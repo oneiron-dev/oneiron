@@ -26,7 +26,8 @@ use crate::side_table::{self, Named, SideTable};
 const HANDLES: SideTable<(EntityId, EntityId), SnapshotHandleRow, Named> =
     SideTable::new(&side_table::SNAPSHOT_READ_HANDLE);
 
-/// The most kinds one handle pages.
+/// The most kinds one handle pages while the owner has set no
+/// `snapshot_read.open.max_kinds` row: that key's default.
 pub const SNAPSHOT_MAX_KINDS: usize = 16;
 
 /// One kind of row a snapshot pages, by the vault's type index.
@@ -90,19 +91,10 @@ pub struct SnapshotHandle {
     pub kinds: Vec<SnapshotKind>,
 }
 
-/// One `vault.snapshot.page` request.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct SnapshotPageRequest {
-    /// The handle `vault.snapshot.open` returned to this caller.
-    pub handle: EntityId,
-    /// The `next` of the page before; absent for the first page.
-    #[serde(default)]
-    pub cursor: Option<String>,
-    /// The most rows this page serves, at most the owner's rows per page.
-    #[serde(default)]
-    pub limit: Option<u32>,
-}
+#[doc(hidden)]
+pub(crate) use oneiron_verb_wire::snapshot_read::snapshot::SnapshotOversizedRow;
+#[doc(hidden)]
+pub use oneiron_verb_wire::snapshot_read::snapshot::SnapshotPageRequest;
 
 /// One page of a snapshot.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -117,16 +109,6 @@ pub struct SnapshotPage {
     pub next: Option<String>,
     /// The rows this handle has served over all its pages.
     pub served: u64,
-}
-
-/// A row a page does not serve because it is larger than the owner's bytes
-/// per page.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct SnapshotOversizedRow {
-    /// The row.
-    pub entity: EntityId,
-    /// Its size as a page row would encode it, in bytes.
-    pub bytes: u64,
 }
 
 /// One row of a snapshot page.
@@ -252,16 +234,16 @@ impl ChangesSinceOpen {
     }
 }
 
-/// The request's shape checks, run before the caller is resolved.
+/// The request's shape checks, run before the caller is resolved. The bound is
+/// `snapshot_read.open.max_kinds` in force, [`SNAPSHOT_MAX_KINDS`] by default.
 ///
 /// # Errors
 ///
-/// No kind, more than [`SNAPSHOT_MAX_KINDS`], a kind named twice, or a zero
-/// lifetime.
-pub fn validate_snapshot_open(input: &SnapshotOpenRequest) -> MemoryResult<()> {
-    if input.kinds.is_empty() || input.kinds.len() > SNAPSHOT_MAX_KINDS {
+/// No kind, more than `max_kinds`, a kind named twice, or a zero lifetime.
+pub fn validate_snapshot_open(input: &SnapshotOpenRequest, max_kinds: usize) -> MemoryResult<()> {
+    if input.kinds.is_empty() || input.kinds.len() > max_kinds {
         return Err(MemoryError::bad_request(format!(
-            "a snapshot pages 1 to {SNAPSHOT_MAX_KINDS} kinds"
+            "a snapshot pages 1 to {max_kinds} kinds"
         )));
     }
     let mut types: Vec<u8> = input.kinds.iter().map(|kind| kind.entity_type()).collect();
@@ -289,10 +271,20 @@ pub fn snapshot_open(
     memory: &Memory<'_>,
     input: &SnapshotOpenRequest,
 ) -> MemoryResult<SnapshotHandle> {
-    validate_snapshot_open(input)?;
+    let vault = memory.vault();
+    let max_kinds = {
+        let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
+        usize::try_from(
+            super::setting_keys::SNAPSHOT_MAX_KINDS_SETTING
+                .read_in_txn(vault, &txn, &[], None)?
+                .value
+                .max(1),
+        )
+        .unwrap_or(usize::MAX)
+    };
+    validate_snapshot_open(input, max_kinds)?;
     // The caller must hold a read lane at all; each page opens its own.
     memory.read_lane(ClaimReadStatus::Recorded)?;
-    let vault = memory.vault();
     let bounds = vault.snapshot_read_settings()?;
     let now = vault.store.authorization_now()?;
     let lifetime = input
@@ -430,8 +422,12 @@ pub fn snapshot_page(
     let reader = memory.with_read_filter(handle.filter.as_ref());
     let lane = reader.read_lane(ClaimReadStatus::Recorded)?;
     let _pins = lane.prepare_point_read::<MemoryError>()?;
-    let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
-    let changes = ChangesSinceOpen::read_in(vault, &txn, &handle)?;
+    // The known-value pass's own snapshot for a reader of masked repo bytes
+    // (FIX REPO-ASSET-KNOWN-PASS-NESTED-SNAPSHOT).
+    let snapshot = reader.lane_snapshot()?;
+    let known = snapshot.known();
+    let txn = snapshot.txn();
+    let changes = ChangesSinceOpen::read_in(vault, txn, &handle)?;
     let mut rows = Vec::new();
     let mut oversized = Vec::new();
     let mut bytes = 0u64;
@@ -452,7 +448,7 @@ pub fn snapshot_page(
         let entity_type = handle.kinds[kind_at].entity_type();
         let ids = vault.entities_by_type_page_in_txn(&txn, entity_type, after.as_ref(), want)?;
         let exhausted = ids.len() < want;
-        let views = reader.read_views_in_txn(&lane, &txn, &ids)?;
+        let views = reader.read_views_in_txn(&lane, txn, known, &ids)?;
         receipt = Some(match receipt.take() {
             None => views.receipt,
             Some(mut kept) => {
@@ -514,9 +510,9 @@ pub fn snapshot_page(
     }
     let receipt = match receipt {
         Some(receipt) => receipt,
-        None => reader.read_views_in_txn(&lane, &txn, &[])?.receipt,
+        None => reader.read_views_in_txn(&lane, txn, known, &[])?.receipt,
     };
-    drop(txn);
+    drop(snapshot);
     let count = u64::try_from(rows.len()).unwrap_or(u64::MAX);
     // The rows are counted against the handle in one write, judged again
     // there: a page read at the same time may have used them (review of

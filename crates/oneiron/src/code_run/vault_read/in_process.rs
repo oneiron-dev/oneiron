@@ -6,6 +6,7 @@ mod media_query;
 
 pub use deferred_forms::DeferredServedForms;
 
+use crate::batch::export::released_body_for;
 use crate::claim::{PointRead, ReadRow, ScopedRead, ScopedReadActorKey};
 use crate::context_pack::{
     ContextPack, ContextPackBuilder, ContextPackRetrievalBudget, DEFAULT_MAX_NEIGHBORS,
@@ -26,8 +27,8 @@ use super::error::{
     invalid_request, named_row,
 };
 use super::projection::{
-    batch_item_from_result, entity_record_from_parts, project_context_pack,
-    project_memory_timeline, timeline_is_absent,
+    OmittedRow, ProjectionBodyBudget, batch_item_from_result, entity_record_from_parts,
+    project_context_pack, project_memory_timeline, timeline_is_absent,
 };
 use super::sealed;
 use super::types::{
@@ -51,6 +52,7 @@ pub struct InProcessVaultReadAdapter<'v> {
     media_memory: Option<&'v crate::host_memory::MachineMemory>,
     image_pick: Option<crate::memory::ImagePick<'v>>,
     deferred_forms: Option<&'v DeferredServedForms>,
+    projection_body_bytes: Option<usize>,
 }
 
 /// The engine code a context pack or query naming `media` is refused with
@@ -94,7 +96,33 @@ impl<'v> InProcessVaultReadAdapter<'v> {
             media_memory: None,
             image_pick: None,
             deferred_forms: None,
+            projection_body_bytes: None,
         }
+    }
+
+    /// Bounds the body bytes one `memory.query` or `memory.hydrate_many`
+    /// answer decodes to `bound`, its host's
+    /// `[limits].projection_body_bytes` (H27), as the `/v1` doors bound
+    /// theirs: each body at the length its reader reads, the stored body's
+    /// for the owner. A Summary or Full body the rest of the budget cannot
+    /// hold is not decoded: its row keeps its id, kind and time and carries
+    /// [`super::CoreBodyOmitted`] in its place. A body withheld from its
+    /// reader takes no budget and carries no marker. A single hydrate takes
+    /// no budget and returns its body whole. Without this every admitted
+    /// body decodes.
+    #[must_use]
+    pub fn with_projection_body_bytes(mut self, bound: usize) -> Self {
+        self.projection_body_bytes = Some(bound);
+        self
+    }
+
+    /// A fresh body budget for one multi-row answer in `view`: none for a
+    /// Standard answer, which decodes no body.
+    fn body_budget(&self, view: View) -> Option<ProjectionBodyBudget> {
+        if matches!(view, View::Standard) {
+            return None;
+        }
+        self.projection_body_bytes.map(ProjectionBodyBudget::new)
     }
 
     /// Searches `seeds`, which the host embedded from a context pack's or
@@ -238,21 +266,31 @@ impl<'v> InProcessVaultReadAdapter<'v> {
             producers.list(admitted.value.iter().map(|result| result.id));
         }
         let mut narrowing = admitted.receipt;
+        // Whether this reader reads each body as stored, judged in the
+        // snapshot that read the rows (ruling EXPORTDOORS Q4 = A).
         let projected = self
             .scoped_read
-            .read(
+            .read_projected(
                 &admitted
                     .value
                     .iter()
                     .map(|result| PointRead::id(result.id).at(crate::vault::ReadMode::Indexed))
                     .collect::<Vec<_>>(),
                 Some(&narrowing.applied.as_filter()),
+                |txn, rows| {
+                    Ok::<_, crate::error::Error>((
+                        self.scoped_read.reads_stored_bodies_in(txn)?,
+                        rows,
+                    ))
+                },
             )
             .map_err(|error| engine_failure(METHOD, &error))?;
         narrowing.restrict_with(&projected.receipt);
-        let total = projected.value.iter().filter(|row| row.is_some()).count();
+        let (reads_stored, rows) = projected.value;
+        let total = rows.iter().filter(|row| row.is_some()).count();
         let mut items = Vec::with_capacity(total.min(limit));
-        for (result, row) in admitted.value.into_iter().zip(projected.value) {
+        let mut bodies = self.body_budget(view);
+        for (result, row) in admitted.value.into_iter().zip(rows) {
             if items.len() >= limit {
                 break;
             }
@@ -260,19 +298,48 @@ impl<'v> InProcessVaultReadAdapter<'v> {
                 entity_type,
                 learned_at,
                 body: Some(body),
+                content_hash,
                 ..
             }) = row
             else {
                 continue;
             };
-            items.push(entity_record_from_parts(
-                &result.id,
-                entity_type,
-                learned_at,
-                Some(result.score),
-                &body,
-                view,
-            ));
+            // Every reader but the owner reads the body the typed Nulled rule
+            // releases (ruling EXPORTDOORS Q4 = A); the owner's is the stored
+            // body. A body decodes only while the answer's budget holds it
+            // (H27), charged at the length of the body its reader reads,
+            // which is the stored length for the owner, as the /v1 doors
+            // charge theirs. A withheld body takes no budget and leaves no
+            // marker, so its length never reaches a reader who may not read
+            // it (REVIEW2 #7571 P2-1).
+            let released = released_body_for(reads_stored, entity_type, &body)
+                .map_err(|error| engine_failure(METHOD, &error))?;
+            let decoded = released.as_deref().is_none_or(|released| {
+                bodies
+                    .as_mut()
+                    .is_none_or(|bodies| bodies.admits(released.len()))
+            });
+            items.push(match (bodies.as_ref(), released.as_deref()) {
+                (Some(bodies), Some(released)) if !decoded => bodies.omitted(
+                    self.scoped_read.vault(),
+                    OmittedRow {
+                        id: result.id,
+                        entity_type,
+                        learned_at,
+                        score: Some(result.score),
+                        body_bytes: released.len(),
+                        content_hash,
+                    },
+                ),
+                (_, released) => entity_record_from_parts(
+                    &result.id,
+                    entity_type,
+                    learned_at,
+                    Some(result.score),
+                    released,
+                    view,
+                ),
+            });
         }
         Ok(CoreQueryResponse {
             access: crate::access_grant::GrantedData::new(
@@ -445,14 +512,17 @@ impl<'v> InProcessVaultReadAdapter<'v> {
             reader,
             row,
             &mut narrowing,
+            None,
         )
     }
 
     /// One hydrated item, and the form it serves `reader` in place of an
-    /// image's body: the caller records it before it answers.
+    /// image's body: the caller records it before it answers. An item of a
+    /// batch decodes its body only while the batch's `bodies` budget holds
+    /// it; a single hydrate passes none.
     #[expect(
         clippy::too_many_arguments,
-        reason = "one hydrated item: its method, ref, view, reader, row and receipt"
+        reason = "one hydrated item: its method, ref, view, reader, row, receipt and the batch's body budget"
     )]
     fn project_hydrate(
         &self,
@@ -463,6 +533,7 @@ impl<'v> InProcessVaultReadAdapter<'v> {
         reader: &crate::memory::AssetConsumer,
         hydrated: Option<ReadRow>,
         narrowing: &mut crate::claim::ScopedReadReceipt,
+        mut bodies: Option<&mut ProjectionBodyBudget>,
     ) -> VaultReadResult<(CoreHydrateResponse, Option<ServedForm>)> {
         // A missing row and a clamp-denied claim are the SAME answer here. The
         // adapter never probes the naked vault to tell them apart.
@@ -472,6 +543,7 @@ impl<'v> InProcessVaultReadAdapter<'v> {
             learned_at,
             deletion,
             body,
+            content_hash: stored_hash,
             ..
         }) = hydrated
         else {
@@ -491,44 +563,61 @@ impl<'v> InProcessVaultReadAdapter<'v> {
             };
             return Ok((response, None));
         };
-        // A generated image is served down its ladder for `reader` (OF-329):
-        // its bytes, its thumbnail beside its ASSET_TEXT, or the text, each
-        // read through this lane.
-        let mut served = None;
-        if entity_type == ENTITY_TYPE_ASSET {
-            let lane = &self.scoped_read;
-            let asset = crate::memory::hydrated_asset(
-                lane,
-                id,
-                reader,
-                self.image_pick.as_ref(),
-                &mut |_| true,
-                None,
-            )
-            .map_err(|error| engine_failure(method, &error))?;
-            narrowing.restrict_with(&asset.receipt);
-            served = match asset.value {
-                crate::memory::HydratedAsset::Served { body, text, form } => {
-                    if let Some(producers) = self.producers {
-                        producers.list(text);
-                    }
-                    Some((body, form))
-                }
-                crate::memory::HydratedAsset::Stored
-                | crate::memory::HydratedAsset::Omitted { .. } => None,
-            };
-        }
         // This adapter serves MCP tools: a repo file reads masked (FIX 7608).
+        // Every reader but the owner reads the body the typed Nulled rule
+        // releases (ruling EXPORTDOORS Q4 = A); a withheld one leaves the
+        // item without a body. A served form is read from released rows.
         let body = masked_asset_body(self.scoped_read.vault(), &id, entity_type, body)
             .map_err(|error| engine_failure(method, &error))?;
-        let item = entity_record_from_parts(
-            &id,
-            entity_type,
-            learned_at,
-            None,
-            served.as_ref().map_or(&body, |(form, _)| form),
-            view,
-        );
+        let reads_stored = self
+            .scoped_read
+            .reads_stored_bodies()
+            .map_err(|error| engine_failure(method, &error))?;
+        let released = released_body_for(reads_stored, entity_type, &body)
+            .map_err(|error| engine_failure(method, &error))?;
+        // An item of a batch decodes its body only while the batch's budget
+        // holds it (H27), charged at the length of the body its reader reads.
+        // A withheld body takes no budget and leaves no marker, so its length
+        // never reaches a reader who may not read it (REVIEW2 #7571 P2-1).
+        let mut decoded = released.as_deref().is_none_or(|released| {
+            bodies
+                .as_deref_mut()
+                .is_none_or(|bodies| bodies.admits(released.len()))
+        });
+        // A generated image is served down its ladder for `reader` (OF-329).
+        let mut served = None;
+        if decoded && entity_type == ENTITY_TYPE_ASSET {
+            match self.hydrate_asset(method, id, reader, bodies.as_deref_mut(), narrowing)? {
+                crate::memory::HydratedAsset::Served { body, form, .. } => {
+                    served = Some((body, form));
+                }
+                crate::memory::HydratedAsset::Stored => {}
+                crate::memory::HydratedAsset::Omitted { .. } => decoded = false,
+            }
+        }
+        let item = match (bodies.as_deref(), released.as_deref()) {
+            (Some(bodies), Some(released)) if !decoded => bodies.omitted(
+                self.scoped_read.vault(),
+                OmittedRow {
+                    id,
+                    entity_type,
+                    learned_at,
+                    score: None,
+                    body_bytes: released.len(),
+                    content_hash: stored_hash,
+                },
+            ),
+            (_, released) => entity_record_from_parts(
+                &id,
+                entity_type,
+                learned_at,
+                None,
+                served
+                    .as_ref()
+                    .map_or(released, |(form, _)| Some(form.as_slice())),
+                view,
+            ),
+        };
         // A Standard item carries no body, so it serves no form.
         let served = served
             .filter(|_| !matches!(view, View::Standard))
@@ -544,6 +633,42 @@ impl<'v> InProcessVaultReadAdapter<'v> {
             item: Some(item),
         };
         Ok((response, served))
+    }
+
+    /// What the live ASSET `id` serves `reader` (OF-329): its bytes, its
+    /// thumbnail beside its ASSET_TEXT, or the text, each read through this
+    /// lane and charged to `bodies`, a batch's budget, when it has one; with
+    /// nothing left that fits, it is omitted and the vault asks.
+    fn hydrate_asset(
+        &self,
+        method: VaultReadMethod,
+        id: crate::entity_id::EntityId,
+        reader: &crate::memory::AssetConsumer,
+        mut bodies: Option<&mut ProjectionBodyBudget>,
+        narrowing: &mut crate::claim::ScopedReadReceipt,
+    ) -> VaultReadResult<crate::memory::HydratedAsset> {
+        let room_left = bodies.as_deref().map(ProjectionBodyBudget::remaining);
+        let mut admits = |len: usize| {
+            bodies
+                .as_deref_mut()
+                .is_none_or(|bodies| bodies.admits(len))
+        };
+        let asset = crate::memory::hydrated_asset(
+            &self.scoped_read,
+            id,
+            reader,
+            self.image_pick.as_ref(),
+            &mut admits,
+            room_left,
+        )
+        .map_err(|error| engine_failure(method, &error))?;
+        narrowing.restrict_with(&asset.receipt);
+        if let crate::memory::HydratedAsset::Served { text, .. } = &asset.value
+            && let Some(producers) = self.producers
+        {
+            producers.list(*text);
+        }
+        Ok(asset.value)
     }
 
     fn hydrate_op(&self, request: &CoreHydrateRequest) -> VaultReadResult<CoreHydrateResponse> {
@@ -584,6 +709,7 @@ impl<'v> InProcessVaultReadAdapter<'v> {
         let mut values = hydrated.value.into_iter();
         let mut results = Vec::with_capacity(request.refs.len());
         let mut served = Vec::new();
+        let mut bodies = self.body_budget(view);
         for (reference, parsed) in request.refs.iter().zip(parsed) {
             let Some((short_id, content_hash)) = parsed else {
                 results.push(CoreBatchShortIdHydrateItem {
@@ -614,6 +740,7 @@ impl<'v> InProcessVaultReadAdapter<'v> {
                     &reader,
                     row,
                     &mut narrowing,
+                    bodies.as_mut(),
                 )
                 .map(|(response, form)| {
                     served.extend(form);
@@ -759,8 +886,9 @@ impl sealed::Backend for InProcessVaultReadAdapter<'_> {
     ) -> VaultReadResult<VaultReadResponse> {
         // Keep request-local reader state isolated. Policy is re-resolved in
         // each body snapshot, so a retained actor binding is not retained authority.
-        // The fresh reader lists into the host's producer set, and holds its
-        // served forms for a host that defers them.
+        // The fresh reader lists into the host's producer set, holds its
+        // served forms for a host that defers them, and decodes bodies under
+        // the host's body bound.
         let mut reader = Self::new(
             self.scoped_read.vault(),
             self.scoped_read.actor_key().clone(),
@@ -770,6 +898,7 @@ impl sealed::Backend for InProcessVaultReadAdapter<'_> {
         reader.media = self.media;
         reader.media_memory = self.media_memory;
         reader.image_pick = self.image_pick.clone();
+        reader.projection_body_bytes = self.projection_body_bytes;
         let request = request.into_inner();
         // The caller's own filter binds this request's fresh reader alone,
         // never the backend's (FIX 3977).

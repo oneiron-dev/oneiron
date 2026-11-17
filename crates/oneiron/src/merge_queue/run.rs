@@ -5,15 +5,13 @@
 //! work and veto none: an entry whose predecessors still hold waits Queued
 //! and is never refused. A predecessor stops holding it once its
 //! declaration is released, expires or is replaced, or once a run batch
-//! accepted under that declaration reaches the queue's head; one accepted
-//! after this entry never holds it. Acceptance hands the exact candidate to
+//! accepted under that declaration that ends its enqueue reaches the
+//! queue's head (an earlier batch of a split enqueue does not:
+//! [MERGE-QUEUE-ENQUEUE-SPLITS-LARGE-BATCH]); one accepted after this entry
+//! never holds it. Acceptance hands the exact candidate to
 //! the queue: staging and landing never ask whether the worker that
 //! submitted it still runs, and every existing check, review and recovery
 //! still applies.
-
-use std::collections::BTreeSet;
-
-use serde::{Deserialize, Serialize};
 
 use super::batch_index::BatchIndexKind;
 use super::{BatchState, MergeBatch, MergeProposal, MergeQueue};
@@ -21,39 +19,8 @@ use crate::EntityId;
 use crate::error::Result;
 use crate::store::contract_oracle::invalid;
 
-/// A run's accepted queue entry: whose it is, the exact proposals accepted,
-/// the declaration it was accepted under and the predecessors it waits
-/// behind, as its batch writer read them.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct RepoQueueOrder {
-    /// The run's work the proposals were made in.
-    pub work: EntityId,
-    /// The TASK the run realized.
-    pub task: EntityId,
-    /// The actor that submitted them.
-    pub holder: EntityId,
-    /// The exact stored proposals accepted, in batch order.
-    pub proposals: Vec<EntityId>,
-    /// The run's own declaration the entry was accepted under, if it had one.
-    pub declaration: Option<EntityId>,
-    /// The symbols the entry touches (CALL "FIX 6867 run-only overlap
-    /// granularity").
-    pub symbols: BTreeSet<String>,
-    /// The live declarations of other TASKs that overlapped it when it was
-    /// accepted.
-    pub predecessors: Vec<RepoQueuePredecessor>,
-    /// The queue sequence that accepted it: an entry accepted later never
-    /// holds this one.
-    pub sequence: u64,
-}
-
-/// One declaration a run's entry waits behind: the TASK and the id of the
-/// declaration that held it at acceptance.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct RepoQueuePredecessor {
-    pub task: EntityId,
-    pub declaration: EntityId,
-}
+#[doc(hidden)]
+pub use oneiron_records::merge_queue::run::{RepoQueueOrder, RepoQueuePredecessor};
 
 impl MergeQueue<'_> {
     /// Queues a run's exact stored proposals as one batch through the one
@@ -124,21 +91,26 @@ impl MergeQueue<'_> {
                 BatchIndexKind::Declaration,
                 &predecessor.declaration.to_hex(),
             )?;
-            let accepted: Vec<(BatchState, u64)> = batches
+            // Each accepted batch's state, sequence, and whether it ends its
+            // enqueue: a later batch of a split enqueue still follows it.
+            let accepted: Vec<(BatchState, u64, bool)> = batches
                 .iter()
                 .filter_map(|other| {
                     let other_order = other.run_order.as_ref()?;
-                    (other_order.declaration == Some(predecessor.declaration))
-                        .then_some((other.state, other_order.sequence))
+                    (other_order.declaration == Some(predecessor.declaration)).then_some((
+                        other.state,
+                        other_order.sequence,
+                        other.followed_by.is_none(),
+                    ))
                 })
                 .collect();
-            let landed = accepted.iter().any(|(state, _)| {
-                matches!(state, BatchState::HeadAdvanced | BatchState::GreenAdvanced)
+            let landed = accepted.iter().any(|(state, _, last)| {
+                *last && matches!(state, BatchState::HeadAdvanced | BatchState::GreenAdvanced)
             });
             let behind = !accepted.is_empty()
                 && accepted
                     .iter()
-                    .all(|(_, sequence)| *sequence > order.sequence);
+                    .all(|(_, sequence, _)| *sequence > order.sequence);
             if !landed
                 && !behind
                 && crate::task_verb::declaration_holds_in_txn(

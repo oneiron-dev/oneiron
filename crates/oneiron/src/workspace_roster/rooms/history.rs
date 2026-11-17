@@ -4,7 +4,7 @@ use super::*;
 use crate::store::Store;
 
 mod pages;
-pub(in crate::workspace_roster) use pages::served_page_size;
+pub(in crate::workspace_roster) use pages::served_room_page_size;
 
 pub(in crate::workspace_roster) const PAGE_LIMIT: usize = 256;
 
@@ -642,8 +642,12 @@ impl Memory<'_> {
         }
     }
 
-    /// Canonical HEAD is a room-local indexed read; branch turns are excluded.
-    /// A head this reader may not read is no head for it.
+    /// The room's head turn. A room that keeps DAG topology is headed by
+    /// its selected DAG HEAD, so a trunk turn appended without advancing
+    /// HEAD, or left behind by a HEAD move, is not the head even when it
+    /// is the newest trunk row. A room with no DAG topology is headed by
+    /// its newest trunk row. Branch turns are excluded. A head this
+    /// reader may not read is no head for it.
     pub fn room_head(&self, room: EntityId) -> MemoryResult<Option<RoomTurn>> {
         let worlds = self.room_read_worlds(room)?;
         let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
@@ -651,14 +655,27 @@ impl Memory<'_> {
         if !turns_readable(&worlds) {
             return Ok(None);
         }
-        let head = HEADS
-            .iter_rev_from(&self.vault().store, &txn, room.as_bytes())?
-            .next()
-            .map(|row| -> MemoryResult<RoomTurn> {
-                let (_, turn_id) = row?;
-                Ok(turn_in(self.vault(), &txn, turn_id)?)
-            })
-            .transpose()?;
+        let head = if crate::conversation_dag::keeps_dag_topology(&self.vault().store, &txn, &room)?
+        {
+            // A DAG HEAD whose room row is gone, or whose row is no trunk
+            // row of this room, is no room head: the room's rows were
+            // removed, or the TURN keeps no row.
+            match crate::conversation_dag::local_head_in(&self.vault().store, &txn, &room)? {
+                Some(turn_id) => TURNS
+                    .get(&self.vault().store, &txn, &turn_id)?
+                    .filter(|turn| turn.room_id == room.to_hex() && turn.thread_of.is_none()),
+                None => None,
+            }
+        } else {
+            HEADS
+                .iter_rev_from(&self.vault().store, &txn, room.as_bytes())?
+                .next()
+                .map(|row| -> MemoryResult<RoomTurn> {
+                    let (_, turn_id) = row?;
+                    Ok(turn_in(self.vault(), &txn, turn_id)?)
+                })
+                .transpose()?
+        };
         drop(txn);
         Ok(self.admitted_turns(head.into_iter().collect())?.pop())
     }
@@ -816,7 +833,38 @@ impl Memory<'_> {
             .into_iter()
             .filter(|header| root_ids.contains(&header.thread))
             .collect();
-        Ok(super::RoomTrunk { turn, headers })
+        let for_org = self
+            .turns_for_org(std::slice::from_ref(&turn))?
+            .remove(&turn.turn_id);
+        Ok(super::RoomTrunk {
+            turn,
+            headers,
+            for_org,
+        })
+    }
+
+    /// By turn id, the org each of `turns`' speakers ran as its house at the
+    /// turn's `at` (HOUSE-BIND = A, FIX SPEAKER-BYLINE-FOR-ORG). It reads the
+    /// house link receipts alone and stores nothing, so an unbind never
+    /// changes how a turn written before it reads. A speaker that ran no org
+    /// then, or whose actor is no entity id, has no entry.
+    pub(super) fn turns_for_org(
+        &self,
+        turns: &[RoomTurn],
+    ) -> MemoryResult<std::collections::BTreeMap<String, String>> {
+        let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
+        let mut for_org = std::collections::BTreeMap::new();
+        for turn in turns {
+            let Ok(speaker) = EntityId::from_hex(&turn.actor) else {
+                continue;
+            };
+            if let Some(org) =
+                crate::workspace_roster::house_org_at_in_txn(self.vault(), &txn, speaker, turn.at)?
+            {
+                for_org.insert(turn.turn_id.clone(), org.to_hex());
+            }
+        }
+        Ok(for_org)
     }
 
     /// The audience edits among `turns`, which a thread fold reads as no

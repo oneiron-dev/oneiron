@@ -98,12 +98,21 @@ fn binding_mismatch() -> Error {
 /// vault gives it, trusting this device's signer ([`Vault::checkpoint_key`]); a
 /// host without the vault unlocks it from a wrap the artifact carries
 /// ([`CheckpointKey::unlock`]) and says whom it trusts.
+/// The keys of one data-key generation: the commitment naming it, the
+/// checkpoint-seal KEK, and the custody-head subkey (KS-4).
+struct GenerationKey {
+    commitment: [u8; 32],
+    kek: Kek,
+    custody_wrap: zeroize::Zeroizing<[u8; 32]>,
+}
+
 pub struct CheckpointKey {
     pub(super) vault_id: [u8; 32],
-    kek: Kek,
-    /// The data key's custody-head subkey, which opens a custody head's
-    /// host-readable compartments on a host without the vault (KS-4).
-    custody_wrap: zeroize::Zeroizing<[u8; 32]>,
+    /// The current generation's keys: what sealing uses.
+    current: GenerationKey,
+    /// The earlier generations' keys, newest first: what opens an artifact
+    /// sealed before a new generation.
+    earlier: Vec<GenerationKey>,
     trust: Trust,
     /// The data key a carried wrap opened to, kept opaque for a sealed vault
     /// restored from the artifact ([`Self::restored_page_seal`]); `None` for
@@ -122,6 +131,12 @@ pub struct CheckpointKey {
     /// The signers the vault's mode roots delegated, trusted beside `trust`
     /// (`trusting_mode_roots`, FIX 968).
     pub(super) delegated: Option<Box<super::signer_delegation::DelegatedSigners>>,
+    /// An escrow recipient opened this key ([`CheckpointKey::unlock`] with a
+    /// carried escrow wrap but the world kit's, or with
+    /// [`VaultKeyUnlock::EscrowCapsule`]). Such a key opens no artifact whose
+    /// signed key header carries "Nobody but me", whichever artifact it was
+    /// unlocked from (review of #7766, rounds 1 and 2).
+    escrow_opened: bool,
 }
 
 impl std::fmt::Debug for CheckpointKey {
@@ -165,20 +180,36 @@ impl CheckpointKey {
     /// It trusts no signer until told whom ([`CheckpointKey::trusting`]).
     pub fn unlock(path: &Path, unlock: &VaultKeyUnlock<'_>) -> Result<Self> {
         let prelude = Prelude::read(&mut File::open(path)?)?;
-        let (key, opened) =
-            prelude
-                .carried()?
-                .subkey_opened(&prelude.vault_id, unlock, SEAL_CONTEXT)?;
+        let carried = prelude.carried()?;
+        let (key, opened) = carried.subkey_opened(&prelude.vault_id, unlock, SEAL_CONTEXT)?;
+        // The header's links reach the earlier generations from the opened
+        // key. A forged header can only add links that fail to open, which
+        // refuses the unlock; links are never silently dropped.
+        let earlier_keys = opened.earlier_keys(carried.links())?;
+        let mut earlier = Vec::with_capacity(earlier_keys.len());
+        for older in &earlier_keys {
+            earlier.push(GenerationKey {
+                commitment: older.commitment(&prelude.vault_id),
+                kek: Kek::from_zeroizing(older.derive(SEAL_CONTEXT, &prelude.vault_id)),
+                custody_wrap: older
+                    .derive(crate::store::CUSTODY_HEAD_WRAP_CONTEXT, &prelude.vault_id),
+            });
+        }
         Ok(Self {
             vault_id: prelude.vault_id,
-            kek: Kek::from_zeroizing(key),
-            custody_wrap: opened.subkey(crate::store::CUSTODY_HEAD_WRAP_CONTEXT),
+            current: GenerationKey {
+                commitment: *carried.commitment(),
+                kek: Kek::from_zeroizing(key),
+                custody_wrap: opened.subkey(crate::store::CUSTODY_HEAD_WRAP_CONTEXT),
+            },
+            earlier,
             trust: Trust::Nobody,
             opened: Some(opened),
             expected: None,
             wake_floor: None,
             artifact_host_holds: None,
             delegated: None,
+            escrow_opened: unlock.is_escrow_recipient_unlock(),
         })
     }
 
@@ -210,14 +241,19 @@ impl CheckpointKey {
         }
         Ok(Self {
             vault_id: expected.engine_vault_id,
-            kek: Kek::from_zeroizing(opened.subkey(SEAL_CONTEXT)),
-            custody_wrap: opened.subkey(crate::store::CUSTODY_HEAD_WRAP_CONTEXT),
+            current: GenerationKey {
+                commitment: opened.commitment(),
+                kek: Kek::from_zeroizing(opened.subkey(SEAL_CONTEXT)),
+                custody_wrap: opened.subkey(crate::store::CUSTODY_HEAD_WRAP_CONTEXT),
+            },
+            earlier: Vec::new(),
             trust: Trust::Pinned(expected.signer_pins.clone()),
             opened: Some(opened),
             expected: Some(Box::new(expected.clone())),
             wake_floor: None,
             artifact_host_holds: None,
             delegated: None,
+            escrow_opened: false,
         })
     }
 
@@ -287,9 +323,25 @@ impl CheckpointKey {
             .transpose()
     }
 
-    /// The custody-head subkey of the data key this key came from (KS-4).
-    pub(super) fn custody_wrap(&self) -> zeroize::Zeroizing<[u8; 32]> {
-        self.custody_wrap.clone()
+    /// The custody-head subkey of the current generation's data key, which
+    /// alone opens a custody head (KS-4). An earlier generation's never does:
+    /// a holder of a replaced key could seal a head of its own beside a
+    /// newer backup. The first publication after a new generation seals
+    /// every head again under the new key (its commitment is part of the
+    /// publication policy).
+    pub(crate) fn custody_wrap(&self) -> zeroize::Zeroizing<[u8; 32]> {
+        self.current.custody_wrap.clone()
+    }
+
+    /// The keys for the artifact whose carried header names `commitment`.
+    /// Refuses when this key holds no generation under that commitment.
+    fn key_for(&self, commitment: &[u8; 32]) -> Result<&GenerationKey> {
+        std::iter::once(&self.current)
+            .chain(&self.earlier)
+            .find(|key| &key.commitment == commitment)
+            .ok_or_else(|| {
+                refused("the artifact is sealed under a data key this key does not hold")
+            })
     }
 }
 
@@ -307,16 +359,45 @@ impl Vault {
     /// capture): a locked key refuses (`vault_subkey`) instead of unlocking,
     /// and no keystore slot or wrap is made.
     pub(crate) fn held_checkpoint_key(&self) -> Result<CheckpointKey> {
+        let seal_keys = self.vault_subkeys(SEAL_CONTEXT)?;
+        let custody_keys = self.vault_subkeys(crate::store::CUSTODY_HEAD_WRAP_CONTEXT)?;
+        let mut custody_by_commitment: std::collections::BTreeMap<
+            [u8; 32],
+            zeroize::Zeroizing<[u8; 32]>,
+        > = custody_keys.into_iter().collect();
+        let mut seal_keys = seal_keys.into_iter();
+        let (commitment, subkey) = seal_keys
+            .next()
+            .ok_or_else(|| refused("the vault key is locked"))?;
+        let current = GenerationKey {
+            commitment,
+            kek: Kek::from_zeroizing(subkey),
+            custody_wrap: custody_by_commitment
+                .remove(&commitment)
+                .ok_or_else(|| refused("the vault key changed while its generations were read"))?,
+        };
+        let mut earlier = Vec::new();
+        for (commitment, subkey) in seal_keys {
+            let custody_wrap = custody_by_commitment
+                .remove(&commitment)
+                .ok_or_else(|| refused("the vault key changed while its generations were read"))?;
+            earlier.push(GenerationKey {
+                commitment,
+                kek: Kek::from_zeroizing(subkey),
+                custody_wrap,
+            });
+        }
         Ok(CheckpointKey {
             vault_id: *self.vault_id().as_bytes(),
-            kek: Kek::from_zeroizing(self.vault_subkey(SEAL_CONTEXT)?),
-            custody_wrap: self.vault_subkey(crate::store::CUSTODY_HEAD_WRAP_CONTEXT)?,
+            current,
+            earlier,
             trust: Trust::Device(self.device_keystore()?),
             opened: None,
             expected: None,
             wake_floor: None,
             artifact_host_holds: None,
             delegated: None,
+            escrow_opened: false,
         })
     }
 
@@ -327,18 +408,24 @@ impl Vault {
         txn: &heed::RoTxn<'_>,
     ) -> Result<(CarriedVaultKey, CheckpointKey)> {
         let (carried, key) = self.carried_vault_key_in_txn(txn, SEAL_CONTEXT)?;
+        let commitment = *carried.commitment();
         Ok((
             carried,
             CheckpointKey {
                 vault_id: *self.vault_id().as_bytes(),
-                kek: Kek::from_zeroizing(key),
-                custody_wrap: self.vault_subkey(crate::store::CUSTODY_HEAD_WRAP_CONTEXT)?,
+                current: GenerationKey {
+                    commitment,
+                    kek: Kek::from_zeroizing(key),
+                    custody_wrap: self.vault_subkey(crate::store::CUSTODY_HEAD_WRAP_CONTEXT)?,
+                },
+                earlier: Vec::new(),
                 trust: Trust::Nobody,
                 opened: None,
                 expected: None,
                 wake_floor: None,
                 artifact_host_holds: None,
                 delegated: None,
+                escrow_opened: false,
             },
         ))
     }
@@ -513,6 +600,12 @@ pub(super) fn open_artifact_file(
         || commitment.key_header_blake3 != Some(*blake3::hash(&prelude.key_header).as_bytes())
     {
         return Err(codec());
+    }
+    // The header is the signed one now: a key an escrow recipient opened
+    // stops at an artifact sealed under "Nobody but me", even when it was
+    // unlocked from an earlier artifact sealed under "Standard".
+    if key.escrow_opened {
+        carried.admit_escrow_opened_key()?;
     }
     // The prelude's registry binding is the one the signature covers (FIX
     // 5826), compared after the signature verifies and never with where the

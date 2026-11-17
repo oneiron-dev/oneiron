@@ -2,9 +2,17 @@
 use serde::{Deserialize, Serialize};
 
 use super::notifications::PolicyNotificationTarget;
+use crate::batch::export::archive_side_install::{
+    ArchivedSideRowOutcome, decode_archived_row, install_archived_row,
+};
+use crate::batch::export::{
+    ArchiveRetainedSideRow, OwnerArchiveRestorePermit, RetainedSideHeldBackReason,
+};
 use crate::batch::secret_scan::admit_typed;
+use crate::check_in::CheckInDecision;
 use crate::error::{Error, GateError, Result};
 use crate::gate::{PolicyRowChange, PolicyRowScope};
+use crate::receipt::ERASED_CALL_IDENTITY;
 use crate::side_table::{self, Raw, SideTable};
 use crate::{EntityId, Vault};
 
@@ -27,6 +35,12 @@ pub struct PolicyRowReceipt {
     /// The prior holder ruling on this exact row/scope, retained for one-step reverts.
     pub previous_receipt_id: Option<String>,
     pub at: u64,
+    /// The check-in decision the change ran on (2k4; P25-SHAPE Q1 = A): the
+    /// vault's Owner on their own proof, naming the asker's approved
+    /// check-in it applied. Absent on another holder's change and on a
+    /// receipt kept before it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub check_in: Option<CheckInDecision>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -43,13 +57,8 @@ pub struct PolicyChangedEvent {
     pub at: u64,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum PolicyProposalStatus {
-    Pending,
-    Approved { receipt_id: String, holder: String },
-    Declined { holder: String },
-}
+#[doc(hidden)]
+pub use oneiron_records::policy_model::owner_rows::ledger::PolicyProposalStatus;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -78,6 +87,7 @@ pub(super) fn append_change_in_txn(
     txn: &mut heed::RwTxn<'_>,
     author: EntityId,
     change: PolicyRowChange,
+    check_in: Option<CheckInDecision>,
     now: u64,
 ) -> Result<PolicyRowReceipt> {
     let next = match vault.store.vault_meta.get(txn, SEQUENCE)? {
@@ -104,6 +114,7 @@ pub(super) fn append_change_in_txn(
         change,
         previous_receipt_id,
         at: now,
+        check_in,
     };
     // OF-067: the owner's row text and reasons as the side-row wall keeps them.
     let receipt_key = [RECEIPT, &next.to_be_bytes()].concat();
@@ -156,6 +167,45 @@ pub(super) fn put_event_in_txn(
     event: &PolicyChangedEvent,
 ) -> Result<()> {
     EVENTS.put(&vault.store, txn, &event.receipt_id, &encode(event)?)
+}
+
+/// The change receipts, bound through the declared table, for the actor
+/// erase's rewrite. Key: the u64be sequence.
+const RECEIPTS: SideTable<u64, Vec<u8>, Raw> =
+    SideTable::new(&side_table::OWNER_POLICY_CHANGE_RECEIPT);
+
+/// The hard erase's actor scrub over the change receipts (review round 1 of
+/// #8085: an erased asker stayed named; FIX
+/// [CHECK-IN-POLICY-RECEIPT-REQUESTER-UNSCRUBBED]). A receipt whose check-in
+/// decision names `actor` as the asker whose approved check-in the Owner
+/// applied keeps its ruling, its author and its decision, and the asker
+/// becomes [`ERASED_CALL_IDENTITY`], as a shared act's decision does. A
+/// restore's actor sweep runs it again over the restored receipts.
+///
+/// # Errors
+///
+/// A stored receipt that does not read; storage errors.
+pub(crate) fn erase_change_receipt_requester_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    actor: &EntityId,
+) -> Result<()> {
+    let actor_hex = actor.to_hex();
+    for (sequence, raw) in RECEIPTS.scan(&vault.store, wtxn)? {
+        let mut receipt: PolicyRowReceipt = decode(&raw)?;
+        let Some(requester) = receipt
+            .check_in
+            .as_mut()
+            .and_then(|decision| decision.requester.as_mut())
+        else {
+            continue;
+        };
+        if *requester == actor_hex || EntityId::from_hex(requester).is_ok_and(|id| id == *actor) {
+            ERASED_CALL_IDENTITY.clone_into(requester);
+            RECEIPTS.put(&vault.store, wtxn, &sequence, &encode(&receipt)?)?;
+        }
+    }
+    Ok(())
 }
 
 /// Every landed ruling in ledger order: the immutable receipts a queued
@@ -316,5 +366,90 @@ impl Vault {
             }
         }
         Ok(rows)
+    }
+}
+
+/// Lands one archived `OWNER_POLICY_CHANGE_EVENT` envelope in `txn`: canonical outer decode
+/// and the credential predicate, then the embedded event's own canonical round-trip with its
+/// key naming its receipt id. No ruling, receipt, sequence row or notification is written.
+///
+/// # Errors
+/// Storage faults; validation stays in the returned outcome.
+fn land_archived_policy_change_event_row_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    permit: &OwnerArchiveRestorePermit,
+    row: &ArchiveRetainedSideRow,
+) -> Result<ArchivedSideRowOutcome> {
+    let (key, value) = match decode_archived_row(&EVENTS, row) {
+        Ok(decoded) => decoded,
+        Err(reason) => return Ok(ArchivedSideRowOutcome::HeldBack(reason)),
+    };
+    let event: PolicyChangedEvent = match decode(&value) {
+        Ok(event) => event,
+        Err(_) => {
+            return Ok(ArchivedSideRowOutcome::HeldBack(
+                RetainedSideHeldBackReason::InvalidEncoding,
+            ));
+        }
+    };
+    let canonical = match encode(&event) {
+        Ok(canonical) => canonical,
+        Err(_) => {
+            return Ok(ArchivedSideRowOutcome::HeldBack(
+                RetainedSideHeldBackReason::InvalidEncoding,
+            ));
+        }
+    };
+    if canonical != value || key != event.receipt_id {
+        return Ok(ArchivedSideRowOutcome::HeldBack(
+            RetainedSideHeldBackReason::InvalidEncoding,
+        ));
+    }
+    if event.kind.is_empty()
+        || EntityId::from_hex(&event.receipt_id).is_err()
+        || EntityId::from_hex(&event.author).is_err()
+    {
+        return Ok(ArchivedSideRowOutcome::HeldBack(
+            RetainedSideHeldBackReason::InvalidValue,
+        ));
+    }
+    install_archived_row(&EVENTS, vault, txn, permit, &key, row)
+}
+
+impl Vault {
+    /// Lands the owner's archived owner-policy envelopes in input order, one outcome per row:
+    /// `OWNER_POLICY_CHANGE_EVENT` rows install as passive history and
+    /// `OWNER_POLICY_SECRET_SCAN_RECEIPT` rows through the switch's own checks. An absent row
+    /// installs, an identical row is unchanged, and a different row stays live. No ruling,
+    /// sequence row, mode row, lift run or notification is written here: the ledger's
+    /// `SEQUENCE` allocates ruling revisions, not event keys, so no counter is repaired.
+    ///
+    /// # Errors
+    /// Storage faults; validation stays in the returned outcomes.
+    pub(crate) fn land_archived_policy_model_rows_in_txn(
+        vault: &Vault,
+        txn: &mut heed::RwTxn<'_>,
+        permit: &OwnerArchiveRestorePermit,
+        rows: &[ArchiveRetainedSideRow],
+    ) -> Result<Vec<ArchivedSideRowOutcome>> {
+        let mut outcomes = Vec::with_capacity(rows.len());
+        for row in rows {
+            let outcome = match row.source_table.as_str() {
+                name if name == side_table::OWNER_POLICY_CHANGE_EVENT.name => {
+                    land_archived_policy_change_event_row_in_txn(vault, txn, permit, row)?
+                }
+                name if name == side_table::OWNER_POLICY_SECRET_SCAN_RECEIPT.name => {
+                    super::secret_scan_switch::land_archived_secret_scan_receipt_row_in_txn(
+                        vault, txn, permit, row,
+                    )?
+                }
+                // The dispatcher never sends a foreign envelope here; without an
+                // owning table the envelope has no decoding.
+                _ => ArchivedSideRowOutcome::HeldBack(RetainedSideHeldBackReason::InvalidEncoding),
+            };
+            outcomes.push(outcome);
+        }
+        Ok(outcomes)
     }
 }

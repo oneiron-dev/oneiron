@@ -30,6 +30,8 @@ use crate::skill_attribution::{
 use crate::{EntityId, Error, Result, Vault};
 use rmpv::Value;
 
+// The output archive's axes job, queued per request (ARM05 P2).
+mod archive_axes;
 // A paired eval measurement's job, queued per request (FIX 574).
 mod eval_measurement;
 // Q3 tuning's read, policy call and proposal (FIX 8708).
@@ -39,11 +41,14 @@ mod think_threshold;
 
 pub use self::think_threshold::ThinkThresholdPolicy;
 
+pub(crate) use self::archive_axes::enqueue_coach_archive_axes_in_txn;
 pub(crate) use self::eval_measurement::enqueue_coach_eval_measurement_in_txn;
 
 pub use crate::claim::maintenance_kind::COACH_HOST_QUEUE_KIND;
 /// Skill authoring from sessions: the session-end `actor.*` craft-note distill
-/// (ARCH-0003 §G.1 `actor.lesson`).
+/// (ARCH-0003 §G.1 `actor.lesson`), and, with no model, the skills a person's
+/// repeated workaround in an outside app nominates
+/// ([`Vault::run_coach_workaround_skills`], CLIF-STEALS 2).
 pub const COACH_SKILL_DISTILL_FACET: &str = "coach.skill_distill";
 /// Skill discovery from attempt receipts: the task-attribution sweep, whose
 /// `discovery` verdicts become skill edit proposals.
@@ -83,6 +88,10 @@ pub const COACH_OFFER_CHECK_FACET: &str = "coach.offer_check";
 /// [`Vault::coach_eval_measurement_target`], then generates, scores and
 /// records its legs. Input: `{measurement: <64 hex>}`.
 pub const COACH_EVAL_MEASUREMENT_FACET: &str = "coach.eval_measurement";
+/// One output-archive axes request (ARM05 P2) from `vault.research.archive.propose_axes`;
+/// the host reads it through [`Vault::coach_archive_axes_target`] and answers it through
+/// [`Vault::run_coach_archive_axes`]. Input: `{request: <32 hex>}`.
+pub const COACH_ARCHIVE_AXES_FACET: &str = "coach.archive_axes";
 /// One owner-authorized training run, queued for the host when the owner
 /// authorizes it; the host trains, then evaluates, or records why it cannot.
 /// Input: `{run: <32 hex>, spec: <64 hex>}`.
@@ -233,7 +242,7 @@ const HOST_FACETS: [&str; 22] = [
     COACH_TOPOLOGY_AUDIT_FACET,
 ];
 /// The Coach's closed-form nightly jobs, which the wake driver runs.
-const MAINTENANCE_FACETS: [&str; 12] = [
+const MAINTENANCE_FACETS: [&str; 13] = [
     COACH_READ_HARDENING_FACET,
     COACH_TRIPWIRES_FACET,
     COACH_TRADEOFF_ESCALATION_FACET,
@@ -247,6 +256,7 @@ const MAINTENANCE_FACETS: [&str; 12] = [
     COACH_ROOM_UPKEEP_FACET,
     COACH_FOLD_SUGGESTIONS_FACET,
     COACH_LAYOUT_SUGGESTIONS_FACET,
+    super::idle_return_tables::COACH_IDLE_RETURN_TABLES_FACET,
 ];
 const READ_HARDENING_SCOPE: &str = "retrieval";
 /// Hours a pending tradeoff ask waits on one rung before it climbs, a learned

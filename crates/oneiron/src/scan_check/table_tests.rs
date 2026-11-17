@@ -245,6 +245,11 @@ fn seed(vault: &Vault, scan: EngineScan) -> Option<(usize, Read<'_>)> {
             ))
         }
         EngineScan::LexicalHintRows => {
+            // With no hint index (a vault older than it) the read walks
+            // every CLAIM row.
+            vault
+                .drop_lexical_query_hint_index_for_test()
+                .expect("drop the hint index");
             // Derived hint CLAIM ids of a stored CLAIM whose bodies are gone:
             // read, never served.
             let target = id(0x64, PAST);
@@ -360,6 +365,11 @@ fn seed(vault: &Vault, scan: EngineScan) -> Option<(usize, Read<'_>)> {
         }
         EngineScan::AccessGrantRows => {
             // Index rows whose grants are gone: read, skipped, never served.
+            // With no companion grant index (a vault older than it) the read
+            // walks every grant (census L3-28E).
+            vault
+                .drop_companion_grant_index_for_test()
+                .expect("drop the companion grant index");
             vault
                 .with_write_txn(|wtxn| {
                     for index in 0..PAST {
@@ -376,7 +386,7 @@ fn seed(vault: &Vault, scan: EngineScan) -> Option<(usize, Read<'_>)> {
                 0,
                 Box::new(move || {
                     Ok(vault
-                        .authorized_companion_profile_personas(&id(0x59, 0), &id(0x59, 1))?
+                        .authorized_companion_profile_facets(&id(0x59, 0), &id(0x59, 1))?
                         .len())
                 }),
             ))

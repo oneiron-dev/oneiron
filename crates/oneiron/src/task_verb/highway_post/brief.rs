@@ -37,6 +37,8 @@ impl Memory<'_> {
                     "Post a new task for new work.",
                 ));
             }
+            // Plan mode first: an unapproved plan pin is a plan refusal.
+            self.require_plan_admission_in(&txn, body.assignee, Some(&next))?;
             next.validate_in(self.vault(), &txn, body.assignee)?;
             match body.brief {
                 Some(held) if held.rev == 1 => (1, Some(held.brief)),

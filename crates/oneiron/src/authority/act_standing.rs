@@ -414,13 +414,13 @@ fn capture_in_txn(
     }
     let entries = authority_log_rows_in_txn(store, txn)?
         .into_iter()
-        .map(|(_, body)| decode_authority_log_entry_body(&body))
+        .map(|(_, body)| decode_stored_authority_log_body(&body))
         .collect::<Result<Vec<_>>>()?;
     let parents = entries
         .iter()
         .map(|entry| Ok((authority_entry_hash(entry)?, entry.parent_hashes.clone())))
         .collect::<Result<Parents>>()?;
-    let observations = authority_local_observations_in_txn(store, txn, &entries)?;
+    let observations = authority_local_observations_in_txn(store, txn)?;
     let capture = FoldCapture::for_image(heads.clone());
     let (consent, local) = super::fold_engine::own_log_inputs(posture, pin);
     super::fold_engine::fold_authority_log_inner(
@@ -462,7 +462,7 @@ fn capture_past_adopted(
             held_covered.insert(*hash);
             continue;
         }
-        let entry = decode_authority_log_entry_body(&body)?;
+        let entry = decode_stored_authority_log_body(&body)?;
         let hash = authority_entry_hash(&entry)?;
         if image.rows.contains_key(&hash) {
             held_covered.insert(hash);
@@ -475,13 +475,7 @@ fn capture_past_adopted(
         .iter()
         .filter_map(|hash| Some((*hash, tail.get(hash)?.0.clone())))
         .collect();
-    let metas: Vec<_> = closed_tail
-        .iter()
-        .map(|(hash, entry)| super::fold_resume::RowMeta::of(Some(*hash), entry))
-        .collect();
-    let observations = super::sequence_observation::authority_local_observations_of_rows_in_txn(
-        store, txn, &metas,
-    )?;
+    let observations = authority_local_observations_in_txn(store, txn)?;
     let parents = image
         .rows
         .iter()

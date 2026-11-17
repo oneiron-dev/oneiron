@@ -14,9 +14,11 @@
 
 mod annotation_hold;
 mod borrowed_lease;
+mod boundary_pause;
 pub mod browser_admission;
 mod budget_hold;
 mod cancel;
+mod carried_spend;
 mod completion;
 pub mod dispatch_payload;
 mod encoding;
@@ -39,6 +41,7 @@ mod ports;
 mod read_set;
 mod result;
 pub mod run_signal;
+pub(crate) mod setting_keys;
 mod settlement;
 pub mod skill_edit_cycle;
 pub mod source_rows;
@@ -54,6 +57,7 @@ mod tests;
 
 pub use annotation_hold::{ANNOTATION_HOLD_ACTOR, AnnotationHold, AnnotationHoldSweep};
 pub use borrowed_lease::BorrowedAttemptLease;
+pub(crate) use boundary_pause::PauseAtBoundary;
 pub use budget_hold::{BUDGET_HOLD_ACTOR, HoldAttemptForBudget};
 pub use cancel::{
     ATTEMPT_RUNTIME_ACTOR, AcceptAttemptLanding, AttemptCancelPressure, AttemptCancelReceipt,

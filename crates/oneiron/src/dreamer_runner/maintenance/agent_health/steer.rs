@@ -4,31 +4,14 @@ use crate::consent::AuthenticatedOwner;
 use crate::memory::{
     MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INVALID_STATE, Memory, MemoryError, MemoryResult,
 };
-use crate::run_tree::{RunSignalInput, RunSignalKind, RunSignalState, RunTreeAdapter};
+use crate::run_tree::{RunSignalInput, RunSignalKind, RunTreeAdapter};
 use crate::task_verb::{superseded_attempt_ids, task_create_owner_in};
 use crate::{EdgeActorClass, EntityId};
-use serde::{Deserialize, Serialize};
 
-/// `steer`'s input: the child TASK, the nudge, and the caller's retry key.
-/// A resend with the same key and instruction answers the first receipt.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct SteerRequest {
-    pub task_ref: String,
-    pub instruction: String,
-    pub key: String,
-}
-
-/// `steer`'s answer: the live attempt whose inbox holds the signal, and the
-/// signal's state (pending until the child's breakpoint takes it).
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct SteerReceipt {
-    pub task_ref: String,
-    pub branch: String,
-    pub run_id: String,
-    pub key: String,
-    pub state: RunSignalState,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::dreamer_runner::maintenance::agent_health::steer::{
+    SteerReceipt, SteerRequest,
+};
 
 /// `steer`: the TASK's spawner nudges its live run. Anyone else's steer is
 /// refused, not proposed: a nudge carries no effect a review could approve.

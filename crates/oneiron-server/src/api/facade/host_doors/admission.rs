@@ -94,7 +94,29 @@ pub(in crate::api::facade) fn door_admits(
                     crate::api::facade::FacadeApiError::from(error).into_memory_error()
                 })
         }
-        Proof::Owner => owner_proof(auth, server, verb).map(drop),
+        Proof::Owner => {
+            // Restriction wave 7 (C28, C41): the run-review and hook-regen
+            // reads an agent's own Grant may open under the owner's Setting.
+            // An agent credential passes the preflight with its bound actor
+            // on these rows alone; the engine door judges its Grant and the
+            // key. Every other caller keeps the owner's proof.
+            if matches!(
+                verb,
+                "vault.runs.review"
+                    | "vault.runs.settlement"
+                    | "vault.runs.changes.get"
+                    | "vault.hooks.regen.due"
+                    | "vault.hooks.regen.get"
+                    | "vault.hooks.regen.adopt"
+            ) && auth.actor_class() == Some("agent")
+                && !auth.is_owner_grade()
+            {
+                return crate::api::facade::facade_actor(server, auth)
+                    .map(drop)
+                    .map_err(crate::api::facade::FacadeApiError::into_memory_error);
+            }
+            owner_proof(auth, server, verb).map(drop)
+        }
         // `vault.consent.revoke` (FIX 23149): the owner's proof, or a credential bound to an actor,
         // which the door then admits only on a Grant that actor holds. A caller with neither keeps
         // the owner refusal.
@@ -113,6 +135,11 @@ pub(in crate::api::facade) fn door_admits(
         // whose Steward grant the engine reader checks at the read.
         Proof::SubstrateReader => {
             crate::api::facade::substrate_read_doors::substrate_reader(server, auth, verb).map(drop)
+        }
+        // `vault.imports.cancel` (ARCH-0027 #hosted-import): the owner under its proof, or a person
+        // or agent on its own slip, whose Steward `delete` grant the cancel's writer checks.
+        Proof::ImportCanceller => {
+            crate::api::facade::hosted_import_doors::import_canceller(server, auth, verb).map(drop)
         }
         // An engine-control knob (untangle 6.6d): the owner under its proof, or a person or agent on
         // its own slip, whose engine.controls grant the knob's writer checks in the write.
@@ -141,6 +168,12 @@ pub(in crate::api::facade) fn door_admits(
         // the bank binds each act to the voice's subject or creator.
         Proof::VoiceBank => {
             crate::api::facade::voice_bank_doors::voice_bank_admits(server, auth, verb)
+        }
+        // The recognition withdrawal (VOICE-WITHDRAW-AGENT-ON-CALL): a person's proof as
+        // `SharedPerson`, or an agent whose own Grant naming the consent-log verb the engine's
+        // withdrawal admits.
+        Proof::RecognitionWithdrawer => {
+            crate::api::facade::voice_recognition_doors::withdrawer_admits(server, auth, verb)
         }
         // The exact publish rows (FIX 6866): the owner, or a bound principal
         // whose one Grant the engine door admits in its own snapshot.
@@ -175,6 +208,25 @@ pub(in crate::api::facade) fn door_admits(
         Proof::WorkflowMember => {
             crate::api::facade::agent_definition_doors::member_proof(server, auth, verb).map(drop)
         }
+        // A drafted reply's approval (FIX 18868): the mailbox's own person on
+        // their own slip, member or owner, as the door acts under; the door
+        // then admits only the person whose mailbox the draft is from.
+        Proof::MailboxPerson => {
+            crate::api::facade::agent_definition_doors::member_proof(server, auth, verb).map(drop)
+        }
+        // A check-in holder's answer (ROLES-CHECKIN P2.3c): a live person on
+        // their own slip, bound to it, as the door answers under.
+        Proof::CheckInHolder => {
+            crate::api::facade::check_in_doors::holder_proof(server, auth, verb).map(drop)
+        }
+        // `vault.cleanup.decide` (RESTRICTION-WAVE-10 C43): the owner's proof, or a credential
+        // bound to an agent, which the door admits only while the owner's
+        // vault_cleanup.decide.owner_only is off, on a Grant naming the verb, and when the
+        // credential is bound to no invitation, record or channel. Any other caller keeps the
+        // owner refusal.
+        Proof::CleanupDecider => {
+            crate::api::facade::cleanup_doors::decider(server, auth, verb).map(drop)
+        }
         // The off-record session rows admit their session's manager: the
         // owner, or a person or agent who starts and keeps their own
         // (WILL-PLAN L13 row 03). Each door binds the stretch for them again.
@@ -197,6 +249,11 @@ pub(in crate::api::facade) fn door_admits(
         Proof::CredentialHolder => crate::api::facade::credential_doors::holder(auth).map(drop),
         Proof::SlideReviewer => slide_reviewer(server, auth).map(drop),
         Proof::ArtifactAsker => artifact_asker(server, auth).map(drop),
+        // An image edit (L4-15): the owner, or a person or agent on its own slip, whose lane the
+        // engine reads the artifact through.
+        Proof::ImageEditor => {
+            crate::api::facade::image_edit_doors::image_editor(server, auth).map(drop)
+        }
         Proof::DiaryReader => diary_reader(server, auth, verb).map(drop),
         Proof::DecisionHolder => {
             crate::api::facade::decision_ask_doors::holder(auth, verb).map(drop)
@@ -237,6 +294,11 @@ pub(in crate::api::facade) fn door_admits(
         // A policy put by a person holding the policy power (FIX 8177), which the manifest writer checks.
         Proof::PolicyPutter => {
             crate::api::facade::gate_policy_doors::policy_putter(server, auth, verb).map(drop)
+        }
+        // A ramp demotion by the owner or a person holding the ramp demotion power (census L7-33), which
+        // the demotion writer checks again.
+        Proof::RampDemoter => {
+            crate::api::facade::graduation_doors::ramp_demoter(server, auth, verb).map(drop)
         }
         // A publish or repoint as the caller on its own slip (FIX 8161), which the outbound Gate judges.
         Proof::ArtifactPublisher => {

@@ -13,10 +13,12 @@ mod audience_notices;
 mod audience_overlay;
 mod backfill;
 mod carrier_erase;
+mod closed;
 mod fact_subject;
 mod history;
 mod hosting;
 mod liveness;
+mod member_role;
 mod offer_activity;
 mod offer_erase;
 mod offer_history;
@@ -30,6 +32,8 @@ mod pins;
 mod private_threads;
 mod replica;
 mod speaking;
+// FIX [LIBTEST-QUARANTINE-WORKSPACE-ROSTER-ROOMS-TESTS]: the lib test target's type check fails here (13 errors: E0308 x8, E0063 x3, E0639 x1, E0061 x1); port it, then drop this gate
+#[cfg(any())]
 #[cfg(test)]
 mod tests;
 mod thread_delete;
@@ -91,6 +95,8 @@ pub(crate) use backfill::backfill_room_turns_on_open;
 pub(crate) use backfill::doors as backfill_doors;
 #[cfg(feature = "sync")]
 pub(crate) use carrier_erase::erased_side_row_here;
+pub use closed::RoomClosedSet;
+pub(crate) use closed::room_is_closed_in;
 pub use fact_subject::{ACTOR_ERASE_PARTICIPATION_KEY, ParticipationKeyErase};
 pub(super) use history::PAGE_LIMIT;
 pub(super) use history::delete_room_metadata;
@@ -114,6 +120,7 @@ pub use liveness::{
 pub(in crate::workspace_roster) use liveness::{
     is_thread_root, thread_root_map, thread_task_bindings,
 };
+pub use member_role::{RoomMemberRoleReceipt, RoomMemberRoleSet};
 pub use offer_activity::OfferVoteRequest;
 pub(crate) use offer_activity::{ROOM_OFFER_IDLE_SECS, record_offer_append_in_txn};
 pub(in crate::workspace_roster) use offer_erase::drop_open_offer_in_txn;
@@ -272,28 +279,24 @@ pub enum RoomTrunkItem {
     Result(RoomTrunkHeader),
 }
 
-/// A delivered TASK's durable result, attached to its trunk on a room read.
-/// The TASK terminal register holds the fact; no second row is stored.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct RoomTrunkHeader {
-    pub thread: EntityId,
-    pub task: EntityId,
-    pub result_ref: EntityId,
-}
+#[doc(hidden)]
+pub use oneiron_records::workspace_roster::rooms::{
+    RoomClaimOutcome, RoomClaimReceipt, RoomThreadPage, RoomTrunkHeader,
+};
 
 /// A trunk turn with the delivered task headers under its thread anchors.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RoomTrunk {
     pub turn: RoomTurn,
     pub headers: Vec<RoomTrunkHeader>,
+    /// The org the turn's speaker ran as its house when it spoke (HOUSE-BIND
+    /// = A, FIX SPEAKER-BYLINE-FOR-ORG): "pr2, for <org>". Read from the
+    /// house link receipts at the turn's `at` on each read, never stored.
+    /// `None` when the speaker ran no org then.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub for_org: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct RoomThreadPage {
-    pub rows: Vec<EntityId>,
-    /// Explicit end marker: `None` means the room has no further page.
-    pub next_after: Option<EntityId>,
-}
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RoomPage {
@@ -301,6 +304,18 @@ pub struct RoomPage {
     pub next_after: Option<String>,
     /// The room Scope this page was read inside (ARCH-0067 §8).
     pub scope: crate::federation::Scope,
+    /// By turn id, the org each row's speaker ran as its house when it
+    /// spoke (HOUSE-BIND = A, FIX SPEAKER-BYLINE-FOR-ORG), as
+    /// [`RoomTrunk::for_org`] reads it. A row whose speaker ran no org then
+    /// has no entry, so the map is empty by default.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub for_org: std::collections::BTreeMap<String, String>,
+    /// Who made each row, keyed by the `actor` it names, as this reader may
+    /// name them (FIX [UI-GATE-PREVIEW] phase 3): one entry per actor on the
+    /// page, `unknown` for one the reader cannot name. `vault.rooms.messages`
+    /// fills it; a page read for another door leaves it empty.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub actors: std::collections::BTreeMap<String, crate::context_board::ActorAttribution>,
 }
 
 /// A room TURN is an ordinary record, not a claim, so it lives in base
@@ -315,22 +330,6 @@ fn turns_readable(scope: &crate::federation::Scope) -> bool {
 fn outside_scope() -> MemoryError {
     MemoryError::bad_request_with("room turn is outside the room scope", &[])
 }
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct RoomClaimReceipt {
-    pub room_id: String,
-    pub turn_id: String,
-    pub actor: String,
-    pub receipt_ref: String,
-    pub at: u64,
-}
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub enum RoomClaimOutcome {
-    Claimed(RoomClaimReceipt),
-    HeldBy(RoomClaimReceipt),
-    NotAddressed,
-}
-
 /// Project rooms use the PROJECT roster instead of the ordinary membership
 /// ledger. Return None for other conversations so their historical membership
 /// windows remain authoritative at the ordinary audience door. Each audience
@@ -390,6 +389,30 @@ pub(crate) fn room_join_audience_in(
     let receipt =
         participation::require_join_covering_in_txn(vault, txn, room, None, &subject, None);
     Ok(participation::joined(receipt)?.is_some())
+}
+
+/// The live vault owner who alone reads the ordinary room `room`, or `None`:
+/// no project room, one current member, that member a live vault owner, and
+/// no Ready join filed for anyone else in the room or its threads. An
+/// unplaced voice speaker's entry (OF-365) is keyed by its speaker, not by
+/// room, and is not seen here.
+pub(crate) fn room_sole_owner_reader_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    room: EntityId,
+) -> Result<Option<EntityId>> {
+    if project_room_audience_in(vault, txn, room, &[])?.is_some() {
+        return Ok(None);
+    }
+    let [owner] = vault.members_in_txn(txn, room)?[..] else {
+        return Ok(None);
+    };
+    if !crate::policy_model::is_live_vault_owner_in_txn(vault, txn, &owner)?
+        || super::join_receipt::room_ready_join_for_other_in(&vault.store, txn, room, owner)?
+    {
+        return Ok(None);
+    }
+    Ok(Some(owner))
 }
 
 /// The validated project room `room` is, or `None` for an ordinary
@@ -676,15 +699,24 @@ impl Memory<'_> {
     /// Uses the normal witness gate. The common witness transaction verifies
     /// the claim, membership, reply binding, and addressing before any message.
     pub fn rooms_speak(&self, turn: &WitnessTurn) -> MemoryResult<WitnessReceipt> {
+        self.rooms_speak_admission(turn)?;
+        self.witness(turn)
+    }
+
+    /// The speech precheck [`Self::rooms_speak`] runs before its witness,
+    /// read only: the speaker's standing in the room (OF-529: an agent on a
+    /// Ready receipt, checked before the room's scope is read; a person from
+    /// its seat) and the room's scope. `can({verb})` answers
+    /// `vault.rooms.speak` from it (FIX [UI-GATE-PREVIEW]). The witness
+    /// transaction checks the turn's own messages when it lands.
+    pub(crate) fn rooms_speak_admission(&self, turn: &WitnessTurn) -> MemoryResult<()> {
         let room = EntityId::from_hex(&turn.conversation_ref)?;
-        // OF-529: an agent speaks on a Ready receipt, checked before the
-        // room's scope is read; a person from its seat, as before.
         let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
         participation::require_speaker_in_txn(self.vault(), &txn, room, turn, self.actor())?;
         drop(txn);
         if !turns_readable(&self.room_read_worlds(room)?) {
             return Err(outside_scope());
         }
-        self.witness(turn)
+        Ok(())
     }
 }

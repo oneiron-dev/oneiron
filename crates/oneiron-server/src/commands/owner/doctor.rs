@@ -51,8 +51,10 @@ pub(super) fn doctor_report(args: DoctorArgs) -> anyhow::Result<serde_json::Valu
     let unresolved = serve_config.is_err();
     let mut clock_unknown = false;
     let mut embedder = None;
+    let mut dump_suppression = None;
     let dict_search_paths = match serve_config {
         Ok(config) => {
+            dump_suppression = Some(config.off_record_dump_suppression);
             vault_config.page_seal = config.device_page_seal();
             if let Some(clock) = config.runtime.store_clock() {
                 vault_config.store_clock = clock;
@@ -83,6 +85,7 @@ pub(super) fn doctor_report(args: DoctorArgs) -> anyhow::Result<serde_json::Valu
     });
     let plan = BackupPlan::new(&args.path, backup.dir_for(&args.path), backup.keep);
     let every = backup.enabled.then_some(backup.every_hours);
+    let dump_suppression = off_record_dump_suppression_report(dump_suppression);
     if clock_unknown {
         // An open runs the vault's recovery, which may record the time it
         // reads for good, so a vault whose clock may be a manual one is not
@@ -102,6 +105,7 @@ pub(super) fn doctor_report(args: DoctorArgs) -> anyhow::Result<serde_json::Valu
         return Ok(serde_json::json!({
             "location": location,
             "embedder": embedder,
+            "off_record_dump_suppression": dump_suppression,
             "config_errors": config_errors,
         }));
     }
@@ -163,10 +167,24 @@ pub(super) fn doctor_report(args: DoctorArgs) -> anyhow::Result<serde_json::Valu
         ),
         Err(error) => anyhow::bail!("open vault {} failed: {error}", args.path.display()),
     };
+    report["off_record_dump_suppression"] = dump_suppression;
     if !config_errors.is_empty() {
         report["config_errors"] = serde_json::to_value(config_errors)?;
     }
     Ok(report)
+}
+
+/// Which core-dump suppression a serve started with these settings and this
+/// environment applies to a process that holds an off-record room (census
+/// row L6-18): `enabled` from `off_record_dump_suppression` and its
+/// environment override, `null` when the settings did not resolve, and what
+/// suppression changes on this platform. Doctor reads the settings, not a
+/// running server.
+fn off_record_dump_suppression_report(enabled: Option<bool>) -> serde_json::Value {
+    serde_json::json!({
+        "enabled": enabled,
+        "mechanisms": oneiron_store::session_overlay::OFF_RECORD_DUMP_SUPPRESSION_MECHANISMS,
+    })
 }
 
 /// The vault clock a doctor whose serve config did not resolve opens under.
@@ -188,7 +206,9 @@ enum LayeredClock {
 /// the flags set no clock, and doctor reads no settings file. A config path
 /// whose existence cannot be checked, a config file that does not read as
 /// TOML, or one whose `[runtime] clock` is not `"system"` leaves the clock
-/// unknown.
+/// unknown. So does a config file its reader refuses
+/// ([`crate::config::merge::read_config_file`]): a file any user can write
+/// names no clock this report may trust.
 fn layered_store_clock(serve: &ServeArgs) -> LayeredClock {
     if let Ok(env) = EnvConfig::from_process()
         && let Ok(layered) = layer_serve_config(serve, env, default_config_path())
@@ -213,7 +233,7 @@ fn layered_store_clock(serve: &ServeArgs) -> LayeredClock {
         Ok(false) => return LayeredClock::Host,
         Err(_) => return LayeredClock::Unknown,
     }
-    let Ok(table) = std::fs::read_to_string(&path)
+    let Ok(table) = crate::config::merge::read_config_file(&path)
         .map_err(drop)
         .and_then(|raw| toml::from_str::<toml::Table>(&raw).map_err(drop))
     else {

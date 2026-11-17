@@ -25,11 +25,11 @@
 //! byte-exact and withholds credential-bearing copies; CONS-09 keeps the
 //! person's header and safe fields while nulling its credential fields and
 //! encoded payloads. CONS-07's contact bundle also carries no credential text.
-//! CONS-06 and CONS-09's contact bundle asserts remain held out under
-//! `#[cfg(any())]` (FIX row CONTACT-BUNDLE-SHIPS-SCAN-OFF-CREDENTIALS): on main
-//! the contact bundle keeps a `signature` member, byte arrays that encode a
-//! credential map and JSON text that encodes a credential, and nulls every safe
-//! binary too. Custody is skipped: custody already travels in the owner's
+//! CONS-06 and CONS-09's contact bundles read each body by the scoped export's
+//! typed Nulled rule (FIX row CONTACT-BUNDLE-SHIPS-SCAN-OFF-CREDENTIALS): before
+//! it, the contact bundle kept a `signature` member, byte arrays that encode a
+//! credential map and JSON text that encodes a credential, and nulled every
+//! safe binary too. Custody is skipped: custody already travels in the owner's
 //! archive today, and `SecretCustodyRecord` value fields are crate-private, so
 //! no public door seeds one here.
 //!
@@ -127,6 +127,45 @@ fn scoped_changed_types(vault: &Vault, scoped: &[ScopedRecord]) -> Result<BTreeM
         }
     }
     Ok(changed_types)
+}
+
+/// Prints how a contact bundle over every row of the owner's whole-vault JSON
+/// reads against that JSON, whose bodies keep the bundle's untyped reading:
+/// the rows it carries, and those whose body it changes, by entity type, and
+/// how many of those go as null.
+fn bundle_census(vault: &Vault, label: &str) -> Result<()> {
+    let whole: serde_json::Value =
+        serde_json::from_slice(&vault.export_vault_json()?).expect("whole-vault JSON");
+    let whole_rows = whole["entities"].as_array().expect("whole-vault entities");
+    let ids: Vec<EntityId> = whole_rows
+        .iter()
+        .map(|row| EntityId::from_hex(row["id"].as_str().expect("row id")).expect("row id hex"))
+        .collect();
+    let bundle: serde_json::Value =
+        serde_json::from_slice(&vault.export_entity_bundle_json(&ids)?).expect("census bundle");
+    let rows = bundle["entities"]
+        .as_array()
+        .expect("census bundle entities");
+    let mut changed_types = BTreeMap::new();
+    let mut null_bodies = 0;
+    for row in rows {
+        let Some(old) = whole_rows.iter().find(|old| old["id"] == row["id"]) else {
+            continue;
+        };
+        if old["body"] != row["body"] {
+            let entity_type = row["entity_type"].as_u64().expect("entity type");
+            *changed_types.entry(entity_type).or_insert(0) += 1;
+            null_bodies += usize::from(row["body"].is_null());
+        }
+    }
+    let changed: usize = changed_types.values().sum();
+    eprintln!(
+        "BUNDLE-CENSUS {label} rows={} changed={changed} changed_types={changed_types:?} \
+         null_bodies={null_bodies} payloads_nulled={}",
+        rows.len(),
+        bundle["manifest"]["secrets_nulled"]["payloads"]
+    );
+    Ok(())
 }
 
 fn package() -> HubPackage {
@@ -338,10 +377,8 @@ fn owner_archive_keeps_skill_source_credentials_and_restores_them() -> Result<()
             }
         }
     }
-    // FIX [CONTACT-BUNDLE-SHIPS-SCAN-OFF-CREDENTIALS]: on main the contact bundle
-    // keeps the `signature` member of the scan-off JSON copy; held out in place.
-    #[cfg(any())]
     {
+        bundle_census(&vault, "cons06")?;
         // A contact bundle over the skill alone, and over the skill plus the
         // selected source copies, never carries the credential text.
         for ids in [&[id][..], &selected[..]] {
@@ -757,10 +794,8 @@ fn owner_archive_keeps_credential_fields_and_binary_payloads() -> Result<()> {
             &Value::Binary(b"inspectable public bytes".to_vec())
         );
     }
-    // FIX [CONTACT-BUNDLE-SHIPS-SCAN-OFF-CREDENTIALS]: on main the contact bundle
-    // keeps byte_map and the JSON-encoded payloads and nulls public_binary; held out in place.
-    #[cfg(any())]
     {
+        bundle_census(&vault, "cons09")?;
         // A contact's shareable bundle still nulls them.
         let bundle: serde_json::Value =
             serde_json::from_slice(&vault.export_entity_bundle_json(&[id])?)

@@ -5,6 +5,7 @@
 //! journal entries, generation-stamped read/segment leases, and the byte
 //! budget that bounds live overlay rows.
 
+mod dump_suppression;
 pub mod journal;
 pub mod keyspace;
 pub mod overlay;
@@ -17,6 +18,10 @@ pub mod hygiene_tests;
 #[cfg(test)]
 mod tests;
 
+pub use self::dump_suppression::{
+    OFF_RECORD_DUMP_SUPPRESSION_MECHANISMS, off_record_dump_suppression,
+    set_off_record_dump_suppression,
+};
 pub use self::journal::{
     JournalEntry, JournalRole, JournalScope, PromotePlan, replayed_subject,
     zeroize_batch_op_payload,

@@ -16,11 +16,33 @@
 //!   mind's project question, with its typed answer and budget unchanged.
 //! * `code_fix_class_prompt` / `code_fix_class_prompt_file`: the Coach's
 //!   failure-class question. Its Choice options stay fixed.
+//! * `extraction_prompt_file`: the Dreamer's extraction prompt, a JSON file
+//!   in the shipped prompt's shape (`{"system": "...", "examples": [{"user":
+//!   "...", "assistant": "..."}]}`). Every extraction and NOTE review asks in
+//!   it; the reply contract and its check stay the engine's.
+//! * `consolidation_wording_file`: a JSON file naming any of the
+//!   consolidation's typed questions (`resolution`, `identity`, `correction`,
+//!   `sieve_novelty`, `sieve_kind`, `sieve_entity`, `sieve_confidence`,
+//!   `nightly_link`, `arc_open`). Each one named replaces that question's
+//!   wording; the rest stay shipped. Their options and answers stay fixed.
+//! * `meeting_follow_up_prompt` / `meeting_follow_up_prompt_file`: how the
+//!   drafting model is asked which follow-ups the owner promised in a meeting
+//!   transcript (CAL-08). The shipped default is the engine's
+//!   (`oneiron::calendar::follow_up::MEETING_FOLLOW_UP_INSTRUCTION`), and so
+//!   is the reply contract it states: a rewording must keep it, since the
+//!   engine files only a reply in it.
+//!
+//! Prompts belong to the host layer (ARCH-0026 #dreamer-seat-open, ARCH-0053
+//! OF-334): a file that does not read, names another key or leaves a text
+//! blank refuses the config at load.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+use anyhow::Context;
+use oneiron::{ConsolidationDecisions, ExtractionPrompt};
 use serde::Deserialize;
+use sha2::{Digest, Sha256};
 
 const DEFAULT_CODE_FIX_REPRODUCED: &str = include_str!("../../../prompts/code-fix-reproduced.md");
 const DEFAULT_CODE_FIX_FIXED: &str = include_str!("../../../prompts/code-fix-fixed.md");
@@ -48,6 +70,9 @@ const DEFAULT_COACH_PRODUCER_FIX: &str = include_str!("../../../prompts/coach-pr
 const DEFAULT_COACH_ENVIRONMENT_REPAIR: &str =
     include_str!("../../../prompts/coach-environment-repair.md");
 const DEFAULT_COACH_PROMPT_REPAIR: &str = include_str!("../../../prompts/coach-prompt-repair.md");
+/// The engine's own drafting instruction: the reply contract it states is the
+/// one the engine files.
+const DEFAULT_MEETING_FOLLOW_UP: &str = oneiron::calendar::follow_up::MEETING_FOLLOW_UP_INSTRUCTION;
 
 /// `[models.dreamer.wording]` as written in the config file.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize)]
@@ -83,10 +108,80 @@ pub(super) struct DreamerWordingFile {
     commitment_reminder_prompt_file: Option<PathBuf>,
     #[serde(default)]
     commitment_reminder_personas: BTreeMap<String, String>,
+    meeting_follow_up_prompt: Option<String>,
+    meeting_follow_up_prompt_file: Option<PathBuf>,
     coach_heal_route_prompt: Option<String>,
     coach_heal_route_prompt_file: Option<PathBuf>,
     coach_health_draft_prompt: Option<String>,
     coach_health_draft_prompt_file: Option<PathBuf>,
+    extraction_prompt_file: Option<PathBuf>,
+    consolidation_wording_file: Option<PathBuf>,
+}
+
+/// `consolidation_wording_file` as written: the questions it words, each
+/// in place of its shipped wording.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ConsolidationWording {
+    resolution: Option<String>,
+    identity: Option<String>,
+    correction: Option<String>,
+    sieve_novelty: Option<String>,
+    sieve_kind: Option<String>,
+    sieve_entity: Option<String>,
+    sieve_confidence: Option<String>,
+    nightly_link: Option<String>,
+    arc_open: Option<String>,
+}
+
+impl ConsolidationWording {
+    /// The wording in `text`, a JSON object, the text of the file at `path`.
+    /// A text that does not read names the file and the place, never the
+    /// parser's message.
+    fn from_json(field: &str, path: &Path, text: &str) -> anyhow::Result<Self> {
+        let wording: Self =
+            crate::config::diagnostics::parse_json(path, text).with_context(|| field.to_owned())?;
+        for (key, question) in wording.questions() {
+            if question.is_some_and(|text| text.trim().is_empty()) {
+                anyhow::bail!("{field}: `{key}` is blank");
+            }
+        }
+        Ok(wording)
+    }
+
+    /// Each question by its key, with the wording this file gives it.
+    fn questions(&self) -> [(&'static str, Option<&str>); 9] {
+        [
+            ("resolution", self.resolution.as_deref()),
+            ("identity", self.identity.as_deref()),
+            ("correction", self.correction.as_deref()),
+            ("sieve_novelty", self.sieve_novelty.as_deref()),
+            ("sieve_kind", self.sieve_kind.as_deref()),
+            ("sieve_entity", self.sieve_entity.as_deref()),
+            ("sieve_confidence", self.sieve_confidence.as_deref()),
+            ("nightly_link", self.nightly_link.as_deref()),
+            ("arc_open", self.arc_open.as_deref()),
+        ]
+    }
+}
+
+/// Where a piece of wording in force comes from, as a pass logs it:
+/// `shipped`, or `file:sha256:<16 hex>` of the host file's text.
+fn wording_source(file: Option<&str>) -> String {
+    file.map_or_else(
+        || "shipped".to_owned(),
+        |text| {
+            let digest = format!("{:x}", Sha256::digest(text.as_bytes()));
+            format!("file:sha256:{}", &digest[..16])
+        },
+    )
+}
+
+/// `slot` in `text`'s words, when the host gives any.
+fn replace_wording(slot: &mut String, text: Option<&str>) {
+    if let Some(text) = text {
+        text.clone_into(slot);
+    }
 }
 
 impl DreamerWordingFile {
@@ -185,6 +280,13 @@ impl DreamerWordingFile {
             base,
         )?
         .unwrap_or_else(default_reminder_instruction);
+        let meeting_follow_up_instruction = super::levels::prompt_text(
+            "models.dreamer.wording.meeting_follow_up_prompt",
+            self.meeting_follow_up_prompt,
+            self.meeting_follow_up_prompt_file,
+            base,
+        )?
+        .unwrap_or_else(|| DEFAULT_MEETING_FOLLOW_UP.to_owned());
         let coach_session_distill = super::levels::prompt_text(
             "models.dreamer.wording.coach_session_distill_prompt",
             self.coach_session_distill_prompt,
@@ -206,6 +308,30 @@ impl DreamerWordingFile {
             base,
         )?
         .unwrap_or_else(|| DEFAULT_COACH_HEALTH_DRAFT.to_owned());
+        let extraction_field = "models.dreamer.wording.extraction_prompt_file";
+        let extraction_file =
+            super::levels::prompt_file(extraction_field, self.extraction_prompt_file, base)?;
+        let extraction_prompt = extraction_file
+            .as_ref()
+            .map(|(path, text)| {
+                // The engine's own read keeps the parser's message, which can
+                // name a key or quote a value: the text is read here first,
+                // so a text that does not read names only the file and the
+                // place (FIX CONFIG-SIDE-FILE-PARSE-ERRORS-PRINT-PARSER-MESSAGE).
+                crate::config::diagnostics::parse_json::<ExtractionPrompt>(path, text)
+                    .context(extraction_field)?;
+                ExtractionPrompt::from_json(text)
+                    .map_err(|error| anyhow::anyhow!("{extraction_field}: {error}"))
+            })
+            .transpose()?;
+        let consolidation_field = "models.dreamer.wording.consolidation_wording_file";
+        let consolidation_file =
+            super::levels::prompt_file(consolidation_field, self.consolidation_wording_file, base)?;
+        let consolidation = consolidation_file
+            .as_ref()
+            .map(|(path, text)| ConsolidationWording::from_json(consolidation_field, path, text))
+            .transpose()?
+            .unwrap_or_default();
         Ok(DreamerWording {
             code_fix_reproduced,
             code_fix_fixed,
@@ -222,8 +348,17 @@ impl DreamerWordingFile {
             coach_prompt_repair,
             reminder_instruction,
             reminder_personas: self.commitment_reminder_personas,
+            meeting_follow_up_instruction,
             coach_heal_route,
             coach_health_draft,
+            extraction_prompt,
+            extraction_prompt_source: wording_source(
+                extraction_file.as_ref().map(|(_, text)| text.as_str()),
+            ),
+            consolidation,
+            consolidation_wording_source: wording_source(
+                consolidation_file.as_ref().map(|(_, text)| text.as_str()),
+            ),
         })
     }
 }
@@ -246,11 +381,77 @@ pub struct DreamerWording {
     coach_prompt_repair: String,
     reminder_instruction: String,
     reminder_personas: BTreeMap<String, String>,
+    meeting_follow_up_instruction: String,
     coach_heal_route: String,
     coach_health_draft: String,
+    /// The host's extraction prompt; `None` asks in the engine's shipped one.
+    extraction_prompt: Option<ExtractionPrompt>,
+    extraction_prompt_source: String,
+    /// The consolidation questions the host words.
+    consolidation: ConsolidationWording,
+    consolidation_wording_source: String,
 }
 
 impl DreamerWording {
+    /// `decisions` asking in this host's words: its extraction prompt and
+    /// each consolidation question it words. Every piece it leaves unset
+    /// keeps `decisions`' own.
+    #[must_use]
+    pub fn apply_consolidation_wording(
+        &self,
+        mut decisions: ConsolidationDecisions,
+    ) -> ConsolidationDecisions {
+        if let Some(prompt) = &self.extraction_prompt {
+            decisions.extraction_prompt.clone_from(prompt);
+        }
+        let wording = &self.consolidation;
+        replace_wording(
+            &mut decisions.resolution_wording,
+            wording.resolution.as_deref(),
+        );
+        replace_wording(&mut decisions.identity_wording, wording.identity.as_deref());
+        replace_wording(
+            &mut decisions.correction_wording,
+            wording.correction.as_deref(),
+        );
+        replace_wording(
+            &mut decisions.sieve_novelty_wording,
+            wording.sieve_novelty.as_deref(),
+        );
+        replace_wording(
+            &mut decisions.sieve_kind_wording,
+            wording.sieve_kind.as_deref(),
+        );
+        replace_wording(
+            &mut decisions.sieve_entity_wording,
+            wording.sieve_entity.as_deref(),
+        );
+        replace_wording(
+            &mut decisions.sieve_confidence_wording,
+            wording.sieve_confidence.as_deref(),
+        );
+        replace_wording(
+            &mut decisions.nightly_link_wording,
+            wording.nightly_link.as_deref(),
+        );
+        replace_wording(&mut decisions.arc_open_wording, wording.arc_open.as_deref());
+        decisions
+    }
+
+    /// Where the extraction prompt in force comes from: `shipped`, or
+    /// `file:sha256:<16 hex>` of the host's `extraction_prompt_file`.
+    #[must_use]
+    pub fn extraction_prompt_source(&self) -> &str {
+        &self.extraction_prompt_source
+    }
+
+    /// Where the consolidation wording in force comes from: `shipped`, or
+    /// `file:sha256:<16 hex>` of the host's `consolidation_wording_file`.
+    #[must_use]
+    pub fn consolidation_wording_source(&self) -> &str {
+        &self.consolidation_wording_source
+    }
+
     /// The question asking whether a replay reproduced the failure.
     #[must_use]
     pub fn code_fix_reproduced(&self) -> &str {
@@ -340,6 +541,13 @@ impl DreamerWording {
         self.reminder_personas.get(reference).map(String::as_str)
     }
 
+    /// The instruction a meeting transcript's drafting model is asked with,
+    /// in the engine's reply contract.
+    #[must_use]
+    pub fn meeting_follow_up_instruction(&self) -> &str {
+        &self.meeting_follow_up_instruction
+    }
+
     /// The Coach's existing heal-route question.
     #[must_use]
     pub fn coach_heal_route(&self) -> &str {
@@ -372,8 +580,13 @@ impl Default for DreamerWording {
             coach_prompt_repair: DEFAULT_COACH_PROMPT_REPAIR.to_owned(),
             reminder_instruction: default_reminder_instruction(),
             reminder_personas: BTreeMap::new(),
+            meeting_follow_up_instruction: DEFAULT_MEETING_FOLLOW_UP.to_owned(),
             coach_heal_route: DEFAULT_COACH_HEAL_ROUTE.to_owned(),
             coach_health_draft: DEFAULT_COACH_HEALTH_DRAFT.to_owned(),
+            extraction_prompt: None,
+            extraction_prompt_source: wording_source(None),
+            consolidation: ConsolidationWording::default(),
+            consolidation_wording_source: wording_source(None),
         }
     }
 }

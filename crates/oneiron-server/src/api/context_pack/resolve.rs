@@ -65,11 +65,12 @@ pub(crate) async fn core_context_pack(
 }
 
 /// The members of a context pack request that its route reads and the
-/// native `memory.context_pack` contract does not carry: its room, session,
-/// reaction signals, affect, assembly policy, time window, projection,
-/// interlocutors and reader.
+/// native `memory.context_pack` contract does not carry: its room and its
+/// home, session, reaction signals, affect, assembly policy, time window,
+/// projection, interlocutors and reader.
 const CONTEXT_PACK_ROUTE_CONTROLS: &[&str] = &[
     "conversation_id",
+    "conversation_home",
     "session_id",
     "signals_since",
     "signals_after",
@@ -78,6 +79,8 @@ const CONTEXT_PACK_ROUTE_CONTROLS: &[&str] = &[
     "signals_person",
     "query_affect",
     "queryAffect",
+    "packet_id",
+    "packetId",
     "hydrate",
     "include_edges",
     "includeEdges",
@@ -226,10 +229,12 @@ pub(crate) async fn execute_context_pack(
         room_id,
         room,
         interlocutors,
+        home,
         media,
         skill_reliability,
         candidate_limit,
         query_affect,
+        packet,
         ranking,
         time,
         signals,
@@ -342,6 +347,15 @@ pub(crate) async fn execute_context_pack(
     if let Some(vector) = req.query_vector.as_deref() {
         builder = builder.search_vector(vector, candidate_limit);
     }
+    if let Some(phonetic) = req.phonetic_vector.as_ref() {
+        builder = builder.search_phonetic_vector(
+            &phonetic.model_id,
+            &phonetic.vector,
+            phonetic
+                .limit
+                .unwrap_or(oneiron::phonetic_learned::PHONETIC_VECTOR_DEFAULT_LIMIT),
+        );
+    }
     for seed in &media {
         builder = builder.search_media(
             &seed.space,
@@ -353,6 +367,9 @@ pub(crate) async fn execute_context_pack(
     }
     if let Some(vad) = query_affect {
         builder = builder.query_affect(vad);
+    }
+    if let Some(summary) = packet {
+        builder = builder.rehydrate_from(summary);
     }
     builder = ranking.applied(builder);
     builder = time.applied(builder);
@@ -375,18 +392,26 @@ pub(crate) async fn execute_context_pack(
     )?;
     // OF-365 ILD-2: one DisclosureContext value feeds builder, board, and
     // response, so the response can never describe a different clamp than
-    // the one applied (design §11 rule 6).
+    // the one applied (design §11 rule 6). It carries the pack's home
+    // (DEC-0006 #home-clearance).
     let disclosure = resolve_core_disclosure_with_once(
         &server.vault,
         interlocutors.as_ref(),
         room.as_ref().map(|room| room.reader.is_some()),
         &once,
+        home,
     )?;
     if let Some(ctx) = disclosure.as_ref() {
         builder = builder.disclosure_context(ctx.clone());
     }
     if skip_optional_recall {
         builder = builder.skip_optional_recall();
+    }
+    // A live chat turn's recall names the TURN it serves, so the engine can
+    // label its run from the user's later words (FIX
+    // RETRIEVAL-TURN-CONVENTION-HOST-STAMP).
+    if let Some(turn) = req.retrieval_turn {
+        builder = builder.retrieval_turn(turn);
     }
     // Reaction signals ride the same clamp as the pack they come with.
     let signal_disclosure = disclosure.clone();
@@ -463,12 +488,15 @@ pub(crate) async fn execute_context_pack(
 }
 
 /// The live stretch a pack reads beside base: the one its request names
-/// (`x-oneiron-session`), for the vault's owner on their proof, so the turn
-/// board of a chat turn taken there reads the stretch's rows. Any other
-/// caller, and a stretch the owner cannot bind now (gone, closing, closed, or
-/// a room they are not in), reads base alone, as a pack did before. Whether a
-/// room's rows are opaque to every non-owner reader is open (ARCH-0052
-/// #e5-read-union-open; ASK L6-12-NON-OWNER).
+/// (`x-oneiron-session`), so the turn board of a chat turn taken there reads
+/// the stretch's rows. The vault's owner binds it on their proof. A person or
+/// agent on their own live slip binds a room's stretch while on that room's
+/// roster (ARCH-0052 #e5-read-union-open = B, ROOM-PACK-MEMBER-BIND), and
+/// each row is read under that member's own key, so a member's agent gets
+/// what that member's key reads, never more. Any other caller, and a stretch
+/// the reader cannot bind now (gone, closing, closed, a room they are not in,
+/// or, for anyone but the owner, a stretch entered alone), reads base alone,
+/// as a pack did before.
 fn context_pack_room<'v>(
     server: &'v SyncServer,
     auth: &CoreAuth,
@@ -476,17 +504,50 @@ fn context_pack_room<'v>(
     let Some(key) = auth.off_record_session() else {
         return Ok(None);
     };
-    let Ok(owner) = crate::api::owner_routes::owner(auth, server) else {
+    let rooms = server.vault.off_record_session_vault();
+    let bound = if let Ok(owner) = crate::api::owner_routes::owner(auth, server) {
+        let owner = owner
+            .revalidate(&server.vault)
+            .map_err(|error| core_engine_error("context-pack owner proof failed", error))?;
+        rooms.bind_pack_reader(key, owner)
+    } else {
+        let Some(member) = context_pack_room_member(server, auth)? else {
+            return Ok(None);
+        };
+        rooms.bind_pack_member(key, member)
+    };
+    bound.map_err(|error| core_engine_error("context-pack stretch bind failed", error))
+}
+
+/// The person or agent a pack's caller is, on their own live slip, who may
+/// read a room's stretch as a member of it, as the off-record doors bind one
+/// (`bound_session`). `None` for a host credential, which names no person, a
+/// managed owner's attestation, which keeps no slip to check again, any other
+/// actor class, and a slip no longer live.
+fn context_pack_room_member(
+    server: &SyncServer,
+    auth: &CoreAuth,
+) -> Result<Option<oneiron::EntityId>, ApiError> {
+    if auth.is_host_holder() || auth.managed_owner().is_some() {
+        return Ok(None);
+    }
+    let Some(slip) = auth.verified_slip() else {
         return Ok(None);
     };
-    let owner = owner
-        .revalidate(&server.vault)
-        .map_err(|error| core_engine_error("context-pack owner proof failed", error))?;
-    server
+    let Ok((actor, class)) = crate::api::facade::facade_actor(server, auth) else {
+        return Ok(None);
+    };
+    if !matches!(
+        class,
+        oneiron::EdgeActorClass::Human | oneiron::EdgeActorClass::Agent
+    ) {
+        return Ok(None);
+    }
+    let live = server
         .vault
-        .off_record_session_vault()
-        .bind_pack_reader(key, owner)
-        .map_err(|error| core_engine_error("context-pack stretch bind failed", error))
+        .capability_slip_is_live(slip)
+        .map_err(|error| core_engine_error("context-pack slip check failed", error))?;
+    Ok(live.then_some(actor))
 }
 
 /// The agent signal feed rides the context pack of the agent's next turn:
@@ -540,13 +601,25 @@ fn read_reaction_signals(
     // of one person's messages; a delegated, room-scoped or
     // interlocutor-scoped read is filtered by the same scoped read and
     // disclosure clamp as the pack, and so is a read that names its own
-    // filter, which the pack's reader carries (FIX 3977). Paging follows the
-    // filter, so a cursor never names a signal this caller was not shown.
+    // filter, which the pack's reader carries (FIX 3977), and so is a read a
+    // clamp narrows, such as an owner session homed in another vault
+    // (DEC-0006 `#home-clearance`). Paging follows the filter, so a cursor
+    // never names a signal this caller was not shown.
     let scoped = auth.verified_slip().is_some()
         || !auth.is_owner_grade()
         || req.conversation_id.is_some()
         || req.interlocutors.is_some()
-        || req.filter.is_some();
+        || req.filter.is_some()
+        || disclosure.is_some();
+    // The raw feed meets the world judge the scoped read applies (DEC-0005:
+    // a caller off this device reads nothing a withheld world keeps). An
+    // owner-grade caller with no slip off this device, as a managed vault's
+    // owner or a dev-hatch request a proxy marked, hears of no reaction a
+    // world withheld from its destination keeps, nor of one on a message
+    // such a world keeps. A caller on this device is withheld nothing.
+    let raw_destination = (!scoped)
+        .then(|| auth.destination())
+        .filter(oneiron::settings::ReadDestination::is_off_device);
     let mut kept = Vec::new();
     for signal in signals {
         checkpoint()?;
@@ -554,6 +627,14 @@ fn read_reaction_signals(
             && !scoped_read
                 .is_reaction_signal_readable_under(&signal, disclosure)
                 .map_err(|e| core_engine_error("reaction signal scope failed", e))?
+        {
+            continue;
+        }
+        if let Some(destination) = &raw_destination
+            && !server
+                .vault
+                .rows_may_leave_for(&[signal.reaction, signal.message], destination)
+                .map_err(|e| core_engine_error("reaction signal world judge failed", e))?
         {
             continue;
         }

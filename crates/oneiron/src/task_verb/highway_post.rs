@@ -19,7 +19,7 @@ use serde::{Deserialize, Serialize};
 use rmpv::Value;
 
 use crate::Vault;
-use crate::authority::TaskActorVerb;
+use crate::authority::{TaskActorProof, TaskActorVerb};
 use crate::claim::{ClaimApprovalStatus, ClaimBody};
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
@@ -66,6 +66,7 @@ use super::wire_encode::canonical_bytes;
 mod brief;
 mod key;
 mod parking;
+mod plan_run;
 mod settlement;
 use self::key::{PostKey, observe_key_in};
 pub(crate) use self::settlement::settle_task_proposal_in_txn;
@@ -299,8 +300,11 @@ fn create_spec_of(
 /// An agent's take of one proposal, inside the take's transaction: the
 /// agent approves it as the owner's inbox door does, settlement lands its
 /// TASK, and L02's rule proves the agent may accept work addressed to it.
-/// That rule reads the landed TASK's facts, so it runs last. Answers the
-/// landed TASK.
+/// The agent is proven as one of this vault's own agents
+/// ([`TaskActorProof::OwnAgent`]): pairing binds no such agent, so an
+/// unbound one takes while its definition stands, and a bound one is held to
+/// its binding. That rule reads the landed TASK's facts, so it runs last.
+/// Answers the landed TASK.
 fn take_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -331,7 +335,12 @@ fn take_in_txn(
     vault.complete_deferred_claim_in_txn(wtxn, &proposal_ref, None, now, Some(agent))?;
     settle_task_proposal_in_txn(vault, wtxn, proposal_ref, Some(agent), now)?;
     let task_ref = EntityId::derive(TASK_SETTLE_ID_DOMAIN, &[proposal_ref.as_bytes()])?;
-    vault.prove_task_actor_in_txn(wtxn, task_ref, &agent, TaskActorVerb::Accept)?;
+    vault.prove_task_actor_by_in_txn(
+        wtxn,
+        task_ref,
+        TaskActorProof::OwnAgent(&agent),
+        TaskActorVerb::Accept,
+    )?;
     Ok(task_ref)
 }
 
@@ -519,6 +528,10 @@ impl Memory<'_> {
         let (type_ref, stale_pins) = {
             let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
             observe_key_in(self.vault(), &txn, &post.intent_key, task_ref);
+            // Plan mode, before the pin checks: a plan-doc pinned at a
+            // revision the owner has not approved is a plan refusal, not a
+            // moved pin.
+            self.require_plan_admission_in(&txn, Some(post.assignee), Some(&post.brief))?;
             let stale_pins = if copy.is_some() {
                 post.brief
                     .validate_copy_in(self.vault(), &txn, Some(post.assignee))?
@@ -620,6 +633,10 @@ impl Memory<'_> {
             if let Some(binding) = &post.brief.context.workflow {
                 binding.validate_in(self.vault(), &*wtxn, Some(post.assignee))?;
             }
+            // Plan mode: so are the plan the brief pins and the assignee's
+            // plan mode, so a verdict, an edit or a mode set that lands after
+            // the check above still decides.
+            self.require_plan_admission_in(&*wtxn, Some(post.assignee), Some(&post.brief))?;
             record_task_create(
                 self.vault(),
                 wtxn,

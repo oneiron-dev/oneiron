@@ -55,6 +55,18 @@ impl FacadeApiError {
     }
 }
 
+/// The catalogue status for an `ApiError` code string, if `code` is one.
+/// A door that hands an `ApiError` on as an engine error
+/// (`FacadeApiError::from(error).into_memory_error()`) drops its status; the
+/// match below takes it back from the catalogue, so a caller's refusal never
+/// reads as a server fault ([MESH-DOOR-REFUSAL-STATUS-500]).
+fn catalogue_refusal_status(code: &str) -> Option<StatusCode> {
+    crate::error::ErrorCode::ALL
+        .iter()
+        .find(|candidate| candidate.as_str() == code)
+        .map(|candidate| candidate.status())
+}
+
 /// The engine's refusal, forwarded whole.
 ///
 /// The status is derived from the code; the code, message, and suggestions are
@@ -117,6 +129,9 @@ impl From<MemoryError> for FacadeApiError {
             // A verb hook asked first: accepted, not run, and the body names
             // the ask a retry with the same invocation waits on.
             MEMORY_CODE_PENDING_ASK => StatusCode::ACCEPTED,
+            // The act waits on a check-in its door opened: accepted, not
+            // run; the reason code names the check-in a re-call names.
+            oneiron::memory::MEMORY_CODE_CHECK_IN_PENDING => StatusCode::ACCEPTED,
             // A budget window paced the call and the engine holds it in its
             // caller's line (FIX 8753): accepted, run on its turn.
             oneiron::memory::MEMORY_CODE_PACED_HOLD => StatusCode::ACCEPTED,
@@ -193,6 +208,12 @@ impl From<MemoryError> for FacadeApiError {
                 host_doors::ask_image_refusal_status(code)
                     .unwrap_or(StatusCode::INTERNAL_SERVER_ERROR)
             }
+            // L4-15: `vault.artifacts.image.edit`'s own refusals, each with
+            // its status: the caller's request, or no node to run it now.
+            code if super::image_edit_doors::image_edit_refusal_status(code).is_some() => {
+                super::image_edit_doors::image_edit_refusal_status(code)
+                    .unwrap_or(StatusCode::INTERNAL_SERVER_ERROR)
+            }
             // A facade door that holds a live run (live_run_doors.rs) refuses
             // under the live-run guard's own codes. They take the status the
             // guard's direct route answers (LiveRunRefusal::status): 400 for
@@ -211,6 +232,13 @@ impl From<MemoryError> for FacadeApiError {
             // is the cause (`repo_doors::repo_refusal_status`).
             code if repo_doors::repo_refusal_status(code).is_some() => {
                 repo_doors::repo_refusal_status(code).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR)
+            }
+            // [MESH-DOOR-REFUSAL-STATUS-500]: an `ApiError` catalogue code
+            // that reached the facade as an engine error string takes its
+            // catalogue status back. The arms above keep winning, and their
+            // statuses equal the catalogue's for the codes both name.
+            code if catalogue_refusal_status(code).is_some() => {
+                catalogue_refusal_status(code).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR)
             }
             MEMORY_CODE_INTERNAL => StatusCode::INTERNAL_SERVER_ERROR,
             _ => StatusCode::INTERNAL_SERVER_ERROR,
@@ -280,8 +308,8 @@ impl From<ApiError> for FacadeApiError {
 
 impl FacadeApiError {
     /// The engine holds the call rather than answering it: a hook accepted
-    /// it only to ask first, or a budget window paced it into its caller's
-    /// line (FIX 8753). Neither is an asynchronous job's answer, and a
+    /// it only to ask first, a budget window paced it into its caller's
+    /// line (FIX 8753), or its act waits on a check-in. Neither is an asynchronous job's answer, and a
     /// same-id retry reaches the held call again. Chat keeps its own wire
     /// code, but carries the same native stop.
     pub(super) fn is_held_call(status: u16, body: &serde_json::Value) -> bool {
@@ -291,7 +319,11 @@ impl FacadeApiError {
         if matches!(
             body.pointer("/error/code")
                 .and_then(serde_json::Value::as_str),
-            Some(MEMORY_CODE_PENDING_ASK | oneiron::memory::MEMORY_CODE_PACED_HOLD)
+            Some(
+                MEMORY_CODE_PENDING_ASK
+                    | oneiron::memory::MEMORY_CODE_PACED_HOLD
+                    | oneiron::memory::MEMORY_CODE_CHECK_IN_PENDING
+            )
         ) {
             return true;
         }

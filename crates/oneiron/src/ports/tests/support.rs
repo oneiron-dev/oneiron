@@ -148,6 +148,7 @@ pub(super) fn row(kind: u8, body: &[u8]) -> EntityRecord {
         entity_type: kind,
         occurred: TimeRange { start: 1, end: 1 },
         learned_at: 1,
+        row_version: 0,
         body: body.to_vec(),
     }
 }

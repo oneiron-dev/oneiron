@@ -1,9 +1,11 @@
 //! Question- and reversibility-scoped escalation bands; learning starts in shadow.
 
+use super::questions::DecisionRoute;
 use super::types::invalid;
 use super::{DecisionBand, DecisionQuestion};
 use oneiron_contracts::{EntityId, Result};
 use std::collections::BTreeMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, PoisonError, RwLock};
 
 #[derive(
@@ -41,6 +43,53 @@ pub struct LearnedBand {
     pub band: DecisionBand,
     pub version: u32,
     pub mode: BandMode,
+}
+
+/// Where a learned row applies: the question id, the question version and the
+/// reversibility class.
+pub type LearnedBandKey = (EntityId, u32, Reversibility);
+
+impl LearnedBand {
+    /// The row a learn of `band` at `version` puts over `held`, the row its key holds
+    /// now: a shadow row, whose version must advance the held row's.
+    pub fn learned_over(
+        held: Option<&LearnedBand>,
+        question: &DecisionQuestion,
+        band: DecisionBand,
+        version: u32,
+    ) -> Result<LearnedBand> {
+        question.validate()?;
+        band.validate()?;
+        if version == 0 {
+            return Err(invalid("invalid learned band version"));
+        }
+        if held.is_some_and(|row| row.version >= version) {
+            return Err(invalid("learned band version must advance"));
+        }
+        Ok(LearnedBand {
+            band,
+            version,
+            mode: BandMode::Shadow,
+        })
+    }
+
+    /// The row an enforce puts over `held`: the held row, at its version, in enforce mode.
+    pub fn enforced_over(
+        held: Option<&LearnedBand>,
+        question: &DecisionQuestion,
+    ) -> Result<LearnedBand> {
+        question.validate()?;
+        let held = held.ok_or_else(|| invalid("band must be learned before enforcement"))?;
+        Ok(LearnedBand {
+            mode: BandMode::Enforce,
+            ..*held
+        })
+    }
+
+    /// How far the row has moved: its version, then enforce after shadow.
+    fn standing(&self) -> (u32, bool) {
+        (self.version, self.mode == BandMode::Enforce)
+    }
 }
 
 /// Resolves one question version's band on the running host. Without a learned
@@ -91,17 +140,56 @@ pub struct ThinkThreshold {
     pub version: u32,
 }
 
+/// How many reads weighed against the think row each model route took: the
+/// host's step-up rate. A read the rule rung or a person answered, or one with
+/// no route, is not counted.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ThinkRouteCounts {
+    /// The first answer stood.
+    pub direct: u64,
+    /// A stronger rung or a second measurement ran and answered.
+    pub stepped_up: u64,
+    /// More thinking was wanted but did not start, or the deadline cut it.
+    pub step_unfinished: u64,
+}
+
+impl ThinkRouteCounts {
+    /// Every counted read.
+    #[must_use]
+    pub fn weighed(&self) -> u64 {
+        self.direct + self.stepped_up + self.step_unfinished
+    }
+
+    /// The share of counted reads that stepped up and answered; none before
+    /// the first read.
+    #[must_use]
+    pub fn step_up_rate(&self) -> Option<f64> {
+        let weighed = self.weighed();
+        (weighed > 0).then(|| self.stepped_up as f64 / weighed as f64)
+    }
+}
+
+/// The shared counters behind [`ThinkRouteCounts`].
+#[derive(Debug, Default)]
+struct ThinkRouteTally {
+    direct: AtomicU64,
+    stepped_up: AtomicU64,
+    step_unfinished: AtomicU64,
+}
+
 /// Vault-owned policy for the running host. No learned row means shadow at
 /// the dial's seed band, not an implicit permission to enforce a global
 /// threshold. Learned bands, the person row and the think row are shared by
 /// every clone, so an owner's update reaches callers that already hold the
-/// policy.
+/// policy. So are the think-row route counts, so every caller's read counts
+/// toward the one host rate.
 /// No person row means a person reading never routes.
 #[derive(Debug, Clone, Default)]
 pub struct DecisionBandPolicy {
     rows: Arc<RwLock<BTreeMap<(EntityId, u32, Reversibility), LearnedBand>>>,
     person: Arc<RwLock<Option<PersonThreshold>>>,
     think: Arc<RwLock<Option<ThinkThreshold>>>,
+    think_routes: Arc<ThinkRouteTally>,
     questions_per_call: Option<usize>,
 }
 
@@ -174,6 +262,30 @@ impl DecisionBandPolicy {
         *self.think.read().unwrap_or_else(PoisonError::into_inner)
     }
 
+    /// Counts one read weighed against the think row at `route`, for every
+    /// clone, and answers the counts with it; none, and nothing counted, for a
+    /// route no model rung took (rule, person, unrouted).
+    pub fn count_think_route(&self, route: DecisionRoute) -> Option<ThinkRouteCounts> {
+        let counter = match route {
+            DecisionRoute::Direct { .. } => &self.think_routes.direct,
+            DecisionRoute::SteppedUp { .. } => &self.think_routes.stepped_up,
+            DecisionRoute::StepUnfinished { .. } => &self.think_routes.step_unfinished,
+            DecisionRoute::Rule | DecisionRoute::Person | DecisionRoute::Unrouted => return None,
+        };
+        counter.fetch_add(1, Ordering::Relaxed);
+        Some(self.think_route_counts())
+    }
+
+    /// The think-row route counts so far, over every clone.
+    #[must_use]
+    pub fn think_route_counts(&self) -> ThinkRouteCounts {
+        ThinkRouteCounts {
+            direct: self.think_routes.direct.load(Ordering::Relaxed),
+            stepped_up: self.think_routes.stepped_up.load(Ordering::Relaxed),
+            step_unfinished: self.think_routes.step_unfinished.load(Ordering::Relaxed),
+        }
+    }
+
     pub fn person_threshold(&self) -> Option<PersonThreshold> {
         *self.person.read().unwrap_or_else(PoisonError::into_inner)
     }
@@ -185,21 +297,9 @@ impl DecisionBandPolicy {
         band: DecisionBand,
         version: u32,
     ) -> Result<LearnedBand> {
-        question.validate()?;
-        band.validate()?;
-        if version == 0 {
-            return Err(invalid("invalid learned band version"));
-        }
         let key = (question.id, question.version, reversibility);
         let mut rows = self.rows.write().unwrap_or_else(PoisonError::into_inner);
-        if rows.get(&key).is_some_and(|row| row.version >= version) {
-            return Err(invalid("learned band version must advance"));
-        }
-        let row = LearnedBand {
-            band,
-            version,
-            mode: BandMode::Shadow,
-        };
+        let row = LearnedBand::learned_over(rows.get(&key), question, band, version)?;
         rows.insert(key, row);
         Ok(row)
     }
@@ -209,13 +309,33 @@ impl DecisionBandPolicy {
         question: &DecisionQuestion,
         reversibility: Reversibility,
     ) -> Result<LearnedBand> {
-        question.validate()?;
+        let key = (question.id, question.version, reversibility);
         let mut rows = self.rows.write().unwrap_or_else(PoisonError::into_inner);
-        let row = rows
-            .get_mut(&(question.id, question.version, reversibility))
-            .ok_or_else(|| invalid("band must be learned before enforcement"))?;
-        row.mode = BandMode::Enforce;
-        Ok(*row)
+        let row = LearnedBand::enforced_over(rows.get(&key), question)?;
+        rows.insert(key, row);
+        Ok(row)
+    }
+
+    /// Replaces the shared learned rows with `rows`, the ones the vault holds, for every clone.
+    pub fn replace_learned_bands(
+        &self,
+        rows: impl IntoIterator<Item = (LearnedBandKey, LearnedBand)>,
+    ) {
+        *self.rows.write().unwrap_or_else(PoisonError::into_inner) = rows.into_iter().collect();
+    }
+
+    /// Installs `row`, which the vault now holds at `key`, for every clone, unless the
+    /// installed row is already later. A stored row only moves forward (a learn advances
+    /// its version, an enforce keeps it), so two writes that install in another order than
+    /// they committed still leave the later row.
+    pub fn install_learned_band(&self, key: LearnedBandKey, row: LearnedBand) {
+        let mut rows = self.rows.write().unwrap_or_else(PoisonError::into_inner);
+        if rows
+            .get(&key)
+            .is_none_or(|held| held.standing() <= row.standing())
+        {
+            rows.insert(key, row);
+        }
     }
 
     pub fn resolve(

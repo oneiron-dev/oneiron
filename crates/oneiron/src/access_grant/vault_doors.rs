@@ -317,6 +317,16 @@ impl Vault {
         &self,
         calendar_ref: &EntityId,
     ) -> Result<Vec<CalendarAccessGrantRow>> {
+        self.list_calendar_access_grants_naming(std::slice::from_ref(calendar_ref))
+    }
+
+    /// Lists every access grant whose scope names one of `calendar_refs`,
+    /// revoked rows included, in one walk: the rows a booking page's grant
+    /// view judges live for its caller (ARCH-0062 #grant-view).
+    pub fn list_calendar_access_grants_naming(
+        &self,
+        calendar_refs: &[EntityId],
+    ) -> Result<Vec<CalendarAccessGrantRow>> {
         let rtxn = self.store.env.read_txn()?;
         let mut rows = Vec::new();
         for entry in self
@@ -347,7 +357,10 @@ impl Vault {
             let Some(grant) = super::codec::decode_live_access_grant_body(&body)? else {
                 continue;
             };
-            if grant.scope.calendar_rung(calendar_ref).is_some() {
+            if calendar_refs
+                .iter()
+                .any(|calendar_ref| grant.scope.calendar_rung(calendar_ref).is_some())
+            {
                 rows.push(CalendarAccessGrantRow { grant_ref, grant });
             }
         }
@@ -376,6 +389,13 @@ impl Vault {
         })
     }
 
+    /// Lands one AccessGrant body: every grant write (create, narrow,
+    /// revoke, erase scrub) comes through here. A grant decides reads as an
+    /// authority-log row does, though it is stored outside the log, so its
+    /// write moves the authority generation in this same transaction, as a
+    /// legacy token's revoke marker does (FIX 11810). A reader that kept a
+    /// judgement at one generation (an MCP page cursor's rows, a kept
+    /// inference snapshot) then sees the grant change.
     pub(crate) fn apply_access_grant_body(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
@@ -384,6 +404,7 @@ impl Vault {
         data: Vec<u8>,
     ) -> Result<()> {
         let data = super::witness_history::with_witness_read_history_in_txn(self, wtxn, id, data)?;
+        crate::authority::advance_authority_cache_generation(&self.store, wtxn)?;
         apply_ops(
             &self.store,
             &self.config,

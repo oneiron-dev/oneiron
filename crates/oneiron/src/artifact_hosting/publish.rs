@@ -1,6 +1,7 @@
 //! The OF-327 artifact-publish dispatch door and its share-style receipt projection.
 
 use super::*;
+use crate::store::gate_reason::GateReceiptOutcome;
 
 impl OutboundDispatchPipeline {
     /// Authorize one exact public pointer update before making it visible. Gate,
@@ -228,18 +229,11 @@ pub(super) fn publish_artifact_pointer_in_txn(
     )? {
         return Err(Error::EntityNotFound);
     }
-    let refs = exhaust_taint_refs_in_txn(&vault.store, wtxn, &snapshot.code_artifact_id)?;
-    let stale_taint_override = match taint_state_for_refs_in_txn(&vault.store, wtxn, &refs)? {
-        ArtifactTaintState::Clean | ArtifactTaintState::TaintedLive => false,
-        ArtifactTaintState::TaintedStale => {
-            if !allow_stale_publish_in_txn(&vault.store, wtxn)? {
-                return Err(Error::Secret(SecretError::TaintedArtifactStale {
-                    artifact: snapshot.artifact.clone(),
-                }));
-            }
-            true
-        }
-    };
+    let stale_taint_override = vault.publish_stale_taint_override_in_txn(
+        wtxn,
+        &snapshot.code_artifact_id,
+        &snapshot.artifact,
+    )?;
     put_artifact_pointer_in_txn(
         &vault.store,
         wtxn,
@@ -321,7 +315,24 @@ fn admitted_gate(
         .store
         .gate_decision_in_txn(txn, admission.gate_id)?
         .ok_or(Error::CorruptedIndex("artifact publish gate missing"))?;
-    if gate.outcome != "allow"
+    let allowed = match gate.gate_outcome() {
+        Some(GateReceiptOutcome::Allow) => true,
+        Some(
+            GateReceiptOutcome::Pending
+            | GateReceiptOutcome::Deny
+            | GateReceiptOutcome::Approved
+            | GateReceiptOutcome::ApprovedAmended
+            | GateReceiptOutcome::Rejected
+            | GateReceiptOutcome::LetGo
+            | GateReceiptOutcome::Superseded
+            | GateReceiptOutcome::Retracted
+            | GateReceiptOutcome::Invalidated
+            | GateReceiptOutcome::Revoked
+            | GateReceiptOutcome::Noted,
+        )
+        | None => false,
+    };
+    if !allowed
         || gate.redacted_at.is_some()
         || gate.content_kind != "external_effect"
         || gate.actor_ref.as_deref() != Some(admission.actor.to_hex().as_str())

@@ -4,9 +4,8 @@ use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, GateError, Result};
 use crate::registry::ENTITY_TYPE_POLICY_MANIFEST;
 use crate::side_table::{self, CodecError, HexId, Raw, RawValue, SideTable};
-use crate::store::{
-    GATE_DECISION_LEDGER_VERSION, GateDecisionId, GateDecisionRecord, GateSystemNoticeRecord, Store,
-};
+use crate::store::gate_reason::GateReceiptOutcome;
+use crate::store::{GateDecisionId, GateReceipt, PolicyBasis, ReceiptActor, Store};
 use crate::{EntityId, Vault};
 
 /// Authenticity hash stamped when a policy manifest is contributed directly (non-replicated),
@@ -248,16 +247,9 @@ fn quarantine_current_in_txn(
     Ok(true)
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
-pub struct ManifestContribution {
-    pub id: String,
-    pub trusted: bool,
-    /// An untrusted contribution: a proposal that enters no effective policy,
-    /// narrowing included, until a policy holder authors its values through
-    /// the manifest put (FIX 8780).
-    pub restrict_only: bool,
-    pub quarantined: bool,
-}
+#[doc(hidden)]
+pub use oneiron_records::gate::manifest_authenticity::ManifestContribution;
+
 impl Vault {
     /// Surface untrusted contributions as proposals a holder may act on,
     /// without giving them any effect (FIX 8780).
@@ -298,35 +290,25 @@ impl Vault {
         id: EntityId,
         hash: [u8; 32],
     ) -> Result<GateDecisionId> {
-        let decision_id = GateDecisionId::from_bytes(self.store.clock.ulid()?);
-        let (actor_class, actor_ref) = match actor {
-            Some(actor) => ("human".to_owned(), Some(actor.to_hex())),
-            None => ("system".to_owned(), None),
+        // An owner's act is the owner's yes; the engine's own quarantine of a fresh proposal
+        // asked no one, so it stays the rule's `allow` (UC-03 PR 5, D2).
+        let (outcome, actor) = match actor {
+            Some(actor) => (GateReceiptOutcome::Approved, ReceiptActor::human(actor)),
+            None => (GateReceiptOutcome::Allow, ReceiptActor::Engine),
         };
-        let record = GateDecisionRecord {
-            version: GATE_DECISION_LEDGER_VERSION,
-            decision_id,
-            created_at: crate::ports::recorded_at_in_txn(&self.store, txn)?,
-            outcome: "allow".to_owned(),
-            reason_codes: vec![reason.to_owned()],
-            receipt_reasons: Vec::new(),
-            system_notices: GateSystemNoticeRecord::receipt_details(
-                MANIFEST_QUARANTINE_CONTENT_KIND,
-                vec![format!("manifest:{}", id.to_hex())],
-            ),
-            actor_class,
-            actor_ref,
-            content_kind: MANIFEST_QUARANTINE_CONTENT_KIND.to_owned(),
-            policy_manifest_version: crate::gate::POLICY_SCHEMA_VERSION.to_owned(),
-            claim_id: None,
-            grant_ref: None,
-            diff_handle: hash.to_vec(),
-            read_frontier_hash: [0; 32],
-            context: Default::default(),
-            redacted_at: None,
-        };
-        self.store.append_gate_decision_in_txn(txn, &record)?;
-        Ok(decision_id)
+        let mut receipt = GateReceipt::new(
+            outcome,
+            MANIFEST_QUARANTINE_CONTENT_KIND,
+            reason,
+            actor,
+            hash.to_vec(),
+            PolicyBasis::NOT_READ,
+        );
+        receipt.details = vec![format!("manifest:{}", id.to_hex())];
+        Ok(self
+            .store
+            .record_gate_receipt_in_txn(txn, receipt)?
+            .decision_id)
     }
 
     /// Human removal of an untrusted narrowing, pinned to these exact bytes.
@@ -392,7 +374,7 @@ impl Vault {
         now: u64,
     ) -> Result<()> {
         owner.revalidate_in_txn(self, txn)?;
-        self.write_policy_manifest_in_txn(txn, id, data, now)
+        self.write_policy_change_in_txn(txn, id, data, now)
     }
 
     /// [`Self::write_owner_policy_manifest_in_txn`] for a door whose own check,
@@ -409,7 +391,30 @@ impl Vault {
         now: u64,
     ) -> Result<()> {
         holder.revalidate_person_in_txn(self, txn)?;
-        self.write_policy_manifest_in_txn(txn, id, data, now)
+        self.write_policy_change_in_txn(txn, id, data, now)
+    }
+
+    /// [`Self::write_policy_manifest_in_txn`] for the owner's or a holder's
+    /// write, which changes policy: in the same write it requeues, once, the
+    /// executor-error parks that wait on a policy this write changes (FIX
+    /// 23347). A section is read from the manifest's own prior body at `id`,
+    /// so a change another manifest shadows still requeues once, and a try it
+    /// did not clear parks again on its next run.
+    fn write_policy_change_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        id: EntityId,
+        data: Vec<u8>,
+        now: u64,
+    ) -> Result<()> {
+        let prior = crate::ports::EntityStoreRead::port_entity_raw(&self.store, txn, &id)?
+            .and_then(|raw| raw.get(ENTITY_METADATA_HEADER_LEN..).map(<[u8]>::to_vec));
+        let cleared = cleared_policy_waits(prior.as_deref(), &data);
+        self.write_policy_manifest_in_txn(txn, id, data, now)?;
+        if !cleared.is_empty() {
+            crate::dreamer_runner::policy_wait::requeue_policy_waits_in_txn(self, txn, &cleared)?;
+        }
+        Ok(())
     }
 
     fn write_policy_manifest_in_txn(
@@ -735,4 +740,55 @@ pub(crate) fn update_manifest_origin(
         TRUSTED_ORIGIN.delete(store, txn, &HexId(*id))?;
     }
     Ok(())
+}
+
+/// The sections the gate reads for an Auto answer to a family's write: an
+/// Auto-grant wait is cleared by a change of any of them.
+const AUTO_GRANT_SECTIONS: [&str; 5] = [
+    super::constants::POLICY_ACTOR_CEILINGS_KEY,
+    super::constants::POLICY_DELEGATED_GRANTS_KEY,
+    super::constants::POLICY_RULES_KEY,
+    super::constants::POLICY_DEFAULTS_KEY,
+    super::constants::POLICY_SOURCE_TRUST_KEY,
+];
+
+/// The policy waits a write of the manifest body `next` over `prior` (none
+/// for a new manifest) clears: the source-trust waits when its `source_trust`
+/// section changed, the Auto-grant waits when any of [`AUTO_GRANT_SECTIONS`]
+/// changed. A body that is not a map reads as holding no section.
+fn cleared_policy_waits(
+    prior: Option<&[u8]>,
+    next: &[u8],
+) -> Vec<crate::dreamer_runner::policy_wait::PolicyWaitKind> {
+    use crate::dreamer_runner::policy_wait::PolicyWaitKind;
+    let prior = prior.and_then(manifest_sections).unwrap_or_default();
+    let next = manifest_sections(next).unwrap_or_default();
+    let changed = |key: &str| manifest_section(&prior, key) != manifest_section(&next, key);
+    let mut cleared = Vec::new();
+    if changed(super::constants::POLICY_SOURCE_TRUST_KEY) {
+        cleared.push(PolicyWaitKind::SourceTrust);
+    }
+    if AUTO_GRANT_SECTIONS.into_iter().any(changed) {
+        cleared.push(PolicyWaitKind::AutoGrant);
+    }
+    cleared
+}
+
+/// A manifest body's top-level entries, when it decodes as a map.
+fn manifest_sections(body: &[u8]) -> Option<Vec<(rmpv::Value, rmpv::Value)>> {
+    match rmpv::decode::read_value(&mut std::io::Cursor::new(body)).ok()? {
+        rmpv::Value::Map(entries) => Some(entries),
+        _ => None,
+    }
+}
+
+/// The value of the top-level section `key`, when the manifest has one.
+fn manifest_section<'a>(
+    entries: &'a [(rmpv::Value, rmpv::Value)],
+    key: &str,
+) -> Option<&'a rmpv::Value> {
+    entries
+        .iter()
+        .find(|(name, _)| name.as_str() == Some(key))
+        .map(|(_, value)| value)
 }

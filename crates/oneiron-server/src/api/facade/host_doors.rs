@@ -49,6 +49,7 @@ pub(crate) use super::calendar_doors::*;
 pub(crate) use super::campaign_doors::*;
 pub(crate) use super::compliance_doors::*;
 pub(crate) use super::credential_doors::*;
+pub(crate) use super::esign_rules_doors::*;
 // The caller's own actor and person refs (FIX 1047).
 pub(crate) use super::saved_query_doors::*;
 pub(crate) use super::self_actor_doors::*;
@@ -58,6 +59,12 @@ pub(crate) use crate::api::anonymous_chat::ai_anonymous_chat;
 pub(crate) use super::agent_definition_doors::*;
 // The owner's agent grant doors (FIX 5628) too.
 pub(crate) use super::agent_grant_doors::*;
+// The owner's world access of an agent too.
+pub(crate) use super::agent_world_access_doors::*;
+// The owner's verdict on a plan-doc (plan mode) too.
+pub(crate) use super::plan_doc_doors::*;
+// A check-in holder's answer (ROLES-CHECKIN P2.3c), likewise.
+pub(crate) use super::check_in_doors::*;
 // The Steward doors: member asks, the system-agent grant narrowing and the
 // engine-control receipts (untangle 6.3, 6.6).
 pub(crate) use super::steward_doors::*;
@@ -88,13 +95,20 @@ pub(crate) use super::shared_policy_doors::*;
 pub(crate) use super::trusted_contact_doors::*;
 // The voice-bank doors (DOOR-143, FIX 4393) too.
 pub(crate) use super::voice_bank_doors::*;
+// The voice-recognition consent door (VOICE-RECOGNITION-CONSENT-NO-DOOR) too.
+pub(crate) use super::voice_recognition_doors::*;
 // The owner's legal-hold doors (OF-470) too.
 pub(crate) use super::asr_doors::*;
 pub(crate) use super::cleanup_doors::*;
 pub(crate) use super::clustering_doors::*;
 pub(crate) use super::default_facet_doors::*;
 pub(crate) use super::extraction_doors::*;
+pub(crate) use super::hosted_import_doors::*;
 pub(crate) use super::identity_doors::*;
+// The image organ's edit and preview doors (L4-15, L4-16) too.
+pub(crate) use super::image_edit_doors::{
+    vault_artifacts_image_edit, vault_artifacts_image_preview,
+};
 pub(crate) use super::legal_hold_doors::*;
 pub(crate) use super::linear_doors::*;
 pub(crate) use super::live_run_doors::*;
@@ -103,7 +117,6 @@ pub(crate) use super::mesh_doors::*;
 pub(crate) use super::model_catalog_doors::*;
 pub(crate) use super::model_manifest_doors::*;
 pub(crate) use super::model_pack_doors::*;
-pub(crate) use super::model_setting_doors::*;
 pub(crate) use super::model_step_doors::*;
 pub(crate) use super::model_stream_doors::*;
 pub(crate) use super::non_base_world_claim_fraction_doors::*;
@@ -170,6 +183,10 @@ pub(crate) use super::weave_admin_doors::{
 };
 // The owner inbox's group doors over both kinds (FIX 3024, 3026), likewise.
 pub(crate) use super::inbox_group_doors::*;
+// The inquiry rows (INQUIRE-1 PR 5), likewise.
+pub(crate) use super::inquiry_doors::*;
+pub(crate) use super::schedule_doors::*;
+pub(crate) use super::setting_catalogue_doors::*;
 pub(crate) use super::web_fetch_doors::*;
 // The graph ask and standing-question doors (OF-506), likewise.
 pub(crate) use super::graph_ask_doors::*;
@@ -266,6 +283,7 @@ pub(crate) use super::critic_review_doors::*;
 pub(crate) use super::affect_doors::*;
 pub(crate) use super::agent_verb_class_doors::*;
 pub(crate) use super::aging_doors::*;
+pub(crate) use super::archive_judge_doors::*;
 pub(crate) use super::campaign_split_doors::*;
 pub(crate) use super::coach_offer_doors::*;
 // The drafter's owner and agent doors (FIX 12569), likewise.
@@ -279,8 +297,18 @@ pub(crate) use super::vector_doors::*;
 pub(crate) use super::stream_recovery_doors::*;
 // The owner's project-card tap door (OF-501), likewise.
 pub(crate) use super::project_card_doors::*;
+// The owner's room facet set door (L7-39 PR 3), likewise.
+pub(crate) use super::project_room_facet_doors::*;
 // The owner's proposed-claim review and settle doors (DOOR-115), likewise.
 pub(crate) use super::claim_settle_doors::*;
+// The owner's claim-refinement reserve and offer doors (FIX [SKILL-HUB-PROMOTION-VERBS]), likewise.
+pub(crate) use super::claim_refinement_doors::*;
+// The owner's held-out admission door for a hub skill (FIX [SKILL-HUB-PROMOTION-VERBS]), likewise.
+pub(crate) use super::skill_activation_doors::*;
+// The owner's ingress door for a shared-skill merge offer (FIX [SKILL-HUB-PROMOTION-VERBS]), likewise.
+pub(crate) use super::skill_merge_doors::*;
+// A run's own skill pack load on its attached live run (FIX [SKILL-HUB-PROMOTION-VERBS]), likewise.
+pub(crate) use super::skill_pack_load_doors::*;
 // The plugin Context Board section doors (DOOR-112), likewise.
 pub(crate) use super::commitment_doors::*;
 pub(crate) use super::consolidation_doors::*;

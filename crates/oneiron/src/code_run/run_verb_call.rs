@@ -117,6 +117,12 @@ pub fn run_verb_call(verb: RunVerb, input: Value, now: u64) -> Result<SelfCall> 
             let args: crate::code_run::ReportBlockedInput = decode(input)?;
             SelfCall::ReportBlocked(args.into_call())
         }
+        // L8-25: the run's own visible thought, a speech call like
+        // `self.think`, stamped by the bridge.
+        RunVerb::SelfThinkAloud => {
+            let args: crate::code_run::ThinkAloudInput = decode(input)?;
+            SelfCall::ThinkAloud(super::SelfSpeechCall::new(args.into_text()))
+        }
         RunVerb::SelfSkillsCall => {
             let args: crate::code_run::SkillCallInput = decode(input)?;
             SelfCall::SkillsCall(crate::code_run::SelfSkillCall {
@@ -207,8 +213,14 @@ pub fn run_verb_call(verb: RunVerb, input: Value, now: u64) -> Result<SelfCall> 
                     }
                 }
                 // Slice 6.5b: a wait over AGENT children of the run, no
-                // reader child, request or reader cutoff.
-                crate::code_run::TaskWaitInput::Agents(args) => args.into_call(),
+                // reader child or request. Its `until` is a guest time, as
+                // the reader wait's is ([AGENT-WAIT-DEADLINE]).
+                crate::code_run::TaskWaitInput::Agents(args) => {
+                    if let Some(until) = args.until {
+                        js_time(until)?;
+                    }
+                    args.into_call()
+                }
             })
         }
         // ONE-2510: the run's answer to a connector's mid-call questions.

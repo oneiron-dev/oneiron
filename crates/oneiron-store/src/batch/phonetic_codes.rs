@@ -1,7 +1,18 @@
-//! Deterministic name codes for the first phonetic rung (OF-101).
+//! Deterministic name codes for the phonetic rungs (OF-101; CROSS-ARCH-0013
+//! `#ladder`).
 //!
 //! Kana and Latin romaji share a romanized key. English additionally gets a
-//! Soundex key; it is a Latin-only shortcut, not G2P/NPD or a learned model.
+//! Soundex key, a Latin-only shortcut. Every name a reader reads also gets a
+//! sound key per reading, `ipa:<lang>:<ipa>`: the G2P → IPA string that the
+//! Normalized Phonetic Distance ([`npd()`]) compares across scripts (rung 1).
+
+mod features;
+mod ipa;
+mod npd;
+
+pub use features::{Segment, ipa_segments};
+pub use ipa::{IpaReading, phonetic_readings, strip_org_suffix};
+pub use npd::{NPD_CAP, NPD_KEEP_RATIO, NPD_THRESHOLD, npd};
 
 use std::collections::BTreeSet;
 use unicode_normalization::{UnicodeNormalization, char::is_combining_mark};
@@ -9,11 +20,15 @@ use unicode_normalization::{UnicodeNormalization, char::is_combining_mark};
 /// Generate the same codes used on writes for a name or a query mention.
 ///
 /// Hiragana, katakana and half-width kana are folded to hiragana and Hepburn
-/// romaji. Latin names receive a romaji key and an English Soundex key. Han
-/// readings are entity-specific: pass a known kana/romaji reading separately
-/// rather than guessing a pronunciation from the written name.
+/// romaji. Latin names receive a romaji key and an English Soundex key. Each
+/// reading of [`phonetic_readings`] adds a sound key `ipa:<lang>:<ipa>`;
+/// Han reads as Mandarin only, so a Japanese kanji name still needs its
+/// reading passed separately rather than guessed from the written name.
 pub fn generate_phonetic_codes(name: &str) -> Vec<String> {
     let mut codes = BTreeSet::new();
+    for reading in phonetic_readings(name) {
+        codes.insert(format!("ipa:{}:{}", reading.lang, reading.ipa()));
+    }
     match spelling(&normalize(name)) {
         Spelling::Kana { folded, romaji } => {
             codes.insert(format!("kana:{folded}"));
@@ -134,14 +149,41 @@ fn add_soundex(codes: &mut BTreeSet<String>, text: &str) {
 /// Only explicit name/alias/reading fields feed this index, never prose or
 /// secret custody. A reading can accompany a Han name without changing it.
 pub fn codes_for_body(entity_type: u8, data: &[u8]) -> Vec<String> {
+    let mut codes = BTreeSet::new();
+    for_each_name(entity_type, data, |name| {
+        codes.extend(generate_phonetic_codes(name));
+    });
+    codes.into_iter().collect()
+}
+
+/// The most names [`names_for_body`] returns for one entity.
+pub const NAMES_PER_ENTITY_CAP: usize = 16;
+
+/// The names the learned rung embeds for a body (CROSS-ARCH-0013 rung 2,
+/// names only): the fields [`codes_for_body`] reads, in field order, each
+/// NFC-normalized and otherwise as written (the model reads raw Unicode),
+/// without repeats. The caller caps them at [`NAMES_PER_ENTITY_CAP`].
+pub fn names_for_body(entity_type: u8, data: &[u8]) -> Vec<String> {
+    let mut names: Vec<String> = Vec::new();
+    for_each_name(entity_type, data, |name| {
+        let name: String = name.trim().nfc().collect();
+        if !name.is_empty() && !names.contains(&name) {
+            names.push(name);
+        }
+    });
+    names
+}
+
+/// Calls `visit` with each name field of a body, in field order: one walk
+/// for both rungs, so they read one set of names.
+fn for_each_name(entity_type: u8, data: &[u8], mut visit: impl FnMut(&str)) {
     if entity_type == oneiron_base::registry::ENTITY_TYPE_SECRET_CUSTODY {
-        return Vec::new();
+        return;
     }
     let Ok(rmpv::Value::Map(fields)) = rmpv::decode::read_value(&mut std::io::Cursor::new(data))
     else {
-        return Vec::new();
+        return;
     };
-    let mut codes = BTreeSet::new();
     for (key, value) in fields {
         match key.as_str() {
             Some(
@@ -149,20 +191,19 @@ pub fn codes_for_body(entity_type: u8, data: &[u8]) -> Vec<String> {
                 | "name_reading",
             ) => {
                 if let Some(name) = value.as_str() {
-                    codes.extend(generate_phonetic_codes(name));
+                    visit(name);
                 }
             }
             Some("aliases") => {
                 if let Some(aliases) = value.as_array() {
                     for alias in aliases.iter().filter_map(rmpv::Value::as_str) {
-                        codes.extend(generate_phonetic_codes(alias));
+                        visit(alias);
                     }
                 }
             }
             _ => {}
         }
     }
-    codes.into_iter().collect()
 }
 
 fn is_separator(c: char) -> bool {

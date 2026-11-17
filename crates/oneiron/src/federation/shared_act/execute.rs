@@ -37,6 +37,19 @@ impl Vault {
         act_id: &str,
         slips: Option<&HostSlipIssuer>,
     ) -> Result<SharedActExecution> {
+        self.execute_completed_shared_act_with_owner_key_revokes(executor, act_id, slips, &[])
+    }
+
+    /// The run [`Self::execute_completed_shared_act`] describes, with a
+    /// device's `owner_key_revokes` landed in its writer before the move
+    /// (row HOSTED-OWNER-MOVE-TWO-PHASE; none for a plain run).
+    pub(super) fn execute_shared_act_in_writer(
+        &self,
+        executor: &AuthenticatedOwner,
+        act_id: &str,
+        slips: Option<&HostSlipIssuer>,
+        owner_key_revokes: &[Vec<u8>],
+    ) -> Result<SharedActExecution> {
         let mut export = self
             .removal_export(executor, act_id)?
             .map(|(member, records)| {
@@ -73,6 +86,11 @@ impl Vault {
         if kind == SharedActKind::Erase {
             // A held erase runs through its own door, which binds the record.
             return Err(invalid());
+        }
+        // A hard erase scrubbed a person this act names (Engine RULING
+        // ROW4-SHARED-ACT-ERASE = B): it cannot run, and says why.
+        if act.execution.is_none() {
+            super::actor_erase::refuse_an_erased_member_act(&act)?;
         }
         if let Some(execution) = &act.execution {
             let receipt = execution
@@ -115,6 +133,21 @@ impl Vault {
             request_id.clone(),
             Some(receipt_id.clone()),
         )?;
+        // A device's confirm of a move that ends an Owner's keys lands its
+        // owner-key revokes here, before the move, which then finds none
+        // left to revoke (row HOSTED-OWNER-MOVE-TWO-PHASE).
+        if !owner_key_revokes.is_empty() {
+            let member =
+                super::owner_key_confirm::owner_standing_ends(&act)?.ok_or_else(invalid)?;
+            let root = slips.map(HostSlipIssuer::public_key);
+            self.land_owner_key_move_in_txn(
+                &mut txn,
+                actor,
+                member,
+                root.as_ref(),
+                owner_key_revokes,
+            )?;
+        }
         // The grant ids an Owner handover wrote and retired, for its signed
         // entry (FIX 5765), and the signed-mint Grants it deleted with no
         // signed withdrawal (FIX 12335).
@@ -160,6 +193,7 @@ impl Vault {
                     &notify,
                     hex_id(&act.starter)?,
                     owner,
+                    slips,
                     now,
                 )?;
                 handover_ids = moved.handover_ids();
@@ -358,7 +392,7 @@ impl Vault {
                     (summary, (staged, positions))
                 });
         let (summary, archive) = export.unzip();
-        let receipt = self.record_shared_change_in_txn(
+        let mut receipt = self.record_shared_change_in_txn(
             &mut txn,
             receipt_id,
             act.vault_id,
@@ -371,6 +405,7 @@ impl Vault {
             None,
             now,
         )?;
+        self.record_receipt_check_in_in_txn(&mut txn, &mut receipt, act.check_in.clone())?;
         if let Some(records) = &export_records {
             self.keep_export_records_in_txn(&mut txn, &receipt.id, records)?;
         }

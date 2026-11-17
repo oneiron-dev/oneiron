@@ -3,11 +3,13 @@
 //! moves across an edit (OF-368, owner ruling 2026-10-17).
 //!
 //! An edit inside the commented spot keeps the anchor; only deleting the spot
-//! detaches it, and a partial delete shrinks the anchor to what remains. A
+//! detaches it, and a partial delete shrinks the anchor to what remains.
+//! Rewriting the spot's words deletes it: a rewritten sentence detaches. A
 //! detached comment keeps a snapshot of its text, so a person can be offered
 //! the exact words when they return; nothing here reattaches on a guess.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::ops::Range;
 
 use dom_query::{Document, NodeRef};
 use similar::{Algorithm, DiffTag, capture_diff_slices};
@@ -29,14 +31,14 @@ use xlsx::{find_in_sheets, xlsx_range_text};
 
 /// Paragraphs joined in a shape's text.
 const PARAGRAPH_SEPARATOR: char = '\n';
-/// The most places one reattach offer lists.
-pub(super) const MAX_OFFERS: usize = 16;
 
 /// The format readers' ceilings, resolved once per sweep from live policy.
 #[derive(Clone)]
 pub(super) struct TextLimits {
     pub(super) package: Limits,
     pub(super) docx: oneiron_docedit::ArchiveLimits,
+    /// The most places one reattach offer lists (`anchored_annotation.reattach.max_offers`).
+    pub(super) max_offers: usize,
 }
 
 /// Artifact text formats, with HTML and plain text beside the OOXML edit
@@ -197,6 +199,8 @@ pub(super) fn anchor_text(
             char_end,
             ..
         } => Ok(text::text_span(bytes, *char_start, *char_end)),
+        // An image region or overlay names no words (L4-16).
+        Locator::ImagePixel { .. } | Locator::ImageObject { .. } => Ok(None),
     }
 }
 
@@ -216,19 +220,20 @@ pub(super) fn find_text(
     let mut found = match format {
         UnitFormat::Xlsx => find_in_sheets(bytes, text, limits)?,
         UnitFormat::Docx => {
-            let mut found: Vec<Locator> =
-                docx_blocks(bytes, limits)?
-                    .map(|blocks| {
-                        blocks
-                            .iter()
-                            .flat_map(|(id, block)| {
-                                char_occurrences(block, text).into_iter().filter_map(
-                                    |(start, end)| Locator::docx(id.clone(), start, end).ok(),
-                                )
-                            })
-                            .collect()
-                    })
-                    .unwrap_or_default();
+            let mut found: Vec<Locator> = docx_blocks(bytes, limits)?
+                .map(|blocks| {
+                    blocks
+                        .iter()
+                        .flat_map(|(id, block)| {
+                            char_occurrences(block, text, limits.max_offers)
+                                .into_iter()
+                                .filter_map(|(start, end)| {
+                                    Locator::docx(id.clone(), start, end).ok()
+                                })
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
             if let Some(read) = stories::units(bytes, limits)? {
                 for story in &read {
                     if read
@@ -240,12 +245,14 @@ pub(super) fn find_text(
                         continue;
                     }
                     for (id, paragraph) in &story.paragraphs {
-                        found.extend(char_occurrences(paragraph, text).into_iter().filter_map(
-                            |(start, end)| {
-                                Locator::docx_story(story.scope.clone(), id.clone(), start, end)
-                                    .ok()
-                            },
-                        ));
+                        found.extend(
+                            char_occurrences(paragraph, text, limits.max_offers)
+                                .into_iter()
+                                .filter_map(|(start, end)| {
+                                    Locator::docx_story(story.scope.clone(), id.clone(), start, end)
+                                        .ok()
+                                }),
+                        );
                     }
                 }
             }
@@ -280,23 +287,23 @@ pub(super) fn find_text(
                     .iter()
                     .filter(|block| counts.get(block.part_id.as_str()).copied().unwrap_or(0) == 1)
                     .flat_map(|block| {
-                        char_occurrences(&block.text, text).into_iter().filter_map(
-                            |(start, end)| Locator::html(block.part_id.clone(), start, end).ok(),
-                        )
+                        char_occurrences(&block.text, text, limits.max_offers)
+                            .into_iter()
+                            .filter_map(|(start, end)| {
+                                Locator::html(block.part_id.clone(), start, end).ok()
+                            })
                     })
                     .collect()
             })
             .unwrap_or_default(),
-        UnitFormat::Text => text::find_in_text(bytes, text),
+        UnitFormat::Text => text::find_in_text(bytes, text, limits.max_offers),
     };
-    found.truncate(MAX_OFFERS);
+    found.truncate(limits.max_offers);
     Ok(found)
 }
 
-/// Moves a Word or HTML span across disjoint character edits. Boundaries
-/// inside one changed run move to its edges. A span detaches only when none
-/// of its original characters survives; partial deletes shrink it and edits
-/// inside a surviving span stay inside its boundaries.
+/// Moves a Word or HTML span across an edit, by a character diff of the two
+/// texts; [`span_after_edits`] holds the rule.
 pub(super) fn remap_span(before: &str, after: &str, start: u64, end: u64) -> Option<(u64, u64)> {
     let before: Vec<char> = before.chars().collect();
     let after: Vec<char> = after.chars().collect();
@@ -304,22 +311,41 @@ pub(super) fn remap_span(before: &str, after: &str, start: u64, end: u64) -> Opt
     if start >= end || end > before.len() {
         return None;
     }
-    let edits = capture_diff_slices(Algorithm::Myers, &before, &after);
-    let survives = edits.iter().any(|edit| {
-        let (tag, old, _) = edit.as_tag_tuple();
-        tag == DiffTag::Equal && old.start < end && start < old.end
-    });
-    if !survives {
-        return None;
-    }
+    let edits: Vec<CharEdit> = capture_diff_slices(Algorithm::Myers, &before, &after)
+        .iter()
+        .map(|edit| edit.as_tag_tuple())
+        .collect();
+    span_after_edits(&before, &after, &edits, start, end)
+}
+
+/// One step of a character diff: its kind, its old range and its new range.
+type CharEdit = (DiffTag, Range<usize>, Range<usize>);
+
+/// Moves the span `start..end` of `before` onto `after` across `edits`, a
+/// character diff of the two texts in order. Boundaries inside one changed
+/// run move to its edges. Text inserted right at a boundary stays outside
+/// the span, and text inserted inside it joins it. The span keeps its
+/// anchor while its words survive ([`words_survive`]): a partial delete
+/// shrinks it and a small edit keeps it, but a span whose words were
+/// rewritten detaches, however many letters the new words share with the
+/// old ones (OF-368; ARCH-0075: no selection is invented).
+fn span_after_edits(
+    before: &[char],
+    after: &[char],
+    edits: &[CharEdit],
+    start: usize,
+    end: usize,
+) -> Option<(u64, u64)> {
     let map = |at: usize, trailing: bool| {
-        for edit in &edits {
-            let (tag, old, new) = edit.as_tag_tuple();
+        for (tag, old, new) in edits {
+            if !trailing && *tag == DiffTag::Insert && old.start == at {
+                continue;
+            }
             if at <= old.start {
                 return new.start;
             }
             if at < old.end {
-                return if tag == DiffTag::Equal {
+                return if *tag == DiffTag::Equal {
                     new.start + at - old.start
                 } else if trailing {
                     new.end
@@ -331,7 +357,123 @@ pub(super) fn remap_span(before: &str, after: &str, start: u64, end: u64) -> Opt
         after.len()
     };
     let (new_start, new_end) = (map(start, false), map(end, true));
-    (new_start < new_end).then(|| (new_start as u64, new_end as u64))
+    if new_start >= new_end {
+        return None;
+    }
+    let survives = words_survive(
+        before,
+        after,
+        word_extent(before, start..end),
+        word_extent(after, new_start..new_end),
+    )
+    .unwrap_or_else(|| {
+        edits
+            .iter()
+            .any(|(tag, old, _)| *tag == DiffTag::Equal && old.start < end && start < old.end)
+    });
+    survives.then_some((new_start as u64, new_end as u64))
+}
+
+/// Whether a span's words survive an edit. `old` and `new` are the span
+/// before and after it, each widened to whole words. Words are diffed as
+/// wholes, so a letter matched inside another word never keeps a span. A
+/// word counts as kept when it is unchanged, or when it is replaced one for
+/// one by a word that keeps more than half of its letters (a typo fix). A
+/// replaced run pairs its old and new words in order; an old word left
+/// without a partner is deleted and a new one inserted, and a deleted or
+/// inserted word counts neither way. The span survives while its kept words
+/// are at least as many as its replaced ones. `None` when the span holds no
+/// word: its characters decide.
+fn words_survive(
+    before: &[char],
+    after: &[char],
+    old: Range<usize>,
+    new: Range<usize>,
+) -> Option<bool> {
+    let old_words: Vec<&[char]> = words(before, old).into_iter().map(|w| &before[w]).collect();
+    if old_words.is_empty() {
+        return None;
+    }
+    let new_words: Vec<&[char]> = words(after, new).into_iter().map(|w| &after[w]).collect();
+    let (mut kept, mut replaced) = (0_usize, 0_usize);
+    for edit in capture_diff_slices(Algorithm::Myers, &old_words, &new_words) {
+        let (tag, was, now) = edit.as_tag_tuple();
+        match tag {
+            DiffTag::Equal => kept += was.len(),
+            DiffTag::Delete | DiffTag::Insert => {}
+            DiffTag::Replace => {
+                for (word, new_word) in old_words[was].iter().zip(&new_words[now]) {
+                    if keeps_most_letters(word, new_word) {
+                        kept += 1;
+                    } else {
+                        replaced += 1;
+                    }
+                }
+            }
+        }
+    }
+    Some(kept > 0 && kept >= replaced)
+}
+
+/// Whether `new` keeps more than half of `old`'s letters, counted against
+/// the longer of the two words.
+fn keeps_most_letters(old: &[char], new: &[char]) -> bool {
+    let shared: usize = capture_diff_slices(Algorithm::Myers, old, new)
+        .iter()
+        .filter(|edit| edit.tag() == DiffTag::Equal)
+        .map(|edit| edit.old_range().len())
+        .sum();
+    2 * shared > old.len().max(new.len())
+}
+
+/// The words in `text[range]`, as ranges: runs of letters and digits, with
+/// each CJK character a word of its own.
+fn words(text: &[char], range: Range<usize>) -> Vec<Range<usize>> {
+    let mut out = Vec::new();
+    let mut at = range.start;
+    while at < range.end {
+        if joins_word(text[at]) {
+            let from = at;
+            while at < range.end && joins_word(text[at]) {
+                at += 1;
+            }
+            out.push(from..at);
+        } else {
+            if text[at].is_alphanumeric() {
+                out.push(at..at + 1);
+            }
+            at += 1;
+        }
+    }
+    out
+}
+
+/// `range` widened to whole words of `text`.
+fn word_extent(text: &[char], range: Range<usize>) -> Range<usize> {
+    let (mut start, mut end) = (range.start, range.end);
+    while inside_word(text, start) {
+        start -= 1;
+    }
+    while inside_word(text, end) {
+        end += 1;
+    }
+    start..end
+}
+
+/// Whether offset `at` falls between two letters of one word.
+fn inside_word(text: &[char], at: usize) -> bool {
+    at > 0 && at < text.len() && joins_word(text[at - 1]) && joins_word(text[at])
+}
+
+/// A letter or digit that runs on into its neighbours. Kana and CJK
+/// ideographs stand alone: those scripts put no space between words.
+fn joins_word(c: char) -> bool {
+    c.is_alphanumeric()
+        && !matches!(
+            u32::from(c),
+            0x3040..=0x30FF | 0x31F0..=0x31FF | 0x3400..=0x4DBF | 0x4E00..=0x9FFF
+                | 0xF900..=0xFAFF | 0x2_0000..=0x3_134F
+        )
 }
 
 /// The body paragraphs of a Word document: block id and visible text. Both
@@ -620,11 +762,13 @@ pub(super) fn text_units_for_sight(
 
 /// Exact matches in the projected head, named in raw text coordinates. Both
 /// the detached snapshot and head are read as this caller sees them; a masked
-/// match that is not on raw character boundaries is skipped.
+/// match that is not on raw character boundaries is skipped. At most
+/// `max_offers` places, in document order.
 pub(super) fn text_find_text_for_sight(
     raw_bytes: &[u8],
     sighted_bytes: &[u8],
     words: &str,
+    max_offers: usize,
 ) -> Vec<Locator> {
     if words.trim().is_empty() {
         return Vec::new();
@@ -633,10 +777,7 @@ pub(super) fn text_find_text_for_sight(
         return Vec::new();
     };
     if raw_bytes == sighted_bytes {
-        return text::find_in_text(raw_bytes, words)
-            .into_iter()
-            .take(MAX_OFFERS)
-            .collect();
+        return text::find_in_text(raw_bytes, words, max_offers);
     }
     let mut out = Vec::new();
     for (byte_start, matched) in sighted.match_indices(words) {
@@ -651,7 +792,7 @@ pub(super) fn text_find_text_for_sight(
         }
         if let Ok(locator) = Locator::text(start, end) {
             out.push(locator);
-            if out.len() >= MAX_OFFERS {
+            if out.len() >= max_offers {
                 break;
             }
         }
@@ -711,8 +852,9 @@ fn char_slice(text: &str, start: u64, end: u64) -> Option<String> {
     (start < end && end <= chars.len()).then(|| chars[start..end].iter().collect())
 }
 
-/// Every non-overlapping exact occurrence of `needle`, in characters.
-fn char_occurrences(haystack: &str, needle: &str) -> Vec<(u64, u64)> {
+/// Every non-overlapping exact occurrence of `needle`, in characters, at
+/// most `max` of them.
+fn char_occurrences(haystack: &str, needle: &str, max: usize) -> Vec<(u64, u64)> {
     let len = needle.chars().count() as u64;
     let mut out = Vec::new();
     let mut from = 0;
@@ -721,7 +863,7 @@ fn char_occurrences(haystack: &str, needle: &str) -> Vec<(u64, u64)> {
         let start = haystack[..byte].chars().count() as u64;
         out.push((start, start + len));
         from = byte + needle.len().max(1);
-        if out.len() >= MAX_OFFERS {
+        if out.len() >= max {
             break;
         }
     }

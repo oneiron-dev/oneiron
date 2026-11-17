@@ -11,6 +11,7 @@ use rmpv::Value;
 use serde::{Deserialize, Serialize};
 
 use crate::batch::{ApplyOpsGateMode, BatchOp};
+use crate::calendar::claims::attendee_address_identity;
 use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
 };
@@ -22,15 +23,85 @@ use crate::serialize::msgpack_value_to_json;
 use crate::temporal::TimeRange;
 use crate::write_envelope::{ClaimCandidate, WRITE_ENVELOPE_EVIDENCE_ACTOR_KEY, WriteActor};
 
-/// Predicates with declared multi-cardinality supersession keys (B1c,
-/// RATIFY-20260710 R0): the prior-claim match extends
-/// `subject+scope+predicate` with `value.question_id`.
-pub const MULTI_CARDINALITY_PREDICATES: [&str; 1] = ["companion.onboarding.answer"];
+/// How a multi-cardinality value key's field compares between two claims.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ValueKeyMatch {
+    /// Equal JSON values.
+    Exact,
+    /// Equal calendar address identities (`attendee_address_identity`): one
+    /// person spelled `MAILTO:Ada@...` by one system and `mailto:ada@...` by
+    /// another is one attendee.
+    AttendeeAddress,
+}
 
-const MULTI_CARDINALITY_VALUE_KEY: &str = "question_id";
+/// A declared multi-cardinality predicate's value key: the field of its
+/// value that extends the prior-claim match, and how that field compares.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct MultiCardinalityValueKey {
+    field: &'static str,
+    matching: ValueKeyMatch,
+}
+
+impl MultiCardinalityValueKey {
+    /// This key's identity in a claim value (its JSON form); `None` when the
+    /// value has no such field.
+    fn identity(self, value: &serde_json::Value) -> Option<serde_json::Value> {
+        let field = value.get(self.field)?;
+        match (self.matching, field.as_str()) {
+            (ValueKeyMatch::AttendeeAddress, Some(address)) => Some(serde_json::Value::String(
+                attendee_address_identity(address),
+            )),
+            _ => Some(field.clone()),
+        }
+    }
+}
+
+/// Predicates with declared multi-cardinality supersession keys (B1c,
+/// RATIFY-20260710 R0), each with the value key that extends the
+/// prior-claim match `subject+scope+predicate`: a claim replaces, and an
+/// approval closes, only a claim whose value has the same key identity.
+const MULTI_CARDINALITY_VALUE_KEYS: [(&str, MultiCardinalityValueKey); 2] = [
+    (
+        "companion.onboarding.answer",
+        MultiCardinalityValueKey {
+            field: "question_id",
+            matching: ValueKeyMatch::Exact,
+        },
+    ),
+    // ARCH-0003 §G.1 predicate registry, line 272: one row per attendee,
+    // conflict set `(event, who)`. A second attendee stands beside the
+    // first; the same attendee's newer role or answer replaces its row,
+    // whichever calendar system spelled the address.
+    (
+        "calendar.attendee",
+        MultiCardinalityValueKey {
+            field: "who",
+            matching: ValueKeyMatch::AttendeeAddress,
+        },
+    ),
+];
+
+/// The predicates of the value-key table `MULTI_CARDINALITY_VALUE_KEYS`.
+pub const MULTI_CARDINALITY_PREDICATES: [&str; MULTI_CARDINALITY_VALUE_KEYS.len()] = {
+    let mut predicates = [""; MULTI_CARDINALITY_VALUE_KEYS.len()];
+    let mut index = 0;
+    while index < predicates.len() {
+        predicates[index] = MULTI_CARDINALITY_VALUE_KEYS[index].0;
+        index += 1;
+    }
+    predicates
+};
+
+/// The value key of `predicate`'s prior-claim match, when it is a declared
+/// multi-cardinality predicate.
+fn multi_cardinality_value_key(predicate: &str) -> Option<MultiCardinalityValueKey> {
+    MULTI_CARDINALITY_VALUE_KEYS
+        .iter()
+        .find_map(|&(name, key)| (name == predicate).then_some(key))
+}
 
 /// How the facade chooses a prior head; keyed multi predicates additionally
-/// retain the `value.question_id` identity above (ARCH-0044 S3).
+/// retain the value-key identity above (ARCH-0044 S3).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ClaimCardinality {
     Single,
@@ -81,6 +152,15 @@ const DECLARED_CARDINALITY: &[(&str, ClaimCardinality)] = &[
     ("character.backstory", ClaimCardinality::Set),
     // ARCH-0022 predicate registry additions, line 282 (multi).
     ("character.dynamic", ClaimCardinality::Set),
+    // Engine ruling 13 Nov 12:58 (the linker's role edges): a person holds
+    // many relationships of one word, so a second `relationship.friend`
+    // stands beside the first and never supersedes it.
+    ("relationship.*", ClaimCardinality::Set),
+    // ARCH-0060 §3: passports stay per (system x UID), N on one EVENT. The
+    // calendar importer supersedes only the passport of its own (system,
+    // UID) (`calendar::passport::supersede_calendar_passport`), so the
+    // owner's approval of one system's passport never closes another's.
+    ("calendar.passport", ClaimCardinality::Set),
 ];
 
 /// Exact rows beat namespace wildcards regardless of table order. A wildcard
@@ -102,48 +182,8 @@ fn declared_cardinality(predicate: &str) -> ClaimCardinality {
     wildcard.map_or(ClaimCardinality::Single, |(_, cardinality)| cardinality)
 }
 
-/// One claim to commit. `approval` is deliberately NOT settable by callers
-/// (pin 2); the facade computes the request and the gate decides.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct ClaimInput {
-    /// Caller-supplied deterministic 32-hex claim id; `None` ⇒ generated.
-    /// Load-bearing for ONE-258's idempotent backfill.
-    pub id: Option<String>,
-    /// Dotted predicate (open vocabulary; `edge.*` reserved).
-    pub predicate: String,
-    /// Subject entity ref (short-id ref or 32-hex).
-    pub subject_ref: String,
-    /// Claim value (JSON, stored as MessagePack).
-    pub value: serde_json::Value,
-    /// Calibrated-absolute confidence in `[0, 1]`.
-    pub confidence: f32,
-    /// `ClaimSource::as_str` value: `user_stated`/`observed`/`inferred`/
-    /// `imported`/`tool_output`/`generated`.
-    pub source: String,
-    /// Optional WORLD entity ref.
-    pub world_ref: Option<String>,
-    /// Optional RELATIONSHIP refs: absent means all relationships, `[]` the
-    /// explicit empty set, otherwise every listed relationship. Unknown or
-    /// wrong-kind refs are rejected.
-    #[serde(default)]
-    pub relationship_ref: Option<Vec<String>>,
-    /// Optional scope map (e.g. `{"sensitivity": 0}`).
-    pub scope: Option<serde_json::Value>,
-    /// Validity window start (Unix seconds).
-    pub valid_from: Option<u64>,
-    /// Validity window end (Unix seconds).
-    pub valid_to: Option<u64>,
-    /// Backdating passthrough; `None` ⇒ now (Unix seconds).
-    pub occurred_at: Option<u64>,
-    /// Backdating passthrough; `None` ⇒ now (Unix seconds).
-    pub learned_at: Option<u64>,
-    /// Optional salience in `[0, 1]`.
-    pub salience: Option<f32>,
-    /// The band and basis a calibrated producer gave `confidence`; absent
-    /// means the house band of the number (FIX 7761).
-    #[serde(default)]
-    pub confidence_details: Option<crate::claim::ConfidenceDetails>,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::memory::claims::ClaimInput;
 
 /// Receipt for one committed claim. A refused element of a batch never
 /// gets one: it answers [`CommitOutcome::Refused`] instead (OF-063).
@@ -253,59 +293,8 @@ impl RecordRefusal {
 
 pub use crate::deletion::SafeDeleteReason;
 
-/// Where one delete request stands (FIX 1465). Neither says the erase is
-/// complete: that is its deletion receipt's signed final row.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum DeleteRequestState {
-    /// The local delete rail applied it.
-    Applied,
-    /// Accepted and recorded, not applied yet: "erase confirmed; completion
-    /// pending". It runs once nothing holds the record, or once the shared
-    /// vault's veto window has run out.
-    CompletionPending,
-}
-
-impl DeleteRequestState {
-    /// Stable string form.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Applied => "applied",
-            Self::CompletionPending => "completion_pending",
-        }
-    }
-}
-
-/// Receipt for one safe delete.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct DeleteReceipt {
-    /// Whether the entity existed before the delete.
-    pub existed: bool,
-    /// The reason the delete was performed under.
-    pub reason: String,
-    /// Redaction audit receipt ref (`redaction:<hex>`); `None` for
-    /// `user_delete`, which writes no receipt entity by design, and for a
-    /// request not applied yet.
-    pub receipt_ref: Option<String>,
-    /// Whether the local rail applied it or it waits (FIX 1465).
-    pub state: DeleteRequestState,
-}
-
-/// One pending gated write awaiting consent.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct PendingWrite {
-    /// 32-hex id of the parked claim.
-    pub claim_ref: String,
-    /// Gate decision ref (`gate:<hex>`).
-    pub decision_ref: String,
-    /// Unix seconds the decision was recorded.
-    pub created_at: u64,
-    /// Gate reason codes (e.g. `gate.pending.actor_ceiling`).
-    pub reason_codes: Vec<String>,
-    /// Dreamer run lane, when the write came from a consolidation run.
-    pub dreamer_run_id: Option<String>,
-}
+#[doc(hidden)]
+pub use oneiron_records::memory::claims::{DeleteReceipt, DeleteRequestState, PendingWrite};
 
 /// One receipt: a gate decision, or, when `vault.receipts` names `kinds`,
 /// a receipt of the unified family in the same shape.
@@ -362,6 +351,7 @@ pub(in crate::memory) use self::commit::{BatchClaim, BatchRefusal};
 mod prompted;
 mod settle;
 
+pub(in crate::memory) use settle::ConflictHeadIndex;
 pub use settle::{
     ClaimChangeVerdict, ClaimProposalReview, ClaimProposalReviewRequest, ClaimSettleDecision,
     ClaimSettleRequest, ClaimSettlement, ClaimSettlementAnswer, ClaimSettlementReason,

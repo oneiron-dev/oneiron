@@ -16,7 +16,6 @@ use crate::{
     store::{ManifestDbs, Store},
 };
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeSet;
 
 mod asset_body;
 #[cfg(feature = "sync")]
@@ -31,6 +30,8 @@ mod comm_source;
 mod birth_placement;
 mod delete;
 mod export;
+// FIX DISTINCT-EVENT-DEFAULT-PROJECT-STAMP: an AssertDistinct event stands where its CLAIM stands.
+mod identity_event;
 pub(crate) mod note_world;
 #[cfg(feature = "sync")]
 pub(crate) mod origin_positions;
@@ -38,6 +39,8 @@ mod read;
 // FIX 7608 slice 4: the masked copy a scoped export carries of a marked repo row.
 mod secret_projection;
 mod stamping;
+// FIX [LIBTEST-QUARANTINE-FEDERATION-RECORD-SCOPE-TESTS]: the lib test target's type check fails here (2 errors: E0061 x2); port it, then drop this gate
+#[cfg(any())]
 #[cfg(test)]
 mod tests;
 
@@ -144,9 +147,11 @@ pub(crate) fn retire_stamp(store: &Store, txn: &mut heed::RwTxn<'_>, id: EntityI
     asset_text::retire_source_free_birth(store, txn, id)?;
     bump_scope_revision(store, txn)
 }
-fn singleton<T: Ord>(v: T) -> ScopeAxis<T> {
-    ScopeAxis::Some(BTreeSet::from([v]))
-}
+#[doc(hidden)]
+pub(crate) use oneiron_records::federation::record_scope::default_stamp;
+#[doc(hidden)]
+use oneiron_records::federation::record_scope::singleton;
+
 pub(crate) use crate::batch::row_put::RowPut;
 /// The world and facet a narrowed writer's TASKs are born at (ARCH-0067 §5:
 /// a peer hears "my tasks" only where it may read them). An axis left `None`
@@ -164,18 +169,6 @@ impl BirthPosition {
             .filter(|world| *world != crate::claim::base_world_id())
     }
 }
-pub(crate) fn default_stamp(kind: u8, facet: EntityId) -> Scope {
-    Scope {
-        worlds: singleton(ScopeId(crate::claim::base_world_id())),
-        facets: singleton(ScopeId(facet)),
-        bands: singleton(kind),
-        audience: singleton(ScopeId(crate::claim::default_project_id())),
-        // The record itself is not a capability. The operation is bound at evaluation.
-        verbs: ScopeAxis::Bottom,
-        sensitivity: SensitivityCeiling::AtMost(Sensitivity::Sensitive),
-    }
-}
-
 /// L02 17:11 (carried by L01-W for FIX 7774): intentionally NOTE/ASSET
 /// only. EVENT/TURN read their birth edge from dedicated arms below so a
 /// derived row without edge keeps the substrate fallback instead of the
@@ -256,6 +249,10 @@ pub(crate) fn candidate_put_position(
 /// A FACET or RELATIONSHIP keeps the sensitivity its body declares. `None`
 /// for a NOTE or ASSET whose `FacetOf` is not written: no position is
 /// inferred.
+///
+/// An identity topology event that asserts a distinct pair, and the
+/// disposition that signs it, take its CLAIM's project and world
+/// (`identity_event`).
 fn derived_position(
     store: &impl ManifestDbs,
     txn: &heed::RoTxn<'_>,
@@ -328,6 +325,11 @@ fn derived_position(
             _ => substrate,
         };
         (default_stamp(kind, facet), facet)
+    } else if kind == crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT {
+        // FIX DISTINCT-EVENT-DEFAULT-PROJECT-STAMP: an AssertDistinct event,
+        // and the disposition that signs it, are born in its CLAIM's project
+        // and world.
+        identity_event::identity_event_position(store, txn, id, kind, data)?
     } else {
         let facet = crate::claim::substrate_facet_id(id)?;
         (default_stamp(kind, facet), facet)

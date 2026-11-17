@@ -38,6 +38,7 @@ impl ScopedRead<'_> {
         let rtxn = self.grant_read_txn()?;
         let admission = self.reaction_admission_in(&rtxn, None)?;
         let value = self.reaction_lines_in(&rtxn, &admission, record, counted, &mut Vec::new())?;
+        self.charge_served(counted.iter().copied());
         Ok(ScopedReadResult {
             value,
             receipt: admission.receipt,
@@ -128,7 +129,7 @@ impl ScopedRead<'_> {
         } else {
             None
         };
-        disclosure.admits(&self.vault.store, rtxn, id, row.entity_type, claim.as_ref())
+        disclosure.admits_in(self.vault, rtxn, id, row.entity_type, claim.as_ref())
     }
 
     /// Attaches each hydrated MESSAGE or TURN result's grouped reaction lines
@@ -192,7 +193,9 @@ impl ScopedRead<'_> {
     /// The one walk behind [`Self::attach_reactions_quoting`] and
     /// [`Self::attach_reactions_listing_producers`]. For each MESSAGE or TURN
     /// result, `walked` gets the record, the reaction claims its lines count,
-    /// the reactors they name, and whether the lines were attached.
+    /// the reactors they name, and whether the lines were attached. The
+    /// claims of each attached line count toward the reader's read exposure
+    /// (L8-65).
     fn attach_reactions_walk(
         &self,
         pack: &mut ContextPack,
@@ -229,6 +232,9 @@ impl ScopedRead<'_> {
                 }
                 _ => false,
             };
+            if attached {
+                self.charge_served(counted.iter().copied());
+            }
             walked(entity.id, counted, named, attached);
         }
         Ok(admission.receipt)
@@ -237,8 +243,10 @@ impl ScopedRead<'_> {
     /// [`crate::Vault::reaction_pills`] under this read, in one snapshot: only
     /// messages this read reads get pills, and a pill counts only the
     /// reactions it reads, each under its whole admission. The pills come
-    /// with the receipt of that read (FIX 8669). Like every read on this
-    /// lane, an owner lane refuses once its binding is gone.
+    /// with the receipt of that read (FIX 8669). The reaction claims a pill
+    /// counts count toward the reader's read exposure (L8-65), as a reaction
+    /// line's do. Like every read on this lane, an owner lane refuses once its
+    /// binding is gone.
     pub fn reaction_pills(
         &self,
         messages: &[EntityId],
@@ -254,11 +262,17 @@ impl ScopedRead<'_> {
                 readable.push(*message);
             }
         }
+        let mut counted = Vec::new();
         let value = self
             .vault
             .reaction_pills_in(&rtxn, &readable, viewer, |row| {
-                self.row_admitted_in(&rtxn, &admission, &row.id)
+                let admitted = self.row_admitted_in(&rtxn, &admission, &row.id)?;
+                if admitted {
+                    counted.push(row.id);
+                }
+                Ok(admitted)
             })?;
+        self.charge_served(counted);
         Ok(ScopedReadResult {
             value,
             receipt: admission.receipt,

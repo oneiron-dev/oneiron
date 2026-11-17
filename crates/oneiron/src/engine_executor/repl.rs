@@ -315,13 +315,15 @@ impl EngineNativeExecutor<'_> {
                     }
                     // A step a provider outage ended stops on that outage,
                     // which parks its run, however its guest took the
-                    // failure (FIX 3194).
-                    if let Some(outage) = host
-                        .hard_failure
-                        .take()
-                        .filter(|failure| matches!(failure, Error::ProviderUnavailable { .. }))
-                    {
-                        return Err(outage.into());
+                    // failure (FIX 3194). A step an off-record session
+                    // refused an act of ends on that refusal the same way:
+                    // the guest's throw keeps none of its words (FIX
+                    // OFF-RECORD-RUN-POLICY-REFUSAL-500).
+                    if let Some(failure) = host.hard_failure.take().filter(|failure| {
+                        matches!(failure, Error::ProviderUnavailable { .. })
+                            || super::is_session_act_refusal(failure)
+                    }) {
+                        return Err(failure.into());
                     }
                     return Err(err.into());
                 }
@@ -599,7 +601,7 @@ impl EngineNativeExecutor<'_> {
                 }
                 result => result?,
             };
-            self.acknowledge_step_signals(taken);
+            let paused = self.acknowledge_step_signals(taken);
             // The implicit bubble is downstream of its checkpoint commit. A
             // compare-and-put failure emits nothing. A terminal retry replays
             // this delivery under stable witness ids, so it can recover a
@@ -622,6 +624,18 @@ impl EngineNativeExecutor<'_> {
                     continue;
                 }
                 return Ok(self.outcome(status, steps_run, record));
+            }
+            // A person's pause this step took holds the run here, before its
+            // next model request: its row is already Paused and its lease
+            // released, and a resume runs it on from this record.
+            if paused {
+                return Ok(self.outcome(
+                    EngineExecutorStatus::Paused {
+                        next_step_seq: completed_step_count(&record)?,
+                    },
+                    steps_run,
+                    record,
+                ));
             }
             expected_generation = Some(next_generation);
         }

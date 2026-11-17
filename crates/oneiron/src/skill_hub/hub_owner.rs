@@ -90,44 +90,14 @@ impl<A: SkillHubAdapter> SkillHubAdapter for PrefetchedPackage<'_, A> {
     }
 }
 
-/// Explicit owner selection. Provider version/tag strings are download locators;
-/// only the separate expected fields assert the caller's desired identity.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct ClawHubImportRequest {
-    pub hub: EntityId,
-    pub slug: String,
-    pub version: Option<String>,
-    pub tag: Option<String>,
-    pub publisher: String,
-    pub expected_skill_id: Option<String>,
-    pub expected_skill_version: Option<String>,
-    /// Native SHA-256 canonical-tree hex, not a provider or archive hash.
-    pub expected_content_hash: Option<String>,
-    /// The initial HTTP response budget; native expanded-tree bounds still apply.
-    pub response_limit_bytes: Option<usize>,
-}
-
-/// A source pin records the actual imported tree. Without an explicit expected
-/// native hash it is first-observed identity, not a previously reviewed pin.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
-#[serde(tag = "outcome", rename_all = "snake_case")]
-pub enum ClawHubImportReply {
-    Imported {
-        entity: EntityId,
-        source: HubRef,
-        github_handoff: Option<super::ClawHubGitHubHandoff>,
-    },
-    ProviderError {
-        status: u16,
-        retry_after: Option<String>,
-        body: String,
-    },
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::skill_hub::hub_owner::{ClawHubImportReply, ClawHubImportRequest};
 
 impl Vault {
     /// Downloads an explicitly selected public-registry skill, then imports the
-    /// same checked bytes through the configured hub's normal marketplace doors.
+    /// same checked bytes through the configured hub's normal marketplace
+    /// doors. A refused import withdraws the publisher it just admitted, and
+    /// keeps one that already stood.
     pub fn import_clawhub_skill(
         &self,
         owner: &AuthenticatedOwner,
@@ -183,38 +153,51 @@ impl Vault {
             ));
         }
         let source = HubRef::new(input.hub, &input.slug, HubPin::ContentHash(hash.to_hex()))?;
-        let publisher = self.admit_skill_publisher(owner, &input.publisher, input.hub)?;
-        let at = self.now_recorded_at();
-        let occurred = TimeRange { start: at, end: at };
-        let osv = Some(&super::osv::OsvDevClient as &dyn super::osv::OsvQuery);
-        let caller = HoldsNothing;
-        let fit = self.chosen_skill_fit(&caller)?;
-        let entity = self.import_marketplace_skill_with_query(
-            &PrefetchedPackage {
-                adapter: &adapter,
-                source: &source,
-                package,
-            },
-            &source,
-            &publisher,
-            &*fit,
-            osv,
-            occurred,
-            at,
-            &mut super::SkillImportRows::default(),
-        )?;
-        Ok(ClawHubImportReply::Imported {
-            entity,
-            source,
-            github_handoff,
-        })
+        // A refused import withdraws the publisher it just admitted, and
+        // keeps one that already stood.
+        let was_active = self
+            .skill_publisher_grant_is_active(&input.publisher, input.hub)
+            .unwrap_or(true);
+        let admitted = self.admit_skill_publisher(owner, &input.publisher, input.hub)?;
+        let result = (|| {
+            let at = self.now_recorded_at();
+            let occurred = TimeRange { start: at, end: at };
+            let osv = Some(&super::osv::OsvDevClient as &dyn super::osv::OsvQuery);
+            let caller = HoldsNothing;
+            let fit = self.chosen_skill_fit(&caller)?;
+            let entity = self.import_marketplace_skill_with_query(
+                &PrefetchedPackage {
+                    adapter: &adapter,
+                    source: &source,
+                    package,
+                },
+                &source,
+                &admitted,
+                &*fit,
+                osv,
+                occurred,
+                at,
+                &mut super::SkillImportRows::default(),
+            )?;
+            Ok(ClawHubImportReply::Imported {
+                entity,
+                source,
+                github_handoff,
+            })
+        })();
+        if result.is_err() && !was_active {
+            let _ = self.revoke_skill_publisher(owner, &input.publisher, input.hub);
+        }
+        result
     }
 
     /// Owner door: import the skill at `folder` of a configured hub, at a
-    /// pin. The named publisher is admitted for this hub first. The owner's
-    /// chosen skill fit decides: a clean reversible import activates through
-    /// the install plan, anything else lands Candidate behind one permission
-    /// ask ([`Vault::approve_marketplace_permission_ask`]).
+    /// pin. The named publisher is admitted for this hub first; a refused
+    /// import withdraws one it just admitted, and keeps one that already
+    /// stood. The owner's chosen skill fit decides: a clean reversible
+    /// import activates through the install plan, anything else lands
+    /// Candidate behind one permission ask
+    /// ([`Vault::approve_marketplace_permission_ask`]).
     pub fn import_skill_from_hub_ref(
         &self,
         owner: &AuthenticatedOwner,
@@ -223,33 +206,46 @@ impl Vault {
         pin: HubPin,
         publisher: &str,
     ) -> Result<EntityId> {
-        let publisher = self.admit_skill_publisher(owner, publisher, hub)?;
-        let source = HubRef::new(hub, folder, pin)?;
-        let at = self.now_recorded_at();
-        let occurred = TimeRange { start: at, end: at };
-        let caller = HoldsNothing;
-        let fit = self.chosen_skill_fit(&caller)?;
-        let fetch = self.hub_ref_fetch(&pinned_tracking(source.clone())?, None)?;
-        let osv = Some(super::osv::hub_advisory_query(fetch.kind()));
-        self.import_marketplace_skill_with_query(
-            &fetch,
-            &source,
-            &publisher,
-            &*fit,
-            osv,
-            occurred,
-            at,
-            &mut super::SkillImportRows::default(),
-        )
+        // A refused import withdraws the publisher it just admitted, and
+        // keeps one that already stood, so no refusal leaves a new
+        // offer-only Grant standing with no receipt tying it to it.
+        let was_active = self
+            .skill_publisher_grant_is_active(publisher, hub)
+            .unwrap_or(true);
+        let admitted = self.admit_skill_publisher(owner, publisher, hub)?;
+        let result = (|| {
+            let source = HubRef::new(hub, folder, pin)?;
+            let at = self.now_recorded_at();
+            let occurred = TimeRange { start: at, end: at };
+            let caller = HoldsNothing;
+            let fit = self.chosen_skill_fit(&caller)?;
+            let fetch = self.hub_ref_fetch(&pinned_tracking(source.clone())?, None)?;
+            let osv = Some(super::osv::hub_advisory_query(fetch.kind()));
+            self.import_marketplace_skill_with_query(
+                &fetch,
+                &source,
+                &admitted,
+                &*fit,
+                osv,
+                occurred,
+                at,
+                &mut super::SkillImportRows::default(),
+            )
+        })();
+        if result.is_err() && !was_active {
+            let _ = self.revoke_skill_publisher(owner, publisher, hub);
+        }
+        result
     }
 
     /// [`Self::import_skill_from_hub_ref`] for a caller that names the skill
     /// it asked for (FIX 10202): the package is fetched once, its declared id
     /// and the requested version are checked before the publisher is
     /// admitted or a candidate is born, and the import commits that same
-    /// package. A mismatch writes nothing. `rows` notes the hub once its row
-    /// is read and the stored skill a content dedup answers, landed or
-    /// refused (FIX 11699).
+    /// package. A mismatch writes nothing; a refusal after the admission
+    /// withdraws a publisher this import just admitted, and keeps one that
+    /// already stood. `rows` notes the hub once its row is read and the
+    /// stored skill a content dedup answers, landed or refused (FIX 11699).
     #[expect(
         clippy::too_many_arguments,
         reason = "the owner door's inputs plus the skill identity the caller asked for"
@@ -278,26 +274,37 @@ impl Vault {
         // does too.
         let parsed = super::folder::package_from_files(package.files.clone())?;
         check_expected_skill(&parsed.record, skill_id, version)?;
-        let publisher = self.admit_skill_publisher(owner, publisher, hub)?;
-        let at = self.now_recorded_at();
-        let occurred = TimeRange { start: at, end: at };
-        let osv = Some(super::osv::hub_advisory_query(fetch.kind()));
-        let caller = HoldsNothing;
-        let fit = self.chosen_skill_fit(&caller)?;
-        self.import_marketplace_skill_with_query(
-            &PrefetchedPackage {
-                adapter: &fetch,
-                source: &source,
-                package,
-            },
-            &source,
-            &publisher,
-            &*fit,
-            osv,
-            occurred,
-            at,
-            rows,
-        )
+        // A refused import withdraws the publisher it just admitted, and
+        // keeps one that already stood.
+        let was_active = self
+            .skill_publisher_grant_is_active(publisher, hub)
+            .unwrap_or(true);
+        let admitted = self.admit_skill_publisher(owner, publisher, hub)?;
+        let result = (|| {
+            let at = self.now_recorded_at();
+            let occurred = TimeRange { start: at, end: at };
+            let osv = Some(super::osv::hub_advisory_query(fetch.kind()));
+            let caller = HoldsNothing;
+            let fit = self.chosen_skill_fit(&caller)?;
+            self.import_marketplace_skill_with_query(
+                &PrefetchedPackage {
+                    adapter: &fetch,
+                    source: &source,
+                    package,
+                },
+                &source,
+                &admitted,
+                &*fit,
+                osv,
+                occurred,
+                at,
+                rows,
+            )
+        })();
+        if result.is_err() && !was_active {
+            let _ = self.revoke_skill_publisher(owner, publisher, hub);
+        }
+        result
     }
 
     /// The hub refs an imported skill's provenance names.

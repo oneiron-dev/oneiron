@@ -1,7 +1,7 @@
 //! Tombstone apply/export/replay plus window rebuild from updates.
 
 use super::bridge::{self, BRIDGE_ORIGIN};
-use super::egress::export_scrubbed_window_snapshot;
+use super::egress::export_scrubbed_window_state;
 use super::loro_support::{
     TombstoneIndex, doc_version_vector, import_doc, map_delete, map_for_each_bytes,
     map_insert_bytes,
@@ -241,6 +241,10 @@ pub(crate) fn publish_pending_tombstones(vault: &Vault, window_key: &WindowKey) 
         return Ok(0);
     }
     let replayed = if let Some((window, materializer, _manager)) = vault.live_window(window_key) {
+        // The live-window turn first (L7-45): the replay builds a tombstone
+        // index over the shared doc, so no peer import lands in it from the
+        // merge to the commit. Both drop before the scrub of other windows.
+        let _turn = materializer.enter_live_window();
         // Merged outside the materializer lock: an import into an observed
         // doc fires Observer B, which takes the lock itself. The commit runs
         // under it, and Observer A persists and routes the delta as usual.
@@ -336,6 +340,9 @@ fn replay_tombstone_markers(
     for (key, value) in markers {
         apply_tombstone_to_indexed_window_doc(doc, &tombstones, &key.id, value)?;
     }
+    // The policies no binding reaches now go in this replay's commit, the
+    // window pinned history-free first (fix list row 17211).
+    crate::sync::source_audiences::prune_unreached_policies(vault, doc, Some(window_key))?;
     // Bridge origin: local LMDB already reflects the delete (the marker was
     // written in the purge/scrub txn itself), so Observer B must not re-run
     // the hard purge against a soft shell.
@@ -346,11 +353,14 @@ fn replay_tombstone_markers(
     let delete_update = export_tombstone_commit_delta(doc, &vv_before)?;
 
     // Persist BEFORE clearing the markers — the marker may only be cleared
-    // after CRDT commit + snapshot persistence succeed.
-    let snapshot = export_scrubbed_window_snapshot(vault, window_key, doc)?;
+    // after CRDT commit + snapshot persistence succeed. The export reads the
+    // pin; a legal hold read in the writer keeps the history a pinned export
+    // dropped (census L6-05).
+    let snapshot = export_scrubbed_window_state(vault, window_key, doc)?;
     let vv = doc_version_vector(doc);
     vault.with_write_txn_grouped(|wtxn| {
-        persist_window_doc_in_txn(vault, wtxn, window_key, &snapshot, &vv)?;
+        let (stored, history_free) = snapshot.stored_in_txn(vault, wtxn)?;
+        persist_window_doc_in_txn(vault, wtxn, window_key, stored, &vv, history_free)?;
         if any_hard {
             crate::sync::queue::scrub_window_updates_in_txn(vault, wtxn, window_key.as_str())?;
             prune_subsumed_window_updates_in_txn(vault, wtxn, window_key, merged_update_keys)?;

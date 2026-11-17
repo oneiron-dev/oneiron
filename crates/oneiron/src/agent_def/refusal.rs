@@ -14,8 +14,6 @@
 //! decline stops her own act, never another agent's, a person's, or a policy
 //! hold.
 
-use serde::{Deserialize, Serialize};
-
 use super::types::AgentDefinition;
 use crate::Vault;
 use crate::error::Result;
@@ -25,31 +23,8 @@ pub use crate::store::agent_refusal::{
     REFUSAL_DIAL_KEYS, RefusalDial, RefusalDomain, RefusalLevel,
 };
 
-impl RefusalLevel {
-    /// The one evaluator: what an agent's tagged self-refusal becomes at this
-    /// level. Only an explicit self-refusal is evaluated; inability, a
-    /// provider's refusal and an owner's "no" never reach here.
-    #[must_use]
-    pub const fn outcome(self) -> RefusalOutcome {
-        match self {
-            Self::None => RefusalOutcome::Proceed,
-            Self::Voice => RefusalOutcome::Object,
-            Self::Veto | Self::Full => RefusalOutcome::Decline,
-        }
-    }
-}
-
-/// What the dial makes of one tagged self-refusal.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum RefusalOutcome {
-    /// Proceed; nothing is recorded.
-    Proceed,
-    /// Record her one objection with its reason, then proceed.
-    Object,
-    /// Decline the act, with her reason.
-    Decline,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::agent_def::refusal::RefusalOutcome;
 
 /// Which defaults an unset dial takes. This is the vault's existing
 /// personal-versus-shared split, read from its shared-vault creation row the

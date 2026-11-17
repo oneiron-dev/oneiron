@@ -13,13 +13,19 @@
 //! that pack, the revert installs the version the update kept again, after
 //! its bytes pass an install's checks once more (FIX 20192).
 
+use std::cell::RefCell;
+
 use serde::{Deserialize, Serialize};
 
-use super::{ACTIVE, ModelPackChange, ModelPackReceipt, ModelPackSetting, PREFERENCE, invalid};
+use super::{
+    ACTIVE, ModelPackChange, ModelPackReceipt, ModelPackSetting, changed_the_row, invalid,
+    model_pack_preference_change,
+};
 use crate::Vault;
 use crate::consent::AuthenticatedOwner;
 use crate::error::Result;
 use crate::inbox::{NotificationEvent, NotificationKind, NotificationSource};
+use crate::setting::SettingCaller;
 use crate::settings::model_pack::ModelPackPreference;
 use crate::skill_hub::pack_catalog::InstalledModelPack;
 
@@ -65,36 +71,10 @@ impl ModelPackChangeCause {
     }
 }
 
-/// The owner's revert: the change its notice names.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct ModelPackRevertRequest {
-    pub change_ref: String,
-}
-
-/// Why a revert cannot run now. Nothing changed.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum ModelPackRevertBlock {
-    /// A later pack change replaced this one; its own notice reverts it.
-    Superseded,
-    /// The change had no pack before it: the vault's first pack.
-    NoPreviousPack,
-    /// The pack before the change is neither installed nor kept as the
-    /// version a same-name update replaced at the bytes the change recorded,
-    /// or its kept bytes no longer pass an install's checks.
-    NotInstalled,
-    /// The pack before the change has retired: it is no longer served.
-    Retired,
-    /// The hub ref the pack before the change came from is frozen to other
-    /// bytes, the newer version's, so its drift check refuses the version
-    /// the change recorded. The owner lifts the freeze, then reverts: the
-    /// newer version stays in effect while the freeze is lifted, so the
-    /// change still stands. Moving the freeze to the older bytes instead
-    /// ends the newer version first, a change of its own that supersedes
-    /// this one (review #6755).
-    FrozenRefPinsNewer,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::llm::model_pack::change::{
+    ModelPackRevertBlock, ModelPackRevertRequest,
+};
 
 /// What a revert did.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -105,6 +85,39 @@ pub struct ModelPackRevert {
     pub blocked: Option<ModelPackRevertBlock>,
     /// The owner's model pack setting after the call.
     pub setting: ModelPackSetting,
+}
+
+thread_local! {
+    /// The pack in effect before the revert this thread is writing, read before the revert
+    /// installed a replaced version again, while the revert writes its pin: the key's hook
+    /// records the revert's move from it ([`revert_before`]). The hook runs inside the revert's
+    /// own call that writes the pin, on the same thread.
+    static REVERT_BEFORE: RefCell<Option<Option<ModelPackReceipt>>> = const { RefCell::new(None) };
+}
+
+/// Holds a revert's pack before it for the key's hook while the revert writes its pin, and
+/// drops it when that write returns or unwinds.
+struct RevertBefore;
+
+impl RevertBefore {
+    fn hold(before: Option<ModelPackReceipt>) -> Self {
+        REVERT_BEFORE.set(Some(before));
+        Self
+    }
+}
+
+impl Drop for RevertBefore {
+    fn drop(&mut self) {
+        REVERT_BEFORE.set(None);
+    }
+}
+
+/// The pack in effect before the revert this thread is writing, taken once by the hook of
+/// `models.pack_preference`: a revert that installs a replaced version again moves the vault
+/// from the pack it followed before that install, which the row's prior value no longer selects
+/// among the packs installed after it. `None` outside a revert's write.
+pub(crate) fn revert_before() -> Option<Option<ModelPackReceipt>> {
+    REVERT_BEFORE.take()
 }
 
 /// The pack a revert returns to, and where it is now.
@@ -127,8 +140,8 @@ impl RevertTarget {
 /// The preference a revert to `previous` stores. An engine call (CALLS, FIX
 /// 5369): a revert pins the pack it restores by its id, so a newer pack does
 /// not move the vault off it again; following the latest pack again is the
-/// owner's own setting (`vault.settings.model_pack.replace`), and a revert
-/// of the revert pins the pack it left.
+/// owner's own setting (`vault.settings.set` of `models.pack_preference`),
+/// and a revert of the revert pins the pack it left.
 #[must_use]
 pub fn model_pack_revert_preference(previous: &InstalledModelPack) -> ModelPackPreference {
     ModelPackPreference::PinnedPack {
@@ -294,8 +307,9 @@ impl Vault {
 
     /// The owner's one-tap revert of the pack change `request` names, under
     /// the owner proof (FIX 5369): the pack the vault followed before it is
-    /// pinned ([`model_pack_revert_preference`]) and followed, recorded as a
-    /// change of its own with its own notice. When a same-name update
+    /// pinned ([`model_pack_revert_preference`]) through `models.pack_preference`,
+    /// as the owner's change whose reason names this verb and the change, and
+    /// followed, recorded as a change of its own with its own notice. When a same-name update
     /// replaced that pack, its kept version is installed again first, and
     /// the version it replaces is kept in turn, so the revert's own notice
     /// reverts it the same way (FIX 20192). A change a later one replaced,
@@ -314,29 +328,55 @@ impl Vault {
         if request.change_ref.trim().is_empty() {
             return Err(invalid("a revert names a change"));
         }
-        self.with_write_txn_grouped(|txn| {
-            owner.revalidate_as_vault_owner_in_txn(self, txn)?;
-            let blocked = match self.model_pack_revert_target_in_txn(txn, &request.change_ref)? {
-                Ok(target) => {
-                    let before = self.model_pack_in_effect_in_txn(txn)?;
-                    if let RevertTarget::Replaced(replaced) = &target {
-                        self.restore_replaced_model_pack_in_txn(txn, &replaced.receipt.pack_name)?;
+        self.with_write_txn_grouped_after_commit(
+            |txn| {
+                owner.revalidate_as_vault_owner_in_txn(self, txn)?;
+                let (blocked, applied) = match self
+                    .model_pack_revert_target_in_txn(txn, &request.change_ref)?
+                {
+                    Ok(target) => {
+                        let before = self.model_pack_in_effect_in_txn(txn)?;
+                        if let RevertTarget::Replaced(replaced) = &target {
+                            self.restore_replaced_model_pack_in_txn(
+                                txn,
+                                &replaced.receipt.pack_name,
+                            )?;
+                        }
+                        let change = model_pack_preference_change(
+                            model_pack_revert_preference(target.pack()),
+                            format!("{MODEL_PACK_REVERT_VERB} of change {}", request.change_ref),
+                        )?;
+                        // The key's hook records a change of the row, from the pack in effect
+                        // before the revert installed anything again.
+                        let outcome = {
+                            let _held = RevertBefore::hold(before.clone());
+                            self.set_setting_in_txn(txn, SettingCaller::Owner(owner), &change)?
+                        };
+                        // A row that already pinned the pack records none, though a version
+                        // installed again may have moved the pack in effect.
+                        if !changed_the_row(&outcome) {
+                            self.note_active_model_pack_in_txn(
+                                txn,
+                                before,
+                                ModelPackChangeCause::Revert,
+                            )?;
+                        }
+                        (None, Some((change, outcome)))
                     }
-                    PREFERENCE.put(
-                        &self.store,
-                        txn,
-                        &(),
-                        &model_pack_revert_preference(target.pack()),
-                    )?;
-                    self.note_active_model_pack_in_txn(txn, before, ModelPackChangeCause::Revert)?;
-                    None
+                    Err(block) => (Some(block), None),
+                };
+                let revert = ModelPackRevert {
+                    blocked,
+                    setting: self.model_pack_setting_in_txn(txn)?,
+                };
+                Ok((revert, applied))
+            },
+            |(revert, applied)| {
+                if let Some((change, outcome)) = &applied {
+                    crate::setting::run_after_commit(self, &[(change, outcome)]);
                 }
-                Err(block) => Some(block),
-            };
-            Ok(ModelPackRevert {
-                blocked,
-                setting: self.model_pack_setting_in_txn(txn)?,
-            })
-        })
+                Ok(revert)
+            },
+        )
     }
 }

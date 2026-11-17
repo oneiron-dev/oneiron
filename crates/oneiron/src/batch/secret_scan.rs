@@ -17,8 +17,7 @@ use zeroize::Zeroizing;
 
 pub(crate) use self::container::{
     ContainerReader, RetainedProjectionEdit, apply_retained_repo_projection_diff, is_container,
-    is_sealed, live_content_hit, masked_copy, scan_text_content, served_masked_copy,
-    tree_rebuilt_copy,
+    is_sealed, scan_text_content,
 };
 pub use self::lift_history::{
     LiftCause, LiftCauseCount, LiftCloseReason, LiftCounts, LiftFamily, LiftTrigger,
@@ -41,6 +40,8 @@ pub(crate) use self::mask::carrier::{
 #[cfg(oneiron_test_support)]
 pub(crate) use self::mask::mark_text_value_in_txn;
 pub(super) use self::mask::mask_batch_ops;
+#[cfg(oneiron_test_support)]
+pub(crate) use self::mask::put_mask_origin_for_test_door;
 pub(crate) use self::mask::retained_repo::read::{
     RepoKnownCheck, project_marked_retained_repo_blob, retained_repo_known_places,
 };
@@ -57,9 +58,12 @@ pub(crate) use self::mask::spool::{
 };
 pub(crate) use self::mask::stream_known::{KnownStreamFinder, StreamKnown};
 pub(crate) use self::mask::{
-    mask_origin_in_txn, seal_promoted_message_ops_in_txn, seal_whole_part_in_txn,
+    file_mints_in_txn, move_mask_origin_in_txn, rebind_mask_origin_in_txn, side_row::admission_form,
 };
-pub(crate) use self::mask::{rebind_mask_origin_in_txn, side_row::admission_form};
+pub(crate) use self::mask::{
+    file_spans, mask_origin_in_txn, seal_promoted_message_ops_in_txn, seal_whole_part_in_txn,
+    span_placed_for,
+};
 pub(crate) use self::message_parts::seal_message_parts_in_txn;
 use self::provider_tokens::{classify_token, provider_token_spans};
 pub(crate) use self::provider_tokens::{embedded_credential, provider_prefix_head};
@@ -79,6 +83,31 @@ use crate::side_table::{self, Named, SideTable, SideTableDbs};
 use crate::store::Store;
 
 const REASON_DETECTED: &str = "gate.secret_scan.detected";
+
+/// The reason the side-row wall adds when it refuses a fresh secret in a row
+/// an off-record room writes (FIX 2329; Engine RULING FIX-2329-ROOM-CUSTODY
+/// = C): the room holds no custody of its own, and no off-record byte enters
+/// base, so a value no custody record holds cannot take a handle there. The
+/// remedy is to put the value in vault custody first, or to run on record.
+const REASON_OFF_RECORD_FRESH_KEY: &str = "gate.secret_scan.off_record_fresh_key";
+
+/// `refusal`, a refusal of a fresh secret in an off-record room's row, with
+/// [`REASON_OFF_RECORD_FRESH_KEY`] after its own reasons.
+fn off_record_fresh_key_refusal(refusal: Error) -> Error {
+    match refusal {
+        Error::Gate(GateError::GateWriteRejected {
+            outcome,
+            mut reason_codes,
+        }) => {
+            reason_codes.push(REASON_OFF_RECORD_FRESH_KEY);
+            Error::Gate(GateError::GateWriteRejected {
+                outcome,
+                reason_codes,
+            })
+        }
+        other => other,
+    }
+}
 const REASON_AWS_ACCESS_KEY_ID: &str = "gate.secret_scan.aws_access_key_id";
 const REASON_GITHUB_TOKEN: &str = "gate.secret_scan.github_token";
 const REASON_GOOGLE_API_KEY: &str = "gate.secret_scan.google_api_key";
@@ -90,32 +119,8 @@ const REASON_STRIPE_KEY: &str = "gate.secret_scan.stripe_key";
 const REASON_JSON_TOO_DEEP: &str = "gate.secret_scan.json_depth_over_127";
 const REASON_MESSAGEPACK_TOO_DEEP: &str = "gate.secret_scan.messagepack_depth_over_1024";
 
-/// The vault's `secrets` setting: whether the write door scans what a host
-/// writes into this vault for credential shapes. On by default; only the
-/// vault owner switches it, and every switch writes a receipt
-/// ([`Vault::set_secret_scan_mode`](crate::Vault::set_secret_scan_mode)).
-/// Serve and export redact credentials in both modes.
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    Default,
-    PartialEq,
-    Eq,
-    serde::Serialize,
-    serde::Deserialize,
-    schemars::JsonSchema,
-)]
-#[serde(rename_all = "snake_case")]
-pub enum SecretScanMode {
-    /// The write door scans. A secret it can place in text or a field goes
-    /// to custody and leaves its handle there; any other hit refuses the
-    /// whole write.
-    #[default]
-    On,
-    /// The write door does not scan; serve and export still redact.
-    Off,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::batch::secret_scan::SecretScanMode;
 
 /// The owner's switch row. Key: ().
 const SECRET_SCAN_MODE: SideTable<(), SecretScanMode, Named> =
@@ -243,14 +248,62 @@ fn release_hit(bytes: &[u8]) -> Option<&'static str> {
     // A lossy copy is wiped on drop (FIX 6668).
     let mut wiped = None::<Zeroizing<String>>;
     let haystack = wiped_lossy(bytes, &mut wiped);
-    detect(haystack, Door::Release).or_else(|| {
-        let payload = framed_payload(bytes)?;
-        let Some(mut value) = decode_members(payload) else {
-            return nested_past_decoder(payload);
-        };
-        sanitize_messagepack(&mut value, false, Door::Release)
-            .then_some("gate.secret_scan.sensitive_env")
-    })
+    detect(haystack, Door::Release).or_else(|| release_decoded_hit(framed_payload(bytes)?))
+}
+
+/// How deep text decoded inside text the release rules read, as deep as the
+/// typed rule reads it (`serialize::export_value::TEXT_DEPTH`). A body that
+/// still decodes there reads as a hit: the typed rule reads it as nil.
+const RELEASE_TEXT_DEPTH: usize = 128;
+
+/// The release rules over `bytes` read as a structured body
+/// ([`decode_members`]): every member, its field names included, and each
+/// text in it (a string, or binary that is UTF-8) that decodes as a body
+/// again, read the same way at every depth, as the typed rule reads text
+/// inside text. A credential key escaped in JSON that is itself a string's
+/// text is no text the raw rules read. A body nested past its decoder reads
+/// as a hit: none of its members was read.
+pub(crate) fn release_decoded_hit(bytes: &[u8]) -> Option<&'static str> {
+    let Some(value) = decode_members(bytes) else {
+        return nested_past_decoder(bytes);
+    };
+    // Each body decoded from text, with how deep in text it sits. The walk
+    // keeps its own stacks: text nested in text must not deepen the call
+    // stack once per level on top of each body's own nesting.
+    let mut bodies = vec![(value, 0_usize)];
+    while let Some((mut body, depth)) = bodies.pop() {
+        if sanitize_messagepack(&mut body, false, Door::Release) {
+            return Some("gate.secret_scan.sensitive_env");
+        }
+        let mut nodes = vec![&body];
+        while let Some(node) = nodes.pop() {
+            let text: &[u8] = match node {
+                rmpv::Value::String(text) => text.as_bytes(),
+                rmpv::Value::Binary(bytes) if std::str::from_utf8(bytes).is_ok() => {
+                    bytes.as_slice()
+                }
+                rmpv::Value::Array(items) => {
+                    nodes.extend(items.iter());
+                    continue;
+                }
+                rmpv::Value::Map(fields) => {
+                    nodes.extend(fields.iter().flat_map(|(key, value)| [key, value]));
+                    continue;
+                }
+                _ => continue,
+            };
+            match decode_members(text) {
+                Some(_) if depth + 1 >= RELEASE_TEXT_DEPTH => return Some(REASON_JSON_TOO_DEEP),
+                Some(inner) => bodies.push((inner, depth + 1)),
+                None => {
+                    if let Some(reason) = nested_past_decoder(text) {
+                        return Some(reason);
+                    }
+                }
+            }
+        }
+    }
+    None
 }
 
 /// The release reading of a body no decoder took whole: its text, and a

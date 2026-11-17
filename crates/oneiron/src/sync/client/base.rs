@@ -7,21 +7,19 @@ use std::sync::Mutex;
 use loro::{LoroDoc, VersionVector};
 use tokio::sync::mpsc;
 
-use super::types::{EphemeralChangeOrigin, SVF_FRESH, SyncClientConfig, SyncEvent, SyncStatus};
+use super::types::{EphemeralChangeOrigin, SyncClientConfig, SyncEvent, SyncStatus};
 use crate::Vault;
 use crate::error::{
     Error, Result, SyncConfigField, SyncEngineContext, SyncError, SyncProtocolValidation,
 };
-use crate::sync::loro_support::{doc_from_snapshot, doc_version_vector, export_snapshot};
+use crate::sync::loro_support::doc_from_snapshot;
 use crate::sync::manager::WindowManager;
 use crate::sync::schema::read_window_list;
 use crate::sync::transport;
 use crate::sync::transport::TransportError;
 use crate::sync::types::{WindowKey, parse_window_key_str};
 use crate::sync::window::{LoadedWindow, UpdateVerdict, Withhold};
-use crate::sync::window_rows::{
-    LAST_SYNC, ROOT_SHALLOW_FENCE, ROOT_SNAPSHOT, ROOT_STATE_VECTOR, ROOT_UPDATE,
-};
+use crate::sync::window_rows::{LAST_SYNC, ROOT_SNAPSHOT, ROOT_UPDATE};
 use crate::sync::{
     EphemeralEventTrigger, EphemeralStore, EphemeralStoreEvent, LoroValue, Subscription,
 };
@@ -108,6 +106,16 @@ pub struct SyncClient {
     /// promotion, not the home's grant on this socket (FIX 20202). Cleared at
     /// every connect.
     pub(crate) promotions_granted: HashSet<WindowKey>,
+    /// The followed windows this connection asked the home to grant
+    /// (`FOLLOW_REQUEST`). Cleared at every connect.
+    pub(crate) follow_requests: Mutex<HashSet<WindowKey>>,
+    /// The followed windows the home refused on this connection
+    /// (`FOLLOW_REFUSED`). Cleared at every connect.
+    pub(crate) follows_refused: HashSet<WindowKey>,
+    /// The followed windows whose full exchange landed here on this
+    /// connection, their thin read cache rows dropped
+    /// ([`Self::land_followed_window`]). Cleared at every connect.
+    pub(crate) followed_windows_landed: HashSet<WindowKey>,
     /// The windows whose home replacement installed here on this connection
     /// since a per-window re-bootstrap last asked for one (FIX 20202). Cleared
     /// at every connect.
@@ -263,6 +271,9 @@ impl SyncClient {
             root_bootstrapped: false,
             residence_acks: HashMap::new(),
             promotions_granted: HashSet::new(),
+            follow_requests: Mutex::new(HashSet::new()),
+            follows_refused: HashSet::new(),
+            followed_windows_landed: HashSet::new(),
             replacements_installed: HashSet::new(),
             window_pads: Mutex::default(),
             document_parts: Mutex::default(),
@@ -341,18 +352,19 @@ impl SyncClient {
 
     /// Whether window `key`'s updates may go out as residence updates: an
     /// opened machine sends only the windows the home granted (`rp:w:`) and
-    /// the windows of the worlds it follows ([`Self::follows_full_window`]). A
-    /// window the home refused to grant again stays on disk and no longer
-    /// syncs, so its writes wait queued instead of closing the socket ("window
-    /// not promoted"). A sync-all machine sends every window. A marker that
-    /// cannot be read is judged ungranted.
+    /// the windows of the worlds it follows that the home granted on this
+    /// connection ([`Self::followed_window_granted`]). A window the home
+    /// refused to grant again stays on disk and no longer syncs, so its writes
+    /// wait queued instead of closing the socket ("window not promoted"). A
+    /// sync-all machine sends every window. A marker that cannot be read is
+    /// judged ungranted.
     pub(crate) fn residence_granted(&self, key: &str) -> bool {
         self.config.residence_mode != crate::sync::SyncResidenceMode::Opened
             || self
                 .vault
                 .sync_state_get(&format!("rp:w:{key}"))
                 .is_ok_and(|marker| marker.is_some())
-            || self.follows_full_window(key)
+            || self.followed_window_granted(key)
     }
 
     /// Whether an outgoing frame carries what a device-only world now keeps
@@ -568,7 +580,78 @@ impl SyncClient {
             .sync_state_get(&format!("rp:w:{key}"))
             .map_err(|e| TransportError::Storage(e.to_string()))?
             .is_some();
-        Ok(promoted || self.follows_full_window(key))
+        Ok(promoted || self.followed_window_granted(key))
+    }
+
+    /// Whether `key` is a window of a world this lane follows
+    /// ([`Self::follows_full_window`]) that the home granted on this
+    /// connection. A follow the home refused (`FOLLOW_REFUSED`) or has not
+    /// answered yet stays unsynced on this socket, its vector unasked and its
+    /// writes queued, and the next connection asks again.
+    pub(crate) fn followed_window_granted(&self, key: &str) -> bool {
+        WindowKey::try_new(key).is_some_and(|window| self.promotions_granted.contains(&window))
+            && self.follows_full_window(key)
+    }
+
+    /// The followed windows this connection asked the home to grant that it
+    /// has neither granted nor refused yet. The queue replays once each is
+    /// answered: a granted window's queued writes go, a refused one's stay
+    /// owed.
+    pub(crate) fn unanswered_follow_requests(&self) -> Vec<WindowKey> {
+        let mut keys: Vec<WindowKey> = self
+            .follow_requests
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .iter()
+            .filter(|key| !self.follow_answered(key))
+            .cloned()
+            .collect();
+        keys.sort_by(|left, right| left.as_str().cmp(right.as_str()));
+        keys
+    }
+
+    /// Whether the home granted or refused followed window `key` on this
+    /// connection.
+    pub(crate) fn follow_answered(&self, key: &WindowKey) -> bool {
+        self.promotions_granted.contains(key) || self.follows_refused.contains(key)
+    }
+
+    /// Once a followed window's full exchange lands here (a home update
+    /// imported, or the home's replacement installed), drops the thin read
+    /// cache rows its items kept from before the follow
+    /// (FOLLOWED-WINDOW-STALE-THIN-CACHE), as a promotion drops them: the
+    /// canonical rows are here now, and a local edit at such an item is no
+    /// longer refused as a thin read. Once per window and connection; a
+    /// window this device promoted dropped them at its promotion.
+    pub(crate) fn land_followed_window(
+        &mut self,
+        key: &WindowKey,
+    ) -> std::result::Result<(), TransportError> {
+        if self.peer_session.is_some()
+            || !self.followed_window_granted(key.as_str())
+            || self.opened_window_promoted(key)?
+            || !self.followed_windows_landed.insert(key.clone())
+        {
+            return Ok(());
+        }
+        self.vault
+            .with_write_txn_grouped(|txn| {
+                super::residence::drop_thin_rows_in(&self.vault, txn, key)
+            })
+            .map_err(|error| TransportError::Storage(error.to_string()))
+    }
+
+    /// Whether `key` syncs in full on this lane only because `worlds`
+    /// follows its world: a followed world's window this device never
+    /// promoted (no `rp:w:`). It is asked of the home as a follow
+    /// (`FOLLOW_REQUEST`), and its vector waits for the grant.
+    pub(crate) fn follow_only_window_in(
+        &self,
+        key: &WindowKey,
+        worlds: &FollowedWorlds,
+    ) -> std::result::Result<bool, TransportError> {
+        Ok(self.follows_full_window_in(key.as_str(), worlds)
+            && !self.opened_window_promoted(key)?)
     }
 
     /// Whether `key` is this vault's embedding setup window on an opened-item
@@ -597,11 +680,21 @@ impl SyncClient {
     /// once while the held window stays. Never on a federation lane, under
     /// sync all or for a base window. A follow set that cannot be read
     /// follows nothing.
+    ///
+    /// Judged against the set this connection's negotiation follows, read
+    /// once as it began, as its frames are (FOLLOWED-WINDOW-SET-READ-PER-FRAME):
+    /// the gates each full-window frame meets read no store. A change of the
+    /// set renegotiates at once ([`Self::follow_set_changed`]), and the
+    /// inbound world gate still reads the live set, so a revoked world's
+    /// frames are refused at once. Before any connection began, the live set.
     pub(crate) fn follows_full_window(&self, key: &str) -> bool {
-        self.full_window_world(key).is_some_and(|world| {
-            self.effective_worlds()
-                .is_ok_and(|worlds| worlds.contains(&world))
-        })
+        self.full_window_world(key)
+            .is_some_and(|world| match &self.negotiated_worlds {
+                Some(worlds) => worlds.contains(&world),
+                None => self
+                    .effective_worlds()
+                    .is_ok_and(|worlds| worlds.contains(&world)),
+            })
     }
 
     /// [`Self::follows_full_window`], judged against `worlds`: the set a
@@ -681,11 +774,7 @@ impl SyncClient {
         if self.config.federation_peer.is_some() {
             return Ok(());
         }
-        // Saturate to 0 on pre-epoch wall clock — matches the other
-        // SystemTime uses in this module.
-        let now_secs = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0, |d| d.as_secs());
+        let now_secs = crate::unix_seconds_now();
         self.vault.with_write_txn_grouped(|wtxn| {
             LAST_SYNC.put(&self.vault.store, wtxn, &(), &now_secs.to_le_bytes())?;
             Ok(())
@@ -698,16 +787,20 @@ impl SyncClient {
     /// into its `ls:` row in the SAME txn, so the replay doors' lease reads
     /// can never observe a root state without its registry rows. Malformed
     /// entries quarantine (x: row) and keep any previous good `ls:` row.
+    ///
+    /// This is the put the device's own server uses, so the rows and the
+    /// mirror keep every root op that server wrote since this doc was loaded:
+    /// a window it added, a lease it revoked or expired
+    /// (`server_state::persist_root_with_lease_mirror_in_txn`). This doc
+    /// itself stays the home's root.
     pub(super) fn persist_root_state(&self) -> Result<()> {
         let frontiers_before = self.root_doc.state_frontiers();
-        let snapshot = export_snapshot(&self.root_doc)?;
-        let vv = doc_version_vector(&self.root_doc);
         if let Err(err) = self.vault.with_write_txn_grouped(|wtxn| {
-            ROOT_SNAPSHOT.put(&self.vault.store, wtxn, &(), &snapshot)?;
-            ROOT_STATE_VECTOR.put(&self.vault.store, wtxn, &(), &vv)?;
-            ROOT_SHALLOW_FENCE.put(&self.vault.store, wtxn, &(), &[SVF_FRESH])?;
-            crate::sync::lease::mirror_leases_from_root_in_txn(&self.vault, wtxn, &self.root_doc)?;
-            Ok(())
+            crate::sync::server_state::persist_root_with_lease_mirror_in_txn(
+                &self.vault,
+                wtxn,
+                &self.root_doc,
+            )
         }) {
             if let Err(revert_err) = self.root_doc.revert_to(&frontiers_before) {
                 return Err(Error::sync_engine_rollback(

@@ -85,12 +85,8 @@ impl EmergencyPlan {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum EmergencyLocalBasis {
-    PreStartCancellation,
-    EmergencyAtOrAfterStart,
-    RequestUpdate,
-}
+#[doc(hidden)]
+pub use oneiron_records::booking::emergency_reschedule::planning::EmergencyLocalBasis;
 
 /// Local state is committed with both passports, before the first intent.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -374,6 +370,8 @@ pub(super) fn plan_item(
         .sequence
         .checked_add(1)
         .ok_or_else(|| refused("booking passport sequence is exhausted"))?;
+    // The owner's proposal count, floor and search span (PACK-SETTINGS-ALL W1).
+    let policy = super::setting_keys::emergency_proposal_policy(vault).map_err(storage_failure)?;
     let start = request
         .affected_window
         .end
@@ -386,7 +384,7 @@ pub(super) fn plan_item(
         calendars,
         TimeRange {
             start,
-            end: start.saturating_add(7 * 86_400),
+            end: start.saturating_add(policy.search_span_secs),
         },
         now_utc,
     )?;
@@ -400,15 +398,13 @@ pub(super) fn plan_item(
         }) {
             proposals.push(slot);
         }
-        if proposals.len() == 3 {
+        if proposals.len() >= usize::from(policy.max_proposals) {
             break;
         }
     }
-    if proposals.len() < 2 {
-        return Err(refused(
-            "this booking has fewer than two live solver proposals",
-        ));
-    }
+    policy
+        .admit(proposals.len())
+        .map_err(BookingError::InvalidConfig)?;
     let (organizer, recipient) = delivery_parties(vault, &booking)?;
     let invite_before = {
         let txn = vault.store.env.read_txn().map_err(storage_failure)?;

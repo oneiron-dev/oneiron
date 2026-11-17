@@ -85,6 +85,14 @@ fn holder_class(key: &str) -> Option<EngineControlClass> {
         .map(|(_, class)| *class)
 }
 
+/// Whether `key` is a work budget a holder may tune: a holder's row on it
+/// stays within the owner's own seed or pin for that knob and scope, at the
+/// holder's door ([`owner_rows_admit`]) and at every read after
+/// (`resolution::capped_row_in_txn`).
+pub(super) fn is_work_budget(key: &str) -> bool {
+    matches!(holder_class(key), Some(WorkBudget))
+}
+
 /// The receipt's rendering of a holder's change.
 fn rendered(scope: &SettingScope, mode: SettingMode, value: Option<f64>) -> String {
     let scope = match scope {
@@ -155,6 +163,40 @@ fn owner_rows_admit(
         }
     }
     Ok(())
+}
+
+/// The `engine.controls` class of the learning dial `key`, for an archived holder row.
+///
+/// The same closed list the holder's door reads ([`ENGINE_CONTROL_SETTINGS`]), without any
+/// live grant check: a historical holder needs no current grant for its row to land. `None`
+/// means holders may not tune `key`.
+pub(super) fn holder_class_for_archive_restore(key: &str) -> Option<EngineControlClass> {
+    holder_class(key)
+}
+
+/// Whether the destination owner rows admit an archived holder row over `spec`, `mode` and
+/// `scope` with `value`.
+///
+/// The same precedence the holder's door enforces ([`owner_rows_admit`]): an owner's pin or
+/// work-budget row stands over a holder's, a holder's pin never lands under the owner's pin
+/// for the whole vault, and a holder's work budget stays within the owner's cap for that knob
+/// and scope. The landing calls this after its owner rows, so the check sees the destination
+/// owner rows the same import installed. No grant check, witness, or receipt.
+///
+/// # Errors
+///
+/// Storage errors. An owner-cap violation is [`crate::Error::InvalidClaimBody`], for the
+/// landing to report as a local authority mismatch.
+pub(super) fn owner_rows_admit_archived_holder_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    spec: &SettingSpec,
+    scope: &SettingScope,
+    mode: SettingMode,
+    class: EngineControlClass,
+    value: f64,
+) -> Result<()> {
+    owner_rows_admit(vault, txn, spec, scope, mode, class, Some(value))
 }
 
 impl Vault {

@@ -32,7 +32,8 @@ use crate::gate::{DeriveCapability, derive_verdict_in_txn};
 use crate::memory::{Memory, MemoryError, MemoryResult};
 use crate::{EntityId, Vault, WriteActor};
 
-/// The most refs one `vault.policy.preflight` request names.
+/// The most refs one `vault.policy.preflight` request names while the owner
+/// has set no `snapshot_read.preflight.max_refs` row: that key's default.
 pub const POLICY_PREFLIGHT_MAX_REFS: usize = 100;
 
 /// The act a preflight asks about.
@@ -66,33 +67,16 @@ impl PolicyPreflightAct {
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct PolicyPreflightRequest {
-    /// The refs, at most [`POLICY_PREFLIGHT_MAX_REFS`]; each is answered in
-    /// this order.
+    /// The refs, at most `snapshot_read.preflight.max_refs` in force
+    /// ([`POLICY_PREFLIGHT_MAX_REFS`] by default); each is answered in this
+    /// order.
     pub refs: Vec<EntityId>,
     /// The act the caller means to take on them.
     pub act: PolicyPreflightAct,
 }
 
-/// The derive verdict on one readable ref, for the acts `derive` and
-/// `archive`: what a `vault.derive.commit` item of the caller's that changes
-/// the row would be told by its grant, judged now.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(tag = "outcome", rename_all = "snake_case")]
-pub enum PolicyPreflightVerdict {
-    /// The caller's live grant allows the act.
-    Allowed {
-        /// The grant a commit's receipt names: the newest standing Steward
-        /// grant row's id, or the policy rows' ref for a base agent no grant
-        /// row names yet.
-        grant: String,
-    },
-    /// The caller's live grant refuses the act.
-    Refused {
-        /// The stable refusal token a commit's receipt carries
-        /// (`gate.deny.derive.*`).
-        reason: String,
-    },
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::snapshot_read::policy_preflight::PolicyPreflightVerdict;
 
 /// What the caller's read lets it do with one ref.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -133,20 +117,24 @@ pub struct PolicyPreflight {
     pub refs: Vec<PolicyPreflightRef>,
 }
 
-/// Refuses a request with no refs or more than [`POLICY_PREFLIGHT_MAX_REFS`].
+/// Refuses a request with no refs or more than `snapshot_read.preflight.max_refs` in force,
+/// [`POLICY_PREFLIGHT_MAX_REFS`] by default.
 ///
 /// # Errors
 ///
 /// `BAD_REQUEST` for either.
-pub fn validate_policy_preflight(input: &PolicyPreflightRequest) -> MemoryResult<()> {
+pub fn validate_policy_preflight(
+    input: &PolicyPreflightRequest,
+    max_refs: usize,
+) -> MemoryResult<()> {
     if input.refs.is_empty() {
         return Err(MemoryError::bad_request(
             "a preflight names at least one ref",
         ));
     }
-    if input.refs.len() > POLICY_PREFLIGHT_MAX_REFS {
+    if input.refs.len() > max_refs {
         return Err(MemoryError::bad_request(format!(
-            "at most {POLICY_PREFLIGHT_MAX_REFS} refs per preflight"
+            "at most {max_refs} refs per preflight"
         )));
     }
     Ok(())
@@ -164,10 +152,20 @@ pub fn policy_preflight(
     memory: &Memory<'_>,
     input: &PolicyPreflightRequest,
 ) -> MemoryResult<ScopedReadResult<PolicyPreflight>> {
-    validate_policy_preflight(input)?;
+    let vault = memory.vault();
+    let max_refs = {
+        let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
+        usize::try_from(
+            super::setting_keys::POLICY_PREFLIGHT_MAX_REFS_SETTING
+                .read_in_txn(vault, &txn, &[], None)?
+                .value
+                .max(1),
+        )
+        .unwrap_or(usize::MAX)
+    };
+    validate_policy_preflight(input, max_refs)?;
     let read = memory.read_lane(ClaimReadStatus::Recorded)?;
     let points: Vec<PointRead<'_>> = input.refs.iter().copied().map(PointRead::id).collect();
-    let vault = memory.vault();
     let capability = input.act.derive_capability();
     // The actor a derivation commit of this caller's is stamped with.
     let actor = memory.write_actor();

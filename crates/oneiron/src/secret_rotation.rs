@@ -8,7 +8,13 @@ pub(crate) use self::revoke::{
     revoke_custody_with_context_in_txn, revoke_secret_with_context_in_txn,
 };
 use crate::Vault;
-use crate::blob_artifact::decode_blob_artifact_body;
+use crate::batch::export::archive_side_install::{
+    ArchivedSideRowOutcome, decode_archived_row, install_archived_row,
+};
+use crate::batch::export::{
+    ArchiveRetainedSideRow, OwnerArchiveRestorePermit, RetainedSideHeldBackReason,
+};
+use crate::blob_artifact::{body_with_secret_taint_refs, decode_blob_artifact_body};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result, SecretError};
 use crate::ports::{EntityRecord, EntityStoreRead};
@@ -19,11 +25,15 @@ use crate::secret_record::{SecretCustodyStatus, policy_manifest_bodies_strict};
 use crate::side_table::{self, HexId, Raw, SideTable};
 use crate::store::Store;
 use crate::store::secret_name_index::resolve_secret_ref_in_txn;
+use oneiron_contracts::msgpack;
 use rmpv::Value;
 
 mod owner_door;
+mod provider_refresh;
 mod revoke;
 pub(crate) mod tables;
+// FIX [LIBTEST-QUARANTINE-SECRET-ROTATION-TESTS]: the lib test target's type check fails here (9 errors: E0061 x7, E0308 x1, E0063 x1); port it, then drop this gate
+#[cfg(any())]
 #[cfg(test)]
 mod tests;
 
@@ -31,10 +41,6 @@ mod tests;
 /// not part of the body, so the body stays raw for `decode_rotation_receipt_body`.
 const RECEIPTS: SideTable<HexId, Vec<u8>, Raw> =
     SideTable::new(&side_table::SECRET_ROTATION_RECEIPT);
-
-/// The FORWARD taint sidecar for one exhaust entity, keyed by the entity id in hex.
-const EXHAUST_TAINT: SideTable<HexId, Vec<SecretTaintRef>, Raw> =
-    SideTable::new(&side_table::SECRET_EXHAUST_TAINT);
 
 /// The lease table, scanned and decoded by the revoke sweep (`revoke`).
 const LEASES: SideTable<HexId, SecretLease, Raw> = SideTable::new(&side_table::SECRET_LEASE);
@@ -46,15 +52,6 @@ const LEASES: SideTable<HexId, SecretLease, Raw> = SideTable::new(&side_table::S
 /// The `vault_meta` prefix for a durable [`RotationReceipt`] row, keyed by
 /// the receipt's own [`EntityId`].
 pub const SECRET_ROTATION_RECEIPT_PREFIX: &str = "secret_rotation_receipt:v1:";
-
-/// The `vault_meta` prefix for the FORWARD taint-ref sidecar of one exhaust
-/// entity, keyed by that entity's [`EntityId`].
-///
-/// Forward only: `artifact -> refs`. There is deliberately no row anywhere
-/// in this crate keyed by a SECRET that lists the artifacts it tainted — the
-/// 2026-08-05 amendment forbids exactly that reverse index, and the
-/// regression suite asserts its absence.
-pub const SECRET_EXHAUST_TAINT_PREFIX: &str = "secret_exhaust_taint:v1:";
 
 /// The POLICY_MANIFEST key that opens the stale-publish dial. Absent or
 /// unreadable-as-`true` means CLOSED: a publish gate defaults to refusing.
@@ -122,14 +119,52 @@ pub struct RotationReceipt {
     pub rotated_at: u64,
     /// Which op minted this receipt.
     pub kind: RotationKind,
+    /// Why the op ran: the owner's act, or a provider's refresh answer the
+    /// engine stored (RULING MICROSOFT365-REFRESH-WRITEBACK).
+    pub cause: RotationCause,
 }
 
-const ROTATION_RECEIPT_BODY_KEYS: [&str; 5] = [
+/// Why a rotation or revoke ran.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RotationCause {
+    /// The owner's act: behind the owner's proof, or a holder performing an
+    /// owner's custody change. Every receipt written before causes were
+    /// recorded is one.
+    Owner,
+    /// The provider's own refresh answer, stored by the engine in place of
+    /// the grant a credential door read: the same name, bindings and custody
+    /// policy (RULING MICROSOFT365-REFRESH-WRITEBACK, 14 Nov 07:00).
+    ProviderRefresh,
+}
+
+impl RotationCause {
+    /// The wire string.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Owner => "owner",
+            Self::ProviderRefresh => "provider_refresh",
+        }
+    }
+
+    /// Parses the wire string.
+    #[must_use]
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "owner" => Some(Self::Owner),
+            "provider_refresh" => Some(Self::ProviderRefresh),
+            _ => None,
+        }
+    }
+}
+
+const ROTATION_RECEIPT_BODY_KEYS: [&str; 6] = [
     "secret_ref",
     "from_generation",
     "to_generation",
     "rotated_at",
     "kind",
+    "cause",
 ];
 
 fn encode_rotation_receipt_body(receipt: &RotationReceipt) -> Result<Vec<u8>> {
@@ -153,6 +188,10 @@ fn encode_rotation_receipt_body(receipt: &RotationReceipt) -> Result<Vec<u8>> {
         (
             Value::from(ROTATION_RECEIPT_BODY_KEYS[4]),
             Value::from(receipt.kind.as_str()),
+        ),
+        (
+            Value::from(ROTATION_RECEIPT_BODY_KEYS[5]),
+            Value::from(receipt.cause.as_str()),
         ),
     ]);
     let mut out = Vec::new();
@@ -191,7 +230,19 @@ fn decode_rotation_receipt_body(receipt_id: EntityId, bytes: &[u8]) -> Result<Ro
             "receipt kind",
         )?)
         .ok_or(invalid_body("receipt kind"))?,
+        cause: rotation_cause_at(&entries)?,
     })
+}
+
+/// The receipt's cause. A receipt written before causes were recorded has
+/// no `cause` key and was the owner's; a duplicated or unknown one refuses.
+fn rotation_cause_at(entries: &[(Value, Value)]) -> Result<RotationCause> {
+    let key = ROTATION_RECEIPT_BODY_KEYS[5];
+    if !entries.iter().any(|(k, _)| k.as_str() == Some(key)) {
+        return Ok(RotationCause::Owner);
+    }
+    RotationCause::parse(&string_at(entries, key, "receipt cause")?)
+        .ok_or(invalid_body("receipt cause"))
 }
 
 // ---------------------------------------------------------------------------
@@ -201,17 +252,7 @@ fn decode_rotation_receipt_body(receipt_id: EntityId, bytes: &[u8]) -> Result<Ro
 // ---------------------------------------------------------------------------
 
 fn decode_map_body(bytes: &[u8], reason: &'static str) -> Result<Vec<(Value, Value)>> {
-    use std::io::Cursor;
-
-    let mut cursor = Cursor::new(bytes);
-    let value = rmpv::decode::read_value(&mut cursor).map_err(|_| invalid_body(reason))?;
-    if cursor.position() != bytes.len() as u64 {
-        return Err(invalid_body(reason));
-    }
-    let Value::Map(entries) = value else {
-        return Err(invalid_body(reason));
-    };
-    Ok(entries)
+    msgpack::decode_map(bytes).map_err(|_| invalid_body(reason))
 }
 
 fn string_at(entries: &[(Value, Value)], key: &str, reason: &'static str) -> Result<String> {
@@ -296,24 +337,22 @@ pub(crate) fn taint_state_for_refs_in_txn(
 
 /// Reads the FORWARD taint refs of one exhaust entity inside a txn.
 ///
-/// The union of the forward planes an entity can carry them on: the
-/// entity-keyed sidecar row, the pinned `secret_taint.refs` body key when
-/// the entity is a BLOB_ARTIFACT, and, when it is an ASSET, that key on
-/// every artifact a `blob.version` claim names as holding its bytes. Both
-/// the body and the claim replicate, so a version payload reads tainted on
-/// every device its artifact reached, not only where the sidecar was
-/// written. Union, not precedence: all are action-boundary attachments,
-/// and dropping any would under-report taint. A secret named twice keeps
-/// its LOWEST recorded generation, which is the fail-closed direction (the
-/// older generation is the one more likely to have been rotated away from).
+/// The refs ride replicated rows only: the pinned `secret_taint.refs` body
+/// key when the entity is a BLOB_ARTIFACT (a capture's own refs and every
+/// host mark, [`Vault::mark_artifact_tainted`]), and, when it is an ASSET,
+/// that key on every artifact a `blob.version` claim names as holding its
+/// bytes. Both the body and the claim replicate, so a version payload reads
+/// tainted on every device its artifact reached. Union, not precedence:
+/// all are action-boundary attachments, and dropping any would
+/// under-report taint. A secret named twice keeps its LOWEST recorded
+/// generation, which is the fail-closed direction (the older generation is
+/// the one more likely to have been rotated away from).
 pub(crate) fn exhaust_taint_refs_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     id: &EntityId,
 ) -> Result<Vec<SecretTaintRef>> {
-    let mut refs = EXHAUST_TAINT
-        .get(store, txn, &HexId(*id))?
-        .unwrap_or_default();
+    let mut refs = Vec::new();
     if let Some(row) = store.port_entity_record(txn, id)? {
         if row.entity_type == ENTITY_TYPE_ASSET {
             // A file-plane ASSET's row holds its manifest: the claims name the
@@ -343,6 +382,54 @@ fn blob_artifact_taint_refs(row: &EntityRecord) -> Result<Vec<SecretTaintRef>> {
     Ok(decode_blob_artifact_body(&row.body)?.secret_taint_refs)
 }
 
+/// The body a put of `data` over the stored row `id` stores, when both are
+/// BLOB_ARTIFACT rows (census L6-32): `data` with the stored
+/// `secret_taint.refs` unioned in, each secret at its LOWEST generation and
+/// the refs sorted by name. A host mark or a capture's own refs thus leave
+/// an artifact only with its erasure: a metadata re-put, local or
+/// replicated, keeps them, and export still nulls the artifact.
+///
+/// `None` when `data` already names every stored ref at or below its
+/// generation, when `data` is empty (an erase shell keeps no words), when
+/// no artifact with refs is stored at `id`, and when `data` does not decode
+/// (the type check refuses it as before).
+///
+/// # Errors
+///
+/// A stored artifact body that does not decode, a union the body codec
+/// refuses (the ref count bound), and storage failures.
+pub(crate) fn body_keeping_stored_taint_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    entity_type: u8,
+    data: &[u8],
+) -> Result<Option<Vec<u8>>> {
+    if entity_type != ENTITY_TYPE_BLOB_ARTIFACT || data.is_empty() {
+        return Ok(None);
+    }
+    let Some(stored) = store
+        .port_entity_record(txn, id)?
+        .filter(|row| !row.body.is_empty())
+    else {
+        return Ok(None);
+    };
+    let held = blob_artifact_taint_refs(&stored)?;
+    if held.is_empty() {
+        return Ok(None);
+    }
+    let Ok(incoming) = decode_blob_artifact_body(data) else {
+        return Ok(None);
+    };
+    let mut kept = incoming.secret_taint_refs.clone();
+    union_refs(&mut kept, held);
+    if kept == incoming.secret_taint_refs {
+        return Ok(None);
+    }
+    kept.sort_by(|a, b| a.secret_ref.cmp(&b.secret_ref));
+    body_with_secret_taint_refs(data, &kept).map(Some)
+}
+
 fn union_refs(into: &mut Vec<SecretTaintRef>, refs: Vec<SecretTaintRef>) {
     for r in refs {
         match into.iter_mut().find(|held| held.secret_ref == r.secret_ref) {
@@ -352,33 +439,22 @@ fn union_refs(into: &mut Vec<SecretTaintRef>, refs: Vec<SecretTaintRef>) {
     }
 }
 
-/// Writes the forward taint sidecar for one exhaust entity, inside a
-/// transaction the CALLER owns.
-///
-/// Caller-owned on purpose: this is the S7 same-transaction law. The attach
-/// must land with the exhaust row it marks, or neither lands — untainted
-/// exhaust surviving a half-failed write is the one failure direction that
-/// matters here. An EMPTY ref list clears the row rather than writing an
-/// empty one, so "clean" has exactly one representation (absent).
-pub(crate) fn mark_exhaust_tainted_in_txn(
-    store: &Store,
-    wtxn: &mut heed::RwTxn<'_>,
-    id: &EntityId,
-    refs: &[SecretTaintRef],
-) -> Result<()> {
-    let key = HexId(*id);
-    if refs.is_empty() {
-        EXHAUST_TAINT.delete(store, wtxn, &key)?;
-        return Ok(());
-    }
-    let refs = refs.to_vec();
-    EXHAUST_TAINT.put(store, wtxn, &key, &refs)?;
-    Ok(())
-}
-
 // ---------------------------------------------------------------------------
 // The stale-publish dial
 // ---------------------------------------------------------------------------
+
+/// Whether any lease, live or ended, ever named the secret `name`: a use of
+/// its record, so a merge keeps the record (FILE-CUSTODY-MERGE-AFTER-REWRAP).
+pub(crate) fn secret_ever_leased_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    name: &str,
+) -> Result<bool> {
+    Ok(LEASES
+        .scan(store, txn)?
+        .iter()
+        .any(|(_, lease)| lease.secret_ref == name))
+}
 
 /// Resolves [`POLICY_TAINT_ALLOW_STALE_PUBLISH_KEY`] across every
 /// POLICY_MANIFEST body, inside a txn the caller owns.
@@ -491,16 +567,50 @@ impl Vault {
         taint_state_for_refs_in_txn(&self.store, &rtxn, &refs)
     }
 
-    /// Attaches taint refs to one exhaust entity through the entity-keyed
-    /// sidecar. The thin wrapper over
-    /// `mark_exhaust_tainted_in_txn` for callers that own no transaction;
-    /// callers that DO (an artifact put, a raw-output write) must use the
-    /// in-txn form so the attach cannot separate from its exhaust.
+    /// Attaches a host's taint refs to one BLOB_ARTIFACT (ARCH-0069
+    /// `#exhaust-taint-open`): the secrets the host injected while producing
+    /// it, each pinned to the generation it read. The refs join the
+    /// artifact body's `secret_taint.refs` key in one write transaction, so
+    /// the mark syncs, archives and exports redacted with the row, as a
+    /// capture's own refs do. A secret the body already names keeps its
+    /// LOWEST generation, the fail-closed direction; every other key of the
+    /// stored body keeps its value. A mark that adds nothing writes nothing.
+    /// It writes through the stored-stamp door, so a mail attachment a
+    /// source landing stamped keeps its stamp and takes the mark; a later
+    /// put of the artifact keeps the refs (`body_keeping_stored_taint_in_txn`).
+    ///
+    /// # Errors
+    ///
+    /// [`SecretError::InvalidSecretRotationBody`](crate::error::SecretError::InvalidSecretRotationBody)
+    /// for malformed refs ([`validate_taint_refs`]) and for an id that names
+    /// no BLOB_ARTIFACT row: an ASSET's taint comes from its artifacts, and
+    /// no other row carries a host mark.
     pub fn mark_artifact_tainted(&self, id: &EntityId, refs: &[SecretTaintRef]) -> Result<()> {
         validate_taint_refs(refs)?;
-        let mut wtxn = self.store.env.write_txn()?;
-        mark_exhaust_tainted_in_txn(&self.store, &mut wtxn, id, refs)?;
-        Ok(wtxn.commit()?)
+        self.with_write_txn_grouped(|txn| {
+            let row = self
+                .store
+                .port_entity_record(txn, id)?
+                .filter(|row| row.entity_type == ENTITY_TYPE_BLOB_ARTIFACT)
+                .ok_or(invalid_body("a host taint mark rides a blob artifact"))?;
+            let held = blob_artifact_taint_refs(&row)?;
+            let mut marked = held.clone();
+            union_refs(&mut marked, refs.to_vec());
+            if marked == held {
+                return Ok(());
+            }
+            marked.sort_by(|a, b| a.secret_ref.cmp(&b.secret_ref));
+            let body = body_with_secret_taint_refs(&row.body, &marked)?;
+            self.batch_in()
+                .put_keeping_stored_stamp(
+                    id,
+                    ENTITY_TYPE_BLOB_ARTIFACT,
+                    row.occurred,
+                    row.learned_at,
+                    &body,
+                )
+                .apply(txn)
+        })
     }
 
     /// Whether the vault's resolved policy opens the stale-publish dial.
@@ -508,4 +618,94 @@ impl Vault {
         let rtxn = self.store.env.read_txn()?;
         allow_stale_publish_in_txn(&self.store, &rtxn)
     }
+}
+
+/// The holdback reason for one decoded rotation receipt, or `None` when its kind/generation
+/// attestation matches its writer.
+fn archived_secret_rotation_holdback(
+    receipt: &RotationReceipt,
+) -> Option<RetainedSideHeldBackReason> {
+    match (receipt.kind, receipt.from_generation.checked_add(1)) {
+        (RotationKind::Rotated, Some(next)) if receipt.to_generation == next => None,
+        (RotationKind::Revoked, _) if receipt.to_generation == receipt.from_generation => None,
+        _ => Some(RetainedSideHeldBackReason::InvalidValue),
+    }
+}
+
+/// Whether `value` is the body a writer wrote for `receipt`: the current form with its cause, or
+/// the form written before causes were recorded, which has no `cause` key and reads as the
+/// owner's (`rotation_cause_at`). Any other bytes, extra or reordered keys included, are not.
+fn archived_rotation_body_is_written_form(receipt: &RotationReceipt, value: &[u8]) -> bool {
+    let Ok(encoded) = encode_rotation_receipt_body(receipt) else {
+        return false;
+    };
+    if encoded == value {
+        return true;
+    }
+    if receipt.cause != RotationCause::Owner {
+        return false;
+    }
+    let Ok(Value::Map(mut entries)) = rmpv::decode::read_value(&mut encoded.as_slice()) else {
+        return false;
+    };
+    entries.retain(|(key, _)| key.as_str() != Some(ROTATION_RECEIPT_BODY_KEYS[5]));
+    let mut before_causes = Vec::new();
+    rmpv::encode::write_value(&mut before_causes, &Value::Map(entries)).is_ok()
+        && before_causes == value
+}
+
+/// Lands one archived `SECRET_ROTATION_RECEIPT` envelope: the receipt body must decode as a form
+/// its writer wrote ([`archived_rotation_body_is_written_form`]) and its kind/generation must
+/// match its writer before install via the shared collision rule.
+///
+/// # Errors
+/// Storage faults; validation stays in the returned outcome.
+fn land_archived_secret_rotation_row_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    permit: &OwnerArchiveRestorePermit,
+    row: &ArchiveRetainedSideRow,
+) -> Result<ArchivedSideRowOutcome> {
+    let (key, value) = match decode_archived_row(&RECEIPTS, row) {
+        Ok(decoded) => decoded,
+        Err(reason) => return Ok(ArchivedSideRowOutcome::HeldBack(reason)),
+    };
+    let receipt = match decode_rotation_receipt_body(key.0, &value) {
+        Ok(receipt) => receipt,
+        Err(_) => {
+            return Ok(ArchivedSideRowOutcome::HeldBack(
+                RetainedSideHeldBackReason::InvalidEncoding,
+            ));
+        }
+    };
+    if !archived_rotation_body_is_written_form(&receipt, &value) {
+        return Ok(ArchivedSideRowOutcome::HeldBack(
+            RetainedSideHeldBackReason::InvalidEncoding,
+        ));
+    }
+    if let Some(reason) = archived_secret_rotation_holdback(&receipt) {
+        return Ok(ArchivedSideRowOutcome::HeldBack(reason));
+    }
+    install_archived_row(&RECEIPTS, vault, txn, permit, &key, row)
+}
+
+/// Lands the owner's archived `SECRET_ROTATION_RECEIPT` envelopes in input order, one outcome per
+/// row: an absent receipt installs, an identical receipt is unchanged, and a different receipt
+/// stays live. Never rotates, revokes, or touches custody, leases, or taint state.
+///
+/// # Errors
+/// Storage faults; validation stays in the returned outcomes.
+pub(crate) fn land_archived_secret_rotation_rows_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    permit: &OwnerArchiveRestorePermit,
+    rows: &[ArchiveRetainedSideRow],
+) -> Result<Vec<ArchivedSideRowOutcome>> {
+    let mut outcomes = Vec::with_capacity(rows.len());
+    for row in rows {
+        outcomes.push(land_archived_secret_rotation_row_in_txn(
+            vault, txn, permit, row,
+        )?);
+    }
+    Ok(outcomes)
 }

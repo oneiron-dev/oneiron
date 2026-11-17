@@ -1450,6 +1450,21 @@ fn put_claim(vault: &oneiron::Vault, seed: u8, text: &str) -> oneiron::entity_id
     let mut bytes = [seed; 16];
     bytes[0] = 0x7e;
     let id = oneiron::entity_id::EntityId::from_bytes(bytes).expect("entity id");
+    // A CLAIM is born only under a stored FACET (FIX 7757): store the one
+    // claim_body stamps, the subject's substrate facet, once.
+    let subject = oneiron::EntityId::from_bytes([0x7d; 16]).expect("subject id");
+    let facet = oneiron::claim::substrate_facet_id(subject).expect("substrate facet");
+    if !vault.entity_exists(&facet).expect("read facet row") {
+        vault
+            .put_entity(
+                &facet,
+                oneiron::registry::ENTITY_TYPE_FACET,
+                oneiron::temporal::TimeRange { start: 1, end: 1 },
+                1,
+                b"embedder test facet",
+            )
+            .expect("put facet");
+    }
     vault
         .batch()
         .put(
@@ -1590,6 +1605,13 @@ fn the_worker_fills_pending_vectors_and_the_semantic_door_finds_them() {
     );
 }
 
+/// The served app with each request from a loopback peer: a hatch server
+/// answers only callers on this device.
+fn loopback_app(server: Arc<crate::server::SyncServer>) -> Router {
+    let loopback = axum::extract::ConnectInfo(SocketAddr::from(([127, 0, 0, 1], 0)));
+    crate::build_app(server).layer(axum::Extension(loopback))
+}
+
 async fn wait_for_vectors(vault: &oneiron::Vault, ids: &[oneiron::entity_id::EntityId]) -> bool {
     for _ in 0..200 {
         let filled = ids
@@ -1678,7 +1700,7 @@ fn the_semantic_door_refuses_with_503_when_no_embedder_is_configured() {
         .build()
         .expect("runtime");
     let (status, body) = runtime.block_on(async {
-        let response = crate::build_app(server)
+        let response = loopback_app(server)
             .oneshot(
                 Request::builder()
                     .method("POST")
@@ -1735,7 +1757,7 @@ fn the_text_search_door_refuses_an_oversized_query_with_413() {
         .build()
         .expect("runtime");
     let (status, body) = runtime.block_on(async {
-        let response = crate::build_app(server)
+        let response = loopback_app(server)
             .oneshot(
                 Request::builder()
                     .method("GET")
@@ -1870,7 +1892,7 @@ fn a_local_provider_that_cannot_fetch_its_model_still_serves_lexical_reads() {
         let worker = server
             .spawn_embedding_worker()
             .expect("a configured slot starts a worker");
-        let text = crate::build_app(Arc::clone(&server))
+        let text = loopback_app(Arc::clone(&server))
             .oneshot(
                 Request::builder()
                     .uri("/api/search/text?query=anything")
@@ -1881,7 +1903,7 @@ fn a_local_provider_that_cannot_fetch_its_model_still_serves_lexical_reads() {
             .expect("text response");
         let text_status = text.status();
         let _ = to_bytes(text.into_body(), 1 << 20).await;
-        let semantic = crate::build_app(Arc::clone(&server))
+        let semantic = loopback_app(Arc::clone(&server))
             .oneshot(
                 Request::builder()
                     .method("POST")
@@ -1990,7 +2012,20 @@ fn remote_rung_routes_each_entity_and_falls_back_with_truthful_locality() {
         let reconciler = PendingEmbeddingReconciler::new(Arc::clone(&vault), primary)
             .with_remote_rung(rung)
             .unwrap();
-        let report = reconciler.reconcile_once().unwrap();
+        // One pass leases at most the reconciler's batch (32), and the vault's
+        // seeded rows no longer fit beside the test's three: the pass totals
+        // accumulate until a pass leases nothing.
+        let mut report = oneiron::embed::PendingEmbeddingReconcileReport::default();
+        loop {
+            let pass = reconciler.reconcile_once().unwrap();
+            report.routed_remote += pass.routed_remote;
+            report.egress_denied += pass.egress_denied;
+            report.egress_no_verdict += pass.egress_no_verdict;
+            report.filled += pass.filled;
+            if pass.leased == 0 {
+                break;
+            }
+        }
         assert_eq!(
             (
                 report.routed_remote,
@@ -2131,8 +2166,16 @@ fn a_remote_batch_its_line_refuses_is_never_sent_and_embeds_on_device() {
     let remote = MockEndpoint::start(MockBehaviour::Ok);
     let dir = tempfile::tempdir().unwrap();
     let vault = test_vault(dir.path());
-    let id = put_claim(&vault, 0x95, "a row its line cannot pay for");
     let config = endpoint_config(&local.base);
+    // One pass leases at most the reconciler's batch (32): drain the vault's
+    // seeded rows through a local-only reconciler first, so the refused batch
+    // below holds only the test's row.
+    let drain = PendingEmbeddingReconciler::new(
+        Arc::clone(&vault),
+        endpoint::HttpEmbedder::from_config(&config).unwrap(),
+    );
+    while drain.reconcile_once().unwrap().leased > 0 {}
+    let id = put_claim(&vault, 0x95, "a row its line cannot pay for");
     let section = remote_section(&remote.base, id);
     let receipts = Arc::new(MemoryReceipts::default());
     let rung = endpoint::HttpEmbedder::from_config(&section.endpoint_config(&config)).unwrap();

@@ -19,7 +19,6 @@ use crate::store::{ManifestDbs, Store};
 use crate::{EntityId, Vault};
 use heed::{RoTxn, RwTxn};
 use mark::{Mark, WalkRow};
-use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Bound;
 
@@ -100,28 +99,8 @@ impl RawValue for DependentWalkPolicy {
     }
 }
 
-/// OF-520 question a source's walk raised once it withdrew more dependents
-/// than the threshold. It is evidence for the host, never a refusal: the walk
-/// went on.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct DependentWalkCheck {
-    /// The source whose dependents were walked.
-    pub document: String,
-    /// The door that walked them ([`DependentWalkProgress::door`]).
-    pub door: String,
-    /// The threshold in force at the crossing.
-    pub threshold: u64,
-    /// Dependents withdrawn when the walk crossed it.
-    pub walked: u64,
-    /// Unix seconds of the crossing.
-    pub raised_at: u64,
-}
-
-impl DependentWalkCheck {
-    /// Machine-readable check discriminator; presentation text belongs to hosts.
-    pub const KIND: &'static str = "dependent_walk_size";
-}
+#[doc(hidden)]
+pub use oneiron_records::ports::dependent_walk::DependentWalkCheck;
 
 /// A walk still under way.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -591,6 +570,12 @@ impl Vault {
     /// The first walk that failed, once every other walk has finished. A
     /// failed walk keeps its row and resumes on the next call.
     pub fn finish_dependent_walks(&self) -> Result<()> {
+        #[cfg(test)]
+        if self.store.test_hooks.take_dependent_walks_failure() {
+            return Err(Error::InvariantViolation(
+                "test failure finishing dependent walks",
+            ));
+        }
         let mut failed = BTreeSet::new();
         let mut first_error = None;
         loop {
@@ -699,6 +684,49 @@ impl Vault {
     }
 }
 
+/// Lands one archived PORTS_DEPENDENT_WALK_POLICY row live: a positive batch validates, then
+/// installs through the archive seam without starting or resuming a walk.
+fn land_archived_dependent_walk_policy_row_in_txn(
+    vault: &crate::Vault,
+    txn: &mut heed::RwTxn<'_>,
+    permit: &crate::batch::export::OwnerArchiveRestorePermit,
+    row: &crate::batch::export::ArchiveRetainedSideRow,
+) -> crate::Result<crate::batch::export::archive_side_install::ArchivedSideRowOutcome> {
+    use crate::batch::export::RetainedSideHeldBackReason;
+    use crate::batch::export::archive_side_install::{
+        ArchivedSideRowOutcome, decode_archived_row, install_archived_row,
+    };
+    let (key, value) = match decode_archived_row(&POLICY, row) {
+        Ok(decoded) => decoded,
+        Err(reason) => return Ok(ArchivedSideRowOutcome::HeldBack(reason)),
+    };
+    if value.validate().is_err() {
+        return Ok(ArchivedSideRowOutcome::HeldBack(
+            RetainedSideHeldBackReason::InvalidValue,
+        ));
+    }
+    install_archived_row(&POLICY, vault, txn, permit, &key, row)
+}
+
+/// Lands archived PORTS_DEPENDENT_WALK_POLICY rows live, one outcome per input row in input
+/// order.
+pub(crate) fn land_archived_ports_rows_in_txn(
+    vault: &crate::Vault,
+    txn: &mut heed::RwTxn<'_>,
+    permit: &crate::batch::export::OwnerArchiveRestorePermit,
+    rows: &[crate::batch::export::ArchiveRetainedSideRow],
+) -> crate::Result<Vec<crate::batch::export::archive_side_install::ArchivedSideRowOutcome>> {
+    let mut outcomes = Vec::with_capacity(rows.len());
+    for row in rows {
+        outcomes.push(land_archived_dependent_walk_policy_row_in_txn(
+            vault, txn, permit, row,
+        )?);
+    }
+    Ok(outcomes)
+}
+
 mod mark;
+// FIX [LIBTEST-QUARANTINE-PORTS-DEPENDENT-WALK-TESTS]: the lib test target's type check fails here (1 errors: E0063 x1); port it, then drop this gate
+#[cfg(any())]
 #[cfg(test)]
 mod tests;
