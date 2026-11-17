@@ -40,7 +40,9 @@ fn invalid() -> Error {
 /// The run reference the dispatcher of agent attempt `attempt` runs under:
 /// the attempt's `run_id`, else `agent:` and the attempt's hex. The run's
 /// write receipts are keyed by it, so a continuation of a failed run reads
-/// the source's receipts under it (FIX 4199).
+/// the source's receipts under it (FIX 4199). A child the attempt spawns
+/// takes it as its own `run_id` (L7-32), so a root and every child under it
+/// run under one reference.
 pub(crate) fn agent_attempt_run_ref(attempt: AttemptId, run_id: Option<String>) -> String {
     run_id.unwrap_or_else(|| {
         format!(
@@ -355,7 +357,10 @@ impl<'a> HostSelfDispatcher<'a> {
                     crate::entity_id::bytes_to_hex_lower(parent.as_bytes()),
                     call.intent_key
                 )),
-                run_id: live.attempt.run_id,
+                // L7-32: the child joins its parent's run, a run-id-less
+                // root's `agent:<root hex>` included, so one undo-all of the
+                // root takes back its children's changes too.
+                run_id: Some(agent_attempt_run_ref(parent, live.attempt.run_id)),
                 now,
             },
             context,
