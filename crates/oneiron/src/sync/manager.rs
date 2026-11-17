@@ -297,6 +297,8 @@ impl WindowManager {
             // (Observer B's NOTE scrub, FIX 12128).
             if !super::quarantine::pending_remat_entities(&self.vault, key.as_str())?.is_empty() {
                 forward_rematerialize(&self.vault, &existing.doc, &self.materializer, key)?;
+                // ROOM-PINS-LWW-MERGE: a room body it merged owes the window.
+                self.wake_for_owed_rows(key);
             }
             return Ok((existing, false));
         }
@@ -391,18 +393,10 @@ impl WindowManager {
         drop(opening);
         drop(registry);
         // ROOM-PINS-LWW-MERGE: a room body the forward pass merged with the
-        // pin records held here left a pending-mirror marker; the live
+        // pin records held here left a merged-carrier marker; the live
         // mirror's next pass writes the merged carrier over the doc's, so the
         // other machine learns them without waiting for another write.
-        match pending_mirror::Owed::read(&self.vault, key) {
-            Ok(owed) if !owed.rows().is_empty() => {
-                self.note_committed_rows(owed.rows().clone(), false);
-            }
-            Ok(_) => {}
-            Err(error) => {
-                tracing::warn!(window = %key, %error, "pending mirrors not read after the window opened");
-            }
-        }
+        self.wake_for_owed_rows(key);
         // FIX 12129: a window closed while a NOTE was deleted keeps that
         // NOTE's review-bundle attachments; scrub what this vault deleted.
         if let Err(error) =

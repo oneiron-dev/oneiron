@@ -140,7 +140,8 @@ fn pin_order(pin: &RoomPin) -> (u64, EntityId, EntityId, Option<EntityId>) {
 /// and every other record either copy holds stays pinned. An unpin removes
 /// only the records it saw, so a pin another machine made meanwhile stays.
 /// `None` when the merge holds the same records as `carried`, the copy that
-/// arrived; else the merged `(pins, unpinned)`, each in [`pin_order`].
+/// arrived; else the merged `(pins, unpinned)`, each ordered by time, then
+/// by target and writer.
 pub fn merge_room_pins(
     carried: (&[RoomPin], &[RoomPin]),
     held: (&[RoomPin], &[RoomPin]),
@@ -171,7 +172,7 @@ fn ordered_records(set: BTreeSet<&RoomPin>) -> Vec<RoomPin> {
 }
 
 /// The pins a reader is served from a stored list: one record per target,
-/// the earliest ([`pin_order`]), at its stored place. Two records of one
+/// the earliest (by time, then by writer), at its stored place. Two records of one
 /// target remain only where two machines pinned it at once; the earlier one
 /// stands for both.
 pub fn live_room_pins(pins: &[RoomPin]) -> Vec<RoomPin> {
@@ -297,6 +298,14 @@ pub const ROOM_THREAD_KEY: &str = "room_thread";
 /// The door-owned CONVERSATION body key naming the project that groups this ordinary room as an
 /// extra room; only vault.projects.rooms.link and .unlink stamp it.
 pub const ROOM_PROJECT_GROUP_KEY: &str = "project_group";
+
+/// The room body key (ordinary and home rooms) of the room's shared pin records; only the room
+/// pin doors write it.
+pub const ROOM_PINS_KEY: &str = "pins";
+
+/// The room body key (ordinary and home rooms) of the pin records the room's unpins removed,
+/// which a merge never brings back (ROOM-PINS-LWW-MERGE); only the room pin doors write it.
+pub const ROOM_UNPINNED_KEY: &str = "unpinned";
 
 /// A thread TURN's birth binding: its thread's root, the room whose
 /// membership it reads under, the trunk turn the thread hangs off and, on

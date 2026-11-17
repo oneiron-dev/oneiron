@@ -27,12 +27,9 @@ use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::registry::ENTITY_TYPE_CONVERSATION;
 use crate::store::conversation_body::{
-    decode, encode, invalid, merge_room_pins, validate_room_pins,
+    ROOM_PINS_KEY, ROOM_UNPINNED_KEY, decode, encode, invalid, merge_room_pins,
+    validate_room_pins,
 };
-
-/// The body keys a room's pin records ride under.
-const PINS_KEY: &str = "pins";
-const UNPINNED_KEY: &str = "unpinned";
 
 /// A room body's MessagePack map, with the pin records and unpinned records
 /// it holds.
@@ -58,8 +55,8 @@ impl PinnedMap {
         if !cursor.is_empty() {
             return None;
         }
-        let pins = records(&entries, PINS_KEY)?;
-        let unpinned = records(&entries, UNPINNED_KEY)?;
+        let pins = records(&entries, ROOM_PINS_KEY)?;
+        let unpinned = records(&entries, ROOM_UNPINNED_KEY)?;
         validate_room_pins(&pins, &unpinned).ok()?;
         Some(Self {
             entries,
@@ -71,8 +68,8 @@ impl PinnedMap {
     /// The map's bytes with `pins` and `unpinned` under its pin keys, each
     /// key absent while its list is empty, as the room pin doors leave it.
     fn bytes_with(mut self, pins: &[RoomPin], unpinned: &[RoomPin]) -> Result<Vec<u8>> {
-        set_records(&mut self.entries, PINS_KEY, pins)?;
-        set_records(&mut self.entries, UNPINNED_KEY, unpinned)?;
+        set_records(&mut self.entries, ROOM_PINS_KEY, pins)?;
+        set_records(&mut self.entries, ROOM_UNPINNED_KEY, unpinned)?;
         let mut bytes = Vec::new();
         rmpv::encode::write_value(&mut bytes, &Value::Map(self.entries))
             .map_err(|_| invalid("body encode"))?;
@@ -165,6 +162,6 @@ pub(in crate::sync) fn carried_room_pins_in_txn<'a>(
         return Ok(data);
     }
     let merged = carried.bytes_with(&pins, &unpinned)?;
-    vault.mark_merged_carrier_in_txn(wtxn, id, blob)?;
+    vault.mark_merged_carrier_in_txn(wtxn, window_key, id, blob)?;
     Ok(Cow::Owned(merged))
 }

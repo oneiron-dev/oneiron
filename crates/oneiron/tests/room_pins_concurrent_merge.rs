@@ -6,10 +6,15 @@
 //!
 //! Fixture: one vault with a group room, a seated member and two of the
 //! member's room MESSAGEs as pin targets, copied to a second directory while
-//! closed, so both machines hold the same rows. Each machine runs its own
-//! live window manager over the room's base window; the tests carry the
-//! window between the two docs both ways, as a sync connection does, until
-//! both machines store the expected pins.
+//! closed, so both machines hold the same rows. As the testkit's fixture
+//! copy, it refuses a seed that left anything beside the vault directory
+//! (key custody or a page seal), which a copy would share. Each machine runs
+//! its own live window manager over the room's base window; the tests carry
+//! the window between the two docs both ways, as a sync connection does,
+//! until both machines store the expected pins.
+//!
+//! On main one room body wins whole: the first, second and fourth tests fail
+//! there; the third guards an unpin both machines saw.
 //!
 //! Run: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test room_pins_concurrent_merge`.
@@ -45,6 +50,8 @@ type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
 /// The room's base window: it is learned in March 2026.
 const WINDOW: &str = "2026-03";
+/// The vault's directory inside each machine's temp dir.
+const VAULT_DIR: &str = "vault";
 /// 2026-03-15 00:00 UTC, inside [`WINDOW`].
 const LEARNED_AT: u64 = 1_773_532_800;
 /// How long a machine's live mirror, or the two machines' sync, may take.
@@ -220,7 +227,10 @@ fn copy_vault_dir(from: &Path, to: &Path) -> TestResult {
 /// The machine on `dir`, its live window manager running as `user`, with the
 /// room's window open.
 fn open_machine(dir: tempfile::TempDir, user: &str) -> TestResult<Machine> {
-    let vault = Arc::new(Vault::open_owned(dir.path(), VaultConfig::default())?);
+    let vault = Arc::new(Vault::open_owned(
+        dir.path().join(VAULT_DIR),
+        VaultConfig::default(),
+    )?);
     let manager = Arc::new(WindowManager::new(
         Arc::clone(&vault),
         Arc::new(Materializer::new()),
@@ -239,9 +249,26 @@ fn open_machine(dir: tempfile::TempDir, user: &str) -> TestResult<Machine> {
 /// window once.
 fn two_machines() -> TestResult<(Machine, Machine, Room)> {
     let first_dir = tempfile::tempdir()?;
-    let room = seed_vault(first_dir.path())?;
+    let first_vault = first_dir.path().join(VAULT_DIR);
+    std::fs::create_dir_all(&first_vault)?;
+    let room = seed_vault(&first_vault)?;
+    let mut beside = Vec::new();
+    for entry in std::fs::read_dir(first_dir.path())? {
+        let name = entry?.file_name();
+        if name != VAULT_DIR {
+            beside.push(name);
+        }
+    }
+    if !beside.is_empty() {
+        return Err(format!(
+            "the seed left {beside:?} beside the vault (key custody or a page seal): a copy would share those keys"
+        )
+        .into());
+    }
     let second_dir = tempfile::tempdir()?;
-    copy_vault_dir(first_dir.path(), second_dir.path())?;
+    let second_vault = second_dir.path().join(VAULT_DIR);
+    std::fs::create_dir_all(&second_vault)?;
+    copy_vault_dir(&first_vault, &second_vault)?;
     let first = open_machine(first_dir, "machine-a")?;
     let second = open_machine(second_dir, "machine-b")?;
     exchange(&first.doc, &second.doc)?;
@@ -401,12 +428,17 @@ fn an_unpin_seen_by_both_replicas_stays_removed() -> TestResult {
     // B saw the pin and unpins it: the unpin reaches A and stays.
     unpin(&b, &room, room.first)?;
     converge(&a, &b, &room, &[])?;
+    // A later write on A, whose room body now holds the unpinned record,
+    // brings it back on neither machine.
+    let later = pin(&a, &room, room.second)?;
+    converge(&a, &b, &room, &[&later])?;
     for _ in 0..10 {
         exchange(&a.doc, &b.doc)?;
         std::thread::sleep(POLL);
     }
+    let expected = records(&[&later]);
     assert!(
-        stored_pins(&a, &room)?.is_empty() && stored_pins(&b, &room)?.is_empty(),
+        stored_pins(&a, &room)? == expected && stored_pins(&b, &room)? == expected,
         "a later sync brought an unpinned record back"
     );
     // No reader is served the records an unpin removed: the member's read
@@ -421,4 +453,22 @@ fn an_unpin_seen_by_both_replicas_stays_removed() -> TestResult {
         "a served room body names no pin record: {served}"
     );
     Ok(())
+}
+
+#[test]
+fn an_unpin_holds_against_a_later_write_that_still_holds_the_record() -> TestResult {
+    let (a, b, room) = two_machines()?;
+    let seen = pin(&a, &room, room.first)?;
+    converge(&a, &b, &room, &[&seen])?;
+    // Apart: B unpins the record. A, which still holds it, pins the second
+    // MESSAGE and changes that pin twice more, so A's room body is the
+    // window's later write and still carries the record B unpinned.
+    unpin(&b, &room, room.first)?;
+    let mut kept = pin(&a, &room, room.second)?;
+    for _ in 0..2 {
+        unpin(&a, &room, room.second)?;
+        kept = pin(&a, &room, room.second)?;
+    }
+    // Synced: B's unpin holds on both machines, and A's last pin stays.
+    converge(&a, &b, &room, &[&kept])
 }
