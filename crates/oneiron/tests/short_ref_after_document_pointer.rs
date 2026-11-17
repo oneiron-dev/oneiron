@@ -8,8 +8,12 @@
 //! other fields (a scope SUMMARY's body), or a text an edit changed.
 //! The text migration, atomic MESSAGE commit and streamed MESSAGE cases keep
 //! bodies the projection reproduces byte for byte; they guard that a fix
-//! keeps those refs resolving. The verbs are called by name through the
-//! embedded door, and their output is read as JSON.
+//! keeps those refs resolving. The owner's short-id repair pass
+//! (`oneiron maintain --recompute-short-ids`) keeps every one of them too:
+//! it hashed the stored row, a document-backed row's pointer, and moved the
+//! index to a hash no read issues (FIX RECOMPUTE-SHORT-ID-POINTER-HASH).
+//! The verbs are called by name through the embedded door, and their output
+//! is read as JSON.
 //!
 //! Fleet: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test short_ref_after_document_pointer`
 #![cfg(feature = "test-support")]
@@ -81,8 +85,8 @@ fn field<'a>(output: &'a Value, pointer: &str, what: &str) -> &'a Value {
 }
 
 /// The ref `vault.get` issues for `entity` must name it at
-/// `vault.refs.resolve` and read it back at `vault.get`.
-fn assert_issued_short_ref_resolves(memory: &Memory<'_>, entity: &EntityId) {
+/// `vault.refs.resolve` and read it back at `vault.get`. Returns that ref.
+fn assert_issued_short_ref_resolves(memory: &Memory<'_>, entity: &EntityId) -> String {
     let read = oneiron::task_verb::sdk::invoke(
         memory,
         "vault.get",
@@ -119,12 +123,31 @@ fn assert_issued_short_ref_resolves(memory: &Memory<'_>, entity: &EntityId) {
         !field(&reread, "/value", "vault.get by short ref").is_null(),
         "vault.get reads the row back by the ref it issued ({reference}): {reread}"
     );
+    reference
 }
 
-#[test]
-fn a_migrated_text_row_resolves_by_its_issued_short_ref() {
-    let (_directory, vault) = fresh_vault();
-    let (owner, proof) = authenticated_owner(&vault);
+/// The owner's short-id repair pass keeps `entity`'s index on the hash a
+/// live read issues: `vault.get` issues the same ref after the pass, and it
+/// still resolves (FIX RECOMPUTE-SHORT-ID-POINTER-HASH).
+fn assert_short_id_recompute_keeps_issued_ref(vault: &Vault, entity: &EntityId) {
+    let memory = owner_memory(vault);
+    let before = assert_issued_short_ref_resolves(&memory, entity);
+    vault
+        .maintain()
+        .recompute_short_id_hashes()
+        .run()
+        .expect("the owner's short-id recompute pass runs");
+    let after = assert_issued_short_ref_resolves(&memory, entity);
+    assert_eq!(
+        after, before,
+        "the recompute pass changes no issued short ref"
+    );
+}
+
+/// A text ASSET whose body the owner migrated to a document: the migration
+/// rewrites the indexed text body to a document pointer.
+fn migrated_text_row(vault: &Vault) -> EntityId {
+    let (owner, proof) = authenticated_owner(vault);
     let entity = EntityId::now();
     vault
         .put_entity(
@@ -135,7 +158,6 @@ fn a_migrated_text_row_resolves_by_its_issued_short_ref() {
             b"short ref fixture text",
         )
         .expect("text asset");
-    // The migration rewrites the indexed text body to a document pointer.
     vault
         .migrate_entity_text(
             &entity,
@@ -144,18 +166,16 @@ fn a_migrated_text_row_resolves_by_its_issued_short_ref() {
             &DocAuthorization::Owner(&proof),
         )
         .expect("the owner migrates the text to a document");
-
-    assert_issued_short_ref_resolves(&owner_memory(&vault), &entity);
+    entity
 }
 
-#[test]
-fn a_map_row_whose_text_field_moves_resolves_by_its_issued_short_ref() {
-    let (_directory, vault) = fresh_vault();
-    let (owner, proof) = authenticated_owner(&vault);
+/// A map ASSET whose text field the owner migrated to a document. The text
+/// field comes first, as a scope SUMMARY's body has it before its actor,
+/// covers and minting time; the document projection writes the other fields
+/// first and the text after them.
+fn map_row_with_moved_text_field(vault: &Vault) -> EntityId {
+    let (owner, proof) = authenticated_owner(vault);
     let entity = EntityId::now();
-    // The text field comes first, as a scope SUMMARY's body has it before
-    // its actor, covers and minting time. The document projection writes
-    // the other fields first and the text after them.
     let body = rmpv::Value::Map(vec![
         (
             rmpv::Value::from("text"),
@@ -182,6 +202,21 @@ fn a_map_row_whose_text_field_moves_resolves_by_its_issued_short_ref() {
             &DocAuthorization::Owner(&proof),
         )
         .expect("the owner migrates the text field to a document");
+    entity
+}
+
+#[test]
+fn a_migrated_text_row_resolves_by_its_issued_short_ref() {
+    let (_directory, vault) = fresh_vault();
+    let entity = migrated_text_row(&vault);
+
+    assert_issued_short_ref_resolves(&owner_memory(&vault), &entity);
+}
+
+#[test]
+fn a_map_row_whose_text_field_moves_resolves_by_its_issued_short_ref() {
+    let (_directory, vault) = fresh_vault();
+    let entity = map_row_with_moved_text_field(&vault);
 
     assert_issued_short_ref_resolves(&owner_memory(&vault), &entity);
 }
@@ -266,4 +301,49 @@ fn a_streamed_message_resolves_by_its_issued_short_ref() {
         .expect("the stream finalizes");
 
     assert_issued_short_ref_resolves(&memory, &handle.message_id());
+}
+
+#[test]
+fn a_migrated_text_row_keeps_its_issued_short_ref_through_the_short_id_recompute() {
+    let (_directory, vault) = fresh_vault();
+    let entity = migrated_text_row(&vault);
+
+    assert_short_id_recompute_keeps_issued_ref(&vault, &entity);
+}
+
+#[test]
+fn a_map_row_whose_text_field_moves_keeps_its_issued_short_ref_through_the_short_id_recompute() {
+    let (_directory, vault) = fresh_vault();
+    let entity = map_row_with_moved_text_field(&vault);
+
+    assert_short_id_recompute_keeps_issued_ref(&vault, &entity);
+}
+
+#[test]
+fn a_committed_message_keeps_its_issued_short_ref_through_the_short_id_recompute() {
+    let (_directory, vault) = fresh_vault();
+    let turn = witness_turn(&vault, "a committed message body");
+    owner_memory(&vault)
+        .commit_message(&turn)
+        .expect("the owner commits one MESSAGE");
+
+    assert_short_id_recompute_keeps_issued_ref(&vault, &message_id(&turn));
+}
+
+/// A row with no document keeps the stored row's hash, as before the fix.
+#[test]
+fn a_plain_text_row_keeps_its_issued_short_ref_through_the_short_id_recompute() {
+    let (_directory, vault) = fresh_vault();
+    let entity = EntityId::now();
+    vault
+        .put_entity(
+            &entity,
+            ENTITY_TYPE_ASSET,
+            TimeRange { start: 7, end: 7 },
+            9,
+            b"short ref fixture text kept in its row",
+        )
+        .expect("text asset");
+
+    assert_short_id_recompute_keeps_issued_ref(&vault, &entity);
 }
