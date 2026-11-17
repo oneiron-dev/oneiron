@@ -41,6 +41,7 @@ use zeroize::Zeroizing;
 
 use super::super::{
     FieldRule, REASON_DETECTED, scan_write_payload, secret_scan_error, write_payload_hit,
+    write_payload_hit_with_rule,
 };
 use super::body::{BodyForm, body_tree, encode_body};
 use super::changed_scan::scan_reads_same;
@@ -152,7 +153,7 @@ pub(super) fn plan_part_seals(
         if !sealing {
             return Err(refusal);
         }
-        let read = |bytes: &[u8]| hit(kept, record, bytes);
+        let read = |bytes: &[u8]| hit_with_rule(kept, record, bytes, rule);
         let clean = |part: &SidePart| part.scan(kept, record, rule).is_ok();
         let taken = seal_until_clean(part, refusal, |part| seal_part(part, &read), clean)?;
         seals.extend(taken.into_iter().map(|(at, reason)| Seal {
@@ -342,8 +343,20 @@ fn seal_tree_copy(
 /// the owner ruled no secret or kept as text there screened out; `None`
 /// when they read clean.
 fn hit(kept: &KeptValues, record: &EntityId, bytes: &[u8]) -> Option<&'static str> {
+    hit_with_rule(kept, record, bytes, FieldRule::AnyShape)
+}
+
+/// [`hit`], with the field rule `rule` over the members it reads: a row
+/// part's seal search reads a value as that row's scans read it, so it
+/// seals no value the rule reads part by part.
+fn hit_with_rule(
+    kept: &KeptValues,
+    record: &EntityId,
+    bytes: &[u8],
+    rule: FieldRule,
+) -> Option<&'static str> {
     let screened = kept.screened(record, bytes).map(Zeroizing::new);
-    write_payload_hit(screened.as_deref().map_or(bytes, Vec::as_slice))
+    write_payload_hit_with_rule(screened.as_deref().map_or(bytes, Vec::as_slice), rule)
 }
 
 /// The path of the smallest value in `tree` that reads as a hit on its own
