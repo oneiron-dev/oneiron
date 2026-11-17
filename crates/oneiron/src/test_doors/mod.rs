@@ -81,6 +81,7 @@ pub mod extra_room_index;
 pub mod fanout_admission;
 pub mod feed_prune;
 pub mod feeds;
+pub mod file_custody_marks;
 pub mod fingerprint_keep_executor_cohort_credit;
 pub mod fingerprint_keep_git_wire;
 pub mod fingerprint_keep_hook_digests;
