@@ -15,6 +15,11 @@
 
 use heed::{RoTxn, RwTxn};
 
+use crate::batch::export::RetainedSideHeldBackReason;
+use crate::batch::export::archive_side_install::{
+    ArchivedSideRowOutcome, decode_archived_row, install_archived_row,
+};
+use crate::batch::export::{ArchiveRetainedSideRow, OwnerArchiveRestorePermit};
 use crate::error::Result;
 use crate::side_table::{self, Raw, SideTable};
 use crate::store::Store;
@@ -106,4 +111,49 @@ pub(crate) fn clear(vault: &Vault, covered: &[WakeKey]) -> Result<()> {
     }
     txn.commit()?;
     Ok(())
+}
+
+/// The sweep whose notes carry `tag`.
+fn sweep_of(tag: [u8; 1]) -> Option<HousekeepingSweep> {
+    match tag {
+        [1] => Some(HousekeepingSweep::SecretLeaseExpiry),
+        [2] => Some(HousekeepingSweep::CriticalConfirmExpiry),
+        [3] => Some(HousekeepingSweep::VoicePrintRetention),
+        [4] => Some(HousekeepingSweep::SharedActMaturity),
+        [5] => Some(HousekeepingSweep::AnnotationBodyAnchors),
+        _ => None,
+    }
+}
+
+/// Lands archived wake notes with recognized sweep tags, holding back the rest. A note it
+/// installs makes its sweep's job due by its deadline in the same write, as a live note does.
+pub(crate) fn land_archived_housekeeping_wake_rows_in_txn(
+    vault: &Vault,
+    txn: &mut RwTxn<'_>,
+    permit: &OwnerArchiveRestorePermit,
+    rows: &[ArchiveRetainedSideRow],
+) -> Result<Vec<ArchivedSideRowOutcome>> {
+    let mut outcomes = Vec::with_capacity(rows.len());
+    for row in rows {
+        let outcome = match decode_archived_row(&WAKE, row) {
+            Err(reason) => ArchivedSideRowOutcome::HeldBack(reason),
+            Ok((key, ())) => match sweep_of(key.0) {
+                None => ArchivedSideRowOutcome::HeldBack(RetainedSideHeldBackReason::InvalidValue),
+                Some(sweep) => {
+                    let outcome = install_archived_row(&WAKE, vault, txn, permit, &key, row)?;
+                    if matches!(outcome, ArchivedSideRowOutcome::Installed) {
+                        crate::housekeeping::jobs::sweep_due_by_in_txn(
+                            &vault.store,
+                            txn,
+                            sweep,
+                            key.1,
+                        )?;
+                    }
+                    outcome
+                }
+            },
+        };
+        outcomes.push(outcome);
+    }
+    Ok(outcomes)
 }
