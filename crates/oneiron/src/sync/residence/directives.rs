@@ -170,7 +170,7 @@ impl Vault {
 /// covered ones the image carries whole (FIX 5412), or the stored ones alone
 /// where it dropped them for the residence-body overflow (FIX 11400), as
 /// before #4095 carried them.
-fn directive_states_in_txn(
+pub(crate) fn directive_states_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
 ) -> Result<Vec<ResidenceDirectiveState>> {

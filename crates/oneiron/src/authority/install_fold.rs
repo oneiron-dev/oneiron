@@ -16,9 +16,11 @@ pub(super) fn fold_as_install(
     consent_arm: fn(&FoldedDevice) -> bool,
     local: FoldLocalInputs<'_>,
 ) -> AuthorityFold {
+    // Floors apply where this install's observations do; the once fold
+    // takes each from the rows (`rows_floor`).
     let sequence_floors = local
         .observations
-        .map(|observations| &observations.sequence_floors);
+        .map(|_| &super::fold_engine::SEQUENCE_FLOORS_FROM_ROWS);
     let stale_roster_window_secs = local
         .observations
         .map_or(DEFAULT_STALE_ROSTER_WINDOW_SECS, |local| {
@@ -313,12 +315,15 @@ impl NoVouch {
         // Only a row a floor would refuse needs a vouch. A removal vouches for
         // its own branch, whichever rows that holds. A row causal ancestry
         // already admits needs none, so the floors are the ones the fold keeps
-        // once later rows of the same signer and scope vouch for what they
-        // can (Astra #1422c F1). Clearing only drops floors, so the receipts
-        // alone rule out most folds first.
+        // once later rows of the same signer vouch for what they can (Astra
+        // #1422c F1). With neither a vouched row nor a removal, no fold
+        // needs one.
         let removal = by_hash
             .values()
             .any(|entry| super::revoke_proof::removes_machine(&entry.op));
+        if observations.vouched.is_empty() && !removal {
+            return None;
+        }
         let rescues = |floors: &BTreeMap<AuthorityEntryHash, u64>| {
             let refused = |hash: &AuthorityEntryHash| {
                 by_hash
@@ -330,9 +335,8 @@ impl NoVouch {
             };
             observations.vouched.iter().any(refused) || (removal && floors.keys().any(refused))
         };
-        if !rescues(&observations.sequence_floors)
-            || !super::fold_engine::causal_floors_of(entries, bare)
-                .is_some_and(|floors| rescues(&floors))
+        if !super::fold_engine::causal_floors_of(entries, bare)
+            .is_some_and(|floors| rescues(&floors))
         {
             return None;
         }

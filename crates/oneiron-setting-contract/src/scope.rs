@@ -2,6 +2,7 @@
 
 use oneiron_contracts::entity_id::EntityId;
 use oneiron_contracts::error::{Error, Result};
+use oneiron_contracts::register::Register;
 use serde::{Deserialize, Serialize};
 
 /// The kinds of place a row may sit at. One enum covers every scope the engine's settings use:
@@ -19,8 +20,10 @@ use serde::{Deserialize, Serialize};
     Serialize,
     Deserialize,
     schemars::JsonSchema,
+    Register,
 )]
 #[serde(rename_all = "snake_case")]
+#[register("setting.scope_kind")]
 pub enum ScopeKind {
     Vault,
     World,
@@ -84,24 +87,15 @@ impl ScopeKind {
             .position(|kind| *kind == self)
             .unwrap_or(Self::NARROWEST_FIRST.len())
     }
-
-    /// The kind's wire token.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Vault => "vault",
-            Self::World => "world",
-            Self::Project => "project",
-            Self::SubProject => "sub_project",
-            Self::Thread => "thread",
-            Self::Goal => "goal",
-            Self::TaskType => "task_type",
-            Self::Agent => "agent",
-            Self::Person => "person",
-            Self::Repo => "repo",
-        }
-    }
 }
+
+/// The scope kinds a learned key may sit at: the places a fit's cell is keyed by.
+pub const LEARNED_SCOPES: [ScopeKind; 4] = [
+    ScopeKind::Goal,
+    ScopeKind::Project,
+    ScopeKind::TaskType,
+    ScopeKind::Vault,
+];
 
 /// One place a row applies. The vault has no id; a task type is named by its type node; every
 /// other kind by its entity.
