@@ -176,6 +176,8 @@ pub mod payment_credential;
 pub mod peer_author_redaction;
 pub mod pending_write_tray;
 #[cfg(feature = "sync")]
+pub mod pending_work_reports;
+#[cfg(feature = "sync")]
 pub mod predicted_residence;
 pub mod provenance_body_checkpoint;
 pub mod question_saved_lane;
