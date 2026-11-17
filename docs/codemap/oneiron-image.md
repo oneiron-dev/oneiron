@@ -23,4 +23,5 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/host_e2e.rs` | test | s | — | — | The image organ as its own process behind the organ host, over a real vault blob (ART-1 "done means", the… |
 | `tests/hostile_input.rs` | test | m | — | — | Inputs built to slip past the header checks (the second PR2 review round) |
 | `tests/image_edit_landing.rs` | test | L | — | — | An image artifact's edit through the image organ's host adapter (`oneiron_organ_host::image`, L4-15): the… |
+| `tests/image_edit_owner_max_ops.rs` | test | s | — | — | Restriction wave 13 (census C112), end to end: an owner who raises `organ_host.image.max_ops` past 256 gets… |
 | `tests/image_ops.rs` | test | L | — | — | The image organ's first slice, checked against analytic pixels (ART-1 plan, "Fixture and oracle gate"): crop… |

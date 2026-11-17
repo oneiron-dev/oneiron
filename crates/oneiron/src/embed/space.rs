@@ -27,7 +27,7 @@ use super::EmbeddingProvenance;
 use super::device::{
     clear_media_devices_in_txn, drop_media_device_in_txn, record_media_device_in_txn,
 };
-use crate::Vault;
+use super::world_space::WorldTextSpaces;
 use crate::batch::{BatchOp, ENTITY_METADATA_HEADER_LEN, apply_ops};
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
@@ -36,8 +36,9 @@ use crate::pipeline::ScoredEntity;
 use crate::ports::EntityStoreRead;
 use crate::registry::ENTITY_TYPE_EMBEDDING_SETUP;
 use crate::side_table::{self, CodecError, Named, Raw, RawValue, SideTable, SideTableDbs};
-use crate::store::{decode_vector_row, encode_vector_row_v1};
+use crate::store::{Store, decode_vector_row, encode_vector_row_v1};
 use crate::temporal::TimeRange;
+use crate::{HostingPrivacyPosture, Vault};
 
 mod bindings;
 mod capabilities;
@@ -47,8 +48,10 @@ mod replica;
 pub(super) mod repo_projection;
 #[cfg(feature = "sync")]
 pub use replica::MediaVectorReplica;
+#[cfg(all(feature = "sync", oneiron_test_support))]
+pub(crate) use replica::install_media_vector_replica_in_txn;
 #[cfg(feature = "sync")]
-pub(crate) use replica::reuse_home_text_media_vectors;
+pub(crate) use replica::reuse_home_media_vectors;
 
 pub use crate::store::embedding::{
     EMBEDDING_SETUP_LEARNED_AT, EMBEDDING_SPACE_ID_MAX_LEN, EMBEDDING_SPACE_MAX_DIMENSIONS,
@@ -211,8 +214,8 @@ const WIDTH_CONFLICT_TAKES_CARRIER: bool = true;
 
 /// Installs one replicated EMBEDDING_SETUP row of this vault into the side tables in `wtxn`,
 /// under the checks its local writer makes. `id` must be the row's own derived id. A binding of
-/// a space not declared here yet, a retirement of a space a slot here still binds, and a row
-/// naming a slot a move here carries wait
+/// a space not declared here yet, a retirement of a space a slot here still binds or a world's
+/// model order here names as its text space, and a row naming a slot a move here carries wait
 /// ([`ArtifactError::EmbeddingSetupDependencyPending`]); anything else that fails a check is
 /// refused ([`ArtifactError::InvalidEmbeddingSetupBody`]). Nothing is written then. A declaration
 /// at another width than the one here is the carrier every device keeps
@@ -220,7 +223,8 @@ const WIDTH_CONFLICT_TAKES_CARRIER: bool = true;
 /// replaces the declaration here and drops its vectors.
 #[cfg(feature = "sync")]
 pub(crate) fn install_replicated_embedding_setup_in_txn(
-    store: &impl SideTableDbs,
+    store: &Store,
+    posture: HostingPrivacyPosture,
     wtxn: &mut RwTxn<'_>,
     id: &EntityId,
     data: &[u8],
@@ -266,9 +270,9 @@ pub(crate) fn install_replicated_embedding_setup_in_txn(
                 }
                 drop_space_rows_in_txn(store, wtxn, &space.id, &InputKind::ALL.into())?;
             }
-            // A same-width declaration keeps what the bound slots use, as the local declare
-            // path does (FIX 9832, FIX 11170); a first declaration, or one arriving after the
-            // width-conflict handling above, lands as it came.
+            // A same-width declaration keeps what the bound slots and a world's text space
+            // use, as the local declare path does (FIX 9832, FIX 11170); a first declaration,
+            // or one arriving after the width-conflict handling above, lands as it came.
             let space = match &existing {
                 Some(existing) if existing.dimensions == space.dimensions => {
                     capabilities::reconcile_bound_space_capabilities_in_txn(
@@ -292,6 +296,11 @@ pub(crate) fn install_replicated_embedding_setup_in_txn(
             }
             if super::space_move::open_move_names_in_txn(store, wtxn, &space_id)? {
                 return Err(setup_waits(format!("an open move here names {space_id}")));
+            }
+            if WorldTextSpaces::read_for_store_in(store, posture, wtxn)?.names(&space_id) {
+                return Err(setup_waits(format!(
+                    "a world's model order here names {space_id} as its text space"
+                )));
             }
             let key = space_key(&space_id);
             MEDIA_VECTOR.delete_from(store, wtxn, &key)?;
@@ -498,10 +507,10 @@ pub(crate) fn embedding_spaces_in_txn(
 }
 
 /// [`Vault::declare_embedding_space`] in the caller's write: a valid space, at its declared
-/// width when its id is declared already, keeping what the slots it serves use
+/// width when its id is declared already, keeping what the slots and worlds it serves use
 /// ([`capabilities::reconcile_bound_space_capabilities_in_txn`], FIX 9832).
 pub(crate) fn declare_embedding_space_in_txn(
-    store: &impl SideTableDbs,
+    store: &Store,
     txn: &mut RwTxn<'_>,
     space: &EmbeddingSpace,
 ) -> Result<()> {
@@ -780,6 +789,38 @@ pub(super) fn drop_space_rows_in_txn(
     Ok(())
 }
 
+/// Drops the rows of `kinds` a version move filled into its candidate `space_id`, as the move
+/// ends without the candidate taking the slots: abandoned, expired, or kept by its check. A
+/// world whose model order names the candidate as its own text space is a live user of it, as a
+/// kind slot that binds it is (DEC-0005 #private-world-vectors): its declaration stays, and so
+/// does the vector of every row such a world routes to it. Only the rows no world routes there
+/// go. Otherwise [`drop_space_rows_in_txn`].
+pub(super) fn drop_candidate_rows_in_txn(
+    store: &Store,
+    posture: HostingPrivacyPosture,
+    txn: &mut RwTxn<'_>,
+    space_id: &str,
+    kinds: &BTreeSet<InputKind>,
+) -> Result<()> {
+    let worlds = WorldTextSpaces::read_for_store_in(store, posture, txn)?;
+    if !worlds.names(space_id) {
+        return drop_space_rows_in_txn(store, txn, space_id, kinds);
+    }
+    let key = space_key(space_id);
+    let mut drop = Vec::new();
+    for row in MEDIA_VECTOR.iter_from(store, txn, &key)? {
+        let ((_, id), row) = row?;
+        if kinds.contains(&row.kind) && !worlds.of_row(store, txn, &id)?.contains(space_id) {
+            drop.push(id);
+        }
+    }
+    for id in drop {
+        MEDIA_VECTOR.delete(store, txn, &(key, id))?;
+        drop_media_device_in_txn(store, txn, &(key, id))?;
+    }
+    Ok(())
+}
+
 /// Removes `id`'s text rows from every declared space, as its text-index vector is dropped: a
 /// vector of words the record no longer holds stops matching at once, and the backfill embeds
 /// what is left. Its image and audio rows stay; a refusal of it is forgotten, so the backfill
@@ -805,6 +846,28 @@ pub(crate) fn delete_text_media_vectors_in_txn(
         MEDIA_REFUSED.delete(store, txn, &(key, *id))?;
     }
     Ok(())
+}
+
+/// Removes `id`'s text row from `space` alone, with its device mark and any refusal of it there;
+/// its image and audio rows stay. Whether it held a text row there.
+#[cfg(feature = "sync")]
+pub(super) fn delete_text_media_vector_in_space_in_txn(
+    store: &impl SideTableDbs,
+    txn: &mut RwTxn<'_>,
+    space: &EmbeddingSpace,
+    id: &EntityId,
+) -> Result<bool> {
+    let key = (space.key(), *id);
+    if !MEDIA_VECTOR
+        .get(store, txn, &key)?
+        .is_some_and(|row| row.kind == InputKind::Text)
+    {
+        return Ok(false);
+    }
+    MEDIA_VECTOR.delete(store, txn, &key)?;
+    drop_media_device_in_txn(store, txn, &key)?;
+    MEDIA_REFUSED.delete(store, txn, &key)?;
+    Ok(true)
 }
 
 /// Removes `id`'s media vectors from every declared space; the delete door calls it beside the
@@ -1178,9 +1241,9 @@ impl Vault {
         )
     }
 
-    /// Retires a declared space no slot binds and no open version move names: its rows and its
-    /// declaration go. The owner's door: its row names the owner (FIX 6697), and the write
-    /// checks the owner's proof again (FIX 8200).
+    /// Retires a declared space no slot binds, no open version move names and no world's model
+    /// order names as its text space: its rows and its declaration go. The owner's door: its row
+    /// names the owner (FIX 6697), and the write checks the owner's proof again (FIX 8200).
     pub fn retire_embedding_space(&self, owner: &AuthenticatedOwner, space_id: &str) -> Result<()> {
         self.retire_embedding_space_as(space_id, SetupDoor::Owner(owner))
     }
@@ -1205,6 +1268,14 @@ impl Vault {
         if super::space_move::open_move_names_in_txn(&self.store, &wtxn, space_id)? {
             return Err(Error::InvalidConfig(format!(
                 "an open embedding space move names {space_id}; conclude or abandon it first"
+            )));
+        }
+        // A world's order that names the space as its text space uses it as a slot does: its
+        // rows embed there alone (DEC-0005 #private-world-vectors).
+        if WorldTextSpaces::read_in(self, &wtxn)?.names(space_id) {
+            return Err(Error::InvalidConfig(format!(
+                "a world's model order names embedding space {space_id} as its text space; \
+                 change that order first"
             )));
         }
         MEDIA_VECTOR.delete_from(&self.store, &mut wtxn, &space_key(space_id))?;
