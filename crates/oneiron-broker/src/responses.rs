@@ -32,7 +32,7 @@ const SOCKET_LIMIT: &str = "websocket_connection_limit_reached";
 
 #[expect(
     clippy::too_many_arguments,
-    reason = "one parameter per part of a send: the call, its URL, its bodies, the release state, the key, the daemon's stream and the deadline"
+    reason = "one parameter per part of a send: the websocket's TLS settings, the call, its URL, its bodies, the release state, the key, the daemon's stream and the deadline"
 )]
 pub(crate) async fn responses_to<W: AsyncRead + AsyncWrite + Unpin>(
     ws_tls: &Arc<rustls::ClientConfig>,
