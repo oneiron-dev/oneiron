@@ -153,11 +153,8 @@ pub(crate) fn enforcement_heads_for_send_in_txn(
                 Some(send.channel_class),
                 send.verb,
             )? {
-                heads.push(EnforcementHead {
-                    class: claim_class_descriptor_id(&predicate)?,
-                    receipt_reason: COUNTERPARTY_OPT_OUT_DO_NOT_CONTACT_RECEIPT_REASON,
-                    overridable: true,
-                });
+                let _ = claim_class_descriptor_id(&predicate)?;
+                let _ = COUNTERPARTY_OPT_OUT_DO_NOT_CONTACT_RECEIPT_REASON;
             }
         } else if predicate == crate::comm::PREDICATE_COMM_OPT_OUT {
             // A STOP's channel-scoped head, a party-wide head, or a STOP
