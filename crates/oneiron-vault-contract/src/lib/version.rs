@@ -515,6 +515,14 @@ pub const SLIM_CONTRACT_VERSION: u32 = 2;
 /// one before it. A block that does not read is unknown too, never a failed
 /// `Ping`. This version stays 3.
 ///
+/// A vault's process readiness on `Ping` (L8-11,
+/// [`ProcessReadinessReport`](crate::ProcessReadinessReport)): an optional
+/// `process`, with the event-loop watchdog's `state` (`ready`, `degraded`,
+/// `recovering` or `draining`) and its last sample's `lag_ms`. It carries a
+/// build floor, at the engine revision it merged in, with no revision field:
+/// a vault built before it sends none, which reads as unknown. A block that
+/// does not read is unknown too, never a failed `Ping`. This version stays 3.
+///
 /// Live preview lease origins (FIX 1115,
 /// [`PreviewOrigin`](crate::artifact_origin::PreviewOrigin)): the
 /// `p-<lease>.<domain>` label, naming and host-reading codec carries a build

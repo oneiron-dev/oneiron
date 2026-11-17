@@ -87,6 +87,11 @@ pub struct AuthenticatedOwner {
     /// ([`Vault::bind_managed_mfa_verified`], L7-17): that act's org Admin
     /// step-up. It lends no other authority.
     managed_mfa_verified: bool,
+    /// The owner key this install holds that proved this owner for one ask
+    /// word ([`Vault::authenticate_owner_device`], UC-05 PR 2b). Every
+    /// revalidation then also requires the authority fold to still trust it
+    /// as the owner's.
+    owner_key: Option<crate::authority::AuthorityKey>,
 }
 
 impl AuthenticatedOwner {
@@ -286,6 +291,20 @@ impl AuthenticatedOwner {
                 "person credential is no longer live",
             )));
         }
+        if let Some(key) = &self.owner_key {
+            // Rechecked in the caller's transaction (UC-05 PR 2b): an owner
+            // key revoked, or taken into the host's custody, while the word
+            // waited for the writer commits nothing.
+            let hosted = vault.privacy_posture() == crate::HostingPrivacyPosture::Hosted;
+            if !vault
+                .authority_view_readonly_in_txn(txn)?
+                .proves_owner_acts(key, hosted)
+            {
+                return Err(Error::Gate(GateError::ConsentOwnerNotAuthenticated(
+                    "the owner key this owner proved with no longer proves the owner's acts",
+                )));
+            }
+        }
         self.request_credential_holds_in_txn(vault, txn)?;
         Ok(self.actor)
     }
@@ -348,6 +367,13 @@ impl AuthenticatedOwner {
     pub(crate) fn carried_by_support_slip(&self) -> bool {
         self.carried_slip()
             .is_some_and(|credential| credential.claims().delegation.is_some())
+    }
+
+    /// Whether this is a person's own proof, carried by their person
+    /// credential ([`Vault::bind_person_credential`]): it carries no owner
+    /// authority, even an owner's (FIX 4707).
+    pub(crate) const fn is_person_tier(&self) -> bool {
+        self.person_credential.is_some()
     }
 
     /// The slip a transport bound this proof to: the owner's credential, or
