@@ -95,8 +95,9 @@ impl DreamerAttemptBinding {
     /// This door has no served pieces, so it keeps the terminal record's JSON rather
     /// than decoding the bound extraction reply as submit and resubmit do. It answers only
     /// while every queued TURN still serves and every row the step's request was read
-    /// from still reads for this actor at the version the request named; otherwise every
-    /// hash answers as an unknown hash does.
+    /// from still reads for this actor at the version the request named, a TURN's version
+    /// through the TURN reader as the inputs page reads it; otherwise every hash answers as
+    /// an unknown hash does.
     pub(super) fn extraction_step_receipt(
         &self,
         input: ModelStepReceiptRequest,
@@ -129,13 +130,18 @@ impl DreamerAttemptBinding {
             }
             let still_reads =
                 |version: &crate::snapshot_read::SourceVersion| -> crate::Result<bool> {
+                    let version_read = if version.entity_type == crate::registry::ENTITY_TYPE_TURN {
+                        turn_read
+                    } else {
+                        &read
+                    };
                     Ok(crate::snapshot_read::observed_claim_reads_in_txn(
                         vault,
                         txn,
                         &read,
                         reader_scope.as_ref(),
                         version.entity,
-                    )? && version.recheck_in_txn(&read, txn)?
+                    )? && version.recheck_in_txn(version_read, txn)?
                         == crate::snapshot_read::SourceVersionCheck::Current)
                 };
             crate::llm::request_hash_step_receipt_in_txn(
