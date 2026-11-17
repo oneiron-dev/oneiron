@@ -38,6 +38,19 @@
 //!   redaction even while the task holds the answer. Passes on the base and
 //!   with the fix; failed at the PR's first head, which restored on the
 //!   mark alone.
+//! - `a_post_hook_that_redacts_keep_leaves_the_statements_withheld` (blind
+//!   review round 1 of #9318): a post hook redacts `keep` from the kept
+//!   form. The caller's view keeps both stand-ins and no statement: the
+//!   statements go back only into an answer that still says it is kept
+//!   `task`. Red on the base (the hook reads the whole answer, so the view
+//!   keeps the statement) and at the PR head 0edcc19d95 (it restored on the
+//!   stand-ins alone).
+//! - `a_drained_ask_saves_no_statement_of_an_answer_with_no_keep`: the same
+//!   review. A drained rerun whose answer reaches the save with its `keep`
+//!   gone, as a post hook that redacted `keep` left it at 0edcc19d95, is
+//!   saved withheld, and the retry restores nothing into it even while the
+//!   task holds the answer. Red on the base and at 0edcc19d95 (both saved
+//!   the answer whole: only `keep` = `task` was withheld).
 //!
 //! The doors build only under the test cfg:
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test inquiry_answer_hook_copies`.
@@ -91,6 +104,8 @@ const BODY_JS: &str = "return { kind: \"continue\" };\n";
 const CONTINUE: &str = r#"{"kind":"continue"}"#;
 /// A pre hook's outcome that pauses the call on the owner's answer.
 const ASK: &str = r#"{"kind":"ask","question":"Send this inquiry?"}"#;
+/// A post hook's outcome that redacts the answer's `keep`.
+const REDACT_KEEP: &str = r#"{"kind":"redact","paths":["/keep"]}"#;
 
 /// The hook sandbox the test installs: it keeps each input it is handed and
 /// answers `outcome`.
@@ -498,4 +513,68 @@ fn a_drained_ask_retry_keeps_what_a_post_hook_redacted() {
         retried, redacted,
         "the retry reads the answer as the hook left it"
     );
+}
+
+#[test]
+fn a_post_hook_that_redacts_keep_leaves_the_statements_withheld() {
+    let fixture = Fixture::new(REDACT_KEEP);
+    fixture.bind_hook("post", "redact");
+    let reply = answer(EntityId::now(), "task");
+
+    let view = fixture.post_chain(&reply);
+    let inputs = fixture.runtime.inputs();
+    assert_eq!(inputs.len(), 1, "the post hook ran once");
+    assert_withheld(&inputs[0], "the post hook's input");
+    assert!(
+        !view.to_string().contains(MEMBER_WORD),
+        "the caller's view of an answer whose keep a hook redacted holds no statement: {view}"
+    );
+    assert_eq!(view.get("keep"), None, "the hook redacted keep: {view}");
+    assert_eq!(view["statements"], json!([]), "{view}");
+    assert_eq!(view["statements_withheld"], json!(true), "{view}");
+    assert_eq!(view["inquiry_id"], reply["inquiry_id"], "{view}");
+}
+
+#[test]
+fn a_drained_ask_saves_no_statement_of_an_answer_with_no_keep() {
+    let fixture = Fixture::new(ASK);
+    let binding = fixture.bind_hook("pre", "ask");
+    let inquiry = EntityId::now();
+    let task = fixture.open_task();
+    let statement = InquiryStatement::new(MEMBER_WORD, StatementSource::MemberWord)
+        .expect("the member's statement");
+    assert!(
+        door::hold_answer(
+            &fixture.vault,
+            fixture.owner,
+            task,
+            inquiry,
+            &[statement],
+            VALID_UNTIL,
+        )
+        .expect("hold the answer"),
+        "the open task holds the answer"
+    );
+    // The view a post hook that redacted `keep` left at the drain's rerun on
+    // the PR head 0edcc19d95: the statements back, no `keep`.
+    let mut unkept = answer(inquiry, "task");
+    unkept
+        .as_object_mut()
+        .expect("an answer object")
+        .remove("keep");
+    fixture
+        .vault
+        .install_verb_ask_credential_check(Arc::new(AnsweringCheck {
+            reply: unkept.clone(),
+        }));
+
+    let retried = fixture.drained_retry(binding, task);
+    assert!(
+        !retried.to_string().contains(MEMBER_WORD),
+        "the saved answer with no keep holds no statement, and the retry restores none: {retried}"
+    );
+    assert_eq!(retried.get("keep"), None, "{retried}");
+    assert_eq!(retried["statements"], json!([]), "{retried}");
+    assert_eq!(retried["statements_withheld"], json!(true), "{retried}");
+    assert_eq!(retried["inquiry_id"], json!(inquiry), "{retried}");
 }
