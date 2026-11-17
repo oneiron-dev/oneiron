@@ -63,6 +63,7 @@ use super::{BackupSelection, INDEX_SOURCE_PHONETIC, INDEX_SOURCE_TEXT, StorageTi
 use crate::error::{Error, Result};
 use crate::side_table::SideDb;
 use crate::store::checkpoint_payload::CHECKPOINT_PAYLOADS_ENABLED;
+use crate::store::checkpoint_payload::rows::descriptor::Adapter;
 use crate::store::checkpoint_payload::rows::{
     Captured, OpenedOwnerRows, OwnerRef, OwnerRows, Restored, RowDb, RowLocator, RowPart,
     frame_actor_parts, frame_owner,
@@ -114,77 +115,56 @@ pub(crate) fn getter_restore_in_txn(
 
 pub(in crate::recovery::checkpoint) use crate::store::checkpoint_payload::rows::{Carrier, Getter};
 
-/// Each owner getter's store module, beside its own codecs (KS7-2a): it reads the getter's
-/// families and puts an opened compartment's rows back. The getters, their tags and their order
-/// sit with the rows they place ([`Getter`]).
-macro_rules! getter_modules {
-    (
-        modules { $($name:ident => $($module:ident)::+;)+ }
-        rows { $($row:ident => $($row_module:ident)::+;)+ }
-    ) => {
-        impl Getter {
-            /// Every row of this getter's families in `txn`, by owner. It
-            /// reads its whole families: nothing here filters them.
-            pub(super) fn capture(self, store: &Store, txn: &RoTxn<'_>) -> Result<Captured> {
-                match self {
-                    $(Self::$name => $($module)::+::capture(store, txn),)+
-                    $(Self::$row => $($row_module)::+::ADAPTER.capture(store, txn),)+
-                }
-            }
-
-            /// `rows`' parts in this getter's families, framed for their
-            /// compartment.
-            pub(super) fn bytes_for_owner(self, rows: &OwnerRows) -> Result<Vec<u8>> {
-                match self {
-                    $(Self::$name => $($module)::+::bytes_for_owner(rows),)+
-                    $(Self::$row => $($row_module)::+::ADAPTER.bytes_for_owner(rows),)+
-                }
-            }
-
-            /// Puts an opened compartment's rows of this getter back in
-            /// `txn`, through the restore-only sink.
-            pub(in crate::recovery::checkpoint) fn restore_in_txn(
-                self,
-                store: &Store,
-                txn: &mut RwTxn<'_>,
-                opened: OpenedOwnerRows,
-            ) -> Result<Restored> {
-                match self {
-                    $(Self::$name => $($module)::+::restore_in_txn(store, txn, opened),)+
-                    $(Self::$row => $($row_module)::+::ADAPTER.restore_in_txn(store, txn, opened),)+
-                }
-            }
+impl Getter {
+    /// This getter's checkpoint row, in its store module beside its own
+    /// codecs (KS7-2a): the tables its compartments hold, and how its
+    /// capture, check, join and restore read them (UC-10). The getters, their
+    /// tags and their order sit with the rows they place ([`Getter`]).
+    fn adapter(self) -> &'static Adapter {
+        match self {
+            Self::Entities => &crate::ports::checkpoint::ADAPTER,
+            Self::Note => &crate::note::checkpoint::ADAPTER,
+            Self::EntityDoc => &crate::entity_doc::checkpoint::ADAPTER,
+            Self::TypedBody => &crate::typed_body::checkpoint::ADAPTER,
+            Self::EntityRevision => &crate::vault::entity_revision::checkpoint::ADAPTER,
+            Self::TextSource => &crate::bm25::checkpoint::ADAPTER,
+            Self::PhoneticSource => &crate::batch::checkpoint::ADAPTER,
+            Self::ProvenanceBody => &crate::provenance::body::checkpoint::ADAPTER,
+            Self::ProvenanceBirth => &crate::provenance::birth::checkpoint::ADAPTER,
+            Self::CodeDocument => &crate::code_document::checkpoint::ADAPTER,
+            Self::CodeRevision => &crate::code_revision::checkpoint::ADAPTER,
+            Self::Codebase => &crate::codebase::checkpoint::ADAPTER,
+            Self::OfficeBody => &crate::office_body::checkpoint::ADAPTER,
+            Self::BlobArtifact => &crate::blob_artifact::checkpoint::ADAPTER,
+            Self::OutboundCall => &crate::outbound_intent_ledger::checkpoint::ADAPTER,
+            Self::BlockedSourceOwner => &crate::self_heal::blocked_reports::checkpoint::ADAPTER,
+            Self::EmbedMedia => &crate::embed::checkpoint::ADAPTER,
+            Self::WorkflowTool => &crate::agent_dispatch::workflow_tool_checkpoint::ADAPTER,
+            Self::SourceAudience => &crate::source_audience::checkpoint::ADAPTER,
         }
-    };
-}
-
-/// Each owner getter's store module, beside its own codecs (KS7-2a): it reads the getter's
-/// families and puts an opened compartment's rows back. The getters, their tags and their order
-/// sit with the rows they place ([`Getter`]). A module under `rows` declares its checkpoint rows
-/// once, as its `ADAPTER` descriptor row (UC-10); the others still spell their own skeleton.
-getter_modules! {
-    modules {
-        Entities => crate::ports::checkpoint;
-        Note => crate::note::checkpoint;
-        EntityDoc => crate::entity_doc::checkpoint;
-        EntityRevision => crate::vault::entity_revision::checkpoint;
     }
-    rows {
-        TypedBody => crate::typed_body::checkpoint;
-        ProvenanceBirth => crate::provenance::birth::checkpoint;
-        CodeDocument => crate::code_document::checkpoint;
-        CodeRevision => crate::code_revision::checkpoint;
-        OfficeBody => crate::office_body::checkpoint;
-        BlobArtifact => crate::blob_artifact::checkpoint;
-        TextSource => crate::bm25::checkpoint;
-        PhoneticSource => crate::batch::checkpoint;
-        ProvenanceBody => crate::provenance::body::checkpoint;
-        Codebase => crate::codebase::checkpoint;
-        OutboundCall => crate::outbound_intent_ledger::checkpoint;
-        BlockedSourceOwner => crate::self_heal::blocked_reports::checkpoint;
-        EmbedMedia => crate::embed::checkpoint;
-        WorkflowTool => crate::agent_dispatch::workflow_tool_checkpoint;
-        SourceAudience => crate::source_audience::checkpoint;
+
+    /// Every row of this getter's families in `txn`, by owner. It reads
+    /// its whole families: nothing here filters them.
+    pub(super) fn capture(self, store: &Store, txn: &RoTxn<'_>) -> Result<Captured> {
+        self.adapter().capture(store, txn)
+    }
+
+    /// `rows`' parts in this getter's families, framed for their
+    /// compartment.
+    pub(super) fn bytes_for_owner(self, rows: &OwnerRows) -> Result<Vec<u8>> {
+        self.adapter().bytes_for_owner(rows)
+    }
+
+    /// Puts an opened compartment's rows of this getter back in `txn`,
+    /// through the restore-only sink.
+    pub(in crate::recovery::checkpoint) fn restore_in_txn(
+        self,
+        store: &Store,
+        txn: &mut RwTxn<'_>,
+        opened: OpenedOwnerRows,
+    ) -> Result<Restored> {
+        self.adapter().restore_in_txn(store, txn, opened)
     }
 }
 

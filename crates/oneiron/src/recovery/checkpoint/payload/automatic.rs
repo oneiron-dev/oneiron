@@ -123,7 +123,7 @@ impl Selection {
         if !out.owners.is_empty() {
             // Reuse the native head/NOTE marker/birth/fork associations and its
             // shared-owner verdict. A document slot is never an entity guess.
-            let documents = crate::entity_doc::checkpoint::capture(&vault.store, txn)?;
+            let documents = crate::entity_doc::checkpoint::ADAPTER.capture(&vault.store, txn)?;
             out.captured_rows(&documents, |_| true);
 
             // The native body getter binds each occurrence part to the

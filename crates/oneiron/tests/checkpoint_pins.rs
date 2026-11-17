@@ -1,4 +1,4 @@
-//! The fifteen checkpoint getters' pins (UC-10 PR 3 and PR 4): one fixed seed,
+//! The nineteen checkpoint getters' pins (UC-10 PR 3, PR 4 and PR 5): one fixed seed,
 //! one printed table. Run at the commit before the getters move onto the
 //! shared descriptor and at the commit after; both runs print the same table.
 #![cfg(oneiron_test_support)]
@@ -7,8 +7,8 @@ use oneiron::test_doors::checkpoint_pins as doors;
 use oneiron::{Vault, VaultConfig};
 use sha2::{Digest, Sha256};
 
-/// The fifteen getters, in pin order.
-const GETTERS: [&str; 15] = [
+/// The nineteen getters, in pin order.
+const GETTERS: [&str; 19] = [
     "bm25",
     "batch",
     "provenance_body",
@@ -24,16 +24,24 @@ const GETTERS: [&str; 15] = [
     "code_revision",
     "office_body",
     "blob_artifact",
+    "entities",
+    "note",
+    "entity_doc",
+    "entity_revision",
 ];
 
-/// The six getters that also restore with no actor parts.
-const BARE_GETTERS: [&str; 6] = [
+/// The ten getters that also restore with no actor parts.
+const BARE_GETTERS: [&str; 10] = [
     "typed_body",
     "provenance_birth",
     "code_document",
     "code_revision",
     "office_body",
     "blob_artifact",
+    "entities",
+    "note",
+    "entity_doc",
+    "entity_revision",
 ];
 
 #[test]
@@ -46,7 +54,7 @@ fn checkpoint_pins_table_of_the_getters() {
         .expect("open the target vault");
     let bare = Vault::open(directory.path().join("bare"), VaultConfig::device())
         .expect("open the bare vault");
-    let lines = doors::pins(&source, &target, &bare).expect("pin the fifteen getters");
+    let lines = doors::pins(&source, &target, &bare).expect("pin the nineteen getters");
     for line in &lines {
         println!("PIN {line}");
     }
@@ -71,10 +79,12 @@ fn checkpoint_pins_table_of_the_getters() {
     }
     for getter in BARE_GETTERS {
         let bare_prefix = format!("RESTORED-BARE {getter} ");
+        let refused_prefix = format!("REFUSED-BARE {getter} ");
         assert!(
             lines
                 .iter()
-                .any(|line| line.starts_with(bare_prefix.as_str())),
+                .any(|line| line.starts_with(bare_prefix.as_str())
+                    || line.starts_with(refused_prefix.as_str())),
             "no bare restore line for {getter}"
         );
     }
