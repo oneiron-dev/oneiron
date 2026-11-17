@@ -697,6 +697,11 @@ pub(crate) fn mcp_error_response(id: Value, error: McpGatewayError) -> Value {
     {
         object.insert("pending".to_owned(), json!(*pending));
     }
+    if let Some(required) = error.required_capabilities
+        && let Some(object) = data.as_object_mut()
+    {
+        object.insert("requiredCapabilities".to_owned(), *required);
+    }
     if let Some(retry_after) = error.retry_after
         && let Some(object) = data.as_object_mut()
     {
