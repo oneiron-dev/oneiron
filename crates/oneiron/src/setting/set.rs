@@ -593,6 +593,7 @@ fn open_request_in_txn(
         &VerifiedChain::new(&NoAgentVerdict),
         now,
     )?;
+    super::ask::keep_ask_in_txn(vault, txn, &row.id, agent, change.key, change.value)?;
     Ok(SetSettingOutcome::Pending {
         check_in: row.id.to_hex(),
     })
@@ -618,5 +619,5 @@ fn spend_in_txn(
         ));
     }
     consume_pending_check_in_in_txn(vault, txn, id, &effect_digest(change), now)?;
-    Ok(())
+    super::ask::drop_ask_in_txn(vault, txn, id)
 }

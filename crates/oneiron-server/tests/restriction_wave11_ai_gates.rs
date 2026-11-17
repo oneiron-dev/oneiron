@@ -671,7 +671,7 @@ fn the_vault_row_lets_every_agent_plan() {
 #[test]
 fn an_agent_the_owner_lets_answer_waits_out_a_quota_question() {
     run_on_engine_stack("wave11-quota-wait", || async {
-        let (fixture, a, _b) = setup().await;
+        let (fixture, a, _b) = setup_ai().await;
         set_quota_row(&fixture, "wait", SettingScope::Agent(a.principal), true);
         plant_question(&fixture, "q1", vec![QuotaChoice::Wait, QuotaChoice::TopUp]);
 
@@ -710,7 +710,7 @@ fn an_agent_the_owner_lets_answer_waits_out_a_quota_question() {
 #[test]
 fn a_read_only_agent_the_owner_lets_answer_is_refused() {
     run_on_engine_stack("wave11-quota-read-only", || async {
-        let (fixture, a, _b) = setup().await;
+        let (fixture, a, _b) = setup_ai().await;
         let reader = pair_agent_with_verbs(
             &fixture.vault,
             &fixture.app,
@@ -737,7 +737,7 @@ fn a_read_only_agent_the_owner_lets_answer_is_refused() {
         )
         .await;
         assert_eq!(status, StatusCode::FORBIDDEN, "read-only agent: {body}");
-        assert_eq!(body["error"]["code"].as_str(), Some("FORBIDDEN"), "{body}");
+        assert_eq!(body["code"].as_str(), Some("FORBIDDEN"), "{body}");
         assert!(
             body.to_string().contains("core:write"),
             "the refusal names the write scope: {body}"
@@ -767,7 +767,7 @@ fn a_read_only_agent_the_owner_lets_answer_is_refused() {
 #[test]
 fn a_quota_answer_the_owner_did_not_let_stays_refused() {
     run_on_engine_stack("wave11-quota-item", || async {
-        let (fixture, a, _b) = setup().await;
+        let (fixture, a, _b) = setup_ai().await;
         set_quota_row(&fixture, "wait", SettingScope::Agent(a.principal), true);
         plant_question(&fixture, "q1", vec![QuotaChoice::Wait, QuotaChoice::TopUp]);
 

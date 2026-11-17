@@ -25,6 +25,7 @@
 //! Stage 0.1 lands the primitive unused: no engine key is in the catalogue yet, and no value in
 //! force moves.
 
+mod ask;
 mod catalogue;
 mod change;
 mod learned;
@@ -40,6 +41,8 @@ pub use oneiron_setting_contract::{
 };
 
 #[cfg(feature = "sync")]
+pub use self::ask::SettingAsk;
+pub(crate) use self::ask::erase_setting_ask_actor_in_txn;
 pub(crate) use self::catalogue::leave_keeps_row;
 pub use self::catalogue::{catalogue, spec_named};
 pub use self::change::SettingChange;

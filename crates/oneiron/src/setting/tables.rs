@@ -22,4 +22,13 @@ crate::side_table::side_tables! {
     /// out again under a feed cursor. Key: ().
     SETTING_CHANGE_NEXT: VaultMeta b"setting:change_next:v1" Named
         [restore: live] [family: unclassified] [tier: canonical];
+    /// An agent's setting change that waits on a check-in, kept beside it in the writer that
+    /// opens it, so the owner's confirm sheet reads the row the ask changes, the value it asks
+    /// for and the key's loosening note (RESTRICTION-WAVE-11-CAP-NOTE): the check-in holds only
+    /// the effect digest. The writer that spends the check-in drops it; the asker's erase drops
+    /// every ask of theirs. Key: id16 (the pending check-in).
+    SETTING_ASK: VaultMeta b"setting:ask:v1:" Named
+        // Restore class: live, as the pending check-in it joins is.
+        [restore: live] [family: unclassified] [tier: canonical]
+        => crate::setting::erase_setting_ask_actor_in_txn;
 }
