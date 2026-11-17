@@ -14,6 +14,15 @@
 //! the owner's. A change within it is any writer's (FIX 9558): the list
 //! narrowed to models it already names, or the compaction model moved to one
 //! of them.
+//!
+//! Both are judged over a definition's switches ([`AgentSwitches`]), the one
+//! form the owner's statement on the authority log also takes (pass 28 R2d):
+//! a replicated row lands a widening only within the switches the owner last
+//! stated (`super::switch_statement`).
+
+use std::collections::BTreeSet;
+
+use crate::authority::{AgentApproval, AgentSwitches};
 
 use super::codec::decode_agent_definition;
 use super::id_pin::is_agent_id_in_txn;
@@ -21,18 +30,40 @@ use super::types::AgentDefinition;
 use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus};
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::llm::ModelId;
 use crate::registry::ENTITY_TYPE_AGENT_DEF;
 use crate::store::Store;
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 
-/// Approval from least to most authority: rejected, proposed, approved, auto.
-const fn approval_rank(status: ClaimApprovalStatus) -> u8 {
+/// An approval's place among the authority levels the switches order.
+const fn approval(status: ClaimApprovalStatus) -> AgentApproval {
     match status {
-        ClaimApprovalStatus::Rejected => 0,
-        ClaimApprovalStatus::Proposed => 1,
-        ClaimApprovalStatus::Approved => 2,
-        ClaimApprovalStatus::Auto => 3,
+        ClaimApprovalStatus::Rejected => AgentApproval::Rejected,
+        ClaimApprovalStatus::Proposed => AgentApproval::Proposed,
+        ClaimApprovalStatus::Approved => AgentApproval::Approved,
+        ClaimApprovalStatus::Auto => AgentApproval::Auto,
+    }
+}
+
+/// The switches `def` holds: whether it is on, its approval, whether it is
+/// active, and its model choices by id (each listed model once, sorted; a
+/// list entry's `when` decides nothing a widening judges).
+pub(crate) fn agent_switches(def: &AgentDefinition) -> AgentSwitches {
+    let models: BTreeSet<String> = def
+        .models
+        .iter()
+        .map(|entry| entry.model_ref.as_str().to_owned())
+        .collect();
+    AgentSwitches {
+        enabled: def.enabled,
+        approval: approval(def.approval_status),
+        active: def.lifecycle_status == ClaimLifecycleStatus::Active,
+        models: models.into_iter().collect(),
+        compaction_model: def
+            .compaction_model
+            .as_ref()
+            .map(|model| model.as_str().to_owned()),
+        model_tier: def.model_tier.as_ref().map(|tier| tier.0.clone()),
+        dreaming_model: def.dreaming_model.as_ref().map(|tier| tier.0.clone()),
     }
 }
 
@@ -41,34 +72,33 @@ const fn approval_rank(status: ClaimApprovalStatus) -> u8 {
 /// model choice outside the grant `prior` holds. `None` is an agent id whose
 /// row was deleted, which holds none.
 fn widens(prior: Option<&AgentDefinition>, updated: &AgentDefinition) -> bool {
-    let (enabled, approval, active) = prior.map_or(
-        (false, approval_rank(ClaimApprovalStatus::Rejected), false),
-        |prior| {
-            (
-                prior.enabled,
-                approval_rank(prior.approval_status),
-                prior.lifecycle_status == ClaimLifecycleStatus::Active,
-            )
-        },
-    );
+    switches_widen(prior.map(agent_switches).as_ref(), &agent_switches(updated))
+}
+
+/// [`widens`] over switches: `prior` is the switches a stored row holds, or
+/// those its owner last stated.
+pub(crate) fn switches_widen(prior: Option<&AgentSwitches>, updated: &AgentSwitches) -> bool {
+    let (enabled, approval, active) = prior
+        .map_or((false, AgentApproval::Rejected, false), |prior| {
+            (prior.enabled, prior.approval, prior.active)
+        });
     (updated.enabled && !enabled)
-        || approval_rank(updated.approval_status) > approval
-        || (updated.lifecycle_status == ClaimLifecycleStatus::Active && !active)
-        || prior.map_or(has_model_choice(updated), |prior| {
+        || updated.approval > approval
+        || (updated.active && !active)
+        || prior.map_or(names_model_choice(updated), |prior| {
             !models_within_grant(prior, updated)
         })
 }
 
 /// Whether `updated`'s model choices stay within the grant `prior` holds
 /// (FIX 9558): its list the same, or a non-empty list of models `prior`
-/// lists (each entry's `when` reworded or not); its compaction model the
-/// same, or one `prior` lists; its tier and dreaming model the same. A
-/// cleared choice falls back to the house route, outside the grant.
-fn models_within_grant(prior: &AgentDefinition, updated: &AgentDefinition) -> bool {
-    let listed = |model: &ModelId| prior.models.iter().any(|entry| entry.model_ref == *model);
+/// lists; its compaction model the same, or one `prior` lists; its tier and
+/// dreaming model the same. A cleared choice falls back to the house route,
+/// outside the grant.
+fn models_within_grant(prior: &AgentSwitches, updated: &AgentSwitches) -> bool {
+    let listed = |model: &String| prior.models.contains(model);
     let models = updated.models == prior.models
-        || (!updated.models.is_empty()
-            && updated.models.iter().all(|entry| listed(&entry.model_ref)));
+        || (!updated.models.is_empty() && updated.models.iter().all(listed));
     let compaction = match (&updated.compaction_model, &prior.compaction_model) {
         (None, None) => true,
         (Some(model), held) => held.as_ref() == Some(model) || listed(model),
@@ -78,6 +108,14 @@ fn models_within_grant(prior: &AgentDefinition, updated: &AgentDefinition) -> bo
         && compaction
         && updated.model_tier == prior.model_tier
         && updated.dreaming_model == prior.dreaming_model
+}
+
+/// Whether switches name any model choice.
+fn names_model_choice(switches: &AgentSwitches) -> bool {
+    !switches.models.is_empty()
+        || switches.compaction_model.is_some()
+        || switches.model_tier.is_some()
+        || switches.dreaming_model.is_some()
 }
 
 /// Whether a definition names any model choice of its own.

@@ -129,6 +129,7 @@ pub(super) fn classify_grant_act(
     let (kind, change) = match record.change {
         GrantActChange::Give { .. } => (AuthorityAuditEventKind::Grant, "give"),
         GrantActChange::End => (AuthorityAuditEventKind::Revoke, "end"),
+        GrantActChange::State { .. } => (AuthorityAuditEventKind::Grant, "state"),
     };
     (
         kind,

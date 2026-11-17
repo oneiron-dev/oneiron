@@ -282,6 +282,8 @@ impl Vault {
     ) -> Result<AgentTreePauseReceipt> {
         let pause = self.new_entity_id()?;
         let now = self.store.clock.now_recorded_at();
+        // Each turn-off may replace the owner's statement of its switches (pass 28 R2d).
+        self.load_membership_carrier();
         let (receipt, count, hooks_moved) = self.with_write_txn(|txn| {
             let owner_id = owner.revalidate_as_vault_owner_in_txn(self, txn)?;
             let mut count = ScanCount::start(
@@ -455,6 +457,8 @@ impl Vault {
         pause: &EntityId,
     ) -> Result<AgentTreeResumeReceipt> {
         let now = self.store.clock.now_recorded_at();
+        // Each turn-on is stated on the authority log (pass 28 R2d).
+        self.load_membership_carrier();
         let (receipt, hooks_moved) = self.with_write_txn(|txn| {
             let owner_id = owner.revalidate_as_vault_owner_in_txn(self, txn)?;
             let mut record = TREE_PAUSE

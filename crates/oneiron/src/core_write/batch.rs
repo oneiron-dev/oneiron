@@ -112,6 +112,9 @@ impl CoreWriteLaneRef<'_> {
 impl Vault {
     /// Stages every put of `input` and commits them once, at `commit`. A
     /// TURN is a platform announcement only at the owner's `announcement`.
+    /// It writes as [`Self::write_core_batch_in_lane`] does on an unbound
+    /// lane: at owner grade, the vault's owner states the switches of each
+    /// agent definition it puts (pass 28 R2d review finding 3).
     /// # Errors
     /// A bad id, interval or body, or the commit's
     /// refusal; nothing is written then.
@@ -121,21 +124,7 @@ impl Vault {
         commit: CoreBatchCommit,
         announcement: AnnouncementAuthority,
     ) -> MemoryResult<CoreBatchWriteReceipt> {
-        let (batch, entities, carried) = self.stage_core_batch(input, announcement)?;
-        let verify = |txn: &heed::RoTxn<'_>| -> crate::Result<()> {
-            for (id, expected) in &carried {
-                verify_project_group_carry(self, txn, id, *expected)?;
-            }
-            Ok(())
-        };
-        match commit {
-            CoreBatchCommit::Owner => batch.commit_with_target_guard(verify),
-            CoreBatchCommit::BelowOwner => batch.commit_below_owner_with_guard(verify),
-        }?;
-        Ok(CoreBatchWriteReceipt {
-            count: entities.len(),
-            entities,
-        })
+        self.write_core_batch_in_lane(input, commit, announcement, &CoreWriteLane::Unbound)
     }
 
     /// [`Self::write_core_batch`] held to `lane` (OF-063; FIX 1223, 6068). A
@@ -168,6 +157,11 @@ impl Vault {
     /// stored definition more than the slice holds leaves it a proposal.
     /// With no `writer`, or one that is no agent, every body is written as
     /// staged. `door` is the verb a definition it holds records as its door.
+    /// At owner grade, the vault's owner states the switches of each agent
+    /// definition the batch writes, in the name of `writer` when it is a
+    /// human who is a counted owner of the vault (pass 28 R2d); a definition
+    /// whose statement this install could not make lands here alone, and its
+    /// receipt row carries the notice the owner is shown.
     /// # Errors
     /// As [`Self::write_core_batch_in_lane`], and the author writer's
     /// refusal of a definition it would refuse at `vault.agents.put`.
@@ -182,9 +176,12 @@ impl Vault {
     ) -> MemoryResult<CoreBatchWriteReceipt> {
         let (mut batch, mut entities, carried) = self.stage_core_batch(input, announcement)?;
         if let Some(writer) = writer {
-            batch = batch.authored_through(writer, door, lane.actor_key());
+            batch = batch
+                .authored_through(writer, door, lane.actor_key())
+                .with_owner_statement_person(writer);
         }
         let receipts = batch.agent_definition_write_receipts();
+        let reaches = batch.agent_switches_reaches();
         batch.commit_in_core_lane(lane, commit, |txn| {
             for (id, expected) in &carried {
                 verify_project_group_carry(self, txn, id, *expected)?;
@@ -193,10 +190,18 @@ impl Vault {
         })?;
         // Each AGENT_DEF row takes its own put's receipt, in input order, so
         // two puts at one id each name what they became.
-        let definitions: Vec<&mut CoreBatchEntityReceipt> = entities
+        let mut definitions: Vec<&mut CoreBatchEntityReceipt> = entities
             .iter_mut()
             .filter(|entity| entity.entity_type == crate::registry::ENTITY_TYPE_AGENT_DEF)
             .collect();
+        // A definition that landed on this install alone says so (Engine RULING
+        // R2D-NO-CARRIER-POLICY = B; R2d review finding 6).
+        for entity in &mut definitions {
+            entity.notice = crate::entity_id::EntityId::from_hex(&entity.id)
+                .ok()
+                .and_then(|id| reaches.notice_for(&id))
+                .map(str::to_owned);
+        }
         let staged: Vec<crate::entity_id::EntityId> = definitions
             .iter()
             .filter_map(|entity| crate::entity_id::EntityId::from_hex(&entity.id).ok())
@@ -300,6 +305,7 @@ impl Vault {
                 id: id.to_hex(),
                 entity_type: entity.entity_type,
                 agent_definition: None,
+                notice: None,
             });
         }
         Ok((batch, entities, carried.into_iter().collect()))
