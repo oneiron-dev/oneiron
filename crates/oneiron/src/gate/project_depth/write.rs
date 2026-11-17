@@ -293,6 +293,38 @@ where
     Ok(edit)
 }
 
+/// Test-only signed edit over caller heads for the `ProjectDepthPredecessors`
+/// threshold table (rule 5): [`signed_edit`] plus its content id and bytes.
+/// The seed reads the bytes back through the public put door, which counts
+/// the predecessors; the fold would meet missing parents as pending, never
+/// as a refusal.
+#[cfg(test)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "one signed edit's snapshot, subject, heads, signer key and signer"
+)]
+pub(crate) fn signed_edit_for_scan_tests<S>(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    project: EntityId,
+    depth: u64,
+    heads: &[EntityId],
+    writer: &WriteActor,
+    signer_key: AuthorityKey,
+    signer: S,
+) -> Result<(EntityId, Vec<u8>)>
+where
+    S: FnOnce(&[u8]) -> Result<Vec<u8>>,
+{
+    let edit = signed_edit(
+        vault, txn, project, depth, heads, writer, signer_key, signer,
+    )?;
+    Ok((
+        edit_id(&edit)?,
+        encode_contribution(&ProjectDepthContribution::Edit(edit))?,
+    ))
+}
+
 pub(crate) fn put_default_edit_in_txn<S>(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
