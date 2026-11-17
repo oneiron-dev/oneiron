@@ -261,23 +261,31 @@ impl OutboundExecutionSink for EsignSink<'_> {
                 owner_act,
                 ledger_identity_ref: self.ledger_identity.clone(),
             };
-            // FIX 9606: the exact approved send runs at its approval rung;
-            // only unapproved automation needs the autonomous-envelope grant.
-            if self.automated
-                && recorded.owner_act.is_none()
-                && !super::principals::automated_outbound_allowed(
-                    self.vault,
-                    txn,
-                    request.intent.on_behalf_of.as_deref(),
-                )?
-            {
-                return Err(NotApplied::Refused);
-            }
             let mut state = if self.command.verb == EsignOutboundVerb::Void {
                 super::ledger::restrictive_state_in(self.vault, txn, id)?
             } else {
                 state_in(self.vault, txn, id)?
             };
+            // FIX 9606: the exact approved send runs at its approval rung;
+            // only an agent's own act needs its autonomous Grant for the
+            // principal the document names, and a send or a reminder spends
+            // one action of its window (SGN06-WHO-MAY-SEND = B).
+            if self.automated
+                && recorded.owner_act.is_none()
+                && !super::autonomy::agent_act_admitted_in(
+                    self.vault,
+                    txn,
+                    EntityId::from_hex(&request.intent.actor).ok(),
+                    (
+                        state.document.principal_ref,
+                        request.intent.on_behalf_of.as_deref(),
+                    ),
+                    self.command.verb.mints_links(),
+                    self.now,
+                )?
+            {
+                return Err(NotApplied::Refused);
+            }
             if state.document.recipients.len() != self.command.recipient_count {
                 return Err(NotApplied::Refused);
             }
@@ -601,6 +609,15 @@ impl Vault {
         };
         if state.document.recipients.len() != command.recipient_count {
             return Err(invalid("recipient count changed").into());
+        }
+        // An act is for the principal its document names (SGN06-WHO-MAY-SEND
+        // = B): a call naming another is refused.
+        if let (Some(named), Some(stated)) = (
+            state.document.principal_ref,
+            request.intent.on_behalf_of.as_deref(),
+        ) && EntityId::from_hex(stated).ok() != Some(named)
+        {
+            return Err(invalid("on_behalf_of names another principal than the document").into());
         }
         let bytes = serde_json::to_vec(&(command, &state.document, reminder))
             .map_err(|_| invalid("command encoding"))?;

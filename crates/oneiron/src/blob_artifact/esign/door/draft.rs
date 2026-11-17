@@ -5,6 +5,7 @@
 //! download switch (`qr_pdf_download`) lands in the draft's own transaction,
 //! and only the vault owner turns it on, on the owner's own live credential
 //! or none (the embedded owner), never one handed to another key.
+use super::super::autonomy::admit_drafter_in;
 use super::super::lane_scope::{self, EsignScope};
 use super::super::ledger::{create_document_in, state_in};
 use super::super::lifecycle::with_lifecycle;
@@ -26,7 +27,9 @@ impl Memory<'_> {
     /// A `document_ref` that is no id, a QR PDF download asked for by anyone
     /// but the vault owner, or the vault's refusal: a draft that does not
     /// validate, an item whose PDF moved past its pinned version, a project
-    /// the caller is no member of, or a document already drafted.
+    /// the caller is no member of, a document already drafted, or an agent's
+    /// draft for a principal the owner gave it no live rung above
+    /// `scoped_read` for (SGN06-WHO-MAY-SEND = B).
     pub fn esign_create(&self, input: &EsignCreateRequest) -> MemoryResult<EsignDraftView> {
         let document = document_id(&input.document_ref)?;
         // Every envelope is sensitive unless the owner says otherwise
@@ -54,6 +57,7 @@ impl Memory<'_> {
         let body = draft_body(vault, &input.draft, now)?;
         validate_document(&body, now)?;
         vault.try_with_write_txn_grouped(|txn| -> MemoryResult<()> {
+            admit_drafter_in(vault, txn, self.actor(), self.actor_class(), &body)?;
             create_document_in(vault, txn, document, &body, actor, now)?;
             if input.qr_pdf_download {
                 self.admit_qr_pdf_download_in(txn)?;
@@ -94,6 +98,7 @@ impl Memory<'_> {
         validate_document(&body, now)?;
         lane_scope::write_artifact(lane, self, document, |txn| {
             lane_scope::reaches_draft_in(lane, txn, &body)?;
+            admit_drafter_in(vault, txn, self.actor(), self.actor_class(), &body)?;
             create_document_in(vault, txn, document, &body, actor, now)?;
             if input.qr_pdf_download {
                 self.admit_qr_pdf_download_in(txn)?;

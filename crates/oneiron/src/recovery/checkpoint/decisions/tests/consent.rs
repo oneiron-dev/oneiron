@@ -433,6 +433,7 @@ pub(super) fn esign_ceremonies() -> Result<Case> {
             full_trail_appendix: true,
             lifecycle: None,
             project: None,
+            principal_ref: None,
             commitments: Vec::new(),
         },
         EsignAuditActor {

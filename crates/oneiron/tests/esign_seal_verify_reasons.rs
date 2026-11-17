@@ -64,6 +64,7 @@ fn document(artifact: EntityId) -> EsignDocument {
         full_trail_appendix: true,
         lifecycle: None,
         project: None,
+        principal_ref: None,
         commitments: Vec::new(),
     }
 }

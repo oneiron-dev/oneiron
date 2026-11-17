@@ -65,6 +65,7 @@ pub fn burn_page_fields(
             full_trail_appendix: false,
             lifecycle: None,
             project: None,
+            principal_ref: None,
             commitments: Vec::new(),
         },
         status: DocumentStatus::Pending,

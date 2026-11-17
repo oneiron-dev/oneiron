@@ -150,7 +150,8 @@ impl Vault {
                 }
             };
             if let Some(call) = &mintable.grant
-                && let Some(reason) = self.grant_unauthorized_in(txn, call)?
+                && let Some(reason) =
+                    self.grant_unauthorized_in(txn, call, mintable.state.document.principal_ref)?
             {
                 return Ok(EsignDeliveryMint::Held(reason));
             }
@@ -191,24 +192,28 @@ impl Vault {
     }
 
     /// Why no Grant live under this writer covers `call` any more, or `None`
-    /// when one does, with an automated sender's principal dial still at
-    /// autonomous-in-envelope.
+    /// when one does, with an automated sender's autonomous Grant for the
+    /// principal its document names (`named`) still live.
     fn grant_unauthorized_in(
         &self,
         txn: &heed::RwTxn<'_>,
         call: &EsignDeliveryCall,
+        named: Option<EntityId>,
     ) -> Result<Option<&'static str>> {
         if crate::outbound::esign_delivery_grant_in_txn(self, txn, call)?.is_none() {
             return Ok(Some("no live Grant covers the delivery"));
         }
         if call.actor_class != "human"
-            && !super::principals::automated_outbound_allowed(
+            && !super::autonomy::agent_delivery_granted_in(
                 self,
                 txn,
-                call.on_behalf_of.as_deref(),
+                call.actor_entity_ref,
+                (named, call.on_behalf_of.as_deref()),
             )?
         {
-            return Ok(Some("the principal's autonomy no longer permits the send"));
+            return Ok(Some(
+                "the agent's Grant for the principal no longer permits the send",
+            ));
         }
         Ok(None)
     }
