@@ -89,6 +89,7 @@ impl Fixture {
                     expected_revision: None,
                     why: None,
                     check_in_ref: None,
+                    weight_runs: None,
                 },
             )
             .expect("the owner's change");
