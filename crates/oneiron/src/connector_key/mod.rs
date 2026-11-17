@@ -95,6 +95,7 @@ pub(crate) use self::charter::{
 pub(crate) use self::credential_binding::{
     connector_issuer_hold_in_txn, connector_issuer_hold_reason_in_txn,
 };
+pub(crate) use self::lifecycle::PROXY_EXCHANGE_PREDICATE;
 pub(crate) use self::lifecycle::catalog_charter_in_txn;
 pub(crate) use self::meter::{
     BudgetBlock, EffectorBudgetChargeOutcome, SpendReserve, append_effector_steering_message,
@@ -197,3 +198,6 @@ pub(crate) fn read_key_for_pack_in_txn(
 ) -> crate::Result<Option<ConnectorKeyRecord>> {
     txn::read_connector_key_in_txn(&vault.store, txn, id)
 }
+
+#[cfg(oneiron_test_support)]
+pub(crate) use self::txn::connector_index_key_pin_for_test;

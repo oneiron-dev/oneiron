@@ -292,6 +292,9 @@ fold_state_fields!(
     hosted,
     actor_rows,
     residence_directives,
+    passkey_contexts,
+    passkey_vouched_keys,
+    passkey_vouch_confirmations,
 );
 
 impl ReplayEvidence {

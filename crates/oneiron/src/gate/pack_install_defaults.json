@@ -12,8 +12,13 @@
       "reveal secret"
     ],
     "parameter_injection": [
-      "ignore",
-      "instruction",
+      "ignore previous",
+      "ignore the above",
+      "ignore all",
+      "ignore your",
+      "new instructions",
+      "these instructions",
+      "override instructions",
       "system prompt",
       "developer message",
       "exfiltrat",

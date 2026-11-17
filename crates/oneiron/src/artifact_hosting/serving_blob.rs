@@ -75,6 +75,29 @@ pub(super) fn put_serving_blob_in_txn(
     SERVING_BLOBS.put(store, wtxn, &(*artifact_id, version), serving)
 }
 
+/// Puts a serving descriptor for the checkpoint-pins door: `key`'s version
+/// serving `content_hash`'s bytes as `export_name`'s `export_media_type`.
+#[cfg(oneiron_test_support)]
+pub(crate) fn put_pins_serving_blob_in_txn(
+    store: &crate::store::Store,
+    txn: &mut RwTxn<'_>,
+    key: &(EntityId, u64),
+    content_hash: &[u8; 32],
+    export_name: &str,
+    export_media_type: &str,
+) -> crate::error::Result<()> {
+    SERVING_BLOBS.put(
+        store,
+        txn,
+        key,
+        &ServingBlobDescriptor {
+            content_hash: *content_hash,
+            export_name: export_name.to_owned(),
+            export_media_type: export_media_type.to_owned(),
+        },
+    )
+}
+
 /// Removes every descriptor of `id`, whatever its version, so an erased
 /// blob's presentation never serves under a later chain at the same id.
 pub(super) fn remove_serving_blobs_in_txn(
