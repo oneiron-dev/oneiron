@@ -192,7 +192,7 @@ pub(super) fn hydrate_dispatch_compliance_facts(
         consent: evidence.consent,
         // A send with no sending identity has no identity to disclose,
         // whatever a configuration row claims.
-        sender_identity_present: elements.sender_identity && sending_identity.is_some(),
+        sender_identity_present: elements.sender_identity && effect.channel_identity_ref.is_some(),
         physical_address_present: elements.physical_address,
         optout_mechanism_present: elements.optout_mechanism,
         commercial_marking_present: elements.commercial_marking,
