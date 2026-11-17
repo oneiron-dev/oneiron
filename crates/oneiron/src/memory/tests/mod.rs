@@ -7,8 +7,6 @@
 
 mod asset_hydrate;
 mod asset_resolve;
-// FIX [LIBTEST-QUARANTINE-MEMORY-TESTS-AUTHORITY-REVOCATION]: the lib test target's type check fails here (3 errors: E0063 x2, E0639 x1); port it, then drop this gate
-#[cfg(any())]
 mod authority_revocation;
 // FIX [LIBTEST-QUARANTINE-MEMORY-TESTS-COMMIT-CLAIMS]: the lib test target's type check fails here (14 errors: E0609 x12, E0061 x2); port it, then drop this gate
 #[cfg(any())]
@@ -25,8 +23,6 @@ mod export;
 #[cfg(any())]
 mod same_bytes_erase;
 mod seeded_upgrade;
-// FIX [LIBTEST-QUARANTINE-MEMORY-TESTS-SELF-GRANT]: the lib test target's type check fails here (2 errors: E0308 x1, E0599 x1); port it, then drop this gate
-#[cfg(any())]
 mod self_grant;
 // FIX [LIBTEST-QUARANTINE-MEMORY-TESTS-SESSION-RECALL]: the lib test target's type check fails here (5 errors: E0061 x2, E0063 x2, E0639 x1); port it, then drop this gate
 #[cfg(any())]

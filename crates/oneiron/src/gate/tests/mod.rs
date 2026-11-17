@@ -77,8 +77,6 @@ mod isolation_persona;
 // FIX [LIBTEST-QUARANTINE-GATE-TESTS-MANIFEST-AUTHENTICITY]: the lib test target's type check fails here (9 errors: E0061 x9); port it, then drop this gate
 #[cfg(any())]
 mod manifest_authenticity;
-// FIX [LIBTEST-QUARANTINE-GATE-TESTS-MANIFEST-AUTO]: the lib test target's type check fails here (1 errors: E0061 x1); port it, then drop this gate
-#[cfg(any())]
 mod manifest_auto;
 // FIX [LIBTEST-QUARANTINE-GATE-TESTS-POLICY-INPUTS]: the lib test target's type check fails here (8 errors: E0308 x8); port it, then drop this gate
 #[cfg(any())]
@@ -94,8 +92,6 @@ mod support;
 // FIX [LIBTEST-QUARANTINE-GATE-TESTS-TRUST-BOUNDARY]: the lib test target's type check fails here (15 errors: E0061 x9, E0308 x6); port it, then drop this gate
 #[cfg(any())]
 mod trust_boundary;
-// FIX [LIBTEST-QUARANTINE-GATE-TESTS-VAD-VETTING]: the lib test target's type check fails here (1 errors: E0061 x1); port it, then drop this gate
-#[cfg(any())]
 mod vad_vetting;
 // FIX [LIBTEST-QUARANTINE-GATE-TESTS-WITNESS-MESSAGE]: the lib test target's type check fails here (6 errors: E0061 x3, E0063 x3); port it, then drop this gate
 #[cfg(any())]

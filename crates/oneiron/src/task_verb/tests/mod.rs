@@ -55,11 +55,7 @@ use crate::{Vault, unix_seconds_now};
 use rmpv::Value;
 
 mod board_ack;
-// FIX [LIBTEST-QUARANTINE-TASK-VERB-TESTS-CANCEL]: the lib test target's type check fails here (4 errors: E0061 x3, E0063 x1); port it, then drop this gate
-#[cfg(any())]
 mod cancel;
-// FIX [LIBTEST-QUARANTINE-TASK-VERB-TESTS-CONSULT-FANOUT]: the lib test target's type check fails here (2 errors: E0639 x2); port it, then drop this gate
-#[cfg(any())]
 mod consult_fanout;
 mod consult_ladder;
 // FIX [LIBTEST-QUARANTINE-TASK-VERB-TESTS-CONSULT-LIFECYCLE]: the lib test target's type check fails here (7 errors: E0599 x4, E0063 x2, E0639 x1); port it, then drop this gate

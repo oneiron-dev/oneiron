@@ -31,8 +31,6 @@ pub(super) use tempfile::TempDir;
 
 mod anonymous_chat;
 mod cloud_dual;
-// FIX [LIBTEST-QUARANTINE-POLICY-MODEL-TESTS-DIAL-PATTERN-ROLES]: the lib test target's type check fails here (1 errors: E0063 x1); port it, then drop this gate
-#[cfg(any())]
 mod dial_pattern_roles;
 mod door_invariants;
 mod edge_identity;

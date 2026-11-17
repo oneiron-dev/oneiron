@@ -15,35 +15,12 @@ use core::assert_matches;
 use rmpv::Value;
 
 fn test_config() -> VaultConfig {
-    VaultConfig {
-        failure_signals: Default::default(),
-        store_clock: crate::ports::StoreClock::default(),
-        ppr_vad_alpha: crate::config::PPR_VAD_ALPHA_DEFAULT,
-        ppr_community: crate::config::PprCommunityConfig::default(),
-        retrieval_telemetry_capture: false,
-        map_size: 16 * 1024 * 1024,
-        dimensions: 4,
-        fast_dims: None,
-        embedding_model: None,
-        embedding_transform: None,
-        vector_evidence: crate::config::VectorEvidenceFloors::default(),
-        call_mode_deadline: crate::memory::DEFAULT_CALL_MODE_DEADLINE,
-        tagging: None,
-        max_readers: 16,
-        hnsw: HnswConfig {
-            m_max_0: 64,
-            ef_construction: 200,
-            ef_search: 128,
-        },
-        text_analyzer: crate::config::TextAnalyzerConfig::default(),
-        dict_search_paths: Vec::new(),
-        assistant_display_names: Vec::new(),
-        skip_text_index_manifest_check: false,
-        off_record_enabled: true,
-        off_record_overlay_budget_bytes: crate::config::DEFAULT_OFF_RECORD_OVERLAY_BUDGET_BYTES,
-        limits: crate::limit_ask::EngineLimits::default(),
-        privacy: crate::config::VaultPrivacyConfig::default(),
-    }
+    let mut config = VaultConfig::device();
+    config.map_size = 16 * 1024 * 1024;
+    config.dimensions = 4;
+    config.max_readers = 16;
+    config.hnsw = HnswConfig::default();
+    config
 }
 
 fn test_time_range(start: u64, end: u64) -> TimeRange {
@@ -91,12 +68,14 @@ fn seed_raw_claim_bytes(vault: &Vault, id: &EntityId, data: &[u8]) -> Result<()>
         occurred_start: 1,
         occurred_end: 1,
         learned_at: 2,
+        row_version: 0,
     };
     let mut payload = Vec::with_capacity(crate::batch::ENTITY_METADATA_HEADER_LEN + data.len());
     payload.push(header.entity_type);
     payload.extend_from_slice(&header.occurred_start.to_be_bytes());
     payload.extend_from_slice(&header.occurred_end.to_be_bytes());
     payload.extend_from_slice(&header.learned_at.to_be_bytes());
+    payload.extend_from_slice(&header.row_version.to_be_bytes());
     payload.extend_from_slice(data);
 
     let mut wtxn = vault.store.env.write_txn()?;
@@ -991,13 +970,9 @@ fn analysis_read_from_other_fields_is_refused() -> Result<()> {
 /// A vault with room for documents at the per-document text ceiling.
 fn open_ceiling_vault() -> Result<(tempfile::TempDir, Vault)> {
     let temp_dir = tempfile::tempdir()?;
-    let vault = Vault::open(
-        temp_dir.path(),
-        VaultConfig {
-            map_size: 64 * 1024 * 1024,
-            ..test_config()
-        },
-    )?;
+    let mut config = test_config();
+    config.map_size = 64 * 1024 * 1024;
+    let vault = Vault::open(temp_dir.path(), config)?;
     Ok((temp_dir, vault))
 }
 
