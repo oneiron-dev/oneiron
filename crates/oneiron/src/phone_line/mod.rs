@@ -2,6 +2,7 @@
 
 mod answer;
 pub(crate) mod tables;
+pub use answer::PhoneLineConsent;
 pub(crate) use answer::{CallReach, PhoneLineReadCeiling};
 
 use crate::Vault;

@@ -1,17 +1,8 @@
 //! Moved from `crates/oneiron/src/calendar/connectors/door.rs` (lib split W3: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use crate::calendar::connectors::seat::CalendarConnectorSeatConfig;
 use serde::Deserialize;
 use serde::Serialize;
-
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct CalendarConnectorConfigureRequest {
-    pub config: CalendarConnectorSeatConfig,
-    /// CalDAV discovery URL. Credentials belong in the named custody record.
-    pub endpoint: String,
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]

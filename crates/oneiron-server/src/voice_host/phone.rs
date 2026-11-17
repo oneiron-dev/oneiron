@@ -132,6 +132,19 @@ impl PhoneCallRead {
             .ok_or(HostError::InvalidRequest)
     }
 
+    /// The call's whole live consent, captured before history assembly: a
+    /// history read under one consent is dropped when any of it changes,
+    /// the picked documents or the caller rule as well as the scope, since
+    /// either can withhold a row the history was read from (#8667 review r2
+    /// P1).
+    pub(super) fn current_consent(
+        &self,
+    ) -> Result<oneiron::phone_line::PhoneLineConsent, HostError> {
+        self.read()
+            .phone_line_consent()?
+            .ok_or(HostError::InvalidRequest)
+    }
+
     /// The scope was captured before the input was assembled. Never stamp
     /// context prepared under an earlier scope with the current one instead.
     pub(super) fn prepare_generation(

@@ -26,9 +26,11 @@ use crate::error::{Error, Result};
 use crate::federation::{
     ScopeAxis, ScopeId, decode_federation_grant_body, encode_federation_grant_body,
 };
+use crate::memory::{Memory, MemoryResult};
 use crate::receipt::ReceiptRecord;
 use crate::registry::ENTITY_TYPE_FEDERATION_GRANT;
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
+use crate::verbs::{CheckInOpenRequest, CheckInVerdict};
 use crate::{EntityId, TimeRange, Vault};
 
 /// A chain the test names: each rung's members. A rung it does not name is
@@ -213,6 +215,22 @@ pub fn open_verified(
         let now = crate::ports::recorded_at_in_txn(&vault.store, txn)?;
         open_pending_check_in_in_txn(vault, txn, request, &VerifiedChain::new(verdicts), now)
     })
+}
+
+/// `vault.check_in.open` as `memory`'s caller calls it, with the test's agent
+/// verdicts in place of the verb's none: for
+/// `tests/check_in_spawn_parent.rs` (FIX CHECK-IN-SPAWN-PARENT-PRINCIPAL), a
+/// spawn parent's answer on rung 2.
+///
+/// # Errors
+///
+/// As `vault.check_in.open`.
+pub fn open_as_caller(
+    memory: &Memory<'_>,
+    input: CheckInOpenRequest,
+    verdicts: &FixedVerdicts,
+) -> MemoryResult<CheckInVerdict> {
+    crate::verbs::check_in_open_with(memory, input, verdicts)
 }
 
 /// [`advance`] on the ladder from verified records, with the test's agent
