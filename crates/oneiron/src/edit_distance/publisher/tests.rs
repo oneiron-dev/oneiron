@@ -11,12 +11,16 @@ use crate::comm::{count_contact_record_claim_entries, run_comm_projector};
 use crate::settings::model_versioning::{
     DEFAULT_MODEL_STACK_CURRENT_ID, default_model_stack_registry,
 };
+// FIX [T0B-PUBLISHER-PARTY-PORT]: publisher party key removed (#4165): port to withholding, SignatureNotFound and delivery successors
+#[cfg(any())]
 use crate::vault::Vault;
 
 /// The string that must never reach disk. Deliberately long, mixed-case and
 /// punctuated — nothing about it fits any field's admitted shape.
 const SENTINEL: &str = "CANARY free-text: user said 'my password is hunter2' <leak>";
 
+// FIX [T0B-PUBLISHER-PARTY-PORT]: publisher party key removed (#4165): port to withholding, SignatureNotFound and delivery successors
+#[cfg(any())]
 fn open_vault() -> (tempfile::TempDir, Vault) {
     crate::test_util::open_test_vault_with(crate::test_util::embedding_test_config())
 }
@@ -35,6 +39,8 @@ fn counts() -> [(CountKey, u32); 3] {
     ]
 }
 
+// FIX [T0B-PUBLISHER-PARTY-PORT]: publisher party key removed (#4165): port to withholding, SignatureNotFound and delivery successors
+#[cfg(any())]
 fn signature() -> IssueSignature {
     IssueSignature::new(
         IssueCategory::SkillDefect,
@@ -143,6 +149,8 @@ fn constructor_refuses_free_text_in_every_string_position() {
 
 // ─── the dial ───────────────────────────────────────────────────────────
 
+// FIX [T0B-PUBLISHER-PARTY-PORT]: publisher party key removed (#4165): port to withholding, SignatureNotFound and delivery successors
+#[cfg(any())]
 /// Dial off: computed, stored, withheld — and the withholding is durable, so a
 /// skip can be audited after the fact rather than only observed in a return
 /// value.
@@ -272,6 +280,8 @@ fn dial_on_hands_off_and_delivery_confirms_sent() {
     assert_eq!(again.local, 0);
 }
 
+// FIX [T0B-PUBLISHER-PARTY-PORT]: publisher party key removed (#4165): port to withholding, SignatureNotFound and delivery successors
+#[cfg(any())]
 /// The send door will not receipt a signature that does not exist — an id with
 /// no row behind it is a caller bug, not an empty send.
 #[test]

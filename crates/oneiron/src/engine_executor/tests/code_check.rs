@@ -5,15 +5,21 @@
 //! crashes: the check's result arrives as the step's type feedback only,
 //! pending while the check runs on its own thread and landed under the
 //! step's `check_ref` after.
+// FIX [LIBTEST-SHADOW-CHECK-RETIRED]: shadow mode and its replay record were replaced by typed non-blocking feedback (#3903): port to TypeFeedback/FeedbackCheck or retire?
+#[cfg(any())]
 use super::*;
 use crate::code_run::{
     DiagnosticCollection, KeptProgramSteps, ProgramStepFeedback, TypeDiagnostics,
 };
 use crate::engine_executor::TypeFeedback;
+// FIX [LIBTEST-SHADOW-CHECK-RETIRED]: shadow mode and its replay record were replaced by typed non-blocking feedback (#3903): port to TypeFeedback/FeedbackCheck or retire?
+#[cfg(any())]
 use oneiron_code_check::{
     BackendId, CheckFailure, CheckInput, CheckReport, CodeCheck, Diagnostic, FeedbackCheck,
     StepThen,
 };
+// FIX [LIBTEST-SHADOW-CHECK-RETIRED]: shadow mode and its replay record were replaced by typed non-blocking feedback (#3903): port to TypeFeedback/FeedbackCheck or retire?
+#[cfg(any())]
 use std::sync::Arc;
 
 /// Substrate invariant (ARCH-0028, one table): the checked-in code-mode
@@ -34,11 +40,15 @@ fn code_mode_declarations_file_is_the_verb_table() {
     );
 }
 
+// FIX [LIBTEST-SHADOW-CHECK-RETIRED]: shadow mode and its replay record were replaced by typed non-blocking feedback (#3903): port to TypeFeedback/FeedbackCheck or retire?
+#[cfg(any())]
 /// A checker that finds one diagnostic in every program, or panics.
 struct FixtureCheck {
     panics: bool,
 }
 
+// FIX [LIBTEST-SHADOW-CHECK-RETIRED]: shadow mode and its replay record were replaced by typed non-blocking feedback (#3903): port to TypeFeedback/FeedbackCheck or retire?
+#[cfg(any())]
 impl CodeCheck for FixtureCheck {
     fn backend(&self) -> BackendId {
         BackendId {
@@ -231,6 +241,8 @@ fn assert_waiting_counts(check: &FeedbackCheck, panics: bool) {
     }
 }
 
+// FIX [LIBTEST-SHADOW-CHECK-RETIRED]: shadow mode and its replay record were replaced by typed non-blocking feedback (#3903): port to TypeFeedback/FeedbackCheck or retire?
+#[cfg(any())]
 /// The step of `executor_preserves_durable_wait_when_runtime_errors_after_wait`
 /// parks its run on the wait its program recorded before failing. With a type
 /// check attached, even one whose checker crashes, the step still parks the

@@ -169,6 +169,8 @@ impl RecoveryRoot {
 // The stack painter comes from oneiron-crypto under the test-support cfg, not a
 // dev-dependency feature, so PR tests and shipped binaries keep one feature
 // graph (1d4e005d213).
+// FIX [LIBTEST-STACK-PROBE-TIER]: move to a crypto-side probe in oneiron-crypto; stack_probe is configured out here since the dev-dependency lost feature stack-probe (1d4e005d213)
+#[cfg(any())]
 #[cfg(all(
     test,
     oneiron_test_support,

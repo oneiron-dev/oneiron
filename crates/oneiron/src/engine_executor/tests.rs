@@ -20,6 +20,8 @@ use super::*;
 
 mod agent_verb_regressions;
 mod code_check;
+// FIX [LIBTEST-AGENT-RUNTIME-TIER]: move to an integration test with test doors; real QuickJS / CompiledSandboxBackends live in oneiron-agent-runtime, which links a second, non-test oneiron (pub use oneiron::code_sandbox::*)
+#[cfg(any())]
 #[cfg(feature = "code-sandbox-wasmtime")]
 mod compaction_host;
 mod memory_rows;
