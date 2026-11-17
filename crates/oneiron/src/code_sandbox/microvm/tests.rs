@@ -15,18 +15,30 @@ fn test_mounts(root: &Path) -> SandboxMountTable {
     )
 }
 
-// FIX [LIBTEST-OVERLAY-CAPS-RETIRED]: overlay byte/count/depth caps were removed (#2664, #4988, #5904; Rule 5): retire these refusal tests or redesign them?
-#[cfg(any())]
 #[test]
-fn code_sandbox_microvm_overlay_rejects_directory_count_breach() {
+fn code_sandbox_microvm_overlay_accepts_broad_directory_tree_without_bound() {
     let dir = tempfile::tempdir().expect("tempdir");
-    for index in 0..=MAX_OVERLAY_DIRECTORIES {
-        fs::create_dir(dir.path().join(format!("d{index}"))).expect("overlay directory");
+    for index in 0..64 {
+        let sub = dir.path().join(format!("d{index:02}"));
+        fs::create_dir(&sub).expect("overlay directory");
+        fs::write(sub.join("file.bin"), b"data").expect("overlay file");
     }
 
-    let error = collect_overlay_writes(dir.path(), SandboxMount::Workspace)
-        .expect_err("a broad tree of empty directories must be bounded");
-    assert_eq!(error.kind(), ErrorKind::MicroVmOverlayError);
+    let writes = collect_overlay_writes(dir.path(), SandboxMount::Workspace)
+        .expect("a broad tree is accepted");
+    assert_eq!(writes.len(), 64);
+    let total: u64 = writes
+        .iter()
+        .map(|write| match write {
+            SandboxProposalWrite::FileWrite(file) => file.body.len(),
+            other => panic!("expected FileWrite, got {other:?}"),
+        })
+        .sum();
+    assert_eq!(total, 64 * 4);
+    assert!(writes.iter().any(|write| matches!(write,
+        SandboxProposalWrite::FileWrite(file) if file.path.as_str() == "/mnt/workspace/d00/file.bin" && file.body.is(b"data"))));
+    assert!(writes.iter().any(|write| matches!(write,
+        SandboxProposalWrite::FileWrite(file) if file.path.as_str() == "/mnt/workspace/d63/file.bin" && file.body.is(b"data"))));
 }
 
 #[test]
@@ -151,93 +163,130 @@ fn code_sandbox_microvm_read_file_refuses_fifo_before_open() {
     assert_eq!(error.kind(), ErrorKind::MicroVmOverlayError);
 }
 
-// FIX [LIBTEST-OVERLAY-CAPS-RETIRED]: overlay byte/count/depth caps were removed (#2664, #4988, #5904; Rule 5): retire these refusal tests or redesign them?
-#[cfg(any())]
 #[test]
-fn code_sandbox_microvm_overlay_rejects_oversized_single_file_before_read() {
+fn code_sandbox_microvm_overlay_accepts_large_single_file_whole() {
     let dir = tempfile::tempdir().expect("tempdir");
-    let oversized = dir.path().join("oversized.bin");
-    let file = fs::File::create(&oversized).expect("create sparse file");
-    file.set_len(MAX_OVERLAY_FILE_BYTES + 1)
-        .expect("size sparse file");
+    let large = dir.path().join("large.bin");
+    let file = fs::File::create(&large).expect("create sparse file");
+    const SIZE: u64 = 64 * 1024 * 1024 + 1;
+    file.set_len(SIZE).expect("size sparse file");
 
-    let error = collect_overlay_writes(dir.path(), SandboxMount::Workspace)
-        .expect_err("oversized overlay file must be rejected");
-    assert_eq!(error.kind(), ErrorKind::MicroVmOverlayError);
+    let writes = collect_overlay_writes(dir.path(), SandboxMount::Workspace)
+        .expect("a large file is accepted");
+    assert_eq!(writes.len(), 1);
+    let SandboxProposalWrite::FileWrite(file) = &writes[0] else {
+        panic!("expected FileWrite, got {:?}", writes[0]);
+    };
+    assert_eq!(file.path.as_str(), "/mnt/workspace/large.bin");
+    assert_eq!(file.body.len(), SIZE);
+    assert_eq!(file.body.read_range(0, 1024).expect("head"), vec![0; 1024]);
+    assert_eq!(file.body.read_range(SIZE - 1, 1).expect("tail"), vec![0]);
 }
 
-// FIX [LIBTEST-OVERLAY-CAPS-RETIRED]: overlay byte/count/depth caps were removed (#2664, #4988, #5904; Rule 5): retire these refusal tests or redesign them?
-#[cfg(any())]
 #[test]
-fn code_sandbox_microvm_overlay_rejects_aggregate_byte_breach() {
+fn code_sandbox_microvm_overlay_accepts_aggregate_bytes_without_bound() {
     let dir = tempfile::tempdir().expect("tempdir");
-    fs::write(dir.path().join("next.bin"), b"x").expect("overlay file");
+    let first = vec![b'a'; 1024];
+    let second = vec![b'b'; 2048];
+    fs::write(dir.path().join("a.bin"), &first).expect("overlay file");
+    fs::write(dir.path().join("b.bin"), &second).expect("overlay file");
     let mut files = BTreeMap::new();
     let mut stack = Vec::new();
-    let mut bounds = OverlayWalkBounds {
-        total_bytes: MAX_OVERLAY_TOTAL_BYTES,
-        file_count: 1,
-        directory_count: 0,
-    };
-
-    let error = walk_overlay_dir(
+    walk_overlay_dir(
         dir.path(),
         "",
-        0,
         SandboxMount::Workspace,
         &mut files,
         &mut stack,
-        &mut bounds,
     )
-    .expect_err("aggregate byte bound must be enforced before reading");
-    assert_eq!(error.kind(), ErrorKind::MicroVmOverlayError);
-    assert!(error.to_string().contains("aggregate byte bound"));
-    assert!(error.to_string().contains("next.bin"));
+    .expect("aggregate bytes are accepted");
+    assert!(stack.is_empty(), "no nested directories were queued");
+    let writes: Vec<_> = files.into_values().collect();
+    assert_eq!(writes.len(), 2);
+    let total: u64 = writes
+        .iter()
+        .map(|write| match write {
+            SandboxProposalWrite::FileWrite(file) => file.body.len(),
+            other => panic!("expected FileWrite, got {other:?}"),
+        })
+        .sum();
+    assert_eq!(total, 1024 + 2048);
+    assert!(writes.iter().any(|write| matches!(write,
+        SandboxProposalWrite::FileWrite(file) if file.path.as_str() == "/mnt/workspace/a.bin" && file.body.is(&first))));
+    assert!(writes.iter().any(|write| matches!(write,
+        SandboxProposalWrite::FileWrite(file) if file.path.as_str() == "/mnt/workspace/b.bin" && file.body.is(&second))));
 }
 
-// FIX [LIBTEST-OVERLAY-CAPS-RETIRED]: overlay byte/count/depth caps were removed (#2664, #4988, #5904; Rule 5): retire these refusal tests or redesign them?
-#[cfg(any())]
 #[test]
-fn code_sandbox_microvm_overlay_rejects_file_count_breach() {
+fn code_sandbox_microvm_overlay_accepts_many_files_without_bound() {
     let dir = tempfile::tempdir().expect("tempdir");
-    fs::write(dir.path().join("next.bin"), b"x").expect("overlay file");
+    for index in 0..64 {
+        let name = format!("f{index:02}.bin");
+        let body = format!("payload-{index}");
+        fs::write(dir.path().join(&name), body.as_bytes()).expect("overlay file");
+    }
     let mut files = BTreeMap::new();
     let mut stack = Vec::new();
-    let mut bounds = OverlayWalkBounds {
-        total_bytes: 0,
-        file_count: MAX_OVERLAY_FILES,
-        directory_count: 0,
-    };
-
-    let error = walk_overlay_dir(
+    walk_overlay_dir(
         dir.path(),
         "",
-        0,
         SandboxMount::Workspace,
         &mut files,
         &mut stack,
-        &mut bounds,
     )
-    .expect_err("file count bound must be enforced before reading");
-    assert_eq!(error.kind(), ErrorKind::MicroVmOverlayError);
-    assert!(error.to_string().contains("file count bound"));
-    assert!(error.to_string().contains("next.bin"));
+    .expect("many files are accepted");
+    assert!(stack.is_empty(), "no nested directories were queued");
+    let writes: Vec<_> = files.into_values().collect();
+    assert_eq!(writes.len(), 64);
+    let total: u64 = writes
+        .iter()
+        .map(|write| match write {
+            SandboxProposalWrite::FileWrite(file) => file.body.len(),
+            other => panic!("expected FileWrite, got {other:?}"),
+        })
+        .sum();
+    let mut expected_total = 0_u64;
+    for index in 0..64 {
+        expected_total += format!("payload-{index}").len() as u64;
+    }
+    assert_eq!(total, expected_total);
+    assert!(writes.iter().any(|write| matches!(write,
+        SandboxProposalWrite::FileWrite(file) if file.path.as_str() == "/mnt/workspace/f00.bin" && file.body.is(b"payload-0"))));
+    assert!(writes.iter().any(|write| matches!(write,
+        SandboxProposalWrite::FileWrite(file) if file.path.as_str() == "/mnt/workspace/f63.bin" && file.body.is(b"payload-63"))));
 }
 
-// FIX [LIBTEST-OVERLAY-CAPS-RETIRED]: overlay byte/count/depth caps were removed (#2664, #4988, #5904; Rule 5): retire these refusal tests or redesign them?
-#[cfg(any())]
 #[test]
-fn code_sandbox_microvm_overlay_rejects_over_depth_descent() {
+fn code_sandbox_microvm_overlay_accepts_deep_tree_past_the_old_depth_cap() {
     let dir = tempfile::tempdir().expect("tempdir");
     let mut nested = dir.path().to_path_buf();
-    for index in 0..=MAX_OVERLAY_DEPTH {
+    for index in 0..65 {
         nested.push(format!("d{index}"));
     }
     fs::create_dir_all(&nested).expect("deep overlay tree");
+    fs::write(nested.join("deep.bin"), b"deep").expect("deep file");
 
-    let error = collect_overlay_writes(dir.path(), SandboxMount::Workspace)
-        .expect_err("over-depth overlay tree must be rejected");
-    assert_eq!(error.kind(), ErrorKind::MicroVmOverlayError);
+    let writes = collect_overlay_writes(dir.path(), SandboxMount::Workspace)
+        .expect("a deep tree is accepted");
+    assert_eq!(writes.len(), 1);
+    let expected_suffix = (0..65)
+        .map(|index| format!("d{index}"))
+        .collect::<Vec<_>>()
+        .join("/");
+    let expected_path = format!("/mnt/workspace/{expected_suffix}/deep.bin");
+    assert!(writes.iter().any(|write| matches!(write,
+        SandboxProposalWrite::FileWrite(file) if file.path.as_str() == expected_path && file.body.is(b"deep"))));
+    let path = match &writes[0] {
+        SandboxProposalWrite::FileWrite(file) => file.path.as_str().to_owned(),
+        other => panic!("expected FileWrite, got {other:?}"),
+    };
+    let depth = path
+        .strip_prefix("/mnt/workspace/")
+        .expect("workspace prefix")
+        .split('/')
+        .count()
+        - 1;
+    assert_eq!(depth, 65);
 }
 
 #[test]

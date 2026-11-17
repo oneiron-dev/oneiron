@@ -46,6 +46,34 @@ fn open_test_vault() -> (tempfile::TempDir, Vault) {
     (dir, vault)
 }
 
+struct RecordingLimitAsk {
+    calls: Mutex<Vec<(crate::limit_ask::EngineLimit, u64, u64)>>,
+}
+
+impl crate::limit_ask::LimitAsk for RecordingLimitAsk {
+    fn crossed(&self, row: crate::limit_ask::EngineLimit, bound: u64, measured: u64) {
+        self.calls
+            .lock()
+            .expect("limit ask lock")
+            .push((row, bound, measured));
+    }
+}
+
+fn open_test_vault_with_step_bound() -> (tempfile::TempDir, Vault, std::sync::Arc<RecordingLimitAsk>)
+{
+    let mut config = embedding_test_config();
+    config
+        .limits
+        .set(crate::limit_ask::EngineLimit::ExecutorRunSteps, 1);
+    let dir = tempfile::tempdir().expect("tempdir");
+    let vault = Vault::open(dir.path(), config).expect("open vault");
+    let ask = std::sync::Arc::new(RecordingLimitAsk {
+        calls: Mutex::new(Vec::new()),
+    });
+    vault.set_limit_ask(ask.clone());
+    (dir, vault, ask)
+}
+
 fn prompt_package_root() -> std::path::PathBuf {
     crate::prompt::workspace_test_prompt_package_root().expect("workspace test prompt package")
 }
@@ -298,11 +326,9 @@ fn executor_blocks_later_self_calls_after_durable_wait() {
     );
 }
 
-// FIX [LIBTEST-QUARANTINE-ENGINE-EXECUTOR-TESTS-ITEMS]: retired behaviour, not a port (2 errors: E0560 x1, E0599 x1): the retry tail asserts EngineExecutorStatus::HardStepLimitReached under EngineExecutorLimits hard_steps 1, both removed by FIX 4197 (a run past the step budget now asks through the [limits] executor_run_steps row); rewrite the retry tail to that ask, then drop this gate
-#[cfg(any())]
 #[test]
 fn executor_self_writes_route_through_gated_actor_write_trap() {
-    let (_dir, vault) = open_test_vault();
+    let (_dir, vault, ask) = open_test_vault_with_step_bound();
     let backend = FixtureBackend::new(["await self.memory.put_edge(src, 'mentions', tgt);"]);
     let lease = BudgetLease::for_test("executor-lease");
     let src = seed_person(&vault, 0xB1);
@@ -315,13 +341,7 @@ fn executor_self_writes_route_through_gated_actor_write_trap() {
             0.7,
         ))]]);
     let gated_write = gated_actor_write(&vault, "run-gated-write");
-    let config = executor_config(
-        entity(0x85),
-        EngineExecutorLimits {
-            soft_steps: 1,
-            hard_steps: 1,
-        },
-    );
+    let config = executor_config(entity(0x85), EngineExecutorLimits { soft_steps: 1 });
     let before = gate_decision_count(&vault);
 
     let mut executor =
@@ -348,8 +368,8 @@ fn executor_self_writes_route_through_gated_actor_write_trap() {
     assert_eq!(bridge_outcome_kind(&stored.bridge_calls[0]), "denied");
     assert_eq!(stored.step_checkpoints.len(), 1);
 
-    let retry_backend = FixtureBackend::new(std::iter::empty::<&str>());
-    let mut retry_runtime = FixtureRuntime::new(std::iter::empty::<JsCodeModeStepOutcome>());
+    let retry_backend = FixtureBackend::new(["const second = true;"]);
+    let mut retry_runtime = FixtureRuntime::new([JsCodeModeStepOutcome::complete("recovered")]);
     let mut retry = EngineNativeExecutor::new(
         &vault,
         &retry_backend,
@@ -357,26 +377,29 @@ fn executor_self_writes_route_through_gated_actor_write_trap() {
         &mut retry_runtime,
         &gated_write,
     );
-    let retry_outcome = block_on_ready(retry.run(&config)).expect("retry reads checkpoint");
+    let retry_outcome = block_on_ready(retry.run(&config)).expect("retry completes");
+    assert_eq!(retry_outcome.status, EngineExecutorStatus::Complete);
+    assert_eq!(retry_outcome.steps_run, 1);
+    assert_eq!(retry_runtime.seen.len(), 1);
+    assert_eq!(retry_runtime.seen[0].seq, 1);
+    let steps_asks: Vec<_> = ask
+        .calls
+        .lock()
+        .expect("limit ask lock")
+        .iter()
+        .filter(|entry| entry.0 == crate::limit_ask::EngineLimit::ExecutorRunSteps)
+        .copied()
+        .collect();
+    assert_eq!(steps_asks.len(), 1);
     assert_eq!(
-        retry_outcome.status,
-        EngineExecutorStatus::HardStepLimitReached
-    );
-    assert!(retry_runtime.seen.is_empty());
-    assert!(
-        retry_backend
-            .requests
-            .lock()
-            .expect("requests lock")
-            .is_empty()
+        steps_asks[0],
+        (crate::limit_ask::EngineLimit::ExecutorRunSteps, 1, 2)
     );
 }
 
-// FIX [LIBTEST-QUARANTINE-ENGINE-EXECUTOR-TESTS-ITEMS]: retired behaviour, not a port (2 errors: E0560 x1, E0599 x1): the retry tail asserts EngineExecutorStatus::HardStepLimitReached under EngineExecutorLimits hard_steps 1, both removed by FIX 4197 (a run past the step budget now asks through the [limits] executor_run_steps row); rewrite the retry tail to that ask, then drop this gate
-#[cfg(any())]
 #[test]
 fn executor_persists_bridge_calls_when_audited_write_fails() {
-    let (_dir, vault) = open_test_vault();
+    let (_dir, vault, ask) = open_test_vault_with_step_bound();
     let backend = FixtureBackend::new(["<exec>\nawait self.memory.put_claim(claim);\n</exec>"]);
     let lease = BudgetLease::for_test("executor-lease");
     let missing_subject = entity(0xD5);
@@ -392,13 +415,7 @@ fn executor_persists_bridge_calls_when_audited_write_fails() {
             SelfCall::MemoryPutClaim(SelfMemoryPutClaimCall::new(claim, candidate, range(11), 12)),
         ]]);
     let gated_write = gated_actor_write(&vault, "run-audited-write-failure");
-    let config = executor_config(
-        entity(0x8E),
-        EngineExecutorLimits {
-            soft_steps: 1,
-            hard_steps: 1,
-        },
-    );
+    let config = executor_config(entity(0x8E), EngineExecutorLimits { soft_steps: 1 });
     let before = gate_decision_count(&vault);
 
     let mut executor =
@@ -431,8 +448,8 @@ fn executor_persists_bridge_calls_when_audited_write_fails() {
         "a healed host-bridge failure counts with its replay checkpoint"
     );
 
-    let retry_backend = FixtureBackend::new(std::iter::empty::<&str>());
-    let mut retry_runtime = FixtureRuntime::new(std::iter::empty::<JsCodeModeStepOutcome>());
+    let retry_backend = FixtureBackend::new(["const second = true;"]);
+    let mut retry_runtime = FixtureRuntime::new([JsCodeModeStepOutcome::complete("recovered")]);
     let mut retry = EngineNativeExecutor::new(
         &vault,
         &retry_backend,
@@ -440,26 +457,29 @@ fn executor_persists_bridge_calls_when_audited_write_fails() {
         &mut retry_runtime,
         &gated_write,
     );
-    let retry_outcome = block_on_ready(retry.run(&config)).expect("retry reads checkpoint");
+    let retry_outcome = block_on_ready(retry.run(&config)).expect("retry completes");
+    assert_eq!(retry_outcome.status, EngineExecutorStatus::Complete);
+    assert_eq!(retry_outcome.steps_run, 1);
+    assert_eq!(retry_runtime.seen.len(), 1);
+    assert_eq!(retry_runtime.seen[0].seq, 1);
+    let steps_asks: Vec<_> = ask
+        .calls
+        .lock()
+        .expect("limit ask lock")
+        .iter()
+        .filter(|entry| entry.0 == crate::limit_ask::EngineLimit::ExecutorRunSteps)
+        .copied()
+        .collect();
+    assert_eq!(steps_asks.len(), 1);
     assert_eq!(
-        retry_outcome.status,
-        EngineExecutorStatus::HardStepLimitReached
-    );
-    assert!(retry_runtime.seen.is_empty());
-    assert!(
-        retry_backend
-            .requests
-            .lock()
-            .expect("requests lock")
-            .is_empty()
+        steps_asks[0],
+        (crate::limit_ask::EngineLimit::ExecutorRunSteps, 1, 2)
     );
 }
 
-// FIX [LIBTEST-QUARANTINE-ENGINE-EXECUTOR-TESTS-ITEMS]: retired behaviour, not a port (2 errors: E0560 x1, E0599 x1): the retry tail asserts EngineExecutorStatus::HardStepLimitReached under EngineExecutorLimits hard_steps 1, both removed by FIX 4197 (a run past the step budget now asks through the [limits] executor_run_steps row); rewrite the retry tail to that ask, then drop this gate
-#[cfg(any())]
 #[test]
 fn executor_persists_bridge_calls_when_runtime_errors_after_dispatch() {
-    let (_dir, vault) = open_test_vault();
+    let (_dir, vault, ask) = open_test_vault_with_step_bound();
     let backend = FixtureBackend::new(["```js\nawait self.memory.write_fixture(claim);\n```"]);
     let lease = BudgetLease::for_test("executor-lease");
     let subject = seed_person(&vault, 0xD1);
@@ -474,13 +494,7 @@ fn executor_persists_bridge_calls_when_runtime_errors_after_dispatch() {
         SelfMemoryWriteFixtureCall::new(claim, candidate, range(7), 8),
     )]);
     let gated_write = gated_actor_write(&vault, "run-error-after-dispatch");
-    let config = executor_config(
-        entity(0x8B),
-        EngineExecutorLimits {
-            soft_steps: 1,
-            hard_steps: 1,
-        },
-    );
+    let config = executor_config(entity(0x8B), EngineExecutorLimits { soft_steps: 1 });
 
     let mut executor =
         EngineNativeExecutor::new(&vault, &backend, &lease, &mut runtime, &gated_write);
@@ -523,8 +537,8 @@ fn executor_persists_bridge_calls_when_runtime_errors_after_dispatch() {
         "a healed failed-step turn counts when its bridge/checkpoint commit succeeds"
     );
 
-    let retry_backend = FixtureBackend::new(std::iter::empty::<&str>());
-    let mut retry_runtime = FixtureRuntime::new(std::iter::empty::<JsCodeModeStepOutcome>());
+    let retry_backend = FixtureBackend::new(["const second = true;"]);
+    let mut retry_runtime = FixtureRuntime::new([JsCodeModeStepOutcome::complete("recovered")]);
     let mut retry = EngineNativeExecutor::new(
         &vault,
         &retry_backend,
@@ -532,26 +546,29 @@ fn executor_persists_bridge_calls_when_runtime_errors_after_dispatch() {
         &mut retry_runtime,
         &gated_write,
     );
-    let retry_outcome = block_on_ready(retry.run(&config)).expect("retry reads checkpoint");
+    let retry_outcome = block_on_ready(retry.run(&config)).expect("retry completes");
+    assert_eq!(retry_outcome.status, EngineExecutorStatus::Complete);
+    assert_eq!(retry_outcome.steps_run, 1);
+    assert_eq!(retry_runtime.seen.len(), 1);
+    assert_eq!(retry_runtime.seen[0].seq, 1);
+    let steps_asks: Vec<_> = ask
+        .calls
+        .lock()
+        .expect("limit ask lock")
+        .iter()
+        .filter(|entry| entry.0 == crate::limit_ask::EngineLimit::ExecutorRunSteps)
+        .copied()
+        .collect();
+    assert_eq!(steps_asks.len(), 1);
     assert_eq!(
-        retry_outcome.status,
-        EngineExecutorStatus::HardStepLimitReached
-    );
-    assert!(retry_runtime.seen.is_empty());
-    assert!(
-        retry_backend
-            .requests
-            .lock()
-            .expect("requests lock")
-            .is_empty()
+        steps_asks[0],
+        (crate::limit_ask::EngineLimit::ExecutorRunSteps, 1, 2)
     );
 }
 
-// FIX [LIBTEST-QUARANTINE-ENGINE-EXECUTOR-TESTS-ITEMS]: retired behaviour, not a port (2 errors: E0560 x1, E0599 x1): the retry tail asserts EngineExecutorStatus::HardStepLimitReached under EngineExecutorLimits hard_steps 1, both removed by FIX 4197 (a run past the step budget now asks through the [limits] executor_run_steps row); rewrite the retry tail to that ask, then drop this gate
-#[cfg(any())]
 #[test]
 fn executor_persists_bridge_calls_when_output_recording_fails_after_dispatch() {
-    let (_dir, vault) = open_test_vault();
+    let (_dir, vault, ask) = open_test_vault_with_step_bound();
     let backend = FixtureBackend::new(["```js\nawait self.memory.write_fixture(claim);\n```"]);
     let lease = BudgetLease::for_test("executor-lease");
     let subject = seed_person(&vault, 0xD3);
@@ -572,13 +589,7 @@ fn executor_persists_bridge_calls_when_output_recording_fails_after_dispatch() {
             SelfMemoryWriteFixtureCall::new(claim, candidate, range(9), 10),
         )]]);
     let gated_write = gated_actor_write(&vault, "run-output-error-after-dispatch");
-    let config = executor_config(
-        entity(0x8C),
-        EngineExecutorLimits {
-            soft_steps: 1,
-            hard_steps: 1,
-        },
-    );
+    let config = executor_config(entity(0x8C), EngineExecutorLimits { soft_steps: 1 });
 
     let mut executor =
         EngineNativeExecutor::new(&vault, &backend, &lease, &mut runtime, &gated_write);
@@ -620,8 +631,8 @@ fn executor_persists_bridge_calls_when_output_recording_fails_after_dispatch() {
         "a healed output-recording failure counts with its replay checkpoint"
     );
 
-    let retry_backend = FixtureBackend::new(std::iter::empty::<&str>());
-    let mut retry_runtime = FixtureRuntime::new(std::iter::empty::<JsCodeModeStepOutcome>());
+    let retry_backend = FixtureBackend::new(["const second = true;"]);
+    let mut retry_runtime = FixtureRuntime::new([JsCodeModeStepOutcome::complete("recovered")]);
     let mut retry = EngineNativeExecutor::new(
         &vault,
         &retry_backend,
@@ -629,18 +640,23 @@ fn executor_persists_bridge_calls_when_output_recording_fails_after_dispatch() {
         &mut retry_runtime,
         &gated_write,
     );
-    let retry_outcome = block_on_ready(retry.run(&config)).expect("retry reads checkpoint");
+    let retry_outcome = block_on_ready(retry.run(&config)).expect("retry completes");
+    assert_eq!(retry_outcome.status, EngineExecutorStatus::Complete);
+    assert_eq!(retry_outcome.steps_run, 1);
+    assert_eq!(retry_runtime.seen.len(), 1);
+    assert_eq!(retry_runtime.seen[0].seq, 1);
+    let steps_asks: Vec<_> = ask
+        .calls
+        .lock()
+        .expect("limit ask lock")
+        .iter()
+        .filter(|entry| entry.0 == crate::limit_ask::EngineLimit::ExecutorRunSteps)
+        .copied()
+        .collect();
+    assert_eq!(steps_asks.len(), 1);
     assert_eq!(
-        retry_outcome.status,
-        EngineExecutorStatus::HardStepLimitReached
-    );
-    assert!(retry_runtime.seen.is_empty());
-    assert!(
-        retry_backend
-            .requests
-            .lock()
-            .expect("requests lock")
-            .is_empty()
+        steps_asks[0],
+        (crate::limit_ask::EngineLimit::ExecutorRunSteps, 1, 2)
     );
 }
 

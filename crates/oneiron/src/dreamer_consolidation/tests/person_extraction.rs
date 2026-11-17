@@ -95,25 +95,34 @@ fn production_executor_mints_only_explicit_evidenced_people_and_never_relabels()
     Ok(())
 }
 
-// FIX [LIBTEST-QUARANTINE-DREAMER-CONSOLIDATION-TESTS-PERSON-EXTRACTION-ITEMS]: not a port (1 errors: E0308): mint_extracted_people now takes &PersonBindings, whose ids the engine derives from new:P<n> declarations (bind_people, extracted_people/bindings.rs); the test pins reply-supplied hex ids and asserts each one mints; rewrite it through bind_people, then drop this gate
-#[cfg(any())]
 #[test]
 fn expired_mint_transaction_does_not_publish_extracted_people() -> Result<()> {
     let (_dir, vault) = open_vault();
     let conversation = seed_session(&vault, 0x72, 1);
     let turn = seed_turn(&vault, &conversation, "user", "I met Casey", 10);
-    let person = EntityId::now();
-    let response = text_response(
-        serde_json::json!({"candidates": [], "persons": [{
-            "id": person.to_hex(), "name": "Casey", "evidence_turn_refs": [turn.to_hex()]
-        }]})
-        .to_string(),
+    let sources = TestCallSources::new(&[(turn, "I met Casey")]);
+    let persons = vec![
+        crate::dreamer_consolidation::executor::extraction::ExtractedPerson {
+            id: "new:P1".to_owned(),
+            name: "Casey".to_owned(),
+            evidence_turn_refs: vec!["T1".to_owned()],
+        },
+    ];
+    let namespace = crate::dreamer_consolidation::extracted_people::MintNamespace::new(
+        crate::AttemptId::now(),
+        None,
+        None,
+        None,
+        None,
     );
+    let bindings =
+        crate::dreamer_consolidation::extracted_people::bind_people(&persons, &sources, &namespace);
+    let id = bindings.subject(1).expect("P1 binds");
     let deadline = WakePassDeadline::with_clock(180_000, std::sync::Arc::new(|| 180_001));
     assert!(
         crate::dreamer_consolidation::extracted_people::mint_extracted_people(
             &vault,
-            &response,
+            &bindings,
             &[turn],
             &source_scope(&vault, &[turn])?,
             20,
@@ -122,12 +131,10 @@ fn expired_mint_transaction_does_not_publish_extracted_people() -> Result<()> {
         )
         .is_err()
     );
-    assert!(!vault.entity_exists(&person)?);
+    assert!(!vault.entity_exists(&id)?);
     Ok(())
 }
 
-// FIX [LIBTEST-QUARANTINE-DREAMER-CONSOLIDATION-TESTS-PERSON-EXTRACTION-ITEMS]: not a port (1 errors: E0308): mint_extracted_people now takes &PersonBindings, whose ids the engine derives from new:P<n> declarations (bind_people, extracted_people/bindings.rs); the test pins reply-supplied hex ids and asserts each one mints; rewrite it through bind_people, then drop this gate
-#[cfg(any())]
 #[test]
 fn extraction_provenance_rechecks_role_and_liveness_even_for_working_set_ids() -> Result<()> {
     let (_dir, vault) = open_vault();
@@ -136,28 +143,43 @@ fn extraction_provenance_rechecks_role_and_liveness_even_for_working_set_ids() -
     let tool = seed_turn(&vault, &conversation, "tool", "I met Morgan", 11);
     let deleted = seed_turn(&vault, &conversation, "user", "I met Jordan", 12);
     vault.delete_entity_with_reason(&deleted, crate::deletion::DeleteReason::UserDelete)?;
-    let valid_person = EntityId::now();
-    let tool_person = EntityId::now();
-    let deleted_person = EntityId::now();
-    let row = |id: EntityId, name: &str, turn: EntityId| {
-        serde_json::json!({
-            "id": id.to_hex(), "name": name, "evidence_turn_refs": [turn.to_hex()],
-        })
-    };
-    let response = text_response(
-        serde_json::json!({
-            "candidates": [],
-            "persons": [
-                row(valid_person, "Casey", user),
-                row(tool_person, "Morgan", tool),
-                row(deleted_person, "Jordan", deleted)
-            ]
-        })
-        .to_string(),
+    let sources = TestCallSources::new(&[
+        (user, "I met Casey"),
+        (tool, "I met Morgan"),
+        (deleted, "I met Jordan"),
+    ]);
+    let persons = vec![
+        crate::dreamer_consolidation::executor::extraction::ExtractedPerson {
+            id: "new:P1".to_owned(),
+            name: "Casey".to_owned(),
+            evidence_turn_refs: vec!["T1".to_owned()],
+        },
+        crate::dreamer_consolidation::executor::extraction::ExtractedPerson {
+            id: "new:P2".to_owned(),
+            name: "Morgan".to_owned(),
+            evidence_turn_refs: vec!["T2".to_owned()],
+        },
+        crate::dreamer_consolidation::executor::extraction::ExtractedPerson {
+            id: "new:P3".to_owned(),
+            name: "Jordan".to_owned(),
+            evidence_turn_refs: vec!["T3".to_owned()],
+        },
+    ];
+    let namespace = crate::dreamer_consolidation::extracted_people::MintNamespace::new(
+        crate::AttemptId::now(),
+        None,
+        None,
+        None,
+        None,
     );
+    let bindings =
+        crate::dreamer_consolidation::extracted_people::bind_people(&persons, &sources, &namespace);
+    let valid = bindings.subject(1).expect("P1 binds");
+    let tool_id = bindings.subject(2).expect("P2 binds");
+    let deleted_id = bindings.subject(3).expect("P3 binds");
     crate::dreamer_consolidation::extracted_people::mint_extracted_people(
         &vault,
-        &response,
+        &bindings,
         &[user, tool, deleted],
         &source_scope(&vault, &[user, tool, deleted])?,
         20,
@@ -165,16 +187,14 @@ fn extraction_provenance_rechecks_role_and_liveness_even_for_working_set_ids() -
         None,
     )?;
     assert_eq!(
-        zero_live_members(&vault, &valid_person)?,
+        zero_live_members(&vault, &valid)?,
         Some(CleanupKind::ClaimlessExtractionPerson)
     );
-    assert!(!vault.entity_exists(&tool_person)?);
-    assert!(!vault.entity_exists(&deleted_person)?);
+    assert!(!vault.entity_exists(&tool_id)?);
+    assert!(!vault.entity_exists(&deleted_id)?);
     Ok(())
 }
 
-// FIX [LIBTEST-QUARANTINE-DREAMER-CONSOLIDATION-TESTS-PERSON-EXTRACTION-ITEMS]: not a port (1 errors: E0308): mint_extracted_people now takes &PersonBindings, whose ids the engine derives from new:P<n> declarations (bind_people, extracted_people/bindings.rs); the test pins reply-supplied hex ids and asserts each one mints; rewrite it through bind_people, then drop this gate
-#[cfg(any())]
 #[test]
 fn extraction_requires_a_normalized_name_span_not_an_embedded_word() -> Result<()> {
     let (_dir, vault) = open_vault();
@@ -200,48 +220,103 @@ fn extraction_requires_a_normalized_name_span_not_an_embedded_word() -> Result<(
         ("Ann-Marie", "I met Ann-Marie.", true),
     ];
     let mut working_set = Vec::new();
-    let mut people = Vec::new();
-    let mut expected = Vec::new();
-    for (name, text, should_mint) in cases {
-        let turn = seed_turn(&vault, &conversation, "user", text, 10);
-        let person = EntityId::now();
+    let mut turn_texts = Vec::new();
+    let mut persons = Vec::new();
+    for (index, (name, text, _)) in cases.iter().enumerate() {
+        let turn = seed_turn(&vault, &conversation, "user", *text, 10);
         working_set.push(turn);
-        people.push(serde_json::json!({
-            "id": person.to_hex(),
-            "name": name,
-            "evidence_turn_refs": [turn.to_hex()],
-        }));
-        expected.push((person, name, text, should_mint));
+        turn_texts.push((turn, *text));
+        persons.push(
+            crate::dreamer_consolidation::executor::extraction::ExtractedPerson {
+                id: format!("new:P{}", index + 1),
+                name: (*name).to_owned(),
+                evidence_turn_refs: vec![format!("T{}", index + 1)],
+            },
+        );
     }
-    let response =
-        text_response(serde_json::json!({"candidates": [], "persons": people}).to_string());
+    let sources = TestCallSources::new(&turn_texts);
+    let namespace = crate::dreamer_consolidation::extracted_people::MintNamespace::new(
+        crate::AttemptId::now(),
+        None,
+        None,
+        None,
+        None,
+    );
+    let bindings =
+        crate::dreamer_consolidation::extracted_people::bind_people(&persons, &sources, &namespace);
     crate::dreamer_consolidation::extracted_people::mint_extracted_people(
         &vault,
-        &response,
+        &bindings,
         &working_set,
         &source_scope(&vault, &working_set)?,
         20,
         None,
         None,
     )?;
-    for (person, name, text, should_mint) in expected {
-        assert_eq!(
-            vault.entity_exists(&person)?,
-            should_mint,
-            "name {name:?}, evidence {text:?}"
-        );
-        if should_mint {
-            assert_eq!(
-                zero_live_members(&vault, &person)?,
-                Some(CleanupKind::ClaimlessExtractionPerson)
-            );
+    for (index, (name, text, should_mint)) in cases.iter().enumerate() {
+        let number = index + 1;
+        match bindings.subject(number) {
+            Ok(id) => {
+                assert_eq!(
+                    vault.entity_exists(&id)?,
+                    *should_mint,
+                    "name {name:?}, evidence {text:?}"
+                );
+                if *should_mint {
+                    assert_eq!(
+                        zero_live_members(&vault, &id)?,
+                        Some(CleanupKind::ClaimlessExtractionPerson)
+                    );
+                }
+            }
+            Err(_) => {
+                assert!(!should_mint, "name {name:?} bound no id but expected mint");
+            }
         }
     }
     Ok(())
 }
 
-// FIX [LIBTEST-QUARANTINE-DREAMER-CONSOLIDATION-TESTS-PERSON-EXTRACTION-ITEMS]: not a port (0 errors: none; only the gated tests above call it): drop this gate with theirs
-#[cfg(any())]
+/// One extraction call's labels over the turns it showed, for person-mint
+/// tests: each turn labelled `T<n>` in seeding order, showing its text.
+struct TestCallSources {
+    labels: crate::dreamer_consolidation::call_labels::CallLabelMap,
+    texts: std::collections::BTreeMap<crate::EntityId, String>,
+}
+
+impl TestCallSources {
+    fn new(turns: &[(crate::EntityId, &str)]) -> Self {
+        let mut labels = crate::dreamer_consolidation::call_labels::CallLabelMap::default();
+        let mut texts = std::collections::BTreeMap::new();
+        for (turn, text) in turns {
+            labels.assign(
+                crate::dreamer_consolidation::call_labels::LabelKind::Turn,
+                *turn,
+            );
+            texts.insert(*turn, (*text).to_owned());
+        }
+        Self { labels, texts }
+    }
+}
+
+impl crate::dreamer_consolidation::call_labels::CallSources for TestCallSources {
+    fn labels(&self) -> &crate::dreamer_consolidation::call_labels::CallLabelMap {
+        &self.labels
+    }
+
+    fn shown(
+        &self,
+        id: crate::EntityId,
+    ) -> Option<crate::dreamer_consolidation::call_labels::SourceShown<'_>> {
+        self.texts.get(&id).map(
+            |text| crate::dreamer_consolidation::call_labels::SourceShown {
+                text: Some(text.as_str()),
+                project: None,
+            },
+        )
+    }
+}
+
 fn source_scope(vault: &Vault, ids: &[EntityId]) -> Result<crate::llm::Scope> {
     let mut scope = crate::llm::Scope::default();
     for id in ids {
