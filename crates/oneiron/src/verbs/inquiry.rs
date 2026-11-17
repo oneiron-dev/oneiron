@@ -368,31 +368,71 @@ pub(crate) fn is_inquire_row(verb: &str) -> bool {
 }
 
 /// What a record outside the task keeps of a `vault.inquire` answer
-/// (INQUIRE-SHAPE Q6 = A): an answer not kept `copy` with its statements
-/// replaced by an empty list and `statements_withheld`, so no run record,
-/// verb hook or saved retry holds the member's words past the task. That is
-/// an answer kept `task`, and one whose `keep` a post hook redacted (review
-/// of #9318). A `copy` answer, a company record (federation.md
-/// #inquiry-keep), and an answer with no statements stay as they are.
+/// (INQUIRE-SHAPE Q6 = A, the keep-no-value path): an answer not kept
+/// `copy` with each statement left in its place, every field of it null,
+/// and `statements_withheld`, so no run record, verb hook or saved retry
+/// holds the member's words past the task. That is an answer kept `task`,
+/// and one whose `keep` a post hook redacted (review of #9318). Each
+/// statement keeps its place and its fields, as a `reveal.wait` answer
+/// keeps its value field with the handle in it, so a post hook's Redact
+/// path lands on the kept form where it would land on the words, and
+/// [`restore_withheld_statements`] puts back only what the hook left
+/// (review round 2 of #9318). A `copy` answer, a company record
+/// (federation.md #inquiry-keep), and an answer with no statements stay as
+/// they are.
 pub(crate) fn kept_inquiry_answer(output: &serde_json::Value) -> serde_json::Value {
     let mut kept = output.clone();
     if let Some(fields) = kept.as_object_mut()
         && fields.get("keep").and_then(serde_json::Value::as_str) != Some("copy")
-        && fields
-            .get("statements")
-            .and_then(serde_json::Value::as_array)
-            .is_some_and(|statements| !statements.is_empty())
+        && let Some(statements) = fields
+            .get_mut("statements")
+            .and_then(serde_json::Value::as_array_mut)
+        && !statements.is_empty()
     {
-        fields.insert(
-            "statements".to_owned(),
-            serde_json::Value::Array(Vec::new()),
-        );
+        statements.iter_mut().for_each(withhold_statement);
         fields.insert(
             "statements_withheld".to_owned(),
             serde_json::Value::Bool(true),
         );
     }
     kept
+}
+
+/// A statement of a kept form ([`kept_inquiry_answer`]): in its place, every
+/// field of it null. A statement that is no object is null whole, and never
+/// put back.
+fn withhold_statement(statement: &mut serde_json::Value) {
+    match statement {
+        serde_json::Value::Object(fields) => fields
+            .values_mut()
+            .for_each(|field| *field = serde_json::Value::Null),
+        other => *other = serde_json::Value::Null,
+    }
+}
+
+/// Puts the member's `statements` back into `kept`, a kept form's
+/// statements ([`kept_inquiry_answer`]) as a post hook left them: each field
+/// still null in its place takes the field of the statement at the same
+/// place. A field a hook's Redact removed, or a statement it masked or
+/// removed, stays as the hook left it, so the caller never reads words a
+/// hook redacted from the form it read.
+pub(crate) fn restore_withheld_statements(
+    kept: &mut [serde_json::Value],
+    statements: &[serde_json::Value],
+) {
+    for (slot, statement) in kept.iter_mut().zip(statements) {
+        if let (serde_json::Value::Object(slot), serde_json::Value::Object(statement)) =
+            (slot, statement)
+        {
+            for (key, field) in slot.iter_mut() {
+                if field.is_null()
+                    && let Some(value) = statement.get(key)
+                {
+                    *field = value.clone();
+                }
+            }
+        }
+    }
 }
 
 /// A `vault.inquire` `answer` saved in its kept form
@@ -404,12 +444,13 @@ pub(crate) fn kept_inquiry_answer(output: &serde_json::Value) -> serde_json::Val
 /// has ended, its `valid_until` has come or the process restarted, the
 /// answer stays withheld, and the agent asks again.
 ///
-/// Only an answer that still says it is kept `task` and holds both
-/// stand-ins the kept form left (the empty list and `statements_withheld`)
-/// takes them back: an answer a post hook changed, such as one whose
-/// `statements` or `keep` it redacted, stays as the hook left it, as the
-/// caller's view does at the post chain. A holder that cannot read its
-/// tasks' state leaves the answer withheld, so a retry never fails on it.
+/// Only an answer that still says it is kept `task` and still holds
+/// `statements_withheld` takes them back, and only into the fields the kept
+/// form left in place ([`restore_withheld_statements`]): a statement or
+/// field a post hook redacted, and every statement of an answer whose
+/// `keep` it redacted, stays as the hook left it, as the caller's view does
+/// at the post chain. A holder that cannot read its tasks' state leaves the
+/// answer withheld, so a retry never fails on it.
 pub(crate) fn restore_held_statements(
     vault: &Vault,
     actor: EntityId,
@@ -421,7 +462,9 @@ pub(crate) fn restore_held_statements(
     };
     if fields.get("keep").and_then(serde_json::Value::as_str) != Some("task")
         || fields.get("statements_withheld") != Some(&serde_json::Value::Bool(true))
-        || fields.get("statements") != Some(&serde_json::Value::Array(Vec::new()))
+        || !fields
+            .get("statements")
+            .is_some_and(serde_json::Value::is_array)
     {
         return;
     }
@@ -442,17 +485,19 @@ pub(crate) fn restore_held_statements(
             return;
         }
     };
-    let statements = statements
+    let statements: Vec<serde_json::Value> = statements
         .iter()
         .map(|statement| {
             let view = statement_view(statement);
             serde_json::json!({ "text": view.text, "source": view.source })
         })
         .collect();
-    fields.insert(
-        "statements".to_owned(),
-        serde_json::Value::Array(statements),
-    );
+    if let Some(kept) = fields
+        .get_mut("statements")
+        .and_then(serde_json::Value::as_array_mut)
+    {
+        restore_withheld_statements(kept, &statements);
+    }
     fields.remove("statements_withheld");
 }
 

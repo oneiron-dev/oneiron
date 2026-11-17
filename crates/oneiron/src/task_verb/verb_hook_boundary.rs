@@ -563,35 +563,25 @@ pub fn revealed_hook_view(
 /// The fields of a `reveal.wait` answer that carry the value.
 const REVEALED_FIELDS: [&str; 2] = ["value", "value_base64"];
 
-/// The fields of a `vault.inquire` answer's kept form that stand in for the
-/// member's statements ([`crate::verbs::kept_inquiry_answer`]).
-const WITHHELD_FIELDS: [&str; 2] = ["statements", "statements_withheld"];
-
 /// The caller's view of a task-kept `vault.inquire` `reply` once its hooks
-/// read its `kept` form: while the view still holds its `keep` and both
-/// stand-ins the kept form left (the empty list and `statements_withheld`),
-/// the statements go back and the mark goes. A view whose hook changed any
-/// of them stays as the hook left it, withheld: the statements go back only
-/// into an answer that still says it is kept `task`, so a hook that redacted
-/// `keep` never hands the statements to a writer that keeps every answer
-/// not kept `task` whole (review of #9318).
+/// read its `kept` form: while the view still holds the `keep` the kept
+/// form left, each statement field still null in its place takes the
+/// member's own back ([`crate::verbs::restore_withheld_statements`]) and the
+/// mark goes. A statement or field a hook redacted stays as the hook left
+/// it: a Redact path lands on the kept form where it would land on the
+/// words, so a path into the words the hook never read still hides them
+/// (review round 2 of #9318). A view whose `keep` a hook redacted stays
+/// withheld whole: the statements go back only into an answer that still
+/// says how it is kept (review of #9318).
 fn inquiry_hook_view(mut view: Value, kept: &Value, reply: &Value) -> Value {
-    if let (Some(fields), Some(kept), Some(reply)) =
-        (view.as_object_mut(), kept.as_object(), reply.as_object())
-        && std::iter::once("keep")
-            .chain(WITHHELD_FIELDS)
-            .all(|key| fields.get(key).is_some() && fields.get(key) == kept.get(key))
+    if let Some(fields) = view.as_object_mut()
+        && fields.get("keep").is_some()
+        && fields.get("keep") == kept.get("keep")
+        && let Some(statements) = reply.get("statements").and_then(Value::as_array)
+        && let Some(slots) = fields.get_mut("statements").and_then(Value::as_array_mut)
     {
-        for key in WITHHELD_FIELDS {
-            match reply.get(key) {
-                Some(value) => {
-                    fields.insert(key.to_owned(), value.clone());
-                }
-                None => {
-                    fields.remove(key);
-                }
-            }
-        }
+        crate::verbs::restore_withheld_statements(slots, statements);
+        fields.remove("statements_withheld");
     }
     view
 }

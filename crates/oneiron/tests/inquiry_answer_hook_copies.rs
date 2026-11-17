@@ -40,11 +40,11 @@
 //!   mark alone.
 //! - `a_post_hook_that_redacts_keep_leaves_the_statements_withheld` (blind
 //!   review round 1 of #9318): a post hook redacts `keep` from the kept
-//!   form. The caller's view keeps both stand-ins and no statement: the
-//!   statements go back only into an answer that still says it is kept
-//!   `task`. Red on the base (the hook reads the whole answer, so the view
-//!   keeps the statement) and at the PR head 0edcc19d95 (it restored on the
-//!   stand-ins alone).
+//!   form. The caller's view keeps the statements withheld (each field
+//!   null) and the mark: the statements go back only into an answer that
+//!   still says how it is kept. Red on the base (the hook reads the whole
+//!   answer, so the view keeps the statement) and at the PR head 0edcc19d95
+//!   (it restored on the stand-ins alone).
 //! - `a_drained_ask_saves_no_statement_of_an_answer_with_no_keep`: the same
 //!   review. A drained rerun whose answer reaches the save with its `keep`
 //!   gone, as a post hook that redacted `keep` left it at 0edcc19d95, is
@@ -368,15 +368,26 @@ fn answer(inquiry: EntityId, keep: &str) -> Value {
     })
 }
 
+/// The statements of [`answer`]'s kept form: its one statement in its
+/// place, every field of it null.
+fn withheld_statements() -> Value {
+    json!([{"text": null, "source": null}])
+}
+
 /// A hook input whose `result` is a task-kept answer's kept form: no
-/// statement text anywhere, the empty list and `statements_withheld`.
+/// statement text anywhere, each statement in its place with every field
+/// null, and `statements_withheld`.
 fn assert_withheld(input_json: &str, what: &str) {
     assert!(
         !input_json.contains(MEMBER_WORD),
         "{what} holds no statement of the member: {input_json}"
     );
     let input: Value = serde_json::from_str(input_json).expect("a hook input is JSON");
-    assert_eq!(input["result"]["statements"], json!([]), "{what}: {input}");
+    assert_eq!(
+        input["result"]["statements"],
+        withheld_statements(),
+        "{what}: {input}"
+    );
     assert_eq!(
         input["result"]["statements_withheld"],
         json!(true),
@@ -447,7 +458,7 @@ fn a_drained_ask_saves_no_task_held_statement() {
         !saved.to_string().contains(MEMBER_WORD),
         "the saved answer holds no statement of the member: {saved}"
     );
-    assert_eq!(saved["statements"], json!([]), "{saved}");
+    assert_eq!(saved["statements"], withheld_statements(), "{saved}");
     assert_eq!(saved["statements_withheld"], json!(true), "{saved}");
     assert_eq!(saved["inquiry_id"], json!(inquiry), "{saved}");
     assert_eq!(saved["outcome"], json!("answered"), "{saved}");
@@ -545,7 +556,7 @@ fn a_post_hook_that_redacts_keep_leaves_the_statements_withheld() {
         "the caller's view of an answer whose keep a hook redacted holds no statement: {view}"
     );
     assert_eq!(view.get("keep"), None, "the hook redacted keep: {view}");
-    assert_eq!(view["statements"], json!([]), "{view}");
+    assert_eq!(view["statements"], withheld_statements(), "{view}");
     assert_eq!(view["statements_withheld"], json!(true), "{view}");
     assert_eq!(view["inquiry_id"], reply["inquiry_id"], "{view}");
 }
@@ -589,7 +600,7 @@ fn a_drained_ask_saves_no_statement_of_an_answer_with_no_keep() {
         "the saved answer with no keep holds no statement, and the retry restores none: {retried}"
     );
     assert_eq!(retried.get("keep"), None, "{retried}");
-    assert_eq!(retried["statements"], json!([]), "{retried}");
+    assert_eq!(retried["statements"], withheld_statements(), "{retried}");
     assert_eq!(retried["statements_withheld"], json!(true), "{retried}");
     assert_eq!(retried["inquiry_id"], json!(inquiry), "{retried}");
 }
