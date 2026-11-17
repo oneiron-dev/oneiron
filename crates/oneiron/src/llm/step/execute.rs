@@ -207,20 +207,6 @@ pub(super) async fn call_as_step_with_fallbacks_and_retries(
     durable_step(ctx, backend, guard, request, fallbacks, None, retries, None).await
 }
 
-/// The span a step's model call runs in, its corrections and retries too
-/// (FIX DREAMER-CALL-ATTEMPT-ID): the attempt as its stage line prints it and
-/// 16 hex of the step hash, ids only. Debug under `oneiron::model::send`, the
-/// target of the server's `model request sent` line at each physical send,
-/// so one log directive shows which attempt and step sent each body.
-fn model_step_span(attempt: AttemptId, step_hash: &[u8; 32]) -> tracing::Span {
-    tracing::debug_span!(
-        target: "oneiron::model::send",
-        "model_step",
-        attempt = %bytes_to_hex_lower(attempt.as_bytes()),
-        step = %bytes_to_hex_lower(&step_hash[..8]),
-    )
-}
-
 async fn durable_step(
     ctx: &DurableStepContext<'_>,
     backend: &dyn LlmBackend,
@@ -570,6 +556,20 @@ async fn durable_step(
         legibility: step_legibility(ctx, guard),
         failure_policy,
     })
+}
+
+/// The span a step's model call runs in, its corrections and retries too
+/// (FIX DREAMER-CALL-ATTEMPT-ID): the attempt as its stage line prints it and
+/// 16 hex of the step hash, ids only. Debug under `oneiron::model::send`, the
+/// target of the server's `model request sent` line at each physical send,
+/// so one log directive shows which attempt and step sent each body.
+fn model_step_span(attempt: AttemptId, step_hash: &[u8; 32]) -> tracing::Span {
+    tracing::debug_span!(
+        target: "oneiron::model::send",
+        "model_step",
+        attempt = %bytes_to_hex_lower(attempt.as_bytes()),
+        step = %bytes_to_hex_lower(&step_hash[..8]),
+    )
 }
 
 /// Verify a persisted step and resolve resident eligibility in the SAME
