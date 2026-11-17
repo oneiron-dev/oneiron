@@ -3,6 +3,7 @@
 //! takes the owner's proof from the request instead.
 
 use super::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
+use crate::authority::{OwnerOrDelegate, VerifiedSlip, is_owner_delegate_verb};
 use crate::consent::AuthenticatedOwner;
 use crate::edge::EdgeActorClass;
 use crate::error::GateError;
@@ -47,6 +48,93 @@ impl Memory<'_> {
                 }
                 other => MemoryError::from(other),
             })
+    }
+
+    /// Runs the owner act `verb`, one whose door also admits the owner's
+    /// delegate (restriction wave 11), as this in-process handle may take
+    /// it. The embedded owner [`Self::embedded_owner`] admits takes it as
+    /// before: `act` gets the owner's proof and no credential. An agent
+    /// handle bound to its own live credential ([`Self::with_read_proof`])
+    /// that the facade would admit for the verb's row takes it as the
+    /// owner's delegate: `act` gets the agent and that credential, and runs
+    /// the delegate door, which reads the owner's Setting key and the
+    /// agent's live Grant in the act's own transaction, as for the facade.
+    /// Any other caller gets the owner refusal (FIX
+    /// WAVE11-INPROCESS-OWNER-DOORS).
+    ///
+    /// # Errors
+    ///
+    /// The owner refusal for a caller that is neither; `FORBIDDEN` for an
+    /// agent's credential that no longer holds, that does not reach the
+    /// row's core scope or that is cut on its records; `act`'s own errors.
+    pub(crate) fn with_owner_or_delegate<T>(
+        &self,
+        verb: &str,
+        act: impl FnOnce(OwnerOrDelegate<'_>, Option<&VerifiedSlip>) -> MemoryResult<T>,
+    ) -> MemoryResult<T> {
+        let refusal = match self.embedded_owner(verb) {
+            Ok(owner) => return act(OwnerOrDelegate::Owner(&owner), None),
+            Err(refusal) => refusal,
+        };
+        match self.own_delegate_credential(verb)? {
+            Some(credential) => act(OwnerOrDelegate::Delegate(self.actor), Some(credential)),
+            None => Err(refusal),
+        }
+    }
+
+    /// This agent handle's own credential, when the handle may take the
+    /// owner act `verb` as the owner's delegate, held to the checks the
+    /// facade runs before its delegate door: the caller is an agent, the
+    /// credential names it and its class, is reusable and was not handed to
+    /// another key, and stands now; it grants the row's core scope; and it
+    /// is cut on no records, channels or scope axis but its verbs (every
+    /// owner-delegate row asks unrestricted record scope). `None` for a
+    /// handle that is no agent, a verb whose door admits no delegate, or no
+    /// credential that is the agent's own.
+    ///
+    /// # Errors
+    ///
+    /// `FORBIDDEN` for a credential that no longer holds, that does not
+    /// reach the row's core scope or that is cut; storage errors.
+    fn own_delegate_credential(&self, verb: &str) -> MemoryResult<Option<&VerifiedSlip>> {
+        let Some(row) = crate::verbs::AgentVerb::from_name(verb) else {
+            return Ok(None);
+        };
+        if self.actor_class != EdgeActorClass::Agent || !is_owner_delegate_verb(verb) {
+            return Ok(None);
+        }
+        let Some(credential) = self.read_proof.as_ref() else {
+            return Ok(None);
+        };
+        let claims = credential.claims();
+        if claims.holder_ref != self.actor.to_hex()
+            || claims.actor_class.as_deref() != Some("agent")
+            || claims.single_use
+            || claims.invitation_ref.is_some()
+            || credential.is_transferred()
+        {
+            return Ok(None);
+        }
+        if !self.vault.capability_slip_is_live(credential)? {
+            return Err(MemoryError::new(
+                MEMORY_CODE_FORBIDDEN,
+                "the credential is no longer live",
+                &["Present a live credential, then call again."],
+            ));
+        }
+        let class = if row.writes() { "write" } else { "read" };
+        if !(credential.allows_verb(class) || credential.allows_verb(&format!("core:{class}"))) {
+            return Err(scope_refusal(&format!("core:{class}")));
+        }
+        let mut uncut = crate::federation::Scope::top();
+        uncut.verbs = credential.scope().verbs.clone();
+        if !claims.records.is_empty()
+            || !claims.channels.is_empty()
+            || !uncut.is_narrowing_of(credential.scope())
+        {
+            return Err(scope_refusal("record-scope"));
+        }
+        Ok(Some(credential))
     }
 
     /// The embedded owner as the caller of the authority clock repair (FIX
@@ -103,4 +191,14 @@ impl Memory<'_> {
         let proof = self.embedded_owner(verb)?;
         Ok(self.vault.put_pack(&proof, files)?)
     }
+}
+
+/// An owner-delegate door's refusal of an agent's credential that lacks
+/// `required`, the scope the facade names for the same refusal.
+fn scope_refusal(required: &str) -> MemoryError {
+    MemoryError::new(
+        MEMORY_CODE_FORBIDDEN,
+        format!("the credential does not have the required scope {required}"),
+        &["Present a credential with the required Oneiron core scope, then call again."],
+    )
 }

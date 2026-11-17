@@ -83,8 +83,10 @@ pub(super) struct EnrollmentLegDispatch {
 /// What the v1 envelope derivation resolved to (FIX 11670).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum CampaignEnvelopeBytes {
-    /// The envelope bytes, frozen exactly as the outward leg freezes them.
-    Resolved(Vec<u8>),
+    /// The envelope bytes, frozen exactly as the outward leg freezes them,
+    /// and the member's replicated comm `party_key` the target resolved to:
+    /// the gate's counterparty for the send.
+    Resolved { bytes: Vec<u8>, party_key: String },
     /// The member does not resolve to a sendable target on the step's
     /// pinned channel and sender (FIX 11513 K12); nothing is sent.
     UnresolvableTarget,
@@ -214,7 +216,10 @@ pub(super) fn campaign_envelope_bytes_in_txn(
     };
     let envelope_bytes = serde_json::to_vec(&envelope)
         .map_err(|_| invalid("a campaign envelope is not JSON-encodable"))?;
-    Ok(CampaignEnvelopeBytes::Resolved(envelope_bytes))
+    Ok(CampaignEnvelopeBytes::Resolved {
+        bytes: envelope_bytes,
+        party_key: target.party_key,
+    })
 }
 
 /// The send mode of the campaign `campaign_ref`; a campaign this vault does
@@ -299,8 +304,9 @@ pub(super) fn run_enrollment_outbound_leg<T: OutboundTransport>(
     // filed body pinning to the program row (FIX 11513 K11): the blob's
     // latest version can run ahead of the accepted row, and then the send
     // waits rather than carrying words the program never accepted.
-    let envelope_bytes = match campaign_envelope_bytes(vault, &event, &step, outbound)? {
-        CampaignEnvelopeBytes::Resolved(bytes) => bytes,
+    let (envelope_bytes, party_key) = match campaign_envelope_bytes(vault, &event, &step, outbound)?
+    {
+        CampaignEnvelopeBytes::Resolved { bytes, party_key } => (bytes, party_key),
         CampaignEnvelopeBytes::UnresolvableTarget => {
             tracing::warn!(
                 event_ref = %event.event_ref.to_hex(),
@@ -353,7 +359,7 @@ pub(super) fn run_enrollment_outbound_leg<T: OutboundTransport>(
         payload: envelope_bytes,
         idempotency_supported: outbound.idempotency_supported,
         resolved_endpoint: None,
-        gate: enrollment_gate_input(&step, outbound, &event, ask.target),
+        gate: enrollment_gate_input(&step, outbound, &event, ask.target, Some(party_key)),
         budget_class: BudgetClass::Send,
         authorization: PreparedAuthorization::None,
         verified_actor: None,
@@ -530,7 +536,8 @@ impl<S: OutboundResultSender + ?Sized> OutboundTransport for SenderTransport<'_,
 /// persisted rows (the logical event, the program step, the consequence and
 /// its call sequence, the frozen body), read against the request retained
 /// for that call as the leg reads it. `None` when the step declares no
-/// outward call. It reads and records nothing else.
+/// outward call. It also reads the member's target, as the leg does, and
+/// records nothing.
 ///
 /// # Errors
 /// As the leg's own resolution of the refs: [`Error::EntityNotFound`] when
@@ -559,9 +566,14 @@ pub(super) fn enrollment_outbound_approval_digest_in_txn(
     let Some(outbound) = step.outbound.as_ref() else {
         return Ok(None);
     };
+    // The digest never reads the counterparty; the key keeps this input the
+    // leg's own, and a member with no sendable target names none.
+    let party_key =
+        super::target::resolve_campaign_member_target_in_txn(vault, txn, event.entity_ref, &step)?
+            .map(|target| target.party_key);
     let consequence_id = enrollment_consequence_id(&event, &step)?;
     let ask = super::approval::leg_ask_in_txn(vault, txn, &event, &step, outbound, consequence_id);
-    let gate = enrollment_gate_input(&step, outbound, &event, ask.target);
+    let gate = enrollment_gate_input(&step, outbound, &event, ask.target, party_key);
     Ok(crate::gate::external_effect_approval_digest(&gate))
 }
 
@@ -571,11 +583,18 @@ pub(super) fn enrollment_outbound_approval_digest_in_txn(
 /// and sticky sender — a step cannot exist without both. They are ASSERTIONS
 /// about persisted state, not a decision: the gate is still the authority, and
 /// CA-06 owns tightening this posture.
+///
+/// `counterparty` is the member's replicated comm `party_key`, the string
+/// every counterparty-keyed gate row reads (do-not-contact, STOP, contact
+/// records, send overrides, outbound grants, campaign compliance), never the
+/// PERSON's entity hex, which no PERSON body carries (ARCH-0059: the dispatch
+/// gate keeps its suppression and compliance rows for campaign sends).
 fn enrollment_gate_input(
     step: &CampaignProgramStep,
     outbound: &CampaignProgramOutbound,
     event: &CampaignEnrollmentEvent,
     target: CampaignLegFacts,
+    counterparty: Option<String>,
 ) -> ExternalEffectGateInput {
     ExternalEffectGateInput {
         actor: GateActor {
@@ -599,7 +618,7 @@ fn enrollment_gate_input(
         // mail: a named policy gap for FIX 11514 / a campaign
         // actor-assertion redesign, not this pack.
         channel_identity_ref: None,
-        counterparty: Some(event.entity_ref.to_hex()),
+        counterparty,
         brief_ref: Some(event.campaign_ref.to_hex()),
         send_ref: Some(event.event_ref.to_hex()),
         standing_grant_ref: None,
@@ -685,7 +704,7 @@ pub(super) fn campaign_approval_snapshot_in_txn(
     };
     let envelope = match campaign_envelope_bytes_in_txn(vault, txn, &frozen_event, &step, outbound)?
     {
-        CampaignEnvelopeBytes::Resolved(bytes) => bytes,
+        CampaignEnvelopeBytes::Resolved { bytes, .. } => bytes,
         CampaignEnvelopeBytes::UnresolvableTarget
         | CampaignEnvelopeBytes::BodyUnpinned
         | CampaignEnvelopeBytes::ListUnsubscribeUnminted => {
