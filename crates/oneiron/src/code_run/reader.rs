@@ -31,9 +31,10 @@ pub use self::origins::{DelegatedSource, ReaderFindingRef, ResultOrigins};
 
 #[doc(hidden)]
 pub use oneiron_records::code_run::reader::{
-    DEFAULT_READER_FOLD_RESERVE_MS, ReaderActor, ReaderJobState, ReaderReportReceipt, ReaderRoute,
-    ReaderSpawnReceipt, RunDeadline, SummarizeEffort, SummarizeReply, TaskWaitFailure,
-    TaskWaitFinding, TaskWaitPolicy, TaskWaitSetCall, TaskWaitSetResult,
+    DEFAULT_READER_FOLD_RESERVE_MS, ReaderActor, ReaderJobState, ReaderJobStatus,
+    ReaderReportReceipt, ReaderRoute, ReaderSpawnReceipt, RunDeadline, SummarizeEffort,
+    SummarizeReply, TaskWaitFailure, TaskWaitFinding, TaskWaitPolicy, TaskWaitSetCall,
+    TaskWaitSetResult,
 };
 
 /// The longest spawn or wait key, in bytes.
