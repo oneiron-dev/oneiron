@@ -11,6 +11,10 @@ use serde::Serialize;
 pub struct OrgAdminConfigured {
     pub org_ref: EntityId,
     pub configured: bool,
+    /// The decision the configuration ran on: the owner's own proof, naming
+    /// the asker's approved check-in it applied (ROLES-CHECKIN 2k8).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub check_in: Option<crate::check_in::CheckInDecision>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]

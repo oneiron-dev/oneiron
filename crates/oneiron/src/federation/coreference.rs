@@ -227,28 +227,46 @@ pub fn coreference_share_consent(
     Ok(claim_id)
 }
 
-/// [`coreference_share_consent`] at an owner door: the actor is `owner`'s,
-/// and the writer revalidates `owner` before it writes (FIX 5950).
+/// [`coreference_share_consent`] at an owner door, the consent occurring
+/// from `now` on and learned at `now`: the actor is `owner`'s, and the
+/// writer revalidates `owner` before it writes (FIX 5950). Consent to export
+/// a link widens what the pact's peer reads, so it is the owner's own act on
+/// their own proof, and with `applied` they apply another asker's approved
+/// check-in for this exact consent, spent in the same writer
+/// (ROLES-CHECKIN 2k8; P25-SHAPE Q1 = A). The consent claim and the
+/// decision.
 pub(crate) fn coreference_share_consent_as_owner(
     vault: &Vault,
     owner: &AuthenticatedOwner,
     local_person: EntityId,
     other_person: EntityId,
     pact_id: &[u8; COREFERENCE_PACT_ID_LEN],
-    occurred: TimeRange,
-    learned_at: u64,
-) -> Result<EntityId> {
+    now: u64,
+    applied: Option<&crate::check_in::AppliedCheckIn<'_>>,
+) -> Result<(EntityId, crate::check_in::CheckInDecision)> {
     let (claim_id, ops) = coreference_share_ops(
         vault,
         &owner_actor(vault, owner)?,
         local_person,
         other_person,
         pact_id,
-        occurred,
-        learned_at,
+        TimeRange {
+            start: now,
+            end: u64::MAX,
+        },
+        now,
     )?;
-    apply_coreference_ops(vault, Some(owner), ops)?;
-    Ok(claim_id)
+    let decision = vault.with_write_txn_grouped(|wtxn| {
+        owner.revalidate_in_txn(vault, wtxn)?;
+        apply_coreference_ops_in_txn(vault, wtxn, ops)?;
+        crate::check_in::owner_act_decision_in_txn(
+            vault,
+            wtxn,
+            crate::check_in::ActClass::GrantWiden,
+            applied,
+        )
+    })?;
+    Ok((claim_id, decision))
 }
 
 /// The consent claim id and the ops of [`coreference_share_consent`], after
@@ -586,19 +604,28 @@ fn apply_coreference_ops(
         if let Some(owner) = owner {
             owner.revalidate_in_txn(vault, wtxn)?;
         }
-        crate::batch::apply_ops(
-            &vault.store,
-            &vault.config,
-            &vault.analyzer,
-            wtxn,
-            ops,
-            vault
-                .text_index_trusted
-                .load(std::sync::atomic::Ordering::Acquire),
-            false,
-            true,
-        )
+        apply_coreference_ops_in_txn(vault, wtxn, ops)
     })
+}
+
+/// Applies `ops` in `wtxn`, the caller's writer.
+fn apply_coreference_ops_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    ops: Vec<BatchOp>,
+) -> Result<()> {
+    crate::batch::apply_ops(
+        &vault.store,
+        &vault.config,
+        &vault.analyzer,
+        wtxn,
+        ops,
+        vault
+            .text_index_trusted
+            .load(std::sync::atomic::Ordering::Acquire),
+        false,
+        true,
+    )
 }
 
 fn require_person_pair(vault: &Vault, a: EntityId, b: EntityId) -> Result<()> {
