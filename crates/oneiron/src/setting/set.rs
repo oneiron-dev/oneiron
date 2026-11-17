@@ -18,7 +18,7 @@ use super::{
     spec_named,
 };
 use crate::Vault;
-use crate::batch::secret_scan::admit_typed;
+use crate::batch::secret_scan::{FieldRule, admit_typed_with_rule};
 use crate::check_in::{
     CheckInMode, CheckInScope, HolderAnswer, NoAgentVerdict, OpenPendingCheckIn, PendingState,
     VerifiedChain, WaitReason, consume_pending_check_in_in_txn, open_keyed_pending_check_in_in_txn,
@@ -251,12 +251,15 @@ impl Vault {
         let value = match request.value.clone() {
             Some(mut json) => {
                 // The side-row wall reads the value before it is encoded (SETTING-ROWS-SIDE-ROW-
-                // WALL = A): a secret goes to custody and the value keeps its handle.
-                admit_typed(
+                // WALL = A): a secret goes to custody and the value keeps its handle. The key's
+                // type fixes each member's shape, so the field rule lifts only text under a
+                // credential name (FIX SETTING-WALL-CREDENTIAL-NAMED-MEMBERS).
+                admit_typed_with_rule(
                     self,
                     txn,
                     (wall_place(spec).as_str(), key.encode().as_slice()),
                     &mut json,
+                    FieldRule::TextOnly,
                 )?;
                 Some(spec.kind.from_json(json)?)
             }

@@ -289,6 +289,24 @@ fn round(server: &SyncServer, renewal: &DigestRenewal) -> oneiron::Result<()> {
             },
             failed => failed,
         };
+        // A requested eval-authoring pass whose record still stands open
+        // keeps its lease unsettled: the error returns, the lease lapses,
+        // and the next admission recovers the record, instead of failing
+        // the lease over a record nothing revisits (FIX
+        // EVAL-AUTHORING-EXECUTE-UNRECORDED-END).
+        let ran = match ran {
+            Err(error)
+                if admitted.status.payload.attempt_type == COACH_EVAL_AUTHORING_FACET
+                    && super::eval_authoring::record_open(vault, &admitted) =>
+            {
+                tracing::warn!(
+                    kind = ?error.kind(),
+                    "a requested eval-authoring pass left its record open; its lease lapses unsettled"
+                );
+                return Err(error);
+            }
+            ran => ran,
+        };
         let served = ran.is_ok();
         settle(vault, &store, &admitted, ran, BUDGET_ID)?;
         // A long round that keeps serving stays ready: each job it completes
@@ -314,6 +332,20 @@ pub(crate) fn round_once(server: &SyncServer) -> oneiron::Result<()> {
         alive: Arc::new(Mutex::new(false)),
     };
     round(server, &renewal)
+}
+
+/// One admitted coach-host job through the wake executor, as a wake pass
+/// with the Coach lent runs it. The cfg-only door
+/// `crate::test_doors::coach_wake` calls it.
+#[cfg(oneiron_test_support)]
+pub(crate) async fn wake_execute_for_test(
+    server: &Arc<SyncServer>,
+    admitted: &DreamerAdmittedAttempt,
+    now: u64,
+) -> oneiron::Result<oneiron::DreamerAttemptExecution> {
+    wake::WakeExecutor::for_test(server)
+        .execute(admitted, now)
+        .await
 }
 
 pub(super) fn run_one(

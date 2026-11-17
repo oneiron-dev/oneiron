@@ -61,4 +61,9 @@ pub enum UsdPriceTarget<'a> {
         model: Option<&'a oneiron_model::llm::ModelId>,
     },
     PeerConsult(EntityId),
+    /// The dollars the owner adds to a run held at its spend cap (owner
+    /// ruling RUN-BUDGET-SPENT = B, 15 Nov 2026: "add $X"), priced at the
+    /// role's binding, as an agent launch with no plan model is. A run's root
+    /// spend scope names no agent of its own.
+    HeldRun,
 }
