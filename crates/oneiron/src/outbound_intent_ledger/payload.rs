@@ -41,6 +41,7 @@ use crate::secret_custody::{
     open_connector_resume_in_txn, retire_connector_resume_in_txn, seal_connector_resume_in_txn,
 };
 use crate::side_table::ErasedForm;
+use oneiron_contracts::lifecycle::Lifecycle;
 
 /// The custody generation a sealed ledger payload takes (FIX 9372).
 pub(crate) const LEDGER_PAYLOAD_CUSTODY_GENERATION: u32 = 0;
@@ -411,7 +412,8 @@ pub(crate) fn erase_outbound_intent_actor_in_txn(
         if recipient_only {
             // The send names the erased person as its recipient: it stops
             // for that, as an actor's erase stops its own sends.
-            stop_for_erase(&mut record, IntentEscalationReason::RecipientErased);
+            stop_for_erase(&mut record, IntentEscalationReason::RecipientErased)
+                .map_err(erase_error)?;
         }
         // A session its remote task's polls kept open is owed its end
         // before the handle naming it goes (FIX 16028).
@@ -433,7 +435,7 @@ pub(crate) fn erase_outbound_intent_actor_in_txn(
         };
         let stops = matches!(record.state, IntentState::Pending | IntentState::Deferred);
         record.authorizing_owner = None;
-        stop_for_erase(&mut record, IntentEscalationReason::OwnerNotLive);
+        stop_for_erase(&mut record, IntentEscalationReason::OwnerNotLive).map_err(erase_error)?;
         put_ledger_record(vault, wtxn, &record).map_err(erase_error)?;
         // An older checkpoint of the call still names him: its compartment
         // rolls, and the next capture reseals the row without him.
@@ -521,13 +523,17 @@ pub(crate) fn payload_recipients_in_txn(
 
 /// Stops a send an erase reaches before it settled: a Pending or Deferred
 /// row is abandoned for `reason`, keeping that it may have crossed the wire.
-fn stop_for_erase(record: &mut IntentLedgerRecord, reason: IntentEscalationReason) {
+fn stop_for_erase(
+    record: &mut IntentLedgerRecord,
+    reason: IntentEscalationReason,
+) -> IntentLedgerResult<()> {
     if matches!(record.state, IntentState::Pending | IntentState::Deferred) {
-        record.delivery_uncertain |=
-            record.recorded_outcome.is_none() || record.state == IntentState::Deferred;
-        record.state = IntentState::Abandoned;
+        let uncertain = record.recorded_outcome.is_none() || record.state == IntentState::Deferred;
+        record.state.transition_to(IntentState::Abandoned)?;
+        record.delivery_uncertain |= uncertain;
         record.recorded_outcome = Some(RecordedOutboundOutcome::Abandoned(reason));
     }
+    Ok(())
 }
 
 /// What an actor's erase leaves of a ledger row: its request gone, and a
@@ -539,7 +545,7 @@ impl ErasedForm for IntentLedgerRecord {
         // A stopped row is never rechecked again, so it keeps no person's id
         // for that (FIX 11591).
         self.authorizing_owner = None;
-        stop_for_erase(&mut self, IntentEscalationReason::ActorErased);
+        stop_for_erase(&mut self, IntentEscalationReason::ActorErased).map_err(erase_error)?;
         Ok(self)
     }
 }
