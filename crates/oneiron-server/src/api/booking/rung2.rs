@@ -19,6 +19,9 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
 
+use oneiron::booking::agent_api::{
+    BookingAvailabilityInput, BookingConstraintInput, BookingOperationRequest,
+};
 use oneiron::booking::agent_front::{
     ConstraintContinuation, ConstraintFrontConfig, constraint_no_fit, top_ranked_slots,
 };
@@ -204,10 +207,11 @@ pub(super) fn rung2_turn_answer(
 /// One visitor's rung-2 send, authorized only by the published page.
 ///
 /// Order: the input's shape, the page's front, the offer (a page with none
-/// answers its no-fit line), the address evidence the owner's rules ask
-/// for, then on the native mail pack: the one-address law against a kept
-/// send, the kept continuation, the guard, the compose, a publication
-/// recheck, the keep and the dispatch.
+/// answers its no-fit line), the session's kept continuation, read once, and
+/// the address evidence the owner's rules ask for, then on the native mail
+/// pack: the one-address law against a kept send, the continuation against
+/// this publication, the guard, the compose, a publication recheck, the keep
+/// and the dispatch.
 pub(super) async fn run_public_rung2_send(
     server: &Arc<SyncServer>,
     authority: PublicBookingAuthority,
@@ -238,13 +242,16 @@ pub(super) async fn run_public_rung2_send(
             });
         }
     };
+    // One read of the session's continuation: the guard's facts, the
+    // publication check and the compose all take this one, so a concurrent
+    // turn that replaces it cannot split them.
+    let continuation = kept_continuation(page_ref, &input.session_ref, now);
     // The owner's rules scoped to the event type the session's turn solved.
-    let event_type = rung2_continuations()
-        .find(&session_key(page_ref, &input.session_ref), now)
-        .map(|continuation| continuation.event_type);
     let mut facts = rung2_send_facts(
         page_ref,
-        event_type,
+        continuation
+            .as_ref()
+            .map(|continuation| continuation.event_type.clone()),
         transport,
         &input.visitor_email,
         &input.session_ref,
@@ -262,6 +269,7 @@ pub(super) async fn run_public_rung2_send(
             front: &front,
             sender: &sender,
             input: &input,
+            continuation: continuation.as_ref(),
             facts: &facts,
             now,
         };
@@ -303,6 +311,9 @@ pub(super) struct Rung2Send<'a> {
     pub(super) front: &'a ConstraintFrontConfig,
     pub(super) sender: &'a Rung2Sender,
     pub(super) input: &'a Rung2SendInput,
+    /// The session's continuation as this request read it, once: the one
+    /// `facts` are scoped to.
+    pub(super) continuation: Option<&'a ConstraintContinuation>,
     pub(super) facts: &'a BookingRequestFacts,
     pub(super) now: u64,
 }
@@ -324,26 +335,21 @@ impl Rung2Send<'_> {
             .booking_rung2_first_send(adapter, page_ref, session_ref)
             .map_err(engine_read_error)?
         {
-            return self.kept_answer(&kept);
+            return self.kept_answer(&kept, dispatch);
         }
         let key = session_key(page_ref, session_ref);
-        let Some(continuation) = rung2_continuations().find(&key, self.now) else {
+        let Some(continuation) = self.continuation.cloned() else {
             return Ok(Rung2SendResponse::NoContinuation);
         };
-        match enforce_rung2_send(self.server, self.facts)? {
-            BookingHttpDisposition::Continue => {}
-            BookingHttpDisposition::PromptCorrection { body } => {
-                return Err(prompt_correction_error(&body));
-            }
-            BookingHttpDisposition::RetryAfter { seconds, .. } => {
-                return Err(rate_limited_error(seconds));
-            }
-            BookingHttpDisposition::SilentOk | BookingHttpDisposition::QuarantineAndAccept => {
-                return Err(ApiError::internal_server_error(
-                    "booking rung-2 send admission invariant",
-                ));
-            }
-        }
+        // The page this request resolved must still offer what the turn
+        // kept: an event type the owner withdrew, or a constraint field the
+        // owner turned off, since that turn is refused as a turn's own
+        // listing would be.
+        public_availability::validate_public_request(
+            &self.authority.publication,
+            &continuation_listing(&continuation, self.solve_window()),
+        )?;
+        self.guard()?;
         let message = self.compose(&continuation)?;
         // Never keep a send for a publication the owner revoked or edited
         // meanwhile.
@@ -375,15 +381,50 @@ impl Rung2Send<'_> {
         })
     }
 
-    /// The answer to a press whose session already kept its send.
-    fn kept_answer(&self, kept: &Rung2FirstSend) -> Result<Rung2SendResponse, ApiError> {
+    /// The answer to a press whose session already kept its send. The kept
+    /// send is dispatched again: a keep whose process stopped before its
+    /// dispatch is resumed, and the intent ledger answers a send it already
+    /// holds or delivered from its record, never sending twice.
+    fn kept_answer(
+        &self,
+        kept: &Rung2FirstSend,
+        dispatch: impl FnOnce(&Vault, &Rung2FirstSend) -> Result<Rung2Dispatched, ApiError>,
+    ) -> Result<Rung2SendResponse, ApiError> {
         if !kept.is_addressed_to(&self.input.visitor_email) {
             return Err(one_address_refusal());
         }
+        // A retried press is a press: the owner's rules bound how often one
+        // reaches the dispatch.
+        self.guard()?;
+        dispatch(&self.server.vault, kept)?;
         Ok(Rung2SendResponse::AlreadyKept {
             send_ref: kept.send_ref.clone(),
             message_id: kept.message_id.clone(),
         })
+    }
+
+    /// The owner's rules for this press: past one, a correction prompt or a
+    /// retry-after, and nothing is kept or dispatched.
+    fn guard(&self) -> Result<(), ApiError> {
+        match enforce_rung2_send(self.server, self.facts)? {
+            BookingHttpDisposition::Continue => Ok(()),
+            BookingHttpDisposition::PromptCorrection { body } => {
+                Err(prompt_correction_error(&body))
+            }
+            BookingHttpDisposition::RetryAfter { seconds, .. } => Err(rate_limited_error(seconds)),
+            BookingHttpDisposition::SilentOk | BookingHttpDisposition::QuarantineAndAccept => Err(
+                ApiError::internal_server_error("booking rung-2 send admission invariant"),
+            ),
+        }
+    }
+
+    /// The window a first send solves over: from now over the event type's
+    /// own booking window.
+    fn solve_window(&self) -> TimeRange {
+        TimeRange {
+            start: self.now,
+            end: self.now.saturating_add(RUNG2_SOLVE_HORIZON_SECS),
+        }
     }
 
     /// The first send's message: the template over the solver's offers for
@@ -396,10 +437,7 @@ impl Rung2Send<'_> {
         let page_ref = self.authority.page_ref;
         let request = SolveRequest {
             event_type: continuation.event_type.clone(),
-            window: TimeRange {
-                start: self.now,
-                end: self.now.saturating_add(RUNG2_SOLVE_HORIZON_SECS),
-            },
+            window: self.solve_window(),
             constraint: Some(continuation.constraint.clone()),
             visitor_tz: continuation.visitor_tz.clone(),
         };
@@ -475,6 +513,32 @@ fn offer_lines(
 
 /// Sends a kept first send through the native mail pack: the cold-send law
 /// holds a first send to a stranger for the owner's one-send press.
+/// The continuation the session's no-fit turn kept, while it is live.
+pub(super) fn kept_continuation(
+    page_ref: EntityId,
+    session_ref: &str,
+    now: u64,
+) -> Option<ConstraintContinuation> {
+    rung2_continuations().find(&session_key(page_ref, session_ref), now)
+}
+
+/// A kept continuation as the availability listing it solves, so a page's
+/// publication checks it as it checks a turn's listing.
+pub(super) fn continuation_listing(
+    continuation: &ConstraintContinuation,
+    window: TimeRange,
+) -> BookingOperationRequest {
+    BookingOperationRequest::Availability(BookingAvailabilityInput {
+        event_type: continuation.event_type.clone(),
+        window,
+        visitor_tz: continuation.visitor_tz.clone(),
+        constraint: Some(BookingConstraintInput::Object(
+            continuation.constraint.clone(),
+        )),
+        session_ref: continuation.session_ref.clone(),
+    })
+}
+
 fn dispatch_on_pack(
     pack: &NativeMailPack,
     vault: &Vault,
