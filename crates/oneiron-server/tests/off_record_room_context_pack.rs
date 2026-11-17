@@ -624,7 +624,8 @@ impl Host {
                     .to_hex(),
                 scope_relationship_id: ClaimRelationships::All(AllRelationships::All),
                 scope_project_id: default_project_id().to_hex(),
-            },
+            }
+            .into(),
             sensitivity: Some(0),
             evidence_turn_refs: Vec::new(),
             valid_from: None,
