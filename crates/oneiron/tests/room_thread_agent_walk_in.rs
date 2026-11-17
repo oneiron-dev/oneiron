@@ -114,6 +114,7 @@ fn speak_trunk(vault: &Vault, speaker: EntityId, room: EntityId, turn: EntityId)
             conversation_ref: room.to_hex(),
             turn_ref: Some(turn.to_hex()),
             thread_audience: None,
+            project: None,
             messages: vec![WitnessMessage {
                 id: Some(EntityId::now().to_hex()),
                 author: WitnessAuthor::User,
@@ -147,6 +148,7 @@ fn speak_private_root(
             conversation_ref: room.to_hex(),
             turn_ref: Some(root.to_hex()),
             thread_audience: Some(audience),
+            project: None,
             messages: vec![WitnessMessage {
                 id: Some(EntityId::now().to_hex()),
                 author: WitnessAuthor::User,
