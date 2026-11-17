@@ -43,7 +43,7 @@ use oneiron::test_doors::compaction_step_read::{
 };
 use oneiron::verbs::{AgentDefinitionCreateRequest, AgentDefinitionSpec};
 use oneiron::workspace_roster::ProjectRecord;
-use oneiron::{EdgeActorClass, EntityId, RawEntityPut, TimeRange, Vault, VaultConfig};
+use oneiron::{EdgeActorClass, EdgeKind, EntityId, RawEntityPut, TimeRange, Vault, VaultConfig};
 use serde_json::{Value, json};
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
@@ -318,6 +318,41 @@ fn the_owner_and_a_reader_of_the_conversation_read_a_compaction_step() -> TestRe
     assert!(
         reads(&fixture.agent(fixture.scribe), step)?,
         "scribe, who compacted the room and reads it, reads its own step"
+    );
+    Ok(())
+}
+
+/// #8590 review r2 P1: `DerivedFrom` edges a caller writes can join two
+/// filed steps in a cycle. Each step's read walks the other's sources, so
+/// the read must refuse the cycle rather than recurse until the serving
+/// thread's stack overflows.
+#[test]
+fn two_compaction_steps_derived_from_each_other_refuse_and_do_not_recurse() -> TestResult {
+    let fixture = open_fixture()?;
+    fixture.assert_message_readers()?;
+    let first = fixture.file_step(CHAT_RUN, ANSWER)?;
+    let second = fixture.file_step(
+        CHAT_RUN,
+        "Owen said the vendor will be told on the tenth that the contract ends.",
+    )?;
+    let cleo = fixture.agent(fixture.cleo);
+    assert!(
+        reads(&cleo, first)? && reads(&cleo, second)?,
+        "FIXTURE: cleo reads both steps before they derive from each other"
+    );
+    fixture
+        .vault
+        .put_edge(&first, EdgeKind::DerivedFrom, &second, 1.0)?;
+    fixture
+        .vault
+        .put_edge(&second, EdgeKind::DerivedFrom, &first, 1.0)?;
+    assert!(
+        !reads(&cleo, first)?,
+        "cleo's read of a step on a cycle of derivations refuses"
+    );
+    assert!(
+        listed_step(&fixture.owner(), first)?.is_some(),
+        "the owner's use-limit walk ends on the cycle and still reads the step"
     );
     Ok(())
 }
