@@ -203,6 +203,6 @@ impl Vault {
         Ok(is_own_device_grant(&grant)
             && grant.member_ref.to_hex() == member
             && grant.confers_at(now)
-            && self.grant_row_stands_in_txn(txn, grant_ref, &body, now)?)
+            && self.grant_row_stands_at_in_txn(txn, grant_ref, &body, now)?)
     }
 }

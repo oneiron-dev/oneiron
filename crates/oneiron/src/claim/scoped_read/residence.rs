@@ -39,8 +39,10 @@ pub struct ResidenceReadContext<'v> {
 impl<'v> ResidenceReadContext<'v> {
     /// The credential `proof` reads under, while `selector` names a live,
     /// conferring member grant over `grant_scope` held by the selector's
-    /// member, and the machine `peer` proved on this connection still stands
-    /// on that key here. A peer that does not is an unknown destination.
+    /// member, standing on the counted act that gives its row (pass 28 R3d; an
+    /// own-device Grant reads from its row until R4), and the machine `peer`
+    /// proved on this connection still stands on that key here. A peer that
+    /// does not is an unknown destination.
     pub fn load_in(
         vault: &'v Vault,
         txn: &heed::RoTxn<'_>,
@@ -65,11 +67,13 @@ impl<'v> ResidenceReadContext<'v> {
         {
             return Err(denied());
         }
-        let grant = decode_federation_grant_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
+        let body = &raw[ENTITY_METADATA_HEADER_LEN..];
+        let grant = decode_federation_grant_body(body)?;
         if grant.role.is_guest()
             || grant.scope != grant_scope
             || grant.member_ref != selector.member_ref
             || !grant.confers_at(vault.store.clock.now_recorded_at())
+            || !vault.grant_row_stands_in_txn(txn, &fold, selector.grant_id, body)?
             || matches!(
                 federation_grant_activation(&fold, &selector.grant_id),
                 FederationGrantActivation::Inactive(_)
