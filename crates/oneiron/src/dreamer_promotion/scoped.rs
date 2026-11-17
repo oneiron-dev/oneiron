@@ -3,9 +3,13 @@
 //! evidence: its value, approval, source and original attribution stay intact.
 use std::collections::{BTreeMap, BTreeSet};
 
+use oneiron_contracts::fingerprint::{ContentHash, LegacyDigest, purposes};
+
 use super::writer::{GateCodes, PromotionRejection};
 use super::*;
 use super::{corrections, resolved_outputs};
+use crate::ClaimSource;
+use crate::dreamer_consolidation::VerifiedLocator;
 use crate::dreamer_consolidation::evidence::{ResolvedConflictOutput, VerifiedEvidenceSet};
 use crate::dreamer_consolidation::resources::{ConsolidationFence, ScopedConsolidationWrite};
 use crate::edge::EdgeKind;
@@ -522,6 +526,69 @@ pub(crate) fn assert_evidence_in_txn(
     })
 }
 
+/// A support assertion's attachment hash (its first 16 bytes are the
+/// provenance claim id) and the source revision it pins, over the head's and
+/// the source's ids and stored-body content hashes, the evidence meet and the
+/// verified citations. A witnessed TURN's revision is its row plus the
+/// MESSAGE revisions the citation names; any other source keeps its row hash
+/// exactly. Both are stored, so they keep their bytes (K, PLAN-UC-04 3.4c).
+fn attachment_digests(
+    (head, source): (EntityId, EntityId),
+    (head_hash, source_hash): (&ContentHash, &ContentHash),
+    evidence_meet: ClaimSource,
+    locators: &[VerifiedLocator],
+) -> ([u8; 32], [u8; 32]) {
+    let mut hash = LegacyDigest::new(purposes::dreamer::EVIDENCE_ATTACHMENT);
+    hash.raw(head.as_bytes())
+        .raw(source.as_bytes())
+        .raw(head_hash.as_bytes())
+        .raw(source_hash.as_bytes())
+        .raw(evidence_meet.as_str().as_bytes());
+    let mut revision = LegacyDigest::new(purposes::dreamer::EVIDENCE_SOURCE_REVISION);
+    revision.raw(source_hash.as_bytes());
+    let mut named = false;
+    for (locator, digest, messages) in locators {
+        hash.raw(&[u8::from(locator.claim_id.is_some())]);
+        if let Some(claim) = locator.claim_id {
+            hash.raw(claim.as_bytes());
+        }
+        hash.raw(&[u8::from(locator.byte_range.is_some())]);
+        if let Some((start, end)) = locator.byte_range {
+            hash.raw(&(start as u64).to_be_bytes())
+                .raw(&(end as u64).to_be_bytes());
+        }
+        hash.raw(digest);
+        for message in messages {
+            message.hash_into(&mut hash);
+            message.hash_into(&mut revision);
+            named = true;
+        }
+    }
+    let source_revision = if named {
+        revision.finish()
+    } else {
+        source_hash.into_bytes()
+    };
+    (hash.finish(), source_revision)
+}
+
+/// Seam for `test_doors::fingerprint_keep_typed_feeds` (PLAN-UC-04 3.4c): the
+/// digests `attach_ref` takes over the head's and the source's stored bodies.
+#[cfg(oneiron_test_support)]
+pub(crate) fn attachment_digests_for_test(
+    edge: (EntityId, EntityId),
+    (head_raw, source_raw): (&[u8], &[u8]),
+    evidence_meet: ClaimSource,
+    locators: &[VerifiedLocator],
+) -> ([u8; 32], [u8; 32]) {
+    attachment_digests(
+        edge,
+        (&ContentHash::of(head_raw), &ContentHash::of(source_raw)),
+        evidence_meet,
+        locators,
+    )
+}
+
 /// One support assertion of `source` for `head`, carrying the `answers` the
 /// head gives (FIX 7381). Returns the assertion's provenance record, whether
 /// this call wrote it, and the answers the assertion already keeps when an
@@ -560,54 +627,21 @@ fn attach_ref(
     // a support across projects is refused before its edge is written, and a
     // replay binds the stored row to that same project.
     let project = crate::provenance::support_project(vault, txn, &edge, &source_raw, &head_raw)?;
-    let head_hash = blake3::hash(&head_raw);
-    let source_hash = blake3::hash(&source_raw);
-    let mut hash = blake3::Hasher::new();
-    hash.update(b"oneiron:dreamer-evidence-attachment:v1");
-    hash.update(head.as_bytes());
-    hash.update(source.as_bytes());
-    hash.update(head_hash.as_bytes());
-    hash.update(source_hash.as_bytes());
-    hash.update(evidence_meet.as_str().as_bytes());
-    // A witnessed TURN's revision is its row plus the MESSAGE revisions the
-    // citation names; any other source keeps its row hash exactly.
-    let mut revision = blake3::Hasher::new();
-    revision.update(b"oneiron:dreamer-evidence-source-revision:v1");
-    revision.update(source_hash.as_bytes());
-    let mut named = false;
-    for (locator, digest, messages) in &locators {
-        hash.update(&[u8::from(locator.claim_id.is_some())]);
-        if let Some(claim) = locator.claim_id {
-            hash.update(claim.as_bytes());
-        }
-        hash.update(&[u8::from(locator.byte_range.is_some())]);
-        if let Some((start, end)) = locator.byte_range {
-            hash.update(&(start as u64).to_be_bytes());
-            hash.update(&(end as u64).to_be_bytes());
-        }
-        hash.update(digest);
-        for message in messages {
-            message.hash_into(&mut hash);
-            message.hash_into(&mut revision);
-            named = true;
-        }
-    }
-    let source_revision = if named {
-        revision.finalize()
-    } else {
-        source_hash
-    };
+    let head_hash = ContentHash::of(&head_raw);
+    let source_hash = ContentHash::of(&source_raw);
+    let (attachment, source_revision) = attachment_digests(
+        (head, source),
+        (&head_hash, &source_hash),
+        evidence_meet,
+        &locators,
+    );
     let mut id = [0_u8; 16];
-    id.copy_from_slice(&hash.finalize().as_bytes()[..16]);
+    id.copy_from_slice(&attachment[..16]);
     let id =
         EntityId::from_bytes(id).map_err(|_| Error::InvalidClaimBody("reserved attachment id"))?;
     let mut record =
         EdgeProvenanceClaimBody::new(actor.entity_ref(), 1.0, SupersessionStatus::Confirmed);
-    record.source_revision_ref = Some(
-        source_revision.as_bytes()[..16]
-            .try_into()
-            .expect("hash prefix"),
-    );
+    record.source_revision_ref = Some(source_revision[..16].try_into().expect("hash prefix"));
     record.body_snapshot_ref = Some(head_hash.as_bytes()[..16].try_into().expect("hash prefix"));
     record.actor_class = Some(actor.actor_class());
     let derived_evidence = evidence.envelope(Vec::new());
