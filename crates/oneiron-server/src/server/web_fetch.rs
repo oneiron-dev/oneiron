@@ -1,8 +1,10 @@
 //! The host owns renderer configuration; acquisition itself stays in the engine.
 //!
 //! A managed (hosted) node's fetcher never reaches the infrastructure it runs
-//! on (SCAN C447), nor a private network (RFC1918, CGNAT, ULA) except at the
-//! private origins the operator passed (`--hosted-private-origin`, FIX 7657):
+//! on (SCAN C447), nor a private network (RFC1918, CGNAT, ULA) except in the
+//! private networks the operator passed (`--hosted-private-network`,
+//! HOSTED-EGRESS-OPERATOR-SETTING) and at the private origins it passed
+//! (`--hosted-private-origin`, FIX 7657):
 //! the engine refuses each page it is asked for and each hop, address and
 //! landing its rungs reach, typed, and the client the engine's
 //! [`build_single_hop_client`] builds here refuses every address it connects
@@ -44,26 +46,28 @@ impl SyncServer {
         self
     }
 
-    /// The guard a managed node checks every outbound fetch with, `None` on a
-    /// self-hosted node: the web fetcher's, and the OAuth server's fetch of a
-    /// client ID metadata document (FIX 4902). The managed switch every
+    /// The guard a managed node checks its owner's outbound fetches with,
+    /// `None` on a self-hosted node: the web fetcher's and the calendar ICS
+    /// feed polls'. A URL an outside party names takes
+    /// [`Self::untrusted_url_egress_guard`] instead. The managed switch every
     /// hosted-only rule reads is set only by managed boot, which alone passes
-    /// the operator's private origins.
+    /// the operator's private networks and origins
+    /// ([`ManagedArgs::carry_hosted_egress`](crate::managed::ManagedArgs::carry_hosted_egress)).
     pub(crate) fn hosted_egress_guard(&self) -> Option<Arc<HostedEgressGuard>> {
         self.managed_issuer.is_some().then(|| {
-            Arc::new(HostedEgressGuard::new(
-                node_addresses,
-                self.config.hosted_private_origins.clone(),
-            ))
+            Arc::new(
+                HostedEgressGuard::new(node_addresses, self.config.hosted_private_origins.clone())
+                    .with_private_networks(self.config.hosted_private_networks.clone()),
+            )
         })
     }
 
     /// The guard for a fetch of a URL an outside, unauthenticated party
     /// names (an OAuth client's metadata document, FIX 4902), on every node:
     /// it refuses this node's own addresses and every private network, with
-    /// no origin excepted. The managed node's `hosted_private_origins` are the
-    /// owner's own web fetcher's exceptions, never an outside caller's
-    /// (review #6478).
+    /// no network or origin excepted. The managed node's
+    /// `hosted_private_networks` and `hosted_private_origins` are the owner's
+    /// own web fetcher's exceptions, never an outside caller's (review #6478).
     pub(crate) fn untrusted_url_egress_guard(&self) -> Arc<HostedEgressGuard> {
         Arc::new(HostedEgressGuard::new(node_addresses, BTreeSet::new()))
     }

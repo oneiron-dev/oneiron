@@ -196,6 +196,13 @@ pub enum SecretError {
     /// may not hold. The reason is a fixed name, never key or envelope bytes.
     #[error("world key refused: {0}")]
     WorldKeyRefused(&'static str),
+    /// A data-key generation met a wrap no presented way covers and the
+    /// owner did not confirm for removal: the way would stop unlocking new
+    /// data. A world key refusal by kind; nothing is written.
+    #[error(
+        "world key refused: the way {id} would stop unlocking new data: present it or confirm its removal"
+    )]
+    DataKeyGenerationWayUnconfirmed { id: String },
     /// No capsule of a sealed bundle or pad object opens for this key: it was
     /// sealed to other readers, as before this machine was added (FIX 4274).
     /// A world key refusal by kind.
@@ -301,6 +308,7 @@ impl SecretError {
             Self::SecretHostDeliveryRefused { .. } => ErrorKind::SecretHostDeliveryRefused,
             Self::SecretGrantCleanupKept { .. } => ErrorKind::SecretGrantCleanupKept,
             Self::WorldKeyRefused(_)
+            | Self::DataKeyGenerationWayUnconfirmed { .. }
             | Self::SealedBundleNoCapsule
             | Self::StalePageSealCredential
             | Self::UnfinishedSealedCreation => ErrorKind::WorldKeyRefused,
