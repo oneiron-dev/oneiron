@@ -132,7 +132,9 @@ impl PollAdmission<'_> {
                 }
                 self.apply_imported_cancel(event_ref, event)?;
             }
-            PassportDecision::SkipUnchanged { .. } => {}
+            PassportDecision::SkipUnchanged { event_ref } => {
+                self.repeat_host_cancel_refund(event_ref, event)?;
+            }
             PassportDecision::UpdateExisting { event_ref } => {
                 // The update verdict moves the EVENT, not just the passport
                 // head: occurred and name follow the drifted VEVENT, and
@@ -474,7 +476,9 @@ impl PollAdmission<'_> {
     /// `STATUS:CANCELLED`): write `calendar.status` cancelled with basis
     /// `imported_cancel`, unless a live claim already says exactly that, and
     /// carry it to CAL-07 as pre-start cancellation evidence. Never writes
-    /// `confirmed` — resurrection is not a v1 basis.
+    /// `confirmed` — resurrection is not a v1 basis. A booking's deposit
+    /// refund commits first, on every sighting, also when the status already
+    /// stood.
     fn apply_imported_cancel(
         &mut self,
         event_ref: EntityId,
@@ -483,6 +487,18 @@ impl PollAdmission<'_> {
         if !event.cancelled {
             return Ok(());
         }
+        // Dated by the source's first report of the cancellation, which its
+        // passport carries across versions; a path with no such passport
+        // dates it now.
+        let seen_at = crate::calendar::passport::live_passport_for(
+            self.vault,
+            &event_ref,
+            self.system,
+            &event.uid,
+        )?
+        .and_then(|(_, passport)| passport.cancelled_since)
+        .unwrap_or(self.now);
+        self.refund_host_cancelled_deposit(event_ref, seen_at)?;
         let body = screen_body(event);
         let source_record_id = self.source_record_id(event);
         if let Some(status_ref) = self.admit_status_if_changed(
@@ -503,12 +519,15 @@ impl PollAdmission<'_> {
     /// provider tombstone. The EVENT row is never deleted. Only the explicit
     /// tombstone is cancellation evidence for CAL-07; an omission writes the
     /// status alone. The screen body is empty: absence carries no inbound
-    /// content to screen.
+    /// content to screen. The tombstone's deposit refund commits first.
     fn admit_absence_cancellation(
         &mut self,
         event_ref: EntityId,
         basis: CalendarStatusBasis,
     ) -> Result<(), CalendarError> {
+        if basis == CalendarStatusBasis::ImportedCancel {
+            self.refund_host_cancelled_deposit(event_ref, self.now)?;
+        }
         let status_ref = self.admit_status_if_changed(
             event_ref,
             &CalendarInboundBody::default(),
@@ -525,6 +544,69 @@ impl PollAdmission<'_> {
         {
             self.record_cancel_outcome(event_ref, status_ref)?;
         }
+        Ok(())
+    }
+
+    /// A VEVENT the passport already carries (or an older SEQUENCE of it):
+    /// when it is the passport's own version (the same SEQUENCE and content
+    /// hash) and an explicit cancellation, its booking's deposit refund is
+    /// asked again. The passport commits before the refund does, so a stop
+    /// between them leaves the next read of the feed here, and this is where
+    /// the refund is repaired. The cancellation was first seen when the
+    /// source's first cancelled passport committed (`cancelled_since`, carried
+    /// across later cancelled versions), so a repair after the booking's
+    /// start still refunds a cancellation first seen before it. An older SEQUENCE replay moves no
+    /// money: the passport it lost to may carry a live booking.
+    fn repeat_host_cancel_refund(
+        &self,
+        event_ref: EntityId,
+        event: &ParsedVEvent,
+    ) -> Result<(), CalendarError> {
+        if !event.cancelled {
+            return Ok(());
+        }
+        let Some((_, passport)) = crate::calendar::passport::live_passport_for(
+            self.vault,
+            &event_ref,
+            self.system,
+            &event.uid,
+        )?
+        else {
+            return Ok(());
+        };
+        if passport.last_sequence == event.sequence && passport.content_hash == event.content_hash {
+            let seen_at = passport.cancelled_since.unwrap_or(passport.last_seen_at);
+            self.refund_host_cancelled_deposit(event_ref, seen_at)?;
+        }
+        Ok(())
+    }
+
+    /// The host cancelled the EVENT explicitly: a booking's deposit on it
+    /// comes back whole (BK-DEPOSITS; RULING DEPOSIT-HOST-CANCEL-REFUND = A).
+    /// An omission is no cancellation evidence and moves no money; an EVENT
+    /// with no deposit writes nothing. The refund commits before the
+    /// cancellation's status does, so the host's cancel is on record with its
+    /// full refund owed before a visitor's cancel can follow it: that cancel
+    /// then finds the refund owed and keeps it, while a visitor who cancelled
+    /// first keeps their own cancel's refund. Asked on every sighting of the
+    /// cancellation; the deposit step is idempotent.
+    fn refund_host_cancelled_deposit(
+        &self,
+        event_ref: EntityId,
+        seen_at: u64,
+    ) -> Result<(), CalendarError> {
+        #[cfg(oneiron_test_support)]
+        if crate::test_doors::host_cancel_refund::take_stop_before_refund() {
+            return Err(ingest("stopped before the host-cancel refund (test door)"));
+        }
+        crate::booking::lifecycle::refund_deposit_on_host_cancel(
+            self.vault, &event_ref, seen_at, self.now,
+        )
+        .map_err(|error| CalendarError::IcsIngest {
+            reason: error.to_string(),
+        })?;
+        #[cfg(oneiron_test_support)]
+        crate::test_doors::host_cancel_refund::run_between_commits();
         Ok(())
     }
 
@@ -640,19 +722,26 @@ impl PollAdmission<'_> {
         event: &ParsedVEvent,
         presence: CalendarPassportPresence,
     ) -> Result<CalendarPassportValue, CalendarError> {
-        let direction = if self.preserve_direction {
-            crate::calendar::passport::live_passport_for(
-                self.vault,
-                &event_ref,
-                self.system,
-                &event.uid,
-            )?
-            .map_or(CalendarPassportDirection::Inbound, |(_, value)| {
-                value.direction
-            })
-        } else {
-            CalendarPassportDirection::Inbound
+        let prior = crate::calendar::passport::live_passport_for(
+            self.vault,
+            &event_ref,
+            self.system,
+            &event.uid,
+        )?
+        .map(|(_, value)| value);
+        let direction = match &prior {
+            Some(prior) if self.preserve_direction => prior.direction,
+            _ => CalendarPassportDirection::Inbound,
         };
+        // A cancelled version keeps the first sighting of the cancellation
+        // its source already reported: a newer SEQUENCE of a cancel seen
+        // before a booking's start is not a cancel first seen now.
+        let cancelled_since = event.cancelled.then(|| {
+            prior
+                .as_ref()
+                .and_then(|prior| prior.cancelled_since)
+                .unwrap_or(self.now)
+        });
         Ok(CalendarPassportValue {
             system: self.system.to_owned(),
             uid: event.uid.clone(),
@@ -662,6 +751,7 @@ impl PollAdmission<'_> {
             direction,
             last_seen_at: self.now,
             presence,
+            cancelled_since,
         })
     }
 

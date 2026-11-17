@@ -31,6 +31,7 @@ fn roster_segment(
         start_ms: 0,
         end_ms: 1_000,
         speaker_label: speaker_label.to_owned(),
+        speaker_key: segment_id.to_owned(),
         subject_ref,
         contact_ref,
         evidence,
@@ -67,6 +68,7 @@ fn seed_voice_roster(
             known_threshold: 0.65,
             segments,
             created_at: 100,
+            roster_revision: 1,
         },
     )
 }

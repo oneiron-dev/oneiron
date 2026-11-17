@@ -646,6 +646,7 @@ fn finish_remote_applied_write_in_txn(
             direction,
             last_seen_at: now,
             presence: CalendarPassportPresence::Live,
+            cancelled_since: None,
         };
         let already_applied = current.as_ref().is_some_and(|(_, value)| {
             value.last_sequence == next.last_sequence
@@ -1255,7 +1256,5 @@ pub(super) fn ingest_error(reason: &'static str) -> CalendarConnectorError {
     CalendarConnectorError::Calendar(ingest_reason(reason))
 }
 
-// FIX [LIBTEST-QUARANTINE-CALENDAR-CONNECTORS-OUTBOUND-TESTS]: the lib test target's type check fails here (1 errors: E0061 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;

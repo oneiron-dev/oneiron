@@ -11,6 +11,7 @@
 pub(crate) mod archive_restore;
 mod provider;
 mod setting;
+pub(crate) mod setting_keys;
 pub(crate) mod tables;
 mod usage;
 

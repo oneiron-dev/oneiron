@@ -203,6 +203,11 @@ fn a_decide_hit_is_the_verdict_and_calls_no_model() -> Result<()> {
             jurisdiction: HOSTED_JURISDICTION.to_owned(),
             policy_version: HOSTED_VERSION.to_owned(),
             row_ref: "hosted:serious-crime".to_owned(),
+            basis: HostedLegalBasis {
+                kind: HostedLegalBasisKind::Law,
+                subject: HOSTED_JURISDICTION.to_owned(),
+                reference: "test-law-reference".to_owned(),
+            },
         }
     );
     assert!(pass.must_halt_relay());
