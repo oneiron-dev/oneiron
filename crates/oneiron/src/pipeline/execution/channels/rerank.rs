@@ -58,9 +58,10 @@ pub(super) struct RerankApplied {
 /// in place of dropping them, so with enough rows in scope a demote keeps
 /// the top the default drop keeps). Every other stage reorders within the
 /// block and within the rest, never across it: the ladder's access factor
-/// and serialization's score sort through the scores (see
-/// [`cap_unscored`]), community diversity and the skill re-sort through
-/// [`RerankedBlock::keep_group_places`]. Empty when no rerank ran.
+/// and the pack's score sort through the scores, and at a tie through the
+/// pipeline's order (see [`cap_unscored`]), community diversity and the
+/// skill re-sort through [`RerankedBlock::keep_group_places`]. Empty when
+/// no rerank ran.
 #[derive(Default)]
 pub(in crate::pipeline) struct RerankedBlock(HashSet<EntityId>);
 
@@ -544,7 +545,9 @@ fn set_aside_unscored(
 /// weakest reranked one, which the receiving row's access factor can bring
 /// below it; then it steps down from there too, keeping its order among
 /// those. At a weakest score of zero no step is taken, as no score is below
-/// zero.
+/// zero: those rows tie there with the weakest reranked one, after it, and
+/// the pack's sort keeps the pipeline's order among equal scores
+/// (`claim_source_ranking::apply`).
 fn cap_unscored(
     reranked: &[ScoredEntity],
     set_aside: &mut [ScoredEntity],
