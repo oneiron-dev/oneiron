@@ -356,6 +356,9 @@ fn the_next_hold_act_after_a_restore_follows_the_restored_log() {
 #[test]
 fn a_lifted_hold_restores_as_history_and_starts_no_erase() {
     let (_source_dir, source) = open_source_vault();
+    // The source shares and its member accepts: each gives a Grant, whose
+    // act this install carries.
+    oneiron::test_support::provision_act_carrier(&source);
     let source_owner = owner_proof(&source);
     let second_id = fixed_id(0x33);
     source
