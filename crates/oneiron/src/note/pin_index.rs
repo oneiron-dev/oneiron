@@ -163,6 +163,53 @@ pub(crate) fn citation_delete_scope_exists(
     Ok(!dependents(store, txn, *id)?.is_empty())
 }
 
+/// Indexes one citation pin for the checkpoint-pins door: its SOURCE row
+/// and the CLAIM and CITING rows that point at it.
+#[cfg(oneiron_test_support)]
+pub(crate) fn put_pins_pin_in_txn(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    citing: &EntityId,
+    pin: &super::NotePin,
+) -> Result<()> {
+    index_pins(store, txn, *citing, std::slice::from_ref(pin))
+}
+
+/// Tracks one citation request for the checkpoint-pins door: its CITING
+/// row and the CLAIM and SOURCE rows beside it.
+#[cfg(oneiron_test_support)]
+pub(crate) fn put_pins_request_in_txn(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    citing: &EntityId,
+    request: &EntityId,
+    document: &EntityId,
+    claim: &EntityId,
+) -> Result<()> {
+    NOTE_PIN_REQUEST_CITING.put(
+        store,
+        txn,
+        &HexPair(HexId(*citing), HexId(*request)),
+        &PinRefs {
+            document: *document,
+            claim: *claim,
+        },
+    )?;
+    NOTE_PIN_REQUEST_SOURCE.put(
+        store,
+        txn,
+        &HexTriple(HexId(*document), HexId(*citing), HexId(*request)),
+        &(),
+    )?;
+    NOTE_PIN_REQUEST_CLAIM.put(
+        store,
+        txn,
+        &HexTriple(HexId(*claim), HexId(*citing), HexId(*request)),
+        &(),
+    )?;
+    Ok(())
+}
+
 #[cfg(feature = "sync")]
 pub(crate) fn track_citation_request(
     store: &Store,
