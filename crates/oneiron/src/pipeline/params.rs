@@ -20,6 +20,7 @@ use super::types::{
     RECENCY_DECAY_TAU_SECS, TEMPORAL_FLOOR, TEMPORAL_WIDENING_FLOOR, TEMPORAL_WIDENING_MULTIPLE,
 };
 use crate::error::{Error, Result};
+use oneiron_store::batch::phonetic_codes::{NPD_CAP, NPD_KEEP_RATIO, NPD_THRESHOLD};
 
 /// The version of the scoring formulas that read [`RetrievalParams`]. A
 /// change to how a number is used, rather than to the number, bumps it; the
@@ -61,6 +62,15 @@ pub struct RetrievalParams {
     /// RET-01: a text query with a run of this many repeated characters is
     /// anomalous, and the context pack abstains.
     pub context_pack_anomalous_repeat_run: usize,
+    /// The phonetic channel's sound match (CROSS-ARCH-0013 rung 1): a
+    /// stored sound key further than this Normalized Phonetic Distance from
+    /// the query's is no match.
+    pub phonetic_npd_threshold: f32,
+    /// ... of the rest, those within this multiple of the nearest one's
+    /// distance are kept ...
+    pub phonetic_npd_keep_ratio: f32,
+    /// ... nearest first, at most this many.
+    pub phonetic_npd_cap: usize,
 }
 
 /// The value type of a knob.
@@ -83,6 +93,8 @@ pub enum KnobAxis {
     Blend,
     /// The context pack's RET-01 abstention.
     ContextPack,
+    /// The phonetic channel's sound match.
+    Phonetic,
 }
 
 /// The values [`RetrievalParams::validate`] accepts for one knob. An
@@ -153,7 +165,7 @@ const fn knob(path: &'static str, kind: KnobKind, range: KnobRange, axis: KnobAx
     }
 }
 
-const RETRIEVAL_KNOB_COUNT: usize = 11;
+const RETRIEVAL_KNOB_COUNT: usize = 14;
 
 /// In the order of [`RetrievalParams::knob_values`].
 static RETRIEVAL_KNOB_SCHEMA: [KnobSpec; RETRIEVAL_KNOB_COUNT] = [
@@ -235,6 +247,25 @@ static RETRIEVAL_KNOB_SCHEMA: [KnobSpec; RETRIEVAL_KNOB_COUNT] = [
         KnobRange::closed(2.0, f64::MAX),
         KnobAxis::ContextPack,
     ),
+    knob(
+        "phonetic_npd_threshold",
+        KnobKind::Float,
+        KnobRange::closed(0.0, f64::MAX),
+        KnobAxis::Phonetic,
+    ),
+    knob(
+        "phonetic_npd_keep_ratio",
+        KnobKind::Float,
+        // Below 1 the nearest match itself would be dropped.
+        KnobRange::closed(1.0, f64::MAX),
+        KnobAxis::Phonetic,
+    ),
+    knob(
+        "phonetic_npd_cap",
+        KnobKind::Integer,
+        KnobRange::closed(1.0, f64::MAX),
+        KnobAxis::Phonetic,
+    ),
 ];
 
 /// Every knob of [`RetrievalParams`], in field order.
@@ -266,6 +297,9 @@ impl RetrievalParams {
             cosine_ghost_vector_threshold: COSINE_GHOST_VECTOR_THRESHOLD,
             context_pack_min_vector_score_gap_ratio: CONTEXT_PACK_MIN_VECTOR_SCORE_GAP_RATIO,
             context_pack_anomalous_repeat_run: CONTEXT_PACK_ANOMALOUS_REPEAT_RUN,
+            phonetic_npd_threshold: NPD_THRESHOLD,
+            phonetic_npd_keep_ratio: NPD_KEEP_RATIO,
+            phonetic_npd_cap: NPD_CAP,
         }
     }
 
@@ -284,6 +318,9 @@ impl RetrievalParams {
             f64::from(self.cosine_ghost_vector_threshold),
             f64::from(self.context_pack_min_vector_score_gap_ratio),
             self.context_pack_anomalous_repeat_run as f64,
+            f64::from(self.phonetic_npd_threshold),
+            f64::from(self.phonetic_npd_keep_ratio),
+            self.phonetic_npd_cap as f64,
         ]
     }
 
