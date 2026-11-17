@@ -98,9 +98,26 @@ pub(crate) fn resume_divergence_ask_target(
     Some((run, step_seq, digest.to_owned()))
 }
 
-/// The ask's words (L8-23): the walk's report line and the two choices, never a request body.
+/// The ask's words (L8-23): the walk's report line and the choices, never a request body. A drift
+/// holding an agent verb effect step offers only leave: a write the step made keeps its receipt.
 fn resume_divergence_ask_detail(report: &ResumePreflightReport) -> String {
-    format!("{report} Re-fire the changed effect steps once, or leave them?")
+    if report.holds_agent_verb_effect() {
+        format!(
+            "{report} A write the step already made keeps its receipt and does not re-fire: leave the changed steps?"
+        )
+    } else {
+        format!("{report} Re-fire the changed effect steps once, or leave them?")
+    }
+}
+
+/// The choices the owner may answer `ask` with (L8-23): leave alone when its drift holds an agent
+/// verb effect step, refire or leave otherwise.
+pub(crate) fn resume_divergence_choices(ask: &ResumeDivergenceAsk) -> &'static [&'static str] {
+    if ask.report.holds_agent_verb_effect() {
+        &["leave"]
+    } else {
+        &["refire", "leave"]
+    }
 }
 
 /// One run's resume-divergence ask, read in `txn` (L8-23).
@@ -260,19 +277,24 @@ impl Vault {
         })
     }
 
-    /// Whether the ask on `run`'s step `step_seq` and `effect_digest` waits for the owner's answer
-    /// now (L8-23), read in `txn`: the inbox offers the ask's taps only then.
-    pub(crate) fn resume_divergence_awaits_owner_in(
+    /// The choices the ask on `run`'s step `step_seq` and `effect_digest` takes now (L8-23), read
+    /// in `txn`: none once it is answered or replaced, else [`resume_divergence_choices`].
+    pub(crate) fn resume_divergence_choices_in(
         &self,
         txn: &heed::RoTxn<'_>,
         run: EntityId,
         step_seq: u64,
         effect_digest: &str,
-    ) -> Result<bool> {
-        Ok(ASKS.get(&self.store, txn, &run)?.is_some_and(|ask| {
-            ask.step_seq == step_seq
-                && ask.effect_digest.as_str() == effect_digest
-                && ask.answer.is_none()
-        }))
+    ) -> Result<&'static [&'static str]> {
+        Ok(match ASKS.get(&self.store, txn, &run)? {
+            Some(ask)
+                if ask.step_seq == step_seq
+                    && ask.effect_digest.as_str() == effect_digest
+                    && ask.answer.is_none() =>
+            {
+                resume_divergence_choices(&ask)
+            }
+            _ => &[],
+        })
     }
 }

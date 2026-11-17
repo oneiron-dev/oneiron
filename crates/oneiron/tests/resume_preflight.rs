@@ -27,15 +27,15 @@ use std::pin::pin;
 use std::task::{Context, Poll, Waker};
 
 use oneiron::code_run::{
-    CodeRunDeterminism, GatedActorWrite, SelfCall, SelfDispatchOutcome, SelfMemoryPutClaimCall,
-    SelfMemorySearchCall,
+    CodeRunDeterminism, GatedActorWrite, SelfCall, SelfDispatchOutcome, SelfEffect,
+    SelfMemoryPutClaimCall, SelfMemorySearchCall,
 };
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::engine_executor::{
-    EngineExecutorConfig, EngineExecutorError, EngineExecutorLimits, EngineExecutorOutcome,
-    EngineExecutorResult, EngineExecutorStatus, EngineNativeExecutor, JsCodeModeHost,
-    JsCodeModeRuntime, JsCodeModeStep, JsCodeModeStepOutcome, JsCodeModeStream, JsResultCall,
-    JsResultTarget, ResumePreflightReport,
+    ChangedStep, EngineExecutorConfig, EngineExecutorError, EngineExecutorLimits,
+    EngineExecutorOutcome, EngineExecutorResult, EngineExecutorStatus, EngineNativeExecutor,
+    JsCodeModeHost, JsCodeModeRuntime, JsCodeModeStep, JsCodeModeStepOutcome, JsCodeModeStream,
+    JsResultCall, JsResultTarget, ResumePreflightReport, ResumeVerdict,
 };
 use oneiron::inbox::NotificationKind;
 use oneiron::llm::ReplyAssertions;
@@ -45,7 +45,7 @@ use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::store::GateDecisionId;
 use oneiron::task_verb::sdk::invoke;
 use oneiron::test_doors::code_run_answer::install_actor_ceiling;
-use oneiron::test_doors::resume_preflight::restamp_guest_abi;
+use oneiron::test_doors::resume_preflight::{raise_resume_divergence_ask, restamp_guest_abi};
 use oneiron::verbs::{
     ResumeDivergenceAnswer, ResumeDivergenceChoice, answer_code_run_resume_divergence_as,
 };
@@ -1220,6 +1220,52 @@ fn owner_leave_applies_when_the_program_ends_before_its_effect_tail() {
     );
 }
 
+/// A held drift whose changed effect step is an agent verb call at seq 1 (L8-23).
+fn agent_verb_write_report(run: EntityId) -> ResumePreflightReport {
+    ResumePreflightReport {
+        run_id: run,
+        step_seq: 0,
+        frontier: 2,
+        replay_free: vec![0],
+        changed: vec![ChangedStep {
+            seq: 1,
+            effect: SelfEffect::AgentVerb,
+            recorded_request_digest: "a".repeat(64),
+            reentered_request_digest: "b".repeat(64),
+            effect_step: true,
+        }],
+        unreached: Vec::new(),
+        boundary_changed: false,
+        preparation_changed: false,
+        effect_steps_would_refire: 1,
+        verdict: ResumeVerdict::EffectTail,
+    }
+}
+
+#[test]
+fn agent_verb_write_drift_takes_leave_only() {
+    let mut fixture = Fixture::open(Variant::Same);
+    let report = agent_verb_write_report(fixture.run_id);
+    raise_resume_divergence_ask(&fixture.vault, fixture.run_id, &report)
+        .expect("the held drift raises its ask");
+    assert_eq!(
+        ask_choices(&fixture.vault),
+        vec!["leave".to_owned()],
+        "the ask on a changed write offers leave alone: the write keeps its receipt",
+    );
+    fixture.last_hold = Some(report);
+    let refused = refire_refusal(&fixture);
+    assert!(
+        refused.contains("resume_divergence_refire_unavailable"),
+        "the owner's refire of a changed write is refused, got {refused}",
+    );
+    assert_eq!(
+        answer(&fixture, "leave"),
+        Some("left".to_owned()),
+        "leave settles the ask",
+    );
+}
+
 // Every read of the L8-23 API sits below, so the red pin on main stubs these helpers alone.
 
 /// The resume-preflight line the entry's outcome carries.
@@ -1299,6 +1345,42 @@ fn answer(fixture: &Fixture, choice: &str) -> Option<String> {
     serde_json::to_value(&answered.outcome)
         .ok()
         .and_then(|value| value.as_str().map(str::to_owned))
+}
+
+/// The choices the owner's open resume-divergence ask taps offer, in order.
+fn ask_choices(vault: &Vault) -> Vec<String> {
+    let owner = vault
+        .ensure_embedded_owner_actor()
+        .expect("the embedded owner");
+    let memory = vault.memory(owner, oneiron::EdgeActorClass::Human);
+    let page = memory
+        .inbox_list(None, 100)
+        .expect("the owner's inbox reads");
+    page.rows
+        .iter()
+        .filter(|row| {
+            row.kind == NotificationKind::Ask && row.source.producer == "code_run.resume_divergence"
+        })
+        .flat_map(|row| row.actions.iter())
+        .filter_map(|action| action.args["choice"].as_str().map(str::to_owned))
+        .collect()
+}
+
+/// The owner's refire of the last hold's ask, which must be refused: the refusal's message.
+fn refire_refusal(fixture: &Fixture) -> String {
+    let report = fixture.last_hold.clone().expect("a held drift");
+    let refused = answer_code_run_resume_divergence_as(
+        &fixture.vault,
+        &fixture.proof,
+        ResumeDivergenceAnswer {
+            run_ref: fixture.run_id,
+            step_seq: report.step_seq,
+            report_digest: report.effect_digest(),
+            choice: ResumeDivergenceChoice::Refire,
+        },
+    )
+    .expect_err("the refire is refused");
+    format!("{}: {}", refused.code, refused.message)
 }
 
 /// The agent's call of the answer verb by name through the generic verb door: the refusal's stable

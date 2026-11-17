@@ -2,9 +2,24 @@
 //! step parked under, as an engine upgrade that adds a guest import would leave it.
 //! Compiled only under `--cfg oneiron_test_support`; never API.
 
+use crate::engine_executor::ResumePreflightReport;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::vault::Vault;
+
+/// Raises the owner's resume-divergence ask on `report`'s drift for `run`, as a held resume
+/// raises it (L8-23).
+pub fn raise_resume_divergence_ask(
+    vault: &Vault,
+    run: EntityId,
+    report: &ResumePreflightReport,
+) -> Result<()> {
+    vault.with_write_txn_grouped(|wtxn| {
+        crate::engine_executor::resume_divergence::raise_resume_divergence_ask_in_txn(
+            vault, wtxn, run, report,
+        )
+    })
+}
 
 /// Reads the run's replay record, sets its pending step's `guest_abi`, and puts it back under
 /// its generation (L8-23). It fails if the run holds no record or no pending step.

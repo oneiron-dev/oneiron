@@ -176,6 +176,21 @@ fn tail_call_holds_effect(
     })
 }
 
+/// Whether a call of `effect` and `verb` is an agent verb write, or an agent verb whose verb is
+/// unknown (L8-23). Its write receipt keeps the call it made, so an owner's refire never re-runs
+/// it: such a drift is only left.
+fn agent_verb_write(effect: SelfEffect, verb: Option<&str>) -> bool {
+    effect == SelfEffect::AgentVerb && effect_step(effect, verb)
+}
+
+/// Whether a recorded program call, or a row a callable it called made, is an agent verb write
+/// (L8-23).
+fn tail_call_holds_agent_verb_write(row: &CodeRunBridgeCall, nested: &[CodeRunBridgeCall]) -> bool {
+    std::iter::once(row)
+        .chain(nested)
+        .any(|made| agent_verb_write(made.effect, made.recorded_verb()))
+}
+
 /// Whether a call of `effect` runs a callable skill's body through the host (L8-23): only a
 /// callable's calls take bridge positions past their caller, so only its effect makes nested rows.
 /// The match is exhaustive with no wildcard arm, so a new variant forces a choice.
@@ -371,6 +386,7 @@ impl DeadlineReplay {
             return PreflightTake::Held(PreflightHeld::Integrity(self.hold(ROWS_MISSING)));
         };
         let recorded_is_effect = effect_step(row.effect, row.recorded_verb());
+        let recorded_writes = agent_verb_write(row.effect, row.recorded_verb());
         let recorded_digest = request_digest(&row.request);
         // The value the strict match compared; empty when the call does not encode.
         let reentered_digest = row
@@ -412,7 +428,10 @@ impl DeadlineReplay {
             if let Some(choice) = approved {
                 match choice {
                     ResumeDivergenceChoice::Refire
-                        if nested_len == 0 && !runs_callable(call.effect()) =>
+                        if nested_len == 0
+                            && !runs_callable(call.effect())
+                            && !recorded_writes
+                            && !agent_verb_write(call.effect(), call_verb(call)) =>
                     {
                         let Some((row, _)) = self.pop_front_call() else {
                             return PreflightTake::Held(PreflightHeld::Integrity(
@@ -510,8 +529,12 @@ impl DeadlineReplay {
                     .then_some(*choice)
             });
             if let Some(choice) = approved {
+                // A write the tail already made keeps its receipt: no refire drops it (L8-23).
+                let refires = !tail
+                    .iter()
+                    .any(|(row, nested)| tail_call_holds_agent_verb_write(row, nested));
                 match choice {
-                    ResumeDivergenceChoice::Refire => {
+                    ResumeDivergenceChoice::Refire if refires => {
                         for (row, nested) in &tail {
                             self.unreached.push(UnreachedStep {
                                 seq: row.seq,
@@ -532,6 +555,7 @@ impl DeadlineReplay {
                         self.left = true;
                         return PreflightTake::LeftTail;
                     }
+                    ResumeDivergenceChoice::Refire => {}
                 }
             }
             self.restore_tail(tail);

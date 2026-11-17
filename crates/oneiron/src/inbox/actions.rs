@@ -223,7 +223,7 @@ impl Memory<'_> {
     /// The producer names the run in `source.result` and the step and effect digest in
     /// `source.event` (L8-23); the ask is a vault owner's, and only an owner's proof answers it.
     /// Shown while the step still waits for an answer: re-fire the changed effect steps once, or
-    /// leave them.
+    /// leave them; leave alone when the drift holds an agent verb write, which keeps its receipt.
     fn resume_divergence_actions(&self, row: &NotificationRow) -> Vec<NotificationAction> {
         let Some((run, step_seq, digest)) =
             crate::engine_executor::resume_divergence::resume_divergence_ask_target(&row.source)
@@ -231,18 +231,18 @@ impl Memory<'_> {
             return Vec::new();
         };
         let vault = self.vault();
-        let waits = vault
+        let choices = vault
             .store
             .env
             .read_txn()
             .map_err(crate::error::Error::from)
-            .and_then(|txn| vault.resume_divergence_awaits_owner_in(&txn, run, step_seq, &digest));
-        if !matches!(waits, Ok(true)) {
+            .and_then(|txn| vault.resume_divergence_choices_in(&txn, run, step_seq, &digest));
+        let Ok(choices) = choices else {
             return Vec::new();
-        }
+        };
         let run_ref = run.to_hex();
-        ["refire", "leave"]
-            .into_iter()
+        choices
+            .iter()
             .map(|choice| {
                 NotificationAction::new(
                     RESUME_DIVERGENCE_ANSWER_VERB,

@@ -38,6 +38,24 @@ pub fn answer_code_run_resume_divergence_as(
             "report_digest is not the 64 lowercase hex digits of an effect digest",
         ));
     }
+    // A drift holding an agent verb effect step takes leave only: a write the step made keeps its
+    // receipt, so no refire re-runs it (L8-23).
+    if input.choice == ResumeDivergenceChoice::Refire {
+        let choices = {
+            let txn = vault
+                .store
+                .env
+                .read_txn()
+                .map_err(crate::error::Error::from)?;
+            vault.resume_divergence_choices_in(&txn, input.run_ref, input.step_seq, &digest)?
+        };
+        if !choices.is_empty() && !choices.contains(&"refire") {
+            return Err(MemoryError::bad_request_with(
+                "resume_divergence_refire_unavailable: a write the held step already made keeps its receipt and does not re-fire",
+                &["Answer leave: the step keeps the writes it made."],
+            ));
+        }
+    }
     let outcome = vault.answer_code_run_resume_divergence(
         owner,
         input.run_ref,

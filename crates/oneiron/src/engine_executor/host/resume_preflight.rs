@@ -75,6 +75,24 @@ pub struct ResumePreflightReport {
 }
 
 impl ResumePreflightReport {
+    /// Whether a changed or unreached effect step is an agent verb call (L8-23). An agent verb
+    /// write keeps its write receipt, so an owner's refire never re-runs it: such a drift is only
+    /// left. The report keeps no verb names, so every agent verb effect step counts.
+    #[must_use]
+    pub fn holds_agent_verb_effect(&self) -> bool {
+        let changed = self
+            .changed
+            .iter()
+            .map(|step| (step.effect, step.effect_step));
+        let unreached = self
+            .unreached
+            .iter()
+            .map(|step| (step.effect, step.effect_step));
+        changed
+            .chain(unreached)
+            .any(|(effect, effect_step)| effect_step && effect == SelfEffect::AgentVerb)
+    }
+
     /// Whether the walk met no drift at all (L8-23): nothing changed, nothing unreached, and
     /// neither flag. A clean report records no output.
     #[must_use]
