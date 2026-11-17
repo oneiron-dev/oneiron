@@ -4,8 +4,9 @@
 //! through `/proc/<pid>/environ`, open the engine's OOM score to raise it,
 //! and open the vault's files. Fenced, it opens its program and the null
 //! device and none of those. Linux only, on a host with Landlock ABI 3:
-//! elsewhere a first-party organ starts unfenced, and the test says it
-//! skipped.
+//! elsewhere a first-party organ starts unfenced, and each test passes
+//! after printing `SKIPPED:` to stderr, which libtest shows only with
+//! `--show-output` or `--nocapture`.
 #![cfg(target_os = "linux")]
 
 use std::path::{Path, PathBuf};

@@ -115,9 +115,9 @@ pub(crate) struct Confined {
 /// organ gets its scratch dir here, before its fence is built around it.
 ///
 /// # Errors
-/// A third-party organ on a platform with no fence; or its scratch dir or
-/// its filesystem fence could not be made, or the pipe the child reports
-/// its isolation on; the error names which.
+/// A third-party organ on a platform with no fence; or a third-party
+/// organ's scratch dir, any organ's filesystem fence, or the pipe the child
+/// reports its isolation on could not be made; the error names which.
 pub(crate) fn command(spec: &OrganSpec, socket: RawFd) -> io::Result<(Command, Confined)> {
     let first_party = spec.tier == OrganTier::FirstParty;
     #[cfg(not(any(target_os = "linux", target_os = "macos")))]
@@ -226,9 +226,11 @@ fn argv(spec: &OrganSpec, scratch: Option<&Scratch>) -> (PathBuf, Vec<OsString>)
     (spec.program.clone(), spec.args.clone())
 }
 
-/// Whether this host can fence a third-party organ's filesystem (FIX
-/// 7885): Landlock ABI 3 or later on Linux, Seatbelt's `sandbox-exec` on
-/// macOS. Where it cannot, the host refuses third-party organs.
+/// Whether this host can fence an organ's filesystem (FIX 7885): Landlock
+/// ABI 3 or later on Linux, Seatbelt's `sandbox-exec` on macOS. Where it
+/// cannot, the host refuses third-party organs. On Linux it also decides
+/// whether a first-party organ starts fenced (FIX
+/// [FIRST-PARTY-ORGAN-PROC-REACH]).
 #[must_use]
 pub fn filesystem_confined() -> bool {
     static CONFINED: OnceLock<bool> = OnceLock::new();
