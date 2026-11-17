@@ -27,6 +27,7 @@ pub mod affect;
 mod answer_boundary;
 mod archive_delete_wire;
 mod archive_purge;
+pub(crate) mod archive_restore;
 mod artifact_hosting_doors;
 mod asset_doors;
 mod asset_resolve;
@@ -203,7 +204,8 @@ pub use can::{CanAnswer, CanEffectAnswer, CanEffectVerdict, CanVerbAnswer, CanVe
 pub use chat::{ChatAbstentionReason, ChatDepth, ChatOptions, ChatResponse, ChatScope};
 pub use chat_composer::{ChatComposeRequest, ChatComposer, ComposedChatAnswer};
 pub use claim_admission::{
-    AllRelationships, ClaimRelationships, ClaimScope, ScopedClaimInput, ScopedCommitRequest,
+    AllRelationships, ClaimRelationships, ClaimScope, ClaimScopeInput, ScopedClaimInput,
+    ScopedCommitRequest,
 };
 pub(crate) use claim_conflict::claim_conflict_ruling_gate_refs_in_txn;
 pub use claim_conflict::{
@@ -258,7 +260,7 @@ pub use export::{
 pub use export_audit::{ExportAuditScope, ExportReceipt};
 pub(crate) use export_audit::{
     ExportCopy, owner_copy_in_txn, record_export, record_raw_export, record_raw_json_export,
-    turn_thread_root,
+    turn_thread_root, whole_vault_exported_since_in_txn,
 };
 pub use export_kept::KeptExportLapse;
 pub use export_transfer_read::{

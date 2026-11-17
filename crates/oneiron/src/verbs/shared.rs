@@ -8,9 +8,13 @@
 use serde::{Deserialize, Serialize};
 
 use super::owner_confirm;
-use crate::authority::{AuthorityHandoffAlarm, HostSlipIssuer};
+use crate::authority::{
+    ActAuthority, ActSurface, AuthorityHandoffAlarm, HostSlipIssuer, OWNER_KEY_MOVE_NOT_PLANNED,
+    OwnerKeyMovePlan, OwnerKeyMoveSigner,
+};
 use crate::consent::AuthenticatedOwner;
 use crate::edge::EdgeActorClass;
+use crate::error::{Error, RecordError};
 use crate::federation::{
     FederationGrantRole as Role, MemberAskChange, OwnerRemoval, PendingAuthorityAct,
     RemovalExportDelivery, SharedActExecution, SharedActExecutionReceipt, SharedActKind,
@@ -21,9 +25,11 @@ use crate::{EntityId, Vault};
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::verbs::shared::{
-    HandoffAlarmRequest, SharedActRequest, SharedAddOwnerRequest, SharedMemberAskIdRequest,
-    SharedMemberAskKind, SharedMemberRequest, SharedOwnerChangeWaitSetRequest,
-    SharedReceiptRequest, SharedVaultRequest,
+    HandoffAlarmRequest, SharedActExecuteRequest, SharedActRequest, SharedAddOwnerRequest,
+    SharedMemberAskIdRequest, SharedMemberAskKind, SharedMemberRequest,
+    SharedOwnerChangeWaitSetRequest, SharedOwnerKeyMoveConfirm, SharedOwnerKeyMovePlan,
+    SharedOwnerKeyMoveSignRequest, SharedOwnerKeyMoveSigner, SharedReceiptRequest,
+    SharedVaultRequest,
 };
 
 /// `vault.shared.propose_delete`'s input: the shared vault, the approved
@@ -349,11 +355,15 @@ pub fn read_shared_owner_change_wait(
 /// the same receipt, and a remaining Owner's re-run of an export-first
 /// removal delivers its archive to the removed Owner again (FIX 1300). A held
 /// `erase` act runs its own executor, then its receipt tells the Owners.
+/// The rows a device of `executor` signed for the act's owner-key move
+/// ([`sign_shared_owner_key_move`]) land in the act's writer before its move
+/// (row HOSTED-OWNER-MOVE-TWO-PHASE); an erase ends no Owner standing, so
+/// rows given for one are refused.
 pub fn execute_shared_act(
     vault: &Vault,
     executor: &AuthenticatedOwner,
     slips: Option<&HostSlipIssuer>,
-    input: SharedActRequest,
+    input: SharedActExecuteRequest,
 ) -> MemoryResult<SharedActExecuted> {
     execute_shared_act_listing(vault, executor, slips, input).0
 }
@@ -369,7 +379,7 @@ pub fn execute_shared_act_listing(
     vault: &Vault,
     executor: &AuthenticatedOwner,
     slips: Option<&HostSlipIssuer>,
-    input: SharedActRequest,
+    input: SharedActExecuteRequest,
 ) -> (MemoryResult<SharedActExecuted>, Option<Vec<EntityId>>) {
     let producers = ProducerRows::default();
     let mut export_listed = false;
@@ -394,14 +404,29 @@ fn execute_shared_act_into(
     vault: &Vault,
     executor: &AuthenticatedOwner,
     slips: Option<&HostSlipIssuer>,
-    input: SharedActRequest,
+    input: SharedActExecuteRequest,
     producers: &ProducerRows,
     export_listed: &mut bool,
 ) -> MemoryResult<SharedActExecuted> {
+    let owner_key_revokes = input
+        .owner_key_revokes
+        .iter()
+        .map(|row| {
+            oneiron_hex::decode_vec(row).ok_or_else(|| {
+                MemoryError::bad_request("owner_key_revokes holds a row that is not lowercase hex")
+            })
+        })
+        .collect::<MemoryResult<Vec<_>>>()?;
     let erase = vault
         .pending_authority_act(&input.act_id)?
         .is_some_and(|act| SharedActKind::parse(&act.act) == Some(SharedActKind::Erase));
     if erase {
+        if !owner_key_revokes.is_empty() {
+            return Err(Error::Record(RecordError::InvalidAuthorityLogBody(
+                OWNER_KEY_MOVE_NOT_PLANNED,
+            ))
+            .into());
+        }
         // A held erase runs through its own executor, which binds the
         // record; its receipt then tells the Owners (OF-150).
         let memory = vault
@@ -422,12 +447,110 @@ fn execute_shared_act_into(
             delivery: None,
         });
     }
-    let execution = vault.execute_completed_shared_act(executor, &input.act_id, slips)?;
+    let execution = vault.execute_completed_shared_act_with_owner_key_revokes(
+        executor,
+        &input.act_id,
+        slips,
+        &owner_key_revokes,
+    )?;
     if let Some(records) = &execution.export_records {
         producers.list(records.iter().copied());
         *export_listed = true;
     }
     Ok(execution.into())
+}
+
+/// `vault.shared.owner_key_move_plan`: the plan a device of `executor`, a
+/// live Owner who may run the act now, confirms the act's owner-key move
+/// with (row HOSTED-OWNER-MOVE-TWO-PHASE): its answer is the input of
+/// `vault.shared.owner_key_move_sign` on that device. A frontier join the
+/// plan needs is signed by `slips` (or this install's live host issuer) and
+/// kept; nothing else is written.
+pub fn plan_shared_owner_key_move(
+    vault: &Vault,
+    executor: &AuthenticatedOwner,
+    slips: Option<&HostSlipIssuer>,
+    input: SharedActRequest,
+) -> MemoryResult<SharedOwnerKeyMovePlan> {
+    let plan = vault.owner_key_move_plan(executor, &input.act_id, slips)?;
+    Ok(owner_key_move_plan_wire(plan))
+}
+
+/// `vault.shared.owner_key_move_sign`: the owner key this install holds for
+/// `owner` signs the plan's revokes, after the plan is checked against this
+/// install's copy of the vault (row HOSTED-OWNER-MOVE-TWO-PHASE). It runs on
+/// the Owner's own device: a host holds none of an Owner's keys, so there it
+/// answers the refusal. `input.member` is the member the Owner confirmed on
+/// the device, from its own copy; a plan of another member signs nothing.
+/// It writes nothing; the answer goes to `vault.shared.execute` as it is.
+pub fn sign_shared_owner_key_move(
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    input: SharedOwnerKeyMoveSignRequest,
+) -> MemoryResult<SharedOwnerKeyMoveConfirm> {
+    let member = person_id("member", &input.member)?;
+    let plan = owner_key_move_plan_from_wire(input.plan)?;
+    let authority = ActAuthority::Owner(owner.clone(), ActSurface::ThisInstall);
+    let rows = vault.sign_owner_key_move_as(&authority, &plan, member)?;
+    Ok(SharedOwnerKeyMoveConfirm {
+        owner_key_revokes: rows.iter().map(|row| oneiron_hex::encode(row)).collect(),
+    })
+}
+
+/// `plan` as the wire carries it: byte fields in lowercase hex.
+fn owner_key_move_plan_wire(plan: OwnerKeyMovePlan) -> SharedOwnerKeyMovePlan {
+    fn hex_all(values: &[[u8; 32]]) -> Vec<String> {
+        values
+            .iter()
+            .map(|value| oneiron_hex::encode(value))
+            .collect()
+    }
+    SharedOwnerKeyMovePlan {
+        authority_vault_id: oneiron_hex::encode(&plan.vault_id),
+        member: plan.member.to_hex(),
+        parents: hex_all(&plan.parents),
+        revoked: hex_all(&plan.revoked),
+        signers: plan
+            .signers
+            .iter()
+            .map(|signer| SharedOwnerKeyMoveSigner {
+                public_key: oneiron_hex::encode(&signer.public_key),
+                seq: signer.seq,
+            })
+            .collect(),
+        at: plan.at,
+        act_id: plan.act_id,
+    }
+}
+
+/// The plan the wire `plan` carries; a field that is not its hex is a bad
+/// request.
+fn owner_key_move_plan_from_wire(plan: SharedOwnerKeyMovePlan) -> MemoryResult<OwnerKeyMovePlan> {
+    fn bytes32(field: &str, text: &str) -> MemoryResult<[u8; 32]> {
+        oneiron_hex::decode(text)
+            .ok_or_else(|| MemoryError::bad_request(format!("{field} is not 64 lowercase hex")))
+    }
+    fn bytes32_all(field: &str, texts: &[String]) -> MemoryResult<Vec<[u8; 32]>> {
+        texts.iter().map(|text| bytes32(field, text)).collect()
+    }
+    Ok(OwnerKeyMovePlan {
+        vault_id: bytes32("plan.authority_vault_id", &plan.authority_vault_id)?,
+        member: person_id("plan.member", &plan.member)?,
+        parents: bytes32_all("plan.parents", &plan.parents)?,
+        revoked: bytes32_all("plan.revoked", &plan.revoked)?,
+        signers: plan
+            .signers
+            .iter()
+            .map(|signer| {
+                Ok(OwnerKeyMoveSigner {
+                    public_key: bytes32("plan.signers.public_key", &signer.public_key)?,
+                    seq: signer.seq,
+                })
+            })
+            .collect::<MemoryResult<_>>()?,
+        at: plan.at,
+        act_id: plan.act_id,
+    })
 }
 
 /// `vault.shared.receipt`: a receipt its reader was told about.
