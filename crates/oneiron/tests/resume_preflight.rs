@@ -27,15 +27,15 @@ use std::pin::pin;
 use std::task::{Context, Poll, Waker};
 
 use oneiron::code_run::{
-    CodeRunDeterminism, GatedActorWrite, SelfCall, SelfDispatchOutcome, SelfMemoryPutClaimCall,
-    SelfMemorySearchCall,
+    CodeRunDeterminism, GatedActorWrite, SelfCall, SelfDispatchOutcome, SelfEffect,
+    SelfMemoryPutClaimCall, SelfMemorySearchCall,
 };
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::engine_executor::{
-    EngineExecutorConfig, EngineExecutorError, EngineExecutorLimits, EngineExecutorOutcome,
-    EngineExecutorResult, EngineExecutorStatus, EngineNativeExecutor, JsCodeModeHost,
-    JsCodeModeRuntime, JsCodeModeStep, JsCodeModeStepOutcome, JsCodeModeStream, JsResultCall,
-    JsResultTarget, ResumePreflightReport,
+    ChangedStep, EngineExecutorConfig, EngineExecutorError, EngineExecutorLimits,
+    EngineExecutorOutcome, EngineExecutorResult, EngineExecutorStatus, EngineNativeExecutor,
+    JsCodeModeHost, JsCodeModeRuntime, JsCodeModeStep, JsCodeModeStepOutcome, JsCodeModeStream,
+    JsResultCall, JsResultTarget, ResumePreflightReport, ResumeVerdict,
 };
 use oneiron::inbox::NotificationKind;
 use oneiron::llm::ReplyAssertions;
@@ -45,7 +45,7 @@ use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::store::GateDecisionId;
 use oneiron::task_verb::sdk::invoke;
 use oneiron::test_doors::code_run_answer::install_actor_ceiling;
-use oneiron::test_doors::resume_preflight::restamp_guest_abi;
+use oneiron::test_doors::resume_preflight::{raise_resume_divergence_ask, restamp_guest_abi};
 use oneiron::verbs::{
     ResumeDivergenceAnswer, ResumeDivergenceChoice, answer_code_run_resume_divergence_as,
 };
@@ -169,6 +169,8 @@ enum Variant {
     /// The pure-changed search, then a `store` of new bytes, then the changed claim put: the
     /// store comes while the walk still has the recorded put ahead.
     StoresBeforeEffectChange,
+    /// Only the recorded search: the program ends with the recorded claim put unreached.
+    EndsBeforeEffectTail,
 }
 
 /// A query naming a GitHub token, in a shape the side-row wall reads as a secret.
@@ -389,6 +391,7 @@ impl JsCodeModeRuntime for TwoEntryRuntime {
                             self.put_call(self.claim, "green tea"),
                         ]
                     }
+                    Variant::EndsBeforeEffectTail => vec![Self::search_call("alpha")],
                 };
                 self.run_entry(host, calls, false)
             }
@@ -1145,6 +1148,124 @@ fn owner_leave_on_unreached_tail_keeps_its_row() {
     );
 }
 
+/// The program ends before its recorded claim put; the owner answers `choice`; the next entry
+/// meets that answer at the program's end and commits instead of asking again.
+fn answer_at_program_end(choice: &str) -> (Fixture, EngineExecutorResult<EngineExecutorOutcome>) {
+    let mut fixture = Fixture::open(Variant::EndsBeforeEffectTail);
+    fixture.park(&[0, 1]);
+    let error = fixture
+        .reenter()
+        .expect_err("the program that ends before its effect tail holds");
+    assert_eq!(
+        divergence_line(&error),
+        Some(
+            "step 0 replays free \u{00b7} step 1 unreached \u{00b7} 1 effect step would re-fire"
+                .to_owned()
+        ),
+    );
+    assert!(
+        answer(&fixture, choice).is_some(),
+        "the owner's {choice} is taken"
+    );
+    let asks = owner_asks(&fixture.vault);
+    let answered = fixture.reenter();
+    assert_eq!(owner_asks(&fixture.vault), asks, "no fresh ask is raised");
+    (fixture, answered)
+}
+
+#[test]
+fn owner_refire_applies_when_the_program_ends_before_its_effect_tail() {
+    let (fixture, answered) = answer_at_program_end("refire");
+    let outcome = answered.unwrap_or_else(|error| {
+        panic!("the refired step commits without its dropped tail, got {error}")
+    });
+    assert_eq!(
+        outcome.status,
+        EngineExecutorStatus::Yielded { next_step_seq: 1 },
+        "the resumed step commits, then the run yields",
+    );
+    let record = fixture
+        .vault
+        .get_code_run_replay_record(&fixture.run_id)
+        .expect("the committed record reads")
+        .expect("the committed record is present");
+    assert!(record.pending_step.is_none(), "no step is pending");
+    assert_eq!(
+        record.bridge_calls.len(),
+        1,
+        "only the search the program made stands"
+    );
+}
+
+#[test]
+fn owner_leave_applies_when_the_program_ends_before_its_effect_tail() {
+    let (fixture, answered) = answer_at_program_end("leave");
+    let outcome = answered
+        .unwrap_or_else(|error| panic!("the left step commits with its kept tail, got {error}"));
+    assert_eq!(
+        outcome.status,
+        EngineExecutorStatus::Yielded { next_step_seq: 1 },
+        "the resumed step commits, then the run yields",
+    );
+    let record = fixture
+        .vault
+        .get_code_run_replay_record(&fixture.run_id)
+        .expect("the committed record reads")
+        .expect("the committed record is present");
+    assert!(record.pending_step.is_none(), "no step is pending");
+    assert_eq!(
+        record.bridge_calls.len(),
+        2,
+        "the kept put of C1 stands beside the search"
+    );
+}
+
+/// A held drift whose changed effect step is an agent verb call at seq 1 (L8-23).
+fn agent_verb_write_report(run: EntityId) -> ResumePreflightReport {
+    ResumePreflightReport {
+        run_id: run,
+        step_seq: 0,
+        frontier: 2,
+        replay_free: vec![0],
+        changed: vec![ChangedStep {
+            seq: 1,
+            effect: SelfEffect::AgentVerb,
+            recorded_request_digest: "a".repeat(64),
+            reentered_request_digest: "b".repeat(64),
+            effect_step: true,
+        }],
+        unreached: Vec::new(),
+        boundary_changed: false,
+        preparation_changed: false,
+        effect_steps_would_refire: 1,
+        verdict: ResumeVerdict::EffectTail,
+    }
+}
+
+#[test]
+fn agent_verb_write_drift_takes_leave_only() {
+    let mut fixture = Fixture::open(Variant::Same);
+    let report = agent_verb_write_report(fixture.run_id);
+    raise_resume_divergence_ask(&fixture.vault, fixture.run_id, &report)
+        .expect("the held drift raises its ask");
+    assert_eq!(
+        ask_choices(&fixture.vault),
+        vec!["leave".to_owned()],
+        "the ask on a changed write offers leave alone: the write keeps its receipt",
+    );
+    fixture.last_hold = Some(report);
+    let refused = refire_refusal(&fixture);
+    assert!(
+        refused.contains("resume_divergence_refire_unavailable"),
+        "the owner's refire of a changed write is refused, got {refused}",
+    );
+    assert_eq!(
+        answer(&fixture, "leave"),
+        Some("left".to_owned()),
+        "leave settles the ask",
+    );
+}
+
 // Every read of the L8-23 API sits below, so the red pin on main stubs these helpers alone.
 
 /// The resume-preflight line the entry's outcome carries.
@@ -1224,6 +1345,42 @@ fn answer(fixture: &Fixture, choice: &str) -> Option<String> {
     serde_json::to_value(&answered.outcome)
         .ok()
         .and_then(|value| value.as_str().map(str::to_owned))
+}
+
+/// The choices the owner's open resume-divergence ask taps offer, in order.
+fn ask_choices(vault: &Vault) -> Vec<String> {
+    let owner = vault
+        .ensure_embedded_owner_actor()
+        .expect("the embedded owner");
+    let memory = vault.memory(owner, oneiron::EdgeActorClass::Human);
+    let page = memory
+        .inbox_list(None, 100)
+        .expect("the owner's inbox reads");
+    page.rows
+        .iter()
+        .filter(|row| {
+            row.kind == NotificationKind::Ask && row.source.producer == "code_run.resume_divergence"
+        })
+        .flat_map(|row| row.actions.iter())
+        .filter_map(|action| action.args["choice"].as_str().map(str::to_owned))
+        .collect()
+}
+
+/// The owner's refire of the last hold's ask, which must be refused: the refusal's message.
+fn refire_refusal(fixture: &Fixture) -> String {
+    let report = fixture.last_hold.clone().expect("a held drift");
+    let refused = answer_code_run_resume_divergence_as(
+        &fixture.vault,
+        &fixture.proof,
+        ResumeDivergenceAnswer {
+            run_ref: fixture.run_id,
+            step_seq: report.step_seq,
+            report_digest: report.effect_digest(),
+            choice: ResumeDivergenceChoice::Refire,
+        },
+    )
+    .expect_err("the refire is refused");
+    format!("{}: {}", refused.code, refused.message)
 }
 
 /// The agent's call of the answer verb by name through the generic verb door: the refusal's stable
