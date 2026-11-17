@@ -52,6 +52,7 @@ pub fn reminder_route(command: crate::cli::ReminderRouteCommand) -> anyhow::Resu
                 expected_revision: None,
                 why: None,
                 check_in_ref: None,
+                weight_runs: None,
             },
             |request: SettingSetRequest| {
                 sdk::setting_set_embedded(&memory, request).map_err(memory_refusal)
