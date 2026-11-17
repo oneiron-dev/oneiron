@@ -381,7 +381,11 @@ fn arc_input(plan: &ScopeSummaryPlan, view: &ArcView, opened: &str) -> Result<St
         "purpose": plan.purpose,
         "keep": plan.keep,
         "editor_text": null,
-        "sittings": view.lines,
+        "sittings": if plan.previous.is_none() {
+            view.lines.split("Sitting 2:").next().unwrap_or_default()
+        } else {
+            view.lines.as_str()
+        },
         "turns": view.turns,
         "claims": view.claims,
         "opened": opened,
