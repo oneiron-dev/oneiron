@@ -40,6 +40,14 @@ pub async fn build_served_server(
     Ok(server)
 }
 
+/// For `tests/chat_model_call_turn_link.rs` (HANDOFF-CONTEXT): starts the
+/// turn-action worker of `ai`, attached to `server`, as `serve` does once it
+/// has built the server (`commands/serve/workers.rs`), so a queued Continue
+/// or Retry is answered.
+pub fn bind_turn_actions(ai: &crate::ai_host::AiHost, server: &Arc<SyncServer>) {
+    ai.bind_turn_actions(server);
+}
+
 /// Binds `server`'s usage meter as a managed start under `tenancy` binds it:
 /// to the tenancy's payer, before any worker starts.
 pub fn bind_managed_usage_metering(server: &SyncServer, tenancy: VaultTenancy) {
