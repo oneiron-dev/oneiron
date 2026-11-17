@@ -45,7 +45,7 @@ use super::CHAT_ROLE;
 use super::live_lease::{self, LiveLease};
 use super::payer_funding::{PayerFault, attempt_grant_funding, requires_payer, scope_run_funding};
 use super::step_failure::StepRetryCause;
-use crate::models::{ModelCallBinding, ModelRuntime};
+use crate::models::{ModelCallBinding, ModelRuntime, RoleCall};
 use crate::server::SyncServer;
 
 mod response_capture;
@@ -550,6 +550,39 @@ impl StepRunner {
         self.generate_in(runtime, vault, input, false, false, None, None, None)
     }
 
+    /// Admits `request` for a step of the run `attempt` belongs to, on the
+    /// chat role's route; or, for a run its owner chose to continue on a free
+    /// local model when it was held at its spend cap (ARCH-0026 depletion
+    /// ladder; RUNBUDGET-KNOB), on that model alone, on its free route read
+    /// now. A local model no longer served so holds the run again, as a spent
+    /// meter does, and the owner is asked again.
+    fn admit_step_call(
+        &self,
+        vault: &Vault,
+        attempt: AttemptId,
+        request: LlmRequest,
+    ) -> Result<RoleCall, StepFault> {
+        let Some(model) = AgentDispatcher::new(vault).run_local_route(attempt)? else {
+            return self
+                .models
+                .admit_role(vault, CHAT_ROLE, request)
+                .map_err(|refusal| {
+                    Error::InvalidConfig(format!("workflow step refused: {refusal}")).into()
+                });
+        };
+        self.models
+            .admit_free_local(vault, CHAT_ROLE, request, &model)
+            .map_err(|refusal| StepFault {
+                retry: None,
+                exhausted: true,
+                payer: None,
+                hook_wait: false,
+                error: Error::InvalidConfig(format!(
+                    "workflow step's free local route refused: {refusal}"
+                )),
+            })
+    }
+
     /// [`Self::generate`] for a step that knows whether it must read its
     /// payer (`payer_required`): a room-bound step's root scope must name
     /// its payer (OF-531), and so must a member's bound run's (FIX 5316).
@@ -627,12 +660,7 @@ impl StepRunner {
         {
             // The body already holds the admitted request. Resolve current
             // route admission, never reconstruct or resample its tool tail.
-            let call = self
-                .models
-                .admit_role(vault, CHAT_ROLE, saved.transcript.request.clone())
-                .map_err(|refusal| {
-                    Error::InvalidConfig(format!("workflow step refused: {refusal}"))
-                })?;
+            let call = self.admit_step_call(vault, attempt.id, saved.transcript.request.clone())?;
             let mut request = call.request;
             request.envelope.host_keyless = call.ladder.all_keyless_own_server();
             request.envelope.host_paid = !call.ladder.all_free_work();
@@ -738,12 +766,7 @@ impl StepRunner {
             };
             // A route the vault narrowed past what this server serves ends the
             // step here, before any call leaves.
-            let call = self
-                .models
-                .admit_role(vault, CHAT_ROLE, request)
-                .map_err(|refusal| {
-                    Error::InvalidConfig(format!("workflow step refused: {refusal}"))
-                })?;
+            let call = self.admit_step_call(vault, attempt.id, request)?;
             let mut request = call.request;
             // FIX 10592: beside the door-stamped locality, the request carries
             // whether its ladder may only serve free keyless own-server work, so
@@ -832,6 +855,21 @@ impl StepRunner {
         let logical_budget_units = continuation
             .as_ref()
             .map_or(self.budget_units, |saved| saved.progress.budget_units);
+        // A try whose attempt carries a dialed landing reserve (ONE-1896 §4)
+        // meters its ordinary calls on that dial less the reserve, as the
+        // Dreamer's turn program does, so no ordinary call reaches the slice
+        // kept for its landing (FIX 4208). The bound holds the guard and the
+        // live lease alike. A retry is a fresh row that keeps its source's
+        // dial values but not its one-shot mark (`successor_row`), and the
+        // workflow path never dials it again, so the values it carries fence
+        // it as they fenced the try before it: only a dial writes a reserve's
+        // limit. An attempt no dial reached keeps the step's budget.
+        let landing = attempt.landing_reserve();
+        let logical_budget_units = if landing.is_dialed() || landing.limit_units > 0 {
+            logical_budget_units.min(landing.ordinary_limit_units())
+        } else {
+            logical_budget_units
+        };
         // OF-531: a room-paid step bills its root payer's own account, bound
         // before anything is reserved, never the vault owner's by default;
         // so does a member's bound run's step (FIX 5316). A payer this host
@@ -885,16 +923,25 @@ impl StepRunner {
             hook_wait: false,
             error: Error::InvalidConfig(format!("workflow step budget: {denied:?}")),
         };
+        // A run the owner approved a one-off overdraft for, or added dollars
+        // to, answering its run-budget ask, widens each of its meters by that
+        // cap (the units bought) once, fresh or restored, until it is held
+        // again (ARCH-0026 depletion ladder; RUNBUDGET-OVERDRAFT,
+        // RUNBUDGET-ADDFUNDS-METER).
+        let overdraft = dispatcher.run_overdraft(attempt.id)?;
         let guard = if let Some(saved) = &continuation {
-            oneiron::BudgetGuard::from_checkpoint(saved.progress.budget.clone()).map_err(budget)?
+            live_lease::restore_try_meter(saved.progress.budget.clone(), overdraft.as_ref())
+                .map_err(budget)?
         } else {
-            vault.policy_budget_guard(
+            let fresh = vault.policy_budget_guard(
                 run_id.clone(),
                 budget_units,
                 reserve,
                 BudgetExhaustionPolicy::Suspend,
                 actor,
-            )?
+            )?;
+            live_lease::grant_run_overdraft(&fresh, overdraft.as_ref());
+            fresh
         };
         // Only a ladder with a paid rung replays, so each replay reserves on
         // the paid line whatever the call's locality: an on-device label

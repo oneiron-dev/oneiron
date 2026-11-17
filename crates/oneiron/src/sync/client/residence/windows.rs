@@ -60,9 +60,10 @@ fn import_promotion_snapshot_with(
 }
 
 /// Sync-state prefix of a window this machine holds in full whose retain the
-/// home refused ([`SyncClient::retain_window`]). The residence upkeep asks
-/// again, so a grant that changed since lets the window sync without waiting
-/// for a first edit to promote it.
+/// home refused ([`SyncClient::retain_window`]), or that a switch to sync
+/// opened did not ask the home to retain ([`mark_ungranted_windows_in_txn`]).
+/// The residence upkeep asks again, so a grant that changed since lets the
+/// window sync without waiting for a first edit to promote it.
 const RETAIN_REFUSED_PREFIX: &str = "rr:w:";
 
 /// Asks the home again to retain each window it refused, on an opened
@@ -97,6 +98,37 @@ pub(crate) async fn retry_refused_retains(
         }
     }
     Ok(retained)
+}
+
+/// Marks each of `windows` that the home has not granted (`rp:w:`) in `txn`
+/// for the residence upkeep to ask the home to retain
+/// ([`retry_refused_retains`]), and answers the windows it marked. Under sync
+/// opened a window syncs only once granted, so a switch that records sync
+/// opened without asking the home to grant its held windows again (an
+/// election moved the home while it planned, FIX
+/// RESIDENCE-SWITCH-STALE-HOME) leaves them to the upkeep this way.
+pub(crate) fn mark_ungranted_windows_in_txn(
+    vault: &crate::Vault,
+    txn: &mut heed::RwTxn<'_>,
+    windows: Vec<WindowKey>,
+) -> crate::error::Result<Vec<WindowKey>> {
+    let mut marked = Vec::new();
+    for window in windows {
+        let granted = vault
+            .store
+            .sync_state
+            .get(txn, &format!("rp:w:{window}"))?
+            .is_some();
+        if granted {
+            continue;
+        }
+        vault
+            .store
+            .sync_state
+            .put(txn, &format!("{RETAIN_REFUSED_PREFIX}{window}"), &[1])?;
+        marked.push(window);
+    }
+    Ok(marked)
 }
 
 impl SyncClient {

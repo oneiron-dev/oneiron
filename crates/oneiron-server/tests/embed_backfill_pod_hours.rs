@@ -99,6 +99,7 @@ fn witness(vault: &Vault, owner_id: EntityId, text: &str) -> TestResult {
                 quote: None,
             }],
             assertions: Default::default(),
+            project: None,
         })?;
     Ok(())
 }
