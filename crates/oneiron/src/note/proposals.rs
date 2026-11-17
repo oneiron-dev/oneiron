@@ -489,7 +489,8 @@ pub(crate) enum NoteEditLanding<'a> {
     },
 }
 
-/// Whether `actor`'s edit of `note` lands now, through `landing`.
+/// Whether `actor`'s edit of `note` lands now, through `landing`: the
+/// Grant's answer, or the door's own proof ([`landing_proves`]).
 pub(super) fn edit_lands(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -497,9 +498,20 @@ pub(super) fn edit_lands(
     actor: WriteActor,
     landing: NoteEditLanding<'_>,
 ) -> Result<bool> {
-    if grant_allows(vault, txn, note, actor)? {
-        return Ok(true);
-    }
+    Ok(grant_allows(vault, txn, note, actor)? || landing_proves(vault, txn, note, actor, landing)?)
+}
+
+/// Whether the proof `landing` holds lands `actor`'s edit of `note` with no
+/// Grant: its live session pad, or a changed file of a folder the owner
+/// attached, under the owner's live proof. [`NoteEditLanding::Grant`] proves
+/// nothing.
+pub(super) fn landing_proves(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    note: EntityId,
+    actor: WriteActor,
+    landing: NoteEditLanding<'_>,
+) -> Result<bool> {
     match landing {
         NoteEditLanding::Grant => Ok(false),
         NoteEditLanding::SessionPad { session, run } => {

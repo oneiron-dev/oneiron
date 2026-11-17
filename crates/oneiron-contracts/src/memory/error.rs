@@ -329,6 +329,16 @@ impl MemoryError {
         self
     }
 
+    /// The same refusal naming `reason_code` after the reason codes it
+    /// already names.
+    #[must_use]
+    /// Engine seam: `pub` only so `oneiron` can call it across the crate split.
+    #[doc(hidden)]
+    pub fn with_reason_code(mut self, reason_code: &str) -> Self {
+        self.reason_codes.push(reason_code.to_owned());
+        self
+    }
+
     /// Rebuilds the typed engine denial this refusal carries, when it carries
     /// one (ONE-1686).
     ///

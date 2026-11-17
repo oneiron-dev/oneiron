@@ -528,7 +528,7 @@ impl Memory<'_> {
                         &[],
                     ));
                 }
-                require_note_writer(self, txn, note)?;
+                require_note_writer(self, txn, note, super::NoteEditLanding::Grant)?;
                 crate::memory::verify_deletion_authority_in_txn(
                     self.vault(),
                     txn,
@@ -681,10 +681,22 @@ pub(super) fn validate_pin_source(
     Ok(())
 }
 
+/// The reason code of a NOTE edit the Grant does not land at a door that has
+/// no fork to open: the scalar NOTE doors and the NOTE socket (RULING
+/// NOTE-SCALAR-NO-GRANT = A). The writer proposes the edit through
+/// `Vault::edit_note`, which opens a fork for review.
+pub(crate) const NOTE_EDIT_NEEDS_GRANT: &str = "note.edit.needs_grant";
+
+/// Whether `memory`'s actor may write NOTE `id` now, through `landing`: the
+/// Grant's answer for this actor and this NOTE, or the door's own landing
+/// proof ([`super::proposals::edit_lands`]). The NOTE's authorship never
+/// decides it (DEC-0006 #10, ARCH-0032 #forks-proposals): an author with no
+/// Grant is refused here as any other writer is.
 pub(super) fn require_note_writer(
     memory: &Memory<'_>,
     txn: &heed::RoTxn<'_>,
     id: EntityId,
+    landing: super::NoteEditLanding<'_>,
 ) -> MemoryResult<()> {
     if memory
         .vault()
@@ -692,15 +704,17 @@ pub(super) fn require_note_writer(
     {
         return Err(invalid("NOTE was erased").into());
     }
-    let (_, body) = super::verbs::note_core(memory.vault(), txn, id)?;
-    if !body.author_ref.is(memory.actor())
-        && !super::proposals::grant_allows(memory.vault(), txn, id, memory.write_actor())?
+    super::verbs::note_core(memory.vault(), txn, id)?;
+    let actor = memory.write_actor();
+    if !super::proposals::grant_allows(memory.vault(), txn, id, actor)?
+        && !super::proposals::landing_proves(memory.vault(), txn, id, actor, landing)?
     {
         if memory.actor_class() != EdgeActorClass::Human {
             return Err(MemoryError::bad_request_with(
-                "NOTE edit requires its author or a bound owner",
-                &[],
-            ));
+                "NOTE edit has no Grant that lands it",
+                &["Propose it through the program NOTE edit, which opens a fork for review."],
+            )
+            .with_reason_code(NOTE_EDIT_NEEDS_GRANT));
         }
         crate::memory::verify_owner_actor_binding_in_txn(memory.vault(), txn, memory.actor())?;
     }
