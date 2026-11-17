@@ -2,14 +2,15 @@
 //! A, Engine 16 Nov 02:00): on a managed vault, whose host root carries the
 //! host's stamp, the confirm answer at both route sites carries R's
 //! authority seed for the recovery box once (also on the owner's own device,
-//! a self-host install of that vault), and none under "Nobody but me"; a
+//! a second install of that vault), and none under "Nobody but me"; a
 //! self-hosted vault has no box, so its answer carries none and the CLI flag
 //! is refused (REVIEW2 #8597 P2-1); the CLI writes it only with
 //! `--box-deposit-out`; the answer never reaches a log line.
 //!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron-server --all-features --test recovery_box_deposit_answer`
 //!
-//! Red on fa6a6fcc2c5d (R4 PR 2): the doors do not exist there, so the file does not compile.
+//! Red on the red pin: R4 PR 2 with the doors and the route bodies they call, without the
+//! deposit, so its answers carry no `box_deposit` and its CLI has no `--box-deposit-out`.
 #![cfg(oneiron_test_support)]
 
 use std::collections::BTreeSet;
@@ -179,7 +180,9 @@ fn any_two_pieces() -> Install {
 }
 
 /// The owner's second install, enrolled as the owner's: it takes the vault's
-/// authority history from the first install, as sync does.
+/// authority history from the first install, as sync does. It opens under
+/// the vault's managed posture: a self-host fold refuses the managed host
+/// root's consent, so nothing that root signed would count there.
 struct SecondInstall {
     _dir: tempfile::TempDir,
     vault: Vault,
@@ -219,7 +222,9 @@ fn take(taker: &Vault, held: &mut BTreeSet<Vec<u8>>, giver: &Vault) {
 
 fn second_install(first: &Install) -> SecondInstall {
     let dir = tempfile::tempdir().expect("tempdir");
-    let vault = Vault::open(dir.path(), VaultConfig::device()).expect("the second install");
+    let mut config = VaultConfig::device();
+    config.privacy.posture = HostingPrivacyPosture::Hosted;
+    let vault = Vault::open(dir.path(), config).expect("the second install");
     vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
     let key = vault
         .machine_encryption_key(first.vault_id)
@@ -364,8 +369,8 @@ fn the_run_answer_carries_the_box_deposit_once() {
     // A root change's target is never the install the owner asked on
     // (`TargetIsRecorder`), so the activate request is recorded on the first
     // install for the second, which runs it. The second is the owner's own
-    // device, a self-host install: the box is the vault's, read from its
-    // folded host stamp, not from the install's posture.
+    // device, an install of the same managed vault: the box is the vault's,
+    // read from its folded host stamp.
     let mut first = hosted();
     let mut second = second_install(&first);
     // The second install's predecessor for R: its own device key, enrolled
