@@ -46,7 +46,8 @@ pub enum ImportOmissionReason {
     HubConfigurationNotRestored,
     /// Policy bodies remain archive data; only a local authority can install policy.
     PolicyAuthorityNotRestored,
-    /// A foreign authority roster, grant, address or credential binding is not a local act.
+    /// A foreign authority roster, grant, address, credential binding or world key pad is
+    /// not a local act.
     LocalAuthorityNotRestored,
     /// Local audit/sequence history remains readable archive data, never replay authority.
     LocalHistoryNotRestored,
