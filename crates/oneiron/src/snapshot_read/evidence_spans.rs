@@ -18,7 +18,9 @@ use crate::dreamer_consolidation::TurnText;
 use crate::dreamer_runner::DreamerAttemptBinding;
 use crate::memory::{Memory, MemoryError, MemoryResult};
 
-/// The most byte ranges one `vault.evidence.spans` request names.
+/// The most byte ranges one `vault.evidence.spans` request names while the
+/// owner has set no `snapshot_read.evidence.max_ranges` row: that key's
+/// default.
 pub const EVIDENCE_SPANS_MAX_RANGES: usize = 64;
 
 /// The reason code of the refusal a reader other than the owner gets when a
@@ -70,16 +72,19 @@ pub struct EvidenceSpans {
     pub masked: bool,
 }
 
-/// The request's shape checks, run before the caller is resolved.
+/// The request's shape checks, run before the caller is resolved. The bound is
+/// `snapshot_read.evidence.max_ranges` in force, [`EVIDENCE_SPANS_MAX_RANGES`] by default.
 ///
 /// # Errors
 ///
-/// More than [`EVIDENCE_SPANS_MAX_RANGES`] ranges, an empty range, or a
-/// version of another row.
-pub fn validate_evidence_spans(input: &EvidenceSpansRequest) -> MemoryResult<()> {
-    if input.ranges.len() > EVIDENCE_SPANS_MAX_RANGES {
+/// More than `max_ranges` ranges, an empty range, or a version of another row.
+pub fn validate_evidence_spans(
+    input: &EvidenceSpansRequest,
+    max_ranges: usize,
+) -> MemoryResult<()> {
+    if input.ranges.len() > max_ranges {
         return Err(MemoryError::bad_request(format!(
-            "at most {EVIDENCE_SPANS_MAX_RANGES} evidence ranges per request"
+            "at most {max_ranges} evidence ranges per request"
         )));
     }
     if input.ranges.iter().any(|range| range.start >= range.end) {
@@ -128,7 +133,9 @@ pub fn evidence_spans(
 }
 
 /// Reads the evidence spans after proving the binding in the spans' own
-/// read transaction, before any row is read.
+/// read transaction, before any source row is read. The range cap is engine
+/// configuration: its Setting row is read first, for the shape check, as an
+/// unbound call reads it.
 ///
 /// # Errors
 ///
@@ -147,8 +154,18 @@ fn bound_evidence_spans(
     input: &EvidenceSpansRequest,
     binding: Option<&DreamerAttemptBinding>,
 ) -> MemoryResult<ScopedReadResult<EvidenceSpans>> {
-    validate_evidence_spans(input)?;
     let vault = memory.vault();
+    let max_ranges = {
+        let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
+        usize::try_from(
+            super::setting_keys::EVIDENCE_SPANS_MAX_RANGES_SETTING
+                .read_in_txn(vault, &txn, &[], None)?
+                .value
+                .max(1),
+        )
+        .unwrap_or(usize::MAX)
+    };
+    validate_evidence_spans(input, max_ranges)?;
     let read = memory.read_lane(ClaimReadStatus::Recorded)?;
     let _pins = read.prepare_point_read::<MemoryError>()?;
     let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
