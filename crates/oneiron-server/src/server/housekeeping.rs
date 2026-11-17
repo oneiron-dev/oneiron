@@ -251,6 +251,19 @@ impl SyncServer {
             {
                 tracing::warn!(panicked = error.is_panic(), "send lease reaper task failed");
             }
+            // FIX 4889: a handed-over run that ended elsewhere settles its
+            // custody scope here, before the reaper takes expired runs.
+            let custody = Arc::clone(&server);
+            if let Err(error) = tokio::task::spawn_blocking(move || {
+                super::resident_pump::reconcile_handed_over_spend(&custody);
+            })
+            .await
+            {
+                tracing::warn!(
+                    panicked = error.is_panic(),
+                    "spend custody reconcile task failed"
+                );
+            }
             // FIX 4747 slice 6: an agent run whose machine closed or vanished
             // is taken here, in the ruled order, when it can run here.
             let runs = Arc::clone(&server);

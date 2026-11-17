@@ -190,6 +190,43 @@ pub struct ListedRootRequest {
     pub carrier: CarrierReading,
 }
 
+impl ListedRootRequest {
+    /// The root a pending pin asks this install to trust; `None` for every
+    /// other change, which its target runs with the kit's own material.
+    #[must_use]
+    pub fn pin_root(&self) -> Option<RecoveryRootId> {
+        match self.change {
+            RootChange::Pin { root } => Some(root),
+            RootChange::Activate | RootChange::Restore { .. } | RootChange::Anchor { .. } => None,
+        }
+    }
+
+    /// The question a surface asks before the owner confirms a pending pin
+    /// ([`crate::authority::pin_request_prompt`]): three lines, the
+    /// question, the kit's code, then who asked by this install's reading
+    /// of the carrier. No name is held for the carrier here, so the last
+    /// line names it by its kind. `None` for every other change.
+    #[must_use]
+    pub fn prompt(&self) -> Option<String> {
+        self.pin_root().map(|root| {
+            crate::authority::pin_request_prompt(
+                &root,
+                &self.carrier,
+                crate::authority::PromptDeviceName::NotHeld,
+            )
+        })
+    }
+
+    /// The code of the root a pending pin names
+    /// ([`crate::authority::recovery_root_code`]): what the owner compares
+    /// with his kit. `None` for every other change.
+    #[must_use]
+    pub fn root_code(&self) -> Option<String> {
+        self.pin_root()
+            .map(|root| crate::authority::recovery_root_code(&root))
+    }
+}
+
 /// The cancel door's refusal for a request this install folds as no root
 /// request: nothing is written.
 const NO_ROOT_REQUEST: &str = "no root request with this id is recorded here; nothing was written";

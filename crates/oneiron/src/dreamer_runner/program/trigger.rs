@@ -149,26 +149,37 @@ pub(super) fn unindex_trigger_in_txn(
     }
 }
 
-/// Drops the trigger index rows of `armings`, the armings of `actor` its erase takes, in the
-/// erase's writer: its timer row goes once, and each idle or feed row.
+/// Drops every trigger index row of `actor`'s armings, in the writer that erases them, whether
+/// or not each arming decodes: each idle or feed row under its kind's tag, and the actor's timer
+/// row once (a damaged arming's trigger cannot be read, so its rows go by the actor's key).
 pub(super) fn unindex_actor_triggers_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     actor: EntityId,
-    armings: &[TurnProgramArming],
 ) -> Result<()> {
-    for arming in armings {
-        if let Some(kind) = arming.trigger.occurrence_kind()
-            && !matches!(kind, OccurrenceKind::Timer)
-        {
-            TRIGGER.delete(
-                vault,
-                txn,
-                &([kind.tag()], arming.actor, arming.registration),
-            )?;
-        }
+    for kind in [OccurrenceKind::Idle, OccurrenceKind::Feed] {
+        let mut prefix = vec![kind.tag()];
+        prefix.extend_from_slice(actor.as_bytes());
+        TRIGGER.delete_from(vault, txn, &prefix)?;
     }
     crate::schedule::disarm_in_txn(&vault.store, txn, PROGRAM_TIMER_JOB.code, Some(actor)).map(drop)
+}
+
+/// Each idle or feed row one of `actor`'s programs keeps: its kind tag and registration.
+/// Only the integration tests' erase doors read it.
+#[cfg(oneiron_test_support)]
+pub(super) fn trigger_rows_for_actor(
+    vault: &Vault,
+    actor: EntityId,
+) -> Result<Vec<(u8, EntityId)>> {
+    let txn = vault.store.env.read_txn()?;
+    let mut rows = Vec::new();
+    for key in TRIGGER.scan_keys(vault, &txn, &[])? {
+        if key.1 == actor {
+            rows.push((key.0[0], key.2));
+        }
+    }
+    Ok(rows)
 }
 
 /// Arms `actor`'s timer row at the earliest next due time of its timer armings, in the caller's
