@@ -257,7 +257,7 @@ fn sheet_check(secret: &[u8; SHEET_SECRET_LEN]) -> [u8; SHEET_CHECK_LEN] {
 /// over a secret: a mirror rewrite that fails after the commit is logged and
 /// answered as pending, since an error would drop the committed change and
 /// its secret. The next sealed open repairs the mirror.
-fn finish_or_pending(transition: WrapTransition<'_>) -> bool {
+pub(super) fn finish_or_pending(transition: WrapTransition<'_>) -> bool {
     match transition.finish() {
         Ok(()) => false,
         Err(error) => {
