@@ -12,6 +12,7 @@ mod line_adapter;
 mod line_chat_archive_pins;
 mod line_chat_binding;
 mod line_chat_erase;
+pub(crate) mod mail_attachments;
 pub(crate) mod mail_html;
 pub mod mail_placement;
 pub mod mailbox_cursor;
@@ -22,9 +23,9 @@ mod slack_adapter;
 mod slack_personas;
 mod slack_validate;
 pub mod stalwart;
-pub mod workspace_connector;
 #[cfg(test)]
 mod tests;
+pub mod workspace_connector;
 
 pub use self::email_adapter::{
     DevEmailIdentityAdapter, DevEmailIdentityAdapterConfig, MockChannelIdentityProviderAdapter,

@@ -489,7 +489,7 @@ pub(crate) use ask_record::{
     ask_notice_at_in, attendee_entry_id, guard_ask_fact_put, read_attendee_entry_in,
 };
 pub(crate) use ask_settlement::{
-    AskStanding, ask_settlement_in, ask_standing_in, settle_ask_if_due,
+    AskStanding, ask_settlement_id, ask_settlement_in, ask_standing_in, settle_ask_if_due,
 };
 pub(crate) use fact_link_wake::{scoped_to_sources, wake_linked_facts_in_txn};
 pub(crate) use lifecycle_facade::deliver_task_result_in_txn;

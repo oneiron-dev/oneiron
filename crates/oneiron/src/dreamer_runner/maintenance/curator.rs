@@ -330,11 +330,17 @@ pub(super) fn run(
     drop(txn);
     // Settle before proposing: a target moved by an approval this pass waits
     // for the next pass to be graded on its new rung. Each approved rung
-    // applies in its own write, as the Dreamer.
+    // applies in its own write, as the Dreamer, judged again there: one that
+    // now lifts a restriction waits (RESTRICTION-CURATOR-APPROVED-APPLY-REJUDGE).
     let mut moved = BTreeSet::new();
     for proposal in approved {
         let applied = vault.with_write_txn_grouped(|txn| {
-            vault.apply_approved_curator_in_txn(txn, proposal, Some(attempt.status.attempt.id), now)
+            vault.apply_approved_curator_rejudged_in_txn(
+                txn,
+                proposal,
+                Some(attempt.status.attempt.id),
+                now,
+            )
         });
         match applied {
             Ok(Some(target)) => {

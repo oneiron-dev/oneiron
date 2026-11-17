@@ -469,8 +469,7 @@ fn prog_name(argv0: Option<&OsString>) -> String {
     argv0
         .map(Path::new)
         .and_then(Path::file_name)
-        .map(|name| name.to_string_lossy().into_owned())
-        .unwrap_or_default()
+        .map_or_default(|name| name.to_string_lossy().into_owned())
 }
 
 fn dispatch(argv: &[OsString]) -> ExitCode {

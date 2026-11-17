@@ -60,6 +60,12 @@ doc = false
 # doctest compile pass entirely.
 doctest = false
 
+# The parked-step restart resume holds its host root in a `MemoryKeystore` (STEP-PARK-BOOT-RESUME).
+[[test]]
+name = "model_step_health_rest"
+path = "tests/model_step_health_rest.rs"
+required-features = ["oneiron/test-support"]
+
 # A mailbox's own person approves its drafted replies at the served door (FIX 18868).
 [[test]]
 name = "mail_reply_approve_mailbox_person_door"
@@ -465,6 +471,12 @@ required-features = ["oneiron/test-support"]
 name = "agent_definition_served_batch"
 path = "tests/agent_definition_served_batch.rs"
 required-features = ["oneiron/test-support", "oneiron/test-hooks", "oneiron-broker/test-support"]
+
+# The caller-deadline cases root their server on a `MemoryKeystore` as well.
+[[test]]
+name = "caller_deadline"
+path = "tests/caller_deadline.rs"
+required-features = ["oneiron/test-support"]
 
 [[test]]
 name = "consent_revoke_grantee_renounce"
