@@ -5,6 +5,11 @@
 //! test asserts the mark names the origin's record, not a duplicate the
 //! import minted. Compiled only under `--cfg oneiron_test_support`
 //! (`test_doors`). Hidden; never API.
+//!
+//! `tests/file_custody_merge_after_rewrap.rs` (FILE-CUSTODY-MERGE-AFTER-
+//! REWRAP) also reads which records the known-value history names, and
+//! runs the finisher of staged known-value history retirements, which
+//! housekeeping runs and whose refusal it only logs.
 
 use crate::Vault;
 use crate::entity_id::EntityId;
@@ -30,4 +35,31 @@ pub fn file_mark_custody(vault: &Vault, bytes: &[u8]) -> Result<Vec<EntityId>> {
         custody.extend(member.keys.iter().map(|key| key.custody));
     }
     Ok(custody)
+}
+
+/// Each custody record the committed known-value history names, in id
+/// order: ids only, no entry or value. Empty while the index keys no value.
+///
+/// # Errors
+///
+/// The store's, and a committed binding of another vault.
+#[doc(hidden)]
+pub fn known_value_history_holders(vault: &Vault) -> Result<Vec<EntityId>> {
+    let txn = vault.store.env.read_txn()?;
+    Ok(vault
+        .store
+        .known_history_ids_in_txn(&txn)?
+        .map(|ids| ids.holders().copied().collect())
+        .unwrap_or_default())
+}
+
+/// Runs the finisher of every staged known-value history retirement
+/// (KS-3) and returns its result, which the housekeeping pass only logs.
+///
+/// # Errors
+///
+/// The finisher's refusals and custody faults.
+#[doc(hidden)]
+pub fn finish_known_history_retirements(vault: &Vault) -> Result<()> {
+    vault.store.finish_known_history_retirements()
 }
