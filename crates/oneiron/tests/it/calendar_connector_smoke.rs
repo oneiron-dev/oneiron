@@ -700,10 +700,12 @@ fn seat_owner(vault: &Vault) -> (EntityId, AuthenticatedOwner) {
 }
 
 /// The owner approves every passport the import filed on `event`. The import
-/// gate files them pending review, and a write takes its UID and SEQUENCE only
-/// from an admitted passport (FIX 8650, #4292; Engine ruling
-/// T0F-CALDAV-PENDING-PASSPORT-UID = A, Tue 10 Nov 09:02), so a write-back of
-/// a pulled EVENT follows the owner's approval of the import.
+/// gate files them pending review. A write takes its UID from an admitted
+/// passport, or from the importer's own pending passport on the same calendar
+/// (the lead's ruling 10 Nov 10:3x), and its SEQUENCE from admitted passports
+/// and the seat's remote copy (FIX 8650, #4292; Engine ruling
+/// T0F-CALDAV-PENDING-PASSPORT-UID = A, Tue 10 Nov 09:02). These write-backs
+/// follow the owner's approval of the import, so they pin the admitted path.
 fn approve_import_passports(vault: &Vault, event: EntityId) {
     let (id, owner) = seat_owner(vault);
     let memory = vault.memory(id, EdgeActorClass::Human);
@@ -1280,6 +1282,133 @@ fn caldav_outbox_is_durable_before_remote_call() {
     assert_eq!(first_event.sequence, retry_event.sequence);
     assert_eq!(first_event.content_hash, retry_event.content_hash);
     assert_eq!(puts[1].expected_etag.as_deref(), Some("v1"));
+}
+
+// ---------------------------------------------------------------------------
+// 5b. A pending import writes back to its own remote object
+// ---------------------------------------------------------------------------
+
+/// An EVENT pulled from CalDAV and edited before the owner approves its import
+/// writes back under the pulled UID, to the pulled object, with the pulled
+/// ETag as the precondition, so the provider keeps one event (the lead's
+/// ruling 10 Nov 10:3x, FIX CALDAV-PENDING-IMPORT-WRITEBACK-DUPLICATE). Before
+/// the fix the write minted `<event>@calendar.invalid` with no href and no
+/// ETag, and the provider created a second event.
+#[test]
+fn caldav_pending_import_writes_back_under_its_own_uid() {
+    let (_dir, vault) = temp_vault();
+    let wire = StubCalDavWire::default();
+    wire.queue_sync(Ok(upsert_batch(
+        Some("tok-pending-1"),
+        body(&[EventSpec::new("uid-pending@x", 1)]),
+        "/stub/work/uid-pending.ics",
+        Some("v1"),
+    )));
+    let connector = CalDavConnector::new(wire);
+    let seat = caldav_seat();
+    let pulled = run_sync(&vault, &seat, &connector, T0);
+    assert_eq!(counters(&pulled), (1, 0, 0, 0));
+    let event = resolve_event_by_uid(&vault, "uid-pending@x")
+        .expect("resolve")
+        .expect("event");
+    let passports = live_passports_for_event(&vault, &event).expect("passports");
+    assert_eq!(passports.len(), 1, "the import filed one passport");
+    let import_passport = vault
+        .get_claim(&passports[0].0)
+        .expect("read the passport")
+        .expect("the passport is stored");
+    assert_eq!(
+        import_passport.approval,
+        oneiron::ClaimApprovalStatus::Proposed,
+        "the import's passport still waits for the owner's review"
+    );
+
+    connector
+        .wire()
+        .queue_put(PutScript::AcceptWithEtag("v2".to_owned()));
+    let receipt = write_calendar_event(&vault, &operation(&vault, &seat), &connector, event, T1)
+        .expect("the write-back lands");
+
+    let puts = connector.wire().put_requests();
+    assert_eq!(puts.len(), 1, "one conditional put");
+    assert_eq!(
+        puts[0].uid, "uid-pending@x",
+        "the write keeps the pulled UID, never a minted one"
+    );
+    assert_eq!(
+        puts[0].href.as_deref(),
+        Some("/stub/work/uid-pending.ics"),
+        "the write replaces the pulled object, never a new resource"
+    );
+    assert_eq!(
+        puts[0].expected_etag.as_deref(),
+        Some("v1"),
+        "the pulled ETag rides as the precondition"
+    );
+    assert_eq!(
+        puts[0].sequence, 2,
+        "the SEQUENCE bumps past the pulled one"
+    );
+    assert_eq!(receipt.uid, "uid-pending@x");
+    let outbox = calendar_write_outbox_rows(&vault).expect("outbox rows");
+    assert_eq!(outbox.len(), 1, "one outbox row");
+    assert_eq!(outbox[0].uid, "uid-pending@x");
+    assert_eq!(outbox[0].state, CalendarWriteOutboxState::Committed);
+    let object = calendar_remote_object_row(&vault, "caldav-work", "work", "uid-pending@x")
+        .expect("read the remote object")
+        .expect("the pulled object row");
+    assert_eq!(object.etag.as_deref(), Some("v2"));
+    assert_eq!(object.last_sequence, 2);
+}
+
+/// The exception widens nothing: once the owner withdraws the import's
+/// passport, a write-back takes no UID from it and mints the EVENT's own, as
+/// FIX 8650's admitted-only rule says for every UID but the importer's own
+/// live pending one. (A MACHINE-filed proposal with no pending-consent row is
+/// withdrawn by a retract; the settle door declines no such proposal.)
+#[test]
+fn caldav_retracted_import_takes_no_uid_on_write_back() {
+    let (_dir, vault) = temp_vault();
+    let wire = StubCalDavWire::default();
+    wire.queue_sync(Ok(upsert_batch(
+        Some("tok-retracted-1"),
+        body(&[EventSpec::new("uid-retracted@x", 1)]),
+        "/stub/work/uid-retracted.ics",
+        Some("v1"),
+    )));
+    let connector = CalDavConnector::new(wire);
+    let seat = caldav_seat();
+    let pulled = run_sync(&vault, &seat, &connector, T0);
+    assert_eq!(counters(&pulled), (1, 0, 0, 0));
+    let event = resolve_event_by_uid(&vault, "uid-retracted@x")
+        .expect("resolve")
+        .expect("event");
+    for (passport, _) in live_passports_for_event(&vault, &event).expect("passports") {
+        vault
+            .retract_claim(&passport, T0 + 50)
+            .expect("the owner withdraws the import's passport");
+        let body = vault
+            .get_claim(&passport)
+            .expect("read the passport")
+            .expect("the passport is kept on record");
+        assert_eq!(body.lifecycle, ClaimLifecycleStatus::Retracted);
+    }
+
+    connector
+        .wire()
+        .queue_put(PutScript::AcceptWithEtag("v-local".to_owned()));
+    write_calendar_event(&vault, &operation(&vault, &seat), &connector, event, T1)
+        .expect("the write lands");
+
+    let puts = connector.wire().put_requests();
+    assert_eq!(puts.len(), 1, "one put");
+    assert!(
+        puts[0].uid.ends_with("@calendar.invalid"),
+        "a retracted passport gives no UID: {}",
+        puts[0].uid
+    );
+    assert_eq!(puts[0].href, None, "no pulled object is addressed");
+    assert_eq!(puts[0].expected_etag, None, "no pulled ETag rides");
 }
 
 #[test]
