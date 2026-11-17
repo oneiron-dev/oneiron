@@ -22,6 +22,7 @@ mod quota_delegate;
 mod tagger_admission;
 pub use inference_admission::admitted_as;
 pub use tagger_admission::{TaggerCall, TaggerCallContext, TaggerEgressPredicate};
+pub(crate) mod model_licence;
 mod role_defaults;
 mod solo;
 pub use inference_admission::{
@@ -180,6 +181,9 @@ pub use self::autocheck::{
     AUTO_CHECK_VALUE_PREVIEW_BYTES, AUTO_CHECKER_DEADLINE_MS, AutoCheckCandidate,
     AutoCheckCandidateOwned, AutoCheckDecisions, AutoCheckNotes, AutoCheckOutcome,
     AutoCheckSignals, AutoCheckWorldHold, BoundedAutoChecker,
+};
+pub use self::model_licence::{
+    NONCOMMERCIAL_LICENCES_HOSTED_REFUSAL, noncommercial_model_licences_admitted,
 };
 pub use self::role_defaults::RoleModelDefaults;
 pub use self::solo::{is_solo, mark_solo};

@@ -64,8 +64,8 @@ crate::setting::setting_keys! {
     /// One CalDAV seat the owner installed, keyed by its seat ref: the discovery endpoint and the
     /// seat's config (the custody name of its credential, its system, its collection and its poll
     /// cadence). An installed seat never changes: a new configuration takes a new seat ref. A seat
-    /// never takes the system of an installed ICS feed, whose complete polls would cancel its
-    /// events.
+    /// never takes the system of an installed ICS feed or a pack calendar source, whose complete
+    /// polls and listings would cancel its events.
     pub(crate) CONNECTOR_SEAT: Option<CalendarSeatSetup> = "calendar.connector_seat" {
         kind: Kind::new(no_seat).strictest(no_seat),
         item: Some(ItemDomain { name: "calendar seat refs", admits: is_seat_ref }),
@@ -73,7 +73,8 @@ crate::setting::setting_keys! {
     };
     /// One ICS feed the owner installed, keyed by its system: the custody name of its URL and its
     /// poll cadence. It grants no import consent. An installed feed never changes: a new
-    /// configuration takes a new system, never one an installed CalDAV seat imports under.
+    /// configuration takes a new system, never one an installed CalDAV seat or a pack calendar
+    /// source imports under.
     /// Installing one starts its poll chain. Clearing one uninstalls it: its standing consent
     /// ends, its cursor goes and its pending polls are cancelled; a system it polled under stays
     /// retired. A change waits for a running poll's admission, so none lands inside one.

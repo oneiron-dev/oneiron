@@ -943,6 +943,10 @@ impl ScopedRead<'_> {
                             return Ok(None);
                         }
                         let saved_body = encode_claim_body(body)?;
+                        // A saved reaction claim is the copy this reader was
+                        // served, its reactor withheld from a reader who may
+                        // not read them (FIX REACTION-CLAIM-VALUE-REACTOR-ID).
+                        let current = self.redact_reaction_row_in(txn, current)?;
                         // A current public replacement cannot authorize a
                         // different old body or changed claim-facet graph.
                         if current[crate::batch::ENTITY_METADATA_HEADER_LEN..] != saved_body {

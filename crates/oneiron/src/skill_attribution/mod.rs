@@ -41,6 +41,8 @@ pub use self::calibration::{
 mod causes;
 pub use self::causes::AttributionCauseRecord;
 pub(crate) use self::causes::attempt_attribution_causes;
+#[cfg(oneiron_test_support)]
+pub(crate) use self::causes::receipt_key_for_test as cause_receipt_key_for_test;
 mod codec;
 pub(crate) use self::codec::{ground_attempt_receipt, manifest_entry_names_skill};
 pub(crate) mod health_review;
