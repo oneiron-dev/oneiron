@@ -106806,6 +106806,16 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/fingerprint_keep_check_in_effect_digests.rs",
+     "purpose": "K-proof (oracle) for the check-in effect digests of P2.5's delete and security-control doors: each keeps its…",
+     "surface": {
+      "fn": 5
+     }
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -114371,7 +114381,7 @@
    "over_bar": 299,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 8112,
-   "test_files": 1866
+   "test_files": 1867
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -129023,6 +129033,14 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/purposes/check_in.rs",
+     "purpose": "Purposes of a person's check-in effects (`oneiron` `check_in::effect`; ARCH-0082 #composing)",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/purposes/cluster.rs",
      "purpose": "Purposes of claim clustering (`oneiron::cluster`, `crates/oneiron/src/memory/claim_cluster.rs`)",
      "surface": {}
@@ -129285,7 +129303,7 @@
      "purpose": "The K door: a digest that main already stores or sends keeps its exact bytes"
     },
     "purposes": {
-     "files": 35,
+     "files": 36,
      "impl_vault": false,
      "largest_src_bucket": "s",
      "layout": "dir",
@@ -129301,7 +129319,7 @@
    },
    "over_bar": 0,
    "purpose": "One fingerprint rule for engine digests (fable pass 22; PLAN-UC-04 stage 0)",
-   "source_files": 38,
+   "source_files": 39,
    "test_files": 1
   },
   "oneiron-gen": {
