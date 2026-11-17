@@ -1,5 +1,3 @@
-// FIX [LIBTEST-QUARANTINE-BOOKING-ANTI-ABUSE-SCOPE-TESTS]: the lib test target's type check fails here (3 errors: E0063 x2, E0061 x1); port it, then drop this gate
-#[cfg(any())]
 #[path = "scope_tests.rs"]
 mod scope_tests;
 
@@ -52,6 +50,7 @@ fn install_page_and_config(vault: &Vault, page: EntityId, event_type: &EventType
             booking_window_secs: 86_400,
             daily_cap: None,
             weekly_cap: None,
+            deposit: None,
             routing: RoutingMode::Either,
             hosts: vec![HostAvailabilityConfig {
                 host_ref: id(0x55),
@@ -1143,6 +1142,7 @@ fn borderline_submission_builds_pending_review_inbox_group() {
         .inbox_groups(crate::inbox::InboxQuery::new(10))
         .expect("inbox groups");
     let group = groups
+        .groups
         .iter()
         .find(|group| group.run_id == run_id)
         .expect("the quarantine run projects a pending-review inbox group");
@@ -2027,8 +2027,10 @@ fn a_restore_goes_ahead_past_a_submission_quarantined_since() {
         panic!("two live negatives route to quarantine");
     };
     quarantine_borderline_submission(&vault, &facts, &reason, 2).expect("quarantine");
+    let key = vault.checkpoint_key().expect("checkpoint key");
     let (restored, _) = Vault::restore_checkpoint_keeping_authority(
         &image,
+        &key,
         &backups.path().join("restored"),
         crate::VaultConfig::default(),
         &vault,

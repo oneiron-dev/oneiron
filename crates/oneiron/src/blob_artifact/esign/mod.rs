@@ -30,8 +30,6 @@ pub use rules::{
 #[doc(hidden)]
 #[path = "../../test_doors/esign_seal_verify_reasons.rs"]
 pub mod esign_seal_verify_reasons;
-// FIX [LIBTEST-QUARANTINE-BLOB-ARTIFACT-ESIGN-TESTS]: the lib test target's type check fails here (18 errors: E0063 x14, E0061 x2, E0639 x1, E0599 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;
 pub(crate) use lane_scope::bounded_by_whole_vault;

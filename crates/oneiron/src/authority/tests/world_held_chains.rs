@@ -22,11 +22,14 @@ fn revision_of(
         machine: request.machine,
         owner: host.owner.actor(),
         machine_key: request.machine_key,
+        device_class: request.device_class,
         encryption_key: request.encryption_key.clone(),
         role,
         revision,
         machine_proof: request.machine_proof,
         seen_world_edits: BTreeSet::new(),
+        carrier: None,
+        act: None,
     }
 }
 
@@ -139,7 +142,7 @@ fn a_held_rotation_never_leaves_the_old_key_standing_through_the_anchor() {
     let key = ed_key(202);
     let request = request_for(host.vault_id, EntityId::now(), &key);
     host.vault
-        .enroll_machine(&host.issuer, &host.owner, &request, YOURS)
+        .enroll_machine(&host.owner, ActSurface::ThisInstall, &request, YOURS, None)
         .unwrap();
     let pin = anchored(&host, &request);
     let rotated = rekeyed(host.vault_id, &request, &key);
@@ -158,7 +161,7 @@ fn a_held_roster_removal_still_removes_beside_a_live_anchor() {
     let host = host();
     let request = request_for(host.vault_id, EntityId::now(), &ed_key(203));
     host.vault
-        .enroll_machine(&host.issuer, &host.owner, &request, YOURS)
+        .enroll_machine(&host.owner, ActSurface::ThisInstall, &request, YOURS, None)
         .unwrap();
     let pin = anchored(&host, &request);
     let (removal, later) =

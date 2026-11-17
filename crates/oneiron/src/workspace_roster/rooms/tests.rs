@@ -14,16 +14,21 @@ fn turn(
     WitnessTurn {
         conversation_ref: room.to_hex(),
         turn_ref: Some(id.to_hex()),
+        thread_audience: None,
+        project: None,
         messages: vec![WitnessMessage {
             id: Some(EntityId::now().to_hex()),
             author,
             message_type: "text".into(),
             content: "room message".into(),
+            parts: None,
             metadata: Some(metadata),
             is_visible: true,
             order: 0,
+            quote: None,
         }],
         occurred_at: at,
+        assertions: Default::default(),
     }
 }
 fn permit_room_reads(vault: &Vault, actors: &[EntityId]) -> Result<()> {
@@ -694,7 +699,7 @@ fn room_projection_reads_task_register_and_reply_without_stored_liveness() -> Re
     let task = worker.tasks_create(&spec).unwrap().task_ref.unwrap();
     let policy = RoomThreadPolicy {
         now: 1_000_000,
-        fresh_for: 1,
+        fresh_for: Some(1),
         rows_per_list: 4,
         tokens_per_list: 512,
         fill: RoomThreadFill::Stage,
@@ -912,6 +917,7 @@ fn room_projection_reads_task_register_and_reply_without_stored_liveness() -> Re
             crate::registry::ENTITY_TYPE_CLAIM,
             TimeRange { start: 5, end: 5 },
             5,
+            None,
             &crate::claim::encode_claim_body(&claim)?,
         )
         .commit()?;
@@ -1042,7 +1048,7 @@ fn room_projections_list_the_tasks_and_results_they_count() -> Result<()> {
     let task = worker.tasks_create(&spec).unwrap().task_ref.unwrap();
     let policy = RoomThreadPolicy {
         now: 1_000_000,
-        fresh_for: 1,
+        fresh_for: Some(1),
         rows_per_list: 4,
         tokens_per_list: 512,
         fill: RoomThreadFill::Stage,
@@ -1093,13 +1099,9 @@ fn consult_question_turn_projects_an_open_wait_without_a_room_state_row() -> Res
     };
     let dir = tempfile::tempdir()?;
     // The engine's clock sits inside the consult's window, where its answer lands.
-    let vault = Vault::open(
-        dir.path(),
-        crate::VaultConfig {
-            store_clock: crate::test_util::pinned_store_clock(1_000_001),
-            ..crate::VaultConfig::default()
-        },
-    )?;
+    let mut config = crate::VaultConfig::device();
+    config.store_clock = crate::test_util::pinned_store_clock(1_000_001);
+    let vault = Vault::open(dir.path(), config)?;
     let owner = EntityId::now();
     let asker = EntityId::from_bytes([0xE1; 16])?;
     let peer = EntityId::from_bytes([0xE2; 16])?;
@@ -1176,7 +1178,7 @@ fn consult_question_turn_projects_an_open_wait_without_a_room_state_row() -> Res
         .unwrap();
     let policy = RoomThreadPolicy {
         now: 1_000_000,
-        fresh_for: 1,
+        fresh_for: Some(1),
         rows_per_list: 4,
         tokens_per_list: 512,
         fill: RoomThreadFill::Stage,
@@ -1200,6 +1202,7 @@ fn consult_question_turn_projects_an_open_wait_without_a_room_state_row() -> Res
                     evidence_refs: vec![ConsultPayloadRef::Turn(question)],
                 },
                 completed_at: 1_000_001,
+                measured_spend: None,
             },
         )
         .unwrap();
@@ -1281,7 +1284,7 @@ fn peer_ask_wait_projects_its_existing_followup_ladder() -> Result<()> {
             room,
             RoomThreadPolicy {
                 now: before + 100,
-                fresh_for: 1,
+                fresh_for: Some(1),
                 rows_per_list: 8,
                 tokens_per_list: 512,
                 fill: RoomThreadFill::Stage,
@@ -1382,7 +1385,7 @@ fn a_peer_ask_wait_lists_the_task_its_class_came_from() -> Result<()> {
     }
     let policy = RoomThreadPolicy {
         now: before + 100,
-        fresh_for: 1,
+        fresh_for: Some(1),
         rows_per_list: 8,
         tokens_per_list: 512,
         fill: RoomThreadFill::Stage,
@@ -1491,7 +1494,7 @@ fn settled_multi_recipient_ask_drops_unanswered_sibling_wait() -> Result<()> {
     assert_eq!(receipt.task_refs.len(), 2);
     let policy = RoomThreadPolicy {
         now: now + 10,
-        fresh_for: 1,
+        fresh_for: Some(1),
         rows_per_list: 8,
         tokens_per_list: 512,
         fill: RoomThreadFill::Stage,
@@ -1553,7 +1556,7 @@ fn room_manifest_changes_selected_rows_and_cannot_be_widened_by_caller() -> Resu
     }
     let caller = RoomThreadPolicy {
         now: 1000,
-        fresh_for: 1,
+        fresh_for: Some(1),
         rows_per_list: 8,
         tokens_per_list: 512,
         fill: RoomThreadFill::Stage,
@@ -1601,7 +1604,7 @@ fn room_manifest_changes_selected_rows_and_cannot_be_widened_by_caller() -> Resu
     )?;
     let longer = RoomThreadPolicy {
         now: 10 * 86_400,
-        fresh_for: 14 * 86_400,
+        fresh_for: Some(14 * 86_400),
         ..caller
     };
     assert_eq!(
