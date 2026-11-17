@@ -15,6 +15,11 @@
 //! A thread whose model changed lists each turn's answering model through
 //! `vault.conversations.turns.models` (FIX [THREAD-PROVENANCE-READ]).
 //!
+//! Each listed call names what its request was assembled from (FIX
+//! [HANDOFF-CONTEXT]): this host's default agent keeps no retained log, so a
+//! turn the caller sends no earlier line with is a first (cold) turn, and one
+//! with lines names how many rode and how many were past the history bound.
+//!
 //! Run with: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked
 //! -p oneiron-server --all-features --test chat_model_call_turn_link`.
 
@@ -54,6 +59,8 @@ const MODEL: &str = "test-model";
 const ENGINE_MODEL: &str = "local/test-model@live";
 /// The model the thread changes to, as the second config names it.
 const OTHER_MODEL: &str = "other-model";
+/// The most caller lines one chat turn sends on, as the config sets it.
+const HISTORY_BOUND: usize = 4;
 /// That model's engine id.
 const OTHER_ENGINE_MODEL: &str = "local/other-model@live";
 
@@ -90,6 +97,7 @@ fn models_running(base_url: &str, model: &str) -> ModelsConfig {
     let toml = format!(
         "default = \"local:{model}\"\n\
          [dreamer]\nenabled = false\n[workflows]\nenabled = false\n\
+         [chat]\nhistory_turns = {HISTORY_BOUND}\n\
          [providers.local]\nkind = \"local-openai-compat\"\nbase_url = \"{base_url}\"\n"
     );
     ModelsConfig::from_toml(&toml, None).expect("models config")
@@ -135,6 +143,16 @@ impl Host {
     /// The owner's chat turn `text` in `conversation`, answered whole, from
     /// the owner's app on this device; its saved reply.
     async fn chat(&self, conversation: EntityId, text: &str) -> SavedReply {
+        self.chat_after(conversation, text, &[]).await
+    }
+
+    /// [`Host::chat`] with the caller's earlier lines `history`, oldest first.
+    async fn chat_after(
+        &self,
+        conversation: EntityId,
+        text: &str,
+        history: &[Value],
+    ) -> SavedReply {
         let timestamp = self.vault.now_recorded_at();
         let nonce = EntityId::now().to_hex();
         let challenge = holder_proof_challenge(timestamp, &nonce);
@@ -144,7 +162,11 @@ impl Host {
             .expect("owner holder proof"));
         let binding =
             json!({"timestamp": timestamp, "nonce": nonce, "signature": signature}).to_string();
-        let input = json!({"conversation_ref": conversation.to_hex(), "text": text});
+        let input = json!({
+            "conversation_ref": conversation.to_hex(),
+            "text": text,
+            "history": history,
+        });
         let mut request = Request::post("/v1/ai/chat")
             .header("authorization", format!("Bearer {}", self.owner_token))
             .header("x-oneiron-binding", binding)
@@ -420,18 +442,132 @@ fn two_models_in_one_thread_list_in_turn_order() {
                 Some(reply.turn.to_hex().as_str())
             );
             assert_eq!(turn["state"].as_str(), Some("answered"), "{turn}");
+            let calls = turn["calls"]
+                .as_array()
+                .unwrap_or_else(|| panic!("the turn lists its calls: {turn}"));
             assert_eq!(
-                turn["calls"],
-                json!([{
+                calls.len(),
+                1,
+                "the turn names the one call that answered it: {turn}"
+            );
+            let mut call = calls[0].clone();
+            let context = call
+                .as_object_mut()
+                .and_then(|call| call.remove("context"))
+                .unwrap_or_else(|| panic!("the call names its context form: {turn}"));
+            assert_eq!(
+                call,
+                json!({
                     "message_ref": reply.message.to_hex(),
                     "model": model,
                     "provider": "local",
-                }]),
-                "the turn names the one call that answered it, and no route, login or seat"
+                }),
+                "the call names its model and provider, and no route, login or seat"
             );
+            // FIX [HANDOFF-CONTEXT]: the caller sent no earlier line, so the
+            // other model's first turn on this thread got none either.
+            assert_eq!(context["form"].as_str(), Some("turn"), "{turn}");
+            assert_eq!(context["history"], json!({"kind": "cold"}), "{turn}");
         }
         assert_eq!(turns[2]["state"].as_str(), Some("withheld"), "{body}");
         assert_eq!(turns[2]["calls"], json!([]), "{body}");
+        host.ai.shutdown().await;
+    });
+}
+
+/// The context form the read lists for the one call that answered `reply`,
+/// with its board's place checked against the forms a board takes.
+fn listed_context(turns: &[Value], reply: &SavedReply) -> Value {
+    let turn = turns
+        .iter()
+        .find(|turn| turn["turn_ref"].as_str() == Some(reply.turn.to_hex().as_str()))
+        .unwrap_or_else(|| panic!("the read lists the turn {}: {turns:?}", reply.turn.to_hex()));
+    assert_eq!(turn["state"].as_str(), Some("answered"), "{turn}");
+    let context = turn["calls"][0]["context"].clone();
+    assert_eq!(
+        context["form"].as_str(),
+        Some("turn"),
+        "a chat turn's form: {turn}"
+    );
+    assert!(
+        matches!(
+            context["board"].as_str(),
+            Some("rode" | "omitted" | "absent")
+        ),
+        "the form names its board's place: {turn}"
+    );
+    context["history"].clone()
+}
+
+/// FIX [HANDOFF-CONTEXT] "bounded caller history", "first/cold input" and "a
+/// hash difference alone never labels a context form": each turn's call
+/// names the earlier lines its request carried. A turn with none is cold,
+/// whatever its words; one past the bound names the lines that rode and the
+/// ones it dropped. Red on PR 2's head 6d0ca27e05: no call names a context.
+#[test]
+fn each_turn_names_the_earlier_lines_its_call_was_sent() {
+    run_on_engine_stack("each-turn-names-its-earlier-lines", || async {
+        let fake = FakeLlm::start(
+            Vec::new(),
+            Some(ModelReply::Text {
+                text: "noted".into(),
+                model: MODEL.into(),
+            }),
+        )
+        .await;
+        let host = Host::start(&fake).await;
+        let conversation = EntityId::now();
+        let line = |index: usize| {
+            let role = if index % 2 == 0 { "user" } else { "assistant" };
+            json!({"role": role, "text": format!("earlier line {index}")})
+        };
+        let past_bound: Vec<Value> = (0..HISTORY_BOUND + 2).map(line).collect();
+        let within_bound: Vec<Value> = (0..2).map(line).collect();
+
+        let cold = host.chat(conversation, "the thread opens").await;
+        let capped = host
+            .chat_after(conversation, "six lines came before", &past_bound)
+            .await;
+        let kept = host
+            .chat_after(conversation, "two lines came before", &within_bound)
+            .await;
+        let other_words = host
+            .chat(EntityId::now(), "another thread opens in other words")
+            .await;
+        assert_eq!(fake.seen().len(), 4, "four turns made four model calls");
+
+        let replies = [&cold, &capped, &kept, &other_words];
+        let refs: Vec<String> = replies.iter().map(|reply| reply.turn.to_hex()).collect();
+        let (status, body) = host
+            .facade(
+                "vault.conversations.turns.models",
+                &json!({"turn_refs": refs}),
+            )
+            .await;
+        assert_eq!(status, StatusCode::OK, "the read answered {body}");
+        let turns = body["value"]["turns"]
+            .as_array()
+            .unwrap_or_else(|| panic!("the read lists turns: {body}"));
+        assert_eq!(
+            listed_context(turns, &cold),
+            json!({"kind": "cold"}),
+            "a turn sent no earlier line is cold"
+        );
+        assert_eq!(
+            listed_context(turns, &capped),
+            json!({"kind": "caller_lines", "kept": HISTORY_BOUND, "dropped": 2}),
+            "a turn past the bound names the lines that rode and the ones dropped"
+        );
+        assert_eq!(
+            listed_context(turns, &kept),
+            json!({"kind": "caller_lines", "kept": 2, "dropped": 0}),
+            "a turn within the bound sends every line"
+        );
+        assert_eq!(
+            listed_context(turns, &other_words),
+            json!({"kind": "cold"}),
+            "a first turn in other words is cold too: its request bytes differ, its form does not"
+        );
         host.ai.shutdown().await;
     });
 }
