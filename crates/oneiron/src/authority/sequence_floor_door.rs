@@ -122,6 +122,7 @@ fn context(floors: Option<&BTreeMap<AuthorityEntryHash, u64>>) -> FoldContext<'_
         memory_floor_bytes: u64::MAX,
         pin: None,
         owner_key_lines: None,
+        appointments: None,
     }
 }
 

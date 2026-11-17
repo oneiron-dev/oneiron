@@ -9,6 +9,7 @@ pub mod big_rung;
 pub mod board_keyframe_child_release;
 pub mod booking_turn_line;
 pub mod build_server;
+pub mod calendar_egress;
 pub mod calendar_ics_egress;
 pub mod catch_all_status;
 pub mod coach_round;
@@ -25,10 +26,12 @@ pub mod live_fork_rung;
 pub mod live_lease;
 pub mod live_run_payer;
 pub mod live_run_step;
+pub mod lost_training_waiter;
 pub mod mcp_carrier_release;
 pub mod mcp_code_mode_verbs;
 pub mod mcp_page_mint;
 pub mod mcp_refusal_status;
+pub mod mcp_run_claim_lane;
 pub mod mcp_surface;
 pub mod media_job_spend;
 #[cfg(unix)]
@@ -45,6 +48,7 @@ pub mod question_heads;
 pub mod recovery_box_hold;
 pub mod refusal_wire;
 pub mod replay_admission;
+pub mod residence;
 pub mod residence_connection;
 pub mod resident_pump;
 #[cfg(target_os = "linux")]

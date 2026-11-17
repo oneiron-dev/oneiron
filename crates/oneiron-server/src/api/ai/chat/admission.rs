@@ -139,8 +139,8 @@ pub(in crate::api::ai::chat) async fn start_turn(
         None => {
             let skip = request.history.len().saturating_sub(settings.history_turns);
             for earlier in request.history.into_iter().skip(skip) {
-                // A caller's line names no row it was read from.
-                sources.add(None);
+                // A caller's line is its own text: no row the vault fed.
+                sources.caller_text();
                 let role = match earlier.role {
                     HistoryRole::User => LlmMessageRole::User,
                     HistoryRole::Assistant => LlmMessageRole::Assistant,

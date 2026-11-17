@@ -159,6 +159,8 @@ mod recovery;
 mod retired_signers;
 mod revocation_notice;
 mod revoke_proof;
+mod root_appointment_door;
+mod root_appointment_judge;
 mod rows_floor;
 mod seat_child_slip;
 mod sequence_ancestry;
@@ -245,6 +247,15 @@ pub use oneiron_authority::authority::{
 };
 // The settings edit a holder's key work follows (FIX 4704).
 pub use oneiron_authority::authority::WorldPrivacyWorkBasis;
+// The owner anchor's appointment of a successor root key, and the fold's
+// verdict on it (OWNER-ANCHOR-ROOT-RECOVERY).
+pub use oneiron_authority::authority::{
+    ROOT_APPOINTMENT_SUCCESSOR_PROOF_KIND, ROOT_APPOINTMENT_SUCCESSOR_ROLES, RootAppointment,
+    root_appointment_challenge,
+};
+pub use root_appointment_door::RootAppointmentReceipt;
+pub(crate) use root_appointment_door::refuse_unneeded_appointment;
+pub use root_appointment_judge::{AppointmentVerdict, AppointmentVoidReason};
 // The export secret work body and its sealed result (FIX 4624(b)).
 pub use export_secret_work::{
     ExportSecretSupplement, HolderExportRequest, HolderExportState, HolderExportUnassigned,
@@ -333,6 +344,8 @@ pub use clock_repair::{
 pub use conversation_training::ConversationTrainingView;
 pub use conversation_training_vault::ConversationLearningView;
 pub use fold_engine::*;
+#[cfg(oneiron_test_support)]
+pub(crate) use fold_resume::whole_and_resumed_folds_for_test;
 pub use fold_state::*;
 pub use forwarded_caller::{
     ForwardedCallerProof, ForwardedRequest, ForwardingDevice, ForwardingMachineProof,
@@ -508,6 +521,8 @@ pub(crate) use checkpoint_adopt::{
     adopted_image_row_key, adopted_pin_row_key, cached_adopted_authority_checkpoint_in_txn,
     cached_adopted_evidence_in_txn,
 };
+#[cfg(feature = "sync")]
+pub(crate) use claim_write::row_causal_admitted_cached;
 pub(crate) use claim_write::{
     check_materialized_claim_causality, claim_causal_admitted, row_causal_admitted,
 };
@@ -577,12 +592,12 @@ use machine_profile::{
     merge_machine_maps,
 };
 pub(crate) use machine_write::{
-    MACHINE_SIGNATURE_KEY, evidence_without_machine_signature, machine_claim_needs_history,
-    machine_claim_needs_history_observing, machine_claim_read_admitted,
-    machine_claim_signer_bound_in_txn, machine_history_authority_descends,
-    machine_history_authority_descends_with_image, machine_history_host_context,
-    resign_machine_claim_after_mask_in_txn, sign_retained_machine_claim_for_store_in_txn,
-    verify_machine_claim_in_txn,
+    MACHINE_SIGNATURE_KEY, evidence_without_machine_signature, history_control_read_admitted,
+    machine_claim_needs_history, machine_claim_needs_history_observing,
+    machine_claim_read_admitted, machine_claim_signer_bound_in_txn,
+    machine_history_authority_descends, machine_history_authority_descends_with_image,
+    machine_history_host_context, resign_machine_claim_after_mask_in_txn,
+    sign_retained_machine_claim_for_store_in_txn, verify_machine_claim_in_txn,
 };
 use observation_policy::authority_observation_policy_in_txn;
 use op_apply::*;

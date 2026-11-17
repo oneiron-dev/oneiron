@@ -113,6 +113,7 @@ pub(super) fn settle_tail(
         memory_floor_bytes,
         pin: log.pin,
         owner_key_lines: None,
+        appointments: None,
     };
     let mut seed: BTreeMap<_, _> = image
         .per_parent

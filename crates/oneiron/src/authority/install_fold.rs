@@ -47,6 +47,7 @@ pub(super) fn fold_as_install(
         ),
         pin: local.pin,
         owner_key_lines: None,
+        appointments: None,
     };
     let no_vouch = NoVouch::of(entries, first_seen_at_secs, now_secs, local, bare);
     let context = FoldContext {

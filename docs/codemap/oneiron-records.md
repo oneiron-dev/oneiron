@@ -49,7 +49,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/authority/conversation_training/door.rs` | src | s | 1 struct | ConversationTrainingView | Moved from `crates/oneiron/src/authority/conversation_training/door.rs` (lib split R1: record types below… |
 | `src/authority/conversation_training/mod.rs` | src | s | 1 mod · 1 re-export | — | — |
 | `src/authority/export_secret_work.rs` | src | s | 1 struct · 4 re-export | ExportSecretSupplement | Moved from `crates/oneiron/src/authority/export_secret_work.rs` (lib split R1: record types below the lib) |
-| `src/authority/fold_state.rs` | src | s | 2 struct · 3 enum | ActorBindingRejection, ActorBindingState, ActorBindingStatus, AuthorityFoldIssue, FoldedActorBinding | Moved from `crates/oneiron/src/authority/fold_state.rs` (lib split R1: record types below the lib) |
+| `src/authority/fold_state.rs` | src | s | 2 struct · 5 enum | ActorBindingRejection, ActorBindingState, ActorBindingStatus, AppointmentVerdict, AppointmentVoidReason, AuthorityFoldIssue, FoldedActorBinding | Moved from `crates/oneiron/src/authority/fold_state.rs` (lib split R1: record types below the lib) |
 | `src/authority/forwarded_caller.rs` | src | s | 2 struct | ForwardedCallerProof, ForwardingMachineProof | Moved from `crates/oneiron/src/authority/forwarded_caller.rs` (lib split R1: record types below the lib) |
 | `src/authority/host_action.rs` | src | s | 1 fn | — | Moved from `crates/oneiron/src/authority/host_action.rs` (lib split R1: record types below the lib) |
 | `src/authority/leave_notice_continuity/home_rows.rs` | src | s | 1 enum | NoActorContent | Moved from `crates/oneiron/src/authority/leave_notice_continuity/home_rows.rs` (lib split R1: record types… |
@@ -85,7 +85,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/batch/secret_scan/mod.rs` | src | s | 1 mod · 7 re-export | — | — |
 | `src/booking/agent_api.rs` | src | s | 2 struct · 1 enum · 3 fn · 1 const · 8 re-export | BookingAgentEndpoint, BookingAgentInstructionsBlock, BookingAgentInstructionsDefect | Moved from `crates/oneiron/src/booking/agent_api.rs` (lib split R2: record types below the lib) |
 | `src/booking/anti_abuse/mod.rs` | src | s | 1 mod · 4 re-export | — | — |
-| `src/booking/anti_abuse/rules.rs` | src | s | 3 struct · 1 enum · 2 fn · 1 mod | BookingAntiAbuseOwnerConfig, BookingAntiAbuseRule, BookingRuleOwnerStampBinding, BookingRuleScope | Moved from `crates/oneiron/src/booking/anti_abuse/rules.rs` (lib split R2: record types below the lib) |
+| `src/booking/anti_abuse/rules.rs` | src | s | 3 struct · 1 enum · 4 fn · 1 mod | BookingAntiAbuseOwnerConfig, BookingAntiAbuseRule, BookingRuleOwnerStampBinding, BookingRuleScope | Moved from `crates/oneiron/src/booking/anti_abuse/rules.rs` (lib split R2: record types below the lib) |
 | `src/booking/companion_preset/mod.rs` | src | s | 2 mod · 9 re-export | — | — |
 | `src/booking/companion_preset/preset.rs` | src | s | 2 enum | CompanionConfirmationMode, ProposalCarrier | Moved from `crates/oneiron/src/booking/companion_preset/preset.rs` (lib split R2: record types below the lib) |
 | `src/booking/companion_preset/proposal.rs` | src | s | 7 struct · 3 fn · 1 mod | ChoiceId, CompanionProposal, CompanionSoftConfirmation, ProposalChoice, ProposalId, ProposalTap, TapAggregate | Moved from `crates/oneiron/src/booking/companion_preset/proposal.rs` (lib split R2: record types below the… |
@@ -94,6 +94,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/booking/conversion.rs` | src | s | 5 struct · 3 fn · 2 mod · 7 re-export | BookingFaq, BookingLandingContent, BookingSlotPreview, BookingSnippetLink, BookingSnippetSelection | Moved from `crates/oneiron/src/booking/conversion.rs` (lib split R2: record types below the lib) |
 | `src/booking/conversion/policy.rs` | src | s | 2 enum | BookingPolicyPrecedence, BookingPolicyScope | Moved from `crates/oneiron/src/booking/conversion/policy.rs` (lib split R2: record types below the lib) |
 | `src/booking/conversion/ux.rs` | src | s | 4 struct · 1 enum | BookingShortlist, ConfigurableReminderWake, ReminderAction, ReminderStep, ZonedBookingTime | Moved from `crates/oneiron/src/booking/conversion/ux.rs` (lib split R2: record types below the lib) |
+| `src/booking/deposit.rs` | src | s | 2 struct · 3 fn · 2 const | DepositRefundRule, DepositTerms | The deposit record types, below the lib beside the card that carries them (lib split R2) |
 | `src/booking/disclosure_rung.rs` | src | m | 3 struct · 3 enum · 11 fn · 2 mod · 1 re-export | DisclosureRung, EventDetailsRow, EventRow, RungProjection, SurfaceClass, TitledEventRow | Moved from `crates/oneiron/src/booking/disclosure_rung.rs` (lib split R2: record types below the lib) |
 | `src/booking/emergency_reschedule.rs` | src | s | 2 struct · 1 enum · 7 fn · 3 mod · 1 re-export | EmergencyActionPolicy, EmergencyRescheduleRequest, OwnerInstructionRecord | Moved from `crates/oneiron/src/booking/emergency_reschedule.rs` (lib split R2: record types below the lib) |
 | `src/booking/emergency_reschedule/planning.rs` | src | s | 1 enum | EmergencyLocalBasis | Moved from `crates/oneiron/src/booking/emergency_reschedule/planning.rs` (lib split R2: record types below… |
@@ -101,7 +102,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/booking/lifecycle/mod.rs` | src | s | 4 fn · 5 mod · 18 re-export | — | Moved from `crates/oneiron/src/booking/lifecycle/mod.rs` (lib split R2: record types below the lib) |
 | `src/booking/lifecycle/token.rs` | src | s | 3 struct · 1 enum · 2 fn · 1 const | HoldLeaseSpec, OpaqueCheckoutLeaseToken, OpaqueLifecycleToken, SessionKey | Moved from `crates/oneiron/src/booking/lifecycle/token.rs` (lib split R2: record types below the lib) |
 | `src/booking/lifecycle/types.rs` | src | s | 9 struct · 3 enum · 4 fn · 1 const | BookingBookerContactValue, BookingEventTypeRefValue, BookingSourcePageValue, BookingStatus, BookingStatusValue, BookingVerb, CalendarRevision, CancelSpec +4 | Moved from `crates/oneiron/src/booking/lifecycle/types.rs` (lib split R2: record types below the lib) |
-| `src/booking/mod.rs` | src | s | 12 mod · 70 re-export | — | — |
+| `src/booking/mod.rs` | src | s | 13 mod · 74 re-export | — | — |
 | `src/booking/public_lens.rs` | src | s | 4 struct · 1 enum · 1 fn | BookingPageModelError, ConstraintFieldConfig, EventTypeCard, PublicBookingPageToken, ThemeTokens | Moved from `crates/oneiron/src/booking/public_lens.rs` (lib split R2: record types below the lib) |
 | `src/booking/publication.rs` | src | s | 1 fn · 2 const | — | Moved from `crates/oneiron/src/booking/publication.rs` (lib split R2: record types below the lib) |
 | `src/booking/solver/counts.rs` | src | s | 2 struct | BookingCountBucket, BookingCounts | Moved from `crates/oneiron/src/booking/solver/counts.rs` (lib split R2: record types below the lib) |

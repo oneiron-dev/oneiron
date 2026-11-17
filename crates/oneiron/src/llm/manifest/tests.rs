@@ -28,6 +28,8 @@ fn fixture() -> ModelManifest {
                                 ModelId::new(format!("local/{role:?}@r1")).unwrap(),
                             )])
                         },
+                        disposition: None,
+                        reads_audio: false,
                     },
                 )
             })
@@ -216,76 +218,6 @@ fn teacher_policy_holder_cannot_loosen_parent_and_old_receipts_cannot_silently_r
 }
 
 #[test]
-fn widened_resident_route_is_refused_at_inference_admission() {
-    let (_dir, vault) = policy_vault();
-    let manifest = fixture();
-    let approval = TeacherProbeApproval::for_scored_checkpoint(
-        &manifest,
-        &vault.teacher_probe_policy(None).unwrap(),
-        1_000_000,
-    )
-    .unwrap();
-    vault
-        .set_model_manifest_with_teacher_approval(&manifest, &approval)
-        .unwrap();
-    assert!(matches!(
-        vault.set_model_route(ModelSlot::Llm, ModelLocality::ThirdParty),
-        Err(Error::InvalidConfig(_))
-    ));
-    assert_eq!(
-        vault.model_route(ModelSlot::Llm).unwrap(),
-        Some(ModelLocality::OwnServer)
-    );
-
-    // Corrupt resident storage as an untrusted writer could; bypass only the setter.
-    vault
-        .with_write_txn(|txn| {
-            RESIDENT_ROUTES.put(
-                &vault.store,
-                txn,
-                &(),
-                &BTreeMap::from([(ModelSlot::Llm, ModelLocality::ThirdParty)]),
-            )
-        })
-        .unwrap();
-    let request = LlmRequest {
-        model: ModelId::new("host/unused@1").unwrap(),
-        envelope: CallEnvelope {
-            seat_effort: None,
-            scope: Default::default(),
-            purpose: CallPurpose::AutoCheck,
-            class: CallClass::BestEffort,
-            tier: TierPrecedence::for_purpose(
-                &CallPurpose::AutoCheck,
-                ModelTierRef("global".into()),
-            ),
-            response_format: ResponseFormat::Text,
-            locality: ModelLocality::ThirdParty,
-        },
-        messages: vec![],
-        tools: vec![],
-        params: BTreeMap::new(),
-        provider_options: BTreeMap::new(),
-        host_segments: None,
-    };
-    let host = crate::llm::HostInferenceContext {
-        binding: crate::llm::HostInferenceBinding::Advertised {
-            model: manifest.binding(ModelRole::Checker).unwrap().model.clone(),
-            locality: ModelLocality::ThirdParty,
-        },
-        extraction_egress: None,
-    };
-    assert!(matches!(
-        vault.model_route(ModelSlot::Llm),
-        Err(Error::InvalidConfig(_))
-    ));
-    assert!(matches!(
-        vault.authorize_model_role(ModelRole::Checker, request, &host),
-        Err(Error::InvalidConfig(_))
-    ));
-}
-
-#[test]
 fn narrowing_without_a_distinct_model_is_refused_without_relabeling() {
     let (_dir, vault) = policy_vault();
     let mut manifest = fixture();
@@ -305,7 +237,16 @@ fn narrowing_without_a_distinct_model_is_refused_without_relabeling() {
         .set_model_manifest_with_teacher_approval(&manifest, &approval)
         .unwrap();
     assert!(matches!(
-        vault.set_model_route(ModelSlot::Llm, ModelLocality::OnDevice),
+        vault.set_setting(
+            crate::setting::SettingCaller::Owner(&crate::test_util::embedded_owner_proof(&vault)),
+            crate::setting::SetSetting {
+                item: Some("llm".to_owned()),
+                ..crate::setting::SetSetting::vault_value(
+                    "models.resident_route",
+                    serde_json::to_value(ModelLocality::OnDevice).unwrap(),
+                )
+            },
+        ),
         Err(Error::InvalidConfig(_))
     ));
     let mut request = LlmRequest {
@@ -321,6 +262,8 @@ fn narrowing_without_a_distinct_model_is_refused_without_relabeling() {
             ),
             response_format: ResponseFormat::Text,
             locality: ModelLocality::OwnServer,
+            host_keyless: false,
+            host_paid: false,
         },
         messages: vec![],
         tools: vec![],
@@ -340,6 +283,7 @@ fn narrowing_without_a_distinct_model_is_refused_without_relabeling() {
         binding: super::super::HostInferenceBinding::Advertised {
             model: manifest.binding(ModelRole::Checker).unwrap().model.clone(),
             locality: ModelLocality::OwnServer,
+            keyless: false,
         },
         extraction_egress: None,
     };

@@ -278,6 +278,7 @@ fn event_type_config(
         booking_window_secs: 14 * DAY,
         daily_cap,
         weekly_cap,
+        deposit: None,
         routing: RoutingMode::Either,
         hosts: vec![HostAvailabilityConfig {
             host_ref: id(0x73),
@@ -480,6 +481,7 @@ fn publish(vault: &Vault, owner: EntityId, page: EntityId, config: &EventTypeCon
         event_types: vec![EventTypeCard {
             key: EventTypeKey(EVENT_TYPE.to_owned()),
             title: EVENT_TITLE.to_owned(),
+            deposit: None,
             duration_min: 30,
             description: "A first call".to_owned(),
         }],
