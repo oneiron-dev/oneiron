@@ -18,9 +18,15 @@
 //! P3 "A campaign unsubscribe → suppression claim, written at once."
 //! (`generated/llms-full.txt:347025`): one unsubscribe call answers the
 //! suppression claim and the suppressed heads, and a later enroll of that
-//! person on that channel is refused. The send-hold half stays unproven: a
-//! send after suppression holds at the gate as PENDING, which is not a door
-//! answer, so this file asserts the receipt and the enroll refusal only.
+//! person on that channel is refused. The member-state half of the send hold
+//! is proven too: after the unsubscribe an enrolled member's next leg answers
+//! `NothingOwed` and is not listed as held, while a control member's leg
+//! holds `AwaitingApproval` and is listed; and a send already waiting at the
+//! gate is retired when its leg is driven again. The gate's own suppression
+//! hold (`:347032`) stays unproven: the gate and the enroll check both look
+//! the member up by its entity hex as a party key, which no PERSON body
+//! carries (FIX [CAMPAIGN-SUPPRESSION-READS-ENTITY-HEX-AS-PARTY-KEY], found by
+//! reading), so the enroll refusal asserted here fails until that fix lands.
 //!
 //! The file also proves the compliance promise beside P1-P3 (a tightening
 //! install applies at once, a loosening waits for the owner's exact-hash
@@ -55,13 +61,13 @@ use axum::{
 };
 use ed25519_dalek::SigningKey;
 use engine_stack::run_on_engine_stack;
-use oneiron::attempt_queue::{ClaimOutcome, EnqueueOutcome};
+use oneiron::attempt_queue::{AttemptRecord, ClaimOutcome, EnqueueOutcome};
 use oneiron::authority::{CapabilitySlip, HostSlipIssuer, MachineRole, holder_proof};
 use oneiron::campaign::enrollment::{
     CAMPAIGN_ENROLLMENT_SCHEMA_VERSION, CampaignEnrollmentAttemptPayload, CampaignEnrollmentClaim,
     CampaignEnrollmentRunner, CampaignHomeNodeCandidate, CampaignProgramDraft,
     CampaignProgramOutbound, CampaignProgramStepDraft, DetectEnrollment, EnrollmentDetection,
-    EnrollmentLegDrive, create_campaign_program, detect_enrollment,
+    EnrollmentExecution, EnrollmentLegDrive, create_campaign_program, detect_enrollment,
     elect_campaign_home_node_designation,
 };
 use oneiron::campaign::register_crm_pack;
@@ -617,6 +623,176 @@ impl OutboundResultSender for NoSend {
     }
 }
 
+/// One member's leg-ready enrollment: its comm PERSON and its claimed attempt,
+/// whose membership leg already applied.
+struct LegMember {
+    member: EntityId,
+    attempt: AttemptRecord,
+}
+
+/// The held test's leg shape for `addresses`, through each attempt's membership
+/// leg: a comm member per address, campaign + program (one email step with
+/// `CampaignProgramOutbound`) + filed body + launch + home node, and a
+/// detected, enqueued, claimed and executed attempt each, so every member
+/// carries a live Enrolled head when its leg is driven.
+struct LegReady {
+    campaign_hex: String,
+    program: EntityId,
+    step: EntityId,
+    members: Vec<LegMember>,
+}
+
+/// Builds the [`LegReady`] fixture for `addresses`.
+async fn leg_ready(fixture: &Fixture, addresses: &[&str]) -> LegReady {
+    let sender = active_sender_identity(&fixture.vault, fixture.owner, "owen@example.com");
+    let query = seniority_query(&fixture.vault, fixture.owner);
+    let members: Vec<EntityId> = addresses
+        .iter()
+        .map(|address| campaign_member(&fixture.vault, sender, address))
+        .collect();
+    let created = create_campaign_in(
+        &fixture.vault,
+        fixture.owner,
+        EdgeActorClass::Human,
+        "send-hold campaign",
+    );
+    let campaign_hex = created["campaign_ref"]
+        .as_str()
+        .expect("a campaign ref")
+        .to_owned();
+    let campaign_version = created["definition"]["definition_version"]
+        .as_u64()
+        .expect("a campaign version");
+    let campaign = EntityId::from_hex(&campaign_hex).expect("a campaign id");
+    let step = EntityId::now();
+    let program = create_campaign_program(
+        &fixture.vault,
+        fixture.owner,
+        campaign,
+        CAMPAIGN_ENROLLMENT_SCHEMA_VERSION,
+        &CampaignProgramDraft {
+            name: "send-hold program".to_owned(),
+            steps: vec![CampaignProgramStepDraft {
+                step_ref: step,
+                channel: "email".to_owned(),
+                sender_ref: sender,
+                basis_evidence: EntityId::now(),
+                outbound: Some(CampaignProgramOutbound {
+                    call_seq: CALL_SEQ,
+                    verb: "send".to_owned(),
+                    payload: BODY.to_vec(),
+                    idempotency_supported: true,
+                    subject: Some("A plan for you".to_owned()),
+                }),
+                arm: None,
+            }],
+            audience: None,
+        },
+        fixture.vault.now_recorded_at(),
+    )
+    .expect("the program")
+    .program
+    .program_ref;
+    fixture
+        .vault
+        .save_campaign_step_body(
+            program,
+            step,
+            CALL_SEQ,
+            BODY,
+            WriteActor::new(fixture.owner, EdgeActorClass::Human),
+            fixture.vault.now_recorded_at(),
+        )
+        .expect("file the step body");
+    launch_campaign_in(
+        &fixture.vault,
+        fixture.owner,
+        EdgeActorClass::Human,
+        &campaign_hex,
+        campaign_version,
+    );
+    elect_campaign_home_node_designation(
+        &fixture.vault,
+        &[CampaignHomeNodeCandidate::always_on_local(HOME_NODE)],
+        fixture.vault.now_recorded_at(),
+    )
+    .expect("the home node");
+
+    let now = fixture.vault.now_recorded_at();
+    let read = sweep_owner_read(&fixture.vault, fixture.owner, EdgeActorClass::Human)
+        .expect("sweep read")
+        .expect("the owner has a usable read");
+    let grants = QueryScope::default();
+    let evaluator = SavedQueryEvaluator {
+        vault: &fixture.vault,
+        owner_grants: &grants,
+        owner_read: &read,
+        judge: None,
+    };
+    let runner = CampaignEnrollmentRunner::new(&fixture.vault);
+    let mut legs = Vec::new();
+    for member in members {
+        let event = match detect_enrollment(
+            &evaluator,
+            fixture.owner,
+            &DetectEnrollment {
+                query_ref: query,
+                campaign_ref: campaign,
+                entity_ref: member,
+                now: now + 1,
+            },
+        )
+        .await
+        .expect("detect the member")
+        {
+            EnrollmentDetection::Recorded(event) => *event,
+            EnrollmentDetection::NoTransition => panic!("expected a recorded transition"),
+        };
+        match runner
+            .enqueue(
+                &CampaignEnrollmentAttemptPayload {
+                    membership_event_ref: event.event_ref,
+                    campaign_program_ref: program,
+                    program_step_ref: step,
+                },
+                None,
+                now + 2,
+            )
+            .expect("enqueue the attempt")
+        {
+            EnqueueOutcome::Enqueued(_) | EnqueueOutcome::Existing(_) => {}
+            other => panic!("unexpected enqueue outcome: {other:?}"),
+        }
+        let attempt = match runner
+            .claim_if_home(HOME_NODE, format!("worker:{HOME_NODE}"), now + 3)
+            .expect("claim the attempt")
+        {
+            CampaignEnrollmentClaim::Queue(ClaimOutcome::Claimed(record)) => record,
+            other => panic!("expected a claim, got {other:?}"),
+        };
+        let executed = runner
+            .execute_claimed(HOME_NODE, &attempt, &evaluator, now + 4)
+            .await
+            .expect("execute the membership leg");
+        assert!(
+            matches!(
+                executed,
+                EnrollmentExecution::Applied {
+                    outbound_intent: Some(_)
+                }
+            ),
+            "the membership leg lands the Enrolled head and owes its send: {executed:?}"
+        );
+        legs.push(LegMember { member, attempt });
+    }
+    LegReady {
+        campaign_hex,
+        program,
+        step,
+        members: legs,
+    }
+}
+
 /// P1: a campaign program is created under its campaign, read back, replaced
 /// whole under a version check, and archived; the archive sticks, stays
 /// readable, and refuses further writes.
@@ -1119,6 +1295,213 @@ fn unsubscribe_writes_suppression_and_enroll_refuses_after() {
             refused["error"]["message"].as_str(),
             Some("invalid claim body: suppression forbids campaign enrollment on this channel"),
             "the refusal names the suppression: {refused}"
+        );
+    });
+}
+
+/// P3, the member-state half of the send hold: an enrolled member's send after
+/// the door unsubscribe answers `NothingOwed` and stays out of the held list,
+/// while a control member's leg holds `AwaitingApproval` and is listed. No
+/// transport ever sends: both legs drive behind `NoSend`.
+///
+/// Canon `generated/llms-full.txt:347025` "A campaign unsubscribe →
+/// suppression claim, written at once."
+#[test]
+fn unsubscribe_holds_the_next_send_of_an_enrolled_member() {
+    run_on_engine_stack("campaign-send-hold-enrolled", || async {
+        let fixture = setup().await;
+        let ready = leg_ready(&fixture, &["yuki@example.com", "ana@example.com"]).await;
+        let basis_hex = evidence_note(&fixture.vault, fixture.owner).to_hex();
+        let suppressed_hex = ready.members[0].member.to_hex();
+        let control_hex = ready.members[1].member.to_hex();
+
+        let (status, unsubscribed) = post_as_owner(
+            &fixture,
+            "/v1/core/facade/vault.campaign.unsubscribe",
+            json!({
+                "campaign_ref": ready.campaign_hex.clone(),
+                "person_ref": suppressed_hex,
+                "channel": "email",
+                "evidence_ref": basis_hex,
+            }),
+        )
+        .await;
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "owner unsubscribes the member: {unsubscribed}"
+        );
+        assert_eq!(
+            unsubscribed["member_claim_refs"]
+                .as_array()
+                .expect("suppressed heads")
+                .len(),
+            1,
+            "the live Enrolled head is the one suppressed: {unsubscribed}"
+        );
+
+        let at_ms = (fixture.vault.now_recorded_at() + 4) * 1000;
+        let drive_suppressed = fixture
+            .vault
+            .drive_enrollment_outbound_leg(HOME_NODE, &ready.members[0].attempt, &mut NoSend, at_ms)
+            .expect("drive the suppressed leg");
+        assert!(
+            matches!(drive_suppressed, EnrollmentLegDrive::NothingOwed),
+            "the suppressed member's send is owed nothing: {drive_suppressed:?}"
+        );
+        let drive_control = fixture
+            .vault
+            .drive_enrollment_outbound_leg(HOME_NODE, &ready.members[1].attempt, &mut NoSend, at_ms)
+            .expect("drive the control leg");
+        let control_digest = match drive_control {
+            EnrollmentLegDrive::AwaitingApproval { approval_digest } => approval_digest,
+            other => panic!("the control leg reaches the gate and holds: {other:?}"),
+        };
+
+        let (status, held) =
+            post_as_owner(&fixture, "/v1/core/facade/vault.campaign.held", json!({})).await;
+        assert_eq!(status, StatusCode::OK, "owner lists the holds: {held}");
+        let rows = held.as_array().expect("held rows");
+        assert_eq!(rows.len(), 1, "only the control leg holds: {held}");
+        let row = &rows[0];
+        assert_eq!(
+            row["member_ref"].as_str(),
+            Some(control_hex.as_str()),
+            "the hold is the control's: {held}"
+        );
+        assert_eq!(
+            row["campaign_ref"].as_str(),
+            Some(ready.campaign_hex.as_str()),
+            "the hold names its campaign: {held}"
+        );
+        assert_eq!(
+            row["program_ref"].as_str(),
+            Some(ready.program.to_hex().as_str()),
+            "the hold names its program: {held}"
+        );
+        assert_eq!(
+            row["step_ref"].as_str(),
+            Some(ready.step.to_hex().as_str()),
+            "the hold names its step: {held}"
+        );
+        assert_eq!(
+            row["held_at_ms"].as_u64(),
+            Some(at_ms),
+            "the hold names its instant: {held}"
+        );
+        assert_eq!(
+            row["approval_digest"].as_str(),
+            Some(control_digest.as_str()),
+            "the hold names the control's digest: {held}"
+        );
+        assert!(
+            row["approved_redrive"].is_null(),
+            "nothing redrove yet: {held}"
+        );
+    });
+}
+
+/// P3, a send already waiting at the gate: its leg answers `AwaitingApproval`
+/// and is listed, and after the door unsubscribe the SAME attempt driven again
+/// answers `NothingOwed` and its held row is gone. Driving twice is legal: the
+/// member-state check runs before the leg touches its stored intent. No
+/// transport ever sends: every drive is behind `NoSend`.
+///
+/// Canon `generated/llms-full.txt:347025` "A campaign unsubscribe →
+/// suppression claim, written at once."
+#[test]
+fn unsubscribe_retires_a_send_already_waiting_at_the_gate() {
+    run_on_engine_stack("campaign-send-hold-retire", || async {
+        let fixture = setup().await;
+        let ready = leg_ready(&fixture, &["yuki@example.com"]).await;
+        let basis_hex = evidence_note(&fixture.vault, fixture.owner).to_hex();
+        let member_hex = ready.members[0].member.to_hex();
+
+        let at_ms = (fixture.vault.now_recorded_at() + 4) * 1000;
+        let drive_first = fixture
+            .vault
+            .drive_enrollment_outbound_leg(HOME_NODE, &ready.members[0].attempt, &mut NoSend, at_ms)
+            .expect("drive the leg");
+        assert!(
+            matches!(drive_first, EnrollmentLegDrive::AwaitingApproval { .. }),
+            "the leg reaches the gate and holds: {drive_first:?}"
+        );
+
+        let (status, held) =
+            post_as_owner(&fixture, "/v1/core/facade/vault.campaign.held", json!({})).await;
+        assert_eq!(status, StatusCode::OK, "owner lists the holds: {held}");
+        let rows = held.as_array().expect("held rows");
+        assert_eq!(rows.len(), 1, "the leg waits at the gate: {held}");
+        assert_eq!(
+            rows[0]["member_ref"].as_str(),
+            Some(member_hex.as_str()),
+            "the waiting hold is the member's: {held}"
+        );
+        assert_eq!(
+            rows[0]["campaign_ref"].as_str(),
+            Some(ready.campaign_hex.as_str()),
+            "the waiting hold names its campaign: {held}"
+        );
+        assert_eq!(
+            rows[0]["program_ref"].as_str(),
+            Some(ready.program.to_hex().as_str()),
+            "the waiting hold names its program: {held}"
+        );
+        assert_eq!(
+            rows[0]["step_ref"].as_str(),
+            Some(ready.step.to_hex().as_str()),
+            "the waiting hold names its step: {held}"
+        );
+        assert_eq!(
+            rows[0]["held_at_ms"].as_u64(),
+            Some(at_ms),
+            "the waiting hold names its instant: {held}"
+        );
+
+        let (status, unsubscribed) = post_as_owner(
+            &fixture,
+            "/v1/core/facade/vault.campaign.unsubscribe",
+            json!({
+                "campaign_ref": ready.campaign_hex,
+                "person_ref": member_hex,
+                "channel": "email",
+                "evidence_ref": basis_hex,
+            }),
+        )
+        .await;
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "owner unsubscribes the member: {unsubscribed}"
+        );
+        assert_eq!(
+            unsubscribed["member_claim_refs"]
+                .as_array()
+                .expect("suppressed heads")
+                .len(),
+            1,
+            "the live Enrolled head is the one suppressed: {unsubscribed}"
+        );
+
+        let drive_again = fixture
+            .vault
+            .drive_enrollment_outbound_leg(HOME_NODE, &ready.members[0].attempt, &mut NoSend, at_ms)
+            .expect("drive the same attempt again");
+        assert!(
+            matches!(drive_again, EnrollmentLegDrive::NothingOwed),
+            "the suppressed member's send is owed nothing: {drive_again:?}"
+        );
+
+        let (status, relisted) =
+            post_as_owner(&fixture, "/v1/core/facade/vault.campaign.held", json!({})).await;
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "owner relists the holds: {relisted}"
+        );
+        assert!(
+            relisted.as_array().expect("held rows").is_empty(),
+            "the retired send leaves no hold: {relisted}"
         );
     });
 }

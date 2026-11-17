@@ -131,7 +131,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/campaign/presets/shape.rs` | src | s | 9 struct · 2 enum · 1 re-export | BriefSectionData, BriefTemplateData, BriefTemplateKind, BriefTemplateSet, CampaignPresetData, CampaignTemplateData, CommitmentRhythmData, LanePolicyData +3 | Moved from `crates/oneiron/src/campaign/presets/shape.rs` (lib split R1: record types below the lib) |
 | `src/campaign/surface/mod.rs` | src | s | 1 mod · 27 re-export | — | — |
 | `src/campaign/surface/verbs.rs` | src | s | 2 struct | SurfaceCall, SurfaceReply | Moved from `crates/oneiron/src/campaign/surface/verbs.rs` (lib split R1: record types below the lib) |
-| `src/check_in/act_class.rs` | src | m | 1 struct · 4 enum · 6 fn · 6 const · 1 static | ActClass, ActClassRow, ModelCheck, ProofKind, UndoClass | Moved from `crates/oneiron/src/check_in/act_class.rs` (lib split R1: record types below the lib) |
+| `src/check_in/act_class.rs` | src | m | 1 struct · 4 enum · 8 fn · 6 const · 1 static | ActClass, ActClassRow, ModelCheck, ProofKind, UndoClass | Moved from `crates/oneiron/src/check_in/act_class.rs` (lib split R1: record types below the lib) |
 | `src/check_in/mod.rs` | src | s | 6 mod · 24 re-export | — | — |
 | `src/check_in/mode.rs` | src | s | 1 enum · 2 fn · 1 const | CheckInMode | Moved from `crates/oneiron/src/check_in/mode.rs` (lib split R1: record types below the lib) |
 | `src/check_in/pending.rs` | src | m | 7 struct · 4 enum · 12 fn · 1 re-export | CapturedWait, DelayWindow, EligibleBasis, Extension, HolderAnswer, Objection, PendingCheckIn, PendingState +3 | Moved from `crates/oneiron/src/check_in/pending.rs` (lib split R1: record types below the lib) |
@@ -910,3 +910,4 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/fingerprint_keep_policy_hash.rs` | test | s | 3 fn · 1 crate-vis | — | K-proof (oracle) for PLAN-UC-04 stage 3.4a: the hosted legal policy hash keeps its bytes |
 | `tests/identity_ask_key_hex.rs` | test | s | — | — | The identity ask key's hex form (UC-07 PR 8; FIX [IDENTITY-ASK-KEY-ACCEPTS-SIGN]) |
 | `tests/records_register_names.rs` | test | s | — | — | Register names (oneiron-records, wave A1): the names each hand table below wrote before its type became a… |
+| `tests/snapshot_id_side_key.rs` | test | s | — | — | `SnapshotId`'s side-table key (UC-06 PR 9) |

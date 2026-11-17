@@ -232,7 +232,11 @@ fn only_the_running_holder_refuses_a_soft_cancel() {
     let holder_memory = agent_memory(&fixture, holder);
     let handle = accept(&holder_memory, task);
     let leased = stored_try(&fixture, &handle);
-    assert_eq!(leased.state, AttemptState::Leased, "the accept runs the try");
+    assert_eq!(
+        leased.state,
+        AttemptState::Leased,
+        "the accept runs the try"
+    );
     let holder_lease = leased
         .lease_owner
         .clone()
@@ -320,7 +324,11 @@ fn only_the_running_holder_refuses_a_soft_cancel() {
         answered.answered_request_sequence, request,
         "the refusal answers the owner's ask"
     );
-    assert_eq!(answered.record.state, AttemptState::Leased, "the try runs on");
+    assert_eq!(
+        answered.record.state,
+        AttemptState::Leased,
+        "the try runs on"
+    );
     assert_eq!(
         answered.record.lease_owner.as_deref(),
         Some(holder_lease.as_str()),
