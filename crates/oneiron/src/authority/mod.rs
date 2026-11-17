@@ -53,6 +53,7 @@ mod anchor_marks;
 mod ask_forward_holder;
 mod backup_signer_delegation;
 mod carried_act;
+mod carrier_prompt;
 mod carrier_reading;
 mod causal_write;
 mod checkpoint;
@@ -284,6 +285,10 @@ pub use agent_grant_act::{
 pub use backup_signer_delegation::{
     BACKUP_SIGNER_DELEGATION_DOMAIN, BackupModeRootPolicy, BackupModeRoots, BackupSignerDelegation,
     BackupSignerStatement,
+};
+pub use carrier_prompt::{
+    PromptDeviceName, held_answer_prompt, machine_code_line, machine_key_code, pin_request_prompt,
+    recovery_root_code,
 };
 pub use carrier_reading::CarrierReading;
 pub use causal_write::CausalWriteDisposition;
