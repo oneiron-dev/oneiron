@@ -64,7 +64,7 @@ fn a_row_set_aside_follows_the_reranked_rows_below_their_weakest_score() {
     // The reranker reorders the three it was given over their ladder.
     block[..3].copy_from_slice(&[scored(other, 0.8), scored(turn, 0.7), scored(message, 0.5)]);
     let (reranked, rest) = block.split_at_mut(3);
-    cap_set_aside(reranked, rest);
+    cap_unscored(reranked, rest, &mut []);
     assert!(block[3].score < 0.5, "{:?}", block[3]);
     assert!(block[4].score < block[3].score, "{:?}", block[4]);
     // A later sort keeps them after every reranked row, in their own order.

@@ -23,14 +23,24 @@ use crate::{EntityId, Vault};
 /// The attempt kind whose rows owe one deposit's next provider move.
 pub const BOOKING_DEPOSIT_SETTLE_ATTEMPT_KIND: &str = "booking.deposit.settle";
 
-/// How many claims one settle row gets before it fails for good. A retry is
-/// safe: every provider call carries an idempotency key per deposit, move
-/// and amount.
-const DEPOSIT_SETTLE_ATTEMPTS: u32 = 8;
+/// The claim of one settle row at which a failed provider call stops running
+/// again promptly: every claim before it retries
+/// [`DEPOSIT_SETTLE_RETRY_SECONDS`] later, and from it on the row asks again
+/// every [`DEPOSIT_SETTLE_OWED_RECHECK_SECONDS`]. A retry is safe: every
+/// provider call carries an idempotency key per deposit, move and amount.
+const DEPOSIT_SETTLE_PROMPT_ATTEMPTS: u32 = 8;
 
 /// How long a settle row whose provider call failed waits before its next
-/// try.
+/// prompt try.
 const DEPOSIT_SETTLE_RETRY_SECONDS: u64 = 300;
+
+/// How long a settle row waits before it asks again once the provider
+/// refused its move, or its prompt tries are spent. The deposit still owes
+/// the move, and what blocks it can end with no deposit transition to queue
+/// a new row: an outage ends, or the owner repairs the provider key. So the
+/// row never ends while the move is owed
+/// (FIX [BK-DEPOSIT-SETTLE-OUTAGE-STRANDS-MOVE]).
+const DEPOSIT_SETTLE_OWED_RECHECK_SECONDS: u64 = 3_600;
 
 /// How long a settle row whose move the provider holds pending waits before
 /// it asks again.
@@ -85,7 +95,10 @@ pub enum DepositProviderFailure {
     /// answer, since the provider ends the move one way or the other, and
     /// the owner can fix the key.
     Pending(String),
-    /// The provider refused the move itself; another try answers the same.
+    /// The provider refused the move itself; another try answers the same
+    /// until something changes at the provider (the owner repairs a key that
+    /// lacks the permission, say). The deposit still owes the move, so its
+    /// row asks again later and does not end on this answer.
     Permanent(String),
 }
 
@@ -321,11 +334,17 @@ pub struct BookingDepositSettlementDrain {
     pub waiting: u32,
     /// Rows that owed nothing any more.
     pub settled_nothing: u32,
-    /// Rows whose provider call failed and runs again later.
+    /// Rows whose provider call, or whose store write, failed and runs again
+    /// promptly.
     pub retrying: u32,
     /// Rows whose move the provider holds pending, asked again later.
     pub pending: u32,
-    /// Rows that failed for good.
+    /// Rows whose move the provider refused, or whose prompt tries are spent
+    /// on a failing provider call or store write: the deposit still owes the
+    /// move, and the row asks again later.
+    pub still_owed: u32,
+    /// Rows that failed for good: a row whose payload names no deposit, so
+    /// no move is owed through it.
     pub failed: u32,
 }
 
@@ -333,14 +352,18 @@ pub struct BookingDepositSettlementDrain {
 /// rows: each deposit's due move through `port`. A deposit still in its
 /// checkout window is queued again for the window's end, where an
 /// unconfirmed one is voided. A provider failure runs again five minutes
-/// later, and fails for good on a permanent refusal or the eighth claim. A
-/// move the provider holds pending is asked again an hour later, however
-/// many claims it took.
+/// later, until the row's eighth claim. A move the provider refused, or one
+/// still failing at that claim, is asked again an hour later, and so is a
+/// move the provider holds pending, however many claims it took: a row ends
+/// only once its deposit owes nothing, so an outage or a broken provider key
+/// strands no capture, void or refund. A store failure while a move is
+/// decided or recorded runs the row again the same way. Only a row whose
+/// payload names no deposit fails for good.
 ///
 /// # Errors
 ///
 /// [`BookingError::SlotOracle`] on a queue failure. A row whose move fails
-/// settles its row and does not fail the pass.
+/// is queued again and does not fail the pass.
 pub fn run_booking_deposit_settlement<P: DepositSettlementPort>(
     vault: &Vault,
     lease_owner: &str,
@@ -363,15 +386,23 @@ pub fn run_booking_deposit_settlement<P: DepositSettlementPort>(
         let ClaimOutcome::Claimed(record) = claimed else {
             break;
         };
-        let step = settle_payload_key(&record)
-            .and_then(|key| settle_deposit_key(vault, &key, port, now_utc));
         let settle = SettleRow {
             queue: &queue,
             record: &record,
             lease_owner,
             now_utc,
         };
-        match step {
+        let key = match settle_payload_key(&record) {
+            Ok(key) => key,
+            Err(error) => {
+                tracing::warn!(%error, "booking deposit settle row names no deposit");
+                settle.fail(&error)?;
+                drain.failed += 1;
+                continue;
+            }
+        };
+        let prompt = record.attempt_count < DEPOSIT_SETTLE_PROMPT_ATTEMPTS;
+        match settle_deposit_key(vault, &key, port, now_utc) {
             Ok(DepositSettleStep::Nothing) => {
                 settle.complete()?;
                 drain.settled_nothing += 1;
@@ -391,17 +422,15 @@ pub fn run_booking_deposit_settlement<P: DepositSettlementPort>(
             Ok(DepositSettleStep::Failed(DepositProviderFailure::Pending(reason))) => {
                 tracing::debug!(%reason, "booking deposit move is pending at the provider");
                 settle.requeue(
-                    &bounded(&reason, MAX_FAILURE_BYTES),
+                    &requeue_reason(&reason),
                     now_utc.saturating_add(DEPOSIT_SETTLE_PENDING_RECHECK_SECONDS),
                 )?;
                 drain.pending += 1;
             }
-            Ok(DepositSettleStep::Failed(DepositProviderFailure::Transient(reason)))
-                if record.attempt_count < DEPOSIT_SETTLE_ATTEMPTS =>
-            {
+            Ok(DepositSettleStep::Failed(DepositProviderFailure::Transient(reason))) if prompt => {
                 tracing::debug!(%reason, "booking deposit move runs again later");
                 settle.requeue(
-                    &bounded(&reason, MAX_FAILURE_BYTES),
+                    &requeue_reason(&reason),
                     now_utc.saturating_add(DEPOSIT_SETTLE_RETRY_SECONDS),
                 )?;
                 drain.retrying += 1;
@@ -409,19 +438,46 @@ pub fn run_booking_deposit_settlement<P: DepositSettlementPort>(
             Ok(DepositSettleStep::Failed(failure)) => {
                 tracing::warn!(
                     reason = failure.reason(),
-                    "booking deposit move failed for good"
+                    "booking deposit move is still owed and is asked again later"
                 );
-                settle.fail(&refused(bounded(failure.reason(), MAX_FAILURE_BYTES)))?;
-                drain.failed += 1;
+                settle.requeue(
+                    &requeue_reason(failure.reason()),
+                    now_utc.saturating_add(DEPOSIT_SETTLE_OWED_RECHECK_SECONDS),
+                )?;
+                drain.still_owed += 1;
             }
+            // A store failure while the move was decided or recorded. The
+            // deposit may still owe the move, and a move the provider did is
+            // answered again under the same idempotency key.
             Err(error) => {
-                tracing::warn!(%error, "booking deposit settle row failed for good");
-                settle.fail(&error)?;
-                drain.failed += 1;
+                tracing::warn!(%error, "booking deposit settle row met a store failure");
+                let wait = if prompt {
+                    drain.retrying += 1;
+                    DEPOSIT_SETTLE_RETRY_SECONDS
+                } else {
+                    drain.still_owed += 1;
+                    DEPOSIT_SETTLE_OWED_RECHECK_SECONDS
+                };
+                settle.requeue(
+                    &attempt_failure_reason(&error),
+                    now_utc.saturating_add(wait),
+                )?;
             }
         }
     }
     Ok(drain)
+}
+
+/// The reason a settle row is queued again under: the provider's own,
+/// bounded, and never empty, since the queue refuses an empty reason and the
+/// row would then stay leased.
+fn requeue_reason(reason: &str) -> String {
+    let reason = bounded(reason, MAX_FAILURE_BYTES);
+    if reason.is_empty() {
+        "the provider gave no reason".to_owned()
+    } else {
+        reason
+    }
 }
 
 fn settle_payload_key(record: &AttemptRecord) -> Result<[u8; 32], BookingError> {
@@ -431,7 +487,7 @@ fn settle_payload_key(record: &AttemptRecord) -> Result<[u8; 32], BookingError> 
         .ok_or_else(|| refused("booking deposit settle payload names no deposit"))
 }
 
-/// One claimed settle row and the three ways it ends.
+/// One claimed settle row and the three ways its claim ends.
 struct SettleRow<'a> {
     queue: &'a AttemptQueue<'a>,
     record: &'a AttemptRecord,
