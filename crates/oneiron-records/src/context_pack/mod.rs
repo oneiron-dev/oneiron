@@ -2,6 +2,7 @@ pub use crate::context_pack::mcp_ref::MCP_CONTEXT_PACK_REF_SCHEMA_VERSION;
 pub use crate::context_pack::mcp_ref::McpContextPackRef;
 pub use crate::context_pack::mcp_ref::McpContextPackRefError;
 pub use crate::context_pack::types::PackStats;
+pub use crate::context_pack::types::PackWorkingSetStats;
 pub use oneiron_store::l2_evidence::L2BaseSummary;
 pub use oneiron_store::serialize::context_entity::ContextEntity;
 pub use oneiron_store::serialize::empty_context::EmptyContext;

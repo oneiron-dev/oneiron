@@ -151,7 +151,9 @@ The rule, by cause:
   `/Root` that cannot be read as a catalog reports the same, never absent.
 - Genuine material that says no about the signer's chains still fails (`fail`,
   `validation_material_invalid`): a CRL or OCSP response stale or future-dated at
-  the applicable time, a delta or IDP-scoped CRL, an OCSP delegate outside its
+  the applicable time, or without nextUpdate (Oneiron sets no maximum freshness,
+  so EN 319 102-1 §5.2.5.4 step 1 finds such evidence not fresh; the host refuses
+  it too, and the seal-side fetchers never embed it), a delta or IDP-scoped CRL, an OCSP delegate outside its
   validity, and a revoked serial or status. Authenticity is judged first, so a
   forged response that claims any of these is unverifiable, never a failure.
   A failure outranks every unresolved result.

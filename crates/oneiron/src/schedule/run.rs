@@ -465,7 +465,8 @@ fn next_occurrence(row: &ScheduleRow, now: u64) -> Option<u64> {
 ///   occurrence after now, or at the run's `due_by` when that is earlier but never sooner than its
 ///   first retry after the end; a deadline is done, unless its run answered a `due_by`, at which
 ///   it is due again, never sooner than its first retry after the end; either way its failures,
-///   cursor and answered request cleared;
+///   cursor, answered request and pull cleared. The time a door pulled the job to while the run
+///   went on (`pulled_to`) counts as the run's `due_by` when it is earlier;
 /// - more: due again at once, going on from its cursor;
 /// - items failed: due again after the backoff, its cursor cleared;
 /// - failed: due again after the backoff, its cursor kept.
@@ -481,9 +482,14 @@ fn finished(spec: &JobSpec, row: ScheduleRow, result: &JobResult, end: u64) -> O
     };
     match &result.ran {
         Ran::Done => {
-            // A `due_by` already past means soon, never again in this pass.
+            // Work a door made due while the run went on, after the run read its own, counts as
+            // the run's `due_by` (review round 2 of #9300, P1). A `due_by` already past means
+            // soon, never again in this pass.
             let due_by = result
                 .due_by
+                .into_iter()
+                .chain(row.pulled_to)
+                .min()
                 .map(|due_by| due_by.max(end.saturating_add(spec.retry_first_secs)));
             let next_due_at = match (next_occurrence(&row, end), due_by) {
                 (Some(next), Some(due_by)) => Some(due_by.min(next)),
@@ -495,6 +501,7 @@ fn finished(spec: &JobSpec, row: ScheduleRow, result: &JobResult, end: u64) -> O
                 failures: 0,
                 cursor: None,
                 answering: false,
+                pulled_to: None,
                 ..row
             })
         }
@@ -535,11 +542,16 @@ fn finished(spec: &JobSpec, row: ScheduleRow, result: &JobResult, end: u64) -> O
 
 /// A row armed again while a run of its earlier arming ran, after that run ended at `end`: the
 /// new arming stands, due no sooner than the run's first retry after its end, so a job that arms
-/// itself again at once never runs in a loop. Its occurrence stays where the arming put it, and
-/// its last run is the one that ended at `end`.
+/// itself again at once never runs in a loop. Its occurrence stays where the arming put it, or
+/// where a door pulled it to while the run went on when that is earlier, and its last run is the
+/// one that ended at `end`.
 fn armed_again(spec: &JobSpec, row: ScheduleRow, end: u64) -> ScheduleRow {
     let floor = end.saturating_add(spec.retry_first_secs);
     let row = ScheduleRow {
+        next_due_at: row
+            .pulled_to
+            .map_or(row.next_due_at, |pulled| pulled.min(row.next_due_at)),
+        pulled_to: None,
         finished_at: end,
         ..row
     };
