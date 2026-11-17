@@ -422,11 +422,11 @@ names the field and never its value:
   the like). An import queue with no `claude_code_root` and `codex_root` of
   its own would read the defaults under HOME, so it stops the vault too.
 
-The supervisor binds ten more settings on argv alone; a settings file that
+The supervisor binds eleven more settings on argv alone; a settings file that
 names `browser_runtime`, `desktop_runtime`, `organ_dir`, `mesh_bind`,
 `mesh_relays`, `shared_model_root`, `container_home`,
-`container_runtime_dir`, `guest_runtime_fact` or `hosted_private_origins` is
-refused `SupervisorOwned`:
+`container_runtime_dir`, `guest_runtime_fact`, `hosted_private_origins` or
+`hosted_private_networks` is refused `SupervisorOwned`:
 
 - `--browser-runtime <path>` and `--desktop-runtime <path>`: the browser and
   desktop guests' container CLI, an absolute path on the vault's own host or
@@ -501,13 +501,39 @@ refused `SupervisorOwned`:
   scheme or port no entry lists is refused. A listed origin never admits
   infrastructure, an address-literal URL or a raw connection: a headless
   render's relay (WebSocket, worker and other raw TCP or UDP traffic) knows
-  only addresses and refuses every private one. The host's DNS (its own
+  only addresses and refuses every private one outside a listed network
+  (`--hosted-private-network`, below). The host's DNS (its own
   lookups and the guest's port-53 datagrams to the host's resolvers) stays
-  unchecked. Without the flag the list is empty and every private address is
-  refused. Plain serve and self-hosted nodes carry no guard and fetch as
+  unchecked. Without the flag the list is empty and every private address
+  outside a listed network is refused. Plain serve and self-hosted nodes carry no guard and fetch as
   before. A vault VM has no config-drive file for it. An engine from before
   this flag refuses it, so a supervisor passes it only to engines at or
   after the merge that added it (`version.rs`, hosted private origins).
+- `--hosted-private-network <network>` (managed only, repeatable): a private
+  network the hosted node's web fetch and calendar feed polls may reach,
+  every address in it
+  (HOSTED-EGRESS-OPERATOR-SETTING): `rfc1918` (`10.0.0.0/8`, `172.16.0.0/12`,
+  `192.168.0.0/16`), `cgnat` (`100.64.0.0/10`) or `ula` (`fc00::/7`), spelled
+  exactly so; any other spelling stops the start. It is the hosting
+  operator's setting, never a vault owner's: a managed settings file that
+  names `hosted_private_networks` is refused. A listed network is judged by
+  address, so it admits its addresses at every check, an address-literal
+  URL and a headless render's raw connections included; a name a
+  `--hosted-private-origin` lists stays bound to the schemes and ports its
+  origins list. It never admits the infrastructure the engine knows inside
+  it: Alibaba Cloud's metadata endpoint (`100.100.100.200`) and Tailscale's
+  node address (`100.100.100.100`) in CGNAT; the AWS (`fd00:ec2::254`, EKS
+  Pod Identity `fd00:ec2::23`), Google Cloud (`fd20:ce::254`), Oracle Cloud
+  (`fd00:c1::a9fe:a9fe`), Scaleway (`fd00:42::42`) and Akamai
+  (`fd00:a9fe:a9fe::1`) metadata endpoints and Tailscale's
+  `fd7a:115c:a1e0::53` in ULA; and the node's own addresses. Another
+  provider's endpoint inside an admitted network is reachable, so an
+  operator admits a network only where no such endpoint sits. Without the
+  flag no network is listed, and the node refuses all three except at a
+  listed origin, as before. Plain serve and self-hosted nodes carry no
+  guard. A vault VM has no config-drive file for it. An engine from before
+  this flag refuses it, so a supervisor passes it only to engines at or
+  after the merge that added it (`version.rs`, hosted private networks).
 
 The container CLI gets `HOME` and `XDG_RUNTIME_DIR` from these two flags
 alone. Every call the engine makes to it for a guest (run, inspect and
@@ -1391,7 +1417,10 @@ the source its flight ran on (`retained_turns` or `live_fork`, never
 provider-reported input, cached-read, cache-write and output tokens (`null`
 when the provider reported none, never a guessed zero), each try the gate
 refused as its own line, the call's step hash and the home parts it wore,
-and, on the live fork, every row the captured request was read from.
+and, on the live fork, every row the captured request was read from. A call
+refused after it went out keeps its own record as the pass's last try: what
+ran it and what it wore, with its usage `null` unless the provider reported
+it; it answered nothing, so no step is filed for it.
 The epoch's receipt rides its coverage row and is named by its SUMMARY's
 birth; a fold's rides its fold record. The run's `compaction` object shows
 the last pass as `self_writer` (landed or not) and every summary the run
@@ -3417,6 +3446,35 @@ tier's checkpoint stops tagging and names that tier in the log.
 configured processing language as a lowercase ISO 639 code. It covers every
 vault turn the tagger reads. Leave it unset when the vault's language is
 unknown or mixed; unset sends no configured language.
+
+`[oneironer.relations]` maps a tagger's relation labels to claim
+predicates, for a tagger whose model card declares `"relations": true`:
+
+```toml
+[oneironer.relations]
+works_at = "work.employer"
+```
+
+The tagger saves the relations it reads between a turn's spans with the
+turn's tags, and `vault.tagging.tags` shows them. A relation is a tag, never
+a claim: the Dreamer's child authors any claim (JointIE, ARCH-0026). Each
+predicate must be one a public claim write takes: two or more dotted
+lowercase segments, outside the engine's reserved namespaces (`edge.*`,
+`skill.*`, `actor.*` and the other engine-owned families), or the server
+refuses to start.
+
+When the Dreamer consolidates a slice whose every turn holds a current tag
+set from the configured tagger with relations, it extracts that slice from
+the relations instead of calling the extraction model. Each relation whose
+label the table maps files one candidate claim: the head span's linked
+entity as its subject, the table's predicate, the tail span's words as its
+value, and the turn as its evidence. Its corrections and conflicts are
+decided as a model's candidates are. Such a slice files only the relations
+its table maps, even where the extraction model would have filed more. A
+slice with a turn the tagger has not tagged, or tagged without relations,
+keeps the extraction model. The table is read when it is used, so changing
+it needs no new tagging pass, and an empty table, the default, leaves every
+slice to the extraction model.
 
 `device = "cuda"` opens only in a server built with candle's CUDA kernels,
 and a named device never falls back to the CPU: a build without them refuses
