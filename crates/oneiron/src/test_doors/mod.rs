@@ -270,6 +270,8 @@ pub mod space_move_window;
 pub mod spend;
 pub mod spent_seat;
 pub mod split_phrase_carrier;
+#[cfg(feature = "sync")]
+pub mod staged_vault_import;
 pub mod steward;
 pub mod stretch_pack_finalize;
 pub mod substrate_reads;
