@@ -41,13 +41,15 @@ pub(crate) const PREFERRED_P50_GAIN: f64 = 0.03;
 pub(crate) const PREFERRED_P95_SLACK: f64 = 0.05;
 
 /// How far an engine's answer may sit from the reference and still clear it.
-/// Spans, labels and links must be the reference's own; only the scores move.
+/// Spans, labels, links, relations and mood windows must be the reference's
+/// own; only the scores move.
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Bar {
-    /// Largest difference allowed in any span or link confidence.
+    /// Largest difference allowed in any span, link or relation confidence.
     pub(crate) max_confidence_delta: f32,
-    /// Largest difference allowed in any mood coordinate.
+    /// Largest difference allowed in any mood coordinate, of the turn's mood
+    /// or of a window's.
     pub(crate) max_vad_delta: f32,
 }
 
@@ -133,11 +135,22 @@ impl Reference {
 }
 
 /// Whether `got` clears the bar against `reference`: the same spans with the
-/// same labels, the same links of every kind, and each confidence and mood
+/// same labels, the same links of every kind, the same relations with the
+/// same labels (an engine that returns none clears only a reference that
+/// returns none), the same mood windows, and each confidence and mood
 /// coordinate within the bar. The stack is identity, checked elsewhere.
 fn clears(bar: Bar, reference: &EncoderOutput, got: &EncoderOutput) -> bool {
     let near = |a: f32, b: f32, delta: f32| (a - b).abs() <= delta;
     let score = |a: f32, b: f32| near(a, b, bar.max_confidence_delta);
+    let mood = |r: &oneiron::affect::Vad, g: &oneiron::affect::Vad| {
+        [
+            (r.valence, g.valence),
+            (r.arousal, g.arousal),
+            (r.dominance, g.dominance),
+        ]
+        .iter()
+        .all(|(r, g)| near(*r, *g, bar.max_vad_delta))
+    };
     pairs(&reference.spans, &got.spans, |r, g| {
         r.message == g.message
             && r.start == g.start
@@ -162,13 +175,22 @@ fn clears(bar: Bar, reference: &EncoderOutput, got: &EncoderOutput) -> bool {
     }) && pairs(&reference.speaker_links, &got.speaker_links, |r, g| {
         r.span == g.span && r.target == g.target && score(r.confidence, g.confidence)
     }) && match (&reference.vad, &got.vad) {
-        (Some(r), Some(g)) => [
-            (r.valence, g.valence),
-            (r.arousal, g.arousal),
-            (r.dominance, g.dominance),
-        ]
-        .iter()
-        .all(|(r, g)| near(*r, *g, bar.max_vad_delta)),
+        (Some(r), Some(g)) => mood(r, g),
+        (None, None) => true,
+        _ => false,
+    } && pairs(&reference.mood_parts, &got.mood_parts, |r, g| {
+        r.message == g.message
+            && r.start == g.start
+            && r.end_message == g.end_message
+            && r.end == g.end
+            && mood(&r.vad, &g.vad)
+    }) && match (&reference.relations, &got.relations) {
+        (Some(r), Some(g)) => pairs(r, g, |r, g| {
+            r.head == g.head
+                && r.tail == g.tail
+                && r.label == g.label
+                && score(r.confidence, g.confidence)
+        }),
         (None, None) => true,
         _ => false,
     }
@@ -367,3 +389,6 @@ pub(super) fn measure_loaded(
         detail: None,
     }
 }
+
+#[cfg(test)]
+mod tests;
