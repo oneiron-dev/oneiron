@@ -45,6 +45,7 @@ impl Vault {
                     commitment,
                     created_at,
                     recovery: RecoveryPreset::Standard,
+                    generation: 0,
                 },
             )?;
             let info = VaultKeyWrapInfo {
@@ -60,8 +61,10 @@ impl Vault {
             WRAPS.put(&self.store, txn, &info.id, &stored)?;
             Ok(info)
         })?;
-        self.hold_vault_key(key);
+        // The mirror's transition finishes whether or not the key is held.
+        let held = self.hold_vault_key(key);
         transition.finish()?;
+        held?;
         Ok(info)
     }
 
@@ -113,11 +116,12 @@ impl Vault {
                     commitment,
                     created_at,
                     recovery: RecoveryPreset::Standard,
+                    generation: 0,
                 },
             )?;
             Ok(true)
         })?;
-        self.hold_vault_key(key);
+        self.hold_vault_key(key)?;
         Ok(created)
     }
 
@@ -144,8 +148,14 @@ impl Vault {
             .into_iter()
             .map(|(_, stored)| stored)
             .collect();
+        let mut links: Vec<KeyHeaderLink> = LINKS
+            .scan(&self.store, txn)?
+            .into_iter()
+            .map(|(_, link)| link)
+            .collect();
+        links.sort_by_key(|link| std::cmp::Reverse(link.generation));
         Ok((
-            CarriedVaultKey::new(state.commitment, state.recovery, wraps),
+            CarriedVaultKey::new(state.commitment, state.recovery, wraps, links),
             key.derive(context, &vault_id),
         ))
     }
@@ -177,6 +187,7 @@ impl Vault {
                     state.commitment,
                     state.recovery,
                     wraps,
+                    Vec::new(),
                 ))
             }
         };
@@ -188,7 +199,7 @@ impl Vault {
             self.vault_id().as_bytes(),
             &VaultKeyUnlock::Device(keystore.as_ref()),
         )?;
-        self.hold_vault_key(key);
+        self.hold_vault_key(key)?;
         // Held either way; a vault that takes no write (archived) wraps it
         // to itself on a later unlock. A wrap that committed on a sealed
         // vault rewrites its mirror, or says it did not.
@@ -207,6 +218,25 @@ impl Vault {
             &VaultKeyWrapKind::Password.id(),
             &UnlockSecret::Passphrase(&passphrase),
         )
+    }
+
+    /// [`Self::unlock_vault_key_with_password`] with `between` run after the
+    /// password wrap opened and before its key is held: a delayed unlock,
+    /// for the test door.
+    #[cfg(oneiron_test_support)]
+    pub(crate) fn unlock_vault_key_with_password_across(
+        &self,
+        password: &[u8],
+        between: impl FnOnce(),
+    ) -> Result<()> {
+        let passphrase =
+            Passphrase::new(password).map_err(|_| refused("the password is not accepted"))?;
+        let key = self.open_vault_key_wrap(
+            &VaultKeyWrapKind::Password.id(),
+            &UnlockSecret::Passphrase(&passphrase),
+        )?;
+        between();
+        self.hold_vault_key(key)
     }
 
     /// Unlocks the vault data key with one passkey's PRF output, borrowed
@@ -264,8 +294,7 @@ impl Vault {
             &presented,
             &UnlockSecret::Hybrid(secret),
         )?;
-        self.hold_vault_key(key);
-        Ok(())
+        self.hold_vault_key(key)
     }
 
     /// Drops the vault data key from this handle once no plaintext copy of
@@ -280,11 +309,7 @@ impl Vault {
         // FIX 14976: no private drafter serves a locked vault; its plaintext
         // goes before the key does.
         self.drafter_serving_locking();
-        *self
-            .world_keys
-            .vault_key
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner) = None;
+        self.drop_held_vault_key();
         receipt
     }
 
@@ -500,5 +525,75 @@ impl Vault {
             .held_vault_key()
             .ok_or_else(|| refused("the vault key is locked"))?;
         Ok(key.derive(context, self.vault_id().as_bytes()))
+    }
+
+    /// The held data key's `context` subkey for a custody publication pass,
+    /// with the key's commitment and the generation the vault stores it at.
+    /// Refused while the key is locked, and when the held key is not the one
+    /// the vault stores, so no head is sealed under a replaced key.
+    pub(crate) fn custody_head_data_key(
+        &self,
+        context: &str,
+    ) -> Result<(Zeroizing<[u8; 32]>, [u8; 32], u32)> {
+        let vault_id = *self.vault_id().as_bytes();
+        let held = self
+            .held_vault_key()
+            .ok_or_else(|| refused("the vault key is locked"))?;
+        let state = {
+            let txn = self.store.env.read_txn()?;
+            STATE.get(&self.store, &txn, &())?
+        }
+        .ok_or_else(|| refused("the vault has no data key"))?;
+        let commitment = held.commitment(&vault_id);
+        if state.commitment != commitment {
+            return Err(refused("this handle holds another vault key"));
+        }
+        Ok((
+            held.derive(context, &vault_id),
+            commitment,
+            state.generation,
+        ))
+    }
+
+    /// A key of its own for `context` for the held vault data key and each of
+    /// its earlier generations: the (commitment, subkey) pairs, the held key
+    /// first. Refused while the key is locked.
+    pub(crate) fn vault_subkeys(
+        &self,
+        context: &str,
+    ) -> Result<Vec<([u8; 32], Zeroizing<[u8; 32]>)>> {
+        let vault_id = *self.vault_id().as_bytes();
+        // The held key and its ring are read under the held key's lock, as
+        // they are set: one generation's pair.
+        let slot = self
+            .world_keys
+            .vault_key
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let held = slot
+            .as_ref()
+            .ok_or_else(|| refused("the vault key is locked"))?;
+        let earlier = self
+            .world_keys
+            .earlier_vault_keys
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let mut keys = Vec::with_capacity(1 + earlier.len());
+        keys.push((held.commitment(&vault_id), held.derive(context, &vault_id)));
+        for key in earlier.iter() {
+            keys.push((key.commitment(&vault_id), key.derive(context, &vault_id)));
+        }
+        Ok(keys)
+    }
+}
+
+impl crate::store::Store {
+    /// The commitment of the data key this vault's key state names, `None`
+    /// while it has none, read in a read transaction of its own: what a
+    /// custody seal checks its recipients' data key against after its
+    /// census.
+    pub(crate) fn stored_vault_key_commitment(&self) -> Result<Option<[u8; 32]>> {
+        let txn = self.env.read_txn()?;
+        Ok(STATE.get(self, &txn, &())?.map(|state| state.commitment))
     }
 }
