@@ -36,6 +36,7 @@ mod door_invariants;
 mod edge_identity;
 mod foundations;
 mod hosted_registration_relay;
+mod hosted_self_host_route;
 mod outage_contracts;
 mod owner_decisions_ledger;
 mod owner_manifest_binding;
