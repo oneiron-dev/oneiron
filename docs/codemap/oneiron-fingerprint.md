@@ -39,6 +39,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/purposes/skill_attribution.rs` | src | s | — | — | Purposes of skill attribution (`crates/oneiron/src/skill_attribution`) |
 | `src/purposes/skill_optimize.rs` | src | s | — | — | Purposes of skill optimization (`crates/oneiron/src/skill_optimize`) |
 | `src/purposes/store.rs` | src | s | — | — | Legacy store digests that existing rows, files and acks hold |
+| `src/purposes/sync.rs` | src | s | — | — | Legacy sync digests stored, sent or compared by existing records and peers |
 | `src/purposes/task.rs` | src | s | — | — | Purposes of tasks (`crates/oneiron/src/task_verb`, `task_type`, `campaign`) |
 | `src/purposes/testing.rs` | src | s | — | — | Purposes for tests only |
 | `src/purposes/vault_import.rs` | src | s | — | — | Purposes of a staged foreign vault import (`oneiron-store` `batch::export::foreign_stage`, sync builds) |

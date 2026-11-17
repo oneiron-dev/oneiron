@@ -116,6 +116,7 @@ pub mod fanout_admission;
 pub mod feed_prune;
 pub mod feeds;
 pub mod file_custody_marks;
+pub mod fingerprint_keep_custody_digests;
 pub mod fingerprint_keep_dreamer;
 pub mod fingerprint_keep_dreamer_consolidation_digests;
 pub mod fingerprint_keep_executor_cohort_credit;
