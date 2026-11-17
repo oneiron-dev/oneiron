@@ -24,6 +24,7 @@ use std::collections::BTreeSet;
 
 use sha2::{Digest, Sha256};
 
+use super::frozen::SavedCredential;
 use super::{RoomTurnCeiling, ScopedReadActorKey};
 use crate::authority::{HostActionGuard, VerifiedSlip};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
@@ -55,6 +56,16 @@ impl ScopedReadActorKey {
         hasher.update(b"oneiron.scoped_read.authority_fingerprint.v1");
         fold_scope(&mut hasher, &self.world_ceiling())?;
         fold_record_bound(&mut hasher, self.record_bound.as_ref());
+        // Only when set, so a key no saved lane bound keeps its fingerprint:
+        // each credential a saved lane froze, and whether it holds now (FIX
+        // OWN-DEVICE-GRANT-NOT-RECHECKED).
+        if !self.saved_credentials.is_empty() {
+            fold_len(&mut hasher, self.saved_credentials.len());
+            for credential in &self.saved_credentials {
+                hasher.update(credential.slip_id());
+                hasher.update([u8::from(credential.holds_in(vault, &txn)?)]);
+            }
+        }
         if let Some(owner) = self.vault_owner_ref() {
             hasher.update([0u8]);
             hasher.update(owner.as_bytes());
@@ -348,9 +359,44 @@ impl ScopedReadActorKey {
         if let Some(holder) = self.agent_grant_holder() {
             key_fold_id(&mut hasher, Some(holder));
         }
-        // Last, and only when set, so every other key keeps its fingerprint:
-        // a reader homed in no conversation of this vault reads no stamped
-        // claim outside a room (RULING SECREAD-HOME-READ-DOORS = B).
+        // The trailing folds, each only when set, so every other key keeps
+        // its fingerprint. First, the credentials saved lanes froze, each
+        // judged in every serving txn (FIX OWN-DEVICE-GRANT-NOT-RECHECKED),
+        // and the earlier end a caveat set one (FIX
+        // SAVED-LANE-OUTLIVES-CAVEAT-EXPIRY).
+        if !self.saved_credentials.is_empty() {
+            key_fold_len(&mut hasher, self.saved_credentials.len());
+            for credential in &self.saved_credentials {
+                let judged = match credential {
+                    SavedCredential::Live {
+                        expires_at: None, ..
+                    } => 0u8,
+                    SavedCredential::Standing(_) => 1u8,
+                    SavedCredential::Live {
+                        expires_at: Some(_),
+                        ..
+                    } => 2u8,
+                };
+                hasher.update(&[judged]);
+                hasher.update(&credential.slip_id());
+                if let Some(end) = credential.expires_at() {
+                    hasher.update(&end.to_be_bytes());
+                }
+            }
+        }
+        // Then a key whose reader's own owner authority is withheld (Sol F3
+        // on #8065).
+        if self.owner_authority_withheld() {
+            hasher.update(b"owner_authority_withheld");
+        }
+        // Then a key rebuilt under a saved lane's floor basis, beside which
+        // the owner alternative stands (blind review round 1 P1 on #8065).
+        if self.rebuilt_under_floor_basis() {
+            hasher.update(b"rebuilt_under_floor_basis");
+        }
+        // Then a reader homed in no conversation of this vault, which reads
+        // no stamped claim outside a room (RULING SECREAD-HOME-READ-DOORS =
+        // B).
         if self.is_homed_unnamed() {
             hasher.update(KEY_FINGERPRINT_HOME_UNNAMED);
             key_fold_id(&mut hasher, self.standing_room);
