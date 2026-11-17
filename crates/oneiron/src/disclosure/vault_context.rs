@@ -404,6 +404,27 @@ impl DisclosureContext {
         })
     }
 
+    /// [`Self::resolve`] read in the caller's snapshot `txn` (fix list row
+    /// 17645): the same mode and the same [`DisclosableSet`] fold, opening
+    /// no snapshot of its own, for a caller that judges rows in that one
+    /// read beside it.
+    pub(crate) fn resolve_in(vault: &Vault, txn: &RoTxn<'_>, set: InterlocutorSet) -> Result<Self> {
+        Ok(Self {
+            mode: DisclosureMode::from_set(&set),
+            disclosable: DisclosableSet::resolve_with_once_in(
+                vault,
+                txn,
+                &set,
+                false,
+                &BTreeMap::new(),
+            )?,
+            interlocutors: set,
+            home: ConversationHome::ThisVault,
+            home_band: None,
+            bound_stretch: None,
+        })
+    }
+
     /// This clamp for a context pack bound to the live room stretch
     /// `session_ref` names, whose every interlocutor is seated in that room
     /// (ARCH-0052 D5 rule 1, ROOM-PACK-STRETCH-TIER-A = A): the stretch's

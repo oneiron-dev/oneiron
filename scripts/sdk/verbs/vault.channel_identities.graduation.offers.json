@@ -1,0 +1,17 @@
+{
+  "name": "vault.channel_identities.graduation.offers",
+  "description": "Reads the standing send graduation offers of the vault's channel identities, each with its scope, streak, evidence and the volume bound auto keeps; reading grants nothing.",
+  "input": "crate::task_verb::sdk::EmptyRequest",
+  "output": "Vec<crate::channel_identity_autonomy::api::ChannelIdentityGraduationOfferView>",
+  "call": "crate::channel_identity_autonomy::api::offers(memory.vault(), &memory.embedded_owner(\"vault.channel_identities.graduation.offers\")?)?",
+  "scope": "Read",
+  "act_class": "read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "host_door": true,
+  "host_door_lists": true,
+  "openapi": true,
+  "host_door_proof": "owner"
+}
