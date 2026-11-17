@@ -802,6 +802,7 @@ fn witness_evidence_turn(vault: &oneiron::Vault) -> oneiron::EntityId {
             conversation_ref: oneiron::EntityId::now().to_hex(),
             turn_ref: None,
             thread_audience: None,
+            project: None,
             messages: vec![oneiron::memory::WitnessMessage {
                 id: None,
                 author: oneiron::memory::WitnessAuthor::User,
