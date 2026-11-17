@@ -26,8 +26,8 @@ const MISSING_WRITER: &str = "writer must name a live authority-bearing entity";
 fn open_vault() -> (tempfile::TempDir, Vault) {
     let dir = tempfile::tempdir().expect("temporary vault directory");
     let vault = Vault::open(dir.path(), VaultConfig::default()).expect("open vault");
-    // A plain delete seals its tombstone under a device key, so the host
-    // installs a keystore, as every delete fixture does.
+    // A plain delete reads the device keystore (`KeystoreUnavailable`
+    // without one), so the host installs one, as main's delete fixtures do.
     vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
     (dir, vault)
 }
