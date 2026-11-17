@@ -19,7 +19,7 @@ use crate::side_table::{self, Named, SideTable, SideTableDbs};
 type Events = SideTable<(EntityId, u64), LegalHoldEvent, Named>;
 
 /// Customer holds' log. Key: id16 (hold) + u64be (sequence).
-const EVENTS: Events = SideTable::new(&side_table::LEGAL_HOLD_EVENT);
+pub(super) const EVENTS: Events = SideTable::new(&side_table::LEGAL_HOLD_EVENT);
 /// The host-only log. Key: id16 (hold) + u64be (sequence).
 const HOST_EVENTS: Events = SideTable::new(&side_table::LEGAL_HOLD_HOST_EVENT);
 
