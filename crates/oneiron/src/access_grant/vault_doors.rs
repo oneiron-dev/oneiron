@@ -317,6 +317,16 @@ impl Vault {
         &self,
         calendar_ref: &EntityId,
     ) -> Result<Vec<CalendarAccessGrantRow>> {
+        self.list_calendar_access_grants_naming(std::slice::from_ref(calendar_ref))
+    }
+
+    /// Lists every access grant whose scope names one of `calendar_refs`,
+    /// revoked rows included, in one walk: the rows a booking page's grant
+    /// view judges live for its caller (ARCH-0062 #grant-view).
+    pub fn list_calendar_access_grants_naming(
+        &self,
+        calendar_refs: &[EntityId],
+    ) -> Result<Vec<CalendarAccessGrantRow>> {
         let rtxn = self.store.env.read_txn()?;
         let mut rows = Vec::new();
         for entry in self
@@ -347,7 +357,10 @@ impl Vault {
             let Some(grant) = super::codec::decode_live_access_grant_body(&body)? else {
                 continue;
             };
-            if grant.scope.calendar_rung(calendar_ref).is_some() {
+            if calendar_refs
+                .iter()
+                .any(|calendar_ref| grant.scope.calendar_rung(calendar_ref).is_some())
+            {
                 rows.push(CalendarAccessGrantRow { grant_ref, grant });
             }
         }
