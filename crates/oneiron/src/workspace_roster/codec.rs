@@ -386,22 +386,33 @@ pub(super) fn roster_member_value(row: &RosterMemberRow) -> Value {
         CompanionOrigin::Unrecorded => {}
     }
     if let Some(link) = row.personal_vault {
-        entries.push((
-            Value::from("personal_vault_id"),
-            Value::from(crate::entity_id::bytes_to_hex_lower(&link.vault)),
-        ));
-        entries.push((
-            Value::from("personal_vault_origin"),
-            Value::from(link.origin.as_str()),
-        ));
+        entries.extend(personal_vault_entries(&link));
     }
     Value::Map(entries)
 }
 
+/// The two keys a stored personal-vault link is written under: in a roster
+/// row, and in the journal row of the offboarding that handed it over.
+pub(super) fn personal_vault_entries(link: &PersonalVaultLink) -> [(Value, Value); 2] {
+    [
+        (
+            Value::from("personal_vault_id"),
+            Value::from(crate::entity_id::bytes_to_hex_lower(&link.vault)),
+        ),
+        (
+            Value::from("personal_vault_origin"),
+            Value::from(link.origin.as_str()),
+        ),
+    ]
+}
+
 /// The personal vault a roster row links; a row with neither
 /// `personal_vault_*` key links none, as every row written before the link
-/// does (STORED-CHANGE keep path).
-fn decode_personal_vault(entries: &[(Value, Value)]) -> Result<Option<PersonalVaultLink>> {
+/// does (STORED-CHANGE keep path). An offboarding's journal row reads the
+/// vault it handed over the same way.
+pub(super) fn decode_personal_vault(
+    entries: &[(Value, Value)],
+) -> Result<Option<PersonalVaultLink>> {
     let field = |name: &str| {
         entries
             .iter()

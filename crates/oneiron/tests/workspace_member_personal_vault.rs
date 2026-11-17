@@ -10,7 +10,12 @@
 //! The seat's inquiry route to the vault ends with the seat, as every seat
 //! end does (`federation/shared_act/membership.rs`, INQUIRE-1 PR 4).
 //!
-//! Public paths only, no `cfg`: `cargo test --locked -p oneiron
+//! A replay of the offboarding names the vault it handed over again, and a
+//! share the leaver's actor holds is revoked through the share door rather
+//! than stopping the offboarding (review #8311 round 1).
+//!
+//! Public paths only, no `cfg` flag (the share case's policy door is the
+//! `test-support` feature's): `cargo test --locked -p oneiron
 //! --all-features --test workspace_member_personal_vault`. On #8125's head
 //! the file does not build: the intent has no `personal_vault`.
 
@@ -375,4 +380,123 @@ fn a_vault_id_that_is_not_32_bytes_of_hex_is_refused() {
     let parsed = PersonalVaultLink::from_view(&view(BROUGHT_VAULT, PersonalVaultOrigin::Brought))
         .expect("64 hex parse");
     assert_eq!(parsed.vault, BROUGHT_VAULT);
+}
+
+/// A replay of the offboarding after the host lost its answer names the
+/// vault it handed over again: the roster row that linked it is gone, so
+/// the offboarding's journal keeps it.
+#[test]
+fn a_replayed_offboarding_names_the_vault_it_handed_over() -> Result<()> {
+    let fixture = fixture()?;
+    let link = PersonalVaultLink {
+        vault: MINTED_VAULT,
+        origin: PersonalVaultOrigin::Minted,
+    };
+    let intent = fixture.intent("vault-link-lost-answer", Some(link))?;
+    let member = intent.person_ref;
+    fixture.onboard(intent)?;
+
+    let first = fixture.offboard("vault-link-lost-answer-off", member)?;
+    let replayed = fixture.offboard("vault-link-lost-answer-off", member)?;
+    assert_eq!(
+        replayed.personal_vault,
+        Some(view(MINTED_VAULT, PersonalVaultOrigin::Minted)),
+        "the replay names the vault the first call handed over"
+    );
+    assert_eq!(replayed.personal_vault, first.personal_vault);
+    Ok(())
+}
+
+/// The share case reads the policy manifest through the `test-support`
+/// feature's doors, which `--all-features` turns on.
+#[cfg(feature = "test-support")]
+mod share_held_by_leaver {
+    use std::collections::BTreeSet;
+
+    use oneiron::access_grant::AccessGrantStatus;
+    use oneiron::note::TakeTarget;
+    use oneiron::share::Share;
+
+    use super::*;
+
+    /// The owner's scoped grant that lets a brief share be created, beside the
+    /// shipped policy.
+    fn permit_brief_share(fixture: &Fixture) -> Result<()> {
+        let id = oneiron_store::policy_record::default_policy_manifest_id()
+            .expect("the default manifest id");
+        let bytes = fixture
+            .vault
+            .get(&id)?
+            .expect("the shipped manifest is stored");
+        let mut manifest: serde_json::Value =
+            rmp_serde::from_slice(&bytes).expect("decode shipped manifest");
+        manifest["scoped_grants"]
+            .as_array_mut()
+            .expect("the shipped scoped-grant table")
+            .push(serde_json::json!({
+                "actor_ref": fixture.owner.to_hex(),
+                "effector": "external:share_brief",
+                "scope": oneiron::test_support::effect_preset(),
+                "selectors": { "channel": "shared_brief" },
+            }));
+        oneiron::test_support::put_policy_manifest_bytes(
+            &fixture.vault,
+            id,
+            &rmp_serde::to_vec_named(&manifest).expect("encode share permission"),
+        )
+        .expect("store the share permission beside the shipped policy");
+        Ok(())
+    }
+
+    /// A brief shared with the leaver's actor is revoked with the rest of the
+    /// leaver's grants, through the share door's own writer: the generic grant
+    /// revoker refuses a share, which stopped the whole offboarding.
+    #[test]
+    fn a_share_the_leavers_actor_holds_is_revoked_at_offboarding() -> Result<()> {
+        let fixture = fixture()?;
+        let intent = fixture.intent("share-held-by-leaver", None)?;
+        let member = intent.person_ref;
+        let actor = intent.actor_ref;
+        fixture.onboard(intent)?;
+
+        permit_brief_share(&fixture)?;
+        let brief = fixture
+            .vault
+            .memory(fixture.owner, EdgeActorClass::Human)
+            .author_take(TakeTarget::Subject(member), "A brief for the member")
+            .expect("stored NOTE brief")
+            .id_hex;
+        let share_id = EntityId::now();
+        let now = fixture.vault.now_recorded_at();
+        fixture.vault.create_share(
+            &share_id,
+            &WriteActor::new(fixture.owner, EdgeActorClass::Human),
+            &Share {
+                recipient_ref: actor,
+                brief_ref: brief,
+                world_refs: BTreeSet::new(),
+                facet_refs: BTreeSet::new(),
+                include_unscoped: true,
+                status: AccessGrantStatus::Active,
+                created_at: now,
+                revoked_at: None,
+                expires_at: None,
+                mention: None,
+            },
+        )?;
+
+        let offboarded = fixture.offboard("share-held-by-leaver-off", member)?;
+        assert!(
+            offboarded.access_grants_revoked.contains(&share_id),
+            "the share is among the revoked grants: {:?}",
+            offboarded.access_grants_revoked
+        );
+        let share = fixture
+            .vault
+            .get_share(&share_id)?
+            .expect("the share reads");
+        assert_eq!(share.status, AccessGrantStatus::Revoked);
+        assert!(!fixture.on_roster(member)?, "the offboarding completed");
+        Ok(())
+    }
 }

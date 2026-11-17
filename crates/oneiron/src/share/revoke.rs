@@ -32,7 +32,7 @@ impl Vault {
         revoked_at: u64,
     ) -> Result<Share> {
         let mut txn = self.store.env.write_txn()?;
-        let (mut share, mut admission) =
+        let (mut share, admission) =
             read_admitted_share_in_txn(&self.store, &txn, share_id)?.ok_or_else(revoke_refused)?;
         verify_share_actor(&self.store, &txn, actor).map_err(|error| match error {
             Error::EntityNotFound => revoke_refused(),
@@ -50,19 +50,45 @@ impl Vault {
         if share.status == AccessGrantStatus::Revoked {
             return Ok(share);
         }
+        self.revoke_admitted_share_in_txn(&mut txn, share_id, *actor, revoked_at)?;
+        txn.commit()?;
+        share.status = AccessGrantStatus::Revoked;
+        share.revoked_at = Some(revoked_at);
+        Ok(share)
+    }
+
+    /// Revokes the admitted share `share_id` in `txn` as `revoker`, whose
+    /// authority to stop it the caller's own act already carries (the
+    /// owner's offboarding of its recipient): the grant's revoked body and
+    /// the admission's revoke, as [`Vault::revoke_share`] writes them. A
+    /// revoked share stays as it is.
+    ///
+    /// # Errors
+    ///
+    /// `EntityNotFound` for a share the share door never admitted, and
+    /// storage errors.
+    pub(crate) fn revoke_admitted_share_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        share_id: &EntityId,
+        revoker: WriteActor,
+        revoked_at: u64,
+    ) -> Result<()> {
+        let (share, mut admission) =
+            read_admitted_share_in_txn(&self.store, txn, share_id)?.ok_or(Error::EntityNotFound)?;
+        if share.status == AccessGrantStatus::Revoked {
+            return Ok(());
+        }
         let revoked = share.grant().revoked(revoked_at)?;
         self.apply_access_grant_body(
-            &mut txn,
+            txn,
             share_id,
             revoked_at,
             encode_access_grant_body(&revoked)?,
         )?;
         admission.revoked_at = Some(revoked_at);
-        admission.revoker = Some(*actor);
-        ADMISSIONS.put(&self.store, &mut txn, share_id, &admission.encode())?;
-        txn.commit()?;
-        share.status = AccessGrantStatus::Revoked;
-        share.revoked_at = Some(revoked_at);
-        Ok(share)
+        admission.revoker = Some(revoker);
+        ADMISSIONS.put(&self.store, txn, share_id, &admission.encode())?;
+        Ok(())
     }
 }

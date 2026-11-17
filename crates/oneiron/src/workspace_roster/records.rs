@@ -174,18 +174,22 @@ pub(super) const OFFBOARDING: SideTable<String, OffboardingJournalRow, Raw> =
     SideTable::new(&side_table::WORKSPACE_OFFBOARDING);
 
 /// One [`OFFBOARDING`] row. Like the onboarding journal it pins the digest
-/// of the request and stores no refs: the request names its workspace and
-/// member, and the outcome of the first call is that call's answer.
+/// of the request, and the request names its workspace and member. Of the
+/// first call's outcome it keeps the one part the request cannot name and
+/// the roster row no longer holds: the personal vault it handed over, so a
+/// replay after a lost answer still names it for the host.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct OffboardingJournalRow {
     pub(super) offboarding_id: String,
     pub(super) intent_digest: [u8; 32],
     pub(super) completed_at: u64,
+    /// The personal vault the member's roster row linked, handed over.
+    pub(super) personal_vault: Option<PersonalVaultLink>,
 }
 
 impl RawValue for OffboardingJournalRow {
     fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
-        Ok(encode_value(&Value::Map(vec![
+        let mut entries = vec![
             (
                 Value::from("schema_version"),
                 Value::from(WORKSPACE_ROSTER_SCHEMA_VERSION),
@@ -199,7 +203,11 @@ impl RawValue for OffboardingJournalRow {
                 Value::Binary(self.intent_digest.to_vec()),
             ),
             (Value::from("completed_at"), Value::from(self.completed_at)),
-        ]))?)
+        ];
+        if let Some(link) = &self.personal_vault {
+            entries.extend(personal_vault_entries(link));
+        }
+        Ok(encode_value(&Value::Map(entries))?)
     }
 
     fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
@@ -222,6 +230,7 @@ impl RawValue for OffboardingJournalRow {
             offboarding_id,
             intent_digest,
             completed_at,
+            personal_vault: decode_personal_vault(&entries)?,
         })
     }
 }

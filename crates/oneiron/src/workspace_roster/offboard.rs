@@ -423,8 +423,14 @@ impl Vault {
                 outcome.made_by.push(made);
             }
         }
-        outcome.access_grants_revoked =
-            revoke_leaver_access_grants_in_txn(self, txn, &actors, born_grant, now)?;
+        outcome.access_grants_revoked = revoke_leaver_access_grants_in_txn(
+            self,
+            txn,
+            &actors,
+            born_grant,
+            WriteActor::new(offboarder, EdgeActorClass::Human),
+            now,
+        )?;
         // "Revoke the actor" (ARCH-0063:152): a slip the actor holds would
         // still read under its owner-minted agent Grants, which judge the
         // Grant and its pact, not the definition switched off above.
@@ -540,6 +546,7 @@ impl Vault {
                 offboarding_id: intent.offboarding_id.clone(),
                 intent_digest: *digest,
                 completed_at: now,
+                personal_vault: row.personal_vault,
             },
         )?;
 
@@ -607,11 +614,11 @@ fn replay(
             "offboarding_id was already used with different inputs",
         ));
     }
-    Ok(MemberOffboardingOutcome::new(
-        intent,
-        done.completed_at,
-        true,
-    ))
+    let mut outcome = MemberOffboardingOutcome::new(intent, done.completed_at, true);
+    // The vault the first call handed over: the host may have lost that
+    // answer before it moved the vault.
+    outcome.personal_vault = done.personal_vault.as_ref().map(PersonalVaultLink::view);
+    Ok(outcome)
 }
 
 /// A member leaves on their own through `vault.members.leave`; an
@@ -671,12 +678,15 @@ fn custody_live_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>, name: &str) -> Resu
 
 /// Revokes every live access grant one of `actors` holds, and the
 /// companion-profile grant `born_grant` minted for a born companion: the
-/// revoked ids.
+/// revoked ids. A share one of them holds is revoked through the share
+/// door's own writer, as `offboarder`'s revoke, so its admission records the
+/// revoke too; the generic revoker refuses a share.
 fn revoke_leaver_access_grants_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     actors: &[EntityId],
     born_grant: Option<EntityId>,
+    offboarder: WriteActor,
     now: u64,
 ) -> Result<Vec<EntityId>> {
     let mut ids = Vec::new();
@@ -705,13 +715,18 @@ fn revoke_leaver_access_grants_in_txn(
         if grant.status == crate::access_grant::AccessGrantStatus::Active
             && (actors.contains(&grant.principal_ref) || born_grant == Some(id))
         {
-            doomed.push(id);
+            let share = crate::share::is_share_grant_in_txn(vault, txn, &id, &grant)?;
+            doomed.push((id, share));
         }
     }
-    for id in &doomed {
-        vault.revoke_admitted_access_grant_in_txn(txn, id, now, |_| Ok(()))?;
+    for (id, share) in &doomed {
+        if *share {
+            vault.revoke_admitted_share_in_txn(txn, id, offboarder, now)?;
+        } else {
+            vault.revoke_admitted_access_grant_in_txn(txn, id, now, |_| Ok(()))?;
+        }
     }
-    Ok(doomed)
+    Ok(doomed.into_iter().map(|(id, _)| id).collect())
 }
 
 /// Ends the membership of each of `leavers` in every live room they stand
