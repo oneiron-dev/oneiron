@@ -9,7 +9,8 @@
 //!   state. The key's hook keeps what the old setter did: a custody record not bound to
 //!   `origin:mirror-push` refuses the set; a strategy change moves `strategy_revision` and keeps
 //!   the target generation; a new URL takes a fresh generation and keeps the revision; a row at
-//!   the vault scope is refused; a clear removes the mirror.
+//!   the vault scope is refused; a clear removes the mirror; a pin is refused, so the key's one
+//!   row at the repository is the row in force and the mirror's state follows it.
 //! - an agent's change to either key waits on a check-in: both are owner acts.
 //!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test setting_keyed_a_2`.
@@ -389,6 +390,43 @@ fn the_mirror_is_the_owners_setup_joined_with_its_state() {
             .served_origin_mirror(REPO)
             .expect("mirror read")
             .is_none()
+    );
+}
+
+#[test]
+fn the_mirror_takes_no_pin_so_its_one_row_stays_in_force() {
+    let fx = Fixture::rooted();
+    let me = fx.as_owner();
+    let repo_id = fx.register(REPO);
+    register_bound_secret(&fx.vault, TOKEN, b"push-token", PUSH_EFFECTOR).expect("custody");
+    let url = "https://git.example.com/you/demo.git";
+    call(
+        &me,
+        SET,
+        set_at(MIRROR, repo(repo_id), setup(url, "schedule")),
+    );
+    let before = fx
+        .vault
+        .served_origin_mirror(REPO)
+        .expect("mirror read")
+        .expect("the owner's mirror");
+
+    let mut pin = set_at(MIRROR, repo(repo_id), setup(url, "schedule"));
+    pin["pin"] = json!(true);
+    let pinned = refused(&me, SET, pin);
+    assert!(pinned.contains("takes no pin"), "{pinned}");
+
+    let read = call(&me, GET, json!({ "key": MIRROR, "at": [repo(repo_id)] }));
+    assert_eq!(
+        read["source"],
+        json!({ "from": "row", "scope": repo(repo_id) }),
+        "{read}"
+    );
+    assert_eq!(read["value"]["url"], json!(url), "{read}");
+    assert_eq!(
+        fx.vault.served_origin_mirror(REPO).expect("mirror read"),
+        Some(before),
+        "the refused pin leaves the mirror and its state"
     );
 }
 
