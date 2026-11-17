@@ -11,6 +11,7 @@ use crate::attempt_queue::AttemptId;
 use crate::connector_key::BudgetBlock;
 use crate::error::Error;
 use crate::side_table::{self, Raw, SideKey, SideTable};
+use oneiron_contracts::lifecycle::Lifecycle;
 
 mod approval;
 pub(crate) mod checkpoint;
@@ -575,7 +576,7 @@ pub(crate) fn reconcile_connector_intent_in_txn(
         // A pre-send authority refusal cannot negate a prior in-flight call.
         // Pending/None is durable admission and may have crossed the wire.
         record.delivery_uncertain |= record.recorded_outcome.is_none();
-        record.state = IntentState::Abandoned;
+        record.state.transition_to(IntentState::Abandoned)?;
         record.recorded_outcome = Some(RecordedOutboundOutcome::Abandoned(reason));
         record.updated_ms = now_ms.max(record.created_ms);
         put_ledger_record(vault, wtxn, &record)?;
@@ -719,7 +720,7 @@ fn update_pending_recorded_outcome(
     {
         // A newer semantic attempt took over after the no-wire window. The
         // old permit must never reopen that sender after the takeover.
-        record.state = IntentState::Abandoned;
+        record.state.transition_to(IntentState::Abandoned)?;
         record.recorded_outcome = Some(RecordedOutboundOutcome::Abandoned(
             IntentEscalationReason::DedupeReservationReplaced,
         ));
