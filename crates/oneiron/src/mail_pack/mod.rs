@@ -42,7 +42,7 @@ mod attachments;
 mod caldav_calendar;
 mod calendar;
 pub(crate) mod claim_recheck;
-mod compliance;
+pub(crate) mod compliance;
 mod credential;
 mod dav_xml;
 mod doors;
