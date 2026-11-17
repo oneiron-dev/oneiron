@@ -69,7 +69,7 @@ fn validate_event_type(event_type: &EventTypeKey) -> Result<(), ApiError> {
 
 /// A session ref of any length (ABC row 68): a long one names its card by a
 /// digest in the front.
-fn validate_session_ref(session_ref: &str) -> Result<(), ApiError> {
+pub(super) fn validate_session_ref(session_ref: &str) -> Result<(), ApiError> {
     if session_ref.is_empty() {
         return Err(ApiError::bad_request(
             "session_ref must not be empty",

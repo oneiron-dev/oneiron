@@ -41,6 +41,7 @@ pub(crate) fn settings_schema_keys(section: Option<&str>) -> Option<&'static [&'
         "merge_queue" => struct_fields::<super::MergeQueueCheckerConfig>(),
         "gpu" => struct_fields::<crate::runtime::GpuPoolConfig>(),
         "native_mail" => struct_fields::<super::NativeMailConfig>(),
+        "booking" => struct_fields::<crate::config::BookingConfig>(),
         "device_sync" => struct_fields::<super::DeviceSyncConfig>(),
         "embedding" => struct_fields::<super::EmbeddingConfig>(),
         "line" => struct_fields::<super::LineConfig>(),
@@ -136,6 +137,9 @@ pub(super) fn validate_serve_config(config: &ServeConfig) -> anyhow::Result<()> 
     }
     if let Some(gpu) = &config.gpu {
         gpu.validate()?;
+    }
+    if let Some(booking) = &config.booking {
+        booking.validate()?;
     }
     if let Some(native_mail) = &config.native_mail {
         native_mail.validate()?;

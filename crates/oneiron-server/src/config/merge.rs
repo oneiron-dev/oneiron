@@ -461,6 +461,7 @@ struct FileServeConfig {
     merge_queue: Option<super::MergeQueueCheckerConfig>,
     gpu: Option<crate::runtime::GpuPoolConfig>,
     native_mail: Option<super::NativeMailConfig>,
+    booking: Option<super::BookingConfig>,
     device_sync: Option<super::DeviceSyncConfig>,
     shared_env: Option<Vec<super::SharedEnvConfig>>,
     connectors: Option<std::collections::BTreeMap<String, super::ConnectorHostConfig>>,
@@ -538,6 +539,7 @@ impl From<FileServeConfig> for PartialServeConfig {
             merge_queue: value.merge_queue,
             gpu: value.gpu,
             native_mail: value.native_mail,
+            booking: value.booking,
             device_sync: value.device_sync,
             shared_env: value.shared_env,
             connectors: value.connectors,
@@ -628,6 +630,8 @@ struct PartialServeConfig {
     gpu: Option<crate::runtime::GpuPoolConfig>,
     /// `[native_mail]` is file-only, as `[browser]` is.
     native_mail: Option<super::NativeMailConfig>,
+    /// `[booking]` is file-only, as `[native_mail]` is.
+    booking: Option<super::BookingConfig>,
     /// `[device_sync]` is file-only, as `[native_mail]` is.
     device_sync: Option<super::DeviceSyncConfig>,
     /// `[[shared_env]]` is file-only: explicit dedicated-env paths and
@@ -739,6 +743,7 @@ impl fmt::Debug for PartialServeConfig {
             .field("merge_queue", &self.merge_queue)
             .field("gpu", &self.gpu)
             .field("native_mail", &self.native_mail)
+            .field("booking", &self.booking)
             .field("device_sync", &self.device_sync)
             .field("shared_env", &self.shared_env)
             .field("connectors", &self.connectors)
@@ -849,6 +854,7 @@ impl From<&ServeArgs> for PartialServeConfig {
             merge_queue: None,
             gpu: None,
             native_mail: None,
+            booking: None,
             device_sync: None,
             shared_env: None,
             connectors: None,

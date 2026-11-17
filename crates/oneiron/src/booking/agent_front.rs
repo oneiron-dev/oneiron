@@ -342,7 +342,9 @@ pub fn constraint_no_fit(
 /// `max_offered` (the page's [`ConstraintFrontConfig::max_offered_slots`]),
 /// keep the top-ranked `max_offered` and preserve the oracle's relative order
 /// among them. Nothing is invented, rewritten, or rounded.
-fn top_ranked_slots(slots: &[RankedSlot], max_offered: u16) -> Vec<&RankedSlot> {
+/// A rung-2 first send offers the same slots a card would render.
+#[must_use]
+pub fn top_ranked_slots(slots: &[RankedSlot], max_offered: u16) -> Vec<&RankedSlot> {
     let max_offered = usize::from(max_offered);
     if slots.len() <= max_offered {
         return slots.iter().collect();

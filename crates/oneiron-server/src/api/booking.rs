@@ -67,6 +67,8 @@ mod page_token;
 mod public;
 mod public_availability;
 mod quarantine_restore;
+mod rung2;
+mod rung2_copy;
 mod socket_gate;
 mod subject;
 mod transport;
