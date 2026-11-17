@@ -26,82 +26,40 @@
     reason = "KS7-2b and KS7-5 call the getters; CHECKPOINT_PAYLOADS_ENABLED is false until KS7-6"
 )]
 
-use heed::{RoTxn, RwTxn};
-
 use super::{HELD, RECORDS};
 use crate::EntityId;
-use crate::error::Result;
-use crate::side_table::{SideKey, SideTableDecl};
-use crate::store::ManifestDbs;
-use crate::store::checkpoint_payload::rows::{
-    self, Captured, OpenedOwnerRows, OwnerRef, OwnerRows, Restored, RowLocator,
+use crate::side_table::SideKey;
+use crate::store::checkpoint_payload::rows::descriptor::{
+    Adapter, Capture, Check, ExactTable, Join,
 };
+use crate::store::checkpoint_payload::rows::{OwnerRef, RowLocator};
 
-/// Every binding and hold in `txn`, each under the row its key names.
-pub(crate) fn capture(dbs: &impl ManifestDbs, txn: &RoTxn<'_>) -> Result<Captured> {
-    let mut out = Captured::default();
-    for row in rows::typed_rows(dbs, txn, RECORDS, &mut out)? {
-        out.exact(OwnerRef::entity(&row.key), row.at, row.bytes);
-    }
-    for row in rows::typed_rows(dbs, txn, HELD, &mut out)? {
-        out.exact(OwnerRef::entity(&row.key), row.at, row.bytes);
-    }
-    Ok(out)
-}
-
-/// The tables this getter places.
-fn tables() -> [&'static SideTableDecl; 2] {
-    [RECORDS.decl(), HELD.decl()]
-}
-
-fn owns(at: &RowLocator) -> bool {
-    tables().into_iter().any(|decl| at.in_table(decl))
-}
-
-/// The bundle framing of `rows`' source-audience parts.
-pub(crate) fn bytes_for_owner(rows: &OwnerRows) -> Result<Vec<u8>> {
-    rows::frame_owner(rows, owns)
-}
-
-fn check(at: &RowLocator, value: &[u8]) -> Result<()> {
-    if at.in_table(RECORDS.decl()) {
-        rows::check_row(RECORDS, at, value)
-    } else if at.in_table(HELD.decl()) {
-        rows::check_row(HELD, at, value)
-    } else {
-        Err(rows::bad_part())
-    }
-}
+/// Every binding and hold, each whole under the row its key names. A
+/// restored part must be a row its own table's codec reads, whose key names
+/// the compartment's own row.
+pub(crate) static ADAPTER: Adapter = Adapter {
+    tables: &[
+        &ExactTable {
+            table: RECORDS,
+            owner: OwnerRef::entity,
+        },
+        &ExactTable {
+            table: HELD,
+            owner: OwnerRef::entity,
+        },
+    ],
+    capture: Capture::ByTable,
+    check: Check::ByTable,
+    row_owner: Some(row_of),
+    join: Join::NoSplit,
+};
 
 /// The row a part's key names: its owner.
 fn row_of(at: &RowLocator) -> Option<OwnerRef> {
-    tables()
+    [RECORDS.decl(), HELD.decl()]
         .into_iter()
         .find(|decl| at.in_table(decl))
         .and_then(|decl| at.key.strip_prefix(decl.prefix))
         .and_then(EntityId::decode_key)
         .map(|row| OwnerRef::entity(&row))
-}
-
-/// Puts `opened`'s source-audience rows back exactly, each one its table's
-/// codec reads and whose key names the compartment's own row.
-pub(crate) fn restore_in_txn(
-    dbs: &impl ManifestDbs,
-    txn: &mut RwTxn<'_>,
-    opened: OpenedOwnerRows,
-) -> Result<Restored> {
-    let (subtype, owner32) = (opened.subtype, opened.owner32);
-    rows::restore_parts(
-        dbs,
-        txn,
-        &opened,
-        |at, value| {
-            check(at, value)?;
-            match row_of(at) {
-                Some(row) if row.subtype == subtype && row.owner32 == owner32 => Ok(()),
-                _ => Err(rows::bad_part()),
-            }
-        },
-        rows::no_join,
-    )
 }

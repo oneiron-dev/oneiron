@@ -2,54 +2,45 @@
 //! entity tree. A restore that carried current LIVE rows preserves its refusal
 //! rows and their absence instead of reviving captured refusals.
 
-use heed::{RoTxn, RwTxn};
-
 use super::{MEDIA_REFUSED, MEDIA_VECTOR};
 use crate::embed::EmbeddingProvenance;
 use crate::entity_id::EntityId;
-use crate::error::Result;
 use crate::side_table::{self, Named, SideTable};
-use crate::store::ManifestDbs;
-use crate::store::checkpoint_payload::rows::{
-    self, Captured, OpenedOwnerRows, OwnerRef, OwnerRows, Restored, RowLocator,
+use crate::store::checkpoint_payload::rows::descriptor::{
+    Adapter, Capture, Check, ExactTable, Join,
 };
+use crate::store::checkpoint_payload::rows::{OpenedOwnerRows, OwnerRef};
 
 const MEDIA_DEVICE: SideTable<([u8; 16], EntityId), EmbeddingProvenance, Named> =
     SideTable::new(&side_table::EMBEDDING_MEDIA_DEVICE);
 
-pub(crate) fn capture(dbs: &impl ManifestDbs, txn: &RoTxn<'_>) -> Result<Captured> {
-    let mut out = Captured::default();
-    for row in rows::typed_rows(dbs, txn, MEDIA_VECTOR, &mut out)? {
-        out.exact(OwnerRef::entity(&row.key.1), row.at, row.bytes);
-    }
-    for row in rows::typed_rows(dbs, txn, MEDIA_DEVICE, &mut out)? {
-        out.exact(OwnerRef::entity(&row.key.1), row.at, row.bytes);
-    }
-    for row in rows::typed_rows(dbs, txn, MEDIA_REFUSED, &mut out)? {
-        out.exact(OwnerRef::entity(&row.key.1), row.at, row.bytes);
-    }
-    Ok(out)
+/// The source document a media row's key names.
+fn source_document(key: &([u8; 16], EntityId)) -> OwnerRef {
+    OwnerRef::entity(&key.1)
 }
 
-fn owns(at: &RowLocator) -> bool {
-    at.in_table(MEDIA_VECTOR.decl())
-        || at.in_table(MEDIA_DEVICE.decl())
-        || at.in_table(MEDIA_REFUSED.decl())
-}
-
-pub(crate) fn bytes_for_owner(rows: &OwnerRows) -> Result<Vec<u8>> {
-    rows::frame_owner(rows, owns)
-}
-
-fn check(at: &RowLocator, value: &[u8]) -> Result<()> {
-    if at.in_table(MEDIA_VECTOR.decl()) {
-        rows::check_row(MEDIA_VECTOR, at, value)
-    } else if at.in_table(MEDIA_DEVICE.decl()) {
-        rows::check_row(MEDIA_DEVICE, at, value)
-    } else {
-        rows::check_row(MEDIA_REFUSED, at, value)
-    }
-}
+/// Every media vector, device provenance and refusal row, whole under its
+/// source document's tree, restored exactly.
+pub(crate) static ADAPTER: Adapter = Adapter {
+    tables: &[
+        &ExactTable {
+            table: MEDIA_VECTOR,
+            owner: source_document,
+        },
+        &ExactTable {
+            table: MEDIA_DEVICE,
+            owner: source_document,
+        },
+        &ExactTable {
+            table: MEDIA_REFUSED,
+            owner: source_document,
+        },
+    ],
+    capture: Capture::ByTable,
+    check: Check::ByTable,
+    row_owner: None,
+    join: Join::NoSplit,
+};
 
 /// The restore already carried the current LIVE rows, including absence. Leave
 /// superseded refusal parts out before write budgeting and getter dispatch.
@@ -57,12 +48,4 @@ pub(crate) fn preserve_current_refusals(opened: &mut OpenedOwnerRows) {
     opened
         .rows
         .retain(|part| !part.at().in_table(MEDIA_REFUSED.decl()));
-}
-
-pub(crate) fn restore_in_txn(
-    dbs: &impl ManifestDbs,
-    txn: &mut RwTxn<'_>,
-    opened: OpenedOwnerRows,
-) -> Result<Restored> {
-    rows::restore_parts(dbs, txn, &opened, check, rows::no_join)
 }

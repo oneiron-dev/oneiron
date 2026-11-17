@@ -86,7 +86,7 @@ fn join_birth(
 }
 
 fn capture_text_source(store: &Store, txn: &RoTxn<'_>, out: &mut Captured) -> Result<()> {
-    out.merge(crate::bm25::checkpoint::capture(store, txn)?);
+    out.merge(crate::bm25::checkpoint::ADAPTER.capture(store, txn)?);
     Ok(())
 }
 
@@ -265,7 +265,7 @@ fn compare_capture(
 pub fn compare_captures(vault: &Vault) -> Result<Vec<CaptureComparison>> {
     let store = &vault.store;
     let txn = store.env.read_txn()?;
-    let text = crate::bm25::checkpoint::capture(store, &txn)?;
+    let text = crate::bm25::checkpoint::ADAPTER.capture(store, &txn)?;
     let births = crate::provenance::birth::checkpoint::capture(store, &txn)?;
     Ok(vec![
         compare_capture(
@@ -273,14 +273,14 @@ pub fn compare_captures(vault: &Vault) -> Result<Vec<CaptureComparison>> {
             &TEXT_SOURCE_BY_TABLE,
             &TEXT_SOURCE_BY_TABLE.capture(store, &txn)?,
             &text,
-            crate::bm25::checkpoint::bytes_for_owner,
+            |rows| crate::bm25::checkpoint::ADAPTER.bytes_for_owner(rows),
         )?,
         compare_capture(
             "text source by its own capture",
             &TEXT_SOURCE_OWN_CAPTURE,
             &TEXT_SOURCE_OWN_CAPTURE.capture(store, &txn)?,
             &text,
-            crate::bm25::checkpoint::bytes_for_owner,
+            |rows| crate::bm25::checkpoint::ADAPTER.bytes_for_owner(rows),
         )?,
         compare_capture(
             "row births",
@@ -433,7 +433,9 @@ pub fn compare_restores(
             &TEXT_SOURCE_BY_TABLE,
             vaults,
             actors_open,
-            |store, txn, opened| crate::bm25::checkpoint::restore_in_txn(store, txn, opened),
+            |store, txn, opened| {
+                crate::bm25::checkpoint::ADAPTER.restore_in_txn(store, txn, opened)
+            },
             text_rows,
         )?,
         compare_restore(
@@ -484,7 +486,9 @@ fn descriptor_admits(vault: &Vault, descriptor: &Adapter, opened: OpenedOwnerRow
 /// never committed.
 fn text_getter_admits(vault: &Vault, opened: OpenedOwnerRows) -> Result<bool> {
     let mut txn = vault.store.env.write_txn()?;
-    Ok(crate::bm25::checkpoint::restore_in_txn(&vault.store, &mut txn, opened).is_ok())
+    Ok(crate::bm25::checkpoint::ADAPTER
+        .restore_in_txn(&vault.store, &mut txn, opened)
+        .is_ok())
 }
 
 /// Text-source parts opened from `owner`'s compartment, each restored

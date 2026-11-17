@@ -11,14 +11,27 @@
     reason = "KS7-2b and KS7-5 call the getters; CHECKPOINT_PAYLOADS_ENABLED is false until KS7-6"
 )]
 
-use heed::{RoTxn, RwTxn};
+use heed::RoTxn;
 
 use super::{BODY, BODY_DIGEST};
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::store::ManifestDbs;
+use crate::store::Store;
+use crate::store::checkpoint_payload::rows::descriptor::{
+    Adapter, Capture, CapturedByAdapter, Check, Join,
+};
 use crate::store::checkpoint_payload::rows::{
-    self, Captured, OpenedOwnerRows, OwnerRef, OwnerRows, Restored, RowLocator, RowPart, Unresolved,
+    self, Captured, OpenedOwnerRows, OwnerRef, RowLocator, RowPart, Unresolved,
+};
+
+/// Every body descriptor and digest holder row, by occurrence, restored
+/// exactly.
+pub(crate) static ADAPTER: Adapter = Adapter {
+    tables: &[&CapturedByAdapter(BODY), &CapturedByAdapter(BODY_DIGEST)],
+    capture: Capture::Own(capture),
+    check: Check::ByTable,
+    row_owner: None,
+    join: Join::NoSplit,
 };
 
 /// Files a row under `owner`'s `occurrence`, holding while `owner` does.
@@ -40,18 +53,17 @@ fn occurrence_row(
 }
 
 /// Every body descriptor and digest holder row in `txn`, by occurrence.
-pub(crate) fn capture(dbs: &impl ManifestDbs, txn: &RoTxn<'_>) -> Result<Captured> {
+fn capture(store: &Store, txn: &RoTxn<'_>, out: &mut Captured) -> Result<()> {
     let dependencies =
-        crate::agent_dispatch::workflow_tool_checkpoint::body_dependencies(dbs, txn)?;
-    let mut out = Captured::default();
-    for row in rows::typed_rows(dbs, txn, BODY, &mut out)? {
+        crate::agent_dispatch::workflow_tool_checkpoint::body_dependencies(store, txn)?;
+    for row in rows::typed_rows(store, txn, BODY, out)? {
         let (owner, occurrence) = row.key;
         if row.value.owner != owner || row.value.occurrence != occurrence {
             out.unclassified(row.at, None, Unresolved::NoOwner);
             continue;
         }
         occurrence_row(
-            &mut out,
+            out,
             &owner,
             &occurrence,
             dependencies
@@ -63,10 +75,10 @@ pub(crate) fn capture(dbs: &impl ManifestDbs, txn: &RoTxn<'_>) -> Result<Capture
         );
     }
     // A holder row is keyed by the digest; its owner is its value.
-    for row in rows::typed_rows(dbs, txn, BODY_DIGEST, &mut out)? {
+    for row in rows::typed_rows(store, txn, BODY_DIGEST, out)? {
         let occurrence = row.key.1;
         occurrence_row(
-            &mut out,
+            out,
             &row.value,
             &occurrence,
             dependencies
@@ -77,33 +89,7 @@ pub(crate) fn capture(dbs: &impl ManifestDbs, txn: &RoTxn<'_>) -> Result<Capture
             row.bytes,
         );
     }
-    Ok(out)
-}
-
-fn owns(at: &RowLocator) -> bool {
-    at.in_table(BODY.decl()) || at.in_table(BODY_DIGEST.decl())
-}
-
-/// The bundle framing of `rows`' descriptor parts.
-pub(crate) fn bytes_for_owner(rows: &OwnerRows) -> Result<Vec<u8>> {
-    rows::frame_owner(rows, owns)
-}
-
-fn check(at: &RowLocator, value: &[u8]) -> Result<()> {
-    if at.in_table(BODY.decl()) {
-        rows::check_row(BODY, at, value)
-    } else {
-        rows::check_row(BODY_DIGEST, at, value)
-    }
-}
-
-/// Puts `opened`'s descriptor rows back exactly.
-pub(crate) fn restore_in_txn(
-    dbs: &impl ManifestDbs,
-    txn: &mut RwTxn<'_>,
-    opened: OpenedOwnerRows,
-) -> Result<Restored> {
-    rows::restore_parts(dbs, txn, &opened, check, rows::no_join)
+    Ok(())
 }
 
 /// The rows of `opened` a restore puts among the image's `vault_meta` rows
@@ -129,7 +115,7 @@ pub(crate) fn image_rows(opened: &OpenedOwnerRows) -> Result<Vec<(Vec<u8>, Vec<u
         if !at.path.is_empty() {
             return Err(rows::bad_part());
         }
-        check(at, value)?;
+        ADAPTER.check(at, value)?;
         out.push((at.key.clone(), value.clone()));
     }
     Ok(out)

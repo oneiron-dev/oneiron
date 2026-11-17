@@ -128,7 +128,7 @@ impl Selection {
 
             // The native body getter binds each occurrence part to the
             // record that actually holds it, not to its shared digest.
-            let bodies = crate::provenance::body::checkpoint::capture(&vault.store, txn)?;
+            let bodies = crate::provenance::body::checkpoint::ADAPTER.capture(&vault.store, txn)?;
             for owner in bodies.owners() {
                 if !owner.rows.is_empty()
                     && owner.rows.iter().all(|part| {

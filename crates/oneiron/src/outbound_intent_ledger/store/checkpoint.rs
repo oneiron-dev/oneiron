@@ -54,11 +54,14 @@ use crate::Vault;
 use crate::attempt_queue::AttemptId;
 use crate::error::{Error, Result};
 use crate::side_table::{self, CodecError, Raw, RawValue, SideKey, SideTable};
-use crate::store::ManifestDbs;
 use crate::store::checkpoint_payload::Subtype;
-use crate::store::checkpoint_payload::rows::{
-    self, Captured, OpenedOwnerRows, OwnerRef, OwnerRows, Restored, RowDb, RowLocator, Unresolved,
+use crate::store::checkpoint_payload::rows::descriptor::{
+    Adapter, Capture, CapturedByAdapter, Check, Join,
 };
+use crate::store::checkpoint_payload::rows::{
+    self, Captured, OwnerRef, RowDb, RowLocator, Unresolved,
+};
+use crate::store::{ManifestDbs, Store};
 
 /// The calls this vault holds no record of, by call (FIX 6260): what their
 /// admission still counts toward their per-tool bound. Key: id16(attempt) +
@@ -343,14 +346,27 @@ fn accounting(bytes: &[u8]) -> Result<Vec<u8>> {
     Ok(out)
 }
 
+/// Every ledger record and attempt binding, by call, restored exactly: a
+/// call's record and its binding, or neither. Each call's accounting and
+/// unavailable rows are structure, never held.
+pub(crate) static ADAPTER: Adapter = Adapter {
+    tables: &[
+        &CapturedByAdapter(LEDGER),
+        &CapturedByAdapter(INTENT_ATTEMPT_INDEX),
+    ],
+    capture: Capture::Own(capture),
+    check: Check::Own(check),
+    row_owner: None,
+    join: Join::NoSplit,
+};
+
 /// Every ledger record and attempt binding in `txn`, by call, with each
 /// call's accounting and its unavailable row as structure; and every
 /// unavailable row of a call with no record here, as it stands.
-pub(crate) fn capture(dbs: &impl ManifestDbs, txn: &RoTxn<'_>) -> Result<Captured> {
-    let mut out = Captured::default();
+fn capture(store: &Store, txn: &RoTxn<'_>, out: &mut Captured) -> Result<()> {
     let mut recorded = BTreeSet::new();
     let mut accounted = BTreeSet::new();
-    for row in rows::typed_rows(dbs, txn, LEDGER, &mut out)? {
+    for row in rows::typed_rows(store, txn, LEDGER, out)? {
         let record = &row.value;
         if record.id != row.key {
             out.unclassified(row.at, None, Unresolved::NoOwner);
@@ -374,30 +390,21 @@ pub(crate) fn capture(dbs: &impl ManifestDbs, txn: &RoTxn<'_>) -> Result<Capture
         }
         out.exact(owner, row.at, row.bytes);
     }
-    for row in rows::typed_rows(dbs, txn, INTENT_ATTEMPT_INDEX, &mut out)? {
+    for row in rows::typed_rows(store, txn, INTENT_ATTEMPT_INDEX, out)? {
         let owner = call(&row.key.attempt_id, row.key.call_seq)?;
         out.exact(owner, row.at, row.bytes);
     }
-    for row in rows::typed_rows(dbs, txn, UNAVAILABLE, &mut out)? {
+    for row in rows::typed_rows(store, txn, UNAVAILABLE, out)? {
         if !recorded.contains(&row.at.key) {
             out.structure(row.at, row.bytes, Vec::new());
         }
     }
-    for row in rows::typed_rows(dbs, txn, CALL_ACCOUNTING, &mut out)? {
+    for row in rows::typed_rows(store, txn, CALL_ACCOUNTING, out)? {
         if !accounted.contains(&row.at.key) {
             out.structure(row.at, row.bytes, Vec::new());
         }
     }
-    Ok(out)
-}
-
-fn owns(at: &RowLocator) -> bool {
-    at.in_table(LEDGER.decl()) || at.in_table(INTENT_ATTEMPT_INDEX.decl())
-}
-
-/// The bundle framing of `rows`' ledger parts.
-pub(crate) fn bytes_for_owner(rows: &OwnerRows) -> Result<Vec<u8>> {
-    rows::frame_owner(rows, owns)
+    Ok(())
 }
 
 /// A record must read with its codec (its stored shape, digest and intent
@@ -416,14 +423,4 @@ fn check(at: &RowLocator, value: &[u8]) -> Result<()> {
     } else {
         Err(rows::bad_part())
     }
-}
-
-/// Puts `opened`'s ledger rows back exactly: a call's record and its
-/// binding, or neither.
-pub(crate) fn restore_in_txn(
-    dbs: &impl ManifestDbs,
-    txn: &mut RwTxn<'_>,
-    opened: OpenedOwnerRows,
-) -> Result<Restored> {
-    rows::restore_parts(dbs, txn, &opened, check, rows::no_join)
 }
