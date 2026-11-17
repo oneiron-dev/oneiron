@@ -25,8 +25,8 @@ mod use_limit;
 
 pub(crate) use use_limit::{
     CooperativeRestriction, CooperativeRestrictionKey, any_cooperative_restriction_in_txn,
-    cooperative_restriction_active_in_txn, held_in_txn, partition_held_in_txn, rows_keep_record,
-    use_limit_in_txn,
+    cooperative_restriction_active_in_txn, held_in_txn, partition_held_in_txn,
+    records_under_cooperative_restriction_in_txn, rows_keep_record, use_limit_in_txn,
 };
 
 use std::sync::{Mutex, PoisonError};
