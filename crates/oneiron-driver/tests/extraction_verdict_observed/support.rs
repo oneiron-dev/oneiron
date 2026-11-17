@@ -1,4 +1,5 @@
 //! Provides the minimal real-vault fixture for observed verdict checks.
+#![allow(dead_code)]
 
 use std::sync::Arc;
 
