@@ -226,7 +226,7 @@ fn decide_in_txn(
             if !success.is_subset(&material)
                 || state.success_lower.iter().any(|id| !lower.contains(id))
             {
-                state.stale = true;
+                state.stale = false;
             }
             state.pending_set = Some(arc.source_set);
             state.pending_material = material.iter().copied().collect();
