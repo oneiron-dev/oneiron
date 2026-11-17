@@ -1043,6 +1043,12 @@ fn insert_ready_row<R: Read + Seek>(
                     row.learned_at,
                     &body,
                 );
+                // The owner's restore of the owner's own archive brings a
+                // room's shared pins, the records its unpins removed and its
+                // pin policy back as the room pin doors wrote them: it writes
+                // under their marker (ROOM-SCOPED-PINS, ROOM-PINS-LWW-MERGE).
+                let room_pins = owner_restore.is_some()
+                    && row.entity_type == crate::registry::ENTITY_TYPE_CONVERSATION;
                 if !sources.is_empty() {
                     let weight =
                         EdgeKind::DerivedFrom
@@ -1054,7 +1060,14 @@ fn insert_ready_row<R: Read + Seek>(
                         batch = batch.edge(&id, EdgeKind::DerivedFrom, source, weight);
                     }
                 }
-                batch.apply(wtxn)
+                if room_pins {
+                    crate::conversation::PIN_UPDATES.put(&vault.store, wtxn, &id, &[1])?;
+                }
+                let applied = batch.apply(wtxn);
+                if room_pins {
+                    crate::conversation::PIN_UPDATES.delete(&vault.store, wtxn, &id)?;
+                }
+                applied
             }
         }
     };

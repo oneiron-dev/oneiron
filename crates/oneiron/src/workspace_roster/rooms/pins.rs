@@ -258,7 +258,8 @@ impl Memory<'_> {
     /// caller, a current member or its pen agent ([`pin_writer_in`]). The
     /// caller must read the target through the room's own lane
     /// ([`Memory::for_room_turn`]); a target it cannot read answers as not
-    /// found. A target pinned already keeps its first record.
+    /// found. A target pinned already keeps its record, the earliest one
+    /// readers are served ([`crate::store::conversation_body::live_room_pins`]).
     pub fn rooms_pins_pin(&self, input: &RoomPinRequest) -> MemoryResult<RoomPinReply> {
         self.require_pin_room(input.room)?;
         let vault = self.vault();
@@ -280,8 +281,11 @@ impl Memory<'_> {
             vault.verify_write_actor_in_txn(txn, &caller)?;
             let mut body = PinnedBody::read_in(vault, txn, input.room)?;
             let (person, agent) = pin_writer_in(vault, txn, input.room, caller, &body)?;
-            if let Some(pin) = body.pins().iter().find(|pin| pin.target == input.target) {
-                return Ok::<_, MemoryError>(pin.clone());
+            if let Some(pin) = crate::store::conversation_body::live_room_pins(body.pins())
+                .into_iter()
+                .find(|pin| pin.target == input.target)
+            {
+                return Ok::<_, MemoryError>(pin);
             }
             let mut pin = RoomPin {
                 target: input.target,

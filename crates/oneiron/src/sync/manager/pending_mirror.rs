@@ -257,6 +257,11 @@ impl Owed {
         Ok(owed)
     }
 
+    /// The rows whose carrier the window owes.
+    pub(super) fn rows(&self) -> &BTreeSet<EntityId> {
+        &self.rows
+    }
+
     /// `rows`, which a commit handed over, with the rows this window owes.
     pub(super) fn rows_with<'a>(
         &self,

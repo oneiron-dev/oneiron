@@ -199,9 +199,10 @@ fn seed_vault(dir: &Path) -> TestResult<Room> {
     })
 }
 
-/// Copies the closed vault directory `from` into `to`, file by file. The
-/// root preflight refuses a data file without its lock file, and LMDB
-/// resets a copied reader table at its first open, as no process holds it.
+/// Copies the closed vault directory `from` into `to`, file by file, as the
+/// testkit's fixture copy does. The lock file goes too: the root preflight
+/// refuses a data file without one. The seed vault was closed with no live
+/// transaction, so the copy holds no reader that LMDB would wait on.
 fn copy_vault_dir(from: &Path, to: &Path) -> TestResult {
     for entry in std::fs::read_dir(from)? {
         let entry = entry?;
@@ -313,21 +314,26 @@ fn unpin(machine: &Machine, room: &Room, target: EntityId) -> TestResult {
     settle(machine, room.room)
 }
 
+/// One pin record: its target, PERSON, acting agent and time.
+type Record = (EntityId, EntityId, Option<EntityId>, u64);
+
+fn record(pin: &RoomPin) -> Record {
+    (pin.target, pin.pinned_by, pin.acting_agent, pin.pinned_at)
+}
+
 /// The pin records `machine` stores for the room, as a set.
-fn stored_pins(machine: &Machine, room: &Room) -> TestResult<BTreeSet<(EntityId, EntityId, u64)>> {
+fn stored_pins(machine: &Machine, room: &Room) -> TestResult<BTreeSet<Record>> {
     Ok(machine
         .vault
         .conversation_body(room.room)?
         .pins
         .iter()
-        .map(|pin| (pin.target, pin.pinned_by, pin.pinned_at))
+        .map(record)
         .collect())
 }
 
-fn records(pins: &[&RoomPin]) -> BTreeSet<(EntityId, EntityId, u64)> {
-    pins.iter()
-        .map(|pin| (pin.target, pin.pinned_by, pin.pinned_at))
-        .collect()
+fn records(pins: &[&RoomPin]) -> BTreeSet<Record> {
+    pins.iter().map(|pin| record(pin)).collect()
 }
 
 /// Syncs the two machines until both store exactly `expected`, or fails
@@ -403,19 +409,16 @@ fn an_unpin_seen_by_both_replicas_stays_removed() -> TestResult {
         stored_pins(&a, &room)?.is_empty() && stored_pins(&b, &room)?.is_empty(),
         "a later sync brought an unpinned record back"
     );
-    // No reader is served the records an unpin removed.
-    let served = a.vault.get(&room.room)?.ok_or("room body missing")?;
-    let mut cursor = std::io::Cursor::new(served.as_slice());
-    let served = rmpv::decode::read_value(&mut cursor)?;
-    let keys: Vec<&str> = served
-        .as_map()
-        .ok_or("the served room body is a map")?
-        .iter()
-        .filter_map(|(key, _)| key.as_str())
-        .collect();
+    // No reader is served the records an unpin removed: the member's read
+    // of the room carries neither its pins nor them.
+    let read = a
+        .vault
+        .memory(room.member, EdgeActorClass::Human)
+        .get_entity(&room.room.to_hex())?;
+    let served = serde_json::to_value(&read.value)?.to_string();
     assert!(
-        !keys.contains(&"pins") && !keys.contains(&"unpinned"),
-        "a served room body names no pin record: {keys:?}"
+        !served.contains("\"pins\"") && !served.contains("\"unpinned\""),
+        "a served room body names no pin record: {served}"
     );
     Ok(())
 }

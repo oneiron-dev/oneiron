@@ -218,8 +218,9 @@ pub(super) fn room_in(vault: &Vault, txn: &heed::RoTxn<'_>, room: EntityId) -> R
     }
     room.member_ids = effective.seat_list(project.members());
     room.claims_scope_ref = effective.claims_scope_ref;
-    // The view never carries the room's shared pins: a reader gets them only
-    // through the room's admitted projection (ROOM-SCOPED-PINS).
+    // The view never carries the room's shared pins, nor the records its
+    // unpins removed: a reader gets pins only through the room's admitted
+    // projection (ROOM-SCOPED-PINS).
     room.pins.clear();
     room.unpinned.clear();
     Ok(room)

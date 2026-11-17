@@ -390,6 +390,19 @@ impl WindowManager {
         self.track_issued_handle(key, &window);
         drop(opening);
         drop(registry);
+        // ROOM-PINS-LWW-MERGE: a room body the forward pass merged with the
+        // pin records held here left a pending-mirror marker; the live
+        // mirror's next pass writes the merged carrier over the doc's, so the
+        // other machine learns them without waiting for another write.
+        match pending_mirror::Owed::read(&self.vault, key) {
+            Ok(owed) if !owed.rows().is_empty() => {
+                self.note_committed_rows(owed.rows().clone(), false);
+            }
+            Ok(_) => {}
+            Err(error) => {
+                tracing::warn!(window = %key, %error, "pending mirrors not read after the window opened");
+            }
+        }
         // FIX 12129: a window closed while a NOTE was deleted keeps that
         // NOTE's review-bundle attachments; scrub what this vault deleted.
         if let Err(error) =
