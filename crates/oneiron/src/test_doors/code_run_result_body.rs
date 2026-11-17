@@ -149,3 +149,46 @@ fn result_output(
     }
     Err(Error::CorruptedIndex("fixture result occurrence missing"))
 }
+
+/// Up to `len` bytes from `offset` of the body this exact owned occurrence's
+/// reads show, as a raw chunk read takes them: `None` when no read shows it.
+///
+/// # Errors
+///
+/// Missing occurrences, and result taint, body or view storage errors.
+pub fn shown_result_range(
+    vault: &Vault,
+    run_id: EntityId,
+    occurrence: EntityId,
+    offset: u64,
+    len: usize,
+) -> Result<Option<Vec<u8>>> {
+    let output = result_output(vault, run_id, occurrence)?;
+    let storage = ExecutorStorage::Canonical(vault);
+    match ResultRead::new(&storage, run_id, output, None, None, false)? {
+        Ok(read) => read.read_shown(&storage, offset, len),
+        Err(_) => Err(Error::InvariantViolation(
+            "a whole-body result read refuses no range",
+        )),
+    }
+}
+
+/// The text a summarizer is shown of bytes `start..end` of this exact owned
+/// occurrence, as a summary job reads its members, or the member's refusal.
+///
+/// # Errors
+///
+/// Missing occurrences, and result taint, body or view storage errors.
+pub fn summary_member_text(
+    vault: &Vault,
+    run_id: EntityId,
+    occurrence: EntityId,
+    start: u64,
+    end: u64,
+) -> Result<std::result::Result<String, String>> {
+    let output = result_output(vault, run_id, occurrence)?;
+    let storage = ExecutorStorage::Canonical(vault);
+    Ok(storage
+        .summary_member_text(run_id, output, (start, end))?
+        .map_err(str::to_owned))
+}

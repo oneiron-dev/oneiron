@@ -195,7 +195,11 @@ impl RecordingJsHost<'_, '_> {
                         ));
                     }
                 };
-                if read.is_tainted() {
+                // A tainted member its redacted view shows is bound and
+                // summarized from that view, and the summary inherits its
+                // marks (ARCH-0069 `#result-bodies`); one no read shows is
+                // never summarized.
+                if read.withheld_whole() {
                     return Ok((
                         SelfDispatchOutcome::Summarize(SummarizeReply::Withheld {
                             reply: read.withheld(),
