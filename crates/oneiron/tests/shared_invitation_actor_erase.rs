@@ -14,8 +14,6 @@
 //! --all-features --test shared_invitation_actor_erase`.
 #![cfg(oneiron_test_support)]
 
-use std::sync::Arc;
-
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::federation::{
     FederationGrantRole as Role, InitialSharedMember, SharedInvitation, SharedInvitationState,
@@ -52,11 +50,11 @@ fn proof(vault: &Vault, person: EntityId) -> AuthenticatedOwner {
 
 /// A vault and its embedded owner. An erase signs its receipt with the
 /// install's device key, which the delete door loads from the keystore a
-/// host installs.
+/// host installs; sharing and accepting give Grants, whose acts this
+/// install carries (keystore, root, machine profile, owner binding).
 fn vault_and_owner(dir: &std::path::Path) -> (Vault, EntityId) {
     let vault = Vault::open(dir, VaultConfig::default()).expect("vault");
-    vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
-    let owner = vault.ensure_embedded_owner_actor().expect("owner");
+    let (_, owner) = oneiron::test_support::provision_act_carrier(&vault);
     (vault, owner)
 }
 
