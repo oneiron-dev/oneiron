@@ -216,7 +216,7 @@ impl ConsolidationExecutor<'_> {
                 policy: &policy,
                 sizing: Sizing::new(
                     self.roles.follower_window_tokens(),
-                    policy.follower_sizing_bytes_per_token,
+                    policy.follower_sizing_token_bytes,
                 ),
                 key,
                 writer,

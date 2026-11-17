@@ -43,7 +43,9 @@ pub(crate) use self::eval_measurement::enqueue_coach_eval_measurement_in_txn;
 
 pub use crate::claim::maintenance_kind::COACH_HOST_QUEUE_KIND;
 /// Skill authoring from sessions: the session-end `actor.*` craft-note distill
-/// (ARCH-0003 §G.1 `actor.lesson`).
+/// (ARCH-0003 §G.1 `actor.lesson`), and, with no model, the skills a person's
+/// repeated workaround in an outside app nominates
+/// ([`Vault::run_coach_workaround_skills`], CLIF-STEALS 2).
 pub const COACH_SKILL_DISTILL_FACET: &str = "coach.skill_distill";
 /// Skill discovery from attempt receipts: the task-attribution sweep, whose
 /// `discovery` verdicts become skill edit proposals.

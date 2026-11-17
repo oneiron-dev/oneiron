@@ -605,7 +605,8 @@ impl Memory<'_> {
     /// read: pinned while the span sits at its opening offsets, mapped where
     /// an edit before it moved it, drifted where its characters no longer
     /// all stand with the same text. A drifted anchor stays on the span it
-    /// names. An anchor with no frontier (a brief's copy) reads no words.
+    /// names. An anchor with no frontier (a brief stored before its value
+    /// kept the body) reads no words.
     fn plan_doc_anchor_views(
         &self,
         anchor: &Anchor,
