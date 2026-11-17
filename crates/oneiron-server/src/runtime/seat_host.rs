@@ -199,6 +199,7 @@ impl SyncServer {
             ran,
             executor.session_manifest,
         );
+        terminal::end_runner_checkout(&dispatcher, self, &fence);
     }
 }
 
