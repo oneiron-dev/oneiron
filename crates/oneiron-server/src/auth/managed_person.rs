@@ -74,7 +74,7 @@ pub(crate) const MANAGED_PERSON_DOORS: [&str; 47] = [
     "vault.shared.withdraw_objection",
     "vault.shared.erase_ask",
     "vault.shared.close_erase_ask",
-    "vault.records.erase_preview",
+    "vault.owner_confirm.preview",
     "vault.records.erase_confirm",
     "vault.shared.policy.propose",
     "vault.shared.policy.answer",

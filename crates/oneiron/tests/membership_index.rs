@@ -12,7 +12,8 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use oneiron::conversation::{ConversationBody, HistoryChoice};
-use oneiron::registry::ENTITY_TYPE_PERSON;
+use oneiron::conversation_dag::{AddressMode, AppendRecord};
+use oneiron::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_TURN};
 use oneiron::test_doors::conversation_membership_index as doors;
 use oneiron::{EdgeActorClass, EntityId, Error, TimeRange, Vault, VaultConfig, WriteActor};
 
@@ -494,5 +495,109 @@ fn a_deleted_room_answers_no_membership_read() -> TestResult {
             "public windows of a deleted room answered {windows:?}"
         );
     }
+    Ok(())
+}
+
+/// An owned vault whose embedded owner hosts one room, with bob joined
+/// (Share, so his window runs from 0) and dan never joined, and `count`
+/// TURNs the owner appends through the public append door after the join.
+/// The owner reads every row the append names, so the append's own
+/// reference check needs no grant. The join indexes the room.
+struct AudienceRoom {
+    vault: Vault,
+    room: EntityId,
+    bob: EntityId,
+    dan: EntityId,
+    rows: Vec<EntityId>,
+    _dir: tempfile::TempDir,
+}
+
+fn audience_room(count: u64) -> TestResult<AudienceRoom> {
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open_owned(dir.path(), VaultConfig::default())?;
+    let owner = vault.ensure_embedded_owner_actor()?;
+    let actor = WriteActor::new(owner, EdgeActorClass::Human);
+    let person = rmp_serde::to_vec_named(&serde_json::json!({}))?;
+    let bob = EntityId::now();
+    let dan = EntityId::now();
+    for id in [bob, dan] {
+        vault.put_entity(
+            &id,
+            ENTITY_TYPE_PERSON,
+            TimeRange { start: 0, end: 0 },
+            0,
+            &person,
+        )?;
+    }
+    let room = EntityId::now();
+    vault.create_conversation(room, &ConversationBody::default(), actor, 1)?;
+    vault.join_member(room, bob, actor, 1, HistoryChoice::Share)?;
+    let writer = vault.memory(owner, EdgeActorClass::Human);
+    let mut rows = Vec::new();
+    for at in 2..2 + count {
+        let input = AppendRecord {
+            conversation: room,
+            parent: vault.head(&room)?,
+            reply_to: None,
+            quote: None,
+            address: AddressMode::Broadcast,
+            recipients: Vec::new(),
+            advance: true,
+            kind: ENTITY_TYPE_TURN,
+            containing_turn: None,
+            occurred: TimeRange { start: at, end: at },
+            learned_at: at,
+            body: rmp_serde::to_vec_named(&serde_json::json!({"txt": "turn"}))?,
+            text: Vec::new(),
+            session: None,
+            actor,
+            thread_audience: None,
+        };
+        rows.push(vault.append_dag_record(&writer, &input)?.id);
+    }
+    Ok(AudienceRoom {
+        vault,
+        room,
+        bob,
+        dan,
+        rows,
+        _dir: dir,
+    })
+}
+
+/// An audience read over an indexed room takes each person's windows from
+/// the per-participant index and reads no ledger (FIX
+/// AUDIENCE-CACHE-FOLDS-MEMBERSHIP-LEDGER). Red on main: one ledger read.
+#[test]
+fn an_audience_read_over_an_indexed_room_reads_no_ledger() -> TestResult {
+    let fixture = audience_room(3)?;
+    let (kept, reads) = doors::audience_read(&fixture.vault, &fixture.rows, &[fixture.bob])?;
+    assert_eq!(
+        kept,
+        fixture.rows.len(),
+        "the member's audience reads the turns"
+    );
+    assert_eq!(reads, 0, "an indexed room reads no ledger");
+    let (kept, _) = doors::audience_read(&fixture.vault, &fixture.rows, &[fixture.dan])?;
+    assert_eq!(kept, 0, "a non-member's audience is withheld");
+    Ok(())
+}
+
+/// Over a room whose index was dropped, the audience read still folds the
+/// ledger, once for the room's every row, and admits as the index does.
+/// Green on main and on the fix.
+#[test]
+fn an_audience_read_over_an_unindexed_room_still_folds() -> TestResult {
+    let fixture = audience_room(3)?;
+    doors::drop_room_index(&fixture.vault, fixture.room)?;
+    let (kept, reads) = doors::audience_read(&fixture.vault, &fixture.rows, &[fixture.bob])?;
+    assert_eq!(
+        kept,
+        fixture.rows.len(),
+        "the fallback reads the member's turns"
+    );
+    assert_eq!(reads, 1, "one ledger read serves the room's every row");
+    let (kept, _) = doors::audience_read(&fixture.vault, &fixture.rows, &[fixture.dan])?;
+    assert_eq!(kept, 0, "a non-member's audience is withheld");
     Ok(())
 }

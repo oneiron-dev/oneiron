@@ -243,7 +243,7 @@ impl ModelPack {
     /// pack does not fill the role.
     #[must_use]
     pub fn variants(&self, role: &str) -> &[ModelPackVariant] {
-        self.roles.get(role).map(Vec::as_slice).unwrap_or_default()
+        self.roles.get(role).map_or_default(Vec::as_slice)
     }
 
     /// The retirement the pack marks for `model`, if it marks one.

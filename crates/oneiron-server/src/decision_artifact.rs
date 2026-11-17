@@ -134,10 +134,16 @@ impl UnitDecider for HostUnitDecider<'_> {
     }
 
     /// Presence first on the host's ladder, its images seated as
-    /// [`Self::decide_unit`] seats them.
+    /// [`Self::decide_unit`] seats them, under the same bound caller: its
+    /// rungs' evidence rows and runs read the caller's off-record session
+    /// as a unit's do (census L5-25).
     fn decide_located(&self, call: &UnitCall<'_>) -> Result<LocatedDecision> {
         let state = self.state(call.state);
-        ladder_located(self.server, self.ladder_call(call, &state))
+        crate::decision_verdict::with_model_call_context(
+            call.principal,
+            self.session.as_deref(),
+            || ladder_located(self.server, self.ladder_call(call, &state)),
+        )
     }
 }
 

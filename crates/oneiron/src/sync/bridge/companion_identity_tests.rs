@@ -6,7 +6,7 @@ use ed25519_dalek::SigningKey;
 use loro::LoroDoc;
 
 use crate::authority::{
-    EditOrigin, HostSlipIssuer, MACHINE_ENCRYPTION_SUITE_HYBRID_V1, MachineEncryptionKey,
+    ActSurface, HostSlipIssuer, MACHINE_ENCRYPTION_SUITE_HYBRID_V1, MachineEncryptionKey,
     MachineEnrolmentRequest, MachineOwnership, MachineRole,
 };
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
@@ -77,7 +77,7 @@ fn own_request(vault_id: [u8; 32], install: &Vault) -> MachineEnrolmentRequest {
 fn enroll(host: &Host, install: &Vault, role: MachineRole) -> EntityId {
     let request = own_request(host.vault_id, install);
     host.vault
-        .enroll_machine(&host.issuer, &host.owner, &request, role)
+        .enroll_machine(&host.owner, ActSurface::ThisInstall, &request, role, None)
         .unwrap();
     request.machine
 }
@@ -449,7 +449,13 @@ fn a_local_enrolment_and_removal_move_the_stored_edges() {
     );
 
     host.vault
-        .set_machine_role(&host.issuer, &host.owner, machine, MachineRole::Removed)
+        .set_machine_role(
+            &host.owner,
+            ActSurface::ThisInstall,
+            machine,
+            MachineRole::Removed,
+            None,
+        )
         .unwrap();
     assert!(
         !shell_edge(&host.vault, loser, survivor),
@@ -481,11 +487,14 @@ fn anchor_root(host: &Host, seed: &RecoveryRootSeed, install: Option<&Vault>) ->
             machine: request.machine,
             owner: host.owner.actor(),
             machine_key: request.machine_key,
+            device_class: request.device_class,
             encryption_key: request.encryption_key,
             role: MachineRole::Owned(MachineOwnership::Yours),
             revision: 1,
             machine_proof: request.machine_proof,
             seen_world_edits: std::collections::BTreeSet::new(),
+            carrier: None,
+            act: None,
         }));
     }
     for op in ops {
@@ -522,10 +531,7 @@ fn a_pin_change_alone_moves_the_stored_edges() {
         "an anchor no pin trusts lends no standing"
     );
 
-    let here = EditOrigin::ThisMachine;
-    host.vault
-        .pin_owner_root(&host.owner, here, marking)
-        .unwrap();
+    host.vault.pin_owner_root(&host.owner, marking).unwrap();
     assert!(
         shell_edge(&host.vault, loser, survivor),
         "pinned to the marking root"
@@ -536,7 +542,7 @@ fn a_pin_change_alone_moves_the_stored_edges() {
         EntityLifecycleState::Merged
     );
 
-    host.vault.pin_owner_root(&host.owner, here, other).unwrap();
+    host.vault.pin_owner_root(&host.owner, other).unwrap();
     assert!(
         !shell_edge(&host.vault, loser, survivor),
         "pinned to another root"
@@ -679,9 +685,11 @@ fn a_restore_keeping_authority_keeps_own_merges_in_force() {
     let image = root.path().join("image");
     source.snapshot_checkpoint(&image, 100).unwrap();
     merge_locally(&source, EntityId::now(), EntityId::now());
+    let checkpoint_key = source.checkpoint_key().unwrap();
 
     let (copy, _) = Vault::restore_checkpoint_keeping_authority(
         &image,
+        &checkpoint_key,
         &root.path().join("copy"),
         VaultConfig::device(),
         &source,
@@ -703,8 +711,10 @@ fn own_merges_survive_a_beside_restore_and_never_bind_a_stranger() {
     merge_locally(&source, loser, survivor);
     let image = root.path().join("image");
     source.snapshot_checkpoint(&image, 100).unwrap();
+    let checkpoint_key = source.checkpoint_key().unwrap();
     let (copy, _) = Vault::restore_checkpoint_beside(
         &image,
+        &checkpoint_key,
         &root.path().join("copy"),
         VaultConfig::device(),
         &source.side_restore_source().unwrap(),
@@ -758,11 +768,13 @@ fn a_restore_keeping_authority_redecides_edges_under_the_current_roster() {
         let image = root.path().join("image");
         host.vault.snapshot_checkpoint(&image, 100).unwrap();
         host.vault
-            .set_machine_role(&host.issuer, &host.owner, machine, now)
+            .set_machine_role(&host.owner, ActSurface::ThisInstall, machine, now, None)
             .unwrap();
 
+        let checkpoint_key = host.vault.checkpoint_key().unwrap();
         let (copy, _) = Vault::restore_checkpoint_keeping_authority(
             &image,
+            &checkpoint_key,
             &root.path().join("copy"),
             VaultConfig::default(),
             &host.vault,
@@ -800,19 +812,14 @@ fn a_reopen_under_another_posture_redecides_the_stored_edges() {
         _dir: dir, vault, ..
     } = host;
     drop(vault);
-    let hosted = Vault::open(
-        dir.path(),
-        VaultConfig {
-            privacy: crate::config::VaultPrivacyConfig {
-                posture: crate::config::HostingPrivacyPosture::Hosted,
-                data_key_custody: crate::config::VaultDataKeyCustody::HostManagedKms {
-                    key_ref: "kms://example/placeholder".to_owned(),
-                },
-            },
-            ..VaultConfig::default()
+    let mut hosted_config = VaultConfig::device();
+    hosted_config.privacy = crate::config::VaultPrivacyConfig {
+        posture: crate::config::HostingPrivacyPosture::Hosted,
+        data_key_custody: crate::config::VaultDataKeyCustody::HostManagedKms {
+            key_ref: "kms://example/placeholder".to_owned(),
         },
-    )
-    .unwrap();
+    };
+    let hosted = Vault::open(dir.path(), hosted_config).unwrap();
     assert!(!shell_edge(&hosted, loser, survivor));
     assert_eq!(folded_state(&hosted, loser), EntityLifecycleState::Active);
 

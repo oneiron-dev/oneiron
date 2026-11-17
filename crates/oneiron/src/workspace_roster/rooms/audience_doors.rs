@@ -31,9 +31,16 @@
 //! (P26B-WALKIN = A): the Owner and an Admin who owns the room walk in at
 //! once, any other Admin's walk-in waits on them, and the Admin's call
 //! naming the approved ask walks in. Every member is told, and the walker
-//! shows in the thread's member list
-//! ([`super::audience_notices`]). An agent never walks in, a pen of the
-//! Owner or an Admin included: it asks to join ([`super::thread_join`]).
+//! shows in the thread's member list ([`super::audience_notices`]). An
+//! agent goes by role (owner ruling DECIDE-SWITCHOVER = A, OF-529): a pen
+//! whose PERSON is the Owner or an Admin, adding itself or that PERSON,
+//! walks in as that role, from now on, and the members' notice names the
+//! agent and its role. As an Admin it walks in only while that setting is
+//! on; as the Owner, whatever it says. Into a closed room a pen's walk-in
+//! is judged as any agent's add there: its owner Grant for the door, then
+//! the room owners' ask. Opening the full history stays the Owner's own
+//! act as a person ([`super::audience_history`]). Any other agent asks to
+//! join ([`super::thread_join`]).
 //! Anyone adding themselves when already in, a member or an agent alike,
 //! changes nothing, whatever history they ask: their own cut never moves
 //! (Engine ruling 10-20 17:3x). A member inside the thread adding anyone
@@ -166,12 +173,13 @@ pub(super) fn unknown_thread() -> MemoryError {
 }
 
 /// The refusal for an agent's self-add into a private thread it is not in
-/// (FIX 6384), a pen of the Owner or an Admin included: it asks to join.
+/// (FIX 6384) when its PERSON is neither the vault's Owner nor an Admin
+/// (OF-529): it asks to join.
 fn agent_walk_in_forbidden() -> MemoryError {
     MemoryError::new(
         MEMORY_CODE_AGENT_THREAD_WALK_IN_FORBIDDEN,
         format!(
-            "{MEMORY_CODE_AGENT_THREAD_WALK_IN_FORBIDDEN}: agents may request to join a private thread; they cannot walk in"
+            "{MEMORY_CODE_AGENT_THREAD_WALK_IN_FORBIDDEN}: an agent without the Owner or Admin role may request to join a private thread; it cannot walk in"
         ),
         &["Ask the thread's members to add the agent, or have it request to join."],
     )
@@ -314,12 +322,13 @@ impl Memory<'_> {
     /// Adds a person to a private thread's audience (FIX 5545), sharing the
     /// whole thread or its turns from this add on: one audience edit TURN of
     /// the thread. The Owner or an Admin adding themselves walks in from now
-    /// on (FIX 6381); an agent never walks in (FIX 6384). Audience changes
-    /// persist even while talk is off record; they are not saved or
-    /// discarded with the transcript (FIX 5643). An add of someone else is
-    /// judged by check-in (ROLES-CHECKIN P2.6a): an agent's waits
-    /// (`CHECK_IN_PENDING`) until the call that names the approved check-in
-    /// as `check_in_ref`, and is from now on.
+    /// on (FIX 6381), a pen of one as that role (OF-529); any other agent
+    /// asks to join (FIX 6384). Audience changes persist even while talk is
+    /// off record; they are not saved or discarded with the transcript
+    /// (FIX 5643). An add of someone else is judged by check-in
+    /// (ROLES-CHECKIN P2.6a): an agent's waits (`CHECK_IN_PENDING`) until
+    /// the call that names the approved check-in as `check_in_ref`, and is
+    /// from now on.
     pub fn rooms_thread_audience_add(
         &self,
         input: &ThreadAudienceAddRequest,
@@ -420,14 +429,15 @@ impl Memory<'_> {
     /// audience, member or agent alike, is a walk-in that folds as nothing,
     /// whatever `history` asks: no one's own cut moves (Engine ruling 10-20
     /// 17:3x (a)). Else a walk-in for the Owner or an Admin adding
-    /// themselves, as a person (FIX 6381), refused for an Admin while the
-    /// Owner's setting is off (FIX 6382). From outside the thread an
-    /// Admin's add is from now on, and for someone already in a walk-in
-    /// that changes nothing, `from_now` included (17:3x (b)); the Owner's
-    /// with full history is an opened history (FIX 6383), and the Owner's
-    /// from now on an add that moves the cut of someone already in forward.
-    /// Else an add with the caller's pick. An agent adding itself, or its
-    /// PERSON, into a thread they are not in is refused (FIX 6384).
+    /// themselves (FIX 6381), a pen of one as that role (OF-529), refused
+    /// for an Admin while the Owner's setting is off (FIX 6382). From
+    /// outside the thread an Admin's add is from now on, and for someone
+    /// already in a walk-in that changes nothing, `from_now` included
+    /// (17:3x (b)); the Owner's with full history is an opened history (FIX
+    /// 6383), and the Owner's from now on an add that moves the cut of
+    /// someone already in forward.
+    /// Else an add with the caller's pick. Any other agent adding itself,
+    /// or its PERSON, into a thread they are not in is refused (FIX 6384).
     fn added_event_in(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -446,7 +456,8 @@ impl Memory<'_> {
         let entering = !thread.folded.current().contains(&person);
         // The verified class of this write's actor, never a caller's flag.
         let human = self.actor_class() == EdgeActorClass::Human;
-        if own && entering && !human {
+        // An agent walks in only as the role its PERSON holds (OF-529).
+        if own && entering && !human && !thread.privileged {
             return Err(agent_walk_in_forbidden());
         }
         if !matches!(
@@ -459,7 +470,7 @@ impl Memory<'_> {
                 "an added person must be a live PERSON or AGENT_DEF among the room's members",
             ));
         }
-        let walk_in = own && thread.privileged && human;
+        let walk_in = own && thread.privileged;
         let outside = thread.privileged && !thread.inside && !own;
         // The strict live Owner as a person; read only where it decides.
         let owner = (walk_in || outside)
@@ -470,7 +481,11 @@ impl Memory<'_> {
             // folds as nothing for someone already in.
             (AudienceOp::WalkIn, None)
         } else if walk_in {
-            if !owner && !room_thread_admin_settings_in_txn(vault, txn)?.admin_walk_in {
+            // The Owner's switch binds an Admin, a pen of one included; a
+            // pen of the Owner walks in as the Owner, whatever it says.
+            let owner_role = owner
+                || (!human && vault_standing_in(vault, txn, actor)? == Some(VaultStanding::Owner));
+            if !owner_role && !room_thread_admin_settings_in_txn(vault, txn)?.admin_walk_in {
                 return Err(admin_walk_in_off());
             }
             (AudienceOp::WalkIn, None)
@@ -578,7 +593,19 @@ impl Memory<'_> {
             };
             let id = put_audience_event_in(vault, txn, &thread.binding, &event)?;
             let notice = match event.op {
-                AudienceOp::WalkIn if entering => Some(ThreadNotice::WalkIn { event: id }),
+                AudienceOp::WalkIn if entering => {
+                    // An agent walks in as its PERSON's role, and the
+                    // notice names it (OF-529).
+                    let agent_role = if self.actor_class() == EdgeActorClass::Human {
+                        None
+                    } else {
+                        vault_standing_in(vault, txn, actor)?.map(VaultStanding::role_name)
+                    };
+                    Some(ThreadNotice::WalkIn {
+                        event: id,
+                        agent_role,
+                    })
+                }
                 AudienceOp::OpenFullHistory => {
                     Some(ThreadNotice::OwnerAddedFullHistory { event: id, person })
                 }

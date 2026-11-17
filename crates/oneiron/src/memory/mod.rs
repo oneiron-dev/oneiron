@@ -60,7 +60,7 @@ mod claim_stale;
 pub mod clustering;
 pub mod commitment_doors;
 mod conflict_settle;
-pub(crate) use conflict_settle::conflict_review_held_in;
+pub(crate) use conflict_settle::{conflict_review_held_in, dreamer_conflict_review_held_in};
 pub mod consolidation;
 pub mod consolidation_frontier;
 pub mod coping_doors;
@@ -121,6 +121,7 @@ pub mod identity_doors;
 mod inspection;
 mod key_value;
 mod lifted_view;
+pub(crate) use lifted_view::lifted_keys_of_bodies_in_txn;
 mod locality;
 mod machine_write;
 pub mod merge_queue_doors;
@@ -280,7 +281,8 @@ pub use key_value::{
 };
 pub use locality::ProducerRows;
 pub use oneiron_contracts::memory::{
-    MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_BUDGET_SPENT, MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INTERNAL,
+    ExtractionCorrectionPair, ExtractionLayout, ExtractionStepSlice, MEMORY_CODE_BAD_REQUEST,
+    MEMORY_CODE_BUDGET_SPENT, MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INTERNAL,
     MEMORY_CODE_INVALID_STATE, MEMORY_CODE_LEASE_REQUIRED, MEMORY_CODE_MODEL_UNAVAILABLE,
     MEMORY_CODE_NOT_FOUND, MEMORY_CODE_OFF_RECORD_SESSION_DOOR, MEMORY_CODE_OWNER_BINDING_REQUIRED,
     MEMORY_CODE_PACED_HOLD, MEMORY_CODE_PENDING_ASK, MEMORY_CODE_VAULT_LOCKED_SINGLE_WRITER,
@@ -325,6 +327,7 @@ pub use oneiron_contracts::memory::{
     ADMIN_ACT_HELD_REASON_PREFIX, MEMORY_CODE_ADMIN_ACT_HELD, TWO_ADMIN_HOLD_REASON_CODE,
     TWO_ADMIN_HOLD_REFUSAL,
 };
+pub use oneiron_contracts::memory::MEMORY_CODE_OWNER_CONFIRM_REQUIRED;
 pub use oneiron_contracts::memory::{CHECK_IN_PENDING_REASON_PREFIX, MEMORY_CODE_CHECK_IN_PENDING};
 // WILL-PLAN L13 row 03: a room's whole off-record stretch, which no
 // consent record admits a session row to manage.

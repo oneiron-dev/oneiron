@@ -347,6 +347,52 @@ const MEDIA_VECTOR: SideTable<([u8; 16], EntityId), MediaVectorRow, Raw> =
 const MEDIA_REFUSED: SideTable<([u8; 16], EntityId), MediaRefusal, Named> =
     SideTable::new(&side_table::EMBEDDING_MEDIA_REFUSED);
 
+/// Puts a media vector row for the checkpoint-pins door: `kind`'s row
+/// `row`, keeping `text_hash` on a text row, as the codec does.
+#[cfg(oneiron_test_support)]
+pub(crate) fn put_pins_media_vector_in_txn(
+    store: &impl SideTableDbs,
+    txn: &mut RwTxn<'_>,
+    key: &([u8; 16], EntityId),
+    kind: InputKind,
+    text_hash: [u8; TEXT_HASH_LEN],
+    row: &[u8],
+) -> Result<()> {
+    MEDIA_VECTOR.put(
+        store,
+        txn,
+        key,
+        &MediaVectorRow {
+            kind,
+            text_hash,
+            row: row.to_vec(),
+        },
+    )
+}
+
+/// Puts a media refusal row for the checkpoint-pins door: `id` refused at
+/// `fingerprint` for `reason`, at vault second `at`.
+#[cfg(oneiron_test_support)]
+pub(crate) fn put_pins_media_refusal_in_txn(
+    store: &impl SideTableDbs,
+    txn: &mut RwTxn<'_>,
+    key: &([u8; 16], EntityId),
+    fingerprint: [u8; 32],
+    reason: &str,
+    at: u64,
+) -> Result<()> {
+    MEDIA_REFUSED.put(
+        store,
+        txn,
+        key,
+        &MediaRefusal {
+            fingerprint,
+            reason: reason.to_owned(),
+            at,
+        },
+    )
+}
+
 /// Why a space's model refused one document, and which bytes it refused.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct MediaRefusal {
@@ -849,8 +895,8 @@ pub(crate) fn delete_text_media_vectors_in_txn(
 }
 
 /// Removes `id`'s text row from `space` alone, with its device mark and any refusal of it there;
-/// its image and audio rows stay. Whether it held a text row there.
-#[cfg(feature = "sync")]
+/// its image and audio rows stay. Whether it held a text row there. Ungated: the world edge
+/// reconcile (`world_space::reconcile_world_edge_rows_in_txn`) calls it in every build.
 pub(super) fn delete_text_media_vector_in_space_in_txn(
     store: &impl SideTableDbs,
     txn: &mut RwTxn<'_>,

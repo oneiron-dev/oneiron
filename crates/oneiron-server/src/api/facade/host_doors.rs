@@ -93,6 +93,8 @@ pub(crate) use super::shared_admin_doors::*;
 pub(crate) use super::shared_member_doors::*;
 // The shared-act policy doors (DOOR-129) too.
 pub(crate) use super::shared_policy_doors::*;
+// The owner's role-training prepare door (ROLE-TRAINING-RUN) too.
+pub(crate) use super::training_run_doors::*;
 // The trusted-contact doors (DOOR-140, OF-527) too.
 pub(crate) use super::trusted_contact_doors::*;
 // The voice-bank doors (DOOR-143, FIX 4393) too.
@@ -124,8 +126,10 @@ pub(crate) use super::model_step_doors::*;
 pub(crate) use super::model_stream_doors::*;
 pub(crate) use super::non_base_world_claim_fraction_doors::*;
 pub(crate) use super::outbox_diverged_doors::*;
+pub(crate) use super::sandbox_provider_doors::*;
 pub(crate) use super::snapshot_read_settings_doors::*;
 pub(crate) use super::web_connector_doors::*;
+pub(crate) use super::world_vectors_doors::*;
 // The owner's committed-run reads (DOOR-141 A/B), likewise.
 pub(crate) use super::run_read_doors::*;
 // A turn program's reads (DOOR-141 PR3a), on the caller's own lane.
@@ -268,6 +272,8 @@ pub(crate) use super::connector_slate_doors::*;
 pub(crate) use super::connector_witness_read_doors::*;
 // The owner's per-call outbound request erase (FIX 11801), likewise.
 pub(crate) use super::outbound_call_erase_doors::*;
+// The shared owner-checked preview of one one-way act (DEC-0006 #undo-class).
+pub(crate) use super::owner_confirm_doors::*;
 pub(crate) use super::proxy_doors::*;
 pub(crate) use crate::api::openai_proxy::ai_chat_completions;
 // The secret use door, whose connector.call sends (OF-560), likewise.
