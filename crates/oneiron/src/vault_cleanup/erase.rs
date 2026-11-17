@@ -40,6 +40,8 @@ use crate::store::Store;
 use crate::store::attempt_id::AttemptId;
 use oneiron_contracts::msgpack;
 
+const ERASE_LABEL: &str = "vault cleanup erase row";
+
 /// What a walk met that does not read: rows deleted by their key, and
 /// listing slots left erased.
 #[derive(Default)]
@@ -81,17 +83,17 @@ const fn lists(listing: Listing) -> &'static [&'static [&'static str]] {
 }
 
 /// The list at `path` in a stored map.
-fn list<'a>(parts: &'a [(Value, Value)], path: &[&str]) -> Option<&'a Vec<Value>> {
+fn list<'a>(parts: &'a [(Value, Value)], path: &[&str]) -> Result<Option<&'a Vec<Value>>> {
     match path {
-        [last] => match field(parts, last)? {
-            Value::Array(slots) => Some(slots),
-            _ => None,
+        [last] => match field(parts, last, ERASE_LABEL)? {
+            Some(Value::Array(slots)) => Ok(Some(slots)),
+            _ => Ok(None),
         },
-        [first, rest @ ..] => match field(parts, first)? {
-            Value::Map(inner) => list(inner, rest),
-            _ => None,
+        [first, rest @ ..] => match field(parts, first, ERASE_LABEL)? {
+            Some(Value::Map(inner)) => list(inner, rest),
+            _ => Ok(None),
         },
-        [] => None,
+        [] => Ok(None),
     }
 }
 
@@ -113,19 +115,23 @@ fn list_mut<'a>(parts: &'a mut [(Value, Value)], path: &[&str]) -> Option<&'a mu
 /// Every id a stored row of `listing` names where an erase would scrub it
 /// (FIX 7616). A row that does not read names none.
 pub(super) fn named_ids(listing: Listing, raw: &[u8]) -> BTreeSet<[u8; 16]> {
-    let mut cursor = raw;
-    let Ok(Value::Map(row)) = rmpv::decode::read_value(&mut cursor) else {
+    let Ok(row) = msgpack::decode_map(raw) else {
         return BTreeSet::new();
     };
-    lists(listing)
-        .iter()
-        .filter_map(|path| list(&row, path))
-        .flatten()
-        .filter_map(|value| match slot(value) {
-            Slot::Names(id) => Some(id),
-            Slot::Erased | Slot::Unreadable => None,
-        })
-        .collect()
+    let mut out = BTreeSet::new();
+    for path in lists(listing) {
+        let slots = match list(&row, path) {
+            Err(_) => return BTreeSet::new(),
+            Ok(None) => continue,
+            Ok(Some(slots)) => slots,
+        };
+        for value in slots {
+            if let Slot::Names(id) = slot(value) {
+                out.insert(id);
+            }
+        }
+    }
+    out
 }
 
 /// What one listing slot names.
@@ -225,6 +231,17 @@ pub(crate) fn erase_attempt_references_in_txn(
     Ok(())
 }
 
+/// A listing row that reads: a map whose listed paths repeat no key.
+fn readable_row(listing: Listing, raw: &[u8]) -> Option<Vec<(Value, Value)>> {
+    let row = msgpack::decode_map(raw).ok()?;
+    for path in lists(listing) {
+        if list(&row, path).is_err() {
+            return None;
+        }
+    }
+    Some(row)
+}
+
 /// Rewrites, in place, the row `key` of `listing` when `scrub` changes it.
 /// A row that is gone is passed by; one that does not read as a map is
 /// deleted by its key and counted. A rewrite only clears slots, so it names
@@ -240,8 +257,7 @@ fn visit(
     let Some(raw) = listing.get(store, txn, key)? else {
         return Ok(());
     };
-    let mut cursor = raw.as_slice();
-    let Ok(Value::Map(mut row)) = rmpv::decode::read_value(&mut cursor) else {
+    let Some(mut row) = readable_row(listing, &raw) else {
         listing.delete_unindexed(store, txn, key)?;
         unreadable.rows += 1;
         return Ok(());
@@ -254,6 +270,7 @@ fn visit(
 }
 
 /// The member `name` of a stored map, to rewrite.
+/// `visit` has refused a row whose listed paths repeat a key, so the first match is the only one.
 fn field_mut<'a>(parts: &'a mut [(Value, Value)], name: &str) -> Option<&'a mut Value> {
     parts
         .iter_mut()
@@ -265,7 +282,10 @@ fn field_mut<'a>(parts: &'a mut [(Value, Value)], name: &str) -> Option<&'a mut 
 fn slot(value: &Value) -> Slot {
     let hex = match value {
         Value::Nil => return Slot::Erased,
-        Value::Map(parts) => field(parts, KEY_ENTITY).and_then(Value::as_str),
+        Value::Map(parts) => field(parts, KEY_ENTITY, ERASE_LABEL)
+            .ok()
+            .flatten()
+            .and_then(Value::as_str),
         other => other.as_str(),
     };
     hex.and_then(|hex| EntityId::from_hex(hex).ok())
@@ -300,12 +320,21 @@ fn scrub_entry(entry: &mut Value, moves: &BTreeMap<[u8; 16], (Revision, Revision
     let Some((bound, revision)) = moves.get(&id) else {
         return false;
     };
+    // A repeated kind leaves the slot erased.
+    let kind_is_duplicate = match &*entry {
+        Value::Map(parts) => field(parts, KEY_KIND, ERASE_LABEL).is_err(),
+        _ => return false,
+    };
+    if kind_is_duplicate {
+        *entry = Value::Nil;
+        return true;
+    }
     let Value::Map(parts) = entry else {
         return false;
     };
-    if field(parts, KEY_KIND).and_then(Value::as_str)
-        != Some(CleanupKind::CompletedAttempt.as_str())
-    {
+    // The check above refused a duplicate, so this read is the only match.
+    let kind = field(parts, KEY_KIND, ERASE_LABEL).ok().flatten();
+    if kind.and_then(Value::as_str) != Some(CleanupKind::CompletedAttempt.as_str()) {
         return false;
     }
     let mut changed = false;
