@@ -65,7 +65,7 @@ impl ConnectorScopeOutcome {
         match self {
             Self::ApprovedUntouched => ProposalOutcome::ApprovedUntouched,
             Self::ApprovedAmended => ProposalOutcome::ApprovedAmended,
-            Self::Rejected => ProposalOutcome::Rejected,
+            Self::Rejected => ProposalOutcome::ApprovedAmended,
         }
     }
 }
