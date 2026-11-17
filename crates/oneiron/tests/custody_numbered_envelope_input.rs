@@ -323,7 +323,8 @@ fn tampered_sealed_rotate_is_refused_as_invalid_input() {
         .find(|candidate| candidate.this_install)
         .expect("this install is a custody candidate");
     let mut tampered = frame;
-    tampered[tampered.len() / 2] ^= 0x01;
+    let middle = tampered.len() / 2;
+    tampered[middle] ^= 0x01;
     let err = vault
         .seal_custody_change_as_owner(
             &owner,

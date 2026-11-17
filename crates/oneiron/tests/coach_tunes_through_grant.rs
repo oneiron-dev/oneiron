@@ -27,11 +27,10 @@ use oneiron::policy_setting_doors::{WakePolicySetRequest, wake_policy_set_as_hol
 use oneiron::task_verb::sdk::{
     ConsolidationSelectionTimingSetRequest, ConsolidationStrengthSetRequest,
     CuratorCadenceSetRequest, DreamerProjectorSetRequest, FreeTimeScheduleSetRequest,
-    ProactivityPeriodSetRequest, RetuneThresholdsSetRequest, SieveBudgetsLowerRequest,
-    StewardshipRulePeriodSetRequest, lower_sieve_budgets_as, set_consolidation_selection_timing_as,
-    set_consolidation_strength_as, set_curator_cadence_as, set_dreamer_projector_as,
-    set_free_time_schedule_as, set_proactivity_period_as, set_retune_thresholds_as,
-    set_stewardship_rule_period_as,
+    RetuneThresholdsSetRequest, SieveBudgetsLowerRequest, StewardshipRulePeriodSetRequest,
+    lower_sieve_budgets_as, set_consolidation_selection_timing_as, set_consolidation_strength_as,
+    set_curator_cadence_as, set_dreamer_projector_as, set_free_time_schedule_as,
+    set_retune_thresholds_as, set_stewardship_rule_period_as,
 };
 use oneiron::test_doors::coach::{coach, define_agent};
 use oneiron::test_doors::steward::{open_owner_carrier_vault, owner};
@@ -113,14 +112,6 @@ fn the_coach_tunes_each_knob_through_its_verb() {
         (rubric.minimum_age_secs, rubric.cadence_secs),
         (3_600, 7_200)
     );
-
-    let period = set_proactivity_period_as(
-        &vault,
-        holder(),
-        ProactivityPeriodSetRequest { period_secs: 7_200 },
-    )
-    .expect("proactivity period");
-    assert_eq!(period.change.knob, "DREAMER_PROACTIVITY_CADENCE");
 
     let thresholds = set_retune_thresholds_as(
         &vault,
@@ -275,14 +266,6 @@ fn an_agent_without_engine_controls_is_refused() {
     assert_eq!(
         vault.dreamer_projector_policy().expect("projector"),
         projector
-    );
-    assert!(
-        set_proactivity_period_as(
-            &vault,
-            stranger,
-            ProactivityPeriodSetRequest { period_secs: 60 },
-        )
-        .is_err()
     );
     let held = vault.dreamer_sieve_policy().expect("sieve");
     assert!(
