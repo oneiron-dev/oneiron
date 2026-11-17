@@ -47,6 +47,10 @@ pub struct ScopedReadActorKey {
     /// standing Grants again, so a lane held past a revoke or a lapse narrows
     /// with it (REVIEW-7051 P1). See [`Self::bound_by_live_agent_grants`].
     agent_grant_holder: Option<EntityId>,
+    /// The credentials saved lanes froze, carried with no proof (OF-506):
+    /// each serving txn reads nothing unless every one still holds there;
+    /// see [`Self::bound_by_saved_credential`].
+    pub(super) saved_credentials: Vec<super::frozen::SavedCredential>,
     /// A host-bound channel on a channel-aware read door, never a grant.
     pub(super) channel: Option<String>,
     /// Set only on the vault owner's own key; see [`Self::vault_owner`].
@@ -404,6 +408,7 @@ impl ScopedReadActorKey {
             authority: None,
             grant_alternatives: None,
             agent_grant_holder: None,
+            saved_credentials: Vec::new(),
             channel: None,
             owner: None,
             owner_exemption: None,
@@ -451,6 +456,7 @@ impl ScopedReadActorKey {
             authority: None,
             grant_alternatives: None,
             agent_grant_holder: None,
+            saved_credentials: Vec::new(),
             channel: None,
             owner: Some(owner),
             owner_exemption: None,
@@ -1084,6 +1090,23 @@ impl ScopedReadActorKey {
     /// binds it.
     pub(crate) fn agent_grant_holder(&self) -> Option<EntityId> {
         self.agent_grant_holder
+    }
+
+    /// This key's rows also held, in each serving txn, to `credential`, the
+    /// credential a saved lane froze (OF-506): the key reads nothing in a
+    /// snapshot where it no longer holds, as the key's rebuild judged it, so
+    /// a key rebuilt while it held and kept past its withdrawal reads no
+    /// more (FIX OWN-DEVICE-GRANT-NOT-RECHECKED). It only narrows: each
+    /// credential bound before still binds beside it.
+    #[must_use]
+    pub(super) fn bound_by_saved_credential(
+        mut self,
+        credential: super::frozen::SavedCredential,
+    ) -> Self {
+        if !self.saved_credentials.contains(&credential) {
+            self.saved_credentials.push(credential);
+        }
+        self
     }
 
     /// The worlds this read asked for, as a world-only ceiling; `None` when
