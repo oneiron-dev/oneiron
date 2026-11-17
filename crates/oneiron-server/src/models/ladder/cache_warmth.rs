@@ -66,8 +66,7 @@ fn cache_profile(rung: &LadderRung, request: &LlmRequest) -> Option<CacheProfile
     if binding.custody == KeyCustody::T0 {
         return None;
     }
-    let route = &binding.route;
-    if (route.adapter(), route.origin()) != ANTHROPIC_ROUTE {
+    if !anthropic_route(&binding.route) {
         return None;
     }
     let lifetime = match AnthropicProviderOptions::from_request(request)
@@ -81,6 +80,18 @@ fn cache_profile(rung: &LadderRung, request: &LlmRequest) -> Option<CacheProfile
         lifetime,
         lookback: ANTHROPIC_LOOKBACK_BLOCKS,
     })
+}
+
+/// Whether `route` is [`ANTHROPIC_ROUTE`], the one route the lifetime table
+/// knows. In this crate's own test build an Anthropic-compatible route on
+/// loopback, where the scripted fake model listens, reads as that route
+/// too, so a chat fixture whose fake reports a cache write warms a prefix
+/// (FIX-LIST SELF-COMPACTION-AUTO-FALLBACK-UNTESTED). Every other build
+/// keeps that route cold.
+fn anthropic_route(route: &oneiron::llm::run_admission::OfferRoute) -> bool {
+    let at = (route.adapter(), route.origin());
+    at == ANTHROPIC_ROUTE
+        || (cfg!(test) && at.0 == ANTHROPIC_ROUTE.0 && at.1.starts_with("http://127.0.0.1:"))
 }
 
 /// One reusable prefix of a request as its rung sends it: the content block

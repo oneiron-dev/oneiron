@@ -49,6 +49,11 @@ pub(crate) enum Reply {
     Hold { text: String },
     /// Answer with text computed from the request (to echo ids it carries).
     Computed(Compute),
+    /// Like `Computed`, and an Anthropic-compatible reply's usage also
+    /// reports `cache_write` prompt tokens written to the provider's cache
+    /// (`cache_creation_input_tokens`), as the API reports a marked prefix
+    /// it now holds. An OpenAI-compatible reply carries no such field.
+    ComputedCacheWrite { compute: Compute, cache_write: u64 },
     /// Answer with this exact event-stream body, one event per chunk: an
     /// empty stream, a lone `[DONE]`, a stream cut after its first event.
     Raw(String),
@@ -230,6 +235,10 @@ async fn answer(
         None => Reply::Status(500),
     };
     let usage = !matches!(reply, Reply::NoUsage { .. });
+    let cache_write = match &reply {
+        Reply::ComputedCacheWrite { cache_write, .. } => Some(*cache_write),
+        _ => None,
+    };
     let (deltas, model) = match reply {
         Reply::Status(status) => {
             let body = if anthropic {
@@ -256,7 +265,9 @@ async fn answer(
         }
         Reply::Text { text, model } => (vec![text], model),
         Reply::Deltas { deltas, model } | Reply::NoUsage { deltas, model } => (deltas, model),
-        Reply::Computed(compute) => (vec![compute(&body)], "fake-model".to_owned()),
+        Reply::Computed(compute) | Reply::ComputedCacheWrite { compute, .. } => {
+            (vec![compute(&body)], "fake-model".to_owned())
+        }
         Reply::Raw(body) => return sse_body(body),
         Reply::Oversized { status, bytes } => {
             return oversized(Arc::clone(&shared), status, bytes);
@@ -280,6 +291,9 @@ async fn answer(
         }
         (true, false) => {
             let mut reply = anthropic_json(&deltas.concat(), &model);
+            if let Some(tokens) = cache_write {
+                reply["usage"]["cache_creation_input_tokens"] = json!(tokens);
+            }
             if !usage {
                 reply["usage"] = Value::Null;
             }
@@ -294,6 +308,11 @@ async fn answer(
         }
         (true, true) => {
             let mut events = anthropic_events(&deltas, &model);
+            if let Some(tokens) = cache_write
+                && let Some((_, start)) = events.first_mut()
+            {
+                start["message"]["usage"]["cache_creation_input_tokens"] = json!(tokens);
+            }
             if !usage {
                 for (_, event) in &mut events {
                     if let Some(message) = event.get_mut("message").and_then(Value::as_object_mut) {
