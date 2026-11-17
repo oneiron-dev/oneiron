@@ -13,8 +13,14 @@
 //! marker, and the live mirror writes the stored body over the carrier, so
 //! the machine that sent it learns this machine's records.
 //!
-//! A row a federation peer's import brought ([`super::peer_row_in_txn`])
-//! lands as it came: only the owner's own machines merge pin records.
+//! A row a federation peer's import brought ([`super::peer_row_in_txn`];
+//! CONVERSATION is a peer-judged kind, so the import records each room it
+//! brings) lands as it came: only the owner's own machines merge pin records.
+//!
+//! A pin key the carried body lacks goes after its other keys, where the
+//! room pin doors write it in field order: the merged bytes may differ in
+//! key order from the bytes a door would write for the same records. Both
+//! decode to one body; the next door write spells it the door's way.
 
 use std::borrow::Cow;
 
@@ -40,12 +46,17 @@ struct PinnedMap {
 
 impl PinnedMap {
     /// `body` as a map with valid pin records under its pin keys (none where
-    /// a key is absent). `None` for an empty body (a header-only room), for
-    /// bytes that are no single map, and for pin keys that hold no valid
-    /// records, which the put judges as it would.
+    /// a key is absent); an empty body (a live header-only room) as an empty
+    /// map, which holds no records. `None` for bytes that are no single map,
+    /// and for pin keys that hold no valid records, which the put judges as
+    /// it would.
     fn read(body: &[u8]) -> Option<Self> {
         if body.is_empty() {
-            return None;
+            return Some(Self {
+                entries: Vec::new(),
+                pins: Vec::new(),
+                unpinned: Vec::new(),
+            });
         }
         let mut cursor = body;
         let Ok(Value::Map(entries)) = rmpv::decode::read_value(&mut cursor) else {

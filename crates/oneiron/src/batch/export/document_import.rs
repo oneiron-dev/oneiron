@@ -1076,7 +1076,11 @@ fn insert_ready_row<R: Read + Seek>(
                 }
                 let applied = batch.apply(wtxn);
                 if room_pins {
-                    crate::conversation::PIN_UPDATES.delete(&vault.store, wtxn, &id)?;
+                    // The apply's own error comes back first.
+                    let cleared = crate::conversation::PIN_UPDATES.delete(&vault.store, wtxn, &id);
+                    if applied.is_ok() {
+                        cleared?;
+                    }
                 }
                 applied
             }

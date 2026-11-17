@@ -377,7 +377,12 @@ impl Owed {
 
 /// Whether a local write still owes `window` a row's carrier or an edge's
 /// removal (FIX 14534): until the mirror takes it, the window's persisted
-/// document lacks it, so a copy dropped now would lose it.
+/// document lacks it, so a copy dropped now would lose it. A merged-carrier
+/// marker counts too, owed or not: which it is takes the window's carrier,
+/// which a closed window's caller does not read. A merged row the window
+/// owes holds records only this store has, so a copy dropped now would lose
+/// them; one it no longer owes defers the drop until the window's next open
+/// or the start pass retires the marker.
 ///
 /// # Errors
 /// Store errors.
