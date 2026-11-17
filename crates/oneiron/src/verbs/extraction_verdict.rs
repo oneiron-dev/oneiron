@@ -64,7 +64,8 @@ pub enum ExtractionPart {
 
 /// One bound Extraction verdict pack: the read, its part, the candidate operands the job
 /// proposes, the listed and prior claim pins the engine rebuilds, the questions with
-/// canonical options, and the earlier answers a final round checks.
+/// canonical options, the earlier answers a final round checks, and the optional conflict
+/// member selector a resolution read disambiguates.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ExtractionPack {
@@ -85,6 +86,9 @@ pub struct ExtractionPack {
     /// The earlier page or group answers a final round checks.
     #[serde(default)]
     pub earlier: Vec<EarlierAnswer>,
+    /// The selected conflict members name the candidate indexes this pack resolves, in order.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub set_members: Option<Vec<usize>>,
 }
 
 /// One candidate operand: the typed bounded proposal the job shows the model for one

@@ -29,6 +29,7 @@
 mod checks;
 mod execution;
 mod finals;
+mod observed_beside;
 mod reads;
 
 pub(crate) use super::executor::evidence_version_for_row;
@@ -47,8 +48,21 @@ use crate::attempt_queue::AttemptId;
 use crate::claim::ScopedRead;
 use crate::entity_id::EntityId;
 use crate::error::Result;
+use crate::memory::{Memory, MemoryResult};
 use crate::model_decision::AnswerContract;
 use crate::verbs::{ExtractionPack, ExtractionPart, ExtractionRead, PackQuestion};
+
+/// Borrows the live snapshot and span-bearing operands for one bound pack rebuild.
+pub(crate) struct ExtractionRebuildContext<'a> {
+    /// Borrows the actor-scoped memory that admitted the operands.
+    pub(crate) memory: &'a Memory<'a>,
+    /// Borrows the live read that rebuilt the bound projection.
+    pub(crate) read: &'a ScopedRead<'a>,
+    /// Borrows the transaction that holds the verified snapshot.
+    pub(crate) txn: &'a heed::RoTxn<'a>,
+    /// Borrows the original operands, including their served evidence spans.
+    pub(crate) operands: &'a [crate::verbs::CandidateOperand],
+}
 
 /// What the checked rebuild returns: the derived candidate ids, the rebuilt
 /// listed and prior sets, the rebuilt questions with canonical options, and the
@@ -81,8 +95,8 @@ pub(crate) struct RebuiltExtractionPack {
 /// Any operand, set, part, round or earlier answer the native builders would
 /// not produce: malformed references, an ungrammatical predicate, a null
 /// proposal, missing evidence, a relationship outside the bound set, an
-/// unknown or unlisted corrected claim, candidates spanning more than one
-/// conflict or none at all, a part beside its rebuilt pages, a final round
+/// unknown or unlisted corrected claim, candidates with no selected conflict,
+/// ambiguous sets without a selector, a part beside its rebuilt pages, a final round
 /// that does not exist, or an earlier answer outside its canonical options.
 /// The bound handler maps every error below to its request refusal.
 pub(crate) fn rebuild_checked_pack(
@@ -90,10 +104,19 @@ pub(crate) fn rebuild_checked_pack(
     bound: &BoundBranchRead,
     attempt: AttemptId,
     branch: &ConsolidationBranchPlan<EntityId>,
-    read: &ScopedRead<'_>,
-    txn: &heed::RoTxn<'_>,
+    context: &ExtractionRebuildContext<'_>,
     branch_subject: EntityId,
-) -> Result<RebuiltExtractionPack> {
+) -> MemoryResult<RebuiltExtractionPack> {
+    if matches!(
+        pack.read,
+        ExtractionRead::Correction | ExtractionRead::CorrectionFinal
+    ) && pack.set_members.is_some()
+    {
+        return Err(invalid_consolidation(
+            "extraction correction reads do not select conflict members",
+        )
+        .into());
+    }
     let checked = reads::check_pack_candidates(&pack.candidates, bound, attempt, branch)?;
     let candidate_ids = checked.candidate_ids();
     let scope = bound.scope().clone();
@@ -102,7 +125,8 @@ pub(crate) fn rebuild_checked_pack(
             if !pack.earlier.is_empty() {
                 return Err(invalid_consolidation(
                     "extraction earlier answers name no read question",
-                ));
+                )
+                .into());
             }
             let questions = reads::correction_plan_questions(&checked, pack.part)?;
             let listed = checked.listed_ids();
@@ -122,9 +146,9 @@ pub(crate) fn rebuild_checked_pack(
                 finals::correction_final_plan(&checked, &pack.earlier, pack.part)?;
             let listed = checked.listed_ids();
             let ExtractionPart::Final { round } = pack.part else {
-                return Err(invalid_consolidation(
-                    "extraction pack part does not match its read",
-                ));
+                return Err(
+                    invalid_consolidation("extraction pack part does not match its read").into(),
+                );
             };
             let correlation =
                 EntityId::from_bytes(*attempt.as_bytes()).map_err(crate::Error::from)?;
@@ -143,16 +167,29 @@ pub(crate) fn rebuild_checked_pack(
             if !pack.earlier.is_empty() {
                 return Err(invalid_consolidation(
                     "extraction earlier answers name no read question",
-                ));
+                )
+                .into());
             }
-            let built = reads::resolution_conflict(&checked.rows, bound, read, txn, attempt)?;
+            let built = reads::resolution_conflict(
+                &checked.rows,
+                bound,
+                context,
+                attempt,
+                pack.set_members.as_deref(),
+            )?;
             let questions = reads::resolution_plan_questions(&built, pack.part)?;
             let priors = built.prior_ids();
             let execution = CheckedExtractionRead::resolution(built, pack.part, scope);
             (Vec::new(), priors, questions, execution)
         }
         ExtractionRead::ResolutionFinal => {
-            let built = reads::resolution_conflict(&checked.rows, bound, read, txn, attempt)?;
+            let built = reads::resolution_conflict(
+                &checked.rows,
+                bound,
+                context,
+                attempt,
+                pack.set_members.as_deref(),
+            )?;
             let (question, page_answers) =
                 finals::resolution_final_plan(&built, &pack.earlier, pack.part)?;
             let priors = built.prior_ids();
@@ -160,13 +197,19 @@ pub(crate) fn rebuild_checked_pack(
             (Vec::new(), priors, vec![question], execution)
         }
         ExtractionRead::IdentityFinal => {
-            let built = reads::resolution_conflict(&checked.rows, bound, read, txn, attempt)?;
+            let built = reads::resolution_conflict(
+                &checked.rows,
+                bound,
+                context,
+                attempt,
+                pack.set_members.as_deref(),
+            )?;
             let (questions, shortlist) =
                 finals::identity_final_plan(&built, &pack.earlier, pack.part)?;
             let ExtractionPart::Final { round } = pack.part else {
-                return Err(invalid_consolidation(
-                    "extraction pack part does not match its read",
-                ));
+                return Err(
+                    invalid_consolidation("extraction pack part does not match its read").into(),
+                );
             };
             let priors = built.prior_ids();
             let execution = CheckedExtractionRead::identity_final(built, shortlist, round, scope);
@@ -183,6 +226,30 @@ pub(crate) fn rebuild_checked_pack(
         questions,
         execution,
     })
+}
+
+/// Selects one routed set by its complete ordered member list or requires a unique set.
+fn select_conflict(
+    routed: &[observed_beside::RoutedConflict],
+    members: Option<&[usize]>,
+) -> Result<usize> {
+    if let Some(members) = members {
+        return routed
+            .iter()
+            .position(|routed| routed.set.candidate_indexes.as_slice() == members)
+            .ok_or_else(|| {
+                invalid_consolidation("extraction set members name no routed conflict")
+            });
+    }
+    match routed.len() {
+        1 => Ok(0),
+        0 => Err(invalid_consolidation(
+            "extraction candidates form no native conflict",
+        )),
+        _ => Err(invalid_consolidation(
+            "extraction candidates span more than one conflict",
+        )),
+    }
 }
 
 /// Runs the ladder's contract check over one rebuilt Choice's `options`

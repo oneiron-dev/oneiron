@@ -10,13 +10,11 @@
 //! real call map in native order, while question labels stay positional, so
 //! both measure the same bytes without any question id.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use super::super::ConsolidationBranchPlan;
 use super::super::call_labels::{CallLabelMap, LabelKind};
-use super::super::conflict::{
-    ConflictIdentity, PriorHead, candidate_facts, conflict_open_marker_id, route_bound_priors,
-};
+use super::super::conflict::{ConflictIdentity, candidate_facts, conflict_open_marker_id};
 use super::super::executor::extraction::corrections::{
     NumberedCorrectionCandidate, NumberedListedClaim, correction_candidate_bytes,
     correction_choice_specs, correction_frame_bytes, correction_listed_bytes,
@@ -33,11 +31,13 @@ use super::super::routing::judge_queue;
 use super::super::settle::decision_pages::{json_len, split_pages};
 use super::super::support::invalid_consolidation;
 use super::super::value_projection::rmpv_to_json;
-use super::BoundBranchRead;
+use super::observed_beside::route_observed_priors;
+use super::{BoundBranchRead, ExtractionRebuildContext, select_conflict};
 use crate::attempt_queue::AttemptId;
-use crate::claim::{ClaimSource, ScopedRead, validate_predicate};
+use crate::claim::{ClaimSource, validate_predicate};
 use crate::entity_id::EntityId;
 use crate::error::Result;
+use crate::memory::MemoryResult;
 use crate::verbs::{CandidateOperand, ExtractionPart, PackQuestion};
 use crate::write_envelope::ClaimCandidate;
 
@@ -438,26 +438,25 @@ pub(super) fn correction_page_entries(
     })
 }
 
-/// The one native conflict the pack candidates form: nomination through
-/// the native [`judge_queue`] over stored vectors with the bound key rules
-/// and threshold, then [`route_bound_priors`] over the bound heads. The pack
-/// is one conflict exactly when routing leaves a single set covering every
-/// candidate, exactly-restated members aside. Returns its rows for reads,
-/// its heads, whether members span predicates, and the retained set identity
-/// with its native evidence and ask correlation for the lent execution.
+/// Rebuilds the selected conflict with native nomination and the crate's observed-beside route.
+/// Coverage stays within its original nomination component, with exact restatements allowed.
+/// Returns the selected rows, heads, predicate span, retained identity, evidence and correlation.
 pub(super) fn resolution_conflict(
     rows: &[CheckedCandidate],
     bound: &BoundBranchRead,
-    read: &ScopedRead<'_>,
-    txn: &heed::RoTxn<'_>,
+    context: &ExtractionRebuildContext<'_>,
     attempt: AttemptId,
-) -> Result<BuiltConflict> {
+    set_members: Option<&[usize]>,
+) -> MemoryResult<BuiltConflict> {
     let proposals: Vec<PromotionCandidate> = rows.iter().map(|row| row.proposal.clone()).collect();
     let mut embeddings: BTreeMap<EntityId, Vec<f32>> = BTreeMap::new();
     for proposal in &proposals {
-        if let Some(vector) =
-            bound.candidate_vector_in_txn(read, txn, proposal.claim_id, &proposal.candidate)?
-        {
+        if let Some(vector) = bound.candidate_vector_in_txn(
+            context.read,
+            context.txn,
+            proposal.claim_id,
+            &proposal.candidate,
+        )? {
             embeddings.insert(proposal.claim_id, vector);
         }
     }
@@ -467,33 +466,26 @@ pub(super) fn resolution_conflict(
         bound.key_rules(),
         bound.cosine_threshold(),
     )?;
-    let heads: Vec<PriorHead> = bound.priors().values().cloned().collect();
-    let (routed, exact) =
-        route_bound_priors(&proposals, &heads, nominated, bound.key_rules(), |id| {
-            bound.require_prior_write(id)
-        })?;
-    if routed.len() != 1 {
-        return Err(invalid_consolidation(if routed.is_empty() {
-            "extraction candidates form no native conflict"
-        } else {
-            "extraction candidates span more than one conflict"
-        }));
-    }
-    let set = &routed[0];
-    let mut covered: Vec<usize> = set.candidate_indexes.clone();
-    covered.extend(exact.iter().copied());
-    covered.sort_unstable();
-    if covered != (0..proposals.len()).collect::<Vec<_>>() {
-        return Err(invalid_consolidation(
-            "extraction candidates are not one native conflict",
-        ));
+    let (routed, exact) = route_observed_priors(&proposals, bound, context, nominated)?;
+    let selected = &routed[select_conflict(&routed, set_members)?];
+    let set = &selected.set;
+    let covered: BTreeSet<usize> = selected
+        .component_coverage
+        .iter()
+        .chain(&exact)
+        .copied()
+        .collect();
+    if covered.into_iter().ne(0..proposals.len()) {
+        return Err(
+            invalid_consolidation("extraction candidates are not one native conflict").into(),
+        );
     }
     let mut members = Vec::with_capacity(set.candidate_indexes.len());
     for index in &set.candidate_indexes {
         let Some(proposal) = proposals.get(*index) else {
-            return Err(invalid_consolidation(
-                "extraction candidates are not one native conflict",
-            ));
+            return Err(
+                invalid_consolidation("extraction candidates are not one native conflict").into(),
+            );
         };
         let facts = candidate_facts(&proposal.candidate)?;
         members.push((
@@ -505,9 +497,9 @@ pub(super) fn resolution_conflict(
     let mut shown = Vec::with_capacity(set.prior_heads.len());
     for id in &set.prior_heads {
         let Some(head) = bound.prior(*id) else {
-            return Err(invalid_consolidation(
-                "extraction conflict names an unknown prior head",
-            ));
+            return Err(
+                invalid_consolidation("extraction conflict names an unknown prior head").into(),
+            );
         };
         shown.push(head.clone());
     }
