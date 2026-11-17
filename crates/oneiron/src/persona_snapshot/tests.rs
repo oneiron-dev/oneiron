@@ -160,7 +160,7 @@ fn ambiguous_sensitivity_band_fails_closed() {
         (Value::from("sensitivity"), Value::from(0_u64)),
         (Value::from("sensitivity"), Value::from(3_u64)),
     ]));
-    assert!(persona_snapshot_tier_a_clamped(&body));
+    assert!(persona_snapshot_tier_a_clamped(&body, true));
 }
 
 #[test]

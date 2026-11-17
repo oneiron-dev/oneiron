@@ -257,6 +257,13 @@ objc2-core-ml = { version = "=0.3.2", default-features = false, features = [
     "MLMultiArray", "MLMultiArrayConstraint",
 ] }
 
+# The field editor's save to a draft roots its server on a `MemoryKeystore`, and sends its
+# document through `oneiron::test_support::mark_esign_sent`.
+[[test]]
+name = "esign_editor_draft_fields"
+path = "tests/esign_editor_draft_fields.rs"
+required-features = ["oneiron/test-support"]
+
 # The console echo guard (`commands/owner/secret_input.rs`, FIX 11387),
 # through the binding the workspace already locks; no SDK at build time.
 [target.'cfg(windows)'.dependencies]
