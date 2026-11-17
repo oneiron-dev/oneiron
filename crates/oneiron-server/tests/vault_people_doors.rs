@@ -18,7 +18,8 @@
 //! - :174 "The renderer shows the highest line at or below the reader's
 //!   ceiling.": a reader whose model channel sits below a person's name band
 //!   reads the bare handle, until the owner raises that connection's ceiling
-//!   (DEC-0006's names dial, `vault.disclosure.ceiling.set`).
+//!   (DEC-0006's names dial: the connection's row of the
+//!   `disclosure.model_ceiling` key, set through `vault.settings.set`).
 //!
 //! Not covered here: the Dreamer's `about` lines themselves (:174 "The
 //! Dreamer writes each line only from facts at or below its band."). They
@@ -59,7 +60,10 @@ use tower::ServiceExt;
 const CREATE: &str = "vault.people.create";
 const GET: &str = "vault.people.get";
 const LIST: &str = "vault.people.list";
-const CEILING_SET: &str = "vault.disclosure.ceiling.set";
+const SETTING_SET: &str = "vault.settings.set";
+/// The key whose rows are the owner's model-connection ceilings; a row's item
+/// is `<connection>/<class>`, and the class `*` stands for the whole connection.
+const MODEL_CEILING: &str = "disclosure.model_ceiling";
 
 /// Rows on one `vault.people.list` page (memory/people_verbs.rs
 /// `PEOPLE_PAGE_SIZE`).
@@ -822,12 +826,19 @@ fn a_reader_below_a_names_band_sees_the_bare_handle_until_the_owner_raises_its_c
             "the agent's roster carries the name nowhere: {reader_rows:?}"
         );
 
-        let connection = format!("agent:{}", reader.id.to_hex());
-        host.owner_ok(
-            CEILING_SET,
-            json!({"connection": connection, "ceiling": "restricted"}),
-        )
-        .await;
+        let ceiling = |band: &str| {
+            json!({
+                "key": MODEL_CEILING,
+                "item": format!("agent:{}/*", reader.id.to_hex()),
+                "scope": {"kind": "vault"},
+                "value": band,
+            })
+        };
+        let set = host.owner_ok(SETTING_SET, ceiling("restricted")).await;
+        assert_eq!(
+            set["status"], "applied",
+            "the owner raises the ceiling: {set}"
+        );
         let raised = host
             .call(Caller::As(&reader), GET, json!({"pr": handle}))
             .await
@@ -838,11 +849,11 @@ fn a_reader_below_a_names_band_sees_the_bare_handle_until_the_owner_raises_its_c
             "a raised ceiling shows the name: {raised}"
         );
 
-        host.owner_ok(
-            CEILING_SET,
-            json!({"connection": connection, "ceiling": "public"}),
-        )
-        .await;
+        let set = host.owner_ok(SETTING_SET, ceiling("public")).await;
+        assert_eq!(
+            set["status"], "applied",
+            "the owner lowers the ceiling: {set}"
+        );
         let lowered = host
             .call(Caller::As(&reader), GET, json!({"pr": handle}))
             .await

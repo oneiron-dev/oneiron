@@ -12,9 +12,11 @@
 //!   confirm": the owner's one standing confirm writes the offered clearance,
 //!   and the settled offer takes no second answer.
 //! - DEC-0006 :112 "The agent never raises its own ceiling.": every owner door
-//!   of the family (ceilings, home clearances, reveal asks and answers)
-//!   refuses an agent and a person who is not the owner, and their attempt
-//!   changes no dial.
+//!   of the family (home clearances, reveal asks and answers) refuses an agent
+//!   and a person who is not the owner, and their attempt changes no dial. A
+//!   ceiling is a row of the `disclosure.model_ceiling` key (DESIGN
+//!   15-setting-primitive, stage 4): `vault.settings.set` refuses the person,
+//!   and the agent's raise of its own ceiling never applies.
 //! - DEC-0006 :102 "A record above the connection's ceiling reaches the model
 //!   as its bare handle": the owner's ceiling on a model connection turns a
 //!   classed value in that connection's context pack into its handle, and
@@ -92,6 +94,10 @@ const NAME_VALUE: &str = "Marisol Quenby";
 
 /// A names-class predicate (`disclosure/model_channel.rs` `claim_data_class`).
 const NAME_PREDICATE: &str = "profile.given_name";
+
+/// The key whose rows are the owner's model-connection ceilings, one row per
+/// connection and data class (`<connection>/<class>`).
+const MODEL_CEILING: &str = "disclosure.model_ceiling";
 
 /// The registered secret's value, which no answer may carry.
 const SECRET_VALUE: &str = "reading-room-door-code-5521";
@@ -181,6 +187,21 @@ impl Reply {
 
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+/// A `vault.settings.set` body for `dial`'s row of [`MODEL_CEILING`]: `band`
+/// sets the ceiling, and `None` clears the row.
+fn ceiling_set(dial: &str, band: Option<&str>) -> Value {
+    let mut body = json!({"key": MODEL_CEILING, "item": dial, "scope": {"kind": "vault"}});
+    if let Some(band) = band {
+        body["value"] = json!(band);
+    }
+    body
+}
+
+/// A `vault.settings.get` body for `dial`'s row of [`MODEL_CEILING`].
+fn ceiling_get(dial: &str) -> Value {
+    json!({"key": MODEL_CEILING, "item": dial, "at": []})
 }
 
 /// The rows of a list answer: a bare array, or an `items` array.
@@ -686,35 +707,22 @@ fn one_owner_confirm_clears_a_new_party_and_settles_its_offer_once() {
 /// DEC-0006 :112: "The agent never raises its own ceiling." Each owner door
 /// of the family refuses the vault's own full-access agent and a person who
 /// is not the owner with the owner refusal, and their attempts change no
-/// dial the owner set.
+/// dial the owner set. On the agent's names ceiling, a row of
+/// [`MODEL_CEILING`], the person's `vault.settings.set` is refused and the
+/// agent's raise does not apply.
 #[test]
 fn no_disclosure_dial_or_reveal_answer_opens_for_anyone_but_the_owner() {
     run_on_engine_stack("disclosure-doors-owner-only", || async {
         let host = Host::new();
         let agent = host.agent("disclosure-agent", 0x74, CORE);
         let person = host.principal(host.person("Mina"), "human", 0x75, CORE);
-        let connection = format!("agent:{}", agent.id.to_hex());
+        let dial = format!("agent:{}/names", agent.id.to_hex());
         let home = hex(&OTHER_HOME);
         let set = host
-            .owner_ok(
-                "vault.disclosure.ceiling.set",
-                json!({"connection": connection, "class": "names", "ceiling": "public"}),
-            )
+            .owner_ok("vault.settings.set", ceiling_set(&dial, Some("public")))
             .await;
-        assert_eq!(set["ceiling"], "public", "{set}");
+        assert_eq!(set["status"], "applied", "{set}");
         let doors = [
-            (
-                "vault.disclosure.ceiling.get",
-                json!({"connection": connection, "class": "names"}),
-            ),
-            (
-                "vault.disclosure.ceiling.set",
-                json!({"connection": connection, "class": "names", "ceiling": "restricted"}),
-            ),
-            (
-                "vault.disclosure.ceiling.clear",
-                json!({"connection": connection, "class": "names"}),
-            ),
             ("vault.disclosure.home.get", json!({"home_vault_id": home})),
             (
                 "vault.disclosure.home.set",
@@ -745,14 +753,23 @@ fn no_disclosure_dial_or_reveal_answer_opens_for_anyone_but_the_owner() {
                 );
             }
         }
+        let raise = ceiling_set(&dial, Some("restricted"));
+        host.facade(Caller::As(&person), "vault.settings.set", &raise)
+            .await
+            .refused("a person who is not the owner at the agent's ceiling");
+        let asked = host
+            .facade(Caller::As(&agent), "vault.settings.set", &raise)
+            .await;
+        assert!(
+            !asked.status.is_success() || asked.body["status"] != "applied",
+            "the agent's raise of its own ceiling does not apply: {}",
+            asked.body
+        );
         let ceiling = host
-            .owner_ok(
-                "vault.disclosure.ceiling.get",
-                json!({"connection": connection, "class": "names"}),
-            )
+            .owner_ok("vault.settings.get", ceiling_get(&dial))
             .await;
         assert_eq!(
-            ceiling["ceiling"], "public",
+            ceiling["value"], "public",
             "the refused callers moved no ceiling: {ceiling}"
         );
         let home_band = host
@@ -775,8 +792,7 @@ fn a_model_connection_sees_a_bare_handle_above_its_ceiling_until_the_owner_clear
     run_on_engine_stack("disclosure-doors-ceiling", || async {
         let host = Host::new();
         let claim = host.seed_name_claim().to_hex();
-        let connection = format!("owner:{}", host.owner.to_hex());
-        let dial = json!({"connection": connection, "class": "names"});
+        let dial = format!("owner:{}/names", host.owner.to_hex());
         let pack = host.owner_pack(SHARED_WORD).await;
         assert!(
             result_ids(&pack).contains(&claim),
@@ -787,22 +803,17 @@ fn a_model_connection_sees_a_bare_handle_above_its_ceiling_until_the_owner_clear
             "with no ceiling the owner's connection reads the value: {pack}"
         );
         let unset = host
-            .owner_ok("vault.disclosure.ceiling.get", dial.clone())
+            .owner_ok("vault.settings.get", ceiling_get(&dial))
             .await;
-        assert!(unset["ceiling"].is_null(), "no ceiling is set yet: {unset}");
+        assert!(unset["value"].is_null(), "no ceiling is set yet: {unset}");
         let set = host
-            .owner_ok(
-                "vault.disclosure.ceiling.set",
-                json!({"connection": connection, "class": "names", "ceiling": "public"}),
-            )
+            .owner_ok("vault.settings.set", ceiling_set(&dial, Some("public")))
             .await;
-        assert_eq!(set["connection"], connection, "{set}");
-        assert_eq!(set["class"], "names", "{set}");
-        assert_eq!(set["ceiling"], "public", "{set}");
+        assert_eq!(set["status"], "applied", "{set}");
         let read = host
-            .owner_ok("vault.disclosure.ceiling.get", dial.clone())
+            .owner_ok("vault.settings.get", ceiling_get(&dial))
             .await;
-        assert_eq!(read["ceiling"], "public", "{read}");
+        assert_eq!(read["value"], "public", "{read}");
         let pack = host.owner_pack(SHARED_WORD).await;
         assert!(
             result_ids(&pack).contains(&claim),
@@ -813,11 +824,15 @@ fn a_model_connection_sees_a_bare_handle_above_its_ceiling_until_the_owner_clear
             "above the ceiling the model reads the handle, never the value: {pack}"
         );
         let cleared = host
-            .owner_ok("vault.disclosure.ceiling.clear", dial.clone())
+            .owner_ok("vault.settings.set", ceiling_set(&dial, None))
+            .await;
+        assert_eq!(cleared["status"], "applied", "{cleared}");
+        let read = host
+            .owner_ok("vault.settings.get", ceiling_get(&dial))
             .await;
         assert!(
-            cleared["ceiling"].is_null(),
-            "the clear removes the ceiling: {cleared}"
+            read["value"].is_null(),
+            "the clear removes the ceiling: {read}"
         );
         let pack = host.owner_pack(SHARED_WORD).await;
         assert!(

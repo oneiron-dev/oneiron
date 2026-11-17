@@ -29,8 +29,9 @@ use oneiron::calendar::follow_up::{
 use oneiron::calendar::transcript::{
     TranscriptFileDropRequest, TranscriptIngestOutcome, ingest_file_drop_transcript,
 };
-use oneiron::disclosure::{DisclosureBand, DisclosureCeilingSet, DisclosureDataClass};
+use oneiron::disclosure::{DisclosureBand, DisclosureDataClass};
 use oneiron::registry::ENTITY_TYPE_PERSON;
+use oneiron::setting::{SetSetting, SetSettingOutcome, SettingCaller};
 use oneiron::settings::ReadDestination;
 use oneiron::store::GateDecisionId;
 use oneiron::store::ports::ManualClock;
@@ -173,16 +174,28 @@ impl Fixture {
             .dreamer_authority()
             .expect("the Dreamer")
             .entity_ref();
-        self.vault
-            .set_model_disclosure_ceiling(
-                &proof,
-                DisclosureCeilingSet {
-                    connection: format!("agent:{}", dreamer.to_hex()),
-                    class: Some(DisclosureDataClass::Names),
-                    ceiling,
+        let dial = format!(
+            "agent:{}/{}",
+            dreamer.to_hex(),
+            DisclosureDataClass::Names.as_str()
+        );
+        let outcome = self
+            .vault
+            .set_setting(
+                SettingCaller::Owner(&proof),
+                SetSetting {
+                    item: Some(dial),
+                    ..SetSetting::vault_value(
+                        "disclosure.model_ceiling",
+                        serde_json::json!(ceiling.as_str()),
+                    )
                 },
             )
             .expect("set the ceiling");
+        assert!(
+            matches!(outcome, SetSettingOutcome::Applied { .. }),
+            "the owner's ceiling applies: {outcome:?}"
+        );
     }
 }
 

@@ -2,15 +2,17 @@
 //!
 //! Canon (agent-runtime-v1.md, "Plan mode reuses built review parts"):
 //! "Per-agent plan_mode: required | optional | off". Engine ruling SETTING = A
-//! (Fri 13 Nov 03:05): the mode is the owner's authority, set only by
-//! `vault.agents.plan_mode.set`; `required` refuses a non-owner creator's run
+//! (Fri 13 Nov 03:05): the mode is the owner's authority, set only by the
+//! owner (now the agent's row of the `agents.plan_mode` key, set through
+//! `vault.settings.set`; DESIGN 15-setting-primitive, stage 4); `required`
+//! refuses a non-owner creator's run
 //! without an approved plan, and the owner's own TASK is never refused; `off`
 //! refuses a plan that agent proposes; an agent with no row is `optional`.
 //!
 //! An agent with an owner Grant of base reach posts TASKs for its own
-//! definition, as in `plan_mode_run.rs`. The tests set the mode through the
-//! verb by name, so on a tree without it each fails at run time as an
-//! unknown verb.
+//! definition, as in `plan_mode_run.rs`. The tests set the mode through
+//! `vault.settings.set` by name, so on a tree without the key each fails at
+//! run time as an unknown key.
 //!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test plan_mode_setting`.
 #![cfg(oneiron_test_support)]
@@ -34,7 +36,10 @@ use oneiron::verbs::{AgentGrantMintRequest, mint_agent_grant_as};
 use oneiron::{EdgeActorClass, EntityId, Vault, VaultConfig};
 use serde_json::{Value, json};
 
-const SET: &str = "vault.agents.plan_mode.set";
+const SET: &str = "vault.settings.set";
+const GET: &str = "vault.settings.get";
+/// The key whose agent row is that agent's plan mode.
+const PLAN_MODE: &str = "agents.plan_mode";
 /// The refusal of a run of a `required` agent that pins no approved plan.
 const PLAN_MODE_REQUIRED: &str = "gate.deny.plan_mode.required";
 /// The refusal of a plan an `off` agent proposes.
@@ -121,21 +126,49 @@ fn owner(fixture: &Fixture) -> Memory<'_> {
     fixture.vault.memory(fixture.owner, EdgeActorClass::Human)
 }
 
+fn agent_scope(fixture: &Fixture) -> Value {
+    json!({ "kind": "agent", "id": fixture.agent.to_hex() })
+}
+
+/// The agent's plan mode in force as the owner reads it, and the revision of
+/// the row that decided it (0 with no row).
+fn mode_in_force(fixture: &Fixture) -> (String, u64) {
+    let view = oneiron::task_verb::sdk::invoke(
+        &owner(fixture),
+        GET,
+        json!({ "key": PLAN_MODE, "at": [agent_scope(fixture)] }),
+    )
+    .expect("the owner reads the plan mode");
+    (
+        view["value"].as_str().expect("a mode").to_owned(),
+        view["revision"].as_u64().expect("a revision"),
+    )
+}
+
 /// `memory` sets the agent's plan mode from `expected` to `plan_mode` through
-/// the verb, by name.
+/// `vault.settings.set`, by name. The key compares revisions, not modes: when
+/// the mode in force is `expected`, the set names the revision of its row;
+/// otherwise it names a revision the row does not have.
 fn set_mode(
     fixture: &Fixture,
     memory: &Memory<'_>,
     expected: &str,
     plan_mode: &str,
 ) -> Result<Value, String> {
+    let (in_force, revision) = mode_in_force(fixture);
+    let seen = if in_force == expected {
+        revision
+    } else {
+        revision + 1
+    };
     oneiron::task_verb::sdk::invoke(
         memory,
         SET,
         json!({
-            "agent_def_ref": fixture.agent.to_hex(),
-            "expected": expected,
-            "plan_mode": plan_mode,
+            "key": PLAN_MODE,
+            "scope": agent_scope(fixture),
+            "value": plan_mode,
+            "expected_revision": seen,
         }),
     )
     .map_err(|error| format!("{error:?}"))
@@ -146,14 +179,14 @@ fn owner_sets(fixture: &Fixture, expected: &str, plan_mode: &str) {
     let set = set_mode(fixture, &owner(fixture), expected, plan_mode)
         .unwrap_or_else(|error| panic!("the owner sets {plan_mode}: {error}"));
     assert_eq!(
-        set.pointer("/plan_mode").and_then(Value::as_str),
-        Some(plan_mode),
-        "the setter answers the mode it set: {set}"
+        set.pointer("/status").and_then(Value::as_str),
+        Some("applied"),
+        "the owner's change applies: {set}"
     );
     assert_eq!(
-        set.pointer("/agent_def_ref").and_then(Value::as_str),
-        Some(fixture.agent.to_hex().as_str()),
-        "the setter answers the agent it set: {set}"
+        mode_in_force(fixture).0,
+        plan_mode,
+        "the agent's row is the mode the owner set: {set}"
     );
 }
 
@@ -274,9 +307,13 @@ fn an_off_agent_cannot_propose() {
 #[test]
 fn only_the_owner_sets_the_mode_and_only_from_the_mode_it_has() {
     let fixture = fixture();
+    let by_agent = set_mode(&fixture, &agent(&fixture), "optional", "off");
     assert!(
-        set_mode(&fixture, &agent(&fixture), "optional", "off").is_err(),
-        "an agent sets no plan mode, its own included"
+        by_agent
+            .as_ref()
+            .map_or(true, |answer| answer["status"] == json!("pending")),
+        "an agent sets no plan mode, its own included: its change is refused or waits on the \
+         owner: {by_agent:?}"
     );
     assert!(
         set_mode(&fixture, &owner(&fixture), "required", "off").is_err(),

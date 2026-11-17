@@ -80,6 +80,7 @@ use oneiron::authority::{
     encode_authority_log_entry_body, machine_profile_proof_transcript,
 };
 use oneiron::consent::AuthenticatedOwner;
+use oneiron::setting::{SetSetting, SetSettingOutcome, SettingCaller};
 use oneiron::store::GateDecisionId;
 use oneiron::test_doors::host_root_row_signature::sign_authority_row_as_host_root;
 use oneiron::{EntityId, ErrorKind, TimeRange, Vault, VaultConfig};
@@ -304,13 +305,30 @@ fn host_root_row(
     entry
 }
 
+/// The owner sets this machine's `authority.observation_policy` key to the default policy with a
+/// fold memory floor of `floor_bytes`.
 fn set_floor(vault: &Vault, floor_bytes: u64) {
-    vault
-        .set_authority_observation_policy(AuthorityObservationPolicy {
-            log_fold_memory_floor_bytes: Some(floor_bytes),
-            ..AuthorityObservationPolicy::default()
-        })
+    let owner = vault.ensure_embedded_owner_actor().expect("the owner");
+    let proof = vault
+        .authenticate_owner(owner, &owner.to_hex(), true, GateDecisionId::now())
+        .expect("an owner proof");
+    let policy = AuthorityObservationPolicy {
+        log_fold_memory_floor_bytes: Some(floor_bytes),
+        ..AuthorityObservationPolicy::default()
+    };
+    let outcome = vault
+        .set_setting(
+            SettingCaller::Owner(&proof),
+            SetSetting::vault_value(
+                "authority.observation_policy",
+                serde_json::to_value(policy).expect("the policy as JSON"),
+            ),
+        )
         .expect("the floor row");
+    assert!(
+        matches!(outcome, SetSettingOutcome::Applied { .. }),
+        "the owner's floor row applies: {outcome:?}"
+    );
 }
 
 /// How a flood ended.

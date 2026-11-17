@@ -25,7 +25,9 @@ use oneiron::booking::DisclosureRung;
 use oneiron::psych_profile::PsychProfileKey;
 use oneiron::registry::{ENTITY_TYPE_FACET, ENTITY_TYPE_PERSON};
 use oneiron::scan_check::EngineScan;
+use oneiron::setting::{SetSetting, SetSettingOutcome, SettingCaller};
 use oneiron::settings::ReadDestination;
+use oneiron::store::GateDecisionId;
 use oneiron::temporal::TimeRange;
 use oneiron::test_doors::companion_grant_index as doors;
 use oneiron::{AccessGrant, DeleteReason, EntityId, Vault, VaultConfig};
@@ -302,6 +304,27 @@ fn index_answers_as_the_walk_through_grants_revokes_a_delete_and_a_reopen() {
     fails_closed(&vault);
 }
 
+/// The owner sets `scan`'s row of the `origin.scan_threshold` key to `rows`.
+fn set_scan_threshold(vault: &Vault, scan: EngineScan, rows: u64) {
+    let person = vault.ensure_embedded_owner_actor().expect("embedded owner");
+    let owner = vault
+        .authenticate_owner(person, &person.to_hex(), true, GateDecisionId::now())
+        .expect("owner proof");
+    let outcome = vault
+        .set_setting(
+            SettingCaller::Owner(&owner),
+            SetSetting {
+                item: Some(scan.code().to_owned()),
+                ..SetSetting::vault_value("origin.scan_threshold", serde_json::json!(rows))
+            },
+        )
+        .expect("threshold");
+    assert!(
+        matches!(outcome, SetSettingOutcome::Applied { .. }),
+        "the owner's threshold row applies: {outcome:?}"
+    );
+}
+
 #[test]
 fn a_persona_list_reads_only_its_own_grants_from_the_index() {
     const PEOPLE: usize = 40;
@@ -355,7 +378,7 @@ fn a_persona_list_reads_only_its_own_grants_from_the_index() {
             .filter(|check| check.scan == scan.code())
             .count()
     };
-    vault.set_scan_threshold(scan, 2).expect("threshold");
+    set_scan_threshold(&vault, scan, 2);
     vault
         .authorized_companion_profile_facets(&reader, &person)
         .expect("list");
