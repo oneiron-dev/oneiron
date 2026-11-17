@@ -682,7 +682,10 @@ pub(super) fn enrollment_intent_id(
 /// goes as it did before this check, with a warning.
 pub(super) fn membership_sends(vault: &Vault, event: &CampaignEnrollmentEvent) -> bool {
     match effective_member_state(vault, event.entity_ref, event.campaign_ref) {
-        Ok(state) => matches!(state, None | Some(CampaignMemberState::Enrolled)),
+        Ok(state) => matches!(
+            state,
+            None | Some(CampaignMemberState::Enrolled | CampaignMemberState::Suppressed)
+        ),
         Err(error) => {
             tracing::warn!(
                 kind = ?error.kind(),
