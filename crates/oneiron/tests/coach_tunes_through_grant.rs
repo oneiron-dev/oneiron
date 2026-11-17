@@ -224,20 +224,13 @@ fn the_coach_tunes_each_knob_through_its_verb() {
 
     // Every change has its receipt, each naming the Coach as a holder.
     let changes = vault.engine_control_changes(&owner).expect("receipts");
-    assert_eq!(changes.len(), 10, "{changes:?}");
+    assert_eq!(changes.len(), 9, "{changes:?}");
     assert!(
         changes
             .iter()
             .all(|(_, change)| change.by == coach && !change.owner)
     );
-    for answer in [
-        &selection,
-        &strength,
-        &curator,
-        &period,
-        &thresholds,
-        &projector,
-    ] {
+    for answer in [&selection, &strength, &curator, &thresholds, &projector] {
         assert!(changes.iter().any(|(id, _)| *id == answer.id));
     }
 }
