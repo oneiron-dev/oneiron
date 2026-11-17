@@ -63,9 +63,10 @@ pub struct DecisionStepQuestion {
     /// `{"kind": "score", "min": 1, "max": 5}`, one number in that range.
     #[serde(default = "yes_no")]
     pub contract: oneiron_store::model_decision::AnswerContract,
-    /// What the question reads, as the run gives it. It is part of the
-    /// step's request: a retry of the key names the same state, its keys in
-    /// the same order, or it is refused as another request.
+    /// What the question reads, as the run gives it: a JSON object, the
+    /// empty object when omitted. It is part of the step's request: a retry
+    /// of the key names the same state, its keys in the same order, or it is
+    /// refused as another request.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub state: Option<serde_json::Value>,
 }

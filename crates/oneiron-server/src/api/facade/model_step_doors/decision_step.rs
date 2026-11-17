@@ -113,7 +113,12 @@ impl RunStep {
         dial.ceiling = DecisionRung::Big;
         let policy = host.bands();
         let ladder = host.ladder().ladder();
-        let state = decision.state.clone().unwrap_or(Value::Null);
+        // The ladder reads a state that is a JSON object: an omitted one is
+        // the empty object.
+        let state = decision
+            .state
+            .clone()
+            .unwrap_or_else(|| Value::Object(serde_json::Map::new()));
         // The run's step answers inside the read, on this thread; what it
         // answered is kept here, for the call's answer.
         let step = Mutex::new(self);
