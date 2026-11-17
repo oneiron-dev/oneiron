@@ -74,7 +74,7 @@ pub use self::escrow::{
 };
 pub use self::generation::{
     DATA_KEY_GENERATION_PAGE_SEAL_NOTICE, DataKeyGenerationCause, DataKeyGenerationDraft,
-    DataKeyGenerationOutcome, DataKeyGenerationWays,
+    DataKeyGenerationKeptWays, DataKeyGenerationOutcome, DataKeyGenerationWays,
 };
 pub use self::generation_proposal::{
     DataKeyGenerationProposal, NOTIFICATION_PRODUCER_DATA_KEY_GENERATION_PROPOSAL,

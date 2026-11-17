@@ -412,9 +412,20 @@ pub fn admit_imported_entity(
 /// The verdict class (`clear`, `flagged` or `indeterminate`) of the screen an
 /// imported claim's admission ran under, read back from the evidence
 /// [`imported_candidate`] wrote; `None` when no screen ran.
+///
+/// A stored claim keeps that evidence under its write envelope's candidate
+/// key, beside the actor and provenance the envelope adds, so the verdict is
+/// read there; the bare candidate evidence reads the same.
 pub(crate) fn imported_screen_verdict(evidence: &MsgpackValue) -> Option<&str> {
     let MsgpackValue::Map(entries) = evidence else {
         return None;
+    };
+    let entries = match map_entry(
+        entries,
+        crate::write_envelope::WRITE_ENVELOPE_EVIDENCE_CANDIDATE_KEY,
+    ) {
+        Some(MsgpackValue::Map(candidate)) => candidate,
+        _ => entries,
     };
     let MsgpackValue::Map(fields) = map_entry(entries, "screen")? else {
         return None;
