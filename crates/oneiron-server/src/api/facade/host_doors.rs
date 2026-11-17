@@ -95,7 +95,8 @@ pub(crate) use super::shared_policy_doors::*;
 pub(crate) use super::trusted_contact_doors::*;
 // The voice-bank doors (DOOR-143, FIX 4393) too.
 pub(crate) use super::voice_bank_doors::*;
-// The voice-recognition consent door (VOICE-RECOGNITION-CONSENT-NO-DOOR) too.
+// The voice-recognition consent and withdrawal doors (VOICE-RECOGNITION-CONSENT-NO-DOOR,
+// VOICE-CONSENT-LOG-WHO = A) too.
 pub(crate) use super::voice_recognition_doors::*;
 // The owner's legal-hold doors (OF-470) too.
 pub(crate) use super::asr_doors::*;
@@ -283,6 +284,7 @@ pub(crate) use super::critic_review_doors::*;
 pub(crate) use super::affect_doors::*;
 pub(crate) use super::agent_verb_class_doors::*;
 pub(crate) use super::aging_doors::*;
+pub(crate) use super::archive_judge_doors::*;
 pub(crate) use super::campaign_split_doors::*;
 pub(crate) use super::coach_offer_doors::*;
 // The drafter's owner and agent doors (FIX 12569), likewise.
