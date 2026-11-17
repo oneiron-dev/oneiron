@@ -72,13 +72,15 @@ use serde::Serialize;
 /// row that grants counts in full, a world key record included, and the image records its fork
 /// as a `SequenceFork` issue (Engine RULINGs SEQ-FLOOR-SHAPE-S = B, SEQ-FLOOR-S-WORLD-KEY-FLOOR
 /// = A).
-/// 44: only the roster's chain admits or removes an owner act's carrier, never an anchor's
+/// 44: the fold keeps each enrolled passkey's assertion contexts, each key a passkey vouched
+/// for and each such key a second vouch confirmed (row WEB-PASSKEY-OWNER-KEY).
+/// 45: only the roster's chain admits or removes an owner act's carrier, never an anchor's
 /// (FIX FOREIGN-ANCHOR-CHAIN-COUNTS-IN-EVERY-CHAIN-PREDICATES, site S1, and FIX
 /// FOREIGN-ANCHOR-ADMIT-SIDE); every other shared judge reads the roster's chain alone too (an
 /// owner key's enrolled machine, a residence result's signer, a one-machine pick, the
 /// names-the-key gates; Fable pass 29 K3), and a one-machine pick needs a live roster head in
 /// any role, not "yours".
-pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 44;
+pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 45;
 
 /// The domain every encoded image starts with.
 pub const AUTHORITY_CHECKPOINT_V2_DOMAIN: &[u8] = b"oneiron/authority/checkpoint/v2";

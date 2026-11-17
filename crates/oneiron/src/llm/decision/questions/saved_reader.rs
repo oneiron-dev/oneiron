@@ -5,7 +5,10 @@
 //! made_by is admitted through) builds its reader here:
 //! the principal's own live key, or the current caller's credential key on
 //! a proof-bearing workflow, narrowed by the version's frozen lane
-//! ([`crate::claim::FrozenReadLane::narrow_in_txn`]). A version saved as the
+//! ([`crate::claim::FrozenReadLane::narrow_row_key_in_txn`] for the
+//! principal's key, which reads as the class the lane was saved under;
+//! [`crate::claim::FrozenReadLane::narrow_in_txn`] for the caller's, which
+//! reads nothing under another class). A version saved as the
 //! principal's own reads exactly as before; a narrowed one reads only inside
 //! its narrowing, and nothing once its credential is no longer live.
 
@@ -29,14 +32,14 @@ pub(super) fn saved_reader_in_txn(
     read_lane: &FrozenReadLane,
 ) -> Result<ScopedReadActorKey> {
     let key = super::graph_ask::asker_reader_in_txn(vault, txn, principal)?;
-    read_lane.narrow_in_txn(vault, txn, key)
+    read_lane.narrow_row_key_in_txn(vault, txn, key)
 }
 
 /// [`saved_reader_in_txn`] in its own snapshot.
 ///
 /// # Errors
 /// As [`saved_reader_in_txn`].
-pub(super) fn saved_reader(
+pub(crate) fn saved_reader(
     vault: &Vault,
     principal: EntityId,
     read_lane: &FrozenReadLane,
@@ -45,8 +48,66 @@ pub(super) fn saved_reader(
     saved_reader_in_txn(vault, &txn, principal, read_lane)
 }
 
+/// `key`, a question's source key, read on `principal`'s grants in `txn`:
+/// with the owner's exemption while `principal` is the vault's live owner,
+/// proved again at each read, as the asker reader holds it
+/// (`graph_ask::asker_reader_in_txn`); otherwise under the access gate on
+/// `principal`'s grants (FIX SAVED-SOURCE-DROPS-OWNER-EXEMPTION). A saved
+/// lane keeps the exemption only where its live key held an owner standing
+/// ([`FrozenReadLane::narrow_in_txn`]).
+///
+/// # Errors
+/// A store failure reading the principal's row or the owner binding.
+pub(super) fn under_principal_gate_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    key: ScopedReadActorKey,
+    principal: EntityId,
+) -> Result<ScopedReadActorKey> {
+    let owner =
+        crate::memory::owner_exemption_holds_in_txn(vault, txn, principal).map_err(|refusal| {
+            crate::error::Error::Claim(crate::error::ClaimError::ScopedReadOwnerNotLive(Box::new(
+                refusal,
+            )))
+        })?;
+    Ok(if owner {
+        key.exempt_while_owner(principal)
+    } else {
+        key.require_access_grants(Some(principal))
+    })
+}
+
+/// `principal`'s source reader of a version saved under `read_lane`, in
+/// `txn`: the principal's own key as a question's source reads build it
+/// (its class from its row's type, on its own grants as
+/// [`under_principal_gate_in`] reads them), narrowed by the lane. The
+/// refresh's unit read, an artifact ask's rows and a withdrawal wake's
+/// admission each rebuild here, so one rebuild serves the three
+/// (OPUS-SECREAD-A N2 on #8109).
+///
+/// # Errors
+/// A store failure reading the principal's row or the owner binding, an
+/// `EntityNotFound` for a principal that is no actor, and a store, fold or
+/// clock failure judging the frozen credential.
+pub(crate) fn saved_source_key_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    principal: EntityId,
+    read_lane: &FrozenReadLane,
+) -> Result<ScopedReadActorKey> {
+    let key = under_principal_gate_in(
+        vault,
+        txn,
+        super::refresh::source_actor_key(vault, txn, principal, None)?,
+        principal,
+    )?;
+    read_lane.narrow_row_key_in_txn(vault, txn, key)
+}
+
 /// The saved lane met with the current caller's credential key in the same
-/// snapshot. Without a carried credential, keep the native saved reader.
+/// snapshot: a credential of another class than the lane's reads nothing
+/// (Sol F1 on #8134). Without a carried credential, keep the native saved
+/// reader.
 pub(super) fn saved_reader_in_txn_with_current(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -136,9 +197,7 @@ pub(super) fn saved_artifact_reads(
     ids: &[EntityId],
 ) -> Result<SavedArtifactReads> {
     let txn = vault.store.env.read_txn()?;
-    let key = super::refresh::source_actor_key(vault, &txn, principal, None)?
-        .require_access_grants(Some(principal));
-    let key = read_lane.narrow_in_txn(vault, &txn, key)?;
+    let key = saved_source_key_in_txn(vault, &txn, principal, read_lane)?;
     let sight = key.secret_sight();
     let read = super::reader_authority::question_lane(vault, key);
     let mut readable = BTreeSet::new();
@@ -210,9 +269,7 @@ pub(crate) fn wake_lane<'v>(
     let key = {
         let txn = vault.store.env.read_txn()?;
         let read_lane = wake_read_lane_in_txn(vault, &txn, principal, question)?;
-        let key = super::refresh::source_actor_key(vault, &txn, principal, None)?
-            .require_access_grants(Some(principal));
-        read_lane.narrow_in_txn(vault, &txn, key)?
+        saved_source_key_in_txn(vault, &txn, principal, &read_lane)?
     };
     Ok(super::reader_authority::question_lane(vault, key))
 }

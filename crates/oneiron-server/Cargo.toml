@@ -320,6 +320,12 @@ name = "it_esign_public"
 path = "tests/it_esign_public.rs"
 required-features = ["oneiron/test-support", "oneiron/test-hooks"]
 
+# The retrieval policy and outcome door promise tests serve the owner's root from a `MemoryKeystore`.
+[[test]]
+name = "vault_retrieval_policy_doors"
+path = "tests/vault_retrieval_policy_doors.rs"
+required-features = ["oneiron/test-support"]
+
 # The sieve doors (queue, spans, policies, lease, evidence, settlements, budgets) root on a `MemoryKeystore`.
 [[test]]
 name = "vault_sieve_doors"
