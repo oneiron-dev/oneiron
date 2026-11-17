@@ -2,6 +2,8 @@
 //! Entry: MediaPart.
 //! Definitions: this module; the parent re-exports the old paths.
 
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
+
 use super::{
     AiOperation, BTreeMap, BTreeSet, CallEnvelope, Deserialize, FatalLlmError, ImageBytes,
     ImageIntent, JsonValue, LlmRequest, LlmResult, Modality, ModelId, Serialize,
@@ -195,11 +197,15 @@ impl MediaRequest {
     }
 
     /// The digest of the call's canonical bytes: what its dispatch receipt
-    /// names.
+    /// names, and the request half of its replay key
+    /// ([`super::MediaReplayKey`]), so it keeps its bytes (K, PLAN-UC-04
+    /// stage 6.4).
     pub fn canonical_hash_hex(&self) -> Result<String, serde_json::Error> {
         let bytes = crate::llm::canonical_json_bytes(self)?;
         Ok(oneiron_contracts::entity_id::bytes_to_hex_lower(
-            blake3::hash(&bytes).as_bytes(),
+            &LegacyDigest::new(purposes::llm::MEDIA_REQUEST)
+                .raw(&bytes)
+                .finish(),
         ))
     }
 

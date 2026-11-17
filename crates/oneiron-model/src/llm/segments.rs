@@ -22,6 +22,7 @@ use serde::Serialize;
 use super::session::ConversationAnchor;
 use super::{ContentPart, LlmMessage, LlmMessageRole};
 use oneiron_contracts::EntityId;
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
 
 /// Fixed-width bytes that travel as lowercase hex.
 macro_rules! hex_bytes {
@@ -481,14 +482,18 @@ fn message_stamp(message: &LlmMessage) -> MessageStamp {
     }
 }
 
+/// The manifest's digest: two manifests are equal when their digests are,
+/// and a restamped call keeps its admitted turn's digest, so it keeps its
+/// bytes (K, PLAN-UC-04 stage 6.4).
 fn manifest_digest(
     segments: &[Segment],
     anchor: Option<&ConversationAnchor>,
     messages: &[MessageStamp],
 ) -> ManifestDigest {
-    let mut hasher = blake3::Hasher::new();
-    hasher.update(b"oneiron.llm.segments.manifest.v1\0");
     let bytes = super::canonical_json_bytes(&(segments, anchor, messages)).unwrap_or_default();
-    hasher.update(&bytes);
-    ManifestDigest(*hasher.finalize().as_bytes())
+    ManifestDigest(
+        LegacyDigest::new(purposes::llm::SEGMENTS_MANIFEST)
+            .raw(&bytes)
+            .finish(),
+    )
 }
