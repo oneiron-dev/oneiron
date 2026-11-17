@@ -373,6 +373,16 @@ impl ScopedReadActorKey {
                 hasher.update(&credential.slip_id());
             }
         }
+        // Then a key whose reader's own owner authority is withheld (Sol F3
+        // on #8065).
+        if self.owner_authority_withheld() {
+            hasher.update(b"owner_authority_withheld");
+        }
+        // Then a key rebuilt under a saved lane's floor basis, beside which
+        // the owner alternative stands (blind review round 1 P1 on #8065).
+        if self.rebuilt_under_floor_basis() {
+            hasher.update(b"rebuilt_under_floor_basis");
+        }
         // Then a reader homed in no conversation of this vault, which reads
         // no stamped claim outside a room (RULING SECREAD-HOME-READ-DOORS =
         // B).

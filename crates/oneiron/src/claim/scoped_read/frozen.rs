@@ -89,7 +89,8 @@ impl SavedCredential {
 /// The grant basis a saved lane's live key read under (FIX 14344, Astra F2
 /// on #8029), kept beside its frozen Scope as a queued summary's
 /// declaration keeps it (`requester_owner_exemption`,
-/// `requester_relationship_grants`). A rebuild over the principal's own key,
+/// `requester_relationship_grants`), or alone on a lane under the access
+/// gate (Sol F3 on #8061). A rebuild over the principal's own key,
 /// or over a current caller's, reads under the meet of that key and this
 /// basis (`ScopedReadActorKey::within_native_basis`): it never regains an
 /// owner standing the live key lacked, nor reads a row either gate refused
@@ -139,6 +140,18 @@ pub(crate) enum NativeGrantGate {
     Access,
 }
 
+impl NativeReadBasis {
+    /// Whether this is the access gate (Sol F3 on #8061 and on #8065): such
+    /// a key refused the unscoped MESSAGE and SUMMARY rows its principal's
+    /// own rebuilt key admits under the relationship gate, so its lane keeps
+    /// this basis, and each rebuild refuses them again. The owner's floor
+    /// under the access gate refused them too: the floor passes the policy
+    /// check, not the grant gate.
+    fn closes_unscoped_rows(self) -> bool {
+        self.grant_gate == NativeGrantGate::Access
+    }
+}
+
 /// The scope a read lane read under when its work was saved (OF-506). The
 /// engine mints it from the saver's live lane ([`Self::freeze`]) or as the
 /// principal's own ([`Self::principal`]); no caller authors one.
@@ -179,8 +192,10 @@ pub struct FrozenReadLane {
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     home_unnamed: bool,
     /// The grant basis the saved lane's live key read under (FIX 14344):
-    /// kept on every lane that keeps a Scope. `None` on a lane that reads as
-    /// its principal's own, and on one saved before the basis was kept.
+    /// kept on every lane that keeps a Scope, and on a lane under the access
+    /// gate, which keeps no Scope its live key lacked (Sol F1/F2/F3 on
+    /// #8065). `None` on a lane that reads as its principal's own, and on
+    /// one saved before the basis was kept.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     native_basis: Option<NativeReadBasis>,
     /// The fields a narrower reader's view of this lane withheld a row or a
@@ -200,7 +215,8 @@ impl FrozenReadLane {
     /// The principal's own lane: no narrowing beyond the principal's live
     /// authority. An engine-built record that no caller's lane saved (an
     /// internal one-off ask, a review's dissent question) keeps it, and so
-    /// does an un-narrowed native owner key or bare principal key.
+    /// does an un-narrowed native owner key or a bare principal key outside
+    /// the access gate.
     #[must_use]
     pub fn principal() -> Self {
         Self::default()
@@ -243,9 +259,12 @@ impl FrozenReadLane {
     /// `lane`, frozen. A lane under no narrowing freezes as the principal's
     /// own, except under a credential that keeps its Scope at top
     /// (`keeps_top_scope`), whose credential's id stays with a top read
-    /// Scope, or under another credential that names a grant, whose id
-    /// stays with no Scope ([`Self::reads_as_principal`]): each rebuild
-    /// judges that grant (FIX OWN-DEVICE-GRANT-NOT-RECHECKED). Otherwise the
+    /// Scope, under a key the access gate binds, which keeps its grant basis
+    /// and its key's own Scope, if any (Sol F3 on #8061; F1/F2/F3 on #8065),
+    /// or under another
+    /// credential that names a grant, whose id stays with no Scope
+    /// ([`Self::reads_as_principal`]): each rebuild judges that grant (FIX
+    /// OWN-DEVICE-GRANT-NOT-RECHECKED). Otherwise the
     /// credential's id, read Scope and records caveat, each agent Grant
     /// alternative alone, the asked worlds and the room facets are kept. A
     /// lane that keeps a Scope also keeps its key's grant basis
@@ -313,6 +332,12 @@ impl FrozenReadLane {
                 Some(proof) => keeps_top_scope(key, proof),
                 None => !key.saved_credentials.is_empty() && key.authority_scope().is_some(),
             };
+        // A key under the access gate keeps its grant basis, whose
+        // principal's rebuilt key would admit the unscoped rows it refused
+        // (Sol F3 on #8061), the owner's floor under that gate among them
+        // (Sol F3 on #8065).
+        let basis = key.native_read_basis();
+        let keeps_basis = basis.closes_unscoped_rows();
         let narrows = scope_narrows
             || !records.is_empty()
             || channel_refused
@@ -333,7 +358,7 @@ impl FrozenReadLane {
             .map(SavedCredential::slip_id)
             .collect();
         if let Some(claims) = claims
-            && (names_grant || keeps_scope || narrows)
+            && (names_grant || keeps_scope || keeps_basis || narrows)
             && !credentials.contains(&claims.slip_id)
         {
             credentials.push(claims.slip_id);
@@ -347,7 +372,7 @@ impl FrozenReadLane {
                 ));
             }
         };
-        if !keeps_scope && !narrows {
+        if !keeps_scope && !keeps_basis && !narrows {
             // No Scope: a rebuild keeps the principal's own floor and owner
             // authority while the credential stands.
             return Ok(Self {
@@ -362,22 +387,28 @@ impl FrozenReadLane {
         // meet: two Grants on disjoint worlds meet to no world, and saved work
         // must read what each one alone admits (FIX AGENT-GRAPHFS-GRANT-WORLDS).
         let (authority, grant_alternatives) = if channel_refused {
-            (Scope::default(), None)
-        } else {
+            (Some(Scope::default()), None)
+        } else if keeps_scope || narrows {
             (
-                key.authority_scope().cloned().unwrap_or_else(Scope::top),
+                Some(key.authority_scope().cloned().unwrap_or_else(Scope::top)),
                 key.grant_alternatives().map(<[Scope]>::to_vec),
             )
+        } else {
+            // Kept for its grant basis alone, with the key's own Scope, if
+            // any: a top Scope would stand as read authority the live key
+            // lacked, a policy floor of its own and no own Grant alternative
+            // (Sol F1/F2 on #8065).
+            (key.authority_scope().cloned(), None)
         };
         Ok(Self {
             credential,
-            authority: Some(authority),
+            authority,
             grant_alternatives,
             records,
             worlds,
             room_facets: key.room_facets,
             home_unnamed: key.is_homed_unnamed(),
-            native_basis: Some(key.native_read_basis()),
+            native_basis: Some(basis),
             withheld: Vec::new(),
         })
     }
@@ -535,7 +566,12 @@ impl FrozenReadLane {
         if let Some(basis) = self.native_basis {
             key = key.within_native_basis(basis);
         }
-        key = key.within_authority(self.authority.clone().unwrap_or_else(Scope::top));
+        // A lane kept for its grant basis alone holds no Scope its live key
+        // lacked (Sol F1/F2 on #8065); a lane saved before the basis was
+        // kept reads under top.
+        if self.authority.is_some() || self.native_basis.is_none() {
+            key = key.within_authority(self.authority.clone().unwrap_or_else(Scope::top));
+        }
         if let Some(alternatives) = &self.grant_alternatives {
             key = key.within_grant_alternatives(alternatives);
         }
