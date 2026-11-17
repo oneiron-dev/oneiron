@@ -88,6 +88,9 @@ impl Memory<'_> {
             NotificationKind::Ask if producer == OAUTH_AUTHORIZATION_NOTIFICATION_PRODUCER => {
                 self.oauth_authorization_actions(row)
             }
+            NotificationKind::Ask if producer == NOTIFICATION_PRODUCER_ERASE_PROPOSAL => {
+                self.erase_proposal_actions(row)
+            }
             NotificationKind::Ask if producer == UNCERTAIN_SEND_NOTIFICATION_PRODUCER => {
                 self.uncertain_send_actions(row)
             }
@@ -101,9 +104,6 @@ impl Memory<'_> {
             }
             NotificationKind::Ask if producer == crate::mail_pack::MAIL_REPLY_ASK_PRODUCER => {
                 self.mail_reply_ask_actions(row)
-            }
-            NotificationKind::Ask if producer == NOTIFICATION_PRODUCER_ERASE_PROPOSAL => {
-                self.erase_proposal_actions(row)
             }
             _ => Vec::new(),
         }
