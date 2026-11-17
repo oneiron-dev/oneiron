@@ -561,6 +561,14 @@ pub(super) fn fold_entry_state(
         {
             return EntryFold::Invalid(AuthorityFoldIssue::MissingAuthorityConsent(hash));
         }
+        // A key the host does not hold never re-roots a hosted vault whose
+        // host root is live (FIX [HOSTED-REROOT-FOLD-RULE]).
+        if super::entry_transition_predicates::re_root_passes_over_a_serving_host(
+            &state.roster,
+            &signer,
+        ) {
+            return EntryFold::Invalid(AuthorityFoldIssue::MissingAuthorityConsent(hash));
+        }
     }
     if op_reuses_existing_device_key(&state, &entry.op) {
         return EntryFold::Invalid(AuthorityFoldIssue::InvalidEntry(hash));

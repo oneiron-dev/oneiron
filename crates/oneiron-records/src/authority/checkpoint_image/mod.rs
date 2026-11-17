@@ -72,7 +72,9 @@ use serde::Serialize;
 /// row that grants counts in full, a world key record included, and the image records its fork
 /// as a `SequenceFork` issue (Engine RULINGs SEQ-FLOOR-SHAPE-S = B, SEQ-FLOOR-S-WORLD-KEY-FLOOR
 /// = A).
-pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 43;
+/// 44: a `ReRoot` by a key without the host's stamp never counts while a live owner key with that
+/// stamp stands, and every row above such a move is refused with it (FIX HOSTED-REROOT-FOLD-RULE).
+pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 44;
 
 /// The domain every encoded image starts with.
 pub const AUTHORITY_CHECKPOINT_V2_DOMAIN: &[u8] = b"oneiron/authority/checkpoint/v2";
