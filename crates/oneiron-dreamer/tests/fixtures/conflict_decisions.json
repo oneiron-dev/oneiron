@@ -1,0 +1,498 @@
+{
+  "policy_pin": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "facts_pin": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "now_ms": 1720000000000,
+  "attempt": "a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5",
+  "candidate": {
+    "index": 0,
+    "claim": "00000000000000000000000000000001",
+    "identity_token": "identity",
+    "topic_token": "topic",
+    "value_token": "value",
+    "slice_token": "slice",
+    "predicate": "record.field",
+    "corrects": null,
+    "meet": "generated",
+    "observed": false,
+    "evidence_count": 3,
+    "first_seen_ms": 1719999800000,
+    "latest_ms": 1719999999000,
+    "diversity": 2,
+    "fan_in": 0,
+    "new_refs": 0,
+    "has_vector": false,
+    "named_facet": null,
+    "scope_facet": "f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0",
+    "scope_project": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0",
+    "replay_facet": "f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0",
+    "correctable": [],
+    "single_valued": false
+  },
+  "listed": {
+    "claim": "00000000000000000000000000000100",
+    "subject": "f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1",
+    "version": {
+      "entity": "00000000000000000000000000000100",
+      "entity_type": 4,
+      "learned_at": 0,
+      "revision": "blake3:0000000000000000000000000000000000000000000000000000000000000000",
+      "projection": null
+    }
+  },
+  "prior": {
+    "claim": "00000000000000000000000000000200",
+    "version": {
+      "entity": "00000000000000000000000000000200",
+      "entity_type": 4,
+      "learned_at": 0,
+      "revision": "blake3:0000000000000000000000000000000000000000000000000000000000000000",
+      "projection": null
+    },
+    "identity_token": "identity",
+    "topic_token": "topic",
+    "value_token": "value",
+    "source": "generated",
+    "standing": "prior",
+    "writable": true,
+    "scope_facet": "f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0",
+    "scope_project": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0",
+    "scope_equal_candidates": [],
+    "non_widening_candidates": [],
+    "subject_predicate_equal_candidates": []
+  },
+  "single_correction": {
+    "attempt": "a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5",
+    "now_ms": 1720000000000,
+    "policy_pin": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "facts_pin": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "candidates": [
+      {
+        "index": 0,
+        "claim": "00000000000000000000000000000001",
+        "identity_token": "identity",
+        "topic_token": "topic",
+        "value_token": "value",
+        "slice_token": "slice",
+        "predicate": "record.field",
+        "corrects": null,
+        "meet": "generated",
+        "observed": false,
+        "evidence_count": 3,
+        "first_seen_ms": 1719999800000,
+        "latest_ms": 1719999999000,
+        "diversity": 2,
+        "fan_in": 0,
+        "new_refs": 0,
+        "has_vector": false,
+        "named_facet": null,
+        "scope_facet": "f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0",
+        "scope_project": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0",
+        "replay_facet": "f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0",
+        "correctable": [
+          0
+        ],
+        "single_valued": false
+      }
+    ],
+    "listed": [
+      {
+        "claim": "00000000000000000000000000000100",
+        "subject": "f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1",
+        "version": {
+          "entity": "00000000000000000000000000000100",
+          "entity_type": 4,
+          "learned_at": 0,
+          "revision": "blake3:0000000000000000000000000000000000000000000000000000000000000000",
+          "projection": null
+        }
+      }
+    ],
+    "priors": [],
+    "replay": [],
+    "scores": []
+  },
+  "two_listed_correction": {
+    "attempt": "a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5",
+    "now_ms": 1720000000000,
+    "policy_pin": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "facts_pin": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "candidates": [
+      {
+        "index": 0,
+        "claim": "00000000000000000000000000000001",
+        "identity_token": "identity",
+        "topic_token": "topic",
+        "value_token": "value",
+        "slice_token": "slice",
+        "predicate": "record.field",
+        "corrects": null,
+        "meet": "generated",
+        "observed": false,
+        "evidence_count": 3,
+        "first_seen_ms": 1719999800000,
+        "latest_ms": 1719999999000,
+        "diversity": 2,
+        "fan_in": 0,
+        "new_refs": 0,
+        "has_vector": false,
+        "named_facet": null,
+        "scope_facet": "f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0",
+        "scope_project": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0",
+        "replay_facet": "f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0",
+        "correctable": [
+          0,
+          1
+        ],
+        "single_valued": false
+      }
+    ],
+    "listed": [
+      {
+        "claim": "00000000000000000000000000000100",
+        "subject": "f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1",
+        "version": {
+          "entity": "00000000000000000000000000000100",
+          "entity_type": 4,
+          "learned_at": 0,
+          "revision": "blake3:0000000000000000000000000000000000000000000000000000000000000000",
+          "projection": null
+        }
+      },
+      {
+        "claim": "00000000000000000000000000000101",
+        "subject": "f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1",
+        "version": {
+          "entity": "00000000000000000000000000000101",
+          "entity_type": 4,
+          "learned_at": 0,
+          "revision": "blake3:0000000000000000000000000000000000000000000000000000000000000000",
+          "projection": null
+        }
+      }
+    ],
+    "priors": [],
+    "replay": [],
+    "scores": []
+  },
+  "two_candidate_same": {
+    "attempt": "a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5",
+    "now_ms": 1720000000000,
+    "policy_pin": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "facts_pin": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "candidates": [
+      {
+        "index": 0,
+        "claim": "00000000000000000000000000000001",
+        "identity_token": "identity",
+        "topic_token": "topic",
+        "value_token": "value",
+        "slice_token": "slice",
+        "predicate": "record.field",
+        "corrects": null,
+        "meet": "generated",
+        "observed": false,
+        "evidence_count": 3,
+        "first_seen_ms": 1719999800000,
+        "latest_ms": 1719999999000,
+        "diversity": 2,
+        "fan_in": 0,
+        "new_refs": 0,
+        "has_vector": false,
+        "named_facet": null,
+        "scope_facet": "f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0",
+        "scope_project": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0",
+        "replay_facet": "f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0",
+        "correctable": [],
+        "single_valued": false
+      },
+      {
+        "index": 1,
+        "claim": "00000000000000000000000000000002",
+        "identity_token": "identity",
+        "topic_token": "topic",
+        "value_token": "value",
+        "slice_token": "slice",
+        "predicate": "record.field",
+        "corrects": null,
+        "meet": "generated",
+        "observed": false,
+        "evidence_count": 3,
+        "first_seen_ms": 1719999800000,
+        "latest_ms": 1719999999000,
+        "diversity": 2,
+        "fan_in": 0,
+        "new_refs": 0,
+        "has_vector": false,
+        "named_facet": null,
+        "scope_facet": "f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0",
+        "scope_project": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0",
+        "replay_facet": "f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0",
+        "correctable": [],
+        "single_valued": false
+      }
+    ],
+    "listed": [],
+    "priors": [],
+    "replay": [],
+    "scores": []
+  },
+  "two_candidate_same_with_prior": {
+    "attempt": "a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5",
+    "now_ms": 1720000000000,
+    "policy_pin": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "facts_pin": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "candidates": [
+      {
+        "index": 0,
+        "claim": "00000000000000000000000000000001",
+        "identity_token": "identity",
+        "topic_token": "topic",
+        "value_token": "value",
+        "slice_token": "slice",
+        "predicate": "record.field",
+        "corrects": null,
+        "meet": "generated",
+        "observed": false,
+        "evidence_count": 3,
+        "first_seen_ms": 1719999800000,
+        "latest_ms": 1719999999000,
+        "diversity": 2,
+        "fan_in": 0,
+        "new_refs": 0,
+        "has_vector": false,
+        "named_facet": null,
+        "scope_facet": "f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0",
+        "scope_project": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0",
+        "replay_facet": "f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0",
+        "correctable": [],
+        "single_valued": false
+      },
+      {
+        "index": 1,
+        "claim": "00000000000000000000000000000002",
+        "identity_token": "identity",
+        "topic_token": "topic",
+        "value_token": "value",
+        "slice_token": "slice",
+        "predicate": "record.field",
+        "corrects": null,
+        "meet": "generated",
+        "observed": false,
+        "evidence_count": 3,
+        "first_seen_ms": 1719999800000,
+        "latest_ms": 1719999999000,
+        "diversity": 2,
+        "fan_in": 0,
+        "new_refs": 0,
+        "has_vector": false,
+        "named_facet": null,
+        "scope_facet": "f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0",
+        "scope_project": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0",
+        "replay_facet": "f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0",
+        "correctable": [],
+        "single_valued": false
+      }
+    ],
+    "listed": [],
+    "priors": [
+      {
+        "claim": "00000000000000000000000000000200",
+        "version": {
+          "entity": "00000000000000000000000000000200",
+          "entity_type": 4,
+          "learned_at": 0,
+          "revision": "blake3:0000000000000000000000000000000000000000000000000000000000000000",
+          "projection": null
+        },
+        "identity_token": "identity",
+        "topic_token": "topic",
+        "value_token": "value",
+        "source": "generated",
+        "standing": "prior",
+        "writable": true,
+        "scope_facet": "f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0",
+        "scope_project": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0",
+        "scope_equal_candidates": [],
+        "non_widening_candidates": [],
+        "subject_predicate_equal_candidates": []
+      }
+    ],
+    "replay": [],
+    "scores": []
+  },
+  "two_candidate_cross": {
+    "attempt": "a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5",
+    "now_ms": 1720000000000,
+    "policy_pin": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "facts_pin": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "candidates": [
+      {
+        "index": 0,
+        "claim": "00000000000000000000000000000001",
+        "identity_token": "identity",
+        "topic_token": "topic",
+        "value_token": "value",
+        "slice_token": "slice",
+        "predicate": "record.field",
+        "corrects": null,
+        "meet": "generated",
+        "observed": false,
+        "evidence_count": 3,
+        "first_seen_ms": 1719999800000,
+        "latest_ms": 1719999999000,
+        "diversity": 2,
+        "fan_in": 0,
+        "new_refs": 0,
+        "has_vector": false,
+        "named_facet": null,
+        "scope_facet": "f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0",
+        "scope_project": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0",
+        "replay_facet": "f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0",
+        "correctable": [],
+        "single_valued": false
+      },
+      {
+        "index": 1,
+        "claim": "00000000000000000000000000000002",
+        "identity_token": "identity",
+        "topic_token": "topic",
+        "value_token": "value",
+        "slice_token": "slice",
+        "predicate": "record.other",
+        "corrects": null,
+        "meet": "generated",
+        "observed": false,
+        "evidence_count": 3,
+        "first_seen_ms": 1719999800000,
+        "latest_ms": 1719999999000,
+        "diversity": 2,
+        "fan_in": 0,
+        "new_refs": 0,
+        "has_vector": false,
+        "named_facet": null,
+        "scope_facet": "f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0",
+        "scope_project": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0",
+        "replay_facet": "f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0",
+        "correctable": [],
+        "single_valued": false
+      }
+    ],
+    "listed": [],
+    "priors": [],
+    "replay": [],
+    "scores": []
+  },
+  "three_listed_correction": {
+    "attempt": "a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5",
+    "now_ms": 1720000000000,
+    "policy_pin": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "facts_pin": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "candidates": [
+      {
+        "index": 0,
+        "claim": "00000000000000000000000000000001",
+        "identity_token": "identity",
+        "topic_token": "topic",
+        "value_token": "value",
+        "slice_token": "slice",
+        "predicate": "record.field",
+        "corrects": null,
+        "meet": "generated",
+        "observed": false,
+        "evidence_count": 3,
+        "first_seen_ms": 1719999800000,
+        "latest_ms": 1719999999000,
+        "diversity": 2,
+        "fan_in": 0,
+        "new_refs": 0,
+        "has_vector": false,
+        "named_facet": null,
+        "scope_facet": "f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0",
+        "scope_project": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0",
+        "replay_facet": "f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0",
+        "correctable": [
+          0,
+          1,
+          2
+        ],
+        "single_valued": false
+      }
+    ],
+    "listed": [
+      {
+        "claim": "00000000000000000000000000000100",
+        "subject": "f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1",
+        "version": {
+          "entity": "00000000000000000000000000000100",
+          "entity_type": 4,
+          "learned_at": 0,
+          "revision": "blake3:0000000000000000000000000000000000000000000000000000000000000000",
+          "projection": null
+        }
+      },
+      {
+        "claim": "00000000000000000000000000000101",
+        "subject": "f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1",
+        "version": {
+          "entity": "00000000000000000000000000000101",
+          "entity_type": 4,
+          "learned_at": 0,
+          "revision": "blake3:0000000000000000000000000000000000000000000000000000000000000000",
+          "projection": null
+        }
+      },
+      {
+        "claim": "00000000000000000000000000000102",
+        "subject": "f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1",
+        "version": {
+          "entity": "00000000000000000000000000000102",
+          "entity_type": 4,
+          "learned_at": 0,
+          "revision": "blake3:0000000000000000000000000000000000000000000000000000000000000000",
+          "projection": null
+        }
+      }
+    ],
+    "priors": [],
+    "replay": [],
+    "scores": []
+  },
+  "native_evidence": {
+    "correction_keys": "crates/oneiron/src/dreamer_consolidation/executor/extraction/corrections.rs:36",
+    "correction_none": "crates/oneiron/src/dreamer_consolidation/executor/extraction/corrections.rs:88",
+    "grouping": "crates/oneiron/src/dreamer_consolidation/executor/decisions.rs:230",
+    "group_split": "crates/oneiron/src/dreamer_consolidation/executor/decisions.rs:234",
+    "ids_per_question": "crates/oneiron/src/dreamer_consolidation/executor/decisions.rs:40",
+    "resolution_keys": "crates/oneiron/src/dreamer_consolidation/executor/merge_resolution.rs:51",
+    "identity_keys": "crates/oneiron/src/dreamer_consolidation/executor/merge_resolution.rs:63",
+    "resolutions": "crates/oneiron/src/dreamer_consolidation/executor/merge_resolution.rs:27",
+    "identity_none_rule": "crates/oneiron/src/dreamer_consolidation/executor/merge_resolution.rs:412",
+    "paged_none": "crates/oneiron/src/dreamer_consolidation/executor/merge_resolution.rs:387",
+    "final_options": "crates/oneiron/src/dreamer_consolidation/executor/merge_resolution.rs:37",
+    "final_marker": "crates/oneiron/src/dreamer_consolidation/executor/merge_resolution.rs:78",
+    "named_ids": "crates/oneiron/src/dreamer_consolidation/executor/decisions/identity_choice.rs:34",
+    "most_probable": "crates/oneiron/src/dreamer_consolidation/executor/decisions/identity_choice.rs:50",
+    "tie_last": "crates/oneiron/src/dreamer_consolidation/executor/decisions/identity_choice.rs:61",
+    "round_parts": "crates/oneiron/src/dreamer_consolidation/executor/decisions/identity_choice.rs:80",
+    "choose_loop": "crates/oneiron/src/dreamer_consolidation/executor/decisions/identity_choice.rs:157",
+    "filter_shortlist": "crates/oneiron/src/dreamer_consolidation/executor/decisions/identity_choice.rs:201",
+    "empty_fallback": "crates/oneiron/src/dreamer_consolidation/executor/decisions/identity_choice.rs:213",
+    "single_keeps": "crates/oneiron/src/dreamer_consolidation/executor/decisions/identity_choice.rs:217",
+    "shortlist_order": "crates/oneiron/src/dreamer_consolidation/extraction_pack/finals.rs:29",
+    "resolution_sentinel": "crates/oneiron/src/dreamer_consolidation/extraction_pack/finals.rs:234",
+    "unanimous_no_final": "crates/oneiron/src/dreamer_consolidation/extraction_pack/finals.rs:275",
+    "escalate_no_final": "crates/oneiron/src/dreamer_consolidation/extraction_pack/finals.rs:267",
+    "correction_base": "crates/oneiron/src/dreamer_consolidation/extraction_pack/finals.rs:207",
+    "correction_final_none": "crates/oneiron/src/dreamer_consolidation/extraction_pack/finals.rs:209",
+    "identity_final_none": "crates/oneiron/src/dreamer_consolidation/extraction_pack/finals.rs:356",
+    "paged_standing": "crates/oneiron/src/dreamer_consolidation/executor/merge_resolution.rs:247",
+    "merge_keeps_identity": "crates/oneiron/src/dreamer_consolidation/executor/merge_resolution.rs:278",
+    "candidate_alias": "crates/oneiron/src/dreamer_consolidation/extraction_pack.rs:284",
+    "layout_refusal": "crates/oneiron/src/dreamer_consolidation/extraction_pack.rs:89",
+    "typed_layout": "crates/oneiron-contracts/src/memory/error.rs:195",
+    "layout_mirror": "crates/oneiron-contracts/src/memory/error.rs:267",
+    "pack_entry_wire": "crates/oneiron/src/verbs/extraction_verdict.rs:164",
+    "one_entry_per_question": "crates/oneiron/src/dreamer_runner/attempt_binding/extraction_execution.rs:88",
+    "key_option_parity": "crates/oneiron/src/dreamer_runner/attempt_binding/extraction_evidence.rs:114"
+  }
+}

@@ -49,6 +49,8 @@ pub struct WakeEntry {
 /// bounds-valid ledger page serialize past [`MAX_CTL_LINE`] (the worst
 /// remaining expansion is the 2-char escapes for `"` and `\`, which the
 /// `max_valid_wake_list_fits_ctl_line` test proves stays under the cap).
+///
+/// [`MAX_CTL_LINE`]: crate::MAX_CTL_LINE
 pub(super) fn validate_wake_fields(id: &str, reason_tag: &str) -> anyhow::Result<()> {
     anyhow::ensure!(!id.is_empty() && id.len() <= MAX_WAKE_ID, "bad entry id");
     anyhow::ensure!(!id.bytes().any(|b| b < 0x20), "control bytes in entry id");

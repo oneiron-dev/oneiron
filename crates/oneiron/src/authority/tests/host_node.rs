@@ -70,3 +70,56 @@ fn the_hosts_node_is_never_mine_and_never_returns_once_removed() {
     assert_eq!(fold.append_heads, heads);
     assert!(fold.machine(id).unwrap().roster.as_ref().unwrap().removed);
 }
+
+/// A hosted owner without the operator's per-vault capability is refused his
+/// checkpoint root choice, and the refusal names the rule (the owner's
+/// QUORUM-HOST-ROOT = C: the host key signs a hosted vault's checkpoints) and
+/// the self-host and relay route, with no bound kind (census L9-61; RULING
+/// L9-61-CHECKPOINT = A).
+#[test]
+fn a_hosted_checkpoint_root_choice_names_the_host_key_rule_and_the_self_host_route() {
+    let dir = tempfile::tempdir().unwrap();
+    let issuer = crate::test_support::test_host_issuer();
+    let vault = open_hosted(dir.path());
+    vault.ensure_host_root_slip(&issuer).unwrap();
+    let person = crate::vault::embedded_owner_actor_id().unwrap();
+    vault.bind_host_owner_for_test(&issuer, person).unwrap();
+    let vault_id = vault.authority_fold().unwrap().vault_id.unwrap();
+    own_encryption_key(&vault, vault_id);
+    let _node = vault.provision_host_node(&issuer).unwrap();
+    assert!(!vault.checkpoint_policy_selection_available());
+    let owner = vault
+        .authenticate_owner(person, &person.to_hex(), true, GateDecisionId::now())
+        .unwrap();
+    let choice = CheckpointRootChoice {
+        roots: vec![AuthorityKey::Ed25519([7; 32])],
+        quorum: 1,
+        hardware: false,
+    };
+    let refused = vault.set_checkpoint_policy_as(
+        &ActAuthority::Owner(owner, ActSurface::ThisInstall),
+        Some(choice),
+        None,
+    );
+    let Err(crate::error::Error::Record(crate::error::RecordError::CheckpointPolicyRefused(
+        reason,
+    ))) = refused
+    else {
+        panic!("{refused:?}");
+    };
+    assert!(
+        reason.starts_with("hosted checkpoint root selection requires"),
+        "{reason}"
+    );
+    assert!(
+        reason.contains("on a hosted vault the host key signs its checkpoints"),
+        "{reason}"
+    );
+    assert!(
+        reason.contains("a self-hosted or relay vault's owner chooses its roots"),
+        "{reason}"
+    );
+    for kind in ["law", "provider", "capacity"] {
+        assert!(!reason.contains(kind), "{reason}");
+    }
+}
