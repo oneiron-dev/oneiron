@@ -55,6 +55,16 @@ pub enum VaultImportClassification {
     /// A well-formed chain identity that is not this vault's, or this vault's
     /// chain signed by one of its machines that is not the owner's own device
     /// ([`VaultImportMismatch::SignerNotOwnerDevice`]). Never a restore.
+    ///
+    /// Task authority facts never cross vaults in an archive (Engine ruling
+    /// TASK-FACT-ARCHIVE-CROSSING = A, 17 Nov). A whole-vault archive keeps
+    /// every fact its vault holds, as one true archive does (ARCH-0027
+    /// #export-complete), and the import of a foreign chain's archive
+    /// refuses them as built: a whole-vault archive's TASK row of the
+    /// engine-reserved role fails the public raw-put door its import lands
+    /// rows through, and a staged window update fails the Guest admission's
+    /// task-fact check. A sync window bound for another vault withholds them
+    /// at release instead.
     ForeignAuthorityChain,
     /// Identity could not be established, or it matched and something else
     /// drifted. Every reason is listed in [`VaultImportReceipt::mismatches`].
