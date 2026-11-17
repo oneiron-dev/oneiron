@@ -499,7 +499,7 @@ fn oracle_request(
         },
         BookingVerbRequest::Waitlist(spec) => BookingOracleRequest {
             page_ref: Some(spec.page_ref),
-            exclude_session_key: waitlist_oracle_exclusion(&spec.action),
+            exclude_session_key: waitlist_oracle_exclusion(vault, spec)?,
         },
     })
 }

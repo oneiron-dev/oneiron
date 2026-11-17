@@ -103,6 +103,8 @@ const ERASERS: &[EntitySideRowEraser] = &[
     |write, txn, id| {
         crate::booking::lifecycle::erase_booking_receipt_carriers_in_txn(write.store, txn, id)
     },
+    // Census L3-13: every waitlist entry an erased contact joined with.
+    |write, txn, id| crate::booking::lifecycle::erase_waitlist_contact_in_txn(write.store, txn, id),
     // FIX 9876: an imported MESSAGE's text hash in the history import ledger.
     |write, txn, id| crate::ingest::history::erase_message_in_txn(write.store, txn, id),
     // L2-15-CAPTURE-SUBJECT: an erased AG-UI capture's asset, owed its own delete.
