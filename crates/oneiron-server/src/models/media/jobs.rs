@@ -374,9 +374,9 @@ impl JobStore {
                         match rmp_serde::from_slice::<JobRow>(&bytes) {
                             Ok(kept) => {
                                 !kept.erased
-                                    && kept
-                                        .replay_until_s
-                                        .is_none_or(|until| until <= super::replay::now_s())
+                                    && kept.replay_until_s.is_none_or(|until| {
+                                        until <= oneiron_base::unix_seconds_now()
+                                    })
                             }
                             Err(_) => false,
                         }

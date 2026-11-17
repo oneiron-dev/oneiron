@@ -440,6 +440,18 @@ pub struct ServeArgs {
     #[arg(long = "trusted-organ-build", value_parser = blake3_hex)]
     pub trusted_organ_builds: Vec<String>,
 
+    /// Release payment credentials on this host although its runner fence
+    /// is unproven (L8-60; CROSS-ARCH-0019 `#fence-unproven`). By default
+    /// the engine withholds a credential the owner marks as a payment
+    /// credential wherever the organ host proves no filesystem fence
+    /// (Landlock ABI 3 on Linux, Seatbelt on macOS); every other credential
+    /// stays at its rung. A self-hoster owns his host and its risk, and this
+    /// flag is his to lift the default. Plain serve only, argv only: no
+    /// config file, settings file or environment sets it, and managed mode
+    /// refuses it.
+    #[arg(long = "release-payment-credentials-unfenced")]
+    pub release_payment_credentials_unfenced: bool,
+
     /// Managed mode: where the paired-machine mesh listener binds
     /// (`ip:port`), in place of `ONEIRON_MESH_BIND`, which managed mode never
     /// reads. Without it the mesh is off.
@@ -495,6 +507,15 @@ pub struct ServeArgs {
     /// that does not parse stops the start.
     #[arg(long = "hosted-private-origin", requires = "managed_by_hypnos")]
     pub hosted_private_origins: Vec<oneiron::web_fetch::HostedPrivateOrigin>,
+
+    /// Managed mode: a private network the hosted node's web fetch and
+    /// calendar feed polls may reach, every address in it: `rfc1918`,
+    /// `cgnat` or `ula`; repeat it for each (HOSTED-EGRESS-OPERATOR-SETTING).
+    /// Without it, none: the hosted node refuses all three except at a
+    /// listed origin. A network never admits the infrastructure the guard
+    /// knows inside it, and a spelling outside the three stops the start.
+    #[arg(long = "hosted-private-network", requires = "managed_by_hypnos")]
+    pub hosted_private_networks: Vec<oneiron::web_fetch::HostedPrivateNetwork>,
 
     /// Host address to bind to.
     #[arg(long)]

@@ -1,0 +1,17 @@
+{
+  "name": "vault.agents.worlds.get",
+  "description": "The owner reads the worlds one agent may read and the worlds its turn reads when it names none, with the rows in force.",
+  "input": "crate::settings::agent_world_access::AgentWorldAccessRequest",
+  "output": "crate::settings::agent_world_access::AgentWorldAccess",
+  "call": "crate::settings::agent_world_access::agent_world_access_embedded(memory, input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Read",
+  "act_class": "read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

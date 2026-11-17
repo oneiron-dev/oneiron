@@ -4,7 +4,9 @@
 
 use std::ffi::OsStr;
 use std::fs;
-use std::io::{self, Write};
+use std::io;
+#[cfg(unix)]
+use std::io::Write;
 #[cfg(unix)]
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Component, Path, PathBuf};
@@ -15,7 +17,7 @@ use crate::git_wire::git_path_os_str;
 
 use super::git::{git_common_dir, run_git, validate_relative_repo_path};
 use super::queue::PreparedCommitFile;
-use super::support::{hex_bytes, now_millis, path_arg, sha256_bytes, utf8_trimmed};
+use super::support::{hex_bytes, path_arg, sha256_bytes, utf8_trimmed};
 use crate::error::CodeError;
 
 const REPO_MUTATION_WORKTREE_PREFIX: &str = "oneiron-repo-mutation-";
@@ -198,7 +200,7 @@ fn queue_owned_worktree_path(repo_root: &Path) -> Result<PathBuf> {
             "{}:{}:{}:{}",
             common_dir.display(),
             std::process::id(),
-            now_millis(),
+            crate::unix_millis_now(),
             counter
         );
         let suffix = &hex_bytes(&sha256_bytes(seed.as_bytes()))[..24];
@@ -219,6 +221,84 @@ pub(super) fn write_repo_file_no_symlink(
 ) -> Result<()> {
     let target = safe_repo_file_target(repo_root, path)?;
     write_file_no_follow(&target, content)
+}
+
+/// Writes `content` at `path` as a new file that only its owner may read,
+/// from its first byte. It never writes over a file that exists or through a
+/// symlink, the path's ancestors included: the file is created through its
+/// directory's held descriptor, as a T2 file is, and nothing is written when
+/// an ancestor moved since the walk. A write that fails after the create
+/// removes the file it created, wherever its directory moved, so no empty or
+/// partial file stands in for the committed one. A withheld file holds bytes
+/// custody keeps out of every snapshot, so a restore that writes one anew
+/// never widens who may read it, nor where it lands (FIX 2230). Unix only:
+/// the restore recreates no withheld file elsewhere.
+pub(super) fn create_owner_only_repo_file_no_symlink(
+    repo_root: &Path,
+    path: &str,
+    content: &[u8],
+    executable: bool,
+) -> Result<()> {
+    let target = ensure_repo_parent_dirs_no_symlink(repo_root, path)?;
+    create_owner_only_file_no_follow(&target, content, executable)
+}
+
+#[cfg(unix)]
+fn create_owner_only_file_no_follow(path: &Path, content: &[u8], executable: bool) -> Result<()> {
+    use crate::secret_lease::FileIdentity;
+    use crate::secret_lease::written::{Links, Target};
+
+    let target = Target::open(path)?;
+    let mut file = target.create()?;
+    let written = fill_created_file(&target, &mut file, path, content, executable);
+    if written.is_err() {
+        // No row covers the file this created, so a failed fill takes its
+        // name again (as the T2 guard does a fresh file), even when a second
+        // name was linked to it meanwhile. Its handle is still open, so the
+        // inode the removal checks is this file's, never a reused one.
+        if let Ok(metadata) = file.metadata() {
+            let _ = target.remove(FileIdentity::of(&metadata), Links::Any);
+        }
+    }
+    written
+}
+
+/// Fills a file [`create_owner_only_file_no_follow`] just created through
+/// `target`'s held directory. The post-open floor first, as the T2 writer's:
+/// an ancestor moved or swapped since the walk leaves the held directory off
+/// the path, so no byte is written there.
+#[cfg(unix)]
+fn fill_created_file(
+    target: &crate::secret_lease::written::Target,
+    file: &mut fs::File,
+    path: &Path,
+    content: &[u8],
+    executable: bool,
+) -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+
+    if !target.still_named_by(path)? {
+        return Err(Error::Code(CodeError::InvalidRepoMutationRecord(
+            "an ancestor of a restored withheld file moved while it was written",
+        )));
+    }
+    if executable {
+        file.set_permissions(fs::Permissions::from_mode(0o700))?;
+    }
+    file.write_all(content)?;
+    file.flush()?;
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn create_owner_only_file_no_follow(
+    _path: &Path,
+    _content: &[u8],
+    _executable: bool,
+) -> Result<()> {
+    Err(Error::InvariantViolation(
+        "a withheld file is recreated only on unix",
+    ))
 }
 
 fn safe_repo_file_target(repo_root: &Path, path: &str) -> Result<PathBuf> {

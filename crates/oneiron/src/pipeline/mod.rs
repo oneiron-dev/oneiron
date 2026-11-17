@@ -23,6 +23,7 @@ mod l2_evidence;
 mod media_channel;
 mod media_query_memory;
 mod params;
+mod phonetic_vector_channel;
 pub mod retrieval_policy;
 mod support;
 mod temporal_bound;
@@ -33,7 +34,8 @@ mod types;
 pub use oneiron_store::vector_refinement::VectorRefinement;
 mod world_authority;
 pub(crate) use world_authority::{
-    ResolvedWorldScope, WorldGrantIndex, reading_default, resolve_world_authority,
+    FoldedWorldAccess, ResolvedWorldScope, WorldGrantIndex, folded_world_access, reading_default,
+    resolve_world_authority,
 };
 
 pub use self::builder::PipelineBuilder;

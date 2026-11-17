@@ -5,23 +5,71 @@ use std::collections::HashSet;
 use loro::LoroMap;
 
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
-use crate::claim::decode_claim_body;
+use crate::claim::{ClaimSubject, decode_claim_body};
 use crate::registry::ENTITY_TYPE_CLAIM;
+use crate::write_envelope::world_access_predicates::is_world_access_tier_predicate;
 use crate::{EntityId, Result, Vault};
 
 use super::bridge::parse_edge_key;
 use super::loro_support::map_for_each_value_bytes;
 
 /// E-sign events have no authenticated replay format. Every receiving batch
-/// refuses them, so no sync door may ship them. Undecodable CLAIM carriers
-/// also fail closed: their predicate cannot be proved exportable.
+/// refuses them, so no sync door may ship them. The world-access tiers are
+/// local authority ([`world_access_claim`]), so no sync door ships them
+/// either. Undecodable CLAIM carriers also fail closed: their predicate
+/// cannot be proved exportable.
 pub(super) fn claim_sync_allowed(raw: &[u8]) -> bool {
     if raw.first().copied() != Some(ENTITY_TYPE_CLAIM) {
         return true;
     }
     EntityMetadataHeader::parse(raw).is_some()
-        && decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)
-            .is_ok_and(|body| !body.predicate.starts_with("esign."))
+        && decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true).is_ok_and(|body| {
+            !body.predicate.starts_with("esign.")
+                && !is_world_access_tier_predicate(&body.predicate)
+        })
+}
+
+/// Whether `data`, the body of a CLAIM row, is an ALLOWED-SET grant or a
+/// DEFAULT-SUBSET row. Both world-access tiers are local authority (ARCH-0067
+/// #phasing; RULING L2-53-CEILING, 14 Nov): a replicated put skips source
+/// trust, so a synced grant could set the worlds of an agent on a node whose
+/// owner never granted them. No sync door ships one, and every door that
+/// replays a peer's rows drops one: dropped, not refused, so the rest of an
+/// older peer's window still lands. Every row the world-authority fold reads
+/// was therefore written on this node, or restored from this vault's own
+/// checkpoint (RULING L2-53-CHECKPOINT = B).
+pub(super) fn world_access_claim(data: &[u8]) -> bool {
+    decode_claim_body(data, true).is_ok_and(|body| is_world_access_tier_predicate(&body.predicate))
+}
+
+// Whether the row stored at `id` is a world-access grant or default: a
+// peer's row or tombstone under that id never replaces or deletes it.
+pub(super) use crate::claim::world_access::holds_world_access_claim_in;
+
+/// Whether `data` is a MACHINE claim history control row (a birth,
+/// transition or handoff) whose target is a world-access grant or default
+/// stored here. Such a row carries an id of its own, so
+/// [`holds_world_access_claim_in`] passes it, but landing it indexes the
+/// grant's id as machine-owned history, and the read predicate then
+/// quarantines the grant (`authority::machine_claim_read_admitted`): a
+/// narrower grant would drop out of the fold and widen the agent's reads.
+/// Every door that replays a peer's rows drops such a row, as it drops a row
+/// under the grant's own id.
+pub(super) fn targets_world_access_claim_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    data: &[u8],
+) -> Result<bool> {
+    let Ok(body) = decode_claim_body(data, true) else {
+        return Ok(false);
+    };
+    if crate::claim::history_store::machine_history_kind(&body.predicate).is_none() {
+        return Ok(false);
+    }
+    let ClaimSubject::Entity(target) = body.subject else {
+        return Ok(false);
+    };
+    holds_world_access_claim_in(vault, txn, &target)
 }
 
 pub(super) fn local_claim_sync_allowed(vault: &Vault, id: &EntityId) -> Result<bool> {

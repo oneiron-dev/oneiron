@@ -3,39 +3,12 @@
 //! that holds every rule settles, held import and worker answer alike
 //! (FIX 9944, 10166).
 
-use serde::{Deserialize, Serialize};
-
 use crate::memory::extraction::{EncoderInput, EncoderOutput, NerSpan};
 
 const MAX_LABEL_BYTES: usize = 64;
 
-/// Why an answer was refused. Each code names the rule it broke and carries
-/// none of the answer or the turn.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum OutputRefusal {
-    /// A mood value outside valence −1..1, arousal and dominance 0..1.
-    MoodOutOfRange,
-    /// A span names a message the input does not have.
-    UnknownMessage,
-    /// A span is empty, runs past its message, or splits a character.
-    BadOffsets,
-    /// A label is empty or longer than 64 bytes.
-    BadLabel,
-    /// A confidence is not a finite value in 0..1.
-    BadConfidence,
-    /// A link names a missing span or points forward, or a span carries a
-    /// second link of any kind.
-    BadLink,
-    /// A context link names a turn or a message the input did not send as
-    /// context.
-    UnknownContext,
-    /// Spans are out of (message, start, end) order, or two share
-    /// coordinates.
-    SpanOrder,
-    /// The answer names another stack than the one the marker is owed to.
-    OtherStack,
-}
+#[doc(hidden)]
+pub use oneiron_records::tagging::output::OutputRefusal;
 
 /// The rules an answer meets before it settles a marker owed to `stack`,
 /// when one is pinned: `Memory::witness_with_shadow`'s rules, applied to the
@@ -78,7 +51,8 @@ pub(super) fn check_moved_output(
             return Err(OutputRefusal::BadConfidence);
         }
     }
-    check_links(input, output)
+    check_links(input, output)?;
+    check_relations(output)
 }
 
 /// The windows' moods of a turn read in several (FIX 9518): each in range,
@@ -168,6 +142,25 @@ pub(crate) fn check_links(
         claim(link.span)?;
         if !is_confidence(link.confidence) {
             return Err(OutputRefusal::BadConfidence);
+        }
+    }
+    Ok(())
+}
+
+/// The relation rules: each relation joins two different spans of the
+/// answer, under a label of 1 to 64 bytes, with a confidence in 0..1. Any
+/// number of relations holds, and two may join the same spans.
+pub(crate) fn check_relations(output: &EncoderOutput) -> Result<(), OutputRefusal> {
+    let spans = output.spans.len();
+    for relation in output.relations.iter().flatten() {
+        if relation.head >= spans
+            || relation.tail >= spans
+            || relation.head == relation.tail
+            || relation.label.is_empty()
+            || relation.label.len() > MAX_LABEL_BYTES
+            || !is_confidence(relation.confidence)
+        {
+            return Err(OutputRefusal::BadRelation);
         }
     }
     Ok(())

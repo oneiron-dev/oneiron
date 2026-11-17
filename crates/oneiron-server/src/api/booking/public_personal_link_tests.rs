@@ -383,7 +383,8 @@ async fn a_personal_link_ended_mid_confirm_books_nothing() {
 
     // The confirm's admission resolves the link: the snapshot it carries.
     let (authority, _, resolved) =
-        public_attempt_authority(&fixture.server, &link.token).expect("live link");
+        public_attempt_authority(&fixture.server, &link.token, &ReadDestination::on_device())
+            .expect("live link");
     assert_eq!(
         authority.personal_link_ref.as_deref(),
         resolved.as_ref().map(|resolved| resolved.link_ref.as_str())

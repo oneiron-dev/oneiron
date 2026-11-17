@@ -75,6 +75,10 @@ impl fmt::Debug for ServeArgs {
             .field("desktop_runtime", &self.desktop_runtime)
             .field("organ_dir", &self.organ_dir)
             .field("trusted_organ_builds", &self.trusted_organ_builds)
+            .field(
+                "release_payment_credentials_unfenced",
+                &self.release_payment_credentials_unfenced,
+            )
             .field("mesh_bind", &self.mesh_bind)
             .field("mesh_relays", &self.mesh_relays)
             .field("shared_model_root", &self.shared_model_root)
@@ -82,6 +86,7 @@ impl fmt::Debug for ServeArgs {
             .field("container_runtime_dir", &self.container_runtime_dir)
             .field("guest_runtime_fact", &self.guest_runtime_fact)
             .field("hosted_private_origins", &self.hosted_private_origins)
+            .field("hosted_private_networks", &self.hosted_private_networks)
             .field("host", &self.host)
             .field("port", &self.port)
             .field("artifact_port", &self.artifact_port)

@@ -83,6 +83,12 @@ pub struct OwnerWorkView {
     /// (FIX 4739).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cancel_text: Option<String>,
+    /// The check-in decision a root request `vault.roots.requests.create`
+    /// recorded ran on (2k3): the Owner on their own proof, and the approved
+    /// check-in of another asker it applied, with its requester. `None` for
+    /// every other answer, and when nothing was recorded.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub check_in: Option<crate::check_in::CheckInDecision>,
 }
 
 impl From<OwnerWorkReceipt> for OwnerWorkView {
@@ -110,6 +116,7 @@ impl From<OwnerWorkReceipt> for OwnerWorkView {
             advice_text,
             home_warning_text,
             cancel_text,
+            check_in: None,
         }
     }
 }
@@ -144,12 +151,29 @@ pub fn cancel_root_request_as(
 }
 
 /// One root request naming this install with no result yet, as
-/// `vault.roots.requests.list` answers it: its change and its receipt.
+/// `vault.roots.requests.list` answers it: its change, its receipt, the
+/// machine it names as its carrier, and this install's own reading of the
+/// key that signed it ([`crate::authority::CarrierReading`]). A surface names
+/// who asked from `carrier_role` and `carrier_is_yours`, never from the
+/// request's own words (CARRIED-PIN-PROMPT-HOSTED-CARRIER = A). With no
+/// `carrier_role` the machine id is the request's word alone, and a surface
+/// names no machine by it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct PendingRootRequestView {
     pub change: RootChangeView,
     pub receipt: OwnerWorkView,
+    /// The machine the request names as its carrier: the request's own word
+    /// until `carrier_role` is set.
+    pub carrier: EntityId,
+    /// The role this install's records give the key that signed the request
+    /// on that machine: `yours`, `work_school`, `rented`, `hosted_node`,
+    /// `execution_node`, `removed` or `unanswered`. `None` when its records
+    /// do not tie that machine to the key.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub carrier_role: Option<String>,
+    /// Whether this install trusts that key as one of the owner's machines.
+    pub carrier_is_yours: bool,
 }
 
 /// `vault.roots.requests.create` (FIX 5598): records the owner's root change
@@ -157,13 +181,18 @@ pub struct PendingRootRequestView {
 /// surface he is authenticated on; `surface` is audit only. The answer is
 /// the request's receipt: "recorded, awaiting a holder" until the target
 /// makes the change, or, for a target this install cannot name (itself, or
-/// one not linked), why nothing was written.
+/// one not linked), why nothing was written. A recorded request answers the
+/// check-in decision it ran on; with `check_in_ref` the Owner applies an
+/// asker's approved check-in for this change (2k3; P25-SHAPE Q1 = A).
 ///
 /// # Errors
 ///
-/// `BAD_REQUEST` for a malformed target, root or machine, or a change that
-/// is not pin, restore (each with root), anchor (with root and machine) or
-/// activate (with neither); a stale owner proof; storage errors.
+/// `BAD_REQUEST` for a malformed target, root, machine or `check_in_ref`,
+/// or a change that is not pin, restore (each with root), anchor (with root
+/// and machine) or activate (with neither); a stale owner proof; a check-in
+/// that does not apply to a recorded request (a target this install cannot
+/// name records nothing, so it answers no decision and spends no check-in);
+/// storage errors.
 pub fn create_root_request_as(
     vault: &Vault,
     owner: &AuthenticatedOwner,
@@ -173,15 +202,19 @@ pub fn create_root_request_as(
     let target = EntityId::from_hex(&input.target)
         .map_err(|_| MemoryError::bad_request("target must be 32 hex"))?;
     let change = root_change(&input)?;
-    Ok(vault
-        .request_root_change(owner, surface, target, change)?
-        .into())
+    let check_in_ref = super::shared::check_in_ref(input.check_in_ref.as_deref())?;
+    let (receipt, check_in) =
+        vault.request_root_change_with_check_in(owner, surface, target, change, check_in_ref)?;
+    Ok(OwnerWorkView {
+        check_in,
+        ..OwnerWorkView::from(receipt)
+    })
 }
 
 /// `vault.roots.requests.list` (FIX 5598): the root requests naming this
 /// install with no result yet, ascending by entry, but those the owner
-/// cancelled or a newer request superseded, through
-/// [`Vault::pending_root_requests`]. Ids only.
+/// cancelled or a newer request superseded, each with the machine that
+/// carried it, through [`Vault::pending_root_request_listing`]. Ids only.
 ///
 /// # Errors
 ///
@@ -191,11 +224,14 @@ pub fn list_root_requests_as(
     owner: &AuthenticatedOwner,
 ) -> MemoryResult<Vec<PendingRootRequestView>> {
     Ok(vault
-        .pending_root_requests(owner)?
+        .pending_root_request_listing(owner)?
         .into_iter()
-        .map(|(_, change, receipt)| PendingRootRequestView {
-            change: change.into(),
-            receipt: receipt.into(),
+        .map(|listed| PendingRootRequestView {
+            change: listed.change.into(),
+            receipt: listed.receipt.into(),
+            carrier: listed.carrier.machine,
+            carrier_role: listed.carrier.role.map(|role| role.wire().to_owned()),
+            carrier_is_yours: listed.carrier.is_mine,
         })
         .collect())
 }

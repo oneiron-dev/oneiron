@@ -69,14 +69,8 @@ use std::ops::Range;
 
 use crate::edit_distance::delta::{OpsSummary, u32_saturating};
 
-/// What a relocated line costs against a rewritten one.
-///
-/// A move-paired character charges `2 · MOVE_DISCOUNT` (0.2) into the edit
-/// mass where the delete-plus-insert it replaces would charge 2.0 — the
-/// ratified tenth. Compile-time on purpose: this is part of the metric's definition,
-/// not a dial an operator turns under a miner that already banked numbers
-/// measured with the old one.
-pub const MOVE_DISCOUNT: f32 = 0.1;
+#[doc(hidden)]
+pub use oneiron_records::edit_distance::myers::MOVE_DISCOUNT;
 
 /// Cap on the shortest-edit-script length `D`.
 ///
