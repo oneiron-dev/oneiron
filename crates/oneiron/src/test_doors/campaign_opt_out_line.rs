@@ -100,6 +100,44 @@ pub fn seal_bulk_native_mail(
     Ok((sealed, opt_out.hygiene_headers()?))
 }
 
+/// RED PROOF ONLY (FIX [CAMPAIGN-OPT-OUT-LINE-LOCALE]): the stalwart
+/// branch's native message for `step_body`, sealed with the opt-out the
+/// frozen envelope carries as main's sender decodes it: no language key
+/// (its envelope denies unknown keys), a bulk mode with its link, or the
+/// English line; `None` for any other shape.
+///
+/// # Errors
+/// As the branch: the message does not seal.
+pub fn seal_native_mail_from_envelope(
+    envelope: &[u8],
+    target: &str,
+    subject: &str,
+    step_body: &str,
+    sender_address: &str,
+) -> Result<Option<SealedCampaignEmail>> {
+    let Ok(keys) = serde_json::from_slice::<serde_json::Map<String, serde_json::Value>>(envelope)
+    else {
+        return Ok(None);
+    };
+    if keys.contains_key("opt_out_language") {
+        return Ok(None);
+    }
+    let opt_out = match (
+        keys.get("send_mode").and_then(serde_json::Value::as_str),
+        keys.get("list_unsubscribe").and_then(serde_json::Value::as_str),
+    ) {
+        (None, None) => CampaignEmailOptOut::BodyLine,
+        (Some("bulk"), Some(uri)) => CampaignEmailOptOut::ListUnsubscribe(uri.to_owned()),
+        _ => return Ok(None),
+    };
+    let message =
+        seal_campaign_native_message(target, subject, step_body, sender_address, &opt_out)?;
+    Ok(Some(SealedCampaignEmail {
+        body_text: message.text.clone().unwrap_or_default(),
+        content_ref: message.content_ref()?,
+    }))
+}
+
 /// The one-click link a bulk send to `person` in `campaign` freezes on
 /// `vault`; `None` when no origin is installed or the vault holds no key.
 ///
