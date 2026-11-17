@@ -344,6 +344,19 @@ async fn mcp_narrowed_admission_refuses_unscoped_execution_on_each_axis() {
     let facet_only =
         crate::mcp::McpConnectorScope::scoped(None, Some(seeded_test_entity_id(0x1704_00d3)));
     let vault_wide = crate::mcp::McpConnectorScope::vault_wide();
+    // A TASK is born under its facet as a facet_of edge (ARCH-0022), whose
+    // end must be a stored FACET: the facet-only credential's facet is one.
+    // The world axis names no row.
+    server
+        .vault()
+        .put_entity(
+            &seeded_test_entity_id(0x1704_00d3),
+            oneiron::registry::ENTITY_TYPE_FACET,
+            oneiron::TimeRange { start: 1, end: 1 },
+            1,
+            b"facet",
+        )
+        .expect("seed the facet-only credential's facet");
     register_scoped_mcp_actor(
         &server,
         "one-1704-world-only",

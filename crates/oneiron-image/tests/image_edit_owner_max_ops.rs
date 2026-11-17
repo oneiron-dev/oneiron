@@ -126,6 +126,7 @@ impl Fixture {
             artifact,
             version: None,
             ops,
+            format: None,
             run_ref: run_ref.to_owned(),
             trigger: None,
             submitter: None,

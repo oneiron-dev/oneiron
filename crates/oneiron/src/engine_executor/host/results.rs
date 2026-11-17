@@ -723,23 +723,32 @@ impl RecordingJsHost<'_, '_> {
                 "stored result offset exceeds its body".into(),
             ));
         }
-        // A raw chunk is the occurrence's bytes: a tainted occurrence
-        // (a secret mark reads tainted) refuses here, as its facets do.
-        if storage
-            .code_run_result_taint(Some(self.run_id), output)?
-            .0
-            .is_tainted()
-        {
+        // A raw chunk is the bytes the occurrence's reads show, as its
+        // facets read them; one no read shows refuses here.
+        let Ok(read) = ResultRead::new(storage, self.run_id, output.clone(), None, None, false)?
+        else {
+            return Err(Error::InvariantViolation(
+                "a whole-body result read refuses no range",
+            ));
+        };
+        // A scoped child reads the chunk only before its live cutoff,
+        // checked again before the chunk is released (FIX 8233). The read
+        // carries the cutoff too, so building a redacted view (a read of
+        // the whole body) stops at it, and answers this read's refusal.
+        let read = read.with_live_cutoff(self.live_cutoff());
+        self.check_live_cutoff("stored result")?;
+        let shown = match read.read_shown(storage, offset, RECOVERABLE_OUTPUT_CHUNK_BYTES) {
+            Ok(shown) => shown,
+            Err(error) => {
+                self.check_live_cutoff("stored result")?;
+                return Err(error);
+            }
+        };
+        let Some(bytes) = shown else {
             return Err(Error::InvalidConfig(
                 "stored result read refused: tainted".into(),
             ));
-        }
-        // A scoped child reads the chunk only before its live cutoff,
-        // checked again before the chunk is released (FIX 8233).
-        self.check_live_cutoff("stored result")?;
-        let bytes = storage
-            .read_code_run_raw_output_range(output, offset, RECOVERABLE_OUTPUT_CHUNK_BYTES)?
-            .ok_or(Error::CorruptedIndex("executor replay output bytes"))?;
+        };
         // A body stored before its scan read every rule may hold a
         // secret no mark names: a chunk showing one is withheld like a
         // card or answer showing one is.

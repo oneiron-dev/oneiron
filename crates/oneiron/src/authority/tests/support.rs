@@ -363,6 +363,9 @@ pub(super) fn single_owner_state(
         hosted: false,
         actor_rows: Default::default(),
         residence_directives: Default::default(),
+        passkey_contexts: BTreeMap::new(),
+        passkey_vouched_keys: BTreeSet::new(),
+        passkey_vouch_confirmations: BTreeSet::new(),
     };
     (owner, owner_key, parent, state)
 }
