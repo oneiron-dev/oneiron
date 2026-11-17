@@ -16,7 +16,7 @@ use oneiron::dreamer_runner::DreamerAdmittedAttempt;
 use oneiron::identity_topology::{
     TopologyAuditAnswer, TopologyAuditCase, TopologyAuditRecipe, TopologyAuditReviewer,
 };
-use oneiron::llm::decision::{AnswerContract, DecisionAnswer, HumanAskReason};
+use oneiron::llm::decision::{AnswerContract, DecisionAnswer, HumanAskReason, Reversibility};
 use oneiron::memory::caps::MAX_RECALL_DEADLINE_MS;
 use oneiron::memory::{MEMORY_CODE_MODEL_UNAVAILABLE, Memory};
 use oneiron::task_verb::sdk::AiVerdictRequest;
@@ -122,7 +122,7 @@ impl HostRecipe<'_> {
             evidence: case.evidence.iter().map(EntityId::to_hex).collect(),
             state: Some(case.state.clone()),
             ceiling: None,
-            reversibility: Default::default(),
+            reversibility: Reversibility::ReversibleRead,
             deadline_ms: None,
             routine: false,
             image: None,

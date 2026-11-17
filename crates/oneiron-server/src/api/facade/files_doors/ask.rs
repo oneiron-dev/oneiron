@@ -83,7 +83,13 @@ pub(crate) async fn vault_files_sources_ask(
         };
         return (Ok(answer), rows);
     }
-    let reply = match asked(server, &owner, &query, &texts).await {
+    // An owner verified in an off-record session that keeps no model-call
+    // record names no rows on the answer's runs (census L5-25).
+    let off_record = server.vault().model_call_keeps_no_record_for(
+        auth.off_record_session(),
+        crate::api::call_receipt::request_principal(auth),
+    );
+    let reply = match asked(server, &owner, &query, &texts, off_record).await {
         Ok(reply) => reply,
         Err(refusal) => return refused(refusal),
     };
@@ -111,12 +117,14 @@ pub(crate) async fn vault_files_sources_ask(
 
 /// The model's reply to the owner's question over `texts`: one call of the
 /// house chat role, on the owner's budget line, each rung sent the files'
-/// text only where the Files world may be read.
+/// text only where the Files world may be read. With `off_record` the run
+/// names no source rows, so no receipt of it names their worlds.
 async fn asked(
     server: &Arc<SyncServer>,
     owner: &AuthenticatedOwner,
     query: &str,
     texts: &[FilesAskText],
+    off_record: bool,
 ) -> MemoryResult<String> {
     let ai = &server.ai;
     let vault: &Vault = server.vault();
@@ -150,9 +158,9 @@ async fn asked(
         )?)
     })?;
     let notes: Vec<EntityId> = texts.iter().map(|read| read.file.note).collect();
-    let run = ai
-        .undeclared_run(run_id, meter)
-        .sourced(Some(notes.clone()));
+    let run = ai.undeclared_run(run_id, meter);
+    let run = if off_record { run.off_record() } else { run };
+    let run = run.sourced(Some(notes.clone()));
     let sources = AskSources {
         vault,
         texts,
