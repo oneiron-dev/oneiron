@@ -138,6 +138,7 @@ mod op_apply;
 mod origin_cut;
 mod owner_act;
 mod owner_choice;
+mod owner_delegate;
 mod owner_key_enrollment;
 mod owner_key_enrollment_door;
 mod owner_key_move_confirm;
@@ -256,6 +257,11 @@ pub use oneiron_authority::authority::RootRevisionBasis;
 // length (FIX 4920, the seam L04's FIX 4921 calls).
 pub use oneiron_authority::authority::{
     OWNER_KEY_POSSESSION_PROOF_LEN, owner_key_enrollment_challenge,
+};
+// A passkey's assertion as an owner root's signature: its envelope and the
+// challenge it names (row WEB-PASSKEY-OWNER-KEY).
+pub use oneiron_authority::authority::{
+    webauthn_assertion_envelope, webauthn_challenge, webauthn_es256_public_key,
 };
 mod federation_activation;
 pub use federation_activation::federation_grant_activation;
@@ -414,8 +420,13 @@ pub(crate) use owner_act::{
     owner_act_signer_admits,
 };
 pub use owner_choice::OwnerChoiceHead;
+pub(crate) use owner_delegate::{
+    OwnerDelegate, delegate_reads_in_txn, is_owner_delegate_verb, owner_delegate_in_txn,
+};
+pub use owner_delegate::{OwnerOrDelegate, owner_delegate_admits};
 pub use owner_key_enrollment_door::{
-    EnrolledOwnerKey, OwnerKeyEnrollment, OwnerKeyEnrollmentReceipt,
+    EnrolledOwnerKey, EnrolledOwnerPasskey, OwnerKeyEnrollment, OwnerKeyEnrollmentReceipt,
+    OwnerPasskeyEnrollment, OwnerPasskeyEnrollmentReceipt, PreparedOwnerKeyEnrollment,
 };
 pub use owner_key_move_confirm::{
     OWNER_KEY_MOVE_MEMBER_NOT_CONFIRMED, OWNER_KEY_MOVE_NO_HELD_KEY, OWNER_KEY_MOVE_NOT_PLANNED,

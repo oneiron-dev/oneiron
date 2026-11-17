@@ -155,11 +155,7 @@ impl Vault {
 
 /// A lower-case hex id, as every id on a link is written.
 pub(super) fn canonical_id(hex: &str) -> Result<crate::EntityId> {
-    let id = crate::EntityId::from_hex(hex).map_err(|_| invalid_authority())?;
-    if id.to_hex() != hex {
-        return Err(invalid_authority());
-    }
-    Ok(id)
+    crate::EntityId::from_lower_hex(hex).map_err(|_| invalid_authority())
 }
 
 fn pairing_scope(reason: &'static str) -> crate::error::Error {
