@@ -49,9 +49,10 @@ pub(crate) fn claim_access_axes(body: &ClaimBody) -> (RelationshipScope, bool) {
 /// admission refuses it, and what the read asked of its rows (FIX 7462).
 /// The fourth holds, for the same serving txn, each reader's verdict on each
 /// CLAIM access class it judged (FIX 11915). The fifth is set on the row
-/// checks of a record an `edge.provenance` or `core.coreference.status`
-/// Claim names ([`Self::judge_cited`]): the provenance rule is not re-entered.
-/// The sixth names the status claim whose endpoints a worklist judges
+/// checks of a record an `edge.provenance` or coreference (status or share
+/// consent) Claim names ([`Self::judge_cited`]): the provenance rule is not
+/// re-entered. The sixth names the coreference claim whose endpoints a
+/// worklist judges
 /// ([`Self::judge_cited_coreference`]); only that row leaves its endpoint
 /// check to the walk. The seventh holds each room's admission of a
 /// retrieval hit for this read in this serving txn ([`Self::room_verdicts`],
@@ -131,18 +132,19 @@ impl HeldAuthority {
     }
 
     /// `judge` over the row checks of a record an `edge.provenance` or
-    /// `core.coreference.status` Claim names, in this serving txn: this read's
+    /// coreference Claim names, in this serving txn: this read's
     /// relationship authority, Grants and class verdicts, under the key's own
     /// floor alone, with no row's legal non-use conjunct asked. The provenance
-    /// rule is not re-entered; a status claim still meets its endpoint rule.
+    /// rule is not re-entered; a coreference claim still meets its endpoint
+    /// rule.
     /// The relationship authority is lent to `judge` and taken back after it,
     /// whatever it answers.
     pub(super) fn judge_cited<T>(&self, judge: impl FnOnce(&Self) -> Result<T>) -> Result<T> {
         self.judge_cited_with_coreference(None, judge)
     }
 
-    /// [`Self::judge_cited`] for the status claim `id` whose endpoints the
-    /// worklist judges: its ordinary admission leaves only that row's
+    /// [`Self::judge_cited`] for the coreference claim `id` whose endpoints
+    /// the worklist judges: its ordinary admission leaves only that row's
     /// endpoint check to the walk.
     pub(super) fn judge_cited_coreference<T>(
         &self,
@@ -172,13 +174,13 @@ impl HeldAuthority {
     }
 
     /// Whether these row checks judge a record an `edge.provenance` or
-    /// `core.coreference.status` Claim names ([`Self::judge_cited`]). This
-    /// skips only the provenance rule, not a status claim's endpoint rule.
+    /// coreference Claim names ([`Self::judge_cited`]). This skips only the
+    /// provenance rule, not a coreference claim's endpoint rule.
     pub(super) fn judges_cited(&self) -> bool {
         self.4
     }
 
-    /// Whether a worklist judges the endpoints of the status claim `id`,
+    /// Whether a worklist judges the endpoints of the coreference claim `id`,
     /// leaving only that row's endpoint check out of its ordinary admission.
     pub(super) fn judges_coreference_endpoints_of(&self, id: &EntityId) -> bool {
         self.5.as_ref() == Some(id)
@@ -415,7 +417,8 @@ impl ScopedRead<'_> {
     /// relationship grant admits, is read on a `ConversationMessages` grant
     /// over its conversation, found on this read's content as the
     /// transcript finds it (the MESSAGE PartOf a TURN, the TURN ChildOf the
-    /// conversation). The grant stands in for the relationship check alone;
+    /// conversation; over a room stretch, its shell is its room). The grant
+    /// stands in for the relationship check alone;
     /// every other check on the row still binds. Edges that do not read
     /// admit nothing.
     fn conversation_message_granted_in(
@@ -443,6 +446,9 @@ impl ScopedRead<'_> {
                 self.edge_targets_in(txn, turn, EdgeKind::ChildOf, ENTITY_TYPE_CONVERSATION)
             })
             .any(|conversation| {
+                let conversation = self
+                    .stretch
+                    .map_or(conversation, |stretch| stretch.room_of(conversation));
                 context.allows_conversation_message_at_snapshot(conversation, record)
             })
     }

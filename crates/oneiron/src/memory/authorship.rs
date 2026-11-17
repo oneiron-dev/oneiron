@@ -319,12 +319,16 @@ pub(super) fn require_authorship_in_txn(
 /// below the owner: the row restricts someone's access or authority
 /// ([`crate::federation::claim_removal_widens_in`]: a paused, suppressed or
 /// exited `campaign.member`, a do-not-contact bar, an opt-out, an
-/// unreachable channel, a delivery window, ...), and `actor` is neither a
-/// live owner nor the engine's System writer. Lifting a restriction is a
-/// widening, a live owner's alone, whoever wrote the row (the lead's RULING
-/// WORLD-ACCESS-GRANT-DELETE = A, 15 Nov: "deleting a restriction IS a
-/// widening"; the Engine's RULING RESTRICTION-FIX-SCOPE = A, FIX
-/// [RESTRICTION-CLAIM-OVERWRITE-AND-SELF-RETRACT]).
+/// unreachable channel, a delivery window, ...), and `actor` is not a live
+/// owner. Lifting a restriction is a widening, a live owner's alone, whoever
+/// wrote the row (the lead's RULING WORLD-ACCESS-GRANT-DELETE = A, 15 Nov:
+/// "deleting a restriction IS a widening"; the Engine's RULING
+/// RESTRICTION-FIX-SCOPE = A, FIX [RESTRICTION-CLAIM-OVERWRITE-AND-SELF-RETRACT]).
+/// A System actor is no exception: at this door it acts under an owner's
+/// standing Grant ([`require_authorship_in_txn`]), and a standing Grant is no
+/// live owner's stamp on a widening (ARCH-0003: "widening writes are
+/// human-gated"; FIX [RESTRICTION-CLOSE-BY-SYSTEM-GRANT]). The engine's own
+/// writers (a projector, the Dreamer's runner) never reach this check.
 ///
 /// # Errors
 ///
@@ -335,9 +339,7 @@ pub(crate) fn lifts_restriction_below_owner_in(
     actor: WriteActor,
     body: &ClaimBody,
 ) -> Result<bool> {
-    if actor.actor_class() == EdgeActorClass::System
-        || !crate::federation::claim_removal_widens_in(vault, txn, body)?
-    {
+    if !crate::federation::claim_removal_widens_in(vault, txn, body)? {
         return Ok(false);
     }
     Ok(!(actor.actor_class() == EdgeActorClass::Human

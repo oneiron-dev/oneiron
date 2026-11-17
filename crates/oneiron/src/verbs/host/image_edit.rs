@@ -1,10 +1,12 @@
 //! `vault.artifacts.image.edit`'s input and answer (L4-15; the Engine's
 //! ruling of 13 Nov 09:34, IO-SHAPE A): crops and resizes of one image
-//! artifact's version, run in order by the host's image organ, whose PNG
+//! artifact's version, run in order by the host's image organ, whose file
 //! waits beside the artifact as one proposal for Keep, or is held with its
-//! reason until one of the owner's nodes can export it. A JPEG or WebP
-//! source's PNG lands on a new `image/png` artifact born from it (IO-FORMAT
-//! B). An embedded handle has no organ host and refuses the verb.
+//! reason until one of the owner's nodes can export it. The file is in the
+//! source's own format unless the request names another (FIX 23724,
+//! IO-FORMAT C); a file in another format lands on a new artifact of that
+//! format born from the source (IO-FORMAT B). An embedded handle has no
+//! organ host and refuses the verb.
 //!
 //! `vault.artifacts.image.preview`'s input and answer too (L4-16): one
 //! version with the same ops, scaled down to fit a side bound, answered as
@@ -26,9 +28,11 @@ pub struct ImageEditRequest {
     /// default), applied in order. Each is in canvas pixels after the
     /// steps before it, from the top-left corner, after EXIF orientation.
     pub ops: Vec<ImageEditOp>,
-    /// The export's format: PNG, the only one this build writes.
+    /// The export's format: the source's own when absent, so the file lands
+    /// as its next version. A format other than the source's lands on a new
+    /// artifact of that format, born from the source.
     #[serde(default)]
-    pub format: ImageExportFormat,
+    pub format: Option<ImageExportFormat>,
     /// The proposal's ref, unique beside the artifact: a ref already waiting
     /// or settled there is refused.
     pub run_ref: String,
@@ -57,21 +61,22 @@ pub enum ImageResizeFilter {
 }
 
 /// The format an image edit exports.
-#[derive(
-    Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ImageExportFormat {
-    #[default]
     Png,
+    /// Baseline JPEG at quality 90; refused for a source with alpha.
+    Jpeg,
+    /// Lossless WebP, at most 16384 pixels a side.
+    Webp,
 }
 
-/// `vault.artifacts.image.edit`'s answer: where the PNG waits, and either
+/// `vault.artifacts.image.edit`'s answer: where the file waits, and either
 /// its proposal or the export held for a node.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ImageEditAnswer {
-    /// The artifact the PNG waits beside: the source itself, or a new
-    /// `image/png` artifact born from a JPEG or WebP source.
+    /// The artifact the file waits beside: the source itself, or a new
+    /// artifact of the named format born from a source of another.
     pub artifact_ref: String,
     /// Whether `artifact_ref` is new, born from the source.
     pub born: bool,
