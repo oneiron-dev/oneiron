@@ -1672,6 +1672,86 @@ fn a_claim_learned_from_a_hard_deleted_kept_message_stays_withheld() {
     );
 }
 
+/// A CLAIM learned from a CLAIM that was learned from caller A's kept
+/// MESSAGE holds A's words through both births. The owner deletes the middle
+/// CLAIM: its header-only shell keeps no birth and no body, so nothing left
+/// in the outer CLAIM's lineage says the words were A's (#8609 review r2
+/// P1). B's call does not read the outer CLAIM, and the Member's restricted
+/// window does not carry it. Its control, learned the same way through a
+/// CLAIM from the ordinary MESSAGE, both of which stay, does both.
+#[cfg(all(feature = "sync", feature = "test-hooks"))]
+#[test]
+fn a_claim_learned_through_a_deleted_claim_from_a_kept_message_stays_withheld() {
+    use oneiron::provenance::made_by::MadeByInputRole;
+
+    let reach = reach_fixture();
+    let vault = &reach.fixture.vault;
+    let subject = ordinary_subject_person(vault);
+    let middle = claim_born_from(
+        &reach,
+        subject,
+        reach.msg_a_caller,
+        MadeByInputRole::Input,
+        "middle",
+    );
+    let from_a = claim_born_from(&reach, subject, middle, MadeByInputRole::Input, "from_a");
+    let control_middle = claim_born_from(
+        &reach,
+        subject,
+        reach.control_msg,
+        MadeByInputRole::Input,
+        "control_middle",
+    );
+    let from_control = claim_born_from(
+        &reach,
+        subject,
+        control_middle,
+        MadeByInputRole::Input,
+        "from_control",
+    );
+    vault
+        .memory(reach.fixture.owner, EdgeActorClass::Human)
+        .safe_delete(
+            &middle.to_hex(),
+            oneiron::memory::SafeDeleteReason::UserDelete,
+        )
+        .expect("the owner deletes the CLAIM middle");
+    assert!(
+        vault
+            .get(&from_a)
+            .expect("FIXTURE: read the CLAIM from_a")
+            .is_some_and(|body| !body.is_empty()),
+        "FIXTURE: the CLAIM from_a outlives the delete of middle",
+    );
+    let call = vault.scoped_read(reach.b_call_key.clone());
+    assert!(
+        call.is_entity_readable(&from_control)
+            .expect("B's call reads from_control"),
+        "precondition: B's call reads the CLAIM from_control",
+    );
+    let call_reads_from_a = call
+        .is_entity_readable(&from_a)
+        .expect("B's call reads from_a");
+    let carried = member_selector_carries(&reach, |source| {
+        for (id, label) in [(&from_a, "from_a"), (&from_control, "from_control")] {
+            assert!(
+                source.get_map("entities").get(&id.to_hex()).is_some(),
+                "FIXTURE: the packed window holds {label}",
+            );
+        }
+    });
+    assert!(
+        carried.contains(&from_control),
+        "precondition: the Member restricted window carries the CLAIM from_control",
+    );
+    assert!(
+        !call_reads_from_a && !carried.contains(&from_a),
+        "LEAK: a CLAIM learned through a deleted CLAIM from A's kept MESSAGE reads on \
+         (B's call reads it: {call_reads_from_a}; the Member restricted window carries it: {})",
+        carried.contains(&from_a),
+    );
+}
+
 #[test]
 fn an_off_record_session_cannot_strip_a_phone_stamp() {
     use oneiron::RawEntityPut;
