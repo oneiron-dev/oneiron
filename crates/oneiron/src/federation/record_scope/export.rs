@@ -24,7 +24,7 @@ impl Vault {
     /// a text written from one, nor a row whose own words are withdrawn.
     /// The export goes to a recipient nobody proved; see
     /// [`Self::export_records_in_scope_for`].
-    pub(crate) fn export_records_in_scope(
+    pub fn export_records_in_scope(
         &self,
         selector: &Scope,
         slip: &Scope,
@@ -45,7 +45,7 @@ impl Vault {
     /// own copy of every record is [`Self::export_owner_records`], which
     /// also judges each row by the members' mailbox rule (fix list row
     /// 15416).
-    pub(crate) fn export_records_in_scope_for(
+    pub fn export_records_in_scope_for(
         &self,
         selector: &Scope,
         slip: &Scope,
