@@ -73103,7 +73103,7 @@
      "path": "src/secret_custody/control/input.rs",
      "purpose": "The protected input of an active custody change (WILL L04 row 04): what a register, rotate or bind hands its…",
      "surface": {
-      "crate-vis": 35,
+      "crate-vis": 36,
       "re-export": 2
      }
     },
@@ -73191,7 +73191,7 @@
      "path": "src/secret_custody/control/input/witness.rs",
      "purpose": "A relayed custody input's witness in numbered parts (FIX 8088)",
      "surface": {
-      "crate-vis": 22
+      "crate-vis": 23
      }
     },
     {
@@ -73484,7 +73484,7 @@
      "path": "src/secret_custody/mod.rs",
      "purpose": "ARCH-0069 secret custody — SECRET-01 (ONE-1919): custody classes, the custody record that is the secret…",
      "surface": {
-      "crate-vis": 33,
+      "crate-vis": 34,
       "re-export": 21
      }
     },
@@ -82396,7 +82396,7 @@
      "path": "src/store/key_custody/head.rs",
      "purpose": "The sealed custody head (KS-4, FIX 5685): the latest live entries of one lineage and every retirement fact…",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 12
      }
     },
     {
@@ -82406,7 +82406,7 @@
      "path": "src/store/key_custody/head/carried_pads.rs",
      "purpose": "Core half of `store::key_custody::head::carried_pads`: its store-layer items live in…",
      "surface": {
-      "crate-vis": 17
+      "crate-vis": 18
      }
     },
     {
@@ -82496,7 +82496,7 @@
      "path": "src/store/key_custody/mod.rs",
      "purpose": "Typed key custody (KS-1): one storage and lifecycle service for the independent, erasable secrets a vault…",
      "surface": {
-      "crate-vis": 41,
+      "crate-vis": 42,
       "mod": 1,
       "re-export": 2
      }
@@ -82988,7 +82988,7 @@
      "path": "src/store/mod.rs",
      "purpose": "LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the…",
      "surface": {
-      "crate-vis": 169,
+      "crate-vis": 170,
       "mod": 69,
       "re-export": 89
      }
@@ -84661,7 +84661,7 @@
      "path": "src/subject_model.rs",
      "purpose": "Subject model: who, if anyone, stands behind an actor (ARCH-0063 R7)",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 12,
       "fn": 8,
       "re-export": 5
      }
@@ -84675,7 +84675,7 @@
      "path": "src/subject_model/archive.rs",
      "purpose": "Inert subject-fact restore and explicit current-owner activation",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 5,
       "struct": 1
      }
@@ -94042,6 +94042,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/test_doors/fingerprint_keep_custody_digests.rs",
+     "purpose": "Door for `tests/fingerprint_keep_custody_digests.rs` (PLAN-UC-04 stage 6.1b): a custody input witness's…",
+     "surface": {
+      "fn": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/test_doors/fingerprint_keep_dreamer.rs",
      "purpose": "The agent-health trend replay hash, for the K-proof of PLAN-UC-04 stage 3.2…",
      "surface": {
@@ -94764,7 +94774,7 @@
      "purpose": "Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD)",
      "surface": {
       "fn": 1,
-      "mod": 291,
+      "mod": 292,
       "re-export": 1
      }
     },
@@ -106796,6 +106806,27 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/fingerprint_keep_check_in_effect_digests.rs",
+     "purpose": "K-proof (oracle) for the check-in effect digests of P2.5's delete and security-control doors: each keeps its…",
+     "surface": {
+      "fn": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/fingerprint_keep_custody_digests.rs",
+     "purpose": "K-proof (oracle) for PLAN-UC-04 stage 6.1b: three custody digest helpers keep their bytes",
+     "surface": {
+      "const": 2,
+      "crate-vis": 5
+     }
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -114172,7 +114203,7 @@
      "purpose": "`TimeRange`, temporal expressions/parsing, granularity/anchor enums"
     },
     "test_doors": {
-     "files": 297,
+     "files": 298,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -114349,8 +114380,8 @@
    },
    "over_bar": 299,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 8111,
-   "test_files": 1865
+   "source_files": 8112,
+   "test_files": 1867
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -129002,6 +129033,14 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/purposes/check_in.rs",
+     "purpose": "Purposes of a person's check-in effects (`oneiron` `check_in::effect`; ARCH-0082 #composing)",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/purposes/cluster.rs",
      "purpose": "Purposes of claim clustering (`oneiron::cluster`, `crates/oneiron/src/memory/claim_cluster.rs`)",
      "surface": {}
@@ -129028,6 +129067,14 @@
      "notable": [],
      "path": "src/purposes/git_wire.rs",
      "purpose": "Purposes of the git wire (`oneiron-store`'s `git_wire` and `crates/oneiron/src/git_wire`)",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/purposes/key_custody.rs",
+     "purpose": "Purposes of key custody (`crates/oneiron/src/store/key_custody`, with its store half in `oneiron-store`)",
      "surface": {}
     },
     {
@@ -129125,6 +129172,14 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/purposes/secret.rs",
+     "purpose": "Purposes of secret scanning (`crates/oneiron/src/batch/secret_scan`) and secret custody (`secret_custody`)",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/purposes/setting.rs",
      "purpose": "Purposes of the Setting primitive (`crates/oneiron/src/setting/`)",
      "surface": {}
@@ -129159,6 +129214,14 @@
      "notable": [],
      "path": "src/purposes/store.rs",
      "purpose": "Legacy store digests that existing rows, files and acks hold",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/purposes/subject_model.rs",
+     "purpose": "Purposes of the subject model (`crates/oneiron/src/subject_model`)",
      "surface": {}
     },
     {
@@ -129240,7 +129303,7 @@
      "purpose": "The K door: a digest that main already stores or sends keeps its exact bytes"
     },
     "purposes": {
-     "files": 32,
+     "files": 36,
      "impl_vault": false,
      "largest_src_bucket": "s",
      "layout": "dir",
@@ -129256,7 +129319,7 @@
    },
    "over_bar": 0,
    "purpose": "One fingerprint rule for engine digests (fable pass 22; PLAN-UC-04 stage 0)",
-   "source_files": 35,
+   "source_files": 39,
    "test_files": 1
   },
   "oneiron-gen": {
@@ -164059,13 +164122,13 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/device_sync.rs",
      "purpose": "The device side of sync (ARCH-0023b): a machine that is not the home dials its home and keeps its vault in…",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 10
      }
     },
     {
@@ -164143,9 +164206,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/device_sync/host.rs",
-     "purpose": "The existing served host, or an app's already-open device vault",
+     "purpose": "The existing served host, or the macOS app's device-mode server over its already-open vault (L7-47)",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 10
      }
     },
     {
@@ -164265,6 +164328,7 @@
      "path": "src/embedded/device.rs",
      "purpose": "Device sync for an app that already opened and profiled its own vault",
      "surface": {
+      "crate-vis": 5,
       "fn": 2,
       "struct": 1
      }
@@ -165084,7 +165148,7 @@
      "path": "src/handler/mesh.rs",
      "purpose": "The paired-machine mesh listener (OF-535)",
      "surface": {
-      "crate-vis": 29
+      "crate-vis": 30
      }
     },
     {
@@ -165132,7 +165196,7 @@
      "path": "src/handler/mod.rs",
      "purpose": "WebSocket upgrade handler and connection lifecycle",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -165498,7 +165562,7 @@
      "purpose": "Oneiron CRDT sync server library",
      "surface": {
       "const": 1,
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 3,
       "mod": 27,
       "re-export": 2
@@ -171374,7 +171438,7 @@
      "path": "src/server/core.rs",
      "purpose": "Core server state: the `SyncServer` struct, construction, and shared helpers",
      "surface": {
-      "crate-vis": 39,
+      "crate-vis": 42,
       "fn": 19,
       "re-export": 1,
       "struct": 1
@@ -171387,6 +171451,7 @@
      "path": "src/server/core/construction.rs",
      "purpose": "Construction of the core sync server from an opened vault",
      "surface": {
+      "crate-vis": 1,
       "fn": 1
      }
     },
@@ -172245,13 +172310,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/server/windows.rs",
      "purpose": "Window serving: snapshots, exports, and the local-change broadcast bridge",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 11
      }
     },
     {
@@ -172474,6 +172539,30 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/test_doors/embedded_peer_fixture.rs",
+     "purpose": "An enrolled device vault for the L7-47 mesh peer path tests",
+     "surface": {
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "RootNotices",
+      "ServedDeviceLink"
+     ],
+     "path": "src/test_doors/embedded_peer_path.rs",
+     "purpose": "Doors for the Mac app's peer path test (L7-47): starting `EmbeddedDeviceSync` on a mesh bind without the…",
+     "surface": {
+      "fn": 18,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/test_doors/embedding_line.rs",
      "purpose": "Doors for `tests/embedder_host_line_notice.rs` (0053-EMB, on census L1-27): a server holding an endpoint…",
      "surface": {
@@ -172689,7 +172778,7 @@
      "path": "src/test_doors/mod.rs",
      "purpose": "Doors for the integration tests to crate-private items, as in `oneiron::test_doors`",
      "surface": {
-      "mod": 60
+      "mod": 62
      }
     },
     {
@@ -174284,6 +174373,14 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/embedded_peer_serve.rs",
+     "purpose": "The macOS app's mesh peer path (L7-47, RULING L7-47-PR2-TESTS = A)",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/embedder_config_register_names.rs",
      "purpose": "The embedder config names, one line per row, generated from `scripts/ratchet/hand_name_tables.py --names…",
      "surface": {}
@@ -175666,6 +175763,14 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/serve_device_peer_root.rs",
+     "purpose": "serve as a device of another home serves its peers the root its link learned (FIX-LIST…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/serve_usage_metering.rs",
      "purpose": "A self-hosted serve binds its usage meter before any work starts (FIX 11011, FIX 22868): to the vault's own…",
      "surface": {}
@@ -176854,7 +176959,7 @@
      "purpose": "Request fixtures mint real logged slips before crossing the production router"
     },
     "test_doors": {
-     "files": 62,
+     "files": 64,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -176917,10 +177022,10 @@
      "purpose": "The host's precision recalculator (ARCH-0075 xlsx row; FIX 2462, OF-505 = A): LibreOffice Calc headless…"
     }
    },
-   "over_bar": 69,
+   "over_bar": 70,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 2014,
-   "test_files": 481
+   "source_files": 2016,
+   "test_files": 483
   },
   "oneiron-setting-contract": {
    "files": [
@@ -181264,7 +181369,7 @@
      "path": "src/key_custody/head/carried_pads.rs",
      "purpose": "World pad compartments a restore left unopened, carried forward (PAD-3, FIX 11133)",
      "surface": {
-      "const": 6,
+      "const": 4,
       "fn": 3,
       "mod": 1
      }
@@ -188540,7 +188645,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "PendingDoors",
@@ -188550,7 +188655,7 @@
      "purpose": "The nightly pending-door filter (Engine ruling 03:32, 10 Nov; Fable's verdict, section 1, \"Door waits\")…",
      "surface": {
       "const": 1,
-      "fn": 7,
+      "fn": 9,
       "struct": 2
      }
     },
@@ -188845,7 +188950,7 @@
     "pending_door": {
      "files": 1,
      "impl_vault": false,
-     "largest_src_bucket": "s",
+     "largest_src_bucket": "m",
      "layout": "file",
      "purpose": "The nightly pending-door filter (Engine ruling 03:32, 10 Nov; Fable's verdict, section 1, \"Door waits\")…"
     },

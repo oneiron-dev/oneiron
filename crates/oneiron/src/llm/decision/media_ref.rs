@@ -5,6 +5,8 @@
 //! resolves it through the asker's own lane before a call. A medium no rung reads is
 //! never captioned in its place; its entry says it was not served, and why.
 
+use oneiron_contracts::fingerprint::ContentHash;
+
 use super::{
     DecisionAudio, DecisionDial, DecisionImage, DecisionLadder, DecisionQuestion, DecisionRung,
     audio_format,
@@ -148,7 +150,7 @@ impl MediaCall {
                 } => {
                     reference.validate()?;
                     if bytes.is_empty()
-                        || *blake3::hash(&bytes).as_bytes() != reference.evidence.body_hash
+                        || *ContentHash::of(&bytes).as_bytes() != reference.evidence.body_hash
                     {
                         return Err(FatalLlmError::InvalidRequest.into());
                     }
