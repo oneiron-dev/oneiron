@@ -276,6 +276,7 @@ pub mod staged_vault_import;
 pub mod steward;
 pub mod stretch_pack_finalize;
 pub mod substrate_reads;
+pub mod summarize_note_set;
 #[cfg(feature = "sync")]
 pub mod sync_checkpoint_pins;
 pub mod sync_parted_row_binding;
