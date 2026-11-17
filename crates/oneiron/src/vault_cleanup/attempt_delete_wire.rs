@@ -6,8 +6,12 @@
 //! Engine ruling P25-SHAPE Q1 = A) judges the confirm in that writer, after
 //! its authority, and its receipt records the decision: the Owner deletes on
 //! their own proof, an Admin's confirm never asks, a Deputy's goes on their
-//! own judgment (`sure`). No role that reaches this door waits, so it takes
-//! no `check_in_ref`.
+//! own judgment (`sure`). An agent's confirm (the owner's
+//! `vault_cleanup.attempt_delete.owner_or_admin_only` off, and its live owner
+//! Grant naming the verb) is not judged here, as `vault.delete` does not judge
+//! one (2k5c): PR 3's act gate judges agents, and its receipt records no
+//! decision. No role that reaches this door waits, so it takes no
+//! `check_in_ref`.
 
 use super::attempt_delete_authority::{DeleteAuthority, require_delete_in_txn};
 use super::attempt_delete_receipts::stamp_in_txn;
@@ -74,8 +78,12 @@ pub fn confirm_attempt_archive_delete_wire(
             run_id: record.run_id,
             receipt_ref,
             role: authority.role.to_owned(),
-            grant_ref: authority.grant.map(|(grant, _)| grant.to_hex()),
-            check_in: Some(check_in),
+            grant_ref: authority
+                .grant
+                .map(|(grant, _)| grant)
+                .or(authority.agent_grant)
+                .map(|grant| grant.to_hex()),
+            check_in,
         })
     })
 }
@@ -83,7 +91,8 @@ pub fn confirm_attempt_archive_delete_wire(
 /// The check-in decision of the confirm `authority` admitted for attempt
 /// `id`, judged in `txn`, its writer (module docs). The Owner acts on their
 /// own proof. An Admin or a Deputy is judged under the membership role of
-/// the grant that admitted them, over the attempt's delete digest.
+/// the grant that admitted them, over the attempt's delete digest. An agent
+/// is not judged at this door (module docs): none.
 ///
 /// # Errors
 ///
@@ -94,9 +103,12 @@ fn attempt_delete_check_in_in_txn(
     txn: &mut heed::RwTxn<'_>,
     authority: &DeleteAuthority,
     id: AttemptId,
-) -> crate::Result<CheckInDecision> {
+) -> crate::Result<Option<CheckInDecision>> {
+    if authority.agent_grant.is_some() {
+        return Ok(None);
+    }
     let Some((grant, role)) = authority.grant else {
-        return Ok(check_in::owner_own_proof_decision(ActClass::Delete));
+        return Ok(Some(check_in::owner_own_proof_decision(ActClass::Delete)));
     };
     let act = DoorAct {
         person: authority.actor,
@@ -109,7 +121,7 @@ fn attempt_delete_check_in_in_txn(
     };
     let now = crate::ports::recorded_at_in_txn(&vault.store, txn)?;
     match check_in::person_door_check_in_in_txn(vault, txn, &act, None, now)? {
-        DoorCheckIn::Go(decision) => Ok(decision),
+        DoorCheckIn::Go(decision) => Ok(Some(decision)),
         DoorCheckIn::Wait(_) => Err(Error::InvariantViolation(
             "an attempt archive delete by an Admin or a Deputy never waits",
         )),
