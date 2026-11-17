@@ -19,9 +19,17 @@
 //! which the run works in (ROOM-SCOPED-PINS P2c), and its dispatch input
 //! carries the other turns' keys. A room wake never carries another room's
 //! turn or an inbox message: its run works in its one room.
+//!
+//! A project's home room wakes the project's leader under the project's
+//! leader binding (UNBUILT3-22): that binding's wake mode and hold apply to
+//! the room, and its wake runs stamped with the project, in the room. A turn
+//! the project's goal intake took wakes no resident run: the intake answers
+//! it (RULING GOAL-INTAKE-DRAFT-RUN = A). Every other room takes the agent's
+//! own binding, and with none it is no resident wake of this pass.
 
 use std::collections::{BTreeMap, HashSet};
 
+use super::project_leader::RoomWakePolicy;
 use super::{
     AGENT_DISPATCH_ATTEMPT_TYPE, AgentDispatchOutcome, AgentDispatchTarget, AgentDispatcher,
     AgentSpawnContext, DispatchAgent, ResidentAgentSpec, ResidentInboxDispatch, ResidentWakeMode,
@@ -100,28 +108,39 @@ fn room_wake_briefing(room: EntityId, turns: &[StagedRoomWake]) -> String {
 }
 
 impl AgentDispatcher<'_> {
-    /// Dispatches resident `spec`'s staged room wakes under its wake mode and
-    /// hold, each turn at most once (`woken` holds the keys its run already
-    /// took), and settles each one taken, woken or not. A turn that does not
-    /// wake it settles at once; a waking turn whose room's hold still runs
-    /// stays staged, and `pass` records when that hold falls due. Stops,
-    /// leaving the rest staged, once `pass` holds `limit` new dispatches.
+    /// Dispatches resident `agent`'s staged room wakes, each under the
+    /// policy of its room: the leader binding of the project whose home room
+    /// it is, else `own`, the agent's own binding. Each turn wakes it at
+    /// most once (`woken` holds the keys its run already took), and each
+    /// one taken settles, woken or not. A turn that does not wake it settles
+    /// at once; a waking turn whose room's hold still runs stays staged, and
+    /// `pass` records when that hold falls due. A wake no binding takes is
+    /// left staged. Stops, leaving the rest staged, once `pass` holds
+    /// `limit` new dispatches.
     pub(super) fn dispatch_resident_room_wakes(
         &self,
-        spec: &ResidentAgentSpec,
+        agent: EntityId,
+        own: Option<&ResidentAgentSpec>,
         woken: &HashSet<String>,
         limit: usize,
         now: u64,
         pass: &mut ResidentInboxDispatch,
     ) -> Result<()> {
-        let agent = spec.agent_def_ref;
         let mut settled = Vec::new();
-        let mut rooms: BTreeMap<EntityId, Vec<StagedRoomWake>> = BTreeMap::new();
+        let mut rooms: BTreeMap<EntityId, (RoomWakePolicy, Vec<StagedRoomWake>)> = BTreeMap::new();
         for staged in self.vault.staged_room_wakes()? {
             if staged.wake.agent != agent {
                 continue;
             }
-            let wakes = match spec.wake {
+            let policy = {
+                let txn = self.vault.store.env.read_txn()?;
+                self.vault
+                    .room_wake_policy_in_txn(&txn, agent, staged.wake.room, own)?
+            };
+            let Some(policy) = policy else {
+                continue;
+            };
+            let wakes = match policy.wake {
                 ResidentWakeMode::Manual => false,
                 mode => self
                     .vault
@@ -130,15 +149,26 @@ impl AgentDispatcher<'_> {
                         mode == ResidentWakeMode::AllAddressed || turn.speaker_is_person
                     }),
             };
+            let taken_by_intake = match policy.project {
+                Some(project) => self.goal_intake_took_turn(project, staged.wake.turn)?,
+                None => false,
+            };
             let key = room_wake_key(agent, staged.wake.turn);
-            if wakes && !woken.contains(&format!("{AGENT_DISPATCH_ATTEMPT_TYPE}:{key}")) {
-                rooms.entry(staged.wake.room).or_default().push(staged);
+            if wakes
+                && !taken_by_intake
+                && !woken.contains(&format!("{AGENT_DISPATCH_ATTEMPT_TYPE}:{key}"))
+            {
+                rooms
+                    .entry(staged.wake.room)
+                    .or_insert_with(|| (policy, Vec::new()))
+                    .1
+                    .push(staged);
             } else {
                 settled.push(staged.attempt);
             }
         }
-        let hold = u64::from(spec.wake_hold_secs);
-        'rooms: for (room, mut turns) in rooms {
+        'rooms: for (room, (policy, mut turns)) in rooms {
+            let hold = u64::from(policy.wake_hold_secs);
             turns.sort_by_key(|staged| (staged.staged_at, staged.attempt));
             let mut rest = turns.as_slice();
             while let Some(first) = rest.first() {
@@ -152,6 +182,22 @@ impl AgentDispatcher<'_> {
                 }
                 let (carried, after) = rest.split_at(rest.len().min(WAKE_CARRY_LIMIT));
                 rest = after;
+                let context = AgentSpawnContext {
+                    context_spec: Some(ContextSpec {
+                        briefing: Some(room_wake_briefing(room, carried)),
+                        ..ContextSpec::default()
+                    }),
+                    carried_wake_keys: carried[1..]
+                        .iter()
+                        .map(|staged| room_wake_key(agent, staged.wake.turn))
+                        .collect(),
+                    ..AgentSpawnContext::default()
+                };
+                // A project's room wake runs in the project, from its room.
+                let context = match policy.project {
+                    Some(project) => context.with_project(project).with_origin_conversation(room),
+                    None => context,
+                };
                 let outcome = self.dispatch_with_context(
                     DispatchAgent {
                         target: AgentDispatchTarget::Custom(agent),
@@ -160,17 +206,7 @@ impl AgentDispatcher<'_> {
                         run_id: Some(resident_run_id(agent)),
                         now,
                     },
-                    AgentSpawnContext {
-                        context_spec: Some(ContextSpec {
-                            briefing: Some(room_wake_briefing(room, carried)),
-                            ..ContextSpec::default()
-                        }),
-                        carried_wake_keys: carried[1..]
-                            .iter()
-                            .map(|staged| room_wake_key(agent, staged.wake.turn))
-                            .collect(),
-                        ..AgentSpawnContext::default()
-                    },
+                    context,
                 )?;
                 if !matches!(outcome, AgentDispatchOutcome::Existing(_)) {
                     pass.outcomes.push(outcome);

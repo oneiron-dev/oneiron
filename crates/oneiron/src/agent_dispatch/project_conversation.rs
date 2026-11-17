@@ -313,7 +313,7 @@ impl AgentDispatcher<'_> {
         }
         let project = canonical(&brief.project)?;
         let home_room = canonical(&brief.home_room)?;
-        let run_id = format!("project:{}", project.to_hex());
+        let run_id = project_run_id(project);
         if run.input.project_ref != Some(project)
             || run.payload.parent_attempt.is_some()
             || run.attempt.run_id.as_deref() != Some(run_id.as_str())
@@ -451,17 +451,14 @@ fn goal_intake_request(
     if let Some(turn) = turn {
         brief["turn"] = serde_json::Value::String(turn.to_hex());
     }
-    let dedupe_key = match turn {
-        None => format!("project-goal-intake:{}", project.to_hex()),
-        Some(turn) => format!("project-goal-intake:{}:{}", project.to_hex(), turn.to_hex()),
-    };
+    let dedupe_key = goal_intake_dedupe_key(project, turn);
     let briefing = serde_json::json!({ "goal_intake": brief }).to_string();
     (
         DispatchAgent {
             target: AgentDispatchTarget::Custom(leader),
             parent_attempt: None,
             dedupe_key: Some(dedupe_key),
-            run_id: Some(format!("project:{}", project.to_hex())),
+            run_id: Some(project_run_id(project)),
             now,
         },
         AgentSpawnContext {
@@ -471,6 +468,37 @@ fn goal_intake_request(
         .with_context_spec(ContextSpec::default().with_briefing(briefing))
         .with_origin_conversation(home_room),
     )
+}
+
+/// The dedupe key of a project's goal-intake run: its opening run's, or the
+/// run an interview turn `turn` dispatched.
+fn goal_intake_dedupe_key(project: EntityId, turn: Option<EntityId>) -> String {
+    match turn {
+        None => format!("project-goal-intake:{}", project.to_hex()),
+        Some(turn) => format!("project-goal-intake:{}:{}", project.to_hex(), turn.to_hex()),
+    }
+}
+
+/// The run id every goal-intake run of `project` carries.
+fn project_run_id(project: EntityId) -> String {
+    format!("project:{}", project.to_hex())
+}
+
+impl AgentDispatcher<'_> {
+    /// Whether `project`'s goal intake took the room turn `turn`: a run of
+    /// the project carries that turn's intake key, live or ended (RULING
+    /// GOAL-INTAKE-DRAFT-RUN = A). Its leader's resident wake then leaves the
+    /// turn to the intake (UNBUILT3-22).
+    pub(super) fn goal_intake_took_turn(&self, project: EntityId, turn: EntityId) -> Result<bool> {
+        let key = format!(
+            "{AGENT_DISPATCH_ATTEMPT_TYPE}:{}",
+            goal_intake_dedupe_key(project, Some(turn))
+        );
+        Ok(AttemptQueue::new(self.vault)
+            .list_run(&project_run_id(project))?
+            .iter()
+            .any(|row| row.dedupe_key.as_deref() == Some(key.as_str())))
+    }
 }
 
 /// The project job a briefing names: `None` for any other briefing, an

@@ -1,5 +1,9 @@
 //! The room wake producer (FIX 15647): a committed room turn wakes each
 //! agent it addresses, and each agent holding an open TASK on its thread.
+//! A turn in a project's home room also wakes the project's leader while
+//! its leader binding acts (UNBUILT3-22; ARCH-0067 #agents: "a message from
+//! a person wakes it"). A wake is no standing to speak: what the leader may
+//! say there is decided as for any agent.
 //!
 //! The witness that mints a room turn stages one wake per such agent in its
 //! own write: an attempt row of [`ROOM_WAKE_ATTEMPT_KIND`] that names the
@@ -90,8 +94,9 @@ pub struct RoomWakeTurn {
 }
 
 /// Stages a wake for each agent the room turn `turn` wakes, in the witness
-/// write that minted its row: each agent it addresses and each holder of an
-/// open TASK of its thread `branch`, but never its speaker. An agent wakes
+/// write that minted its row: each agent it addresses, each holder of an
+/// open TASK of its thread `branch`, and, in a project's home room, the
+/// project's leader while its leader binding acts, but never its speaker. An agent wakes
 /// only when it takes part as an agent, stands in the room or the thread
 /// now, and, on a private thread, is in `audience`, the audience that reads
 /// the turn. A standing that does not read is logged and wakes no one; a
@@ -111,6 +116,21 @@ pub(super) fn stage_room_wakes_in_txn(
         agents.insert(EntityId::from_hex(named)?);
     }
     agents.extend(thread_task_holders_in_txn(vault, txn, turn)?);
+    // UNBUILT3-22: a turn in a project's home room wakes the project's
+    // leader while its leader binding acts (ARCH-0067 #agents).
+    // A binding that does not read stages no leader wake and fails no turn.
+    match vault.home_room_leader_resident_in_txn(txn, room) {
+        Ok(Some(leader)) => {
+            agents.insert(leader.agent_def_ref);
+        }
+        Ok(None) => {}
+        Err(error) => tracing::warn!(
+            room = %room.to_hex(),
+            turn = %turn_id.to_hex(),
+            %error,
+            "room wake: the home room's leader binding did not read; no leader wake staged"
+        ),
+    }
     if let Ok(speaker) = EntityId::from_hex(&turn.actor) {
         agents.remove(&speaker);
     }
@@ -147,9 +167,9 @@ pub(super) fn stage_room_wakes_in_txn(
                 now,
             },
         )?;
-        // A project leader is no resident, so no consumer runs it on a
-        // wake. In its goal-intake interview the engine continues its own
-        // interview on its own TASK (RULING GOAL-INTAKE-DRAFT-RUN = A).
+        // In its goal-intake interview the engine continues its own
+        // interview on its own TASK (RULING GOAL-INTAKE-DRAFT-RUN = A); the
+        // leader's resident wake leaves a turn the intake took to it.
         vault.continue_project_goal_interview_in_txn(txn, branch, turn_id, agent, now)?;
     }
     Ok(())
