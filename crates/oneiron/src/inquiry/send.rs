@@ -6,10 +6,17 @@
 //! that does not answer this inquiry all give `unavailable`.
 //!
 //! A pending inquiry is re-sent by the agent with the same id; the member's
-//! vault returns its current answer. No housekeeping pass re-sends it.
+//! vault returns its current answer. No housekeeping pass re-sends it. A
+//! re-send is bound to the inquiry's first send from this vault (Engine
+//! ruling INQUIRE-RESEND = A): it names the same member, asker and task and
+//! carries the same asker role, question and purpose, and it goes out, until
+//! the first send's expiry, as the inquiry that send stored, with its expiry
+//! and keep.
 
+use super::landing::inquiry_landing;
 use super::record::{
-    Inquiry, InquiryAnswer, InquiryAsker, InquiryOutcome, InquiryStatement, InquiryTask, refuse,
+    Inquiry, InquiryAnswer, InquiryAsker, InquiryKeep, InquiryOutcome, InquiryStatement,
+    InquiryTask, refuse,
 };
 use super::route::{InquiryRoute, inquiry_route_in_txn};
 use crate::Vault;
@@ -93,13 +100,14 @@ pub struct InquirySent {
 
 impl Vault {
     /// Sends one inquiry about `request.member` over the member's route
-    /// through `transport`, writes its `inquiry` receipt (never answer
-    /// text), and holds an answer's statements with the task until the task
-    /// ends or `valid_until` comes. The keep is the vault's `inquiry_keep`.
-    /// `copy` has no landing yet (INQUIRE-1 PR 6), so an answer to a `copy`
-    /// inquiry is held with the task as well. Every send, whatever its
-    /// outcome and before any refusal, first drops the held answers whose
-    /// task has ended or whose `valid_until` has come.
+    /// through `transport` and writes its `inquiry` receipt (never answer
+    /// text). The keep is the vault's `inquiry_keep`. With `task`, an
+    /// answer's statements are held with the task until the task ends or
+    /// `valid_until` comes. With `copy`, they land in this vault in the
+    /// receipt's transaction ([`super::landing`]) and are not held; a `copy`
+    /// send with no landing gives `unavailable` without a send. Every send,
+    /// whatever its outcome and before any refusal, first drops the held
+    /// answers whose task has ended or whose `valid_until` has come.
     ///
     /// # Errors
     ///
@@ -117,10 +125,15 @@ impl Vault {
                 "the inquiry's task is not an open TASK of this vault",
             ));
         }
-        let keep = self.inquiry_keep()?.keep;
-        let (inquiry, route) = {
+        let first = self.bind_inquiry_resend(request)?;
+        let keep = match &first {
+            Some(first) => first.keep,
+            None => self.inquiry_keep()?.keep,
+        };
+        let (inquiry, route, landing) = {
             let txn = self.store.env.read_txn()?;
-            let Some(vault_id) = self.authority_fold_readonly_in_txn(&txn)?.vault_id else {
+            let fold = self.authority_fold_readonly_in_txn(&txn)?;
+            let Some(vault_id) = fold.vault_id else {
                 return Err(refuse(
                     "this vault is not rooted: it has no vault id to ask from",
                 ));
@@ -138,7 +151,9 @@ impl Vault {
                 },
                 question: request.question.clone(),
                 keep,
-                expires_at: request.expires_at,
+                expires_at: first
+                    .as_ref()
+                    .map_or(request.expires_at, |first| first.expires_at),
             };
             inquiry.validate()?;
             let route =
@@ -152,7 +167,12 @@ impl Vault {
                 } else {
                     None
                 };
-            (inquiry, route)
+            let landing = match (&route, keep) {
+                (Some(route), InquiryKeep::Copy) => inquiry_landing(&fold, route)?,
+                _ => None,
+            };
+            let route = route.filter(|_| keep == InquiryKeep::Task || landing.is_some());
+            (inquiry, route, landing)
         };
         let answer = match &route {
             Some(route) => self.exchange_inquiry(&inquiry, route, transport)?,
@@ -160,6 +180,19 @@ impl Vault {
         };
         let receipt = self.with_write_txn(|txn| {
             let now = crate::ports::recorded_at_in_txn(&self.store, txn)?;
+            if let (Some(landing), Some(valid_until), InquiryOutcome::Answered) =
+                (&landing, answer.valid_until(), answer.outcome())
+            {
+                self.land_inquiry_copy_in_txn(
+                    txn,
+                    landing,
+                    inquiry.id,
+                    request.member,
+                    answer.statements(),
+                    valid_until,
+                    now,
+                )?;
+            }
             super::receipt::write_inquiry_receipt_in_txn(
                 &self.store,
                 txn,
@@ -170,14 +203,17 @@ impl Vault {
             )
         })?;
         let held = match answer.valid_until() {
-            Some(valid_until) if answer.outcome() == InquiryOutcome::Answered => self
-                .hold_inquiry_answer(
+            Some(valid_until)
+                if keep == InquiryKeep::Task && answer.outcome() == InquiryOutcome::Answered =>
+            {
+                self.hold_inquiry_answer(
                     request.asker,
                     request.task,
                     inquiry.id,
                     answer.statements(),
                     valid_until,
-                )?,
+                )?
+            }
             _ => false,
         };
         Ok(InquirySent {
@@ -217,5 +253,66 @@ impl Vault {
             }
             _ => InquiryAnswer::unavailable(inquiry),
         })
+    }
+
+    /// The first send a re-send of `request.inquiry_id` is bound to (Engine
+    /// ruling INQUIRE-RESEND = A), or `None` for a new inquiry. The re-send
+    /// goes out with that send's `expires_at` and keep, whatever the
+    /// request's `expires_at` and the vault's `inquiry_keep` say now.
+    ///
+    /// # Errors
+    ///
+    /// This vault never sent the inquiry; the request names another member,
+    /// asker or task, or another asker role, question or purpose, than the
+    /// first send (the refusal names the field); the first send's expiry has
+    /// come; storage errors. A first receipt written before receipts kept
+    /// the asker's role binds no role; the member's vault still refuses a
+    /// changed one.
+    fn bind_inquiry_resend(
+        &self,
+        request: &InquirySendRequest,
+    ) -> Result<Option<super::receipt::InquiryFirstSend>> {
+        let Some(id) = request.inquiry_id else {
+            return Ok(None);
+        };
+        let first = {
+            let txn = self.store.env.read_txn()?;
+            super::receipt::first_inquiry_send_in_txn(&self.store, &txn, &id)?
+        };
+        let Some(first) = first else {
+            return Err(refuse(&format!(
+                "inquiry_id {} names no inquiry this vault sent",
+                id.to_hex()
+            )));
+        };
+        let fields = [
+            ("member", first.member == Some(request.member)),
+            ("asker", first.asker == Some(request.asker)),
+            (
+                "asker_role",
+                first
+                    .asker_role
+                    .as_deref()
+                    .is_none_or(|role| role == request.asker_role),
+            ),
+            ("task", first.task == request.task),
+            ("question", first.question == request.question),
+            ("purpose", first.purpose == request.purpose),
+        ];
+        if let Some((field, _)) = fields.into_iter().find(|(_, same)| !same) {
+            return Err(refuse(&format!(
+                "a re-send of inquiry {} differs from its first send in its {field}; \
+                 send a new inquiry instead",
+                id.to_hex()
+            )));
+        }
+        if first.expires_at <= self.now_recorded_at() {
+            return Err(refuse(&format!(
+                "inquiry {} expired at {}; send a new inquiry instead",
+                id.to_hex(),
+                first.expires_at
+            )));
+        }
+        Ok(Some(first))
     }
 }

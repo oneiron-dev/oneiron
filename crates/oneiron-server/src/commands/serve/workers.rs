@@ -134,6 +134,9 @@ pub(crate) async fn start_desktop_workers(
     crate::managed_owner_check::ServerManagedOwnerCheck::install(&sync_server);
     // Served sends reach this host's provider APIs and mail server (FIX 4435).
     crate::builtin_host::install_served_transports(&sync_server, config.models.as_ref());
+    // Bulk campaign email names this host's one-click unsubscribe links
+    // (ARCH-0059 #opt-out).
+    crate::api::install_one_click_unsubscribe_origin(&sync_server);
     // Queued Continue and Retry are taken up from here, on this server (FIX 6920).
     ai.bind_turn_actions(&sync_server);
     // The skill-edit gate's replay judge, on the ladder the server just built (OF-495).
@@ -154,6 +157,9 @@ pub(crate) async fn start_desktop_workers(
     } else {
         lifecycle_admit
     };
+    // The owner's model steps parked before this start resume on this
+    // server's ladder, under the host root it holds (STEP-PARK-BOOT-RESUME).
+    crate::api::resume_parked_model_steps(&sync_server);
     let lifecycle = sync_server.spawn_lifecycle_scheduler(lifecycle_admit);
     // An answered code consent wait's effect runs on this server, whatever
     // hooks or models it serves, before the connector settler starts
@@ -326,6 +332,7 @@ pub(crate) async fn start_desktop_workers(
             config.vault_path.clone(),
             admitted(),
         )
+        .with_archive_entry_cap(config.import.archive_entry_cap())
         .spawn(Arc::clone(&sync_server)),
     );
     // Attached folders rescan after the import queue starts (OF-554).

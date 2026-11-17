@@ -414,7 +414,7 @@ impl<'a> StepSecretUse<'a> {
         request: &mut LlmRequest,
         assistant: Option<&mut usize>,
     ) -> Vec<oneiron::EntityId> {
-        let at = super::super::unix_now();
+        let at = super::super::unix_seconds_now();
         let fresh = super::super::resident_craft::queue_craft(
             self.vault,
             self.attempt.id,

@@ -523,7 +523,8 @@ async fn a_personal_link_ended_mid_confirm_books_nothing() {
 
     // The confirm's admission resolves the link: the snapshot it carries.
     let (authority, _, resolved) =
-        public_attempt_authority(&fixture.server, &link.token).expect("live link");
+        public_attempt_authority(&fixture.server, &link.token, &ReadDestination::on_device())
+            .expect("live link");
     assert_eq!(
         authority.personal_link_ref.as_deref(),
         resolved.as_ref().map(|resolved| resolved.link_ref.as_str())
@@ -573,4 +574,120 @@ async fn a_personal_link_ended_mid_confirm_books_nothing() {
     )
     .await;
     assert_eq!((answered.status(), bytes(answered).await), unknown);
+}
+
+/// [`answer`] as a visitor on this device sends it: from loopback, with no
+/// proxy forwarding header (the fixture's own requests carry one, so they
+/// come from off this device).
+async fn answer_on_this_device(
+    fixture: &Fixture,
+    method: &str,
+    path: &str,
+    body: Value,
+) -> (StatusCode, Vec<u8>) {
+    let request = Request::builder()
+        .method(method)
+        .uri(path)
+        .header(CONTENT_TYPE, "application/json")
+        .extension(ConnectInfo(
+            "127.0.0.1:43125".parse::<SocketAddr>().expect("peer"),
+        ))
+        .body(Body::from(serde_json::to_vec(&body).expect("body")))
+        .expect("request");
+    let response = crate::build_app(fixture.server.clone())
+        .oneshot(request)
+        .await
+        .expect("response");
+    let status = response.status();
+    (status, bytes(response).await)
+}
+
+/// DEC-0005 (census L5-29) on the personal-link path: a personal link opens
+/// the page's own publication and configuration rows, so the off-device
+/// judge runs on it as on the page token. With the page's event-type
+/// configuration born again in a world the owner keeps on this machine, a
+/// visitor off this device meets the one 404 through the link (its page,
+/// its availability and its "not you?"), which names no world, and the
+/// refused "not you?" ends nothing. On this device the link still serves
+/// the page. A personal-link path that skips the judge answers the kept
+/// configuration's page off this device.
+#[tokio::test]
+async fn a_personal_link_off_this_device_meets_no_kept_page() {
+    let fixture = Fixture::new();
+    let vault = &fixture.server.vault;
+    let minted = mint(&fixture, "ada@example.test", "Ada");
+    let token = minted.token.clone();
+    let slots = fixture.slots().await;
+    let page = format!("/public/booking/{token}");
+    let _ = page_json(&fixture, &token).await;
+
+    // As in `public_availability_off_this_device_ignores_a_kept_configuration`:
+    // the configuration's copy is born in a kept world and the base claim
+    // retires, so the page reads the world's configuration.
+    let world = EntityId::now();
+    vault
+        .put_entity(
+            &world,
+            oneiron::registry::ENTITY_TYPE_WORLD,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"world",
+        )
+        .expect("world");
+    let mut body = vault.get_claim(&id(0x72)).expect("read").expect("config");
+    body.world = Some(world);
+    let kept = EntityId::now();
+    vault
+        .put_claim(&kept, &body, TimeRange { start: 1, end: 1 }, 1)
+        .expect("configuration born in the world");
+    vault
+        .retract_claim(&id(0x72), 1)
+        .expect("the base configuration retires");
+    vault
+        .keep_world_on_this_machine_under_for_test(
+            &crate::test_credentials::host_issuer(&fixture.server),
+            world,
+            true,
+        )
+        .expect("keep the world on this machine");
+    crate::test_credentials::bind_owner(vault, "owner-fixture-secret", id(0x77));
+    assert!(
+        vault
+            .device_local_keeps_for(&kept, &oneiron::claim::CallerLocality::OffDevice.into())
+            .expect("world judge"),
+        "the kept world holds the configuration from a caller off this device"
+    );
+
+    let (status, here) = answer_on_this_device(&fixture, "GET", &page, Value::Null).await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "on this device the link still serves its page: {}",
+        String::from_utf8_lossy(&here)
+    );
+
+    for (method, path, request) in [
+        ("GET", page.clone(), Value::Null),
+        (
+            "POST",
+            format!("{page}/availability"),
+            availability_over(&slots[0], "ada"),
+        ),
+        ("POST", format!("{page}/not-you"), Value::Null),
+    ] {
+        let (status, away) = answer(&fixture, method, &path, request).await;
+        let away = String::from_utf8_lossy(&away).into_owned();
+        assert_eq!(
+            status,
+            StatusCode::NOT_FOUND,
+            "{method} {path}: a personal link served a page a kept world shapes off this device: {away}"
+        );
+        assert!(!away.contains(&world.to_hex()), "the miss names no world");
+    }
+    assert!(
+        oneiron::booking::resolve_personal_booking_link(vault, &token)
+            .expect("link read")
+            .is_some(),
+        "a refused \"not you?\" ends no link"
+    );
 }

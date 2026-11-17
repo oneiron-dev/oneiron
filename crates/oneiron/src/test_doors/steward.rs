@@ -217,14 +217,16 @@ pub enum GrantMark {
 /// serving host's: rooted under the test host, the engine's MACHINE writers
 /// provisioned, the embedded owner seeded, an in-memory device keystore
 /// installed, and this install's machine profile enrolled, so the owner's
-/// agent-grant act has a carrier.
+/// agent-grant act has a carrier. The handle holds the test host's root as a
+/// serving host holds its own, so the owner acts it carries are proven (row
+/// CARRIER-OWNER-PROOF).
 ///
 /// # Errors
 ///
 /// The vault's or the authority log's.
 pub fn open_owner_carrier_vault(path: &std::path::Path) -> Result<Vault> {
     let vault = Vault::open(path, crate::VaultConfig::device())?;
-    let issuer = crate::test_support::provision_engine_machines(&vault);
+    let issuer = crate::test_fixtures::provision_engine_machines(&vault);
     vault
         .ensure_embedded_owner_actor()
         .map_err(|error| Error::InvalidConfig(format!("embedded owner: {error:?}")))?;
@@ -233,7 +235,28 @@ pub fn open_owner_carrier_vault(path: &std::path::Path) -> Result<Vault> {
         oneiron_keystore::MemoryKeystore::default(),
     ));
     vault.ensure_serving_install_profile(&issuer, crate::authority::MachineRole::Unanswered)?;
+    vault.hold_checkpoint_root_signer(std::sync::Arc::new(issuer));
     Ok(vault)
+}
+
+/// The managed host's account recovery on a hosted vault (census L7-14):
+/// [`Vault::recover_cloud_account`] under the owner's proof, the vault's
+/// current host root `issuer` signing the move to `new_device` as a managed
+/// host signs its root migration. The host root's key signs only inside this
+/// door.
+///
+/// # Errors
+///
+/// [`Vault::recover_cloud_account`]'s.
+pub fn recover_cloud_account_signed_by_host_root(
+    vault: &Vault,
+    owner: &crate::consent::AuthenticatedOwner,
+    issuer: &crate::authority::HostSlipIssuer,
+    new_device: crate::authority::DeviceAuthority,
+) -> Result<crate::authority::AuthorityLogEntry> {
+    vault.recover_cloud_account(owner, new_device, issuer.public_key(), |bytes| {
+        Ok(issuer.sign_claim_handoff(bytes).to_vec())
+    })
 }
 
 /// The shipped policy with every row naming the Dreamer taken out, as an
@@ -266,7 +289,7 @@ pub fn drop_dreamer_rows(vault: &Vault) -> Result<()> {
     let mut bytes = Vec::new();
     rmpv::encode::write_value(&mut bytes, &rmpv::Value::Map(entries))
         .map_err(|_| Error::InvalidConfig("encode policy".into()))?;
-    crate::test_support::put_policy_manifest_bytes(
+    crate::test_fixtures::put_policy_manifest_bytes(
         vault,
         crate::gate::default_policy_manifest_id()?,
         &bytes,
@@ -289,7 +312,7 @@ fn rewrite_shipped_policy(
     let mut bytes = Vec::new();
     rmpv::encode::write_value(&mut bytes, &rmpv::Value::Map(entries))
         .map_err(|_| Error::InvalidConfig("encode policy".into()))?;
-    crate::test_support::put_policy_manifest_bytes(
+    crate::test_fixtures::put_policy_manifest_bytes(
         vault,
         crate::gate::default_policy_manifest_id()?,
         &bytes,
@@ -479,7 +502,7 @@ pub fn empty_grant_policy_rows(vault: &Vault) -> Result<()> {
 /// The vault's or the authority log's.
 pub fn revoke_base_agent_bindings(vault: &Vault, agent: EntityId) -> Result<usize> {
     use crate::authority::{ActorBindingStatus, AuthorityOp};
-    let issuer = crate::test_support::test_host_issuer();
+    let issuer = crate::test_fixtures::test_host_issuer();
     let fold = vault.authority_fold()?;
     let live: Vec<_> = fold
         .actor_bindings

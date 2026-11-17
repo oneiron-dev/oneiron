@@ -49,13 +49,13 @@ use super::super::loro_support::{
 };
 use super::super::types::WindowKey;
 use super::egress::{
-    export_scrubbed_window_snapshot, replay_pending_mirrors_kept, scrub_local_claim_carriers,
+    export_scrubbed_window_state, replay_pending_mirrors_kept, scrub_local_claim_carriers,
     scrub_local_only_carriers, scrub_redacted_attribution_carriers,
     scrub_withdrawn_delete_carriers,
 };
 use super::tombstones::apply_tombstone_to_indexed_window_doc;
 use super::{
-    forward_rematerialize, persist_window_doc_in_txn, reverse_rematerialize,
+    forward_rematerialize_detached, persist_window_doc_in_txn, reverse_rematerialize,
     write_window_svf_in_txn,
 };
 use crate::Vault;
@@ -287,9 +287,13 @@ pub(in crate::sync) fn prepare_bounded_replacement(
     // Select only this snapshot's still-chosen values before that scrub.
     let positions = positions.and_then(|positions| positions.select_replacement(&candidate));
     reverse_rematerialize(vault, &candidate, key)?;
-    forward_rematerialize(vault, &candidate, materializer, key)?;
+    // The candidate is not registered yet, so no import reaches it: no
+    // live-window turn under the registry lock (FIX 12128).
+    forward_rematerialize_detached(vault, &candidate, materializer, key)?;
 
-    let state = export_scrubbed_window_snapshot(vault, key, &candidate)?;
+    // The export reads the pin; a legal hold read in the writer keeps the
+    // candidate history a pinned export dropped (census L6-05).
+    let state = export_scrubbed_window_state(vault, key, &candidate)?;
     // The candidate is final once its snapshot is cut: the forward pass and the export scrubs can
     // still take a value out. A queued send retires only once each value it wrote is in the
     // window being installed or named as a conflict, and every other conflict is provisional
@@ -312,7 +316,8 @@ pub(in crate::sync) fn prepare_bounded_replacement(
     };
     let _position_bodies = positions.as_ref().map(|_| vault.pin_all_result_bodies());
     vault.with_write_txn_grouped(|wtxn| {
-        persist_window_doc_in_txn(vault, wtxn, key, &state, &vv)?;
+        let (stored, history_free) = state.stored_in_txn(vault, wtxn)?;
+        persist_window_doc_in_txn(vault, wtxn, key, stored, &vv, history_free)?;
         // The old generation's pending updates and the queued sends it took in depend on history
         // the candidate does not hold; their effects are in it as its own operations. A peer's
         // copy keeps the queued sends for the home, which has not taken them (FIX 4748).

@@ -78,18 +78,30 @@ const UNATTESTED: &[(&str, &str, Unattested)] = &[
     ),
     // The signing ceremony's signer doors.
     ("GET", "/sign", PublicProof),
-    ("GET", "/sign/editor.js", PublicProof),
-    ("GET", "/sign/field-renderer.js", PublicProof),
     ("POST", "/sign/geometry", PublicProof),
     ("POST", "/sign/image", PublicProof),
     ("POST", "/sign/layout", PublicProof),
     ("POST", "/sign/pdf", PublicProof),
     ("POST", "/sign/preview", PublicProof),
     ("POST", "/sign/signature", PublicProof),
-    // A sealed certificate's QR page and its report, keyless as the signer
-    // doors are: the vault checks the QR capability on each report.
+    // A sealed certificate's QR page, its report and its PDF download,
+    // keyless as the signer doors are: the vault checks the QR capability on
+    // each report and each download.
     ("GET", "/esign/verify", PublicProof),
+    ("POST", "/esign/verify/pdf", PublicProof),
     ("POST", "/esign/verify/report", PublicProof),
+    // A bulk campaign email's one-click unsubscribe link (RFC 8058):
+    // keyless, its mac checked in the vault on each call.
+    (
+        "GET",
+        "/unsubscribe/one-click/{campaign}/{person}/{mac}",
+        PublicProof,
+    ),
+    (
+        "POST",
+        "/unsubscribe/one-click/{campaign}/{person}/{mac}",
+        PublicProof,
+    ),
     // Pairing redemption, federation, feedback and provider webhooks.
     ("POST", "/v1/core/pairing/oauth", PublicProof),
     ("POST", "/v1/core/pairing/pin", PublicProof),
