@@ -1,7 +1,5 @@
 //! Storage: vault_meta keyspace, the evidence-grounding door check, and MessagePack encode/decode.
 
-use std::io::Cursor;
-
 use rmpv::Value;
 use serde::{Deserialize, Serialize};
 
@@ -12,6 +10,7 @@ use oneiron_base::error::Error;
 use oneiron_base::error::Result;
 use oneiron_contracts::entity_id::EntityId;
 use oneiron_contracts::limit_ask::EngineLimit;
+use oneiron_contracts::msgpack;
 
 use oneiron_skill_attribution::types::AttemptOutcome;
 use oneiron_skill_attribution::types::AttributionJudgment;
@@ -227,15 +226,11 @@ pub fn decode_optional_entity(value: &Value) -> Result<Option<EntityId>> {
 }
 
 pub fn encode_value(value: &Value) -> Result<Vec<u8>> {
-    let mut encoded = Vec::new();
-    rmpv::encode::write_value(&mut encoded, value)
-        .map_err(|_| invalid("skill attribution MessagePack encode failed"))?;
-    Ok(encoded)
+    Ok(msgpack::encode(value))
 }
 
 pub fn decode_value(raw: &[u8]) -> Result<Value> {
-    rmpv::decode::read_value(&mut Cursor::new(raw))
-        .map_err(|_| invalid("skill attribution MessagePack decode failed"))
+    msgpack::decode(raw).map_err(|_| invalid("skill attribution MessagePack decode failed"))
 }
 
 pub fn expect_map(value: &Value) -> Result<&Vec<(Value, Value)>> {

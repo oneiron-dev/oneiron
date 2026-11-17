@@ -382,6 +382,12 @@ impl Runner<'_> {
         Ok(Ok(Prepared {
             with_skill_hash: request_hash(&with_skill)?,
             without_skill_hash: request_hash(&without_skill)?,
+            // The branch with the load is the next step's captured request,
+            // which reads that capsule's rows; the branch without it shows a
+            // scratch arm's console, whose rows no capsule names: unknown
+            // (FIX 7104).
+            with_skill_rows: next.source_rows.clone(),
+            without_skill_rows: None,
             exposure_revision: target.revision,
             capsule: next,
             binding,

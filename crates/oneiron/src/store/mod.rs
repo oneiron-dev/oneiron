@@ -412,8 +412,6 @@ mod writer_lease;
 
 #[cfg(test)]
 pub(crate) mod test_hooks;
-// FIX [LIBTEST-QUARANTINE-STORE-TESTS]: the lib test target's type check fails here (17 errors: E0560 x4, E0061 x4, E0609 x3, E0308 x3, E0063 x3); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;
 
@@ -665,6 +663,8 @@ pub(crate) use oneiron_store::record_references;
 pub(crate) mod scan_count;
 pub(crate) mod skill_resident;
 pub(crate) mod tables;
+#[cfg(oneiron_test_support)]
+mod test_support_rows;
 
 pub(crate) use oneiron_store::host_issuer_seed;
 pub(crate) use oneiron_store::principal_record;

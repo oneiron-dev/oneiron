@@ -34,6 +34,7 @@ mod coreference;
 mod courtesy_delete;
 mod credential;
 mod custody_drain;
+mod data_key_generation;
 mod describe;
 mod diary;
 mod diary_pinned;
@@ -42,6 +43,7 @@ mod embedding_space;
 mod engine_controls;
 mod eval_cohort;
 mod explain;
+mod extraction_verdict;
 mod fanout_launch;
 mod federation;
 #[cfg(feature = "sync")]
@@ -79,6 +81,7 @@ mod off_record_rooms;
 mod off_record_runs;
 mod outbound_call_erase;
 mod outbox_diverged;
+mod owner_confirm;
 mod pack_preview;
 mod persona;
 mod proxy;
@@ -111,6 +114,7 @@ mod self_actor;
 mod self_model_read;
 mod self_verbs;
 mod setting;
+pub(crate) mod setting_keys;
 mod share;
 mod shared;
 mod shared_admin;
@@ -389,6 +393,7 @@ pub use self::coreference::*;
 pub use self::courtesy_delete::*;
 pub use self::credential::*;
 pub use self::custody_drain::*;
+pub use self::data_key_generation::*;
 pub use self::describe::*;
 pub use self::diary::*;
 pub use self::diary_pinned::*;
@@ -397,6 +402,7 @@ pub use self::embedding_space::*;
 pub use self::engine_controls::*;
 pub use self::eval_cohort::*;
 pub use self::explain::*;
+pub use self::extraction_verdict::*;
 pub use self::fanout_launch::*;
 pub use self::federation::*;
 #[cfg(feature = "sync")]
@@ -432,6 +438,7 @@ pub use self::off_record_rooms::*;
 pub use self::off_record_runs::*;
 pub use self::outbound_call_erase::*;
 pub use self::outbox_diverged::*;
+pub use self::owner_confirm::*;
 pub use self::pack_preview::*;
 pub use self::persona::*;
 pub use self::proxy::*;
@@ -666,8 +673,6 @@ fn verb_input_schema_is_built_once_per_process() {
     assert!(std::ptr::eq(first, second));
 }
 
-// FIX [LIBTEST-QUARANTINE-VERBS-ITEMS]: the lib test target's type check fails here (5 errors: E0599 x5); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 #[test]
 fn sdk_catalog_drives_scoped_projections_and_round_trips_names() {
@@ -683,11 +688,12 @@ fn sdk_catalog_drives_scoped_projections_and_round_trips_names() {
             verb.as_str()
         );
     }
-    assert!(AgentVerb::TasksAsk.is_section());
-    assert!(AgentVerb::RoomsSpeak.writes());
-    assert!(AgentVerb::RoomsList.is_facade());
-    assert!(!AgentVerb::BoardExpand.is_facade());
-    assert_eq!(AgentVerb::Recall.argument_fields(), &["spec"]);
+    assert!(AgentVerb::Ask.is_section());
+    assert!(AgentVerb::VaultRoomsSpeak.writes());
+    assert!(AgentVerb::VaultRoomsList.is_facade());
+    // A host-served row (the browser context) is no facade verb; board.expand, the old pin, is gone.
+    assert!(!AgentVerb::SelfBrowserClick.is_facade());
+    assert_eq!(AgentVerb::VaultRecall.argument_fields(), &["spec"]);
     assert!(AgentVerb::from_name("not.a.verb").is_none());
 }
 

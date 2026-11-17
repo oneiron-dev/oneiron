@@ -106,6 +106,7 @@ impl Evidence {
             title: "Agreement é\\u{e9}".into(),
             sequential: false,
             expires_at: 1000,
+            token_expires_at: None,
             items: vec![EsignItem {
                 artifact_ref: EntityId::now().to_hex(),
                 original_version: 1,
@@ -119,10 +120,12 @@ impl Evidence {
                 expires_at: 1000,
                 principal_ref: None,
                 automated: false,
+                natural_person: None,
             }],
             fields,
             full_trail_appendix: trail,
             lifecycle: None,
+            project: None,
             commitments: Vec::new(),
         };
         let state = EsignState::draft(document.clone(), 1).unwrap();
@@ -170,6 +173,13 @@ impl Evidence {
             EsignEvent::Signed {
                 recipient,
                 next: None,
+                evidence: EsignSigningEvidence {
+                    authentication_method: EsignAuthenticationMethod::Person,
+                    disclosure_version: None,
+                    consent: true,
+                    intent: EsignSigningIntent::Direct,
+                },
+                items: result.state.document.items.clone(),
             }
         });
         result
@@ -216,6 +226,7 @@ impl Evidence {
             audit: &self.audit,
             canonical_url: "https://sign.example.test/cap/opaque-proof",
             signature_images: &self.images,
+            pinned_buffer_bytes: 0,
         }
     }
     fn prepare(&self, input: &mut Input) -> Result<PreparedEsignPdf> {

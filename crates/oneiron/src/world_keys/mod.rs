@@ -16,6 +16,7 @@
 //! replicates is public keys and sealed envelopes (`oneiron-crypto`, purpose
 //! `WorldDek`). An unwrapped key or a seed never replicates.
 
+mod appoint_owner_root;
 mod bundle;
 mod content;
 #[cfg(feature = "sync")]
@@ -50,8 +51,6 @@ mod vault_key;
 mod wrap;
 
 pub(crate) mod tables;
-// FIX [LIBTEST-QUARANTINE-WORLD-KEYS-TESTS]: the lib test target's type check fails here (25 errors: E0061 x24, E0599 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;
 
@@ -160,11 +159,11 @@ pub use self::vault_key::kit::{IssuedVaultKeyKit, sealed_keeps_kit_piece};
 pub(crate) use self::vault_key::restore::{RecipientCustody, RestoreAdmissionCapability};
 pub use self::vault_key::{
     DATA_KEY_GENERATION_PAGE_SEAL_NOTICE, DataKeyGenerationCause, DataKeyGenerationDraft,
-    DataKeyGenerationOutcome, DataKeyGenerationWays, EscrowAddWarning, EscrowAdded,
-    EscrowRetirement, KitPasskey, NewVaultKeyWrap, RecoveryPreset, RecoveryPresetAnyTwoChange,
-    RecoveryPresetChange, RecoverySheet, ResealedEscrowCapsule, VaultKeyEscrowCapsule,
-    VaultKeyStatus, VaultKeyUnlock, VaultKeyWrapInfo, VaultKeyWrapKind, escrow_recipient,
-    passkey_prf_input, reseal_escrow_capsule,
+    DataKeyGenerationOutcome, DataKeyGenerationProposal, DataKeyGenerationWays, EscrowAddWarning,
+    EscrowAdded, EscrowRetirement, KitPasskey, NOTIFICATION_PRODUCER_DATA_KEY_GENERATION_PROPOSAL,
+    NewVaultKeyWrap, RecoveryPreset, RecoveryPresetAnyTwoChange, RecoveryPresetChange,
+    RecoverySheet, ResealedEscrowCapsule, VaultKeyEscrowCapsule, VaultKeyStatus, VaultKeyUnlock,
+    VaultKeyWrapInfo, VaultKeyWrapKind, escrow_recipient, passkey_prf_input, reseal_escrow_capsule,
 };
 pub(crate) use self::wrap::{open_world_key, seal_world_key};
 pub use crate::error::KitRecord;

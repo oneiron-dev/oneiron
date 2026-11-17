@@ -240,7 +240,7 @@ fn held_root_caller(
         .ensure_host_root_slip(issuer)
         .and_then(|slip| slip.to_token())
         .map_err(MemoryError::from)?;
-    let instrument = *blake3::hash(token.as_bytes()).as_bytes();
+    let instrument = CoreAuth::token_instrument(&token);
     CoreAuth::from_recorded_host_root(verified, instrument, &**vault)
         .map_err(|_| internal("ai.steps.submit"))
 }
