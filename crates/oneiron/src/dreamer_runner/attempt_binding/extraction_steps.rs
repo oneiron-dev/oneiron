@@ -93,7 +93,11 @@ impl DreamerAttemptBinding {
     /// Reads this attempt's saved step without borrowing, admitting or charging a backend.
     ///
     /// This door has no served pieces, so it keeps the terminal record's JSON rather
-    /// than decoding the bound extraction reply as submit and resubmit do.
+    /// than decoding the bound extraction reply as submit and resubmit do. It answers only
+    /// while every queued TURN still serves and every row the step's request was read
+    /// from still reads for this actor at the version the request named, a TURN's version
+    /// through the TURN reader as the inputs page reads it; otherwise every hash answers as
+    /// an unknown hash does.
     pub(super) fn extraction_step_receipt(
         &self,
         input: ModelStepReceiptRequest,
@@ -124,17 +128,40 @@ impl DreamerAttemptBinding {
             if !self.serves_every_queued_turn_in_txn(txn, reads, reader_scope.as_ref())? {
                 return Err(MemoryError::from(crate::Error::EntityNotFound));
             }
-            crate::llm::request_hash_step_receipt_in_txn(vault, txn, self.lease.attempt(), &hash)
-                .map_err(MemoryError::from)
+            let still_reads =
+                |version: &crate::snapshot_read::SourceVersion| -> crate::Result<bool> {
+                    let version_read = if version.entity_type == crate::registry::ENTITY_TYPE_TURN {
+                        turn_read
+                    } else {
+                        &read
+                    };
+                    Ok(crate::snapshot_read::observed_claim_reads_in_txn(
+                        vault,
+                        txn,
+                        &read,
+                        reader_scope.as_ref(),
+                        version.entity,
+                    )? && version.recheck_in_txn(version_read, txn)?
+                        == crate::snapshot_read::SourceVersionCheck::Current)
+                };
+            crate::llm::request_hash_step_receipt_in_txn(
+                vault,
+                txn,
+                self.lease.attempt(),
+                &hash,
+                still_reads,
+            )
+            .map_err(MemoryError::from)
         })?;
         Ok(receipt.value)
     }
 
     /// Whether this actor's live read still serves every TURN the attempt queued.
     ///
-    /// A saved reply quotes the attempt's TURNs, and its record lists none of them. So a
-    /// receipt answers only while the inputs page would still serve every queued TURN; once
-    /// one is withheld, every hash answers as an unknown hash does.
+    /// A saved reply quotes the attempt's TURNs. So a receipt answers only while the inputs
+    /// page would still serve every queued TURN; once one is withheld, every hash answers as
+    /// an unknown hash does. The rows a step was read from are checked beside this, by the
+    /// versions its record names.
     fn serves_every_queued_turn_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
