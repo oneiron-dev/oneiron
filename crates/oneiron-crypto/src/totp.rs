@@ -44,7 +44,7 @@ pub fn matching_totp_step(seed: &[u8], code: &str, unix_secs: u64) -> Option<u64
             .iter()
             .zip(code.bytes())
             .fold(0u8, |diff, (a, b)| diff | (*a ^ b));
-        tag.as_mut_slice().zeroize();
+        tag[..].zeroize();
         digits.zeroize();
         if difference == 0 {
             matched = Some(step);
