@@ -55,6 +55,7 @@ fn turn() -> WitnessTurn {
         }],
         assertions: Default::default(),
         thread_audience: None,
+        project: None,
     }
 }
 

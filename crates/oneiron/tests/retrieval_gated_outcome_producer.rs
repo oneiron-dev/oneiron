@@ -123,6 +123,7 @@ impl Fixture {
                 }],
                 occurred_at,
                 assertions: WitnessAssertions::default(),
+                project: None,
             })
             .expect("witness a user turn")
             .turn_id;
