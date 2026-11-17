@@ -64,8 +64,9 @@ use oneiron::authority::{
     DeviceAuthority, HostSlipIssuer, MACHINE_ENCRYPTION_KEY_LEN,
     MACHINE_ENCRYPTION_SUITE_HYBRID_V1, MachineDeviceClass, MachineEncryptionKey, MachineOwnership,
     MachineProfile, MachineRole, OwnerAct, OwnerActKind, OwnerKeyEnrollment,
-    OwnerPasskeyEnrollment, ROLE_AGENT, ROLE_OWNER, machine_profile_proof_transcript,
-    webauthn_assertion_envelope, webauthn_challenge,
+    OwnerPasskeyEnrollment, ROLE_AGENT, ROLE_OWNER, encode_authority_log_entry_body,
+    machine_profile_proof_transcript, sign_owner_key_move, webauthn_assertion_envelope,
+    webauthn_challenge,
 };
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::error::RecordError;
@@ -1793,8 +1794,21 @@ struct SharedVault {
 
 impl SharedVault {
     fn open() -> Self {
+        Self::open_with(VaultConfig::device())
+    }
+
+    /// [`Self::open`] under the Hosted posture, as a managed host serves it:
+    /// its custodial root proves for no owner (the fixture of
+    /// tests/owner_key_move_two_phase.rs).
+    fn open_hosted() -> Self {
+        let mut config = VaultConfig::device();
+        config.privacy.posture = HostingPrivacyPosture::Hosted;
+        Self::open_with(config)
+    }
+
+    fn open_with(config: VaultConfig) -> Self {
         let dir = tempfile::tempdir().expect("vault directory");
-        let vault = Vault::open(dir.path(), VaultConfig::device()).expect("vault");
+        let vault = Vault::open(dir.path(), config).expect("vault");
         vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
         let issuer = oneiron::test_support::provision_engine_machines(&vault);
         vault
@@ -1884,4 +1898,140 @@ fn a_removed_owner_keeps_no_passkey() {
         !live_owner_key_on(&shared.vault, &passkey_roster_key()),
         "the removed Owner's passkey is revoked with the removal"
     );
+}
+
+impl SharedVault {
+    /// `person` enrols an owner signing key of a device of theirs, made from
+    /// `seed`, with the host root as its predecessor; this install never
+    /// holds it. Answers the key.
+    fn enrol_device_key(&self, person: oneiron::EntityId, seed: u8) -> ed25519_dalek::SigningKey {
+        let key = ed25519_dalek::SigningKey::from_bytes(&[seed; 32]);
+        let public_key = key.verifying_key().to_bytes();
+        let machine = self
+            .vault
+            .prepare_install_signing()
+            .expect("this install's machine");
+        let authority =
+            ActAuthority::Owner(person_proof(&self.vault, person), ActSurface::ThisInstall);
+        let challenge = self
+            .vault
+            .owner_key_enrollment_challenge_as(&authority, machine, &public_key)
+            .expect("the enrolment challenge");
+        let input = OwnerKeyEnrollment {
+            machine,
+            public_key,
+            proof: key.sign(&challenge).to_bytes().to_vec(),
+        };
+        self.vault
+            .enrol_owner_signing_key_as_host(&authority, input, &self.issuer)
+            .expect("an Owner enrols an owner key of their own");
+        key
+    }
+
+    /// `person` enrols the passkey, with the host root as its predecessor.
+    fn enrol_passkey_of(&self, person: oneiron::EntityId) {
+        let authority =
+            ActAuthority::Owner(person_proof(&self.vault, person), ActSurface::ThisInstall);
+        let challenge = self
+            .vault
+            .owner_passkey_enrollment_challenge_as(&authority, &passkey_public_key())
+            .expect("the passkey's enrollment challenge");
+        self.vault
+            .enrol_owner_passkey_as_host(
+                &authority,
+                &passkey_enrollment(assert_over(&challenge, FLAGS_PRESENT_VERIFIED)),
+                &self.issuer,
+            )
+            .expect("an Owner enrols a passkey");
+    }
+}
+
+/// A hosted removal of an Owner who holds a device key and a passkey lands
+/// with both revoked (REVIEW2 #8539 P2-1, the second lander of #9093): the
+/// move's plan names every live owner key of the member, the passkey among
+/// them, the executor's device signs a revoke of each, and the confirmed run
+/// lands them with the removal. Before, the plan named the device key alone,
+/// and the run then found the passkey live with no owner proof to end it, so
+/// the removal could never run.
+#[test]
+fn a_hosted_removal_revokes_the_members_passkey_on_the_executors_confirm() {
+    let shared = SharedVault::open_hosted();
+    let owner_key = shared.enrol_device_key(shared.owner, 0x71);
+    shared.enrol_passkey_of(shared.co_owner);
+    let co_key = shared.enrol_device_key(shared.co_owner, 0x73);
+    let co_device_key = AuthorityKey::Ed25519(co_key.verifying_key().to_bytes());
+    assert!(
+        live_owner_key_on(&shared.vault, &passkey_roster_key())
+            && live_owner_key_on(&shared.vault, &co_device_key),
+        "guard: the co-Owner holds a live passkey and a live device key"
+    );
+    let owner_proof = person_proof(&shared.vault, shared.owner);
+    let act = shared
+        .vault
+        .propose_remove_owner(&owner_proof, SHARED, shared.co_owner, None, None, false)
+        .expect("the owner starts remove_owner")
+        .id;
+    let plan = shared
+        .vault
+        .owner_key_move_plan(&owner_proof, &act, Some(&shared.issuer))
+        .expect("the act's plan");
+    let rows: Vec<Vec<u8>> =
+        sign_owner_key_move(&plan, owner_key.verifying_key().to_bytes(), |transcript| {
+            Ok(owner_key.sign(transcript).to_bytes().to_vec())
+        })
+        .expect("the owner's device signs the plan")
+        .iter()
+        .map(|row| encode_authority_log_entry_body(row).expect("a row body"))
+        .collect();
+    shared
+        .vault
+        .execute_completed_shared_act_with_owner_key_revokes(
+            &owner_proof,
+            &act,
+            Some(&shared.issuer),
+            &rows,
+        )
+        .expect("the confirmed removal runs");
+    assert!(
+        !live_owner_key_on(&shared.vault, &passkey_roster_key()),
+        "the removal revokes the co-Owner's passkey"
+    );
+    assert!(
+        !live_owner_key_on(&shared.vault, &co_device_key),
+        "the removal revokes the co-Owner's device key"
+    );
+    assert!(
+        live_owner_key_on(
+            &shared.vault,
+            &AuthorityKey::Ed25519(owner_key.verifying_key().to_bytes())
+        ),
+        "the confirming key stays live"
+    );
+}
+
+/// The move plan's wire names a passkey by its compressed P-256 key, 66
+/// hex digits, beside a device key's 64 (`vault.shared.owner_key_move_plan`).
+#[test]
+fn the_move_plan_verb_names_the_members_passkey_in_hex() {
+    use oneiron::task_verb::sdk::{self, SharedActRequest};
+    let shared = SharedVault::open_hosted();
+    shared.enrol_device_key(shared.owner, 0x71);
+    shared.enrol_passkey_of(shared.co_owner);
+    let owner_proof = person_proof(&shared.vault, shared.owner);
+    let act_id = shared
+        .vault
+        .propose_remove_owner(&owner_proof, SHARED, shared.co_owner, None, None, false)
+        .expect("the owner starts remove_owner")
+        .id;
+    let plan = sdk::plan_shared_owner_key_move(
+        &shared.vault,
+        &owner_proof,
+        Some(&shared.issuer),
+        SharedActRequest { act_id },
+    )
+    .expect("the plan verb answers the plan");
+    let passkey_hex =
+        oneiron_hex::encode(passkey().verifying_key().to_encoded_point(true).as_bytes());
+    assert_eq!(passkey_hex.len(), 66, "guard: a compressed P-256 key");
+    assert_eq!(plan.revoked, vec![passkey_hex], "{plan:?}");
 }
