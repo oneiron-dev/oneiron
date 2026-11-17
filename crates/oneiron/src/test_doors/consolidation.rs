@@ -319,7 +319,7 @@ pub fn consolidate_tagged_turn(
             "the held tags were not saved: {outcome:?}"
         )));
     }
-    consolidate_witnessed_turns(vault, turn, None, reply)
+    consolidate_witnessed_turns(vault, turn, &[], reply)
 }
 
 /// Witnesses `words` as one visible user MESSAGE carrying `metadata` into a
