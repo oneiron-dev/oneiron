@@ -355,6 +355,14 @@ fn class_judge_in(
     {
         return Ok(false);
     }
+    // A named room's standing lifts the conversation home only while this
+    // serving snapshot finds the reader standing in the room (DEC-0006
+    // `#home-clearance`); the verdict is held for this snapshot alone.
+    if crate::disclosure::scope_home_band(view.scope).is_some()
+        && key.room_standing_lapsed_in(vault, txn)?
+    {
+        return Ok(false);
+    }
     Ok(crate::gate::claim_read_policy_allows(
         &reader.policy,
         key,

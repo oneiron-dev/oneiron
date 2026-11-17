@@ -14,12 +14,103 @@ use crate::serialize::msgpack_value_to_json;
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 
 /// Distinct observations an Observed preference needs: ARCH-0003's minting
-/// rule, "three observations across two or more sessions".
+/// rule, "three observations across two or more sessions". The owner's
+/// `claim.observed_preference.min_observations` moves it for a preference
+/// whose subject is the owner; every other person keeps it.
 pub(crate) const OBSERVED_PREFERENCE_MIN_OBSERVATIONS: usize = 3;
 
 /// Distinct sessions those observations must span: the same rule's "two or
-/// more sessions".
+/// more sessions". The owner's `claim.observed_preference.min_sessions` moves
+/// it for a preference whose subject is the owner.
 pub(crate) const OBSERVED_PREFERENCE_MIN_SESSIONS: usize = 2;
+
+/// The value of `claim.observed_preference.min_observations` and
+/// `.min_sessions`: a count of at least 1.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    serde::Serialize,
+    serde::Deserialize,
+    schemars::JsonSchema,
+)]
+#[serde(transparent)]
+pub(crate) struct ObservedPreferenceCount(pub(crate) u32);
+
+impl crate::setting::SettingValue for ObservedPreferenceCount {
+    /// A count is at least 1: an Observed stamp always rests on an observation.
+    fn check(self) -> Result<Self> {
+        if self.0 >= 1 {
+            Ok(self)
+        } else {
+            Err(crate::error::Error::InvalidConfig(
+                "an observed-preference count is at least 1".into(),
+            ))
+        }
+    }
+}
+
+/// The bar one Observed preference meets: distinct observations, and the
+/// distinct sessions they span.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ObservedPreferenceBar {
+    pub(crate) observations: usize,
+    pub(crate) sessions: usize,
+}
+
+impl ObservedPreferenceBar {
+    /// ARCH-0003's minting rule: three observations across two sessions.
+    pub(crate) const CANON: Self = Self {
+        observations: OBSERVED_PREFERENCE_MIN_OBSERVATIONS,
+        sessions: OBSERVED_PREFERENCE_MIN_SESSIONS,
+    };
+
+    /// Whether `observations` distinct observations across `sessions`
+    /// distinct sessions meet the bar.
+    pub(crate) const fn met_by(self, observations: usize, sessions: usize) -> bool {
+        observations >= self.observations && sessions >= self.sessions
+    }
+}
+
+/// The bar for a preference about `subject`, read in `txn`: the owner's
+/// `claim.observed_preference.min_observations` and `.min_sessions` when
+/// `subject` is a live owner of this vault, ARCH-0003's three across two for
+/// every other person (Engine RULING RESTRICTION-WAVE-8-ROWS, C96 = C). At
+/// the defaults no owner census is read, so the bar is the canon one exactly
+/// as before.
+///
+/// # Errors
+///
+/// Storage errors, and an unreadable count row.
+pub(crate) fn observed_preference_bar_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    subject: &EntityId,
+) -> Result<ObservedPreferenceBar> {
+    let count = |value: ObservedPreferenceCount| usize::try_from(value.0).unwrap_or(usize::MAX);
+    let owners = ObservedPreferenceBar {
+        observations: count(
+            super::setting_keys::OBSERVED_PREFERENCE_OBSERVATIONS
+                .read_in_txn(vault, txn, &[], None)?
+                .value,
+        ),
+        sessions: count(
+            super::setting_keys::OBSERVED_PREFERENCE_SESSIONS
+                .read_in_txn(vault, txn, &[], None)?
+                .value,
+        ),
+    };
+    if owners == ObservedPreferenceBar::CANON
+        || !crate::policy_model::is_live_vault_owner_in_txn(vault, txn, subject)?
+    {
+        return Ok(ObservedPreferenceBar::CANON);
+    }
+    Ok(owners)
+}
 
 /// Whether `predicate` is in the `preference.*` family.
 pub(crate) fn is_preference_predicate(predicate: &str) -> bool {
@@ -27,10 +118,12 @@ pub(crate) fn is_preference_predicate(predicate: &str) -> bool {
 }
 
 /// Whether `evidence` holds enough distinct live, nonimported user TURNs
-/// witnessed into distinct live SESSIONs, read on the writer's snapshot.
+/// witnessed into distinct live SESSIONs for a preference about `subject`
+/// ([`observed_preference_bar_in_txn`]), read on the writer's snapshot.
 pub(crate) fn observed_preference_support_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
+    subject: &EntityId,
     evidence: &[EntityId],
 ) -> Result<bool> {
     let mut observations = BTreeSet::new();
@@ -48,8 +141,8 @@ pub(crate) fn observed_preference_support_in_txn(
         observations.insert(*turn);
         sessions.insert(session);
     }
-    Ok(observations.len() >= OBSERVED_PREFERENCE_MIN_OBSERVATIONS
-        && sessions.len() >= OBSERVED_PREFERENCE_MIN_SESSIONS)
+    Ok(observed_preference_bar_in_txn(vault, txn, subject)?
+        .met_by(observations.len(), sessions.len()))
 }
 
 fn user_turn_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>, id: &EntityId) -> Result<bool> {

@@ -10,14 +10,12 @@
 use super::decode;
 use crate::origin::{RepoManifest, RepoPortableId};
 use crate::store::checkpoint_payload::rows::OwnerRef;
-use crate::sync::carrier_parts::{is_part_key, join_parts_from};
-use crate::sync::checkpoint_payload::{Holder, KeyClass, Placement, SyncUnclassified};
+use crate::sync::carrier_parts::join_parts_from;
+use crate::sync::checkpoint_payload::{Holder, KeyClass, PartLookup, Placement, SyncUnclassified};
 
-/// Where the value under `key` in the repo manifest map goes.
+/// Where the value under `key` in the repo manifest map goes (a part's,
+/// the map's row places).
 pub(in crate::sync) fn entry(key: &str, value: &[u8]) -> Placement {
-    if is_part_key(key) {
-        return Placement::Part;
-    }
     match (decode(value), RepoPortableId::from_hex(key)) {
         (Ok(carried), Some(_)) => Placement::Manifest {
             holders: vec![Holder::new(OwnerRef::entity(&carried.code), Vec::new())],
@@ -28,11 +26,10 @@ pub(in crate::sync) fn entry(key: &str, value: &[u8]) -> Placement {
     }
 }
 
-/// What a repo manifest map key spells: its portable id, or a part's digest.
+/// What a repo manifest map key spells: its portable id (a part's digest,
+/// the map's row reads).
 pub(in crate::sync) fn key_class(key: &str) -> KeyClass {
-    if is_part_key(key) {
-        KeyClass::Digest
-    } else if RepoPortableId::from_hex(key).is_some() {
+    if RepoPortableId::from_hex(key).is_some() {
         KeyClass::Opaque
     } else {
         KeyClass::Payload
@@ -45,11 +42,7 @@ pub(in crate::sync) fn key_class(key: &str) -> KeyClass {
 /// `Some(false)` when it is another manifest. `None` for a value that is no
 /// head under a portable id, for a head whose parts do not all join, and
 /// for joined bytes that read as no manifest: it proves no binding.
-pub(in crate::sync) fn bound<B: AsRef<[u8]>>(
-    key: &str,
-    value: &[u8],
-    part: impl FnMut(&str) -> Option<B>,
-) -> Option<bool> {
+pub(in crate::sync) fn bound(key: &str, value: &[u8], part: PartLookup<'_>) -> Option<bool> {
     let portable = RepoPortableId::from_hex(key)?;
     let head = decode(value).ok()?;
     let joined = join_parts_from(&head.body, part)?;
