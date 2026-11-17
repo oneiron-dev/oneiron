@@ -32,6 +32,12 @@
 //!   with the answer held for the caller's open task, as an answered `task`
 //!   send holds it: the retry reads the statement back from the task.
 //!   Passes on the base (which saves the whole answer) and with the fix.
+//! - `a_drained_ask_retry_keeps_what_a_post_hook_redacted` (review of
+//!   #9318): the drain's rerun crosses the post chain, and a post hook that
+//!   redacted `statements` there leaves only the mark; the retry keeps the
+//!   redaction even while the task holds the answer. Passes on the base and
+//!   with the fix; failed at the PR's first head, which restored on the
+//!   mark alone.
 //!
 //! The doors build only under the test cfg:
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test inquiry_answer_hook_copies`.
@@ -448,5 +454,48 @@ fn a_drained_ask_retry_reads_the_statements_its_task_holds() {
         retried,
         answer(inquiry, "task"),
         "the retry reads the member's words from the open task"
+    );
+}
+
+#[test]
+fn a_drained_ask_retry_keeps_what_a_post_hook_redacted() {
+    let fixture = Fixture::new(ASK);
+    let binding = fixture.bind_hook("pre", "ask");
+    let inquiry = EntityId::now();
+    let task = fixture.open_task();
+    let statement = InquiryStatement::new(MEMBER_WORD, StatementSource::MemberWord)
+        .expect("the member's statement");
+    assert!(
+        door::hold_answer(
+            &fixture.vault,
+            fixture.owner,
+            task,
+            inquiry,
+            &[statement],
+            VALID_UNTIL,
+        )
+        .expect("hold the answer"),
+        "the open task holds the answer"
+    );
+    // The view a post hook leaves when it redacts `statements` from the kept
+    // form at the drain's rerun: the mark, no statements.
+    let mut redacted = answer(inquiry, "task");
+    let fields = redacted.as_object_mut().expect("an answer object");
+    fields.remove("statements");
+    fields.insert("statements_withheld".to_owned(), json!(true));
+    fixture
+        .vault
+        .install_verb_ask_credential_check(Arc::new(AnsweringCheck {
+            reply: redacted.clone(),
+        }));
+
+    let retried = fixture.drained_retry(binding, task);
+    assert!(
+        !retried.to_string().contains(MEMBER_WORD),
+        "the retry reads no statement the hook redacted: {retried}"
+    );
+    assert_eq!(
+        retried, redacted,
+        "the retry reads the answer as the hook left it"
     );
 }
