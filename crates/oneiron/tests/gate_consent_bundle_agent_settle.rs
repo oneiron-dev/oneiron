@@ -5,7 +5,9 @@
 //! listing the verb and only a bundle its read lane reads whole. Whatever the key says, the
 //! opener's lineage and its forks never settle their own bundle, and a bundle holding a
 //! proactivity policy request waits for the owner. With the key off (the default) the agent is
-//! refused and the owner's own doors settle as before.
+//! refused and the owner's own doors settle as before. An approval lands the members as the
+//! settler's own writes: a settler whose definition or policy ceiling is Proposed is refused
+//! with `gate.pending.actor_ceiling`; only an Auto-ceiling settler approves.
 //! Run with `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test gate_consent_bundle_agent_settle`.
 #![cfg(oneiron_test_support)]
 
@@ -21,6 +23,10 @@ use oneiron::dreamer_consolidation::{
 };
 use oneiron::federation::{Scope, ScopeId};
 use oneiron::memory::{Memory, MemoryError};
+use oneiron::policy_manifest_doors::{
+    ActorCeiling, PolicyCeiling, PolicyManifestPut, PolicyManifestRead, policy_manifests_as_owner,
+    put_policy_manifest_as_owner,
+};
 use oneiron::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_TASK, ENTITY_TYPE_TURN};
 use oneiron::store::GateDecisionId;
 use oneiron::task_verb::sdk::invoke;
@@ -184,6 +190,77 @@ fn granted_forked_agent(fixture: &Fixture, name: &str, parent: EntityId) -> Enti
         .put_agent_definition(&id, &definition, TimeRange { start: at, end: at }, at)
         .expect("the forked definition lands");
     mint_base_grant(fixture, id, BUNDLE_VERBS, None);
+    id
+}
+
+/// An agent definition with an Auto ceiling and no fork parent, with the same
+/// base Grant as [`granted_agent`] plus an actor-bound Auto ceiling row in the
+/// vault policy for it alone, so the gate's actor ceiling for it is Auto and
+/// its bundle approval replays as its own Auto writes. Built like
+/// [`granted_forked_agent`] with `None` parent and `Auto`; the policy row
+/// names only this agent, so the opener's writes still park.
+fn granted_auto_agent(fixture: &Fixture, name: &str, extra: &[&str]) -> EntityId {
+    let definition = AgentDefinition::new(
+        name,
+        "Consent bundle auto fixture agent",
+        "1",
+        None,
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+        None,
+        AgentScope::All,
+        AgentCeiling::Auto,
+        None,
+        ClaimApprovalStatus::Approved,
+        ClaimLifecycleStatus::Active,
+        ClaimSource::UserStated,
+        1.0,
+        false,
+        true,
+        RmpValue::Map(vec![(
+            RmpValue::from("definedVia"),
+            RmpValue::from("define_agent"),
+        )]),
+        None,
+        true,
+        None,
+    );
+    let id = EntityId::now();
+    let at = fixture.vault.now_recorded_at();
+    fixture
+        .vault
+        .put_agent_definition(&id, &definition, TimeRange { start: at, end: at }, at)
+        .expect("the auto definition lands");
+    mint_base_grant(fixture, id, extra, None);
+    let proof = owner_proof(fixture);
+    let view = policy_manifests_as_owner(
+        &fixture.vault,
+        &proof,
+        &PolicyManifestRead { manifest_ref: None },
+    )
+    .expect("the owner reads the default manifest");
+    let default = view
+        .manifests
+        .iter()
+        .find(|entry| entry.manifest_ref == view.default_manifest_ref)
+        .expect("the default policy manifest");
+    let mut manifest = default.manifest.clone();
+    manifest.actor_ceilings.push(ActorCeiling {
+        actor_class: "agent".into(),
+        actor_ref: Some(id.to_hex()),
+        ceiling: PolicyCeiling::Auto,
+    });
+    put_policy_manifest_as_owner(
+        &fixture.vault,
+        &proof,
+        PolicyManifestPut {
+            manifest_ref: Some(default.manifest_ref.clone()),
+            expected_body_hash: Some(default.body_hash.clone()),
+            manifest,
+        },
+    )
+    .expect("the owner grants the settler an Auto ceiling");
     id
 }
 
@@ -369,7 +446,7 @@ fn an_agent_the_owner_turns_the_key_on_for_reviews_and_approves_a_bundle() {
     let fixture = rooted_vault();
     let run = "consent-bundle-agent-approve";
     let opener = granted_agent(&fixture, "bundle-opener", BUNDLE_VERBS);
-    let settler = granted_agent(&fixture, "bundle-settler", BUNDLE_VERBS);
+    let settler = granted_auto_agent(&fixture, "bundle-settler", BUNDLE_VERBS);
     let (first, second) = park_two_in_run(&fixture, opener, run);
     let mut expected = vec![first.to_hex(), second.to_hex()];
     expected.sort();
@@ -500,7 +577,7 @@ fn the_opener_and_its_forks_never_settle_their_bundle() {
     let run = "consent-bundle-opener-lineage";
     let opener = granted_agent(&fixture, "bundle-opener", BUNDLE_VERBS);
     let fork = granted_forked_agent(&fixture, "bundle-opener-fork", opener);
-    let outsider = granted_agent(&fixture, "bundle-outsider", BUNDLE_VERBS);
+    let outsider = granted_auto_agent(&fixture, "bundle-outsider", BUNDLE_VERBS);
     let (first, second) = park_two_in_run(&fixture, opener, run);
     owner_turns_on(&fixture, DELEGATE_KEY, None);
     let (owner_hex, _) = owner_bundle_hex(&fixture, run);
@@ -559,7 +636,7 @@ fn a_bundle_with_a_member_its_lane_withholds_reads_as_none() {
         BUNDLE_VERBS,
         Some([ENTITY_TYPE_TURN, ENTITY_TYPE_TASK].as_slice()),
     );
-    let settler = granted_agent(&fixture, "bundle-settler", BUNDLE_VERBS);
+    let settler = granted_auto_agent(&fixture, "bundle-settler", BUNDLE_VERBS);
     let (first, second) = park_two_in_run(&fixture, opener, run);
     owner_turns_on(&fixture, DELEGATE_KEY, None);
     let (owner_hex, _) = owner_bundle_hex(&fixture, run);
@@ -592,4 +669,77 @@ fn a_bundle_with_a_member_its_lane_withholds_reads_as_none() {
     let mut expected = vec![first.to_hex(), second.to_hex()];
     expected.sort();
     assert_eq!(settled_members(&settled), expected, "{settled}");
+}
+
+#[test]
+fn a_proposed_ceiling_agent_never_approves_a_bundle() {
+    let fixture = rooted_vault();
+    let run = "consent-bundle-proposed-ceiling";
+    let opener = granted_agent(&fixture, "bundle-opener", BUNDLE_VERBS);
+    let settler = granted_agent(&fixture, "bundle-settler", BUNDLE_VERBS);
+    let (first, second) = park_two_in_run(&fixture, opener, run);
+    let mut expected = vec![first.to_hex(), second.to_hex()];
+    expected.sort();
+    owner_turns_on(&fixture, DELEGATE_KEY, Some(settler));
+
+    let review = agent_review(&fixture, settler, run);
+    let bundle_hex = review["bundle_id"].as_str().expect("bundle id").to_owned();
+
+    let refused = invoke(
+        &agent_memory(&fixture, settler),
+        RESOLVE_AS,
+        json!({
+            "bundle_id": bundle_hex,
+            "dreamer_run_id": run,
+            "action": "approve",
+        }),
+    )
+    .expect_err("a Proposed-ceiling settler approves nothing");
+    assert!(
+        refused.message.contains("gate.pending.actor_ceiling"),
+        "the refusal names the actor ceiling: {refused:?}"
+    );
+    assert!(
+        refused.message.contains("pending"),
+        "the refusal is pending: {refused:?}"
+    );
+    for id in [first, second] {
+        assert_eq!(
+            claim_status(&fixture, &id).0,
+            ClaimApprovalStatus::Proposed,
+            "the refused settler changed nothing"
+        );
+    }
+    let (owner_hex, owner_members) = owner_bundle_hex(&fixture, run);
+    assert_eq!(
+        owner_hex, bundle_hex,
+        "the refused approval left the bundle bound"
+    );
+    assert_eq!(
+        owner_members, expected,
+        "both members are still in the bundle"
+    );
+
+    let bundle = fixture
+        .vault
+        .review_gate_consent_bundle(&WriteActor::new(fixture.owner, EdgeActorClass::Human), run)
+        .expect("the owner reviews");
+    let now = fixture.vault.now_recorded_at();
+    fixture
+        .vault
+        .resolve_gate_consent_bundle(
+            &owner_proof(&fixture),
+            bundle.bundle_id,
+            run,
+            GateConsentBundleAction::Approve,
+            now,
+        )
+        .expect("the owner settles its own bundle");
+    for id in [first, second] {
+        assert_eq!(
+            claim_status(&fixture, &id).0,
+            ClaimApprovalStatus::Approved,
+            "the owner's approval lands"
+        );
+    }
 }
