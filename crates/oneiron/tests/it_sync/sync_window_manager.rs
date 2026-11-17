@@ -323,8 +323,12 @@ fn cold_open_persists_each_recovery_commit_once_before_observers_attach() {
 
     let mut routed_updates = Vec::new();
     while let Ok(update) = outbound_rx.try_recv() {
-        assert_eq!(update.window_key, key.as_str());
-        routed_updates.push(update.update_bytes);
+        // The manager's live mirror opens every window a pending-mirror marker
+        // names (the seeded owner rows mark "1970-01") and routes that window's
+        // recovery commits through the same sink; this test counts its own.
+        if update.window_key == key.as_str() {
+            routed_updates.push(update.update_bytes);
+        }
     }
     assert_eq!(
         routed_updates.len(),
