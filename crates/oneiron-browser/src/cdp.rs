@@ -207,8 +207,7 @@ impl Pipe {
     pub(crate) fn claim_network(&self, target: &str) -> bool {
         self.routed
             .lock()
-            .map(|mut routed| routed.insert(target.to_owned()))
-            .unwrap_or(false)
+            .is_ok_and(|mut routed| routed.insert(target.to_owned()))
     }
 
     /// Counts page `session`'s navigation events from now on, and keeps the
@@ -231,8 +230,7 @@ impl Pipe {
     pub(crate) fn take_dialog_failures(&self) -> Vec<DialogAnswerFailure> {
         self.dialogs
             .lock()
-            .map(|mut dialogs| std::mem::take(&mut *dialogs))
-            .unwrap_or_default()
+            .map_or_default(|mut dialogs| std::mem::take(&mut *dialogs))
     }
 
     /// Sends one command and waits for its reply until `deadline`.
