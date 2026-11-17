@@ -30,16 +30,6 @@ const RETRIEVAL_OUTCOME_KEY_MAX_LEN: usize = 128;
 
 pub(in crate::store) const RETRIEVAL_RUNS_CAPACITY_HINT_LIMIT: usize = 1024;
 
-impl SideKey for RetrievalRunId {
-    fn encode_into(&self, out: &mut Vec<u8>) {
-        out.extend_from_slice(&self.as_bytes());
-    }
-
-    fn decode_key(bytes: &[u8]) -> Option<Self> {
-        Some(Self::from_bytes(bytes.try_into().ok()?))
-    }
-}
-
 /// Retrieval-run telemetry record, keyed by run id. Codec fixed `Raw` (see
 /// the decls.rs note): decode also enforces the version byte and
 /// `RetrievalState::validate`, so [`RawValue`] delegates to
