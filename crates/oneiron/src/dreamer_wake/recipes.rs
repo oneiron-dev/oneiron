@@ -81,7 +81,7 @@ pub(crate) fn weave_in_txn(
                 },
                 requester,
             },
-            Some(attempt.status.attempt.id),
+            None,
             attempt.status.attempt.run_id.as_deref(),
             now,
         )?;
