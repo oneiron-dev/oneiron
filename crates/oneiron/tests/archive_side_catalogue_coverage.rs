@@ -70,7 +70,7 @@ fn the_archive_dispositions_name_existing_canonical_tables() {
     let coverage = canonical_archive_side_coverage();
     let canonical: BTreeSet<&str> = coverage.iter().map(|(name, _)| *name).collect();
     let dispositions = archive_side_disposition_names();
-    assert_eq!(dispositions.len(), 123, "the dispositions name 123 tables");
+    assert_eq!(dispositions.len(), 122, "the dispositions name 122 tables");
     let count = |class: &str| {
         dispositions
             .iter()
@@ -78,7 +78,7 @@ fn the_archive_dispositions_name_existing_canonical_tables() {
             .count()
     };
     assert_eq!(count("retained"), 95, "the dispositions retain 95 tables");
-    assert_eq!(count("omitted"), 23, "the dispositions omit 23 tables");
+    assert_eq!(count("omitted"), 22, "the dispositions omit 22 tables");
     assert_eq!(
         count("other_section"),
         5,

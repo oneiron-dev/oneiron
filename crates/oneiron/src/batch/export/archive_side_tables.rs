@@ -11,7 +11,7 @@
 //!
 //! The whole-vault archive also carries the retained rows: one inert copy of every row of the
 //! 95 retained side tables, each naming its source table with the row's original key suffix
-//! and value bytes, and declares the 23 omitted tables with their reasons in its manifest. No
+//! and value bytes, and declares the 22 omitted tables with their reasons in its manifest. No
 //! live reader reads a retained copy; the next archive carries it again.
 //!
 //! A row goes out with the record it belongs to and every carrier it names, read

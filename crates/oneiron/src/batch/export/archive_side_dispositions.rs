@@ -13,7 +13,7 @@ pub(crate) enum ArchiveSideDisposition {
     Omitted(ImportOmissionReason),
 }
 
-/// The 118 decided side tables in TSV order, 95 retained and 23 omitted.
+/// The 117 decided side tables in TSV order, 95 retained and 22 omitted.
 pub(crate) const SIDE_TABLE_DISPOSITIONS: &[(&str, ArchiveSideDisposition)] = &[
     ("ACCESS_GRANT_OWNER_ACT", ArchiveSideDisposition::Retained),
     ("AGENT_DEF_POWER_GRANT", ArchiveSideDisposition::Retained),
@@ -119,10 +119,6 @@ pub(crate) const SIDE_TABLE_DISPOSITIONS: &[(&str, ArchiveSideDisposition)] = &[
     ("HOOKS_GRANT", ArchiveSideDisposition::Retained),
     ("HOOKS_RECEIPT", ArchiveSideDisposition::Retained),
     ("HOOKS_REGEN_RECEIPT", ArchiveSideDisposition::Retained),
-    (
-        "HOUSEKEEPING_SCHEDULE",
-        ArchiveSideDisposition::Omitted(ImportOmissionReason::LocalProjectionNotRestored),
-    ),
     ("HOUSEKEEPING_WAKE", ArchiveSideDisposition::Retained),
     ("HOUSE_LINK_RECEIPT", ArchiveSideDisposition::Retained),
     ("INQUIRY_RECEIPT", ArchiveSideDisposition::Retained),

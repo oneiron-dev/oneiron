@@ -10,7 +10,7 @@
 //! * `whole_vault_archive_retains_rows_and_declares_omitted_tables`: the
 //!   source archive holds exactly one retained SNAPSHOT_READ_SETTINGS row and
 //!   one retained CONSENT_STANDING_GRANT row, none for HEALER_OVERSIGHT_RECEIPT,
-//!   and the manifest declares 23 omitted tables, the healer table with
+//!   and the manifest declares 22 omitted tables, the healer table with
 //!   three rows.
 //! * `each_import_door_carries_the_rows_and_only_the_owner_door_installs_the_setting`:
 //!   the owner door installs the snapshot bounds row live while the actor and
@@ -407,8 +407,8 @@ fn whole_vault_archive_retains_rows_and_declares_omitted_tables() {
     let omissions = side_table_omissions(&source.archive);
     assert_eq!(
         omissions.len(),
-        23,
-        "the manifest declares 23 omitted tables: {omissions:?}"
+        22,
+        "the manifest declares 22 omitted tables: {omissions:?}"
     );
     let healer = omissions
         .iter()
