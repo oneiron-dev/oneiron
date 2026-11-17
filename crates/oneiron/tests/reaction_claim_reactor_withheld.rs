@@ -1,7 +1,7 @@
 //! A reaction claim names its reactor twice: `by` in its value and the writer
 //! stamp (`actor_entity_ref`) in its evidence. A reader who may not read the
-//! reactor's PERSON row reads the claim without either, and the reaction still
-//! counts; a reader who reads the PERSON row reads the claim whole (FIX
+//! reactor's PERSON row reads the claim with both as nil, and the reaction still
+//! counts, in its pill and in the reader's context pack; a reader who reads the PERSON row reads the claim whole (FIX
 //! REACTION-CLAIM-VALUE-REACTOR-ID; Engine ANSWER = A, 17 Nov 07:32). Mirela is
 //! confirmed from the words of a relationship R, then reacts 👍 to an open
 //! MESSAGE in a room the outsider (outside R) and a member of R both sit in.
@@ -387,7 +387,7 @@ fn decoded(body: &[u8]) -> ClaimBody {
 }
 
 /// The claim a reader who may not read the reactor gets: still the 👍 reaction on the
-/// room MESSAGE, without `by` or the writer stamp.
+/// room MESSAGE, with `by` and the writer stamp absent or nil.
 fn assert_reactor_withheld(fixture: &Fixture, body: &[u8], door: &str) {
     let claim = decoded(body);
     assert_eq!(
@@ -400,14 +400,15 @@ fn assert_reactor_withheld(fixture: &Fixture, body: &[u8], door: &str) {
         "{door}: the outsider still reads the reaction’s glyph"
     );
     assert!(
-        entry(&claim.value, KEY_BY).is_none(),
+        entry(&claim.value, KEY_BY).is_none_or(Value::is_nil),
         "{door}: the outsider reads no `by` of a reactor it may not read"
     );
     assert!(
         claim
             .evidence
             .as_ref()
-            .is_none_or(|evidence| entry(evidence, KEY_WRITER).is_none()),
+            .and_then(|evidence| entry(evidence, KEY_WRITER))
+            .is_none_or(Value::is_nil),
         "{door}: the outsider reads no writer stamp of a reactor it may not read"
     );
     assert!(
@@ -477,6 +478,44 @@ fn the_reaction_still_counts_for_a_reader_who_may_not_read_the_reactor() {
         .and_then(|pills| pills.iter().find(|pill| pill.glyph == "👍"))
         .map(|pill| pill.count);
     assert_eq!(count, Some(1), "the reaction still counts for the outsider");
+}
+
+/// The reaction claim stays in the context pack of a reader who may not read the reactor.
+/// The pack's scoped filter holds each hydrated claim against the row the lane serves now,
+/// so the served claim must still match the fields hydration projected, where `by` and
+/// the writer stamp already read as null. The search reaches the claim through its
+/// indexed text, the glyph and the reactor's stored name (`reaction/write.rs`
+/// `indexed_text`).
+#[test]
+fn the_outsiders_context_pack_keeps_the_reaction_claim() {
+    let fixture = fixture();
+    let read = fixture.vault.scoped_read(key(fixture.outsider));
+    let plan = read.context_pack_plan().expect("the outsider’s pack plan");
+    let mut pack = plan
+        .admit(fixture.vault.context_pack())
+        .search_text("Mirela", 10)
+        .filter_types(&[ENTITY_TYPE_CLAIM])
+        .run()
+        .expect("the outsider’s pack");
+    let holds = |pack: &oneiron::ContextPack| {
+        pack.results
+            .iter()
+            .any(|entity| entity.id == fixture.reaction)
+    };
+    assert!(
+        holds(&pack),
+        "FIXTURE: the outsider’s search hydrates the reaction claim before the filter: {:?}",
+        pack.results
+            .iter()
+            .map(|entity| entity.id)
+            .collect::<Vec<_>>()
+    );
+    read.filter_context_pack(&mut pack)
+        .expect("the outsider’s pack filter");
+    assert!(
+        holds(&pack),
+        "the outsider’s context pack keeps the reaction claim whose reactor it may not read"
+    );
 }
 
 impl Fixture {

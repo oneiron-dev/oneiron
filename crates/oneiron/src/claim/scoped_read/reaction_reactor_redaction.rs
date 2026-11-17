@@ -3,7 +3,8 @@
 //! them only to a reader who may read the reactor's PERSON row: "an id must
 //! not reach a reader who may not read the reactor's PERSON row, by any door"
 //! (FIX REACTION-CLAIM-VALUE-REACTOR-ID; Engine ANSWER = A, 17 Nov 07:32). Any
-//! other reader gets the claim without them, and the reaction still counts.
+//! other reader gets the claim with both read as nil, and the reaction still
+//! counts.
 //! Every door that serves a stored claim's bytes, a decoded claim or a row's
 //! birth to a scoped reader judges here; the JSON doors null each binary, so a
 //! served value or evidence never spells an id (`msgpack_value_projection`).

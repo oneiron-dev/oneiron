@@ -164,7 +164,7 @@ pub(crate) fn machine_written(body: &ClaimBody) -> bool {
     evidence_entry(body, WRITE_ENVELOPE_EVIDENCE_ACTOR_CLASS_KEY)
         .and_then(Value::as_u64)
         .is_some_and(|class| class == EdgeActorClass::System as u64)
-        && evidence_entry(body, "machine_signature").is_some()
+        && evidence_entry(body, KEY_MACHINE_SIGNATURE).is_some()
 }
 
 /// Structural rule for the reaction family, run on every claim write door,
@@ -231,20 +231,51 @@ pub(crate) fn named_reactor(body: &ClaimBody) -> Option<EntityId> {
     by.or_else(|| crate::claim::claim_author(body))
 }
 
-/// A reaction claim as a reader who may not read its reactor gets it: no `by`
-/// in its value and no writer stamp in its evidence. The predicate, subject,
-/// glyph and time stay, so it still reads as the reaction it counts as
-/// (Engine ANSWER REACTION-CLAIM-VALUE-REACTOR-ID = A, 17 Nov 07:32).
+/// A reaction claim as a reader who may not read its reactor gets it: every
+/// binary under `by` in its value, and under the writer stamp and the machine
+/// signature in its evidence, reads as nil. A mirrored reaction's signature
+/// covers the whole body, `by` included (`machine_claim_transcript`), so a
+/// reader holding candidate ids could test each one against it. The predicate,
+/// subject, glyph and time stay, so it still reads as the reaction it counts as
+/// (Engine ANSWER REACTION-CLAIM-VALUE-REACTOR-ID = A, 17 Nov 07:32). The keys
+/// stay and keep their shape: every JSON door already projects a binary as
+/// null, so a context pack's snapshot recheck still matches the served row to
+/// the fields it hydrated, and the evidence still reads as a stamped body
+/// (`ClaimBody::evidence_ref_slots` keys on the writer stamp being present).
 pub(crate) fn withhold_reactor(body: &mut ClaimBody) {
+    fn nil_binaries(value: &mut Value) {
+        match value {
+            Value::Binary(_) => *value = Value::Nil,
+            Value::Array(parts) => parts.iter_mut().for_each(nil_binaries),
+            Value::Map(entries) => entries
+                .iter_mut()
+                .for_each(|(_, value)| nil_binaries(value)),
+            _ => {}
+        }
+    }
+    let nil_under = |entries: &mut [(Value, Value)], named: &[&str]| {
+        for (key, value) in entries.iter_mut() {
+            if key.as_str().is_some_and(|key| named.contains(&key)) {
+                nil_binaries(value);
+            }
+        }
+    };
     if let Value::Map(entries) = &mut body.value {
-        entries.retain(|(key, _)| key.as_str() != Some(KEY_BY));
+        nil_under(entries, &[KEY_BY]);
     }
     if let Some(Value::Map(entries)) = &mut body.evidence {
-        entries.retain(|(key, _)| {
-            key.as_str() != Some(crate::write_envelope::WRITE_ENVELOPE_EVIDENCE_ACTOR_KEY)
-        });
+        nil_under(
+            entries,
+            &[
+                crate::write_envelope::WRITE_ENVELOPE_EVIDENCE_ACTOR_KEY,
+                KEY_MACHINE_SIGNATURE,
+            ],
+        );
     }
 }
+
+/// The evidence key a signed MACHINE's write proof rides under.
+const KEY_MACHINE_SIGNATURE: &str = "machine_signature";
 
 use crate::entity_id::derived_domains::CONVERSATION_MIRROR_ACTOR;
 
