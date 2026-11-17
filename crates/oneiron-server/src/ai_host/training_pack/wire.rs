@@ -22,7 +22,7 @@ const RECEIPT_FORMAT: &str = "oneiron.training-pack.receipt/1";
 /// The one recipe the worker trains, as a plan's `settings.recipe` names it.
 pub(super) const RECIPE: &str = "oneiron.frozen-encoder-binary-head/1";
 /// The compute kind of a job an engine run authorized.
-const ENGINE_RUN: &str = "engine_run";
+pub(super) const ENGINE_RUN: &str = "engine_run";
 const QUESTION: &str = "question";
 /// The two terminal statuses that carry a complete result.
 const TRAINED: &str = "trained";
@@ -227,11 +227,11 @@ pub(super) struct Expected {
 }
 
 #[derive(Deserialize)]
-struct StatusWire {
-    format: String,
-    status: String,
+pub(super) struct StatusWire {
+    pub(super) format: String,
+    pub(super) status: String,
     #[serde(default)]
-    reason: Option<String>,
+    pub(super) reason: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -250,15 +250,15 @@ struct ReceiptWire {
 }
 
 #[derive(Deserialize)]
-struct AuthorizationWire {
-    kind: String,
-    reference: String,
+pub(super) struct AuthorizationWire {
+    pub(super) kind: String,
+    pub(super) reference: String,
 }
 
 #[derive(Deserialize)]
-struct RequestWire {
-    sha256: String,
-    bytes: u64,
+pub(super) struct RequestWire {
+    pub(super) sha256: String,
+    pub(super) bytes: u64,
 }
 
 #[derive(Deserialize)]
@@ -309,23 +309,23 @@ struct RecipeBaseWire {
 }
 
 #[derive(Deserialize)]
-struct LoadSetsWire {
-    training: LoadSetWire,
-    export: LoadSetWire,
+pub(super) struct LoadSetsWire {
+    pub(super) training: LoadSetWire,
+    pub(super) export: LoadSetWire,
 }
 
 /// One load set: its model, its files and `PinnedCheckpoint::content_hash`.
 #[derive(Deserialize)]
-struct LoadSetWire {
-    model: String,
+pub(super) struct LoadSetWire {
+    pub(super) model: String,
     files: Vec<LoadFileWire>,
-    load_set_blake3: String,
+    pub(super) load_set_blake3: String,
 }
 
 /// One load-set row. `name` is the checkpoint's identity; `path` is only
 /// where the file sits under the output directory.
 #[derive(Deserialize)]
-struct LoadFileWire {
+pub(super) struct LoadFileWire {
     name: String,
     kind: CheckpointFileKind,
     source: SourcePin,
@@ -357,17 +357,17 @@ struct ExportCheckWire {
 }
 
 #[derive(Deserialize)]
-struct ServiceUnitsWire {
-    unit: String,
-    quantity: u64,
+pub(super) struct ServiceUnitsWire {
+    pub(super) unit: String,
+    pub(super) quantity: u64,
 }
 
-fn not_this_job(what: &str) -> Error {
+pub(super) fn not_this_job(what: &str) -> Error {
     invalid(format!("the trainer's receipt is not this job's: {what}"))
 }
 
 /// A 64-hex hash in the canonical lowercase form.
-fn hash_from_hex(field: &str, value: &str) -> oneiron::Result<[u8; 32]> {
+pub(super) fn hash_from_hex(field: &str, value: &str) -> oneiron::Result<[u8; 32]> {
     blake3::Hash::from_hex(value)
         .ok()
         .filter(|hash| hash.to_hex().as_str() == value)
@@ -528,7 +528,11 @@ pub(super) fn decode_output(
 
 /// One load set's files as returned bytes, each with the producer's BLAKE3,
 /// which custody keeps beside what the bytes hash to.
-fn upload(output: &Path, set: LoadSetWire, model: &ModelId) -> oneiron::Result<CheckpointUpload> {
+pub(super) fn upload(
+    output: &Path,
+    set: LoadSetWire,
+    model: &ModelId,
+) -> oneiron::Result<CheckpointUpload> {
     let files = set
         .files
         .into_iter()
