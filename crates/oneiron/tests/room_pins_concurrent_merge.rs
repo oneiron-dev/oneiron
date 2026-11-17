@@ -86,6 +86,7 @@ fn say(vault: &Vault, member: EntityId, room: EntityId, message: EntityId) -> Te
             conversation_ref: room.to_hex(),
             turn_ref: Some(EntityId::now().to_hex()),
             thread_audience: None,
+            project: None,
             messages: vec![WitnessMessage {
                 id: Some(message.to_hex()),
                 author: WitnessAuthor::User,
