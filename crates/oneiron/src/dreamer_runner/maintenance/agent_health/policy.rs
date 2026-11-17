@@ -199,6 +199,19 @@ pub(crate) fn reviewer_policy_seeds(bytes: &[u8]) -> BTreeMap<&'static str, f64>
     decode(bytes).0
 }
 
+/// The seed T1 runs for every detector dial when `bytes` is a revision's
+/// `policy.json`: the file's valid seed, or the dial's compiled seed where
+/// the file leaves the dial out, holds it out of bounds, or falls back
+/// whole (review round 2 of #7949). An owner setting or a fit still
+/// overrides either at run time.
+pub(crate) fn reviewer_policy_effective_seeds(bytes: &[u8]) -> BTreeMap<&'static str, f64> {
+    let seeds = decode(bytes).0;
+    POLICY_DIALS
+        .iter()
+        .map(|spec| (spec.key, seeds.get(spec.key).copied().unwrap_or(spec.seed)))
+        .collect()
+}
+
 /// The typed seeds `bytes` carry (`TripwireBounds::decode`'s shape): one
 /// JSON object whose keys are detector dial keys, each a finite number
 /// inside its dial's bounds. A dial left out or out of bounds, and a key
@@ -231,7 +244,9 @@ fn decode(bytes: &[u8]) -> (BTreeMap<&'static str, f64>, Vec<PolicyFallback>) {
 /// write winning. `None` when `bytes` are not one JSON object, or any
 /// top-level key repeats. Keys nested inside a value are that value's own
 /// shape, as before.
-fn object_without_duplicates(bytes: &[u8]) -> Option<serde_json::Map<String, serde_json::Value>> {
+pub(crate) fn object_without_duplicates(
+    bytes: &[u8],
+) -> Option<serde_json::Map<String, serde_json::Value>> {
     struct Unique(serde_json::Map<String, serde_json::Value>);
 
     struct UniqueVisitor;

@@ -233,6 +233,7 @@ pub mod side_key_pins;
 pub mod skill_gate;
 pub mod skill_hub_restore;
 pub mod skill_judgment_cut;
+pub mod skill_optimize_files;
 pub mod skill_package;
 pub mod skill_read_hold;
 pub mod slack_install_rows;
