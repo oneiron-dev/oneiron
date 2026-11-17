@@ -64,6 +64,7 @@ fn hold(dispatcher: &AgentDispatcher<'_>, root: &AttemptRecord, leased: &Attempt
             None,
             "spend cap",
             now,
+            None,
         )
         .expect("the budget hold is admitted");
 }

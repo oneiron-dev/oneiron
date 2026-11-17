@@ -30,6 +30,12 @@ crate::side_table::side_tables! {
     /// approved it and when. The run's next hold deletes it. Key: id16(root attempt).
     AGENT_DISPATCH_RUN_OVERDRAFT: VaultMeta b"agent.dispatch.run_overdraft.v1\0" Named Engine
         [restore: content] [family: unclassified] [tier: canonical];
+    /// The free local chat model the host named for a run held at its spend cap, and the owner's
+    /// choice to continue the run on it (ARCH-0026 depletion ladder; Engine ruling RUNBUDGET-KNOB
+    /// = A): by his answer to the run-budget ask, or by his standing answer, the
+    /// on_budget_exhausted knob. The run's next hold deletes it. Key: id16(root attempt).
+    AGENT_DISPATCH_RUN_LOCAL_ROUTE: VaultMeta b"agent.dispatch.run_local_route.v1\0" Named Engine
+        [restore: content] [family: unclassified] [tier: canonical];
     /// FIX 3694: the owner's applied prompt continuation of one failed agent attempt: the card,
     /// ask and diagnostic it answered, the approving owner and when, the approval's fingerprint
     /// and id, and the successor attempt it enqueued. Key: id16(failed attempt).
