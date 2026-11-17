@@ -130,6 +130,8 @@ pub(crate) use projection::{
 pub(crate) use tests::create_project_signed_for_test;
 #[cfg(test)]
 pub(crate) use tests::set_project_depth_signed_for_test;
+#[cfg(test)]
+pub(crate) use tests::{sign_project_with_for_scan_tests, spawn_signed_project_for_scan_tests};
 
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::error::{Error, RecordError, Result};
