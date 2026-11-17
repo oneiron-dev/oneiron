@@ -421,11 +421,14 @@ pub(super) async fn durable_step(
             }
             return trapped;
         }
-        // A health rest the step could not wait out (FIX 11226): nothing went
-        // out and nothing failed, so it is no failed step and takes no
-        // failure policy. The caller parks the step until the offer is back.
+        // A health rest the step could not wait out (FIX 11226), or hours no
+        // rung serves in (UNBUILT-14): nothing went out and nothing failed, so
+        // it is no failed step and takes no failure policy. The caller parks
+        // the step until the offer is back.
         Err(DurableStepError::Llm(
-            source @ LlmError::Retryable(RetryableLlmError::HealthRest { .. }),
+            source @ LlmError::Retryable(
+                RetryableLlmError::HealthRest { .. } | RetryableLlmError::OutsideHours { .. },
+            ),
         )) if !answered => {
             settle_failed_usage(guard, &admission.lease, &failed_usage);
             return Err(DurableStepError::Llm(source));
