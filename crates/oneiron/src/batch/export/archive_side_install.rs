@@ -79,8 +79,6 @@ pub(crate) enum ArchivedSideGroup {
     Memory,
     /// Dreamer free-time receipts.
     DreamerRunner,
-    /// Served-origin LFS path rules.
-    OriginLfs,
     /// Queue review policy.
     MergeQueue,
     /// Owner learning rows before holder rows.
@@ -149,7 +147,6 @@ pub(crate) fn archived_side_group(source_table: &str) -> Option<ArchivedSideGrou
             Some(Group::Memory)
         }
         name if name == side_table::DREAMER_FREE_TIME_RECEIPT.name => Some(Group::DreamerRunner),
-        name if name == side_table::ORIGIN_LFS_PATH_POLICY.name => Some(Group::OriginLfs),
         name if name == side_table::MERGE_QUEUE_REVIEW_POLICY.name => Some(Group::MergeQueue),
         name if name == side_table::LEARNING_SETTING.name => Some(Group::LearningSetting),
         name if name == side_table::RETRIEVAL_POLICY_PINS.name => Some(Group::RetrievalPins),
@@ -240,9 +237,6 @@ pub(crate) fn land_archived_side_group_in_txn(
             crate::dreamer_runner::archive_restore::land_archived_dreamer_runner_rows_in_txn(
                 vault, txn, permit, rows,
             )
-        }
-        ArchivedSideGroup::OriginLfs => {
-            crate::Vault::land_archived_origin_lfs_rows_in_txn(vault, txn, permit, rows)
         }
         ArchivedSideGroup::MergeQueue => {
             crate::Vault::land_archived_merge_queue_rows_in_txn(vault, txn, permit, rows)

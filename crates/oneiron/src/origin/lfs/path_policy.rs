@@ -1,32 +1,22 @@
 //! The owner's repository LFS path policy (NO-DOOR REPO-LFS-PATH-POLICY;
 //! Engine CODECUSTODY-LFS Q1 = A): one served origin's ordered rules, each an
-//! exact path or a directory prefix with its class, and the revision of the
-//! owner's last set, which the next set must name. The first rule that
-//! matches a path decides its class; a path no rule matches is
-//! repository-large. A rule never reads a byte count.
+//! exact path or a directory prefix with its class. The rules are the
+//! catalogue key `origin.lfs_path_rules` at the origin's repo scope (DESIGN
+//! 15-setting-primitive stage 4), set through `vault.settings.set` with the
+//! revision the setter read. The first rule that matches a path decides its
+//! class; a path no rule matches is repository-large. A rule never reads a
+//! byte count.
 
 use serde::{Deserialize, Serialize};
 
-use super::{LfsAssetClass, LfsPathPolicy, lfs_repo_id};
+use super::{LfsAssetClass, LfsPathPolicy};
 use crate::Vault;
-use crate::batch::export::archive_side_install::{
-    ArchivedSideRowOutcome, decode_archived_row, install_archived_row,
-};
-use crate::batch::export::{
-    ArchiveRetainedSideRow, OwnerArchiveRestorePermit, RetainedSideHeldBackReason,
-};
 use crate::entity_id::EntityId;
-use crate::error::{Error, Result};
-use crate::git_wire::{GitWire, git_path_bytes};
-use crate::origin::smart_http::{
-    ORIGIN_REPO_DIR_SUFFIX, ORIGIN_SERVING_ROOT_NAME, validate_repo_name,
-};
-use crate::side_table::{self, Named, SideTable};
+use crate::error::Result;
+use crate::git_wire::git_path_bytes;
+use crate::origin::setting_keys::LFS_PATH_RULES;
+use crate::setting::{SettingScope, SettingValue};
 use crate::store::code_snapshot::validation::validate_manifest_path;
-
-/// One served origin's path policy. Key: the origin's LFS repo id.
-const PATH_POLICY: SideTable<EntityId, OriginLfsPathPolicy, Named> =
-    SideTable::new(&side_table::ORIGIN_LFS_PATH_POLICY);
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::origin::lfs::path_policy::OriginLfsPathMatch;
@@ -40,9 +30,22 @@ pub struct OriginLfsPathRule {
     pub class: LfsAssetClass,
 }
 
-/// One served origin's LFS path policy: its ordered rules and the revision
-/// of the owner's last set. Revision 0 with no rules is an origin whose
-/// owner never set one.
+/// One served origin's LFS path rules in order: the value of the catalogue
+/// key `origin.lfs_path_rules`. None by default.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(transparent)]
+pub struct OriginLfsPathRules(pub Vec<OriginLfsPathRule>);
+
+impl SettingValue for OriginLfsPathRules {
+    fn check(self) -> Result<Self> {
+        validate_origin_lfs_path_rules(&self.0)?;
+        Ok(self)
+    }
+}
+
+/// One served origin's LFS path policy as a push reads it: its ordered rules
+/// and the revision of the key's row that decided them. Revision 0 with no
+/// rules is an origin whose owner never set one.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct OriginLfsPathPolicy {
@@ -82,7 +85,7 @@ impl OriginLfsPathRule {
 ///
 /// # Errors
 /// The first such path's refusal.
-pub(crate) fn validate_origin_lfs_path_rules(rules: &[OriginLfsPathRule]) -> Result<()> {
+fn validate_origin_lfs_path_rules(rules: &[OriginLfsPathRule]) -> Result<()> {
     rules.iter().try_for_each(OriginLfsPathRule::validate)
 }
 
@@ -98,20 +101,6 @@ impl LfsPathPolicy for OriginLfsPathPolicy {
 }
 
 impl Vault {
-    /// The LFS path policy of the served origin `repo_name` and its repo id:
-    /// what the owner last set, or revision 0 with no rules.
-    ///
-    /// # Errors
-    /// A name that is no served origin, or a store failure.
-    pub fn served_origin_lfs_path_policy(
-        &self,
-        repo_name: &str,
-    ) -> Result<(EntityId, OriginLfsPathPolicy)> {
-        let repo_id = self.served_mirror_repo_id(repo_name)?;
-        let txn = self.store.env.read_txn()?;
-        Ok((repo_id, self.origin_lfs_path_policy_in_txn(&txn, repo_id)?))
-    }
-
     /// The served origin `repo_id`'s policy, read now: what a push's
     /// pointers are classified by when it is accepted and when it lands. No
     /// decision reads the class yet (Engine CODECUSTODY-LFS-CLASS = B), so a
@@ -134,138 +123,11 @@ impl Vault {
         txn: &heed::RoTxn<'_>,
         repo_id: EntityId,
     ) -> Result<OriginLfsPathPolicy> {
-        Ok(PATH_POLICY
-            .get(&self.store, txn, &repo_id)?
-            .unwrap_or_default())
-    }
-
-    /// Replaces the served origin `repo_id`'s rules in `txn` when its stored
-    /// revision is `expected_revision`, and advances the revision by one; an
-    /// empty rule list sets the default back and still advances it. The
-    /// stored revision otherwise, and nothing is written.
-    ///
-    /// # Errors
-    /// A rule whose path is not a normalized repository-relative path, a
-    /// revision overflow, or a store failure.
-    pub(crate) fn set_origin_lfs_path_policy_in_txn(
-        &self,
-        txn: &mut heed::RwTxn<'_>,
-        repo_id: EntityId,
-        expected_revision: u64,
-        rules: Vec<OriginLfsPathRule>,
-    ) -> Result<std::result::Result<OriginLfsPathPolicy, u64>> {
-        validate_origin_lfs_path_rules(&rules)?;
-        let current = self.origin_lfs_path_policy_in_txn(txn, repo_id)?;
-        if current.revision != expected_revision {
-            return Ok(Err(current.revision));
-        }
-        let policy = OriginLfsPathPolicy {
-            revision: current
-                .revision
-                .checked_add(1)
-                .ok_or(Error::ArithmeticOverflow("origin lfs path policy revision"))?,
-            rules,
-        };
-        PATH_POLICY.put(&self.store, txn, &repo_id, &policy)?;
-        Ok(Ok(policy))
-    }
-}
-
-/// The holdback reason for `repo_id`'s live state, or `None` when a served route resolves to
-/// it. The read-only scan reads git identity first: no live repository anywhere under the
-/// serving root derives to `repo_id` and the repo is missing, while a live identity with no
-/// served name and route is a non-portable reference. Repository identity is filesystem
-/// state, not an entity row — registration writes no LMDB record — so the scan is the whole
-/// live check and it never creates an origin.
-///
-/// # Errors
-/// The serving root cannot be listed.
-fn origin_repo_holdback(
-    vault: &Vault,
-    repo_id: &EntityId,
-) -> Result<Option<RetainedSideHeldBackReason>> {
-    let root = vault.store.env.path().join(ORIGIN_SERVING_ROOT_NAME);
-    if !root.is_dir() {
-        return Ok(Some(RetainedSideHeldBackReason::MissingLiveEntity));
-    }
-    let wire = GitWire::new(vault)?;
-    let mut live = false;
-    for entry in std::fs::read_dir(&root)? {
-        let entry = entry?;
-        let Ok(identity) = wire.repository_identity(&entry.path()) else {
-            continue;
-        };
-        if lfs_repo_id(&identity.as_hex())? != *repo_id {
-            continue;
-        }
-        live = true;
-        let file_name = entry.file_name();
-        let Some(name) = file_name
-            .to_str()
-            .and_then(|name| name.strip_suffix(ORIGIN_REPO_DIR_SUFFIX))
-        else {
-            continue;
-        };
-        if validate_repo_name(name).is_err() {
-            continue;
-        }
-        if vault.served_mirror_repo_id(name).ok().as_ref() == Some(repo_id) {
-            return Ok(None);
-        }
-    }
-    if live {
-        Ok(Some(RetainedSideHeldBackReason::NonPortableReference))
-    } else {
-        Ok(Some(RetainedSideHeldBackReason::MissingLiveEntity))
-    }
-}
-
-/// Lands one archived `ORIGIN_LFS_PATH_POLICY` envelope in `txn`: canonical decode and the
-/// credential predicate, then rule validation, then the live served origin and its binding.
-/// An accepted policy installs with its stored revision; the revision never increments here.
-///
-/// # Errors
-/// Storage faults; validation stays in the returned outcome.
-fn land_archived_origin_lfs_path_policy_row_in_txn(
-    vault: &Vault,
-    txn: &mut heed::RwTxn<'_>,
-    permit: &OwnerArchiveRestorePermit,
-    row: &ArchiveRetainedSideRow,
-) -> Result<ArchivedSideRowOutcome> {
-    let (repo_id, value) = match decode_archived_row(&PATH_POLICY, row) {
-        Ok(decoded) => decoded,
-        Err(reason) => return Ok(ArchivedSideRowOutcome::HeldBack(reason)),
-    };
-    if validate_origin_lfs_path_rules(&value.rules).is_err() {
-        return Ok(ArchivedSideRowOutcome::HeldBack(
-            RetainedSideHeldBackReason::InvalidValue,
-        ));
-    }
-    if let Some(reason) = origin_repo_holdback(vault, &repo_id)? {
-        return Ok(ArchivedSideRowOutcome::HeldBack(reason));
-    }
-    install_archived_row(&PATH_POLICY, vault, txn, permit, &repo_id, row)
-}
-
-impl Vault {
-    /// Lands the owner's archived `ORIGIN_LFS_PATH_POLICY` envelopes in input order, one
-    /// outcome per row: an absent policy installs, an identical policy is unchanged, and a
-    /// different policy stays live. Stored revisions are preserved, never incremented.
-    ///
-    /// # Errors
-    /// Storage faults; validation stays in the returned outcomes.
-    pub(crate) fn land_archived_origin_lfs_rows_in_txn(
-        vault: &Vault,
-        txn: &mut heed::RwTxn<'_>,
-        permit: &OwnerArchiveRestorePermit,
-        rows: &[ArchiveRetainedSideRow],
-    ) -> Result<Vec<ArchivedSideRowOutcome>> {
-        let mut outcomes = Vec::with_capacity(rows.len());
-        for row in rows {
-            outcomes.push(land_archived_origin_lfs_path_policy_row_in_txn(
-                vault, txn, permit, row,
-            )?);
-        }
-        Ok(outcomes)
+        let resolved =
+            LFS_PATH_RULES.read_in_txn(self, txn, &[SettingScope::Repo(repo_id)], None)?;
+        Ok(OriginLfsPathPolicy {
+            revision: resolved.revision,
+            rules: resolved.value.0,
+        })
     }
 }

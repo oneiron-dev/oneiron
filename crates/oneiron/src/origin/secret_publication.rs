@@ -3,7 +3,6 @@
 
 pub use oneiron_store::origin::secret_publication::*;
 
-use super::mirror::{OriginMirrorTarget, TARGETS};
 use super::secret_marks::{RepoMarkFacts, RepoSecretMark, RepoSecretPlacement};
 use super::secret_projection::index::UNATTRIBUTABLE_MARK_FAILS_CLOSED;
 use crate::Vault;
@@ -40,24 +39,6 @@ pub(crate) fn repo_secret_liveness(
             RepoSecretLiveness::Unknown
         }
     }
-}
-
-/// The audience a mirror row takes from its setup: the visibility the owner
-/// states; unstated, the same URL keeps its own and a new one is `unknown`
-/// (CALLS OLD-AUDIENCE).
-pub(crate) fn configured_audience(
-    stated: Option<RepoDestinationVisibility>,
-    previous: Option<&OriginMirrorTarget>,
-    url: &str,
-) -> RepoDestinationAudience {
-    let kept = previous
-        .filter(|row| row.url == url)
-        .map(|row| row.audience.visibility);
-    RepoDestinationAudience::mirror(
-        stated
-            .or(kept)
-            .unwrap_or(RepoDestinationVisibility::Unknown),
-    )
 }
 
 impl Vault {
@@ -146,7 +127,7 @@ impl Vault {
     /// to its blob holds only the refs whose history carries that blob.
     fn public_mark_join(&self, repo_id: EntityId) -> Result<Option<MarkJoin>> {
         let txn = self.store.env.read_txn()?;
-        let audience = TARGETS.get(&self.store, &txn, &repo_id)?.map_or(
+        let audience = self.mirror_target_in_txn(&txn, repo_id)?.map_or(
             RepoDestinationAudience::mirror(RepoDestinationVisibility::Unknown),
             |row| row.audience,
         );

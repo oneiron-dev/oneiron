@@ -8,29 +8,28 @@
 //! and refuses one whose expected epoch moved. The git route then pushes
 //! under the lease this host holds, or refuses the push when it holds none.
 //!
-//! `/v1/owner/origin-mirror`: the repository's outbound mirror (ARCH-0068
-//! RA8). The owner names an https URL, the custody record of its push token
-//! (bound to `origin:mirror-push`) and a cadence in seconds; the origin host
-//! pushes its published refs there on that cadence, which is the real RPO.
-//! `POST /v1/owner/origin-mirror/push` pushes now.
+//! `GET /v1/owner/origin-mirror`: the repository's outbound mirror (ARCH-0068
+//! RA8). The owner sets it through `vault.settings.set` as the catalogue key
+//! `origin.mirror` at the repository's scope: an https URL, the custody record
+//! of its push token (bound to `origin:mirror-push`), a cadence in seconds and
+//! a sync strategy; the origin host pushes its published refs there on that
+//! cadence, which is the real RPO. `POST /v1/owner/origin-mirror/push` pushes
+//! now.
 //!
 //! Each mirror carries a sync strategy (FIX 6866): `schedule` is that
 //! cadenced push; `full_auto` pushes each new green head as soon as the
 //! published refs move; `ask_me`, the default, sends nothing whole, so its
 //! push refuses with `publish_request_required` and exact reviewed commits
-//! go out through `vault.code.origin.publish.*`. `POST
-//! /v1/owner/origin-mirror/strategy` changes the strategy alone.
+//! go out through `vault.code.origin.publish.*`.
 
 use std::sync::Arc;
 
 use axum::extract::rejection::QueryRejection;
 use axum::extract::{Query, State};
 use axum::response::Json;
-use axum::routing::{delete, get, post};
-use oneiron::origin::mirror::{OriginMirrorRun, OriginMirrorTarget, OriginMirrorTargetInput};
-use oneiron::origin::mirror_strategy::OriginMirrorSyncStrategy;
+use axum::routing::{get, post};
+use oneiron::origin::mirror::{OriginMirrorRun, OriginMirrorTarget};
 use oneiron::origin::residence::{OriginAuthority, OriginResidence};
-use oneiron::origin::secret_publication::RepoDestinationVisibility;
 use serde::{Deserialize, Serialize};
 
 use super::openapi::{OwnerRoute, RestShape};
@@ -80,29 +79,6 @@ pub(super) fn owner_table() -> OwnerTable {
         (
             OwnerRoute {
                 method: "post",
-                path: "/origin-mirror",
-                summary: "Set origin mirror.",
-                row: None,
-                shape: Some(RestShape::json(
-                    set_origin_mirror_body_schema,
-                    origin_mirror_target_schema,
-                )),
-            },
-            post(set_origin_mirror),
-        ),
-        (
-            OwnerRoute {
-                method: "delete",
-                path: "/origin-mirror",
-                summary: "Clear origin mirror.",
-                row: None,
-                shape: None,
-            },
-            delete(clear_origin_mirror),
-        ),
-        (
-            OwnerRoute {
-                method: "post",
                 path: "/origin-mirror/push",
                 summary: "Push origin mirror.",
                 row: None,
@@ -112,19 +88,6 @@ pub(super) fn owner_table() -> OwnerTable {
                 )),
             },
             post(push_origin_mirror),
-        ),
-        (
-            OwnerRoute {
-                method: "post",
-                path: "/origin-mirror/strategy",
-                summary: "Set one origin mirror's sync strategy (FIX 6866): `repo` and `sync_strategy`, `ask_me` (nothing goes out until an exact publish request is approved; push refuses publish_request_required) or `schedule` (the cadenced push of every published ref). Changes the strategy and its revision only; answers the mirror target.",
-                row: None,
-                shape: Some(RestShape::json(
-                    set_origin_mirror_strategy_body_schema,
-                    origin_mirror_target_schema,
-                )),
-            },
-            post(set_origin_mirror_strategy),
         ),
     ]
 }
@@ -139,16 +102,6 @@ pub(crate) fn origin_authority_schema() -> serde_json::Value {
     oneiron_contracts::code_run::vault_read::request_schema::<OriginAuthority>()
 }
 
-/// The OpenAPI schema of `POST /v1/owner/origin-mirror`'s body (FIX 11617): [`SetOriginMirror`].
-pub(crate) fn set_origin_mirror_body_schema() -> serde_json::Value {
-    oneiron_contracts::code_run::vault_read::request_schema::<SetOriginMirror>()
-}
-
-/// The OpenAPI schema of the origin-mirror answers (FIX 11617): [`OriginMirrorTarget`].
-pub(crate) fn origin_mirror_target_schema() -> serde_json::Value {
-    oneiron_contracts::code_run::vault_read::request_schema::<OriginMirrorTarget>()
-}
-
 /// The OpenAPI schema of `POST /v1/owner/origin-mirror/push`'s body (FIX 11617): [`RepoQuery`].
 pub(crate) fn push_origin_mirror_body_schema() -> serde_json::Value {
     oneiron_contracts::code_run::vault_read::request_schema::<RepoQuery>()
@@ -157,11 +110,6 @@ pub(crate) fn push_origin_mirror_body_schema() -> serde_json::Value {
 /// The OpenAPI schema of `POST /v1/owner/origin-mirror/push`'s answer (FIX 11617): [`OriginMirrorRun`].
 pub(crate) fn origin_mirror_run_schema() -> serde_json::Value {
     oneiron_contracts::code_run::vault_read::request_schema::<OriginMirrorRun>()
-}
-
-/// The OpenAPI schema of `POST /v1/owner/origin-mirror/strategy`'s body (FIX 11617): [`SetOriginMirrorStrategy`].
-pub(crate) fn set_origin_mirror_strategy_body_schema() -> serde_json::Value {
-    oneiron_contracts::code_run::vault_read::request_schema::<SetOriginMirrorStrategy>()
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -278,106 +226,6 @@ async fn origin_mirror(
     })
     .await?;
     Ok(Json(state))
-}
-
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-struct SetOriginMirror {
-    repo: String,
-    /// The mirror's https URL, with no credential in it.
-    url: String,
-    /// The custody record of the mirror's push token.
-    secret_ref: String,
-    /// The basic-auth user the token goes with; `x-access-token` when absent.
-    user: Option<String>,
-    /// Seconds between pushes: the repository's RPO.
-    every_secs: u64,
-    /// `ask_me`, `schedule` or `full_auto`; absent, the same URL keeps its
-    /// strategy and a new one asks first.
-    #[serde(default)]
-    sync_strategy: Option<OriginMirrorSyncStrategy>,
-    /// `public`, `private` or `unknown`; absent, the same URL keeps its own
-    /// and a new one is `unknown`, held as public.
-    #[serde(default)]
-    visibility: Option<RepoDestinationVisibility>,
-}
-
-async fn set_origin_mirror(
-    auth: CoreAuth,
-    State(server): State<Arc<SyncServer>>,
-    payload: OwnerJsonBody<SetOriginMirror>,
-) -> Result<Json<OriginMirrorTarget>, EnvelopedApiError> {
-    let owner = owner(&auth, &server)?;
-    let request = payload.read(&server).await?;
-    let row = blocking(move || {
-        Ok(server.vault().set_served_origin_mirror_as_owner(
-            &owner,
-            &request.repo,
-            OriginMirrorTargetInput {
-                url: request.url,
-                secret_ref: request.secret_ref,
-                user: request.user,
-                every_secs: request.every_secs,
-                sync_strategy: request.sync_strategy,
-                visibility: request.visibility,
-            },
-        )?)
-    })
-    .await?;
-    Ok(Json(row))
-}
-
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-struct SetOriginMirrorStrategy {
-    repo: String,
-    /// `ask_me`, `schedule` or `full_auto`.
-    sync_strategy: OriginMirrorSyncStrategy,
-}
-
-/// Changes one mirror's sync strategy and its revision, nothing else.
-async fn set_origin_mirror_strategy(
-    auth: CoreAuth,
-    State(server): State<Arc<SyncServer>>,
-    payload: OwnerJsonBody<SetOriginMirrorStrategy>,
-) -> Result<Json<OriginMirrorTarget>, EnvelopedApiError> {
-    let owner = owner(&auth, &server)?;
-    let request = payload.read(&server).await?;
-    let row = blocking(move || {
-        Ok(server.vault().set_served_origin_mirror_strategy_as_owner(
-            &owner,
-            &request.repo,
-            request.sync_strategy,
-        )?)
-    })
-    .await?;
-    Ok(Json(row))
-}
-
-#[derive(Debug, Serialize)]
-struct ClearedOriginMirror {
-    repo: String,
-    /// Whether a mirror was set.
-    cleared: bool,
-}
-
-async fn clear_origin_mirror(
-    auth: CoreAuth,
-    State(server): State<Arc<SyncServer>>,
-    query: Result<Query<RepoQuery>, QueryRejection>,
-) -> Result<Json<ClearedOriginMirror>, EnvelopedApiError> {
-    let owner = owner(&auth, &server)?;
-    let RepoQuery { repo } = query_params(query)?;
-    let cleared = blocking(move || {
-        Ok(ClearedOriginMirror {
-            cleared: server
-                .vault()
-                .clear_served_origin_mirror_as_owner(&owner, &repo)?,
-            repo,
-        })
-    })
-    .await?;
-    Ok(Json(cleared))
 }
 
 async fn push_origin_mirror(

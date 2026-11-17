@@ -23,7 +23,7 @@
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 
-use super::mirror::{OriginMirrorPushes, OriginMirrorTarget, TARGETS};
+use super::mirror::{OriginMirrorPushes, OriginMirrorTarget, put_mirror_state_in_txn};
 use super::mirror_auto::ORIGIN_MIRROR_FULL_AUTO_MIN_DELAY_SECS;
 use super::mirror_strategy::OriginMirrorSyncStrategy;
 use super::publish::{MirrorRunScope, MirrorSelection};
@@ -88,7 +88,7 @@ impl Vault {
     ) -> Result<OriginMirrorPushes> {
         let targets = {
             let txn = self.store.env.read_txn()?;
-            TARGETS.scan(&self.store, &txn)?
+            self.mirror_targets_in_txn(&txn)?
         };
         let mut report = OriginMirrorPushes {
             targets: u64::try_from(targets.len()).unwrap_or(u64::MAX),
@@ -267,14 +267,14 @@ impl Vault {
     fn record_mirror_pushed(&self, repo_id: EntityId, url: &str, names: &[String]) {
         let written = (|| -> Result<()> {
             let mut txn = self.store.env.write_txn()?;
-            let Some(mut row) = TARGETS.get(&self.store, &txn, &repo_id)? else {
+            let Some(mut row) = self.mirror_target_in_txn(&txn, repo_id)? else {
                 return Ok(());
             };
             if row.url != url || row.pushed.as_slice() == names {
                 return Ok(());
             }
             row.pushed = names.to_vec();
-            TARGETS.put(&self.store, &mut txn, &repo_id, &row)?;
+            put_mirror_state_in_txn(self, &mut txn, repo_id, &row)?;
             txn.commit()?;
             Ok(())
         })();

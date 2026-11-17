@@ -155,7 +155,6 @@ pub(crate) const SIDE_TABLE_DISPOSITIONS: &[(&str, ArchiveSideDisposition)] = &[
         ArchiveSideDisposition::Retained,
     ),
     ("ORG_ADMIN_POLICY", ArchiveSideDisposition::Retained),
-    ("ORIGIN_LFS_PATH_POLICY", ArchiveSideDisposition::Retained),
     ("OUTBOUND_DIRECT_RECEIPT", ArchiveSideDisposition::Retained),
     (
         "OUTBOUND_GRANT_CHANNEL_IDENTITY_USAGE",

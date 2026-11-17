@@ -27,11 +27,6 @@
 //!   a holder seed above the destination owner's pin cap stays out of force
 //!   and reports one held-back row with reason `local_authority_mismatch`,
 //!   while the destination keeps its own row.
-//! * `a_path_policy_for_an_absent_repo_is_held_back`: a source
-//!   ORIGIN_LFS_PATH_POLICY row for a repo the destination never registered
-//!   reports one held-back row with reason `missing_live_entity` and is
-//!   still retained byte for byte. Registering the served origin needs
-//!   bridged git, which the fleet host contract provides.
 //!
 //! New report counts are read through `serde_json::to_value` of the SIDE-1
 //! summary, so this file compiles on 24ed2deead79; an absent field fails its
@@ -61,10 +56,8 @@ use oneiron::memory::merge_queue_doors::{
     QueueReviewPolicyInput, QueueReviewPolicyProof, QueueReviewPolicySetRequest,
     QueueReviewPolicyState,
 };
-use oneiron::memory::origin_doors::OriginLfsPathPolicySetRequest;
 use oneiron::memory::{MessageStreamPolicy, MessageWriteMode, StreamCadence, StreamSyncVisibility};
 use oneiron::merge_queue::QueueReviewThresholds;
-use oneiron::origin::lfs::{LfsAssetClass, OriginLfsPathMatch, OriginLfsPathRule};
 use oneiron::store::{RetrievalBlendSignal, RetrievalPolicyPin, RetrievalPolicyPins};
 use oneiron::workspace_roster::ProjectHistoryPolicy;
 use oneiron::{EdgeActorClass, EntityId};
@@ -664,72 +657,5 @@ fn a_holder_learning_row_over_the_destination_owner_cap_is_held_back() {
         rows_for(&retained_rows(&export_whole(&dest)), "LEARNING_SETTING").len(),
         2,
         "the destination keeps its live row and the retained holder tuple"
-    );
-}
-
-/// A path policy for a repo the destination never registered is held back
-/// and retained byte for byte.
-#[test]
-fn a_path_policy_for_an_absent_repo_is_held_back() {
-    let (_source_dir, source) = open_source_vault();
-    let source_owner = owner_proof(&source);
-    let source_actor = source
-        .ensure_embedded_owner_actor()
-        .expect("the source names its embedded owner actor");
-    let source_memory = source.memory(source_actor, EdgeActorClass::Human);
-    let repo = "field-notes";
-    let repo_id = source
-        .register_served_origin_as_owner(&source_owner, repo, "main")
-        .expect("the owner registers the source served origin");
-    let rules = vec![OriginLfsPathRule {
-        path_match: OriginLfsPathMatch::Exact("models/large.bin".to_owned()),
-        class: LfsAssetClass::BuildRequired,
-    }];
-    let stored = source_memory
-        .origin_lfs_path_policy_set_as(
-            &source_owner,
-            OriginLfsPathPolicySetRequest {
-                repo: repo.to_owned(),
-                expected_revision: 0,
-                rules: rules.clone(),
-            },
-        )
-        .expect("the owner stores the source path rules");
-    assert_eq!(
-        stored.revision, 1,
-        "the first set lands at revision one: {stored:?}"
-    );
-    assert_eq!(stored.rules, rules, "the source holds its path rules");
-    assert_eq!(
-        stored.repo_id, repo_id,
-        "the view names the registered repo: {stored:?}"
-    );
-    let archive = export_whole(&source);
-    let source_tuple = rows_for(&retained_rows(&archive), "ORIGIN_LFS_PATH_POLICY");
-    assert_eq!(
-        source_tuple.len(),
-        1,
-        "the source archive holds one path-policy tuple"
-    );
-
-    let (_dest_dir, dest) = open_later_vault();
-    let dest_owner = owner_proof(&dest);
-    let receipt = dest
-        .import_whole_vault_archive_from_as_owner(Cursor::new(&archive), &dest_owner)
-        .expect("the owner import succeeds");
-    let summary =
-        serde_json::to_value(&receipt.retained_side_rows).expect("the summary serializes");
-    assert_eq!(
-        held_back_for_table(&summary, "ORIGIN_LFS_PATH_POLICY"),
-        Some(serde_json::json!([{"reason": "missing_live_entity", "rows": 1}])),
-        "the owner import holds back one path-policy row as missing_live_entity; an absent field means it counted no held-back outcome: {summary}"
-    );
-    assert_eq!(
-        rows_for(
-            &retained_rows(&export_whole(&dest)),
-            "ORIGIN_LFS_PATH_POLICY"
-        ),
-        source_tuple,
-        "the destination retains the held-back path tuple byte for byte"
     );
 }
