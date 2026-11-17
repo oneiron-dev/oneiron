@@ -46,6 +46,7 @@ pub mod question_heads;
 pub mod recovery_box_hold;
 pub mod refusal_wire;
 pub mod replay_admission;
+pub mod residence;
 pub mod residence_connection;
 pub mod resident_pump;
 #[cfg(target_os = "linux")]

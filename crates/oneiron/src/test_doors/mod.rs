@@ -235,6 +235,7 @@ pub mod scrub_keeps_hint_and_name_rows;
 pub mod seat_park_model_step;
 #[cfg(feature = "sync")]
 pub mod secret_same_value;
+pub mod selector_grant;
 pub mod setting;
 pub mod setting_keys;
 pub mod settle_backoff;
