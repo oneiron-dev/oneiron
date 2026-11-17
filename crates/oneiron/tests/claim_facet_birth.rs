@@ -44,8 +44,8 @@ use oneiron::federation::Scope;
 use oneiron::git_wire::{GitOid, GitRefName, GitWireRepo, GitWireRepoIdentity};
 use oneiron::origin::publication::OriginPublicationRequest;
 use oneiron::registry::{
-    ENTITY_TYPE_ASSET, ENTITY_TYPE_EVENT, ENTITY_TYPE_FACET, ENTITY_TYPE_MACHINE,
-    ENTITY_TYPE_PERSON, ENTITY_TYPE_POLICY_MANIFEST, ENTITY_TYPE_SESSION, ENTITY_TYPE_TURN,
+    ENTITY_TYPE_ASSET, ENTITY_TYPE_EVENT, ENTITY_TYPE_FACET, ENTITY_TYPE_PERSON,
+    ENTITY_TYPE_POLICY_MANIFEST, ENTITY_TYPE_SESSION, ENTITY_TYPE_TURN,
 };
 use oneiron::store::GateDecisionId;
 use oneiron::surface_event::PROVIDER_EVENT_REF_PREFIX;
@@ -68,11 +68,6 @@ use serde_json::json;
 
 /// The shipped default policy pack, whose rules a fixture extends.
 const SHIPPED_POLICY_PACK: &str = "oneiron-default-policy";
-
-/// The provider-inbound MACHINE's derivation domain, the engine's
-/// `derived_domains::SURFACE_PROVIDER_INBOUND_ACTOR`, spelled out as
-/// `tests/summary_as_record_permit.rs` spells its landing writer's.
-const SURFACE_PROVIDER_INBOUND_ACTOR: &[u8] = b"oneiron:surface-provider-inbound-actor:v1";
 
 /// The rooted vault's fixed clock: no wall time, no sleeps.
 const ROOTED_T0: u64 = 1_780_000_000;
@@ -348,31 +343,24 @@ fn line_chat_observation_is_born_in_a_stored_facet() {
     let (_directory, vault) = fresh_vault();
     let destination = format!("U{}", "2".repeat(32));
     let chat = LineChat::new(LineChatKind::Group, format!("C{}", "1".repeat(32)));
-    // The provider-inbound MACHINE the observation is about, stored with the
-    // body `archive_provider_event` gives it. The archive call itself is
-    // refused on this rooted vault: its blob version write as that MACHINE
-    // carries no signature (FIX [PROVIDER-EVENT-ARCHIVE-MACHINE-UNSIGNED]).
-    let inbound =
-        EntityId::derive(SURFACE_PROVIDER_INBOUND_ACTOR, &[]).expect("provider-inbound id");
-    let mut machine_body = Vec::new();
-    rmpv::encode::write_value(
-        &mut machine_body,
-        &Value::Map(vec![(
-            Value::from("name"),
-            Value::from("provider event inbound"),
-        )]),
-    )
-    .expect("MACHINE body encode");
-    vault
-        .put_entity(
-            &inbound,
-            ENTITY_TYPE_MACHINE,
-            TimeRange { start: 14, end: 14 },
+    // The event is archived first, as the LINE door does: the archive keeps
+    // the provider-inbound MACHINE the observation is about. The host
+    // provisioned that MACHINE with the engine writers, so its signed
+    // version write is admitted on this rooted vault
+    // (FIX [PROVIDER-EVENT-ARCHIVE-MACHINE-UNSIGNED]).
+    let event = json!({
+        "destination": destination,
+        "event": { "type": "join", "source": { "type": "group", "groupId": chat.id } },
+    });
+    let payload_ref = vault
+        .archive_provider_event(
+            "line",
+            "line-join-facet-birth",
+            event.to_string().as_bytes(),
             14,
-            &machine_body,
         )
-        .expect("the provider-inbound MACHINE is stored");
-    let payload_ref = format!("{PROVIDER_EVENT_REF_PREFIX}{}@1", EntityId::now().to_hex());
+        .expect("the LINE event is archived");
+    assert!(payload_ref.starts_with(PROVIDER_EVENT_REF_PREFIX));
     let claim = vault
         .observe_line_chat(&destination, &chat, &payload_ref, 14)
         .expect("a LINE chat is observed");
