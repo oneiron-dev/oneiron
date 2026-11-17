@@ -8021,6 +8021,7 @@ dependencies = [
  "oneiron-crypto",
  "oneiron-delivery-vocabulary",
  "oneiron-docedit",
+ "oneiron-esign-render",
  "oneiron-guest",
  "oneiron-hex",
  "oneiron-keystore",
@@ -8445,6 +8446,14 @@ dependencies = [
  "tempfile",
  "tokio",
  "tracing",
+]
+
+[[package]]
+name = "oneiron-esign-render"
+version = "0.1.0"
+dependencies = [
+ "encoding_rs",
+ "lopdf",
 ]
 
 [[package]]
@@ -8915,12 +8924,12 @@ dependencies = [
  "cms",
  "const-oid 0.9.6",
  "der 0.7.10",
- "encoding_rs",
  "flate2",
  "futures-util",
  "ipnet",
  "lopdf",
  "oneiron",
+ "oneiron-esign-render",
  "oneiron-hex",
  "oneiron-keystore",
  "oneiron-organ-host",
@@ -9179,7 +9188,6 @@ dependencies = [
  "base64 0.22.1",
  "blake3",
  "ed25519-dalek 2.2.0",
- "encoding_rs",
  "half",
  "heed",
  "image",
@@ -9194,6 +9202,7 @@ dependencies = [
  "oneiron-crypto",
  "oneiron-delivery-vocabulary",
  "oneiron-docedit",
+ "oneiron-esign-render",
  "oneiron-hex",
  "oneiron-lens-wire",
  "oneiron-linkedin-policy",

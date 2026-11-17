@@ -9,6 +9,7 @@
 //! [`request_wake`] to ENQUEUE and [`DreamerWakeDriver::run_wake_pass`] to
 //! RUN the pass — two separate host calls. Idle = nothing runs.
 mod arc_backstop;
+pub(crate) mod archive_restore;
 mod deadline;
 mod driver;
 pub(crate) mod follower;
