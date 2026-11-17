@@ -178,6 +178,7 @@ impl Memory<'_> {
             census,
             question_digest,
             statement,
+            raised_in,
             now,
         } = mint;
         let guest_grants = super::ask_guest::mint_guest_grants(
@@ -230,6 +231,7 @@ impl Memory<'_> {
             created_at: now,
             guest_grants,
             reached_role: census.reached_role,
+            raised_in,
             policy_surface,
             statement,
         };

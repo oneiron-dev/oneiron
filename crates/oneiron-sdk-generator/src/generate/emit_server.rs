@@ -171,10 +171,14 @@ pub(crate) const SERVER_RECALL_DOC: &str =
 /// under the call's own caller (FIX 2905): its references ride in
 /// `residence`, apart from the local items; without them the pack is
 /// local-only and `partial`.
+///
+/// A caller in an off-record session that keeps no model-call record names
+/// no rows on its reranker's runs (census L5-25).
 ";
 
 /// FIX 2905: the server doors that also ask an opened device's home, by row, with the caller the call (or the MCP
-/// actor) admitted as the last argument.
+/// actor) admitted, then whether the caller's off-record session keeps no model-call record, so its reranker's runs
+/// name no rows (census L5-25), as the last two arguments.
 pub(crate) const HOME_SERVER_DOORS: &[(&str, &str)] = &[("vault.recall", "recall_home_listing")];
 
 /// FIX 3876: the rows whose page is read on the transport's own caller surface, then completed by the opened device's
@@ -434,7 +438,7 @@ pub(crate) fn facade_dispatch(
                 .and_then(|name| HOME_SERVER_DOORS.iter().find(|(row, _)| *row == name))
             {
                 Some((_, home_door)) => format!(
-                    "{home_door}(actor, class, auth.verified_slip().cloned(), auth.destination(), call.room_turn()?, facade_input(value)?, call.home_caller())"
+                    "{home_door}(actor, class, auth.verified_slip().cloned(), auth.destination(), call.room_turn()?, facade_input(value)?, call.home_caller(), server.vault().model_call_keeps_no_record_for(auth.off_record_session(), crate::api::call_receipt::request_principal(auth)))"
                 ),
                 None => format!(
                     "{}_listing(actor, class, auth.verified_slip().cloned(), auth.locality(), call.room_turn()?, facade_input(value)?)",

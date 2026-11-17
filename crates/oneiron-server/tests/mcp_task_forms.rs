@@ -19,14 +19,18 @@
 //!   A question asked beside it is, and the status line names both.
 //! - A poll that does not declare form elicitation sees `working` and the
 //!   count.
-//! - An ask the agent raised before the run began is not the run's, and a
-//!   question that offers no option to choose is never a form's.
+//! - A run's form lists only the asks raised in the run's own attempts: an
+//!   ask raised outside any run, or in another run of the same agent that
+//!   overlaps it, is not the run's, and an accept on the form answers
+//!   nothing of it. A question that offers no option to choose, or whose
+//!   class requires sources (an option alone would settle it unknown), is
+//!   never a form's.
 //!
 //! Run with: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked
 //! -p oneiron-server --all-features --features oneiron/test-support
 //! --test mcp_task_forms`.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use axum::Router;
@@ -34,7 +38,7 @@ use axum::body::{Body, to_bytes};
 use axum::http::Request;
 use oneiron::agent_def::workflow::WorkflowDefinition;
 use oneiron::agent_dispatch::AgentDispatcher;
-use oneiron::attempt_queue::AttemptId;
+use oneiron::attempt_queue::{AttemptId, AttemptQueue};
 use oneiron::authority::{CapabilitySlip, HostSlipIssuer, MachineRole, holder_proof_challenge};
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::federation::Scope;
@@ -44,14 +48,14 @@ use oneiron::policy_manifest_doors::{
 };
 use oneiron::registry::ENTITY_TYPE_TURN;
 use oneiron::task_verb::{
-    ConsultPayloadRef, TaskAskHandle, TaskAskOption, TaskAskOptionId, TaskAskQuestion, TaskAskSpec,
-    TaskAskStatus, TaskAskTarget,
+    ConsultPayloadRef, HostBinding, TaskAskClass, TaskAskDefault, TaskAskHandle, TaskAskOption,
+    TaskAskOptionId, TaskAskQuestion, TaskAskSpec, TaskAskStatus, TaskAskTarget,
 };
 use oneiron::test_doors::label_writers::embedded_owner;
 use oneiron::test_doors::verb_hook_ask::HookAsk;
 use oneiron::{EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig};
 use oneiron_server::mcp::MCP_TOOL_ARGS_SCHEMA_VERSION;
-use oneiron_server::test_doors::workflow_park::{claim_step, park_step};
+use oneiron_server::test_doors::workflow_park::{StepTry, claim_step, park_step};
 use oneiron_server::{
     ENGINE_THREAD_STACK_BYTES, build_app, config::SyncServerConfig, server::SyncServer,
 };
@@ -277,21 +281,113 @@ impl Fixture {
             .ok_or_else(|| format!("tasks/update answers: {reply}"))?)
     }
 
-    /// The step's agent asks the owner one question about the TURN under
-    /// `intent_key`, at `revision`, with the two options.
-    fn ask(&self, intent_key: &str, label: &str, revision: u64) -> TestResult<TaskAskHandle> {
-        self.ask_offering(intent_key, label, revision, &OPTIONS)
+    /// Claims the run `root`'s step as the pump does: its first try, leased,
+    /// whose agent's asks are raised in it.
+    fn claim(&self, root: AttemptId) -> TestResult<StepTry> {
+        let now = self.vault.now_recorded_at();
+        Ok(
+            claim_step(&self.vault, root, now, ANSWERED_USES)?
+                .ok_or("the step's first try runs")?,
+        )
     }
 
-    /// The step's agent asks the owner one question about the TURN under
-    /// `intent_key`, at `revision`, offering `options`.
+    /// The one open run's step, claimed ([`Self::claim`]).
+    fn step(&self) -> TestResult<StepTry> {
+        self.claim(self.open_root()?)
+    }
+
+    /// The step's agent asks the owner, in the try `step`, one question
+    /// about the TURN under `intent_key`, at `revision`, with the two
+    /// options.
+    fn ask(
+        &self,
+        step: &StepTry,
+        intent_key: &str,
+        label: &str,
+        revision: u64,
+    ) -> TestResult<TaskAskHandle> {
+        self.ask_offering(step, intent_key, label, revision, &OPTIONS)
+    }
+
+    /// The step's agent asks the owner, in the try `step`, one question
+    /// about the TURN under `intent_key`, at `revision`, offering `options`.
     fn ask_offering(
         &self,
+        step: &StepTry,
         intent_key: &str,
         label: &str,
         revision: u64,
         options: &[&str],
     ) -> TestResult<TaskAskHandle> {
+        let spec = self.spec_offering(intent_key, label, revision, options)?;
+        self.raise(Some(step), &spec)
+    }
+
+    /// The step's agent asks the owner one question about the TURN under
+    /// `intent_key`, with the two options, outside any run: no host bound a
+    /// try it runs in.
+    fn ask_outside_run(&self, intent_key: &str, label: &str) -> TestResult<TaskAskHandle> {
+        let spec = self.spec_offering(intent_key, label, 1, &OPTIONS)?;
+        self.raise(None, &spec)
+    }
+
+    /// The step's agent asks the owner, in the try `step`, one question
+    /// about the TURN under `intent_key`, with the two options, under a
+    /// class that requires the TURN itself as a source of every word.
+    fn ask_needing_sources(
+        &self,
+        step: &StepTry,
+        intent_key: &str,
+        label: &str,
+    ) -> TestResult<TaskAskHandle> {
+        let mut spec = self.spec_offering(intent_key, label, 1, &OPTIONS)?;
+        let turn = ConsultPayloadRef::Turn(self.question);
+        spec.class = Some(TaskAskClass {
+            key: "forms-sourced".into(),
+            version: 1,
+            governance: false,
+            deadline_seconds: 3600,
+            allowed_recipients: BTreeSet::from([self.owner]),
+            required_people: BTreeSet::new(),
+            minimum_responses: 1,
+            required_sources: BTreeSet::from([turn]),
+            decision: None,
+            disclosure: BTreeMap::from([(self.owner, BTreeSet::from([turn]))]),
+            fallback: BTreeSet::from([
+                TaskAskDefault::Proceed,
+                TaskAskDefault::Hold,
+                TaskAskDefault::AskMe,
+            ]),
+            guest_fact_limit: None,
+            soft_confirm_surface: None,
+            remind: Vec::new(),
+        });
+        self.raise(Some(step), &spec)
+    }
+
+    /// The agent's `tasks.ask` of `spec`: in the try `step` when one is
+    /// given, bound as a host binds its running try (`with_task_host`, from
+    /// the leased row), else outside any run.
+    fn raise(&self, step: Option<&StepTry>, spec: &TaskAskSpec) -> TestResult<TaskAskHandle> {
+        let mut memory = self.vault.memory(self.agent, EdgeActorClass::Agent);
+        if let Some(step) = step {
+            let leased = AttemptQueue::new(&self.vault)
+                .get(step.leaf)?
+                .ok_or("the claimed try is kept")?;
+            memory = memory.with_task_host(HostBinding::from_leased(&leased, None)?);
+        }
+        Ok(memory.tasks_ask(spec)?.handle)
+    }
+
+    /// The spec of one question the step's agent asks the owner about the
+    /// TURN under `intent_key`, at `revision`, offering `options`.
+    fn spec_offering(
+        &self,
+        intent_key: &str,
+        label: &str,
+        revision: u64,
+        options: &[&str],
+    ) -> TestResult<TaskAskSpec> {
         let mut what = TaskAskQuestion::new(ConsultPayloadRef::Turn(self.question));
         what.revision = revision;
         what.label = Some(label.to_owned());
@@ -306,11 +402,7 @@ impl Fixture {
             Default::default(),
         );
         spec.intent_key = intent_key.to_owned();
-        Ok(self
-            .vault
-            .memory(self.agent, EdgeActorClass::Agent)
-            .tasks_ask(&spec)?
-            .handle)
+        Ok(spec)
     }
 
     /// An ask's status, as its asker reads it.
@@ -451,8 +543,9 @@ fn open_asks_make_the_task_input_required_with_one_form() -> TestResult {
     on_engine_stack(|| async {
         let fixture = Fixture::new()?;
         let task = fixture.task("forms-open").await?;
-        let first = fixture.ask("forms-open-a", "Ship the notes?", 1)?;
-        let second = fixture.ask("forms-open-b", "Tag the release?", 1)?;
+        let step = fixture.step()?;
+        let first = fixture.ask(&step, "forms-open-a", "Ship the notes?", 1)?;
+        let second = fixture.ask(&step, "forms-open-b", "Tag the release?", 1)?;
 
         let polled = fixture.get(&task, Elicitation::Form).await?;
         assert_eq!(polled["status"], "input_required", "{polled}");
@@ -498,8 +591,9 @@ fn an_accepted_form_answers_each_ask_as_evidence_not_approval() -> TestResult {
     on_engine_stack(|| async {
         let fixture = Fixture::new()?;
         let task = fixture.task("forms-accept").await?;
-        let first = fixture.ask("forms-accept-a", "Ship the notes?", 1)?;
-        let second = fixture.ask("forms-accept-b", "Tag the release?", 1)?;
+        let step = fixture.step()?;
+        let first = fixture.ask(&step, "forms-accept-a", "Ship the notes?", 1)?;
+        let second = fixture.ask(&step, "forms-accept-b", "Tag the release?", 1)?;
         let (key, _) = form(&fixture.get(&task, Elicitation::Form).await?)?;
         let gate_decisions = fixture.vault.gate_decisions(1_000)?.len();
 
@@ -546,8 +640,9 @@ fn a_declined_form_voids_the_callers_seats_and_the_run_goes_on() -> TestResult {
     on_engine_stack(|| async {
         let fixture = Fixture::new()?;
         let task = fixture.task("forms-decline").await?;
-        let first = fixture.ask("forms-decline-a", "Ship the notes?", 1)?;
-        let second = fixture.ask("forms-decline-b", "Tag the release?", 1)?;
+        let step = fixture.step()?;
+        let first = fixture.ask(&step, "forms-decline-a", "Ship the notes?", 1)?;
+        let second = fixture.ask(&step, "forms-decline-b", "Tag the release?", 1)?;
         let (key, _) = form(&fixture.get(&task, Elicitation::Form).await?)?;
 
         let updated = fixture
@@ -582,8 +677,25 @@ fn a_declined_form_voids_the_callers_seats_and_the_run_goes_on() -> TestResult {
 fn a_cancelled_form_stops_the_run() -> TestResult {
     on_engine_stack(|| async {
         let fixture = Fixture::new()?;
+        let hook = HookAsk::on_verb(
+            &fixture.vault,
+            fixture.owner,
+            &fixture.owner_proof,
+            "self.use",
+        )?;
         let task = fixture.task("forms-cancel").await?;
-        let ask = fixture.ask("forms-cancel-a", "Ship the notes?", 1)?;
+        let step = fixture.step()?;
+        let ask = fixture.ask(&step, "forms-cancel-a", "Ship the notes?", 1)?;
+        // The try then parks on its hook's approval, so the cancel stops the
+        // step at once; a try a worker still holds would only be asked to
+        // land.
+        let approval = hook.ask(&fixture.vault, &step.actor, step.next_use)?;
+        park_step(
+            &fixture.vault,
+            &step,
+            approval,
+            fixture.vault.now_recorded_at(),
+        )?;
         let (key, _) = form(&fixture.get(&task, Elicitation::Form).await?)?;
 
         let updated = fixture
@@ -606,13 +718,14 @@ fn a_form_key_from_an_old_round_is_ignored() -> TestResult {
     on_engine_stack(|| async {
         let fixture = Fixture::new()?;
         let task = fixture.task("forms-round").await?;
-        let first = fixture.ask("forms-round-a", "Ship the notes?", 1)?;
-        let second = fixture.ask("forms-round-b", "Tag the release?", 1)?;
+        let step = fixture.step()?;
+        let first = fixture.ask(&step, "forms-round-a", "Ship the notes?", 1)?;
+        let second = fixture.ask(&step, "forms-round-b", "Tag the release?", 1)?;
         let (old_key, _) = form(&fixture.get(&task, Elicitation::Form).await?)?;
 
         // The agent asks the first question again, changed: a new ask at
         // revision 2.
-        let revised = fixture.ask("forms-round-a-2", "Ship the notes today?", 2)?;
+        let revised = fixture.ask(&step, "forms-round-a-2", "Ship the notes today?", 2)?;
         let (new_key, properties) = form(&fixture.get(&task, Elicitation::Form).await?)?;
         assert_ne!(new_key, old_key, "a changed question set is a new form");
         assert!(
@@ -681,9 +794,26 @@ fn an_approval_wait_is_never_a_form() -> TestResult {
             "the hook's ask is named nowhere in the task: {polled}"
         );
 
-        // A question the agent asks beside it is a form's; the approval still
-        // is not, and the status line names both.
-        let question = fixture.ask("forms-approval-a", "Ship the notes?", 1)?;
+        // A question the agent asked in its try before the try parked on the
+        // approval is a form's; the approval still is not, and the status
+        // line names both.
+        let fixture = Fixture::new()?;
+        let hook = HookAsk::on_verb(
+            &fixture.vault,
+            fixture.owner,
+            &fixture.owner_proof,
+            "self.use",
+        )?;
+        let task = fixture.task("forms-approval-beside").await?;
+        let step = fixture.step()?;
+        let question = fixture.ask(&step, "forms-approval-a", "Ship the notes?", 1)?;
+        let approval = hook.ask(&fixture.vault, &step.actor, step.next_use)?;
+        park_step(
+            &fixture.vault,
+            &step,
+            approval,
+            fixture.vault.now_recorded_at(),
+        )?;
         let polled = fixture.get(&task, Elicitation::Form).await?;
         assert_eq!(polled["status"], "input_required", "{polled}");
         assert_eq!(
@@ -709,8 +839,9 @@ fn a_client_without_form_elicitation_sees_working() -> TestResult {
     on_engine_stack(|| async {
         let fixture = Fixture::new()?;
         let task = fixture.task("forms-plain").await?;
-        fixture.ask("forms-plain-a", "Ship the notes?", 1)?;
-        fixture.ask("forms-plain-b", "Tag the release?", 1)?;
+        let step = fixture.step()?;
+        fixture.ask(&step, "forms-plain-a", "Ship the notes?", 1)?;
+        fixture.ask(&step, "forms-plain-b", "Tag the release?", 1)?;
 
         for elicitation in [Elicitation::None, Elicitation::UrlOnly] {
             let polled = fixture.get(&task, elicitation).await?;
@@ -729,12 +860,15 @@ fn a_client_without_form_elicitation_sees_working() -> TestResult {
 fn an_ask_from_before_the_run_or_with_no_choice_is_never_its_question() -> TestResult {
     on_engine_stack(|| async {
         let fixture = Fixture::new()?;
-        let earlier = fixture.ask("forms-scope-earlier", "Ship last week's notes?", 1)?;
+        // The agent asks before the run, outside any try a host bound.
+        let earlier = fixture.ask_outside_run("forms-scope-earlier", "Ship last week's notes?")?;
         // The run begins a recorded second after the agent's earlier ask.
         tokio::time::sleep(std::time::Duration::from_millis(1_100)).await;
         let task = fixture.task("forms-scope").await?;
-        let choiceless = fixture.ask_offering("forms-scope-open", "Anything else?", 1, &[])?;
-        let plain = fixture.ask("forms-scope-plain", "Tag the release?", 1)?;
+        let step = fixture.step()?;
+        let choiceless =
+            fixture.ask_offering(&step, "forms-scope-open", "Anything else?", 1, &[])?;
+        let plain = fixture.ask(&step, "forms-scope-plain", "Tag the release?", 1)?;
 
         let polled = fixture.get(&task, Elicitation::Form).await?;
         assert_eq!(polled["status"], "input_required", "{polled}");
@@ -742,7 +876,7 @@ fn an_ask_from_before_the_run_or_with_no_choice_is_never_its_question() -> TestR
         let (_, properties) = form(&polled)?;
         assert!(
             !properties.contains_key(&property(earlier, 1)),
-            "an ask raised before the run began is not the run's: {polled}"
+            "an ask raised outside the run's attempts is not the run's: {polled}"
         );
         assert!(
             !properties.contains_key(&property(choiceless, 1)),
@@ -752,6 +886,105 @@ fn an_ask_from_before_the_run_or_with_no_choice_is_never_its_question() -> TestR
             properties.keys().cloned().collect::<BTreeSet<_>>(),
             BTreeSet::from([property(plain, 1)]),
             "{polled}"
+        );
+        Ok(())
+    })
+}
+
+#[test]
+fn a_question_whose_class_requires_sources_is_never_a_form_question() -> TestResult {
+    on_engine_stack(|| async {
+        let fixture = Fixture::new()?;
+        let task = fixture.task("forms-sources").await?;
+        let step = fixture.step()?;
+        let sourced =
+            fixture.ask_needing_sources(&step, "forms-sources-cited", "Ship the cited notes?")?;
+        let plain = fixture.ask(&step, "forms-sources-plain", "Tag the release?", 1)?;
+
+        let polled = fixture.get(&task, Elicitation::Form).await?;
+        assert_eq!(polled["status"], "input_required", "{polled}");
+        assert_eq!(polled["statusMessage"], "waiting on 1 question", "{polled}");
+        let (_, properties) = form(&polled)?;
+        // A form answers with an option alone: a word that names none of
+        // the class's required sources would settle the ask as unknown.
+        assert_eq!(
+            properties.keys().cloned().collect::<BTreeSet<_>>(),
+            BTreeSet::from([property(plain, 1)]),
+            "{polled}"
+        );
+        assert!(
+            !polled.to_string().contains(&sourced.group_ref.to_hex()),
+            "the source-required ask is named nowhere in the task: {polled}"
+        );
+        assert!(
+            !matches!(fixture.status(sourced)?, TaskAskStatus::Settled(_)),
+            "the source-required ask stays open for an answer that names its sources"
+        );
+        Ok(())
+    })
+}
+
+#[test]
+fn a_runs_form_lists_only_the_asks_raised_in_its_own_attempts() -> TestResult {
+    on_engine_stack(|| async {
+        let fixture = Fixture::new()?;
+        let first_task = fixture.task("forms-runs-a").await?;
+        let first_root = fixture.open_root()?;
+        let second_task = fixture.task("forms-runs-b").await?;
+        let second_root = AgentDispatcher::new(&fixture.vault)
+            .open_workflow_roots()?
+            .into_iter()
+            .find(|root| *root != first_root)
+            .ok_or("the second dispatch opens a second run")?;
+        // One agent runs both steps: two overlapping task-less runs, each
+        // asking the owner in its own try.
+        let first_step = fixture.claim(first_root)?;
+        let second_step = fixture.claim(second_root)?;
+        let first = fixture.ask(&first_step, "forms-runs-a-q", "Ship the notes?", 1)?;
+        let second = fixture.ask(&second_step, "forms-runs-b-q", "Tag the release?", 1)?;
+
+        for (task, own, other) in [(&first_task, first, second), (&second_task, second, first)] {
+            let polled = fixture.get(task, Elicitation::Form).await?;
+            assert_eq!(polled["status"], "input_required", "{polled}");
+            assert_eq!(polled["statusMessage"], "waiting on 1 question", "{polled}");
+            let (_, properties) = form(&polled)?;
+            assert_eq!(
+                properties.keys().cloned().collect::<BTreeSet<_>>(),
+                BTreeSet::from([property(own, 1)]),
+                "a run's form lists the asks of its own attempts only: {polled}"
+            );
+            assert!(
+                !polled.to_string().contains(&other.group_ref.to_hex()),
+                "the other run's ask is named nowhere in the task: {polled}"
+            );
+        }
+
+        // An accept on the first run's form that names the second run's ask
+        // answers only the first run's own.
+        let (key, _) = form(&fixture.get(&first_task, Elicitation::Form).await?)?;
+        let updated = fixture
+            .update(
+                &first_task,
+                &key,
+                json!({
+                    "action": "accept",
+                    "content": {
+                        (property(first, 1)): "shipped",
+                        (property(second, 1)): "held",
+                    },
+                }),
+            )
+            .await?;
+        assert_eq!(updated["resultType"], "complete", "{updated}");
+        let first_status = fixture.status(first)?;
+        assert!(
+            settled_on(&first_status, fixture.owner, "shipped"),
+            "the first run's ask holds the owner's word: {first_status:?}"
+        );
+        let second_status = fixture.status(second)?;
+        assert!(
+            matches!(second_status, TaskAskStatus::Pending { .. }),
+            "the second run's ask is not the first run's form's to answer: {second_status:?}"
         );
         Ok(())
     })

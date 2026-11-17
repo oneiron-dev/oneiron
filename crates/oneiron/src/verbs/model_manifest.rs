@@ -1,8 +1,7 @@
 //! Embedded-owner projection of the model-manifest and slot-route doors.
 use crate::llm::manifest::ModelManifest;
 use crate::llm::manifest::doors::{
-    ModelManifestReplace, ModelRoleRead, ModelRoleReceipt, ModelRouteRead, ModelRouteReplace,
-    ModelRouteView,
+    ModelManifestReplace, ModelRoleRead, ModelRoleReceipt, ModelRouteRead, ModelRouteView,
 };
 use crate::memory::{Memory, MemoryResult};
 
@@ -29,16 +28,6 @@ pub fn read_model_route(
     Ok(memory
         .vault()
         .model_route_as_owner(&memory.embedded_owner("vault.models.routes.read")?, input)?)
-}
-
-pub fn replace_model_route(
-    memory: &Memory<'_>,
-    input: ModelRouteReplace,
-) -> MemoryResult<ModelRouteView> {
-    Ok(memory.vault().replace_model_route_as_owner(
-        &memory.embedded_owner("vault.models.routes.replace")?,
-        input,
-    )?)
 }
 
 pub fn read_model_role(
