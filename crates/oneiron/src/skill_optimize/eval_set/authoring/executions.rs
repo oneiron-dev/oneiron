@@ -15,6 +15,9 @@
 //! whose lease lapsed, and whose attempt another host leased again, changes
 //! no record.
 
+#[cfg(oneiron_test_support)]
+use std::sync::atomic::{AtomicUsize, Ordering};
+
 use serde::{Deserialize, Serialize};
 
 use super::{EvalAuthoringInventory, EvalAuthoringPlan, EvalAuthoringReport};
@@ -42,6 +45,39 @@ const EXECUTIONS: SideTable<EntityId, EvalAuthoringExecution, Named> =
 
 /// Why an agent with no conferring Grant is refused.
 const NO_GRANT: &str = "no live Grant from a live owner names this agent and lists the verb";
+
+/// Test-only fault (FIX EVAL-AUTHORING-EXECUTE-UNRECORDED-END): while
+/// armed, this many execution-record writes fail instead of writing, as a
+/// storage-write fault would. Armed through the
+/// `eval_authoring_execution_fault` test door; queue settle writes are
+/// unaffected.
+#[cfg(oneiron_test_support)]
+static FAIL_EXECUTION_WRITES: AtomicUsize = AtomicUsize::new(0);
+
+/// Arms the execution-record write fault: the next `count` record ends
+/// and recoveries fail. `0` disarms. The
+/// `eval_authoring_execution_fault` test door calls it.
+#[cfg(oneiron_test_support)]
+pub(crate) fn fail_execution_writes(count: usize) {
+    FAIL_EXECUTION_WRITES.store(count, Ordering::SeqCst);
+}
+
+/// Fails when the execution-record write fault is armed, consuming one
+/// armed failure.
+#[cfg(oneiron_test_support)]
+fn fail_armed_execution_write() -> Result<()> {
+    let armed = FAIL_EXECUTION_WRITES
+        .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |count| {
+            count.checked_sub(1)
+        })
+        .is_ok();
+    if armed {
+        return Err(Error::Io(std::io::Error::other(
+            "the armed eval-authoring execution write fault fired",
+        )));
+    }
+    Ok(())
+}
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::skill_optimize::eval_set::authoring::executions::{
@@ -323,6 +359,8 @@ impl Vault {
     ) -> Result<Option<EvalAuthoringExecution>> {
         self.require_coach_attempt(attempt, COACH_EVAL_AUTHORING_FACET)?;
         let id = EntityId::from_bytes(*attempt.status.attempt.id.as_bytes())?;
+        #[cfg(oneiron_test_support)]
+        fail_armed_execution_write()?;
         self.with_write_txn_grouped(|txn| {
             require_live_lease_in_txn(self, txn, attempt)?;
             recover_in_txn(self, txn, &id, now)
@@ -371,6 +409,8 @@ impl Vault {
         end: ExecutionEnd,
         now: u64,
     ) -> Result<EvalAuthoringExecution> {
+        #[cfg(oneiron_test_support)]
+        fail_armed_execution_write()?;
         self.with_write_txn_grouped(|txn| {
             require_live_lease_in_txn(self, txn, attempt)?;
             let mut execution = EXECUTIONS.get(self, txn, id)?.ok_or_else(not_requested)?;

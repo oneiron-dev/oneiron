@@ -259,6 +259,7 @@ pub fn consolidate_tagged_turn(
                 conversation_ref: EntityId::now().to_hex(),
                 turn_ref: Some(turn.to_hex()),
                 thread_audience: None,
+                project: None,
                 messages: vec![WitnessMessage {
                     id: Some(EntityId::now().to_hex()),
                     author: WitnessAuthor::User,
@@ -355,6 +356,7 @@ pub(super) fn witness_user_turn(
             conversation_ref: conversation.to_hex(),
             turn_ref: Some(turn.to_hex()),
             thread_audience: None,
+            project: None,
             messages: vec![WitnessMessage {
                 id: Some(message.to_hex()),
                 author: WitnessAuthor::User,

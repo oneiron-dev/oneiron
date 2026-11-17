@@ -83,6 +83,20 @@ impl<'vault> ScopedRead<'vault> {
         )? {
             return Ok(false);
         }
+        // A room's row and its turns are the room's structure: a hit shows
+        // only to a reader the room itself admits, as every door that serves
+        // it does (L9-52, Engine RULING L9-52-ROOM-STRUCTURE = A).
+        if matches!(
+            row.entity_type,
+            crate::registry::ENTITY_TYPE_TURN | crate::registry::ENTITY_TYPE_CONVERSATION
+        ) && !self.vault.room_structure_admitted_held_in(
+            self,
+            txn,
+            id,
+            authority.room_verdicts(),
+        )? {
+            return Ok(false);
+        }
         if row.entity_type != crate::registry::ENTITY_TYPE_TURN {
             return Ok(true);
         }

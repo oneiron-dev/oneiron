@@ -13,7 +13,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 |---|---|---|---|---|---|
 | `build.rs` | src | s | — | — | Generates the SDK outputs oneiron-uniffi includes at build time (crates/oneiron-sdk-build) |
 | `src/bin/uniffi_bindgen.rs` | src | s | — | — | Local bindgen entry point, behind the `bindgen-cli` feature |
-| `src/codec.rs` | src | XL | 18 crate-vis | — | Lift and lower codecs between this crate's UniFFI records and the engine types the shared… |
+| `src/codec.rs` | src | XL | 19 crate-vis | — | Lift and lower codecs between this crate's UniFFI records and the engine types the shared… |
 | `src/codec/ai_answers.rs` | src | s | 2 crate-vis | — | Owned provider-usage JSON conversion for AI answer outputs (FIX 12936) |
 | `src/codec/ai_options.rs` | src | s | — | — | Owned AI-options output lift for opaque model option JSON (FIX 12936) |
 | `src/codec/browser_answers.rs` | src | s | 2 crate-vis | — | Owned JSON in browser-answer manifests and nested library batches |
