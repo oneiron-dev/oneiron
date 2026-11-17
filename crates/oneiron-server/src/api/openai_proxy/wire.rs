@@ -162,6 +162,11 @@ pub(super) fn upstream_error(failure: LlmError) -> Response {
             "api_error",
             "world_route_not_admitted",
         ),
+        LlmError::Retryable(RetryableLlmError::OutsideHours { .. }) => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            "api_error",
+            "outside_hours",
+        ),
         LlmError::Retryable(_) => (StatusCode::BAD_GATEWAY, "api_error", "upstream_error"),
     };
     let timing = super::timing::RetryTiming::of(&failure);
