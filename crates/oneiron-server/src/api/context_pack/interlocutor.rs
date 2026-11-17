@@ -291,12 +291,19 @@ fn bound_room_owner(
 /// The room member an agent credential reads as, when it names one of the
 /// vault's own agents in the room. Its own credential's read already
 /// bounds it, so like the owner it adds no clearance term (ARCH-0067 §8).
+/// A transferred slip is another holder's, acting on the agent's word, so
+/// it is not the agent reading on its own (as the inquiry and
+/// guest-document doors hold it).
 fn own_agent_reader(
     auth: &CoreAuth,
     members: &[oneiron::EntityId],
     parties: &[oneiron::disclosure::RoomPartyEntry],
 ) -> Option<oneiron::EntityId> {
-    if auth.actor_class() != Some("agent") {
+    if auth.actor_class() != Some("agent")
+        || auth
+            .verified_slip()
+            .is_some_and(|proof| proof.is_transferred())
+    {
         return None;
     }
     let id = oneiron::EntityId::from_hex(auth.principal_ref()?).ok()?;
