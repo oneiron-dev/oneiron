@@ -1,6 +1,12 @@
 //! Typed policy reads, owner edits and inert untrusted contributions.
 //! The owner writer is the same one `install_owner_policy_manifest` takes;
 //! composition and validation remain the existing manifest resolver's.
+mod affect_lookup;
+pub(crate) use affect_lookup::{AFFECT_LOOKUP_KEY, affect_lookup_in_txn, decode_affect_lookup};
+pub use affect_lookup::{
+    AffectLookupConfigureRequest, AffectLookupPolicy, AffectLookupReceipt, AffectLookupView,
+    NearestStateMetric, affect_lookup_as_owner, configure_affect_lookup_as_owner,
+};
 mod agent_verb_classes;
 pub(crate) use agent_verb_classes::{
     AGENT_VERB_CLASSES_KEY, agent_verb_class_rows_for_store_in_txn, agent_verb_class_rows_of_body,
