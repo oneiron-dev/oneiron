@@ -11,6 +11,8 @@ use super::conflict::{
 };
 use super::wake_plan::PreparedWake;
 
+mod bound_read;
+mod extraction_scope;
 mod held;
 mod nightly_link_grant;
 mod parts;
@@ -18,9 +20,11 @@ mod pins;
 mod prior;
 mod restated;
 mod root;
+pub(crate) use bound_read::{BoundBranchInput, BoundBranchRead, project_bound_branch};
 pub(crate) use nightly_link_grant::require_nightly_link_write;
 pub use nightly_link_grant::{NightlyLinkGrantRequest, mint_nightly_link_grant};
 pub(super) use pins::{BranchPins, OwnedPins};
+pub(super) use prior::prior_keys;
 pub(super) use prior::standing;
 use root::ResourceOrigin;
 pub(super) mod signals;
@@ -45,6 +49,8 @@ use crate::registry::{
 };
 use crate::write_envelope::WriteActor;
 use crate::{Result, Vault};
+#[cfg(oneiron_test_support)]
+pub(crate) use bound_read::extraction_routing_door;
 use oneiron_model::llm::{LlmResponse, Scope, ScopeResource};
 pub use write::ScopedConsolidationWrite;
 pub(crate) use write::{ConsolidationFence, RowRevision};

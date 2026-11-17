@@ -775,6 +775,23 @@ pub(crate) fn conflict_review_held_in(
     live_review_bound(vault, txn, actor, HOLD_VERB, subject)
 }
 
+/// The owner's live hold on the Dreamer's conflict review of `subject`, its
+/// own or the whole vault's, by the Grant's ref. It is the one hold an owner
+/// mints ([`Memory::hold_dreamer_conflict_review`]), so the open conflicts
+/// page asks it for every reader but the owner: a held subject's conflicts
+/// are the owner's to answer.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn dreamer_conflict_review_held_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    subject: EntityId,
+) -> Result<Option<String>, Error> {
+    live_review_bound(vault, txn, dreamer_principal()?, HOLD_VERB, subject)
+}
+
 /// The live standing Grant of `verb` naming `actor` on `subject`, its own or
 /// the whole vault's, if one is live.
 fn live_review_bound(
