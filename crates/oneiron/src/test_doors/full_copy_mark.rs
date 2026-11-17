@@ -1,7 +1,7 @@
-//! Fixture doors for the peer-route full-copy test (L7-47): a machine the
-//! owner marks as their own, another machine's home candidacy and full-copy
-//! mark signed under that machine's own key, and the fold reads the peer
-//! order runs on.
+//! Fixture doors for the full-copy tests (L7-47): a machine the owner marks
+//! as their own, another machine's home candidacy and full-copy mark signed
+//! under that machine's own key, the fold reads the peer order runs on, and
+//! the mark a connection's first round writes.
 
 use ed25519_dalek::{Signer, SigningKey};
 
@@ -180,6 +180,20 @@ pub fn sign_full_copy_mark(
 /// A fold that does not read; storage errors.
 pub fn holds_full_copy(vault: &Vault, machine: EntityId) -> Result<bool> {
     Ok(vault.authority_fold()?.holds_full_copy(machine))
+}
+
+/// The full-copy mark this install's connection writes once a home session's
+/// first round completes under sync all, with `configured` the host's
+/// configured mode (L7-47).
+///
+/// # Errors
+///
+/// A mark the fold refuses; storage errors.
+pub fn mark_first_round_full_copy(
+    vault: &Vault,
+    configured: crate::sync::SyncResidenceMode,
+) -> Result<Option<AuthorityEntryHash>> {
+    vault.mark_first_round_full_copy(configured)
 }
 
 /// The peer order over `granted` in one snapshot: every machine that holds
