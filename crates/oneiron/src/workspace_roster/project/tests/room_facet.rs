@@ -30,6 +30,7 @@ fn note(subject: EntityId, value: &str) -> ClaimInput {
         occurred_at: None,
         learned_at: None,
         salience: None,
+        confidence_details: None,
     }
 }
 

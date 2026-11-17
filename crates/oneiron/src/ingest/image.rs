@@ -71,14 +71,47 @@ pub struct NormalizedIngestEntity {
     pub recognizer_locality: Option<LocalityRung>,
 }
 
-/// The statically registered image source uses process-global, once-set host
-/// injection doors rather than carrying generic recognizers in the registry.
-pub struct ImageIngestSource;
+/// One image normalization seat: what a single caller reads image text with.
+///
+/// A seat built with [`ImageIngestSource::new`] reads with the built-in OCR,
+/// or with the recognizer [`ImageIngestSource::with_text_recognizer`] gives
+/// it. It never sees a recognizer another caller registered for the process,
+/// so two seats in one process never share OCR state. Only the registry's
+/// shared seat falls back to the process default a host registered with
+/// [`register_image_text_recognizer`], for hosts that configure OCR once at
+/// startup.
+pub struct ImageIngestSource {
+    text_recognizer: Option<&'static dyn ImageTextRecognizer>,
+    /// Whether this seat falls back to the process default when it holds no
+    /// recognizer of its own. Only the registry's shared seat sets this.
+    process_default: bool,
+}
 
 impl ImageIngestSource {
     #[must_use]
     pub const fn new() -> Self {
-        Self
+        Self {
+            text_recognizer: None,
+            process_default: false,
+        }
+    }
+
+    /// The registry's shared seat: honors the process default for hosts that
+    /// registered one, else reads with the built-in OCR.
+    #[must_use]
+    pub(crate) const fn with_process_default() -> Self {
+        Self {
+            text_recognizer: None,
+            process_default: true,
+        }
+    }
+
+    /// This seat reads image text with `recognizer`, whatever any other seat
+    /// or the process default holds.
+    #[must_use]
+    pub fn with_text_recognizer(mut self, recognizer: &'static dyn ImageTextRecognizer) -> Self {
+        self.text_recognizer = Some(recognizer);
+        self
     }
 }
 
@@ -91,6 +124,11 @@ impl Default for ImageIngestSource {
 pub static RECOGNIZER: OnceLock<&'static dyn ImageTextRecognizer> = OnceLock::new();
 pub static CAPTION_RECOGNIZER: OnceLock<&'static dyn ImageCaptionRecognizer> = OnceLock::new();
 
+/// Sets the process default the registry's shared seat reads image text
+/// with. Prefer giving each seat its own recognizer with
+/// [`ImageIngestSource::with_text_recognizer`]: the default is one slot per
+/// process, so a second registration fails and every shared-seat caller sees
+/// the first one.
 pub fn register_image_text_recognizer(
     recognizer: &'static dyn ImageTextRecognizer,
 ) -> Result<(), &'static str> {
@@ -208,16 +246,19 @@ impl IngestSource for ImageIngestSource {
     }
 
     fn normalize_binary(&self, bytes: &[u8]) -> IngestResult<NormalizedIngestBatch> {
-        normalize_image(
-            bytes,
-            image_text_recognizer()?,
-            CAPTION_RECOGNIZER.get().copied(),
-        )
+        let recognizer = if let Some(recognizer) = self.text_recognizer {
+            recognizer
+        } else if self.process_default {
+            image_text_recognizer()?
+        } else {
+            builtin_image_text_recognizer()?
+        };
+        normalize_image(bytes, recognizer, CAPTION_RECOGNIZER.get().copied())
     }
 }
 
-/// The OCR the ingest station reads image text with: the host's once one is
-/// registered, else the built-in one.
+/// The OCR the registry's shared seat reads image text with: the process
+/// default once a host registers one, else the built-in one.
 ///
 /// # Errors
 /// The built-in OCR cannot run without its models: it says so before any
@@ -226,6 +267,15 @@ pub(crate) fn image_text_recognizer() -> IngestResult<&'static dyn ImageTextReco
     if let Some(recognizer) = RECOGNIZER.get().copied() {
         return Ok(recognizer);
     }
+    builtin_image_text_recognizer()
+}
+
+/// The built-in OCR: what a seat with no recognizer of its own reads with.
+///
+/// # Errors
+/// The built-in OCR cannot run without its models: it says so before any
+/// decode, not after decoding an image to find out.
+fn builtin_image_text_recognizer() -> IngestResult<&'static dyn ImageTextRecognizer> {
     #[cfg(feature = "image-station-ocr")]
     ocr_model_paths()?;
     Ok(&DEFAULT_RECOGNIZER)

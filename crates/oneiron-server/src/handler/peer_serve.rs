@@ -43,6 +43,17 @@ use crate::error::{ApiError, ApiErrorDetails};
 use crate::protocol::ProtocolError;
 use crate::server::SyncServer;
 
+/// What the person at a refused device reads when this machine does not
+/// serve it because it is not marked as the owner's. The words are the UI
+/// session's (Engine TASK, 17 Nov 08:32): they say "device" and "yours". The
+/// log line and the receipt reason keep the engine's words.
+const NOT_MARKED_YOURS_REFUSAL: &str =
+    "This device can sync from your other devices only after you mark it as yours.";
+/// The next step under [`NOT_MARKED_YOURS_REFUSAL`].
+const NOT_MARKED_YOURS_NEXT_STEP: &str = "On a device that is already yours, open settings, then \
+                                          devices, and mark this one as yours. Then try again \
+                                          here.";
+
 /// One socket this machine serves as a peer, and its receipt.
 pub(super) struct PeerServe {
     receipt: PeerSyncReceipt,
@@ -112,11 +123,11 @@ pub(super) fn admit(
             "peer sync refused: the machine is not proved as one marked mine"
         );
         return Err(ApiError::new(
-            "peer sync refused: only a machine marked mine is served while the home is down",
+            NOT_MARKED_YOURS_REFUSAL,
             ApiErrorDetails::Forbidden {
                 required_scope: Some("mine_machine".to_owned()),
             },
-            ["Mark the machine as yours on the owner's surface, then dial it again."],
+            [NOT_MARKED_YOURS_NEXT_STEP],
         )
         .into_response());
     }

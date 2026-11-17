@@ -42,8 +42,25 @@ pub(crate) fn span_placed_for(reason: &str) -> bool {
 
 /// The spans of `text` the write door's text rules place, merged where they
 /// meet, in order: a private-key block, a blocklist entry, a provider key
-/// token, an assigned value under a credential name, and a recovery phrase.
+/// token, an assigned value under a credential name (under the provider's
+/// reason when it holds a provider key), and a recovery phrase.
 pub(super) fn secret_spans(text: &str) -> Vec<(Range<usize>, &'static str)> {
+    let providers = provider_token_spans(text);
+    // An assigned value that holds a provider key names that provider. Its
+    // span can run past the key's token (the NUL and DEL after a token in a
+    // binary blob's text run), and the longer span names the merged one, so
+    // the generic class would hide the provider (FIX
+    // REPO-MARK-BINARY-DETECTOR-CLASS).
+    let assignments: Vec<(Range<usize>, &'static str)> = shapes::assignment_spans(text)
+        .into_iter()
+        .map(|span| {
+            let reason = providers
+                .iter()
+                .find(|(key, _)| key.start < span.end && span.start < key.end)
+                .map_or(REASON_SENSITIVE_ENV, |(_, reason)| *reason);
+            (span, reason)
+        })
+        .collect();
     let spans: Vec<(Range<usize>, &'static str)> = shapes::private_key_block_spans(text)
         .into_iter()
         .map(|span| (span, REASON_PRIVATE_KEY))
@@ -52,12 +69,8 @@ pub(super) fn secret_spans(text: &str) -> Vec<(Range<usize>, &'static str)> {
                 .into_iter()
                 .map(|span| (span, REASON_BLOCKLIST)),
         )
-        .chain(provider_token_spans(text))
-        .chain(
-            shapes::assignment_spans(text)
-                .into_iter()
-                .map(|span| (span, REASON_SENSITIVE_ENV)),
-        )
+        .chain(providers)
+        .chain(assignments)
         // A recovery phrase takes one span per phrase (FIX 1099).
         .chain(
             shapes::mnemonic_spans(text)

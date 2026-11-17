@@ -292,6 +292,11 @@ and every local source change.
   hook, so a decode can ask for memory before it grows a buffer (FIX 7654). Provenance and the
   patch list are in `crates/oneiron-seal/vendor/README.md`. The `pkix-chain` 0.4.1 snapshot
   beside it is unmodified.
+- `pkix-path-builder` 0.3.2, `crates/oneiron-seal/vendor/pkix-path-builder-0.3.2` (Apache-2.0 OR
+  MIT): when every candidate path fails validation, a second search goes on past a trust anchor
+  that shares its DN with a pool intermediate under another key (FIX
+  PKIX-BUILDER-ANCHOR-DN-ENDS-SEARCH). pkix-chain and the organ host's seal evidence check both
+  build paths through it. Provenance and the patch list are in the same README.
 
 ## Licences and attribution
 

@@ -938,6 +938,8 @@ fn psych_profile_keeps_legacy_profile_claim_body_backward_compatible() {
             "scopeFacetId",
             "scopeProjectId",
             "scopeVersion",
+            "confBand",
+            "confBasis",
         ],
         "PsychProfile snapshots must preserve the pinned Claim body ABI"
     );
@@ -1696,6 +1698,7 @@ fn gate_receipt_horizon_does_not_block_later_retraction_of_a_live_claim() -> Res
         grant_ref: None,
         diff_handle: vec![0xAA],
         read_frontier_hash: [0xBB; 32],
+        context: Default::default(),
         redacted_at: None,
     };
     vault.with_write_txn(|txn| vault.store.append_gate_decision_in_txn(txn, &old))?;
@@ -3079,6 +3082,7 @@ fn expression_preference_claim_input(
         valid_from: Some(5),
         valid_to: None,
         salience: None,
+        confidence_details: None,
     }
 }
 
@@ -3105,13 +3109,19 @@ fn facade_generic_claim_writes_refuse_an_expression_preference() -> Result<()> {
         .commit(std::slice::from_ref(&input))
         .expect("commit reports per element")
     {
-        assert_eq!(receipt.approval, "rejected");
+        assert!(
+            matches!(receipt, crate::memory::CommitOutcome::Refused { .. }),
+            "{receipt:?}"
+        );
     }
     for receipt in facade
         .seed_claims(std::slice::from_ref(&input))
         .expect("seed reports per element")
     {
-        assert_eq!(receipt.approval, "rejected");
+        assert!(
+            matches!(receipt, crate::memory::CommitOutcome::Refused { .. }),
+            "{receipt:?}"
+        );
     }
 
     assert_eq!(
@@ -3464,15 +3474,13 @@ fn the_typed_memory_door_writes_and_reports_what_it_superseded() -> Result<()> {
     let human = non_owner_human(&vault);
     let memory = vault.memory(human.entity_ref(), EdgeActorClass::Human);
     let first = memory
-        .set_expression_preference(
-            &crate::memory::ExpressionPreferenceInput {
-                subject_ref: subject.to_hex(),
-                value: ExpressionPreferenceValue::Language("ja".to_owned()),
-                origin: ExpressionPreferenceOrigin::ExplicitUser,
-                valid_from: 1,
-            },
-            1,
-        )
+        .set_expression_preference(&crate::memory::ExpressionPreferenceInput {
+            subject_ref: subject.to_hex(),
+            value: ExpressionPreferenceValue::Language("ja".to_owned()),
+            origin: ExpressionPreferenceOrigin::ExplicitUser,
+            valid_from: 1,
+            occurred_at: Some(1),
+        })
         .expect("the typed door writes a fresh preference");
     assert!(
         first.superseded_short_ids.is_empty(),
@@ -3493,15 +3501,13 @@ fn the_typed_memory_door_writes_and_reports_what_it_superseded() -> Result<()> {
         .expect("the first write is in force");
 
     let second = memory
-        .set_expression_preference(
-            &crate::memory::ExpressionPreferenceInput {
-                subject_ref: subject.to_hex(),
-                value: ExpressionPreferenceValue::Language("en-US".to_owned()),
-                origin: ExpressionPreferenceOrigin::ExplicitUser,
-                valid_from: 2,
-            },
-            2,
-        )
+        .set_expression_preference(&crate::memory::ExpressionPreferenceInput {
+            subject_ref: subject.to_hex(),
+            value: ExpressionPreferenceValue::Language("en-US".to_owned()),
+            origin: ExpressionPreferenceOrigin::ExplicitUser,
+            valid_from: 2,
+            occurred_at: Some(2),
+        })
         .expect("the typed door writes a replacement");
     assert_eq!(
         second.superseded_short_ids.len(),
@@ -3517,7 +3523,7 @@ fn the_typed_memory_door_writes_and_reports_what_it_superseded() -> Result<()> {
     // And the read verb on the same surface agrees about who won.
     assert_eq!(
         memory
-            .expression_preferences(&subject.to_hex(), 2)
+            .expression_preferences(&subject.to_hex(), Some(2))
             .expect("the read verb resolves")
             .language
             .as_deref(),
@@ -3537,22 +3543,20 @@ fn the_typed_memory_door_retracts_and_restores_the_predecessor() {
     let memory = vault.memory(human.entity_ref(), EdgeActorClass::Human);
     for (language, at) in [("ja", 1), ("en-US", 2)] {
         memory
-            .set_expression_preference(
-                &crate::memory::ExpressionPreferenceInput {
-                    subject_ref: subject.to_hex(),
-                    value: ExpressionPreferenceValue::Language(language.to_owned()),
-                    origin: ExpressionPreferenceOrigin::ExplicitUser,
-                    valid_from: at,
-                },
-                at,
-            )
+            .set_expression_preference(&crate::memory::ExpressionPreferenceInput {
+                subject_ref: subject.to_hex(),
+                value: ExpressionPreferenceValue::Language(language.to_owned()),
+                origin: ExpressionPreferenceOrigin::ExplicitUser,
+                valid_from: at,
+                occurred_at: Some(at),
+            })
             .expect("the typed door writes");
     }
     // The facade's read hands back a REF, and the facade's retract takes one —
     // so the round trip needs no hex formatting in between. That is the whole
     // point of the surface speaking one vocabulary.
     let head_ref = memory
-        .expression_preferences(&subject.to_hex(), 2)
+        .expression_preferences(&subject.to_hex(), Some(2))
         .expect("the read verb resolves")
         .winning_refs
         .get(&ExpressionPreferenceKind::Language)
@@ -3565,7 +3569,7 @@ fn the_typed_memory_door_retracts_and_restores_the_predecessor() {
 
     assert_eq!(
         memory
-            .expression_preferences(&subject.to_hex(), 3)
+            .expression_preferences(&subject.to_hex(), Some(3))
             .expect("the read verb resolves")
             .language
             .as_deref(),
@@ -3580,15 +3584,13 @@ fn the_typed_door_refuses_when_the_gate_will_not_grant_auto() {
     // The fixture initially admits auto for this prefix.
     let memory = vault.memory(agent.entity_ref(), EdgeActorClass::Agent);
     let auto = memory
-        .set_expression_preference(
-            &crate::memory::ExpressionPreferenceInput {
-                subject_ref: subject.to_hex(),
-                value: ExpressionPreferenceValue::Language("ja".to_owned()),
-                origin: ExpressionPreferenceOrigin::Inferred,
-                valid_from: 1,
-            },
-            1,
-        )
+        .set_expression_preference(&crate::memory::ExpressionPreferenceInput {
+            subject_ref: subject.to_hex(),
+            value: ExpressionPreferenceValue::Language("ja".to_owned()),
+            origin: ExpressionPreferenceOrigin::Inferred,
+            valid_from: 1,
+            occurred_at: Some(1),
+        })
         .expect("the typed door writes");
     assert_eq!(auto.approval, ClaimApprovalStatus::Auto.as_str());
 
@@ -3601,15 +3603,13 @@ fn the_typed_door_refuses_when_the_gate_will_not_grant_auto() {
         .expect("the granted write is the standing head");
     let before = vault.get_raw(&head).expect("read").expect("head stored");
     put_proposed_only_expression_manifest(&vault);
-    let refused = memory.set_expression_preference(
-        &crate::memory::ExpressionPreferenceInput {
-            subject_ref: subject.to_hex(),
-            value: ExpressionPreferenceValue::Language("en-US".to_owned()),
-            origin: ExpressionPreferenceOrigin::Inferred,
-            valid_from: 2,
-        },
-        2,
-    );
+    let refused = memory.set_expression_preference(&crate::memory::ExpressionPreferenceInput {
+        subject_ref: subject.to_hex(),
+        value: ExpressionPreferenceValue::Language("en-US".to_owned()),
+        origin: ExpressionPreferenceOrigin::Inferred,
+        valid_from: 2,
+        occurred_at: Some(2),
+    });
     let err = refused.expect_err("a gate that will not grant auto refuses the write");
     assert_eq!(err.code, crate::memory::MEMORY_CODE_FORBIDDEN);
     assert_eq!(
@@ -3659,6 +3659,7 @@ fn a_proposed_preference_arriving_by_sync_never_wins_the_winners_read() -> Resul
             crate::registry::ENTITY_TYPE_CLAIM,
             TimeRange { start: 2, end: 2 },
             2,
+            None,
             &data,
         )
         .commit()?;
@@ -3681,15 +3682,13 @@ fn the_auto_or_refuse_denial_keeps_the_forbidden_classification() {
     put_proposed_only_expression_manifest(&vault);
 
     let err = memory
-        .set_expression_preference(
-            &crate::memory::ExpressionPreferenceInput {
-                subject_ref: subject.to_hex(),
-                value: ExpressionPreferenceValue::Language("ja".to_owned()),
-                origin: ExpressionPreferenceOrigin::Inferred,
-                valid_from: 1,
-            },
-            1,
-        )
+        .set_expression_preference(&crate::memory::ExpressionPreferenceInput {
+            subject_ref: subject.to_hex(),
+            value: ExpressionPreferenceValue::Language("ja".to_owned()),
+            origin: ExpressionPreferenceOrigin::Inferred,
+            valid_from: 1,
+            occurred_at: Some(1),
+        })
         .expect_err("a gate that will not grant auto refuses");
     assert_eq!(
         err.code,
@@ -3705,7 +3704,7 @@ fn a_retract_denial_keeps_the_forbidden_classification() -> Result<()> {
     let head = seed_agent_language_preference(&vault, &agent, subject, "en-US", 2)?;
     let head_ref = vault
         .memory(agent.entity_ref(), EdgeActorClass::Agent)
-        .expression_preferences(&subject.to_hex(), 3)
+        .expression_preferences(&subject.to_hex(), Some(3))
         .expect("the view reads")
         .winning_refs
         .get(&ExpressionPreferenceKind::Language)
@@ -3753,14 +3752,14 @@ fn a_hex_subject_that_names_nothing_is_not_found() {
     // A real subject with no preferences yet: an empty view, and that is the
     // honest answer for it.
     let empty = memory
-        .expression_preferences(&subject.to_hex(), 1)
+        .expression_preferences(&subject.to_hex(), Some(1))
         .expect("an existing subject reads");
     assert!(empty.language.is_none());
 
     // A well-formed id naming nothing: a different answer.
     let absent = EntityId::now();
     let err = memory
-        .expression_preferences(&absent.to_hex(), 1)
+        .expression_preferences(&absent.to_hex(), Some(1))
         .expect_err("a subject that is not there is not an empty subject");
     assert_eq!(
         err.code,
@@ -3933,15 +3932,13 @@ fn the_typed_memory_door_still_refuses_an_agent_explicit_user_write() {
     let (_temp, vault, subject, _human, agent) = expression_preference_fixture();
     let memory = vault.memory(agent.entity_ref(), EdgeActorClass::Agent);
 
-    let refused = memory.set_expression_preference(
-        &crate::memory::ExpressionPreferenceInput {
-            subject_ref: subject.to_hex(),
-            value: ExpressionPreferenceValue::Language("ja".to_owned()),
-            origin: ExpressionPreferenceOrigin::ExplicitUser,
-            valid_from: 1,
-        },
-        1,
-    );
+    let refused = memory.set_expression_preference(&crate::memory::ExpressionPreferenceInput {
+        subject_ref: subject.to_hex(),
+        value: ExpressionPreferenceValue::Language("ja".to_owned()),
+        origin: ExpressionPreferenceOrigin::ExplicitUser,
+        valid_from: 1,
+        occurred_at: Some(1),
+    });
 
     assert!(
         refused.is_err(),
@@ -4827,7 +4824,10 @@ fn relationship_candidate_stamps_and_rejects_unknown_deleted_or_wrong_kind() -> 
             2,
         )
         .commit()?;
-    assert_eq!(vault.get_claim(&id)?.unwrap().rel, Some(relationship));
+    assert_eq!(
+        vault.get_claim(&id)?.unwrap().rel,
+        Some(RelationshipSet::from([relationship]))
+    );
     let deleted = EntityId::now();
     vault.put_entity(
         &deleted,
