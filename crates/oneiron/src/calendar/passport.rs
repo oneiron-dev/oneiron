@@ -755,6 +755,12 @@ pub(crate) fn encode_passport_value(value: &CalendarPassportValue) -> rmpv::Valu
             ]),
         ));
     }
+    if let Some(since) = value.cancelled_since {
+        entries.push((
+            rmpv::Value::from("cancelled_since"),
+            rmpv::Value::from(since),
+        ));
+    }
     rmpv::Value::Map(entries)
 }
 
@@ -804,8 +810,6 @@ fn series_exception_with(
     Ok(false)
 }
 
-// FIX [LIBTEST-QUARANTINE-CALENDAR-PASSPORT-TESTS]: the lib test target's type check fails here (1 errors: E0063 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -828,9 +832,11 @@ mod tests {
             uid: uid.to_owned(),
             last_sequence: 3,
             content_hash: [7; 32],
+            source: None,
             direction: CalendarPassportDirection::Outbound,
             last_seen_at: 100,
             presence: CalendarPassportPresence::Live,
+            cancelled_since: None,
         };
         let claim = crate::ClaimBody::new(
             PREDICATE_CALENDAR_PASSPORT,

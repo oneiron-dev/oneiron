@@ -1083,6 +1083,7 @@ fn retrieval_trace_fused_scores_are_bounded_by_trace_limit() {
                 score: 0.9,
             },
         ]],
+        &[],
         1,
     );
 
@@ -1443,10 +1444,8 @@ fn default_search_does_not_persist_retrieval_telemetry() -> Result<()> {
 #[test]
 fn opted_in_search_persists_retrieval_telemetry_across_reopen() -> Result<()> {
     let dir = tempfile::tempdir()?;
-    let config = crate::config::VaultConfig {
-        retrieval_telemetry_capture: true,
-        ..crate::config::VaultConfig::default()
-    };
+    let mut config = crate::config::VaultConfig::default();
+    config.retrieval_telemetry_capture = true;
     let vault = crate::Vault::open(dir.path(), config)?;
     let id = entity_id(0xE7);
     vault

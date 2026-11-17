@@ -235,6 +235,11 @@ fn a_category_the_engine_never_shipped_enforces_and_receipts_end_to_end() -> Res
             jurisdiction: HOSTED_JURISDICTION.to_owned(),
             policy_version: HOSTED_VERSION.to_owned(),
             row_ref: "hosted:kk-2027".to_owned(),
+            basis: HostedLegalBasis {
+                kind: HostedLegalBasisKind::Law,
+                subject: HOSTED_JURISDICTION.to_owned(),
+                reference: "test-law-reference".to_owned(),
+            },
         }
     );
     let receipts = gate_receipts(&vault)?;

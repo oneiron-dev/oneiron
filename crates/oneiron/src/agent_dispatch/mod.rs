@@ -112,7 +112,10 @@ mod run_writer_proof;
 mod scope;
 pub(crate) use scope::project_descends_from_in_txn;
 mod skill_default;
-pub(crate) use skill_default::workflow_default;
+pub(crate) use skill_default::{
+    bootstrap_skill_in_force_in_txn, bootstrap_skill_root_in_txn,
+    bootstrap_skill_root_sourced_in_txn, workflow_default,
+};
 mod spend_calibration;
 mod spend_custody;
 #[cfg(feature = "sync")]
@@ -238,8 +241,6 @@ pub use self::types::{
 
 #[cfg(test)]
 mod kill_spawn_tests;
-// FIX [LIBTEST-QUARANTINE-AGENT-DISPATCH-TESTS]: the lib test target's type check fails here (7 errors: E0061 x3, E0308 x3, E0063 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;
 
@@ -282,8 +283,6 @@ pub use resident::{
     ResidentWakeMode, resident_attempt_reviews_diary, resident_attempt_wakes_for_room,
 };
 
-// FIX [LIBTEST-QUARANTINE-AGENT-DISPATCH-RESIDENT-TESTS]: the lib test target's type check fails here (6 errors: E0063 x6); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod resident_tests;
 pub(crate) mod tables;
