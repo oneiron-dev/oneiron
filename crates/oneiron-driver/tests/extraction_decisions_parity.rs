@@ -154,7 +154,7 @@ fn run_parity_with_values(
     for &(predicate, value) in heads {
         support::land_head(&vault, subject, predicate, value, ClaimSource::Generated)?;
     }
-    for &(predicate, value) in big_heads {
+    for &(predicate, ref value) in big_heads {
         let text = value.as_str().ok_or("a big head value is text")?;
         support::land_head(&vault, subject, predicate, text, ClaimSource::Generated)?;
     }
