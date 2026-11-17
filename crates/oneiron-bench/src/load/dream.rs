@@ -57,7 +57,7 @@ const USAGE: &str = "usage: oneiron-bench load dream --server <oneiron-server> -
   (--model-base-url ends where /chat/completions follows, usually in /v1)";
 
 /// The server's log level: the Dreamer's stage and pass lines are info.
-pub(super) const RUST_LOG: &str = "warn,oneiron::dreamer::stages=info";
+const RUST_LOG: &str = "warn,oneiron::dreamer::stages=info";
 const LOG_NAME: &str = "serve.log";
 /// The timing proxy's call records, one JSON line each.
 const CALLS_NAME: &str = "calls.jsonl";
@@ -154,6 +154,12 @@ fn parse(args: &[String]) -> Result<Plan, String> {
 
 pub(super) fn run(args: &[String]) -> Result<(), String> {
     execute(&parse(args)?)
+}
+
+/// The server's log level (`RUST_LOG`), for the lives screen's spawned
+/// dreamed arm, which watches the same Dreamer lines.
+pub(super) fn server_log_level() -> &'static str {
+    RUST_LOG
 }
 
 fn say(text: &str) {

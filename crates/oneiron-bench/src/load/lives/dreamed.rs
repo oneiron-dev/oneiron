@@ -39,7 +39,7 @@ use serde::Serialize;
 use super::super::client::Agent;
 use super::super::dream::cycle::{self, DreamerStatus, OPEN_WAIT, QUIET, StillWait};
 use super::super::dream::server_log::{Scan, Tail};
-use super::super::dream::{RUST_LOG, proof, setup};
+use super::super::dream::{proof, server_log_level, setup};
 use super::super::server::Vault;
 use super::super::stats::Sample;
 use super::answer::Endpoint;
@@ -130,7 +130,7 @@ impl Dreaming {
         )?;
         let granted = setup::grant(bin, vault, setup::route(keyed))?;
         say(&format!("dreamer grant: {granted}"));
-        let mut env = vec![("RUST_LOG".to_owned(), RUST_LOG.to_owned())];
+        let mut env = vec![("RUST_LOG".to_owned(), server_log_level().to_owned())];
         if let Some(key) = &self.key {
             env.push((setup::MODEL_KEY_ENV.to_owned(), key.clone()));
         }
