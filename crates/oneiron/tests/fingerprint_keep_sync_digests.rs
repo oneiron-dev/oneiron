@@ -142,7 +142,7 @@ mod base_office {
 #[rustfmt::skip]
 #[allow(unreachable_pub)]
 mod base_asset {
-    use oneiron::batch::ENTITY_METADATA_HEADER_LEN;
+    use oneiron_contracts::record_layout::ENTITY_METADATA_HEADER_LEN;
     struct AssetBodyFacts { blake3: [u8; 32], len: u64, xxh32: u32 }
     // main 62d2d72f5c1b: crates/oneiron/src/sync/ingest/peer_import.rs:67-74
     fn asset_digest(blob: &[u8], facts: &AssetBodyFacts) -> [u8; 32] {
@@ -668,8 +668,8 @@ fn peer_asset_origin_keeps_main_s_bytes() {
     let mut hashes = BTreeSet::new();
     let mut rows = 0;
     for header in [
-        vec![0; oneiron::batch::ENTITY_METADATA_HEADER_LEN],
-        vec![255; oneiron::batch::ENTITY_METADATA_HEADER_LEN],
+        vec![0; oneiron_contracts::record_layout::ENTITY_METADATA_HEADER_LEN],
+        vec![255; oneiron_contracts::record_layout::ENTITY_METADATA_HEADER_LEN],
     ] {
         for body in [[0; 32], [255; 32]] {
             for len in [0, u64::MAX] {
