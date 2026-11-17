@@ -661,6 +661,11 @@ pub enum EngineLimit {
     /// the row asks whether everything is okay and the pack is still
     /// served whole; nothing is refused or clamped.
     ContextSelectedEdges,
+    /// Distinct records the engine has served one external reader over its
+    /// whole life (L8-65): a reader is a key bound to a credential its caller
+    /// presented, the vault owner's own excepted. Past it the row asks whether
+    /// everything is okay, and every read is still served whole.
+    ActorExposedRecords,
 }
 
 /// `1/divisor` of the machine's memory, or the fallback when it cannot be
