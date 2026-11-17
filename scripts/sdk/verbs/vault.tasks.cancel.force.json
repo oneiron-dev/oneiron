@@ -3,7 +3,7 @@
   "description": "The owner force-stops every live branch of one TASK, unrefusably: each running attempt is cancelled, its live step stops, and the reply carries every branch's landing and cancellation receipts.",
   "input": "crate::task_verb::run_doors::CancelForceRequest",
   "output": "crate::task_verb::run_doors::CancelForceReceipt",
-  "call": "crate::task_verb::run_doors::cancel_force_as(memory.vault(), &memory.embedded_owner(\"vault.tasks.cancel.force\")?, input)?",
+  "call": "memory.with_owner_or_delegate(\"vault.tasks.cancel.force\", |who, credential| match who { crate::authority::OwnerOrDelegate::Owner(owner) => crate::task_verb::run_doors::cancel_force_as(memory.vault(), owner, input), crate::authority::OwnerOrDelegate::Delegate(agent) => crate::task_verb::run_doors::cancel_force_as_delegate(memory.vault(), agent, credential, input) })?",
   "host_door": true,
   "host_door_lists": true,
   "scope": "Write",

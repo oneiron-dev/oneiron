@@ -526,8 +526,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/memory/merge_queue_doors/check_receipt.rs` | src | s | 1 struct | CodeCheckReceiptRequest | Moved from `crates/oneiron/src/memory/merge_queue_doors/check_receipt.rs` (lib split W2: wire types below… |
 | `src/memory/merge_queue_doors/checker_types.rs` | src | s | 4 struct · 1 enum | MergeQueueCheckRequest, MergeQueueCheckStatusRequest, MergeQueueDiagnoseRequest, MergeQueueInitializeRequest, QueueCheckPhase | Moved from `crates/oneiron/src/memory/merge_queue_doors/checker_types.rs` (lib split W2: wire types below… |
 | `src/memory/merge_queue_doors/export_types.rs` | src | s | 1 struct | MergeQueueGreenExportRequest | Moved from `crates/oneiron/src/memory/merge_queue_doors/export_types.rs` (lib split W2: wire types below the… |
-| `src/memory/merge_queue_doors/mod.rs` | src | s | 5 mod · 9 re-export | — | — |
-| `src/memory/merge_queue_doors/review_policy.rs` | src | s | 3 struct · 2 enum | QueueReviewMode, QueueReviewPolicyInput, QueueReviewPolicySetRequest, QueueReviewPolicyState, QueueReviewPolicyView | Moved from `crates/oneiron/src/memory/merge_queue_doors/review_policy.rs` (lib split W2: wire types below… |
+| `src/memory/merge_queue_doors/mod.rs` | src | s | 4 mod · 4 re-export | — | — |
 | `src/memory/merge_queue_doors/types.rs` | src | s | 4 struct | MergeQueueBatchRequest, MergeQueueEnqueueRequest, MergeQueueObserveRequest, MergeQueueRepoRequest | Moved from `crates/oneiron/src/memory/merge_queue_doors/types.rs` (lib split W2: wire types below the lib) |
 | `src/memory/mod.rs` | src | m | 67 mod · 242 re-export | — | — |
 | `src/memory/origin_doors/import_types.rs` | src | s | 4 struct · 1 enum · 2 re-export | CodeImportManifestFile, CodeImportManifestView, CodeRepoImportRequest, CodeRepoImportState, CodeRepoImportView | Moved from `crates/oneiron/src/memory/origin_doors/import_types.rs` (lib split W2: wire types below the lib) |
