@@ -21,7 +21,7 @@ pub(super) const APPROVE_ONCE_MARKERS: SideTable<[u8; 32], ApproveOnceMarker, si
 #[cfg(test)]
 pub(super) use crate::store::consent_bound::SUBJECT_KIND_AUDIENCE;
 pub(super) use crate::store::consent_bound::{
-    hash_field, normalized_ref, normalized_selectors, selectors_contain,
+    normalized_ref, normalized_selectors, selectors_contain,
 };
 
 pub(super) const fn undo_fidelity_byte(fidelity: UndoFidelity) -> u8 {

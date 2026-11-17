@@ -2,14 +2,12 @@
 
 use oneiron_authority::federation::{Scope, ScopeAxis, Sensitivity, SensitivityCeiling};
 use oneiron_base::error::{Error, GateError, Result};
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
 
 use crate::write_envelope::EffectDigest;
 
 const DOMAIN_DISCLOSURE: &str = "disclosure";
 pub const DOMAIN_ACTION: &str = "action";
-
-/// Domain-separated BLAKE3 label for a normalized bound digest.
-const BOUND_DIGEST_DOMAIN: &[u8] = b"oneiron.consent.bound_digest.v2\0";
 
 /// Upper bound on the byte length of any single ref/selector string.
 ///
@@ -533,33 +531,34 @@ pub struct GrantBound {
 // Scope is persisted in standing-grant rows; this digest must be stable after
 // decode and must distinguish two scopes with the same selector marker.
 fn hash_scope_axis<T: Ord>(
-    hasher: &mut blake3::Hasher,
+    digest: &mut LegacyDigest,
     axis: &ScopeAxis<T>,
     bytes: impl Fn(&T) -> Vec<u8>,
 ) {
     match axis {
         ScopeAxis::Bottom => {
-            hasher.update(&[0]);
+            digest.raw(&[0]);
         }
         ScopeAxis::All => {
-            hasher.update(&[1]);
+            digest.raw(&[1]);
         }
         ScopeAxis::Some(values) => {
-            hasher.update(&[2]);
-            hasher.update(&(values.len() as u64).to_be_bytes());
+            digest.raw(&[2]).len_u64_be(values.len());
             for value in values {
-                hash_field(hasher, &bytes(value));
+                let value = bytes(value);
+                digest.len_u64_be(value.len()).raw(&value);
             }
         }
     }
 }
 
-fn hash_scope(hasher: &mut blake3::Hasher, scope: &Scope) {
-    hash_field(hasher, b"contact-scope-v1");
-    hash_scope_axis(hasher, &scope.worlds, |id| id.0.as_bytes().to_vec());
-    hash_scope_axis(hasher, &scope.bands, |band| vec![*band]);
-    hash_scope_axis(hasher, &scope.audience, |id| id.0.as_bytes().to_vec());
-    hash_scope_axis(hasher, &scope.verbs, |verb| verb.as_bytes().to_vec());
+fn hash_scope(digest: &mut LegacyDigest, scope: &Scope) {
+    let marker = b"contact-scope-v1";
+    digest.len_u64_be(marker.len()).raw(marker);
+    hash_scope_axis(digest, &scope.worlds, |id| id.0.as_bytes().to_vec());
+    hash_scope_axis(digest, &scope.bands, |band| vec![*band]);
+    hash_scope_axis(digest, &scope.audience, |id| id.0.as_bytes().to_vec());
+    hash_scope_axis(digest, &scope.verbs, |verb| verb.as_bytes().to_vec());
     let sensitivity = match scope.sensitivity {
         SensitivityCeiling::Bottom => 0,
         SensitivityCeiling::AtMost(Sensitivity::Public) => 1,
@@ -567,7 +566,7 @@ fn hash_scope(hasher: &mut blake3::Hasher, scope: &Scope) {
         SensitivityCeiling::AtMost(Sensitivity::Sensitive) => 3,
         SensitivityCeiling::AtMost(Sensitivity::Restricted) => 4,
     };
-    hasher.update(&[sensitivity]);
+    digest.raw(&[sensitivity]);
 }
 
 impl GrantBound {
@@ -666,80 +665,97 @@ impl GrantBound {
 
     /// Engine-computed digest over the normalized bound, used as the
     /// `diff_handle` of a standing-grant receipt.
+    ///
+    /// The standing grant's row key is this digest's hex, so it keeps its bytes
+    /// (K, PLAN-UC-04 3.1): every string framed by its length and every count
+    /// written as a u64 big-endian, after the tag.
     #[must_use]
     pub fn digest(&self) -> EffectDigest {
-        let mut hasher = blake3::Hasher::new();
-        hasher.update(BOUND_DIGEST_DOMAIN);
-        hash_field(&mut hasher, self.domain().as_str().as_bytes());
+        let mut digest = LegacyDigest::new(purposes::consent::BOUND_DIGEST);
+        let domain = self.domain().as_str();
+        digest.len_u64_be(domain.len()).raw(domain.as_bytes());
         match &self.subject {
             BoundSubject::Actor(actor) => {
-                hash_field(&mut hasher, SUBJECT_KIND_ACTOR.as_bytes());
-                hash_field(&mut hasher, actor.actor_ref.as_bytes());
+                for field in [SUBJECT_KIND_ACTOR, actor.actor_ref.as_str()] {
+                    digest.len_u64_be(field.len()).raw(field.as_bytes());
+                }
                 match actor.actor_class.as_deref() {
                     None => {
-                        hasher.update(&[0]);
+                        digest.raw(&[0]);
                     }
                     Some(class) => {
-                        hasher.update(&[1]);
-                        hash_field(&mut hasher, class.as_bytes());
+                        digest
+                            .raw(&[1])
+                            .len_u64_be(class.len())
+                            .raw(class.as_bytes());
                     }
                 }
             }
             BoundSubject::Audience(audience) => {
-                hash_field(&mut hasher, SUBJECT_KIND_AUDIENCE.as_bytes());
-                hasher.update(&(audience.members.len() as u64).to_be_bytes());
+                digest
+                    .len_u64_be(SUBJECT_KIND_AUDIENCE.len())
+                    .raw(SUBJECT_KIND_AUDIENCE.as_bytes())
+                    .len_u64_be(audience.members.len());
                 for member in &audience.members {
-                    hash_field(&mut hasher, member.as_bytes());
+                    digest.len_u64_be(member.len()).raw(member.as_bytes());
                 }
             }
         }
-        hash_field(&mut hasher, b"class");
-        hash_field(&mut hasher, self.class.as_str().as_bytes());
+        for field in ["class", self.class.as_str()] {
+            digest.len_u64_be(field.len()).raw(field.as_bytes());
+        }
         match &self.envelope {
             BoundEnvelope::Disclosure(envelope) => {
-                hash_field(&mut hasher, b"envelope:disclosure");
-                hasher.update(&(envelope.selectors.len() as u64).to_be_bytes());
+                let kind = "envelope:disclosure";
+                digest
+                    .len_u64_be(kind.len())
+                    .raw(kind.as_bytes())
+                    .len_u64_be(envelope.selectors.len());
                 for selector in &envelope.selectors {
-                    hash_field(&mut hasher, selector.as_bytes());
+                    digest.len_u64_be(selector.len()).raw(selector.as_bytes());
                 }
                 match &envelope.scope {
                     None => {
-                        hasher.update(&[0]);
+                        digest.raw(&[0]);
                     }
                     Some(scope) => {
-                        hasher.update(&[1]);
-                        hash_scope(&mut hasher, scope);
+                        digest.raw(&[1]);
+                        hash_scope(&mut digest, scope);
                     }
                 }
             }
             BoundEnvelope::Action(envelope) => {
-                hash_field(&mut hasher, b"envelope:action");
-                hasher.update(&(envelope.selectors.len() as u64).to_be_bytes());
+                let kind = "envelope:action";
+                digest
+                    .len_u64_be(kind.len())
+                    .raw(kind.as_bytes())
+                    .len_u64_be(envelope.selectors.len());
                 for selector in &envelope.selectors {
-                    hash_field(&mut hasher, selector.as_bytes());
+                    digest.len_u64_be(selector.len()).raw(selector.as_bytes());
                 }
                 match envelope.target.as_deref() {
                     None => {
-                        hasher.update(&[0]);
+                        digest.raw(&[0]);
                     }
                     Some(target) => {
-                        hasher.update(&[1]);
-                        hash_field(&mut hasher, target.as_bytes());
+                        digest
+                            .raw(&[1])
+                            .len_u64_be(target.len())
+                            .raw(target.as_bytes());
                     }
                 }
                 match envelope.budget {
                     None => {
-                        hasher.update(&[0]);
+                        digest.raw(&[0]);
                     }
                     Some(budget) => {
-                        hasher.update(&[1]);
-                        hasher.update(&budget.to_be_bytes());
+                        digest.raw(&[1]).raw(&budget.to_be_bytes());
                     }
                 }
-                hasher.update(&[u8::from(envelope.receipt_required)]);
+                digest.raw(&[u8::from(envelope.receipt_required)]);
             }
         }
-        EffectDigest::from_bytes(*hasher.finalize().as_bytes())
+        EffectDigest::from_bytes(digest.finish())
     }
 }
 
@@ -788,13 +804,6 @@ pub fn selectors_contain(bound: &[String], candidate: &[String]) -> bool {
     candidate
         .iter()
         .all(|selector| bound.binary_search(selector).is_ok())
-}
-
-/// Length-prefixed field hashing, so `["ab","c"]` and `["a","bc"]` never
-/// collide into the same digest.
-pub fn hash_field(hasher: &mut blake3::Hasher, bytes: &[u8]) {
-    hasher.update(&(bytes.len() as u64).to_be_bytes());
-    hasher.update(bytes);
 }
 
 pub const fn invalid_bound(message: &'static str) -> Error {

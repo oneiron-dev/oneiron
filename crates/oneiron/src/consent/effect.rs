@@ -1,12 +1,11 @@
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
+
 use crate::error::{Error, Result};
 
 use super::bound::{ConsentDomain, GrantBound, covers};
 use super::grant::StandingConsentGrant;
-use super::support::{hash_field, invalid_bound, undo_fidelity_byte};
+use super::support::{invalid_bound, undo_fidelity_byte};
 use crate::error::GateError;
-
-/// Domain-separated BLAKE3 label for [`EffectDigest`].
-const EFFECT_DIGEST_DOMAIN: &[u8] = b"oneiron.consent.effect_digest.v1\0";
 
 #[doc(hidden)]
 pub use oneiron_consent_state::consent::effect::{CatastropheClass, EffectFacts, UndoFidelity};
@@ -386,45 +385,57 @@ impl ComposedEffect {
     }
 
     /// The engine-computed digest identifying this exact op.
+    ///
+    /// Approve-once markers and code consent waits store it, so it keeps its
+    /// bytes (K, PLAN-UC-04 3.1): each variable field framed by its length as
+    /// a u64 big-endian, after the tag.
     #[must_use]
     pub fn digest(&self) -> EffectDigest {
-        let mut hasher = blake3::Hasher::new();
-        hasher.update(EFFECT_DIGEST_DOMAIN);
-        hash_field(&mut hasher, self.facts.operation_kind.as_bytes());
-        hasher.update(&[
-            u8::from(self.facts.fires_hooks),
-            u8::from(self.facts.triggers_publish),
-            u8::from(self.facts.external_observers),
-            undo_fidelity_byte(self.facts.undo_fidelity),
-        ]);
-        hasher.update(&self.facts.blast_radius.to_be_bytes());
-        hash_field(
-            &mut hasher,
-            self.facts
-                .catastrophe
-                .map(CatastropheClass::as_str)
-                .unwrap_or_default()
-                .as_bytes(),
-        );
+        let mut digest = LegacyDigest::new(purposes::consent::EFFECT_DIGEST);
+        let operation_kind = self.facts.operation_kind.as_bytes();
+        digest
+            .len_u64_be(operation_kind.len())
+            .raw(operation_kind)
+            .raw(&[
+                u8::from(self.facts.fires_hooks),
+                u8::from(self.facts.triggers_publish),
+                u8::from(self.facts.external_observers),
+                undo_fidelity_byte(self.facts.undo_fidelity),
+            ])
+            .raw(&self.facts.blast_radius.to_be_bytes());
+        let catastrophe = self
+            .facts
+            .catastrophe
+            .map(CatastropheClass::as_str)
+            .unwrap_or_default();
+        digest
+            .len_u64_be(catastrophe.len())
+            .raw(catastrophe.as_bytes());
         for requirement in [&self.disclosure_requirement, &self.action_requirement] {
             match requirement {
-                Some(bound) => hash_field(&mut hasher, bound.digest().as_bytes()),
-                None => hash_field(&mut hasher, &[]),
+                Some(bound) => {
+                    let bound = bound.digest();
+                    digest
+                        .len_u64_be(bound.as_bytes().len())
+                        .raw(bound.as_bytes());
+                }
+                None => {
+                    digest.len_u64_be(0);
+                }
             }
         }
         // Appended only when set, so every digest minted before these facts
         // existed stays the digest of the same op.
         if self.place != EffectPlace::default() || self.erase {
-            hash_field(&mut hasher, b"place");
+            let marker = b"place";
+            digest.len_u64_be(marker.len()).raw(marker);
             for id in [self.place.project, self.place.thread] {
-                hash_field(
-                    &mut hasher,
-                    id.as_ref().map_or(&[][..], |id| id.as_bytes().as_slice()),
-                );
+                let id = id.as_ref().map_or(&[][..], |id| id.as_bytes().as_slice());
+                digest.len_u64_be(id.len()).raw(id);
             }
-            hasher.update(&[u8::from(self.erase)]);
+            digest.raw(&[u8::from(self.erase)]);
         }
-        EffectDigest::from_bytes(*hasher.finalize().as_bytes())
+        EffectDigest::from_bytes(digest.finish())
     }
 }
 
