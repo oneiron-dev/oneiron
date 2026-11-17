@@ -401,7 +401,7 @@ fn remote_applied_resume_uses_stored_snapshot_after_a_newer_local_edit() {
         expected_etag: row.expected_etag.clone(),
         uid: uid.clone(),
         sequence: row.sequence,
-        ics: render_owner_vevent(&vault, &event, &uid, row.sequence, NOW)
+        ics: render_owner_vevent(&vault, &event, &uid, row.sequence, NOW, None, None)
             .unwrap()
             .ics,
     };
@@ -581,6 +581,7 @@ fn a_push_under_a_pending_passport_uid_never_moves_the_uid_index() {
             direction: CalendarPassportDirection::TwoWay,
             last_seen_at: NOW,
             presence: CalendarPassportPresence::Live,
+            cancelled_since: None,
         }),
         1.0,
         crate::ClaimApprovalStatus::Proposed,

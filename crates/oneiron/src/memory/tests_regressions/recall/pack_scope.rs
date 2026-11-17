@@ -14,6 +14,9 @@ fn recall_returns_versioned_pack_with_provenance() {
                 "aurora borealis sighting over the fjord",
             )],
             occurred_at: 1500,
+            thread_audience: None,
+            project: None,
+            assertions: Default::default(),
         })
         .expect("witness");
 
@@ -126,6 +129,10 @@ fn recall_scope_honesty_lists_excluded_worlds() {
             Effort::Medium,
             &RecallScope {
                 world_ref: Some(world_one.to_hex()),
+                worlds: None,
+                project_refs: Vec::new(),
+                conversation_refs: Vec::new(),
+                person_ref: None,
                 facet: None,
                 kinds: None,
             },
@@ -351,6 +358,10 @@ fn recall_neighbours_stay_inside_the_asked_worlds() {
                 Effort::Medium,
                 &RecallScope {
                     world_ref,
+                    worlds: None,
+                    project_refs: Vec::new(),
+                    conversation_refs: Vec::new(),
+                    person_ref: None,
                     facet: None,
                     kinds: None,
                 },
@@ -420,6 +431,9 @@ fn recall_and_query_verbs_respect_limits() {
                     &format!("pelican count {i}"),
                 )],
                 occurred_at: 1700,
+                thread_audience: None,
+                project: None,
+                assertions: Default::default(),
             })
             .expect("witness");
     }

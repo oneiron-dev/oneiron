@@ -15,6 +15,7 @@ fn replicate_with_text(vault: &Vault, body: &ClaimBody, text: &str) -> Result<En
             ENTITY_TYPE_CLAIM,
             t(50),
             50,
+            None,
             &crate::claim::encode_claim_body(body)?,
         )
         .text(&id, &[("body", text)]);
@@ -239,10 +240,13 @@ fn receiving_room_replica_hides_claim_arriving_after_real_tombstone() -> Result<
         byline,
         1,
     )?;
+    let writer = source.memory(byline.entity_ref(), byline.actor_class());
     let turn = source
-        .append_dag_record(&crate::conversation_dag::fixtures::input(
-            room, None, true, byline,
-        ))?
+        .append_dag_record(
+            &writer,
+            &crate::conversation_dag::fixtures::input(room, None, true, byline),
+        )
+        .expect("append")
         .id;
     let session = source.spawn_dag_sub_session(&turn, byline)?;
     let claim = write_actor_claim(
@@ -264,6 +268,7 @@ fn receiving_room_replica_hides_claim_arriving_after_real_tombstone() -> Result<
                 header.entity_type,
                 t(header.occurred_start),
                 header.learned_at,
+                None,
                 &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
             )
             .commit()?;

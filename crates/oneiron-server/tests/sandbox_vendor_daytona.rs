@@ -14,7 +14,9 @@
 #![cfg(all(oneiron_test_support, target_os = "linux"))]
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-use std::fs;
+#[path = "sandbox_vendor/fixture.rs"]
+mod fixture;
+
 use std::sync::{Arc, Mutex};
 
 use axum::Router;
@@ -22,59 +24,17 @@ use axum::body::Bytes;
 use axum::extract::State;
 use axum::http::{HeaderMap, Method, StatusCode, Uri};
 use axum::response::{IntoResponse, Response};
-use oneiron::code_sandbox::microvm::{
-    CredentialAllowlist, CredentialDestination, CredentialResolver, ExecutionBudget, GuestImage,
-    MicroVmExit, MicroVmOutputSink, MicroVmSandboxAdapter, SandboxBackends,
-    select_backend_for_tier,
-};
+use fixture::{Console, GUEST_IMAGE_NAME, VendorVault, contains, guest_frames, start_stand_in};
+use oneiron::code_sandbox::microvm::{MicroVmExit, MicroVmSandboxAdapter, SandboxBackends};
 use oneiron::code_sandbox::{
-    SandboxCredentialHandle, SandboxGuestTier, SandboxMountTable, SandboxProposalKind,
-    SandboxProposalWrite, SandboxProvider, SandboxVendor,
+    SandboxProposalKind, SandboxProposalWrite, SandboxProvider, SandboxVendor,
 };
-use oneiron::consent::AuthenticatedOwner;
-use oneiron::engine_executor::{JsCodeModeStream, StepCancellation};
-use oneiron::secret_custody::{
-    CustodyClass, CustodyTier, OwnerSecretRegistration, RequestedBinding,
-};
-use oneiron::settings::sandbox_provider::SandboxProviderSetting;
-use oneiron::store::GateDecisionId;
-use oneiron::{ErrorKind, Result, Vault, VaultConfig};
+use oneiron::{ErrorKind, Result};
 use oneiron_server::test_doors::sandbox_vendor::served_backends;
 use serde_json::{Value, json};
 
-const GUEST_IMAGE: &str =
-    "ghcr.io/example/guest@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 const KEY_NAME: &str = "daytona.api_key";
 const KEY_VALUE: &str = "dtn-test-key-5f1c0a";
-const STORED_AT: u64 = 1_800_000_000;
-/// `oneiron_sandbox_contract::GUEST_PROTOCOL_VERSION`; the server does not
-/// depend on that crate.
-const GUEST_PROTOCOL_VERSION: u32 = 3;
-
-/// A resolver no read reaches: a vendor run has no credential broker.
-struct NoResolver;
-
-impl CredentialResolver for NoResolver {
-    fn resolve_for(
-        &self,
-        _handle: &SandboxCredentialHandle,
-        _dest: &CredentialDestination,
-    ) -> Result<Vec<u8>> {
-        panic!("a vendor run resolves no credential")
-    }
-}
-
-/// The console text the run streamed.
-#[derive(Default)]
-struct Console(Vec<String>);
-
-impl MicroVmOutputSink for Console {
-    fn write_output_frame(&mut self, stream: JsCodeModeStream<'_>, frame: Vec<u8>) -> Result<()> {
-        assert!(matches!(stream, JsCodeModeStream::Console), "console only");
-        self.0.push(String::from_utf8(frame).expect("console text"));
-        Ok(())
-    }
-}
 
 /// How the stand-in answers.
 struct Script {
@@ -166,56 +126,8 @@ async fn answer(
     }
 }
 
-/// Starts the stand-in on a loopback port, on its own runtime thread, and
-/// answers its base URL.
-fn start_stand_in(stand_in: StandIn) -> String {
-    let (bound, address) = std::sync::mpsc::channel();
-    std::thread::spawn(move || {
-        let runtime = tokio::runtime::Builder::new_multi_thread()
-            .worker_threads(2)
-            .enable_all()
-            .build()
-            .expect("the stand-in's runtime");
-        runtime.block_on(async move {
-            let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-                .await
-                .expect("bind the stand-in");
-            bound
-                .send(listener.local_addr().expect("the stand-in's address"))
-                .unwrap();
-            let app = Router::new().fallback(answer).with_state(stand_in);
-            axum::serve(listener, app)
-                .await
-                .expect("serve the stand-in");
-        });
-    });
-    format!("http://{}", address.recv().expect("the stand-in bound"))
-}
-
-fn transcript(frames: &[Value]) -> Vec<u8> {
-    let mut bytes = Vec::new();
-    for frame in frames {
-        let body = serde_json::to_vec(frame).expect("encode guest frame");
-        bytes.extend_from_slice(&u32::try_from(body.len()).unwrap().to_be_bytes());
-        bytes.extend_from_slice(&body);
-    }
-    bytes
-}
-
-fn hello() -> Value {
-    json!({ "type": "hello", "version": GUEST_PROTOCOL_VERSION })
-}
-
-fn contains(haystack: &[u8], needle: &[u8]) -> bool {
-    haystack
-        .windows(needle.len())
-        .any(|window| window == needle)
-}
-
 struct Fixture {
-    dir: tempfile::TempDir,
-    vault: Arc<Vault>,
-    owner: AuthenticatedOwner,
+    vault: VendorVault,
     calls: Arc<Mutex<Vec<Call>>>,
     backends: Arc<dyn SandboxBackends>,
 }
@@ -224,106 +136,31 @@ impl Fixture {
     /// A vault whose owner stored a Daytona key in custody, bound to
     /// `sandbox:daytona`, and a stand-in that answers as `script` says.
     fn new(script: Script) -> Self {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let vault_dir = dir.path().join("vault");
-        fs::create_dir(&vault_dir).expect("vault dir");
-        let vault = Vault::open(&vault_dir, VaultConfig::device()).expect("vault");
-        vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::new()));
-        vault.prepare_install_signing().expect("install signing");
-        let actor = vault.ensure_embedded_owner_actor().expect("owner actor");
-        let owner = vault
-            .authenticate_owner(actor, &actor.to_hex(), true, GateDecisionId::now())
-            .expect("owner");
-        vault
-            .register_secret_as_owner(
-                &owner,
-                &OwnerSecretRegistration {
-                    name: KEY_NAME,
-                    class: CustodyClass::CustodyDeviceBound,
-                    device_only: true,
-                    rung: CustodyTier::T0Doored,
-                    bindings: vec![RequestedBinding {
-                        effector: SandboxVendor::Daytona.effector().to_owned(),
-                        tier_ceiling: None,
-                        scopes: vec!["read".to_owned()],
-                    }],
-                    manifest: None,
-                    value: KEY_VALUE.as_bytes(),
-                },
-                STORED_AT,
-            )
-            .expect("the owner's Daytona key in custody");
-        let vault = Arc::new(vault);
+        let vault = VendorVault::new(SandboxVendor::Daytona, KEY_NAME, KEY_VALUE);
         let calls = Arc::new(Mutex::new(Vec::new()));
-        let base = start_stand_in(StandIn {
+        let base = start_stand_in(Router::new().fallback(answer).with_state(StandIn {
             script: Arc::new(script),
             calls: Arc::clone(&calls),
-        });
+        }));
         let backends = served_backends(
-            &vault,
+            &vault.vault,
             &base,
             &format!("{base}/toolbox"),
-            dir.path().join("vm"),
+            vault.dir.path().join("vm"),
         );
         Self {
-            dir,
             vault,
-            owner,
             calls,
             backends,
         }
     }
 
     fn switch(&self, provider: SandboxProvider, vendor_key: Option<&str>) -> Result<()> {
-        self.vault
-            .replace_sandbox_provider_setting_as_owner(
-                &self.owner,
-                SandboxProviderSetting {
-                    provider,
-                    vendor_key: vendor_key.map(str::to_owned),
-                },
-            )
-            .map(drop)
+        self.vault.switch(provider, vendor_key)
     }
 
-    /// One Foreign run of a scripted guest on the backend the switch selects.
     fn run(&self, console: &mut Console) -> Result<(MicroVmSandboxAdapter, MicroVmExit)> {
-        let base = self.dir.path().join("base");
-        for mount in ["workspace", "uploads", "outputs", "skills"] {
-            fs::create_dir_all(base.join(mount)).expect("mount root");
-        }
-        fs::write(base.join("workspace/notes.txt"), b"base notes\n").expect("stage base file");
-        let component = self.dir.path().join("component.wasm");
-        fs::write(&component, b"\0asm\x0d\0\x01\0scripted").expect("component");
-        let image = GuestImage::new("", "", component)
-            .with_oci(GUEST_IMAGE)
-            .expect("pinned guest image")
-            .with_source("export default 1;");
-        let backend = select_backend_for_tier(
-            &*self.backends,
-            self.vault.sandbox_provider()?,
-            SandboxGuestTier::Foreign,
-        )?
-        .expect("an isolating backend");
-        let mut adapter = MicroVmSandboxAdapter::new(
-            SandboxGuestTier::Foreign,
-            SandboxMountTable::new(
-                base.join("workspace"),
-                base.join("uploads"),
-                base.join("outputs"),
-                base.join("skills"),
-            ),
-            backend,
-            Arc::new(NoResolver),
-            CredentialAllowlist::new(),
-        )?;
-        let exit = adapter.run_cancellable(
-            &image,
-            ExecutionBudget::new(30, 512, 64),
-            &StepCancellation::new(),
-            console,
-        )?;
-        Ok((adapter, exit))
+        self.vault.run(&*self.backends, console)
     }
 
     fn calls(&self) -> Vec<String> {
@@ -334,18 +171,6 @@ impl Fixture {
             .map(|call| format!("{} {}", call.method, call.path))
             .collect()
     }
-}
-
-fn guest_frames() -> Vec<u8> {
-    transcript(&[
-        hello(),
-        json!({ "type": "write_open", "path": "/mnt/workspace/new.txt" }),
-        json!({ "type": "write_chunk", "bytes": b"hi\n".to_vec() }),
-        json!({ "type": "write_close" }),
-        json!({ "type": "output_text", "target": "console", "start": true, "frame": "logged" }),
-        json!({ "type": "step_result", "result_json": "{\"ok\":true}" }),
-        json!({ "type": "finish", "status": 0 }),
-    ])
 }
 
 #[test]
@@ -399,7 +224,7 @@ fn a_switched_run_goes_to_daytona_on_the_owners_key() {
         "every call carries the owner's key"
     );
     let created: Value = serde_json::from_slice(&calls[0].body).expect("create body");
-    assert_eq!(created["snapshot"], "oneiron-guest-0123456789ab");
+    assert_eq!(created["snapshot"], GUEST_IMAGE_NAME);
     assert_eq!(created["networkBlockAll"], true);
     assert_eq!(created["autoDeleteInterval"], 0);
     let commands: Vec<Value> = calls
@@ -456,6 +281,7 @@ fn a_switch_without_a_key_refuses_the_vendor() {
     assert_eq!(error.kind(), ErrorKind::InvalidConfig, "{error}");
     assert_eq!(
         fixture
+            .vault
             .vault
             .sandbox_provider_setting()
             .expect("the switch")
