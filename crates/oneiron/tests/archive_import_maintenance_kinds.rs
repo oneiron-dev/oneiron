@@ -12,8 +12,10 @@
 //!   source vault with no report restores on main as well.
 //! * `an_archive_with_an_issue_row_restores_whole_as_its_owner`: the owner
 //!   files one report (`Memory::report` writes one ISSUE row); the owner's
-//!   restore into a fresh vault succeeds, leaves the ISSUE out
-//!   (`LocalHistoryNotRestored`) and restores the PERSON it is about.
+//!   restore into a fresh vault succeeds, brings the ISSUE back with the
+//!   source's actor, request, filing time and review as an
+//!   `OwnerArchiveRestore`, and restores the PERSON it is about. The manifest
+//!   still lists the ISSUE as `LocalHistoryNotRestored`.
 //! * `the_actorless_import_of_an_issue_row_archive_succeeds`: the same
 //!   archive through the actorless import.
 //! * `an_archive_with_a_declared_embedding_space_restores_whole_as_its_owner`:
@@ -193,10 +195,15 @@ fn a_fresh_owner_vault_restores_whole_as_its_owner() {
 fn an_archive_with_an_issue_row_restores_whole_as_its_owner() {
     let source = source_with_person(true);
     let issue = source.issue.expect("the source filed a report");
+    let expected = source
+        .vault
+        .report_issue(&issue)
+        .expect("read the source issue")
+        .expect("the source holds the ISSUE row");
 
     let (_dest_dir, dest, restored) = restore_into_fresh_vault_as_owner(&source.archive);
 
-    let receipt = match restored {
+    let _receipt = match restored {
         Ok(receipt) => receipt,
         Err(error) => {
             panic!("the owner's whole archive holding one ISSUE row must restore: {error:?}")
@@ -207,13 +214,30 @@ fn an_archive_with_an_issue_row_restores_whole_as_its_owner() {
         Some(ENTITY_TYPE_PERSON),
         "the rest of the vault restores"
     );
-    assert!(
-        dest.report_issue(&issue).expect("read the issue").is_none(),
-        "the ISSUE row stays archive data"
+    let recovered = dest
+        .report_issue(&issue)
+        .expect("read the restored issue")
+        .expect("the owner's restore must bring the ISSUE row back");
+    assert_eq!(
+        recovered.actor_ref, expected.actor_ref,
+        "the restored report keeps the source actor"
     );
-    assert!(
-        receipt.omitted_entities >= 1,
-        "the receipt counts the omitted ISSUE row: {receipt:?}"
+    assert_eq!(
+        recovered.request, expected.request,
+        "the restored report keeps the full source request"
+    );
+    assert_eq!(
+        recovered.received_at, expected.received_at,
+        "the restored report keeps the source filing time"
+    );
+    assert_eq!(
+        recovered.review, expected.review,
+        "the restored report keeps the source review"
+    );
+    assert_eq!(
+        recovered.origin,
+        oneiron::feedback::ReportIssueOrigin::OwnerArchiveRestore,
+        "the restored report is marked as an owner-archive restore"
     );
     let omissions = import_omissions(&source.vault, &source.archive);
     assert!(
