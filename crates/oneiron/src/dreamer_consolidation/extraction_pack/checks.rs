@@ -16,8 +16,8 @@ use crate::memory::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_TURN};
 use crate::snapshot_read::{
     EvidenceSourceStatus, EvidenceSpansRequest, SourceVersion, SourceVersionCheck,
-    evidence_spans_in_txn, extraction_turn_in_txn, observed_claim_reads_in_txn,
-    queued_extraction_branch_in_txn,
+    evidence_spans_in_txn, extraction_turn_in_txn, extraction_turn_read,
+    observed_claim_reads_in_txn, queued_extraction_branch_in_txn,
 };
 use crate::verbs::{CandidateOperand, PinnedClaim, TurnEvidence};
 
@@ -35,11 +35,13 @@ pub(crate) fn check_extraction_operands_in_txn(
     pins: Option<(&[PinnedClaim], &[PinnedClaim])>,
 ) -> MemoryResult<(ConsolidationBranchPlan<EntityId>, BoundBranchRead)> {
     let vault = memory.vault();
+    let turn_read = extraction_turn_read(read, None)?;
+    let turn_read = turn_read.as_ref().unwrap_or(read);
     let attempt_entity = EntityId::from_bytes_unchecked(*attempt.as_bytes());
     let (scope, branch) = queued_extraction_branch_in_txn(vault, txn, attempt_entity)?;
     check_operand_rows(
         memory,
-        read,
+        (read, turn_read),
         txn,
         reader_scope,
         candidates,
@@ -65,7 +67,7 @@ pub(crate) fn check_extraction_operands_in_txn(
 /// Rechecks cited turn projections, spans, and claim pins before interpreting proposals.
 fn check_operand_rows(
     memory: &Memory<'_>,
-    read: &ScopedRead<'_>,
+    (read, turn_read): (&ScopedRead<'_>, &ScopedRead<'_>),
     txn: &heed::RoTxn<'_>,
     reader_scope: Option<&Scope>,
     candidates: &[CandidateOperand],
@@ -77,13 +79,20 @@ fn check_operand_rows(
 ) -> MemoryResult<()> {
     for candidate in candidates {
         for evidence in &candidate.evidence {
-            let _served = check_turn_evidence(memory, read, txn, reader_scope, evidence, queued)?;
+            let _served = check_turn_evidence(
+                memory,
+                (read, turn_read),
+                txn,
+                reader_scope,
+                evidence,
+                queued,
+            )?;
         }
     }
     if let Some((listed, priors)) = pins {
         for pin in listed.iter().chain(priors.iter()) {
             check_source_pin(
-                read,
+                (read, turn_read),
                 txn,
                 reader_scope,
                 &pin.claim,
@@ -98,7 +107,7 @@ fn check_operand_rows(
 /// Rechecks one turn locator in the same order as the checked verdict pack.
 pub(crate) fn check_turn_evidence(
     memory: &Memory<'_>,
-    read: &ScopedRead<'_>,
+    (read, turn_read): (&ScopedRead<'_>, &ScopedRead<'_>),
     txn: &heed::RoTxn<'_>,
     reader_scope: Option<&Scope>,
     evidence: &TurnEvidence,
@@ -108,7 +117,7 @@ pub(crate) fn check_turn_evidence(
     ),
 ) -> MemoryResult<(EntityId, crate::snapshot_read::EvidenceSpans)> {
     let turn = check_source_pin(
-        read,
+        (read, turn_read),
         txn,
         reader_scope,
         &evidence.turn,
@@ -125,7 +134,7 @@ pub(crate) fn check_turn_evidence(
     if extraction_turn_in_txn(
         memory.vault(),
         txn,
-        read,
+        (read, turn_read),
         reader_scope,
         queued.0,
         &key,
@@ -137,7 +146,7 @@ pub(crate) fn check_turn_evidence(
     }
     let served = evidence_spans_in_txn(
         memory,
-        read,
+        turn_read,
         txn,
         &EvidenceSpansRequest {
             source: turn,
@@ -179,7 +188,7 @@ fn check_operand_subjects(
 
 /// Reads and rechecks one pinned row under the dreamer live record reach.
 fn check_source_pin(
-    read: &ScopedRead<'_>,
+    (read, turn_read): (&ScopedRead<'_>, &ScopedRead<'_>),
     txn: &heed::RoTxn<'_>,
     reader_scope: Option<&Scope>,
     reference: &str,
@@ -205,7 +214,12 @@ fn check_source_pin(
             "extraction evidence locators must name TURNs and claim pins must name CLAIMs",
         ));
     }
-    match version.recheck_in_txn(read, txn)? {
+    let version_read = if kind == ENTITY_TYPE_TURN {
+        turn_read
+    } else {
+        read
+    };
+    match version.recheck_in_txn(version_read, txn)? {
         SourceVersionCheck::Current => Ok(id),
         SourceVersionCheck::Withheld => Err(extraction_not_served()),
         SourceVersionCheck::Moved => Err(extraction_source_moved()),

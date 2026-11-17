@@ -8,6 +8,9 @@
 
 use std::sync::Arc;
 
+use oneiron::claim::{
+    ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
+};
 use oneiron::dreamer_consolidation::selection::SelectionConfig;
 use oneiron::memory::MemoryResult;
 use oneiron::test_doors::consolidation::open_dreamer_vault;
@@ -156,11 +159,24 @@ fn big_candidate_fixture(with_listed: bool) -> TestResult<BigFixture> {
         return Err("the bound attempt must serve both turns".into());
     }
     let subject_hex = subject.to_hex();
+    // Two one-turn citations tie on every strength signal, so ready order falls
+    // to the per-attempt random claim hexes and the routed set flips between
+    // [0, 1] and [1, 0]. The resolution tests assert [0, 1] with layouts and
+    // packs in that order, so the first operand cites both turns: its higher
+    // evidence count and diversity win the strength sort deterministically.
+    let first_evidence = if with_listed {
+        vec![json!({"turn": turns[0].0.clone(), "version": turns[0].1.clone()})]
+    } else {
+        vec![
+            json!({"turn": turns[0].0.clone(), "version": turns[0].1.clone()}),
+            json!({"turn": turns[1].0.clone(), "version": turns[1].1.clone()}),
+        ]
+    };
     let operands = vec![
         json!({
             "subject": subject_hex, "predicate": "profile.hobby",
             "value": big_value("tea"),
-            "evidence": [{"turn": turns[0].0.clone(), "version": turns[0].1.clone()}],
+            "evidence": first_evidence,
         }),
         json!({
             "subject": subject_hex, "predicate": "profile.hobby",
@@ -186,11 +202,19 @@ fn big_candidate_fixture(with_listed: bool) -> TestResult<BigFixture> {
 /// the tie by ascending claim identifier
 /// (`crates/oneiron/tests/extraction_read_layout.rs:52-72`).
 fn land_two_big_listed(vault: &Vault) -> TestResult<(EntityId, EntityId, EntityId)> {
-    let (subject, first) = land_extraction_verdict_listing_claim(vault)?;
-    let mut body = vault
-        .get_claim(&first)?
-        .ok_or("the listing fixture landed its claim")?;
-    body.value = RmpValue::from("owen".chars().cycle().take(50_000).collect::<String>());
+    let subject = EntityId::now();
+    seed_named_person(vault, &subject, "owen", vault.now_recorded_at())?;
+    let first = EntityId::now();
+    let mut body = ClaimBody::new(
+        "profile.name",
+        ClaimSubject::Entity(subject),
+        RmpValue::from("owen".chars().cycle().take(50_000).collect::<String>()),
+        0.8,
+        ClaimApprovalStatus::Auto,
+        ClaimLifecycleStatus::Active,
+    )?;
+    body.source = Some(ClaimSource::UserStated);
+    body.scope_facet = vault.default_facet()?;
     let now = vault.now_recorded_at();
     let occurred = TimeRange {
         start: now,

@@ -11,6 +11,10 @@
 use serde::{Deserialize, Serialize};
 
 use super::source_version::{SourceVersion, SourceVersionCheck, blake3_ref, source_version_in_txn};
+use super::{
+    extraction_reader_scope_in_txn, extraction_turn_in_txn, extraction_turn_read,
+    queued_extraction_branch_in_txn,
+};
 use crate::EntityId;
 use crate::batch::secret_scan::LiftedKeys;
 use crate::claim::{ClaimReadStatus, PointRead, ScopedReadResult};
@@ -171,7 +175,16 @@ fn bound_evidence_spans(
     };
     validate_evidence_spans(input, max_ranges)?;
     let read = memory.read_lane(ClaimReadStatus::Recorded)?;
+    let turn_read = if binding.is_some() {
+        extraction_turn_read(&read, None)?
+    } else {
+        None
+    };
     let _pins = read.prepare_point_read::<MemoryError>()?;
+    let _turn_pins = turn_read
+        .as_ref()
+        .map(crate::claim::ScopedRead::prepare_point_read::<MemoryError>)
+        .transpose()?;
     let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
     if let Some(binding) = binding {
         memory.prove_read_authority_in_txn(&txn)?;
@@ -181,10 +194,58 @@ fn bound_evidence_spans(
         &txn,
         &[PointRead::id(input.source)],
         None,
-        |txn, _rows| -> MemoryResult<EvidenceSpans> {
+        |txn, rows| -> MemoryResult<EvidenceSpans> {
+            let is_turn = rows
+                .first()
+                .and_then(Option::as_ref)
+                .is_some_and(|row| row.entity_type == crate::registry::ENTITY_TYPE_TURN);
+            if is_turn
+                && let Some(binding) = binding
+                && let Some(turn_read) = turn_read.as_ref()
+                && attempt_serves_turn_in_txn(
+                    memory,
+                    txn,
+                    (&read, turn_read),
+                    binding,
+                    input.source,
+                )?
+            {
+                return evidence_spans_in_txn(memory, turn_read, txn, input);
+            }
             evidence_spans_in_txn(memory, &read, txn, input)
         },
     )
+}
+
+/// Whether the bound attempt's inputs page serves `turn`: the attempt queues
+/// it and its page admission holds.
+///
+/// Only such a TURN reads its text under native's relationship gate, as
+/// native's branch reads only its declared TURNs. Every other source stays on
+/// the caller's ordinary lane.
+fn attempt_serves_turn_in_txn(
+    memory: &Memory<'_>,
+    txn: &heed::RoTxn<'_>,
+    (read, turn_read): (&crate::claim::ScopedRead<'_>, &crate::claim::ScopedRead<'_>),
+    binding: &DreamerAttemptBinding,
+    turn: EntityId,
+) -> MemoryResult<bool> {
+    let vault = memory.vault();
+    let (scope, branch) = queued_extraction_branch_in_txn(vault, txn, binding.attempt())?;
+    let Some(part) = branch.parts.iter().find(|part| part.turns.contains(&turn)) else {
+        return Ok(false);
+    };
+    let reader_scope = extraction_reader_scope_in_txn(memory, txn, None)?;
+    Ok(extraction_turn_in_txn(
+        vault,
+        txn,
+        (read, turn_read),
+        reader_scope.as_ref(),
+        scope,
+        &branch.part_key(part.conversation_ref),
+        turn,
+    )?
+    .is_some())
 }
 
 /// Serves one source and its masked spans through an existing live read transaction.

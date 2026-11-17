@@ -58,6 +58,8 @@ pub(crate) struct ExtractionRebuildContext<'a> {
     pub(crate) memory: &'a Memory<'a>,
     /// Borrows the live read that rebuilt the bound projection.
     pub(crate) read: &'a ScopedRead<'a>,
+    /// Borrows the relationship-gated TURN reader for MESSAGE evidence masking.
+    pub(crate) turn_read: &'a ScopedRead<'a>,
     /// Borrows the transaction that holds the verified snapshot.
     pub(crate) txn: &'a heed::RoTxn<'a>,
     /// Borrows the original operands, including their served evidence spans.

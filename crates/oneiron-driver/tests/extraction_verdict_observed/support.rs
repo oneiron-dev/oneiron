@@ -14,10 +14,14 @@ use oneiron::session_lifecycle::{
     SessionClosePredicate, SessionEndWake, SessionKey, SessionMintOutcome,
 };
 use oneiron::test_doors::consolidation::open_dreamer_vault;
+use oneiron::test_doors::derive::grant_derive_rows;
 use oneiron::test_doors::extraction_inputs::enqueue_admitted_extraction_attempt;
 use oneiron::test_doors::steward::{STEWARD_VERBS, dreamer, stand_steward_grant};
 use oneiron::test_doors::untangle_regressions::seed_named_person;
-use oneiron::{EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig};
+use oneiron::{
+    ClaimCandidate, EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig, WriteActor,
+    WriteEnvelope, WriteProvenance,
+};
 use oneiron_dreamer::extraction_observations::read_observations;
 use oneiron_dreamer::extraction_selection::ExtractionSelectionConfig;
 use oneiron_remote::OneironClient;
@@ -257,6 +261,10 @@ pub(crate) fn fixture(observed: bool, with_generated: bool) -> TestResult<Fixtur
 }
 
 /// Lands one active auto head with the given value and source.
+///
+/// A Generated head lands attributed, under the subject's actor-bound permit:
+/// an unattributed Generated put at Auto pends on source trust. Any other
+/// source keeps the plain put.
 fn land_head(
     vault: &Vault,
     subject: EntityId,
@@ -264,6 +272,35 @@ fn land_head(
     source: ClaimSource,
 ) -> TestResult<EntityId> {
     let head = EntityId::now();
+    let now = vault.now_recorded_at();
+    if source == ClaimSource::Generated {
+        grant_derive_rows(vault, &[subject])?;
+        let envelope = WriteEnvelope::new(
+            WriteActor::new(subject, EdgeActorClass::Human),
+            ClaimSource::Generated,
+            WriteProvenance::new(RmpValue::from("generated-head-fixture"))?,
+            ClaimApprovalStatus::Auto,
+        );
+        vault
+            .batch()
+            .claim_candidate(
+                &head,
+                ClaimCandidate::new(
+                    "preference.food",
+                    ClaimSubject::Entity(subject),
+                    RmpValue::from(value),
+                    1.0,
+                ),
+                &envelope,
+                TimeRange {
+                    start: now,
+                    end: now,
+                },
+                now,
+            )
+            .commit()?;
+        return Ok(head);
+    }
     let mut body = ClaimBody::new(
         "preference.food",
         ClaimSubject::Entity(subject),
@@ -274,7 +311,6 @@ fn land_head(
     )?;
     body.source = Some(source);
     body.scope_facet = vault.default_facet()?;
-    let now = vault.now_recorded_at();
     vault.put_claim(
         &head,
         &body,
