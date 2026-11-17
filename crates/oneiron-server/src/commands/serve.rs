@@ -18,6 +18,7 @@ use super::{history_import, local_servers};
 
 mod hooks;
 mod page_seal;
+mod sleep_release;
 mod startup_gate;
 mod stop;
 mod workers;
@@ -67,6 +68,12 @@ pub(super) async fn serve_anchored(
         dimensions = config.dimensions,
         "starting oneiron sync server"
     );
+    // Every request this process serves gets the same OpenAPI document; it is
+    // assembled beside the start-up, so the first GET /api/openapi.json finds
+    // it built (FIX [SLOW-FACADE-CALLS-COORDINATION-08]: 2.05 s in the dev build).
+    if let Err(error) = crate::api::spawn_openapi_document_precompute() {
+        tracing::warn!(%error, "the OpenAPI document is assembled on its first request instead");
+    }
     let addr: SocketAddr = format!("{}:{}", config.host, config.port).parse()?;
     // systemd or launchd may have bound the socket and hold the secrets;
     // otherwise this binds `addr` itself. Read once, at process entry.
@@ -88,6 +95,7 @@ pub(super) async fn serve_anchored(
     if let Err(error) = sign_root_project(&vault, server_config.auth_secret.as_deref()) {
         tracing::warn!(%error, "the root project was not signed; it stays unsigned until the next start");
     }
+    warn_genesis_fragile(&vault);
     crate::owner::house::bind_house_leader_at_start(
         &vault,
         server_config.auth_secret.as_deref(),
@@ -198,6 +206,11 @@ pub(super) async fn serve_anchored(
     let mesh_server = Arc::clone(&sync_server);
     // Each socket upgraded on the API listener or the mesh sees the stop, and
     // the stop waits for it and the calls it admitted (FIX 4757).
+    // The event-loop watchdog (L8-11) reports this process's readiness on
+    // `/api/health` and sheds nothing: a self-hosted owner's requests are
+    // never refused for it. It runs until serve returns.
+    let _process_watchdog = sync_server
+        .start_process_watchdog(crate::process_readiness::ProcessHealthSettings::default());
     let (app, upgrades) = crate::embedded::upgrade_lifetime(
         build_app(sync_server).layer(cors_layer),
         stopped.clone(),
@@ -366,6 +379,7 @@ pub(crate) async fn build_server(
         .map_err(|e| anyhow::anyhow!("sync server init failed: {e}"))?
         .with_embedder(embedder)
         .with_tagger(tagger)
+        .with_phonetic_embedder(config.phonetic_embedder.as_ref())?
         .with_model_setup_config(config, startup_args)
         .with_gpu_pool(gpu_pool)
         .with_broker(broker)
@@ -393,11 +407,19 @@ pub(crate) async fn build_server(
         // The `[policy]` section's owner-plane wording and settings (FIX
         // 5042); an embedding host may set its own after this.
         .with_owner_policy_config(config.policy.owner_policy_config());
+    // The image organ the host names by its program (L4-15); organs run
+    // on unix hosts only.
+    #[cfg(unix)]
+    sync_server.install_image_organ_from_env();
     // Its browser readiness starts from the `[browser]` section and its
     // runtime binding, with no supervisor's runtime fact (FIX 7670).
     sync_server
         .browser_readiness()
         .seed(config.browser.as_ref(), None);
+    // The runner fence each seat CLI starts under, proved now so the proof's
+    // outcome is in the start log and its cost is not the first run's
+    // (L8-27).
+    let _ = sync_server.runner_fence();
     // `[models] extraction_egress = true` is the owner's opt-in for
     // extraction to leave the device (FIX 6621): the raw `/v1/llm` routes
     // and every door that reads the host's predicate admit it, still within
@@ -413,7 +435,40 @@ pub(crate) async fn build_server(
     } else {
         sync_server
     };
+    // Bound before any worker starts, so every admitted call is attributed.
+    bind_vault_owner_usage_metering(&sync_server);
     Ok((sync_server, gpu_poller))
+}
+
+/// Binds a self-hosted vault's usage meter to the vault's own billing owner,
+/// its embedded owner, whose account owner spend bills
+/// (`PayerAccount::VaultOwner`, `ai_host::payer_funding`). Settled calls,
+/// recalls and embed fills are then recorded, and the nightly training-offer
+/// pass has a workload to read (FIX 11011, FIX 22868). Any other posture
+/// stays unmetered here: the cloud names a hosted vault's billing owner, and
+/// serve never invents one; a managed start binds that one
+/// (`managed::usage_meter`, census L8-12). A failed bind (a vault whose
+/// authority log has no genesis yet: no auth secret on a fresh vault) leaves
+/// this start unmetered, as every reader of the meter allows; the next start
+/// binds it again.
+fn bind_vault_owner_usage_metering(server: &SyncServer) {
+    if server.vault().privacy_posture() != oneiron::HostingPrivacyPosture::SelfHostLocal {
+        return;
+    }
+    let bound = || -> anyhow::Result<()> {
+        let owner = oneiron::EntityId::derive(
+            oneiron_contracts::entity_id::derived_domains::EMBEDDED_OWNER_ACTOR,
+            &[],
+        )?;
+        server.bind_usage_metering(owner.to_hex())?;
+        Ok(())
+    };
+    if let Err(error) = bound() {
+        tracing::warn!(
+            %error,
+            "usage is not metered on this start; the next start binds it again"
+        );
+    }
 }
 
 /// One embedder build: its slot, the pool it routes through, and only the
@@ -473,6 +528,11 @@ pub(crate) fn build_embedder_on_thread(
     // The server's sink before a host chooses one: the log.
     let receipts = Arc::new(crate::models::ServerReceipts::default());
     let slot = crate::embedder::build_slot_with_broker(config.embedder.as_ref(), receipts, broker)?;
+    // Every paid embedding request then spends on the vault's background
+    // line (ARCH-0053 `#embedding-admission-built`).
+    if let Some(slot) = &slot {
+        slot.bind_background_line(vault)?;
+    }
     if let (Some(slot), Some((pool, scope, release))) = (&slot, gpu_route) {
         crate::embedder::route_batches_through(slot, pool, scope, release)?;
     }
@@ -489,6 +549,26 @@ pub(crate) fn build_embedder_on_thread(
 /// address judged is the one this path binds, before the vault opens. A dev
 /// server reachable from the LAN sets a secret instead; there is no override.
 /// Managed serve never comes here: the supervisor owns its socket.
+/// Says at each start, by the typed reason `GENESIS_FRAGILE`, that the vault
+/// holds no recovery method: a root move retired its recovery kit's key with
+/// every other key and no owner key has been enrolled since, or the owner
+/// skipped saving the genesis recovery secret (identity.md "Genesis window";
+/// L1-07-KIT-AFTER-MOVE = B). A flag, never a refusal: serve goes on.
+fn warn_genesis_fragile(vault: &oneiron::Vault) {
+    match vault.genesis_fragile_now() {
+        Ok(false) => {}
+        Ok(true) => tracing::warn!(
+            reason = oneiron::authority::GENESIS_FRAGILE_FLAG,
+            "this vault holds no recovery method; enrol a new recovery kit with \
+             `oneiron recovery-kit issue`, then `confirm`, then `enroll-authority`"
+        ),
+        Err(error) => tracing::warn!(
+            kind = ?error.kind(),
+            "whether this vault holds a recovery method was not read at start"
+        ),
+    }
+}
+
 fn refuse_unauthenticated_public_bind(
     config: &ServeConfig,
     addr: SocketAddr,

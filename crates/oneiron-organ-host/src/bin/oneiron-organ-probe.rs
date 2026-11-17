@@ -1,6 +1,7 @@
 //! A diagnostics organ for the host's own checks: the runtime's built-in
 //! verbs (`organ.touch`, `organ.echo`) plus `probe.sleep`, `probe.crash`,
-//! `probe.fork`, `probe.outputs` and `probe.ask`. Hostile modes stand in for
+//! `probe.fork`, `probe.outputs`, `probe.ask` and `probe.ptrace` (Linux).
+//! Hostile modes stand in for
 //! a broken organ: `--deaf` answers the handshake and then never reads its
 //! socket, `--drip` sends its `hello_ack` one byte at a time, `--ask-twice`
 //! sends a second ask before the first is answered, `--ask-once` asks and
@@ -33,6 +34,7 @@ mod probe {
                 "probe.fork",
                 "probe.outputs",
                 "probe.ask",
+                "probe.ptrace",
             ]
             .map(|name| VerbSpec {
                 name: name.into(),
@@ -50,6 +52,7 @@ mod probe {
         /// past refusals, and reports each answer (its value, the length and
         /// fold of its bytes) or refusal code; a cancel ends it as cancelled.
         /// With `fail`, it ends in an error once it has asked.
+        /// `probe.ptrace {in_child}` makes one ptrace call (`ptrace` below).
         fn call(&self, call: &CallContext<'_>) -> Result<Answer, OrganError> {
             let field = |key: &str| {
                 call.args
@@ -73,6 +76,14 @@ mod probe {
                     Ok(Answer::default())
                 }
                 "probe.crash" => std::process::abort(),
+                #[cfg(target_os = "linux")]
+                "probe.ptrace" => {
+                    let in_child = field("in_child").and_then(|v| v.as_bool()).unwrap_or(false);
+                    Ok(Answer {
+                        report: ptrace(in_child),
+                        ..Answer::default()
+                    })
+                }
                 "probe.ask" => {
                     let verb = field("verb")
                         .and_then(|v| v.as_str().map(str::to_owned))
@@ -149,6 +160,58 @@ mod probe {
                 other => Err(OrganError::new(ErrorCode::UnknownVerb, other)),
             }
         }
+    }
+
+    /// One ptrace call, as an organ escaping its sandbox would make:
+    /// `PTRACE_PEEKDATA` of pid 0, which nothing traces, so where the call
+    /// is allowed it fails with ESRCH and changes nothing. In the organ
+    /// itself it answers the call's return and errno. With `in_child`, a
+    /// forked child makes the call and exits 0, and the answer is how the
+    /// child ended: `signal` (0 if it exited) and `exit` (-1 if a signal
+    /// ended it).
+    #[cfg(target_os = "linux")]
+    fn ptrace(in_child: bool) -> Value {
+        let request = libc::c_long::from(libc::PTRACE_PEEKDATA);
+        let zero: libc::c_long = 0;
+        if !in_child {
+            // SAFETY: PTRACE_PEEKDATA of pid 0 reads nothing: no process
+            // is pid 0's tracee, so the kernel answers ESRCH.
+            let returned = unsafe { libc::syscall(libc::SYS_ptrace, request, zero, zero, zero) };
+            let errno = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
+            return Value::Map(vec![
+                ("returned".into(), i64::from(returned).into()),
+                ("errno".into(), i64::from(errno).into()),
+            ]);
+        }
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "a hostile organ's own fork, outside the server"
+        )]
+        // SAFETY: the child makes one ptrace syscall and _exit(2), both
+        // async-signal-safe, and touches no memory of the parent's.
+        let pid = unsafe { libc::fork() };
+        if pid == 0 {
+            // SAFETY: as above; _exit(2) ends the child without running
+            // the parent's exit handlers.
+            unsafe {
+                libc::syscall(libc::SYS_ptrace, request, zero, zero, zero);
+                libc::_exit(0);
+            }
+        }
+        let mut status: libc::c_int = 0;
+        // SAFETY: waitpid on the child just forked, into a local.
+        let waited = unsafe { libc::waitpid(pid, &raw mut status, 0) };
+        let (signal, exit) = if waited != pid {
+            (0, -2)
+        } else if libc::WIFSIGNALED(status) {
+            (libc::WTERMSIG(status), -1)
+        } else {
+            (0, libc::WEXITSTATUS(status))
+        };
+        Value::Map(vec![
+            ("signal".into(), i64::from(signal).into()),
+            ("exit".into(), i64::from(exit).into()),
+        ])
     }
 }
 

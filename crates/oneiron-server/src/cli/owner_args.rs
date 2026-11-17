@@ -195,6 +195,15 @@ pub struct RestoreArgs {
     #[arg(long, value_name = "HEX")]
     pub vault_id: Option<String>,
 
+    /// With `--unlock kit` and `--credential`: an owner-only file holding
+    /// the synced passkey's PRF output (32 raw bytes, 64 hex digits or
+    /// base64url), at the PRF input `--inspect` prints for its `kit_point`
+    /// wrap. The data-key kit's piece the backup carries under that passkey
+    /// joins the pieces given, so one piece and the passkey restore, or the
+    /// passkey and the kit passphrase with no `--piece`.
+    #[arg(long, value_name = "FILE", requires = "credential")]
+    pub kit_passkey_prf_file: Option<PathBuf>,
+
     /// Trust exactly the checkpoint signers in this file, in place of this
     /// install's: `oneiron vault-key signer` prints one on a host that holds
     /// the vault. A backup's own head is never trusted.
@@ -253,6 +262,9 @@ pub enum UnlockMethod {
     /// opens the `world-kit` escrow wrap; the data-key kit's pieces rebuild
     /// the vault key itself, checked against its commitment.
     Kit,
+    /// The printed recovery sheet's code, read as a secret: the way a vault
+    /// under the "Nobody but me" recovery preset restores.
+    Sheet,
 }
 
 /// Where a secret is read, and the recovery box that keeps escrow seeds. A
@@ -306,6 +318,43 @@ pub enum VaultKeyCommand {
     /// released recipient's secret, and print the new capsule's report. No
     /// vault opens, and the data key never leaves the process.
     ResealCapsule(Box<VaultKeyResealArgs>),
+    /// The recovery preset: `standard`, or `nobody-but-me`, where the
+    /// printed sheet alone restores the vault. Shown, or set with `--set`.
+    RecoveryPreset(Box<VaultKeyRecoveryPresetArgs>),
+}
+
+/// The owner's recovery preset, as `vault-key recovery-preset --set` names
+/// it.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+pub enum RecoveryPresetArg {
+    /// Every wrap kind may be added (the default).
+    Standard,
+    /// "Nobody but me": the printed sheet alone restores the vault. Entering
+    /// it issues the sheet and removes every password, passkey and escrow
+    /// wrap but the world kit's.
+    NobodyButMe,
+    /// "Nobody but me" with "any 2 pieces": two of the data-key kit's pieces
+    /// restore the vault. Turned on with its kit by `oneiron recovery-kit
+    /// issue-vault-key --any-two-pieces`.
+    NobodyButMeAnyTwo,
+}
+
+#[derive(Args, Clone, Debug)]
+pub struct VaultKeyRecoveryPresetArgs {
+    /// Set the preset instead of showing it.
+    #[arg(long, value_enum, value_name = "PRESET")]
+    pub set: Option<RecoveryPresetArg>,
+
+    /// With `--set nobody-but-me`: the new owner-only file the printed
+    /// sheet's code is written to, once. Print it and keep it offline.
+    #[arg(long, value_name = "FILE")]
+    pub sheet_out: Option<PathBuf>,
+
+    #[command(flatten)]
+    pub unlock: VaultUnlockArgs,
+
+    #[command(flatten)]
+    pub serve: ServeArgs,
 }
 
 #[derive(Args, Clone, Debug)]
@@ -341,13 +390,14 @@ pub struct VaultKeyArgs {
 #[derive(Args, Clone, Debug)]
 pub struct VaultKeyAddDeviceArgs {
     /// How a sealed vault's pages unlock before it opens: `device` (this
-    /// install's keystore), `password`, `passkey`, `escrow` or `kit` (the
-    /// world kit's `world-kit` escrow wrap, or the data-key kit's pieces),
-    /// its secret read as `oneiron restore --unlock` reads it.
+    /// install's keystore), `password`, `passkey`, `escrow`, `kit` (the
+    /// world kit's `world-kit` escrow wrap, or the data-key kit's pieces) or
+    /// `sheet`, its secret read as `oneiron restore --unlock` reads it.
     #[arg(long, value_enum, default_value_t = UnlockMethod::Device)]
     pub unlock: UnlockMethod,
 
-    /// With `--unlock passkey`: the passkey's credential name.
+    /// With `--unlock passkey`, or `--unlock kit` with
+    /// `--kit-passkey-prf-file`: the passkey's credential name.
     #[arg(long, value_name = "NAME")]
     pub credential: Option<String>,
 
@@ -372,6 +422,16 @@ pub struct VaultKeyAddDeviceArgs {
     /// from the vault's page-seal mirror.
     #[arg(long, value_name = "HEX")]
     pub vault_id: Option<String>,
+
+    /// With `--unlock kit` and `--credential`: an owner-only file holding
+    /// the synced passkey's PRF output (32 raw bytes, 64 hex digits or
+    /// base64url) at the PRF input `vault-key prf-input` prints for that
+    /// name. The data-key kit's piece the vault keeps sealed under that
+    /// passkey (its `kit_point` wrap) joins the pieces given, so one
+    /// `--piece` and the passkey unlock, or the passkey and the kit
+    /// passphrase with no `--piece` (census L10-18).
+    #[arg(long, value_name = "FILE", requires = "credential")]
+    pub kit_passkey_prf_file: Option<PathBuf>,
 
     #[command(flatten)]
     pub secret: SecretSourceArgs,
@@ -727,6 +787,13 @@ pub enum ImportCommand {
     /// `events.jsonl`) or a Cursor agent transcript. One file, under a folder
     /// listed in `[import] hook_transcript_roots`.
     HookTranscript(Box<ImportSourceArgs>),
+    /// A Slack workspace export: the zip, or the unzipped folder. Each
+    /// conversation reads to the members Slack shares it with whom
+    /// `--members` maps to a vault person, and to you; every other member
+    /// is kept as a contact, by name, who reads nothing. `--propose-members`
+    /// writes the map for you to confirm; `members set` maps one member
+    /// later.
+    Slack(Box<ImportSlackCommand>),
     /// A folder of linked markdown notes (an Obsidian vault, an agent's
     /// memory folder): writes the batch of new notes and links to `--out` and
     /// prints the digest that approves or declines it.
@@ -811,8 +878,25 @@ pub struct ImportArchiveArgs {
     /// The archive (a ZIP).
     pub path: PathBuf,
 
+    /// Whose words the archive's conversations hold. An archive imported
+    /// again takes the choice it was imported with; the other is refused.
+    #[arg(long, value_enum, default_value_t = ArchiveSpeakers::Own)]
+    pub speakers: ArchiveSpeakers,
+
     #[command(flatten)]
     pub serve: ServeArgs,
+}
+
+/// Whose words an imported archive's conversations hold (FIX 15412).
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+pub enum ArchiveSpeakers {
+    /// This vault's own person and companion spoke them: every author and
+    /// speaker stays as the archive has it.
+    Own,
+    /// They came from outside: each user, companion or assistant message and
+    /// turn lands as a counterparty's, its original author kept inert beside
+    /// it; system notices stay.
+    Foreign,
 }
 
 #[derive(Args, Clone, Debug)]
@@ -833,6 +917,100 @@ pub struct ImportSourceArgs {
     /// else.
     #[arg(long, conflicts_with = "dry_run")]
     pub queue: bool,
+
+    /// Stage this ChatGPT or Claude export in the vault's own data folder
+    /// (`imports/<id>/`) for the running `serve` to import as a job: a
+    /// restart takes it up where it stopped, and its claims wait in one
+    /// review (ARCH-0027 #hosted-import). Prints the import's id; copies the
+    /// export and nothing else.
+    #[arg(long, conflicts_with_all = ["dry_run", "queue"])]
+    pub hosted: bool,
+
+    #[command(flatten)]
+    pub serve: ServeArgs,
+}
+
+/// `oneiron import slack <path> (--members | --propose-members) <file>`, or
+/// `oneiron import slack members set ...`.
+#[derive(Args, Clone, Debug)]
+#[command(args_conflicts_with_subcommands = true, subcommand_negates_reqs = true)]
+pub struct ImportSlackCommand {
+    #[command(subcommand)]
+    pub command: Option<ImportSlackSubcommand>,
+
+    #[command(flatten)]
+    pub import: ImportSlackArgs,
+}
+
+#[derive(Subcommand, Clone, Debug)]
+pub enum ImportSlackSubcommand {
+    /// The members of a workspace an import kept.
+    #[command(subcommand)]
+    Members(ImportSlackMembersCommand),
+}
+
+#[derive(Subcommand, Clone, Debug)]
+pub enum ImportSlackMembersCommand {
+    /// Map one member to a vault person, or back to a contact. Every
+    /// channel of the workspace the member is in reads to its person from
+    /// now on, the messages already imported included.
+    Set(Box<ImportSlackMemberSetArgs>),
+}
+
+#[derive(Args, Clone, Debug)]
+pub struct ImportSlackArgs {
+    /// The export: its zip, or the unzipped folder holding `users.json`.
+    /// Only this path is read: symbolic links under it are not followed.
+    #[arg(required = true)]
+    pub path: Option<PathBuf>,
+
+    #[command(flatten)]
+    pub map: ImportSlackMemberMapArgs,
+
+    /// The workspace's name, as the report shows it: by default the export's
+    /// file or folder name, up to " Slack export".
+    #[arg(long)]
+    pub workspace: Option<String>,
+
+    #[command(flatten)]
+    pub serve: ServeArgs,
+}
+
+/// The member map the import lands under, or the file a proposed one goes to.
+#[derive(Args, Clone, Debug)]
+#[group(required = true, multiple = false)]
+pub struct ImportSlackMemberMapArgs {
+    /// The member map: a JSON object from Slack member id to `"owner"` (your
+    /// own member), a vault person's id in hex, or `null` (a contact); or to
+    /// an object holding that as `person` beside a `name`, as
+    /// `--propose-members` writes it. A member it leaves out is a contact.
+    /// `{}` imports a workspace no one in the vault was in, which then reads
+    /// to you alone.
+    #[arg(long)]
+    pub members: Option<PathBuf>,
+
+    /// Lands nothing: writes the member map the vault proposes to this new
+    /// file, readable by you alone, for you to check and pass to `--members`.
+    /// A member the vault already maps keeps its mapping; any other member
+    /// whose email address is that of exactly one person in the vault is
+    /// proposed as that person; every other member is a contact. Your own
+    /// member is never guessed: set it to "owner".
+    #[arg(long)]
+    pub propose_members: Option<PathBuf>,
+}
+
+#[derive(Args, Clone, Debug)]
+pub struct ImportSlackMemberSetArgs {
+    /// The workspace's key, as the import's report shows it (`workspace.key`):
+    /// its Slack team id.
+    pub workspace: String,
+
+    /// The member's Slack id, as `users.json` lists it.
+    pub member: String,
+
+    /// A vault person's id in hex, or `contact`: the member then reads
+    /// nothing.
+    pub person: String,
 
     #[command(flatten)]
     pub serve: ServeArgs,

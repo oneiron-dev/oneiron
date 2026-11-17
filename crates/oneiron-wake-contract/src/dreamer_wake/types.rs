@@ -178,6 +178,24 @@ pub enum DreamerAttemptExecution {
         /// The vendor-reported reset in Unix seconds, when known.
         reset_at_s: Option<u64>,
     },
+    /// A spent model seat refused a step after the try's admitted calls spent units
+    /// (SEAT-PARK-MODEL-STEP-PATH): the driver settles that spend as it settles
+    /// [`Self::ParkWithSpend`], and parks the try on the seat in the same write. The seat's
+    /// available write resumes it. `seat` is the seat's 16-byte id; `reset_at_s` is the
+    /// vendor-reported reset in Unix seconds, none for a lapsed login.
+    ParkOnSeatWithSpend {
+        /// The refusal recorded on the park.
+        reason: String,
+        /// The refused model seat's durable id.
+        seat: [u8; 16],
+        /// The vendor-reported reset in Unix seconds, when known.
+        reset_at_s: Option<u64>,
+        /// Units the try's admitted calls spent before the refusal.
+        completed_units: u64,
+        /// Terminal step identities this park charges for the first time.
+        /// Atomic with wake-budget settlement so replay cannot double debit.
+        step_bindings: Vec<StepEffectBinding>,
+    },
     /// Selection holds are scheduled retries, never unspent parked attempts.
     Deferred {
         completed_units: u64,

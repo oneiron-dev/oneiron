@@ -36,7 +36,10 @@ pub(crate) fn scrub_context_pack_visible_stats(pack: &mut oneiron::ContextPack) 
     pack.stats.entities_hydrated = pack.results.len();
     pack.stats.neighbors_hydrated = pack.neighbors.len();
 
-    if pack.results.is_empty() && pack.neighbors.is_empty() && pack.l2_base.is_none() {
+    // A pack its rows left empty reads alike with the L2 base beside it or
+    // not: the base answers no query (FIX 22309, E2E RETRIEVAL-06), and the
+    // code-run read already reads it so (`code_run/vault_read/in_process.rs`).
+    if pack.results.is_empty() && pack.neighbors.is_empty() {
         // A reader profile's skip is decided before any row is read, so
         // naming it tells nothing about rows.
         if pack

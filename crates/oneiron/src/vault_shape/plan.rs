@@ -9,39 +9,14 @@ use super::seed::{hex, seed_digest};
 use super::{ShapeCeiling, ShapeMemberRole, ShapeRead, ShapeRow, ShapeSeed, ShapeTarget, invalid};
 use crate::error::Result;
 use crate::{EntityId, Vault};
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::borrow::Borrow;
 use std::collections::{BTreeMap, BTreeSet};
 
-/// What an item does to the named structure.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum ShapeChange {
-    /// The structure is missing and is created.
-    Create,
-    /// The structure exists and takes the declared values.
-    Update,
-    /// The structure leaves, by an explicit retire line.
-    Retire,
-}
-
-/// How an item lands (ARCH-0070 `shape:plan-apply`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum ShapeItemClass {
-    /// A narrowing, or an ordinary setup write that widens nothing (a new
-    /// world, a roster row at a proposed ceiling): lands with a receipt.
-    Receipted,
-    /// Any new grant, raised ceiling, retire line, new power or kind on the
-    /// wire: lands Proposed and waits for the owner's stamp. A widening never
-    /// rides autonomy, whatever the rung.
-    Widening,
-    /// A key binding, an ownership transfer or a co-sign change: goes to the
-    /// AUTHORITY_LOG ceremony unchanged. A member row moving a role to or
-    /// from Owner compiles to one.
-    Authority,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::vault_shape::plan::{ShapeChange, ShapeItemClass};
 
 /// One difference between the seed and the vault.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -156,9 +131,19 @@ fn classify(
         (Some(ShapeRow::Member { role: was, .. }), Some(ShapeRow::Member { role: now, .. })) => {
             if *was == ShapeMemberRole::Owner || *now == ShapeMemberRole::Owner {
                 Authority
-            } else if now.reach() > was.reach()
-                // A Steward made a Member gains `write`, which no Steward holds.
-                || (*was == ShapeMemberRole::Steward && *now == ShapeMemberRole::Member)
+            } else if ShapeMemberRole::raises(*was, *now)
+                // Steward is the owner's to give (ARCH-0043; lead 10 Nov
+                // 06:5x): a move into it waits for his stamp, whoever asks.
+                || *now == ShapeMemberRole::Steward
+                // A Steward made a Member, an Admin or a Deputy gains
+                // `write`, which no Steward holds.
+                || (*was == ShapeMemberRole::Steward
+                    && matches!(
+                        now,
+                        ShapeMemberRole::Member
+                            | ShapeMemberRole::Admin
+                            | ShapeMemberRole::Deputy
+                    ))
             {
                 Widening
             } else {
@@ -219,7 +204,7 @@ fn door(
             ShapeChange::Retire,
             ShapeTarget::World { .. } | ShapeTarget::Facet { .. } | ShapeTarget::WorldFacet { .. },
         ) => Some("delete_entity"),
-        (ShapeChange::Create, ShapeTarget::Actor { .. }) => Some("define_agent"),
+        (ShapeChange::Create, ShapeTarget::Actor { .. }) => Some("create_agent_definition_as"),
         (ShapeChange::Update | ShapeChange::Retire, ShapeTarget::Actor { .. }) => {
             Some("update_agent_definition_as")
         }
@@ -264,19 +249,39 @@ fn door(
     }
 }
 
+/// The plan's frontier: the seed, the policy read-frontier, every live row
+/// and the reach. Apply compares it with the vault's before it writes, so
+/// it keeps its bytes (K, PLAN-UC-04 3.4c).
 fn frontier(seed: &ShapeSeed, live: &LiveShape) -> Result<String> {
-    let mut hasher = blake3::Hasher::new();
-    hasher.update(b"oneiron.vault_shape.frontier.v1\0");
-    hasher.update(&seed_digest(seed)?);
-    hasher.update(&live.policy_frontier);
+    let mut hasher = LegacyDigest::new(purposes::vault_shape::FRONTIER);
+    hasher.raw(&seed_digest(seed)?).raw(&live.policy_frontier);
     for (row, entity) in &live.rows {
         let bytes = rmp_serde::to_vec_named(row).map_err(|_| invalid("row encoding failed"))?;
-        hasher.update(&(bytes.len() as u64).to_be_bytes());
-        hasher.update(&bytes);
-        hasher.update(entity.map(|id| id.to_hex()).unwrap_or_default().as_bytes());
+        hasher
+            .len_u64_be(bytes.len())
+            .raw(&bytes)
+            .raw(entity.map(|id| id.to_hex()).unwrap_or_default().as_bytes());
     }
     live.reach.hash_into(&mut hasher);
-    Ok(hex(hasher.finalize().as_bytes()))
+    Ok(hex(&hasher.finish()))
+}
+
+/// Seam for `test_doors::fingerprint_keep_typed_feeds` (PLAN-UC-04 3.4c): the
+/// frontier of `seed` over these live rows, policy read-frontier and reach.
+#[cfg(oneiron_test_support)]
+pub(crate) fn frontier_for_test(
+    seed: &ShapeSeed,
+    rows: Vec<(ShapeRow, Option<EntityId>)>,
+    policy_frontier: [u8; 32],
+    reach: &crate::test_doors::fingerprint_keep_typed_feeds::ReachRows,
+) -> Result<String> {
+    let live = LiveShape {
+        rows,
+        policy_frontier,
+        reach: reach.into(),
+        withheld: BTreeSet::new(),
+    };
+    frontier(seed, &live)
 }
 
 impl Vault {

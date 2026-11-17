@@ -23,8 +23,8 @@ use super::manifest_types::{
 use crate::gate::class_policy::{ActPosture, WaitResolution};
 
 use crate::gate::ceiling::{
-    OwnerRowAction, PolicyAxes, PolicyCriticality, PolicyOwnerPatternRow, PolicyOwnerPolicyRow,
-    PolicyOwnerPrecedence, PolicySensitivity, PolicySignature,
+    OwnerRowAction, PolicyAuthorityMarker, PolicyAxes, PolicyCriticality, PolicyOwnerPatternRow,
+    PolicyOwnerPolicyRow, PolicyOwnerPrecedence, PolicySensitivity,
 };
 use crate::gate::grants::{PolicyScopedGrant, scoped_read_grant_has_read_effector};
 use crate::gate::policy_values::{
@@ -1060,8 +1060,10 @@ impl PolicyManifestResolution {
             .any(scoped_read_grant_has_read_effector)
     }
 
+    /// The manifest's authority markers (its `signature` and `signatures`
+    /// keys). Nothing verifies them: see `PolicyAuthorityMarker`.
     #[must_use]
-    pub(crate) fn signatures(&self) -> &[PolicySignature] {
+    pub(crate) fn signatures(&self) -> &[PolicyAuthorityMarker] {
         &self.signatures
     }
 

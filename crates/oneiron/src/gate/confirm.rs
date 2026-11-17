@@ -104,7 +104,8 @@ impl Vault {
             for (sequence, pending) in page {
                 last_inspected = Some(sequence);
                 if let Ok(binding) = critical_write_confirm_binding(&pending)
-                    && (binding.expires_at > now || critical_confirm_has_no_deadline(&pending))
+                    && (!oneiron_store::expiry::is_expired(now, binding.expires_at)
+                        || critical_confirm_has_no_deadline(&pending))
                 {
                     // Preserve the established public ordering for each
                     // bounded result page; sequence only controls sweep progress.
@@ -218,7 +219,8 @@ impl Vault {
             .ok_or(Error::EntityNotFound)?;
         let header =
             EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
-        let expired = binding.expires_at <= now && !critical_confirm_has_no_deadline(&pending);
+        let expired = oneiron_store::expiry::is_expired(now, binding.expires_at)
+            && !critical_confirm_has_no_deadline(&pending);
         let answered = pending.diff_handle.clone();
         let deferred = self.has_deferred_claim_in_txn(wtxn, &binding.claim_id)?;
         if expired && !deferred {
@@ -351,7 +353,7 @@ impl Vault {
                     self.complete_deferred_claim_in_txn(
                         wtxn,
                         &binding.claim_id,
-                        true,
+                        Some(removal),
                         now,
                         closer,
                     )?;
@@ -361,7 +363,7 @@ impl Vault {
                 self.store
                     .delete_critical_confirm_index_in_txn(wtxn, &confirm_id)?;
                 // A held provenance claim stamped no flags on its edge.
-                if removal == crate::store::TrayRemoval::Answered
+                if removal.is_answered()
                     && body.predicate == crate::provenance::PREDICATE_EDGE_PROVENANCE
                 {
                     self.restamp_cleared_edge_provenance_in_txn(wtxn, &binding.claim_id)?;
@@ -422,8 +424,7 @@ impl Vault {
                 self.store.close_pending_gate_consent_as_in_txn(
                     wtxn,
                     &binding.claim_id,
-                    now,
-                    "rejected",
+                    crate::store::gate_reason::GateReceiptOutcome::Rejected,
                     vec![GATE_REASON_CRITICAL_CONFIRM_DECLINED.to_owned()],
                     None,
                     removal,
@@ -509,7 +510,7 @@ impl Vault {
                 if critical_confirm_has_no_deadline(&row) {
                     continue;
                 }
-                if binding.expires_at > now
+                if !oneiron_store::expiry::is_expired(now, binding.expires_at)
                     || !self.confirm_demotion_retries.due(&binding.confirm_id, now)
                 {
                     continue;
@@ -607,15 +608,8 @@ pub(crate) struct ConfirmExpiryPage {
     pub(crate) ended: bool,
 }
 
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
-)]
-pub enum CriticalWriteConfirmResolution {
-    Cleared,
-    Retracted,
-    DemotedToProposed,
-    AlreadySettled,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::gate::confirm::CriticalWriteConfirmResolution;
 
 /// Reconciles replicated claim input against the claim's owner-answer
 /// obligation (FIX 9603). The peer's bytes always land unchanged: a replica
@@ -650,8 +644,7 @@ pub(crate) fn reconcile_critical_write_confirm_on_replicated_overwrite(
     store.close_pending_gate_consent_as_in_txn(
         wtxn,
         claim_id,
-        pending.created_at,
-        "invalidated",
+        crate::store::gate_reason::GateReceiptOutcome::Invalidated,
         vec![GATE_REASON_CRITICAL_CONFIRM_REPLICATED_OVERWRITE.to_owned()],
         None,
         crate::store::TrayRemoval::Silent,

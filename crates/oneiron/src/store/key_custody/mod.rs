@@ -57,6 +57,8 @@ pub(crate) use self::erasable::{
 pub(crate) use self::erase_evidence::{CredentialFenceFact, FenceFact};
 #[cfg(test)]
 pub(in crate::store) use self::files::arm_after_key_marker_check;
+#[cfg(oneiron_test_support)]
+pub(crate) use self::files::custody_entry_reads_for_test;
 pub(crate) use self::files::{EntryState, LocalCustody, custody_present};
 pub(crate) use self::folder::FolderTarget;
 pub(crate) use self::fork::{CustodyPlan, ForkedCustodyDir, Requirement};

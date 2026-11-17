@@ -86,7 +86,8 @@ use crate::write_envelope::ClaimCandidate;
 pub(in crate::batch) use batch_door::mask_batch_ops;
 pub(crate) use promoted_message_parts::seal_promoted_message_ops_in_txn;
 use split_phrase::Spread;
-use text_spans::{file_spans, merged, occurrences, secret_spans};
+pub(crate) use text_spans::{file_spans, span_placed_for};
+use text_spans::{merged, occurrences, secret_spans};
 use wipe::{PlanOps, PlanValues, replace_wiped};
 
 const REASON_BLOCKLIST: &str = "gate.secret_scan.blocklist";
@@ -124,6 +125,31 @@ pub(crate) fn mask_origin_in_txn(
     id: &EntityId,
 ) -> Result<Option<MaskOrigin>> {
     MASK_ORIGIN.get(store, txn, id)
+}
+
+/// Records that a scan of kind `reason` lifted the custody record `custody`
+/// out of `record`'s body, for the payment-credential test door
+/// (`test_doors::payment_credential`, L8-60).
+#[cfg(oneiron_test_support)]
+pub(crate) fn put_mask_origin_for_test_door(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    custody: &EntityId,
+    record: &EntityId,
+    reason: &str,
+    masked_at: u64,
+) -> Result<()> {
+    MASK_ORIGIN.put(
+        store,
+        wtxn,
+        custody,
+        &MaskOrigin {
+            record: *record,
+            reason: reason.to_owned(),
+            place: "body".to_owned(),
+            masked_at,
+        },
+    )
 }
 
 /// Rebinds one custody record's mask origin from `old` to `new` (FIX 12779):

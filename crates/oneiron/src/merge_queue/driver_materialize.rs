@@ -72,9 +72,9 @@ impl MergeQueue<'_> {
 
     /// Releases a settled batch's staged-path keep-refs (FIX 7305): its
     /// speculative commits, which nothing reads once it is sealed green,
-    /// rolled back, cancelled or its survivors decided. Its base and landed
-    /// commits stay pinned, and so does a commit another pinned batch still
-    /// names; its drive record is no longer pinned.
+    /// rolled back, cancelled, superseded or its survivors decided. Its base
+    /// and landed commits stay pinned, and so does a commit another pinned
+    /// batch still names; its drive record is no longer pinned.
     pub(super) fn release_batch_pins(&self, id: &str) -> Result<QueueDriveOutcome> {
         let _guard = lock_repository(self.repo.common_dir())?;
         let queue = self.queue()?;
@@ -192,8 +192,9 @@ impl MergeQueue<'_> {
 
 impl QueueStageOverlap {
     /// CALL A "whole-file queue overlap": two distinct accepted proposals,
-    /// whole-file or source-bound received bundles (FIX 9976), that replace
-    /// the same path from the same green base and retained
+    /// any stored change whose side builds: one file, a native bundle or a
+    /// source-bound received bundle (FIX 9976), that replace the same path
+    /// from the same green base and retained
     /// snapshot, inside `batch` or against another retained batch, need a
     /// fresh combined reviewed proposal even when a text merge could be
     /// clean; equal target bytes count too, so no authorship is dropped. A
@@ -206,20 +207,30 @@ impl QueueStageOverlap {
         batch: &MergeBatch,
         retained: &[MergeBatch],
     ) -> Result<QueueOverlapFinding> {
-        // A source already handed off and superseded, or one whose handoff
-        // this batch's own TASK resolves, is no new overlap.
+        // A source already handed off and superseded, or one whose open
+        // conflict this batch's own proposals resolve, is no new overlap. The
+        // resolution is matched by its conflict, not by the TASK it runs
+        // under (RULING CODECUSTODY-RECONCILE-SUCCESSOR = A).
+        let mut resolving = BTreeSet::new();
+        for proposal in &batch.proposals {
+            let Ok(id) = EntityId::from_hex(&proposal.id) else {
+                continue;
+            };
+            if let Some(row) = queue.vault.repo_proposal(id)?
+                && let RepoProposalOperation::ResolveConflictFile {
+                    open_conflict_claim_id,
+                    ..
+                } = row.operation
+            {
+                resolving.insert(open_conflict_claim_id);
+            }
+        }
         let resolved = |other: &MergeBatch| {
             other
                 .drive
                 .as_ref()
                 .and_then(|drive| drive.overlap.as_ref())
-                .is_some_and(|link| {
-                    link.superseded
-                        || batch
-                            .run_order
-                            .as_ref()
-                            .is_some_and(|order| link.task == Some(order.task))
-                })
+                .is_some_and(|link| link.superseded || resolving.contains(&link.conflict))
         };
         let peers = retained.iter().filter(|other| {
             other.id != batch.id
@@ -295,15 +306,11 @@ impl QueueStageOverlap {
                     .is_ok_and(|store| store.as_hex() == queue.repo.identity().as_hex()),
                 _ => false,
             };
-            // A source-bound received bundle shares the handoff (FIX 9976).
-            if !same_store
-                || !(matches!(row.operation, RepoProposalOperation::CommitFile)
-                    || row.is_source_bound_received())
-            {
+            // Any stored change whose side builds shares the handoff.
+            if !same_store || !row.conflict_side_buildable() {
                 return hold(
                     QueueDriveHoldReason::HeldOverlap,
-                    "an overlapping proposal is not a whole-file or received proposal of this \
-                     repository",
+                    "an overlapping proposal is no buildable change of this repository",
                 );
             }
             rows.push(row);

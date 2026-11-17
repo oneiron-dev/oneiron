@@ -42,7 +42,7 @@ pub(super) fn clear_policy_manifests_for_test(vault: &crate::Vault) {
                 ids.push(id);
             }
             for id in ids {
-                crate::batch::deindex_entity_for_test(&vault.store, wtxn, &id)?;
+                crate::batch::deindex_entity_for_test(&vault, wtxn, &id)?;
             }
             Ok(())
         })
@@ -120,7 +120,7 @@ pub(super) fn put_raw_entity_row(
     entity_type: u8,
     body: &[u8],
 ) -> Result<()> {
-    let payload = entity_record(entity_type, test_time(1), 1, body);
+    let payload = entity_record(entity_type, test_time(1), 1, 0, body);
     vault.with_write_txn(|wtxn| {
         vault.store.entities.put(wtxn, id.as_bytes(), &payload)?;
         let type_key = Store::encode_type_key(entity_type, id);
@@ -193,7 +193,7 @@ pub(super) fn check_external_effect_policy_with_budget(
             EffectorBudgetChargeOutcome::NoRows(charge)
             | EffectorBudgetChargeOutcome::Charged(charge) => charge,
             EffectorBudgetChargeOutcome::Exhausted {
-                row_index,
+                location,
                 on_exhaust,
                 mut charge,
             } => {
@@ -204,7 +204,7 @@ pub(super) fn check_external_effect_policy_with_budget(
                         wtxn,
                         &target.key_id,
                         &target.key,
-                        crate::connector_key::budget_exhausted_reason(row_index),
+                        crate::connector_key::budget_exhausted_reason(&location),
                         crate::unix_seconds_now(),
                     )?;
                     charge.read.status = ConnectorKeyStatus::Suspended;
@@ -448,6 +448,7 @@ pub(super) fn policy_manifest_blob(data: &[u8]) -> Vec<u8> {
         ENTITY_TYPE_POLICY_MANIFEST,
         TimeRange { start: 1, end: 1 },
         1,
+        0,
         data,
     )
 }
@@ -457,6 +458,7 @@ pub(super) fn access_grant_blob(data: &[u8]) -> Vec<u8> {
         ENTITY_TYPE_ACCESS_GRANT,
         TimeRange { start: 1, end: 1 },
         1,
+        0,
         data,
     )
 }
@@ -467,6 +469,7 @@ pub(super) fn authority_log_blob(data: &[u8]) -> Vec<u8> {
         crate::registry::ENTITY_TYPE_AUTHORITY_LOG,
         TimeRange { start: 1, end: 1 },
         1,
+        0,
         data,
     )
 }
@@ -479,6 +482,14 @@ pub(super) fn put_malformed_access_grant_bytes(
     let payload = access_grant_blob(data);
 
     vault.with_write_txn(|wtxn| {
+        // Through the body stage's companion index writer, as a stored row
+        // passes it, so the indexed reads walk and fail closed on it too.
+        crate::access_grant::reindex_companion_grant(
+            &vault.store,
+            wtxn,
+            id,
+            Some((ENTITY_TYPE_ACCESS_GRANT, data)),
+        )?;
         vault.store.entities.put(wtxn, id.as_bytes(), &payload)?;
         let type_key = Store::encode_type_key(ENTITY_TYPE_ACCESS_GRANT, id);
         vault.store.type_index.put(wtxn, &type_key, &[])?;
@@ -694,6 +705,7 @@ pub(super) fn put_claim_body(vault: &crate::Vault, id: &EntityId, body: &ClaimBo
         crate::registry::ENTITY_TYPE_CLAIM,
         TimeRange { start: 1, end: 1 },
         1,
+        0,
         &data,
     );
 
@@ -759,6 +771,7 @@ pub(super) fn federated_claim_update(id: &EntityId, body: &ClaimBody) -> Result<
         crate::registry::ENTITY_TYPE_CLAIM,
         TimeRange { start: 5, end: 5 },
         5,
+        0,
         &data,
     );
 
@@ -927,6 +940,7 @@ pub(super) fn external_effect_gate_input(
         has_opted_in: true,
         has_permission: true,
         policy_risk: ExternalEffectPolicyRisk::Normal,
+        send_autonomy: None,
     }
 }
 

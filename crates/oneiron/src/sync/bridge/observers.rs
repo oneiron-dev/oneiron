@@ -71,6 +71,41 @@ pub struct Materializer {
     mutex: Mutex<()>,
     lease_vault_id: u64,
     live_query_tees: Mutex<Vec<std::sync::Weak<dyn LiveQueryTee>>>,
+    /// The live-window turn: see [`Materializer::enter_live_window`].
+    live_window_turns: LiveWindowTurns,
+}
+
+/// Which thread holds the live-window turn, and how many nested turns it
+/// holds (L7-45).
+#[derive(Default)]
+struct LiveWindowTurns {
+    holder: Mutex<Option<(std::thread::ThreadId, usize)>>,
+    released: std::sync::Condvar,
+}
+
+/// One thread's live-window turn: dropping the last nested turn of the
+/// holding thread releases it. Not `Send`: a turn is released by the thread
+/// that took it, so it is never held across an `.await`.
+pub(crate) struct LiveWindowTurn<'a> {
+    turns: &'a LiveWindowTurns,
+    _held_by_this_thread: std::marker::PhantomData<*const ()>,
+}
+
+impl Drop for LiveWindowTurn<'_> {
+    fn drop(&mut self) {
+        let mut holder = self
+            .turns
+            .holder
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        *holder = match *holder {
+            Some((thread, depth)) if depth > 1 => Some((thread, depth - 1)),
+            _ => None,
+        };
+        if holder.is_none() {
+            self.turns.released.notify_all();
+        }
+    }
 }
 
 impl Default for Materializer {
@@ -79,6 +114,7 @@ impl Default for Materializer {
             mutex: Mutex::new(()),
             lease_vault_id: crate::sync::lease::DEFAULT_LEASE_VAULT_ID,
             live_query_tees: Mutex::new(Vec::new()),
+            live_window_turns: LiveWindowTurns::default(),
         }
     }
 }
@@ -93,6 +129,7 @@ impl Materializer {
             mutex: Mutex::new(()),
             lease_vault_id,
             live_query_tees: Mutex::new(Vec::new()),
+            live_window_turns: LiveWindowTurns::default(),
         }
     }
 
@@ -128,6 +165,43 @@ impl Materializer {
 
     pub fn lease_vault_id(&self) -> u64 {
         self.lease_vault_id
+    }
+
+    /// Takes the live-window turn (L7-45; ARCH-0023b `#tombstone-index-built`):
+    /// an import into a window document other threads reach, with its
+    /// Observer callbacks, and an indexed sync pass over such a document never
+    /// overlap. A pass's `TombstoneIndex` reads a case-shifted tombstone key
+    /// from a snapshot taken when it is built, and only an import writes one;
+    /// a pass holds the turn from before that build to its end, so no import
+    /// lands between them.
+    ///
+    /// Re-entrant on the holding thread: Observer callbacks run inside the
+    /// import that holds the turn, and a nested pass shares it. Lock order:
+    /// this turn, then [`Self::lock`]; never take it while holding the
+    /// materializer lock. Never wait for it while holding the window
+    /// registry lock either: the turn's holder may take that lock (Observer
+    /// B's NOTE scrub, FIX 12128), so a window open retries its pass after
+    /// the registry lock is down, and a replacement forwards its unregistered
+    /// candidate without the turn ([`crate::sync::window::forward_rematerialize_detached`]).
+    pub(crate) fn enter_live_window(&self) -> LiveWindowTurn<'_> {
+        let turns = &self.live_window_turns;
+        let this_thread = std::thread::current().id();
+        let mut holder = turns
+            .holder
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        while holder.is_some_and(|(thread, _)| thread != this_thread) {
+            holder = turns
+                .released
+                .wait(holder)
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+        }
+        let depth = holder.map_or(0, |(_, depth)| depth);
+        *holder = Some((this_thread, depth + 1));
+        LiveWindowTurn {
+            turns,
+            _held_by_this_thread: std::marker::PhantomData,
+        }
     }
 
     /// Acquires the materializer lock.
@@ -685,7 +759,9 @@ pub(crate) fn register_turn_program_observers(
 }
 
 /// Subscribes to a map's changes, filtering out bridge-origin events and
-/// delegating to a materializer function under the materializer lock.
+/// delegating to a materializer function under the materializer lock. The
+/// tombstones map's scrub of the deleted NOTEs out of the other live windows
+/// runs once that lock is down (FIX 25183).
 fn subscribe_map_observer(
     doc: &LoroDoc,
     map: &LoroMap,
@@ -753,7 +829,7 @@ fn subscribe_map_observer(
             let _import = crate::sync::manager::import_scope();
             for cdiff in &event.events {
                 if let Some(map_delta) = cdiff.diff.as_map() {
-                    let (replayed_entities, changes) = {
+                    let (replayed_entities, changes, deleted) = {
                         let _guard = materializer.lock();
                         if live_query.0 == "entities" {
                             let (committed, changes) =
@@ -764,7 +840,17 @@ fn subscribe_map_observer(
                                     &window_key,
                                     lease_vault_id,
                                 );
-                            (committed.then(Vec::new), changes)
+                            (committed.then(Vec::new), changes, Vec::new())
+                        } else if live_query.0 == "tombstones" {
+                            match super::tombstones::materialize_tombstones_with_deletes(
+                                &callback_doc,
+                                map_delta,
+                                &vault,
+                                &window_key,
+                            ) {
+                                Some(batch) => (Some(batch.affected), Vec::new(), batch.applied),
+                                None => (None, Vec::new(), Vec::new()),
+                            }
                         } else {
                             (
                                 materialize(
@@ -775,9 +861,18 @@ fn subscribe_map_observer(
                                     lease_vault_id,
                                 ),
                                 Vec::new(),
+                                Vec::new(),
                             )
                         }
                     };
+                    // A deleted NOTE's attachments leave the other live
+                    // windows once the lock is down (FIX 12128): the scrub
+                    // lists them through the window registry lock, and a
+                    // replacement holds that lock while it takes this one
+                    // (FIX 25183).
+                    if !deleted.is_empty() {
+                        crate::sync::note::deleted_elsewhere(&vault, &window_key, deleted);
+                    }
                     if let Some(replayed_entities) = replayed_entities {
                         let path = format!("w:{window_key}/{}", live_query.0);
                         let mut diff = entity_document_diff(&path, live_query.0, map_delta);

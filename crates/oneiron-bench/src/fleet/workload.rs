@@ -109,8 +109,14 @@ pub(super) async fn measure(plan: &Plan) -> Result<Observation> {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
         addresses.push(listener.local_addr()?);
         let router = app.clone();
+        // Served with each connection's peer, as build_app asks of an
+        // embedder (a hatch server refuses a connection with no peer).
         _server_tasks.push(ServerTask(tokio::spawn(async move {
-            axum::serve(listener, router).await
+            axum::serve(
+                listener,
+                router.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+            )
+            .await
         })));
     }
     let timeout = Duration::from_secs(plan.timeout_secs);

@@ -440,6 +440,7 @@ impl dyn HeldOutReplayNotes + '_ {
             version: &arm.version,
             instructions: &arm.desc,
             held_out_receipts: &receipts,
+            goal: None,
         };
         // The criterion's own kind when the host sent one, else the kind the
         // goal declares now: either way it is frozen with the question, so a

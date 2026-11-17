@@ -37,6 +37,40 @@ pub(crate) fn apply_ops(
     )
 }
 
+/// [`apply_ops`] for a local batch that stages AUTHORITY_LOG rows: each
+/// row's store door reads the snapshot's fold beside `authority_rows`, the
+/// rows the batch carries, so a fold that needs history a later row of the
+/// batch supplies answers as the batch's preflight did (owner-reserve delta
+/// review F2). Every other op applies as [`apply_ops`] applies it.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "batch write plumbing keeps gate persistence modes explicit at call sites"
+)]
+pub(crate) fn apply_ops_beside_authority_rows(
+    store: &Store,
+    config: &crate::config::VaultConfig,
+    analyzer: &crate::analyzer::MultilingualAnalyzer,
+    wtxn: &mut RwTxn<'_>,
+    ops: Vec<BatchOp>,
+    text_index_trusted: bool,
+    record_gate_decisions: bool,
+    persist_gate_pending_consent: bool,
+    authority_rows: crate::store::authority_rows::RowsBeside<'_>,
+) -> Result<()> {
+    apply_ops_with_authority_beside(
+        store,
+        config,
+        analyzer,
+        wtxn,
+        ops,
+        text_index_trusted,
+        ApplyOpsGateMode::new(record_gate_decisions, persist_gate_pending_consent),
+        BaseWriteOrigin::Ordinary,
+        Some(authority_rows),
+        None,
+    )
+}
+
 /// Why a base write transaction is allowed to touch the ids it touches
 /// (ARCH-0052 D2, ONE-1728 K4). Exactly two arms:
 ///
@@ -86,10 +120,10 @@ impl BaseWriteOrigin<'_> {
 /// at `admit_claim_put`, using its synchronized descriptor rather than a seed.
 ///
 /// Membership is read from live registry state INSIDE the transaction, at the
-/// moment the op is decoded — there is no preflight pass and no membership-epoch
-/// publication protocol to keep in sync. The state read here is the state this
-/// transaction applies against, which removes the TOCTOU class rather than
-/// racing it.
+/// moment the op is decoded. It includes committed rows and each live room's
+/// open segment (ARCH-0052, the open-segment window): a room commits its segment
+/// after its base commit, so a later base writer must see that segment before
+/// it becomes committed overlay state. There is no hoisted preflight pass.
 /// The K4 verdict for ONE id: a base row may not be written AT an id that is a
 /// live session-overlay member.
 ///
@@ -105,7 +139,11 @@ pub(super) fn reject_overlay_member_base_write(
     id: &EntityId,
     origin: BaseWriteOrigin<'_>,
 ) -> Result<()> {
-    if store.off_record_sessions.contains_entity(id)? && !origin.exempts(id) {
+    if store
+        .off_record_sessions
+        .contains_committed_or_staged_entity(id)?
+        && !origin.exempts(id)
+    {
         return Err(Error::OffRecord(
             OffRecordError::OffRecordTaintedBaseWrite {
                 entity_ref: id.to_hex(),
@@ -120,14 +158,16 @@ pub(super) fn check_decode_point_taint_guard(
     op: &BatchOp,
     origin: BaseWriteOrigin<'_>,
 ) -> Result<()> {
-    // Decode-point membership probe. With zero live overlay entities no id in
-    // this op can be a member, so the guard is a no-op and a raw CLAIM body is
-    // never decoded twice on the canonical path. This is the same live read the
-    // per-id checks below make — read here, inside the applying transaction, at
-    // the decode point — not a hoisted preflight: it answers "could any id be
-    // tainted right now", and the transaction applies against exactly this
-    // state.
-    if !store.off_record_sessions.has_overlay_entities()? {
+    // Decode-point membership includes committed rows and every live room's
+    // open segment. A room commits its segment after its base commit, so this
+    // probe must see those staged rows too (ARCH-0052, the open-segment window).
+    // With neither committed nor staged entities, no id here can be a member
+    // and a raw CLAIM body need not be decoded twice on the canonical path.
+    // This is a live read inside the applying transaction, not a preflight.
+    if !store
+        .off_record_sessions
+        .has_committed_or_staged_overlay_entities()?
+    {
         return Ok(());
     }
     let tainted = |id: &EntityId| {
@@ -136,7 +176,10 @@ pub(super) fn check_decode_point_taint_guard(
         })
     };
     let check = |id: &EntityId| -> Result<()> {
-        if !store.off_record_sessions.contains_entity(id)? {
+        if !store
+            .off_record_sessions
+            .contains_committed_or_staged_entity(id)?
+        {
             return Ok(());
         }
         // `PromoteReplay` exempts ONLY the session whose promote this
@@ -341,10 +384,11 @@ pub(crate) fn apply_ops_with_gate_mode(
 /// would build on the row as it was before the first. A put's index, in
 /// particular, could not publish the revision the put staged.
 ///
-/// A room indexes what it stages at once and runs no idle pass. So the apply
-/// that indexes a row the room put publishes the row's revision (its indexed
-/// revision becomes its live one), and hides the row's text or vector that
-/// it did not restage when they describe another body. When neither base's
+/// A room indexes what it stages at once and runs no idle pass. A Put-only
+/// restage indexes its live body's text and publishes its revision at once.
+/// Explicit text or vector writes also publish the row's revision (its indexed
+/// revision becomes its live one), and hide the row's text or vector that
+/// they did not restage when they describe another body. When neither base's
 /// indexed body nor its live one is the room's, it hides base's vector of
 /// the row even when base has none yet, since base may still embed that
 /// body. Base keeps its deferred-index interval.
@@ -364,6 +408,36 @@ pub(crate) fn apply_ops_session(
     wtxn: &mut RwTxn<'_>,
     entries: Vec<JournalEntry>,
 ) -> Result<()> {
+    apply_ops_session_projecting_restages(
+        view,
+        route,
+        config,
+        analyzer,
+        wtxn,
+        entries,
+        &|_, _, fields| Ok(fields),
+    )
+}
+
+/// The text a room indexes for a Put-only restage of row `id`, from the
+/// fields its live body derives, read in the apply's writer.
+pub(crate) type RestageTextProjection<'p> =
+    dyn Fn(&RwTxn<'_>, &EntityId, Vec<(String, String)>) -> Result<Vec<(String, String)>> + 'p;
+
+/// [`apply_ops_session`], with `project` applied to the text fields a Put-only
+/// restage derives from its live body before the room indexes them. The
+/// room's secret projection passes itself here, so a derived text with a
+/// marked source indexes the sealed-file placeholder whether its words came
+/// in a Text op or from its body (`embed::apply_ops_session_projected`).
+pub(crate) fn apply_ops_session_projecting_restages(
+    view: &crate::store::SessionStoreView<'_>,
+    route: &SessionWriteRoute,
+    config: &crate::config::VaultConfig,
+    analyzer: &crate::analyzer::MultilingualAnalyzer,
+    wtxn: &mut RwTxn<'_>,
+    entries: Vec<JournalEntry>,
+    project: &RestageTextProjection<'_>,
+) -> Result<()> {
     // A route minted before the most recent mode publication names a mode
     // epoch that no longer authorizes overlay writes. Refuse BEFORE staging a
     // byte, so a flip landing mid-call cannot leave half a turn in a room the
@@ -379,11 +453,15 @@ pub(crate) fn apply_ops_session(
 
     // One write of a row per apply (see above), refused before a byte stages.
     let mut rows = HashSet::new();
+    let mut puts = HashSet::new();
     let mut texts = HashSet::new();
     let mut vectors = HashSet::new();
     for entry in &entries {
         let id = match &entry.op {
-            BatchOp::Put { id, .. } => id,
+            BatchOp::Put { id, .. } => {
+                puts.insert(*id);
+                id
+            }
             BatchOp::Text { id, .. } => {
                 texts.insert(*id);
                 id
@@ -626,16 +704,34 @@ pub(crate) fn apply_ops_session(
         }
         overlay.stage_journal_entry(entry)?;
     }
-    // The apply that indexes a row the room put publishes its revision, and
-    // hides an index of another body that it did not restage (see above). A
-    // vector the room staged describes the body it indexed last, so it stands
-    // until the body changes (Sol R23).
-    for id in texts.union(&vectors) {
+    let mut restaged = HashSet::new();
+    for id in puts.difference(&texts) {
+        if !view.entities.stages_row(id.as_bytes()) {
+            continue;
+        }
+        if let Some(fields) =
+            crate::vault::entity_revision::room_restage_text_fields(view, wtxn, id)?
+        {
+            let fields = project(wtxn, id, fields)?;
+            crate::store::text_index::index_text(view, wtxn, analyzer, id, &fields)?;
+            restaged.insert(*id);
+        }
+    }
+    // Put-only restages publish their live-body text now. A Text in the next
+    // apply replaces those postings and finds live == indexed at publication.
+    // Explicit text/vector writes keep their path, hiding indexes of another
+    // body only when neither that write nor the restage replaced them.
+    let indexed: HashSet<_> = texts
+        .union(&vectors)
+        .copied()
+        .chain(restaged.iter().copied())
+        .collect();
+    for id in &indexed {
         if !view.entities.stages_row(id.as_bytes()) {
             continue;
         }
         let changed = crate::vault::entity_revision::publish_room_revision(view, wtxn, id)?;
-        if changed && !texts.contains(id) {
+        if changed && !texts.contains(id) && !restaged.contains(id) {
             crate::store::text_index::deindex_text(view, wtxn, id)?;
         }
         if !vectors.contains(id) && (changed || !view.vectors.stages_row(id.as_bytes())) {

@@ -7,7 +7,9 @@ use crate::code_run::payload::{
 };
 use crate::code_run::replay::{CodeRunBridgeCall, CodeRunReplayGeneration, CodeRunReplayRecord};
 use crate::code_run::storage::derived_executor_id;
-use crate::code_run::types::{SelfDeniedResult, SelfDispatchOutcome, SelfEffect};
+use crate::code_run::types::{
+    SelfAgentVerbCall, SelfDeniedResult, SelfDispatchOutcome, SelfEffect,
+};
 use crate::error::{Error, Result};
 use crate::task_verb::sdk::AgentVerb;
 use crate::{EntityId, Vault};
@@ -254,6 +256,14 @@ pub(super) fn row_identity(row: &CodeRunBridgeCall) -> Option<Vec<u8>> {
         return Some(identity);
     }
     Some(call_identity(verb, &serde_json::from_str(input).ok()?))
+}
+
+/// Whether a write's receipt row recorded this live call: the row's input,
+/// read back from the JSON text the receipt keeps, has the live input's
+/// identity. A float in the input must read back exactly, so the crate's
+/// serde_json parses with `float_roundtrip` (census L1-06).
+pub(super) fn records_call(row: &CodeRunBridgeCall, call: &SelfAgentVerbCall) -> bool {
+    row_identity(row) == Some(call_identity(call.verb.as_str(), &call.input))
 }
 
 /// Whether a write row carries the answer its receipt kept: a verb's answer,

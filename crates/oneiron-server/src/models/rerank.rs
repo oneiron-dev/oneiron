@@ -11,10 +11,12 @@
 //! documents the call names: they go in batches on its one permit
 //! ([`batches`], FIX 9514). A call whose later batch would overrun its line,
 //! or failed, answers what its finished batches scored ([`outcome`], FIX
-//! 11228).
+//! 11228). A provider whose key is a vault secret sends each batch through
+//! the credential broker instead of its own HTTP client
+//! ([`super::broker_rerank`], L9-12): the same body, scores and settlement.
 use std::collections::BTreeMap;
 
-use oneiron::llm::SingleRouteBackend;
+use oneiron::llm::{BrokerIsolation, SingleRouteBackend};
 use oneiron::{
     BudgetLease, CallClass, CallEnvelope, CallPurpose, ContentPart, FatalLlmError, LlmBackend,
     LlmCapability, LlmError, LlmGenerateFuture, LlmInputUsage, LlmMessage, LlmMessageRole,
@@ -23,7 +25,8 @@ use oneiron::{
 };
 use serde_json::Value as JsonValue;
 
-use super::http::{HttpFailure, ProviderHttp};
+use super::broker_rerank::BrokerRerank;
+use super::http::{HttpFailure, JsonReply, ProviderHttp};
 
 mod batches;
 mod outcome;
@@ -32,7 +35,7 @@ use outcome::{LATER_BATCH_FAILURE_ENDS_PARTIAL, RerankPartial, line_admits};
 pub(crate) use outcome::{RerankLine, RerankOutcome, RerankStop, on_line, rerank_outcome};
 
 /// The protocol path, joined to the provider's base URL.
-const RERANK_PATH: &str = "/v1/rerank";
+pub(super) const RERANK_PATH: &str = "/v1/rerank";
 
 /// The purpose a rerank call is admitted under.
 const RERANK_PURPOSE: &str = "rerank";
@@ -117,22 +120,52 @@ fn part_text(part: &ContentPart) -> Option<&str> {
     }
 }
 
+/// How one provider's rerank requests leave.
+pub(super) enum RerankTransport {
+    /// The provider's own HTTP client: no key, or an `api_key_env` key in
+    /// its default headers.
+    Direct(ProviderHttp),
+    /// The credential broker, for a `key_secret` key (L9-12).
+    Broker(BrokerRerank),
+}
+
 /// One provider's rerank client. It serves the reranker rungs on that
 /// provider, each by its own wire model.
 pub(super) struct RerankBackend {
-    http: ProviderHttp,
+    transport: RerankTransport,
     /// Each served engine model id, and the name the provider knows it by.
     wire_models: BTreeMap<ModelId, String>,
 }
 
 impl RerankBackend {
-    pub(super) fn new(http: ProviderHttp, wire_models: BTreeMap<ModelId, String>) -> Self {
-        Self { http, wire_models }
+    pub(super) fn new(transport: RerankTransport, wire_models: BTreeMap<ModelId, String>) -> Self {
+        Self {
+            transport,
+            wire_models,
+        }
+    }
+
+    /// Sends one batch's `body`, naming `wire_model`, as the call `lease`
+    /// admitted: the provider's status, headers and JSON reply.
+    async fn post(
+        &self,
+        wire_model: &str,
+        body: &JsonValue,
+        lease: &BudgetLease,
+    ) -> LlmResult<JsonReply> {
+        match &self.transport {
+            RerankTransport::Direct(http) => http
+                .post_json(RERANK_PATH, &BTreeMap::new(), body)
+                .await
+                .map_err(transport),
+            RerankTransport::Broker(broker) => broker.post_json(wire_model, body, lease).await,
+        }
     }
 }
 
-/// One `.send()` per batch over [`ProviderHttp`], in order, which follows no
-/// redirect and never resends: a run's gate may wrap this backend.
+/// One `.send()` per batch over [`ProviderHttp`], or one broker call per
+/// batch, which the broker sends once: in order, following no redirect and
+/// never resending. A run's gate may wrap this backend.
 impl oneiron::llm::SingleSend for RerankBackend {}
 
 impl SingleRouteBackend for RerankBackend {
@@ -140,7 +173,17 @@ impl SingleRouteBackend for RerankBackend {
         if stream || !self.wire_models.contains_key(&request.model) || parts(request).is_none() {
             return Err(FatalLlmError::InvalidRequest.into());
         }
-        Ok(())
+        match &self.transport {
+            RerankTransport::Direct(_) => Ok(()),
+            RerankTransport::Broker(broker) => broker.ready(),
+        }
+    }
+
+    fn broker_isolation(&self) -> Option<BrokerIsolation> {
+        match &self.transport {
+            RerankTransport::Direct(_) => None,
+            RerankTransport::Broker(broker) => Some(broker.isolation()),
+        }
     }
 }
 
@@ -172,7 +215,7 @@ impl LlmBackend for RerankBackend {
                     break;
                 }
                 let failed: Option<LlmError> =
-                    match self.send_batch(wire_model, query, &batch).await {
+                    match self.send_batch(wire_model, query, &batch, lease).await {
                         // A batch the provider answered is billed, whatever
                         // it answered.
                         Ok(answer) => {

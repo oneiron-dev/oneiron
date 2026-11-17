@@ -35,6 +35,7 @@ pub(crate) mod schedule;
 pub(crate) mod secret_bindings;
 pub(crate) mod secrets;
 pub(crate) mod stamp;
+pub(crate) mod synced_folder;
 pub(crate) mod vault_key;
 
 use oneiron::consent::AuthenticatedOwner;
@@ -216,5 +217,32 @@ pub(crate) fn memory_refusal(error: oneiron::memory::MemoryError) -> OwnerError 
             )))
         }
         _ => OwnerError::Refused(error.message),
+    }
+}
+
+impl OwnerError {
+    /// An engine refusal as an owner route answers it, per its code (UC-11,
+    /// ruling UC11-CLIENT-STATUSES item 2): a malformed request is invalid
+    /// (400), a state that refuses changed since review (409), an authority
+    /// refusal refused (409), a missing row `not_found` (404), and any other
+    /// code, an engine fault among them, the host's failure (500) in
+    /// `context`'s words. A route with no missing-row answer passes `None`,
+    /// and its NOT_FOUND is the host's failure too. A route that answers a
+    /// code otherwise matches it first, as a named override. A hooked row's
+    /// refusal is `memory_refusal`'s, not this.
+    pub(crate) fn from_memory_code(
+        error: oneiron::memory::MemoryError,
+        not_found: Option<&'static str>,
+        context: &str,
+    ) -> Self {
+        match (error.code.as_str(), not_found) {
+            (oneiron::memory::MEMORY_CODE_BAD_REQUEST, _) => Self::Invalid(error.message),
+            (oneiron::memory::MEMORY_CODE_INVALID_STATE, _) => Self::Changed(error.message),
+            (oneiron::memory::MEMORY_CODE_FORBIDDEN, _) => Self::Refused(error.message),
+            (oneiron::memory::MEMORY_CODE_NOT_FOUND, Some(what)) => {
+                Self::NotFound(what, error.message)
+            }
+            _ => Self::Host(anyhow::anyhow!("{context}: {}", error.message)),
+        }
     }
 }

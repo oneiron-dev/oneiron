@@ -8,22 +8,27 @@ mod changes;
 mod receipts;
 mod restore_group;
 mod revert;
+pub(crate) mod setting_keys;
 mod settle;
 mod snapshot;
 mod topology;
 
 pub(crate) use actor_erase::erase_run_review_actor_in_txn;
-#[cfg(oneiron_test_support)]
-pub(crate) use changes::journal_row_sizes;
-pub(crate) use changes::record_run_claim_in_txn;
 pub use changes::{RunChanges, RunChangesRequest};
+#[cfg(oneiron_test_support)]
+pub(crate) use changes::{journal_changes, journal_row_sizes};
+pub(crate) use changes::{
+    record_run_claim_in_txn, record_run_deletion_in_txn, record_run_topology_in_txn,
+};
 pub(crate) use receipts::run_settlement_receipts;
 
+use crate::authority::{NoStanding, PACT_STANDING_LAPSED, principal_standing_or_lapse_in_txn};
 use crate::consent::AuthenticatedOwner;
 use crate::memory::{Memory, MemoryError, MemoryResult};
 use crate::side_table::{self, Named, SideTable};
 use crate::{EdgeActorClass, EntityId, WriteActor};
 use serde::{Deserialize, Serialize};
+use setting_keys::RUN_REVIEW_AGENT_MAY_READ;
 
 /// An existing change joining this explicit review. No raw entity, approval,
 /// actor or external action can be supplied through this door.
@@ -57,23 +62,38 @@ pub enum RunReviewChange {
 }
 
 impl RunReviewChange {
-    fn change(&self) -> &str {
+    /// The change's ref, which names it in a review, a settlement and a
+    /// revert selection: the row the change wrote (its claim, provenance
+    /// claim, fork, topology event or effect receipt). A deletion wrote no
+    /// row of its own, so its ref is its kind and the entity it removed,
+    /// `delete:<entity>` or `erase:<entity>`: a run that wrote a claim and
+    /// then deleted it, or deleted and then erased one entity, keeps each
+    /// change apart.
+    fn change(&self) -> String {
         match self {
-            Self::Claim { claim_ref } => claim_ref,
-            Self::Edge { provenance_ref } => provenance_ref,
-            Self::Note { fork_ref, .. } => fork_ref,
-            Self::Topology { event_ref } => event_ref,
-            Self::ExternalEffect { receipt_ref } => receipt_ref,
-            Self::Delete { entity_ref } | Self::Erase { entity_ref } => entity_ref,
+            Self::Claim { claim_ref } => claim_ref.clone(),
+            Self::Edge { provenance_ref } => provenance_ref.clone(),
+            Self::Note { fork_ref, .. } => fork_ref.clone(),
+            Self::Topology { event_ref } => event_ref.clone(),
+            Self::ExternalEffect { receipt_ref } => receipt_ref.clone(),
+            Self::Delete { entity_ref } => format!("delete:{entity_ref}"),
+            Self::Erase { entity_ref } => format!("erase:{entity_ref}"),
         }
     }
 
     fn rows(&self) -> MemoryResult<Vec<EntityId>> {
-        match self {
-            Self::ExternalEffect { .. } => Ok(Vec::new()),
-            Self::Note { note_ref, .. } => Ok(vec![EntityId::from_hex(note_ref)?]),
-            _ => Ok(vec![EntityId::from_hex(self.change())?]),
-        }
+        let row = match self {
+            Self::ExternalEffect { .. } => return Ok(Vec::new()),
+            Self::Claim { claim_ref: row }
+            | Self::Edge {
+                provenance_ref: row,
+            }
+            | Self::Note { note_ref: row, .. }
+            | Self::Topology { event_ref: row }
+            | Self::Delete { entity_ref: row }
+            | Self::Erase { entity_ref: row } => row,
+        };
+        Ok(vec![EntityId::from_hex(row)?])
     }
 }
 
@@ -86,43 +106,12 @@ pub struct RunReviewRequest {
     pub changes: Vec<RunReviewChange>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum RunChangeVerdict {
-    Landed,
-    Rejected,
-    Waiting,
-    LetGo,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct RunChangeOutcome {
-    pub change: String,
-    pub verdict: RunChangeVerdict,
-    pub receipt: Option<String>,
-}
-
-/// Derived text with its source refs. It is never persisted as a memory row.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct RunReviewExplainer {
-    pub text: String,
-    pub read_refs: Vec<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct RunReview {
-    pub run_id: String,
-    pub review_id: String,
-    pub changes: Vec<RunChangeOutcome>,
-    pub explainer: RunReviewExplainer,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum RunSettleDecision {
-    Approve,
-    Reject,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::memory::run_review::{
+    RevertRunOutcome, RevertRunRequest, RunAnsweredBy, RunChangeOutcome, RunChangeVerdict,
+    RunCompensation, RunNotUndone, RunNotUndoneReason, RunReview, RunReviewExplainer,
+    RunSettleDecision, RunSettlement, RunSettlementKind, RunSettlementReason, RunSettlementRequest,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -130,84 +119,6 @@ pub struct RunSettleRequest {
     pub review: RunReviewRequest,
     pub review_id: String,
     pub decision: RunSettleDecision,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(untagged)]
-pub enum RunAnsweredBy {
-    Word { word_ref: String },
-    Row { row: String },
-    Grant { grant: String },
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub enum RunSettlementKind {
-    ProposalOutcome,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum RunSettlementReason {
-    OwnerApproved,
-    OwnerRejected,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct RunSettlement {
-    pub kind: RunSettlementKind,
-    pub run_id: String,
-    pub receipt: String,
-    pub changes: Vec<RunChangeOutcome>,
-    pub verdict: RunChangeVerdict,
-    pub answered_by: RunAnsweredBy,
-    pub reason: RunSettlementReason,
-    pub summary: String,
-    pub revert_handle: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct RunSettlementRequest {
-    pub run_id: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct RevertRunRequest {
-    /// The job id or the settlement's run: handle.
-    pub run_id: String,
-    /// Absent means all; a present list selects exact change refs, even one.
-    #[serde(default)]
-    pub changes: Option<Vec<String>>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct RunCompensation {
-    pub change: String,
-    pub receipt: String,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum RunNotUndoneReason {
-    OneWay,
-    BackupOnly,
-    Dependent,
-    NotSelected,
-    NotLanded,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct RunNotUndone {
-    pub change: String,
-    pub reason: RunNotUndoneReason,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct RevertRunOutcome {
-    pub run_id: String,
-    pub compensated: Vec<RunCompensation>,
-    pub not_undone: Vec<RunNotUndone>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -275,6 +186,86 @@ fn require_owner(
     Ok(WriteActor::new(person, EdgeActorClass::Human))
 }
 
+/// The CALL behind the run-review reads (restriction wave 7, C28): with
+/// the owner's proof, today's owner read, unchanged; without one, an AGENT
+/// caller reads when, in this same read transaction, the owner's setting
+/// `memory.run_review.agent_may_read` reads true and the agent's own live
+/// Grant from a live owner names the read's verb. A human without the proof,
+/// a System caller, and an agent with the key off or no Grant naming the
+/// verb are FORBIDDEN. Settle, revert and every restore-group path keep
+/// `require_owner` and stay owner-only.
+fn admit_run_reader(
+    memory: &Memory<'_>,
+    txn: &heed::RoTxn<'_>,
+    owner: Option<&AuthenticatedOwner>,
+    verb: &str,
+) -> MemoryResult<()> {
+    match owner {
+        Some(owner) => require_owner(memory, txn, owner).map(|_| ()),
+        None => {
+            super::verify_actor_binding_in_txn(
+                memory.vault(),
+                txn,
+                memory.actor(),
+                memory.actor_class(),
+            )?;
+            if memory.actor_class() != EdgeActorClass::Agent {
+                return Err(run_reader_refused(
+                    verb,
+                    "only the owner's own proof or an agent's own Grant reads a run",
+                ));
+            }
+            if let Some(slip) = memory.presented_credential()
+                && !memory.vault().capability_slip_is_live_in_txn(txn, slip)?
+            {
+                return Err(run_reader_refused(
+                    verb,
+                    "the caller's credential is no longer live",
+                ));
+            }
+            let key_on = RUN_REVIEW_AGENT_MAY_READ
+                .read_in_txn(memory.vault(), txn, &[], None)?
+                .value;
+            if !key_on {
+                return Err(run_reader_refused(
+                    verb,
+                    "the owner's setting memory.run_review.agent_may_read is off",
+                ));
+            }
+            let standing = principal_standing_or_lapse_in_txn(
+                memory.vault(),
+                txn,
+                memory.actor(),
+                memory.actor_class(),
+                verb,
+            )?;
+            match standing.map(|standing| standing.grant) {
+                Ok(Some(_)) => Ok(()),
+                Err(NoStanding::PactStandingLapsed) => {
+                    Err(run_reader_refused(verb, PACT_STANDING_LAPSED))
+                }
+                Ok(None) | Err(NoStanding::NotStanding) => Err(run_reader_refused(
+                    verb,
+                    "no live Grant from a live owner names this agent and lists the verb",
+                )),
+            }
+        }
+    }
+}
+
+/// The run-review reads' refusal of a caller they do not admit.
+fn run_reader_refused(verb: &str, why: &str) -> MemoryError {
+    MemoryError::new(
+        super::MEMORY_CODE_FORBIDDEN,
+        format!(
+            "{verb} takes the vault owner's own proof, or an agent's own Grant that names it while the owner's setting memory.run_review.agent_may_read is on: {why}"
+        ),
+        &[
+            "Call with your own owner credential, or have the owner turn on memory.run_review.agent_may_read and grant this agent the verb by name.",
+        ],
+    )
+}
+
 fn fingerprint(bytes: &[u8]) -> String {
     blake3::hash(bytes).to_hex().to_string()
 }
@@ -286,6 +277,17 @@ impl Memory<'_> {
         owner: &AuthenticatedOwner,
         input: &RunSettlementRequest,
     ) -> MemoryResult<RunSettlement> {
+        self.run_settlement_as_reader(Some(owner), input)
+    }
+
+    /// [`Self::run_settlement_as_owner`] for the owner's proof or, without
+    /// one, an agent's own Grant naming `vault.runs.settlement` while the
+    /// owner's setting `memory.run_review.agent_may_read` is on.
+    pub fn run_settlement_as_reader(
+        &self,
+        owner: Option<&AuthenticatedOwner>,
+        input: &RunSettlementRequest,
+    ) -> MemoryResult<RunSettlement> {
         let run = run_key(&input.run_id)?;
         let txn = self
             .vault()
@@ -293,7 +295,7 @@ impl Memory<'_> {
             .env
             .read_txn()
             .map_err(crate::Error::from)?;
-        require_owner(self, &txn, owner)?;
+        admit_run_reader(self, &txn, owner, "vault.runs.settlement")?;
         let journal = SETTLEMENTS
             .get(&self.vault().store, &txn, &run)?
             .ok_or_else(|| MemoryError::not_found("no run settlement has that id"))?;
@@ -315,13 +317,24 @@ impl Memory<'_> {
         owner: &AuthenticatedOwner,
         input: &RunReviewRequest,
     ) -> MemoryResult<RunReview> {
+        self.review_run_as_reader(Some(owner), input)
+    }
+
+    /// [`Self::review_run_as_owner`] for the owner's proof or, without one,
+    /// an agent's own Grant naming `vault.runs.review` while the owner's
+    /// setting `memory.run_review.agent_may_read` is on.
+    pub fn review_run_as_reader(
+        &self,
+        owner: Option<&AuthenticatedOwner>,
+        input: &RunReviewRequest,
+    ) -> MemoryResult<RunReview> {
         let txn = self
             .vault()
             .store
             .env
             .read_txn()
             .map_err(crate::Error::from)?;
-        require_owner(self, &txn, owner)?;
+        admit_run_reader(self, &txn, owner, "vault.runs.review")?;
         let reviewed = snapshot::review_in_txn(self, &txn, input)?;
         self.produced_from(
             input

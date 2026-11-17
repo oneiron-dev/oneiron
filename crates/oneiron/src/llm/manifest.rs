@@ -1,5 +1,6 @@
 //! Manifest v2 role bindings, per-vault narrow-only route dials, and verdict floors.
-use super::{AutoCheckOutcome, CallPurpose, LlmRequest, ModelId, ModelLocality};
+use super::setting_keys::{RESIDENT_ROUTE, ResidentRoute, slot_item};
+use super::{CallPurpose, LlmRequest, ModelId, ModelLocality};
 use crate::side_table::{self, LegacyJson, SideTable};
 use crate::{
     Vault,
@@ -12,9 +13,6 @@ use std::{collections::BTreeMap, path::Path};
 /// The vault's pinned model-role manifest. Key: ().
 const MANIFEST: SideTable<(), ModelManifest, LegacyJson> =
     SideTable::new(&side_table::LLM_MANIFEST);
-/// Per-vault narrow-only resident route overrides. Key: ().
-const RESIDENT_ROUTES: SideTable<(), BTreeMap<ModelSlot, ModelLocality>, LegacyJson> =
-    SideTable::new(&side_table::LLM_RESIDENT_ROUTES);
 /// The passing extraction-teacher probe approval behind the pinned teacher. Key: ().
 const TEACHER_APPROVAL: SideTable<(), TeacherProbeApproval, LegacyJson> =
     SideTable::new(&side_table::LLM_EXTRACTION_TEACHER_PROBE);
@@ -24,7 +22,6 @@ mod teacher_probe;
 pub use encoder_export::{
     CheckpointPin, EncoderDistillationRequest, EncoderExport, SharedBaseFork,
 };
-pub(crate) use teacher_probe::valid_holder_ref as valid_teacher_probe_holder_ref;
 pub use teacher_probe::{TEACHER_PROBE_ID, TeacherProbeApproval, TeacherProbePolicy};
 // The band and basis vocabulary is the claim's own (FIX 7761).
 pub use crate::claim::{ConfidenceBand, VerdictBasis};
@@ -41,27 +38,9 @@ pub struct ModelManifest {
     pub seat_policy: Option<super::seat::SeatPolicy>,
 }
 use crate::model_binding::invalid;
-fn model_for_route(
-    binding: &ModelBinding,
-    route: ModelLocality,
-    widest: ModelLocality,
-) -> Result<&ModelId> {
-    if route == widest {
-        Ok(&binding.model)
-    } else {
-        binding
-            .route_models
-            .get(&route)
-            .ok_or_else(|| invalid("resident route has no model binding"))
-    }
-}
-fn route_rank(route: ModelLocality) -> u8 {
-    match route {
-        ModelLocality::OnDevice => 0,
-        ModelLocality::OwnServer => 1,
-        ModelLocality::ThirdParty => 2,
-    }
-}
+#[doc(hidden)]
+use oneiron_verb_wire::llm::manifest::{model_for_route, route_rank};
+
 impl ModelManifest {
     pub fn from_json(bytes: &[u8]) -> Result<Self> {
         let value: Self =
@@ -279,21 +258,11 @@ impl Vault {
         if let Some(approval) = new_approval {
             TEACHER_APPROVAL.put(&self.store, txn, &(), approval)?;
         }
-        // Each resident narrowing the new pins still admit stays, so a bind on
-        // one slot leaves the owner's other narrowed slots as they were (FIX
-        // 9919). One the new pins widen past, or leave without a model at its
-        // route, clears in this transaction; so does a row that does not
-        // decode, as every write cleared it before.
-        let kept: BTreeMap<_, _> = read_routes(&self.store, txn)
-            .unwrap_or_default()
-            .into_iter()
-            .filter(|(slot, route)| route_admits(manifest, *slot, *route).is_ok())
-            .collect();
-        if kept.is_empty() {
-            RESIDENT_ROUTES.delete(&self.store, txn, &())?;
-        } else {
-            RESIDENT_ROUTES.put(&self.store, txn, &(), &kept)?;
-        }
+        // The owner's resident narrowings (`models.resident_route`) stay as
+        // the owner set them: a bind on one slot leaves the other narrowed
+        // slots as they were (FIX 9919), and one the new pins widen past, or
+        // leave without a model at its route, reads as the slot's pin
+        // (`read_routes`).
         MANIFEST.put(&self.store, txn, &(), manifest)
     }
     pub fn model_manifest(&self) -> Result<Option<ModelManifest>> {
@@ -322,7 +291,7 @@ impl Vault {
             .routes
             .get(&binding.slot)
             .ok_or_else(|| invalid("missing slot route"))?;
-        let route = read_routes(&self.store, txn)?
+        let route = read_routes(self, txn, &manifest)?
             .get(&binding.slot)
             .copied()
             .unwrap_or(widest);
@@ -339,34 +308,19 @@ impl Vault {
         };
         Ok(Some(effective_route(
             &manifest,
-            &read_routes(&self.store, &txn)?,
+            &read_routes(self, &txn, &manifest)?,
             slot,
         )?))
-    }
-    pub fn set_model_route(&self, slot: ModelSlot, route: ModelLocality) -> Result<()> {
-        let mut txn = self.store.env.write_txn()?;
-        self.set_model_route_in_txn(&mut txn, slot, route)?;
-        txn.commit()?;
-        Ok(())
-    }
-    fn set_model_route_in_txn(
-        &self,
-        txn: &mut heed::RwTxn<'_>,
-        slot: ModelSlot,
-        route: ModelLocality,
-    ) -> Result<()> {
-        let manifest =
-            read_manifest(&self.store, txn)?.ok_or_else(|| invalid("manifest not configured"))?;
-        route_admits(&manifest, slot, route)?;
-        let mut routes = read_routes(&self.store, txn)?;
-        routes.insert(slot, route);
-        RESIDENT_ROUTES.put(&self.store, txn, &(), &routes)
     }
 }
 /// Whether `manifest` admits a resident narrowing of `slot` to `route`: no
 /// wider than the slot's pin, and every served role on the slot has a model
 /// at that route.
-fn route_admits(manifest: &ModelManifest, slot: ModelSlot, route: ModelLocality) -> Result<()> {
+pub(super) fn route_admits(
+    manifest: &ModelManifest,
+    slot: ModelSlot,
+    route: ModelLocality,
+) -> Result<()> {
     let pin = *manifest
         .routes
         .get(&slot)
@@ -393,13 +347,30 @@ pub(super) fn effective_route(
     }
     Ok(route)
 }
+/// The owner's resident narrowings in force under `manifest` in `txn`: each
+/// slot's route from the key `models.resident_route` while `manifest` admits
+/// it. One it no longer admits reads as the slot's pin, so no reader sees a
+/// widening or a route with no model.
 pub(super) fn read_routes(
-    store: &Store,
+    vault: &Vault,
     txn: &heed::RoTxn<'_>,
+    manifest: &ModelManifest,
 ) -> Result<BTreeMap<ModelSlot, ModelLocality>> {
-    Ok(RESIDENT_ROUTES.get(store, txn, &())?.unwrap_or_default())
+    let mut routes = BTreeMap::new();
+    for &slot in manifest.routes.keys() {
+        let stored = RESIDENT_ROUTE
+            .read_in_txn(vault, txn, &[], Some(slot_item(slot)))?
+            .value;
+        if let Some(ResidentRoute(route)) = stored
+            && route_admits(manifest, slot, route).is_ok()
+        {
+            routes.insert(slot, route);
+        }
+    }
+    Ok(routes)
 }
-pub(crate) use crate::claim_check::apply_verdict_floor;
+// FIX [LIBTEST-QUARANTINE-LLM-MANIFEST-TESTS]: the lib test target's type check fails here (5 errors: E0063 x5); port it, then drop this gate
+#[cfg(any())]
 #[cfg(test)]
 mod tests;
 

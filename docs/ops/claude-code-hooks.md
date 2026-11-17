@@ -20,6 +20,16 @@ The hooks are part of the `oneiron` binary: `oneiron hook --host claude-code
 holds `settings.json` (the snippet to merge) and `check.sh` (the end-to-end
 check).
 
+The Oneiron plugin for Claude Code
+([`plugins/claude-code/`](../../plugins/claude-code/)) carries these four
+hooks, the MCP server entry and a skill that tells Claude when to recall and
+save. Install it in Claude Code with `/plugin marketplace add
+oneiron-dev/oneiron`, then `/plugin install oneiron@oneiron`. The plugin mints
+nothing and runs `oneiron` from Claude Code's `PATH`: do steps 1 and 2 below,
+minting the hooks' credential to `~/.config/oneiron/claude-code-hooks.cred`,
+the path the plugin reads, and skip step 3. Remove it with `/plugin uninstall
+oneiron@oneiron` in place of step 1 of [Remove it](#remove-it).
+
 ## How it works
 
 ```
@@ -100,6 +110,11 @@ Claude Code ──Stop/PreCompact/SessionEnd──▶ oneiron hook hand-over
    running vault and binds the newest that answers, within the same
    `--timeout`. With no config there is no
    vault to start: the line says to set one up with `oneiron init`.
+   When `oneiron user-service install` wrote your user service
+   ([below](#the-user-service)), the hook asks your own supervisor to start
+   it instead, and binds it once it answers; the line says its user service
+   started it. If the supervisor refuses the start, the hook starts the
+   vault itself and says why.
 
 `prompt` binds the same way, by the same choice of steps 1 to 3, but never
 starts a server and prints no line of its own. A pinned or selected vault that does not answer one probe gets no recall, so a
@@ -116,15 +131,59 @@ credential where they point.
 Starting a server never creates a vault: the hook starts one only when the
 config's `vault_path` holds an initialized vault.
 
+### The user service
+
+Optional. A user service keeps the local vault running between sessions and
+after login, under your own supervisor, so step 2 finds it running in every
+session. The engine has one writer per vault, and the service is it.
+
+```bash
+oneiron user-service install [--config <file>] [--settings-file <file>]
+oneiron user-service remove
+oneiron user-service status
+```
+
+- `install` writes the unit and starts it. On Linux that is the systemd user
+  unit `oneiron.service` in `$XDG_CONFIG_HOME/systemd/user/` (else
+  `~/.config/systemd/user/`), made from the shipped
+  `deploy/systemd/oneiron.service` without its `PrivateTmp=` line (a user
+  manager makes a private `/tmp` only inside a user namespace, which some
+  distributions refuse) and with `Type=exec` for its `Type=notify` (the
+  server reports ready only on a socket systemd passed it, and this service
+  binds its address itself); then `systemctl --user daemon-reload`, `enable`
+  and `restart`. On macOS it is the launchd agent `com.oneiron.server` in
+  `~/Library/LaunchAgents/`, with the shipped agent's label, `RunAtLoad`,
+  `KeepAlive` and logs in `~/Library/Logs/`, but no `Sockets`: the server
+  binds its configured address itself; then `launchctl bootout` and
+  `bootstrap` in your `gui/<uid>` domain. The service runs the `serve` step 4
+  runs: this binary (or `--oneiron <file>`), `serve --config <config>
+  [--settings-file <file>] --vault-path <vault> --host 127.0.0.1`, with the
+  config every command reads when none is named unless you give `--config`,
+  and the vault folder `install` found initialized, made absolute: a relative
+  `vault_path` is read from the folder you run `install` in, and the service
+  starts in another. Run again, it writes the unit anew and restarts the
+  service.
+- `install` refuses when there is no initialized vault to run; when a unit
+  it did not write is at that path (it never overwrites one: each unit it
+  writes carries the line `Written by oneiron user-service install.`); and,
+  the first time, when a `serve` it did not start already runs that vault.
+  Stop that server first.
+- `remove` stops the service (`systemctl --user disable --now`, or
+  `launchctl bootout`) and deletes the unit `install` wrote, never another.
+- Each prints one JSON line, `{"installed", "path", "supervisor"}`.
+
 ### The hosted selection
 
 `oneiron hosted` records the hosted vaults you signed in to on this machine
 and the one selected, in `hosted.json` in your oneiron config folder, beside
 `hook.toml`. The surface you signed in on (the cloud console, the app) runs
-these commands to export its selection; you can run them too. Each prints
-where the selection stands as one JSON line.
+these commands to export its selection; you can run them too. With a terminal
+alone, `login` signs you in itself. Each prints where the selection stands as
+one JSON line.
 
 ```bash
+# Sign in here: the vault's own sign-in, in a browser; you allow it in your inbox.
+oneiron hosted login --origin https://<vault-origin>
 # A paired slip: its own vault id is read from the slip.
 oneiron hosted login --origin https://<vault-origin> --credential-file <file>
 # Your owner sign-in: the surface that wrote the headers file names the vault.
@@ -140,13 +199,39 @@ oneiron hosted status
   default), and then selects it. A slip names its own vault, which must match
   `--vault-id` when you give one. Nothing is recorded when the origin refuses
   or does not answer; the bridge's own refusal is printed on stderr.
+- `login` with no credential file signs in through the hosted vault's own
+  OAuth sign-in, as a native app. It prints a link and opens it in your
+  browser; the page shows a match code, and you allow the request in your
+  Oneiron inbox when the code there is the same. The browser then comes back
+  to a one-time listener on this machine's loopback (`--sign-in-timeout-secs`,
+  600 by default; other traffic to the listener does not extend it), and
+  `login` keeps the sign-in in
+  `hosted-oauth-<origin hash>.json` beside `hosted.json`, readable by you
+  alone. It asks for the `read` tier, and the vault lists it in your consent
+  registry, where one tap revokes it. Its access token lasts an hour and
+  refreshes on use; the refresh token lasts 30 days from its last use.
+  `oneiron mcp --auth-mode oauth --oauth-token-file <file>` reaches the vault
+  with it, over HTTP. The browser must run on the machine that runs `login`.
+  An origin has one spelling (scheme and host in lower case, no default
+  port), so `HTTPS://Vault.example/` is `https://vault.example`. Run again for
+  the same origin, `login` keeps the new sign-in apart until the vault admits
+  it for the vault named; only then does it take the old one's place, and the
+  old one is revoked. A recorded login also revokes and removes an OAuth
+  sign-in the vault's earlier record kept in another file, and drops the
+  record of another vault that named the origin's file (the origin answers
+  for that vault no more). A login that is not recorded leaves the old
+  sign-in as it was.
+  A vault that serves no OAuth sign-in (no https `oauth_resource_indicator`
+  in its server config) answers 404, and `login` says so.
 - `select` takes a recorded vault id, or its first characters when no other
   recorded id begins with them; `--none` selects none. `logout` forgets one
-  recorded vault, or every one. Neither deletes a credential file: the
-  surface that wrote it keeps it.
+  recorded vault, or every one. Neither deletes a credential file another
+  surface wrote: that surface keeps it. `logout` revokes an OAuth sign-in
+  `login` made at its vault, and removes its file, after any refresh in
+  flight has written its tokens; the `.lock` file beside it stays.
 - `status` prints `state` (`not_logged_in`, `no_selection`, `selected` or
   `unavailable`), the selected vault id and every recorded vault: its
-  `origin`, `vault_id`, `auth_mode` (`slip` or `owner`), `credential_file` and
+  `origin`, `vault_id`, `auth_mode` (`slip`, `owner` or `oauth`), `credential_file` and
   `verified_at_ms`, when its origin last admitted the credential (a record,
   never an expiry). It names credential files, never what is in them.
 

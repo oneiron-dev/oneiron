@@ -41,6 +41,11 @@ async fn cross(row: LimitRow) -> Crossing {
         })
         .await
         .unwrap(),
+        LimitRow::EmbedderAccountDailyInputTokens => tokio::task::spawn_blocking(|| {
+            crate::embedder::serve::tests::accounts::cross_the_account_day(CALLERS)
+        })
+        .await
+        .unwrap(),
         LimitRow::WindowsPerConnection => {
             crate::handler::window_row_tests::cross_the_windows(CALLERS).await
         }
@@ -254,7 +259,8 @@ async fn cross(row: LimitRow) -> Crossing {
             | EngineLimit::DecisionQuestionsPerCall
             | EngineLimit::ContextEdgeHops
             | EngineLimit::ContextNeighbors
-            | EngineLimit::ContextSelectedEdges,
+            | EngineLimit::ContextSelectedEdges
+            | EngineLimit::ActorExposedRecords,
         ) => {
             unimplemented!("{}: no Rule-5 driver crosses this row yet", row.key())
         }

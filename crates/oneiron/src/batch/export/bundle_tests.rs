@@ -1149,9 +1149,7 @@ fn install_native_agent_pack(
     )?;
     let installed =
         vault.install_pack_from_adapter(&adapter, &reference, &publisher, &Fit, time(), 133);
-    vault.with_write_txn(|txn| {
-        crate::batch::deindex_entity_for_test(&vault.store, txn, &policy_id)
-    })?;
+    vault.with_write_txn(|txn| crate::batch::deindex_entity_for_test(&vault, txn, &policy_id))?;
     let PackInstallDisposition::Installed(receipt) = installed? else {
         panic!("native pack install");
     };

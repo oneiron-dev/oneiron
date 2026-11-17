@@ -9,9 +9,9 @@ use super::super::record::{
     ConnectorKeyRecord, ConnectorKeyStatus, invalid_body, validate_secret_ref,
 };
 use super::super::txn::{
-    ConnectorKeyGeneration, append_connector_key_op_record, read_connector_key_generation_in_txn,
-    read_connector_key_in_txn, reject_terminal_transition, revoke_connector_key_in_txn,
-    rewrite_connector_key_in_txn, suspend_connector_key_in_txn,
+    ConnectorKeyGeneration, SuspendCause, append_connector_key_op_record,
+    read_connector_key_generation_in_txn, read_connector_key_in_txn, reject_terminal_transition,
+    revoke_connector_key_in_txn, rewrite_connector_key_in_txn, suspend_connector_key_in_txn,
     write_connector_key_generation_in_txn,
 };
 use super::tool_grant::{CATALOG_HOLD_REASON, is_held};
@@ -52,20 +52,19 @@ impl Vault {
         guard(&wtxn)?;
         let record =
             read_connector_key_in_txn(&self.store, &wtxn, id)?.ok_or(Error::EntityNotFound)?;
-        if record.status != ConnectorKeyStatus::Active {
-            return Err(invalid_body("illegal status transition"));
-        }
         if reason == CATALOG_HOLD_REASON {
             return Err(invalid_body("that suspension reason is the catalog's own"));
         }
+        // The writer admits Active -> Suspended alone (FIX 22392).
         let suspended = suspend_connector_key_in_txn(
             &self.store,
             &mut wtxn,
             id,
             &record,
-            reason.to_owned(),
+            SuspendCause::Owner(reason),
             at,
-        )?;
+        )?
+        .into_suspended()?;
         let policy = crate::gate::resolve_policy_manifest(&self.store, &wtxn)?;
         append_connector_key_op_record(
             &self.store,
@@ -74,7 +73,6 @@ impl Vault {
             "gate.connector_key.suspend",
             &suspended,
             policy.read_frontier_hash()?,
-            at,
         )?;
         self.sync_derived_keys_in_txn(&mut wtxn, &suspended, at)?;
         wtxn.commit()?;
@@ -134,7 +132,6 @@ impl Vault {
             "gate.connector_key.resume",
             &resumed,
             policy.read_frontier_hash()?,
-            at,
         )?;
         self.sync_derived_keys_in_txn(&mut wtxn, &resumed, at)?;
         wtxn.commit()?;
@@ -157,7 +154,6 @@ impl Vault {
             "gate.connector_key.revoke",
             &revoked,
             policy.read_frontier_hash()?,
-            at,
         )?;
         self.sync_derived_keys_in_txn(&mut wtxn, &revoked, at)?;
         wtxn.commit()?;
@@ -194,7 +190,6 @@ impl Vault {
             "gate.connector_key.remove",
             &removed,
             policy.read_frontier_hash()?,
-            at,
         )?;
         self.sync_derived_keys_in_txn(&mut wtxn, &removed, at)?;
         wtxn.commit()?;
@@ -274,7 +269,6 @@ impl Vault {
             "gate.connector_key.rotate",
             &rotated,
             policy.read_frontier_hash()?,
-            at,
         )?;
         wtxn.commit()?;
         Ok(rotated)

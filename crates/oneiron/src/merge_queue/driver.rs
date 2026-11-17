@@ -11,6 +11,7 @@
 //! moved base holds for a fresh reviewed proposal, and overlapping accepted
 //! work is handed to a reconciliation, never merged here. The owner's doors
 //! keep today's behavior; a new hold is only ever this driver's.
+use super::batch_split::{FOLLOWED_BATCH_ENDED, FollowedBase};
 use super::check_inputs::QueueCheckHoldReason;
 use super::check_store::{QueueCheckConfiguration, QueueCheckRequest, QueueCheckStatus};
 use super::driver_materialize::QueueOverlapFinding;
@@ -386,9 +387,10 @@ impl MergeQueue<'_> {
     }
 
     /// Queued → Staged: predecessors first (WaitingSymbols), then the
-    /// overlap preflight against retained same-base work, then the base
-    /// (HeldNeedsNewBase, no rebase), then the one staging body with its
-    /// pins. A held handoff is tried again on a tick only.
+    /// batch a split enqueue's later batch follows (WaitingFollowedBatch),
+    /// then the overlap preflight against retained same-base work, then the
+    /// base (HeldNeedsNewBase, no rebase), then the one staging body with
+    /// its pins. A held handoff is tried again on a tick only.
     fn drive_stage(
         &self,
         config: &QueueCheckConfiguration,
@@ -419,6 +421,26 @@ impl MergeQueue<'_> {
                 ),
             );
         }
+        // A later batch of a split enqueue stages on the head the batch it
+        // follows landed, once it has ([MERGE-QUEUE-ENQUEUE-SPLITS-LARGE-BATCH]).
+        let base = match self.followed_base(&batch)? {
+            FollowedBase::First => batch.expected_head.clone(),
+            FollowedBase::Landed(head) => head,
+            FollowedBase::Waiting => {
+                return self.hold(
+                    id,
+                    QueueDriveHoldReason::WaitingFollowedBatch,
+                    "waits for the batch it follows to land",
+                );
+            }
+            FollowedBase::Ended => {
+                return self.hold(
+                    id,
+                    QueueDriveHoldReason::HeldNeedsNewBase,
+                    FOLLOWED_BATCH_ENDED,
+                );
+            }
+        };
         if let Some(hold) = batch.drive.as_ref().and_then(|drive| drive.hold.as_ref())
             && hold.reason == QueueDriveHoldReason::HeldOverlap
             && !pass.tick
@@ -434,7 +456,7 @@ impl MergeQueue<'_> {
             QueueOverlapFinding::Hold(hold) => return self.record_hold(id, Some(hold)),
             QueueOverlapFinding::None => {}
         }
-        if batch.expected_head != queue.pointers.head {
+        if base != queue.pointers.head {
             return self.hold(
                 id,
                 QueueDriveHoldReason::HeldNeedsNewBase,
@@ -645,8 +667,8 @@ fn diverged_work(batches: &[MergeBatch], diverged: bool) -> Vec<QueueWork> {
 }
 
 /// Whether `batch` is settled with its staged paths still pinned (FIX
-/// 7305): green and sealed, rolled back, cancelled, or quarantined with its
-/// survivors decided.
+/// 7305): green and sealed, rolled back, cancelled, superseded, or
+/// quarantined with its survivors decided.
 pub(super) fn pins_releasable(batch: &MergeBatch) -> bool {
     let Some(drive) = batch.drive.as_ref().filter(|drive| drive.pinned) else {
         return false;
@@ -655,7 +677,7 @@ pub(super) fn pins_releasable(batch: &MergeBatch) -> bool {
         BatchState::GreenAdvanced => {
             matches!(drive.tested, Some(super::QueueRevisionLink::Sealed { .. }))
         }
-        BatchState::RolledBack | BatchState::Cancelled => true,
+        BatchState::RolledBack | BatchState::Cancelled | BatchState::Superseded => true,
         BatchState::Quarantined => drive.survivor.is_some(),
         _ => false,
     }

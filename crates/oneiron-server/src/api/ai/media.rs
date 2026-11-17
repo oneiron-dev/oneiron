@@ -506,7 +506,9 @@ pub(crate) fn prepare_media_call(
 pub(super) fn failure(error: &LlmError) -> Response {
     let (status, code) = match error {
         LlmError::BudgetDenied(_) => (StatusCode::PAYMENT_REQUIRED, "budget_denied"),
-        LlmError::Fatal(FatalLlmError::Auth) => (StatusCode::BAD_GATEWAY, "provider_auth"),
+        LlmError::Fatal(FatalLlmError::Auth | FatalLlmError::SeatSignedOut { .. }) => {
+            (StatusCode::BAD_GATEWAY, "provider_auth")
+        }
         LlmError::Fatal(FatalLlmError::ContentFiltered) => {
             (StatusCode::UNPROCESSABLE_ENTITY, "content_filtered")
         }

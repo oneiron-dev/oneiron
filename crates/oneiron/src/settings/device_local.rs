@@ -128,6 +128,37 @@ impl Vault {
         )
     }
 
+    /// The live worlds of `rows`, the rows a model call's input was
+    /// assembled from, for the call's run receipts (DEC-0005 world privacy,
+    /// fix 12): every world each row is in, base reality by its own id and
+    /// kept beside a row's other worlds, sorted. `Ok(None)` when
+    /// `rows` is empty, or one row is not held here or proves no world: a
+    /// partial or empty set never stands for the whole. Evidence only: no
+    /// judge reads it, so whether a call may leave this device is decided as
+    /// before.
+    pub fn source_row_worlds(&self, rows: &[EntityId]) -> Result<Option<Vec<EntityId>>> {
+        use crate::ports::EntityStore;
+        let rtxn = self.store.env.read_txn()?;
+        let mut worlds = std::collections::BTreeSet::new();
+        for id in rows {
+            let Some(row) = self.port_entity_get(&rtxn, id)? else {
+                return Ok(None);
+            };
+            let Some(row_worlds) = crate::federation::record_scope::note_world::every_world_in(
+                &self.store,
+                &rtxn,
+                *id,
+                row.entity_type,
+                &row.body,
+            )?
+            .filter(|row_worlds| !row_worlds.is_empty()) else {
+                return Ok(None);
+            };
+            worlds.extend(row_worlds);
+        }
+        Ok((!worlds.is_empty()).then(|| worlds.into_iter().collect()))
+    }
+
     /// Whether a device-local world keeps `id` on this device, so no caller
     /// off it reads the row (DEC-0005). A row whose world cannot be read is
     /// kept too.
@@ -181,10 +212,22 @@ pub(crate) fn off_device_readable_in(
     destination: &ReadDestination,
 ) -> Result<Vec<EntityId>> {
     let rtxn = vault.store.env.read_txn()?;
-    let flagged = device_local_worlds_for(vault, &rtxn, destination)?;
+    off_device_readable_in_txn(vault, store, &rtxn, ids, destination)
+}
+
+/// [`off_device_readable_in`] judged in the caller's transaction, for a
+/// read that holds one: the thread keeps one read transaction at a time.
+pub(crate) fn off_device_readable_in_txn(
+    vault: &Vault,
+    store: &impl crate::store::ManifestDbs,
+    txn: &RoTxn<'_>,
+    ids: Vec<EntityId>,
+    destination: &ReadDestination,
+) -> Result<Vec<EntityId>> {
+    let flagged = device_local_worlds_for(vault, txn, destination)?;
     let mut readable = Vec::with_capacity(ids.len());
     for id in ids {
-        if !device_local_keeps_among(store, &rtxn, &flagged, &id)? {
+        if !device_local_keeps_among(store, txn, &flagged, &id)? {
             readable.push(id);
         }
     }

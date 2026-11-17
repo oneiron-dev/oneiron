@@ -22,7 +22,13 @@
  * follow the engine's OPC rules, `[Content_Types].xml` is present, and no part
  * would send SheetJS to another format's reader first (OpenDocument, Numbers),
  * nor to the nested `Index.zip` it reads without this preflight.
+ *
+ * Last, every deflated entry's stream is walked as an inflater walks it,
+ * keeping none of its output (`inflate.ts`): SheetJS's inflater never stops on
+ * a stream that does not finish inside its entry, so such a stream, or one
+ * that writes other than its declared size, is refused.
  */
+import { deflateStreamFault } from "./inflate";
 
 /** The lines one preview stays within. */
 export interface PreviewBudget {
@@ -43,6 +49,17 @@ export interface PreviewBudget {
   readonly copyBytes: number;
   /** Sheets the workbook lists. */
   readonly sheets: number;
+  /**
+   * Path comparisons SheetJS makes to find the parts one read takes: each
+   * lookup compares the part's name with every path of the package.
+   */
+  readonly partLookups: number;
+  /**
+   * Steps of the loops SheetJS runs over what one read has gathered: each cell
+   * over the array ranges before it, and each comment over the comments of
+   * its cell before it and, for a threaded comment, over the people.
+   */
+  readonly loopSteps: number;
   /** Cells one sheet holds. */
   readonly sheetCells: number;
   /** Characters of cell text and formula text in one sheet. */
@@ -60,7 +77,12 @@ const MIB = 1024 * 1024;
  * a tripwire for a crafted entry, not a size line. Copying grows with the
  * deflated entries that precede large ones: a real workbook of 100 sheets
  * before 200 MiB of media copies about 20 GiB, so the line sits well above
- * that and far below the terabytes 10,000 entries could ask for.
+ * that and far below the terabytes 10,000 entries could ask for. A real
+ * workbook of 300 sheets in 1,500 entries makes about 1.4 million path
+ * comparisons per read; the line sits at 2^24. A step of SheetJS's
+ * array-range scan costs tens of nanoseconds, so the loop line sits at 2^27,
+ * where a sheet of a million cells after 128 array ranges reads in a few
+ * seconds more than its cells alone.
  */
 export const PREVIEW_BUDGET: PreviewBudget = Object.freeze({
   inputBytes: 512 * MIB,
@@ -70,6 +92,8 @@ export const PREVIEW_BUDGET: PreviewBudget = Object.freeze({
   compressionRatio: 200,
   copyBytes: 64 * 1024 * MIB,
   sheets: 10_000,
+  partLookups: 1 << 24,
+  loopSteps: 1 << 27,
   sheetCells: 1_000_000,
   sheetTextChars: 64 * MIB,
 });
@@ -217,6 +241,8 @@ export function preflightPackage(bytes: Uint8Array, budget: PreviewBudget = PREV
     throw new WorkbookBudgetError("entries", "more entries than the budget");
   }
   const patches: [offset: number, compressed: number, expanded: number][] = [];
+  /** Each deflated entry's stream, walked once the records are known to stand apart. */
+  const streams: [data: number, compressed: number, expanded: number][] = [];
   /** Each local record, and where its name and extra field are checked once records are apart. */
   const records: [start: number, end: number, centralName: number, nameLength: number, extra: number][] = [];
   let expandedTotal = 0;
@@ -335,6 +361,7 @@ export function preflightPackage(bytes: Uint8Array, budget: PreviewBudget = PREV
       if (copyTotal > budget.copyBytes) {
         throw new WorkbookBudgetError("copyBytes", "inflating the entries copies past the copy budget");
       }
+      streams.push([data, compressed, expanded]);
     }
   }
   if (at !== end) {
@@ -359,6 +386,12 @@ export function preflightPackage(bytes: Uint8Array, budget: PreviewBudget = PREV
       throw structure("local header disagrees with the central directory");
     }
     refuseZip64(bytes, offset + 30 + nameLength, extra);
+  }
+  for (const [data, compressed, expanded] of streams) {
+    const fault = deflateStreamFault(bytes, data, data + compressed, expanded);
+    if (fault !== undefined) {
+      throw structure(`deflated entry: ${fault}`);
+    }
   }
   if (patches.length === 0) {
     return bytes;

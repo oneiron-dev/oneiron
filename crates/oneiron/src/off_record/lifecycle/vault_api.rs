@@ -325,7 +325,10 @@ impl Vault {
     ///
     /// Both directions publish a fresh overlay mode generation under the held
     /// state lock, so a `SessionWriteRoute` minted before the flip is refused
-    /// by `SessionWriteRoute::revalidate` before it can stage or commit.
+    /// by `SessionWriteRoute::revalidate` before it can stage or commit. A
+    /// flip back off record then lets go of the state lock and waits for the
+    /// base write open now, so one that passed its last route check before
+    /// the flip commits before the flip returns (ARCH-0052 #d5-proof-open).
     pub fn set_off_record_session_mode(
         &self,
         session_ref: &str,
@@ -357,7 +360,10 @@ impl Vault {
                 },
             ));
         }
-        set_entry_mode(&entry, &mut state, session_ref, mode)
+        let (record, writer_wait) = set_entry_mode(&entry, &mut state, session_ref, mode)?;
+        drop(state);
+        writer_wait.wait(&self.store)?;
+        Ok(record)
     }
 
     /// Opens the session-local emit receipt log bound to a live off-record
@@ -399,7 +405,10 @@ impl Vault {
     /// which every mutator rejects with [`OffRecordError::OffRecordSessionClosing`](crate::error::OffRecordError::OffRecordSessionClosing), so
     /// nothing writes into a room that is going away. Each later phase
     /// re-reads the record and fails closed on drift instead of trusting the
-    /// frozen snapshot. The registry entry is dropped LAST, so a close
+    /// frozen snapshot. A stretch on record waits, once its overlay closed,
+    /// for the base write open now, so one that passed its last route check
+    /// before the close commits before the close returns (ARCH-0052
+    /// #d5-proof-open). The registry entry is dropped LAST, so a close
     /// interrupted mid-way can simply be called again (mint a fresh empty log
     /// via [`Vault::off_record_receipt_log`] to retry).
     pub fn close_off_record_session(
@@ -577,6 +586,17 @@ impl Vault {
         // no promoted row to spare from one.
         let turns_deleted = overlay_transcript_deleted;
 
+        // On record, the overlay's close bumped the mode generation, so a
+        // base write that checks its route from here is refused. One that
+        // passed its last check before commits before this close returns:
+        // the close waits for the writer once (ARCH-0052 #d5-proof-open).
+        // Off record too: a flip back may have published `OffRecord` and
+        // still wait for such a write. Only an anonymous stretch, which never
+        // writes to base, owes no wait.
+        if record.mode != OffRecordMode::Anonymous {
+            self.store.wait_for_open_write_txn()?;
+        }
+
         // Validate the frozen in-process record one last time, then drop the
         // registry entry. Neither the session record nor its content ever had
         // a durable row to remove.
@@ -631,19 +651,31 @@ fn vet_roomless_session_ref(session_ref: &str) -> Result<()> {
 /// [`Vault::set_off_record_session_mode`]). A handle passes its own entry, so
 /// the flip lands on the stretch it holds, never on one that took its name
 /// since.
+///
+/// A flip back off record, a repeat one too, returns the wait it owes for the
+/// base write open now (ARCH-0052 #d5-proof-open). Its caller runs that wait
+/// once it has let go of the state lock: a flip inside a base write takes the
+/// lock while it holds the writer, so a wait under the lock would deadlock
+/// with it.
 pub(super) fn set_entry_mode(
     entry: &OffRecordSessionEntry,
     state: &mut OffRecordSessionEntryState,
     session_ref: &str,
     mode: OffRecordMode,
-) -> Result<OffRecordSessionRecord> {
+) -> Result<(OffRecordSessionRecord, OpenWriteTxnWait)> {
     if state.record.closing || state.gone {
         return Err(Error::OffRecord(OffRecordError::OffRecordSessionClosing {
             session_ref: session_ref.to_owned(),
         }));
     }
     if state.record.mode == mode {
-        return Ok(state.record.clone());
+        // A repeat flip back still owes the wait: an earlier flip may have
+        // published this mode and let go of the lock while a base write that
+        // passed its last check before it is still open.
+        let wait = OpenWriteTxnWait {
+            owed: mode == OffRecordMode::OffRecord,
+        };
+        return Ok((state.record.clone(), wait));
     }
     // Anonymous is an entry-time choice, never a way to hide an existing
     // transcript or later publish one. Check both ends before touching the
@@ -660,10 +692,37 @@ pub(super) fn set_entry_mode(
         OffRecordMode::OffRecord => entry.overlay.rearm()?,
     }
     state.record.mode = mode;
-    // Off record again, nobody's vault takes the room's turns.
+    // Off record again, nobody's vault takes the room's turns, and the next
+    // on-record stretch is a conversation of its own (FIX 22388): its first
+    // witness allocates a fresh continuation shell.
     if mode != OffRecordMode::OnRecord {
         state.saver = None;
+        state.continuation_shell = None;
     }
     entry.publish_state(state);
-    Ok(state.record.clone())
+    // The rearm bumped the mode generation, so a base write that checks its
+    // route from here is refused. One that passed its last check before
+    // commits before this flip returns.
+    let wait = OpenWriteTxnWait {
+        owed: mode == OffRecordMode::OffRecord,
+    };
+    Ok((state.record.clone(), wait))
+}
+
+/// The wait a flip back off record owes for the base write open as it
+/// published (ARCH-0052 #d5-proof-open).
+#[must_use = "a flip back off record returns only after the base write open now"]
+pub(super) struct OpenWriteTxnWait {
+    owed: bool,
+}
+
+impl OpenWriteTxnWait {
+    /// Waits for the base write open now, if the flip owes it. Call it with
+    /// the stretch's state lock released.
+    pub(super) fn wait(self, store: &crate::store::Store) -> Result<()> {
+        if self.owed {
+            store.wait_for_open_write_txn()?;
+        }
+        Ok(())
+    }
 }

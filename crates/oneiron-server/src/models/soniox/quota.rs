@@ -23,7 +23,7 @@ use std::time::Duration;
 
 use oneiron::RetryableLlmError;
 use oneiron::llm::limit;
-use oneiron::voice_cascade::soniox::SonioxUpdate;
+use oneiron_speech::asr::soniox::SonioxUpdate;
 use tokio::time::Instant;
 
 use super::{SonioxLive, SonioxRung, invalid};
@@ -71,6 +71,7 @@ pub(in crate::models) fn limit_refusal_of(error: &RetryableLlmError) -> Option<R
             kind,
             retry_after,
             resets_at,
+            ..
         } => Some(Refusal {
             retry_after: *retry_after,
             resets_at,

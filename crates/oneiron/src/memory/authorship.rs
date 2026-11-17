@@ -4,7 +4,8 @@ use crate::claim::ClaimBody;
 use crate::consent::{ActionClass, ActionEnvelope, ActorBound, AuthenticatedOwner, GrantBound};
 use crate::edge::EdgeActorClass;
 use crate::error::{ClaimError, Error, Result};
-use crate::store::{GATE_DECISION_LEDGER_VERSION, GateDecisionId, GateDecisionRecord};
+use crate::store::gate_reason::GateReceiptOutcome;
+use crate::store::{GateReceipt, PolicyBasis, ReceiptActor};
 use crate::write_envelope::WriteActor;
 use crate::{EntityId, Vault};
 
@@ -124,6 +125,167 @@ pub(crate) fn require_claim_self_grant_in_txn(
     require_authorship_in_txn(vault, txn, actor, target, author, verb)
 }
 
+/// The supersede check of a memory claim write (`memory.claim.supersede`):
+/// the prior's own author and a System actor's delegated grant pass, as
+/// [`require_claim_self_grant_in_txn`] passes them, and so does the vault's
+/// root owner writing in person over a claim of the owner's own agent
+/// ([`owner_agent_author_in_txn`]; OWNER-SUPERSEDES-OWN-AGENT-CLAIM, the
+/// lead's ruling B, 13 Nov: never gate the owner on their own vault). Every
+/// other author's claim keeps the conflict review path (ARCH-0040, ARCH-0043:
+/// no admin override by default). Only the memory claim write calls this;
+/// edit, retract, demote and the skill verbs keep their own checks.
+pub(crate) fn require_claim_supersede_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    actor: WriteActor,
+    target: EntityId,
+    body: &ClaimBody,
+) -> Result<()> {
+    let author = crate::batch::authenticated_claim_author_in_txn(&vault.store, txn, &target, body)?;
+    verify_live_actor(vault, txn, actor)?;
+    if let Some(author) = author
+        && owner_agent_author_in_txn(vault, txn, actor, author)?
+    {
+        return Ok(());
+    }
+    require_authorship_in_txn(
+        vault,
+        txn,
+        actor,
+        target,
+        author.map(WriteActor::entity_ref),
+        "memory.claim.supersede",
+    )
+}
+
+/// Whether `author`, the authenticated author of a claim, is the own agent
+/// of `writer`, a human writing in person who is this vault's root owner
+/// (OWNER-SUPERSEDES-OWN-AGENT-CLAIM). Decided from stored facts only, and
+/// closed: an author it cannot place is no one's agent here.
+///
+/// The author is an Agent-class write of a live PERSON or AGENT_DEF (a
+/// MACHINE writes as System, so the Dreamer and the Coach are outside it),
+/// neither an introduced foreign agent nor an identity a counterparty contact
+/// names. Then the first fact that names a person decides:
+/// - the workspace companion map of the author's person (for an AGENT_DEF,
+///   the person its subject anchor names, its own model person included)
+///   must name the owner;
+/// - an AGENT_DEF anchored to a person other than its own model person is
+///   that person's pen, and must be the owner's;
+/// - otherwise every capability slip minted for the author as holder must be
+///   an Agent-class slip whose pairing the owner approved (its signed
+///   `minting_member`, FIX 11713). A slip bound to a guest grant, an
+///   invitation, a share, a support delegation, a trusted contact or a seat
+///   claim names a peer, so it refuses the author. At least one such slip
+///   must exist, or the author is an AGENT_DEF the owner created through the
+///   owner's create door (its creating-owner stamp names the owner,
+///   OWNER-MADE-AGENT-DEF-UNPLACED).
+pub(crate) fn owner_agent_author_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    writer: WriteActor,
+    author: WriteActor,
+) -> Result<bool> {
+    let owner = writer.entity_ref();
+    let agent = author.entity_ref();
+    if writer.actor_class() != EdgeActorClass::Human
+        || author.actor_class() != EdgeActorClass::Agent
+        || agent == owner
+        || !is_root_owner(vault, txn, owner)?
+    {
+        return Ok(false);
+    }
+    let definition = match crate::vault::live_entity_row_in_txn(&vault.store, txn, &agent)? {
+        crate::vault::LiveEntityRow::Live {
+            entity_type: crate::registry::ENTITY_TYPE_AGENT_DEF,
+            ..
+        } => true,
+        crate::vault::LiveEntityRow::Live {
+            entity_type: crate::registry::ENTITY_TYPE_PERSON,
+            ..
+        } => false,
+        _ => return Ok(false),
+    };
+    if crate::gate::introduced_foreign_agents(&vault.store, txn)?.contains(&agent)
+        || !vault
+            .counterparty_contact_ids_for_identity_in_txn(txn, &agent)?
+            .is_empty()
+    {
+        return Ok(false);
+    }
+    let person = if definition {
+        let at = crate::ports::job_recorded_at_in_txn(&vault.store, txn)?;
+        crate::workspace_roster::subject_person_of_actor_in_txn(vault, txn, agent, at)?
+    } else {
+        Some(agent)
+    };
+    if let Some(person) = person {
+        if let Some(principal) =
+            crate::workspace_roster::companion_principal_in_txn(vault, txn, person)?
+        {
+            return Ok(principal == owner);
+        }
+        if definition && person != crate::context_board::agent_person_id(agent)? {
+            return Ok(person == owner);
+        }
+    }
+    Ok(match holder_slips_in_txn(vault, txn, agent, owner)? {
+        HolderSlips::OwnerPaired => true,
+        HolderSlips::Other => false,
+        HolderSlips::Unminted => {
+            definition
+                && crate::agent_def::created_by_owner_in_txn(&vault.store, txn, &agent, &owner)?
+        }
+    })
+}
+
+/// What the capability slips minted for an author as holder say of its owner.
+enum HolderSlips {
+    /// No slip names the author as holder.
+    Unminted,
+    /// Every one is an Agent-class slip the owner approved the pairing of,
+    /// with no peer binding.
+    OwnerPaired,
+    /// At least one names a peer, another class or another approving member.
+    Other,
+}
+
+/// What the capability slips the authority fold keeps for `agent` as its
+/// holder (revoked, consumed and expired ones included, as `self.actor`
+/// reads them) say of `owner`.
+fn holder_slips_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    agent: EntityId,
+    owner: EntityId,
+) -> Result<HolderSlips> {
+    let holder = agent.to_hex();
+    let fold = vault.authority_view_readonly_in_txn(txn)?;
+    let mut minted = HolderSlips::Unminted;
+    for mint in fold
+        .slips
+        .mints
+        .values()
+        .filter(|mint| mint.action.claims.holder_ref == holder)
+    {
+        let claims = &mint.action.claims;
+        let peer_bound = claims.grant_ref.is_some()
+            || claims.invitation_ref.is_some()
+            || claims.share_ref.is_some()
+            || claims.delegation.is_some()
+            || claims.trusted_contact.is_some()
+            || claims.seat_claim.is_some();
+        if peer_bound
+            || claims.actor_class.as_deref() != Some(EdgeActorClass::Agent.gate_actor_class())
+            || mint.action.minting_member != Some(owner)
+        {
+            return Ok(HolderSlips::Other);
+        }
+        minted = HolderSlips::OwnerPaired;
+    }
+    Ok(minted)
+}
+
 pub(super) fn require_authorship_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -153,6 +315,42 @@ pub(super) fn require_authorship_in_txn(
     ))
 }
 
+/// Whether `actor` closing or replacing `body` would lift a restriction
+/// below the owner: the row restricts someone's access or authority
+/// ([`crate::federation::claim_removal_widens_in`]: a paused, suppressed or
+/// exited `campaign.member`, a do-not-contact bar, an opt-out, an
+/// unreachable channel, a delivery window, ...), and `actor` is neither a
+/// live owner nor the engine's System writer. Lifting a restriction is a
+/// widening, a live owner's alone, whoever wrote the row (the lead's RULING
+/// WORLD-ACCESS-GRANT-DELETE = A, 15 Nov: "deleting a restriction IS a
+/// widening"; the Engine's RULING RESTRICTION-FIX-SCOPE = A, FIX
+/// [RESTRICTION-CLAIM-OVERWRITE-AND-SELF-RETRACT]).
+///
+/// # Errors
+///
+/// The contact and owner census reads' own errors.
+pub(crate) fn lifts_restriction_below_owner_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    actor: WriteActor,
+    body: &ClaimBody,
+) -> Result<bool> {
+    if actor.actor_class() == EdgeActorClass::System
+        || !crate::federation::claim_removal_widens_in(vault, txn, body)?
+    {
+        return Ok(false);
+    }
+    Ok(!(actor.actor_class() == EdgeActorClass::Human
+        && crate::policy_model::is_live_vault_owner_in_txn(vault, txn, &actor.entity_ref())?))
+}
+
+/// The edit check of a write at `target`'s id: an existing claim there is its
+/// author's to edit (or a delegated System writer's), and one that restricts
+/// someone only a live owner's ([`lifts_restriction_below_owner_in`]). The
+/// write puts over the row, or closes it behind a successor (a code run's
+/// `vault.claims.put`, `Vault::put_claim_candidate_with_landing_returning_actual`),
+/// so the restriction leaves every fold that reads it (Astra review on #8153
+/// F1). A System writer with no claim there needs its delegated create.
 pub(crate) fn guard_existing_claim_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -161,6 +359,11 @@ pub(crate) fn guard_existing_claim_in_txn(
 ) -> Result<()> {
     if let Some(body) = vault.get_claim_in_txn(txn, &target)? {
         require_claim_self_grant_in_txn(vault, txn, actor, target, &body, "memory.claim.edit")?;
+        if lifts_restriction_below_owner_in(vault, txn, actor, &body)? {
+            return Err(authority_denied(
+                "a write over a claim that restricts someone's access is a live vault owner's act",
+            ));
+        }
     } else if actor.actor_class() == EdgeActorClass::System {
         require_authorship_in_txn(vault, txn, actor, target, None, "memory.claim.create")?;
     }
@@ -221,52 +424,28 @@ impl super::Memory<'_> {
     }
 }
 
+/// A memory settlement's Gate receipt draft: `actor` decided `outcome` on
+/// `kind` for `reason`, about `target`. It reads no policy; a caller that
+/// judged against a frontier sets `basis`. The store mints the id and the
+/// time.
 pub(super) fn decision(
     actor: WriteActor,
-    kind: &str,
-    outcome: &str,
+    kind: &'static str,
+    outcome: GateReceiptOutcome,
     reason: &str,
     target: Option<EntityId>,
     digest: Vec<u8>,
-    now: u64,
-) -> GateDecisionRecord {
-    GateDecisionRecord {
-        version: GATE_DECISION_LEDGER_VERSION,
-        decision_id: GateDecisionId::now(),
-        created_at: now,
-        outcome: outcome.to_owned(),
-        reason_codes: vec![reason.to_owned()],
-        receipt_reasons: Vec::new(),
-        system_notices: Vec::new(),
-        actor_class: actor.actor_class().gate_actor_class().to_owned(),
-        actor_ref: Some(actor.entity_ref().to_hex()),
-        content_kind: kind.to_owned(),
-        policy_manifest_version: crate::gate::POLICY_SCHEMA_VERSION.to_owned(),
-        claim_id: target.map(|id| *id.as_bytes()),
-        grant_ref: None,
-        diff_handle: digest,
-        read_frontier_hash: [0; 32],
-        context: Default::default(),
-        redacted_at: None,
-    }
-}
-
-// EntityId deliberately has no global serde implementation.
-pub(super) mod entity_serde {
-    use crate::EntityId;
-    use serde::{Deserialize, Deserializer, Serializer};
-    pub(in crate::memory) fn serialize<S: Serializer>(
-        id: &EntityId,
-        serializer: S,
-    ) -> Result<S::Ok, S::Error> {
-        serializer.serialize_str(&id.to_hex())
-    }
-    pub(in crate::memory) fn deserialize<'de, D: Deserializer<'de>>(
-        deserializer: D,
-    ) -> Result<EntityId, D::Error> {
-        let text = String::deserialize(deserializer)?;
-        EntityId::from_hex(&text).map_err(serde::de::Error::custom)
-    }
+) -> GateReceipt {
+    let mut receipt = GateReceipt::new(
+        outcome,
+        kind,
+        reason,
+        ReceiptActor::Row(actor),
+        digest,
+        PolicyBasis::NOT_READ,
+    );
+    receipt.about = target;
+    receipt
 }
 
 /// Explicit owner replacement/withdrawal in a family-owned actor-facing door.
@@ -279,7 +458,6 @@ pub(crate) fn explicit_claim_override_in_txn(
     actor: WriteActor,
     target: EntityId,
     body: &ClaimBody,
-    now: u64,
 ) -> Result<()> {
     verify_live_actor(vault, txn, actor)?;
     let owns = claim_author(body) == Some(actor.entity_ref())
@@ -305,11 +483,11 @@ pub(crate) fn explicit_claim_override_in_txn(
     let receipt = decision(
         actor,
         "memory_claim_override",
-        "approved",
+        GateReceiptOutcome::Approved,
         "gate.memory.explicit_owner_override",
         Some(target),
         blake3::hash(&bytes).as_bytes().to_vec(),
-        now,
     );
-    vault.store.append_gate_decision_in_txn(txn, &receipt)
+    vault.store.record_gate_receipt_in_txn(txn, receipt)?;
+    Ok(())
 }

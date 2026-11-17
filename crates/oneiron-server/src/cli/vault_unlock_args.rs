@@ -20,11 +20,12 @@ use super::{SecretSourceArgs, UnlockMethod};
 pub struct VaultUnlockArgs {
     /// How the vault key unlocks: `device` (this install's keystore),
     /// `password`, `passkey`, `escrow` (a wrap the vault carries, or a
-    /// registry's capsule with `--unlock-capsule`) or `kit`.
+    /// registry's capsule with `--unlock-capsule`), `kit` or `sheet`.
     #[arg(long = "unlock", value_enum, default_value_t = UnlockMethod::Device)]
     pub unlock: UnlockMethod,
 
-    /// With `--unlock passkey`: the passkey's credential name.
+    /// With `--unlock passkey`, or `--unlock kit` with
+    /// `--unlock-kit-passkey-prf-file`: the passkey's credential name.
     #[arg(long = "unlock-credential", value_name = "NAME")]
     pub unlock_credential: Option<String>,
 
@@ -50,6 +51,20 @@ pub struct VaultUnlockArgs {
     /// With `--unlock kit`: the vault id the kit is bound to, 64 hex digits.
     #[arg(long = "unlock-vault-id", value_name = "HEX")]
     pub unlock_vault_id: Option<String>,
+
+    /// With `--unlock kit` and `--unlock-credential`: an owner-only file
+    /// holding the synced passkey's PRF output (32 raw bytes, 64 hex digits
+    /// or base64url) at the PRF input `vault-key prf-input` prints for that
+    /// name. The data-key kit's piece the vault keeps sealed under that
+    /// passkey (its `kit_point` wrap) joins the pieces given, so one
+    /// `--unlock-piece` and the passkey unlock, or the passkey and the kit
+    /// passphrase with no `--unlock-piece` (census L10-18).
+    #[arg(
+        long = "unlock-kit-passkey-prf-file",
+        value_name = "FILE",
+        requires = "unlock_credential"
+    )]
+    pub unlock_kit_passkey_prf_file: Option<PathBuf>,
 
     /// Read the unlock's secret from this file, which only its owner may
     /// read, instead of stdin.

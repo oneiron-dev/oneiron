@@ -159,7 +159,9 @@ impl From<MediaEmbedRefusal> for oneiron::Error {
 fn llm_code(error: &LlmError) -> &'static str {
     match error {
         LlmError::BudgetDenied(_) => "budget_denied",
-        LlmError::Fatal(FatalLlmError::Auth) => "provider_auth",
+        LlmError::Fatal(FatalLlmError::Auth | FatalLlmError::SeatSignedOut { .. }) => {
+            "provider_auth"
+        }
         LlmError::Fatal(FatalLlmError::ContentFiltered) => "content_filtered",
         LlmError::Fatal(FatalLlmError::EmptyResponse) => "empty_response",
         LlmError::Fatal(FatalLlmError::JobLost) => "job_lost",
@@ -379,8 +381,10 @@ impl SyncServer {
     /// with no check closes kept
     /// ([`oneiron::Vault::expire_unfilled_space_moves`]), and each waiting
     /// owner-approved embedder binding begins its move
-    /// ([`oneiron::Vault::begin_waiting_embedder_moves`]). Returns each
-    /// space's own pass and the vectors the rooms stored. Blocking.
+    /// ([`oneiron::Vault::begin_waiting_embedder_moves`]). Then the learned
+    /// phonetic rung's names are filled while `[phonetic_embedder]` binds a
+    /// model ([`Self::backfill_phonetic_names`]). Returns each space's own
+    /// pass, and the vectors the rooms and the phonetic rung stored. Blocking.
     fn backfill_media_pass(
         &self,
         runtime: &tokio::runtime::Handle,
@@ -440,9 +444,9 @@ impl SyncServer {
                     let egress = embedder.media_egress();
                     let gate = egress.as_ref().map(|gate| gate as &dyn EgressPredicate);
                     if let Err(error) = runtime.block_on(
-                        self.vault.reuse_home_text_media_vectors(space, BACKFILL_BATCH),
+                        self.vault.reuse_home_media_vectors(space, BACKFILL_BATCH),
                     ) {
-                        tracing::debug!(%space, kind = ?error.kind(), "home text media reuse unavailable");
+                        tracing::debug!(%space, kind = ?error.kind(), "home media reuse unavailable");
                     }
                     let report = self.vault.reconcile_media_embeddings_admitted(
                         &embedder,
@@ -458,10 +462,11 @@ impl SyncServer {
             .collect();
         passes.extend(trained_failures);
         passes.extend(stock_failures);
+        let phonetic_embedded = self.backfill_phonetic_names(runtime);
         self.rederive_repo_index_texts(runtime);
         self.author_space_probes(runtime, &moves);
         self.check_space_moves(runtime, &moves, &mut passes);
-        (passes, room_embedded)
+        (passes, room_embedded + phonetic_embedded)
     }
 
     /// `space`'s pass over the records live off-record rooms stage

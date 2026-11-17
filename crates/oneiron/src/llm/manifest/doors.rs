@@ -11,7 +11,7 @@ use crate::consent::AuthenticatedOwner;
 use crate::error::Result;
 use crate::memory::extraction::{EncoderExecution, EncoderOutput};
 use crate::side_table::{self, Named, SideTable};
-use crate::{LlmRequest, LlmResponse, ModelId, ModelLocality, ModelTierRef, Vault};
+use crate::{LlmResponse, ModelId, ModelLocality, ModelTierRef, Vault};
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -22,32 +22,14 @@ pub struct ModelManifestReplace {
     pub teacher_approval: Option<TeacherProbeApproval>,
 }
 
-/// Binds the Oneironer the server has loaded. The binding's identity is the
-/// loaded slot's; these guards only compare with it, and a mismatch refuses.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct OneironerBind {
-    /// The checkpoint the caller expects the loaded Oneironer to serve.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub expected_checkpoint_sha16: Option<String>,
-    /// The stack the caller expects the loaded Oneironer to serve.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub expected_stack_sha16: Option<String>,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::llm::manifest::doors::{
+    ModelRoleInput, ModelRoleInvoke, ModelRoleRead, ModelRoleReceipt, ModelRouteRead,
+    ModelRouteView, OneironerBind,
+};
 
-/// The loaded native bundle's receipt at its bind: stack and checkpoint,
-/// label count and per-artifact hashes.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct OneironerBundleReceipt {
-    pub stack_sha16: String,
-    pub checkpoint_sha16: String,
-    pub label_count: u32,
-    /// Per-artifact sha256 (`file:hash`), in manifest order; None when the
-    /// bind path has no manifest read. The missing field is `artifacts`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub artifacts: Option<Vec<String>>,
-}
+#[doc(hidden)]
+pub use oneiron_records::llm::manifest::doors::OneironerBundleReceipt;
 
 /// The bound bundle's receipt. Key: string (slot name).
 const BUNDLE_RECEIPTS: SideTable<String, OneironerBundleReceipt, Named> =
@@ -60,66 +42,6 @@ fn bundle_slot_key(slot: ModelSlot) -> String {
         ModelSlot::Oneironer => "oneironer",
     }
     .to_owned()
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct ModelRouteRead {
-    pub slot: ModelSlot,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct ModelRouteReplace {
-    pub slot: ModelSlot,
-    pub route: ModelLocality,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct ModelRouteView {
-    pub slot: ModelSlot,
-    pub pin: Option<ModelLocality>,
-    pub route: Option<ModelLocality>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct ModelRoleRead {
-    pub role: ModelRole,
-}
-
-/// A role's binding in one snapshot, not permission to execute it. A call
-/// returns the same facts for the model and route its provider actually used.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct ModelRoleReceipt {
-    pub role: ModelRole,
-    pub model: ModelId,
-    pub revision: String,
-    pub provider: String,
-    pub slot: ModelSlot,
-    pub tier: ModelTierRef,
-    pub route: ModelLocality,
-    /// BLAKE3 of the registered catalog entry in this snapshot, not a
-    /// provider-supplied revision. None when the host alone attests the model.
-    pub catalog_revision: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct ModelRoleInvoke {
-    pub role: ModelRole,
-    pub input: ModelRoleInput,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
-pub enum ModelRoleInput {
-    /// The role selects model and route; the request cannot override either.
-    Generate { request: Box<LlmRequest> },
-    /// A query through the vault's retrieval embedder, not a media seat.
-    Embed { text: String },
-    /// A write-free extraction over caller-supplied text, never a claim write.
-    Tag { text: String },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -254,29 +176,11 @@ impl Vault {
         let txn = self.store.env.read_txn()?;
         owner.revalidate_as_vault_owner_in_txn(self, &txn)?;
         let manifest = read_manifest(&self.store, &txn)?;
-        route_view(
-            manifest.as_ref(),
-            &read_routes(&self.store, &txn)?,
-            input.slot,
-        )
-    }
-
-    pub fn replace_model_route_as_owner(
-        &self,
-        owner: &AuthenticatedOwner,
-        input: ModelRouteReplace,
-    ) -> Result<ModelRouteView> {
-        let mut txn = self.store.env.write_txn()?;
-        owner.revalidate_as_vault_owner_in_txn(self, &txn)?;
-        self.set_model_route_in_txn(&mut txn, input.slot, input.route)?;
-        let manifest = read_manifest(&self.store, &txn)?;
-        let view = route_view(
-            manifest.as_ref(),
-            &read_routes(&self.store, &txn)?,
-            input.slot,
-        )?;
-        txn.commit()?;
-        Ok(view)
+        let routes = match &manifest {
+            Some(manifest) => read_routes(self, &txn, manifest)?,
+            None => BTreeMap::new(),
+        };
+        route_view(manifest.as_ref(), &routes, input.slot)
     }
 
     pub fn model_role_as_owner(
@@ -289,8 +193,11 @@ impl Vault {
         let manifest =
             read_manifest(&self.store, &txn)?.ok_or_else(|| invalid("manifest not configured"))?;
         let binding = manifest.binding(input.role)?;
-        let route =
-            super::effective_route(&manifest, &read_routes(&self.store, &txn)?, binding.slot)?;
+        let route = super::effective_route(
+            &manifest,
+            &read_routes(self, &txn, &manifest)?,
+            binding.slot,
+        )?;
         let model = model_for_route(binding, route, manifest.routes[&binding.slot])?;
         let registered = super::super::registry::read_model_registry_row(&self.store, &txn, model)?;
         let catalog_revision = catalog_revision(registered.as_ref())?;

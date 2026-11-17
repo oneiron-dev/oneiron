@@ -1,11 +1,12 @@
-//! Generic MessagePack map accessors, signature values, and semver compare.
+//! Generic MessagePack map accessors, policy authority markers, and semver compare.
 
 use rmpv::Value;
 
-use crate::gate::ceiling::PolicySignature;
+use crate::gate::ceiling::PolicyAuthorityMarker;
 use crate::gate::constants::{
     SIGNATURE_ALG_KEY, SIGNATURE_KEY_ID_KEY, SIGNATURE_SIG_KEY, SIGNATURE_SIGNATURE_KEY,
 };
+use oneiron_contracts::msgpack::Entries;
 
 pub(super) enum MapValue<'a> {
     Missing,
@@ -14,16 +15,11 @@ pub(super) enum MapValue<'a> {
 }
 
 pub(super) fn single_map_value<'a>(entries: &'a [(Value, Value)], needle: &str) -> MapValue<'a> {
-    let mut found = None;
-    for (key, value) in entries {
-        if key.as_str() == Some(needle) {
-            if found.is_some() {
-                return MapValue::Duplicate;
-            }
-            found = Some(value);
-        }
+    match Entries::new(entries).get(needle) {
+        Ok(Some(value)) => MapValue::Present(value),
+        Ok(None) => MapValue::Missing,
+        Err(_) => MapValue::Duplicate,
     }
-    found.map_or(MapValue::Missing, MapValue::Present)
 }
 
 pub(super) fn required_value<'a>(entries: &'a [(Value, Value)], key: &str) -> Option<&'a Value> {
@@ -87,16 +83,16 @@ pub(super) fn optional_bool(entries: &[(Value, Value)], key: &str) -> Option<boo
     }
 }
 
-pub(super) fn parse_signatures(value: &Value) -> Option<Vec<PolicySignature>> {
+pub(super) fn parse_signatures(value: &Value) -> Option<Vec<PolicyAuthorityMarker>> {
     let Value::Array(rows) = value else {
         return None;
     };
     rows.iter().map(parse_signature_value).collect()
 }
 
-pub(super) fn parse_signature_value(value: &Value) -> Option<PolicySignature> {
+pub(super) fn parse_signature_value(value: &Value) -> Option<PolicyAuthorityMarker> {
     match value {
-        Value::String(sig) => Some(PolicySignature {
+        Value::String(sig) => Some(PolicyAuthorityMarker {
             alg: "unknown".to_owned(),
             key_id: None,
             sig: sig.as_str()?.to_owned(),
@@ -112,7 +108,7 @@ pub(super) fn parse_signature_value(value: &Value) -> Option<PolicySignature> {
             if alg.is_empty() || sig.is_empty() {
                 return None;
             }
-            Some(PolicySignature { alg, key_id, sig })
+            Some(PolicyAuthorityMarker { alg, key_id, sig })
         }
         _ => None,
     }

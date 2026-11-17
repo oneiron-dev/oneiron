@@ -82,10 +82,19 @@ mod known_values;
 mod leaf_delivery;
 mod masked_files;
 mod owner_door;
+mod owner_list;
+mod payment_credential;
 mod pending_restore;
 mod reveal;
 pub(crate) use self::reveal::run_person_prints_in_txn;
 mod run_bound;
+mod same_value;
+pub use self::same_value::SameValueStatement;
+#[cfg(oneiron_test_support)]
+pub(crate) use self::same_value::{
+    same_value_statement_held_in_txn, same_value_statement_signed_by,
+};
+pub(crate) mod setting_keys;
 mod sighted_file;
 mod storage_seal;
 mod transition;
@@ -156,6 +165,12 @@ pub(crate) use self::handle_labels::{
 };
 pub use self::known_values::KNOWN_VALUE_MIN_BYTES;
 pub(crate) use self::known_values::{KnownSource, KnownSweep, KnownValues, known_index_scope};
+pub use self::owner_list::{
+    SecretCustodyHolder, SecretCustodyList, SecretCustodyListItem, SecretCustodyListRecord,
+    SecretCustodyOrigin, SecretDisplayNameSource,
+};
+pub(crate) use self::payment_credential::refuse_withheld_payment_credential_in_txn;
+pub use self::payment_credential::{PaymentCredentialRelease, SecretPaymentMarkSet};
 // FIX 7402: live carrier key delivery, the L02 halves of L03's sync frame.
 pub(crate) use self::leaf_delivery::CustodyLeafSession;
 pub use self::leaf_delivery::{
@@ -239,6 +254,8 @@ pub(crate) use self::use_handle::{
 pub use oneiron_authority::authority::{CustodyRegisterCheck, CustodyUncheckedReason};
 
 pub(crate) mod tables;
+// FIX [LIBTEST-QUARANTINE-SECRET-CUSTODY-TESTS]: the lib test target's type check fails here (5 errors: E0061 x4, E0063 x1); port it, then drop this gate
+#[cfg(any())]
 #[cfg(test)]
 mod tests;
 

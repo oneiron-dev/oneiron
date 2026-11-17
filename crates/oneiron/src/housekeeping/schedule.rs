@@ -21,10 +21,8 @@ use crate::side_table::{self, Named, SideTable};
 const SCHEDULE: SideTable<String, SweepState, Named> =
     SideTable::new(&side_table::HOUSEKEEPING_SCHEDULE);
 
-/// The first retry after a failure. It doubles with each failure in a row, up
-/// to the sweep's cadence and never past an hour.
-const RETRY_AFTER_SECS: u64 = 60;
-const RETRY_CAP_SECS: u64 = 60 * 60;
+#[doc(hidden)]
+use oneiron_records::housekeeping::schedule::retry_after;
 
 /// While an erasure obligation waits, the erasure sweep runs at least this
 /// often, whatever its idle cadence.
@@ -146,14 +144,6 @@ impl SweepState {
     }
 }
 
-fn retry_after(failures: u32, every: u64) -> u64 {
-    let doublings = failures.saturating_sub(1).min(16);
-    RETRY_AFTER_SECS
-        .saturating_mul(1 << doublings)
-        .min(every)
-        .min(RETRY_CAP_SECS)
-}
-
 /// Every engine sweep's row. A row that does not decode reads as absent: the
 /// sweep is due, and its next finish row replaces it.
 pub(super) fn read_states(vault: &Vault) -> Result<BTreeMap<HousekeepingSweep, SweepState>> {
@@ -223,11 +213,21 @@ pub(super) fn write_state(
     Ok(())
 }
 
-/// Whether any erasure obligation (an `h:` row, or a `hw:` withdrawn
-/// generation's) is queued.
+/// Whether any erasure obligation (an `h:` row, a `hw:` withdrawn
+/// generation's, or an `hc:` window compaction an erase or a refused late
+/// re-put owes) is queued. Each one gets the hourly cadence and the idle
+/// window unload (ARCH-0005a `#housekeeping-built`, census L6-05).
 pub(super) fn erase_obligation_waiting(vault: &Vault) -> Result<bool> {
     let txn = vault.store.env.read_txn()?;
-    for prefix in [HARD_ERASE_SWEEP_PREFIX, WITHDRAWN_GENERATION_SWEEP_PREFIX] {
+    // Only the sync build raises `hc:` rows.
+    #[cfg(feature = "sync")]
+    let owed = Some(crate::deletion::owed_window_compaction::OWED_COMPACTION_PREFIX);
+    #[cfg(not(feature = "sync"))]
+    let owed: Option<&[u8]> = None;
+    for prefix in [HARD_ERASE_SWEEP_PREFIX, WITHDRAWN_GENERATION_SWEEP_PREFIX]
+        .into_iter()
+        .chain(owed)
+    {
         let mut rows = vault.store.sync_queue.prefix_iter(&txn, prefix)?;
         if rows.next().transpose()?.is_some() {
             return Ok(true);

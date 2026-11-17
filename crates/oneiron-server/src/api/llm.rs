@@ -63,6 +63,21 @@ fn refusal(status: StatusCode, code: &str) -> Response {
     let response = (status, Json(serde_json::json!({"error":{"code":code}}))).into_response();
     coded(response, code, "")
 }
+/// The vault's inference policy refused a call: `code`'s body names the
+/// authorizer's typed reason as its `message`, and a server line logs it
+/// (STEP-DOOR-REFUSAL-REASON). Any other error the authorizer returns (a
+/// store or decode fault) keeps the code-only body, and its line names only
+/// the error's kind.
+fn policy_refusal(status: StatusCode, code: &str, error: &oneiron::Error) -> Response {
+    let Some(refused) = oneiron::llm::InferenceRefusal::of(error) else {
+        tracing::warn!(code, kind = ?error.kind(), "the inference policy did not admit a call");
+        return refusal(status, code);
+    };
+    let reason = refused.reason();
+    tracing::info!(code, reason, "the inference policy refused a call");
+    let body = serde_json::json!({"error":{"code":code,"message":reason}});
+    coded((status, Json(body)).into_response(), code, reason)
+}
 /// A param or provider option that would pick the model or the route
 /// (`LlmRequest::route_selector_override`), named as `key` or `namespace.key`,
 /// with `*` for a namespace no adapter reads.
@@ -84,7 +99,9 @@ fn failure_body(error: LlmError) -> (StatusCode, serde_json::Value) {
     use oneiron::{FatalLlmError, RetryableLlmError};
     let (status, code) = match &error {
         LlmError::BudgetDenied(_) => (StatusCode::PAYMENT_REQUIRED, "budget_denied"),
-        LlmError::Fatal(FatalLlmError::Auth) => (StatusCode::UNAUTHORIZED, "auth"),
+        LlmError::Fatal(FatalLlmError::Auth | FatalLlmError::SeatSignedOut { .. }) => {
+            (StatusCode::UNAUTHORIZED, "auth")
+        }
         // The model's answer failed a read check: an upstream fault, never a p = 0.
         LlmError::Fatal(FatalLlmError::LabelRead(_)) => (StatusCode::BAD_GATEWAY, "label_read"),
         LlmError::Fatal(_) => (StatusCode::BAD_REQUEST, "invalid_request"),
@@ -250,12 +267,12 @@ fn admit_owner(
     let authorized = server
         .vault
         .authorize_raw_inference(request.clone(), &context)
-        .map_err(|_| {
+        .map_err(|error| {
             let admitted = oneiron::llm::admitted_as(&original_purpose);
             Box::new(if *admitted == oneiron::CallPurpose::Extraction {
-                refusal(StatusCode::FORBIDDEN, "extraction_egress_denied")
+                policy_refusal(StatusCode::FORBIDDEN, "extraction_egress_denied", &error)
             } else {
-                refusal(StatusCode::BAD_REQUEST, "invalid_request")
+                policy_refusal(StatusCode::BAD_REQUEST, "invalid_request", &error)
             })
         })?;
     *request = authorized.into_request();
@@ -543,7 +560,7 @@ mod tests;
 pub(crate) struct MeshLlm(pub(crate) Arc<SyncServer>);
 
 #[cfg(feature = "mesh")]
-impl oneiron_llm_own_server::LlmMeshHandler for MeshLlm {
+impl oneiron_llm::oneiron_rpc::LlmMeshHandler for MeshLlm {
     fn serves(&self, model: &oneiron::ModelId) -> bool {
         self.0.llm.is_some() && self.0.ai.model_locality(model).is_some()
     }
@@ -590,7 +607,7 @@ impl oneiron_llm_own_server::LlmMeshHandler for MeshLlm {
             .ai
             .chat_catalog()
             .into_iter()
-            .filter(|entry| oneiron_llm_own_server::advertises(entry.locality))
+            .filter(|entry| oneiron_llm::oneiron_rpc::advertises(entry.locality))
             .collect()
     }
 }

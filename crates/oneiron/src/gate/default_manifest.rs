@@ -143,6 +143,10 @@ pub(crate) fn default_policy_manifest() -> Result<Vec<u8>> {
     // Ready fit (FIT-INSTALL-DESIGN = A). Derived the same way, so a moved
     // domain fails closed too.
     let fit_install_writer_ref = crate::context_board::fit_install_writer_id()?.to_hex();
+    // The commitment lapse MACHINE writes the lapse of an overdue instance the
+    // housekeeping pass runs (L9-42-LAPSE-WRITER = A). Derived the same way,
+    // so a moved domain fails closed too.
+    let commitment_lapse_writer_ref = crate::housekeeping::commitment_lapse_writer_id()?.to_hex();
     let policy_values: serde_json::Value =
         serde_json::from_str(include_str!("policy_value_defaults.json"))
             .expect("valid shipped policy values");
@@ -703,6 +707,26 @@ pub(crate) fn default_policy_manifest() -> Result<Vec<u8>> {
                     (
                         Value::from(ACTOR_REF_KEY),
                         Value::from(fit_install_writer_ref.clone()),
+                    ),
+                    (Value::from(ACTOR_CEILING_KEY), Value::from("auto")),
+                ]),
+                // L9-42-LAPSE-WRITER = A (ARCH-0005a #housekeeping-open):
+                // the lapse of an overdue commitment instance is a System
+                // act, written by the engine's commitment lapse writer, which
+                // only the housekeeping pass writes as. The owner consented
+                // to the obligation, its due time and its lapse when the
+                // series was written; the lapse only records that the due
+                // time passed. Keyed to that ONE derived actor; class
+                // `system` as a whole keeps default-deny. A stored manifest
+                // without this row keeps the owner's Human lapse.
+                //
+                // Reversal: delete this row; the pass then lapses as the
+                // owner again (the lapse before this row).
+                Value::Map(vec![
+                    (Value::from(ACTOR_CLASS_KEY), Value::from("system")),
+                    (
+                        Value::from(ACTOR_REF_KEY),
+                        Value::from(commitment_lapse_writer_ref),
                     ),
                     (Value::from(ACTOR_CEILING_KEY), Value::from("auto")),
                 ]),

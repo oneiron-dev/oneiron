@@ -137,7 +137,7 @@ pub(super) fn run(
             let report = crate::commitment_lifecycle::lapse_overdue_commitments(
                 vault,
                 now,
-                &lapse_envelope()?,
+                &lapse_envelope(vault)?,
             )?;
             SweepWork::Commitments {
                 lapsed: count(report.lapsed.len()),
@@ -183,6 +183,18 @@ pub(super) fn run(
             }
         }
         HousekeepingSweep::OAuthExpiry => return oauth_rows(vault, now, deadline),
+        HousekeepingSweep::EsignTokenExpiry => {
+            let (walk, cursor) = esign_walk(vault, deadline, cursor, |documents| {
+                vault.sweep_esign_tokens(documents, now)
+            })?;
+            return Ok(walk.run(cursor, |documents, removed, failed| {
+                SweepWork::EsignTokens {
+                    documents,
+                    removed,
+                    failed,
+                }
+            }));
+        }
         HousekeepingSweep::EsignReminders
         | HousekeepingSweep::ConsultSettlement
         | HousekeepingSweep::PolicyHoldPrune
@@ -509,17 +521,25 @@ fn body_line_index_rebuild(vault: &Vault, deadline: &Deadline) -> Result<Run> {
     Ok(complete(rebuilt, failed, dropped, !had_remainder))
 }
 
-/// The envelope the host lapses an overdue instance under: the vault owner's,
-/// as the owner-typed lifecycle doors act, observing that a due time passed.
-/// The instance is the projector's signed birth, which only an ordinary
-/// successor may replace; the projector's own envelope would have to rewrite
-/// that birth.
-fn lapse_envelope() -> Result<WriteEnvelope> {
-    Ok(WriteEnvelope::new(
-        WriteActor::new(
+/// The envelope the host lapses an overdue instance under, observing that a
+/// due time passed. The pass lapses because time ran out, which is no
+/// person's act, so it writes as the commitment lapse writer, a System
+/// MACHINE (L9-42-LAPSE-WRITER = A), when the policy in force names a ceiling
+/// for it and the host retained its signer. Otherwise it writes as the vault
+/// owner, as the owner-typed lifecycle doors act, which it did before that
+/// writer. Either way the instance is the projector's signed birth, which
+/// only an ordinary successor may replace; the projector's own envelope would
+/// have to rewrite that birth.
+fn lapse_envelope(vault: &Vault) -> Result<WriteEnvelope> {
+    let actor = match super::lapse_writer::commitment_lapse_writer(vault)? {
+        Some(writer) => WriteActor::new(writer, EdgeActorClass::System),
+        None => WriteActor::new(
             crate::vault::embedded_owner_actor_id()?,
             EdgeActorClass::Human,
         ),
+    };
+    Ok(WriteEnvelope::new(
+        actor,
         ClaimSource::Observed,
         WriteProvenance::new(rmpv::Value::from(COMMITMENT_LAPSE_PROVENANCE))?,
         ClaimApprovalStatus::Auto,
@@ -549,6 +569,8 @@ fn hard_erase(vault: &Vault, owner_asked: bool) -> Result<HardEraseWork> {
         windows_unloaded,
         jobs_failed: run.jobs_failed,
         windows_compacted: run.windows_compacted,
+        windows_unchanged: run.windows_unchanged,
+        windows_compacted_held: run.windows_compacted_held,
         windows_deferred_live: run.windows_deferred_live,
         windows_deferred_raced: run.windows_deferred_raced,
         windows_deferred_unproved: run.windows_deferred_unproved,
@@ -561,12 +583,12 @@ fn hard_erase(vault: &Vault, owner_asked: bool) -> Result<HardEraseWork> {
     })
 }
 
-/// A host keeps every window it served registered until it stops, and the
-/// erasure sweep defers every registered window as live. Before it compacts,
-/// each window that no caller holds is written down and closed through the
-/// manager's own unload, which refuses a window someone holds; the next touch
-/// opens it again from its rows. A refused or failed unload leaves the window
-/// as it was, and the sweep defers it.
+/// A host keeps every window it served registered until it stops. Before it
+/// compacts, each window that no caller holds is written down and closed
+/// through the manager's own unload, which refuses a window someone holds;
+/// the next touch opens it again from its rows. A refused or failed unload
+/// leaves the window as it was: the sweep then takes it from its holders
+/// within its drain bound, or defers it (census L9-41).
 #[cfg(feature = "sync")]
 fn unload_idle_windows(vault: &Vault) -> u64 {
     let manager = vault

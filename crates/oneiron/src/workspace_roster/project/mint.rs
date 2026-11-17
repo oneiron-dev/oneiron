@@ -15,42 +15,19 @@ use crate::registry::{
 use crate::side_table::{self, Named, SideTable};
 use crate::store::GateDecisionId;
 use crate::{EntityId, Error, Result, TimeRange, Vault};
-use serde::{Deserialize, Serialize};
 
 /// Durable owner tap of one project card: the tap digest and the mint receipt. Key: blake3
 /// hash32 of the card id.
 const TAPS: SideTable<[u8; 32], ([u8; 32], ProjectMintReceipt), Named> =
     SideTable::new(&side_table::PROJECT_MINT_TAP);
 
-/// The goal is data for the leader, not instructions in its prompt.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ProjectGoalRecord {
-    pub project_id: String,
-    pub goal: String,
-    pub why: String,
-    pub axes: Vec<String>,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::workspace_roster::project::mint::{
+    ProjectBudgetShare, ProjectGoalRecord,
+};
 
-/// The share is expressed against the root project's budget, never a grant
-/// to spend more than the parent has.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ProjectBudgetShare {
-    pub project_id: String,
-    pub parent_id: String,
-    pub share_bps: u16,
-}
-
-/// A durable tap result; `grant_decision_id` identifies the Gate receipt.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ProjectMintReceipt {
-    pub project_id: String,
-    pub card_id: String,
-    pub grant_decision_id: GateDecisionId,
-    pub grant_ref: String,
-}
+#[doc(hidden)]
+pub use oneiron_records::workspace_roster::project::mint::ProjectMintReceipt;
 
 /// An exact tap replay re-proves its mint against the recorded Grant
 /// decision, so the retention sweep keeps each durable tap's decision.
@@ -301,6 +278,11 @@ impl Vault {
             EntityId::from_hex(&root.claims_scope_ref).map_err(|_| invalid())?,
             leader,
         )?;
+        // The minted child attenuates its parent's budget by one, as a
+        // spawned child does, so threads convert under minted projects. A
+        // root with no budget left mints a child with none, as before.
+        project.depth_limit = root.depth_limit;
+        project.depth_remaining = root.depth_remaining.min(root.depth_limit).saturating_sub(1);
         project.board = board.iter().map(EntityId::to_hex).collect();
         project.roster.extend(project.board.iter().cloned());
         if !project.roster.contains(&actor.to_hex()) {

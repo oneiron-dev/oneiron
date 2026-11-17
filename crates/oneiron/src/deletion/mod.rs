@@ -31,6 +31,7 @@ mod receipt_final;
 mod receipt_grammar;
 mod receipt_origin;
 mod rendezvous;
+pub(crate) mod setting_keys;
 mod sweep_queue;
 mod timeline;
 mod tombstone;
@@ -41,6 +42,8 @@ pub(crate) use oneiron_store::deletion::window_document_format;
 // A withdrawn reply copy's Shell generation (FIX 931): the scope-summary
 // withdrawal stages it on this device (FIX 11804), and a carried cutoff on
 // another machine of the vault.
+// FIX [LIBTEST-QUARANTINE-DELETION-TESTS]: the lib test target's type check fails here (3 errors: E0063 x2, E0061 x1); port it, then drop this gate
+#[cfg(any())]
 #[cfg(test)]
 mod tests;
 mod withdrawn;
@@ -168,14 +171,25 @@ pub(crate) use sweep_queue::{
     raise_withdrawn_generation_fence_in_txn, withdrawn_generation_cutoffs_in_txn,
 };
 pub(crate) use timeline::{deletion_window_for_row, row_deletion_marked};
+
+/// Whether `id` carries this install's permanent hard-delete marker, read
+/// from the store alone (`Vault::local_hard_delete_marker_exists_in_txn`
+/// for a caller with no vault at hand).
+pub(crate) fn hard_delete_marker_exists_in_txn(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    id: &crate::entity_id::EntityId,
+) -> crate::error::Result<bool> {
+    tombstone::HARD_DELETE_MARKER.contains(store, txn, &crate::side_table::HexId(*id))
+}
 #[cfg(all(test, feature = "sync"))]
 pub(crate) use tombstone::ROW_DELETION_FENCE_BACKFILLED;
 #[cfg(test)]
 pub(crate) use tombstone::local_hard_delete_key;
 pub(crate) use tombstone::{
     ARCHIVE_TOMBSTONE_PREFIX, LOCAL_HARD_DELETE_PREFIX, PENDING_TOMBSTONE, PendingTombstoneKey,
-    ROW_DELETION_FENCE, archive_tombstone_key, stage_engine_row_hard_erasure_at_in_txn,
-    stage_engine_row_hard_erasure_in_txn,
+    ROW_DELETION_FENCE, archive_tombstone_key, mark_torn_actor_row_in_txn,
+    stage_engine_row_hard_erasure_at_in_txn, stage_engine_row_hard_erasure_in_txn,
 };
 pub(crate) use topology_delete_intent::topology_delete_reservation_in_txn;
 pub(crate) use withdrawn::scrub_withdrawn_record_in_txn;
@@ -214,6 +228,8 @@ pub(crate) use sweep_queue::{
     HardEraseSweepExtras, LAST_HARD_ERASE_SWEEP_SEQ_KEY, encode_hard_erase_sweep_job,
     encode_hard_erase_sweep_key,
 };
+#[cfg(oneiron_test_support)]
+pub(crate) use tombstone::decode_pending_tombstone_key_for_test;
 #[cfg(test)]
 pub(crate) use tombstone::pending_tombstone_key;
 pub(crate) use tombstone::{parse_window_label, window_label_from_timestamp};

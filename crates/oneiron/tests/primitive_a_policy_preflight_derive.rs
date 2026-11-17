@@ -161,8 +161,7 @@ fn preflight(
     refs: Vec<EntityId>,
 ) -> Result<PolicyPreflight, Box<dyn std::error::Error>> {
     let answer =
-        oneiron::verbs::vault_policy_preflight(memory, PolicyPreflightRequest { refs, act })?
-            .value;
+        oneiron::verbs::vault_policy_preflight(memory, PolicyPreflightRequest { refs, act })?.value;
     assert_eq!(answer.act, act);
     Ok(answer)
 }
@@ -234,7 +233,11 @@ fn a_readable_ref_carries_the_verdict_the_commit_meets() -> TestResult {
             }),
             "{act:?}"
         );
-        assert_eq!(shown, Some(judged(vault, agent, archive, person)?), "{act:?}");
+        assert_eq!(
+            shown,
+            Some(judged(vault, agent, archive, person)?),
+            "{act:?}"
+        );
     }
 
     // A Steward grant that names `derive` and not `archive`: the archive is

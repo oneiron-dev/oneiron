@@ -21,11 +21,12 @@ use super::hooks::DoorHooksDir;
 use super::intent::ReceivePackRefResult;
 use super::landing::ReceivePackLanding;
 use super::paths::{
-    DOOR_WINDOW_TIMEOUT, ORIGIN_COMMAND_SECTION_MEMORY_BYTES, SERVE_IDLE_TIMEOUT,
-    SERVE_MAX_STDERR_BYTES, SERVE_STREAM_CHUNK_BYTES, origin_door_root, origin_repo_dir,
-    origin_serving_root, push_refused, repository_busy, serve_failed, serve_idle,
+    DOOR_WINDOW_TIMEOUT, ORIGIN_COMMAND_SECTION_MEMORY_BYTES, SERVE_COMMAND_SECTION_TIMEOUT,
+    SERVE_IDLE_TIMEOUT, SERVE_MAX_STDERR_BYTES, SERVE_STREAM_CHUNK_BYTES, origin_door_root,
+    origin_repo_dir, origin_serving_root, push_refused, repository_busy, serve_failed, serve_idle,
 };
 use super::projected_serve::{ProjectedExchange, select_projected_exchange};
+use super::protected_ref_confirm::ProtectedRef;
 use super::push_admission::{ServeCaller, admit_push, stamp_admission};
 use super::read_projection::RepoGitBackend;
 use super::recipient_serve::RepoGitReadContext;
@@ -35,7 +36,7 @@ use crate::credential_door::CredentialDoorService;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::federation::git_push::GitPushStamp;
-use crate::git_wire::{lock_repository, lock_repository_within, try_lock_repository};
+use crate::git_wire::{GitWire, lock_repository, lock_repository_within, try_lock_repository};
 use crate::origin::RepoPortableId;
 use crate::origin::residence::{OriginAuthorityLease, OriginAuthorityStamp};
 use crate::store::code_snapshot::RepoRef;
@@ -112,6 +113,17 @@ pub struct ServeReport {
 /// is always reaped before this returns. The door's scan keeps the default
 /// [`ScanBounds`](super::ScanBounds).
 ///
+/// # The command section deadline
+///
+/// A push's command section is read under the coordinator, before the
+/// backend is spawned, and a byte resets only the idle limit. So the whole
+/// section must arrive within
+/// [`SERVE_COMMAND_SECTION_TIMEOUT`](super::SERVE_COMMAND_SECTION_TIMEOUT) of
+/// its first read, or the push fails with the same
+/// [`CodeError::GitHttpExchangeIdle`] and lets the coordinator go: a section
+/// that trickles in never holds the repository's other pushes for as long as
+/// it keeps coming. [`serve_bounded`] sets another deadline.
+///
 /// [`CodeError::GitHttpExchangeIdle`]: crate::error::CodeError::GitHttpExchangeIdle
 pub fn serve(
     vault: &Arc<Vault>,
@@ -127,10 +139,11 @@ pub fn serve(
 /// [`serve`] for a transport that admits exchanges by permit.
 ///
 /// It runs under its host's [`ExchangeBounds`]: its own idle limit in place of
-/// [`SERVE_IDLE_TIMEOUT`], and the floors its door scan keeps. A transport
-/// whose body and sink bound their own waits passes the same idle limit, so
-/// whichever side sees the stall first ends the exchange the same way. A
-/// push that finds the repository coordinator taken waits for it, for
+/// [`SERVE_IDLE_TIMEOUT`], its own command section deadline in place of
+/// [`SERVE_COMMAND_SECTION_TIMEOUT`], and the floors its door scan keeps. A
+/// transport whose body and sink bound their own waits passes the same idle
+/// limit, so whichever side sees the stall first ends the exchange the same
+/// way. A push that finds the repository coordinator taken waits for it, for
 /// `repository_wait` at most, and only then fails with
 /// [`CodeError::GitHttpRepositoryBusy`]; the transport queues its own pushes
 /// to one repository before this, so the wait is for a writer outside it.
@@ -173,6 +186,7 @@ pub fn serve_bounded_with_authority(
         seam,
         authority,
         idle: bounds.idle,
+        command_section: bounds.command_section,
         scan: bounds.scan,
         spill_floor: bounds.spill_floor,
         wait_for_repository: false,
@@ -212,6 +226,7 @@ pub fn serve_with_provenance(
         seam,
         authority: None,
         idle: SERVE_IDLE_TIMEOUT,
+        command_section: SERVE_COMMAND_SECTION_TIMEOUT,
         scan: ScanBounds::default(),
         spill_floor: None,
         wait_for_repository: true,
@@ -239,6 +254,7 @@ pub fn serve_with_authority(
         seam,
         authority: Some(authority),
         idle: SERVE_IDLE_TIMEOUT,
+        command_section: SERVE_COMMAND_SECTION_TIMEOUT,
         scan: ScanBounds::default(),
         spill_floor: None,
         wait_for_repository: true,
@@ -251,14 +267,16 @@ pub fn serve_with_authority(
 }
 
 /// What one invocation runs under besides its request: the door seam, a lease
-/// from trusted host configuration, the exchange's idle limit, scan floors
-/// and spill floor, whether a read may wait for a repository a writer holds,
-/// and how long a push waits for it (`None`: until it is free), and who it
+/// from trusted host configuration, the exchange's idle limit, how long a
+/// push's command section may take to arrive, scan floors and spill floor,
+/// whether a read may wait for a repository a writer holds, and how long a
+/// push waits for it (`None`: until it is free), and who it
 /// pushes as (G1-PUSH).
 pub(super) struct ServeTerms<'a> {
     pub(super) seam: DoorSeam,
     pub(super) authority: Option<&'a OriginAuthorityLease>,
     pub(super) idle: Duration,
+    pub(super) command_section: Duration,
     pub(super) scan: ScanBounds,
     pub(super) spill_floor: Option<Arc<dyn SpillFloor>>,
     pub(super) wait_for_repository: bool,
@@ -284,6 +302,7 @@ pub(super) fn serve_request(
         seam,
         authority,
         idle,
+        command_section,
         scan,
         spill_floor,
         wait_for_repository,
@@ -324,7 +343,12 @@ pub(super) fn serve_request(
         .map_or_else(|| repo_dir.clone(), Path::to_path_buf);
     let door_root = origin_door_root(vault)?;
     let list_paths = push.as_ref().is_some_and(GitPushStamp::names_checkout);
-    let hooks = DoorHooksDir::materialize_listing(&door_root, scan, list_paths)?;
+    // Anyone but the vault's owner may neither delete nor rewrite the
+    // repository's default branch (L8-51), so their hook names every branch
+    // move that does not fast-forward. The owner's push runs no such check.
+    let guards_protected_ref = push.as_ref().is_some_and(|stamp| !stamp.is_owner());
+    let hooks =
+        DoorHooksDir::materialize_listing(&door_root, scan, list_paths, guards_protected_ref)?;
     let command = match &projected {
         Some(projected) => projected.command(&project_root, hooks.path())?,
         None => ServeCommand::http_backend(&repo_dir, &project_root, hooks.path())?,
@@ -341,6 +365,12 @@ pub(super) fn serve_request(
         // A fetch and an advertisement mutate nothing, so neither queues behind
         // a push and neither delays one.
         None
+    };
+    // Read under the canonical coordinator, from the canonical store: an
+    // ingress is a copy, and its HEAD is not the repository's.
+    let protected_ref = match &coordinator {
+        Some(_) if guards_protected_ref => protected_default_ref(vault, &repo_dir)?,
+        _ => None,
     };
     // The ingress's own coordinator, after the canonical one, never before.
     let ingress_coordinator = match (&coordinator, served_dir != repo_dir) {
@@ -369,9 +399,19 @@ pub(super) fn serve_request(
         vault.reconcile_receive_pack_operations(&served_dir)?;
     }
     // No byte of the body is read before the admission above is checked and
-    // recorded. A push body the backend would inflate is inflated here
-    // instead, once: the command section read below is then the one
-    // receive-pack reads, and the backend gets the whole body plain.
+    // recorded. The command section must then arrive within its deadline. The
+    // deadline wraps the body as it came, under any inflation, so each read
+    // from the client is checked; it is lifted once the section is in.
+    let reading_command_section = AtomicBool::new(request.is_receive_pack());
+    let mut deadline_body = CommandSectionDeadline {
+        body,
+        deadline: Instant::now() + command_section,
+        reading: &reading_command_section,
+    };
+    let body: &mut (dyn Read + Send) = &mut deadline_body;
+    // A push body the backend would inflate is inflated here instead, once:
+    // the command section read below is then the one receive-pack reads, and
+    // the backend gets the whole body plain.
     let plain;
     let mut inflated;
     let (request, body): (&ServeRequest, &mut (dyn Read + Send)) =
@@ -386,12 +426,15 @@ pub(super) fn serve_request(
         } else {
             (request, body)
         };
-    // A body that stalls here ends at the idle limit, as it would mid-exchange.
+    // A body that stalls here ends at the idle limit, as it would
+    // mid-exchange, and one that trickles ends at its deadline the same way;
+    // either way the coordinator is let go as this returns.
     let mut commands = if request.is_receive_pack() {
         read_command_section(body, door_root, spill_floor.clone()).map_err(stall_as_idle)?
     } else {
         HeldBytes::new(0, None)
     };
+    reading_command_section.store(false, Ordering::SeqCst);
     // A publication this push may land on again gets its roots back while no
     // backend can move a ref yet, on the thread holding the coordinator.
     if coordinator.is_some() {
@@ -418,6 +461,7 @@ pub(super) fn serve_request(
                 admission: admission.as_ref(),
                 scan,
                 spill_floor: spill_floor.as_ref(),
+                protected_ref: protected_ref.as_ref(),
             },
             repo_dir: &served_dir,
             hooks: &hooks,
@@ -495,6 +539,36 @@ pub(super) fn repo_common_dir(repo_dir: &Path) -> Result<PathBuf> {
         Err(error) => return Err(Error::Io(error)),
     };
     Ok(common.canonicalize()?)
+}
+
+/// The branch the served repository's HEAD names, as a full ref, with the
+/// repository's identity: the ref a push by anyone but the vault's owner may
+/// neither delete nor rewrite (L8-51). `None` when HEAD is detached or names
+/// no branch. Read through git, which reads either ref store; a read that
+/// fails for any other reason refuses the push.
+fn protected_default_ref(vault: &Vault, repo_dir: &Path) -> Result<Option<ProtectedRef>> {
+    let args = ["symbolic-ref", "--quiet", "HEAD"].map(str::to_owned);
+    let output = crate::git_wire::run_bridged_git_argv(repo_dir, &args)?;
+    if output.timed_out || output.truncated {
+        return Err(serve_failed("the served repository's HEAD did not read"));
+    }
+    if !output.success {
+        // `symbolic-ref --quiet` answers 1, and only 1, for a detached HEAD.
+        return match output.exit_code {
+            Some(1) => Ok(None),
+            _ => Err(serve_failed("the served repository's HEAD did not read")),
+        };
+    }
+    let name = String::from_utf8(output.stdout)
+        .map_err(|_| serve_failed("the served repository's HEAD is not UTF-8"))?;
+    let name = name.trim_end_matches(['\r', '\n']);
+    if !name.starts_with("refs/heads/") {
+        return Ok(None);
+    }
+    Ok(Some(ProtectedRef {
+        name: name.to_owned(),
+        repo_identity_hex: GitWire::new(vault)?.repository_identity(repo_dir)?.as_hex(),
+    }))
 }
 
 /// A repo_ref that names the repository before any commit is pinned to it.
@@ -710,6 +784,25 @@ fn read_command_section(
         }
         section.write_all(&line).map_err(Error::Io)?;
         return Ok(section);
+    }
+}
+
+/// The request body while a push's command section is read: a read that
+/// starts past `deadline` fails as a body whose own wait ran out does, so the
+/// section is refused as an idle stall. Once `reading` is cleared, the rest of
+/// the body passes as it came.
+struct CommandSectionDeadline<'a> {
+    body: &'a mut (dyn Read + Send),
+    deadline: Instant,
+    reading: &'a AtomicBool,
+}
+
+impl Read for CommandSectionDeadline<'_> {
+    fn read(&mut self, out: &mut [u8]) -> io::Result<usize> {
+        if self.reading.load(Ordering::SeqCst) && Instant::now() >= self.deadline {
+            return Err(io::ErrorKind::TimedOut.into());
+        }
+        self.body.read(out)
     }
 }
 

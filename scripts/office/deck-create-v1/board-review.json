@@ -1,0 +1,364 @@
+{
+  "communication": {
+    "audience": "Board",
+    "outcome": "Approve the budget",
+    "main_message": "Revenue doubled"
+  },
+  "language": "en-GB",
+  "accessibility": [
+    "Describe every figure"
+  ],
+  "pages": [
+    {
+      "id": "results",
+      "job": "explain",
+      "division": "fixed",
+      "blocks": [
+        {
+          "id": "a-title",
+          "kind": "title",
+          "text": "Revenue doubled"
+        },
+        {
+          "id": "a-claim",
+          "kind": "claim",
+          "text": "Revenue grew from 4.1 to 8.3 million.",
+          "evidence": [
+            {
+              "document": "doc:annual-report",
+              "version": "v3",
+              "start": "cursor:10",
+              "end": "cursor:47",
+              "quote": "revenue grew to 8.3 million",
+              "quote_hash": "894acf7192d30717895ea7844b0d5099729392fa0d7da57fbed31a53985c085a",
+              "drift": true
+            }
+          ],
+          "qualifications": [
+            "Unaudited."
+          ]
+        }
+      ]
+    },
+    {
+      "id": "points",
+      "job": "explain",
+      "division": "fixed",
+      "blocks": [
+        {
+          "id": "h-title",
+          "kind": "title",
+          "text": "Two points"
+        },
+        {
+          "id": "h-one",
+          "kind": "claim",
+          "text": "Margins held.",
+          "evidence": [
+            {
+              "document": "doc:annual-report",
+              "version": "v3",
+              "start": "cursor:10",
+              "end": "cursor:47",
+              "quote": "margins held",
+              "quote_hash": "1a5d6b818d48ad05ff3df9a5dcec7cb475ffda9ee9f8c4fa4a566b941ab032ff"
+            }
+          ]
+        },
+        {
+          "id": "h-two",
+          "kind": "claim",
+          "text": "Churn fell.",
+          "evidence": [
+            {
+              "document": "doc:annual-report",
+              "version": "v3",
+              "start": "cursor:10",
+              "end": "cursor:47",
+              "quote": "churn fell",
+              "quote_hash": "82d94d904efc84c9dfb2947730059e80bd610e4e35fae308e96f3e060f2f248e"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "mix",
+      "job": "explain",
+      "division": "fixed",
+      "blocks": [
+        {
+          "id": "b-title",
+          "kind": "title",
+          "text": "Quarterly mix"
+        },
+        {
+          "id": "b-revenue",
+          "kind": "data",
+          "dataset": "revenue",
+          "carriers": [
+            "chart"
+          ]
+        },
+        {
+          "id": "b-cost",
+          "kind": "data",
+          "dataset": "cost",
+          "carriers": [
+            "chart",
+            "table"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "findings",
+      "job": "explain",
+      "division": "split",
+      "blocks": [
+        {
+          "id": "c-title",
+          "kind": "title",
+          "text": "Three findings"
+        },
+        {
+          "id": "c-one",
+          "kind": "claim",
+          "text": "word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word",
+          "evidence": [
+            {
+              "document": "doc:annual-report",
+              "version": "v3",
+              "start": "cursor:10",
+              "end": "cursor:47",
+              "quote": "first finding recorded",
+              "quote_hash": "3687991c0ad079bfd3e6e0e27509c389bdcc558b87730fa3e0d7cd91743d81c3"
+            }
+          ]
+        },
+        {
+          "id": "c-two",
+          "kind": "claim",
+          "text": "word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word",
+          "evidence": [
+            {
+              "document": "doc:annual-report",
+              "version": "v3",
+              "start": "cursor:10",
+              "end": "cursor:47",
+              "quote": "second finding recorded",
+              "quote_hash": "931556755150a348cc3d25ae15f7861783c7780801b47c48fe70c48e16d16a5c"
+            }
+          ]
+        },
+        {
+          "id": "c-three",
+          "kind": "claim",
+          "text": "word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word",
+          "evidence": [
+            {
+              "document": "doc:annual-report",
+              "version": "v3",
+              "start": "cursor:10",
+              "end": "cursor:47",
+              "quote": "third finding recorded",
+              "quote_hash": "d5cfde7e42cd23d46159f5f28eee8d1fcfd128ceaf113d6e6d6bf3660d1daf49"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "regions",
+      "job": "explain",
+      "division": "fixed",
+      "blocks": [
+        {
+          "id": "d-title",
+          "kind": "title",
+          "text": "Cost by region"
+        },
+        {
+          "id": "d-table",
+          "kind": "data",
+          "dataset": "by-region",
+          "carriers": [
+            "table"
+          ]
+        },
+        {
+          "id": "d-claim",
+          "kind": "claim",
+          "text": "Costs fell in every region.",
+          "evidence": [
+            {
+              "document": "doc:annual-report",
+              "version": "v3",
+              "start": "cursor:10",
+              "end": "cursor:47",
+              "quote": "costs fell in every region",
+              "quote_hash": "8829260dbaea7937279572421377cda5875779e7e431ff74dc7c73ed07b81684"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "costs",
+      "job": "explain",
+      "division": "fixed",
+      "blocks": [
+        {
+          "id": "f-title",
+          "kind": "title",
+          "text": "Costs"
+        },
+        {
+          "id": "f-claim",
+          "kind": "claim",
+          "text": "Costs fell.",
+          "evidence": [
+            {
+              "document": "doc:annual-report",
+              "version": "v3",
+              "start": "cursor:10",
+              "end": "cursor:47",
+              "quote": "costs fell",
+              "quote_hash": "25fae5690c14e00d2cac3cce78c07a3a8525245872f7ebac257d71667e425390"
+            }
+          ]
+        },
+        {
+          "id": "f-detail",
+          "kind": "claim",
+          "text": "word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word",
+          "evidence": [
+            {
+              "document": "doc:annual-report",
+              "version": "v3",
+              "start": "cursor:10",
+              "end": "cursor:47",
+              "quote": "detailed cost breakdown",
+              "quote_hash": "afaf4eef7bb48ece60a1e80fd18883ae45c9b2aeb747ac3e04dc4ee195d8e9d8"
+            }
+          ],
+          "priority": "optional"
+        }
+      ]
+    }
+  ],
+  "datasets": [
+    {
+      "id": "revenue",
+      "columns": [
+        {
+          "name": "Quarter",
+          "type": "text"
+        },
+        {
+          "name": "Revenue",
+          "type": "number",
+          "unit": "EUR m"
+        }
+      ],
+      "rows": [
+        [
+          "Q1",
+          4.1
+        ],
+        [
+          "Q2",
+          5.0
+        ],
+        [
+          "Q3",
+          null
+        ],
+        [
+          "Q4",
+          8.3
+        ]
+      ],
+      "missing": "not reported",
+      "sources": [
+        "ledger 2026"
+      ]
+    },
+    {
+      "id": "cost",
+      "columns": [
+        {
+          "name": "Month",
+          "type": "date"
+        },
+        {
+          "name": "Cost",
+          "type": "number",
+          "unit": "EUR m"
+        }
+      ],
+      "rows": [
+        [
+          "2026-01-31",
+          2.0
+        ],
+        [
+          "2026-02-28",
+          1.9
+        ],
+        [
+          "2026-03-31",
+          1.7
+        ],
+        [
+          "2026-04-30",
+          1.6
+        ]
+      ],
+      "sources": [
+        "ledger 2026"
+      ]
+    },
+    {
+      "id": "by-region",
+      "columns": [
+        {
+          "name": "Region",
+          "type": "text"
+        },
+        {
+          "name": "Northwest",
+          "type": "number",
+          "unit": "EUR k"
+        },
+        {
+          "name": "Northeast",
+          "type": "number",
+          "unit": "EUR k"
+        },
+        {
+          "name": "Southwest",
+          "type": "number",
+          "unit": "EUR k"
+        }
+      ],
+      "rows": [
+        [
+          "Coastal",
+          1200,
+          1300,
+          1100
+        ],
+        [
+          "Inland",
+          1000,
+          1100,
+          900
+        ]
+      ],
+      "sources": [
+        "regional ledgers"
+      ]
+    }
+  ]
+}

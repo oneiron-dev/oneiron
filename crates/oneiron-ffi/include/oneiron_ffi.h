@@ -768,33 +768,6 @@ enum OneironStatus oneiron_vault_health_json(struct OneironVault *vault,
                                              struct OneironBuffer *out_buffer);
 
 /**
- * The latest engine-limit questions this raw-opened vault asked, as UTF-8 JSON.
- *
- * `out_available` is the collector fact: 1 when this handle opened its vault
- * raw and carries its questions, 0 on a bound handle or an engine-shared
- * handle, which carry none. `out_json` is the exact UTF-8 JSON array on a
- * carrying handle, `[]` when no row has been crossed yet, and the empty
- * buffer otherwise; a non-empty buffer is released with
- * `oneiron_buffer_free`. Each element is exactly
- * `{"row": <EngineLimit::key>, "bound": <u64>, "measured": <u64>}` in
- * `EngineLimit::ALL` order, with full `u64` digits (never narrowed
- * through a float). The read does not clear. The caller's JSON parser
- * chooses its own number precision; this side promises the digits only.
- *
- * Both out pointers are initialized before anything is read or allocated.
- * A null `vault` with both outs writable is `NullArg`.
- *
- * # Safety
- *
- * `vault` is null or a live handle from `oneiron_vault_open`,
- * `oneiron_engine_vault` or `oneiron_vault_bind`, not freed during the
- * call. Each non-null out pointer is writable for the whole call.
- */
-enum OneironStatus oneiron_vault_native_limit_questions(const struct OneironVault *vault,
-                                                        uint8_t *out_available,
-                                                        struct OneironBuffer *out_json);
-
-/**
  * Store an entity blob. A bound handle stores it as its caller
  * (`oneiron_vault_bind`).
  *
@@ -956,6 +929,33 @@ enum OneironStatus oneiron_vault_open_with_host_root_and_embedding_model(const u
                                                                          uint8_t *out_wrong_host_root);
 
 /**
+ * The latest engine-limit questions this raw-opened vault asked, as UTF-8 JSON.
+ *
+ * `out_available` is the collector fact: 1 when this handle opened its vault
+ * raw and carries its questions, 0 on a bound handle or an engine-shared
+ * handle, which carry none. `out_json` is the exact UTF-8 JSON array on a
+ * carrying handle, `[]` when no row has been crossed yet, and the empty
+ * buffer otherwise; a non-empty buffer is released with
+ * `oneiron_buffer_free`. Each element is exactly
+ * `{"row": <EngineLimit::key>, "bound": <u64>, "measured": <u64>}` in
+ * [`EngineLimit::ALL`] order, with full `u64` digits (never narrowed
+ * through a float). The read does not clear. The caller's JSON parser
+ * chooses its own number precision; this side promises the digits only.
+ *
+ * Both out pointers are initialized before anything is read or allocated.
+ * A null `vault` with both outs writable is `NullArg`.
+ *
+ * # Safety
+ *
+ * `vault` is null or a live handle from `oneiron_vault_open`,
+ * `oneiron_engine_vault` or `oneiron_vault_bind`, not freed during the
+ * call. Each non-null out pointer is writable for the whole call.
+ */
+enum OneironStatus oneiron_vault_native_limit_questions(const struct OneironVault *vault,
+                                                        uint8_t *out_available,
+                                                        struct OneironBuffer *out_json);
+
+/**
  * Store a directed edge between two entities. A bound handle stores it as
  * its caller (`oneiron_vault_bind`).
  *
@@ -1029,8 +1029,8 @@ enum OneironStatus oneiron_vault_search_vector(struct OneironVault *vault,
 /**
  * Search for entities by BM25 text matching.
  *
- * `query_len` must be at most 8 KiB. `out_results` receives a Rust-owned
- * array that must be released with `oneiron_scored_entity_array_free`.
+ * `out_results` receives a Rust-owned array that must be released with
+ * `oneiron_scored_entity_array_free`.
  *
  * # Safety
  *

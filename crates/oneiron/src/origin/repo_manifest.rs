@@ -42,12 +42,10 @@ use crate::side_table::{self, Named, Raw, SideKey, SideTable};
 use crate::store::Store;
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 
-/// The manifest version this build writes and reads: 2 adds the refs
-/// writer's signature (FIX 12765).
-pub const REPO_MANIFEST_VERSION: u16 = 2;
-
-/// The domain a manifest's writer signature is made in.
-const WRITER_SIGNATURE_DOMAIN: &[u8] = b"oneiron/repo-manifest/writer/v2\0";
+#[doc(hidden)]
+use oneiron_verb_wire::origin::repo_manifest::WRITER_SIGNATURE_DOMAIN;
+#[doc(hidden)]
+pub use oneiron_verb_wire::origin::repo_manifest::{REPO_MANIFEST_VERSION, RepoManifestWriter};
 
 /// Every manifest held here, an alias's too. Key: the portable id's bytes.
 const MANIFESTS: SideTable<[u8; 32], RepoManifest, Named> =
@@ -86,18 +84,7 @@ impl RepoPortableId {
     /// The id `text` spells; `None` for anything but its one spelling.
     #[must_use]
     pub fn from_hex(text: &str) -> Option<Self> {
-        if text.len() != 64
-            || !text
-                .bytes()
-                .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
-        {
-            return None;
-        }
-        let mut bytes = [0; 32];
-        for (byte, pair) in bytes.iter_mut().zip(text.as_bytes().chunks_exact(2)) {
-            *byte = u8::from_str_radix(std::str::from_utf8(pair).ok()?, 16).ok()?;
-        }
-        Some(Self(bytes))
+        oneiron_hex::decode::<32>(text).map(Self)
     }
 
     /// A fresh id from the OS RNG: never derived from anything (F1).
@@ -155,18 +142,6 @@ pub struct RepoManifest {
     /// proven here (FIX 12765).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub writer: Option<RepoManifestWriter>,
-}
-
-/// The refs writer's signature on a manifest (FIX 12765): the machine that
-/// wrote it, and its Ed25519 signature over
-/// [`RepoManifest::writer_signing_bytes`].
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct RepoManifestWriter {
-    /// The machine whose key signed.
-    pub machine: EntityId,
-    /// The 64-byte signature.
-    pub signature: Vec<u8>,
 }
 
 /// An LFS object id list as hex text.

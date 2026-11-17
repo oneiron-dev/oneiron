@@ -190,7 +190,10 @@ impl MergeQueue<'_> {
                 .ok_or_else(|| invalid("an overlap batch is gone"))?;
             if matches!(
                 batch.state,
-                BatchState::Cancelled | BatchState::RolledBack | BatchState::Quarantined
+                BatchState::Cancelled
+                    | BatchState::RolledBack
+                    | BatchState::Quarantined
+                    | BatchState::Superseded
             ) || !batch
                 .proposals
                 .iter()
@@ -213,6 +216,7 @@ impl MergeQueue<'_> {
                     .resolution_batch
                     .or_else(|| existing.resolution_batch.clone());
                 linked.superseded |= existing.superseded;
+                linked.resolved_by = linked.resolved_by.or_else(|| existing.resolved_by.clone());
             }
             if unlanded {
                 drive.hold = Some(match &linked.held {
@@ -234,7 +238,10 @@ impl MergeQueue<'_> {
     }
 
     /// Writes `link`'s successor and supersession on every batch it names,
-    /// under the repository writer.
+    /// under the repository writer. A superseded source that never landed
+    /// ends Superseded in the same save, which mints its own completion
+    /// receipt naming the green successor (QUEUE Q1 = A); a landed or
+    /// settled one keeps its state and its receipt.
     pub(super) fn update_overlap_links(&self, link: &QueueConflictLink) -> Result<()> {
         let _guard = lock_repository(self.repo.common_dir())?;
         let queue = self.queue()?;
@@ -248,16 +255,40 @@ impl MergeQueue<'_> {
             {
                 existing.resolution_batch.clone_from(&link.resolution_batch);
                 existing.superseded = link.superseded;
+                existing.resolved_by.clone_from(&link.resolved_by);
                 if link.superseded {
                     drive.hold = None;
                 }
                 linked = true;
             }
+            if linked
+                && link.superseded
+                && matches!(
+                    batch.state,
+                    BatchState::Queued | BatchState::Staged | BatchState::Ready
+                )
+            {
+                batch.state = BatchState::Superseded;
+            }
             if linked {
                 batches.push(batch);
             }
         }
-        self.save(&queue, &batches.iter().collect::<Vec<_>>())
+        let batches: Vec<_> = batches.iter().collect();
+        if !link.superseded {
+            return self.save(&queue, &batches);
+        }
+        // The green successor's supersession completes the reconciliation
+        // TASK in the same write, with the claim that closed the conflict
+        // as its result (FIX QUEUE-RECONCILIATION-TASK-COMPLETION). The
+        // engine settles it: no run is leased on that TASK.
+        let resolution = link.resolved_by.as_ref().and_then(|by| by.resolution);
+        let now = self.vault.now_recorded_at();
+        self.save_then(&queue, &batches, |txn| {
+            self.vault
+                .complete_queue_reconciliation_task_in_txn(txn, link.conflict, resolution, now)
+                .map(|_| ())
+        })
     }
 
     /// The driver's view of `batch`, joined from its drive record and the
@@ -339,11 +370,27 @@ impl MergeQueue<'_> {
             conflicts: drive
                 .overlap
                 .iter()
-                .map(|link| QueueConflictView {
-                    source_proposals: link.sources.iter().map(crate::EntityId::to_hex).collect(),
-                    conflict: link.conflict.to_hex(),
-                    task: link.task.map(|task| task.to_hex()),
-                    resolution_batch: link.resolution_batch.clone(),
+                .map(|link| {
+                    let resolved_by = link.resolved_by.as_ref();
+                    QueueConflictView {
+                        source_proposals: link
+                            .sources
+                            .iter()
+                            .map(crate::EntityId::to_hex)
+                            .collect(),
+                        conflict: link.conflict.to_hex(),
+                        task: link.task.map(|task| task.to_hex()),
+                        resolution_batch: link.resolution_batch.clone(),
+                        resolution_claim: resolved_by
+                            .and_then(|by| by.resolution)
+                            .map(|claim| claim.to_hex()),
+                        resolved_by_task: resolved_by
+                            .and_then(|by| by.task)
+                            .map(|task| task.to_hex()),
+                        resolved_by_work: resolved_by
+                            .and_then(|by| by.work)
+                            .map(|work| work.to_hex()),
+                    }
                 })
                 .collect(),
             survivor_batch: match drive.survivor {
@@ -356,8 +403,8 @@ impl MergeQueue<'_> {
     }
 }
 
-/// Where the driver stands on `batch`: unenrolled, done, its kept hold, or
-/// what its checker work says.
+/// Where the driver stands on `batch`: unenrolled, superseded, done, its
+/// kept hold, or what its checker work says.
 fn drive_status(
     enrolled: bool,
     batch: &MergeBatch,
@@ -367,9 +414,16 @@ fn drive_status(
     if !enrolled {
         return (QueueDriveStatus::Unenrolled, None);
     }
-    let decided =
-        drive.survivor.is_some() || drive.overlap.as_ref().is_some_and(|link| link.superseded);
-    if decided
+    let superseded = drive.overlap.as_ref().is_some_and(|link| link.superseded);
+    let unlanded = matches!(
+        batch.state,
+        BatchState::Queued | BatchState::Staged | BatchState::Ready
+    );
+    if batch.state == BatchState::Superseded || (superseded && unlanded) {
+        return (QueueDriveStatus::Superseded, None);
+    }
+    if superseded
+        || drive.survivor.is_some()
         || matches!(
             batch.state,
             BatchState::GreenAdvanced | BatchState::RolledBack | BatchState::Cancelled

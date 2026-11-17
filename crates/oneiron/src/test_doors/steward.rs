@@ -3,7 +3,6 @@
 
 use std::collections::BTreeSet;
 
-use crate::attempt_queue::AttemptId;
 use crate::dreamer_consolidation::strength::ConsolidationStrengthPolicy;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -16,6 +15,8 @@ pub const STEWARD_VERBS: [&str; 4] = grant_scope::STEWARD_VERBS;
 pub const STEWARD_READ_VERB: &str = grant_scope::STEWARD_READ_VERB;
 /// The Steward's `archive` verb.
 pub const STEWARD_ARCHIVE_VERB: &str = grant_scope::STEWARD_ARCHIVE_VERB;
+/// The Steward's `delete` verb.
+pub const STEWARD_DELETE_VERB: &str = grant_scope::STEWARD_DELETE_VERB;
 
 /// What the Dreamer may do now, as the policy fold reads its rows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -24,15 +25,6 @@ pub struct WeaveReach {
     pub reads: bool,
     /// It lands what it derives Auto.
     pub lands_auto: bool,
-}
-
-/// One strength-archive receipt written for a claim.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct StrengthArchiveReceipt {
-    /// The grant the archive was judged by.
-    pub grant_ref: Option<String>,
-    /// The read frontier the archive saw.
-    pub read_frontier_hash: [u8; 32],
 }
 
 /// The Dreamer's actor id.
@@ -206,44 +198,6 @@ pub fn archive_every_quiet_claim(vault: &Vault) -> Result<()> {
     })
 }
 
-/// A clock reading thirty days after the vault's recorded now, in ms.
-#[must_use]
-pub fn a_month_on_ms(vault: &Vault) -> u64 {
-    (vault.now_recorded_at() + 30 * 86_400).saturating_mul(1_000)
-}
-
-/// Runs the strength archive for the Dreamer's `attempt` at `now_ms`; the
-/// number of claims it archived.
-///
-/// # Errors
-///
-/// The vault's.
-pub fn archive_quiet_claims(vault: &Vault, attempt: AttemptId, now_ms: u64) -> Result<u64> {
-    crate::dreamer_consolidation::strength::archive_quiet_claims(vault, attempt, now_ms)
-}
-
-/// The strength-archive receipts written for `claim`.
-///
-/// # Errors
-///
-/// The vault's.
-pub fn strength_archive_receipts(
-    vault: &Vault,
-    claim: &EntityId,
-) -> Result<Vec<StrengthArchiveReceipt>> {
-    let txn = vault.store.env.read_txn()?;
-    Ok(vault
-        .store
-        .gate_decisions_for_claim_in_txn(&txn, claim.as_bytes())?
-        .into_iter()
-        .filter(|record| record.content_kind == "dreamer_strength_archive")
-        .map(|record| StrengthArchiveReceipt {
-            grant_ref: record.grant_ref,
-            read_frontier_hash: record.read_frontier_hash,
-        })
-        .collect())
-}
-
 /// Where a base agent's Steward grant stands, as the host's first mint or
 /// the owner's narrowing left it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -263,14 +217,16 @@ pub enum GrantMark {
 /// serving host's: rooted under the test host, the engine's MACHINE writers
 /// provisioned, the embedded owner seeded, an in-memory device keystore
 /// installed, and this install's machine profile enrolled, so the owner's
-/// agent-grant act has a carrier.
+/// agent-grant act has a carrier. The handle holds the test host's root as a
+/// serving host holds its own, so the owner acts it carries are proven (row
+/// CARRIER-OWNER-PROOF).
 ///
 /// # Errors
 ///
 /// The vault's or the authority log's.
 pub fn open_owner_carrier_vault(path: &std::path::Path) -> Result<Vault> {
     let vault = Vault::open(path, crate::VaultConfig::device())?;
-    let issuer = crate::test_support::provision_engine_machines(&vault);
+    let issuer = crate::test_fixtures::provision_engine_machines(&vault);
     vault
         .ensure_embedded_owner_actor()
         .map_err(|error| Error::InvalidConfig(format!("embedded owner: {error:?}")))?;
@@ -279,7 +235,28 @@ pub fn open_owner_carrier_vault(path: &std::path::Path) -> Result<Vault> {
         oneiron_keystore::MemoryKeystore::default(),
     ));
     vault.ensure_serving_install_profile(&issuer, crate::authority::MachineRole::Unanswered)?;
+    vault.hold_checkpoint_root_signer(std::sync::Arc::new(issuer));
     Ok(vault)
+}
+
+/// The managed host's account recovery on a hosted vault (census L7-14):
+/// [`Vault::recover_cloud_account`] under the owner's proof, the vault's
+/// current host root `issuer` signing the move to `new_device` as a managed
+/// host signs its root migration. The host root's key signs only inside this
+/// door.
+///
+/// # Errors
+///
+/// [`Vault::recover_cloud_account`]'s.
+pub fn recover_cloud_account_signed_by_host_root(
+    vault: &Vault,
+    owner: &crate::consent::AuthenticatedOwner,
+    issuer: &crate::authority::HostSlipIssuer,
+    new_device: crate::authority::DeviceAuthority,
+) -> Result<crate::authority::AuthorityLogEntry> {
+    vault.recover_cloud_account(owner, new_device, issuer.public_key(), |bytes| {
+        Ok(issuer.sign_claim_handoff(bytes).to_vec())
+    })
 }
 
 /// The shipped policy with every row naming the Dreamer taken out, as an
@@ -312,7 +289,7 @@ pub fn drop_dreamer_rows(vault: &Vault) -> Result<()> {
     let mut bytes = Vec::new();
     rmpv::encode::write_value(&mut bytes, &rmpv::Value::Map(entries))
         .map_err(|_| Error::InvalidConfig("encode policy".into()))?;
-    crate::test_support::put_policy_manifest_bytes(
+    crate::test_fixtures::put_policy_manifest_bytes(
         vault,
         crate::gate::default_policy_manifest_id()?,
         &bytes,
@@ -335,7 +312,7 @@ fn rewrite_shipped_policy(
     let mut bytes = Vec::new();
     rmpv::encode::write_value(&mut bytes, &rmpv::Value::Map(entries))
         .map_err(|_| Error::InvalidConfig("encode policy".into()))?;
-    crate::test_support::put_policy_manifest_bytes(
+    crate::test_fixtures::put_policy_manifest_bytes(
         vault,
         crate::gate::default_policy_manifest_id()?,
         &bytes,
@@ -450,6 +427,71 @@ pub fn write_upper_case_dreamer_permit(vault: &Vault) -> Result<()> {
     })
 }
 
+/// The shipped policy with one more grant-policy row: a Steward holder row
+/// for `holder` on the vault's root that holds the worlds `worlds` (every
+/// world when `None`) and the verbs `verbs` (every verb when `None`), every
+/// other data axis whole. The owner's standing word that narrows what one
+/// Steward holds (RULING REMINT-POLICY-ROWS = A).
+///
+/// # Errors
+///
+/// The vault's.
+pub fn write_steward_holder_row(
+    vault: &Vault,
+    holder: EntityId,
+    worlds: Option<&[EntityId]>,
+    verbs: Option<&[&str]>,
+) -> Result<()> {
+    use crate::federation::grant_policy::{GrantPolicyRow, ROWS_KEY, encode_row};
+    use crate::federation::{FederationGrantRole, FederationGrantScope, Scope, ScopeId};
+    let root = {
+        let txn = vault.store.env.read_txn()?;
+        vault.steward_root_scope_in_txn(&txn)?
+    };
+    let FederationGrantScope::Vault { vault_id } = root else {
+        return Err(Error::InvariantViolation(
+            "a Steward grant names a vault root",
+        ));
+    };
+    let mut scope = Scope::top();
+    if let Some(worlds) = worlds {
+        scope.worlds = worlds.iter().map(|world| ScopeId(*world)).collect();
+    }
+    if let Some(verbs) = verbs {
+        scope.verbs = verbs.iter().map(|verb| (*verb).to_owned()).collect();
+    }
+    let row = encode_row(&GrantPolicyRow::HolderOverride {
+        role: FederationGrantRole::Steward,
+        vault_id,
+        holder,
+        scope,
+    })?;
+    rewrite_shipped_policy(vault, |entries| {
+        let rmpv::Value::Array(rows) = policy_entry(entries, ROWS_KEY)? else {
+            return Err(Error::InvalidConfig(
+                "the grant-policy rows are not a list".into(),
+            ));
+        };
+        rows.push(row);
+        Ok(())
+    })
+}
+
+/// The shipped policy with an empty grant-policy row list: no precedence
+/// row and no role default, so no Steward scope resolves, as an owner who
+/// emptied the list leaves it.
+///
+/// # Errors
+///
+/// The vault's.
+pub fn empty_grant_policy_rows(vault: &Vault) -> Result<()> {
+    rewrite_shipped_policy(vault, |entries| {
+        *policy_entry(entries, crate::federation::grant_policy::ROWS_KEY)? =
+            rmpv::Value::Array(Vec::new());
+        Ok(())
+    })
+}
+
 /// Revokes every live MACHINE binding of base agent `agent` with the host
 /// root's signed `RevokeActor`, as a host that withdraws the agent's
 /// delegation does. Its Steward grant stays as it stands. Returns how many
@@ -460,7 +502,7 @@ pub fn write_upper_case_dreamer_permit(vault: &Vault) -> Result<()> {
 /// The vault's or the authority log's.
 pub fn revoke_base_agent_bindings(vault: &Vault, agent: EntityId) -> Result<usize> {
     use crate::authority::{ActorBindingStatus, AuthorityOp};
-    let issuer = crate::test_support::test_host_issuer();
+    let issuer = crate::test_fixtures::test_host_issuer();
     let fold = vault.authority_fold()?;
     let live: Vec<_> = fold
         .actor_bindings

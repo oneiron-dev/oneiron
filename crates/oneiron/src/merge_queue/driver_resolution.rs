@@ -1,9 +1,11 @@
 //! Reconciliation links follow accepted conflict-path coverage, not TASK completion.
+//! Coverage that supersedes the sources also keeps what closed the conflict,
+//! and that save completes the reconciliation TASK (`update_overlap_links`).
 use std::collections::BTreeSet;
 
 use super::{
     BatchState, CheckPhase, MergeBatch, MergeProposal, MergeQueue, QUEUE_CHECK_CANDIDATE_PREFIX,
-    QueueCheckTarget, QueueConflictLink, SpeculativePath,
+    QueueCheckTarget, QueueConflictLink, QueueConflictResolver, SpeculativePath,
 };
 use crate::codebase::RepoRef;
 use crate::entity_id::EntityId;
@@ -19,9 +21,10 @@ impl MergeQueue<'_> {
         link: &mut QueueConflictLink,
         retained: &[MergeBatch],
     ) -> Result<bool> {
-        let Some(task) = link.task else {
+        // A successor counts only once the reconciliation TASK exists.
+        if link.task.is_none() {
             return Ok(false);
-        };
+        }
         let _guard = lock_repository(self.repo.common_dir())?;
         let Some(target) = self
             .initialized_configuration()?
@@ -54,16 +57,18 @@ impl MergeQueue<'_> {
             if link.batches.contains(&retained.id) {
                 continue;
             }
+            // The successor is matched by the conflict its proposals resolve
+            // (conflict_proposal_paths), not by the TASK it runs under: no
+            // run is leased on the reconciliation TASK itself (RULING
+            // CODECUSTODY-RECONCILE-SUCCESSOR = A).
             let batch = self.batch(&retained.id)?;
-            if !batch
-                .run_order
-                .as_ref()
-                .is_some_and(|order| order.task == task)
-                || matches!(
-                    batch.state,
-                    BatchState::Cancelled | BatchState::RolledBack | BatchState::Quarantined
-                )
-            {
+            if matches!(
+                batch.state,
+                BatchState::Cancelled
+                    | BatchState::RolledBack
+                    | BatchState::Quarantined
+                    | BatchState::Superseded
+            ) {
                 continue;
             }
             if batch.state == BatchState::GreenAdvanced {
@@ -92,7 +97,7 @@ impl MergeQueue<'_> {
                     for path in covered {
                         remaining.remove(&path);
                     }
-                    last_green = Some(batch.id);
+                    last_green = Some((batch.id, batch.run_order));
                 }
             } else if successor.is_none() {
                 for proposal in &batch.proposals {
@@ -107,15 +112,34 @@ impl MergeQueue<'_> {
             }
         }
         let superseded = remaining.is_empty() && last_green.is_some();
+        // What closed it, kept with the supersession: the claim the
+        // reconciliation TASK completes with, and the run whose green
+        // entry made it (FIX QUEUE-RECONCILIATION-TASK-COMPLETION).
+        let resolved_by = match &last_green {
+            Some((batch, run)) if superseded => Some(QueueConflictResolver {
+                resolution: self.vault.queue_conflict_closing_resolution(
+                    self.repo.repo_ref(),
+                    &open,
+                    batch,
+                )?,
+                task: run.as_ref().map(|run| run.task),
+                work: run.as_ref().map(|run| run.work),
+            }),
+            _ => None,
+        };
+        let last_green = last_green.map(|(batch, _)| batch);
         let resolution = if superseded {
             last_green
         } else {
             successor.or(last_green)
         };
-        let changed =
-            recorded || link.resolution_batch != resolution || link.superseded != superseded;
+        let changed = recorded
+            || link.resolution_batch != resolution
+            || link.superseded != superseded
+            || link.resolved_by != resolved_by;
         link.resolution_batch = resolution;
         link.superseded = superseded;
+        link.resolved_by = resolved_by;
         Ok(changed)
     }
 
@@ -143,14 +167,19 @@ impl MergeQueue<'_> {
         {
             return Ok(Vec::new());
         }
-        if let RepoProposalOperation::ResolveConflictFile {
+        // Only a resolution of this open conflict counts: another change to a
+        // conflicted path does not resolve it.
+        let RepoProposalOperation::ResolveConflictFile {
             branch_subject,
             open_conflict_claim_id,
             branch_name,
         } = &row.operation
-            && (*branch_subject != open.subject
-                || *open_conflict_claim_id != open.claim_id
-                || branch_name != &open.branch)
+        else {
+            return Ok(Vec::new());
+        };
+        if *branch_subject != open.subject
+            || *open_conflict_claim_id != open.claim_id
+            || branch_name != &open.branch
         {
             return Ok(Vec::new());
         }
