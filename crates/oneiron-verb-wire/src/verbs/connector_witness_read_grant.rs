@@ -43,6 +43,11 @@ pub struct ConnectorWitnessReadGrantRequest {
     pub agent: EntityId,
     /// The connector conversation whose MESSAGEs the agent reads (32 hex).
     pub conversation: EntityId,
+    /// Another asker's approved check-in for this exact grant, 32 hex: the
+    /// owner applies it on their own proof, and the grant's writer spends it
+    /// (ROLES-CHECKIN 2k8). Omitted: the owner's own grant.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub check_in_ref: Option<String>,
 }
 
 /// `vault.connectors.read_grants.grant`'s answer: the grant as it now
@@ -63,4 +68,9 @@ pub struct ConnectorWitnessReadGranted {
     pub reason: String,
     /// When the active grant was granted (Unix seconds).
     pub granted_at: u64,
+    /// The decision a grant that changed ran on: the owner's own proof,
+    /// naming the asker's approved check-in it applied (ROLES-CHECKIN 2k8).
+    /// Absent when the call changed nothing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub check_in: Option<crate::check_in::CheckInDecision>,
 }
