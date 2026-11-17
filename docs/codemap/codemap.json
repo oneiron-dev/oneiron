@@ -5552,9 +5552,9 @@
      "path": "src/authority/mod.rs",
      "purpose": "AUTHORITY_LOG record substrate",
      "surface": {
-      "crate-vis": 76,
+      "crate-vis": 77,
       "mod": 2,
-      "re-export": 87
+      "re-export": 88
      }
     },
     {
@@ -5755,7 +5755,7 @@
      "path": "src/authority/owner_key_enrollment_door.rs",
      "purpose": "The owner's enrollment of one of his devices' own owner signing keys (FIX 4920 part 2; Engine 10-20 00:5x…",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 12,
       "fn": 14,
       "struct": 7
      }
@@ -5774,6 +5774,23 @@
       "crate-vis": 3,
       "fn": 2,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "DeviceOwnerKeyVouch",
+      "OwnerKeyVouchRequest"
+     ],
+     "path": "src/authority/owner_key_vouch.rs",
+     "purpose": "An owner key vouches for another device's new owner key (pass 27 R2, \"an owner key vouches\"; MFA-1 A: \"vault…",
+     "surface": {
+      "const": 2,
+      "crate-vis": 3,
+      "enum": 1,
+      "fn": 8,
+      "struct": 1
      }
     },
     {
@@ -103434,7 +103451,7 @@
      "purpose": "This install's own owner signing key (FIX 4921; owner ruling 10-19, OWNER SIGNING KEYS = B): one Ed25519 key…",
      "surface": {
       "crate-vis": 5,
-      "fn": 5,
+      "fn": 6,
       "struct": 1
      }
     },
@@ -109425,6 +109442,14 @@
      "bucket": "m",
      "kind": "test",
      "notable": [],
+     "path": "tests/owner_key_vouch.rs",
+     "purpose": "An owner key vouches for another device's new key (pass 27 R2; MFA-1 A: vault authority on a new device…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
      "path": "tests/owner_lifetime_cap_keys.rs",
      "purpose": "The owner's four lifetime keys",
      "surface": {}
@@ -112754,7 +112779,7 @@
      "purpose": "Generic LMDB-backed background attempt queue"
     },
     "authority": {
-     "files": 303,
+     "files": 304,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -114380,8 +114405,8 @@
    },
    "over_bar": 299,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 8112,
-   "test_files": 1867
+   "source_files": 8113,
+   "test_files": 1868
   },
   "oneiron-agent-runtime": {
    "files": [
