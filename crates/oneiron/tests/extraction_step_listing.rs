@@ -1,5 +1,6 @@
 //! The bound extraction step shows the listing its native slice shows, names its layout, and
-//! skips an unbound quote by native's correctable rule.
+//! skips an unbound quote by native's correctable rule. Its receipt answers only while every row
+//! the listing showed still reads for the Dreamer.
 //!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test extraction_step_listing`.
 #![cfg(oneiron_test_support)]
@@ -10,7 +11,10 @@ mod step_support;
 use std::sync::Arc;
 
 use oneiron::dreamer_runner::{DreamerAdmittedAttempt, DreamerAttemptBinding};
-use oneiron::memory::{ExtractionLayout, ExtractionStepSlice, MEMORY_CODE_BAD_REQUEST};
+use oneiron::memory::{
+    ExtractionLayout, ExtractionStepSlice, MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_NOT_FOUND,
+};
+use oneiron::registry::ENTITY_TYPE_CLAIM;
 use oneiron::test_doors::extraction_inputs::{
     enqueue_admitted_extraction_attempt, witness_extraction_turns,
 };
@@ -18,16 +22,20 @@ use oneiron::test_doors::extraction_steps::{
     ExtractionStepFixture, NativeExtractionSlice, attach_extraction_step_lender,
     extraction_step_state_present, native_extraction_slice_transcripts,
 };
-use oneiron::test_doors::extraction_verdict::land_extraction_verdict_listing_claim;
-use oneiron::test_doors::steward::{STEWARD_VERBS, dreamer, stand_steward_grant};
+use oneiron::test_doors::extraction_verdict::{
+    dreamer_extraction_verdict_source_version, land_extraction_verdict_listing_claim,
+};
+use oneiron::test_doors::steward::{
+    STEWARD_VERBS, dreamer, stand_steward_grant, stand_steward_grant_in_bands,
+};
 use oneiron::test_doors::untangle_regressions::seed_named_person;
 use oneiron::{AttemptId, EntityId, Vault};
 use serde_json::{Value, json};
 use step_support::{
     CapturingStepBackend, ExtractionStepTestResult, QUEUE_NOW, bind_extraction,
     extraction_attempt_hex, extraction_step_evidence, extraction_step_request, invoke_bound_step,
-    open_extraction_step_vault, page_turns_with_versions, read_bound_extraction_page,
-    step_plain_reply,
+    invoke_bound_step_receipt, open_extraction_step_vault, page_turns_with_versions,
+    read_bound_extraction_page, step_plain_reply,
 };
 
 /// One bound step attempt over witnessed turns with its served page already read.
@@ -230,6 +238,76 @@ fn a_bound_step_lists_native_entities_and_decodes_a_listed_subject() -> Extracti
         "the cited words render: {}",
         texts[0]
     );
+    Ok(())
+}
+
+/// A saved receipt serves the step only while every row its listing showed still reads: once the
+/// Dreamer's grant stops reaching the listed claim, the receipt of the step that listed it answers
+/// as an unknown key does, while the queued TURN still serves on the inputs page at its version.
+#[test]
+fn a_receipt_withholds_a_step_whose_listed_claim_left_the_grant() -> ExtractionStepTestResult<()> {
+    let (fixture, _subject, claim) = listing_fixture(&["owen likes tea"])?;
+    let backend = Arc::new(CapturingStepBackend::new(
+        listed_reply("P2", "owen likes tea"),
+        100,
+        50,
+    ));
+    let step = ExtractionStepFixture::new(backend.clone())?;
+    let binding = lent_binding(&fixture, &step)?;
+    let (turn, version) = &fixture.turns[0];
+    let request = extraction_step_request(json!([extraction_step_evidence(
+        turn,
+        version.clone(),
+        None
+    ),]));
+    let submit = invoke_bound_step(&binding, request).expect("the listed step finishes");
+    assert_eq!(submit["result"]["status"], json!("finished"));
+    let texts = backend.request_texts();
+    assert_eq!(texts.len(), 1);
+    assert!(
+        texts[0].contains("  claim C1 profile.name = \"owen\"\n"),
+        "the step's request lists the claim: {}",
+        texts[0]
+    );
+    let step_ref = submit["step_ref"]
+        .as_str()
+        .expect("the submit answers its step ref")
+        .to_owned();
+    let served =
+        invoke_bound_step_receipt(&binding, &step_ref).expect("the receipt answers while it reads");
+    assert_eq!(served["result"]["status"], json!("finished"));
+    let unknown_key = if step_ref == "0".repeat(64) {
+        "1".repeat(64)
+    } else {
+        "0".repeat(64)
+    };
+    let unknown =
+        invoke_bound_step_receipt(&binding, &unknown_key).expect_err("an unknown key is not found");
+    let kinds: Vec<u8> = (u8::MIN..=u8::MAX)
+        .filter(|kind| *kind != ENTITY_TYPE_CLAIM)
+        .collect();
+    stand_steward_grant_in_bands(
+        &fixture.vault,
+        dreamer(&fixture.vault)?,
+        &STEWARD_VERBS,
+        &kinds,
+    )?;
+    assert!(
+        dreamer_extraction_verdict_source_version(&fixture.vault, claim)?.is_none(),
+        "the listed claim no longer reads for the Dreamer"
+    );
+    let page = read_bound_extraction_page(&binding, &extraction_attempt_hex(fixture.attempt))?;
+    assert_eq!(
+        page_turns_with_versions(&page),
+        fixture.turns,
+        "the queued TURN still serves at its version"
+    );
+    let withheld = invoke_bound_step_receipt(&binding, &step_ref)
+        .expect_err("the step that listed the claim is not served");
+    assert_eq!(withheld.code, MEMORY_CODE_NOT_FOUND);
+    assert_eq!(withheld.code, unknown.code);
+    assert_eq!(withheld.message, unknown.message);
+    assert_eq!(backend.call_count(), 1);
     Ok(())
 }
 

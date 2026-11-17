@@ -180,6 +180,17 @@ pub(super) fn poll_hold_in_txn(
     )
 }
 
+/// Ends the feed's consent in the write that uninstalls it: its record goes, whatever its state
+/// (CAL-02-FEED-CONSENT = A: uninstalling the feed ends its standing consent).
+pub(super) fn end_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    config: &IcsFeedPollConfig,
+) -> crate::Result<()> {
+    CONSENT.delete(&vault.store, txn, &config.system)?;
+    Ok(())
+}
+
 /// The feed's consent as its owner reads it.
 pub(super) fn consent_view(
     vault: &Vault,
@@ -233,8 +244,9 @@ fn view(
 /// lands Approved, except a flagged one, which joins the held claims.
 ///
 /// # Errors
-/// The owner no longer holds, the review is open or declined (the poll was
-/// held before its admissions, so this is a race), or a settlement refused.
+/// The owner no longer holds, the feed is installed no more, the review is
+/// open or declined (the poll was held before its admissions, so this is a
+/// race), or a settlement refused.
 pub(super) fn settle_completed_poll(
     vault: &Vault,
     owner: &AuthenticatedOwner,
@@ -243,6 +255,13 @@ pub(super) fn settle_completed_poll(
     now: u64,
 ) -> crate::Result<CompletedPollConsent> {
     let (outcome, metrics) = vault.with_write_txn_grouped(|txn| {
+        // The owner may have uninstalled the feed since the poll's admissions: its consent
+        // ended with it, and none opens again.
+        if !super::feed_door::installed_in_txn(vault, txn, config)? {
+            return Err(crate::Error::InvalidConfig(
+                "ICS feed is not installed".into(),
+            ));
+        }
         let actor = WriteActor::new(owner.revalidate_in_txn(vault, txn)?, EdgeActorClass::Human);
         let Some(record) = read_in_txn(vault, txn, config)? else {
             let record = IcsFeedConsentRecord {
@@ -302,6 +321,11 @@ pub(super) fn settle_continuation(
     }
     let metrics = vault.with_write_txn_grouped(|txn| {
         let actor = WriteActor::new(owner.revalidate_in_txn(vault, txn)?, EdgeActorClass::Human);
+        // An uninstalled feed's consent ended with it: its continuation's claims stay as they
+        // are.
+        if !super::feed_door::installed_in_txn(vault, txn, config)? {
+            return Ok(Vec::new());
+        }
         let Some(mut record) = read_in_txn(vault, txn, config)? else {
             return Ok(Vec::new());
         };

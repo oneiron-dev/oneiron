@@ -38,9 +38,11 @@ use oneiron_model::llm::Scope;
 /// scope is the bound attenuated scope for the cited TURNs under the
 /// slice's kept listing. The sources are every row the transcript was
 /// read from. The correctable set freezes the listed and speaker Entity
-/// ids whose step scope holds a correctable claim. No person-mint
-/// namespace binds the request; the decoded reply retains declared
-/// persons without minting them.
+/// ids whose step scope holds a correctable claim. The inputs name the
+/// version of every row whose words the transcript shows, so a receipt
+/// answers only while each still reads at it. No person-mint namespace
+/// binds the request; the decoded reply retains declared persons without
+/// minting them.
 pub(crate) struct PreparedExtractionStep {
     /// Holds the native transcript over the served words, with labels rendered in.
     transcript: String,
@@ -55,6 +57,9 @@ pub(crate) struct PreparedExtractionStep {
     /// Holds the listed and speaker Entity ids whose step scope holds
     /// a correctable claim.
     correctable: BTreeSet<EntityId>,
+    /// Holds the version of every row whose words the transcript shows,
+    /// in id order, as the request names them.
+    inputs: Vec<SourceVersion>,
 }
 
 /// Renders the wake's admitted host material as every extraction input
@@ -118,8 +123,11 @@ pub(crate) struct ExtractionStepPiece {
 /// prepends it. The scope is the bound attenuated scope under the
 /// slice's kept listing, with the MESSAGE rows behind it. No queue or
 /// lineage reads run here; the request binds labels with no person-mint
-/// namespace. Failure rules are not loaded here; execution loads them
-/// after this snapshot closes.
+/// namespace. The inputs name each cited TURN at its checked version and
+/// each listed entity, listed claim and membership claim behind a listed
+/// relationship as the caller reads it here, `reader_scope` being the
+/// caller's grant scope. Failure rules are not loaded here; execution
+/// loads them after this snapshot closes.
 ///
 /// # Errors
 ///
@@ -131,6 +139,7 @@ pub(crate) fn prepare_bound_step(
     vault: &crate::Vault,
     txn: &heed::RoTxn<'_>,
     read: &ScopedRead<'_>,
+    reader_scope: Option<&crate::federation::Scope>,
     bound: &BoundBranchRead,
     pieces: &[ExtractionStepPiece],
     page: Option<usize>,
@@ -257,10 +266,17 @@ pub(crate) fn prepare_bound_step(
         transcript.push_str(&format!("[{turn_label} {role}{speaker}] {text}\n"));
     }
     let mut sources: Vec<EntityId> = labels.rows().collect();
+    let mut listed: Vec<EntityId> = labels
+        .labelled(LabelKind::Entity)
+        .chain(labels.labelled(LabelKind::Claim))
+        .map(|(_, id)| id)
+        .collect();
     if scoped.scope.relationship.is_none() {
         sources.extend(pages[selected].membership_bindings());
+        listed.extend(pages[selected].membership_bindings());
     }
     sources.extend(scoped.message_sources);
+    let inputs = step_input_versions(txn, read, reader_scope, pieces, listed)?;
     let correctable: BTreeSet<EntityId> = labels
         .labelled(LabelKind::Entity)
         .map(|(_, id)| id)
@@ -273,7 +289,47 @@ pub(crate) fn prepare_bound_step(
         scope: scoped.scope,
         sources,
         correctable,
+        inputs,
     })
+}
+
+/// The version of every row whose words the transcript shows, in id
+/// order: each cited TURN at the version its words were checked at, and
+/// each `listed` row as the caller reads it now. A listed row that the
+/// caller's grant does not reach, or `read` does not serve, showed the
+/// caller nothing it may read, so it is not named.
+///
+/// # Errors
+///
+/// Storage errors, and a TURN whose text does not project.
+fn step_input_versions(
+    txn: &heed::RoTxn<'_>,
+    read: &ScopedRead<'_>,
+    reader_scope: Option<&crate::federation::Scope>,
+    pieces: &[ExtractionStepPiece],
+    listed: Vec<EntityId>,
+) -> MemoryResult<Vec<SourceVersion>> {
+    let mut versions: BTreeMap<EntityId, SourceVersion> = pieces
+        .iter()
+        .map(|piece| (piece.turn, piece.version.clone()))
+        .collect();
+    for id in listed {
+        if versions.contains_key(&id)
+            || !crate::snapshot_read::observed_claim_reads_in_txn(
+                read.vault(),
+                txn,
+                read,
+                reader_scope,
+                id,
+            )?
+        {
+            continue;
+        }
+        if let Some((version, _)) = crate::snapshot_read::source_version_in_txn(read, txn, &id)? {
+            versions.insert(id, version);
+        }
+    }
+    Ok(versions.into_values().collect())
 }
 
 /// Builds the typed layout rows for `groups` in native key order.
@@ -304,7 +360,8 @@ fn layout_slices(
 /// request is `request_over` in the loan's prompt, the host's words the
 /// native pass asks in, with no source rule over the prepared transcript
 /// led by the loan's host material through the shared helper, then the
-/// labels bound with no person-mint namespace, then the Extraction rules,
+/// labels bound with no person-mint namespace, then the prepared inputs'
+/// versions in the host options, then the Extraction rules,
 /// then the final Extraction role authorization and reasoning binding.
 /// The bound path has no clean-slice loan, extraction-width, or
 /// trust-flag equivalent for material; none is invented. The call sends
@@ -338,6 +395,7 @@ pub(crate) async fn execute_bound_step(
         &prepared.scope,
     )?;
     prepared.labels.bind_request(&mut request, None);
+    crate::llm::bind_step_input_versions(&mut request, &prepared.inputs)?;
     if let Some(rules) = rules.as_ref() {
         rules.bind(Stage::Extraction, &mut request);
     }
