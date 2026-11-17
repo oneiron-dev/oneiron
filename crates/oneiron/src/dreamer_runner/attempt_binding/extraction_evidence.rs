@@ -109,49 +109,7 @@ fn check_pack_rows(
 ) -> MemoryResult<()> {
     for candidate in &pack.candidates {
         for evidence in &candidate.evidence {
-            let turn = check_source_pin(
-                read,
-                txn,
-                reader_scope,
-                &evidence.turn,
-                &evidence.version,
-                ENTITY_TYPE_TURN,
-            )?;
-            let key = queued
-                .1
-                .parts
-                .iter()
-                .find(|part| part.turns.contains(&turn))
-                .map(|part| queued.1.part_key(part.conversation_ref))
-                .ok_or_else(extraction_not_served)?;
-            if extraction_turn_in_txn(
-                memory.vault(),
-                txn,
-                read,
-                reader_scope,
-                queued.0,
-                &key,
-                turn,
-            )?
-            .is_none()
-            {
-                return Err(extraction_not_served());
-            }
-            let served = evidence_spans_in_txn(
-                memory,
-                read,
-                txn,
-                &EvidenceSpansRequest {
-                    source: turn,
-                    version: Some(evidence.version.clone()),
-                    ranges: evidence.span.into_iter().collect(),
-                },
-            )?;
-            match served.status {
-                EvidenceSourceStatus::Current => {}
-                EvidenceSourceStatus::Moved => return Err(extraction_source_moved()),
-                EvidenceSourceStatus::Withheld => return Err(extraction_not_served()),
-            }
+            let _served = check_turn_evidence(memory, read, txn, reader_scope, evidence, queued)?;
         }
     }
     for pin in pack.listed.iter().chain(&pack.priors) {
@@ -165,6 +123,64 @@ fn check_pack_rows(
         )?;
     }
     Ok(())
+}
+
+/// Rechecks one TURN locator in the same order as the checked verdict pack.
+pub(super) fn check_turn_evidence(
+    memory: &Memory<'_>,
+    read: &ScopedRead<'_>,
+    txn: &heed::RoTxn<'_>,
+    reader_scope: Option<&Scope>,
+    evidence: &crate::verbs::TurnEvidence,
+    queued: (
+        DreamerConsolidationScope,
+        &ConsolidationBranchPlan<EntityId>,
+    ),
+) -> MemoryResult<(EntityId, crate::snapshot_read::EvidenceSpans)> {
+    let turn = check_source_pin(
+        read,
+        txn,
+        reader_scope,
+        &evidence.turn,
+        &evidence.version,
+        ENTITY_TYPE_TURN,
+    )?;
+    let key = queued
+        .1
+        .parts
+        .iter()
+        .find(|part| part.turns.contains(&turn))
+        .map(|part| queued.1.part_key(part.conversation_ref))
+        .ok_or_else(extraction_not_served)?;
+    if extraction_turn_in_txn(
+        memory.vault(),
+        txn,
+        read,
+        reader_scope,
+        queued.0,
+        &key,
+        turn,
+    )?
+    .is_none()
+    {
+        return Err(extraction_not_served());
+    }
+    let served = evidence_spans_in_txn(
+        memory,
+        read,
+        txn,
+        &EvidenceSpansRequest {
+            source: turn,
+            version: Some(evidence.version.clone()),
+            ranges: evidence.span.into_iter().collect(),
+        },
+    )?;
+    match served.status {
+        EvidenceSourceStatus::Current => {}
+        EvidenceSourceStatus::Moved => return Err(extraction_source_moved()),
+        EvidenceSourceStatus::Withheld => return Err(extraction_not_served()),
+    }
+    Ok((turn, served))
 }
 
 /// Checks that each proposed subject reads without treating its proposed value as a fact.
@@ -265,7 +281,7 @@ fn extraction_reference(reference: &str) -> MemoryResult<EntityId> {
 }
 
 /// Refuses a row the bound page would not serve without revealing its contents.
-fn extraction_not_served() -> MemoryError {
+pub(super) fn extraction_not_served() -> MemoryError {
     MemoryError::new(
         MEMORY_CODE_FORBIDDEN,
         "every extraction pack row must be served under the Dreamer attempt's live read",
@@ -275,7 +291,7 @@ fn extraction_not_served() -> MemoryError {
 
 /// Maps the bound branch read's readability refusals (bound_read.rs) to the unserved-row
 /// refusal; every other projection failure keeps its own memory code.
-fn bound_branch_error(error: crate::Error) -> MemoryError {
+pub(super) fn bound_branch_error(error: crate::Error) -> MemoryError {
     match error {
         crate::Error::InvalidClaimBody(
             "branch source is not readable"

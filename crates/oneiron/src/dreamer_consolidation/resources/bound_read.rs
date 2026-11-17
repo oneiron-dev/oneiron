@@ -80,6 +80,10 @@ pub(crate) struct BoundBranchRead {
     sources: BTreeMap<EntityId, SourcePin>,
     /// Each queued turn's frozen text, by turn id.
     texts: BTreeMap<EntityId, TurnText>,
+    /// Each queued TURN's declared part conversation, by TURN id.
+    turns: BTreeMap<EntityId, EntityId>,
+    /// Every declared part's conversation, including parts with no queued TURNs.
+    parents: BTreeSet<EntityId>,
     /// The queued attempt, so a candidate vector read recomputes the native
     /// output id it selects under.
     attempt: AttemptId,
@@ -149,6 +153,69 @@ impl BoundBranchRead {
         self.cosine_threshold
     }
 
+    /// The declared part conversation of queued TURN `turn`, or none when the
+    /// branch queued no such TURN.
+    pub(crate) fn turn_conversation(&self, turn: EntityId) -> Option<EntityId> {
+        self.turns.get(&turn).copied()
+    }
+
+    /// The attenuated scope for a bound extraction step over `cited`, with the
+    /// MESSAGE rows its transcript was read from. The base is the authoritative
+    /// scope without the heads the listing does not show, narrowed through the
+    /// shared extraction helper with no retained prior or membership; an unbound
+    /// scope binds over the passed snapshot transaction. A TURN cited twice reads once.
+    pub(crate) fn extraction_scope(
+        &self,
+        vault: &Vault,
+        txn: &heed::RoTxn<'_>,
+        cited: &[EntityId],
+    ) -> Result<BoundExtractionScope> {
+        let mut seen = BTreeSet::new();
+        let ordered: Vec<EntityId> = cited
+            .iter()
+            .copied()
+            .filter(|id| seen.insert(*id))
+            .collect();
+        let distinct: BTreeSet<EntityId> = seen;
+        let cited_parents: BTreeSet<EntityId> = distinct
+            .iter()
+            .filter_map(|id| self.turns.get(id))
+            .copied()
+            .collect();
+        let mut base = self.scope.clone();
+        for version in self.neighbourhood.unlisted_versions() {
+            base.readable.remove(version);
+            base.writable.remove(version);
+        }
+        let is_parent = |id: &EntityId| self.parents.contains(id);
+        let shows = |_id: EntityId| false;
+        let inputs = super::extraction_scope::ExtractionScopeInputs {
+            sources: &self.sources,
+            turns: &self.turns,
+            priors: &self.priors,
+            texts: &self.texts,
+            cited: &distinct,
+            cited_parents: &cited_parents,
+            is_part_parent: &is_parent,
+            shows_prior: &shows,
+            kept_listing: None,
+            whole_listing: &self.neighbourhood,
+        };
+        let scope = super::extraction_scope::attenuate_extraction_scope(&base, &inputs, || {
+            super::extraction_scope::word_bound_in_txn(vault, txn, &self.texts, &distinct)
+        })?;
+        let mut message_sources = Vec::new();
+        for id in &ordered {
+            if let Some(text) = self.texts.get(id) {
+                message_sources.extend(text.versions().map(|(message, _)| message));
+            }
+        }
+        Ok(BoundExtractionScope {
+            scope,
+            message_sources,
+        })
+    }
+
     /// The stored vector `claim_id` names for the bound `candidate`, read in
     /// the passed transaction under the native candidate vector guards: the
     /// signals grant, the recomputed native output id, and the reviewed
@@ -203,6 +270,17 @@ impl BoundBranchRead {
             &self.scope,
         )
     }
+}
+
+/// A bound extraction step's attenuated scope with the MESSAGE rows behind it.
+pub(crate) struct BoundExtractionScope {
+    /// The scope the bound extraction call asks under: the authoritative scope
+    /// without unlisted heads, sibling TURNs, unrelated conversations, priors
+    /// and unkept MESSAGEs, bound to the cited words' shared relationships.
+    pub(crate) scope: Scope,
+    /// The MESSAGE rows the cited TURNs' words were projected from, in first-seen
+    /// TURN order.
+    pub(crate) message_sources: Vec<EntityId>,
 }
 
 /// Rebuild the queued branch's authoritative read projection in the caller's
@@ -485,6 +563,8 @@ pub(crate) fn project_bound_branch(
         priors,
         sources,
         texts,
+        turns: turn_parts,
+        parents,
         attempt: input.attempt,
         signals,
         key_rules,

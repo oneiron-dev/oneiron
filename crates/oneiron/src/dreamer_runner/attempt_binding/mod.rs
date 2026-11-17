@@ -16,10 +16,13 @@ mod decisions;
 mod extraction_decisions;
 mod extraction_evidence;
 mod extraction_execution;
+mod extraction_step_inputs;
+mod extraction_steps;
 mod invocation;
 
 pub use decisions::DreamerDecisionLender;
 pub use extraction_execution::ExtractionDecisionLoan;
+pub use extraction_steps::{ExtractionStepLoan, ExtractionStepRequest};
 
 use std::fmt;
 use std::sync::Arc;
@@ -46,7 +49,7 @@ use super::{DreamerAdmittedAttempt, DreamerConsolidationScope, decode_dreamer_at
 enum BoundFacet {
     Strength,
     ConflictSettle,
-    /// The consolidation extraction job reads inputs, evidence spans and checked verdict packs.
+    /// The consolidation extraction job reads inputs and verdicts and runs bound generation steps.
     Extraction,
 }
 

@@ -36,6 +36,7 @@ pub mod excluded_conversations;
 mod executor;
 mod extracted_people;
 pub(crate) mod extraction_pack;
+pub(crate) mod extraction_step;
 mod failure_rules;
 mod follower_attempt;
 #[cfg(test)]

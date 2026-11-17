@@ -81,9 +81,7 @@ fn read_bound_extraction_page(
 
 /// Asks one bound verdict through `binding` with `request` as plain JSON.
 fn invoke_bound_verdict(binding: &DreamerAttemptBinding, request: Value) -> MemoryResult<Value> {
-    binding
-        .invoke(AI_VERDICT_VERB, request, None)
-        .map(|answer| answer["value"].clone())
+    binding.invoke(AI_VERDICT_VERB, request, None)
 }
 
 /// Binds `admitted` in `vault` and returns the live extraction binding.

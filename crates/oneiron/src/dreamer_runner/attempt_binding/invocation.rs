@@ -6,8 +6,9 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 
-use super::{BoundFacet, DreamerAttemptBinding, facet_batch, facet_refused};
+use super::{BoundFacet, DreamerAttemptBinding, ExtractionStepRequest, facet_batch, facet_refused};
 use crate::derive::DeriveCommitInput;
+use crate::llm::model_step::ModelStepReceiptRequest;
 use crate::memory::{MemoryError, MemoryResult};
 use crate::runtime_hooks::InvocationId;
 use crate::snapshot_read::{
@@ -29,6 +30,10 @@ const EVIDENCE_SPANS_VERB: &str = "vault.evidence.spans";
 const AI_VERDICT_VERB: &str = "ai.verdict";
 /// The commit that lands items admitted by the bound facet.
 const DERIVE_COMMIT_VERB: &str = "vault.derive.commit";
+/// The durable generation step admitted only by extraction.
+const EXTRACTION_STEP_SUBMIT_VERB: &str = "ai.steps.submit";
+/// The read-only durable receipt admitted only by extraction.
+const EXTRACTION_STEP_RECEIPT_VERB: &str = "ai.steps.receipt";
 
 impl DreamerAttemptBinding {
     /// Runs `verb` on `input` as the Dreamer under this binding; with
@@ -37,7 +42,8 @@ impl DreamerAttemptBinding {
     /// Strength admits its observations page and Archive commits. Conflict
     /// settlement admits its conflicts page, typed verdicts on the host's
     /// lent ladder and Settle commits. Extraction admits its inputs page,
-    /// evidence spans and checked verdict packs, and no commit. A commit takes the batch itself,
+    /// evidence spans, checked verdict packs and bound generation steps with their
+    /// receipts, and no commit. A commit takes the batch itself,
     /// `{"items": [...], "sources": [...]}`: the binding is the live run,
     /// so no `live_run` attachment wraps it.
     ///
@@ -63,7 +69,11 @@ impl DreamerAttemptBinding {
             BoundFacet::Extraction => {
                 matches!(
                     verb,
-                    EXTRACTION_INPUTS_PAGE_VERB | EVIDENCE_SPANS_VERB | AI_VERDICT_VERB
+                    EXTRACTION_INPUTS_PAGE_VERB
+                        | EVIDENCE_SPANS_VERB
+                        | AI_VERDICT_VERB
+                        | EXTRACTION_STEP_SUBMIT_VERB
+                        | EXTRACTION_STEP_RECEIPT_VERB
                 )
             }
         };
@@ -103,6 +113,23 @@ impl DreamerAttemptBinding {
                     crate::snapshot_read::evidence_spans_bound(&memory, &input, self)
                 })?)
             }
+            EXTRACTION_STEP_SUBMIT_VERB => {
+                let input: ExtractionStepRequest = decode(verb, input)?;
+                encode(&typed_row_validated(
+                    &memory,
+                    &VERB_TABLE,
+                    verb,
+                    input,
+                    validate_extraction_step,
+                    |input| self.extraction_step_submit(input),
+                )?)
+            }
+            EXTRACTION_STEP_RECEIPT_VERB => {
+                let input: ModelStepReceiptRequest = decode(verb, input)?;
+                encode(&typed_row(&memory, &VERB_TABLE, verb, input, |input| {
+                    self.extraction_step_receipt(input)
+                })?)
+            }
             AI_VERDICT_VERB => {
                 let input: AiVerdictRequest = decode(verb, input)?;
                 encode(&typed_row(&memory, &VERB_TABLE, verb, input, |input| {
@@ -127,6 +154,11 @@ impl DreamerAttemptBinding {
             }
         }
     }
+}
+
+/// Requires a hook rewrite to remain a reference-only extraction request.
+fn validate_extraction_step(verb: &str, value: &Value) -> MemoryResult<()> {
+    decode::<ExtractionStepRequest>(verb, value.clone()).map(drop)
 }
 
 /// The check a hook's rewrite of a strength commit must pass.
