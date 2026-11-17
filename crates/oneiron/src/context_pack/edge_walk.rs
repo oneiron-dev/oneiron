@@ -203,6 +203,7 @@ pub(super) fn walk_edges(
                         | EdgeKind::AddressedTo
                         | EdgeKind::RepliesTo
                         | EdgeKind::Regenerates
+                        | EdgeKind::Carries
                 ) {
                     continue;
                 }

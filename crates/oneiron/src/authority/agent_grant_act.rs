@@ -30,16 +30,18 @@ use super::*;
 
 /// This install cannot carry the owner's act: it has no machine identity or
 /// install key, or no live profile of it stands under that key. No roster
-/// key, the host root included, carries an owner act (FIX 2222).
-const NO_CARRIER: &str = "this install has no live machine profile in the vault's roster to carry \
+/// key, the host root included, carries an owner act (FIX 2222). Each
+/// `AGENT_GRANT_ACT_*` reason is public so a transport can name its refusal
+/// (FIX-LIST 23279).
+pub const AGENT_GRANT_ACT_NO_CARRIER: &str = "this install has no live machine profile in the vault's roster to carry \
                           the owner's agent Grant act";
 /// The act would name more rows than one authority entry may: the log's
 /// encoding bound, never a possession test.
-const TOO_MANY_HEADS: &str = "the authority log has more concurrent heads than one agent Grant act \
+pub const AGENT_GRANT_ACT_TOO_MANY_HEADS: &str = "the authority log has more concurrent heads than one agent Grant act \
                               may name; nothing was written";
 /// The fold did not count the signed act, so the caller's transaction must
 /// not commit the Grant change it records.
-const NOT_COUNTED: &str = "the authority fold did not count the owner's agent Grant act; nothing \
+pub const AGENT_GRANT_ACT_NOT_COUNTED: &str = "the authority fold did not count the owner's agent Grant act; nothing \
                            was written";
 
 /// The owner's act on an agent's Grant, as the mint and revoke doors pass it.
@@ -206,12 +208,12 @@ impl Vault {
         let actor = owner.revalidate_as_vault_owner_in_txn(self, txn)?;
         let fold = self.authority_view_readonly_in_txn(txn)?;
         let machine = crate::identity::read_machine_id_in_txn(self, txn)?
-            .ok_or_else(|| authority_refused(NO_CARRIER))?;
+            .ok_or_else(|| authority_refused(AGENT_GRANT_ACT_NO_CARRIER))?;
         let key = crate::identity::read_machine_signing_key_in_txn(self, txn)?
-            .ok_or_else(|| authority_refused(NO_CARRIER))?;
+            .ok_or_else(|| authority_refused(AGENT_GRANT_ACT_NO_CARRIER))?;
         let public_key = key.verifying_key().to_bytes();
         if !super::owner_act_signer_admits(fold.machine(machine), &fold.roster, &public_key) {
-            return Err(authority_refused(NO_CARRIER));
+            return Err(authority_refused(AGENT_GRANT_ACT_NO_CARRIER));
         }
         // FIX 7908: join a frontier wider than one entry names, else today's path.
         let joiner = FrontierSigner::Install(machine, &key);
@@ -222,7 +224,7 @@ impl Vault {
         let seq = next_sequence(&fold, &signer)?;
         let parents = fold.append_heads.clone();
         if parents.len() > MAX_PARENTS {
-            return Err(authority_refused(TOO_MANY_HEADS));
+            return Err(authority_refused(AGENT_GRANT_ACT_TOO_MANY_HEADS));
         }
         let (grant, change) = act.into_change();
         let record = AgentGrantActRecord {
@@ -256,7 +258,7 @@ impl Vault {
         if !after.valid_entries.contains(&entry_hash)
             || after.install.held_back.contains(&entry_hash)
         {
-            return Err(authority_refused(NOT_COUNTED));
+            return Err(authority_refused(AGENT_GRANT_ACT_NOT_COUNTED));
         }
         Ok(AgentGrantActRef(entry_hash))
     }
