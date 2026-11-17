@@ -340,7 +340,7 @@ pub(super) fn scratchpad_memory<'a>(
             ApiErrorDetails::Forbidden {
                 required_scope: None,
             },
-            ["Present a slip minted with --principal-ref and --actor-class."],
+            ["Present a slip paired from a link created with --principal-ref and --actor-class."],
         )
     };
     let actor = auth
