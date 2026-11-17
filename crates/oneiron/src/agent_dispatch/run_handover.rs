@@ -29,7 +29,9 @@
 //! agree. The take reserves only what the launch reserved less what the
 //! machines that ran it committed of it, as the run TASK's spend carry
 //! records it (FIX 4889), and waits when nothing is left; the machine whose
-//! tree funded the launch keeps the one counter (canon ARCH-0026:242).
+//! tree funded the launch keeps the one counter (canon ARCH-0026:242). A
+//! take-back on the custody machine keeps the run's scope and folds the
+//! other machines' shares into it (FIX 4889).
 //!
 //! A take that queues a try from the TASK's frozen payload, a re-created
 //! live try or a successor, first asks that the payload's writer proof counts
@@ -59,11 +61,10 @@
 use std::collections::BTreeMap;
 
 use super::run_task::{
-    AgentRunExecutorLease, AgentRunSpendCarry, AgentRunTaskBody, agent_run_lease_held_until,
-    agent_run_lease_renewal, agent_run_task_body_in, agent_run_task_ref_in, attempt_id_from_hex,
-    closing, open_agent_runs_in, update_agent_run_task_body_in_txn,
+    AgentRunExecutorLease, AgentRunTaskBody, agent_run_lease_held_until, agent_run_lease_renewal,
+    agent_run_task_body_in, agent_run_task_ref_in, attempt_id_from_hex, closing,
+    open_agent_runs_in, update_agent_run_task_body_in_txn,
 };
-use super::spend_record::{SCOPE, SpendState};
 use super::{
     AGENT_DISPATCH_ATTEMPT_TYPE, AgentDispatchInput, AgentDispatcher, decode_agent_dispatch_input,
 };
@@ -573,8 +574,9 @@ fn world_readable_here_in(vault: &Vault, txn: &heed::RoTxn<'_>, world: &str) -> 
 /// queue (a root's, or a child's that outlived its root), read in `txn`,
 /// each with its newest such try's id and state. A pending child under a
 /// run's TASK is no try of it here (REVIEW-6638): the take never keeps it as
-/// the run's try, and it renews nothing.
-fn local_agent_run_tries_in(
+/// the run's try, and it renews nothing. The custody reconcile reads it too
+/// (FIX 4889).
+pub(super) fn local_agent_run_tries_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
 ) -> Result<BTreeMap<EntityId, (AttemptId, AttemptState)>> {
@@ -613,7 +615,9 @@ fn take_expired_agent_run(
 /// this machine can fund it; a re-created or successor try only while the
 /// TASK's writer proof counts here; then the lease moves here at the next
 /// generation with a fresh hold, and the TASK names a re-created or
-/// successor try as its live one. A kept try is named by its own claim.
+/// successor try as its live one. A kept try is named by its own claim, and
+/// its scope is judged as a re-created try's is. What the take folded into
+/// the kept scope lands on the TASK's carry (FIX 4889).
 fn take_expired_agent_run_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -634,7 +638,7 @@ fn take_expired_agent_run_in_txn(
         return Ok(AgentRunTake::Waits(RUN_TASK_UNREADABLE));
     };
     let queue = AttemptQueue::new(vault);
-    let (try_id, resume) = match run.local {
+    let (try_id, resume, folded) = match run.local {
         LocalTry::Wait(reason) => return Ok(AgentRunTake::Waits(reason)),
         LocalTry::Keep(id) => {
             let queued = queue.get_in_txn(&*wtxn, id)?.is_some_and(|row| {
@@ -644,19 +648,37 @@ fn take_expired_agent_run_in_txn(
                 return Ok(AgentRunTake::Waits(LOCAL_TRY_CHANGED));
             }
             // The queued try spends under the scope its dispatch or an
-            // earlier take kept for it here, which must not let the run
-            // spend past its launch counted across the machines that ran it
-            // (REVIEW-7879 round 2). A run with no carry runs as its try
-            // stands.
-            if let Some(carry) = body.spend.as_ref() {
-                let Some(input) = frozen_dispatch_input(&body.queue_payload) else {
-                    return Ok(AgentRunTake::Waits(RUN_TASK_UNREADABLE));
-                };
-                if !kept_try_scope_funded_in_txn(vault, wtxn, id, &input, carry, node_id)? {
-                    return Ok(AgentRunTake::Waits(LAUNCH_UNFUNDED_HERE));
+            // earlier take kept for it here. The take judges that scope as
+            // it judges a re-created try's (FIX 4889): the custody machine
+            // folds what the other machines committed since, and elsewhere a
+            // pinned scope comes down to the remainder. A run with no carry
+            // runs as its try stands.
+            let folded = match body.spend.as_ref() {
+                None => 0,
+                Some(carry) => {
+                    let Some(input) = frozen_dispatch_input(&body.queue_payload) else {
+                        return Ok(AgentRunTake::Waits(RUN_TASK_UNREADABLE));
+                    };
+                    let mut savepoint = vault.store.env.nested_write_txn(wtxn)?;
+                    match AgentDispatcher::new(vault).reserve_handed_over_launch_in_txn(
+                        &mut savepoint,
+                        id,
+                        &input,
+                        Some(carry),
+                        node_id,
+                        now,
+                    )? {
+                        super::spend_custody::HandedOverLaunchReserve::Unfunded => {
+                            return Ok(AgentRunTake::Waits(LAUNCH_UNFUNDED_HERE));
+                        }
+                        super::spend_custody::HandedOverLaunchReserve::Reserved { folded } => {
+                            savepoint.commit()?;
+                            folded
+                        }
+                    }
                 }
-            }
-            (id, AgentRunResume::QueuedHere)
+            };
+            (id, AgentRunResume::QueuedHere, folded)
         }
         LocalTry::Recreate | LocalTry::Succeed(_) => {
             // The try runs from the TASK's frozen payload, so a machine that
@@ -704,24 +726,24 @@ fn take_expired_agent_run_in_txn(
             if !super::agent_run::agent_pump_claims_in(vault, &savepoint, &record)? {
                 return Ok(AgentRunTake::Waits(NOT_THE_AGENT_PUMPS));
             }
-            let committed_units = body
-                .spend
-                .as_ref()
-                .map_or(0, AgentRunSpendCarry::committed_units);
-            if !AgentDispatcher::new(vault).reserve_handed_over_launch_in_txn(
+            let folded = match AgentDispatcher::new(vault).reserve_handed_over_launch_in_txn(
                 &mut savepoint,
                 record.id,
                 &input,
-                committed_units,
+                body.spend.as_ref(),
+                node_id,
                 now,
             )? {
-                return Ok(AgentRunTake::Waits(LAUNCH_UNFUNDED_HERE));
-            }
+                super::spend_custody::HandedOverLaunchReserve::Unfunded => {
+                    return Ok(AgentRunTake::Waits(LAUNCH_UNFUNDED_HERE));
+                }
+                super::spend_custody::HandedOverLaunchReserve::Reserved { folded } => folded,
+            };
             savepoint.commit()?;
             // The transaction's owner re-arms the deadline watch after its
             // commit, as a dispatch's enqueue does.
             crate::batch::queue_proactivity_change(vault, wtxn);
-            (record.id, resume)
+            (record.id, resume, folded)
         }
     };
     let lease = AgentRunExecutorLease {
@@ -729,10 +751,22 @@ fn take_expired_agent_run_in_txn(
         generation: run.lease.generation.saturating_add(1),
         held_until: agent_run_lease_held_until(now),
     };
+    // The take stamps the share of the scope its try spends under here
+    // (REVIEW-7890): a kept queued try becomes the TASK's live one only at
+    // its claim, so the executor's stamp of the live try alone would miss
+    // the scope this take just folded into, while the fold counts against
+    // the shares at once.
+    let taken_scope = AgentDispatcher::new(vault).attempt_spend_scope_in_txn(&*wtxn, try_id)?;
     update_agent_run_task_body_in_txn(vault, wtxn, run.task_ref, now, |body| {
         body.executor = lease;
         if resume != AgentRunResume::QueuedHere {
             body.live_attempt_ref = bytes_to_hex_lower(try_id.as_bytes());
+        }
+        if let Some(carry) = body.spend.as_mut() {
+            carry.custody_folded_units = carry.custody_folded_units.saturating_add(folded);
+            if let Some(scope) = &taken_scope {
+                carry.stamp(node_id, scope);
+            }
         }
         Ok(())
     })?;
@@ -741,51 +775,6 @@ fn take_expired_agent_run_in_txn(
         try_id,
         resume,
     })
-}
-
-/// Judges for a take the open scope that `attempt`, the try the take keeps
-/// queued here, spends under (REVIEW-7879 round 2). The run may commit under
-/// it what its launch reserved less what was committed outside it (`carry`,
-/// this machine's other scopes included). `false`, and the take waits, when
-/// the scope committed that already. A pinned scope's cap comes down to it.
-/// A carve keeps its cap, which its parent holds: on the machine whose tree
-/// funds the run, the custody fold of PR 2 counts the other machines' spend,
-/// as it does for a re-created try's carve. No open scope here, or a launch
-/// stated unmetered, keeps the try as it stands.
-fn kept_try_scope_funded_in_txn(
-    vault: &Vault,
-    wtxn: &mut heed::RwTxn<'_>,
-    attempt: AttemptId,
-    input: &AgentDispatchInput,
-    carry: &AgentRunSpendCarry,
-    node: u64,
-) -> Result<bool> {
-    let Some(kept) = AgentDispatcher::new(vault)
-        .attempt_spend_scope_in_txn(&*wtxn, attempt)?
-        .filter(|scope| scope.state == SpendState::Open)
-    else {
-        return Ok(true);
-    };
-    let base = input.launch.as_ref().and_then(|statement| {
-        if statement.parent_scope.is_some() {
-            Some(statement.reserved_units)
-        } else {
-            statement.cap_units
-        }
-    });
-    let Some(base) = base else {
-        return Ok(true);
-    };
-    let remaining = base.saturating_sub(carry.committed_except(node, &kept.scope));
-    if remaining <= kept.spent_units.saturating_add(kept.held_units) {
-        return Ok(false);
-    }
-    if kept.parent.is_none() && remaining < kept.cap_units {
-        let mut lowered = kept;
-        lowered.cap_units = remaining;
-        SCOPE.put(&vault.store, wtxn, &lowered.scope.0, &lowered)?;
-    }
-    Ok(true)
 }
 
 /// The agent dispatch input a run TASK's frozen queue payload carries;

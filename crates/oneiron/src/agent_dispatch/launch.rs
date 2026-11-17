@@ -18,7 +18,9 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::llm::run_admission::LeaseUnit;
 
+use super::run_task::AgentRunSpendCarry;
 use super::spend_calibration::ExpectedSpend;
+use super::spend_custody::HandedOverLaunchReserve;
 use super::spend_record::{ChildSpend, SCOPE, SpendRefused, SpendScope, SpendScopeId, SpendState};
 use super::widen_record::invalid;
 use super::{
@@ -182,9 +184,13 @@ enum HandedOverReserve {
 /// a pinned `budget` outside any tree pins what is left of its cap here; a
 /// launch under a tree scope this machine holds open, or books at an open
 /// ancestor (`tree_here`), reserves under it as the dispatch did, a carve of
-/// its budget or a hold of its expected spend. A tree scope this machine
-/// does not hold lives on the machine that opened it, and nothing of it is
-/// seeded here: the run gets a pinned hard scope of what its launch reserved
+/// its budget or a hold of its expected spend. Such a take keeps no open
+/// scope of the run, so the carve is the budget less `committed_units`
+/// (REVIEW-7890 round 2): a scope of the run that settled here, or one its
+/// retry chain here does not reach, never stacks a second whole carve under
+/// the tree, and a budget committed in full is unfunded. A tree scope this
+/// machine does not hold lives on the machine that opened it, and nothing
+/// of it is seeded here: the run gets a pinned hard scope of what its launch reserved
 /// from that tree less what the machines that ran it committed of it
 /// (`committed_units`, from the run TASK's carry: every scope's spend and
 /// open children's holds, this machine's earlier scopes included), so the
@@ -215,16 +221,25 @@ fn handed_over_launch_reserve(
                 })
             }
         }
-        Some(parent) if tree_here => HandedOverReserve::Reserve(LaunchReserve::Child {
-            parent: parent.clone(),
-            ask: if statement.hard {
-                ChildSpend::Carve { cap_units }
+        Some(parent) if tree_here => {
+            let ask = if statement.hard {
+                let remaining = cap_units.saturating_sub(committed_units);
+                if remaining == 0 {
+                    return HandedOverReserve::Unfunded;
+                }
+                ChildSpend::Carve {
+                    cap_units: remaining,
+                }
             } else {
                 ChildSpend::Hold {
                     expected_units: statement.expected.units,
                 }
-            },
-        }),
+            };
+            HandedOverReserve::Reserve(LaunchReserve::Child {
+                parent: parent.clone(),
+                ask,
+            })
+        }
         Some(_) if room_bound || statement.reserved_units == 0 => HandedOverReserve::Unfunded,
         Some(_) => {
             let remaining = statement.reserved_units.saturating_sub(committed_units);
@@ -245,13 +260,14 @@ impl AgentDispatcher<'_> {
     /// run this machine takes over, in the take's write (FIX 4747 slice 6),
     /// as `handed_over_launch_reserve` rules from the launch statement
     /// `input` froze, less what the machines that ran it committed of it
-    /// (`committed_units`, from the run TASK's carry). A scope that already
-    /// stands here for `attempt` is kept.
-    /// A pinned scope keeps the Grant `input` froze as its funding (FIX
-    /// 7766), as the dispatch's own reserve did.
-    /// A room-bound run proves its join again under the scope it reserves
-    /// under, as its dispatch did. `false` when this machine cannot fund it:
-    /// the take writes nothing, and the run waits.
+    /// (FIX 4889, from the run TASK's `carry`). A scope the run spends under
+    /// here through its retry chain is kept when open. On the custody machine
+    /// the kept scope folds the other machines' shares (FIX 4889); elsewhere
+    /// a kept pinned scope is capped to the remainder. A pinned scope keeps
+    /// the Grant `input` froze as its funding (FIX 7766), as the dispatch's
+    /// own reserve did. A room-bound run proves its join again under the
+    /// scope it reserves under, as its dispatch did. `Unfunded` when this
+    /// machine cannot fund it: the take writes nothing, and the run waits.
     ///
     /// # Errors
     ///
@@ -261,18 +277,24 @@ impl AgentDispatcher<'_> {
         txn: &mut heed::RwTxn<'_>,
         attempt: AttemptId,
         input: &AgentDispatchInput,
-        committed_units: u64,
+        carry: Option<&AgentRunSpendCarry>,
+        node: u64,
         now: u64,
-    ) -> Result<bool> {
-        if SCOPE.contains(
-            &self.vault.store,
-            txn,
-            &SpendScopeId::for_attempt(&attempt).0,
-        )? {
-            return Ok(true);
+    ) -> Result<HandedOverLaunchReserve> {
+        match self.attempt_spend_scope_in_txn(txn, attempt)? {
+            Some(kept) if kept.state == SpendState::Open => {
+                return self.keep_handed_over_scope_in_txn(txn, attempt, kept, input, carry, node);
+            }
+            // A settled scope under the try's own id stands as it is, as
+            // before FIX 4889: a second scope under that id is refused.
+            Some(kept) if kept.scope == SpendScopeId::for_attempt(&attempt) => {
+                return Ok(HandedOverLaunchReserve::Reserved { folded: 0 });
+            }
+            Some(_) | None => {}
         }
+        let committed_units = carry.map_or(0, AgentRunSpendCarry::committed_units);
         let Some(statement) = input.launch.as_ref() else {
-            return Ok(true);
+            return Ok(HandedOverLaunchReserve::Reserved { folded: 0 });
         };
         let tree_here = match &statement.parent_scope {
             Some(parent) => match SCOPE.get(&self.vault.store, txn, &parent.0)? {
@@ -289,7 +311,7 @@ impl AgentDispatcher<'_> {
             input.room.is_some(),
             committed_units,
         ) {
-            HandedOverReserve::Unfunded => return Ok(false),
+            HandedOverReserve::Unfunded => return Ok(HandedOverLaunchReserve::Unfunded),
             HandedOverReserve::Reserve(LaunchReserve::Unmetered) => {}
             HandedOverReserve::Reserve(LaunchReserve::Pinned { unit, cap_units }) => {
                 self.open_pinned_scope_in_txn(
@@ -307,7 +329,7 @@ impl AgentDispatcher<'_> {
                     Ok(_) => {}
                     Err(SpendRefused::Engine(error)) => return Err(error),
                     Err(SpendRefused::OverCap { .. } | SpendRefused::Start(_)) => {
-                        return Ok(false);
+                        return Ok(HandedOverLaunchReserve::Unfunded);
                     }
                 }
             }
@@ -320,11 +342,13 @@ impl AgentDispatcher<'_> {
                 statement.parent_scope.as_ref(),
             ) {
                 Ok(_) => {}
-                Err(Error::Claim(_) | Error::Artifact(_)) => return Ok(false),
+                Err(Error::Claim(_) | Error::Artifact(_)) => {
+                    return Ok(HandedOverLaunchReserve::Unfunded);
+                }
                 Err(error) => return Err(error),
             }
         }
-        Ok(true)
+        Ok(HandedOverLaunchReserve::Reserved { folded: 0 })
     }
 }
 
