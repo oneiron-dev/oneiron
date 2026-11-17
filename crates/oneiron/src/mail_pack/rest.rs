@@ -6,6 +6,7 @@
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::{BufRead, BufReader, Read};
+use std::sync::Arc;
 use std::time::Duration;
 
 use base64::Engine as _;
@@ -18,6 +19,7 @@ use crate::Vault;
 use crate::connector_key::{GrantAccess, ProviderConnectionChecks};
 use crate::error::{Error, Result};
 use crate::secret_lease::DoorInjectionReceipt;
+use crate::web_fetch::{HostedEgressGuard, hosted_dns_resolver};
 
 /// The largest provider answer read: a whole message with its inline parts.
 const MAX_REST_RESPONSE_BYTES: u64 = 32 * 1024 * 1024;
@@ -91,6 +93,30 @@ pub(super) fn https_client() -> Result<reqwest::blocking::Client> {
         .https_only(true)
         .redirect(reqwest::redirect::Policy::none())
         .timeout(Duration::from_secs(60))
+        .build()
+        .map_err(|_| refused("mail_wire_http_client_setup_failed"))
+}
+
+/// [`https_client`], on a managed (hosted) node (`guard` is its egress
+/// guard): every name the client connects to resolves through the guard,
+/// so a name answering with hosted infrastructure or with a private
+/// address no operator origin admits fails its connection before it is
+/// made, and no proxy resolves a name elsewhere. With no guard, the plain
+/// client a self-hosted node fetches with, exactly as before. An address
+/// literal reaches no resolver: the caller checks it with the guard before
+/// the request, as the ICS wire does.
+pub(super) fn https_client_with_hosted_guard(
+    guard: Option<Arc<HostedEgressGuard>>,
+) -> Result<reqwest::blocking::Client> {
+    let Some(guard) = guard else {
+        return https_client();
+    };
+    reqwest::blocking::Client::builder()
+        .https_only(true)
+        .no_proxy()
+        .redirect(reqwest::redirect::Policy::none())
+        .timeout(Duration::from_secs(60))
+        .dns_resolver(hosted_dns_resolver(guard))
         .build()
         .map_err(|_| refused("mail_wire_http_client_setup_failed"))
 }
