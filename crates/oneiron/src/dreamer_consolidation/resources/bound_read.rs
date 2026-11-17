@@ -47,6 +47,9 @@ use crate::write_envelope::ClaimCandidate;
 use crate::{Result, Vault};
 use oneiron_model::llm::{Scope, ScopeResource};
 
+mod evidence;
+mod observations;
+
 /// What the bound verdict supplies to rebuild its queued branch's read
 /// projection in its one live transaction.
 pub(crate) struct BoundBranchInput<'a> {

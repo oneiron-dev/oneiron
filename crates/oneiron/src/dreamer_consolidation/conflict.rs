@@ -88,7 +88,7 @@ pub(super) struct CandidateFacts {
 /// only stamps envelope-owned metadata, so every candidate-owned field reads
 /// as the candidate holds it. A facet the candidate does not name reads as
 /// the probe's, never the vault's.
-pub(super) fn candidate_probe_body(candidate: &ClaimCandidate) -> Result<ClaimBody> {
+pub(crate) fn candidate_probe_body(candidate: &ClaimCandidate) -> Result<ClaimBody> {
     let envelope = WriteEnvelope::new(
         WriteActor::new(candidate_probe_actor(), crate::edge::EdgeActorClass::Agent),
         ClaimSource::Generated,

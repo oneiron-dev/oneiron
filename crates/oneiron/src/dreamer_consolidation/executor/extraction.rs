@@ -433,6 +433,14 @@ pub(in crate::dreamer_consolidation) fn claim_id_for_identity(
     )
 }
 
+/// The claim times the pass clock stamps on one candidate.
+/// The wake clock runs in milliseconds while a claim carries Unix seconds, so the helper divides once (FIX 8695).
+/// Native building and the bound observation path both stamp through this one rule.
+pub(in crate::dreamer_consolidation) fn claim_times(now_ms: u64) -> (TimeRange, u64) {
+    let at = now_ms / 1_000;
+    (TimeRange { start: at, end: at }, at)
+}
+
 /// One parsed candidate as the branch takes it, or why it is not written.
 /// A candidate that corrects a listed claim binds to that head: its subject,
 /// predicate, relationship and topic, so it routes to the head through the
@@ -529,9 +537,7 @@ fn resolve_proposal(
         let claim_id = claim_id_for_identity(attempt_id, &candidate)?;
         (candidate, claim_id)
     };
-    // The wake's clock is milliseconds; a claim's times are Unix seconds
-    // (FIX 8695).
-    let at = now_ms / 1_000;
+    let (occurred, learned_at) = claim_times(now_ms);
     Ok((
         PromotionCandidate {
             claim_id,
@@ -543,8 +549,8 @@ fn resolve_proposal(
             provenance_chain: Vec::new(),
             supersedes: None,
             evidence_meet: ClaimSource::Generated,
-            occurred: TimeRange { start: at, end: at },
-            learned_at: at,
+            occurred,
+            learned_at,
             decisions: decisions.to_vec(),
         },
         parsed.locators,

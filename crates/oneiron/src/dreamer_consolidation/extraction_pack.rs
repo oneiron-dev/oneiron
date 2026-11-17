@@ -26,15 +26,22 @@
 //! the one validation transaction and runs them unsourced, since the extraction call
 //! source rows are unknown.
 
+mod checks;
 mod execution;
 mod finals;
 mod reads;
 
 pub(crate) use super::executor::evidence_version_for_row;
 pub(crate) use super::resources::{BoundBranchInput, BoundBranchRead, project_bound_branch};
+pub(crate) use checks::{
+    bound_branch_error, check_extraction_operands_in_txn, check_turn_evidence,
+    extraction_not_served,
+};
 pub(crate) use execution::{CheckedExtractionRead, ExtractionReadExecution, execute_checked_read};
+pub(crate) use reads::check_pack_candidates;
+pub(in crate::dreamer_consolidation) use reads::parse_reference;
 
-use super::branch::BranchAxes;
+use super::ConsolidationBranchPlan;
 use super::support::invalid_consolidation;
 use crate::attempt_queue::AttemptId;
 use crate::claim::ScopedRead;
@@ -82,12 +89,12 @@ pub(crate) fn rebuild_checked_pack(
     pack: &ExtractionPack,
     bound: &BoundBranchRead,
     attempt: AttemptId,
-    axes: &BranchAxes,
+    branch: &ConsolidationBranchPlan<EntityId>,
     read: &ScopedRead<'_>,
     txn: &heed::RoTxn<'_>,
     branch_subject: EntityId,
 ) -> Result<RebuiltExtractionPack> {
-    let checked = reads::check_pack_candidates(pack, bound, attempt, axes)?;
+    let checked = reads::check_pack_candidates(&pack.candidates, bound, attempt, branch)?;
     let candidate_ids = checked.candidate_ids();
     let scope = bound.scope().clone();
     let (listed, priors, questions, execution) = match pack.read {
