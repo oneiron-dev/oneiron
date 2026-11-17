@@ -39,7 +39,7 @@ use super::support::{loro_kind, open_fork};
 use super::{MemberVerdict, ProposalAsk, ProposalSettleRequest, ReviewedFork, SettleVerdict};
 pub(super) use live_edit::LIVE_EDIT_GROUPS;
 pub(crate) use live_edit::{
-    LiveEditAskOutcome, live_edit_asked_owners_in, live_edit_offered_owners_in,
+    LiveEditAskOutcome, is_live_edit_ask, live_edit_asked_owners_in, live_edit_offered_owners_in,
     resolve_live_edit_holder_ask_in_txn,
 };
 
@@ -259,7 +259,7 @@ fn waiting_revision(proposal: &EntityId, artifact: &EntityId, forks: &[EntityId]
 }
 
 /// Whether `intent_key` is an office holder ask's (FIX 3107).
-fn is_office_holder_ask_intent(intent_key: &str) -> bool {
+pub(crate) fn is_office_holder_ask_intent(intent_key: &str) -> bool {
     intent_key
         .strip_prefix(ASK_INTENT)
         .is_some_and(|rest| rest.is_empty() || rest.starts_with('/'))

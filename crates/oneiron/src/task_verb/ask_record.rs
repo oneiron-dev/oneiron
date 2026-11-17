@@ -73,6 +73,14 @@ pub(super) struct AskGroup {
     /// every other target; an older group decodes with none.
     #[serde(default)]
     pub reached_role: Option<crate::llm::decision::AskRole>,
+    /// The agent attempt the ask was raised in: the try its host bound and
+    /// its admission proved leased to this asker (`task_create_origin_in_txn`),
+    /// so a run's form lists the asks of that run's own attempts. `None` for
+    /// an ask raised outside any run, one released from a launch hold (the
+    /// hold keeps no attempt), and one stored before groups kept it; such an
+    /// ask is no run's question.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub raised_in: Option<crate::attempt_queue::AttemptId>,
     pub policy_surface: super::TaskAskSurface,
     /// Stated after the census and before any member TASK (OF-393).
     pub statement: crate::agent_dispatch::FanoutStatement,

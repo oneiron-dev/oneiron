@@ -73,8 +73,8 @@ pub use docx::{
 };
 pub use fork::{BlockChange, BodyConflict, ChangeKind, ConflictKind, OfficeBodyDiff};
 pub(crate) use holder_ask::{
-    LiveEditAskOutcome, live_edit_asked_owners_in, live_edit_offered_owners_in,
-    resolve_holder_ask_in_txn, resolve_live_edit_holder_ask_in_txn,
+    LiveEditAskOutcome, is_live_edit_ask, is_office_holder_ask_intent, live_edit_asked_owners_in,
+    live_edit_offered_owners_in, resolve_holder_ask_in_txn, resolve_live_edit_holder_ask_in_txn,
 };
 pub use live_units::LivePin;
 pub(crate) use live_units::{LiveChange, LiveSheet};

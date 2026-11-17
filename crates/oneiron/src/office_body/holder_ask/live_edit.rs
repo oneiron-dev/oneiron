@@ -255,7 +255,7 @@ fn live_edit_revision(artifact: &EntityId, editor: &EntityId, owners: &[EntityId
 /// Whether `intent_key` addresses a live-edit holder ask (FIX 596): the
 /// cheap gate checked before the route index is read. The prefix admits
 /// nothing by itself: a routed ask is one its group index names.
-fn is_live_edit_ask(intent_key: &str) -> bool {
+pub(crate) fn is_live_edit_ask(intent_key: &str) -> bool {
     intent_key
         .strip_prefix(LIVE_EDIT_ASK_INTENT)
         .is_some_and(|rest| rest.is_empty() || rest.starts_with('/'))

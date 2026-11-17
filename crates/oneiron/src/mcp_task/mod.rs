@@ -99,10 +99,6 @@ pub struct McpTaskRecord {
     /// When the handle's actor first asked its work to stop, in host milliseconds.
     #[serde(default)]
     pub cancel_requested_at_ms: Option<u64>,
-    /// The round of questions the handle's actor answers next. It moves when the set of open
-    /// questions changes, so an answer to an earlier round is never read as this one's.
-    #[serde(default)]
-    pub input_round: u32,
 }
 
 impl McpTaskRecord {
@@ -157,7 +153,6 @@ impl Vault {
             created_at_ms: now_ms,
             ttl_ms,
             cancel_requested_at_ms: None,
-            input_round: 0,
         };
         let mut txn = self.store.env.write_txn()?;
         HANDLES.put(&self.store, &mut txn, &id.row_key(), &row)?;

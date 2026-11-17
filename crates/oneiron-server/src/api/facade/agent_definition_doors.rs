@@ -6,6 +6,7 @@ use oneiron::consent::AuthenticatedOwner;
 use oneiron::memory::{MEMORY_CODE_FORBIDDEN, MemoryError, MemoryResult};
 use oneiron::runtime_hooks::InvocationId;
 use oneiron::store::GateDecisionId;
+use oneiron::task_verb::WorkflowRunAsks;
 use oneiron::task_verb::sdk::{
     self, AgentDefinitionCreateRequest, AgentDefinitionRequest, AgentDefinitionUpdateRequest,
     AgentDefinitionView, AgentMadeBy, AgentMadeByRequest, AgentTreePauseReceipt,
@@ -482,6 +483,46 @@ pub(crate) async fn vault_workflows_cancel(
         workflow_run_rows,
     )
     .await
+}
+
+/// `vault.workflows.asks` (L1-03): the open questions one run's agents asked
+/// the owner, on the owner proof that reads the run. They are read on the
+/// owner's own credential handle, at its locality and destination, so a
+/// group a device-local world keeps from where the answer goes reads as
+/// none. The answer lists every row that read took, and the run's root.
+pub(crate) async fn vault_workflows_asks(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: WorkflowRunRequest,
+) -> MaybeListed<WorkflowRunAsks> {
+    const VERB: &str = "vault.workflows.asks";
+    let lane = auth.clone();
+    let root = input.root_attempt_ref;
+    let (answer, listed) = as_person_naming(
+        server,
+        VERB,
+        owner_proof(auth, server, VERB),
+        move |server, owner| {
+            let vault = server.vault();
+            let producers = oneiron::memory::ProducerRows::default();
+            let actor = owner.actor_for_read(vault)?;
+            let memory =
+                crate::api::credential_memory(vault, Some(&lane), actor, EdgeActorClass::Human)
+                    .at(lane.locality())
+                    .listing_producers(&producers);
+            let asks = oneiron::task_verb::read_workflow_run_asks_as(&memory, &owner, input)?;
+            Ok((asks, producers.take_listed()))
+        },
+        move |(_, read)| {
+            let mut rows = read.clone()?;
+            rows.push(root);
+            rows.sort_unstable();
+            rows.dedup();
+            Some(rows)
+        },
+    )
+    .await;
+    (answer.map(|(asks, _)| asks), listed)
 }
 
 pub(crate) async fn vault_workspace_establish(

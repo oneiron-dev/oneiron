@@ -499,6 +499,46 @@ impl Memory<'_> {
         Ok(answer)
     }
 
+    /// `tasks.decline` (L1-03): this actor declines the ask `handle`, so its
+    /// own seat is void and the ask goes on without its word. The ask then
+    /// settles by its own rules (`until`, `default`); a decline settles
+    /// nothing, answers for nobody else and is never an approval. The asker's
+    /// waits learn of it as a change, as of a link's "Not you?". A repeat
+    /// changes nothing. An ask that does not ask this actor is refused with
+    /// the words of an unknown handle, so the refusal never tells that the
+    /// ask exists.
+    pub fn tasks_decline(
+        &self,
+        handle: &super::TaskAskHandle,
+    ) -> MemoryResult<super::TaskAskDecline> {
+        if !self.has_task_work_turn() {
+            return self.task_work_memory().tasks_decline(handle);
+        }
+        self.require_answers_in_own_name()?;
+        self.with_verified_actor_write_txn(|txn| {
+            let unknown = || MemoryError::bad_request("unknown ask handle");
+            let group = self
+                .ask_group_named_in(txn, handle.group_ref)?
+                .ok_or_else(unknown)?;
+            let person = self.actor().to_hex();
+            if !group.members.iter().any(|member| member.actor == person) {
+                return Err(unknown());
+            }
+            let void_generation = super::ask_option_link::void_seat_in_txn(
+                self.vault(),
+                txn,
+                handle.group_ref,
+                &group,
+                self.actor(),
+                self.vault().store.clock.now_recorded_at(),
+            )?;
+            Ok(super::TaskAskDecline {
+                handle: *handle,
+                void_generation,
+            })
+        })
+    }
+
     /// Admits `word` on `handle`'s ask and completes the addressed member,
     /// exactly as [`Self::tasks_answer`] does, but settles nothing: the ask
     /// waits for a later cut. Test door only
