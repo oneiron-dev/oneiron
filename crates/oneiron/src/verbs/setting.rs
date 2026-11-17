@@ -4,11 +4,14 @@
 //!
 //! The caller is the vault owner, on the owner's own proof, or an agent on its verified
 //! binding. Reads follow each key's `read_by`; a change goes through [`Vault::set_setting`],
-//! which checks the power live in its write.
+//! which checks the power live in its write. A host door also takes a live owner it proved from
+//! the request itself, a co-owner included (each `*_with_request_owner` form; FIX
+//! SETTINGS-SET-DOOR-CO-OWNER).
 
 use serde::{Deserialize, Serialize};
 
 use crate::Vault;
+use crate::consent::AuthenticatedOwner;
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::federation::EngineControlClass;
@@ -138,9 +141,38 @@ fn agent_of(memory: &Memory<'_>, verb: &str) -> MemoryResult<EntityId> {
     Ok(memory.actor())
 }
 
-/// Who reads, through `memory`: the owner when its proof holds, else its verified agent.
-fn reader_of(memory: &Memory<'_>, verb: &str) -> MemoryResult<SettingReader> {
+/// The `request_owner` of an embedded call, which has no request: none.
+fn no_request_owner() -> Option<AuthenticatedOwner> {
+    None
+}
+
+/// The owner behind `memory`: the handle's own owner proof ([`Memory::embedded_owner`]), else,
+/// for a human caller that one refuses, the live owner the host proved from the request
+/// (`request_owner`, as the host's owner doors prove one: a co-owner on their own full slip
+/// included) when that proof names the handle's own actor. `None` for any other caller, who then
+/// acts as its verified agent or is refused, as before.
+fn owner_of(
+    memory: &Memory<'_>,
+    verb: &str,
+    request_owner: impl FnOnce() -> Option<AuthenticatedOwner>,
+) -> Option<AuthenticatedOwner> {
     if let Ok(owner) = memory.embedded_owner(verb) {
+        return Some(owner);
+    }
+    if memory.actor_class() != EdgeActorClass::Human {
+        return None;
+    }
+    request_owner().filter(|owner| owner.actor() == memory.actor())
+}
+
+/// Who reads, through `memory`: the owner when its proof holds ([`owner_of`]), else its verified
+/// agent.
+fn reader_of(
+    memory: &Memory<'_>,
+    verb: &str,
+    request_owner: impl FnOnce() -> Option<AuthenticatedOwner>,
+) -> MemoryResult<SettingReader> {
+    if let Some(owner) = owner_of(memory, verb, request_owner) {
         owner.revalidate(memory.vault())?;
         return Ok(SettingReader::Owner);
     }
@@ -157,7 +189,21 @@ pub fn setting_get_embedded(
     memory: &Memory<'_>,
     input: SettingGetRequest,
 ) -> MemoryResult<SettingView> {
-    let reader = reader_of(memory, GET)?;
+    setting_get_with_request_owner(memory, no_request_owner, input)
+}
+
+/// [`setting_get_embedded`] on a host door: `request_owner` is the live owner the host proves
+/// from the request, asked only when the handle's own owner proof refuses a human caller.
+///
+/// # Errors
+///
+/// As [`setting_get_embedded`].
+pub fn setting_get_with_request_owner(
+    memory: &Memory<'_>,
+    request_owner: impl FnOnce() -> Option<AuthenticatedOwner>,
+    input: SettingGetRequest,
+) -> MemoryResult<SettingView> {
+    let reader = reader_of(memory, GET, request_owner)?;
     Ok(memory
         .vault()
         .setting_view_for(reader, &input.key, input.item.as_deref(), &input.at)?)
@@ -173,7 +219,21 @@ pub fn setting_list_embedded(
     memory: &Memory<'_>,
     input: SettingListRequest,
 ) -> MemoryResult<SettingCatalogue> {
-    let reader = reader_of(memory, LIST)?;
+    setting_list_with_request_owner(memory, no_request_owner, input)
+}
+
+/// [`setting_list_embedded`] on a host door, with the owner the host proves from the request as
+/// [`setting_get_with_request_owner`] takes it.
+///
+/// # Errors
+///
+/// As [`setting_list_embedded`].
+pub fn setting_list_with_request_owner(
+    memory: &Memory<'_>,
+    request_owner: impl FnOnce() -> Option<AuthenticatedOwner>,
+    input: SettingListRequest,
+) -> MemoryResult<SettingCatalogue> {
+    let reader = reader_of(memory, LIST, request_owner)?;
     let filter = SettingListFilter {
         prefix: input.prefix,
         class: input.class,
@@ -196,9 +256,24 @@ pub fn setting_set_embedded(
     memory: &Memory<'_>,
     input: SettingSetRequest,
 ) -> MemoryResult<SetSettingOutcome> {
+    setting_set_with_request_owner(memory, no_request_owner, input)
+}
+
+/// [`setting_set_embedded`] on a host door, with the owner the host proves from the request as
+/// [`setting_get_with_request_owner`] takes it: that owner's change is the owner's, signed from
+/// the handle's act surface like the embedded owner's.
+///
+/// # Errors
+///
+/// As [`setting_set_embedded`].
+pub fn setting_set_with_request_owner(
+    memory: &Memory<'_>,
+    request_owner: impl FnOnce() -> Option<AuthenticatedOwner>,
+    input: SettingSetRequest,
+) -> MemoryResult<SetSettingOutcome> {
     let request = set_request(input)?;
     let vault: &Vault = memory.vault();
-    if let Ok(owner) = memory.embedded_owner(SET) {
+    if let Some(owner) = owner_of(memory, SET, request_owner) {
         // The owner's change is signed from where the owner's request reached this install, as
         // the host bound it on the handle (an embedded handle's own call names this install).
         let request = SetSetting {
@@ -223,7 +298,21 @@ pub fn setting_accept_defaults_embedded(
     memory: &Memory<'_>,
     input: SettingAcceptDefaultsRequest,
 ) -> MemoryResult<SettingAcceptedDefaults> {
-    let owner = memory.embedded_owner(ACCEPT_DEFAULTS).map_err(|_| {
+    setting_accept_defaults_with_request_owner(memory, no_request_owner, input)
+}
+
+/// [`setting_accept_defaults_embedded`] on a host door, with the owner the host proves from the
+/// request as [`setting_get_with_request_owner`] takes it.
+///
+/// # Errors
+///
+/// As [`setting_accept_defaults_embedded`].
+pub fn setting_accept_defaults_with_request_owner(
+    memory: &Memory<'_>,
+    request_owner: impl FnOnce() -> Option<AuthenticatedOwner>,
+    input: SettingAcceptDefaultsRequest,
+) -> MemoryResult<SettingAcceptedDefaults> {
+    let owner = owner_of(memory, ACCEPT_DEFAULTS, request_owner).ok_or_else(|| {
         MemoryError::new(
             MEMORY_CODE_FORBIDDEN,
             format!("{ACCEPT_DEFAULTS} takes the vault owner"),
