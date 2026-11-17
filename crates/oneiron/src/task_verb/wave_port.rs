@@ -25,7 +25,9 @@ use crate::error::Error;
 use crate::gate::PolicyApprovalCeiling;
 use crate::linear_sync::{LinearSyncError, WaveResult};
 use crate::memory::{Memory, MemoryError, MemoryResult, facade_provenance};
+use crate::setting::SettingScope;
 use crate::side_table::{self, Raw, SideTable};
+use crate::wave_orchestration::setting_keys::AI_WAVES_AGENT_MAY_PLAN;
 use crate::wave_orchestration::*;
 use crate::{EntityId, Vault};
 use serde::{Deserialize, Serialize};
@@ -950,12 +952,39 @@ impl Vault {
         constraints: serde_json::Value,
         now: u64,
     ) -> crate::Result<crate::attempt_queue::EnqueueOutcome> {
-        self.enqueue_wave_plan_with_origin(epic, objective, constraints, now, None)
+        self.enqueue_wave_plan_with_origin(epic, objective, constraints, now, None, None)
+    }
+
+    /// Whether `agent` may plan waves: the value in force of
+    /// `ai.waves.agent_may_plan` at that agent. Off by default: only the
+    /// owner plans. An agent's own row wins over the vault row.
+    pub fn agent_may_plan_waves(&self, agent: EntityId) -> crate::Result<bool> {
+        let txn = self.store.env.read_txn()?;
+        Ok(AI_WAVES_AGENT_MAY_PLAN
+            .read_in_txn(self, &txn, &[SettingScope::Agent(agent)], None)?
+            .value)
+    }
+
+    /// [`Self::enqueue_wave_plan`] as `agent`, whom the owner lets plan
+    /// with `ai.waves.agent_may_plan`. The key is read inside the same
+    /// write that enqueues, and a closed key refuses before anything is
+    /// written.
+    pub fn enqueue_wave_plan_as_agent(
+        &self,
+        agent: EntityId,
+        epic: EntityId,
+        objective: &str,
+        constraints: serde_json::Value,
+        now: u64,
+    ) -> crate::Result<crate::attempt_queue::EnqueueOutcome> {
+        self.enqueue_wave_plan_with_origin(epic, objective, constraints, now, None, Some(agent))
     }
 
     /// [`Self::enqueue_wave_plan`] with an optional root witness, frozen
     /// only when this enqueue mints the attempt (FIX 4973). `None` stays
     /// unwitnessed; `Some` on an existing attempt keeps the first witness.
+    /// An agent enqueue reads `ai.waves.agent_may_plan` first, in this
+    /// same write, and refuses before any write when it is off.
     fn enqueue_wave_plan_with_origin(
         &self,
         epic: EntityId,
@@ -963,10 +992,21 @@ impl Vault {
         constraints: serde_json::Value,
         now: u64,
         origin: Option<&TaskCreateOrigin>,
+        agent: Option<EntityId>,
     ) -> crate::Result<crate::attempt_queue::EnqueueOutcome> {
         let payload = serde_json::to_vec(&serde_json::json!({"epic": epic.to_hex(), "objective": objective, "constraints": constraints}))
             .map_err(|_| Error::InvariantViolation("wave request encoding"))?;
         self.with_write_txn_grouped(|txn| {
+            if let Some(agent) = agent {
+                let may = AI_WAVES_AGENT_MAY_PLAN
+                    .read_in_txn(self, txn, &[SettingScope::Agent(agent)], None)?
+                    .value;
+                if !may {
+                    return Err(Error::Refused(
+                        "wave planning is the owner's; the owner lets an agent plan with the setting `ai.waves.agent_may_plan`".to_owned(),
+                    ));
+                }
+            }
             let outcome = crate::ports::JobQueue::port_job_enqueue(
                 self,
                 txn,
@@ -1144,6 +1184,7 @@ impl Memory<'_> {
                 constraints,
                 now,
                 Some(&origin),
+                None,
             )?);
         }
         let payload = serde_json::to_vec(&serde_json::json!({"epic": epic.to_hex(), "objective": objective, "constraints": constraints}))

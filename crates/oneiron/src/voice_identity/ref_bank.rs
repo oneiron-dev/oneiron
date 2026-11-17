@@ -815,6 +815,8 @@ mod target_verification;
 // Every render decision, kept once beside the current one (FIX 4396).
 #[path = "ref_bank/render_history.rs"]
 mod render_history;
+// The archive landing asks the writer's identity check before it installs a decision.
+pub(super) use render_history::banked_identity_admits_decision_in;
 // The bank's rows in checkpoint images, erased with its subject (FIX 8972).
 #[path = "ref_bank/checkpoint_response.rs"]
 mod checkpoint_response;
