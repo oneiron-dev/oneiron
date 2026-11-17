@@ -115,6 +115,7 @@ fn spoken_archive() -> Spoken {
                 messages: vec![message(author, content, 0)],
                 occurred_at,
                 assertions: WitnessAssertions::default(),
+                project: None,
             })
             .expect("witness the turn")
             .turn_id;

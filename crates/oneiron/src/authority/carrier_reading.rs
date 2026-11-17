@@ -31,6 +31,10 @@ pub struct CarrierReading {
     /// when neither does (the key stands only under a chain this install
     /// does not read), and when the act's row is not stored here.
     pub role: Option<MachineRole>,
+    /// The device class of the profile `role` was read from: the class the
+    /// machine declared and the owner approved. `None` exactly when `role`
+    /// is.
+    pub device_class: Option<MachineDeviceClass>,
     /// Whether the signing key is the machine key of the identity this
     /// install trusts as the owner's machine. Never true on the id alone.
     pub is_mine: bool,
@@ -42,6 +46,7 @@ impl CarrierReading {
         Self {
             machine,
             role: None,
+            device_class: None,
             is_mine: false,
         }
     }
@@ -61,11 +66,14 @@ impl AuthorityFold {
             .machine(machine)
             .and_then(|folded| folded.roster.as_ref())
             .filter(|head| signed(&head.profile));
+        let profile = trusted
+            .as_ref()
+            .map(|trusted| trusted.profile)
+            .or_else(|| roster.map(|head| &head.profile));
         CarrierReading {
             machine,
-            role: trusted
-                .map(|trusted| trusted.profile.role)
-                .or_else(|| roster.map(|head| head.profile.role)),
+            role: profile.map(|profile| profile.role),
+            device_class: profile.map(|profile| profile.device_class),
             is_mine: trusted.is_some(),
         }
     }

@@ -10,15 +10,19 @@
 //!
 //! A served vault's requests all spend on its background line
 //! ([`BackgroundLine`]), built from the vault's budget policy as the Dreamer
-//! pass's line is (ARCH-0053 `#embedding-admission-built`).
+//! pass's line is, or on the host's own line when it pushed one (ARCH-0053
+//! `#embedding-admission-built`). A line that refuses a request for spend
+//! tells the vault's Owners once.
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, PoisonError, Weak};
 
 use oneiron::embed::{Embedder, EmbedderLocality};
+use oneiron::llm::BudgetDenied;
 use oneiron::llm::run_admission::{
     AllocationRefusal, CallOutcome, KeyCustody, LeaseUnit, OfferRoute, PaidConnector, Payer,
     RunAdmission, RunDenied, RunReceiptSink,
 };
-use oneiron::{BudgetExhaustionPolicy, BudgetGuard, ModelLocality, WriteActor};
+use oneiron::{BudgetExhaustionPolicy, BudgetGuard, EntityId, ModelLocality, WriteActor};
 
 use super::endpoint::{HttpEmbedder, PaidRequests};
 use crate::config::remote_embedder::RemoteEmbedderConfig;
@@ -42,6 +46,33 @@ pub(crate) const BACKGROUND_EMBEDDING_LINE: &str = "background-embedding";
 /// that clock builds the line again from the vault's budget policy.
 const BACKGROUND_LINE_SECS: u64 = 86_400;
 
+/// What the Owners' notice of a spent line says its batches do instead: a
+/// refused rung batch embeds on the device (`oneiron::embed`'s rung
+/// fallback), while a refused batch of the primary endpoint or its pods
+/// stays pending for a later pass.
+const SPENT_LINE_DETAIL: &str = "background embeddings spent their budget line: paid requests \
+     are refused until it has room; a remote rung's batches embed on the device meanwhile, and \
+     other batches wait";
+
+/// One line's meter, and the one notice it owes when it is spent
+/// (0053-EMB-EXHAUST-NOTICE = B: one notice per spent line, not per batch).
+struct LineInstance {
+    meter: BudgetGuard,
+    /// Names this line in its notice, so a line built later is told again.
+    id: EntityId,
+    told: AtomicBool,
+}
+
+impl LineInstance {
+    fn new(meter: BudgetGuard) -> Arc<Self> {
+        Arc::new(Self {
+            meter,
+            id: EntityId::now(),
+            told: AtomicBool::new(false),
+        })
+    }
+}
+
 /// The vault's background line (ARCH-0053 `#embedding-admission-built`):
 /// every paid embedding request a served vault sends spends on it, its
 /// primary endpoint's, its pods' and its remote rung's alike. It is built
@@ -57,16 +88,22 @@ const BACKGROUND_LINE_SECS: u64 = 86_400;
 /// with nothing left and is refused, while free work on the owner's own
 /// device still goes.
 ///
-/// Until a vault binds it (`init`'s probes, a slot no vault serves), each
-/// request meters on a line of its own, as [`AdmittedRequests::on_line`]
-/// says.
+/// A host may push its own line instead ([`Self::push_host_line`]): every
+/// later paid request of the slot's doors then spends on that one line, and
+/// the vault's is not built.
+///
+/// Until a vault binds it and no host pushes one (the startup probes, a slot
+/// no vault serves), each request meters on a line of its own, as
+/// [`AdmittedRequests::on_line`] says.
 #[derive(Default)]
 pub(crate) struct BackgroundLine {
     /// The served vault, held weakly so the slot never keeps it open, and
     /// its system principal, the actor the line is bound to.
     vault: OnceLock<(Weak<oneiron::Vault>, WriteActor)>,
+    /// The host's own line, when it pushed one.
+    host: OnceLock<Arc<LineInstance>>,
     /// The day the line covers, and the line.
-    day: Mutex<Option<(u64, BudgetGuard)>>,
+    day: Mutex<Option<(u64, Arc<LineInstance>)>>,
 }
 
 impl BackgroundLine {
@@ -84,18 +121,71 @@ impl BackgroundLine {
         Ok(())
     }
 
-    /// The line a request now spends on, or `None` while no vault is bound.
-    fn line(&self) -> Option<oneiron::Result<BudgetGuard>> {
+    /// Pays every request from `meter`, the host's own line, instead of the
+    /// vault's background line. A second push keeps the first line.
+    pub(crate) fn push_host_line(&self, meter: BudgetGuard) {
+        if self.host.set(LineInstance::new(meter)).is_err() {
+            tracing::warn!("an embedder's host line is pushed once");
+        }
+    }
+
+    /// The line a request now spends on: the host's, else the vault's day
+    /// line, or `None` while neither is there.
+    fn line(&self) -> Option<oneiron::Result<Arc<LineInstance>>> {
+        if let Some(host) = self.host.get() {
+            return Some(Ok(Arc::clone(host)));
+        }
         self.vault
             .get()
             .map(|(vault, principal)| self.day_line(vault, *principal))
+    }
+
+    /// Tells the bound vault's Owners that `line` is spent, the first time
+    /// it refuses a request for spend (ARCH-0053 `#embedding-admission-built`;
+    /// Engine ruling 0053-EMB-EXHAUST-NOTICE = B). Only a recorded notice
+    /// counts: while no vault is bound, or when the notice's write fails
+    /// (logged), the line's next refusal for spend tries again. The refused
+    /// request stays refused either way.
+    fn tell_spent(&self, line: &LineInstance, denied: &RunDenied) {
+        if !matches!(
+            denied,
+            RunDenied::Budget {
+                denied: BudgetDenied::Exhausted
+            }
+        ) {
+            return;
+        }
+        let Some(vault) = self.vault.get().and_then(|(vault, _)| vault.upgrade()) else {
+            return;
+        };
+        // One refusal of the line writes the notice at a time; the rest
+        // return here.
+        if line.told.swap(true, Ordering::AcqRel) {
+            return;
+        }
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |elapsed| elapsed.as_secs());
+        if let Err(error) = vault.notify_background_line_spent(
+            BACKGROUND_EMBEDDING_LINE,
+            line.id,
+            SPENT_LINE_DETAIL,
+            now,
+        ) {
+            line.told.store(false, Ordering::Release);
+            tracing::warn!(
+                kind = ?error.kind(),
+                "background embeddings spent their line; the Owners' notice was not recorded, \
+                 and the line's next refusal tries again"
+            );
+        }
     }
 
     fn day_line(
         &self,
         vault: &Weak<oneiron::Vault>,
         principal: WriteActor,
-    ) -> oneiron::Result<BudgetGuard> {
+    ) -> oneiron::Result<Arc<LineInstance>> {
         let vault = vault
             .upgrade()
             .ok_or_else(|| line_refused("its vault is closed"))?;
@@ -104,16 +194,16 @@ impl BackgroundLine {
         if let Some((held_day, line)) = held.as_ref()
             && *held_day == day
         {
-            return Ok(line.clone());
+            return Ok(Arc::clone(line));
         }
-        let line = vault.policy_budget_guard(
+        let line = LineInstance::new(vault.policy_budget_guard(
             BACKGROUND_EMBEDDING_LINE,
             u64::MAX,
             1,
             BudgetExhaustionPolicy::Suspend,
             principal,
-        )?;
-        *held = Some((day, line.clone()));
+        )?);
+        *held = Some((day, Arc::clone(&line)));
         Ok(line)
     }
 }
@@ -171,11 +261,11 @@ impl EndpointSection for RemoteEmbedderConfig {
 /// The paid door of one endpoint.
 pub(crate) struct AdmittedRequests {
     connector: PaidConnector,
-    /// Each request's line while no vault binds [`Self::background`]. No
-    /// host pushes one yet, so it has no limit: each request still takes
-    /// its permit and writes its rows.
+    /// Each request's line while [`Self::background`] holds no line (no
+    /// vault binds it and no host pushes one): no limit, so each request
+    /// still takes its permit and writes its rows.
     limit_units: u64,
-    /// The vault's background line, once a vault binds it.
+    /// The host's line or the vault's background line, once one is there.
     background: Arc<BackgroundLine>,
     receipts: Arc<dyn RunReceiptSink>,
 }
@@ -249,8 +339,8 @@ pub(super) fn pay_pod_batches(
 ) -> oneiron::Result<()> {
     http.pay_pods_through(Arc::new(AdmittedRequests {
         connector: pod_connector(pool, model_key)?,
-        // No host pushes a line yet, as the primary's: each request still
-        // takes its permit and writes its rows.
+        // As the primary's: no limit while `background` holds no line, and
+        // each request still takes its permit and writes its rows.
         limit_units: u64::MAX,
         background,
         receipts,
@@ -364,24 +454,27 @@ impl PaidRequests for AdmittedRequests {
     ) -> oneiron::Result<Vec<Vec<f32>>> {
         let tokens = estimate(texts);
         let request = oneiron::EntityId::now().to_hex();
-        let (run, meter) = match self.background.line() {
-            // The vault's background line: every request spends on the
-            // day's one meter, so its policy caps bind their total.
+        let (run, meter, line) = match self.background.line() {
+            // The host's line or the vault's background line: every request
+            // spends on its one meter, so its caps bind their total.
             Some(line) => {
                 let run = format!("{BACKGROUND_EMBEDDING_LINE}:{request}");
-                let meter = line.unwrap_or_else(|error| {
-                    tracing::warn!(
-                        %error,
-                        "the background embedding line was not built; a paid request is refused"
-                    );
-                    BudgetGuard::with_reserve_units(
-                        run.clone(),
-                        0,
-                        1,
-                        BudgetExhaustionPolicy::Suspend,
-                    )
-                });
-                (run, meter)
+                match line {
+                    Ok(line) => (run, line.meter.clone(), Some(line)),
+                    Err(error) => {
+                        tracing::warn!(
+                            %error,
+                            "the background embedding line was not built; a paid request is refused"
+                        );
+                        let meter = BudgetGuard::with_reserve_units(
+                            run.clone(),
+                            0,
+                            1,
+                            BudgetExhaustionPolicy::Suspend,
+                        );
+                        (run, meter, None)
+                    }
+                }
             }
             // A meter of its own per request: its lease ids are the
             // request's, and nothing outlives the call.
@@ -393,11 +486,16 @@ impl PaidRequests for AdmittedRequests {
                     1,
                     BudgetExhaustionPolicy::Suspend,
                 );
-                (run, meter)
+                (run, meter, None)
             }
         };
         let run = undeclared_run(run, meter, None, Arc::clone(&self.receipts));
-        let permit = run.admit_paid(&self.connector, tokens).map_err(refused)?;
+        let permit = run.admit_paid(&self.connector, tokens).map_err(|denied| {
+            if let Some(line) = &line {
+                self.background.tell_spent(line, &denied);
+            }
+            refused(denied)
+        })?;
         run.dispatch_paid(permit.lease(), &self.connector)
             .map_err(refused)?;
         let posted = post();
@@ -464,4 +562,25 @@ pub(super) fn send_with_run(
         tracing::error!(%denied, "an embedding request's settlement was refused");
     }
     posted
+}
+
+/// Sends `texts` through the paid door of a third-party remote rung on
+/// `background`, its rows written to `receipts`, `post` standing in for the
+/// request. For `test_doors::embedding_line`.
+#[cfg(oneiron_test_support)]
+pub(super) fn send_on_line(
+    background: &Arc<BackgroundLine>,
+    receipts: Arc<dyn RunReceiptSink>,
+    texts: &[&str],
+    post: &mut dyn FnMut() -> oneiron::Result<Vec<Vec<f32>>>,
+) -> oneiron::Result<Vec<Vec<f32>>> {
+    let section = EndpointEmbedderConfig {
+        endpoint: Some("https://embeddings.example.test/v1".to_owned()),
+        model_key: Some("embedding-model".to_owned()),
+        api_key_env: Some("EMBEDDING_API_KEY".to_owned()),
+        ..EndpointEmbedderConfig::default()
+    };
+    AdmittedRequests::unmetered(&section, EmbedderLocality::ThirdParty, receipts)?
+        .on_background(background)
+        .send(texts, post)
 }
