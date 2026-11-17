@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::attempt_queue::{
     AttemptId, AttemptInterventionKind, AttemptQueue, AttemptRecord, AttemptResumePoint,
-    AttemptState, HoldAttemptForBudget, InterveneAttempt, LandingWarningOutcome,
+    AttemptState, BudgetShortfall, HoldAttemptForBudget, InterveneAttempt, LandingWarningOutcome,
     WarnAttemptBudgetPressure,
 };
 use crate::error::Result;
@@ -78,6 +78,11 @@ pub struct BudgetHoldLease {
     pub attempt_count: u32,
     pub resume_point: AttemptResumePoint,
 }
+
+/// The owner's hold doors' refusal while the held run's scope has nothing
+/// left (RESUME-SPEND-CAP-OWNER-DOORS = A): the verb and the HTTP route give
+/// these words alike. The generic `vault.runs.resume` override stays open.
+const ERR_RESUME_NEEDS_TOP_UP: &str = "top up the held run's binding lease before resuming";
 
 /// Holds keyed by root attempt id.
 const PLAN_HOLD: SideTable<AttemptId, PartialResultHold, LegacyJson> =
@@ -375,6 +380,12 @@ impl AgentDispatcher<'_> {
     }
 
     /// The resume, its actor named by `actor` in the resuming transaction.
+    /// Both owner hold doors resume here, so both refuse alike while the
+    /// run's scope has nothing left, read in this same transaction
+    /// (RESUME-SPEND-CAP-OWNER-DOORS = A). The owner's answers to the run's
+    /// ask (a top-up, an overdraft, the free local model) resume through
+    /// [`Self::resume_budget_hold_in_txn`], and his generic override through
+    /// the queue; neither meets this check.
     fn resume_budget_hold_by(
         &self,
         root: AttemptId,
@@ -383,6 +394,13 @@ impl AgentDispatcher<'_> {
     ) -> Result<PartialResultHold> {
         let mut wtxn = self.vault.store.env.write_txn()?;
         let actor = actor(&wtxn)?;
+        if PLAN_HOLD.get(&self.vault.store, &wtxn, &root)?.is_some()
+            && !self.scope_has_spend_in_txn(&wtxn, root)?
+        {
+            return Err(crate::Error::InvalidConfig(
+                ERR_RESUME_NEEDS_TOP_UP.to_owned(),
+            ));
+        }
         let (hold, withdrawn) = self
             .resume_budget_hold_in_txn(&mut wtxn, root, &actor, now)?
             .ok_or_else(|| invalid("run has no budget hold"))?;
@@ -476,6 +494,33 @@ impl AgentDispatcher<'_> {
             super::run_budget_ask::withdraw_run_budget_ask_in_txn(self.vault, wtxn, root)?;
         }
         PLAN_HOLD.put(&self.vault.store, wtxn, &root, &hold)
+    }
+
+    /// What a generic Resume that overrides `attempt`'s budget hold leaves
+    /// its run short of, in the override's transaction before the hold
+    /// follows it (RESUME-SPEND-CAP-OWNER-DOORS = A): the scope whose cap
+    /// binds the run's root scope, that cap and its unit, when nothing is left
+    /// under it, as the hold doors read it. `None` for an unmetered run or one
+    /// with spend left. The run is the one whose plan hold lists `attempt`;
+    /// a wave's queue-only hold has none, and its row is its own root.
+    pub(crate) fn budget_override_shortfall_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        attempt: &AttemptRecord,
+    ) -> Result<Option<BudgetShortfall>> {
+        let root = self
+            .plan_hold_listing_in_txn(txn, attempt)?
+            .map_or(attempt.id, |(root, _)| root);
+        let scope = SpendScopeId::for_attempt(&root);
+        if SCOPE.get(&self.vault.store, txn, &scope.0)?.is_none() {
+            return Ok(None);
+        }
+        let read = self.spend_read_at_in_txn(txn, &scope)?;
+        Ok((read.available_units == 0).then_some(BudgetShortfall {
+            scope: read.cap_scope,
+            cap_units: read.cap_units,
+            unit: read.unit,
+        }))
     }
 
     /// The plan hold that lists `attempt` as held, with its root: the hold

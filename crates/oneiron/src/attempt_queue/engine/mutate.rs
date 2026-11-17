@@ -8,7 +8,9 @@ use crate::attempt_queue::budget_hold::{BUDGET_HOLD_ACTOR, ERR_BUDGET_HOLD_ACTOR
 use crate::attempt_queue::encoding::{DedupeIndexKeys, decode_record, ready_at, ready_key};
 use crate::attempt_queue::fanout_hold::{ERR_FANOUT_HOLD_ACTOR_RESERVED, FANOUT_HOLD_ACTOR};
 use crate::attempt_queue::hold_override::override_note;
-use crate::attempt_queue::hold_override_receipt::record_hold_override_receipt_in_txn;
+use crate::attempt_queue::hold_override_receipt::{
+    ReleasedHold, record_hold_override_receipt_in_txn,
+};
 use crate::attempt_queue::lifecycle::{
     HoldSignal, NewAttempt, PackReceiptActor, RunEvent, RunLifecycle, RunRow, RunStep,
     TerminalCommit,
@@ -337,6 +339,16 @@ impl AttemptQueue<'_> {
         if outcome.effect == AttemptInterventionEffect::Resumed
             && let Some((pause, before)) = &overridden
         {
+            // RESUME-SPEND-CAP-OWNER-DOORS = A: the override goes through,
+            // and its receipt names what the run was short of, read before
+            // the hold follows the override and stops listing the attempt.
+            let shortfall = match (pause, self.vault) {
+                (AttemptPause::Budget, Some(vault)) => {
+                    crate::agent_dispatch::AgentDispatcher::new(vault)
+                        .budget_override_shortfall_in_txn(wtxn, before)?
+                }
+                _ => None,
+            };
             self.follow_hold_override_in_txn(wtxn, *pause, before, &actor, now)?;
             // Engine call S65-B-R3: the attested record of the override.
             let sequence = outcome
@@ -345,7 +357,16 @@ impl AttemptQueue<'_> {
                 .last()
                 .map_or(0, |event| event.sequence);
             record_hold_override_receipt_in_txn(
-                self.store, wtxn, *pause, before, &actor, sequence, now,
+                self.store,
+                wtxn,
+                ReleasedHold {
+                    pause: *pause,
+                    shortfall,
+                },
+                before,
+                &actor,
+                sequence,
+                now,
             )?;
         }
         // FIX 900: a cancelled child settles its spend lease in the same
