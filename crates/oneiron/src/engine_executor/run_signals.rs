@@ -50,11 +50,12 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::broadcast;
 
 use super::driver::EngineNativeExecutor;
+use super::record::completed_step_count;
 use super::store::{
     RUN_SIGNALS_OUTPUT_SUFFIX, TURN_INTERRUPTS_OUTPUT_SUFFIX, clean_for_context, load_utf8_output,
     record_text_output, run_signals_output_path, turn_interrupts_output_path,
 };
-use super::types::EngineExecutorResult;
+use super::types::{EngineExecutorResult, EngineExecutorStatus};
 use crate::attempt_queue::{AttemptId, AttemptQueue};
 use crate::code_run::{CodeRunReplayRecord, ExecutorStorage};
 use crate::run_tree::{RunSignalKind, RunSignalState, RunTreeAdapter};
@@ -210,14 +211,37 @@ impl EngineNativeExecutor<'_> {
             })
     }
 
+    /// The status a run returns with when `status`, the status of a step
+    /// or turn whose checkpoint has committed, stops it on a durable wait
+    /// and a person's pause is pending on its branch: `Paused` at the step
+    /// after the last committed one, once [`Self::take_wait_pause`] took
+    /// the pause; `None` when `status` is not a wait or no pause was taken.
+    /// Every Waiting return of the run's entry asks this, a step that
+    /// failed after its calls included, so no pause stays pending for the
+    /// length of a wait (FIX PAUSE-BOUNDARY-PARKED-RUN).
+    pub(super) fn pause_at_wait(
+        &self,
+        record: &CodeRunReplayRecord,
+        status: &EngineExecutorStatus,
+    ) -> EngineExecutorResult<Option<EngineExecutorStatus>> {
+        if !matches!(status, EngineExecutorStatus::Waiting(_)) || !self.take_wait_pause() {
+            return Ok(None);
+        }
+        Ok(Some(EngineExecutorStatus::Paused {
+            next_step_seq: completed_step_count(record)?,
+        }))
+    }
+
     /// Takes the person's pause pending on this run's branch when the run
     /// stops on a durable wait, whose step's checkpoint has committed (FIX
     /// PAUSE-BOUNDARY-PARKED-RUN): no step runs until the reply comes, so
     /// the wait is the boundary the pause waits for. The same lease-fenced
     /// writer as at any step boundary settles it and moves the row to
     /// Paused before its host parks the run: `true` when it did. A take
-    /// that fails is logged and the run parks as before.
-    pub(super) fn take_wait_pause(&self) -> bool {
+    /// that fails is logged and the run parks as before; a pause posted
+    /// after this read is taken by the host's park
+    /// (`code_run::park_and_bind_wait_trap`).
+    fn take_wait_pause(&self) -> bool {
         let taken = self.pending_pause().unwrap_or_else(|error| {
             tracing::warn!(?error, "a waiting run's pause was not taken");
             TakenSignals::default()

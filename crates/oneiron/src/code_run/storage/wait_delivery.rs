@@ -249,6 +249,17 @@ pub fn open_wait_trap(
 /// reply already delivered wakes the trap here; `true` when it woke. Consent, peer and human
 /// traps carry the exact wait key as a typed park wait in the same transaction. The wait's
 /// wall-clock record (L2-37) parks in it too, and one a reply already came for returns at once.
+///
+/// A person's pause posted after the run's step stopped on this wait, and
+/// before this park, found no park to take the run off and stayed pending.
+/// This writer takes it, as the pause's own writer takes one of a run
+/// already parked (FIX PAUSE-BOUNDARY-PARKED-RUN): the vault's one writer
+/// orders the two, so the pause meets the park in whichever commits second
+/// and the run stands paused, never parked, until a resume. With no reply
+/// yet the trap stays bound, and the resumed run parks under it again; a
+/// reply already delivered consumes the trap as one that lands while the
+/// run is paused does, wakes no park, and is kept for the resumed run:
+/// `false` then, since no run woke.
 pub fn park_and_bind_wait_trap(
     vault: &Vault,
     park: crate::dreamer_runner::ParkDreamerAttempt,
@@ -256,7 +267,7 @@ pub fn park_and_bind_wait_trap(
     trap: &TrapRef,
     now_ms: u64,
 ) -> Result<bool> {
-    vault.with_write_txn_grouped(|txn| {
+    let (woke, paused) = vault.with_write_txn_grouped(|txn| {
         let attempt = park.attempt_id;
         crate::DreamerRunnerStore::new(vault).park_attempt_with_wait_in_txn(
             txn,
@@ -265,13 +276,19 @@ pub fn park_and_bind_wait_trap(
         )?;
         TRAPS.put(&vault.store, txn, &key.row(), trap)?;
         crate::idle_fold::record_parked_in_txn(vault, txn, key, trap.kind, attempt, now_ms)?;
+        let paused =
+            crate::run_tree::RunTreeAdapter::new(vault).pause_parked_in_txn(txn, attempt)?;
         if !DELIVERIES.contains(&vault.store, txn, &key.row())? {
-            return Ok(false);
+            return Ok((false, paused));
         }
         crate::idle_fold::record_returned_in_txn(vault, txn, key, now_ms)?;
         wake_bound_trap_in_txn(vault, txn, key, trap, now_ms)?;
-        Ok(true)
-    })
+        Ok((!paused, paused))
+    })?;
+    if paused {
+        vault.store.notify_attempt_observers();
+    }
+    Ok(woke)
 }
 
 fn answer_wait(

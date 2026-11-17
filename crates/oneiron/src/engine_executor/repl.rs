@@ -95,13 +95,13 @@ impl EngineNativeExecutor<'_> {
             // one, once the wait's reply is delivered; a person's pause that
             // reached it first holds it at the wait (FIX
             // PAUSE-BOUNDARY-PARKED-RUN), its reply kept for the resume.
-            let mut paused = false;
+            let mut paused = None;
             let resumed = match &status {
                 EngineExecutorStatus::Waiting(wait) => {
                     let delivered = self.park(&record, wait)?;
-                    paused = self.take_wait_pause();
+                    paused = self.pause_at_wait(&record, &status)?;
                     match delivered {
-                        Some(key) if !paused => {
+                        Some(key) if paused.is_none() => {
                             // The resumed run asks the model again, so it
                             // does so under the teaching it committed to.
                             if prompt == PromptBinding::Drifted {
@@ -124,14 +124,7 @@ impl EngineNativeExecutor<'_> {
             };
             let Some(generation) = resumed else {
                 self.recover_checkpointed_implicit_speak(&record, &status, config)?;
-                let status = if paused {
-                    EngineExecutorStatus::Paused {
-                        next_step_seq: completed_step_count(&record)?,
-                    }
-                } else {
-                    status
-                };
-                return Ok(self.outcome(status, 0, record));
+                return Ok(self.outcome(paused.unwrap_or(status), 0, record));
             };
             expected_generation = Some(generation);
         }
@@ -176,7 +169,10 @@ impl EngineNativeExecutor<'_> {
                     .await?
                 {
                     TurnProgram::Generated(program) => (program, None),
+                    // A turn hook's ask the run stops on, before its model
+                    // request, takes a pending pause too.
                     TurnProgram::Ended(status) => {
+                        let status = self.pause_at_wait(&record, &status)?.unwrap_or(status);
                         return Ok(self.outcome(status, steps_run, record));
                     }
                 },
@@ -319,6 +315,7 @@ impl EngineNativeExecutor<'_> {
                         && !cancelled
                     {
                         checking.ended(Some(&status));
+                        let status = self.pause_at_wait(&record, &status)?.unwrap_or(status);
                         return Ok(self.outcome(status, steps_run + 1, record));
                     }
                     // A response whose program failed before its first host bridge call
@@ -374,6 +371,7 @@ impl EngineNativeExecutor<'_> {
                     config,
                 )? {
                     checking.ended(Some(&status));
+                    let status = self.pause_at_wait(&record, &status)?.unwrap_or(status);
                     return Ok(self.outcome(status, steps_run + 1, record));
                 }
                 return Err(failure.into());
@@ -421,6 +419,7 @@ impl EngineNativeExecutor<'_> {
                         )?
                     {
                         checking.ended(Some(&status));
+                        let status = self.pause_at_wait(&record, &status)?.unwrap_or(status);
                         return Ok(self.outcome(status, steps_run + 1, record));
                     }
                     return Err(err);
@@ -637,14 +636,8 @@ impl EngineNativeExecutor<'_> {
                 // of parked (FIX PAUSE-BOUNDARY-PARKED-RUN).
                 if let EngineExecutorStatus::Waiting(wait) = &status {
                     let delivered = self.park(&record, wait)?;
-                    if self.take_wait_pause() {
-                        return Ok(self.outcome(
-                            EngineExecutorStatus::Paused {
-                                next_step_seq: completed_step_count(&record)?,
-                            },
-                            steps_run,
-                            record,
-                        ));
+                    if let Some(paused) = self.pause_at_wait(&record, &status)? {
+                        return Ok(self.outcome(paused, steps_run, record));
                     }
                     if let Some(key) = delivered
                         && let Some(generation) = self.resume_delivered_wait(
