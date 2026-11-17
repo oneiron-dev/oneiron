@@ -210,3 +210,6 @@ pub mod bundle_projection;
 
 pub mod settlement_fact;
 pub(crate) mod tables;
+
+#[cfg(oneiron_test_support)]
+pub(crate) use self::owner_reason::rule_key_pin_for_test;
