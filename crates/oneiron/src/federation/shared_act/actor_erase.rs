@@ -125,6 +125,8 @@ fn scrub_receipt(receipt: &mut SharedActExecutionReceipt, actor: &EntityId) -> b
     let mut changed = scrub(&mut receipt.actor, actor);
     changed |= scrub_optional(&mut receipt.authorizer, actor);
     changed |= scrub_optional(&mut receipt.proposer, actor);
+    // The first admin of an approved held act (Astra on #8482, H5).
+    changed |= scrub_optional(&mut receipt.first_admin, actor);
     changed |= scrub_change(&mut receipt.change, actor);
     changed |= scrub_decision(&mut receipt.check_in, actor);
     if let Some(export) = &mut receipt.export {

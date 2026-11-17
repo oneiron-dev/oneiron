@@ -70,14 +70,40 @@ pub fn establish_workspace_as(
     holder: &AuthenticatedOwner,
     input: WorkspacePresetRequest,
 ) -> MemoryResult<WorkspacePresetReceipt> {
-    vault.establish_workspace_preset(&input.preset, input.work_companion, holder)?;
-    Ok(WorkspacePresetReceipt {
-        workspace_ref: input.preset.workspace_ref,
-        work_companion: input.work_companion,
-    })
+    let call = super::HeldVerbCall::new("vault.workspace.establish", &input)?;
+    let answer = (|| -> MemoryResult<_> {
+        vault.establish_workspace_preset(&input.preset, input.work_companion, holder)?;
+        Ok(WorkspacePresetReceipt {
+            workspace_ref: input.preset.workspace_ref.clone(),
+            work_companion: input.work_companion,
+        })
+    })();
+    call.answer(vault, holder, answer)
 }
 
 pub fn onboard_workspace_member_as(
+    vault: &Vault,
+    holder: &AuthenticatedOwner,
+    input: WorkspaceMemberOnboardRequest,
+) -> MemoryResult<MemberOnboardingOutcome> {
+    // A brought companion's consent is the caller's own proof, which a
+    // second admin's re-run cannot carry: that onboarding is never held, and
+    // with the org two-admin rule on, an Admin's or Deputy's call refuses
+    // with the hold's reason (`two_admin_hold`).
+    if matches!(input.companion, WorkspaceCompanionInput::Bring { .. }) {
+        return onboard_workspace_member(vault, holder, input);
+    }
+    let call = super::HeldVerbCall::new("vault.workspace.members.onboard", &input)?;
+    call.answer(
+        vault,
+        holder,
+        onboard_workspace_member(vault, holder, input),
+    )
+}
+
+/// [`onboard_workspace_member_as`] with no hold of its own: the runner's
+/// AddMember check still refuses a held act.
+fn onboard_workspace_member(
     vault: &Vault,
     holder: &AuthenticatedOwner,
     input: WorkspaceMemberOnboardRequest,

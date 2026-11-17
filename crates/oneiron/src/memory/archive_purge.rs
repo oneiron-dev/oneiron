@@ -309,6 +309,9 @@ impl Memory<'_> {
         };
         crate::federation::require_delete_authority_in_txn(self.vault, txn, caller, target)?
             .map_err(|refusal: DeleteRefusal| {
+                if refusal == DeleteRefusal::TwoAdminHold {
+                    return MemoryError::from(crate::federation::two_admin_hold_refusal());
+                }
                 MemoryError::new(
                     MEMORY_CODE_FORBIDDEN,
                     refusal.message(),

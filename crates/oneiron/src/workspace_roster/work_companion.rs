@@ -149,6 +149,14 @@ impl Vault {
         self.with_write_txn_grouped(|txn| {
             let actor =
                 require_settings_authority_in_txn(self, txn, preset.workspace_vault_id, owner)?;
+            // The approved re-run of a held establish (the org two-admin
+            // rule) lands in this writer.
+            self.land_approved_admin_act_in_txn(
+                txn,
+                preset.workspace_vault_id,
+                actor,
+                self.store.clock.now_recorded_at(),
+            )?;
             super::steps::validate_workspace_preset_in_txn(self, txn, preset)?;
             let existing = PRESET.get(&self.store, txn, &key)?;
             if let Some(existing) = &existing
@@ -181,7 +189,7 @@ impl Vault {
 
 /// The person behind `owner`, live in `txn`, as the vault's owner or as an
 /// admin holding the workspace-settings power over `vault_id`. Enrollment
-/// authority alone does not confer it.
+/// authority alone does not confer it. Answers that person.
 fn require_settings_authority_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -190,6 +198,21 @@ fn require_settings_authority_in_txn(
 ) -> Result<EntityId> {
     let actor = owner.revalidate_person_in_txn(vault, txn)?;
     if crate::policy_model::is_live_vault_owner_in_txn(vault, txn, &actor)? {
+        // An Owner approving a held establish: its first admin must still
+        // hold the settings power (the org two-admin rule).
+        vault
+            .approved_first_admin_admits_in_txn(
+                txn,
+                vault_id,
+                actor,
+                &SharedVaultWrite::WorkspaceSettings,
+            )
+            .map_err(|error| match error {
+                Error::Claim(_) => {
+                    invalid("work_companion is a workspace setting: owner or admin settings power")
+                }
+                other => other,
+            })?;
         return Ok(actor);
     }
     vault
@@ -200,7 +223,9 @@ fn require_settings_authority_in_txn(
             &SharedVaultWrite::WorkspaceSettings,
         )
         .map_err(|error| match error {
-            Error::Claim(crate::error::ClaimError::ActorLacksClaimAuthority { .. }) => {
+            Error::Claim(crate::error::ClaimError::ActorLacksClaimAuthority { reason })
+                if reason != crate::memory::TWO_ADMIN_HOLD_REFUSAL =>
+            {
                 invalid("work_companion is a workspace setting: owner or admin settings power")
             }
             other => other,

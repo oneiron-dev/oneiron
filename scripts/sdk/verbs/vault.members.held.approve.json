@@ -1,0 +1,16 @@
+{
+  "name": "vault.members.held.approve",
+  "description": "A second, distinct live Owner, Admin or Deputy approves a held admin act; its verb runs again under the approver's own proof, and the receipt names both admins.",
+  "input": "crate::task_verb::sdk::HeldAdminActRequest",
+  "output": "crate::task_verb::sdk::HeldAdminActApproved",
+  "call": "crate::task_verb::sdk::approve_held_admin_act_as(memory.vault(), &memory.embedded_owner(\"vault.members.held.approve\")?, None, input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "act_class": "unstated",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "host_door_proof": "shared_person"
+}

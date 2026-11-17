@@ -11,6 +11,7 @@ mod actor_erase;
 mod erase_ask;
 mod execute;
 mod export_records;
+mod held_admin_act;
 mod member_ask;
 mod membership;
 mod owner_add;
@@ -24,6 +25,14 @@ mod removal_import;
 pub use erase_ask::{
     EraseAskKind, EraseAskStatus, EraseProposal, NOTIFICATION_PRODUCER_ERASE_ASK,
     NOTIFICATION_PRODUCER_ERASE_PROPOSAL, SharedEraseAsk,
+};
+pub use held_admin_act::{
+    HeldAdminAct, HeldAdminActStatus, NOTIFICATION_PRODUCER_ADMIN_ACT_HELD,
+    NOTIFICATION_PRODUCER_ADMIN_ACT_LAPSED,
+};
+pub(crate) use held_admin_act::{
+    approved_admin_act_first_admin, current_held_admin_approval, enter_held_admin_approval,
+    run_approved_admin_act, two_admin_hold_refusal,
 };
 pub use member_ask::{
     MemberAskChange, MemberAskStatus, NOTIFICATION_PRODUCER_MEMBER_ASK, SharedMemberAsk,
@@ -285,10 +294,18 @@ pub struct SharedActExecutionReceipt {
     pub authorizer: Option<String>,
     /// The Steward whose member ask this change applied, PERSON hex
     /// (untangle 6.3d): a Steward only suggests a member change, and `actor`
-    /// is the Admin or Owner who applied it. `None` for every change no ask
-    /// proposed.
+    /// is the Admin or Owner who applied it. Or the first admin of a held
+    /// admin act a second admin approved (the org two-admin rule), when no
+    /// ask proposed it: `actor` is the approver. `None` for every other
+    /// change.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub proposer: Option<String>,
+    /// The first admin of the held admin act a second admin approved (the
+    /// org two-admin rule), PERSON hex, when this change is its re-run:
+    /// `actor` is the approver. Set beside a Steward's `proposer` too, so an
+    /// applied ask names both admins. `None` for every other change.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub first_admin: Option<String>,
     /// The bound Connect grants a genuine leave released here (FIX 12555):
     /// the grants actually withdrawn and the typed remainder still standing.
     /// `Some` only when the leave selected at least one bound grant; `None`
@@ -879,6 +896,11 @@ impl Vault {
         now: u64,
     ) -> Result<SharedActExecutionReceipt> {
         let (act_id, request_id) = act.unzip();
+        // The approved re-run of a held admin act lands it in this writer.
+        self.land_approved_admin_act_in_txn(txn, vault_id, actor, now)?;
+        let first_admin = held_admin_act::approved_admin_act_first_admin(vault_id, actor)
+            .as_ref()
+            .map(EntityId::to_hex);
         let receipt = SharedActExecutionReceipt {
             id,
             vault_id,
@@ -899,7 +921,11 @@ impl Vault {
                 .map(|hash| crate::entity_id::bytes_to_hex_lower(hash)),
             authority_record_pending: record == ChangeRecord::Pending,
             authorizer: authorizer.as_ref().map(EntityId::to_hex),
-            proposer: None,
+            // The approved re-run of a held admin act names its first admin
+            // (the org two-admin rule); a Steward's ask replaces `proposer`
+            // after, and `first_admin` keeps the first admin.
+            proposer: first_admin.clone(),
+            first_admin,
             detach: effect.detach,
             check_in: None,
             completed_at: now,

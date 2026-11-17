@@ -212,7 +212,10 @@ impl Vault {
     /// ARCH-0043, an Admin "cannot self-grant blanket access" (lead 10 Nov
     /// 06:5x). Deputy: Admin plus the delegated Owner Grant (ARCH-0082),
     /// which the house door already refuses an Admin (Engine ruling
-    /// C1-DEPUTY-GIVER, 13 Nov).
+    /// C1-DEPUTY-GIVER, 13 Nov). In the approved re-run of a held admin act
+    /// (the org two-admin rule) the first admin must be an Owner too: an
+    /// approval lifts only the rule, so an act its first admin could not
+    /// make never lands, whoever approves it.
     fn reserved_role_given_by_owner_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -220,14 +223,18 @@ impl Vault {
         giver: EntityId,
         role: Role,
     ) -> Result<()> {
-        if matches!(role, Role::Steward | Role::Deputy)
-            && self.member_role_in_txn(txn, vault_id, giver)? != Some(Role::Owner)
-        {
-            return Err(crate::error::Error::Claim(
-                crate::error::ClaimError::ActorLacksClaimAuthority {
-                    reason: "only an owner of the vault gives the Steward or Deputy role",
-                },
-            ));
+        if !matches!(role, Role::Steward | Role::Deputy) {
+            return Ok(());
+        }
+        let first_admin = super::held_admin_act::approved_admin_act_first_admin(vault_id, giver);
+        for person in std::iter::once(giver).chain(first_admin) {
+            if self.member_role_in_txn(txn, vault_id, person)? != Some(Role::Owner) {
+                return Err(crate::error::Error::Claim(
+                    crate::error::ClaimError::ActorLacksClaimAuthority {
+                        reason: "only an owner of the vault gives the Steward or Deputy role",
+                    },
+                ));
+            }
         }
         Ok(())
     }
@@ -274,7 +281,10 @@ impl Vault {
     /// ([`member_move_act`] for a role change), `actor`'s membership role,
     /// and the digest of the exact change. A change the door could never
     /// apply is refused here, before any ask opens; the door's own checks
-    /// run again when it applies.
+    /// run again when it applies. In the approved re-run of a held admin act
+    /// (the org two-admin rule) the check-in is its first admin's, with the
+    /// `check_in_ref` they held it with: the act is theirs, and an approval
+    /// lifts only the rule, never their own check-in (Astra on #8482, H2).
     fn member_effect_check_in_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
@@ -333,17 +343,19 @@ impl Vault {
                 (MEMBERS_REMOVE_VERB, act, member, Some(from), None)
             }
         };
+        let asker =
+            super::held_admin_act::approved_admin_act_first_admin(vault_id, actor).unwrap_or(actor);
         let (grant, role) = self
-            .member_grant_in_txn(txn, vault_id, actor)?
+            .member_grant_in_txn(txn, vault_id, asker)?
             .ok_or_else(invalid)?;
         let door_act = DoorAct {
-            person: actor,
+            person: asker,
             role: RolePreset::of_grant_role(role),
             grant,
             verb,
             act,
             scope: CheckInScope::default(),
-            effect_digest: member_effect_digest(vault_id, actor, verb, member, from, to),
+            effect_digest: member_effect_digest(vault_id, asker, verb, member, from, to),
         };
         crate::check_in::person_door_check_in_in_txn(
             self,
@@ -740,7 +752,11 @@ impl Vault {
     /// A). Go: the change applies and the receipt records the decision. An
     /// act that waits commits the pending check-in alone, applies nothing
     /// and refuses with [`Error::CheckInPending`] naming it; a re-call that
-    /// names it as `check_in_ref` spends it here once it is eligible.
+    /// names it as `check_in_ref` spends it here once it is eligible. The
+    /// org two-admin rule is judged after the check-in: an act it holds has
+    /// passed its first admin's own check-in (the spend rolls back with the
+    /// refusal, and the approved re-run spends it), so an approval never
+    /// skips it (Astra on #8482, H2).
     fn move_shared_member_for_ask(
         &self,
         actor: &AuthenticatedOwner,
@@ -759,11 +775,12 @@ impl Vault {
         // Person tier; the named power is checked against the live roster.
         let actor_id = actor.revalidate_person_in_txn(self, &txn)?;
         super::check_vault(self, &txn, vault_id)?;
+        let writer = WriteActor::new(actor_id, EdgeActorClass::Human);
         if let Some(power) = power {
-            self.authorize_shared_vault_write_in_txn(
+            self.shared_vault_write_standing_in_txn(
                 &txn,
                 vault_id,
-                &WriteActor::new(actor_id, EdgeActorClass::Human),
+                &writer,
                 &SharedVaultWrite::Admin(power),
             )?;
         }
@@ -788,6 +805,14 @@ impl Vault {
             }
             None => None,
         };
+        if let Some(power) = power {
+            self.authorize_shared_vault_write_in_txn(
+                &txn,
+                vault_id,
+                &writer,
+                &SharedVaultWrite::Admin(power),
+            )?;
+        }
         // An admin power's change is told to every live Owner, Admin and
         // Deputy, a seated house mind among them; any other change to the
         // live Owners.

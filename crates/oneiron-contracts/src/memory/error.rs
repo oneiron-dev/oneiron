@@ -124,6 +124,27 @@ pub const MEMORY_CODE_CHECK_IN_PENDING: &str = "CHECK_IN_PENDING";
 /// The prefix of the reason code a `CHECK_IN_PENDING` answer carries: the
 /// pending check-in's id follows it, 32 hex.
 pub const CHECK_IN_PENDING_REASON_PREFIX: &str = "check_in:";
+/// An Admin's or a Deputy's power act waits for a second admin, and nothing
+/// ran (the org two-admin rule; canon identity.md:223, ORG-1 A; Engine
+/// RULING UNBUILT06-SHAPE): an Owner turned the shared vault's `org.two_admin`
+/// key on, so the door stored the act as written and asked each other live
+/// Owner, Admin and Deputy in the inbox. The one reason code
+/// `admin_act:<32 hex>` names the held act. A second, distinct live admin's
+/// approve runs it under their own proof; the first admin never calls
+/// again. Distinct from `CHECK_IN_PENDING`, whose asker re-calls.
+pub const MEMORY_CODE_ADMIN_ACT_HELD: &str = "ADMIN_ACT_HELD";
+/// The prefix of the reason code an `ADMIN_ACT_HELD` answer carries: the
+/// held act's id follows it, 32 hex.
+pub const ADMIN_ACT_HELD_REASON_PREFIX: &str = "admin_act:";
+/// The shared-vault write gate's refusal of an Admin's or a Deputy's power
+/// act while the org two-admin rule holds it. A held verb stores the act
+/// and answers `ADMIN_ACT_HELD`; any other door answers this refusal as
+/// `FORBIDDEN` with the one reason code [`TWO_ADMIN_HOLD_REASON_CODE`]: an
+/// act no verb fronts has no row a second admin could approve as written.
+pub const TWO_ADMIN_HOLD_REFUSAL: &str =
+    "the org two-admin rule holds an Admin's or a Deputy's power act for a second admin";
+/// The reason code of [`TWO_ADMIN_HOLD_REFUSAL`].
+pub const TWO_ADMIN_HOLD_REASON_CODE: &str = "two_admin_hold";
 /// A count-bound budget window paced the call, and the engine holds it in its
 /// caller's fair line until its turn (FIX 8753, ARCH-0044 C5): `resets_at`
 /// names the earliest it runs, and the message its deadline, after which it

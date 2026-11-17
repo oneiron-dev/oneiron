@@ -663,6 +663,11 @@ fn person_delete_check_in_in_txn(
 fn role_delete_refusal(refusal: DeleteRefusal, owner_refusal: &MemoryError) -> MemoryError {
     match refusal {
         DeleteRefusal::Unbound | DeleteRefusal::NoStanding => owner_refusal.clone(),
+        // FORBIDDEN with the hold's own reason code, as every unheld admin
+        // door answers it.
+        DeleteRefusal::TwoAdminHold => {
+            MemoryError::from(crate::federation::two_admin_hold_refusal())
+        }
         DeleteRefusal::NotOwnerOfItem
         | DeleteRefusal::OutOfAdminScope
         | DeleteRefusal::NoDeleteGrant
