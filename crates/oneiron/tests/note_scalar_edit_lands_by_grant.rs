@@ -129,6 +129,11 @@ fn a_persons_scalar_edit_of_its_own_note_with_no_grant_does_not_land() {
         refused.code, MEMORY_CODE_OWNER_BINDING_REQUIRED,
         "{refused:?}"
     );
+    assert_eq!(
+        refused.reason_codes,
+        vec![NOTE_EDIT_NEEDS_GRANT.to_owned()],
+        "{refused:?}"
+    );
     assert_eq!(text(&vault, note), BASE, "the NOTE's text stays as it was");
 }
 
@@ -142,7 +147,7 @@ fn the_owners_scalar_edit_of_an_agents_note_applies() {
     let outcome = prepend(&vault, owner, note, "Owner words. ").expect("the owner's edit is taken");
     assert!(
         matches!(outcome, NoteScalarEditOutcome::Applied(_)),
-        "the owner lands everywhere in his own vault: {outcome:?}"
+        "the owner lands everywhere in the owner's own vault: {outcome:?}"
     );
     assert_eq!(text(&vault, note), format!("Owner words. {BASE}"));
 }

@@ -690,7 +690,7 @@ pub(crate) const NOTE_EDIT_NEEDS_GRANT: &str = "note.edit.needs_grant";
 /// Whether `memory`'s actor may write NOTE `id` now by the Grant's answer
 /// alone: [`require_note_writer_with_landing`] for a door that holds no
 /// landing proof of its own.
-pub(super) fn require_note_writer(
+fn require_note_writer(
     memory: &Memory<'_>,
     txn: &heed::RoTxn<'_>,
     id: EntityId,
@@ -700,9 +700,11 @@ pub(super) fn require_note_writer(
 
 /// Whether `memory`'s actor may write NOTE `id` now, through `landing`: the
 /// Grant's answer for this actor and this NOTE, or the door's own landing
-/// proof ([`super::proposals::edit_lands`]). The NOTE's authorship never
+/// proof ([`super::proposals::landing_proves`]). The NOTE's authorship never
 /// decides it (DEC-0006 #10, ARCH-0032 #forks-proposals): an author with no
-/// Grant is refused here as any other writer is.
+/// Grant is refused here as any other writer is, and the refusal names
+/// [`NOTE_EDIT_NEEDS_GRANT`]; a person who is not the owner keeps the owner
+/// binding refusal's code.
 pub(super) fn require_note_writer_with_landing(
     memory: &Memory<'_>,
     txn: &heed::RoTxn<'_>,
@@ -728,7 +730,13 @@ pub(super) fn require_note_writer_with_landing(
             refused.reason_codes = vec![NOTE_EDIT_NEEDS_GRANT.to_owned()];
             return Err(refused);
         }
-        crate::memory::verify_owner_actor_binding_in_txn(memory.vault(), txn, memory.actor())?;
+        crate::memory::verify_owner_actor_binding_in_txn(memory.vault(), txn, memory.actor())
+            .map_err(|mut refused| {
+                if refused.code == crate::memory::MEMORY_CODE_OWNER_BINDING_REQUIRED {
+                    refused.reason_codes.push(NOTE_EDIT_NEEDS_GRANT.to_owned());
+                }
+                refused
+            })?;
     }
     Ok(())
 }
