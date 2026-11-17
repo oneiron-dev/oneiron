@@ -34,13 +34,8 @@ const TEXT_SOURCE: SideTable<EntityId, Vec<(String, String)>, Named> =
 /// The field a birth's process actor fills, as the birth getter names it.
 const PROCESS: &str = "made_by.process.actor";
 
-#[allow(
-    clippy::unnecessary_wraps,
-    reason = "a placement callback: PlacedTable's fn pointer returns Result"
-)]
-fn place_text(out: &mut Captured, row: TypedRow<EntityId, Vec<(String, String)>>) -> Result<()> {
+fn place_text(out: &mut Captured, row: TypedRow<EntityId, Vec<(String, String)>>) {
     out.exact(OwnerRef::entity(&row.key), row.at, row.bytes);
-    Ok(())
 }
 
 fn place_birth(out: &mut Captured, row: TypedRow<EntityId, RowBirth>) -> Result<()> {
@@ -51,16 +46,11 @@ fn place_birth(out: &mut Captured, row: TypedRow<EntityId, RowBirth>) -> Result<
     })
 }
 
-#[allow(
-    clippy::unnecessary_wraps,
-    reason = "a placement callback: PlacedTable's fn pointer returns Result"
-)]
-fn place_born_from(out: &mut Captured, row: TypedRow<(EntityId, EntityId), ()>) -> Result<()> {
+fn place_born_from(out: &mut Captured, row: TypedRow<(EntityId, EntityId), ()>) {
     let (trigger, born) = row.key;
     let owner = OwnerRef::entity(&born);
     out.depends(owner, &row.at, OwnerRef::entity(&trigger));
     out.exact(owner, row.at, row.bytes);
-    Ok(())
 }
 
 fn join_birth(
@@ -103,7 +93,10 @@ fn refuse_every_part(_: &RowLocator, _: &[u8]) -> Result<()> {
 static TEXT_SOURCE_BY_TABLE: Adapter = Adapter {
     tables: &[&PlacedTable {
         table: TEXT_SOURCE,
-        place: place_text,
+        place: |out, row| {
+            place_text(out, row);
+            Ok(())
+        },
     }],
     capture: Capture::ByTable,
     check: Check::ByTable,
@@ -134,7 +127,10 @@ static TEXT_SOURCE_MISLISTED: Adapter = Adapter {
 static TEXT_SOURCE_GATED: Adapter = Adapter {
     tables: &[&PlacedTable {
         table: TEXT_SOURCE,
-        place: place_text,
+        place: |out, row| {
+            place_text(out, row);
+            Ok(())
+        },
     }],
     capture: Capture::ByTable,
     check: Check::ByTable,
@@ -146,7 +142,10 @@ static TEXT_SOURCE_GATED: Adapter = Adapter {
 static TEXT_SOURCE_OWN_CHECK: Adapter = Adapter {
     tables: &[&PlacedTable {
         table: TEXT_SOURCE,
-        place: place_text,
+        place: |out, row| {
+            place_text(out, row);
+            Ok(())
+        },
     }],
     capture: Capture::ByTable,
     check: Check::Own(refuse_every_part),
@@ -163,7 +162,10 @@ static BIRTHS: Adapter = Adapter {
         },
         &PlacedTable {
             table: BIRTH_BY_TRIGGER,
-            place: place_born_from,
+            place: |out, row| {
+                place_born_from(out, row);
+                Ok(())
+            },
         },
     ],
     capture: Capture::ByTable,
