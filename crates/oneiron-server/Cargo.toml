@@ -474,6 +474,12 @@ name = "vault_drafters_doors"
 path = "tests/vault_drafters_doors.rs"
 required-features = ["oneiron/test-support"]
 
+# The retrieval configuration door promise tests serve the owner's root from a `MemoryKeystore`.
+[[test]]
+name = "vault_retrieval_config_doors"
+path = "tests/vault_retrieval_config_doors.rs"
+required-features = ["oneiron/test-support"]
+
 # Census L8-46's pin: a video job's poll and cancel reach the provider only for
 # the admitted job, through the broker and the same TLS fake provider.
 [[test]]
