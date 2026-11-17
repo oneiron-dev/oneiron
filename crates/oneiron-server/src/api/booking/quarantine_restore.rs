@@ -93,6 +93,7 @@ pub(crate) async fn restore_quarantined_booking(
         Some(session),
         now,
         None,
+        None,
     )
     .await?;
     let hold_token = match held {
@@ -116,6 +117,7 @@ pub(crate) async fn restore_quarantined_booking(
         }),
         Some(session),
         now,
+        None,
         None,
     )
     .await?;
