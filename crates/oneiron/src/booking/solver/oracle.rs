@@ -211,27 +211,10 @@ impl BookingSolver<'_> {
         }
 
         let requested = half_open(req.window)?;
-        let mut config = match (&self.synthetic_config, producers) {
-            (Some(config), _) => config.clone(),
-            (None, Some(producers)) => {
-                let (config, claim) =
-                    load_event_type_config_listed(self.vault, self.page_ref, &req.event_type)?;
-                producers.list([claim]);
-                config
-            }
-            (None, None) => load_event_type_config(self.vault, self.page_ref, &req.event_type)?,
-        };
-        config.min_notice_secs = self.notice_secs(&config, &req.event_type)?;
-        config.validate()?;
+        let mut config = self.resolved_config(req, producers)?;
         if caps == MeetingCaps::Lift {
             config.daily_cap = None;
             config.weekly_cap = None;
-        }
-        if config.key != req.event_type {
-            return Err(BookingError::InvalidConfig(format!(
-                "configuration is for event type {}, not {}",
-                config.key.0, req.event_type.0
-            )));
         }
 
         // The bookable extent is settled BEFORE anything is read, because it is
@@ -328,6 +311,36 @@ impl BookingSolver<'_> {
 }
 
 impl BookingSolver<'_> {
+    /// The configuration a solve of `req` runs on: the synthetic preset, or
+    /// the page's live `booking.event_type` claim (listed in `producers`)
+    /// under the owner's activated notice rule, validated and checked against
+    /// the asked event type.
+    pub(super) fn resolved_config(
+        &self,
+        req: &SolveRequest,
+        producers: Option<&ProducerRows>,
+    ) -> Result<EventTypeConfig, BookingError> {
+        let mut config = match (&self.synthetic_config, producers) {
+            (Some(config), _) => config.clone(),
+            (None, Some(producers)) => {
+                let (config, claim) =
+                    load_event_type_config_listed(self.vault, self.page_ref, &req.event_type)?;
+                producers.list([claim]);
+                config
+            }
+            (None, None) => load_event_type_config(self.vault, self.page_ref, &req.event_type)?,
+        };
+        config.min_notice_secs = self.notice_secs(&config, &req.event_type)?;
+        config.validate()?;
+        if config.key != req.event_type {
+            return Err(BookingError::InvalidConfig(format!(
+                "configuration is for event type {}, not {}",
+                config.key.0, req.event_type.0
+            )));
+        }
+        Ok(config)
+    }
+
     /// Asks CAL for one busy union per host.
     ///
     /// An unbound host is a wiring defect, not a free host: an absent projection
@@ -335,7 +348,7 @@ impl BookingSolver<'_> {
     /// selectors is the same defect and is refused the same way — an empty
     /// selector slice asks `freebusy` for the unfiltered all-calendar union, so
     /// accepting it would make every event in the vault that host's busy time.
-    fn busy_by_host(
+    pub(super) fn busy_by_host(
         &self,
         config: &EventTypeConfig,
         window: TimeRange,

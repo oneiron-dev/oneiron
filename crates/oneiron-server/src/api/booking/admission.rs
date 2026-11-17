@@ -274,6 +274,7 @@ fn benign_response(request: &BookingOperationRequest) -> BookingOperationRespons
             slots: Vec::new(),
             flex_used: false,
             full_days: Vec::new(),
+            busy: None,
         },
         BookingOperationRequest::Book(_) => {
             BookingOperationResponse::Book(BookingBookResult::SlotTaken {

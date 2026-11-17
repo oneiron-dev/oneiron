@@ -55,7 +55,7 @@ pub(crate) const SKILL_PACK_RESOLUTION: &str = "Resolve endpoint against the sam
                 "code": "UNAUTHORIZED",
                 "message": "request is not authorized",
                 "details": { "code": "UNAUTHORIZED" },
-                "suggestions": ["Send Authorization: Bearer credentials and retry."]
+                "suggestions": ["Send Authorization: Bearer credentials and a fresh x-oneiron-binding holder proof, then retry."]
             })
         )
     )
@@ -128,7 +128,7 @@ pub(crate) fn spawn_openapi_document_precompute() -> std::io::Result<std::thread
                 "code": "UNAUTHORIZED",
                 "message": "request is not authorized",
                 "details": { "code": "UNAUTHORIZED" },
-                "suggestions": ["Send Authorization: Bearer credentials and retry."]
+                "suggestions": ["Send Authorization: Bearer credentials and a fresh x-oneiron-binding holder proof, then retry."]
             })
         )
     )
