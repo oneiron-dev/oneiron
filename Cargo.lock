@@ -9177,6 +9177,7 @@ dependencies = [
  "libc",
  "oneiron-fingerprint",
  "oneiron-hex",
+ "oneiron-spawn",
  "serde",
  "serde_json",
  "subtle",
