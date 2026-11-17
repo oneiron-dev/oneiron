@@ -134,9 +134,10 @@ impl Memory<'_> {
             prior,
             ..
         } = *write;
-        // OF-023: every standing stated peer on this key, read in
-        // this transaction rather than taken from the advisory
-        // lookup. Each one whose answer differs opens a conflict.
+        // OF-023, and a generated claim beside user-stated truth: every
+        // standing stated peer on this key, read in this transaction rather
+        // than taken from the advisory lookup. Each one whose answer differs
+        // opens a conflict.
         let stated_conflicts = if beside_stated {
             self.stated_preference_conflicts_in_txn(content.read(), key, id, value)?
         } else {

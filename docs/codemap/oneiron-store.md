@@ -686,5 +686,6 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/side_key_derive.rs` | test | m | — | — | UC-06 PR 0b: `#[derive(SideKey)]` spells and reads a key exactly as the hand-written impl it will replace |
 | `tests/side_key_hex_case.rs` | test | s | — | — | UC-06 PR 0a (HEX-CASE-POLICY = A, Engine RULING 14:31 Sun 15 Nov: "Stored and wire forms stay… |
 | `tests/side_key_pins.rs` | test | m | — | — | UC-06 PR 1 K-proof: the ten `oneiron-store` side-table keys that PR 1 derives spell the same bytes and read… |
+| `tests/source_ranking_tie_order.rs` | test | s | — | — | RERANK-GROUP-ORDER = A, at a weakest reranked score of zero (review round 2 of #8383): the rerank ladder… |
 | `tests/store_envelope_register_names.rs` | test | s | — | — | The names of 6 name lists in `oneiron-store`, one line per row, generated from… |
 | `tests/store_records_register_names.rs` | test | m | — | — | The names of 11 name lists in `oneiron-store`, one line per row, generated from… |
