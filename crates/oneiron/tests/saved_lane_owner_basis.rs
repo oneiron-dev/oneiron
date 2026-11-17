@@ -187,7 +187,8 @@ fn write_owner_claim(
                 scope_facet_id: vault.default_facet().expect("owner default facet").to_hex(),
                 scope_relationship_id: relationships,
                 scope_project_id: default_project_id().to_hex(),
-            },
+            }
+            .into(),
             sensitivity: None,
             evidence_turn_refs: Vec::new(),
             valid_from: None,
