@@ -60,6 +60,12 @@ impl UsageScope {
             vault_id: usage.vault_id().to_owned(),
         })
     }
+
+    /// Whether `vault_id` is this scope's vault. The scope names no billing
+    /// owner: every billing owner's rows live in it (FIX 7035).
+    pub(crate) fn matches_vault(&self, vault_id: &str) -> bool {
+        self.vault_id == vault_id
+    }
 }
 
 /// Why a reviewed row was not removed, as the remove's refusal names it in
