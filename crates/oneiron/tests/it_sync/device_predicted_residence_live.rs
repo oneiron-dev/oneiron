@@ -453,6 +453,93 @@ fn a_phone_waits_for_wifi_and_power() {
     });
 }
 
+/// Applies the predicted level and the home's prediction of one window of `device` on
+/// `connection`, as `a_phone_waits_for_wifi_and_power` does, its set served by `predicted`;
+/// answers the predicted window.
+async fn adopt_one_predicted_window(
+    device: &Device,
+    connection: &SyncConnection,
+    predicted: &Arc<PredictedHome>,
+) -> WindowKey {
+    let window = WindowKey::for_world(now_secs(), device.founder);
+    device
+        .vault
+        .sync_state_put(
+            &format!("ri:w:{window}:{}", EntityId::now().to_hex()),
+            b"thin index anchor",
+        )
+        .expect("the thin index anchor");
+    let parent = issue(
+        device,
+        ResidenceAct::SyncPredicted {
+            window_budget: 8,
+            document_budget: 16,
+        },
+    );
+    assert_eq!(
+        apply_residence_directives(connection)
+            .await
+            .expect("the level applies"),
+        1
+    );
+    let set = predicted_set(&[window.clone()], &[]);
+    serve(predicted, &set);
+    let prediction = append_prediction(
+        &device.vault,
+        &issuer(),
+        local_machine(&device.vault),
+        parent,
+        &set,
+    )
+    .expect("the home's prediction");
+    assert_eq!(
+        apply_residence_directives(connection)
+            .await
+            .expect("the prediction applies"),
+        1
+    );
+    assert_eq!(
+        result_of(device, prediction),
+        Some(ResidenceResultStatus::Applied)
+    );
+    window
+}
+
+/// The shell's report is a fact of the open install, not of one connection: a connection
+/// rebuilt over the same vault (a credential renewal, an embedded engine's wake) fetches on the
+/// report the shell made before it, with no new report.
+#[test]
+fn a_reconnected_phone_keeps_its_reported_fetch_conditions() {
+    run_async(
+        "a_reconnected_phone_keeps_its_reported_fetch_conditions",
+        || async {
+            let device = Device::open_as(MachineDeviceClass::Phone);
+            let predicted = Arc::new(PredictedHome::default());
+            let (url, _seen) = start_home(Arc::clone(&predicted)).await;
+            let first = device_connection(&device, url.clone());
+            let window = adopt_one_predicted_window(&device, &first, &predicted).await;
+            first.set_fetch_conditions(FetchConditions {
+                unmetered: true,
+                powered: true,
+            });
+            drop(first);
+            let reconnected = device_connection(&device, url);
+            run_predicted_pass(&reconnected)
+                .await
+                .expect("the reconnected pass");
+            assert_eq!(
+                predicted.asks.lock().expect("the asks").len(),
+                1,
+                "the rebuilt connection asks on the shell's earlier report"
+            );
+            assert_eq!(
+                *predicted.promotes.lock().expect("the promotes"),
+                vec![window.as_str().to_owned()]
+            );
+        },
+    );
+}
+
 #[test]
 fn a_dropped_window_is_demoted_never_deleted() {
     run_async("a_dropped_window_is_demoted_never_deleted", || async {
