@@ -8,19 +8,31 @@
 //! source (sleep 1100 ms), as in `archive_import_maintenance_kinds.rs`.
 //!
 //! * `whole_vault_archive_retains_rows_and_declares_omitted_tables`: the
-//!   source archive holds exactly one retained BACKUP_POLICY row and one
-//!   retained CONSENT_STANDING_GRANT row, none for HEALER_OVERSIGHT_RECEIPT,
+//!   source archive holds exactly one retained SNAPSHOT_READ_SETTINGS row and
+//!   one retained CONSENT_STANDING_GRANT row, none for HEALER_OVERSIGHT_RECEIPT,
 //!   and the manifest declares 23 omitted tables, the healer table with
 //!   three rows.
 //! * `each_import_door_carries_the_rows_and_only_the_owner_door_installs_the_setting`:
-//!   the owner door installs the backup row live while the actor and actorless
-//!   doors retain it; the grant stays retained for all three, and each
+//!   the owner door installs the snapshot bounds row live while the actor and
+//!   actorless doors retain it; the grant stays retained for all three, and each
 //!   destination's own archive re-carries the tuples byte for byte.
 //! * `a_repeat_import_keeps_one_copy_and_a_new_value_keeps_both`: a repeat
-//!   import adds no copy; a changed backup value lands beside the old one.
+//!   import adds no copy; changed snapshot bounds land beside the old ones.
 //! * `an_actor_erase_drops_the_retained_copies_that_name_the_actor`: erasing
 //!   an actor drops the retained CALL_RECEIPT copy naming that actor and keeps the
-//!   backup copy.
+//!   snapshot bounds copy.
+//! * `an_actor_erase_drops_a_sealed_gate_decision_copy_naming_the_actor`:
+//!   two sealed Gate decisions, one naming actor x and one naming actor y,
+//!   are re-imported into their own vault, so the inert copies share its
+//!   still-held key. Erasing x through the ledger's and the retained table's
+//!   scrubs leaves one tuple for x's decision (the resealed live row) and
+//!   keeps y's (REVIEW-7706 round 1).
+//! * `a_short_binary_credential_withholds_its_retained_row`: a retained
+//!   SNAPSHOT_READ_SETTINGS value that is one short MessagePack binary holding a
+//!   GitHub token, or a byte array or extension holding it, is withheld; the
+//!   same shapes holding plain bytes are not (REVIEW-7706 round 1). The
+//!   archive tree writes a payload of 64 bytes or fewer inline as hex, which
+//!   the document pass cannot read.
 //!
 //! Count model: minting the standing grant also appends its gate receipt, a
 //! plain claim-free GATE_DECISION_LEDGER row the secret scan keeps (ids and
@@ -40,7 +52,7 @@ use std::io::{Cursor, Read as _};
 use oneiron::batch::export::WholeVaultDocument;
 use oneiron::consent::{ActionClass, ActionEnvelope, ActorBound, AuthenticatedOwner, GrantBound};
 use oneiron::receipt::{CallOutcome, CallReceiptInput, CallTransport};
-use oneiron::settings::backup::BackupPolicy;
+use oneiron::settings::snapshot_read::SnapshotReadSettings;
 use oneiron::store::GateDecisionId;
 use oneiron::{EdgeActorClass, EntityId, Vault, VaultConfig, WriteActor};
 
@@ -186,6 +198,8 @@ fn decode_retained_envelope(
             "source_value" => {
                 value = Some(tree_bytes(&pair[1], zip).expect("source_value are bytes"));
             }
+            // Whether the exporting vault held the tuple live; no part of the tuple.
+            "source_live" => {}
             other => panic!("unknown retained envelope member {other}: {tree}"),
         }
     }
@@ -259,8 +273,24 @@ fn hex_to_bytes(hex: &str) -> Vec<u8> {
         .collect()
 }
 
-/// A source vault holding one backup choice, one standing grant and three
-/// healer oversight rows; `archive` is its whole-vault export.
+/// The source's snapshot bounds: the defaults with four handles open per actor.
+pub(crate) fn source_snapshot_bounds() -> SnapshotReadSettings {
+    SnapshotReadSettings {
+        open_per_actor: 4,
+        ..SnapshotReadSettings::DEFAULT
+    }
+}
+
+/// Other valid snapshot bounds: the defaults with two handles open per actor.
+pub(crate) fn other_snapshot_bounds() -> SnapshotReadSettings {
+    SnapshotReadSettings {
+        open_per_actor: 2,
+        ..SnapshotReadSettings::DEFAULT
+    }
+}
+
+/// A source vault holding the owner's snapshot bounds, one standing grant and
+/// three healer oversight rows; `archive` is its whole-vault export.
 pub(crate) struct Source {
     pub(crate) vault: Vault,
     pub(crate) grant_ref: String,
@@ -271,18 +301,16 @@ pub(crate) struct Source {
 pub(crate) fn source_with_rows() -> Source {
     let (dir, vault) = open_source_vault();
     let owner = owner_proof(&vault);
-    let policy = BackupPolicy {
-        enabled: true,
-        every_hours: 6,
-        keep: 3,
-    };
+    let bounds = source_snapshot_bounds();
     vault
-        .set_backup_policy(&owner, policy)
-        .expect("the owner stores the backup choice");
+        .replace_snapshot_read_settings_as_owner(&owner, bounds)
+        .expect("the owner stores the snapshot bounds");
     assert_eq!(
-        vault.backup_policy().expect("read the backup choice"),
-        Some(policy),
-        "the source holds the backup row"
+        vault
+            .snapshot_read_settings()
+            .expect("read the snapshot bounds"),
+        bounds,
+        "the source holds the snapshot bounds row"
     );
     let bound = GrantBound::action(
         ActorBound::new("agent-a").expect("the bound names agent-a"),
@@ -343,11 +371,11 @@ fn whole_vault_archive_retains_rows_and_declares_omitted_tables() {
     let source = source_with_rows();
     let rows = retained_rows(&source.archive);
     // The brief's two targets: exactly one row each, none for the omitted table.
-    let backup = rows_for(&rows, "BACKUP_POLICY");
+    let bounds = rows_for(&rows, "SNAPSHOT_READ_SETTINGS");
     assert_eq!(
-        backup.len(),
+        bounds.len(),
         1,
-        "the source archive holds exactly one retained BACKUP_POLICY row: {rows:?}"
+        "the source archive holds exactly one retained SNAPSHOT_READ_SETTINGS row: {rows:?}"
     );
     let grants = rows_for(&rows, "CONSENT_STANDING_GRANT");
     assert_eq!(
@@ -400,12 +428,12 @@ fn whole_vault_archive_retains_rows_and_declares_omitted_tables() {
 fn each_import_door_carries_the_rows_and_only_the_owner_door_installs_the_setting() {
     let source = source_with_rows();
     let source_rows = retained_rows(&source.archive);
-    let source_backup = rows_for(&source_rows, "BACKUP_POLICY");
+    let source_bounds_rows = rows_for(&source_rows, "SNAPSHOT_READ_SETTINGS");
     let source_grants = rows_for(&source_rows, "CONSENT_STANDING_GRANT");
     assert_eq!(
-        source_backup.len(),
+        source_bounds_rows.len(),
         1,
-        "the source archive holds one backup tuple"
+        "the source archive holds one snapshot bounds tuple"
     );
     assert_eq!(
         source_grants.len(),
@@ -436,11 +464,7 @@ fn each_import_door_carries_the_rows_and_only_the_owner_door_installs_the_settin
         .import_whole_vault_archive_from(Cursor::new(&source.archive))
         .expect("the actorless import succeeds");
 
-    let source_policy = BackupPolicy {
-        enabled: true,
-        every_hours: 6,
-        keep: 3,
-    };
+    let source_bounds = source_snapshot_bounds();
     for (door, dest) in [
         ("owner", &owner_dest),
         ("actor", &actor_dest),
@@ -448,17 +472,17 @@ fn each_import_door_carries_the_rows_and_only_the_owner_door_installs_the_settin
     ] {
         if door == "owner" {
             assert_eq!(
-                dest.backup_policy()
-                    .expect("read the destination backup choice"),
-                Some(source_policy),
-                "the owner import installs the backup row live"
+                dest.snapshot_read_settings()
+                    .expect("read the destination snapshot bounds"),
+                source_bounds,
+                "the owner import installs the snapshot bounds row live"
             );
         } else {
             assert_eq!(
-                dest.backup_policy()
-                    .expect("read the destination backup choice"),
-                None,
-                "the {door} import retains the backup row without making it live"
+                dest.snapshot_read_settings()
+                    .expect("read the destination snapshot bounds"),
+                SnapshotReadSettings::DEFAULT,
+                "the {door} import retains the snapshot bounds row without making it live"
             );
         }
         assert!(
@@ -476,9 +500,9 @@ fn each_import_door_carries_the_rows_and_only_the_owner_door_installs_the_settin
         let dest_rows = retained_rows(&export_whole(dest));
         // The brief's two tuples, byte for byte.
         assert_eq!(
-            rows_for(&dest_rows, "BACKUP_POLICY"),
-            source_backup,
-            "the {door} destination re-carries the backup tuple byte for byte"
+            rows_for(&dest_rows, "SNAPSHOT_READ_SETTINGS"),
+            source_bounds_rows,
+            "the {door} destination re-carries the snapshot bounds tuple byte for byte"
         );
         assert_eq!(
             rows_for(&dest_rows, "CONSENT_STANDING_GRANT"),
@@ -516,11 +540,11 @@ fn each_import_door_carries_the_rows_and_only_the_owner_door_installs_the_settin
 fn a_repeat_import_keeps_one_copy_and_a_new_value_keeps_both() {
     let source = source_with_rows();
     let first_rows = retained_rows(&source.archive);
-    let first_backup = rows_for(&first_rows, "BACKUP_POLICY");
+    let first_bounds = rows_for(&first_rows, "SNAPSHOT_READ_SETTINGS");
     assert_eq!(
-        first_backup.len(),
+        first_bounds.len(),
         1,
-        "the first source archive holds one backup tuple"
+        "the first source archive holds one snapshot bounds tuple"
     );
     let first_grants = rows_for(&first_rows, "CONSENT_STANDING_GRANT");
     assert_eq!(
@@ -537,9 +561,9 @@ fn a_repeat_import_keeps_one_copy_and_a_new_value_keeps_both() {
         .expect("the repeat owner import succeeds");
     let repeat_rows = retained_rows(&export_whole(&dest));
     assert_eq!(
-        rows_for(&repeat_rows, "BACKUP_POLICY"),
-        first_backup,
-        "a repeat import keeps one backup copy: {repeat_rows:?}"
+        rows_for(&repeat_rows, "SNAPSHOT_READ_SETTINGS"),
+        first_bounds,
+        "a repeat import keeps one snapshot bounds copy: {repeat_rows:?}"
     );
     assert_eq!(
         rows_for(&repeat_rows, "CONSENT_STANDING_GRANT"),
@@ -550,36 +574,32 @@ fn a_repeat_import_keeps_one_copy_and_a_new_value_keeps_both() {
     let owner = owner_proof(&source.vault);
     source
         .vault
-        .set_backup_policy(
-            &owner,
-            BackupPolicy {
-                enabled: true,
-                every_hours: 12,
-                keep: 5,
-            },
-        )
-        .expect("the owner stores the second backup choice");
+        .replace_snapshot_read_settings_as_owner(&owner, other_snapshot_bounds())
+        .expect("the owner stores the second snapshot bounds");
     let second_archive = export_whole(&source.vault);
     let second_rows = retained_rows(&second_archive);
-    let second_backup = rows_for(&second_rows, "BACKUP_POLICY");
+    let second_bounds = rows_for(&second_rows, "SNAPSHOT_READ_SETTINGS");
     assert_eq!(
-        second_backup.len(),
+        second_bounds.len(),
         1,
-        "the second source archive holds the new backup tuple"
+        "the second source archive holds the new snapshot bounds tuple"
     );
-    assert_ne!(second_backup, first_backup, "the two backup values differ");
+    assert_ne!(
+        second_bounds, first_bounds,
+        "the two snapshot bounds values differ"
+    );
     dest.import_whole_vault_archive_from_as_owner(Cursor::new(&second_archive), &dest_owner)
         .expect("the second archive imports");
     let both_rows = retained_rows(&export_whole(&dest));
-    let both_backup = rows_for(&both_rows, "BACKUP_POLICY");
+    let both_bounds = rows_for(&both_rows, "SNAPSHOT_READ_SETTINGS");
     assert_eq!(
-        both_backup.len(),
+        both_bounds.len(),
         2,
-        "the destination keeps both backup values: {both_rows:?}"
+        "the destination keeps both snapshot bounds values: {both_rows:?}"
     );
     assert!(
-        both_backup.contains(&first_backup[0]) && both_backup.contains(&second_backup[0]),
-        "the destination keeps the old and the new backup tuple byte for byte: {both_rows:?}"
+        both_bounds.contains(&first_bounds[0]) && both_bounds.contains(&second_bounds[0]),
+        "the destination keeps the old and the new snapshot bounds tuple byte for byte: {both_rows:?}"
     );
     assert_eq!(
         rows_for(&both_rows, "CONSENT_STANDING_GRANT"),
@@ -593,15 +613,8 @@ fn an_actor_erase_drops_the_retained_copies_that_name_the_actor() {
     let (_source_dir, source) = open_source_vault();
     let owner = owner_proof(&source);
     source
-        .set_backup_policy(
-            &owner,
-            BackupPolicy {
-                enabled: true,
-                every_hours: 6,
-                keep: 3,
-            },
-        )
-        .expect("the owner stores the backup choice");
+        .replace_snapshot_read_settings_as_owner(&owner, source_snapshot_bounds())
+        .expect("the owner stores the snapshot bounds");
     // CALL_RECEIPT names its actor as lowercase hex through one public call,
     // with no agent definition or rooted vault needed.
     let x = EntityId::now();
@@ -633,8 +646,10 @@ fn an_actor_erase_drops_the_retained_copies_that_name_the_actor() {
         "the destination archive holds the call receipt as retained: {before:?}"
     );
     assert!(
-        before.iter().any(|(table, _, _)| table == "BACKUP_POLICY"),
-        "the destination archive holds the backup copy: {before:?}"
+        before
+            .iter()
+            .any(|(table, _, _)| table == "SNAPSHOT_READ_SETTINGS"),
+        "the destination archive holds the snapshot bounds copy: {before:?}"
     );
 
     let ran = oneiron::test_doors::inquiry::erase_actor_in_tables_in_order(
@@ -651,7 +666,133 @@ fn an_actor_erase_drops_the_retained_copies_that_name_the_actor() {
         "the erase drops the retained copy naming the actor: {after:?}"
     );
     assert!(
-        after.iter().any(|(table, _, _)| table == "BACKUP_POLICY"),
-        "the erase keeps the backup copy: {after:?}"
+        after
+            .iter()
+            .any(|(table, _, _)| table == "SNAPSHOT_READ_SETTINGS"),
+        "the erase keeps the snapshot bounds copy: {after:?}"
+    );
+}
+
+/// `value` as one MessagePack value's bytes.
+fn msgpack_bytes(value: &rmpv::Value) -> Vec<u8> {
+    let mut out = Vec::new();
+    rmpv::encode::write_value(&mut out, value).expect("encode the value");
+    out
+}
+
+#[test]
+fn a_short_binary_credential_withholds_its_retained_row() {
+    use oneiron::test_doors::archive_side_catalogue::retained_row_withholds_credential;
+    // A GitHub token shape: ghp_ and 36 letters and digits, 40 bytes in all,
+    // under the archive tree's 64-byte inline limit.
+    let token = format!("ghp_{}", "aB3dE5fG7hJ9kL1mN2pQ4rS6tU8vW0xY2zA4");
+    assert_eq!(token.len(), 40, "the token shape is 40 bytes");
+    let plain = b"plain retained bytes with no credential in".to_vec();
+    let shapes = |bytes: &[u8]| {
+        [
+            ("binary", rmpv::Value::Binary(bytes.to_vec())),
+            (
+                "byte array",
+                rmpv::Value::Array(bytes.iter().map(|byte| rmpv::Value::from(*byte)).collect()),
+            ),
+            ("extension", rmpv::Value::Ext(7, bytes.to_vec())),
+            (
+                "binary in a map",
+                rmpv::Value::Map(vec![(
+                    rmpv::Value::from("note"),
+                    rmpv::Value::Binary(bytes.to_vec()),
+                )]),
+            ),
+        ]
+    };
+    for (shape, value) in shapes(token.as_bytes()) {
+        assert!(
+            retained_row_withholds_credential(
+                "SNAPSHOT_READ_SETTINGS",
+                &[],
+                &msgpack_bytes(&value)
+            )
+            .expect("the envelope encodes"),
+            "a retained row whose {shape} payload holds a token is withheld"
+        );
+    }
+    for (shape, value) in shapes(&plain) {
+        assert!(
+            !retained_row_withholds_credential(
+                "SNAPSHOT_READ_SETTINGS",
+                &[],
+                &msgpack_bytes(&value)
+            )
+            .expect("the envelope encodes"),
+            "a retained row whose {shape} payload holds plain bytes travels"
+        );
+    }
+}
+
+/// Whether `haystack` holds `needle`.
+fn holds_bytes(haystack: &[u8], needle: &[u8]) -> bool {
+    haystack
+        .windows(needle.len())
+        .any(|window| window == needle)
+}
+
+#[test]
+fn an_actor_erase_drops_a_sealed_gate_decision_copy_naming_the_actor() {
+    use oneiron::test_doors::archive_side_catalogue::append_sealed_gate_decision_naming;
+
+    let (_dir, vault) = open_source_vault();
+    let x = EntityId::now();
+    let y = EntityId::now();
+    let x_decision = hex_to_bytes(
+        &append_sealed_gate_decision_naming(&vault, &x).expect("the decision naming x lands"),
+    );
+    let y_decision = hex_to_bytes(
+        &append_sealed_gate_decision_naming(&vault, &y).expect("the decision naming y lands"),
+    );
+    let archive = export_whole(&vault);
+    let gate = rows_for(&retained_rows(&archive), "GATE_DECISION_LEDGER");
+    let x_row = gate
+        .iter()
+        .find(|(_, key, _)| *key == x_decision)
+        .expect("the archive carries the decision naming x");
+    assert!(
+        !holds_bytes(&x_row.2, x.as_bytes()) && !holds_bytes(&x_row.2, x.to_hex().as_bytes()),
+        "the decision naming x is sealed: its bytes name x neither raw nor in hex"
+    );
+    vault
+        .import_whole_vault_archive_from(Cursor::new(&archive))
+        .expect("the vault re-imports its own archive");
+
+    let ran = oneiron::test_doors::inquiry::erase_actor_in_tables_in_order(
+        &vault,
+        &x,
+        &["GATE_DECISION_LEDGER", "ARCHIVE_RETAINED_SIDE_ROW"],
+    )
+    .expect("the erase runs");
+    assert_eq!(ran, 2, "both tables register an actor scrub");
+
+    let after = rows_for(
+        &retained_rows(&export_whole(&vault)),
+        "GATE_DECISION_LEDGER",
+    );
+    let tuples_of = |decision: &[u8]| {
+        after
+            .iter()
+            .filter(|(_, key, _)| key.as_slice() == decision)
+            .count()
+    };
+    assert_eq!(
+        tuples_of(&x_decision),
+        1,
+        "only the resealed live decision remains for x; the sealed copy naming x is gone: {after:?}"
+    );
+    assert!(
+        after.iter().all(|row| row != x_row),
+        "the copy naming x no longer travels: {after:?}"
+    );
+    assert_eq!(
+        tuples_of(&y_decision),
+        1,
+        "the decision naming y stays, live and its identical copy as one tuple: {after:?}"
     );
 }

@@ -13,7 +13,7 @@ pub(crate) enum ArchiveSideDisposition {
     Omitted(ImportOmissionReason),
 }
 
-/// The 126 decided side tables in TSV order, 103 retained and 23 omitted.
+/// The 118 decided side tables in TSV order, 95 retained and 23 omitted.
 pub(crate) const SIDE_TABLE_DISPOSITIONS: &[(&str, ArchiveSideDisposition)] = &[
     ("ACCESS_GRANT_OWNER_ACT", ArchiveSideDisposition::Retained),
     ("AGENT_DEF_POWER_GRANT", ArchiveSideDisposition::Retained),
@@ -26,7 +26,6 @@ pub(crate) const SIDE_TABLE_DISPOSITIONS: &[(&str, ArchiveSideDisposition)] = &[
         "AUTHORITY_WITHDRAWN_GRANT",
         ArchiveSideDisposition::Retained,
     ),
-    ("BACKUP_POLICY", ArchiveSideDisposition::Retained),
     ("BOARD_LAYOUT_SETTINGS", ArchiveSideDisposition::Retained),
     ("BUDGET_HOST_ACCOUNT", ArchiveSideDisposition::Retained),
     ("BUDGET_RESIDENT_SHARE", ArchiveSideDisposition::Retained),
@@ -65,13 +64,7 @@ pub(crate) const SIDE_TABLE_DISPOSITIONS: &[(&str, ArchiveSideDisposition)] = &[
     ("CONSENT_STANDING_GRANT", ArchiveSideDisposition::Retained),
     ("CONSENT_WIDEN_PROPOSAL", ArchiveSideDisposition::Retained),
     ("CONVERSATION_ROLE_GRANT", ArchiveSideDisposition::Retained),
-    ("CUSTOMIZATION_EVENT", ArchiveSideDisposition::Retained),
-    ("CUSTOMIZATION_SETTINGS", ArchiveSideDisposition::Retained),
     ("DRAFTER_POLICY", ArchiveSideDisposition::Retained),
-    (
-        "DREAMER_ACTION_MODE_POLICY",
-        ArchiveSideDisposition::Retained,
-    ),
     (
         "DREAMER_BUDGET_STEP_CHARGE",
         ArchiveSideDisposition::Omitted(ImportOmissionReason::LocalProjectionNotRestored),
@@ -92,10 +85,6 @@ pub(crate) const SIDE_TABLE_DISPOSITIONS: &[(&str, ArchiveSideDisposition)] = &[
     ),
     ("DREAMER_SIEVE_POLICY", ArchiveSideDisposition::Retained),
     ("DREAMER_WAKE_POLICY", ArchiveSideDisposition::Retained),
-    (
-        "DREAMER_WAKE_RECIPE_POLICY",
-        ArchiveSideDisposition::Retained,
-    ),
     (
         "EDIT_DISTANCE_ESCALATION_POLICY",
         ArchiveSideDisposition::Retained,
@@ -144,7 +133,6 @@ pub(crate) const SIDE_TABLE_DISPOSITIONS: &[(&str, ArchiveSideDisposition)] = &[
     ("LEGAL_HOLD_ROW", ArchiveSideDisposition::Retained),
     ("LEGAL_HOLD_TARGET", ArchiveSideDisposition::Retained),
     ("LEGAL_HOLD_USE_LIMIT", ArchiveSideDisposition::Retained),
-    ("LLM_DESCRIPTION_POLICY", ArchiveSideDisposition::Retained),
     (
         "MAIL_PACK_COMPLIANCE_SETTING",
         ArchiveSideDisposition::Retained,
@@ -156,10 +144,6 @@ pub(crate) const SIDE_TABLE_DISPOSITIONS: &[(&str, ArchiveSideDisposition)] = &[
     ("MESSAGE_STREAM_POLICY", ArchiveSideDisposition::Retained),
     ("MESSAGE_STREAM_RECEIPT", ArchiveSideDisposition::Retained),
     ("MODEL_OWNER_FALLBACK", ArchiveSideDisposition::Retained),
-    (
-        "MODEL_OWNER_RESPONSES_STORE",
-        ArchiveSideDisposition::Retained,
-    ),
     (
         "NON_BASE_WORLD_CLAIM_FRACTION",
         ArchiveSideDisposition::Retained,
@@ -207,10 +191,6 @@ pub(crate) const SIDE_TABLE_DISPOSITIONS: &[(&str, ArchiveSideDisposition)] = &[
     ),
     ("PENDING_GATE_CONSENT", ArchiveSideDisposition::Retained),
     ("PERSON_BILLING_ACCOUNT", ArchiveSideDisposition::Retained),
-    (
-        "PLUGIN_SUGGESTIONS_ENABLED",
-        ArchiveSideDisposition::Retained,
-    ),
     ("POLICY_HOLD_QUEUE", ArchiveSideDisposition::Retained),
     ("POLICY_SETTING_ACT", ArchiveSideDisposition::Retained),
     (

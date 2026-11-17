@@ -1,26 +1,28 @@
 #![cfg(oneiron_test_support)]
 //! The owner's restore installs retained side rows live (SIDE-2a).
 //!
-//! Public doors only; neutral fixtures (`agent-a`, `owen`, `yuki`); vaults in
+//! Public doors only; neutral fixtures (`agent-a`); vaults in
 //! tempdirs. Each destination opens at least one wall-clock second after its
 //! source (sleep 1100 ms), as in `archive_import_retained_side_rows.rs`.
 //!
 //! * `the_owner_restore_installs_the_setting_and_power_grant_and_the_actorless_import_does_not`:
-//!   the owner import installs one BACKUP_POLICY row and one
+//!   the owner import installs one SNAPSHOT_READ_SETTINGS row and one
 //!   AGENT_DEF_POWER_GRANT row live and reports one installed row for each; a
 //!   repeat owner import reports one unchanged live row for each; the
 //!   actorless import of the same archive leaves both reads at their absent
 //!   values and installs nothing.
 //! * `a_different_destination_setting_stays_live_and_is_reported_kept`: a
-//!   destination that already holds another backup choice keeps it, the
+//!   destination that already holds other snapshot bounds keeps them, the
 //!   report counts one kept-live row, and its next archive holds both tuples.
 //! * `a_power_grant_for_an_absent_agent_is_held_back_and_the_other_rows_install`:
 //!   a grant whose agent was never created stays absent, reports one
 //!   held-back row with reason `missing_live_entity`, and is still retained
-//!   byte for byte, while the backup row installs.
-//! * `restored_customization_events_keep_their_keys_and_the_next_event_follows_them`:
-//!   two source customization events restore with their sequences, and the
-//!   next event the destination owner writes follows with sequence three.
+//!   byte for byte, while the snapshot bounds row installs.
+//! * `an_inert_copy_never_displaces_the_source_live_setting`: a middle vault
+//!   holds its own snapshot bounds live and, after an owner import, an older
+//!   choice as an inert copy whose tuple files first in its archive. The
+//!   owner's restore of that archive into a fresh vault installs the live
+//!   choice and keeps the copy inert (REVIEW-7771 round 1).
 //!
 //! New report counts are read through `serde_json::to_value` of the SIDE-1
 //! summary, so this file compiles on df2ecf9d4376; an absent field fails its
@@ -36,30 +38,12 @@ use oneiron::agent_def::{
     AgentCeiling, AgentDefinition, AgentPowerTarget, AgentPowers, AgentScope,
 };
 use oneiron::claim::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource};
-use oneiron::settings::backup::BackupPolicy;
-use oneiron::settings::{AccentLayer, CustomizationLayerValue, ModeLayer, TypeLayer};
+use oneiron::settings::snapshot_read::SnapshotReadSettings;
 use oneiron::{EntityId, TimeRange};
 use retained_side_rows::{
-    export_whole, open_later_vault, open_source_vault, owner_proof, retained_rows, rows_for,
+    export_whole, open_later_vault, open_source_vault, other_snapshot_bounds, owner_proof,
+    retained_rows, rows_for, source_snapshot_bounds,
 };
-
-/// The source backup choice: enabled, every six hours, keep three.
-fn source_backup_policy() -> BackupPolicy {
-    BackupPolicy {
-        enabled: true,
-        every_hours: 6,
-        keep: 3,
-    }
-}
-
-/// A different valid backup choice the destination holds first.
-fn dest_backup_policy() -> BackupPolicy {
-    BackupPolicy {
-        enabled: true,
-        every_hours: 12,
-        keep: 5,
-    }
-}
 
 /// Both powers off: what the installed grant holds.
 fn restricted_powers() -> AgentPowers {
@@ -130,16 +114,16 @@ fn held_back_for_table(summary: &serde_json::Value, table: &str) -> Option<serde
 fn the_owner_restore_installs_the_setting_and_power_grant_and_the_actorless_import_does_not() {
     let (_source_dir, source) = open_source_vault();
     let source_owner = owner_proof(&source);
-    let policy = source_backup_policy();
+    let bounds = source_snapshot_bounds();
     source
-        .set_backup_policy(&source_owner, policy)
-        .expect("the owner stores the source backup choice");
+        .replace_snapshot_read_settings_as_owner(&source_owner, bounds)
+        .expect("the owner stores the source snapshot bounds");
     assert_eq!(
         source
-            .backup_policy()
-            .expect("read the source backup choice"),
-        Some(policy),
-        "the source holds the backup row"
+            .snapshot_read_settings()
+            .expect("read the source snapshot bounds"),
+        bounds,
+        "the source holds the snapshot bounds row"
     );
     let agent_id = EntityId::now();
     source
@@ -182,10 +166,10 @@ fn the_owner_restore_installs_the_setting_and_power_grant_and_the_actorless_impo
         .import_whole_vault_archive_from_as_owner(Cursor::new(&archive), &dest_owner)
         .expect("the owner import succeeds");
     assert_eq!(
-        dest.backup_policy()
-            .expect("read the destination backup choice"),
-        Some(policy),
-        "the owner import installs the backup row live"
+        dest.snapshot_read_settings()
+            .expect("read the destination snapshot bounds"),
+        bounds,
+        "the owner import installs the snapshot bounds row live"
     );
     assert_eq!(
         dest.agent_powers(AgentPowerTarget::Agent(agent_id))
@@ -196,9 +180,9 @@ fn the_owner_restore_installs_the_setting_and_power_grant_and_the_actorless_impo
     let summary =
         serde_json::to_value(&receipt.retained_side_rows).expect("the summary serializes");
     assert_eq!(
-        table_count(&summary, "BACKUP_POLICY", "installed_rows"),
+        table_count(&summary, "SNAPSHOT_READ_SETTINGS", "installed_rows"),
         Some(1),
-        "the owner import reports one installed BACKUP_POLICY row; an absent field means it installed nothing: {summary}"
+        "the owner import reports one installed SNAPSHOT_READ_SETTINGS row; an absent field means it installed nothing: {summary}"
     );
     assert_eq!(
         table_count(&summary, "AGENT_DEF_POWER_GRANT", "installed_rows"),
@@ -211,7 +195,7 @@ fn the_owner_restore_installs_the_setting_and_power_grant_and_the_actorless_impo
         .expect("the repeat owner import succeeds");
     let repeat_summary =
         serde_json::to_value(&repeat.retained_side_rows).expect("the repeat summary serializes");
-    for table in ["BACKUP_POLICY", "AGENT_DEF_POWER_GRANT"] {
+    for table in ["SNAPSHOT_READ_SETTINGS", "AGENT_DEF_POWER_GRANT"] {
         assert_eq!(
             table_count(&repeat_summary, table, "unchanged_live_rows"),
             Some(1),
@@ -229,10 +213,10 @@ fn the_owner_restore_installs_the_setting_and_power_grant_and_the_actorless_impo
         .import_whole_vault_archive_from(Cursor::new(&archive))
         .expect("the actorless import succeeds");
     assert_eq!(
-        bare.backup_policy()
-            .expect("read the actorless backup choice"),
-        None,
-        "the actorless import retains the backup row without making it live"
+        bare.snapshot_read_settings()
+            .expect("read the actorless snapshot bounds"),
+        SnapshotReadSettings::DEFAULT,
+        "the actorless import retains the snapshot bounds row without making it live"
     );
     assert_eq!(
         bare.agent_powers(AgentPowerTarget::Agent(agent_id))
@@ -242,7 +226,7 @@ fn the_owner_restore_installs_the_setting_and_power_grant_and_the_actorless_impo
     );
     let bare_summary =
         serde_json::to_value(&bare_receipt.retained_side_rows).expect("the summary serializes");
-    for table in ["BACKUP_POLICY", "AGENT_DEF_POWER_GRANT"] {
+    for table in ["SNAPSHOT_READ_SETTINGS", "AGENT_DEF_POWER_GRANT"] {
         assert!(
             matches!(
                 table_count(&bare_summary, table, "installed_rows"),
@@ -257,37 +241,40 @@ fn the_owner_restore_installs_the_setting_and_power_grant_and_the_actorless_impo
 fn a_different_destination_setting_stays_live_and_is_reported_kept() {
     let (_source_dir, source) = open_source_vault();
     let source_owner = owner_proof(&source);
-    let source_policy = source_backup_policy();
+    let source_bounds = source_snapshot_bounds();
     source
-        .set_backup_policy(&source_owner, source_policy)
-        .expect("the owner stores the source backup choice");
+        .replace_snapshot_read_settings_as_owner(&source_owner, source_bounds)
+        .expect("the owner stores the source snapshot bounds");
     let archive = export_whole(&source);
     let source_rows = retained_rows(&archive);
-    let source_backup = rows_for(&source_rows, "BACKUP_POLICY");
+    let source_tuples = rows_for(&source_rows, "SNAPSHOT_READ_SETTINGS");
     assert_eq!(
-        source_backup.len(),
+        source_tuples.len(),
         1,
-        "the source archive holds one backup tuple: {source_rows:?}"
+        "the source archive holds one snapshot bounds tuple: {source_rows:?}"
     );
 
     let (_dest_dir, dest) = open_later_vault();
     let dest_owner = owner_proof(&dest);
-    let dest_policy = dest_backup_policy();
+    let dest_bounds = other_snapshot_bounds();
     assert_ne!(
-        dest_policy, source_policy,
-        "the two backup choices differ before the import"
+        dest_bounds, source_bounds,
+        "the two snapshot bounds differ before the import"
     );
-    dest.set_backup_policy(&dest_owner, dest_policy)
-        .expect("the destination owner stores its own backup choice");
+    dest.replace_snapshot_read_settings_as_owner(&dest_owner, dest_bounds)
+        .expect("the destination owner stores its own snapshot bounds");
     assert_eq!(
-        dest.backup_policy()
-            .expect("read the destination backup choice"),
-        Some(dest_policy),
-        "the destination holds its own backup row before the import"
+        dest.snapshot_read_settings()
+            .expect("read the destination snapshot bounds"),
+        dest_bounds,
+        "the destination holds its own snapshot bounds row before the import"
     );
-    let pre_backup = rows_for(&retained_rows(&export_whole(&dest)), "BACKUP_POLICY");
+    let pre_tuples = rows_for(
+        &retained_rows(&export_whole(&dest)),
+        "SNAPSHOT_READ_SETTINGS",
+    );
     assert_eq!(
-        pre_backup.len(),
+        pre_tuples.len(),
         1,
         "the destination archive holds its live tuple before the import"
     );
@@ -296,27 +283,30 @@ fn a_different_destination_setting_stays_live_and_is_reported_kept() {
         .import_whole_vault_archive_from_as_owner(Cursor::new(&archive), &dest_owner)
         .expect("the owner import succeeds");
     assert_eq!(
-        dest.backup_policy()
-            .expect("read the destination backup choice"),
-        Some(dest_policy),
+        dest.snapshot_read_settings()
+            .expect("read the destination snapshot bounds"),
+        dest_bounds,
         "the owner import keeps the different destination row live"
     );
     let summary =
         serde_json::to_value(&receipt.retained_side_rows).expect("the summary serializes");
     assert_eq!(
-        table_count(&summary, "BACKUP_POLICY", "kept_live_rows"),
+        table_count(&summary, "SNAPSHOT_READ_SETTINGS", "kept_live_rows"),
         Some(1),
-        "the owner import reports one kept-live BACKUP_POLICY row; an absent field means it counted no live outcome: {summary}"
+        "the owner import reports one kept-live SNAPSHOT_READ_SETTINGS row; an absent field means it counted no live outcome: {summary}"
     );
-    let post_backup = rows_for(&retained_rows(&export_whole(&dest)), "BACKUP_POLICY");
+    let post_tuples = rows_for(
+        &retained_rows(&export_whole(&dest)),
+        "SNAPSHOT_READ_SETTINGS",
+    );
     assert_eq!(
-        post_backup.len(),
+        post_tuples.len(),
         2,
-        "the destination keeps both backup values after a kept-live import"
+        "the destination keeps both snapshot bounds values after a kept-live import"
     );
     assert!(
-        post_backup.contains(&source_backup[0]) && post_backup.contains(&pre_backup[0]),
-        "the destination archive holds its live tuple and the retained source tuple byte for byte: {post_backup:?}"
+        post_tuples.contains(&source_tuples[0]) && post_tuples.contains(&pre_tuples[0]),
+        "the destination archive holds its live tuple and the retained source tuple byte for byte: {post_tuples:?}"
     );
 }
 
@@ -324,10 +314,10 @@ fn a_different_destination_setting_stays_live_and_is_reported_kept() {
 fn a_power_grant_for_an_absent_agent_is_held_back_and_the_other_rows_install() {
     let (_source_dir, source) = open_source_vault();
     let source_owner = owner_proof(&source);
-    let policy = source_backup_policy();
+    let bounds = source_snapshot_bounds();
     source
-        .set_backup_policy(&source_owner, policy)
-        .expect("the owner stores the source backup choice");
+        .replace_snapshot_read_settings_as_owner(&source_owner, bounds)
+        .expect("the owner stores the source snapshot bounds");
     let missing_agent = EntityId::now();
     assert!(
         source
@@ -378,9 +368,9 @@ fn a_power_grant_for_an_absent_agent_is_held_back_and_the_other_rows_install() {
         "the import creates no phantom agent definition"
     );
     assert_eq!(
-        dest.backup_policy()
-            .expect("read the destination backup choice"),
-        Some(policy),
+        dest.snapshot_read_settings()
+            .expect("read the destination snapshot bounds"),
+        bounds,
         "the other row still installs while one row is held back"
     );
     let summary =
@@ -391,9 +381,9 @@ fn a_power_grant_for_an_absent_agent_is_held_back_and_the_other_rows_install() {
         "the owner import holds back one power-grant row as missing_live_entity; an absent field means it counted no held-back outcome: {summary}"
     );
     assert_eq!(
-        table_count(&summary, "BACKUP_POLICY", "installed_rows"),
+        table_count(&summary, "SNAPSHOT_READ_SETTINGS", "installed_rows"),
         Some(1),
-        "the owner import reports one installed BACKUP_POLICY row beside the held-back row: {summary}"
+        "the owner import reports one installed SNAPSHOT_READ_SETTINGS row beside the held-back row: {summary}"
     );
     assert_eq!(
         rows_for(
@@ -405,95 +395,128 @@ fn a_power_grant_for_an_absent_agent_is_held_back_and_the_other_rows_install() {
     );
 }
 
+/// The physical key the archive files a retained tuple under, as
+/// `retained_side_row_key` derives it: BLAKE3 over the domain and the
+/// length-framed table name, source key and source value hash.
+fn retained_tuple_key((table, source_key, source_value): &(String, Vec<u8>, Vec<u8>)) -> [u8; 32] {
+    let value_hash = blake3::hash(source_value);
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(b"oneiron.archive.retained_side_row.v1");
+    for part in [
+        table.as_bytes(),
+        source_key.as_slice(),
+        value_hash.as_bytes().as_slice(),
+    ] {
+        hasher.update(&(part.len() as u64).to_le_bytes());
+        hasher.update(part);
+    }
+    *hasher.finalize().as_bytes()
+}
+
+/// The one SNAPSHOT_READ_SETTINGS tuple of `vault`'s whole archive.
+fn snapshot_bounds_tuple(vault: &oneiron::Vault) -> (String, Vec<u8>, Vec<u8>) {
+    let rows = rows_for(
+        &retained_rows(&export_whole(vault)),
+        "SNAPSHOT_READ_SETTINGS",
+    );
+    assert_eq!(
+        rows.len(),
+        1,
+        "the archive holds one snapshot bounds tuple: {rows:?}"
+    );
+    rows[0].clone()
+}
+
 #[test]
-fn restored_customization_events_keep_their_keys_and_the_next_event_follows_them() {
-    let (_source_dir, source) = open_source_vault();
-    let first = source
-        .set_customization_layer(CustomizationLayerValue::Accent(
-            AccentLayer::new("owen").expect("owen is a valid palette token"),
-        ))
-        .expect("the first layer write lands");
+fn an_inert_copy_never_displaces_the_source_live_setting() {
+    // The first vault stores nine choices in turn to read each one's tuple.
+    // The choice whose tuple files last is the live one and the choice whose
+    // tuple files first is the older one, so the older copy files before the
+    // live tuple whatever the hashes give. The first vault then holds the
+    // older choice.
+    let (_first_dir, first) = open_source_vault();
+    let first_owner = owner_proof(&first);
+    let mut candidates = Vec::new();
+    for open_per_actor in [2, 3, 4] {
+        for page_rows in [50, 100, 150] {
+            let choice = SnapshotReadSettings {
+                open_per_actor,
+                page_rows,
+                ..SnapshotReadSettings::DEFAULT
+            };
+            first
+                .replace_snapshot_read_settings_as_owner(&first_owner, choice)
+                .expect("the first owner stores a candidate choice");
+            candidates.push((choice, snapshot_bounds_tuple(&first)));
+        }
+    }
+    candidates.sort_by_key(|(_, tuple)| retained_tuple_key(tuple));
+    let (older, older_tuple) = candidates.first().cloned().expect("nine candidate choices");
+    let (live, live_tuple) = candidates.last().cloned().expect("nine candidate choices");
     assert!(
-        first.event.is_some(),
-        "the first layer write emits a change event"
+        retained_tuple_key(&older_tuple) < retained_tuple_key(&live_tuple),
+        "the older choice's tuple files before the live one: {candidates:?}"
     );
-    let second = source
-        .set_customization_layer(CustomizationLayerValue::Mode(
-            ModeLayer::new("yuki").expect("yuki is a valid mode token"),
-        ))
-        .expect("the second layer write lands");
+    first
+        .replace_snapshot_read_settings_as_owner(&first_owner, older)
+        .expect("the first owner stores the older choice");
+    assert_eq!(
+        snapshot_bounds_tuple(&first),
+        older_tuple,
+        "the first vault holds the older choice"
+    );
+    let first_archive = export_whole(&first);
+
+    let (_middle_dir, middle) = open_later_vault();
+    let middle_owner = owner_proof(&middle);
+    middle
+        .replace_snapshot_read_settings_as_owner(&middle_owner, live)
+        .expect("the middle owner stores the live choice");
+    middle
+        .import_whole_vault_archive_from_as_owner(Cursor::new(&first_archive), &middle_owner)
+        .expect("the middle owner import succeeds");
+    assert_eq!(
+        middle
+            .snapshot_read_settings()
+            .expect("read the middle snapshot bounds"),
+        live,
+        "the middle vault keeps its own choice live"
+    );
+    let middle_archive = export_whole(&middle);
+    let middle_tuples = rows_for(&retained_rows(&middle_archive), "SNAPSHOT_READ_SETTINGS");
     assert!(
-        second.event.is_some(),
-        "the second layer write emits a change event"
+        middle_tuples.len() == 2
+            && middle_tuples.contains(&live_tuple)
+            && middle_tuples.contains(&older_tuple),
+        "the middle archive holds the live tuple and the older inert copy: {middle_tuples:?}"
     );
-    let source_events = source
-        .customization_events_after(0, 10)
-        .expect("read the source events");
-    assert_eq!(
-        source_events.len(),
-        2,
-        "the source holds two customization events"
-    );
-    assert_eq!(
-        source_events[0].sequence, 1,
-        "the first source event keeps sequence one"
-    );
-    assert_eq!(
-        source_events[1].sequence, 2,
-        "the second source event keeps sequence two"
-    );
-    let archive = export_whole(&source);
 
     let (_dest_dir, dest) = open_later_vault();
     let dest_owner = owner_proof(&dest);
-    dest.import_whole_vault_archive_from_as_owner(Cursor::new(&archive), &dest_owner)
+    let receipt = dest
+        .import_whole_vault_archive_from_as_owner(Cursor::new(&middle_archive), &dest_owner)
         .expect("the owner import succeeds");
-    let restored = dest
-        .customization_events_after(0, 10)
-        .expect("read the restored events");
     assert_eq!(
-        restored.len(),
-        2,
-        "the owner import restores two customization events"
+        dest.snapshot_read_settings()
+            .expect("read the destination snapshot bounds"),
+        live,
+        "the source's live choice installs, not the older inert copy {older:?}"
     );
+    let summary =
+        serde_json::to_value(&receipt.retained_side_rows).expect("the summary serializes");
     assert_eq!(
-        restored, source_events,
-        "the restored events match the source events unchanged"
+        table_count(&summary, "SNAPSHOT_READ_SETTINGS", "installed_rows"),
+        Some(1),
+        "the owner import installs one snapshot bounds row: {summary}"
     );
-
-    let third = dest
-        .set_customization_layer(CustomizationLayerValue::Type(
-            TypeLayer::new("owen-type").expect("owen-type is a valid typeface token"),
-        ))
-        .expect("the next layer write lands");
-    assert!(
-        third.event.is_some(),
-        "the next layer write emits a change event"
-    );
-    assert_eq!(
-        third.event.as_ref().map(|event| event.sequence),
-        Some(3),
-        "the next event follows the restored keys with sequence three"
-    );
-    let all = dest
-        .customization_events_after(0, 10)
-        .expect("read all destination events");
-    assert_eq!(
-        all.len(),
-        3,
-        "the destination holds three events after the next write"
-    );
-    assert_eq!(
-        &all[..2],
-        &source_events[..],
-        "the restored two stay unchanged after the next write"
-    );
-    assert_eq!(
-        all[2].sequence, 3,
-        "the third event follows the restored keys with sequence three"
+    let dest_tuples = rows_for(
+        &retained_rows(&export_whole(&dest)),
+        "SNAPSHOT_READ_SETTINGS",
     );
     assert!(
-        all[0] != all[1] && all[1] != all[2] && all[0] != all[2],
-        "the three events are distinct: {all:?}"
+        dest_tuples.len() == 2
+            && dest_tuples.contains(&live_tuple)
+            && dest_tuples.contains(&older_tuple),
+        "the destination archive holds the live tuple and keeps the older copy inert: {dest_tuples:?}"
     );
 }

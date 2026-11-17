@@ -59,7 +59,7 @@ impl ArchivedSideRowRefresh {
 /// The fixed dependency order of the owning landing groups.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum ArchivedSideGroup {
-    /// Independent settings and customization history.
+    /// Independent owner settings.
     Settings,
     /// Grants whose holders have already been restored.
     AgentDef,
@@ -67,8 +67,6 @@ pub(crate) enum ArchivedSideGroup {
     DreamerConsolidation,
     /// Projector wake policy.
     DreamerWake,
-    /// Description routing policy.
-    Llm,
     /// Dependent walk bounds.
     Ports,
     /// Passive housekeeping wake notes.
@@ -79,7 +77,7 @@ pub(crate) enum ArchivedSideGroup {
     ProjectHistory,
     /// Message-stream defaults for new sessions.
     Memory,
-    /// Dreamer action-mode policy.
+    /// Dreamer free-time receipts.
     DreamerRunner,
     /// Served-origin LFS path rules.
     OriginLfs,
@@ -119,18 +117,16 @@ pub(crate) enum ArchivedSideGroup {
     SendReceipts,
     /// Team receipt history.
     Team,
+    /// Customer hold protection and its supporting history.
+    LegalHold,
 }
 
 /// Selects only the tables with a landing group; every other envelope stays retained-only.
 pub(crate) fn archived_side_group(source_table: &str) -> Option<ArchivedSideGroup> {
     use ArchivedSideGroup as Group;
     match source_table {
-        name if name == side_table::BACKUP_POLICY.name
-            || name == side_table::BOARD_LAYOUT_SETTINGS.name
-            || name == side_table::CUSTOMIZATION_EVENT.name
-            || name == side_table::CUSTOMIZATION_SETTINGS.name
+        name if name == side_table::BOARD_LAYOUT_SETTINGS.name
             || name == side_table::NON_BASE_WORLD_CLAIM_FRACTION.name
-            || name == side_table::PLUGIN_SUGGESTIONS_ENABLED.name
             || name == side_table::ROOM_THREADS_ADMIN_DELETE.name
             || name == side_table::ROOM_THREADS_ADMIN_WALK_IN.name
             || name == side_table::SNAPSHOT_READ_SETTINGS.name
@@ -143,7 +139,6 @@ pub(crate) fn archived_side_group(source_table: &str) -> Option<ArchivedSideGrou
             Some(Group::DreamerConsolidation)
         }
         name if name == side_table::DREAMER_PROJECTOR_POLICY.name => Some(Group::DreamerWake),
-        name if name == side_table::LLM_DESCRIPTION_POLICY.name => Some(Group::Llm),
         name if name == side_table::PORTS_DEPENDENT_WALK_POLICY.name => Some(Group::Ports),
         name if name == side_table::HOUSEKEEPING_WAKE.name => Some(Group::HousekeepingWake),
         name if name == side_table::AUTHORITY_WITHDRAWN_GRANT.name => Some(Group::WithdrawnGrant),
@@ -153,11 +148,7 @@ pub(crate) fn archived_side_group(source_table: &str) -> Option<ArchivedSideGrou
         {
             Some(Group::Memory)
         }
-        name if name == side_table::DREAMER_ACTION_MODE_POLICY.name
-            || name == side_table::DREAMER_FREE_TIME_RECEIPT.name =>
-        {
-            Some(Group::DreamerRunner)
-        }
+        name if name == side_table::DREAMER_FREE_TIME_RECEIPT.name => Some(Group::DreamerRunner),
         name if name == side_table::ORIGIN_LFS_PATH_POLICY.name => Some(Group::OriginLfs),
         name if name == side_table::MERGE_QUEUE_REVIEW_POLICY.name => Some(Group::MergeQueue),
         name if name == side_table::LEARNING_SETTING.name => Some(Group::LearningSetting),
@@ -184,6 +175,14 @@ pub(crate) fn archived_side_group(source_table: &str) -> Option<ArchivedSideGrou
         name if name == side_table::SEND_RECEIPT_ATTEMPT_AUDIT.name => Some(Group::SendReceipts),
         name if name == side_table::SEND_RECEIPT_SUMMARY.name => Some(Group::SendReceipts),
         name if name == side_table::TEAM_RECEIPT.name => Some(Group::Team),
+        name if name == side_table::LEGAL_HOLD_ROW.name
+            || name == side_table::LEGAL_HOLD_TARGET.name
+            || name == side_table::LEGAL_HOLD_USE_LIMIT.name
+            || name == side_table::LEGAL_HOLD_ERASE_LINK.name
+            || name == side_table::LEGAL_HOLD_EVENT.name =>
+        {
+            Some(Group::LegalHold)
+        }
         _ => None,
     }
 }
@@ -217,9 +216,6 @@ pub(crate) fn land_archived_side_group_in_txn(
             crate::dreamer_wake::archive_restore::land_archived_dreamer_wake_rows_in_txn(
                 vault, txn, permit, rows,
             )
-        }
-        ArchivedSideGroup::Llm => {
-            crate::llm::archive_restore::land_archived_llm_rows_in_txn(vault, txn, permit, rows)
         }
         ArchivedSideGroup::Ports => {
             crate::ports::land_archived_ports_rows_in_txn(vault, txn, permit, rows)
@@ -307,6 +303,11 @@ pub(crate) fn land_archived_side_group_in_txn(
         }
         ArchivedSideGroup::Team => {
             crate::team::receipt::land_archived_team_rows_in_txn(vault, txn, permit, rows)
+        }
+        ArchivedSideGroup::LegalHold => {
+            crate::store::legal_hold::archive::land_archived_legal_hold_rows_in_txn(
+                vault, txn, permit, rows,
+            )
         }
     }?;
     refresh.record(group, &outcomes);

@@ -29,6 +29,19 @@
 //!   source team Solo receipt, made through the public team record door,
 //!   restore live; the team reports one installed row and the free-time
 //!   table reports one installed row per source receipt.
+//! * `a_consumed_check_in_receipt_restores_as_history`: a check-in the
+//!   holder approved and the act then spent writes the receipts opened,
+//!   answered and consumed; the owner's restore installs all three with none
+//!   held back (REVIEW-7799 round 1: main's `consumed` outcome).
+//! * `rotation_receipts_of_either_body_form_restore_as_history`: a rotation
+//!   receipt body with its cause (`provider_refresh`) and one written before
+//!   causes were recorded (no `cause` key) both install, with none held back
+//!   (REVIEW-7799 round 1: main's six-key receipt body).
+//! * `inquiry_receipts_of_both_kinds_restore_as_history`: INQUIRY_RECEIPT
+//!   holds the asking side's receipt of one send (kind `inquiry`) and the
+//!   Share receipt of one change of an inquiry edge's terms (kind `share`);
+//!   both install with none held back, and the receipt family reads both on
+//!   the destination (REVIEW-7799 round 2: the terms change's Share receipt).
 //!
 //! New report counts are read through `serde_json::to_value` of the SIDE-1
 //! summary, so this file compiles on 7b24852131b3; an absent field fails its
@@ -36,6 +49,8 @@
 //! `cargo test --locked -p oneiron --all-features --test
 //! archive_import_owner_installs_side_receipts`.
 
+#[path = "check_in/fixture.rs"]
+mod check_in_fixture;
 #[path = "archive_import_retained_side_rows.rs"]
 mod retained_side_rows;
 
@@ -1076,4 +1091,221 @@ fn restored_free_time_and_team_receipts_install_as_history()
         dest_sheet.receipts
     );
     Ok(())
+}
+
+#[test]
+fn a_consumed_check_in_receipt_restores_as_history() {
+    use check_in_fixture::{DIGEST, Fixture, people, request};
+    use oneiron::check_in::{ActClass, EligibleBasis, HolderAnswer, Rung};
+    use oneiron::test_doors::check_in::{FixedChain, answer, consume, open};
+
+    let fx = Fixture::open();
+    let (holder, holder_proof) = fx.person();
+    let chain = FixedChain::default().with(Rung::Owner, people(&[holder]));
+    let id = open(&fx.vault, request(EntityId::now(), ActClass::Spawn), &chain)
+        .expect("the check-in opens")
+        .id;
+    answer(
+        &fx.vault,
+        &holder_proof,
+        &id,
+        &DIGEST,
+        HolderAnswer::Approve,
+    )
+    .expect("the holder approves");
+    assert_eq!(
+        consume(&fx.vault, &id, &DIGEST).expect("the approved act runs"),
+        EligibleBasis::Approved
+    );
+    let source_outcomes = fx.outcomes(&id);
+    assert_eq!(
+        source_outcomes.last().map(String::as_str),
+        Some("consumed"),
+        "the spent check-in's last receipt is consumed: {source_outcomes:?}"
+    );
+    let archive = export_whole(&fx.vault);
+
+    let (_dest_dir, dest) = open_later_vault();
+    let dest_owner = owner_proof(&dest);
+    let receipt = dest
+        .import_whole_vault_archive_from_as_owner(Cursor::new(&archive), &dest_owner)
+        .expect("the owner import succeeds");
+    let summary =
+        serde_json::to_value(&receipt.retained_side_rows).expect("the summary serializes");
+    assert_eq!(
+        held_back_for_table(&summary, "CHECK_IN_RECEIPT"),
+        None,
+        "the owner import holds back no check-in receipt: {summary}"
+    );
+    assert_eq!(
+        table_count(&summary, "CHECK_IN_RECEIPT", "installed_rows"),
+        Some(source_outcomes.len() as u64),
+        "the owner import installs every check-in receipt: {summary}"
+    );
+    let mut query = ReceiptQuery::new(100);
+    query.kinds = [ReceiptKind::CheckIn].into();
+    query.job_ref = Some(id.to_hex());
+    let mut restored = dest.receipts(query).expect("read the restored receipts");
+    restored.sort_by_key(|receipt| receipt.receipt_id.clone());
+    assert_eq!(
+        restored
+            .into_iter()
+            .map(|receipt| receipt.outcome)
+            .collect::<Vec<_>>(),
+        source_outcomes,
+        "the destination holds the source check-in history, consumed included"
+    );
+}
+
+/// A rotation receipt body as a writer stores it: the canonical keys in
+/// order, with `cause` last when the writer recorded one.
+fn rotation_receipt_body(rotated_at: u64, cause: Option<&str>) -> Vec<u8> {
+    let mut entries = vec![
+        (
+            rmpv::Value::from("secret_ref"),
+            rmpv::Value::from("mail-relay"),
+        ),
+        (
+            rmpv::Value::from("from_generation"),
+            rmpv::Value::from(1_u64),
+        ),
+        (rmpv::Value::from("to_generation"), rmpv::Value::from(2_u64)),
+        (
+            rmpv::Value::from("rotated_at"),
+            rmpv::Value::from(rotated_at),
+        ),
+        (rmpv::Value::from("kind"), rmpv::Value::from("rotated")),
+    ];
+    if let Some(cause) = cause {
+        entries.push((rmpv::Value::from("cause"), rmpv::Value::from(cause)));
+    }
+    let mut body = Vec::new();
+    rmpv::encode::write_value(&mut body, &rmpv::Value::Map(entries)).expect("encode the body");
+    body
+}
+
+#[test]
+fn rotation_receipts_of_either_body_form_restore_as_history() {
+    use oneiron::test_doors::archive_side_catalogue::put_secret_rotation_receipt_body;
+
+    let (_source_dir, source) = open_source_vault();
+    for (rotated_at, cause) in [(100, None), (200, Some("provider_refresh"))] {
+        put_secret_rotation_receipt_body(
+            &source,
+            EntityId::now(),
+            &rotation_receipt_body(rotated_at, cause),
+        )
+        .expect("the source stores the rotation receipt");
+    }
+    let archive = export_whole(&source);
+
+    let (_dest_dir, dest) = open_later_vault();
+    let dest_owner = owner_proof(&dest);
+    let receipt = dest
+        .import_whole_vault_archive_from_as_owner(Cursor::new(&archive), &dest_owner)
+        .expect("the owner import succeeds");
+    let summary =
+        serde_json::to_value(&receipt.retained_side_rows).expect("the summary serializes");
+    assert_eq!(
+        held_back_for_table(&summary, "SECRET_ROTATION_RECEIPT"),
+        None,
+        "the owner import holds back neither rotation receipt: {summary}"
+    );
+    assert_eq!(
+        table_count(&summary, "SECRET_ROTATION_RECEIPT", "installed_rows"),
+        Some(2),
+        "the owner import installs both rotation receipts: {summary}"
+    );
+}
+
+#[test]
+fn inquiry_receipts_of_both_kinds_restore_as_history() {
+    use oneiron::inquiry::{
+        Inquiry, InquiryAsker, InquiryCheckInMode, InquiryEdge, InquiryKeep, InquiryKeepModes,
+        InquiryOutcome, InquiryTask, InquiryTerms, InquiryTermsChangeOutcome,
+    };
+    use oneiron::test_doors::inquiry::{record_send, record_terms_change};
+
+    let (_source_dir, source) = open_source_vault();
+    let member = fixed_id(0x71);
+    let asked = Inquiry {
+        id: fixed_id(0x72),
+        from: InquiryAsker {
+            vault: "5c".repeat(32),
+            actor: fixed_id(0x73),
+            role: "agent".to_owned(),
+        },
+        task: InquiryTask {
+            id: fixed_id(0x74),
+            purpose: "Find a time for the review".to_owned(),
+        },
+        question: "Is the member in the office on Thursday?".to_owned(),
+        keep: InquiryKeep::Task,
+        expires_at: PASS_NOW,
+    };
+    let sent = record_send(&source, &asked, &member, InquiryOutcome::Answered)
+        .expect("the source stores the send's receipt");
+    let previous = InquiryTerms::member_defaults(fixed_id(0x75));
+    let edge = InquiryEdge {
+        grant: fixed_id(0x76),
+        company_vault_id: [0x5c; 32],
+        guest_actor: fixed_id(0x77),
+        authority_scope: Scope::top(),
+        terms: InquiryTerms {
+            check_in_modes: InquiryKeepModes::uniform(InquiryCheckInMode::NeverAnswer),
+            ..previous
+        },
+        expires_at: None,
+    };
+    let changed = record_terms_change(
+        &source,
+        &edge,
+        &previous,
+        &member,
+        InquiryTermsChangeOutcome::Narrowed,
+    )
+    .expect("the source stores the terms change's receipt");
+    assert_eq!(
+        changed.receipt_kind,
+        ReceiptKind::Share,
+        "a terms change writes a Share receipt"
+    );
+    let archive = export_whole(&source);
+
+    let (_dest_dir, dest) = open_later_vault();
+    let dest_owner = owner_proof(&dest);
+    let receipt = dest
+        .import_whole_vault_archive_from_as_owner(Cursor::new(&archive), &dest_owner)
+        .expect("the owner import succeeds");
+    let summary =
+        serde_json::to_value(&receipt.retained_side_rows).expect("the summary serializes");
+    let sends = dest
+        .receipts(ReceiptQuery::new(10).with_kind(ReceiptKind::Inquiry))
+        .expect("read the restored send receipts");
+    assert_eq!(
+        sends,
+        vec![sent],
+        "the owner import installs the send's receipt live: {summary}"
+    );
+    assert_eq!(
+        held_back_for_table(&summary, "INQUIRY_RECEIPT"),
+        None,
+        "the owner import holds back neither inquiry receipt: {summary}"
+    );
+    assert_eq!(
+        table_count(&summary, "INQUIRY_RECEIPT", "installed_rows"),
+        Some(2),
+        "the owner import installs the send's receipt and the terms change's: {summary}"
+    );
+    let changes: Vec<_> = dest
+        .receipts(ReceiptQuery::new(10).with_kind(ReceiptKind::Share))
+        .expect("read the restored Share receipts")
+        .into_iter()
+        .filter(|restored| restored.receipt_id == changed.receipt_id)
+        .collect();
+    assert_eq!(
+        changes,
+        vec![changed],
+        "the receipt family reads the terms change on the destination"
+    );
 }
