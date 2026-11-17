@@ -230,11 +230,13 @@ impl Vault {
 
     /// The pusher's own live Owner grant under this shared vault's scope,
     /// read row by row so one unreadable row refuses no one; on a personal
-    /// vault, the embedded owner.
+    /// vault, the embedded owner. Only a Grant the fold stands behind counts
+    /// (pass 28 R3), never a row alone.
     fn recorded_owner_in_txn(&self, txn: &heed::RoTxn<'_>, principal: EntityId) -> Result<bool> {
         let Some(creation) = self.shared_vault_creation_in_txn(txn)? else {
             return Ok(principal == crate::vault::embedded_owner_actor_id()?);
         };
+        let fold = self.authority_fold_readonly_in_txn(txn)?;
         let now = self.instant_in_txn(txn)?.secs();
         for id in crate::ports::EntityStoreRead::port_entity_ids_by_type(
             &self.store,
@@ -255,7 +257,8 @@ impl Vault {
                     && grant.role == crate::federation::FederationGrantRole::Owner
                     && grant.scope == FederationGrantScope::vault(creation.vault_id)
                     && grant.confers_at(now)
-            }) {
+            }) && crate::federation::shared_grant_row_in_fold(&fold, id, &body, now).is_some()
+            {
                 return Ok(true);
             }
         }

@@ -79,39 +79,16 @@ impl Vault {
             return Err(denied());
         }
         let member = principal.entity_ref();
-        for entry in self
-            .store
-            .port_entity_ids_by_type(txn, ENTITY_TYPE_FEDERATION_GRANT, None)?
-        {
-            let id = entry?;
-            let raw = self
-                .store
-                .port_entity_record(txn, &id)?
-                .ok_or_else(denied)?
-                .encode();
-            if EntityMetadataHeader::parse(&raw)
-                .is_none_or(|header| header.entity_type != ENTITY_TYPE_FEDERATION_GRANT)
-            {
-                return Err(denied());
-            }
-            // A deleted grant is no membership: its shell is skipped here, and a
-            // stored body counts only while its row is live, checked last.
-            if raw.len() == ENTITY_METADATA_HEADER_LEN
-                && !crate::vault::live_entity_row_in_txn(&self.store, txn, &id)?.is_live()
-            {
-                continue;
-            }
-            let grant = decode_federation_grant_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
-            if grant.scope != FederationGrantScope::vault(vault_id)
-                || grant.member_ref != member
-                || grant
-                    .expires_at
-                    .is_some_and(|expires| self.store.clock.now_recorded_at() >= expires)
+        // Only a Grant the fold stands behind confers here (pass 28 R3): a row no
+        // counted act gives, or one put back after its end, is no membership. Its
+        // scope, liveness and expiry are read there.
+        for row in self.shared_vault_grants_in_txn(txn, vault_id)? {
+            let (id, grant) = (row.id(), row.grant());
+            if grant.member_ref != member
                 || matches!(
                     federation_grant_activation(&fold, &id),
                     FederationGrantActivation::Inactive(_)
                 )
-                || !crate::vault::live_entity_row_in_txn(&self.store, txn, &id)?.is_live()
             {
                 continue;
             }
@@ -314,8 +291,42 @@ impl Vault {
         let guest_vault = self
             .shared_vault_creation_in_txn(txn)?
             .map(|creation| creation.vault_id);
+        // A member's and a delegate's standing: only a Grant the fold stands behind
+        // (pass 28 R3), never a row alone.
         let mut delegate = None;
-        let mut guest = None;
+        for row in self.shared_vault_grants_in_txn(txn, vault_id)? {
+            let (id, grant) = (row.id(), row.grant());
+            if grant.member_ref != *person || !super::pact_admits_grant(&fold, &id, grant) {
+                continue;
+            }
+            match grant.role {
+                FederationGrantRole::Owner
+                | FederationGrantRole::Deputy
+                | FederationGrantRole::Admin
+                | FederationGrantRole::Steward
+                | FederationGrantRole::Member
+                | FederationGrantRole::Viewer => {
+                    return Ok(Some(MembershipStanding::Member {
+                        grant: id,
+                        role: grant.role,
+                    }));
+                }
+                // An owner-agent grant is the owner's verb grant to his
+                // agent, never roster standing.
+                FederationGrantRole::Delegate if !grant.is_git_push() && !grant.owner_agent => {
+                    delegate.get_or_insert(MembershipStanding::Member {
+                        grant: id,
+                        role: grant.role,
+                    });
+                }
+                _ => {}
+            }
+        }
+        if delegate.is_some() || guest_vault != Some(vault_id) {
+            return Ok(delegate);
+        }
+        // A guest's Grant is still read from its row until pass 28 R3's guests and
+        // slips step.
         for entry in self
             .store
             .port_entity_ids_by_type(txn, ENTITY_TYPE_FEDERATION_GRANT, None)?
@@ -345,39 +356,11 @@ impl Vault {
             {
                 continue;
             }
-            match grant.role {
-                FederationGrantRole::Owner
-                | FederationGrantRole::Deputy
-                | FederationGrantRole::Admin
-                | FederationGrantRole::Steward
-                | FederationGrantRole::Member
-                | FederationGrantRole::Viewer
-                    if grant.scope == FederationGrantScope::vault(vault_id) =>
-                {
-                    return Ok(Some(MembershipStanding::Member {
-                        grant: id,
-                        role: grant.role,
-                    }));
-                }
-                // An owner-agent grant is the owner's verb grant to his
-                // agent, never roster standing.
-                FederationGrantRole::Delegate
-                    if grant.scope == FederationGrantScope::vault(vault_id)
-                        && !grant.is_git_push()
-                        && !grant.owner_agent =>
-                {
-                    delegate.get_or_insert(MembershipStanding::Member {
-                        grant: id,
-                        role: grant.role,
-                    });
-                }
-                FederationGrantRole::Guest if guest_vault == Some(vault_id) => {
-                    guest.get_or_insert(MembershipStanding::ScopedGuest { grant: id });
-                }
-                _ => {}
+            if grant.role == FederationGrantRole::Guest {
+                return Ok(Some(MembershipStanding::ScopedGuest { grant: id }));
             }
         }
-        Ok(delegate.or(guest))
+        Ok(None)
     }
 
     /// The standing ONE authenticated grant gives `principal` here, for
@@ -458,6 +441,19 @@ pub(crate) fn authenticated_grant_membership_for_store_in_txn(
             .expires_at
             .is_some_and(|expires| store.clock.now_recorded_at() >= expires)
         || !super::pact_admits_grant(&fold, &grant_id, &grant)
+    {
+        return Ok(None);
+    }
+    // A Grant over the shared vault confers only while the fold stands behind it
+    // (pass 28 R3), never as a row alone.
+    if matches!(grant.scope, FederationGrantScope::Vault { .. })
+        && super::shared_grant_row_in_fold(
+            &fold,
+            grant_id,
+            &raw[ENTITY_METADATA_HEADER_LEN..],
+            store.clock.now_recorded_at(),
+        )
+        .is_none()
     {
         return Ok(None);
     }

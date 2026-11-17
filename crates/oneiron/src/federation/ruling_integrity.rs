@@ -11,6 +11,7 @@ use heed::RwTxn;
 
 use super::rulings::{AdminRulingReceipt, RULING_PREDICATE, ruling_anchor_id};
 use super::{FederationGrantScope, decode_federation_grant_body};
+use crate::authority::GrantFamily;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
@@ -106,7 +107,10 @@ pub(super) fn admitted_ruling(
     {
         return Ok(Some(receipt));
     }
-    Ok(grant_admits_in_txn(store, txn, &receipt, grant_ref)?.then_some(receipt))
+    Ok(
+        grant_admits_in_txn(store, txn, &receipt, grant_ref, RulingGrantRead::StandsNow)?
+            .then_some(receipt),
+    )
 }
 
 /// The ruling `body` stores under `id`, with the grant it names, when it is
@@ -165,14 +169,28 @@ fn issued_ruling(
     Ok(Some((receipt, grant_ref)))
 }
 
+/// What the authority fold must say of a ruling's grant for its row to admit the ruling
+/// (pass 28 R3): a row alone admits none.
+#[derive(Debug, Clone, Copy)]
+enum RulingGrantRead {
+    /// A ruling with no witness: its grant stands now, at the vault clock.
+    StandsNow,
+    /// A witness taken while a writer changes the grant's row: a counted act of a member's
+    /// family gave the grant, whatever its line holds since. A role change gives the new
+    /// terms before it rewrites the row, and a peer can fold an end before the row's
+    /// delete arrives, so an honest admission is witnessed in either order.
+    Given,
+}
+
 /// Whether the grant row stored as `grant_ref` now admits `receipt`'s
 /// ruling: a vault Admin grant of its holder that conferred when it was
-/// learned.
+/// learned, which the fold reads as `read` says.
 fn grant_admits_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     receipt: &AdminRulingReceipt,
     grant_ref: EntityId,
+    read: RulingGrantRead,
 ) -> Result<bool> {
     let row = &receipt.ruling;
     let Ok(holder) = EntityId::from_hex(&row.holder) else {
@@ -189,11 +207,35 @@ fn grant_admits_in_txn(
         return Ok(false);
     }
     let grant = decode_federation_grant_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
-    Ok(!grant.role.is_guest()
-        && grant.scope == FederationGrantScope::vault(row.vault_id)
-        && grant.member_ref == holder
-        && grant.is_admin()
-        && grant.confers_at(row.learned_at))
+    if grant.role.is_guest()
+        || grant.scope != FederationGrantScope::vault(row.vault_id)
+        || grant.member_ref != holder
+        || !grant.is_admin()
+        || !grant.confers_at(row.learned_at)
+    {
+        return Ok(false);
+    }
+    let fold = crate::authority::authority_view_readonly_for_store_in_txn(
+        store,
+        store.privacy_posture,
+        txn,
+    )?;
+    Ok(match read {
+        RulingGrantRead::StandsNow => super::shared_grant_row_in_fold(
+            &fold,
+            grant_ref,
+            &raw[ENTITY_METADATA_HEADER_LEN..],
+            store.clock.now_recorded_at(),
+        )
+        .is_some(),
+        RulingGrantRead::Given => fold.grant_line(grant_ref).is_some_and(|line| {
+            line.giving.is_some()
+                && matches!(
+                    line.family,
+                    Some(GrantFamily::SharedMember | GrantFamily::HouseLink)
+                )
+        }),
+    })
 }
 
 /// Before the FEDERATION_GRANT row stored as `grant`, `row`, is rewritten or
@@ -240,7 +282,9 @@ pub(crate) fn witness_grant_rulings_in_txn(
         let Some((receipt, grant_ref)) = issued_ruling(&id, &body, header.learned_at)? else {
             continue;
         };
-        if grant_ref == *grant && grant_admits_in_txn(store, wtxn, &receipt, grant_ref)? {
+        if grant_ref == *grant
+            && grant_admits_in_txn(store, wtxn, &receipt, grant_ref, RulingGrantRead::Given)?
+        {
             admitted.push(id);
         }
     }
