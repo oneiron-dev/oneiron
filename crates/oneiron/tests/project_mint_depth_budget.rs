@@ -45,6 +45,7 @@ fn speak(
             occurred_at: at,
             thread_audience: None,
             assertions: Default::default(),
+            project: None,
         })
         .expect("room speech");
 }
