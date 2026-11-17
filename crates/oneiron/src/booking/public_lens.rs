@@ -377,6 +377,7 @@ mod tests {
                 event_types: vec![EventTypeCard {
                     key: request.event_type,
                     title: "Introduction".to_owned(),
+                    deposit: None,
                     duration_min: 10,
                     description: "Fixture description".to_owned(),
                 }],
