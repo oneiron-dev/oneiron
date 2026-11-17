@@ -3,8 +3,9 @@
 //!
 //! The owner's agent Grant keeps its own act (`AgentGrantAct`, FIX 5628), whose bytes this
 //! module never touches. This act carries the rest: a shared vault's member roles, an admin's
-//! delegate, a house link, an inquiry edge's re-scope, and a lapse that ends an agent Grant no
-//! person took back. The install that served the decider (a live machine of the vault, in any
+//! delegate, a house link, an inquiry edge's re-scope, and a rule's end: a lapse that ends an
+//! agent Grant no person took back, or a direct delete or erase of any Grant's row (Engine
+//! RULING GRANT-ROW-DELETE-NO-END = A, 16 Nov 05:49: every taking back is a counted end). The install that served the decider (a live machine of the vault, in any
 //! role) signs it with its install key, in the writer's own transaction.
 //!
 //! Two things differ from `AgentGrantActRecord`. The decider may be any PERSON whose own
@@ -19,8 +20,8 @@
 //!
 //! A giving names a fresh Grant or re-gives one in place (a role change rewrites its row at
 //! the same id): the newest giving by ancestry is the Grant's terms. An end is forever. An end
-//! no person decided (a lapse) carries no owner act: its decider is the rule, and only an end
-//! may be one.
+//! no person decided (a lapse, or a row's direct delete) carries no owner act: its decider is
+//! the rule, and only an end may be one.
 
 use rmpv::Value;
 
@@ -66,7 +67,8 @@ pub enum GrantFamily {
     /// A Connect inquiry edge's terms, rewritten in place.
     InquiryEdge,
     /// The owner's agent Grant: its giving is `AgentGrantAct`'s mint and his own end that
-    /// act's revoke, so a grant act of this family is a lapse's end alone.
+    /// act's revoke, so a grant act of this family is a rule's end alone (a lapse, or a direct
+    /// delete of its row).
     OwnerAgent,
 }
 
@@ -104,7 +106,8 @@ pub enum GrantDecider {
     /// `grant_end`, as the change is, and its target the row.
     Person(OwnerAct),
     /// Nobody decided: a rule ended the Grant (an OAuth sign-in that lapsed before its client
-    /// held a token, FIX 22142). Only an end has this decider.
+    /// held a token, FIX 22142; a direct delete or erase of its row; an owed end whose person
+    /// was erased). Only an end has this decider.
     Rule,
 }
 
@@ -183,9 +186,10 @@ impl GrantActRecord {
                     return Err(invalid_authority());
                 }
             }
-            // A rule only ends, and only an agent Grant whose sign-in lapsed.
+            // A rule only ends, a Grant of any family: every taking back is a counted end,
+            // whether a person decided it or not (GRANT-ROW-DELETE-NO-END = A).
             GrantDecider::Rule => {
-                if self.change != GrantActChange::End || self.family != GrantFamily::OwnerAgent {
+                if self.change != GrantActChange::End {
                     return Err(invalid_authority());
                 }
             }

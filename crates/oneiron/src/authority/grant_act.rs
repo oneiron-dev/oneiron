@@ -28,10 +28,6 @@ const NOT_COUNTED: &str = "the authority fold did not count the grant act; nothi
 
 /// Who decides a grant act at its writer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(
-    not(oneiron_test_support),
-    allow(dead_code, reason = "pass 28 R2c's lapse end decides by rule")
-)]
 pub(crate) enum GrantActBy {
     /// `person`, whom the writer's door authenticated and whose standing it judged, decided at
     /// `surface` (audit only).

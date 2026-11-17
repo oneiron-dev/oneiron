@@ -120,6 +120,9 @@ impl Vault {
         // So is the record of a membership change no host issuer signed
         // (FIX 12335).
         self.carry_owed_membership_executions();
+        // Then a Grant end no writer could sign (pass 28 R2c), after the
+        // membership records end their own Grants.
+        self.carry_owed_grant_ends_at_pickup();
         // An import mark this install could not sign when the owner
         // imported is signed once it can (FIX 12291), whether or not any
         // work names this install now.
