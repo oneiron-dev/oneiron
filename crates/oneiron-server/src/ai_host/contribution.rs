@@ -185,6 +185,7 @@ impl ContributionForkModel for ExactFork<'_> {
     fn generate(
         &self,
         request: &LlmRequest,
+        source_rows: Option<&[EntityId]>,
         rung: &ReplayRung,
         clock: &RetrievalDeadline,
     ) -> oneiron::Result<Option<LlmResponse>> {
@@ -227,7 +228,11 @@ impl ContributionForkModel for ExactFork<'_> {
             BudgetExhaustionPolicy::Suspend,
             self.vault.coach_authority()?,
         )?;
-        let run = runtime.undeclared_run(run_id, guard);
+        // The fork's call carries the rows its request was read from (FIX
+        // 7104), or `None`, unknown.
+        let run = runtime
+            .undeclared_run(run_id, guard)
+            .sourced(source_rows.map(<[EntityId]>::to_vec));
         let may_send = || !clock.decision_time_left().is_zero();
         let response = self
             .handle
