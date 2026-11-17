@@ -27,8 +27,15 @@
 //! co-owner, and read and changed the co-owner's personal mail and calendar
 //! sources as the co-owner. It reads the same census now.
 //!
-//! Every vault here is unrooted (no host root), as in
-//! `tests/admin_is_not_steward.rs`, whose shared-vault steps these follow.
+//! The two personal-vault controls run on an unrooted vault (no host root).
+//! The shared cases cannot: sharing and every role change give Grants, and
+//! only an install that carries their acts can share (pass 28 R2b, Engine
+//! RULING GRANT-ACT-FAILURE-POLICY = A, 16 Nov 03:42). So they run on a vault
+//! that carries ([`Fixture::carrying`], Engine ANSWER
+//! GRANT-ACTS-UNROOTED-CENSUS-TESTS = A, 17 Nov 14:47), with every assertion
+//! as before, and one case pins that an unrooted install's share refuses and
+//! writes nothing. The shared-vault steps follow
+//! `tests/admin_is_not_steward.rs`.
 //!
 //! Run: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --no-fail-fast --test unrooted_shared_owner_census`.
@@ -101,7 +108,8 @@ fn ungoverned() -> ResolvedWorldAuthority {
     }
 }
 
-/// An unrooted vault with its embedded owner, an agent and one WORLD.
+/// A vault with its embedded owner, an agent and one WORLD: unrooted
+/// ([`Fixture::new`]) or carrying grant acts ([`Fixture::carrying`]).
 struct Fixture {
     vault: Vault,
     owner: EntityId,
@@ -113,10 +121,26 @@ struct Fixture {
 }
 
 impl Fixture {
+    /// The unrooted vault (no host root, no act carrier).
     fn new() -> Self {
+        Self::open(false)
+    }
+
+    /// The vault rooted under the test host, carrying grant acts (keystore,
+    /// the engine's MACHINE writers, this install's live machine profile and
+    /// the owner bound under the root), so it can share.
+    fn carrying() -> Self {
+        Self::open(true)
+    }
+
+    fn open(carrying: bool) -> Self {
         let directory = tempfile::tempdir().expect("vault dir");
         let vault = Vault::open(directory.path(), VaultConfig::default()).expect("open vault");
-        let owner = vault.ensure_embedded_owner_actor().expect("owner");
+        let owner = if carrying {
+            oneiron::test_support::provision_act_carrier(&vault).1
+        } else {
+            vault.ensure_embedded_owner_actor().expect("owner")
+        };
         let agent = vault
             .ensure_agent_principal("unrooted-census-agent")
             .expect("agent");
@@ -351,7 +375,7 @@ impl Fixture {
 /// reads the census, so the approval is refused and the grant still waits.
 #[test]
 fn an_owner_the_co_owner_made_an_admin_approves_no_grant() {
-    let f = Fixture::new();
+    let f = Fixture::carrying();
     let co_owner = f.share_with_co_owner();
     let claim = f.propose_a_grant(co_owner);
     f.co_owner_demotes_the_embedded_owner(co_owner);
@@ -385,7 +409,7 @@ fn an_owner_the_co_owner_made_an_admin_approves_no_grant() {
 /// refused, as every owner verb is.
 #[test]
 fn an_owner_the_co_owner_made_an_admin_retracts_no_one_elses_claim() {
-    let f = Fixture::new();
+    let f = Fixture::carrying();
     let co_owner = f.share_with_co_owner();
     let input = f.input("profile.note", f.agent, json!("a note"), "user_stated");
     let claim = input.id.clone().unwrap();
@@ -411,7 +435,7 @@ fn an_owner_the_co_owner_made_an_admin_retracts_no_one_elses_claim() {
 /// Owner approves the grant in the inbox, and it governs the agent.
 #[test]
 fn an_owner_still_an_owner_approves_the_grant() {
-    let f = Fixture::new();
+    let f = Fixture::carrying();
     let co_owner = f.share_with_co_owner();
     let claim = f.propose_a_grant(co_owner);
 
@@ -456,7 +480,7 @@ fn a_personal_vaults_owner_passes_as_before() {
 /// `is_vault_owner` (about 45 sites) and its read key are a member's.
 #[test]
 fn an_owner_the_co_owner_made_an_admin_holds_no_owner_key() {
-    let f = Fixture::new();
+    let f = Fixture::carrying();
     let co_owner = f.share_with_co_owner();
     f.co_owner_demotes_the_embedded_owner(co_owner);
 
@@ -478,7 +502,7 @@ fn an_owner_the_co_owner_made_an_admin_holds_no_owner_key() {
 /// Admin, as a key kept past its owner's revocation does.
 #[test]
 fn an_owner_key_kept_past_the_demotion_reads_nothing() {
-    let f = Fixture::new();
+    let f = Fixture::carrying();
     let co_owner = f.share_with_co_owner();
     let key = f
         .vault
@@ -504,7 +528,7 @@ fn an_owner_key_kept_past_the_demotion_reads_nothing() {
 /// former owner is a plain member, so it delegates no role there.
 #[test]
 fn an_owner_the_co_owner_made_an_admin_sets_no_room_role() {
-    let f = Fixture::new();
+    let f = Fixture::carrying();
     let co_owner = f.share_with_co_owner();
     let (room, member) = f.room_created_by(co_owner);
     f.co_owner_demotes_the_embedded_owner(co_owner);
@@ -523,7 +547,7 @@ fn an_owner_the_co_owner_made_an_admin_sets_no_room_role() {
 /// term; the co-owner still classes VaultOwner.
 #[test]
 fn an_owner_the_co_owner_made_an_admin_is_no_owner_party() {
-    let f = Fixture::new();
+    let f = Fixture::carrying();
     let co_owner = f.share_with_co_owner();
     f.co_owner_demotes_the_embedded_owner(co_owner);
 
@@ -544,7 +568,7 @@ fn an_owner_the_co_owner_made_an_admin_is_no_owner_party() {
 /// Owner arm in the co-owner's room, and the VaultOwner party.
 #[test]
 fn an_owner_still_an_owner_keeps_its_shortcuts() {
-    let f = Fixture::new();
+    let f = Fixture::carrying();
     let co_owner = f.share_with_co_owner();
     let (room, member) = f.room_created_by(co_owner);
 
@@ -597,6 +621,54 @@ fn a_personal_vaults_owner_keeps_its_shortcuts() {
 /// judgment itself (`test_doors::source_audience::actor_reads_source`): the
 /// former owner's own read lane, an Admin's with no credential, reads no
 /// row before that judgment runs (Muse delta review of f02b608e, P1).
+/// An unrooted install cannot share: the founding gives the owners' Grants,
+/// and an install that carries no act refuses the giving and writes nothing
+/// (Engine RULING GRANT-ACT-FAILURE-POLICY = A).
+#[test]
+fn an_unrooted_install_shares_nothing() {
+    let f = Fixture::new();
+    let co_owner = EntityId::now();
+    person(&f.vault, co_owner);
+    let refused = f
+        .vault
+        .initialize_shared_vault(
+            &proof(&f.vault, f.owner),
+            SHARED,
+            None,
+            &[
+                InitialSharedMember {
+                    member_ref: f.owner,
+                    role: Some(Role::Owner),
+                },
+                InitialSharedMember {
+                    member_ref: co_owner,
+                    role: Some(Role::Owner),
+                },
+            ],
+            1,
+        )
+        .expect_err("an unrooted install cannot carry the founding's grant acts");
+    assert!(
+        refused.to_string().contains(
+            "this install has no live machine profile in the vault's roster to carry the grant \
+             act; nothing was written"
+        ),
+        "the giving names the missing carrier: {refused}"
+    );
+    assert!(
+        f.vault
+            .shared_vault_creation()
+            .expect("the creation read")
+            .is_none(),
+        "no shared-vault creation was written"
+    );
+    assert_eq!(
+        role_of(&f.vault, f.owner),
+        None,
+        "no Owner grant row was written"
+    );
+}
+
 #[cfg(oneiron_test_support)]
 mod source_audience {
     use std::collections::BTreeSet;
@@ -607,7 +679,7 @@ mod source_audience {
 
     #[test]
     fn an_owner_the_co_owner_made_an_admin_reads_no_co_owners_source() {
-        let f = Fixture::new();
+        let f = Fixture::carrying();
         let co_owner = f.share_with_co_owner();
         let personal =
             land_source_bound_artifact(&f.vault, BTreeSet::from([co_owner]), false, co_owner, 1)
