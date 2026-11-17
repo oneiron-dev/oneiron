@@ -1,5 +1,6 @@
-//! This machine's residence choice: sync every window it may read, or sync
-//! what it opened, and the worlds the owner picked for it to follow. Both
+//! This machine's residence choice: sync every window it may read, sync
+//! what it opened, or sync what it opened plus what its home predicts it
+//! will open; and the worlds the owner picked for it to follow. Both
 //! are node-local, never synced and never an authority entry: they decide
 //! which copies the machine wants, not what its actor may read or where a
 //! world's readable copies may live.
@@ -24,6 +25,10 @@ const WORLD_PICK_KEY: &str = "rs:worlds";
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DeviceSyncPreference {
     pub mode: SyncResidenceMode,
+    /// Whether the machine runs at the predicted level (ARCH-0023b
+    /// #predicted-residence): what it opened plus what its home predicts.
+    /// Only beside `mode` Opened, which the transport runs at that level.
+    pub predicted: bool,
 }
 
 /// The persisted choice, or `None` when the owner never chose on this machine.
@@ -32,34 +37,50 @@ pub fn load_device_sync_preference(vault: &Vault) -> Result<Option<DeviceSyncPre
     Ok(RESIDENCE_MODE
         .read_in_txn(vault, &txn, &[], None)?
         .value
-        .map(|mode| DeviceSyncPreference { mode: mode.into() }))
+        .map(|name| {
+            let (mode, predicted) = match name {
+                ResidenceModeName::Opened => (SyncResidenceMode::Opened, false),
+                ResidenceModeName::Predicted => (SyncResidenceMode::Opened, true),
+                ResidenceModeName::All => (SyncResidenceMode::All, false),
+            };
+            DeviceSyncPreference { mode, predicted }
+        }))
 }
 
-/// Record the owner's choice for this machine. The live connection applies
-/// it by reconnecting; see `SyncConnection::set_residence_mode`.
+/// Record the owner's choice of `mode` for this machine, off the predicted
+/// level. The live connection applies it by reconnecting; see
+/// `SyncConnection::set_residence_mode`.
 pub fn set_device_sync_preference(
     vault: &Vault,
     mode: SyncResidenceMode,
 ) -> Result<DeviceSyncPreference> {
-    vault.with_write_txn_grouped(|txn| set_device_sync_preference_in_txn(vault, txn, mode))
+    vault.with_write_txn_grouped(|txn| set_device_sync_preference_in_txn(vault, txn, mode, false))
 }
 
-/// [`set_device_sync_preference`] in the caller's transaction, for a door
-/// that records more in the same commit. The engine writes the row: every
-/// caller is a path that switches the live connection with it, and the key
-/// refuses any other change. The key runs nothing after the commit.
+/// The owner's choice in the caller's transaction, for a door that records
+/// more in the same commit. `predicted` puts an opened machine at the
+/// predicted level; under All it is ignored. The engine writes the row:
+/// every caller is a path that switches the live connection with it, and
+/// the key refuses any other change. The key runs nothing after the commit.
 pub(crate) fn set_device_sync_preference_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     mode: SyncResidenceMode,
+    predicted: bool,
 ) -> Result<DeviceSyncPreference> {
-    let mut request = SetSetting::vault_value(
-        RESIDENCE_MODE.spec.name,
-        serde_json::json!(ResidenceModeName::from(mode)),
-    );
+    let preference = DeviceSyncPreference {
+        mode,
+        predicted: predicted && mode == SyncResidenceMode::Opened,
+    };
+    let name = if preference.predicted {
+        ResidenceModeName::Predicted
+    } else {
+        ResidenceModeName::from(mode)
+    };
+    let mut request = SetSetting::vault_value(RESIDENCE_MODE.spec.name, serde_json::json!(name));
     request.why = Some("the residence switch".to_owned());
     vault.set_setting_in_txn(txn, SettingCaller::Engine(EngineSetting::own()), &request)?;
-    Ok(DeviceSyncPreference { mode })
+    Ok(preference)
 }
 
 /// The worlds the owner picked for this machine to follow (ARCH-0023b

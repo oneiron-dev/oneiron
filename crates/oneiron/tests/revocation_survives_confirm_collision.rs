@@ -1,0 +1,708 @@
+//! A key's revocation survives a confirmation collision below it (root
+//! FIX-LIST [CONFIRM-COLLISION-SUBTREE-ROLLBACK], Engine RULING 16 Nov 02:37,
+//! SEQ-FLOOR-SHAPE-S = B: RevokeDevice joins the restrictive facts proved on
+//! their own signed branch).
+//!
+//! A host-rooted vault, as a host starts one. The owner enrols two owner
+//! signing keys, O2 and K, through the owner key enrollment door. K signs a
+//! federation confirmation C. O2 revokes K on C. Later K's holder signs B,
+//! another confirmation with C's confirm id and its own nonce, on C's
+//! parents, at K's next sequence, and picks B's nonce so that B's hash is
+//! below C's. Two valid confirmations that share an id collide. Before
+//! #8660 the fold kept the lower hash, B, and settlement removed C with
+//! every row after it, the revocation among them. Since #8660 (Engine
+//! RULING COLLISION-SETTLEMENT-SHAPE = A) a collision drops no row.
+//!
+//! Since #7987 (the revocation fence, REVOKED-OWNER-ROOT-SIBLING-ENROL) a
+//! revoked key's rows count only inside the revocation's own ancestry. B is
+//! K's row outside it, so B never stands: it arrives after the revocation
+//! and the door refuses it, while C and the revocation stay valid. K must
+//! stay revoked either way: the revocation is a valid row, and it is proved
+//! on its own signed branch, which B does not touch.
+//!
+//! Two more cases from the reviews of #8608: K's two confirmations at one
+//! sequence under the revocation (Astra T1: the proof follows the fold on
+//! such siblings), and an approval of K's beside C. The sibling approval no
+//! longer stands inside the window: the fence refuses it at once, so the
+//! window proof moved to C, K's approval inside the revocation's ancestry
+//! (Sol F1's case, kept on C).
+//!
+//! These tests pin the revocation and its stale-roster window under the
+//! fence: C and the revocation stay valid, B is refused, and K stays
+//! revoked.
+//!
+//! The last case is Astra T1 with an actor revocation, root FIX-LIST
+//! [REVOKE-ACTOR-EQUAL-SEQUENCE-SIBLINGS]: a RevokeActor's proof follows the
+//! fold on two equal-sequence siblings too. Since #8660 a collision drops no
+//! row, so there a sequence floor drops the siblings: K's later row arrives
+//! first. Expected red on main, where the proof refused the siblings and K's
+//! binding stood again; green once every restriction's proof follows the
+//! fold.
+//!
+//! Expected (estimate, not run yet): all three red on main, where K is live
+//! again once B arrives; the second and third red at 8b22fd3d77166 (the
+//! first head of #8608); all green at the #7987 merge.
+//!
+//! Run: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
+//! --all-features --test revocation_survives_confirm_collision`.
+
+use std::sync::Arc;
+use std::time::Duration;
+
+use ed25519_dalek::{Signer, SigningKey};
+use oneiron::authority::{
+    AUTHORITY_LOG_SCHEMA_VERSION, ActAuthority, ActSurface, ActorBindingStatus,
+    AuthorityConfirmAction, AuthorityConfirmKind, AuthorityEntryHash, AuthorityFold,
+    AuthorityFoldIssue, AuthorityKey, AuthorityLogEntry, AuthorityObservationPolicy, AuthorityOp,
+    AuthoritySignature, AuthorityVaultId, HostSlipIssuer, MACHINE_ENCRYPTION_KEY_LEN,
+    MACHINE_ENCRYPTION_SUITE_HYBRID_V1, MachineDeviceClass, MachineEncryptionKey,
+    MachineEnrolmentRequest, MachineOwnership, MachineRole, OwnerKeyEnrollment,
+    authority_entry_hash, authority_transcript, machine_profile_proof_transcript,
+};
+use oneiron::consent::AuthenticatedOwner;
+use oneiron::setting::{SetSetting, SetSettingOutcome, SettingCaller};
+use oneiron::store::GateDecisionId;
+use oneiron::{EntityId, TimeRange, Vault, VaultConfig};
+
+const AT: TimeRange = TimeRange { start: 1, end: 1 };
+
+/// A rooted vault as a host starts one: the owner bound under the host root
+/// and this install profiled, so it carries the owner's answers.
+struct Rooted {
+    _dir: tempfile::TempDir,
+    vault: Vault,
+    issuer: HostSlipIssuer,
+    proof: AuthenticatedOwner,
+    vault_id: AuthorityVaultId,
+}
+
+fn rooted() -> Rooted {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let vault = Vault::open(dir.path(), VaultConfig::device()).expect("the install");
+    vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
+    let issuer = oneiron::test_support::provision_engine_machines(&vault);
+    vault
+        .ensure_serving_install_profile(&issuer, MachineRole::Unanswered)
+        .expect("this install's live machine profile");
+    let owner = vault.ensure_embedded_owner_actor().expect("the owner");
+    oneiron::test_support::bind_host_owner(&vault, &issuer, owner).expect("the owner's binding");
+    let proof = vault
+        .authenticate_owner(owner, &owner.to_hex(), true, GateDecisionId::now())
+        .expect("an owner proof");
+    let vault_id = vault
+        .authority_vault_id()
+        .expect("the fold")
+        .expect("a rooted vault");
+    Rooted {
+        _dir: dir,
+        vault,
+        issuer,
+        proof,
+        vault_id,
+    }
+}
+
+/// A machine the owner admitted, whose keystore holds the owner keys the
+/// test enrols.
+fn admit_machine(rooted: &Rooted) -> EntityId {
+    let signing = SigningKey::from_bytes(&[0xA1; 32]);
+    let machine = EntityId::now();
+    let machine_key = signing.verifying_key().to_bytes();
+    let encryption_key = MachineEncryptionKey {
+        suite: MACHINE_ENCRYPTION_SUITE_HYBRID_V1,
+        key: vec![7; MACHINE_ENCRYPTION_KEY_LEN],
+    };
+    let machine_proof = signing
+        .sign(&machine_profile_proof_transcript(
+            &rooted.vault_id,
+            machine,
+            &machine_key,
+            MachineDeviceClass::Computer,
+            &encryption_key,
+        ))
+        .to_bytes();
+    let request = MachineEnrolmentRequest {
+        vault_id: rooted.vault_id,
+        machine,
+        machine_key,
+        device_class: MachineDeviceClass::Computer,
+        encryption_key,
+        machine_proof,
+    };
+    let landing = rooted
+        .vault
+        .enroll_machine(
+            &rooted.proof,
+            ActSurface::ThisInstall,
+            &request,
+            MachineRole::Owned(MachineOwnership::Yours),
+            None,
+        )
+        .expect("the owner admits the machine");
+    assert!(
+        landing.machine().is_some_and(|folded| folded.is_mine(None)),
+        "the admitted machine is the owner's: {landing:?}"
+    );
+    machine
+}
+
+/// The owner enrols `signing` as an owner key held on `machine`, through
+/// the public owner key enrollment door; returns the enrollment's entry.
+fn enrol_owner_key(rooted: &Rooted, machine: EntityId, signing: &SigningKey) -> AuthorityEntryHash {
+    let authority = ActAuthority::Owner(rooted.proof.clone(), ActSurface::ThisInstall);
+    let public_key = signing.verifying_key().to_bytes();
+    let challenge = rooted
+        .vault
+        .owner_key_enrollment_challenge_as(&authority, machine, &public_key)
+        .expect("the enrollment's challenge");
+    rooted
+        .vault
+        .enrol_owner_signing_key_as_host(
+            &authority,
+            OwnerKeyEnrollment {
+                machine,
+                public_key,
+                proof: signing.sign(&challenge).to_bytes().to_vec(),
+            },
+            &rooted.issuer,
+        )
+        .expect("the owner enrols the key")
+        .entry
+}
+
+fn key_of(signing: &SigningKey) -> AuthorityKey {
+    AuthorityKey::Ed25519(signing.verifying_key().to_bytes())
+}
+
+/// `op` signed by `signing` at `seq` on `parents`.
+fn row_signed_by(
+    rooted: &Rooted,
+    signing: &SigningKey,
+    seq: u64,
+    parents: Vec<AuthorityEntryHash>,
+    op: AuthorityOp,
+) -> AuthorityLogEntry {
+    let key = key_of(signing);
+    let mut entry = AuthorityLogEntry {
+        schema_version: AUTHORITY_LOG_SCHEMA_VERSION,
+        vault_id: Some(rooted.vault_id),
+        seq,
+        parent_hashes: parents,
+        op,
+        signer: AuthoritySignature {
+            suite: key.suite(),
+            public_key: key,
+            signature: vec![0; 64],
+        },
+        cosigns: Vec::new(),
+        ts: seq + 1,
+    };
+    let transcript = authority_transcript(&entry).expect("transcript");
+    entry.signer.signature = signing.sign(&transcript).to_bytes().to_vec();
+    entry
+}
+
+fn hash_of(entry: &AuthorityLogEntry) -> AuthorityEntryHash {
+    authority_entry_hash(entry).expect("row hash")
+}
+
+fn is_live(fold: &AuthorityFold, key: &AuthorityKey) -> bool {
+    fold.roster
+        .get(key)
+        .is_some_and(|device| !device.revoked && device.roles != 0)
+}
+
+/// The put door's outcome for `row`, as text for the assertion messages.
+fn put(rooted: &Rooted, row: &AuthorityLogEntry) -> String {
+    match rooted.vault.put_authority_log_entry(row, AT, 1) {
+        Ok(_) => "stored".to_owned(),
+        Err(error) => format!("refused: {:?}", error.kind()),
+    }
+}
+
+/// A federation confirmation with `confirm_id` and `nonce`.
+fn confirmation(confirm_id: [u8; 32], nonce: [u8; 16]) -> AuthorityOp {
+    AuthorityOp::FederationConfirm(AuthorityConfirmAction {
+        kind: AuthorityConfirmKind::Accept,
+        confirm_id,
+        peer_vault_id: [0x77; 32],
+        epoch: 1,
+        nonce,
+    })
+}
+
+/// The first confirmation `signing` signs with `confirm_id` at `seq` on
+/// `parents` whose hash is below `below`. Its nonce starts 0xC0, which no
+/// other row's nonce here does, so it collides only through `confirm_id`.
+/// About one try in two lands below.
+fn colliding_below(
+    rooted: &Rooted,
+    signing: &SigningKey,
+    seq: u64,
+    parents: Vec<AuthorityEntryHash>,
+    confirm_id: [u8; 32],
+    below: AuthorityEntryHash,
+) -> AuthorityLogEntry {
+    (0..=u64::MAX)
+        .map(|counter| {
+            let mut nonce = [0xC0; 16];
+            nonce[8..].copy_from_slice(&counter.to_be_bytes());
+            row_signed_by(
+                rooted,
+                signing,
+                seq,
+                parents.clone(),
+                confirmation(confirm_id, nonce),
+            )
+        })
+        .find(|row| hash_of(row) < below)
+        .expect("a nonce whose confirmation hashes below the one it collides with")
+}
+
+/// O2 and K enrolled (K's enrollment is the head P); C = K's confirmation
+/// at K's sequence 1 on P; the revocation = O2's RevokeDevice of K at O2's
+/// sequence 1 on C; B = K's confirmation with C's id and another nonce at
+/// K's sequence 2 on P, with a hash below C's. The install holds C and the
+/// revocation before B arrives. Under the revocation fence (#7987) B, K's
+/// row outside the revocation's ancestry, is refused at the door; C and the
+/// revocation stay valid and K stays revoked.
+#[test]
+fn a_revocation_below_a_losing_confirmation_keeps_the_key_revoked() {
+    let rooted = rooted();
+    let machine = admit_machine(&rooted);
+    let second_owner = SigningKey::from_bytes(&[0x52; 32]);
+    let colliding = SigningKey::from_bytes(&[0x4B; 32]);
+    enrol_owner_key(&rooted, machine, &second_owner);
+    let enrolled = enrol_owner_key(&rooted, machine, &colliding);
+    let confirm_id = [0x31; 32];
+    let confirmed = row_signed_by(
+        &rooted,
+        &colliding,
+        1,
+        vec![enrolled],
+        confirmation(confirm_id, [0x01; 16]),
+    );
+    let revocation = row_signed_by(
+        &rooted,
+        &second_owner,
+        1,
+        vec![hash_of(&confirmed)],
+        AuthorityOp::RevokeDevice {
+            revoked_key: key_of(&colliding),
+        },
+    );
+    let collision = colliding_below(
+        &rooted,
+        &colliding,
+        2,
+        vec![enrolled],
+        confirm_id,
+        hash_of(&confirmed),
+    );
+
+    // The setup alone: before the collision, C and the revocation are
+    // valid and K is revoked. A failure here is the test's setup, not the
+    // finding.
+    let puts = [put(&rooted, &confirmed), put(&rooted, &revocation)];
+    let fold = rooted.vault.authority_fold().expect("the fold");
+    assert!(
+        fold.valid_entries.contains(&hash_of(&confirmed))
+            && fold.valid_entries.contains(&hash_of(&revocation)),
+        "setup: before the collision C and the revocation are valid; puts {puts:?}, issues {:?}",
+        fold.issues
+    );
+    assert!(
+        !is_live(&fold, &key_of(&colliding)),
+        "setup: before the collision K is revoked; issues {:?}",
+        fold.issues
+    );
+
+    let arrival = put(&rooted, &collision);
+    let fold = rooted.vault.authority_fold().expect("the fold");
+    // The fence (#7987): B is K's row outside the revocation's ancestry
+    // and arrives after it, so the door refuses it and it never reaches
+    // the fold. C and the revocation stand as #8660 left them.
+    assert_eq!(
+        arrival, "refused: InvalidAuthorityLogBody",
+        "the door refuses the colliding confirmation; issues {:?}",
+        fold.issues
+    );
+    assert!(
+        [&confirmed, &revocation]
+            .iter()
+            .all(|row| fold.valid_entries.contains(&hash_of(row))),
+        "C and the revocation stay valid; issues {:?}",
+        fold.issues
+    );
+    assert!(
+        !fold.valid_entries.contains(&hash_of(&collision)),
+        "the refused collision is nowhere in the fold; issues {:?}",
+        fold.issues
+    );
+    assert!(
+        !is_live(&fold, &key_of(&colliding)),
+        "K's colliding confirmation must not make K live again; issues {:?}",
+        fold.issues
+    );
+}
+
+/// Astra T1 on #8608: X and Y = K's confirmations with their own ids at K's
+/// sequence 1 on P, siblings the fold admits; the revocation = O2's
+/// RevokeDevice of K at O2's sequence 1 on [X, Y]; B = K's confirmation
+/// with X's id at K's sequence 2 on P, with a hash below X's. Since #8660
+/// the collision drops no row: X, Y and the revocation stay valid beside B,
+/// and K stays revoked. Under the revocation fence (#7987) B, K's row
+/// outside the revocation's ancestry, is refused at the door; X, Y and the
+/// revocation stay valid and K stays revoked.
+#[test]
+fn a_revocation_over_two_equal_sequence_siblings_keeps_the_key_revoked() {
+    let rooted = rooted();
+    let machine = admit_machine(&rooted);
+    let second_owner = SigningKey::from_bytes(&[0x52; 32]);
+    let colliding = SigningKey::from_bytes(&[0x4B; 32]);
+    enrol_owner_key(&rooted, machine, &second_owner);
+    let enrolled = enrol_owner_key(&rooted, machine, &colliding);
+    let first_id = [0x31; 32];
+    let first = row_signed_by(
+        &rooted,
+        &colliding,
+        1,
+        vec![enrolled],
+        confirmation(first_id, [0x01; 16]),
+    );
+    let second = row_signed_by(
+        &rooted,
+        &colliding,
+        1,
+        vec![enrolled],
+        confirmation([0x32; 32], [0x02; 16]),
+    );
+    let mut both = vec![hash_of(&first), hash_of(&second)];
+    both.sort();
+    let revocation = row_signed_by(
+        &rooted,
+        &second_owner,
+        1,
+        both,
+        AuthorityOp::RevokeDevice {
+            revoked_key: key_of(&colliding),
+        },
+    );
+    let collision = colliding_below(
+        &rooted,
+        &colliding,
+        2,
+        vec![enrolled],
+        first_id,
+        hash_of(&first),
+    );
+
+    // The setup alone: before the collision, X, Y and the revocation are
+    // valid and K is revoked.
+    let puts = [
+        put(&rooted, &first),
+        put(&rooted, &second),
+        put(&rooted, &revocation),
+    ];
+    let fold = rooted.vault.authority_fold().expect("the fold");
+    assert!(
+        [&first, &second, &revocation]
+            .iter()
+            .all(|row| fold.valid_entries.contains(&hash_of(row))),
+        "setup: before the collision X, Y and the revocation are valid; puts {puts:?}, issues {:?}",
+        fold.issues
+    );
+    assert!(
+        !is_live(&fold, &key_of(&colliding)),
+        "setup: before the collision K is revoked; issues {:?}",
+        fold.issues
+    );
+
+    let arrival = put(&rooted, &collision);
+    let fold = rooted.vault.authority_fold().expect("the fold");
+    // The fence (#7987): B is K's row outside the revocation's ancestry
+    // and arrives after it, so the door refuses it and it never reaches
+    // the fold. X, Y and the revocation stand as #8660 left them.
+    assert_eq!(
+        arrival, "refused: InvalidAuthorityLogBody",
+        "the door refuses the colliding confirmation; issues {:?}",
+        fold.issues
+    );
+    assert!(
+        [&first, &second, &revocation]
+            .iter()
+            .all(|row| fold.valid_entries.contains(&hash_of(row))),
+        "X, Y and the revocation stay valid; issues {:?}",
+        fold.issues
+    );
+    assert!(
+        !fold.valid_entries.contains(&hash_of(&collision)),
+        "the refused collision is nowhere in the fold; issues {:?}",
+        fold.issues
+    );
+    assert!(
+        !is_live(&fold, &key_of(&colliding)),
+        "K's two confirmations at one sequence must not void the revocation's proof; issues {:?}",
+        fold.issues
+    );
+}
+
+/// Sol F1 on #8608: Q = K's confirmation with its own id at K's sequence 1
+/// on P, an approval that rests on K; C = K's confirmation at sequence 2 on
+/// P; the revocation = O2's RevokeDevice of K on C; B = K's confirmation
+/// with C's id at sequence 3 on P, with a hash below C's. Before #8660, B
+/// won and the revocation's row went with C, so only its proved fact revoked
+/// K; since #8660 the collision drops no row and the revocation stays valid.
+/// Under the revocation fence (#7987, REVOKED-OWNER-ROOT-SIBLING-ENROL) Q,
+/// K's row outside the revocation's ancestry, never stands: the fold refuses
+/// it at once, so the window proof moved to C, K's approval inside the
+/// revocation's ancestry. Once the stale-roster window has passed since the
+/// revocation was first seen here, C expires.
+#[test]
+fn an_approval_by_a_key_revoked_beside_a_collision_expires_after_the_window() {
+    let rooted = rooted();
+    let machine = admit_machine(&rooted);
+    let second_owner = SigningKey::from_bytes(&[0x52; 32]);
+    let colliding = SigningKey::from_bytes(&[0x4B; 32]);
+    enrol_owner_key(&rooted, machine, &second_owner);
+    let enrolled = enrol_owner_key(&rooted, machine, &colliding);
+    let approval = row_signed_by(
+        &rooted,
+        &colliding,
+        1,
+        vec![enrolled],
+        confirmation([0x33; 32], [0x03; 16]),
+    );
+    let confirm_id = [0x31; 32];
+    let confirmed = row_signed_by(
+        &rooted,
+        &colliding,
+        2,
+        vec![enrolled],
+        confirmation(confirm_id, [0x01; 16]),
+    );
+    let revocation = row_signed_by(
+        &rooted,
+        &second_owner,
+        1,
+        vec![hash_of(&confirmed)],
+        AuthorityOp::RevokeDevice {
+            revoked_key: key_of(&colliding),
+        },
+    );
+    let collision = colliding_below(
+        &rooted,
+        &colliding,
+        3,
+        vec![enrolled],
+        confirm_id,
+        hash_of(&confirmed),
+    );
+
+    let puts = [
+        put(&rooted, &approval),
+        put(&rooted, &confirmed),
+        put(&rooted, &revocation),
+        put(&rooted, &collision),
+    ];
+    // The fence (#7987): Q arrived before the revocation, so the door
+    // stored it, but the fold refuses it at once: it is K's row outside
+    // the revocation's ancestry. B arrives after the revocation and the
+    // door refuses B. C stands inside the default window (a day).
+    let fold = rooted.vault.authority_fold().expect("the fold");
+    assert!(
+        puts[..3].iter().all(|outcome| outcome == "stored")
+            && puts[3] == "refused: InvalidAuthorityLogBody",
+        "setup: Q, C and the revocation are stored and B is refused; puts {puts:?}, issues {:?}",
+        fold.issues
+    );
+    assert!(
+        [&confirmed, &revocation]
+            .iter()
+            .all(|row| fold.valid_entries.contains(&hash_of(row))),
+        "setup: C and the revocation stand inside the window; issues {:?}",
+        fold.issues
+    );
+    assert!(
+        !is_live(&fold, &key_of(&colliding)),
+        "setup: K stays revoked; issues {:?}",
+        fold.issues
+    );
+    assert!(
+        !fold.valid_entries.contains(&hash_of(&approval)),
+        "setup: Q, K's row outside the revocation's ancestry, never stands under the fence; issues {:?}",
+        fold.issues
+    );
+    assert!(
+        fold.issues
+            .contains(&AuthorityFoldIssue::RetiredSigner(hash_of(&approval))),
+        "setup: the fold refuses Q for its signer; issues {:?}",
+        fold.issues
+    );
+    assert!(
+        !fold.valid_entries.contains(&hash_of(&collision)),
+        "setup: the refused B is nowhere in the fold; issues {:?}",
+        fold.issues
+    );
+
+    // A zero window: Q is stale from the second after the revocation was
+    // first seen. This install's clock is monotonic, so wait past it.
+    let policy = rooted
+        .vault
+        .authority_observation_policy()
+        .expect("the observation policy");
+    let zero_window = AuthorityObservationPolicy {
+        stale_roster_window_secs: 0,
+        ..policy
+    };
+    let outcome = rooted
+        .vault
+        .set_setting(
+            SettingCaller::Owner(&rooted.proof),
+            SetSetting::vault_value(
+                "authority.observation_policy",
+                serde_json::to_value(zero_window).expect("the policy as JSON"),
+            ),
+        )
+        .expect("a zero stale-roster window");
+    assert!(
+        matches!(outcome, SetSettingOutcome::Applied { .. }),
+        "the owner's zero window applies: {outcome:?}"
+    );
+    std::thread::sleep(Duration::from_millis(2_500));
+    let fold = rooted.vault.authority_fold().expect("the fold");
+    assert!(
+        !fold.valid_entries.contains(&hash_of(&confirmed)),
+        "C rests on K, which the revocation revokes: the window must expire it; issues {:?}",
+        fold.issues
+    );
+    assert!(
+        fold.issues
+            .contains(&AuthorityFoldIssue::StaleRosterApproval(hash_of(
+                &confirmed
+            ))),
+        "C expires through the stale-roster window; issues {:?}",
+        fold.issues
+    );
+    assert!(
+        fold.valid_entries.contains(&hash_of(&revocation)),
+        "the revocation outlives C's expiry; issues {:?}",
+        fold.issues
+    );
+    assert!(
+        !is_live(&fold, &key_of(&colliding)),
+        "K stays revoked after the window; issues {:?}",
+        fold.issues
+    );
+    assert!(
+        !fold.valid_entries.contains(&hash_of(&approval)),
+        "Q stays refused after the window; issues {:?}",
+        fold.issues
+    );
+}
+
+/// K's actor binding as the fold answers it, if K has one.
+fn binding_status(fold: &AuthorityFold, key: &AuthorityKey) -> Option<ActorBindingStatus> {
+    fold.actor_bindings.get(key).map(|binding| binding.status)
+}
+
+/// [REVOKE-ACTOR-EQUAL-SEQUENCE-SIBLINGS]: Astra T1 with RevokeActor in
+/// place of RevokeDevice, and a sequence floor in place of the collision.
+/// D = O2's binding of K as a human actor at O2's sequence 1 on P; X and
+/// Y = K's confirmations with their own ids at K's sequence 1 on P; the
+/// revocation = O2's RevokeActor of K's binding at O2's sequence 2 on
+/// [X, Y]; B = K's confirmation with a third id at K's sequence 2 on P.
+/// K's holder sends B here first, so on main X and Y arrive below K's
+/// floor of 2: the fold refuses them, and the revocation waits on them for
+/// good. Its own signed branch still proves it, so K's binding stays
+/// revoked whatever order the rows arrived in.
+#[test]
+fn an_actor_revocation_over_two_floor_refused_siblings_keeps_the_binding_revoked() {
+    let rooted = rooted();
+    let machine = admit_machine(&rooted);
+    let second_owner = SigningKey::from_bytes(&[0x52; 32]);
+    let bound = SigningKey::from_bytes(&[0x4B; 32]);
+    enrol_owner_key(&rooted, machine, &second_owner);
+    let enrolled = enrol_owner_key(&rooted, machine, &bound);
+    let binding = row_signed_by(
+        &rooted,
+        &second_owner,
+        1,
+        vec![enrolled],
+        AuthorityOp::BindActor {
+            authority_key: key_of(&bound),
+            actor_ref: EntityId::now(),
+            actor_class: "human".to_owned(),
+            epoch: 1,
+        },
+    );
+    let first = row_signed_by(
+        &rooted,
+        &bound,
+        1,
+        vec![enrolled],
+        confirmation([0x31; 32], [0x01; 16]),
+    );
+    let second = row_signed_by(
+        &rooted,
+        &bound,
+        1,
+        vec![enrolled],
+        confirmation([0x32; 32], [0x02; 16]),
+    );
+    let mut both = vec![hash_of(&first), hash_of(&second)];
+    both.sort();
+    let revocation = row_signed_by(
+        &rooted,
+        &second_owner,
+        2,
+        both,
+        AuthorityOp::RevokeActor {
+            authority_key: key_of(&bound),
+            epoch: 1,
+        },
+    );
+    let later = row_signed_by(
+        &rooted,
+        &bound,
+        2,
+        vec![enrolled],
+        confirmation([0x33; 32], [0x03; 16]),
+    );
+
+    // The setup alone: D binds K. A failure here is the test's setup, not
+    // the finding.
+    let bound_put = put(&rooted, &binding);
+    let fold = rooted.vault.authority_fold().expect("the fold");
+    assert_eq!(
+        binding_status(&fold, &key_of(&bound)),
+        Some(ActorBindingStatus::Active),
+        "setup: D binds K; put {bound_put}, issues {:?}",
+        fold.issues
+    );
+
+    // B first, then X and Y below K's floor, then the revocation.
+    let puts = [
+        put(&rooted, &later),
+        put(&rooted, &first),
+        put(&rooted, &second),
+        put(&rooted, &revocation),
+    ];
+    assert!(
+        puts.iter().all(|outcome| outcome == "stored"),
+        "setup: the door stores every row; puts {puts:?}"
+    );
+    // On main the arrival floor refuses X and Y and the revocation waits
+    // on them, so only its proof revokes K. Where no floor refuses a row
+    // (#8449's floor shape), the revocation folds itself. K stays revoked
+    // under either shape.
+    let fold = rooted.vault.authority_fold().expect("the fold");
+    let valid = [&later, &first, &second, &revocation]
+        .map(|row| fold.valid_entries.contains(&hash_of(row)));
+    assert_eq!(
+        binding_status(&fold, &key_of(&bound)),
+        Some(ActorBindingStatus::Revoked),
+        "K's two rows at one sequence must not void the revocation; B, X, Y, R valid {valid:?}, issues {:?}",
+        fold.issues
+    );
+}

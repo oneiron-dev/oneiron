@@ -6,8 +6,6 @@
 //! every resident's depletion again, while the owner's share stays.
 use std::sync::Arc;
 
-use serde::{Deserialize, Serialize};
-
 use super::setting_keys::RESIDENT_SHARE;
 use crate::llm::run_admission::{AllocationRef, ResidentLedger, ResidentShare, ResidentStanding};
 use crate::setting::{SettingChange, SettingScope, SettingSource};
@@ -115,17 +113,8 @@ fn standing_in_txn(
     ))
 }
 
-/// One resident's share and depletion, as the owner reads it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ResidentShareRead {
-    pub resident: EntityId,
-    pub share: ResidentShare,
-    /// The allocation the counts are on; `None` before any charge.
-    pub allocation: Option<AllocationRef>,
-    pub used_units: u64,
-    pub overdraft_units: u64,
-    pub overdrafts: u64,
-}
+#[doc(hidden)]
+pub use oneiron_records::llm::budget::resident::ResidentShareRead;
 
 /// The run admission's resident ledger over one vault's rows.
 pub struct VaultResidentLedger {

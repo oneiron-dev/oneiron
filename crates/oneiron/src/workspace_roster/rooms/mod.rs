@@ -13,6 +13,7 @@ mod audience_notices;
 mod audience_overlay;
 mod backfill;
 mod carrier_erase;
+mod closed;
 mod fact_subject;
 mod history;
 mod hosting;
@@ -94,6 +95,8 @@ pub(crate) use backfill::backfill_room_turns_on_open;
 pub(crate) use backfill::doors as backfill_doors;
 #[cfg(feature = "sync")]
 pub(crate) use carrier_erase::erased_side_row_here;
+pub use closed::RoomClosedSet;
+pub(crate) use closed::room_is_closed_in;
 pub use fact_subject::{ACTOR_ERASE_PARTICIPATION_KEY, ParticipationKeyErase};
 pub(super) use history::PAGE_LIMIT;
 pub(super) use history::delete_room_metadata;
@@ -276,14 +279,10 @@ pub enum RoomTrunkItem {
     Result(RoomTrunkHeader),
 }
 
-/// A delivered TASK's durable result, attached to its trunk on a room read.
-/// The TASK terminal register holds the fact; no second row is stored.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct RoomTrunkHeader {
-    pub thread: EntityId,
-    pub task: EntityId,
-    pub result_ref: EntityId,
-}
+#[doc(hidden)]
+pub use oneiron_records::workspace_roster::rooms::{
+    RoomClaimOutcome, RoomClaimReceipt, RoomThreadPage, RoomTrunkHeader,
+};
 
 /// A trunk turn with the delivered task headers under its thread anchors.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -298,12 +297,6 @@ pub struct RoomTrunk {
     pub for_org: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct RoomThreadPage {
-    pub rows: Vec<EntityId>,
-    /// Explicit end marker: `None` means the room has no further page.
-    pub next_after: Option<EntityId>,
-}
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RoomPage {
@@ -337,22 +330,6 @@ fn turns_readable(scope: &crate::federation::Scope) -> bool {
 fn outside_scope() -> MemoryError {
     MemoryError::bad_request_with("room turn is outside the room scope", &[])
 }
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct RoomClaimReceipt {
-    pub room_id: String,
-    pub turn_id: String,
-    pub actor: String,
-    pub receipt_ref: String,
-    pub at: u64,
-}
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub enum RoomClaimOutcome {
-    Claimed(RoomClaimReceipt),
-    HeldBy(RoomClaimReceipt),
-    NotAddressed,
-}
-
 /// Project rooms use the PROJECT roster instead of the ordinary membership
 /// ledger. Return None for other conversations so their historical membership
 /// windows remain authoritative at the ordinary audience door. Each audience

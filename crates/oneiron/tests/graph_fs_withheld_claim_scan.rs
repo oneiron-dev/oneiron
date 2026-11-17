@@ -78,8 +78,6 @@ fn base_read_manifest() -> Vec<u8> {
     bytes
 }
 
-/// A vault whose one subject has [`WITHHELD`] claims, all in a world kept on
-/// this machine, with both scan rows set to [`THRESHOLD`] after the writes.
 /// The owner sets `scan`'s row of the `origin.scan_threshold` key to `rows`.
 fn set_scan_threshold(vault: &Vault, scan: EngineScan, rows: u64) {
     let person = vault.ensure_embedded_owner_actor().expect("embedded owner");
@@ -101,6 +99,8 @@ fn set_scan_threshold(vault: &Vault, scan: EngineScan, rows: u64) {
     );
 }
 
+/// A vault whose one subject has [`WITHHELD`] claims, all in a world kept on
+/// this machine, with both scan rows set to [`THRESHOLD`] after the writes.
 fn fixture() -> Fixture {
     let dir = tempfile::tempdir().expect("tempdir");
     let vault = Vault::open(dir.path(), VaultConfig::device()).expect("open vault");

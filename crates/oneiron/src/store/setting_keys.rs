@@ -134,8 +134,9 @@ fn refuse_unswitched_residence_mode(
 }
 
 crate::setting::setting_keys! {
-    /// This machine's residence choice: `all` (sync every window it may read) or `opened`
-    /// (sync what it opened). With no row the host's configured mode holds, and the elected
+    /// This machine's residence choice: `all` (sync every window it may read), `opened` (sync
+    /// what it opened) or `predicted` (what it opened plus what its home predicts it will open).
+    /// With no row the host's configured mode holds, and the elected
     /// home always runs `all`. The owner sets it with `vault.residence.mode`, which switches the
     /// live connection in the same step; `vault.settings.set` refuses a change to it.
     pub(crate) RESIDENCE_MODE: Option<ResidenceModeName> = "sync.residence.mode" {

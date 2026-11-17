@@ -425,6 +425,7 @@ fn set_share(
             expected_revision: None,
             why: None,
             check_in_ref: None,
+            weight_runs: None,
         },
     )?;
     assert!(
