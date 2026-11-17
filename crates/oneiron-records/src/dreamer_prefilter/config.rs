@@ -6,6 +6,8 @@ use crate::dreamer_prefilter::score::PREFILTER_FEATURE_LEN;
 use crate::dreamer_prefilter::score::PREFILTER_FEATURE_NOVELTY;
 use crate::dreamer_prefilter::score::PREFILTER_FEATURE_ROLE;
 use crate::dreamer_prefilter::score::PREFILTER_FEATURE_TTR;
+use oneiron_base::error::{Error, Result};
+use oneiron_setting_contract::SettingValue;
 use serde::Deserialize;
 use serde::Serialize;
 
@@ -16,7 +18,7 @@ use serde::Serialize;
 /// Relative pull of each screening axis. Every weight is finite and
 /// non-negative and the total mass is positive; the score is the weighted mean
 /// of the axes, so it stays in `[0, 1]` whatever the weights are.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct PrefilterWeights {
     /// How much sheer length is worth.
     pub len: f32,
@@ -65,9 +67,9 @@ impl PrefilterWeights {
     }
 }
 
-/// Durable screening policy, read from `vault_meta` on every planning round so
-/// a threshold change takes effect without a recompile or a restart.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+/// Durable screening policy, the value of the setting `dreamer.prefilter`, read on every
+/// planning round so a threshold change takes effect without a recompile or a restart.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct PrefilterConfig {
     /// `false` disables the screen entirely: the planners take their input
     /// unchanged and read nothing extra (invariant I4).
@@ -87,4 +89,57 @@ impl Default for PrefilterConfig {
             weights: PrefilterWeights::default(),
         }
     }
+}
+
+impl SettingValue for PrefilterConfig {
+    fn check(self) -> Result<Self> {
+        validate_prefilter_config(&self)?;
+        Ok(self)
+    }
+}
+
+fn invalid_prefilter_config(reason: impl Into<String>) -> Error {
+    Error::InvalidConfig(reason.into())
+}
+
+/// Refuses a config that cannot produce a meaningful score.
+///
+/// Non-finite (NaN/±Inf) and out-of-`[0, 1]` thresholds, negative or
+/// non-finite weights, an overflowing total, and an all-zero vector are rejected —
+/// BEFORE the row is encoded, so a refused config is never persisted.
+///
+/// # Errors
+///
+/// [`Error::InvalidConfig`] naming the offending field.
+pub fn validate_prefilter_config(config: &PrefilterConfig) -> Result<()> {
+    if !config.threshold.is_finite() {
+        return Err(invalid_prefilter_config(
+            "dreamer prefilter threshold must be finite",
+        ));
+    }
+    if !(0.0..=1.0).contains(&config.threshold) {
+        return Err(invalid_prefilter_config(format!(
+            "dreamer prefilter threshold must be within [0, 1], got {}",
+            config.threshold
+        )));
+    }
+    for (name, weight) in config.weights.axes() {
+        if !weight.is_finite() {
+            return Err(invalid_prefilter_config(format!(
+                "dreamer prefilter {name} weight must be finite"
+            )));
+        }
+        if weight < 0.0 {
+            return Err(invalid_prefilter_config(format!(
+                "dreamer prefilter {name} weight must be non-negative, got {weight}"
+            )));
+        }
+    }
+    let total = config.weights.total();
+    if !total.is_finite() || total <= 0.0 {
+        return Err(invalid_prefilter_config(
+            "dreamer prefilter weights must have finite positive total mass",
+        ));
+    }
+    Ok(())
 }

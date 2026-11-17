@@ -26,10 +26,12 @@ use super::support::{
 };
 
 mod checkpoint;
+mod held;
 mod pending_step;
 
 pub use self::checkpoint::CODE_RUN_STEP_CHECKPOINT_KEYS;
 use self::checkpoint::{decode_step_checkpoint, encode_step_checkpoint, validate_step_checkpoints};
+pub(crate) use self::held::{decode_code_run_replay_generation, decode_code_run_replay_held};
 pub(super) use self::pending_step::pending_step_digest;
 use self::pending_step::{decode_pending_step, encode_pending_step, validate_pending_step};
 
@@ -659,6 +661,13 @@ fn validate_code_run_replay_record(record: &CodeRunReplayRecord) -> Result<()> {
         validate_abi_layout_check(check)?;
     }
 
+    // Each binding names an output by its handle: a set, so the check is
+    // linear in the record and not bindings x outputs at every encode (FIX 16).
+    let handles: HashSet<&str> = record
+        .outputs
+        .iter()
+        .map(|output| output.handle.as_str())
+        .collect();
     let mut names = HashSet::new();
     for binding in &record.bindings {
         if !CodeRunResultBinding::is_valid_name(&binding.name) {
@@ -667,11 +676,7 @@ fn validate_code_run_replay_record(record: &CodeRunReplayRecord) -> Result<()> {
         if !names.insert(binding.name.as_str()) {
             return Err(invalid_code_run_replay("duplicate result binding name"));
         }
-        if !record
-            .outputs
-            .iter()
-            .any(|output| output.handle == binding.handle)
-        {
+        if !handles.contains(binding.handle.as_str()) {
             return Err(invalid_code_run_replay(
                 "result binding names no output of this run",
             ));
