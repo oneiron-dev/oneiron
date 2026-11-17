@@ -148,6 +148,7 @@ fn draft_without_lifecycle_takes_pack_defaults() -> TestResult {
         full_trail_appendix: true,
         lifecycle: None,
         project: None,
+        principal_ref: None,
         commitments: Vec::new(),
     };
     vault

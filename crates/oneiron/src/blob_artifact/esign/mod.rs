@@ -78,6 +78,11 @@ pub use escalation::{
     ESIGN_ASK_CLIMB_HOURS, HELD_SIGNING_LAPSE_NOTIFICATION_PRODUCER, HOLD_ALLOW, HOLD_DECLINE,
     HeldAskWait, HeldSigning, HeldSigningAnswer, HeldSigningState,
 };
+mod autonomy;
+pub(crate) use autonomy::erase_esign_autonomy_actor_in_txn;
+pub use autonomy::{
+    ESIGN_DRAFT_CLASS, ESIGN_SEND_CLASS, EsignAutonomy, EsignAutonomyRequest, EsignSendEnvelope,
+};
 mod principals;
 pub(crate) mod setting_keys;
 pub use capability::EsignCapability;
@@ -86,8 +91,8 @@ pub use ceremony::{
     ESIGN_SEAL_ATTEMPT_KIND, SigningAction, SigningCaller, SigningOutcome, SigningPage,
     SigningSealedItem,
 };
+pub(crate) use principals::automated_signing_allowed;
 pub use principals::{SigningAutonomy, SigningPrincipal};
-pub(crate) use principals::{automated_outbound_allowed, automated_signing_allowed};
 
 mod outbound;
 pub use outbound::{EsignOutboundCommand, EsignOutboundVerb};
