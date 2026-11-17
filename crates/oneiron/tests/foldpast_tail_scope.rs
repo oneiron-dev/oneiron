@@ -144,9 +144,11 @@ fn adopt_image(
                 .adopt_recovered_authority_checkpoint(&pin, &bytes, &attestations, fixed, root)
                 .expect("adopt image");
         }
-        None => adopting
-            .adopt_authority_checkpoint(&pin, &bytes, &attestations)
-            .expect("adopt image"),
+        None => {
+            adopting
+                .adopt_authority_checkpoint(&pin, &bytes, &attestations)
+                .expect("adopt image");
+        }
     }
     adopting.authority_fold().expect("empty tail projects");
     (adopting, adopt_dir)
