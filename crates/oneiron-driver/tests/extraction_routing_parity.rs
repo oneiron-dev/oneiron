@@ -223,6 +223,7 @@ fn assert_choices(
             Route::AlreadyRepresented { .. } => {
                 assert_eq!(choice["kind"], json!("already_represented"))
             }
+            Route::ObservedBeside { .. } => assert_eq!(choice["kind"], json!("new")),
             Route::Judge { .. } => return Err("an outside choice maps to a judge route".into()),
         }
     }
