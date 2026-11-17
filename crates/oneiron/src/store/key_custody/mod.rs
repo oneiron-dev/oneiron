@@ -22,6 +22,8 @@ mod files;
 mod folder;
 mod fork;
 mod head;
+#[cfg(oneiron_test_support)]
+pub(crate) use self::head::custody_head_digest_for_test;
 mod holders;
 mod home;
 use oneiron_store::key_custody::identity;
