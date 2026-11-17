@@ -61,6 +61,7 @@ pub mod siwc_seat;
 pub mod solved_runs;
 pub mod system_one_leg;
 pub mod voice_call;
+pub mod web_search_count;
 pub mod wire_health_sweep;
 pub mod wire_thresholds;
 pub mod workflow_park;
