@@ -20,6 +20,9 @@ use crate::inbox::{
     NotificationEvent, NotificationKind, NotificationSource, decode_notification_body,
 };
 use crate::memory::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
+use crate::ports::EntityStoreRead;
+use crate::registry::ENTITY_TYPE_NOTIFICATION;
+use crate::scan_check::{EngineScan, ScanCount};
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 
 /// The inbox producer of an agent's data-key generation proposal; its event
@@ -151,33 +154,51 @@ impl Vault {
     }
 
     /// Settles the agents' asks for `replaced`, the generation the owner's
-    /// act just replaced: each live ask for it is seen and acked for the
-    /// owner it was raised for. An absent, deleted or already acked row stays
-    /// as it is, and so does a row that does not decode: an inbox row never
-    /// stops the owner's act.
+    /// act just replaced: every stored ask for it is seen and acked for the
+    /// recipient it was raised for, an owner who has since left included, so
+    /// no ask for a replaced generation stays live. The asks are found by
+    /// their producer and event in one scan of the notifications, as an
+    /// erase's scrub finds its rows; the act is rare and owner-run. An absent,
+    /// deleted or already acked row stays as it is, and so does a row that
+    /// does not decode: an inbox row never stops the owner's act.
     pub(crate) fn settle_data_key_generation_proposals_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         replaced: u32,
     ) -> Result<()> {
-        for owner in crate::policy_model::owners_in_txn(self, txn)? {
-            let source = NotificationSource {
-                producer: NOTIFICATION_PRODUCER_DATA_KEY_GENERATION_PROPOSAL.to_owned(),
-                event: format!("{replaced}:{}", owner.to_hex()),
-                ..NotificationSource::default()
-            };
-            let id = crate::inbox::notification_id(&source)?;
+        let event_prefix = format!("{replaced}:");
+        let mut count = ScanCount::start(
+            &self.store,
+            &*txn,
+            EngineScan::TypeIndexRows,
+            &[ENTITY_TYPE_NOTIFICATION],
+        )?;
+        let mut ids = Vec::new();
+        for row in self
+            .store
+            .port_entity_ids_by_type(&*txn, ENTITY_TYPE_NOTIFICATION, None)?
+        {
+            count.row();
+            ids.push(row?);
+        }
+        count.finish(self);
+        for id in ids {
             let LiveEntityRow::Live { entity_type, body } =
-                live_entity_row_in_txn(&self.store, txn, &id)?
+                live_entity_row_in_txn(&self.store, &*txn, &id)?
             else {
                 continue;
             };
-            if entity_type != crate::registry::ENTITY_TYPE_NOTIFICATION {
+            if entity_type != ENTITY_TYPE_NOTIFICATION {
                 continue;
             }
             let Ok(mut body) = decode_notification_body(&body) else {
                 continue;
             };
+            if body.source.producer != NOTIFICATION_PRODUCER_DATA_KEY_GENERATION_PROPOSAL
+                || !body.source.event.starts_with(&event_prefix)
+            {
+                continue;
+            }
             let Some(recipient) = body.recipient.clone() else {
                 continue;
             };
