@@ -18,6 +18,8 @@ pub(super) struct ClaimWrite<'a> {
     pub(super) occurred_at: u64,
     pub(super) learned_at: u64,
     pub(super) key: MemoryKey<'a>,
+    /// Held beside the `UserStated` claims on its key, never over them: an
+    /// observed preference (OF-023) or a generated claim.
     pub(super) beside_stated: bool,
     pub(super) prior: Option<EntityId>,
     /// The original row of an exact signed replay routed to a fresh proposal.
@@ -203,9 +205,15 @@ impl Memory<'_> {
             relationship: relationship.clone(),
         };
         // OF-023: a want derived from behaviour is minted beside the stated
-        // one, never over it. The peer scan is independent of replacement:
-        // seed/propose replace nothing but still collect stated peers.
-        let beside_stated = crate::claim::is_observed_preference(Some(source), &input.predicate);
+        // one, never over it. So is a generated claim (the owner, 22 Sep:
+        // "Generated never supersedes UserStated ... A generated claim that
+        // disagrees lands beside it, Proposed, with a disagreement card"):
+        // the stated head is never its prior, so no author's claim is
+        // replaced and each differing stated peer opens a conflict. The peer
+        // scan is independent of replacement: seed/propose replace nothing
+        // but still collect stated peers.
+        let beside_stated = crate::claim::is_observed_preference(Some(source), &input.predicate)
+            || source == crate::claim::ClaimSource::Generated;
 
         // ADVISORY only (ONE-1936): this lookup runs outside the transaction,
         // so the prior it names may already be closed by the time the write
