@@ -25,7 +25,7 @@ mod role_defaults;
 mod solo;
 pub use inference_admission::{
     AuthorizedInference, BoundInference, HostInferenceBinding, HostInferenceContext,
-    InferencePolicySnapshot,
+    InferencePolicySnapshot, InferenceRefusal,
 };
 #[doc(hidden)]
 pub(crate) use oneiron_consent_state::llm::entity_refs;
@@ -169,7 +169,7 @@ pub use oneiron_model::llm::{ReplyAssertionRecord, ReplyAssertions};
 pub use self::autocheck::{
     AUTO_CHECK_VALUE_PREVIEW_BYTES, AUTO_CHECKER_DEADLINE_MS, AutoCheckCandidate,
     AutoCheckCandidateOwned, AutoCheckDecisions, AutoCheckNotes, AutoCheckOutcome,
-    AutoCheckSignals, BoundedAutoChecker,
+    AutoCheckSignals, AutoCheckWorldHold, BoundedAutoChecker,
 };
 pub use self::role_defaults::RoleModelDefaults;
 pub use self::solo::{is_solo, mark_solo};
@@ -190,8 +190,8 @@ pub use oneiron_model::llm::{
     LlmUsage, ModelId, ModelIdError, ModelLocality, ModelTierRef, OwnedDispatchRelease,
     PinnedConfigViolation, PinnedModelConfig, REASONING_BUDGET_PARAM, ReasoningEffort,
     ReasoningPartKind, ResponseFormat, RetryableLlmError, SafeguardModelBinding,
-    SafeguardModelBindingError, SingleRouteBackend, SingleSend, SpentKind, TierPrecedence,
-    TransportFault, TransportFaultKind, UnsupportedCapability,
+    SafeguardModelBindingError, ServedCacheHorizon, SingleRouteBackend, SingleSend, SpentKind,
+    TierPrecedence, TransportFault, TransportFaultKind, UnsupportedCapability,
 };
 
 #[cfg(test)]
@@ -215,6 +215,7 @@ use std::collections::BTreeMap;
 
 /// Typed question and outcome contracts.
 pub mod decision;
+pub(crate) mod setting_keys;
 pub(crate) mod tables;
 pub(crate) use budget::RsiSigning;
 pub use budget::rsi_doors;

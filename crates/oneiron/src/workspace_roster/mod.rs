@@ -120,9 +120,8 @@ pub use self::records::{
     MemberOnboardingOutcome, MemberOnboardingStep, WORKSPACE_ROSTER_SCHEMA_VERSION,
     WorkspaceRosterEntry, WorkspaceRosterRole,
 };
-// The bind-interval read; its first reader outside the tests is FIX row
-// SPEAKER-BYLINE-FOR-ORG's statement byline.
-#[cfg(oneiron_test_support)]
+// The bind-interval read: the room reads' statement byline (FIX row
+// SPEAKER-BYLINE-FOR-ORG) and its test door.
 pub(crate) use self::house_link::house_org_at_in_txn;
 pub(crate) use self::scrub::{
     erase_companion_principal_actor_in_txn, erase_member_actor_in_txn,
@@ -165,8 +164,9 @@ pub use project::{
     ProjectForkEvidence, ProjectForkOutcome, ProjectFrontier, ProjectHistoryOverBudget,
     ProjectHistoryPolicy, ProjectHistoryQuestion, ProjectParentWitness, ProjectRank,
     ProjectResolution, ProjectRevision, ProjectRevisionHash, ProjectRevisionProof,
-    ProjectRosterWriteOutcome, ProjectRosterWriteRequest, ProjectSeal, ProjectWitness,
-    ProjectWriteOutcome,
+    ProjectRoomFacetsSetRequest, ProjectRoomFacetsState, ProjectRosterWriteOutcome,
+    ProjectRosterWriteRequest, ProjectSeal, ProjectWitness, ProjectWriteOutcome,
+    set_project_room_facets_from_request_as,
 };
 pub use project::{
     GoalAxis, GoalExplorationBudget, GoalInterviewTurns, GoalPreference, GoalRecord,
@@ -267,7 +267,9 @@ pub(crate) use rooms::{
     audience_edit_unlink_refusal, carried_audience_edit_in_txn, scrub_audience_edits,
 };
 
+pub use rooms::RoomClosedSet;
 pub(crate) use rooms::RoomThreadTask;
+pub(crate) use rooms::room_is_closed_in;
 pub(crate) use rooms::stored_room_pins_in;
 pub use rooms::{
     ACTOR_ERASE_HOST_PIN, HostPin, HostPinKind, ProjectRoomPlace, RoomHostHand, RoomHostPin,
@@ -308,7 +310,10 @@ pub(crate) use rooms::{
 pub(crate) use rooms::{
     erase_host_pin_actor_in_txn, erase_offer_actor_in_txn, erase_turn_actor_in_txn,
 };
-pub(crate) use rooms::{own_room_windows_in_txn, project_room_audience_in, room_join_audience_in};
+pub(crate) use rooms::{
+    own_room_windows_in_txn, project_room_audience_in, room_join_audience_in,
+    room_sole_owner_reader_in,
+};
 pub(crate) use rooms::{record_native_room_turn_in_txn, record_room_message_in_txn};
 
 pub(crate) use rooms::{Admitted, admit_participation_in_txn, join_subject_for_actor_in_txn};

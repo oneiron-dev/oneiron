@@ -10,6 +10,7 @@ use super::gpu::{
 };
 use crate::models::{BrokerContext, is_cloud_node};
 use oneiron::federation::derivation::{DerivationScope, SealedOutput};
+use oneiron_base::unix_seconds_now;
 use oneiron_broker::{CallHeader, Shape};
 use rand_core::RngCore;
 use reqwest::header::HeaderValue;
@@ -17,7 +18,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
 /// One rented inference pod: a stable id, its base URL and how many leases it
 /// serves at once.
@@ -33,31 +34,47 @@ pub struct GpuPodConfig {
     pub hours: Option<GpuPodHoursConfig>,
 }
 
-/// A pod's `hours`: `start` and `end` as `"HH:MM"`, read in `utc_offset`
-/// (`"+HH:MM"` or `"-HH:MM"`, required, so a window is never read in the
-/// wrong zone). The start is the first minute in, the end the first minute
-/// out; `start = "22:00"`, `end = "07:00"` runs across midnight. A fixed
-/// offset does not follow daylight-saving changes.
+/// A pod's `hours`: `start` and `end` as `"HH:MM"`, read on exactly one
+/// clock, so a window is never read in the wrong zone: `utc_offset`
+/// (`"+HH:MM"` or `"-HH:MM"`), a fixed offset that does not follow
+/// daylight-saving changes, or `iana_timezone` (such as `"Europe/Berlin"`),
+/// whose hours follow the zone's daylight-saving changes. The start is the
+/// first minute in, the end the first minute out; `start = "22:00"`,
+/// `end = "07:00"` runs across midnight.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct GpuPodHoursConfig {
     pub start: String,
     pub end: String,
-    pub utc_offset: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub utc_offset: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub iana_timezone: Option<String>,
 }
 
 impl GpuPodHoursConfig {
     /// The registry's form of these hours, or what is wrong with them.
-    pub(crate) fn hours(&self) -> anyhow::Result<GpuPodHours> {
+    pub fn hours(&self) -> anyhow::Result<GpuPodHours> {
         let start = clock_minute(&self.start)
             .ok_or_else(|| anyhow::anyhow!("start must be a time of day as \"HH:MM\""))?;
         let end = clock_minute(&self.end)
             .ok_or_else(|| anyhow::anyhow!("end must be a time of day as \"HH:MM\""))?;
         anyhow::ensure!(start != end, "start and end must differ");
-        let offset = utc_offset_minutes(&self.utc_offset).ok_or_else(|| {
-            anyhow::anyhow!("utc_offset must be \"+HH:MM\" or \"-HH:MM\", at most 14:00")
-        })?;
-        GpuPodHours::new(start, end, offset).map_err(anyhow::Error::from)
+        match (&self.utc_offset, &self.iana_timezone) {
+            (Some(offset), None) => {
+                let offset = utc_offset_minutes(offset).ok_or_else(|| {
+                    anyhow::anyhow!("utc_offset must be \"+HH:MM\" or \"-HH:MM\", at most 14:00")
+                })?;
+                GpuPodHours::new(start, end, offset).map_err(anyhow::Error::from)
+            }
+            (None, Some(zone)) => GpuPodHours::in_iana_timezone(start, end, zone).map_err(|_| {
+                anyhow::anyhow!(
+                    "iana_timezone must name an IANA zone in its canonical spelling, such as \"Europe/Berlin\""
+                )
+            }),
+            (Some(_), Some(_)) => anyhow::bail!("set utc_offset or iana_timezone, not both"),
+            (None, None) => anyhow::bail!("hours need a utc_offset or an iana_timezone"),
+        }
     }
 }
 
@@ -202,12 +219,6 @@ fn default_poll_seconds() -> u64 {
 
 /// How long one pod probe may take.
 pub(crate) const POD_PROBE_TIMEOUT: Duration = Duration::from_secs(5);
-
-fn now() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |d| d.as_secs())
-}
 
 fn entropy() -> [u64; 2] {
     [rand_core::OsRng.next_u64(), rand_core::OsRng.next_u64()]
@@ -426,7 +437,7 @@ impl GpuPool {
                 tracing::warn!(region = %self.region(), pod = %id, ?health, "gpu pod unhealthy");
             }
         }
-        self.registry().expire(now());
+        self.registry().expire(unix_seconds_now());
     }
 
     /// Polls every pod at once, then on the configured cadence, for the life
@@ -470,7 +481,7 @@ impl GpuPool {
                     tokio::time::interval_at(tokio::time::Instant::now() + period, period);
                 loop {
                     tick.tick().await;
-                    if pool.registry().renew(id, now()).is_err() {
+                    if pool.registry().renew(id, unix_seconds_now()).is_err() {
                         lost.store(true, Ordering::Release);
                         return;
                     }
@@ -483,7 +494,7 @@ impl GpuPool {
     /// load. The lease renews every [`GPU_RENEW_SECONDS`], past the pod's
     /// hours too, and releases when dropped.
     pub fn acquire(&self) -> Result<GpuLeaseGuard, GpuRegistryError> {
-        let lease = self.registry().acquire(now(), entropy())?;
+        let lease = self.registry().acquire(unix_seconds_now(), entropy())?;
         let url = match self.url(&lease.pod) {
             Ok(url) => url,
             Err(e) => {
@@ -510,9 +521,13 @@ impl GpuPool {
         computation: Vec<u8>,
         content: Vec<u8>,
     ) -> Result<GpuDerivationJob, GpuRegistryError> {
-        let job =
-            self.registry()
-                .acquire_derivation(scope, computation, content, now(), entropy())?;
+        let job = self.registry().acquire_derivation(
+            scope,
+            computation,
+            content,
+            unix_seconds_now(),
+            entropy(),
+        )?;
         let url = match self.url(&job.lease().pod) {
             Ok(url) => url,
             Err(e) => {
@@ -529,6 +544,15 @@ impl GpuPool {
             lost,
             renewer,
         })
+    }
+}
+
+/// The embedding reconciler reads the pods' hours once per pass: while every
+/// pod is outside them, the backfill the owner's wait names stays pending
+/// instead of going to the endpoint (NIGHT-BACKFILL-HOLD).
+impl oneiron::embed::PodHoursClock for GpuPool {
+    fn outside_pod_hours(&self) -> bool {
+        self.registry().outside_hours(unix_seconds_now())
     }
 }
 
@@ -583,7 +607,9 @@ impl GpuDerivationJob {
     pub fn complete(mut self, output: Vec<u8>) -> Result<SealedOutput, GpuRegistryError> {
         self.renewer.abort();
         let job = self.job.take().ok_or(GpuRegistryError::LeaseExpired)?;
-        self.pool.registry().complete_derivation(job, output, now())
+        self.pool
+            .registry()
+            .complete_derivation(job, output, unix_seconds_now())
     }
 }
 
