@@ -50,6 +50,7 @@ pub(crate) fn stamp_birth_with_floor_in_txn(
     birth: &RowBirth,
 ) -> crate::Result<()> {
     stamp_row_birth_in_txn(&vault.store, txn, row, birth)?;
+    crate::source_audience::seal_births_from_erased_inputs_in_txn(vault, txn, &[*row])?;
     crate::source_audience::raise_floors_in_txn(vault, txn, [*row])
 }
 
@@ -65,7 +66,11 @@ pub(crate) fn stamp_birth_with_floor_if_absent_in_txn(
     row: &crate::EntityId,
     birth: &RowBirth,
 ) -> crate::Result<()> {
+    let born = !ROW_BIRTH.contains(&vault.store, txn, row)?;
     stamp_birth_if_absent_in_txn(&vault.store, txn, row, birth)?;
+    if born {
+        crate::source_audience::seal_births_from_erased_inputs_in_txn(vault, txn, &[*row])?;
+    }
     crate::source_audience::raise_floors_in_txn(vault, txn, [*row])
 }
 

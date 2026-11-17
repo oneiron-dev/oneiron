@@ -142,6 +142,7 @@ impl BatchBuilder<'_> {
             (Some(requested), _) => Some(requested),
             (None, active) => active,
         };
+        let born_rows = self.born_rows();
         let floor_rows = self.floor_rows();
         if let Some(actor) = actor {
             let has_owner = super::vad_postcommit::has_vad_postcommit_owner(vault, wtxn);
@@ -164,7 +165,10 @@ impl BatchBuilder<'_> {
             self.apply_staged(wtxn, gate_mode, None, lane, authority_beside, own_device)?;
         }
         // READ-LINEAGE L1 hooks 1 and 2: each row this batch gave words or a
-        // source carries the floor of what it came from, in the same write.
+        // source carries the floor of what it came from, in the same write;
+        // a row born here from an input this vault erased is born sealed
+        // (#9289 review r1 P1).
+        crate::source_audience::seal_births_from_erased_inputs_in_txn(vault, wtxn, &born_rows)?;
         crate::source_audience::raise_floors_in_txn(vault, wtxn, floor_rows)?;
         vault.stamp_agent_authored_creates_in_txn(wtxn, creates)
     }
@@ -175,9 +179,7 @@ impl BatchBuilder<'_> {
     /// its TURN each read under the other's sources; a row under what it is
     /// `DerivedFrom`; a CLAIM under what supports it).
     fn floor_rows(&self) -> Vec<EntityId> {
-        let mut rows: Vec<EntityId> = self.births.iter().map(|(row, _)| *row).collect();
-        rows.extend(self.text_births.keys().copied());
-        rows.extend(self.note_births.iter().map(|(row, _)| *row));
+        let mut rows = self.born_rows();
         for op in &self.ops {
             let (src, kind, tgt) = match op {
                 BatchOp::Put { id, .. } | BatchOp::ClaimCandidate { id, .. } => {
@@ -196,6 +198,15 @@ impl BatchBuilder<'_> {
                 _ => {}
             }
         }
+        rows
+    }
+
+    /// The rows this batch stamps a birth for: each birth, document birth
+    /// and note birth it holds.
+    fn born_rows(&self) -> Vec<EntityId> {
+        let mut rows: Vec<EntityId> = self.births.iter().map(|(row, _)| *row).collect();
+        rows.extend(self.text_births.keys().copied());
+        rows.extend(self.note_births.iter().map(|(row, _)| *row));
         rows
     }
 

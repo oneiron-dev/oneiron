@@ -9,6 +9,7 @@
 //! Run with: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test read_lineage_floor`.
 #![cfg(oneiron_test_support)]
 
+use oneiron::memory::SafeDeleteReason;
 use oneiron::provenance::made_by::{
     MadeBy, MadeByClass, MadeByInput, MadeByInputRole, MadeByProcess,
 };
@@ -16,8 +17,8 @@ use oneiron::test_doors::house_link::put_claim_made_by;
 use oneiron::test_doors::read_lineage_floor::{floor_of, walked_policies_of};
 use oneiron::test_doors::source_audience_binding::{bound_row, reads, remove_policy_row};
 use oneiron::{
-    ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject, EdgeKind,
-    EntityId, Vault, VaultConfig,
+    ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
+    EdgeActorClass, EdgeKind, EntityId, Vault, VaultConfig,
 };
 
 const AT: u64 = 1_769_947_200;
@@ -56,6 +57,16 @@ fn mailbox() -> Mailbox {
 /// An open CLAIM about the owner whose birth names `inputs` as its
 /// evidence (`Input`), stamped in a local write; no edge names them.
 fn claim_born_from(mailbox: &Mailbox, inputs: &[EntityId], value: &str) -> EntityId {
+    claim_born_with(mailbox, inputs, MadeByInputRole::Input, value)
+}
+
+/// [`claim_born_from`], naming `inputs` in the birth as `role`.
+fn claim_born_with(
+    mailbox: &Mailbox,
+    inputs: &[EntityId],
+    role: MadeByInputRole,
+    value: &str,
+) -> EntityId {
     let id = EntityId::now();
     let mut body = ClaimBody::new(
         "profile.preference",
@@ -70,10 +81,7 @@ fn claim_born_from(mailbox: &Mailbox, inputs: &[EntityId], value: &str) -> Entit
     let made_by = MadeBy {
         inputs: inputs
             .iter()
-            .map(|row| MadeByInput {
-                row: *row,
-                role: MadeByInputRole::Input,
-            })
+            .map(|row| MadeByInput { row: *row, role })
             .collect(),
         process: MadeByProcess {
             actor: mailbox.owner,
@@ -110,6 +118,50 @@ fn a_claim_born_from_a_mailbox_row_reads_only_to_the_mailboxs_readers() {
         !reads(&mailbox.vault, learnt, &[mailbox.stranger]).expect("the stranger reads it"),
         "LEAK: a stranger reads a CLAIM whose birth names a mailbox's row",
     );
+}
+
+/// #9289 review r1 P1: an erase takes a row's stored floor with its row, so
+/// a row born from it after the erase has no source left to inherit. The
+/// CLAIM `middle`, learnt from the mailbox's row, holds the mailbox's policy
+/// on its floor; the owner deletes it; a CLAIM whose prompt then names
+/// `middle` is born sealed (READ-LINEAGE-L3 = A) and reads to no one, the
+/// mailbox's reader included. A CLAIM born from `middle` while it stood
+/// keeps the mailbox's policy after the delete: only the birth's own write
+/// seals.
+#[test]
+fn a_claim_born_from_an_erased_row_is_sealed() {
+    let mailbox = mailbox();
+    let middle = claim_born_from(&mailbox, &[mailbox.row], "learnt from the mailbox");
+    let before = claim_born_from(&mailbox, &[middle], "learnt while middle stood");
+    mailbox
+        .vault
+        .memory(mailbox.owner, EdgeActorClass::Human)
+        .safe_delete(&middle.to_hex(), SafeDeleteReason::UserDelete)
+        .expect("the owner deletes the CLAIM middle");
+    let after = claim_born_with(
+        &mailbox,
+        &[middle],
+        MadeByInputRole::Prompt,
+        "learnt from middle after its delete",
+    );
+    assert!(
+        reads(&mailbox.vault, before, &[mailbox.reader]).expect("the reader reads before"),
+        "a CLAIM born while middle stood keeps the mailbox's policy after the delete",
+    );
+    assert!(
+        !reads(&mailbox.vault, before, &[mailbox.stranger]).expect("the stranger reads before"),
+        "LEAK: a stranger reads a CLAIM born from middle while it stood",
+    );
+    for (who, label) in [
+        (mailbox.stranger, "a stranger"),
+        (mailbox.reader, "the mailbox's reader"),
+    ] {
+        assert!(
+            !reads(&mailbox.vault, after, &[who]).expect("the read of after"),
+            "{label} reads a CLAIM born from the deleted middle: it is not sealed, though \
+             nothing here says any more whose words middle held",
+        );
+    }
 }
 
 /// A row written from that CLAIM by an edge carries the CLAIM's floor in

@@ -25,8 +25,10 @@
 //! adds its floor. A CLAIM's supports attest it: one free attestation frees,
 //! otherwise every attestation's floor binds. A row whose lineage cannot be
 //! read when it is written is born under [`sealed_source`], which admits no
-//! one, the vault owner included (READ-LINEAGE-L3 = A); doctor counts such
-//! rows ([`facts_hidden_source_unknown_in`]).
+//! one, the vault owner included (READ-LINEAGE-L3 = A), and so is a row
+//! whose birth names an input this vault erased
+//! ([`seal_births_from_erased_inputs_in_txn`]); doctor counts such rows
+//! ([`facts_hidden_source_unknown_in`]).
 
 use std::collections::BTreeSet;
 
@@ -313,6 +315,48 @@ pub(crate) fn raise_floors_in_txn(
             return Ok(());
         }
     }
+}
+
+/// Seals each row of `born`, in the write that stamps its birth, when that
+/// birth names an input this vault erased: its deletion shell or record
+/// stands (#9289 review r1 P1). An erase takes the input's own source with
+/// its body (a phone row's stamp) and its stored floor with its row
+/// (`erase_derived_policies_in_txn`), so nothing here says any more whose
+/// words the input held: a prompt that read caller A's kept TURN, erased
+/// before the CLAIM it wrote landed, left that CLAIM no source to inherit.
+/// The row is born under [`sealed_source`] (C5, READ-LINEAGE-L3 = A). Only
+/// the birth's own write seals: a row born while its inputs stood already
+/// holds their floor, and a later erase takes no source off it. A vault
+/// where no row can have a floor seals nothing ([`floors_possible_in`]).
+///
+/// # Errors
+///
+/// Storage failures.
+pub(crate) fn seal_births_from_erased_inputs_in_txn(
+    vault: &Vault,
+    txn: &mut RwTxn<'_>,
+    born: &[EntityId],
+) -> Result<()> {
+    if born.is_empty() || !floors_possible_in(vault, txn)? {
+        return Ok(());
+    }
+    let sealed = BTreeSet::from([sealed_source()]);
+    for row in born {
+        for input in crate::store::birth_record::input_rows_in_txn(&vault.store, txn, row)? {
+            if input != *row
+                && crate::ports::TombstoneStoreRead::port_deletion_state(
+                    &vault.store,
+                    &**txn,
+                    &input,
+                )?
+                .deleted
+            {
+                super::add_derived_policies_in_txn(vault, txn, row, &sealed)?;
+                break;
+            }
+        }
+    }
+    Ok(())
 }
 
 /// The threads on the stored floor of `row` that a read must hold, or
