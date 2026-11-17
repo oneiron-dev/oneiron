@@ -205,8 +205,8 @@ pub(super) struct GuardedTransport<S> {
     live_person: Option<live_person::LivePerson>,
     /// Set only while an app-tier frame is draining; sync keeps its owner guard.
     pub(super) app_jti: Option<String>,
-    /// Set only while a selector answer's frame is draining: judged again after
-    /// each wait on the peer (SELECTOR-RELEASE-POINT = B).
+    /// Set only while a selector answer's frame is draining: judged again before
+    /// its bytes leave and after each wait on the peer (SELECTOR-RELEASE-POINT = B).
     pub(super) answer: Option<crate::selector_release::ReleasedAnswer>,
     conn_id: u32,
     /// The socket's own `write_buffer_size`, mirrored so the refusal below can
@@ -580,7 +580,7 @@ where
         let Some(socket) = self.socket.as_mut() else {
             return false;
         };
-        // A selector answer, judged as it was released, is judged again only once this waits.
+        // A selector answer is judged here once this waits; its flush judges it anyway.
         let mut waited = false;
         if std::future::poll_fn(|cx| {
             let ready = socket.poll_ready_unpin(cx);
@@ -685,7 +685,7 @@ where
     /// line and nowhere else: both are unbounded waits on the same sink, and
     /// both must abort rather than park past a revocation.
     async fn guarded_drain(&mut self, what: &'static str) -> bool {
-        self.guarded_flush_loop(what).await
+        self.guarded_flush_loop(what, false).await
     }
 
     /// Drains the queued frame, re-consulting the registry at every park.
@@ -697,7 +697,7 @@ where
     /// so it cannot arrive as an in-process wakeup: observing it means
     /// re-reading the registry, which means getting control back.
     async fn guarded_flush(&mut self) -> bool {
-        self.guarded_flush_loop("a frame awaited flush").await
+        self.guarded_flush_loop("a frame awaited flush", true).await
     }
 
     /// The guarded wait both drains share.
@@ -705,8 +705,9 @@ where
     /// One loop rather than two: the pre-handover drain and the post-handover
     /// flush park on the same sink under the same rules, and two copies of a
     /// security wait drift.
-    async fn guarded_flush_loop(&mut self, what: &'static str) -> bool {
-        let mut waited = false;
+    /// A selector answer is judged after a park, and with `judge_answer` (a queued
+    /// frame's flush) before the first poll too: each frame, not only the first.
+    async fn guarded_flush_loop(&mut self, what: &'static str, mut judge_answer: bool) -> bool {
         loop {
             // BEFORE the poll, not only after it. `start_send` is a synchronous
             // queue-and-return, so a revocation landing between the pre-handover
@@ -716,7 +717,7 @@ where
             // consult ever runs. Checking only at a park makes the guard depend
             // on the peer being slow, which is exactly backwards: the fast peer
             // is the one that gets the frame.
-            if self.credential_revoked() || (waited && self.answer_withdrawn()) {
+            if self.credential_revoked() || (judge_answer && self.answer_withdrawn()) {
                 tracing::warn!(
                     conn_id = self.conn_id,
                     stage = what,
@@ -742,7 +743,7 @@ where
                     return false;
                 }
                 // Back to the loop head, which re-consults before re-polling.
-                FlushStep::Parked => waited = true,
+                FlushStep::Parked => judge_answer = true,
             }
         }
     }

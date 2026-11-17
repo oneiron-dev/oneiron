@@ -13,15 +13,15 @@
 //!   (a client may reuse a request id) and tags each frame of the answer
 //!   with it. The tag is never a peer wire tag: the socket's release strips
 //!   it before every other door.
-//! - The release judges the basis once per answer, at its first frame, before
-//!   any part of it leaves. The later frames of an answer that stood go as it
-//!   was judged; an answer that did not stand sends none.
+//! - The release judges the basis at the answer's first frame, before any
+//!   part of it leaves; an answer that did not stand sends none.
 //! - Each frame of an answer that stood goes under its basis
-//!   ([`ReleasedAnswer`]): the socket's send judges it again after each wait
-//!   on the peer (a full sink, owed control frames, a parked flush), and
-//!   closes the socket rather than send once it no longer stands, as it does
-//!   for a revoked credential. A peer that stops reading cannot park an
-//!   answer past its grant.
+//!   ([`ReleasedAnswer`]): the socket's send judges it again just before the
+//!   frame's bytes leave, and after each wait on the peer (a full sink, owed
+//!   control frames, a parked flush), and closes the socket rather than send
+//!   once it no longer stands, as it does for a revoked credential. A peer
+//!   that stops reading cannot park an answer past its grant, and a later
+//!   frame never leaves on its first frame's judgement.
 //! - A federation UPDATE that does not stand is not sent, and its window's
 //!   ready request is owed again; a residence reply is replaced by
 //!   RESULT_CHANGED.
@@ -75,7 +75,8 @@ enum Judged {
 }
 
 /// What a frame of a queued selector answer that leaves was made under: its
-/// send judges that again after each wait on the peer.
+/// send judges that again before the frame's bytes leave and after each wait
+/// on the peer.
 pub(crate) struct ReleasedAnswer {
     vault: Arc<Vault>,
     bases: Arc<[SelectorReleaseBasis]>,
