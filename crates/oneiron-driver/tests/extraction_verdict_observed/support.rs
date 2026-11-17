@@ -301,6 +301,7 @@ fn witness_turn(
             conversation_ref: conversation.to_hex(),
             turn_ref: Some(EntityId::now().to_hex()),
             thread_audience: None,
+            project: None,
             messages: vec![WitnessMessage {
                 id: Some(EntityId::now().to_hex()),
                 author: WitnessAuthor::User,

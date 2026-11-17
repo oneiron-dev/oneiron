@@ -64,6 +64,7 @@ pub(crate) use conflict_settle::{conflict_review_held_in, dreamer_conflict_revie
 pub mod consolidation;
 pub mod consolidation_frontier;
 pub mod coping_doors;
+mod coping_lookup;
 mod core_write_doors;
 pub mod device_succession;
 mod diagnostics;
@@ -139,6 +140,7 @@ mod read_lane;
 mod read_selection;
 mod reads;
 mod recall;
+pub(crate) mod recall_replay;
 pub use recall::RecallRequest;
 pub mod repo_doors;
 pub(crate) mod repo_secret_reads;
@@ -283,7 +285,7 @@ pub use oneiron_contracts::memory::{
     MEMORY_CODE_LEASE_REQUIRED, MEMORY_CODE_MODEL_UNAVAILABLE, MEMORY_CODE_NOT_FOUND,
     MEMORY_CODE_OFF_RECORD_SESSION_DOOR, MEMORY_CODE_OWNER_BINDING_REQUIRED,
     MEMORY_CODE_PACED_HOLD, MEMORY_CODE_PENDING_ASK, MEMORY_CODE_VAULT_LOCKED_SINGLE_WRITER,
-    MEMORY_CODE_WRONG_ROOT, MemoryError, MemoryGateDenial, MemoryPolicyDenial,
+    MEMORY_CODE_WRONG_ROOT, MemoryError, MemoryGateDenial, MemoryPending, MemoryPolicyDenial,
     MemoryPolicyExceptionProposal, MemoryResult, MemoryWrongRoot,
 };
 pub(crate) use people_verbs::grant_requested_scope;

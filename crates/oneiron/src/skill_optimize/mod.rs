@@ -173,6 +173,8 @@ pub use self::dials::{
     set_skill_optimize_min_outcomes, skill_optimize_min_outcomes,
 };
 pub use self::eval_set::doors as eval_doors;
+#[cfg(oneiron_test_support)]
+pub(crate) use self::eval_set::fail_execution_writes;
 pub use self::eval_set::{
     AuditCase, AuditCoverage, AuditMethodPin, CandidateLabel, CaseDecision, CohortRetirement,
     CohortSummary, CoverageGap, CutDecision, DerivationKind, EvalAuthoringInventory,
