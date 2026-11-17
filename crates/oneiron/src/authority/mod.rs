@@ -158,6 +158,7 @@ mod recovery;
 mod retired_signers;
 mod revocation_notice;
 mod revoke_proof;
+mod root_appointment_judge;
 mod rows_floor;
 mod seat_child_slip;
 mod sequence_ancestry;
@@ -244,6 +245,13 @@ pub use oneiron_authority::authority::{
 };
 // The settings edit a holder's key work follows (FIX 4704).
 pub use oneiron_authority::authority::WorldPrivacyWorkBasis;
+// The owner anchor's appointment of a successor root key, and the fold's
+// verdict on it (OWNER-ANCHOR-ROOT-RECOVERY).
+pub use oneiron_authority::authority::{
+    ROOT_APPOINTMENT_SUCCESSOR_PROOF_KIND, ROOT_APPOINTMENT_SUCCESSOR_ROLES, RootAppointment,
+    root_appointment_challenge,
+};
+pub use root_appointment_judge::{AppointmentVerdict, AppointmentVoidReason};
 // The export secret work body and its sealed result (FIX 4624(b)).
 pub use export_secret_work::{
     ExportSecretSupplement, HolderExportRequest, HolderExportState, HolderExportUnassigned,
