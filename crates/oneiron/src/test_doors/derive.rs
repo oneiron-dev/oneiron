@@ -450,6 +450,56 @@ pub fn grant_derive_rows(vault: &Vault, agents: &[EntityId]) -> Result<()> {
     )
 }
 
+/// [`grant_derive_rows`], each agent's `core:read` grant also naming
+/// `actor_class` beside its actor ref: a read row only a key of that class
+/// matches (ARRIVAL-READER-KEY-CLASSLESS).
+///
+/// # Errors
+///
+/// The vault's, or a shipped policy body that does not decode as a map of
+/// scoped grant rows.
+pub fn grant_derive_rows_with_read_class(
+    vault: &Vault,
+    agents: &[EntityId],
+    actor_class: &str,
+) -> Result<()> {
+    use rmpv::Value;
+    let malformed = || crate::Error::InvariantViolation("shipped policy scoped grants");
+    let mut body = crate::gate::default_policy_manifest()?;
+    for agent in agents {
+        body = crate::gate::body_with_agent_derive_rows(&body, &agent.to_hex())?;
+    }
+    let mut policy = rmpv::decode::read_value(&mut body.as_slice()).map_err(|_| malformed())?;
+    let refs: Vec<String> = agents.iter().map(EntityId::to_hex).collect();
+    let Value::Map(entries) = &mut policy else {
+        return Err(malformed());
+    };
+    let Some((_, Value::Array(rows))) = entries
+        .iter_mut()
+        .find(|(key, _)| key.as_str() == Some("scoped_grants"))
+    else {
+        return Err(malformed());
+    };
+    for row in rows {
+        let Value::Map(fields) = row else {
+            return Err(malformed());
+        };
+        if fields.iter().any(|(key, value)| {
+            key.as_str() == Some("actor_ref")
+                && value.as_str().is_some_and(|r| refs.iter().any(|a| a == r))
+        }) {
+            fields.push((Value::from("actor_class"), Value::from(actor_class)));
+        }
+    }
+    let mut named = Vec::new();
+    rmpv::encode::write_value(&mut named, &policy).map_err(|_| malformed())?;
+    crate::test_fixtures::put_policy_manifest_bytes(
+        vault,
+        crate::gate::default_policy_manifest_id()?,
+        &named,
+    )
+}
+
 /// Holds the Steward grant `grant` to `project`, leaving its verbs and
 /// every other data axis unchanged.
 ///
