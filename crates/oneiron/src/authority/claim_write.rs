@@ -139,12 +139,50 @@ pub(crate) fn row_causal_admitted(
     id: &EntityId,
     raw: &[u8],
 ) -> Result<bool> {
+    let Some(body) = causal_claim_body(raw)? else {
+        return Ok(true);
+    };
+    let view = vault.authority_view_readonly_in_txn(txn)?;
+    claim_causal_admitted(&vault.store, txn, &view, id, &body)
+}
+
+#[cfg(feature = "sync")]
+/// [`row_causal_admitted`] in the read `history` caches: a machine history
+/// control is judged against its target's history as `history` resolves it,
+/// once for the whole read (FIX MACHINE-HISTORY-PAGE-PER-CONTROL-RESOLVE).
+pub(crate) fn row_causal_admitted_cached(
+    history: &crate::claim::history_projection::MachineHistoryReadCache<'_>,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    raw: &[u8],
+) -> Result<bool> {
+    let Some(body) = causal_claim_body(raw)? else {
+        return Ok(true);
+    };
+    if let Some(kind) = crate::claim::history_store::machine_history_kind(&body.predicate) {
+        let crate::claim::ClaimSubject::Entity(target) = body.subject else {
+            return Ok(false);
+        };
+        return super::history_control_read_admitted(
+            history.store(),
+            txn,
+            history.fold(txn)?,
+            &history.target(target),
+            id,
+            &body,
+            kind,
+        );
+    }
+    claim_causal_admitted(history.store(), txn, history.fold(txn)?, id, &body)
+}
+
+/// The CLAIM body the causal check judges in the row `raw`; `None` for a row
+/// of any other kind, which the check admits.
+fn causal_claim_body(raw: &[u8]) -> Result<Option<ClaimBody>> {
     let header =
         EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("causal row header"))?;
     if header.entity_type != crate::registry::ENTITY_TYPE_CLAIM {
-        return Ok(true);
+        return Ok(None);
     }
-    let body = crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
-    let view = vault.authority_view_readonly_in_txn(txn)?;
-    claim_causal_admitted(&vault.store, txn, &view, id, &body)
+    crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true).map(Some)
 }
