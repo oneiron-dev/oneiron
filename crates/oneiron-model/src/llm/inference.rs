@@ -292,13 +292,12 @@ fn receipt_values_in(raw: &JsonValue) -> Option<&JsonValue> {
 fn receipts_in(raw: &JsonValue) -> Vec<InferenceCallReceipt> {
     receipt_values_in(raw)
         .and_then(JsonValue::as_array)
-        .map(|records| {
+        .map_or_default(|records| {
             records
                 .iter()
                 .filter_map(|record| InferenceCallReceipt::deserialize(record).ok())
                 .collect::<Vec<_>>()
         })
-        .unwrap_or_default()
 }
 
 impl LlmUsage {
