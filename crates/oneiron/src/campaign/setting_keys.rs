@@ -11,7 +11,7 @@
 
 use crate::Vault;
 use crate::error::Result;
-use crate::setting::{Kind, lower_is_tighter};
+use crate::setting::Kind;
 
 const fn restart_required() -> bool {
     false
@@ -26,7 +26,7 @@ crate::setting::setting_keys! {
     pub(crate) CAMPAIGN_SENDER_ROTATE_ON_DEAD: bool = "campaign.sender.rotate_on_dead" {
         kind: Kind::new(restart_required)
             .strictest(restart_required)
-            .tighter(lower_is_tighter::<bool>),
+            .lower(),
     };
 }
 

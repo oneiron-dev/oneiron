@@ -8149,6 +8149,7 @@ dependencies = [
  "getrandom 0.4.3",
  "oneiron-contracts",
  "oneiron-crypto",
+ "oneiron-setting-contract",
  "p256",
  "rmp-serde",
  "rmpv",

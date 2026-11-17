@@ -18,7 +18,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::error::{Error, Result};
-use crate::setting::{Kind, SettingChange, SettingSource, SettingValue, higher_is_tighter};
+use crate::setting::{Kind, SettingChange, SettingSource, SettingValue};
 
 /// The shipped count of replacement times one emergency plan offers.
 pub(crate) const DEFAULT_EMERGENCY_MAX_PROPOSALS: u8 = 3;
@@ -105,7 +105,7 @@ crate::setting::setting_keys! {
         "booking.emergency.min_proposals" {
         kind: Kind::new(min_proposals)
             .strictest(highest_min_proposals)
-            .tighter(higher_is_tighter::<EmergencyProposalCount>),
+            .higher(),
         on_change: Some(refuse_floor_above_count),
     };
     /// Seconds past the affected window an emergency reschedule plan searches for replacement

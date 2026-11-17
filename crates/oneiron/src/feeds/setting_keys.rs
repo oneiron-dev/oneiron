@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 
 use super::{FEED_READ_MAX_LIMIT, FEED_RETENTION_SECS};
 use crate::error::{Error, Result};
-use crate::setting::{Kind, PageMax, SettingValue, lower_is_tighter};
+use crate::setting::{Kind, PageMax, SettingValue};
 
 /// How long a cursor in a pruned source stays held without an acknowledgement, in seconds: one
 /// hour to ten years.
@@ -46,7 +46,7 @@ crate::setting::setting_keys! {
     pub(crate) FEED_RETENTION_IDLE_SECS: FeedRetentionSecs = "feeds.retention.idle_secs" {
         kind: Kind::new(feed_retention_default)
             .strictest(feed_retention_default)
-            .tighter(lower_is_tighter::<FeedRetentionSecs>),
+            .lower(),
     };
 
     /// The most entries one `vault.feeds.read` returns from each source (default 256). An ask
@@ -56,6 +56,6 @@ crate::setting::setting_keys! {
     pub(crate) FEED_READ_MAX: PageMax = "feeds.read.max_per_source" {
         kind: Kind::new(feed_read_max_default)
             .strictest(feed_read_max_default)
-            .tighter(lower_is_tighter::<PageMax>),
+            .lower(),
     };
 }

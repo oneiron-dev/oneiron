@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::Vault;
 use crate::error::{Error, Result};
-use crate::setting::{Kind, SettingValue, lower_is_tighter};
+use crate::setting::{Kind, SettingValue};
 
 /// The places one reattach offer has always listed.
 const DEFAULT_MAX_OFFERS: u32 = 16;
@@ -53,7 +53,7 @@ crate::setting::setting_keys! {
         "anchored_annotation.reattach.max_offers" {
         kind: Kind::new(default_max_offers)
             .strictest(fewest_offers)
-            .tighter(lower_is_tighter::<ReattachOfferLimit>),
+            .lower(),
     };
 }
 

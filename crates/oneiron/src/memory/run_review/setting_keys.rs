@@ -1,7 +1,7 @@
 //! Run review's owner Setting keys (DESIGN 15-setting-primitive): rows the setting catalogue
 //! reads from this file.
 
-use crate::setting::{Kind, lower_is_tighter};
+use crate::setting::Kind;
 
 /// Off: run review is read through the owner's own credential alone.
 fn read_by_owner_alone() -> bool {
@@ -20,6 +20,6 @@ crate::setting::setting_keys! {
     pub(crate) RUN_REVIEW_AGENT_MAY_READ: bool = "memory.run_review.agent_may_read" {
         kind: Kind::new(read_by_owner_alone)
             .strictest(read_by_owner_alone)
-            .tighter(lower_is_tighter::<bool>),
+            .lower(),
     };
 }

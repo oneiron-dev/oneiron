@@ -17,7 +17,7 @@ use super::microsoft365_calendar::{
 };
 use super::reply_recipients::MAX_REPLY_RECIPIENTS;
 use crate::error::{Error, Result};
-use crate::setting::{Kind, SettingValue, lower_is_tighter};
+use crate::setting::{Kind, SettingValue};
 
 /// The most recipients one drafted reply names, To and Cc together: at least 1, the person
 /// answered.
@@ -101,7 +101,7 @@ crate::setting::setting_keys! {
         "mail_calendar.reply.max_recipients" {
         kind: Kind::new(shipped_reply_ceiling)
             .strictest(reply_to_one)
-            .tighter(lower_is_tighter::<ReplyRecipientCeiling>),
+            .lower(),
     };
     /// Seconds before its opening at which a Microsoft 365 calendar source's view starts
     /// (default 2,678,400: 31 days). A view opens again each month, and a new value takes effect

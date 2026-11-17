@@ -1,7 +1,7 @@
 //! Structural puts' owner Setting keys (DESIGN 15-setting-primitive): rows the setting catalogue
 //! reads from this file.
 
-use crate::setting::{Kind, lower_is_tighter};
+use crate::setting::Kind;
 
 /// Off: only a verified human-class owner mints a PERSON.
 fn mint_by_owner_alone() -> bool {
@@ -17,6 +17,6 @@ crate::setting::setting_keys! {
     pub(crate) PERSON_AGENT_MAY_MINT: bool = "memory.person.agent_may_mint" {
         kind: Kind::new(mint_by_owner_alone)
             .strictest(mint_by_owner_alone)
-            .tighter(lower_is_tighter::<bool>),
+            .lower(),
     };
 }

@@ -4,7 +4,7 @@
 use serde::{Deserialize, Serialize};
 
 use super::REVEAL_ASK_TTL_SECS;
-use crate::setting::{Kind, SettingValue, lower_is_tighter};
+use crate::setting::{Kind, SettingValue};
 use crate::{Error, Result, Vault};
 
 /// How long an agent's reveal waits for the owner's answer, and a covered reveal for its
@@ -41,7 +41,7 @@ crate::setting::setting_keys! {
     /// with, so a change applies to the reveals filed after it. Absent, one hour.
     pub(crate) REVEAL_ASK_WINDOW: RevealAskWindowSecs = "secrets.reveal.ask_window_secs" {
         kind: Kind::new(RevealAskWindowSecs::shipped)
-            .tighter(lower_is_tighter::<RevealAskWindowSecs>),
+            .lower(),
     };
 }
 
