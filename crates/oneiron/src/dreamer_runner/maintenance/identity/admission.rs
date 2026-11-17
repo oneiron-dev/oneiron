@@ -193,7 +193,14 @@ pub(super) fn admitted_in_txn(
     let mut evidence = vec![stored.turn, stored.message];
     evidence.extend(candidates.iter().copied());
     let mut hints = BTreeMap::new();
-    let summed = hints::hints_in_txn(&vault.store, txn, (stored.kind, &stored.name), Some(admit))?;
+    let possessor =
+        crate::tagging::possessor_in_txn(vault, txn, stored.kind, &stored.name, &stored.message)?;
+    let summed = hints::hints_in_txn(
+        vault,
+        txn,
+        (stored.kind, &stored.name, possessor),
+        Some(admit),
+    )?;
     for (entity, hint, sources) in summed {
         if !candidates.contains(&entity) {
             continue;
