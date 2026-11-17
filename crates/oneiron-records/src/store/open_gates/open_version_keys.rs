@@ -3,7 +3,7 @@
 
 pub const MAX_DBS: u32 = 32;
 
-/// v36 (FIX FOREIGN-ANCHOR-CHAIN-COUNTS-IN-EVERY-CHAIN-PREDICATES, site S1,
+/// v37 (FIX FOREIGN-ANCHOR-CHAIN-COUNTS-IN-EVERY-CHAIN-PREDICATES, site S1,
 /// and FIX FOREIGN-ANCHOR-ADMIT-SIDE): stored authority-log rows keep their
 /// bytes and change meaning. Only the roster's chain admits or removes an
 /// owner act's carrier: an act whose carrier an anchor chain, and not the
@@ -13,6 +13,15 @@ pub const MAX_DBS: u32 = 32;
 /// old answers and no longer decodes (the authority fold schema moves with
 /// it). No old-meaning reader or migration is provided (the lead's M-1
 /// stored-change rule, path "loud").
+///
+/// v36 (row WEB-PASSKEY-OWNER-KEY, owner passkeys): stored authority-log rows
+/// keep their bytes and meaning. The authority fold gains each enrolled
+/// passkey's assertion contexts, each key a passkey vouched for and each such
+/// key a second vouch confirmed, so the authority fold schema moves 43 -> 44
+/// with it: a stored checkpoint image written before it no longer decodes,
+/// and an older build refuses an image that carries them rather than dropping
+/// the passkey limits. No old-meaning reader or migration is provided (the
+/// lead's M-1 stored-change rule, path "loud").
 ///
 /// v35 (FIX SEQUENCE-FLOOR-DELIVERY-ORDER, CHECKPOINT-RAW-FLOOR-CLEARED-ROW):
 /// stored authority-log rows keep their bytes and can change meaning. A
@@ -205,7 +214,7 @@ pub const MAX_DBS: u32 = 32;
 /// `RECEIPT_FAMILY_INDEX_VERSION` requires bumping this version too.
 /// v27 hashes full run/group identifiers in their v2 secondary-index keys.
 /// v26 is reserved for the separately landing attempt-record v4 format.
-pub const STORAGE_ABI_VERSION: u16 = 36;
+pub const STORAGE_ABI_VERSION: u16 = 37;
 
 pub const STORAGE_SCHEMA_VERSION: u16 = 1;
 

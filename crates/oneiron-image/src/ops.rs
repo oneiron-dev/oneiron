@@ -2,7 +2,9 @@
 
 use oneiron_organ_protocol::{ErrorCode, Locator, OrganError};
 
-use crate::body::{Filter, ImageBody, Overlay, Shape, Size, Step, Stroke, bad, check_overlay};
+use crate::body::{
+    Filter, Format, ImageBody, Overlay, Shape, Size, Step, Stroke, bad, check_overlay,
+};
 
 /// What one op did: the new body and the units it touched.
 #[derive(Debug)]
@@ -49,16 +51,18 @@ pub(crate) fn bilinear_bytes(from: Size, to: Size) -> u64 {
         .saturating_add(rgba_bytes(to))
 }
 
-/// The most bytes rendering and exporting `body` holds at once: the decoded
-/// source throughout; at each step the canvas it reads (once it is no longer
-/// the source) and what it makes; then the final canvas with an overlay
-/// mask, or with the encoder's RGB copy and its output. `check` runs
-/// between steps, and returns an error once the call is cancelled.
+/// The most bytes rendering `body` and exporting it as `format` holds at
+/// once: the decoded source throughout; at each step the canvas it reads
+/// (once it is no longer the source) and what it makes; then the final
+/// canvas with an overlay mask, or with what its encoder holds
+/// ([`crate::render::encode_bytes`]). `check` runs between steps, and
+/// returns an error once the call is cancelled.
 ///
 /// # Errors
 /// `bad_request` if a step does not fit; whatever `check` returns.
 pub(crate) fn render_peak(
     body: &ImageBody,
+    format: Format,
     check: &dyn Fn() -> Result<(), OrganError>,
 ) -> Result<u64, OrganError> {
     let source = Size {
@@ -93,11 +97,7 @@ pub(crate) fn render_peak(
     } else {
         pixel_count(canvas)
     };
-    // The encoder streams: its output (sized up front to the stored size),
-    // its compressor and three rows; never a second whole image.
-    let encode = crate::render::png_bound(canvas.w, canvas.h, 4)
-        .saturating_add(3 * (4 * u64::from(canvas.w) + 1))
-        .saturating_add(1 << 20);
+    let encode = crate::render::encode_bytes(format, canvas, body.source.alpha);
     peak = peak.max(last.saturating_add(mask.max(encode)));
     Ok(rgba_bytes(source).saturating_add(peak))
 }
@@ -155,7 +155,9 @@ pub(crate) fn resize(
     let to = step.apply_to(from)?;
     body.canvas = to;
     body.steps.push(step);
-    let peak = render_peak(&body, check)?;
+    // A PNG export's peak: the body's own bound, whatever format a later
+    // export names; that export books its own.
+    let peak = render_peak(&body, Format::Png, check)?;
     if peak > max_bytes {
         return Err(OrganError::new(
             ErrorCode::TooLarge,

@@ -95,6 +95,7 @@ pub(crate) use self::charter::{
 pub(crate) use self::credential_binding::{
     connector_issuer_hold_in_txn, connector_issuer_hold_reason_in_txn,
 };
+pub(crate) use self::lifecycle::PROXY_EXCHANGE_PREDICATE;
 pub(crate) use self::lifecycle::catalog_charter_in_txn;
 pub(crate) use self::meter::{
     BudgetBlock, EffectorBudgetChargeOutcome, SpendReserve, append_effector_steering_message,
