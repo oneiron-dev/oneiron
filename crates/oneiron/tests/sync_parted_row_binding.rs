@@ -275,8 +275,9 @@ fn fixture_room() -> EntityId {
 /// FIX SYNC-DISCARD-PARTED-TURN-HOLDERS-NARROW: a room turn stored in parts
 /// goes with its discarded room, as the same turn stored whole does (held
 /// only while its room, its messages and each turn it quotes are): its
-/// manifest and every part are erased. The manifest was held by the turn
-/// alone, so the room's discard kept the turn's content.
+/// manifest and every part are erased, as the turn's own discard erases
+/// them. The manifest was held by the turn alone, so the room's discard
+/// kept the turn's content.
 #[test]
 fn a_parted_turn_goes_with_its_discarded_room() {
     let turn = EntityId::now();
@@ -289,6 +290,11 @@ fn a_parted_turn_goes_with_its_discarded_room() {
     assert!(
         erased >= 2,
         "the turn's manifest and its parts go, got {erased}"
+    );
+    assert_eq!(
+        gone,
+        discard_projection(&window, &[turn]).expect("the projection runs"),
+        "the room's discard erases what the turn's own discard erases"
     );
 }
 
