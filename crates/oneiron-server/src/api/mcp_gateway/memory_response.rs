@@ -171,10 +171,13 @@ fn execute_read(
     check_query_bound(server, actor, method, &body)?;
     let reader = mcp_scoped_read(&server.vault, actor)?;
     let producers = oneiron::memory::ProducerRows::default();
+    // A query and a batch hydrate decode bodies under the `/v1` doors' one
+    // body budget (H27); a single hydrate reads its body whole.
     let adapter = InProcessVaultReadAdapter::new(&server.vault, reader.actor_key().clone())
         .with_media_query_memory(&server.memory)
         .listing_producers(&producers)
-        .deferring_served_forms(forms);
+        .deferring_served_forms(forms)
+        .with_projection_body_bytes(server.config.limits.projection_body_bytes);
     let adapter = match media {
         Some(seeds) => adapter.with_media_seeds(seeds),
         None => adapter,
@@ -189,7 +192,13 @@ fn execute_read(
             let request: CoreQueryRequest = request(body)?;
             let full = request.view == Some(View::Full);
             let response = adapter.query(request).map_err(native_error)?;
-            for row in &response.items {
+            // A row whose body the budget left out was not decoded, so it is
+            // not observed, as the `/v1` query observes decoded bodies only.
+            for row in response
+                .items
+                .iter()
+                .filter(|row| row.body_omitted.is_none())
+            {
                 served.push(observation(row, full)?);
             }
             encode(response)?
@@ -441,6 +450,7 @@ fn observe_hydrate(
 ) -> Result<(), McpGatewayError> {
     if response.status == CoreHydrateStatus::Live
         && let Some(row) = &response.item
+        && row.body_omitted.is_none()
     {
         served.push(observation(row, full)?);
     }
