@@ -156,6 +156,8 @@ pub use reassignment_map::{
     ReassignmentEntry, ReassignmentMap, ReassignmentStats, ReassignmentTarget,
 };
 pub use stored_event::{StoredIdentityOpAction, StoredIdentityOpEvent};
+#[cfg(oneiron_test_support)]
+pub(crate) use stored_event::{pins_author_attribution_action, pins_undo_action};
 pub use transition_table::{
     IdentityTopologyRejection, ProposalOutcome, ProposalRuling, ProposalScope, evaluate_transition,
 };
@@ -181,11 +183,11 @@ pub(crate) use operation_parts::logical_identity_topology_event_for_store_in_txn
 // in a non-sync build of the library.
 #[cfg_attr(not(feature = "sync"), allow(unused_imports))]
 pub(crate) use operation_parts::validate_operation_part_id;
-pub(crate) use reassignment_map::forget_claim_reassignments_in_txn;
 use reassignment_map::{
     REASSIGNMENT_ORIGIN_INDEX, REASSIGNMENT_TARGET_INDEX, ReassignmentContext,
     apply_reassignment_in_txn,
 };
+pub(crate) use reassignment_map::{facet_fork_origins_in_txn, forget_claim_reassignments_in_txn};
 pub(crate) use store_entity_helpers::guard_batch_identity_delete_in_txn;
 // Reached only from the sync bridge's test lane, so a plain re-export would read
 // as unused in a non-sync test build of the library.

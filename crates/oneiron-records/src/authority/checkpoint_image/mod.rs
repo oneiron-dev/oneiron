@@ -72,11 +72,13 @@ use serde::Serialize;
 /// row that grants counts in full, a world key record included, and the image records its fork
 /// as a `SequenceFork` issue (Engine RULINGs SEQ-FLOOR-SHAPE-S = B, SEQ-FLOOR-S-WORLD-KEY-FLOOR
 /// = A).
-/// 44: on a hosted fold a `human` bind or rebind, and a bind or rebind of any class of a key whose
+/// 44: the fold keeps each enrolled passkey's assertion contexts, each key a passkey vouched
+/// for and each such key a second vouch confirmed (row WEB-PASSKEY-OWNER-KEY).
+/// 45: on a hosted fold a `human` bind or rebind, and a bind or rebind of any class of a key whose
 /// binding, live or revoked, is `human` or of a live key a `human` binding could name (an owner
 /// or admin key, the custodial root's too), counts only with the proof of an owner key no cloud
 /// key holds (rows OLD-PARENTS-OWNER-BINDING-REVOKE, OLD-PARENTS-OWNER-BINDING-CONFLICT).
-pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 44;
+pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 45;
 
 /// The domain every encoded image starts with.
 pub const AUTHORITY_CHECKPOINT_V2_DOMAIN: &[u8] = b"oneiron/authority/checkpoint/v2";

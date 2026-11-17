@@ -20,7 +20,11 @@ pub enum BudgetExhaustionPolicy {
     /// exhausted paid line admits no further paid call. A call bound to run on
     /// this device is unmetered under every policy, before exhaustion too
     /// ([`super::BudgetGuard::admit_for_request`]), so this variant changes no
-    /// admission; it names the line's intent that local work goes on.
+    /// admission; it names the line's intent that local work goes on. As the
+    /// owner's manifest knob it is his standing answer for an agent run held
+    /// at its spend cap: the hold resumes the run on a free local chat model
+    /// the host names, and each later call of the run runs there (Engine
+    /// ruling RUNBUDGET-KNOB = A).
     ContinueOnLocal,
     Overdraft {
         cap: u64,
