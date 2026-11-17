@@ -77,6 +77,8 @@ pub(crate) use proposals::{
     erase_receipt_actor_in_txn, recovery_fork_value,
 };
 pub use sync_rows::{ACTOR_ERASE_NOTE_REQUEST_RECEIPT, NoteRequestReceiptErase};
+#[cfg(oneiron_test_support)]
+pub(crate) use sync_rows::{put_pins_fork_authority_in_txn, put_pins_receipt_by_request_in_txn};
 pub use tombstone_review::NoteTombstoneProposal;
 pub(crate) use tombstone_review::{
     decline_tombstone, open_tombstone_proposals_in_txn, review_note_tombstones, tombstone_accepted,
@@ -264,6 +266,8 @@ pub(crate) use citation_erase::{
     erase_restored_citations_in_txn,
 };
 pub(crate) use pin_index::citation_delete_scope_exists;
+#[cfg(oneiron_test_support)]
+pub(crate) use pin_index::{put_pins_pin_in_txn, put_pins_request_in_txn};
 #[cfg(feature = "sync")]
 pub(crate) use pin_index::{remove_citation_request, track_citation_request};
 #[cfg(feature = "sync")]
@@ -435,6 +439,8 @@ pub(crate) use birth::{birth_document_in_txn, room_birth_document_in_txn};
 mod room_reads;
 mod scan;
 pub(crate) use scan::measure as measure_note_document;
+#[cfg(oneiron_test_support)]
+pub(crate) use title_index::put_pins_title_in_txn;
 #[cfg(feature = "sync")]
 pub(crate) use title_index::replace_recovered_set_in_txn as replace_recovered_titles_in_txn;
 mod operations;
@@ -459,6 +465,8 @@ mod document_tests;
 #[cfg(all(test, feature = "sync"))]
 mod sync_tests;
 pub(crate) use document::MAX_NOTE_BYTES;
+#[cfg(oneiron_test_support)]
+pub(crate) use document::pins_note_proposal_snapshot;
 pub use document::{
     NoteDocumentView, NotePin, NoteScalarEdit, NoteScalarEditOutcome, NoteSpanResolution,
 };
@@ -478,3 +486,8 @@ mod shared_membership_tests;
 #[cfg(test)]
 mod adapter_tests;
 pub(crate) mod tables;
+
+#[cfg(oneiron_test_support)]
+pub(crate) use side_keys::{
+    hex_hex_hash_pin_for_test, hex_pair_pin_for_test, hex_triple_pin_for_test,
+};

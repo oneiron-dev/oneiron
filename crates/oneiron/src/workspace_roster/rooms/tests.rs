@@ -175,17 +175,15 @@ fn room_history_needs_the_readers_own_grant() -> Result<()> {
     };
     let dir = tempfile::tempdir()?;
     let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
-    let leader = EntityId::now();
+    let leader = vault.ensure_embedded_owner_actor().expect("owner");
     let agent = EntityId::now();
-    for actor in [leader, agent] {
-        vault.put_entity(
-            &actor,
-            ENTITY_TYPE_PERSON,
-            TimeRange { start: 1, end: 1 },
-            1,
-            b"room participant",
-        )?;
-    }
+    vault.put_entity(
+        &agent,
+        ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"room participant",
+    )?;
     let root = vault.root_project()?;
     let project = EntityId::now();
     let mut spec = ProjectRecord::new(project, Some(root), root, leader)?;

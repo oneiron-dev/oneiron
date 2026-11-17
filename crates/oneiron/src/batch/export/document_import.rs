@@ -721,11 +721,15 @@ impl Vault {
         // its restored pair does not prove stays out, counted (FIX 6206).
         // An archived conversation DAG link is proven on its record's
         // restored ChildOf and body, so it lands after the plain links
-        // (WHOLE-VAULT-IMPORT-REFUSES-CONVERSATION-DAG).
+        // (WHOLE-VAULT-IMPORT-REFUSES-CONVERSATION-DAG). An archived
+        // readiness or fulfillment link is proven on its restored rows and
+        // their restored `supersedes` chain, so it lands after the plain
+        // links too (WHOLE-VAULT-IMPORT-REFUSES-RESERVED-OWNER-EDGES).
         let mut skipped_unproven_regenerates_edges = 0;
         for pass in [
             ArchiveEdgePass::Plain,
             ArchiveEdgePass::ConversationDag,
+            ArchiveEdgePass::ReadinessAndFulfillment,
             ArchiveEdgePass::Regenerates,
         ] {
             let mut edges = archive.spool.rows(ArchiveRecordKind::Edge);
@@ -2184,6 +2188,10 @@ fn import_edge_with_seeds(
         import_conversation_dag_edge(vault, wtxn, edge, inserted, source, kind, target)?;
         return Ok(EdgeImport::Landed);
     }
+    if is_readiness_or_fulfillment_kind(kind) {
+        import_readiness_or_fulfillment_edge(vault, wtxn, edge, inserted, source, kind, target)?;
+        return Ok(EdgeImport::Landed);
+    }
     let vad = edge
         .vad
         .map_or(oneiron_contracts::affect::Vad::NEUTRAL, |v| {
@@ -2251,11 +2259,13 @@ fn import_edge_with_seeds(
 
 /// The order an archived edge lands in: plain links first, then the
 /// conversation DAG links their records' restored ChildOf and bodies prove,
-/// then `regenerates`, proven on restored MESSAGEs (FIX 5972).
+/// then the readiness and fulfillment links their restored rows prove, then
+/// `regenerates`, proven on restored MESSAGEs (FIX 5972).
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum ArchiveEdgePass {
     Plain,
     ConversationDag,
+    ReadinessAndFulfillment,
     Regenerates,
 }
 
@@ -2264,9 +2274,118 @@ impl ArchiveEdgePass {
         match EdgeKind::try_from_u8(kind) {
             Some(EdgeKind::Regenerates) => Self::Regenerates,
             Some(kind) if is_conversation_dag_kind(kind) => Self::ConversationDag,
+            Some(kind) if is_readiness_or_fulfillment_kind(kind) => Self::ReadinessAndFulfillment,
             _ => Self::Plain,
         }
     }
+}
+
+/// The kinds one typed door each writes, and every public edge door refuses:
+/// `blocks` (`code_memory::insert_blocks_edge`) and the brief fulfillment
+/// pair `fulfills` / `discharged_by` (`link_brief_fulfillment`).
+fn is_readiness_or_fulfillment_kind(kind: EdgeKind) -> bool {
+    matches!(
+        kind,
+        EdgeKind::Blocks | EdgeKind::Fulfills | EdgeKind::DischargedBy
+    )
+}
+
+/// An archived readiness or fulfillment link
+/// (WHOLE-VAULT-IMPORT-REFUSES-RESERVED-OWNER-EDGES) comes back through the
+/// internal write, with its archived value fields, once both its ends are
+/// records this import inserted and the restored rows prove what its one
+/// write door proved. A record already here keeps its own links.
+///
+/// * `blocks`: both ends are CODE_SYMBOLs, the link is no self-loop, and it
+///   closes no cycle of `blocks` links (`validate_blocks_insert`). The door's
+///   actor check is not run again: the source vault's door ran it, and the
+///   link reads only between the two restored symbols.
+/// * `fulfills` and `discharged_by`: one end is a TASK brief and the other a
+///   `commitment.record` its completion can discharge (open, closed or
+///   withdrawn: `fulfill_commitments_for_brief`), and the archive carries
+///   the inverse link too, so the pair the door writes lands whole. The
+///   commitment need not be open: the door checked that when it linked, and
+///   a commitment closes after its link.
+///
+/// Each value is the one its door writes: weight 1.0 and no affect.
+fn import_readiness_or_fulfillment_edge(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    edge: &ExportEdge,
+    inserted: &ArchiveIndex<'_>,
+    source: EntityId,
+    kind: EdgeKind,
+    target: EntityId,
+) -> Result<()> {
+    for end in [&source, &target] {
+        if !inserted.contains(Tag::Inserted, end.as_bytes())? {
+            return Err(invalid(
+                "archived readiness or fulfillment edge names a record this import did not insert",
+            ));
+        }
+    }
+    if edge.vad.is_some() || edge.weight != 1.0 {
+        return Err(invalid(
+            "archived readiness or fulfillment edge carries a value its door never writes",
+        ));
+    }
+    match kind {
+        EdgeKind::Blocks => {
+            for end in [&source, &target] {
+                if crate::batch::stored_entity_type(&vault.store, wtxn, end)?
+                    != Some(crate::registry::ENTITY_TYPE_CODE_SYMBOL)
+                {
+                    return Err(invalid("archived blocks edge leaves a CODE_SYMBOL"));
+                }
+            }
+            if source == target
+                || crate::code_memory::blocks_path_exists(vault, wtxn, target, source)?
+            {
+                return Err(invalid("archived blocks edge closes a cycle"));
+            }
+        }
+        _ => {
+            let (brief, commitment, inverse) = if kind == EdgeKind::Fulfills {
+                (source, target, EdgeKind::DischargedBy)
+            } else {
+                (target, source, EdgeKind::Fulfills)
+            };
+            if crate::batch::stored_entity_type(&vault.store, wtxn, &brief)?
+                != Some(ENTITY_TYPE_TASK)
+            {
+                return Err(invalid("archived fulfillment edge names no TASK brief"));
+            }
+            if !matches!(
+                vault.commitment_instance_state_in_txn(wtxn, &commitment)?,
+                crate::commitment::CommitmentInstanceState::Open(_)
+                    | crate::commitment::CommitmentInstanceState::Closed(_)
+                    | crate::commitment::CommitmentInstanceState::Withdrawn
+            ) {
+                return Err(invalid(
+                    "archived fulfillment edge names no commitment its brief can discharge",
+                ));
+            }
+            if !super::evidence_import::archived_targets(inserted, &target, inverse)?
+                .contains(&source)
+            {
+                return Err(invalid("archived fulfillment edge lacks its inverse link"));
+            }
+        }
+    }
+    vault
+        .batch_in()
+        .edge_with_value_fields(
+            &source,
+            kind,
+            &target,
+            crate::batch::EdgeValueFields {
+                weight: edge.weight,
+                created_at: edge.created_at,
+                vad: oneiron_contracts::affect::Vad::NEUTRAL,
+                provenance: None,
+            },
+        )
+        .apply(wtxn)
 }
 
 /// The kinds only the conversation DAG writes; every public edge door refuses

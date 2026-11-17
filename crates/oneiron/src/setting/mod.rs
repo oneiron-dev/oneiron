@@ -26,6 +26,7 @@
 //! force moves.
 
 pub(crate) mod archive_restore;
+mod ask;
 mod catalogue;
 mod change;
 mod learned;
@@ -40,6 +41,8 @@ pub use oneiron_setting_contract::{
     SettingSource, SettingSync, SettingValue, higher_is_tighter, lower_is_tighter,
 };
 
+pub use self::ask::SettingAsk;
+pub(crate) use self::ask::erase_setting_ask_actor_in_txn;
 #[cfg(feature = "sync")]
 pub(crate) use self::catalogue::leave_keeps_row;
 pub use self::catalogue::{catalogue, spec_named};
@@ -99,6 +102,13 @@ pub struct ItemDomain {
     pub admits: fn(&str) -> bool,
 }
 
+/// The line the owner's confirm sheet shows as the reason of a loosening change to the row at a
+/// scope, for one item of a key (`None`: a change that names no item), read in the sheet's own txn
+/// so it states the vault as the owner sees it at that moment (RESTRICTION-WAVE-11-CAP-NOTE Q1 =
+/// A; CAP-SCOPE = B: the row's scope picks what it states). `Ok(None)`: no line for that item.
+pub type LooseningNote =
+    fn(&Vault, &heed::RoTxn<'_>, &SettingScope, Option<&str>) -> Result<Option<String>>;
+
 /// The one hook a key may run in the write that changes it: re-arm a schedule, clear parks that
 /// wait on the key, or refuse the change on state the value's own check cannot see. It runs only
 /// on an applied change, after its rows are put; its `Err` fails the whole write, so neither row
@@ -132,6 +142,9 @@ pub struct SettingSpec {
     pub read_by: ReadBy,
     pub restore: Restore,
     pub sync: SettingSync,
+    /// The confirm sheet's reason line for a loosening change, for a key whose loosening the
+    /// owner should read a fact about first (the spend cap in force for a payment item).
+    pub loosening_note: Option<LooseningNote>,
     pub on_change: Option<OnChange>,
     /// Run after the commit of each write that applied a change to the key (not on an equal
     /// value, not on a change that waits on a check-in).
@@ -153,6 +166,7 @@ impl SettingSpec {
         read_by: ReadBy::Holders,
         restore: Restore::Live,
         sync: SettingSync::Vault,
+        loosening_note: None,
         on_change: None,
         after_commit: None,
     };
@@ -194,6 +208,36 @@ impl SettingSpec {
                 self.name
             ))),
         }
+    }
+}
+
+impl Vault {
+    /// The confirm sheet's reason line for loosening `key`'s row at `scope` (at `item` of a family
+    /// key), read now: what the key's [`SettingSpec::loosening_note`] states, or `None` for a key
+    /// that states none.
+    ///
+    /// # Errors
+    ///
+    /// An unknown key, a scope or an item the key does not admit; storage errors.
+    pub fn setting_loosening_note(
+        &self,
+        key: &str,
+        scope: &SettingScope,
+        item: Option<&str>,
+    ) -> Result<Option<String>> {
+        let spec = spec_named(key)?;
+        if !spec.admits_scope(scope.kind()) {
+            return Err(Error::InvalidConfig(format!(
+                "`{key}` takes no row at a {} scope",
+                scope.kind().as_str()
+            )));
+        }
+        spec.check_item(item)?;
+        let Some(note) = spec.loosening_note else {
+            return Ok(None);
+        };
+        let txn = self.store.env.read_txn()?;
+        note(self, &txn, scope, item)
     }
 }
 
