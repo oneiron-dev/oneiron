@@ -21,15 +21,16 @@ use super::credential_nulling::{null_document_credentials, null_document_member}
 use super::export_value::{ExportBody, ExportBodyFile, ExportValue, attaches_as_file};
 use crate::Vault;
 use crate::batch::export::{
-    ArchiveRecordKind, ArchiveSecretCustody, ArchiveSideWithheld, ArchiveSideWithheldReason,
-    ExportAdapterDescriptor, ExportCut, ExportDerivationEnvelope, ExportDeterminism,
-    ExportDiaryHold, ExportDiaryRead, ExportEdge, ExportEmbeddingSetup, ExportEntity,
-    ExportEpochFloor, ExportManifest, ExportPack, ExportPackSource, ExportReaderFold,
-    ExportResultBody, ExportRowBirth, ExportRun, ExportRunBinding, ExportRunOutput,
-    ExportSkillBundle, ExportSnapshotBody, ExportSnapshotEntity, ExportSnapshotEntityBody,
-    ExportSnapshotRun, ExportSourceVault, FileSpool, OmissionLedger, RecordSpool, SideRowBytes,
-    VAULT_ARCHIVE_FORMAT, VAULT_OKF_FORMAT, WHOLE_VAULT_DOCUMENT_VERSION,
-    WholeVaultDocumentManifest, WholeVaultExportReceipt, archive_slot_rows,
+    ArchiveRecordKind, ArchiveSecretCustody, ArchiveSideFamily, ArchiveSideTableOmission,
+    ArchiveSideWithheld, ArchiveSideWithheldReason, ExportAdapterDescriptor, ExportCut,
+    ExportDerivationEnvelope, ExportDeterminism, ExportDiaryHold, ExportDiaryRead, ExportEdge,
+    ExportEmbeddingSetup, ExportEntity, ExportEpochFloor, ExportManifest, ExportPack,
+    ExportPackSource, ExportReaderFold, ExportResultBody, ExportRowBirth, ExportRun,
+    ExportRunBinding, ExportRunOutput, ExportSkillBundle, ExportSnapshotBody, ExportSnapshotEntity,
+    ExportSnapshotEntityBody, ExportSnapshotRun, ExportSourceVault, FileSpool, OmissionLedger,
+    RecordSpool, SideRowBytes, VAULT_ARCHIVE_FORMAT, VAULT_OKF_FORMAT,
+    WHOLE_VAULT_DOCUMENT_VERSION, WholeVaultDocumentManifest, WholeVaultExportReceipt,
+    archive_slot_rows,
 };
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -55,10 +56,15 @@ pub(crate) struct DocumentTail {
     pub(crate) fold_only_secrets: Vec<EntityId>,
     /// OF-370: the vault's embedding setup, when this export carries it.
     pub(crate) embedding_setup: Option<ExportEmbeddingSetup>,
+    /// SIDE-1: the omitted side tables this whole-vault export declares, with their reasons and
+    /// row counts; empty outside a whole-vault export.
+    pub(crate) side_table_omissions: Vec<ArchiveSideTableOmission>,
     /// The rows this export is derived from, as a host lists them beside it
     /// (DEC-0005): each row the snapshot read past its locality, the ones it
     /// carries, counts or folds into another section among them.
     pub(crate) sources: Vec<EntityId>,
+    /// L2-23: this install's loaded keys, which sign an archive's manifest.
+    pub(crate) signer: Option<std::sync::Arc<crate::identity::InstallSigner>>,
 }
 
 /// The whole-vault document as its rows are spooled.
@@ -75,6 +81,10 @@ pub(crate) struct DocumentWriter<'v> {
     /// sources, edges, runs, side rows, births, embedding setup, epoch floors
     /// and the manifest's own pass stay nulled.
     secrets: ExportSecrets,
+    /// Whether a room body keeps its shared pins: only in the owner's own
+    /// export. Every other export, a records archive or a code run's, carries
+    /// a room body without them (EXPORTDOORS Q2 = A).
+    keeps_room_pins: bool,
     groups: BTreeMap<String, RecordSpool>,
     files: FileSpool,
     ledger: OmissionLedger,
@@ -100,7 +110,8 @@ pub(crate) struct DocumentWriter<'v> {
 impl<'v> DocumentWriter<'v> {
     /// A writer whose spools live under `vault`'s staging directory. The
     /// built-in adapter descriptors lead the pack member. `secrets` is the
-    /// export's credential policy, from the snapshot's writer decision.
+    /// export's credential policy, from the snapshot's writer decision;
+    /// `keeps_room_pins` holds for the owner's own export alone.
     pub(crate) fn new(
         vault: &'v Vault,
         cut: ExportCut,
@@ -108,6 +119,7 @@ impl<'v> DocumentWriter<'v> {
         adapters: Vec<ExportAdapterDescriptor>,
         agent_ids: BTreeSet<EntityId>,
         secrets: ExportSecrets,
+        keeps_room_pins: bool,
     ) -> Result<Self> {
         let birth_sources = agent_ids
             .iter()
@@ -118,6 +130,7 @@ impl<'v> DocumentWriter<'v> {
             cut,
             attaches_files,
             secrets,
+            keeps_room_pins,
             groups: BTreeMap::new(),
             files: FileSpool::new(vault)?,
             ledger: OmissionLedger::default(),
@@ -428,8 +441,19 @@ impl<'v> DocumentWriter<'v> {
     /// pass at its depth; one the pass would change, one in its table's own
     /// binary codec the release scan reads a credential in, or one that does
     /// not read back through its table, is held out and named in the
-    /// manifest. A long binary value goes beside the document as a file.
+    /// manifest. A long binary value goes beside the document as a file. A
+    /// retained row whose source key or value reads as a credential is held
+    /// out before encoding, in every archive.
     pub(crate) fn side_row(&mut self, raw: SideRowBytes) -> Result<()> {
+        if raw.family == ArchiveSideFamily::RetainedSideRow
+            && crate::batch::export::archive_retained_side_rows::retained_side_row_withholds_credential(
+                &raw,
+            )
+        {
+            self.side_withheld
+                .push(raw.withheld(ArchiveSideWithheldReason::Credential));
+            return Ok(());
+        }
         let Some((row, files)) = raw.portable()? else {
             self.side_withheld
                 .push(raw.withheld(ArchiveSideWithheldReason::NotPortable));
@@ -584,6 +608,8 @@ impl<'v> DocumentWriter<'v> {
             fold_only_secrets: Vec::new(),
             embedding_setup_withheld,
             side_rows_withheld: self.side_withheld,
+            side_table_omissions: tail.side_table_omissions,
+            provenance: None,
         };
         // The manifest's strings go through the same pass, at its depth. The
         // member and file lists are added after: paths, counts and digests.
@@ -604,6 +630,9 @@ impl<'v> DocumentWriter<'v> {
                     .map(|(path, spool)| spool.record(path))
                     .collect();
                 manifest.files = self.files.manifest();
+                if let Some(signer) = tail.signer.as_deref() {
+                    crate::batch::export::sign_archive_manifest(signer, &mut manifest)?;
+                }
                 super::vault_archive::write_vault_archive(
                     sink,
                     &manifest,
@@ -631,8 +660,15 @@ impl<'v> DocumentWriter<'v> {
     /// A stored body as its typed export under this writer's policy; a hub
     /// source's members stored as files are spooled as the bytes its
     /// credential scan read (under Nulled) or as stored (under Included)
-    /// (FIX 10101).
+    /// (FIX 10101). A room body leaves without its shared pins unless this is
+    /// the owner's own export.
     fn exported_body(&mut self, body: &[u8], entity_type: u8) -> Result<ExportBody> {
+        let unpinned = if self.keeps_room_pins {
+            None
+        } else {
+            crate::conversation::body_without_room_pins(entity_type, body)?
+        };
+        let body = unpinned.as_deref().unwrap_or(body);
         let exported = ExportBody::from_bytes_with(body, entity_type, self.secrets);
         if let ExportBody::HubSource(source) = &exported {
             source.attach_files(body, &mut self.files)?;

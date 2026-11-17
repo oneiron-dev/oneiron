@@ -83,6 +83,12 @@ pub struct OwnerWorkView {
     /// (FIX 4739).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cancel_text: Option<String>,
+    /// The check-in decision a root request `vault.roots.requests.create`
+    /// recorded ran on (2k3): the Owner on their own proof, and the approved
+    /// check-in of another asker it applied, with its requester. `None` for
+    /// every other answer, and when nothing was recorded.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub check_in: Option<crate::check_in::CheckInDecision>,
 }
 
 impl From<OwnerWorkReceipt> for OwnerWorkView {
@@ -110,19 +116,15 @@ impl From<OwnerWorkReceipt> for OwnerWorkView {
             advice_text,
             home_warning_text,
             cancel_text,
+            check_in: None,
         }
     }
 }
 
-/// `vault.roots.requests.cancel`'s input: the root request to cancel, as
-/// the route's body names it.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct RootRequestCancelRequest {
-    /// The request's signed authority-log entry, 64 lower-case hex: its
-    /// receipt's `request`.
-    pub request: String,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::verbs::root_requests::{
+    OwnerWorkGetRequest, RootChangeView, RootRequestCancelRequest, RootRequestCreateRequest,
+};
 
 /// `vault.roots.requests.cancel`: records the owner's cancel of one root
 /// request through [`Vault::cancel_root_request`], from any surface he is
@@ -148,70 +150,42 @@ pub fn cancel_root_request_as(
     Ok(vault.cancel_root_request(owner, surface, request)?)
 }
 
-/// `vault.roots.requests.create`'s input: the root change the owner decides
-/// for one install, as `POST /v1/owner/roots/requests` names it. Ids only.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct RootRequestCreateRequest {
-    /// The install that is to make the change, 32 hex.
-    pub target: String,
-    /// `pin`, `activate`, `restore` or `anchor`.
-    pub change: String,
-    /// The root the change binds, 64 lower-case hex: every change but
-    /// `activate`.
-    #[serde(default)]
-    pub root: Option<String>,
-    /// The machine an `anchor` marks, 32 hex.
-    #[serde(default)]
-    pub machine: Option<String>,
-}
-
-/// One root change as a surface shows it: its kind, and the ids it binds.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct RootChangeView {
-    /// `pin`, `activate`, `restore` or `anchor`.
-    pub change: String,
-    /// The root it binds, 64 lower-case hex; `None` for `activate`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub root: Option<String>,
-    /// The machine an `anchor` marks, 32 hex.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub machine: Option<String>,
-}
-
-impl From<RootChange> for RootChangeView {
-    fn from(change: RootChange) -> Self {
-        let machine = match change {
-            RootChange::Anchor { machine, .. } => Some(machine.to_hex()),
-            RootChange::Pin { .. } | RootChange::Activate | RootChange::Restore { .. } => None,
-        };
-        Self {
-            change: change.as_str().to_owned(),
-            root: change
-                .root()
-                .map(|root| crate::entity_id::bytes_to_hex_lower(&root.0)),
-            machine,
-        }
-    }
-}
-
 /// One root request naming this install with no result yet, as
-/// `vault.roots.requests.list` answers it: its change and its receipt.
+/// `vault.roots.requests.list` answers it: its change, its receipt, the
+/// machine it names as its carrier, and this install's own reading of the
+/// key that signed it ([`crate::authority::CarrierReading`]). A surface names
+/// who asked from `carrier_role` and `carrier_is_yours`, never from the
+/// request's own words (CARRIED-PIN-PROMPT-HOSTED-CARRIER = A). With no
+/// `carrier_role` the machine id is the request's word alone, and a surface
+/// names no machine by it.
+///
+/// An answer, so a reader built before a field was added still reads it: it
+/// refuses no field it does not know.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
 pub struct PendingRootRequestView {
     pub change: RootChangeView,
     pub receipt: OwnerWorkView,
-}
-
-/// `vault.owner_work.get`'s input: one owner work request, by its signed
-/// authority-log entry.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct OwnerWorkGetRequest {
-    /// The request's entry, 64 lower-case hex: its receipt's `request`.
-    pub request: String,
+    /// The machine the request names as its carrier: the request's own word
+    /// until `carrier_role` is set.
+    pub carrier: EntityId,
+    /// The role this install's records give the key that signed the request
+    /// on that machine: `yours`, `work_school`, `rented`, `hosted_node`,
+    /// `execution_node`, `removed` or `unanswered`. `None` when its records
+    /// do not tie that machine to the key.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub carrier_role: Option<String>,
+    /// Whether this install trusts that key as one of the owner's machines.
+    pub carrier_is_yours: bool,
+    /// For a pin: the question a surface asks before the owner confirms it,
+    /// composed here from the root's code and this install's reading of the
+    /// carrier, never from the request's own words: three lines separated
+    /// by a line feed. `None` for every other change.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompt: Option<String>,
+    /// For a pin: the code of the root it names, 26 symbols, as the owner's
+    /// kit shows it. `None` for every other change.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub root_code: Option<String>,
 }
 
 /// `vault.roots.requests.create` (FIX 5598): records the owner's root change
@@ -219,13 +193,18 @@ pub struct OwnerWorkGetRequest {
 /// surface he is authenticated on; `surface` is audit only. The answer is
 /// the request's receipt: "recorded, awaiting a holder" until the target
 /// makes the change, or, for a target this install cannot name (itself, or
-/// one not linked), why nothing was written.
+/// one not linked), why nothing was written. A recorded request answers the
+/// check-in decision it ran on; with `check_in_ref` the Owner applies an
+/// asker's approved check-in for this change (2k3; P25-SHAPE Q1 = A).
 ///
 /// # Errors
 ///
-/// `BAD_REQUEST` for a malformed target, root or machine, or a change that
-/// is not pin, restore (each with root), anchor (with root and machine) or
-/// activate (with neither); a stale owner proof; storage errors.
+/// `BAD_REQUEST` for a malformed target, root, machine or `check_in_ref`,
+/// or a change that is not pin, restore (each with root), anchor (with root
+/// and machine) or activate (with neither); a stale owner proof; a check-in
+/// that does not apply to a recorded request (a target this install cannot
+/// name records nothing, so it answers no decision and spends no check-in);
+/// storage errors.
 pub fn create_root_request_as(
     vault: &Vault,
     owner: &AuthenticatedOwner,
@@ -235,15 +214,19 @@ pub fn create_root_request_as(
     let target = EntityId::from_hex(&input.target)
         .map_err(|_| MemoryError::bad_request("target must be 32 hex"))?;
     let change = root_change(&input)?;
-    Ok(vault
-        .request_root_change(owner, surface, target, change)?
-        .into())
+    let check_in_ref = super::shared::check_in_ref(input.check_in_ref.as_deref())?;
+    let (receipt, check_in) =
+        vault.request_root_change_with_check_in(owner, surface, target, change, check_in_ref)?;
+    Ok(OwnerWorkView {
+        check_in,
+        ..OwnerWorkView::from(receipt)
+    })
 }
 
 /// `vault.roots.requests.list` (FIX 5598): the root requests naming this
 /// install with no result yet, ascending by entry, but those the owner
-/// cancelled or a newer request superseded, through
-/// [`Vault::pending_root_requests`]. Ids only.
+/// cancelled or a newer request superseded, each with the machine that
+/// carried it, through [`Vault::pending_root_request_listing`]. Ids only.
 ///
 /// # Errors
 ///
@@ -253,11 +236,16 @@ pub fn list_root_requests_as(
     owner: &AuthenticatedOwner,
 ) -> MemoryResult<Vec<PendingRootRequestView>> {
     Ok(vault
-        .pending_root_requests(owner)?
+        .pending_root_request_listing(owner)?
         .into_iter()
-        .map(|(_, change, receipt)| PendingRootRequestView {
-            change: change.into(),
-            receipt: receipt.into(),
+        .map(|listed| PendingRootRequestView {
+            prompt: listed.prompt(),
+            root_code: listed.root_code(),
+            change: listed.change.into(),
+            receipt: listed.receipt.into(),
+            carrier: listed.carrier.machine,
+            carrier_role: listed.carrier.role.map(|role| role.wire().to_owned()),
+            carrier_is_yours: listed.carrier.is_mine,
         })
         .collect())
 }

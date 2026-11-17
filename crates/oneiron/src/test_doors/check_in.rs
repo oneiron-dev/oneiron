@@ -6,25 +6,31 @@
 //! `_verified` doors run the ladder from verified records (2c), with the
 //! test's agent verdicts. Beside them: the check-in tables' actor scrubs, as
 //! an erase runs them, the rows the off-device screen reads a receipt by, and
-//! a member grant narrowed to some worlds in place.
+//! a member grant narrowed to some worlds in place. For
+//! `tests/check_in_waiter_resume.rs` (P2.3a, piece 2e): the due index, and
+//! the spend of a settled row in the act's own transaction, committed or
+//! aborted.
 
 use std::collections::BTreeMap;
 
 use crate::batch::BatchOp;
 use crate::check_in::{
-    AgentHolderVerdict, CheckInTransition, HolderAnswer, HolderKind, HolderReply, NoAgentVerdict,
-    OpenPendingCheckIn, PendingCheckIn, Rung, RungHolder, RungMembers, RungResolver, VerifiedChain,
-    advance_pending_check_in_in_txn, answer_pending_check_in_in_txn,
-    extend_pending_check_in_in_txn, open_pending_check_in_in_txn, record_objection_in_txn,
+    AgentHolderVerdict, CheckInTransition, EligibleBasis, HolderAnswer, HolderKind, HolderReply,
+    NoAgentVerdict, OpenPendingCheckIn, PendingCheckIn, Rung, RungHolder, RungMembers,
+    RungResolver, VerifiedChain, advance_pending_check_in_in_txn, answer_pending_check_in_in_txn,
+    consume_pending_check_in_in_txn, extend_pending_check_in_in_txn, open_pending_check_in_in_txn,
+    record_objection_in_txn,
 };
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, Result};
 use crate::federation::{
     ScopeAxis, ScopeId, decode_federation_grant_body, encode_federation_grant_body,
 };
+use crate::memory::{Memory, MemoryResult};
 use crate::receipt::ReceiptRecord;
 use crate::registry::ENTITY_TYPE_FEDERATION_GRANT;
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
+use crate::verbs::{CheckInOpenRequest, CheckInVerdict};
 use crate::{EntityId, TimeRange, Vault};
 
 /// A chain the test names: each rung's members. A rung it does not name is
@@ -211,6 +217,22 @@ pub fn open_verified(
     })
 }
 
+/// `vault.check_in.open` as `memory`'s caller calls it, with the test's agent
+/// verdicts in place of the verb's none: for
+/// `tests/check_in_spawn_parent.rs` (FIX CHECK-IN-SPAWN-PARENT-PRINCIPAL), a
+/// spawn parent's answer on rung 2.
+///
+/// # Errors
+///
+/// As `vault.check_in.open`.
+pub fn open_as_caller(
+    memory: &Memory<'_>,
+    input: CheckInOpenRequest,
+    verdicts: &FixedVerdicts,
+) -> MemoryResult<CheckInVerdict> {
+    crate::verbs::check_in_open_with(memory, input, verdicts)
+}
+
 /// [`advance`] on the ladder from verified records, with the test's agent
 /// verdicts.
 pub fn advance_verified(
@@ -353,4 +375,59 @@ pub fn narrow_grant_worlds(vault: &Vault, grant: EntityId, worlds: &[EntityId]) 
             true,
         )
     })
+}
+
+/// Every entry of the check-in due index, in due order: (due time, row).
+///
+/// # Errors
+///
+/// Storage errors.
+pub fn due_rows(vault: &Vault) -> Result<Vec<(u64, EntityId)>> {
+    crate::check_in::due_rows(vault)
+}
+
+/// Spends the settled row `id` for the act over `effect_digest`, in one
+/// write transaction that commits, as an act that ran would.
+///
+/// # Errors
+///
+/// The consume's refusals; storage errors.
+pub fn consume(vault: &Vault, id: &EntityId, effect_digest: &[u8; 32]) -> Result<EligibleBasis> {
+    vault.with_write_txn(|txn| {
+        let now = crate::ports::recorded_at_in_txn(&vault.store, txn)?;
+        consume_pending_check_in_in_txn(vault, txn, id, effect_digest, now)
+    })
+}
+
+/// Spends the settled row `id` in a write transaction that then aborts, as
+/// an act that failed after its check-in was spent would: returns the basis
+/// the spend found, and nothing of it is kept.
+///
+/// # Errors
+///
+/// The consume's refusals; storage errors.
+pub fn consume_then_abort(
+    vault: &Vault,
+    id: &EntityId,
+    effect_digest: &[u8; 32],
+) -> Result<EligibleBasis> {
+    let mut spent = None;
+    let aborted = vault.with_write_txn(|txn| {
+        let now = crate::ports::recorded_at_in_txn(&vault.store, txn)?;
+        spent = Some(consume_pending_check_in_in_txn(
+            vault,
+            txn,
+            id,
+            effect_digest,
+            now,
+        )?);
+        Err::<(), _>(Error::InvalidConfig(
+            "the act failed after its check-in was spent".to_owned(),
+        ))
+    });
+    match (spent, aborted) {
+        (Some(basis), Err(_)) => Ok(basis),
+        (None, Err(error)) => Err(error),
+        (_, Ok(())) => Err(Error::InvariantViolation("the aborting write committed")),
+    }
 }

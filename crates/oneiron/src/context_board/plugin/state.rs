@@ -15,7 +15,6 @@ use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::entity_id::EntityId;
 use crate::memory::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
 use crate::side_table::{self, LegacyJson, SideKey, SideTable};
-use serde::{Deserialize, Serialize};
 use std::ops::Bound;
 
 /// Block rows one read snapshot serves: a work-page size, not a cap. A larger
@@ -36,44 +35,30 @@ pub(crate) fn context_board_plugin_block_accepts_masked(bytes: &[u8]) -> bool {
     crate::side_table::decodes::<BoardBlockRecord, LegacyJson>(bytes)
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, SideKey)]
 struct BlockKey {
     actor: EntityId,
+    #[side_key(len = u64)]
     section_id: SectionId,
     block_ref: [u8; 16],
 }
 
-impl SideKey for BlockKey {
-    fn encode_into(&self, out: &mut Vec<u8>) {
-        out.extend_from_slice(self.actor.as_bytes());
-        out.extend_from_slice(&(self.section_id.0.len() as u64).to_be_bytes());
-        out.extend_from_slice(self.section_id.0.as_bytes());
-        out.extend_from_slice(&self.block_ref);
-    }
-
-    fn decode_key(bytes: &[u8]) -> Option<Self> {
-        let (actor, rest) = bytes.split_at_checked(16)?;
-        let actor = EntityId::from_bytes(actor.try_into().ok()?).ok()?;
-        let (len, rest) = rest.split_at_checked(8)?;
-        let len = u64::from_be_bytes(len.try_into().ok()?);
-        let len = usize::try_from(len).ok()?;
-        let (section, rest) = rest.split_at_checked(len)?;
-        let section_id = SectionId(std::str::from_utf8(section).ok()?.to_owned());
-        let block_ref = rest.try_into().ok()?;
-        Some(Self {
-            actor,
-            section_id,
-            block_ref,
-        })
-    }
+/// One [`BlockKey`] for `test_doors::side_key_pins`.
+#[cfg(oneiron_test_support)]
+pub(crate) fn block_key_pin_for_test(
+    actor: EntityId,
+    section_id: &str,
+    block_ref: [u8; 16],
+) -> crate::test_doors::side_key_pins::Pin {
+    crate::test_doors::side_key_pins::Pin::of(&BlockKey {
+        actor,
+        section_id: SectionId(section_id.to_owned()),
+        block_ref,
+    })
 }
 
-/// The implemented durable block kinds: plugin board state, not the session pad.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum BoardBlockKind {
-    Scratchpad,
-}
+#[doc(hidden)]
+pub use oneiron_records::context_board::plugin::state::{BoardBlockKind, BoardBlockRecord};
 
 /// A block belongs to one actor. There is no implicit vault-wide fallback.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -87,19 +72,6 @@ pub struct BoardBlockWriteEnvelope {
     pub section_id: SectionId,
     pub kind: BoardBlockKind,
     pub scope: BoardBlockScope,
-    pub source_revision_ref: [u8; 16],
-    pub markdown: String,
-}
-
-/// Stored revision of an actor-owned block, returned after commit and on read.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct BoardBlockRecord {
-    pub schema_version: u16,
-    pub block_ref: [u8; 16],
-    pub section_id: SectionId,
-    pub kind: BoardBlockKind,
-    pub author_ref: [u8; 16],
     pub source_revision_ref: [u8; 16],
     pub markdown: String,
 }
@@ -124,6 +96,7 @@ fn refused_block() -> MemoryError {
         reason_codes: Vec::new(),
         legal_hold: None,
         room_join_hold: None,
+        pending: None,
     }
 }
 

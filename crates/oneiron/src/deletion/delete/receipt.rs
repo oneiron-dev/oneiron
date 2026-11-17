@@ -10,8 +10,8 @@ use crate::store::legal_hold::HoldActor;
 
 use super::super::erase::{ProvenanceCapture, sweep_extras};
 use super::super::gate::{
-    GatedDeletion, claim_in_txn, reverify_deletion_authority_when_unpublished,
-    revoke_guest_grants_in_txn,
+    GatedDeletion, claim_in_txn, journal_deletion_in_txn,
+    reverify_deletion_authority_when_unpublished, revoke_guest_grants_in_txn,
 };
 use super::super::receipt::{RedactionReceiptInput, RedactionScope};
 use super::super::tombstone::{DeleteReason, HARD_DELETE_MARKER, TombstoneValueV2};
@@ -290,6 +290,15 @@ impl Vault {
             sweep_extras(captured),
         )?;
         claim_in_txn(gate.as_ref(), &mut wtxn, &tombstone, Some(&receipt_id))?;
+        // The run that asked it keeps the erase in its journal, in the purge
+        // beside its receipt (ARCH-0040 #revert-run).
+        journal_deletion_in_txn(
+            self,
+            gate.as_ref(),
+            &mut wtxn,
+            id,
+            reason.active_store_hard_purge_v1(),
+        )?;
         self.reconcile_identity_topology_after_delete_in_txn(&mut wtxn, id)?;
 
         rekeys.finish(&self.store, &mut wtxn)?;

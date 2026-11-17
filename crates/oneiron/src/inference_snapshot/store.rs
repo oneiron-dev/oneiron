@@ -25,7 +25,6 @@ use std::fs;
 use std::io::ErrorKind;
 use std::path::Path;
 use std::sync::MutexGuard;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use heed::RwTxn;
 use sha2::{Digest, Sha256};
@@ -76,14 +75,6 @@ pub struct SnapshotReconcile {
 
 fn corrupt() -> Error {
     Error::CorruptedIndex("inference snapshot")
-}
-
-fn now_ms() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .ok()
-        .and_then(|elapsed| u64::try_from(elapsed.as_millis()).ok())
-        .unwrap_or(0)
 }
 
 /// The SHA-256 of `bytes`, as the worker hashes its serialized state.
@@ -249,7 +240,7 @@ impl Vault {
                 return Err(error);
             }
         };
-        let now = now_ms();
+        let now = crate::unix_millis_now();
         let record = SnapshotRecord {
             schema: SNAPSHOT_RECORD_SCHEMA,
             id,
@@ -394,6 +385,11 @@ impl Vault {
         wrapped.retire();
         let plaintext = match opened? {
             Some(Some(plaintext)) => plaintext,
+            // A body that does not open under keys read after a key handoff
+            // began proves nothing: it retires only while the admission
+            // still holds, as a new data-key generation ends every earlier
+            // admission before it commits.
+            Some(None) if !self.snapshot_admission_holds(admission) => return Ok(None),
             Some(None) => {
                 self.retire_inference_snapshot(id)?;
                 return Ok(None);
@@ -424,7 +420,10 @@ impl Vault {
             Err(error) if error.kind() == ErrorKind::NotFound => return Ok(Some(None)),
             Err(error) => return Err(error.into()),
         };
-        let Ok(key) = self.vault_subkey(WRAP_CONTEXT) else {
+        // The held key first, then each earlier generation's: a snapshot
+        // published before a new data-key generation keeps its wrapper under
+        // that generation's key, and only an authenticated open counts.
+        let Ok(keys) = self.vault_subkeys(WRAP_CONTEXT) else {
             return Ok(None);
         };
         let aad = associated_data(&record.id, &record.manifest)?;
@@ -441,18 +440,24 @@ impl Vault {
             Ok(_) | Err(Error::CorruptedIndex(_)) => return Ok(Some(None)),
             Err(error) => return Err(error),
         };
-        let plaintext = match open_snapshot_with_expected_len(
-            &key,
-            wrapped,
-            &aad,
-            &sealed,
-            record.plaintext_bytes,
-        ) {
-            Ok(plaintext) => Some(plaintext),
-            Err(Error::CorruptedIndex(_)) => None,
-            Err(error) => return Err(error),
+        let mut opened = None;
+        for (_, key) in &keys {
+            match open_snapshot_with_expected_len(
+                key,
+                wrapped,
+                &aad,
+                &sealed,
+                record.plaintext_bytes,
+            ) {
+                Ok(plaintext) => {
+                    opened = Some(plaintext);
+                    break;
+                }
+                Err(Error::CorruptedIndex(_)) => {}
+                Err(error) => return Err(error),
+            }
         }
-        .filter(|plaintext| {
+        let plaintext = opened.filter(|plaintext| {
             plaintext.len() as u64 == record.plaintext_bytes
                 && sha256(plaintext) == record.snapshot_sha256
         });
@@ -465,7 +470,7 @@ impl Vault {
         let mut wtxn = store.env.write_txn()?;
         if let Some(mut record) = CATALOG.get(store, &wtxn, id)? {
             record.reuse_count = record.reuse_count.saturating_add(1);
-            record.last_used_ms = now_ms();
+            record.last_used_ms = crate::unix_millis_now();
             CATALOG.put(store, &mut wtxn, id, &record)?;
         }
         wtxn.commit()?;

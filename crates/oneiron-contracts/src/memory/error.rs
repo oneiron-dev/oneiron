@@ -114,6 +114,16 @@ pub const MEMORY_CODE_WRONG_ROOT: &str = "WRONG_ROOT";
 /// Distinct from `FORBIDDEN`: nothing was refused, the verb is only waiting,
 /// like a gate's pending write.
 pub const MEMORY_CODE_PENDING_ASK: &str = "PENDING_ASK";
+/// The act waits on a check-in (ARCH-0082 #composing; Engine ruling
+/// P24-SHAPE Q4 = A): its door opened, or found, the pending check-in for
+/// this exact effect and committed it, and ran nothing. The one reason code
+/// `check_in:<32 hex>` names it; a re-call that names it as `check_in_ref`
+/// runs the act once a holder's answer, or the ladder, made it eligible.
+/// Distinct from `PENDING_ASK`, which a verb hook's ask answers.
+pub const MEMORY_CODE_CHECK_IN_PENDING: &str = "CHECK_IN_PENDING";
+/// The prefix of the reason code a `CHECK_IN_PENDING` answer carries: the
+/// pending check-in's id follows it, 32 hex.
+pub const CHECK_IN_PENDING_REASON_PREFIX: &str = "check_in:";
 /// A count-bound budget window paced the call, and the engine holds it in its
 /// caller's fair line until its turn (FIX 8753, ARCH-0044 C5): `resets_at`
 /// names the earliest it runs, and the message its deadline, after which it
@@ -238,6 +248,24 @@ pub struct MemoryError {
     /// The held room join's original intent and every consent it still needs.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub room_join_hold: Option<Box<crate::room_join::RoomJoinHold>>,
+    /// What a `CHECK_IN_PENDING` refusal waits on, typed (Engine ruling
+    /// P38-PENDING-BLOCK-REACH = A): the check-in its one reason code names,
+    /// so no client parses the code. Absent on every other refusal. Boxed for
+    /// the same reason `gate_denial` is.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pending: Option<Box<MemoryPending>>,
+}
+
+/// What a pending refusal waits on. The tag leaves room for later kinds.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum MemoryPending {
+    /// The act waits on this pending check-in (ARCH-0082 #composing): once a
+    /// holder approves it, the same call with `check_in_ref` set to it runs.
+    CheckIn {
+        /// The pending check-in's id, 32 hex.
+        check_in: String,
+    },
 }
 
 /// A wrong-root refusal's correction: the name the caller wrote, the
@@ -285,6 +313,7 @@ impl MemoryError {
             reason_codes: Vec::new(),
             legal_hold: None,
             room_join_hold: None,
+            pending: None,
         }
     }
 

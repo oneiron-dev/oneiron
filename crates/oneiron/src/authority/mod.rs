@@ -45,12 +45,16 @@ mod agent_tier;
 mod agent_world_undo;
 mod ai_grant;
 mod ancestor_index;
+#[cfg(oneiron_test_support)]
+pub(crate) mod ancestor_index_door;
 mod ancestry_evaluator;
 mod anchor_fold;
 mod anchor_marks;
 mod ask_forward_holder;
 mod backup_signer_delegation;
 mod carried_act;
+mod carrier_prompt;
+mod carrier_reading;
 mod causal_write;
 mod checkpoint;
 mod checkpoint_adopt;
@@ -87,11 +91,15 @@ mod fold_schedule;
 mod fold_state;
 mod forwarded_caller;
 mod frontier_join;
+#[cfg(oneiron_test_support)]
+pub(crate) mod frontier_walk_door;
+mod full_copy_mark;
 mod grant_travel;
 mod grant_travel_door;
 mod guest_revoke;
 mod handoff_equivocation;
 mod handover_evidence;
+mod held_answers;
 mod history_admission;
 mod history_coverage;
 mod history_fetch;
@@ -106,6 +114,7 @@ mod import_order;
 mod ingest_observation;
 mod install_fold;
 mod invitee_slip;
+pub(crate) use invitee_slip::slip_holder_is_deleted_in_txn;
 mod invocation_slip;
 mod leave_notice_continuity;
 mod left_notices;
@@ -131,7 +140,9 @@ mod owner_act;
 mod owner_choice;
 mod owner_key_enrollment;
 mod owner_key_enrollment_door;
+mod owner_key_move_confirm;
 mod owner_project_slip;
+mod owner_proof;
 mod owner_roots;
 mod owner_work;
 mod owner_work_diagnostics;
@@ -146,9 +157,13 @@ mod recovery;
 mod retired_signers;
 mod revocation_notice;
 mod revoke_proof;
+mod rows_floor;
 mod seat_child_slip;
 mod sequence_ancestry;
+#[cfg(oneiron_test_support)]
+pub(crate) mod sequence_floor_door;
 mod sequence_observation;
+pub(crate) mod setting_keys;
 mod slip;
 mod slip_pairing;
 mod slip_renewal;
@@ -205,9 +220,10 @@ pub use oneiron_authority::authority::{
     MachineDeviceClass, MachineEncryptionKey, MachineOwnership, MachineProfile, MachineRole,
     ModelOrder, OWNER_HANDOVER_REF_MAX, OwnerAct, OwnerActKind, OwnerHandover, OwnerHandoverCause,
     OwnerRootRecord, OwnerWorkBody, OwnerWorkKind, OwnerWorkOutcome, OwnerWorkRefusal,
-    OwnerWorkRequest, OwnerWorkResult, PrivacyDirection, RESIDENCE_REASON_MAX,
-    RESIDENCE_WINDOW_KEY_MAX, ROLE_ADMIN, ROLE_AGENT, ROLE_CLOUD, ROLE_OWNER, ROLE_RECOVERY,
-    ReadLocation, RecoveryRootId, ResidenceAct, ResidenceDirective, ResidenceResult,
+    OwnerWorkRequest, OwnerWorkResult, PredictedResidenceSet, PrivacyDirection,
+    RESIDENCE_PREDICTED_DOCUMENTS_DEFAULT, RESIDENCE_PREDICTED_WINDOWS_DEFAULT,
+    RESIDENCE_REASON_MAX, RESIDENCE_WINDOW_KEY_MAX, ROLE_ADMIN, ROLE_AGENT, ROLE_CLOUD, ROLE_OWNER,
+    ROLE_RECOVERY, ReadLocation, RecoveryRootId, ResidenceAct, ResidenceDirective, ResidenceResult,
     ResidenceResultStatus, RootChange, SEAT_CLAIM_LEASE_OWNER_MAX_BYTES, SEAT_MODEL_CHANNEL,
     SUPPORT_GRANT_DEFAULT_TTL_SECS, SUPPORT_GRANT_MAX_TTL_SECS, SealedCopies, SeatClaimSlipBinding,
     SlipClaims, SlipMintAction, SupportDelegation, SupportRepair, TrustedContactSlipBinding,
@@ -263,10 +279,18 @@ pub use admission::{
     AuthorityWorkWaitExpired, authority_work_policy, set_authority_work_policy,
     set_authority_work_wait_ms,
 };
+pub use agent_grant_act::{
+    AGENT_GRANT_ACT_NO_CARRIER, AGENT_GRANT_ACT_NOT_COUNTED, AGENT_GRANT_ACT_TOO_MANY_HEADS,
+};
 pub use backup_signer_delegation::{
     BACKUP_SIGNER_DELEGATION_DOMAIN, BackupModeRootPolicy, BackupModeRoots, BackupSignerDelegation,
     BackupSignerStatement,
 };
+pub use carrier_prompt::{
+    PromptDeviceName, held_answer_prompt, machine_code_line, machine_key_code, pin_request_prompt,
+    recovery_root_code,
+};
+pub use carrier_reading::CarrierReading;
 pub use causal_write::CausalWriteDisposition;
 pub use checkpoint::{
     AUTHORITY_CHECKPOINT_MAX_AGE_SECS, AUTHORITY_CHECKPOINT_NEW_BYTES,
@@ -281,8 +305,9 @@ pub use checkpoint_image::*;
 pub use checkpoint_policy::*;
 pub use checkpoint_policy_choice::CheckpointPolicyView;
 pub use checkpoint_root_attest::{
-    AUTHORITY_CHECKPOINT_COUNTERSIGN_PART_MAX, CheckpointRootSigner, ROOT_CHECKPOINT_AUTHORITY,
-    ROOT_CHECKPOINT_PICKUP, RootCheckpointAttest, RootCheckpointAuthority, RootCheckpointPickup,
+    ASK_WORD_PROOF_DOMAIN, AUTHORITY_CHECKPOINT_COUNTERSIGN_PART_MAX, CheckpointRootSigner,
+    ROOT_CHECKPOINT_AUTHORITY, ROOT_CHECKPOINT_PICKUP, RootCheckpointAttest,
+    RootCheckpointAuthority, RootCheckpointPickup,
 };
 pub use checkpoint_root_delivery::{RootAttestationDelivery, RootAttestationDeliveryState};
 pub use checkpoint_root_intake::{
@@ -306,9 +331,11 @@ pub use forwarded_caller::{
     ForwardedCallerProof, ForwardedRequest, ForwardingDevice, ForwardingMachineProof,
     VerifiedForwardedCaller, forwarded_request_transcript,
 };
+pub(crate) use full_copy_mark::append_install_signed_in_txn;
 pub use handoff_equivocation::{
     AuthorityHandoffAlarm, AuthorityHandoffAlarmAck, AuthorityHandoffEquivocation,
 };
+pub use held_answers::{ConfirmedHeldAnswers, HeldAnswerListing, ListedHeldAnswer};
 pub use history_coverage::{
     AuthorityArchiveCoverage, AuthorityHistoryCoverage, AuthorityHistoryRequest,
 };
@@ -327,7 +354,11 @@ pub(crate) use home_pick::{
 };
 pub(crate) use host_action::StoredHostAction;
 pub use host_action::{HostActionAuthority, HostActionIdentity};
+#[cfg(oneiron_test_support)]
+pub(crate) use host_re_root::re_root_authority_as_host_for_test;
 pub use host_re_root::{HostReRoot, RetiredSlip};
+#[cfg(oneiron_test_support)]
+pub(crate) use ingest_observation::decode_ingest_check_key_for_test;
 pub use ingest_observation::*;
 pub use invocation_slip::InvocationSlipBinding;
 pub use leave_notice_continuity::LeaveNoticeContinuity;
@@ -340,16 +371,19 @@ pub use local_open::LocalOpenProfile;
 pub use log_budget::{
     AUTHORITY_LOG_SIGNER_COUNT_ADVISORY, AuthorityLogCheck, MAX_AUTHORITY_ROWS_PER_SIGNER,
 };
+pub use machine_answers::MachineAnswerLanding;
 pub use machine_identity::{
     LocalMachine, MACHINE_PROOF_HEADER, MachineEnrolmentRequest, PeerMachine, RequestCode,
     machine_connection_transcript, machine_proof_header_value,
 };
+pub(crate) use machine_profile::YoursProof;
 pub use machine_profile::{
     FoldedMachine, MachineAdmitter, MachineRevision, PinnedRoot, SignerClass, TrustedMachine,
 };
 pub use machine_write::machine_claim_transcript;
 pub use managed_owner_check::{ManagedOwnerCheck, ManagedOwnerCheckError};
 pub(crate) use managed_owner_check::{OWNER_NOT_LIVE, require_live_managed_owner_in_txn};
+pub(crate) use mesh_machine::reindex_mesh_machine_endpoint;
 pub use mesh_machine::{
     MeshAlpnGrant, MeshBindRefusal, MeshBindingIdentity, MeshEnrolment, MeshMachineAddress,
     MeshMachineAddressEnvelope, MeshMachineBinding,
@@ -361,14 +395,15 @@ pub use oauth_server::{
     OAUTH_ACCESS_TOKEN_PREFIX, OAUTH_ACCESS_TTL_SECS, OAUTH_AUTHORIZATION_NOTIFICATION_PRODUCER,
     OAUTH_AUTHORIZATIONS_PER_HOUR, OAUTH_AUTHORIZATIONS_PER_SOURCE_PER_HOUR, OAUTH_CIMD_TTL_SECS,
     OAUTH_CLIENT_NAME_MAX_CHARS, OAUTH_CLIENTS_MAX, OAUTH_CODE_PREFIX, OAUTH_CODE_TTL_SECS,
-    OAUTH_DEFAULT_TIER, OAUTH_MATCH_CODE_LEN, OAUTH_PENDING_REQUESTS_MAX, OAUTH_REDIRECT_URIS_MAX,
-    OAUTH_REFRESH_TOKEN_PREFIX, OAUTH_REFRESH_TTL_SECS, OAUTH_REGISTRATIONS_PER_HOUR,
-    OAUTH_REGISTRATIONS_PER_SOURCE_PER_HOUR, OAUTH_REQUEST_TTL_SECS, OAUTH_STATE_MAX_BYTES,
-    OAUTH_URI_MAX_BYTES, OAuthAccess, OAuthAuthorizationAllowed, OAuthAuthorizationPending,
-    OAuthAuthorizationStart, OAuthAuthorizationStatus, OAuthClientRecord, OAuthClientRegistration,
-    OAuthClientSource, OAuthCodeExchange, OAuthRefresh, OAuthRegistrationRefusal,
-    OAuthTokenRefusal, OAuthTokens, oauth_client_id_is_metadata_url, oauth_code_challenge_admitted,
-    oauth_redirect_uri_admitted, oauth_requested_tier, oauth_scopes_supported,
+    OAUTH_DEFAULT_TIER, OAUTH_MATCH_CODE_LEN, OAUTH_NAMED_CLIENT_REDIRECT_URIS,
+    OAUTH_PENDING_REQUESTS_MAX, OAUTH_REDIRECT_URIS_MAX, OAUTH_REFRESH_TOKEN_PREFIX,
+    OAUTH_REFRESH_TTL_SECS, OAUTH_REGISTRATIONS_PER_HOUR, OAUTH_REGISTRATIONS_PER_SOURCE_PER_HOUR,
+    OAUTH_REQUEST_TTL_SECS, OAUTH_STATE_MAX_BYTES, OAUTH_URI_MAX_BYTES, OAuthAccess,
+    OAuthAuthorizationAllowed, OAuthAuthorizationPending, OAuthAuthorizationStart,
+    OAuthAuthorizationStatus, OAuthClientRecord, OAuthClientRegistration, OAuthClientSource,
+    OAuthCodeExchange, OAuthRefresh, OAuthRegistrationRefusal, OAuthTokenRefusal, OAuthTokens,
+    oauth_client_id_is_metadata_url, oauth_code_challenge_admitted, oauth_redirect_uri_admitted,
+    oauth_requested_tier, oauth_scopes_supported,
 };
 pub use observation_policy::*;
 // The origin cut a repo manifest is written and judged by (FIX 15740).
@@ -381,6 +416,11 @@ pub(crate) use owner_act::{
 pub use owner_choice::OwnerChoiceHead;
 pub use owner_key_enrollment_door::{
     EnrolledOwnerKey, OwnerKeyEnrollment, OwnerKeyEnrollmentReceipt,
+};
+pub use owner_key_move_confirm::{
+    OWNER_KEY_MOVE_MEMBER_NOT_CONFIRMED, OWNER_KEY_MOVE_NO_HELD_KEY, OWNER_KEY_MOVE_NOT_PLANNED,
+    OWNER_KEY_MOVE_NOT_SYNCED, OWNER_KEY_MOVE_PLAN_STALE, OWNER_KEY_MOVE_SIGNER_NOT_EXECUTORS,
+    OwnerKeyMovePlan, OwnerKeyMoveSigner, sign_owner_key_move,
 };
 pub(crate) use owner_roots::anchor_signed_entry;
 pub use owner_roots::{AwaitedRoot, OwnerRootView};
@@ -399,6 +439,8 @@ pub use slip_renewal::{
     OwnerDeviceRenewalProof, RENEWAL_GRANT_AND_DEVICE, RENEWAL_K04, RENEWAL_LIFETIME,
     RENEWAL_PROOF_NOT_FRESH,
 };
+#[cfg(oneiron_test_support)]
+pub(crate) use slip_replay::decode_nonce_key_for_test;
 pub use slip_replay::{ProofClockAhead, ProofClockRecovery, holder_proof, holder_proof_challenge};
 pub(crate) use slip_replay::{SpentNonces, refuse_moved_proof_freshness};
 pub use slip_state::{FoldedSlip, SlipAuthorityState};
@@ -431,7 +473,8 @@ pub use weave_admin::{
 };
 pub(crate) use withdrawn_grant::{
     ISOLATION_NEW_CHECK_ERROR_MODE, NewCheckErrorMode, grant_known_withdrawn_in_txn,
-    mark_if_withdrawn_grant_in_txn, withdraw_grant_row_in_txn,
+    land_archived_withdrawn_grant_rows_in_txn, mark_if_withdrawn_grant_in_txn,
+    withdraw_grant_row_in_txn,
 };
 pub use work_rebind::{
     InstrumentRebind, REBIND_GRANT, REBIND_HOLDER, REBIND_ORIGIN, REBIND_STILL_STANDS,
@@ -463,18 +506,23 @@ pub use first_seen_clock::{RestrictionOnlyClock, restriction_only_clock};
 pub(crate) use frontier_join::FrontierSigner;
 pub(crate) use handoff_equivocation::{HandoffEquivocations, door_refuses_retired_standing};
 pub(crate) use handover_evidence::HandoverEvidence;
+pub(crate) use held_answers::{drop_held_answer_dismissals_in_txn, is_dismissed_held_answer_row};
 pub(crate) use history_admission::{
-    RowsBeside, preflight_authority_rows_beside_in_txn, preflight_authority_rows_in_txn,
+    AuthorityAdmissionView, RowsBeside, preflight_authority_rows_beside_in_txn,
+    preflight_authority_rows_in_txn,
 };
 pub(crate) use host_action::{HostActionGuard, host_action_refused};
 #[cfg(any(test, feature = "sync"))]
 pub(crate) use import_order::authority_stage_order;
-#[cfg(test)]
+#[cfg(any(test, oneiron_test_support))]
 pub(crate) use log_budget::with_authority_doors_open_for_test;
 pub(crate) use log_budget::{
-    AuthorityDoor, AuthorityDoorView, authority_door, authority_signer_label, signer_has_standing,
+    AuthorityDoor, AuthorityDoorView, DoorFold, OwnerReserveHold, asks_the_owners_work_in_txn,
+    authority_door, authority_signer_label, carried_work_past_owner_reserve_in_txn,
+    end_owner_reserve_work_hold, past_owner_reserve_in_txn, signer_has_standing,
 };
-pub(crate) use owner_work::{RootBasisCheck, check_root_basis_in_txn, root_work_witness_in_txn};
+pub(crate) use log_structure::carried_rows_never_applied_in_txn;
+pub(crate) use owner_work::{RootBasisCheck, check_root_basis};
 pub use owner_work_diagnostics::{OWNER_WORK_NO_VOUCH_DIAGNOSTIC_ONLY, OwnerWorkNoVouchDiagnostic};
 #[cfg(oneiron_test_support)]
 pub(crate) use past_grant_standing::past_standing_history_loads_for_test;
@@ -490,7 +538,8 @@ pub(crate) use principal_standing::{
 };
 pub(crate) use principal_standing::{
     NoStanding, PACT_STANDING_LAPSED, PrincipalStanding, StandingHome, live_agent_principal_in,
-    principal_standing_in, principal_standing_in_txn, principal_standing_or_lapse_in_txn,
+    principal_standing_covering_or_lapse_in_txn, principal_standing_in, principal_standing_in_txn,
+    principal_standing_or_lapse_in_txn,
 };
 pub(crate) use readonly_fold::AuthorityView;
 pub(crate) use readonly_fold::authority_view_readonly_for_store_in_txn;
@@ -529,7 +578,7 @@ pub use world_key_fold::{FoldedWorldKey, WORLD_KEY_WRAPS_PER_RECIPIENT, WrappedK
 pub(crate) use world_key_support::{
     KeyFrontier, WideFrontier, next_sequence, own_world_key_records_in_txn,
     owner_root_record_in_txn, owner_root_records_in_txn, scope_head, sign_side_entry,
-    standing_rows, unsigned_side_entry,
+    sign_side_entry_with_owner_proof, standing_rows, unsigned_side_entry,
 };
 pub use world_models::WorldModelRoutes;
 pub(crate) use world_privacy::side_world;

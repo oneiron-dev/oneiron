@@ -30,13 +30,14 @@ use crate::calendar::claims::{
 };
 use crate::calendar::passport::{
     admitted_passports_for_event_in_txn, carries_admitted_uid_in_txn, encode_passport_value,
-    index_passport_uid_in_txn, live_passport_for_in_txn,
+    index_passport_uid_in_txn, live_passport_for_in_txn, revise_passport_in_txn,
 };
 use crate::calendar::safeguard::CalendarInboundBody;
 use crate::entity_id::EntityId;
 use crate::registry::ENTITY_TYPE_EVENT;
 use crate::side_table::{self, LegacyJson, SideKey, SideTable};
 use crate::vault::Vault;
+use oneiron_contracts::lifecycle::{IllegalTransition, Lifecycle};
 
 /// Sub-tag for durable write-outbox rows.
 pub(super) const OUTBOX_ROW_TAG: &[u8] = b"row:";
@@ -97,53 +98,10 @@ const OUTBOX_ID_DOMAIN: &[u8] = b"oneiron:calendar-connector-write:v1:";
 /// unique, and must never look like a resolvable address.
 pub(super) const LOCAL_UID_DOMAIN: &str = "calendar.invalid";
 
-/// What a local write intends to do to the remote calendar.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum CalendarWriteAction {
-    /// Create or replace one resource.
-    Upsert,
-    /// Remove one resource.
-    Delete,
-}
-
-impl CalendarWriteAction {
-    /// Wire token for this action.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Upsert => "upsert",
-            Self::Delete => "delete",
-        }
-    }
-}
-
-/// The four states one durable write-outbox row moves through.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum CalendarWriteOutboxState {
-    /// Staged and durable; the provider has not been called yet.
-    Prepared,
-    /// The provider accepted the write; the local commit has not landed.
-    RemoteApplied,
-    /// The precondition failed: resume by reconciling, never by rewriting.
-    ReconcileRequired,
-    /// The passport and cursor caught up; the row is closed.
-    Committed,
-}
-
-impl CalendarWriteOutboxState {
-    /// Wire token for this state.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Prepared => "prepared",
-            Self::RemoteApplied => "remote_applied",
-            Self::ReconcileRequired => "reconcile_required",
-            Self::Committed => "committed",
-        }
-    }
-}
+#[doc(hidden)]
+pub use oneiron_records::calendar::connectors::outbound::{
+    CalendarWriteAction, CalendarWriteOutboxState,
+};
 
 /// One durable local write-outbox row.
 ///
@@ -698,9 +656,9 @@ fn finish_remote_applied_write_in_txn(
                 encode_passport_value(&next),
                 now,
             )?;
-            if let Some((old_id, _)) = current {
-                vault.supersede_claim_in_txn(txn, &new_id, &old_id, now)?;
-            }
+            // A pending receipt passport closes the admitted head only once
+            // it is approved; the head keeps its authority until then.
+            revise_passport_in_txn(vault, txn, &member, &row.system, &row.uid, &new_id, now)?;
         }
     }
     if row.uid == local_uid(&event_ref)
@@ -933,6 +891,16 @@ fn write_outbox_row_in_txn(
         }
     } else if actual_prior != expected {
         return Err(literal::invalid());
+    }
+    if let Some(prior) = prior.as_ref()
+        && prior.state != row.state
+        && !prior.state.may_transition_to(&row.state)
+    {
+        return Err(IllegalTransition {
+            from: prior.state,
+            to: row.state,
+        }
+        .into());
     }
     let instance = match row.carrier.as_ref() {
         Some(held) => held.instance,

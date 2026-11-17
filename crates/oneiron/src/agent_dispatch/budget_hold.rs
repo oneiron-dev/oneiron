@@ -25,36 +25,13 @@ use crate::side_table::{self, LegacyJson, SideTable};
 
 use super::AgentDispatcher;
 use super::planner::TeamPlan;
-use super::spend_record::{SpendRead, SpendScopeId, SpendSignal};
+use super::spend_record::{SCOPE, SpendRead, SpendScopeId, SpendSignal};
 use super::widen_record::invalid;
 
-/// Where a run's budget hold stands.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum BudgetHoldState {
-    /// The wrap-up warning went out; nothing is parked yet.
-    Warned,
-    /// At least one attempt is parked at the cap.
-    Held,
-    /// The owner resumed the run.
-    Resumed,
-}
-
-/// One attempt the hold parked, with the checkpoint it resumes from.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct HeldAttempt {
-    pub attempt: AttemptId,
-    pub resume_point: AttemptResumePoint,
-}
-
-/// The owner's notice of a held run, and whether the host delivered it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct BudgetHoldNotice {
-    pub text: String,
-    /// Unix seconds the host delivered it; `None` while it is still owed.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub delivered_at: Option<u64>,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::agent_dispatch::budget_hold::{
+    BudgetHoldNotice, BudgetHoldState, HeldAttempt,
+};
 
 /// A run's saved partial state (ARCH-0079 #budget): who was warned, which
 /// attempts are parked and where each resumes, the results the run already
@@ -212,6 +189,11 @@ impl AgentDispatcher<'_> {
     /// run's hold gathers its saved results and owes the owner a notice, in
     /// one transaction. Never `Cancelled`, never a TASK terminal report.
     ///
+    /// `local_model` is the free local chat model the host names for the
+    /// run's calls now, if any: the owner's ask then offers to continue the
+    /// run on it, and his `continue_on_local` knob resumes the run on it in
+    /// this same write (the hold then reads Resumed).
+    ///
     /// # Errors
     ///
     /// A stale lease, an attempt that is not running, or storage errors.
@@ -222,6 +204,7 @@ impl AgentDispatcher<'_> {
         plan: Option<TeamPlan>,
         reason: &str,
         now: u64,
+        local_model: Option<&crate::llm::ModelId>,
     ) -> Result<PartialResultHold> {
         if reason.trim().is_empty() {
             return Err(invalid("a budget hold names its reason"));
@@ -257,6 +240,10 @@ impl AgentDispatcher<'_> {
         let replay = already_held
             && hold.state == BudgetHoldState::Held
             && hold.held.iter().any(|held| held.attempt == lease.attempt);
+        // A run that was not held until now asks its owner once (ARCH-0026
+        // depletion ladder); a replay, or another attempt of a run still held,
+        // asks nothing new.
+        let newly_held = hold.state != BudgetHoldState::Held;
         hold.state = BudgetHoldState::Held;
         hold.held.retain(|held| held.attempt != lease.attempt);
         hold.held.push(HeldAttempt {
@@ -290,6 +277,20 @@ impl AgentDispatcher<'_> {
             });
         }
         PLAN_HOLD.put(&self.vault.store, &mut wtxn, &root, &hold)?;
+        if newly_held {
+            let asked = super::run_budget_ask::queue_run_budget_ask_in_txn(
+                self.vault,
+                &mut wtxn,
+                root,
+                local_model,
+                now,
+            )?;
+            if asked == super::run_budget_ask::HeldRunAsk::ContinuedOnLocal {
+                hold = PLAN_HOLD
+                    .get(&self.vault.store, &wtxn, &root)?
+                    .unwrap_or(hold);
+            }
+        }
         wtxn.commit()?;
         self.vault.store.notify_attempt_observers();
         Ok(hold)
@@ -380,21 +381,43 @@ impl AgentDispatcher<'_> {
         now: u64,
         actor: impl FnOnce(&heed::RoTxn<'_>) -> Result<String>,
     ) -> Result<PartialResultHold> {
-        let hold = self
-            .plan_hold(root)?
-            .ok_or_else(|| invalid("run has no budget hold"))?;
-        let ready = self.scope_has_spend(root)?;
-        let queue = AttemptQueue::new(self.vault);
         let mut wtxn = self.vault.store.env.write_txn()?;
         let actor = actor(&wtxn)?;
-        let actor = actor.as_str();
+        let (hold, withdrawn) = self
+            .resume_budget_hold_in_txn(&mut wtxn, root, &actor, now)?
+            .ok_or_else(|| invalid("run has no budget hold"))?;
+        wtxn.commit()?;
+        if let Some(seq) = withdrawn {
+            self.vault.signal_decision_answer(seq);
+        }
+        self.vault.store.notify_attempt_observers();
+        Ok(hold)
+    }
+
+    /// [`Self::resume_budget_hold`] as `actor` in the caller's write: the
+    /// ordinary `Resume` on every attempt the hold still parks, the hold read
+    /// Resumed, and the run's open run-budget ask withdrawn, whose arrival
+    /// number comes back for the caller to wake its waiters once the write
+    /// committed. `None` when the run has no hold.
+    pub(super) fn resume_budget_hold_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        root: AttemptId,
+        actor: &str,
+        now: u64,
+    ) -> Result<Option<(PartialResultHold, Option<u64>)>> {
+        let Some(mut hold) = PLAN_HOLD.get(&self.vault.store, wtxn, &root)? else {
+            return Ok(None);
+        };
+        let ready = self.scope_has_spend_in_txn(wtxn, root)?;
+        let queue = AttemptQueue::new(self.vault);
         for held in &hold.held {
             let still_held = queue
-                .get_in_write_txn(&wtxn, held.attempt)?
+                .get_in_write_txn(wtxn, held.attempt)?
                 .is_some_and(|record| record.budget_hold());
             if still_held {
                 queue.release_hold_in_txn(
-                    &mut wtxn,
+                    wtxn,
                     InterveneAttempt {
                         id: held.attempt,
                         kind: AttemptInterventionKind::Resume,
@@ -405,15 +428,25 @@ impl AgentDispatcher<'_> {
                 )?;
             }
         }
-        let mut hold = hold;
         hold.state = BudgetHoldState::Resumed;
         hold.resume_ready = ready;
         hold.resumed_at = Some(now);
         hold.resumed_by = Some(actor.to_owned());
-        PLAN_HOLD.put(&self.vault.store, &mut wtxn, &root, &hold)?;
-        wtxn.commit()?;
-        self.vault.store.notify_attempt_observers();
-        Ok(hold)
+        PLAN_HOLD.put(&self.vault.store, wtxn, &root, &hold)?;
+        let withdrawn =
+            super::run_budget_ask::withdraw_run_budget_ask_in_txn(self.vault, wtxn, root)?;
+        Ok(Some((hold, withdrawn)))
+    }
+
+    /// Whether the run rooted at `root` is held at its cap now, in `txn`.
+    pub(super) fn budget_held_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        root: AttemptId,
+    ) -> Result<bool> {
+        Ok(PLAN_HOLD
+            .get(&self.vault.store, txn, &root)?
+            .is_some_and(|hold| hold.state == BudgetHoldState::Held))
     }
 
     /// RUN-HOLD: a generic Resume released `attempt` (the row as it stood
@@ -437,6 +470,10 @@ impl AgentDispatcher<'_> {
             hold.state = BudgetHoldState::Resumed;
             hold.resumed_at = Some(now);
             hold.resumed_by = Some(actor.to_owned());
+            // The resumed run waits on no answer. No waiter awaits a
+            // run-budget ask (the hold carries the run), so nothing is
+            // signalled after the override's write.
+            super::run_budget_ask::withdraw_run_budget_ask_in_txn(self.vault, wtxn, root)?;
         }
         PLAN_HOLD.put(&self.vault.store, wtxn, &root, &hold)
     }
@@ -517,11 +554,17 @@ impl AgentDispatcher<'_> {
     /// Whether the root's spend scope has spend left now; an unmetered run
     /// always does.
     fn scope_has_spend(&self, root: AttemptId) -> Result<bool> {
+        let txn = self.vault.store.env.read_txn()?;
+        self.scope_has_spend_in_txn(&txn, root)
+    }
+
+    /// [`Self::scope_has_spend`] in the caller's snapshot.
+    fn scope_has_spend_in_txn(&self, txn: &heed::RoTxn<'_>, root: AttemptId) -> Result<bool> {
         let scope = SpendScopeId::for_attempt(&root);
-        if self.read_spend_scope(&scope)?.is_none() {
+        if SCOPE.get(&self.vault.store, txn, &scope.0)?.is_none() {
             return Ok(true);
         }
-        Ok(self.available_units(&scope)? > 0)
+        Ok(self.available_units_in_txn(txn, &scope)? > 0)
     }
 }
 

@@ -19,7 +19,7 @@ use std::collections::BTreeSet;
 use heed::RwTxn;
 use loro::{LoroDoc, VersionVector};
 
-use super::super::bridge::{persist_window_update, persist_window_update_in_txn};
+use super::super::bridge::persist_window_update_in_txn;
 use super::super::loro_support::{doc_from_snapshot, export_updates_from, import_doc};
 use super::super::schema::create_window_doc;
 use super::super::types::WindowKey;
@@ -109,10 +109,18 @@ pub(crate) fn persist_window_arrival(
     update: &[u8],
     from_home: bool,
 ) -> Result<()> {
+    // The inserts of what `doc` took past `base` owe a compaction in the
+    // writer that stores the row, when one names a row hard-deleted here: an
+    // insert a later operation deletes leaves no live value for ingest to
+    // refuse (census L6-05).
+    let inserts = super::UpdateInserts::past(doc, base);
     if key.world().is_some() {
         // Its pads persist by reference where custody here holds them (FIX 7107).
         let persisted = persisted_window_pads(vault, key, update, Some(doc));
-        return persist_window_update(vault, key.as_str(), &persisted);
+        return vault.with_write_txn_grouped(|txn| {
+            persist_window_update_in_txn(vault, txn, key.as_str(), &persisted)?;
+            inserts.owe_in_txn(vault, txn, key)
+        });
     }
     // The live document keeps its observers: the projection reads a copy,
     // taken before the write. A discard that touches the window after this
@@ -143,7 +151,8 @@ pub(crate) fn persist_window_arrival(
             txn,
             key.as_str(),
             projected.as_deref().unwrap_or(update),
-        )
+        )?;
+        inserts.owe_in_txn(vault, txn, key)
     })
 }
 

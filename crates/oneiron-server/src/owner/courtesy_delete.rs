@@ -16,16 +16,11 @@ use oneiron::task_verb::sdk::{
     CourtesyDeleteAnswerRequest, CourtesyDeleteIncoming, CourtesyDeleteSendRequest,
     CourtesyDeleteSent, courtesy_delete_incoming_ask, courtesy_delete_sent_ask,
 };
+use oneiron_base::unix_seconds_now;
 use rand_core::RngCore;
 
 use super::{OwnerError, OwnerResult, entity_id};
 use crate::server::SyncServer;
-
-fn now() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |elapsed| elapsed.as_secs())
-}
 
 fn hex_field<const N: usize>(field: &str, value: &str) -> OwnerResult<[u8; N]> {
     parse_hex(value).ok_or_else(|| OwnerError::Invalid(format!("{field} must be {} hex", N * 2)))
@@ -168,8 +163,12 @@ pub(crate) fn send_with(
     let mut queued = Vec::with_capacity(pages.len());
     let mut first = None;
     for signed in &pages {
-        let notice =
-            vault.queue_cooperative_deletion_request_as(owner, signed, &destination, now())?;
+        let notice = vault.queue_cooperative_deletion_request_as(
+            owner,
+            signed,
+            &destination,
+            unix_seconds_now(),
+        )?;
         queued.push(notice.request_id.clone());
         first = first.or(Some(notice));
     }
@@ -263,7 +262,7 @@ pub(crate) fn answer(
             .transpose()?,
     };
     let mut filed = vault
-        .answer_cooperative_deletion_as(owner, &pact, &nonce, &answer, now())
+        .answer_cooperative_deletion_as(owner, &pact, &nonce, &answer, unix_seconds_now())
         .map_err(|error| {
             if let Err(refusal) = vault.recheck_owner(owner) {
                 return OwnerError::from(refusal);
@@ -282,7 +281,12 @@ pub(crate) fn answer(
                 request.choice.reply_outcome(),
             )
         })?;
-        filed = vault.queue_cooperative_deletion_reply_as(owner, &reply, &destination, now())?;
+        filed = vault.queue_cooperative_deletion_reply_as(
+            owner,
+            &reply,
+            &destination,
+            unix_seconds_now(),
+        )?;
     }
     let fold = vault.authority_fold()?;
     Ok(courtesy_delete_incoming_ask(vault, &fold, filed)?)

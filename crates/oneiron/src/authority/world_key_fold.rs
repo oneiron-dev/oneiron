@@ -14,7 +14,12 @@
 //! signer's flood hides a good one. "First" is the signer's sequence, then
 //! the hash: a machine's later row always has a greater sequence, so a merge
 //! never lets a descendant evict its ancestor's envelope, and the hash
-//! breaks ties between concurrent rows only.
+//! breaks ties between concurrent rows only. A record below its sequence
+//! floor counts as every row does (Engine RULING SEQ-FLOOR-S-WORLD-KEY-FLOOR
+//! = A), so a signer's own fork at or below a record it signed ranks first:
+//! four such forks with lower hashes push that record's envelopes out of a
+//! recipient's slots. Only the forking signer's own envelopes go; a
+//! recipient a standing machine also wrapped to keeps the key.
 //!
 //! A record counts here (CALLS WORLD_KEY_WRAP_AUTH) when, at its parents:
 //! - its publisher passes the one carrier rule's exact-key admission, pin-free
@@ -41,15 +46,15 @@
 //!
 //! A key is current only while a machine whose chain is not removed in this
 //! install's trust set signed one of its counted records. A removed
-//! machine's install key can still sign a record above the floor this
-//! install keeps of it, which lands as honest late arrival does; it never
-//! chooses the world's key, and no honest row that descends from it lends it
-//! that standing (Astra #1422c F2, the Engine's Q1). Such a key stays in the
-//! map, for reading and for the kit, and the next ensure on a machine of the
-//! owner's mints afresh.
+//! machine's install key can still sign a record, at any sequence, on
+//! parents that predate its removal, which lands as honest late arrival
+//! does; it never chooses the world's key, and no honest row that descends
+//! from it lends it that standing (Astra #1422c F2, the Engine's Q1). Such a
+//! key stays in the map, for reading and for the kit, and the next ensure on
+//! a machine of the owner's mints afresh.
 
+use std::collections::BTreeMap;
 use std::collections::btree_map::Entry;
-use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use crate::entity_id::EntityId;
@@ -84,40 +89,10 @@ pub(super) struct WorldKeyState {
     named: BTreeMap<KeyBytes, BTreeMap<EntityId, BTreeMap<WrapRecipient, Slots>>>,
 }
 
-/// A record's commitment and owner.
-type KeyBytes = ([u8; 32], EntityId);
-
-type Slots = BTreeMap<SlotRank, PolicyRevision>;
-
-/// A wrap slot's place among its signer's: the record's sequence, then its
-/// hash. An ancestor always ranks before its descendants.
-type SlotRank = (u64, AuthorityEntryHash);
-
-/// One world key as this install's fold holds it.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct FoldedWorldKey {
-    pub id: WorldKeyId,
-    /// The vault owner PERSON its mint named.
-    pub owner: EntityId,
-    pub commitment: [u8; 32],
-    /// Counted records named other bytes or another owner for this id.
-    pub conflicted: bool,
-    /// Per recipient, at most four counted envelopes from each signer of
-    /// these bytes, standing signers' first.
-    pub wraps: BTreeMap<WrapRecipient, Vec<WrappedKey>>,
-    /// The machines that signed its counted records of these bytes, or of
-    /// any bytes when it is conflicted.
-    pub signers: BTreeSet<EntityId>,
-}
-
-/// One counted envelope of a key for one recipient.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct WrappedKey {
-    pub envelope: Vec<u8>,
-    /// The world's settings revision the wrap was made under.
-    pub policy: PolicyRevision,
-    pub entry: AuthorityEntryHash,
-}
+#[doc(hidden)]
+pub use oneiron_records::authority::world_key_fold::{FoldedWorldKey, WrappedKey};
+#[doc(hidden)]
+use oneiron_records::authority::world_key_fold::{KeyBytes, Slots};
 
 impl AuthorityFold {
     /// Every key of `world` this fold holds, in `(generation, mint)` order.

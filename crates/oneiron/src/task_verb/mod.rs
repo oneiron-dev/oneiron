@@ -7,6 +7,7 @@ mod ask_band;
 mod ask_effect;
 mod ask_facade;
 mod ask_forward;
+mod ask_guard;
 mod ask_guest;
 mod ask_limits;
 mod ask_option_link;
@@ -34,7 +35,6 @@ mod browser_workflow;
 mod cancel_settlement;
 mod checkout_facts;
 mod code_consent_word;
-pub(crate) use checkout_facts::CheckoutTaskAccess;
 pub(crate) use code_consent_word::code_consent_word_in_txn;
 mod consts;
 pub(crate) use consts::TASK_EXTERNAL_ATTEMPT_KIND;
@@ -114,6 +114,7 @@ pub mod run_doors;
 pub(crate) mod run_rows;
 mod runner_done;
 mod scheduling;
+pub(crate) mod setting_keys;
 pub(crate) mod settlement_anchor;
 mod subproject;
 mod symbol_lease;
@@ -138,18 +139,18 @@ pub(crate) use contribution_pair::{
 };
 pub(crate) use project_tradeoff::{project_tradeoff_routed_in, task_created_at_in};
 pub(crate) use training_offer_ask::{
-    OFFER_QUESTION_TYPE, issue_training_offer_asks, offer_question_key, offer_question_text,
-    reserved_offer_question_in, training_offer_ask_key, void_training_offer_asks_in,
-};
-pub(crate) use training_swap_ask::{
-    SWAP_QUESTION_TYPE, is_training_swap_ask_intent, issue_training_swap_asks,
-    pending_swap_question_in, swap_question_key, training_swap_ask_key, void_training_swap_asks_in,
+    issue_training_offer_asks, offer_question_key, offer_question_text, reserved_offer_question_in,
+    training_offer_ask_key, void_training_offer_asks_in,
 };
 pub use training_swap_ask::{SwapAskState, TrainingSwapAskView, training_swap_asks};
+pub(crate) use training_swap_ask::{
+    is_training_swap_ask_intent, issue_training_swap_asks, pending_swap_question_in,
+    swap_question_key, training_swap_ask_key, void_training_swap_asks_in,
+};
 pub(crate) use wire_decode::{
     TaskBinding, decode_task_realization_input, done_task_evidence_in, leader_task_body_in,
-    leader_task_brief_in, task_binding, task_is_blocked_in, task_is_blocked_with_source_in,
-    task_stored_brief_in, task_text_with_source_in,
+    leader_task_brief_in, task_binding, task_is_blocked_with_source_in, task_stored_brief_in,
+    task_text_with_source_in,
 };
 mod wire_encode;
 mod world_privacy_wait;
@@ -189,9 +190,9 @@ pub(crate) use room_thread::{
     task_roster_in as room_thread_task_roster_in, thread_tasks as room_thread_tasks,
 };
 pub use route_receipts::{
-    DEFAULT_TASK_CANCEL_MODE, TaskCancelMode, TaskCancelReceipt, TaskCancelTarget,
-    TaskCreateReceipt, TaskDescription, TaskResultInput, TaskRouteLane, TaskRouteOutcome,
-    TaskStartedReceipt, TaskUpdateReceipt,
+    DEFAULT_TASK_CANCEL_MODE, TaskCancelReceipt, TaskCancelTarget, TaskCreateReceipt,
+    TaskDescription, TaskResultInput, TaskRouteLane, TaskRouteOutcome, TaskStartedReceipt,
+    TaskUpdateReceipt,
 };
 pub use terminal_state::{
     ConsultResultPresence, ConsultResultSummary, TaskExecutionState, TaskTerminalDisposition,
@@ -223,8 +224,7 @@ pub use runner_done::{
 };
 
 pub(crate) use create_validation::{
-    completed_task_at_in_txn, open_task_due_at_in_txn, reject_born_expired_task_deadline,
-    reject_incoherent_task_terminal, settled_task_result_binding,
+    completed_task_at_in_txn, open_task_due_at_in_txn, settled_task_result_binding,
     settled_task_result_binding_in_txn, task_human_assignee, task_is_terminal, watcher_due_at,
 };
 pub(crate) use rate_limit::task_create_owner;
@@ -410,6 +410,8 @@ pub(crate) use scheduling::{acquire_task_symbols, task_dispatch_ready, terminal_
 #[cfg(test)]
 mod symbol_lease_tests;
 
+#[cfg(oneiron_test_support)]
+pub(crate) use ask_record::ask_group_route;
 pub(crate) use fanout_launch::follow_fanout_hold_override_in_txn;
 #[cfg(oneiron_test_support)]
 pub(crate) use fanout_launch::launch_override_actors_in_txn;
@@ -544,12 +546,9 @@ impl TaskAskRequest {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct TaskWaitRequest {
-    pub handle: TaskAskHandle,
-    pub step_key: String,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::task_verb::TaskWaitRequest;
+
 /// `tasks.update`: a typed report on a TASK (progress, blocked work, a
 /// durable result, a failure, a release or a brief revision) through the
 /// task highway under the caller's `report_key`, fenced by the `attempt` an
@@ -570,3 +569,9 @@ pub struct TaskUpdateRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub attempt: Option<crate::task_verb::AttemptHandle>,
 }
+
+#[cfg(oneiron_test_support)]
+pub(crate) use self::{
+    ask_band::{band_key_pin_for_test, marker_key_pin_for_test},
+    follow_up::task_follow_up_key_pin_for_test,
+};

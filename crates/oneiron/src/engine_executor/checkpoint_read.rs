@@ -5,8 +5,6 @@
 //! dispatched, and it shows what the existing injector would carry into the
 //! next model context, not that a provider call consumed it.
 
-use serde::{Deserialize, Serialize};
-
 use super::record::parked_wait_at;
 use super::store::{
     RESULT_REPLY_INLINE_BYTES, clean_for_context, load_utf8_output, resumed_output_wait,
@@ -16,70 +14,22 @@ use crate::code_run::{CodeRunReplayRecord, ExecutorStorage};
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::memory::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
+use crate::request_limits::{ZeroLimitRefused, page_limit_zero_refused};
 use crate::{Error, Vault};
 
 /// Steps in a page when the request names no limit.
 pub const CHECKPOINT_READ_DEFAULT_LIMIT: u32 = 32;
-/// The most steps one page carries; a larger limit reads this many, and
-/// `next_step` names where the following page starts.
+/// The most steps one page carries while the owner has set no
+/// `engine_executor.checkpoint_read.max_limit` row: that key's default. A larger limit reads the
+/// value in force, and `next_step` names where the following page starts. The other owner reads
+/// that borrow this page convention (`crate::dreamer_runner::owner_read_page_limit`) keep this
+/// const: the key covers checkpoint pages only.
 pub const CHECKPOINT_READ_MAX_LIMIT: u32 = 128;
 
-/// One page of one code run's checkpoints.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct CheckpointReadRequest {
-    /// 32-hex code-run id (the executor run, not an attempt's run
-    /// correlation id).
-    pub run_ref: String,
-    /// First checkpointed step to read, inclusive.
-    #[serde(default)]
-    pub from_step: u64,
-    /// Steps in this page; [`CHECKPOINT_READ_DEFAULT_LIMIT`] when absent,
-    /// at most [`CHECKPOINT_READ_MAX_LIMIT`]. Must be positive.
-    #[serde(default)]
-    pub limit: Option<u32>,
-}
-
-/// A page of committed checkpoints and the stored replies resumed at them.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct CheckpointView {
-    pub run_ref: String,
-    /// Count of checkpointed steps, not an in-flight step.
-    pub completed_steps: u64,
-    pub steps: Vec<CheckpointStepView>,
-    /// The replies parked calls of this page's steps resumed with, in the
-    /// order the run recorded them.
-    pub resumed: Vec<CheckpointResumeView>,
-    /// Where the next page starts; none past the last checkpoint.
-    pub next_step: Option<u64>,
-}
-
-/// One committed step checkpoint.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct CheckpointStepView {
-    pub step: u64,
-    pub label: String,
-    /// 64-hex chained state hash the checkpoint committed.
-    pub state_hash: String,
-    pub created_at_ms: u64,
-}
-
-/// One stored reply a parked call resumed with.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct CheckpointResumeView {
-    /// The step whose call parked.
-    pub step: u64,
-    /// 32-hex id of the wait the call parked on.
-    pub wait_ref: String,
-    /// The parked call's effect.
-    pub effect: String,
-    /// The run's handle on the stored reply (bound as `wait<step>`).
-    pub output_handle: String,
-    /// The reply itself, exactly when the injector carries it inline: small
-    /// enough and clean of secret or taint for this run. Otherwise absent,
-    /// and the reply is read by its handle.
-    pub reply: Option<serde_json::Value>,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::engine_executor::checkpoint_read::{
+    CheckpointReadRequest, CheckpointResumeView, CheckpointStepView, CheckpointView,
+};
 
 /// Reads one page of `run_ref`'s checkpoints for the vault's owner. Every
 /// row the run's answers derive from must read on `memory`'s own credential
@@ -104,11 +54,18 @@ pub(crate) fn checkpoint_projection(
     let vault = memory.vault();
     let run = EntityId::from_hex(input.run_ref.trim())
         .map_err(|_| MemoryError::bad_request("run_ref must be a 32-hex code-run id"))?;
-    let limit = match input.limit {
-        Some(0) => return Err(MemoryError::bad_request("limit must be positive")),
-        Some(limit) => limit.min(CHECKPOINT_READ_MAX_LIMIT),
-        None => CHECKPOINT_READ_DEFAULT_LIMIT,
+    // The cap in force bounds the default page too: an owner who sets a max below
+    // CHECKPOINT_READ_DEFAULT_LIMIT gets that many steps from a request that names no limit.
+    let max_limit = {
+        let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
+        super::setting_keys::CHECKPOINT_READ_MAX_LIMIT_SETTING
+            .read_in_txn(vault, &txn, &[], None)?
+            .value
+            .max(1)
     };
+    let limit = page_limit_zero_refused(input.limit, CHECKPOINT_READ_DEFAULT_LIMIT, max_limit)
+        .map_err(|ZeroLimitRefused| MemoryError::bad_request("limit must be positive"))?
+        .rows;
     let Some((view, sources)) = project(vault, run, input.from_step, limit).map_err(engine)? else {
         return Ok(None);
     };

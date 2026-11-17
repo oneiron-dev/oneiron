@@ -12,57 +12,25 @@ use super::environment::{HealthCauseSource, attempt_sources};
 use super::vocabulary::AgentHealthCard;
 use crate::EntityId;
 use crate::agent_dispatch::{AgentDispatcher, SpendScope};
-use crate::attempt_queue::AttemptId;
 use crate::federation::{SubstrateRead, admit_substrate_read};
-use crate::memory::{MEMORY_CODE_BAD_REQUEST, Memory, MemoryError, MemoryResult};
+use crate::memory::{
+    MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_INTERNAL, Memory, MemoryError, MemoryResult,
+};
 use crate::receipt::CallReceipt;
 
 /// The most rows one read answers.
 const READ_LIMIT: usize = 500;
 
-/// `vault.agent_health.cards`: the health cards opened, updated or settled
-/// in `[from, to)`, unix seconds.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct AgentHealthCardsRequest {
-    pub from: u64,
-    pub to: u64,
-    /// At most this many cards, most impact first; at most 500.
-    #[serde(default)]
-    pub limit: Option<usize>,
-}
-
-/// `vault.agent_health.calls`: one agent's call receipts since `since`.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct AgentHealthCallsRequest {
-    /// The agent, by its entity id (hex).
-    pub agent_ref: String,
-    /// Unix seconds.
-    pub since: u64,
-    /// At most this many receipts, newest kept; at most 500.
-    #[serde(default)]
-    pub limit: Option<usize>,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::dreamer_runner::maintenance::agent_health::grant_reads::{
+    AgentHealthCallsRequest, AgentHealthCardsRequest, DiagnosticEvidenceRequest,
+};
 
 /// One call receipt and its row.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct AgentCallReceipt {
     pub receipt_ref: String,
     pub call: CallReceipt,
-}
-
-/// `vault.diagnostics.evidence`: one attempt's failure evidence.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct DiagnosticEvidenceRequest {
-    pub attempt: AttemptId,
-    /// The lease generation the evidence must be of, when known.
-    #[serde(default)]
-    pub generation: Option<u32>,
-    /// The code run whose completed checks to report, by its entity id (hex).
-    #[serde(default)]
-    pub run_ref: Option<String>,
 }
 
 /// One attempt's failure evidence: what its skills were attributed to, the
@@ -117,14 +85,25 @@ pub fn agent_health_cards(
 /// # Errors
 ///
 /// A caller who is neither the owner nor a Steward `read` holder; an agent
-/// ref that is not an entity id; a store failure.
+/// ref that is not an entity id; a call receipt that did not read, so the
+/// agent's list would be incomplete; a store failure.
 pub fn agent_health_calls(
     memory: &Memory<'_>,
     input: &AgentHealthCallsRequest,
 ) -> MemoryResult<Vec<AgentCallReceipt>> {
     admit_substrate_read(memory, "vault.agent_health.calls", SubstrateRead::Evidence)?;
     let agent = entity_ref("agent_ref", &input.agent_ref)?;
-    let (mut calls, _) = agent_calls(memory.vault(), input.since).map_err(MemoryError::from)?;
+    let (mut calls, unread) =
+        agent_calls(memory.vault(), input.since).map_err(MemoryError::from)?;
+    if unread.for_actor(agent).is_some() {
+        // A receipt that did not read may be this agent's: the list would
+        // be incomplete, so no list is answered.
+        return Err(MemoryError::new(
+            MEMORY_CODE_INTERNAL,
+            "a call receipt did not read, so the agent's receipts would be incomplete",
+            &["Retry; if the failure persists, inspect vault store health."],
+        ));
+    }
     let mut receipts: Vec<AgentCallReceipt> = calls
         .remove(&agent)
         .unwrap_or_default()

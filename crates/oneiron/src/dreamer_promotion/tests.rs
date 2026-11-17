@@ -494,6 +494,7 @@ fn imported_evidence_lands_proposed_in_its_import_review_whatever_the_policy_gra
         started_at_ms: None,
         own_started_at_ms: None,
         cwd: None,
+        sharing: None,
         messages: vec![HistoryMessage {
             native_id: "u1".to_owned(),
             parent_id: None,
@@ -620,6 +621,7 @@ fn imported_evidence_lands_proposed_in_its_import_review_whatever_the_policy_gra
             }],
             occurred_at: 9_000,
             thread_audience: None,
+            project: None,
             assertions: Default::default(),
         })
         .expect("a live message");
@@ -1647,6 +1649,7 @@ fn bounded_over(
         wording: "May this write land without the owner's review?".to_owned(),
         notes,
         calibrated,
+        world_hold: None,
     })
 }
 

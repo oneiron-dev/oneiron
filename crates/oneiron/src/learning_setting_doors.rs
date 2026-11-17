@@ -15,16 +15,15 @@ use crate::consent::AuthenticatedOwner;
 use crate::learning::{PriorOrigin, TypeRef};
 use crate::learning_setting::{self, SETTING_CATALOG, SettingMode, SettingRow, SettingScope};
 use crate::learning_setting_choice::{self as choice, ChoiceRow, ChoiceValue, SpawnChoice};
-use crate::{EdgeActorClass, EntityId, Error, Result, Vault, WriteActor};
+use crate::{EdgeActorClass, EntityId, Result, Vault, WriteActor};
 
-/// A seed (a prior the vault's fit starts from, with a weight in runs) or a
-/// pin (the value, whatever the fit says).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum LearningSettingMode {
-    Seed,
-    Pin,
-}
+#[doc(hidden)]
+use oneiron_verb_wire::learning_setting_doors::bad;
+#[doc(hidden)]
+pub use oneiron_verb_wire::learning_setting_doors::{
+    LearningSettingClear, LearningSettingMode, LearningSettingScope, LearningSettingSpecView,
+    LearningSettingsRequest,
+};
 
 impl From<LearningSettingMode> for SettingMode {
     fn from(mode: LearningSettingMode) -> Self {
@@ -42,16 +41,6 @@ impl From<SettingMode> for LearningSettingMode {
             SettingMode::Pin => Self::Pin,
         }
     }
-}
-
-/// Where a row applies.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum LearningSettingScope {
-    Vault,
-    Goal,
-    Project,
-    TaskType,
 }
 
 /// A spawn choice's value, in its own type: what a `model`, `width`,
@@ -101,16 +90,6 @@ impl From<ChoiceValue> for LearningChoiceValue {
     }
 }
 
-/// `vault.settings.learning`'s input: the whole catalog and every row, or
-/// one key's.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct LearningSettingsRequest {
-    /// Only this catalog key or spawn choice.
-    #[serde(default)]
-    pub key: Option<String>,
-}
-
 /// `vault.settings.learning.put`'s input: one seed or pin. A row names a
 /// goal, a project or a task type, or none of them for the vault. A catalog
 /// knob's row carries `value`; a spawn choice's carries `choice`.
@@ -141,21 +120,6 @@ pub struct LearningSettingPut {
     pub project: Option<String>,
     /// A task type's node: the row steers that type's work at any tree
     /// version.
-    #[serde(default)]
-    pub task_type: Option<String>,
-}
-
-/// `vault.settings.learning.clear`'s input: the row of one key, mode and
-/// scope. Clearing an absent row succeeds.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct LearningSettingClear {
-    pub key: String,
-    pub mode: LearningSettingMode,
-    #[serde(default)]
-    pub goal: Option<String>,
-    #[serde(default)]
-    pub project: Option<String>,
     #[serde(default)]
     pub task_type: Option<String>,
 }
@@ -232,26 +196,11 @@ impl From<crate::team::LearnedChoice> for LearnedChoiceView {
     }
 }
 
-/// One catalog knob: its bounds and seed, and what the vault reads for it
-/// now (a vault pin, else the vault fit, else a vault seed, else the seed).
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct LearningSettingSpecView {
-    pub key: String,
-    pub min: f64,
-    pub max: f64,
-    pub seed: f64,
-    pub value: f64,
-}
-
 /// `vault.settings.learning`'s answer.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct LearningSettingsView {
     pub catalog: Vec<LearningSettingSpecView>,
     pub rows: Vec<LearningSettingRowView>,
-}
-
-fn bad(message: &'static str) -> Error {
-    Error::InvalidClaimBody(message)
 }
 
 fn scope_of(

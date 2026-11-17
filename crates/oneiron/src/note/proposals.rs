@@ -6,6 +6,12 @@ use super::documents::{
 };
 use super::side_keys::HexPair;
 use super::sync_rows::SYNC_DS_E;
+use crate::batch::export::archive_side_install::{
+    ArchivedSideRowOutcome, decode_archived_row, install_archived_row,
+};
+use crate::batch::export::{
+    ArchiveRetainedSideRow, OwnerArchiveRestorePermit, RetainedSideHeldBackReason,
+};
 use crate::edge::EdgeActorClass;
 use crate::error::Result;
 use crate::memory::MemoryResult;
@@ -17,18 +23,10 @@ use serde::{Deserialize, Serialize};
 
 pub use crate::store::note_body::NoteActor;
 
-/// What an actor's erase does with a fork it opened that no one decided.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PendingNoteForkErase {
-    /// The fork goes, with its snapshot and its place in a bundle.
-    Delete,
-    /// The fork stays and names no one, as a decided fork does.
-    Keep,
-}
-
-/// A fork no one decided is still review work a reviewer could land, so an
-/// erase of the actor who opened it deletes it (FIX 3520).
-pub const ACTOR_ERASE_PENDING_NOTE_FORK: PendingNoteForkErase = PendingNoteForkErase::Delete;
+#[doc(hidden)]
+pub use oneiron_verb_wire::note::proposals::{
+    ACTOR_ERASE_PENDING_NOTE_FORK, NoteVerdict, PendingNoteForkErase,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NoteFork {
@@ -47,12 +45,6 @@ pub struct NoteFork {
     #[serde(with = "crate::entity_id::serde_hex::optional")]
     pub proposal: Option<EntityId>,
     pub decided: bool,
-}
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub enum NoteVerdict {
-    Merge,
-    Switch,
-    Reject,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NoteLandingReceipt {
@@ -425,9 +417,14 @@ pub(super) fn grant_allows(
 pub(crate) enum NoteEditLanding<'a> {
     /// The Grant's answer for (actor, NOTE): [`grant_allows`].
     Grant,
-    /// The live pad the board bound to the actor's `session`: the actor's
-    /// own board block (ARCH-0032 #motivation, #scratchpad-one-store).
-    SessionPad { session: &'a str },
+    /// The live pad the board bound to the actor's `session`, the pad of
+    /// durable code run `run` when a host bound the writer to one: the
+    /// actor's own board block (ARCH-0032 #motivation,
+    /// #scratchpad-one-store).
+    SessionPad {
+        session: &'a str,
+        run: Option<EntityId>,
+    },
     /// A changed file of a folder the owner attached, landing over the note
     /// its ledger row names, under the owner's live proof: an edited file
     /// supersedes its old version (ARCH-0027 #folder-source).
@@ -449,8 +446,8 @@ pub(super) fn edit_lands(
     }
     match landing {
         NoteEditLanding::Grant => Ok(false),
-        NoteEditLanding::SessionPad { session } => {
-            vault.is_session_pad_in_txn(txn, actor.entity_ref(), session, note)
+        NoteEditLanding::SessionPad { session, run } => {
+            vault.is_session_pad_in_txn(txn, actor.entity_ref(), session, run, note)
         }
         NoteEditLanding::OwnerFolder { owner } => {
             owner.revalidate_in_txn(vault, txn)?;
@@ -852,4 +849,64 @@ fn recovered_merge(base: &str, proposed: &str, current: &str) -> Result<String> 
         .chain(&right)
         .chain(&base[right_end..])
         .collect())
+}
+
+/// The holdback reason for one decoded landing receipt, or `None` when its identity holds and its
+/// NOTE was not hard-deleted.
+fn archived_note_receipt_holdback_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    key: &EntityId,
+    receipt: &NoteLandingReceipt,
+) -> Result<Option<RetainedSideHeldBackReason>> {
+    if receipt.id != *key {
+        return Ok(Some(RetainedSideHeldBackReason::InvalidValue));
+    }
+    if vault.local_hard_delete_marker_exists_in_txn(txn, &receipt.note)? {
+        return Ok(Some(RetainedSideHeldBackReason::MissingLiveEntity));
+    }
+    Ok(None)
+}
+
+/// Lands one archived `NOTE_RECEIPT` envelope: the receipt identity must hold and its NOTE must not
+/// be hard-deleted before install via the shared collision rule. Fork, head, and bundle companions
+/// are never required.
+///
+/// # Errors
+/// Storage faults; validation stays in the returned outcome.
+fn land_archived_note_row_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    permit: &OwnerArchiveRestorePermit,
+    row: &ArchiveRetainedSideRow,
+) -> Result<ArchivedSideRowOutcome> {
+    let (key, receipt) = match decode_archived_row(&NOTE_RECEIPT, row) {
+        Ok(decoded) => decoded,
+        Err(reason) => return Ok(ArchivedSideRowOutcome::HeldBack(reason)),
+    };
+    if let Some(reason) = archived_note_receipt_holdback_in_txn(vault, &*txn, &key, &receipt)? {
+        return Ok(ArchivedSideRowOutcome::HeldBack(reason));
+    }
+    install_archived_row(&NOTE_RECEIPT, vault, txn, permit, &key, row)
+}
+
+impl Vault {
+    /// Lands the owner's archived `NOTE_RECEIPT` envelopes in input order, one outcome per row: an
+    /// absent receipt installs, an identical receipt is unchanged, and a different receipt stays
+    /// live. Never moves heads, decides forks, or notifies.
+    ///
+    /// # Errors
+    /// Storage faults; validation stays in the returned outcomes.
+    pub(crate) fn land_archived_note_rows_in_txn(
+        vault: &Vault,
+        txn: &mut heed::RwTxn<'_>,
+        permit: &OwnerArchiveRestorePermit,
+        rows: &[ArchiveRetainedSideRow],
+    ) -> Result<Vec<ArchivedSideRowOutcome>> {
+        let mut outcomes = Vec::with_capacity(rows.len());
+        for row in rows {
+            outcomes.push(land_archived_note_row_in_txn(vault, txn, permit, row)?);
+        }
+        Ok(outcomes)
+    }
 }

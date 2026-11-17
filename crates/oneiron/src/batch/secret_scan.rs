@@ -17,8 +17,7 @@ use zeroize::Zeroizing;
 
 pub(crate) use self::container::{
     ContainerReader, RetainedProjectionEdit, apply_retained_repo_projection_diff, is_container,
-    is_sealed, live_content_hit, masked_copy, scan_text_content, served_masked_copy,
-    tree_rebuilt_copy,
+    is_sealed, scan_text_content,
 };
 pub use self::lift_history::{
     LiftCause, LiftCauseCount, LiftCloseReason, LiftCounts, LiftFamily, LiftTrigger,
@@ -41,6 +40,8 @@ pub(crate) use self::mask::carrier::{
 #[cfg(oneiron_test_support)]
 pub(crate) use self::mask::mark_text_value_in_txn;
 pub(super) use self::mask::mask_batch_ops;
+#[cfg(oneiron_test_support)]
+pub(crate) use self::mask::put_mask_origin_for_test_door;
 pub(crate) use self::mask::retained_repo::read::{
     RepoKnownCheck, project_marked_retained_repo_blob, retained_repo_known_places,
 };
@@ -48,6 +49,7 @@ pub(crate) use self::mask::retained_repo::{
     RetainedRepoBlobMarks, RetainedRepoBlobPlan, RetainedRepoCustody, RetainedRepoPlacedKey,
     mark_retained_repo_blob_in_txn, plan_retained_repo_blob,
 };
+pub(crate) use self::mask::side_row::admit_typed_with_rule;
 pub(crate) use self::mask::side_row::{
     SidePart, TextReplacements, admit_side_parts, admit_side_row, admit_tracked_side_parts,
     admit_typed, admitted_from, from_named_tree, named_tree, origin as side_row_origin,
@@ -57,9 +59,12 @@ pub(crate) use self::mask::spool::{
 };
 pub(crate) use self::mask::stream_known::{KnownStreamFinder, StreamKnown};
 pub(crate) use self::mask::{
-    mask_origin_in_txn, seal_promoted_message_ops_in_txn, seal_whole_part_in_txn,
+    file_mints_in_txn, move_mask_origin_in_txn, rebind_mask_origin_in_txn, side_row::admission_form,
 };
-pub(crate) use self::mask::{rebind_mask_origin_in_txn, side_row::admission_form};
+pub(crate) use self::mask::{
+    file_spans, mask_origin_in_txn, seal_promoted_message_ops_in_txn, seal_whole_part_in_txn,
+    span_placed_for,
+};
 pub(crate) use self::message_parts::seal_message_parts_in_txn;
 use self::provider_tokens::{classify_token, provider_token_spans};
 pub(crate) use self::provider_tokens::{embedded_credential, provider_prefix_head};
@@ -79,6 +84,31 @@ use crate::side_table::{self, Named, SideTable, SideTableDbs};
 use crate::store::Store;
 
 const REASON_DETECTED: &str = "gate.secret_scan.detected";
+
+/// The reason the side-row wall adds when it refuses a fresh secret in a row
+/// an off-record room writes (FIX 2329; Engine RULING FIX-2329-ROOM-CUSTODY
+/// = C): the room holds no custody of its own, and no off-record byte enters
+/// base, so a value no custody record holds cannot take a handle there. The
+/// remedy is to put the value in vault custody first, or to run on record.
+const REASON_OFF_RECORD_FRESH_KEY: &str = "gate.secret_scan.off_record_fresh_key";
+
+/// `refusal`, a refusal of a fresh secret in an off-record room's row, with
+/// [`REASON_OFF_RECORD_FRESH_KEY`] after its own reasons.
+fn off_record_fresh_key_refusal(refusal: Error) -> Error {
+    match refusal {
+        Error::Gate(GateError::GateWriteRejected {
+            outcome,
+            mut reason_codes,
+        }) => {
+            reason_codes.push(REASON_OFF_RECORD_FRESH_KEY);
+            Error::Gate(GateError::GateWriteRejected {
+                outcome,
+                reason_codes,
+            })
+        }
+        other => other,
+    }
+}
 const REASON_AWS_ACCESS_KEY_ID: &str = "gate.secret_scan.aws_access_key_id";
 const REASON_GITHUB_TOKEN: &str = "gate.secret_scan.github_token";
 const REASON_GOOGLE_API_KEY: &str = "gate.secret_scan.google_api_key";
@@ -90,32 +120,8 @@ const REASON_STRIPE_KEY: &str = "gate.secret_scan.stripe_key";
 const REASON_JSON_TOO_DEEP: &str = "gate.secret_scan.json_depth_over_127";
 const REASON_MESSAGEPACK_TOO_DEEP: &str = "gate.secret_scan.messagepack_depth_over_1024";
 
-/// The vault's `secrets` setting: whether the write door scans what a host
-/// writes into this vault for credential shapes. On by default; only the
-/// vault owner switches it, and every switch writes a receipt
-/// ([`Vault::set_secret_scan_mode`](crate::Vault::set_secret_scan_mode)).
-/// Serve and export redact credentials in both modes.
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    Default,
-    PartialEq,
-    Eq,
-    serde::Serialize,
-    serde::Deserialize,
-    schemars::JsonSchema,
-)]
-#[serde(rename_all = "snake_case")]
-pub enum SecretScanMode {
-    /// The write door scans. A secret it can place in text or a field goes
-    /// to custody and leaves its handle there; any other hit refuses the
-    /// whole write.
-    #[default]
-    On,
-    /// The write door does not scan; serve and export still redact.
-    Off,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::batch::secret_scan::SecretScanMode;
 
 /// The owner's switch row. Key: ().
 const SECRET_SCAN_MODE: SideTable<(), SecretScanMode, Named> =
@@ -243,14 +249,62 @@ fn release_hit(bytes: &[u8]) -> Option<&'static str> {
     // A lossy copy is wiped on drop (FIX 6668).
     let mut wiped = None::<Zeroizing<String>>;
     let haystack = wiped_lossy(bytes, &mut wiped);
-    detect(haystack, Door::Release).or_else(|| {
-        let payload = framed_payload(bytes)?;
-        let Some(mut value) = decode_members(payload) else {
-            return nested_past_decoder(payload);
-        };
-        sanitize_messagepack(&mut value, false, Door::Release)
-            .then_some("gate.secret_scan.sensitive_env")
-    })
+    detect(haystack, Door::Release).or_else(|| release_decoded_hit(framed_payload(bytes)?))
+}
+
+/// How deep text decoded inside text the release rules read, as deep as the
+/// typed rule reads it (`serialize::export_value::TEXT_DEPTH`). A body that
+/// still decodes there reads as a hit: the typed rule reads it as nil.
+const RELEASE_TEXT_DEPTH: usize = 128;
+
+/// The release rules over `bytes` read as a structured body
+/// ([`decode_members`]): every member, its field names included, and each
+/// text in it (a string, or binary that is UTF-8) that decodes as a body
+/// again, read the same way at every depth, as the typed rule reads text
+/// inside text. A credential key escaped in JSON that is itself a string's
+/// text is no text the raw rules read. A body nested past its decoder reads
+/// as a hit: none of its members was read.
+pub(crate) fn release_decoded_hit(bytes: &[u8]) -> Option<&'static str> {
+    let Some(value) = decode_members(bytes) else {
+        return nested_past_decoder(bytes);
+    };
+    // Each body decoded from text, with how deep in text it sits. The walk
+    // keeps its own stacks: text nested in text must not deepen the call
+    // stack once per level on top of each body's own nesting.
+    let mut bodies = vec![(value, 0_usize)];
+    while let Some((mut body, depth)) = bodies.pop() {
+        if sanitize_messagepack(&mut body, false, Door::Release) {
+            return Some("gate.secret_scan.sensitive_env");
+        }
+        let mut nodes = vec![&body];
+        while let Some(node) = nodes.pop() {
+            let text: &[u8] = match node {
+                rmpv::Value::String(text) => text.as_bytes(),
+                rmpv::Value::Binary(bytes) if std::str::from_utf8(bytes).is_ok() => {
+                    bytes.as_slice()
+                }
+                rmpv::Value::Array(items) => {
+                    nodes.extend(items.iter());
+                    continue;
+                }
+                rmpv::Value::Map(fields) => {
+                    nodes.extend(fields.iter().flat_map(|(key, value)| [key, value]));
+                    continue;
+                }
+                _ => continue,
+            };
+            match decode_members(text) {
+                Some(_) if depth + 1 >= RELEASE_TEXT_DEPTH => return Some(REASON_JSON_TOO_DEEP),
+                Some(inner) => bodies.push((inner, depth + 1)),
+                None => {
+                    if let Some(reason) = nested_past_decoder(text) {
+                        return Some(reason);
+                    }
+                }
+            }
+        }
+    }
+    None
 }
 
 /// The release reading of a body no decoder took whole: its text, and a
@@ -481,6 +535,35 @@ fn credential_field(name: &str, nil: bool, text: Option<&str>, door: Door) -> bo
         && !text.is_some_and(|text| shapes::field_placeholder(text, door))
 }
 
+/// Which values under a credential name the write door's field rule reads
+/// whole: its mask lifts such a value into custody, and its scan refuses one
+/// the mask left.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) enum FieldRule {
+    /// Any value but nil or a placeholder, whatever its shape: the batch
+    /// door's rule.
+    #[default]
+    AnyShape,
+    /// Text alone, a string or bytes. A number, a flag, a list or a map under
+    /// a credential name is read part by part, as a member under any other
+    /// name is. For a typed value whose type fixes each member's shape, where
+    /// a handle can stand only in text: a setting value (FIX
+    /// SETTING-WALL-CREDENTIAL-NAMED-MEMBERS). Such a member is stored as
+    /// written unless a text rule finds a shape in it: a value that holds a
+    /// secret holds it as text.
+    TextOnly,
+}
+
+impl FieldRule {
+    /// Whether this rule reads `value`, under a credential name, whole.
+    pub(crate) fn reads_whole(self, value: &rmpv::Value) -> bool {
+        match self {
+            Self::AnyShape => true,
+            Self::TextOnly => matches!(value, rmpv::Value::String(_) | rmpv::Value::Binary(_)),
+        }
+    }
+}
+
 /// Identifiers and records outside the batch door (refs, paths, telemetry
 /// keys, session tags, question rows) keep their scan in both modes: they land
 /// in keys, indexes and receipts that a later mask cannot reach.
@@ -508,7 +591,13 @@ pub(crate) fn scan_write_payload(data: &[u8]) -> Result<()> {
 /// payload's own bytes. A container the walk reads no further is read as
 /// far as it reads.
 pub(crate) fn scan_write_tree(data: &[u8]) -> Result<()> {
-    let _secrets_nulled = scan_payload(data)?;
+    scan_write_tree_with_rule(data, FieldRule::AnyShape)
+}
+
+/// [`scan_write_tree`], with the field rule `rule` over the payload's own
+/// members; a container's members are read by the batch door's rule.
+fn scan_write_tree_with_rule(data: &[u8], rule: FieldRule) -> Result<()> {
+    let _secrets_nulled = scan_payload_with_rule(data, rule)?;
     container::scan_readable_members(data)
 }
 
@@ -554,6 +643,11 @@ pub(crate) fn payload_carries_secret(data: &[u8]) -> bool {
 }
 
 fn scan_payload(data: &[u8]) -> Result<ExportSecretsNulledManifest> {
+    scan_payload_with_rule(data, FieldRule::AnyShape)
+}
+
+/// [`scan_payload`], with the field rule `rule` over the members it reads.
+fn scan_payload_with_rule(data: &[u8], rule: FieldRule) -> Result<ExportSecretsNulledManifest> {
     // A lossy copy is wiped on drop (FIX 6668).
     let mut wiped = None::<Zeroizing<String>>;
     let haystack = wiped_lossy(data, &mut wiped);
@@ -567,7 +661,7 @@ fn scan_payload(data: &[u8]) -> Result<ExportSecretsNulledManifest> {
         let Some(mut value) = read_members(body)? else {
             continue;
         };
-        if sanitize_messagepack(&mut value, false, Door::Write) {
+        if sanitize_messagepack_with_rule(&mut value, false, Door::Write, rule) {
             return Err(secret_scan_error("gate.secret_scan.sensitive_env"));
         }
         // A secret spread over parts the walk keeps apart (a phrase one word
@@ -752,6 +846,16 @@ fn sanitize_messagepack_whole(
 }
 
 fn sanitize_messagepack(value: &mut rmpv::Value, null: bool, door: Door) -> bool {
+    sanitize_messagepack_with_rule(value, null, door, FieldRule::AnyShape)
+}
+
+/// [`sanitize_messagepack`], with the field rule `rule` at every depth.
+fn sanitize_messagepack_with_rule(
+    value: &mut rmpv::Value,
+    null: bool,
+    door: Door,
+    rule: FieldRule,
+) -> bool {
     use rmpv::Value;
     let replacement = || {
         if null {
@@ -780,7 +884,7 @@ fn sanitize_messagepack(value: &mut rmpv::Value, null: bool, door: Door) -> bool
                 return true;
             }
             let changed = values.iter_mut().fold(false, |changed, value| {
-                sanitize_messagepack(value, null, door) | changed
+                sanitize_messagepack_with_rule(value, null, door, rule) | changed
             });
             // Read again once items are nulled, as the JSON walk does.
             if changed && joined_messagepack(values, door) {
@@ -795,14 +899,15 @@ fn sanitize_messagepack(value: &mut rmpv::Value, null: bool, door: Door) -> bool
             fields.retain(|(key, _)| !messagepack_has_secret(key, door));
             let dropped = fields.len() != before;
             fields.iter_mut().fold(dropped, |changed, (key, value)| {
-                let sensitive = key
-                    .as_str()
-                    .is_some_and(|key| credential_field(key, value.is_nil(), value.as_str(), door));
+                let sensitive = rule.reads_whole(value)
+                    && key.as_str().is_some_and(|key| {
+                        credential_field(key, value.is_nil(), value.as_str(), door)
+                    });
                 if sensitive {
                     *value = replacement();
                     true
                 } else {
-                    sanitize_messagepack(value, null, door) | changed
+                    sanitize_messagepack_with_rule(value, null, door, rule) | changed
                 }
             })
         }

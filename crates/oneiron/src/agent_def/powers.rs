@@ -121,6 +121,21 @@ impl AgentPowerTarget {
     }
 }
 
+/// The holder an archived power-grant key names: tag 0 agent, 1 attempt, 2 reader task.
+pub(super) fn decode_power_grant_target(key: &[u8; 17]) -> Option<AgentPowerTarget> {
+    let id: [u8; 16] = key[1..].try_into().ok()?;
+    match key[0] {
+        0 => EntityId::from_bytes(id).ok().map(AgentPowerTarget::Agent),
+        1 => AttemptId::from_bytes(&id)
+            .ok()
+            .map(AgentPowerTarget::Attempt),
+        2 => EntityId::from_bytes(id)
+            .ok()
+            .map(AgentPowerTarget::ReaderTask),
+        _ => None,
+    }
+}
+
 /// The grant table: one byte per holder, bit 0 `spawn`, bit 1 `save_agent`.
 pub(crate) const POWER_GRANTS: SideTable<[u8; 17], [u8; 1], Raw> =
     SideTable::new(&side_table::AGENT_DEF_POWER_GRANT);
@@ -309,17 +324,8 @@ impl Vault {
     }
 }
 
-/// The kind of holder `vault.agents.powers.set` names.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum AgentPowerHolderKind {
-    /// An agent definition: its root grant.
-    Agent,
-    /// One dispatched attempt of an agent.
-    Attempt,
-    /// One reader child, by its task id.
-    ReaderTask,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::agent_def::powers::AgentPowerHolderKind;
 
 /// `vault.agents.powers.set`: the holder, the grant the owner expects it to
 /// hold, and the one it sets.

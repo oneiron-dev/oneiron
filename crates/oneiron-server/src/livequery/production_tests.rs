@@ -160,6 +160,7 @@ pub(super) fn witness(server: &SyncServer, text: &str) -> WitnessReceipt {
             occurred_at: AT,
             assertions: Default::default(),
             thread_audience: None,
+            project: None,
         })
         .unwrap()
 }
@@ -710,6 +711,31 @@ async fn receipt_limit_is_applied_after_actor_scoping() {
             b"fixture actor",
         )
         .unwrap();
+    // The writer reads the record its claim names (FIX 1218): `other` holds
+    // no read permit (the fixture installs one for ACTOR only), so its
+    // upsert below would deny with gate.deny.unresolved_record_reference.
+    // A second `install_read_permit_for_test` is refused once the default
+    // policy changed, so the grant folds beside it as its own owner-authored
+    // test manifest, as `put_actor_read_grant` does.
+    let mut read = oneiron::federation::Scope::top();
+    read.verbs = oneiron::federation::ScopeAxis::Some(["read".to_owned()].into());
+    let owner = server.vault().ensure_embedded_owner_actor().unwrap();
+    oneiron::conversation_dag::test_support::put_test_policy_manifest(
+        server.vault(),
+        WriteActor::new(owner, EdgeActorClass::Human),
+        EntityId::from_hex("77777777777777777777777777777777").unwrap(),
+        &json!({
+            "schema_version": "1.2", "pack_id": "test-read-grant", "pack_version": "1",
+            "min_engine_version": "0.0.0", "defaults": {}, "rules": [], "actor_ceilings": [],
+            "scoped_grants": [json!({
+                "actor_ref": other.to_hex(),
+                "effector": "core:read",
+                "scope": serde_json::to_value(read).unwrap(),
+                "receipt_required": false,
+            })],
+        }),
+    )
+    .unwrap();
     server
         .vault()
         .memory(other, EdgeActorClass::Human)
@@ -2245,6 +2271,7 @@ async fn erasing_a_folded_message_refreshes_the_live_recall_of_its_turn() {
                 occurred_at: AT,
                 assertions: Default::default(),
                 thread_audience: None,
+                project: None,
             })
             .unwrap();
         let id_of = |short_id: &str| {
@@ -2401,7 +2428,7 @@ async fn rpc_recall_takes_call_mode_and_refuses_a_deadline_out_of_range() {
 /// The read RPC is synchronous, yet a stage that never yields cannot hold a
 /// call-mode recall past its deadline: the read runs on a thread of its own,
 /// and at the deadline the RPC answers with the pack recall published.
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn rpc_call_mode_recall_answers_by_its_deadline_past_a_stalled_stage() {
     use oneiron::retrieval_depth::SlowRetrievalStage;
     use oneiron::store::RetrievalSignal;

@@ -7,13 +7,13 @@
 //! checked as the broker will check it, the broker is reached, and only then
 //! is the key read at the door (effector `broker:model`, zeroizing bytes) and
 //! handed over with that one request. No key is read once into a long-lived
-//! bearer or a default header. The built-in Google Sheets connector sends
-//! through it too (`sheets`), its OAuth access token read at its own
-//! custody door by the engine. An outside import's git exchanges go through
-//! the same broker (OSH-3, `git`).
+//! bearer or a default header. The built-in workspace connectors
+//! (`google.sheets`) send through it too (`workspace`), their OAuth access
+//! token read at its own custody door by the engine. An outside import's git
+//! exchanges go through the same broker (OSH-3, `git`).
 mod git;
 mod secret_use;
-mod sheets;
+mod workspace;
 
 pub(crate) use git::WeakBrokerContext;
 
@@ -23,14 +23,14 @@ use std::time::Duration;
 
 use oneiron::{BudgetLease, FatalLlmError, LlmError, LlmResult, RetryableLlmError, Vault};
 use oneiron_broker::{CallHeader, Shape};
-use oneiron_llm_systemone::{
+use oneiron_llm::systemone::{
     SystemOneHttpRequest, SystemOneHttpResponse, SystemOneTransport, SystemOneTransportFuture,
 };
 use zeroize::Zeroizing;
 
 use super::broker::{
-    BrokerSite, KeyDoor, REPLY_MARGIN, VaultKeyDoor, answered, call_with_key_released,
-    open_with_key,
+    BrokerSite, KeyDoor, REPLY_MARGIN, VaultKeyDoor, answered, broker_error,
+    call_with_key_released, connect_with_key, open_with_key,
 };
 use super::http::is_cloud_node;
 use super::seat_model::{SeatModelProvider, seat_model_providers};
@@ -290,6 +290,18 @@ impl BrokerContext {
         .unwrap_or_else(|_| Err(RetryableLlmError::StreamCut.into()))
     }
 
+    /// Reaches the broker and reads the key `secret` at the door, for a
+    /// caller that seals its request once the key is in hand (the System One
+    /// seat): the broker's reply may take at most `wait` past its frame.
+    async fn connect_with_key(
+        &self,
+        secret: &str,
+        wait: Duration,
+    ) -> LlmResult<(oneiron_broker::BrokerConnection, Zeroizing<Vec<u8>>)> {
+        let client = self.client(wait.saturating_add(oneiron_broker::FRAME_DEADLINE))?;
+        connect_with_key(&client, &self.inner.keys, secret).await
+    }
+
     /// The System One seat's transport over this broker, its key the vault
     /// secret `secret`.
     pub(crate) fn system_one(&self, secret: &str) -> Box<dyn SystemOneTransport> {
@@ -357,32 +369,65 @@ struct SystemOneLeg {
     secret: String,
 }
 
+/// The broker's header for one System One call under `lease`, its body
+/// `body`.
+fn system_one_header(
+    lease: &BudgetLease,
+    url: &reqwest::Url,
+    request: &SystemOneHttpRequest,
+    body: &[u8],
+) -> CallHeader {
+    CallHeader::new(
+        lease.id().to_owned(),
+        Shape::SystemOne,
+        url.origin().ascii_serialization(),
+        url.path().to_owned(),
+        request.headers.clone(),
+        request.model.clone(),
+        is_cloud_node(),
+        body,
+    )
+}
+
 impl SystemOneTransport for SystemOneLeg {
     fn send<'a>(
         &'a self,
-        request: SystemOneHttpRequest,
+        mut request: SystemOneHttpRequest,
         lease: &'a BudgetLease,
     ) -> SystemOneTransportFuture<'a> {
         Box::pin(async move {
             let url = reqwest::Url::parse(&request.endpoint)
                 .map_err(|_| LlmError::from(FatalLlmError::InvalidRequest))?;
-            let header = CallHeader::new(
-                lease.id().to_owned(),
-                Shape::SystemOne,
-                url.origin().ascii_serialization(),
-                url.path().to_owned(),
-                request.headers,
-                request.model,
-                is_cloud_node(),
-                &request.body,
-            );
-            let mut answer = self
+            // Checked as the broker will check it before the broker is
+            // reached and the key read: the request as it would go now.
+            let provisional = request.seal()?;
+            system_one_header(lease, &url, &request, &provisional.body)
+                .check(&provisional.body)
+                .map_err(|_| LlmError::from(FatalLlmError::InvalidRequest))?;
+            let (connection, key) = self
                 .context
-                .send(&self.secret, &header, &request.body, request.time_left)
+                .connect_with_key(&self.secret, provisional.time_left)
                 .await?;
+            // The key is read on a blocking worker, whose wait is spent from
+            // the call: the body's budget, the header's digest of it and the
+            // reply's wait are read again now, once the key is in hand. A
+            // call out of time by then is not sent.
+            let sealed = request.seal()?;
+            let header = system_one_header(lease, &url, &request, &sealed.body);
+            let reply = tokio::time::timeout(
+                sealed
+                    .time_left
+                    .saturating_add(oneiron_broker::FRAME_DEADLINE),
+                connection.call(&header, &sealed.body, key),
+            )
+            .await
+            .map_err(|_| LlmError::from(RetryableLlmError::Timeout))?
+            .map_err(broker_error)?;
+            let (status, _) = answered(reply.outcome)?;
+            let mut body = reply.body;
             Ok(SystemOneHttpResponse {
-                status: answer.status,
-                body: std::mem::take(&mut *answer.body),
+                status,
+                body: std::mem::take(&mut *body),
             })
         })
     }

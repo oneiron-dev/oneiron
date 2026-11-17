@@ -69,6 +69,10 @@ mod reap;
 mod refusal;
 /// The relay delete ctl requests (FIX 6826).
 mod relay_delete;
+/// Every API route verifies the owner's attestation or is classified
+/// (L10-29).
+#[cfg(test)]
+mod route_selection_tests;
 /// Generic original-usage export over ctl (LC191311).
 mod usage_export;
 
@@ -345,8 +349,9 @@ const OWNER_PREFIX: &str = "/v1/owner/";
 /// The app's action transport: `POST /v1/core/actions/{verb}`.
 const ACTIONS_PREFIX: &str = "/v1/core/actions/";
 
-/// A held lens card's transports: `POST /v1/core/lens-frames/{card_id}/events`
-/// and `DELETE /v1/core/lens-frames/{card_id}`.
+/// A held lens card's transports: `POST /v1/core/lens-frames/{card_id}/events`,
+/// `DELETE /v1/core/lens-frames/{card_id}` and `GET` (with its HEAD) of the
+/// same path.
 const LENS_FRAMES_PREFIX: &str = "/v1/core/lens-frames/";
 
 /// Whether a `ManagedOwnerAction` may name the owner for this request on
@@ -413,14 +418,17 @@ fn console_attestable(method: &Method, path: &str) -> bool {
 
 /// The owner's action and frame transports, each matched exactly (WILL-PLAN
 /// L13 row 01): `POST /v1/core/actions/{verb}`, `POST
-/// /v1/core/lens-frames/{card_id}/events` and `DELETE
-/// /v1/core/lens-frames/{card_id}`, each `{..}` one non-empty path segment.
-/// The other `/v1/core/*` routes are [`console_attestable`]'s and
-/// [`super::attested_routes`]'s. The assertion is verified over the method,
-/// path, raw query, placing headers and exact body as for the facade.
+/// /v1/core/lens-frames/{card_id}/events`, `DELETE
+/// /v1/core/lens-frames/{card_id}`, and `GET` of that path with its HEAD (a
+/// reload of the held card, GENUI-STATE-PERSIST), each `{..}` one non-empty
+/// path segment. The other `/v1/core/*` routes are [`console_attestable`]'s
+/// and [`super::attested_routes`]'s. The assertion is verified over the
+/// method, path, raw query, placing headers and exact body as for the facade.
 fn action_or_frame_attestable(method: &Method, path: &str) -> bool {
     let segment = |rest: &str| !rest.is_empty() && !rest.contains('/');
-    if *method == Method::POST {
+    if super::attested_routes::registered_method_matches(method, Method::GET.as_str()) {
+        path.strip_prefix(LENS_FRAMES_PREFIX).is_some_and(segment)
+    } else if *method == Method::POST {
         path.strip_prefix(ACTIONS_PREFIX).is_some_and(segment)
             || path
                 .strip_prefix(LENS_FRAMES_PREFIX)
@@ -549,9 +557,11 @@ impl ManagedState {
     /// commit a durable write.
     ///
     /// Two ways one can be live, and quiescence has to answer for both. A
-    /// session past its protocol hello holds a broadcast receiver for as long
-    /// as it runs, and it subscribes before it can import a single update, so
-    /// the receiver count covers every session that is able to write. A
+    /// session past its protocol hello holds a counted broadcast subscriber
+    /// for as long as it runs, and it subscribes before it can import a single
+    /// update, so the session count covers every session that is able to
+    /// write. The host's own subscribers (the cloud erase watch holds one for
+    /// the whole serve) are not sessions and are not counted (FIX 23314). A
     /// session that upgraded and has not spoken yet holds nothing to count, so
     /// a 15-second settle window (the protocol hello deadline plus margin)
     /// covers that blind window instead.
@@ -563,12 +573,9 @@ impl ManagedState {
     /// This vault's own device sync, dialing its home, is live too until its
     /// run and refresh have paused at the freeze (FIX 5127).
     pub fn live_sync_writer(&self) -> bool {
-        // Crate-internal on purpose: the receiver count is the only liveness
-        // signal a session leaves outside its own task, and adding a second
-        // registry to `SyncServer` would put the same fact in two places.
-        if self.server.broadcast_tx.receiver_count() > 0
-            || self.admission.in_flight().device_sync > 0
-        {
+        // Not the channel's receiver count: that also counts the host's own
+        // subscribers, so it never reads zero on a served host (FIX 23314).
+        if self.server.broadcast_sessions.live() > 0 || self.admission.in_flight().device_sync > 0 {
             return true;
         }
         let admitted = self.last_sync_upgrade.load(Ordering::SeqCst);

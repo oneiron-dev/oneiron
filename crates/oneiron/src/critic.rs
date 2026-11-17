@@ -29,7 +29,11 @@ use crate::learning::{LearningCell, LearningPredicate};
 use crate::side_table::{self, Named, SideKey, SideTable};
 use crate::write_envelope::WriteActor;
 
-pub const CRITIQUE_ARTIFACT_SCHEMA_VERSION: u64 = 1;
+#[doc(hidden)]
+pub use oneiron_records::critic::{CRITIQUE_ARTIFACT_SCHEMA_VERSION, CritiqueTriageScores};
+#[doc(hidden)]
+use oneiron_records::critic::{ERASED_CRITIC_REF_PREFIX, MAX_SUGGESTED_EDIT_BYTES};
+
 pub use crate::store::critic_lens::CRITIC_LENS_CATALOG_SCHEMA_VERSION;
 
 /// Private run-tree-scoped critique artifact for one branch attempt, written independently by
@@ -45,50 +49,22 @@ pub(crate) fn critique_artifact_accepts_masked(bytes: &[u8]) -> bool {
 
 /// [`CRITIQUE_ARTIFACT`]'s key: the byte layout above, spelled exactly (a plain
 /// `(AttemptId, String)` tuple would drop the artifact id's length prefix).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, SideKey)]
 pub(crate) struct CritiqueArtifactKey {
     pub(crate) branch_attempt: AttemptId,
+    #[side_key(len = u16)]
     pub(crate) artifact_id: String,
-}
-
-impl SideKey for CritiqueArtifactKey {
-    fn encode_into(&self, out: &mut Vec<u8>) {
-        out.extend_from_slice(self.branch_attempt.as_bytes());
-        out.extend_from_slice(&(self.artifact_id.len() as u16).to_be_bytes());
-        out.extend_from_slice(self.artifact_id.as_bytes());
-    }
-
-    fn decode_key(bytes: &[u8]) -> Option<Self> {
-        let (branch_bytes, rest) = bytes.split_at_checked(16)?;
-        let branch_attempt = AttemptId::from_bytes(branch_bytes).ok()?;
-        let (len_bytes, rest) = rest.split_at_checked(2)?;
-        let len = usize::from(u16::from_be_bytes(len_bytes.try_into().ok()?));
-        if rest.len() != len {
-            return None;
-        }
-        let artifact_id = String::from_utf8(rest.to_vec()).ok()?;
-        Some(Self {
-            branch_attempt,
-            artifact_id,
-        })
-    }
 }
 
 use crate::store::critic_lens::MAX_CONTRACT_BYTES;
 use crate::store::critic_lens::MAX_DOMAIN_BYTES;
 use crate::store::critic_lens::MAX_ID_BYTES;
-use crate::store::critic_lens::MAX_OUTPUT_SCHEMA_BYTES;
 const MAX_ARTIFACT_ID_BYTES: usize = 128;
 const MAX_RUN_ID_BYTES: usize = 128;
 const MAX_CANDIDATE_REF_BYTES: usize = 256;
 const MAX_PROVENANCE_REF_BYTES: usize = 256;
 const MAX_EVIDENCE_REF_BYTES: usize = 256;
-const MAX_SUGGESTED_EDIT_BYTES: usize = 8192;
 const DEFAULT_UCB_EXPLORATION: f64 = 0.35;
-/// How an erased critic's ref begins (FIX 4477; a call): the erased spelling
-/// and a colon, then an opaque id of its own that hashes no actor.
-const ERASED_CRITIC_REF_PREFIX: &str = "erased:";
-
 pub use crate::store::critic_lens::{CriticLens, LensCatalog, OF366_SEED_LENS_CATALOG_JSON};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -268,13 +244,6 @@ impl CritiqueArtifact {
 /// id `opaque`, one per erased critic per record, so no two critics share it.
 pub(crate) fn erased_critic_ref(opaque: EntityId) -> String {
     format!("{ERASED_CRITIC_REF_PREFIX}{}", opaque.to_hex())
-}
-
-#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
-pub struct CritiqueTriageScores {
-    pub accept: f64,
-    pub revise: f64,
-    pub discard: f64,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -510,6 +479,5 @@ pub(crate) mod tables;
 mod validation;
 use self::validation::{
     invalid_critic_config, validate_catalog, validate_critique_artifact, validate_flaw,
-    validate_identifier, validate_lens, validate_provenance, validate_reliability,
-    validate_reliability_table,
+    validate_identifier, validate_provenance, validate_reliability, validate_reliability_table,
 };

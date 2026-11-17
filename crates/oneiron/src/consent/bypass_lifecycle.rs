@@ -28,17 +28,11 @@ pub struct BypassGrantBoundRequest {
     pub envelope: BypassActionEnvelopeRequest,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct BypassActionEnvelopeRequest {
-    pub selectors: Vec<String>,
-    #[serde(default)]
-    pub target: Option<String>,
-    #[serde(default)]
-    pub budget: Option<u64>,
-    #[serde(default)]
-    pub receipt_required: bool,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::consent::bypass_lifecycle::{
+    ActiveBypassGrantsRequest, BypassActionEnvelopeRequest, BypassedEffectReceipt,
+    BypassedEffectReceiptsRequest,
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -64,10 +58,6 @@ pub struct CreateBypassGrantRequest {
     pub warning: BypassGrantWarningView,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct ActiveBypassGrantsRequest {}
-
 /// One live engine row. Revoking `grant` through vault.consent.revoke ends
 /// it; a multi-class creation returns a separate reference for every class.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -77,24 +67,6 @@ pub struct BypassActiveState {
     pub grant: String,
     pub bound: BypassGrantBoundRequest,
     pub floor_version: u16,
-    pub created_at: u64,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct BypassedEffectReceiptsRequest {
-    /// The reference emitted by creation, active state or the registry.
-    pub grant: String,
-}
-
-/// A projection of an existing Gate receipt, never a caller-authored effect.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct BypassedEffectReceipt {
-    pub decision_ref: String,
-    pub grant_ref: String,
-    pub effect_digest: String,
-    pub reason_code: String,
     pub created_at: u64,
 }
 
@@ -166,6 +138,15 @@ pub fn bypass_grant_warning(
     Ok(prepare_warning(vault, owner, input.bound)?.0)
 }
 
+/// `vault.consent.create_bypass_grant`: the Owner's acknowledged bypass
+/// grant, one consent row per class. The Owner's own act on a catastrophe
+/// row goes on their own proof, and each receipt records that decision (2k4;
+/// P25-SHAPE Q1 = A; owner-own-acts).
+///
+/// # Errors
+///
+/// A warning that is not the current one, unchanged; as
+/// [`Vault::create_bypass_grant`].
 pub fn create_bypass_grant(
     vault: &Vault,
     owner: &AuthenticatedOwner,
@@ -185,7 +166,12 @@ pub fn create_bypass_grant(
                 .collect::<crate::Result<Vec<_>>>()
         })?
         .into_iter()
-        .map(ConsentActReceipt::from)
+        .map(|receipt| ConsentActReceipt {
+            check_in: Some(crate::check_in::owner_own_proof_decision(
+                crate::check_in::ActClass::SecurityControlDisable,
+            )),
+            ..ConsentActReceipt::from(receipt)
+        })
         .collect())
 }
 

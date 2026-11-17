@@ -15,6 +15,9 @@
 //! whose lease lapsed, and whose attempt another host leased again, changes
 //! no record.
 
+#[cfg(oneiron_test_support)]
+use std::sync::atomic::{AtomicUsize, Ordering};
+
 use serde::{Deserialize, Serialize};
 
 use super::{EvalAuthoringInventory, EvalAuthoringPlan, EvalAuthoringReport};
@@ -43,55 +46,43 @@ const EXECUTIONS: SideTable<EntityId, EvalAuthoringExecution, Named> =
 /// Why an agent with no conferring Grant is refused.
 const NO_GRANT: &str = "no live Grant from a live owner names this agent and lists the verb";
 
-/// `vault.evals.authoring.execute`'s input: none. The pass reads the whole
-/// inventory, as the nightly pass does; the caller supplies no plan, skill,
-/// lease or target.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct EvalAuthoringExecuteRequest {}
+/// Test-only fault (FIX EVAL-AUTHORING-EXECUTE-UNRECORDED-END): while
+/// armed, this many execution-record writes fail instead of writing, as a
+/// storage-write fault would. Armed through the
+/// `eval_authoring_execution_fault` test door; queue settle writes are
+/// unaffected.
+#[cfg(oneiron_test_support)]
+static FAIL_EXECUTION_WRITES: AtomicUsize = AtomicUsize::new(0);
 
-/// Who asked for a pass, as its admission checked them.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
-pub enum EvalAuthoringCaller {
-    /// The vault owner, on its own proof.
-    Owner { person: EntityId },
-    /// An agent, on the live owner Grant that listed the verb.
-    Agent { agent: EntityId, grant: EntityId },
+/// Arms the execution-record write fault: the next `count` record ends
+/// and recoveries fail. `0` disarms. The
+/// `eval_authoring_execution_fault` test door calls it.
+#[cfg(oneiron_test_support)]
+pub(crate) fn fail_execution_writes(count: usize) {
+    FAIL_EXECUTION_WRITES.store(count, Ordering::SeqCst);
 }
 
-/// What one requested pass came to.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum EvalAuthoringOutcome {
-    /// Admitted and no plan applying: the pass runs, or its host stopped
-    /// first; the next lease of the attempt runs it on this record.
-    Running,
-    /// The plan's effects began and have not ended. A host that stopped
-    /// here leaves it so until the attempt is leased again, which ends it
-    /// `Failed`: what the effects did is not known.
-    Applying,
-    /// The inventory held nothing new to decide: no model call.
-    NoWork,
-    /// No Coach seat, no loadable approved skill, or no seat took the call.
-    Unavailable,
-    /// The model's answer held no plan.
-    NoPlan,
-    /// The engine refused the plan; nothing applied.
-    Refused,
-    /// The plan applied; the report says what each step did.
-    Applied,
-    /// The pass ended in an error, and its attempt failed with it.
-    Failed,
+/// Fails when the execution-record write fault is armed, consuming one
+/// armed failure.
+#[cfg(oneiron_test_support)]
+fn fail_armed_execution_write() -> Result<()> {
+    let armed = FAIL_EXECUTION_WRITES
+        .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |count| {
+            count.checked_sub(1)
+        })
+        .is_ok();
+    if armed {
+        return Err(Error::Io(std::io::Error::other(
+            "the armed eval-authoring execution write fault fired",
+        )));
+    }
+    Ok(())
 }
 
-/// The eval-authoring skill revision a pass loaded.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct EvalAuthoringSkillRun {
-    pub skill: EntityId,
-    pub revision: String,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::skill_optimize::eval_set::authoring::executions::{
+    EvalAuthoringCaller, EvalAuthoringExecuteRequest, EvalAuthoringOutcome, EvalAuthoringSkillRun,
+};
 
 /// One requested pass's kept record, by its Coach attempt.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -368,6 +359,8 @@ impl Vault {
     ) -> Result<Option<EvalAuthoringExecution>> {
         self.require_coach_attempt(attempt, COACH_EVAL_AUTHORING_FACET)?;
         let id = EntityId::from_bytes(*attempt.status.attempt.id.as_bytes())?;
+        #[cfg(oneiron_test_support)]
+        fail_armed_execution_write()?;
         self.with_write_txn_grouped(|txn| {
             require_live_lease_in_txn(self, txn, attempt)?;
             recover_in_txn(self, txn, &id, now)
@@ -416,6 +409,8 @@ impl Vault {
         end: ExecutionEnd,
         now: u64,
     ) -> Result<EvalAuthoringExecution> {
+        #[cfg(oneiron_test_support)]
+        fail_armed_execution_write()?;
         self.with_write_txn_grouped(|txn| {
             require_live_lease_in_txn(self, txn, attempt)?;
             let mut execution = EXECUTIONS.get(self, txn, id)?.ok_or_else(not_requested)?;

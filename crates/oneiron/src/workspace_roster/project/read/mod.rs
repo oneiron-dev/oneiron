@@ -53,7 +53,11 @@ pub(super) fn stored(
     id: EntityId,
     kind: u8,
 ) -> Result<Option<ProjectRecord>> {
-    record(store, txn, id, kind)
+    let mut row: Option<ProjectRecord> = record(store, txn, id, kind)?;
+    if let Some(row) = row.as_mut() {
+        row.drop_unsigned_room_facets();
+    }
+    Ok(row)
 }
 
 /// Whether a row must fit under its parents: a leader's or board holder's
@@ -584,12 +588,13 @@ impl<'a, 't> ProjectReader<'a, 't> {
             &challenge,
             &proof.holder_signature,
             proof.signed_at,
-            &authority.slice,
+            authority,
         )
     }
 
     /// Verifies a slip's standing at `signed_at`, its holder's signature
-    /// over `challenge`, and a project.write scope over `slice`.
+    /// over `challenge`, and a project.write scope over `state`: its slice
+    /// and every facet its room reads through.
     pub(super) fn verify_envelope(
         &self,
         id: EntityId,
@@ -597,8 +602,9 @@ impl<'a, 't> ProjectReader<'a, 't> {
         challenge: &[u8],
         holder_signature: &[u8],
         signed_at: u64,
-        slice: &Scope,
+        state: &ProjectAuthority,
     ) -> Result<std::result::Result<Holder, ProjectVerdict>> {
+        let slice = &state.slice;
         let Ok(slip) = CapabilitySlip::from_token(slip_wire) else {
             return Ok(Err(ProjectVerdict::Quarantined(
                 "invalid project write slip",
@@ -627,9 +633,9 @@ impl<'a, 't> ProjectReader<'a, 't> {
         if !scope.verbs.contains(&"project.write".to_owned())
             || !scope.bands.contains(&self.kind)
             || !(scope.worlds.contains(&world) || matches!(scope.worlds, ScopeAxis::All))
-            || slice
-                .facet
-                .is_some_and(|facet| !scope.facets.contains(&ScopeId(facet)))
+            || (slice.facet.iter())
+                .chain(state.room_facets.iter().flatten())
+                .any(|facet| !scope.facets.contains(&ScopeId(*facet)))
         {
             return Ok(Err(ProjectVerdict::Quarantined(
                 "project write outside slip scope",
@@ -644,24 +650,88 @@ impl<'a, 't> ProjectReader<'a, 't> {
 }
 
 /// The facets a project's home room limits what is read through it: the
-/// slice facet of the authority its history folds to (owner ruling
-/// FACET-READ), never a stored row the fold does not serve. A MESSAGE or
-/// TURN said there sits in it. `None` is a room no project owns, or one whose
-/// project serves no authority or names no facet.
+/// signed room facet set of the authority its history folds to, else that
+/// authority's slice facet (owner ruling FACET-READ; L7-39), never a stored
+/// row the fold does not serve. A MESSAGE or
+/// TURN said there sits in it. `None` is a room no project owns (an ordinary
+/// conversation, or no room: a deleted project's home room goes with it), or
+/// one whose project's authority names no facet.
+///
+/// A room that names a project this vault does not hold, or holds with no
+/// authority (quarantined, pending, dark), reads `Bottom`, and so does one
+/// whose project's slices meet to nothing: never the reader's own facets
+/// (L7-39-OLDER-PEER, Engine 14 Nov 17:31).
 pub(crate) fn room_facets_in(
     vault: &crate::Vault,
     txn: &heed::RoTxn<'_>,
     room: EntityId,
 ) -> Result<Option<ScopeAxis<ScopeId>>> {
-    let Some(project) = ROOM_PROJECT.get(&vault.store, txn, &room)? else {
-        return Ok(None);
+    let project = match ROOM_PROJECT.get(&vault.store, txn, &room)? {
+        Some(project) => project,
+        None => match room_body_owner_in(vault, txn, room)? {
+            RoomBodyOwner::Ordinary => return Ok(None),
+            RoomBodyOwner::Project(project) => project,
+            RoomBodyOwner::Unnamed => return Ok(Some(ScopeAxis::Bottom)),
+        },
     };
     let Some(reader) = ProjectReader::new(&vault.store, txn, vault.privacy_posture())? else {
-        return Ok(None);
+        return Ok(Some(ScopeAxis::Bottom));
     };
-    Ok(reader
-        .effective(project)?
-        .and_then(|effective| effective.slice)
-        .and_then(|slice| slice.facet)
-        .map(|facet| ScopeAxis::Some([ScopeId(facet)].into())))
+    let Some(effective) = reader.effective(project)? else {
+        return Ok(Some(ScopeAxis::Bottom));
+    };
+    // `None`: contradicting slices met, and nothing fits under them.
+    if effective.slice.is_none() {
+        return Ok(Some(ScopeAxis::Bottom));
+    }
+    // The signed room facet set where one is met, else the slice's facet.
+    Ok(effective.room_facet_reach().map(|facets| {
+        if facets.is_empty() {
+            ScopeAxis::Bottom
+        } else {
+            ScopeAxis::Some(facets.into_iter().map(ScopeId).collect())
+        }
+    }))
+}
+
+/// Whom an unmarked room's own body names as its project, by the keys the
+/// room doors read a derived room by (`rooms::project_room_of`).
+enum RoomBodyOwner {
+    /// No row, another kind, or an ordinary conversation's body.
+    Ordinary,
+    /// The project its `project_id` names.
+    Project(EntityId),
+    /// A derived-room body that names no project this read can parse, or a
+    /// body that does not decode.
+    Unnamed,
+}
+
+fn room_body_owner_in(
+    vault: &crate::Vault,
+    txn: &heed::RoTxn<'_>,
+    room: EntityId,
+) -> Result<RoomBodyOwner> {
+    let owner =
+        crate::ports::EntityStoreRead::port_entity_with_raw(&vault.store, txn, &room, |raw| {
+            let Some(header) = crate::batch::EntityMetadataHeader::parse(raw) else {
+                return Ok(RoomBodyOwner::Unnamed);
+            };
+            if header.entity_type != crate::registry::ENTITY_TYPE_CONVERSATION {
+                return Ok(RoomBodyOwner::Ordinary);
+            }
+            let Ok(body) = crate::conversation::ConversationBody::from_bytes(
+                &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
+            ) else {
+                return Ok(RoomBodyOwner::Unnamed);
+            };
+            Ok(match body.extra.get("project_id") {
+                Some(value) => value
+                    .as_str()
+                    .and_then(|hex| EntityId::from_hex(hex).ok())
+                    .map_or(RoomBodyOwner::Unnamed, RoomBodyOwner::Project),
+                None if body.extra.contains_key("memberIds") => RoomBodyOwner::Unnamed,
+                None => RoomBodyOwner::Ordinary,
+            })
+        })?;
+    Ok(owner.unwrap_or(RoomBodyOwner::Ordinary))
 }

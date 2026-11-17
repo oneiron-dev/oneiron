@@ -1,6 +1,7 @@
 //! Pinned vault-meta prefixes, the step ladder, and stored roster/journal records.
 
 use super::*;
+use crate::side_table::NulFreeText;
 
 /// Body schema version for every record this module writes.
 pub const WORKSPACE_ROSTER_SCHEMA_VERSION: u64 = 1;
@@ -125,83 +126,10 @@ pub(super) const ONBOARDING_STEPS: [MemberOnboardingStep; 6] = [
     MemberOnboardingStep::Complete,
 ];
 
-/// Stable refs a completed onboarding produced.
-#[derive(
-    Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
-)]
-pub struct MemberOnboardingOutcome {
-    /// Echo of the idempotency key.
-    pub onboarding_id: String,
-    /// The member `PERSON`.
-    pub person_ref: EntityId,
-    /// The member's `AGENT_DEF` actor.
-    pub actor_ref: EntityId,
-    /// The `(Member, Member)` federation grant.
-    pub federation_grant_ref: EntityId,
-    /// The companion `PERSON`, born here or brought.
-    pub companion_person_ref: Option<EntityId>,
-    /// The companion's `AGENT_DEF` actor, born here or brought.
-    pub companion_actor_ref: Option<EntityId>,
-    /// The workspace's policy is `suggest` and this member brought her own
-    /// companion: a work companion is recommended. Advisory, never a refusal;
-    /// read from the policy in force when the outcome is answered.
-    pub work_companion_suggested: bool,
-    /// The delegated mailbox identity, when one was bound.
-    pub delegated_identity_ref: Option<EntityId>,
-    /// Time the journal first reached [`MemberOnboardingStep::Complete`].
-    pub completed_at: u64,
-}
-
-/// What a roster row is in the workplace.
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
-)]
-#[serde(rename_all = "snake_case")]
-#[non_exhaustive]
-pub enum WorkspaceRosterRole {
-    /// The org given a pen.
-    HouseMind,
-    /// One principal's own companion.
-    PrincipalCompanion,
-}
-
-impl WorkspaceRosterRole {
-    /// Pinned wire spelling.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::HouseMind => "house_mind",
-            Self::PrincipalCompanion => "principal_companion",
-        }
-    }
-}
-
-/// One named persona visible in a workspace.
-///
-/// Memory scope is carried by `actor_ref` / `subject_ref` / `facet_ref` and the
-/// grants around them. `display_name` is presentation only and never selects
-/// what a persona can read.
-#[derive(
-    Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
-)]
-pub struct WorkspaceRosterEntry {
-    /// Workspace this persona appears in.
-    pub workspace_ref: String,
-    /// House mind or principal companion.
-    pub role: WorkspaceRosterRole,
-    /// The principal this companion belongs to; `None` for the house mind.
-    pub principal_ref: Option<EntityId>,
-    /// The `AGENT_DEF` that speaks.
-    pub actor_ref: EntityId,
-    /// The `PERSON`/`ORG` standing behind `actor_ref`.
-    pub subject_ref: EntityId,
-    /// Work facet this persona wears, when it has one.
-    pub facet_ref: Option<EntityId>,
-    /// Channel identity this persona speaks through, when it has one.
-    pub identity_ref: Option<EntityId>,
-    /// Runtime display name. Never an engine constant.
-    pub display_name: String,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::workspace_roster::records::{
+    MemberOnboardingOutcome, WorkspaceRosterEntry, WorkspaceRosterRole,
+};
 
 /// A member roster row as stored under [`MEMBER`].
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -224,33 +152,29 @@ impl RawValue for RosterMemberRow {
     }
 }
 
-/// The bytes after [`MEMBER`]'s declared prefix: `workspace_ref` then a NUL separator then the
-/// member person id as 32 lower-case hex characters. The NUL is unambiguous because
-/// [`WorkspaceRosterPreset::validate`] refuses a `workspace_ref` containing one.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// The bytes after [`MEMBER`]'s declared prefix: `workspace_ref` then a NUL separator
+/// ([`ROSTER_KEY_SEPARATOR`]) then the member person id as 32 lower-case hex characters. The NUL
+/// is unambiguous because [`WorkspaceRosterPreset::validate`] refuses a `workspace_ref`
+/// containing one, and a key whose `workspace_ref` holds one is refused.
+#[derive(Debug, Clone, PartialEq, Eq, SideKey)]
+#[side_key(sep = b'\0')]
 pub(super) struct RosterMemberKey {
+    #[side_key(rest, with = NulFreeText)]
     pub(super) workspace_ref: String,
+    #[side_key(with = HexId)]
     pub(super) person_ref: EntityId,
 }
 
-impl SideKey for RosterMemberKey {
-    fn encode_into(&self, out: &mut Vec<u8>) {
-        out.extend_from_slice(self.workspace_ref.as_bytes());
-        out.push(ROSTER_KEY_SEPARATOR);
-        out.extend_from_slice(self.person_ref.to_hex().as_bytes());
-    }
-
-    fn decode_key(bytes: &[u8]) -> Option<Self> {
-        let separator = bytes
-            .iter()
-            .position(|&byte| byte == ROSTER_KEY_SEPARATOR)?;
-        let workspace_ref = String::from_utf8(bytes[..separator].to_vec()).ok()?;
-        let HexId(person_ref) = HexId::decode_key(&bytes[separator + 1..])?;
-        Some(Self {
-            workspace_ref,
-            person_ref,
-        })
-    }
+/// One [`RosterMemberKey`] for `test_doors::side_key_pins`.
+#[cfg(oneiron_test_support)]
+pub(crate) fn roster_member_key_pin_for_test(
+    workspace_ref: &str,
+    person_ref: EntityId,
+) -> crate::test_doors::side_key_pins::Pin {
+    crate::test_doors::side_key_pins::Pin::of(&RosterMemberKey {
+        workspace_ref: workspace_ref.to_owned(),
+        person_ref,
+    })
 }
 
 /// A journal record as stored under [`ONBOARDING`].

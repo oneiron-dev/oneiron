@@ -72,10 +72,10 @@ pub use supervisor::{
     WorkerPolicy, WorkerProbe, WorkerProbeFuture, WorkerQueueStatus, WorkerSpec, WorkerUnavailable,
 };
 pub use supervisor::{
-    AttachedPassFuture, ConsolidationExecutorFactory, LinkedShutdown, NowSeconds, PassAttachment,
-    PassAttachmentSource, PassExecutorFactory, ProgramExecutorFactory, RestartBackoffConfig,
-    ShutdownHandle, SkillOptimizerLoan, WakePassFuture, WakeSupervisor, WakeSupervisorConfig,
-    WakeSupervisorReport, WaveReadyDispatcher,
+    AttachedPassFuture, ConsolidationExecutorFactory, DreamerJobsExecutor, LinkedShutdown,
+    NowSeconds, PassAttachment, PassAttachmentSource, PassExecutorFactory, ProgramExecutorFactory,
+    RestartBackoffConfig, ShutdownHandle, SkillOptimizerLoan, WakePassFuture, WakeSupervisor,
+    WakeSupervisorConfig, WakeSupervisorReport, WaveReadyDispatcher,
 };
 pub use tick::{
     AppOpenApplyHandle, ArmedLane, AttemptQueueDeadlines, CommitmentDeadline,

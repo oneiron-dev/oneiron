@@ -8,8 +8,6 @@
 //! its own, so no position tells where a secret was or how long it is (lead
 //! 12:4x, FIX-LIST EVIDENCE-SPANS-MASKED-COORDINATES).
 
-use std::fmt::Write as _;
-
 use serde::{Deserialize, Serialize};
 
 use super::source_version::{SourceVersion, SourceVersionCheck, blake3_ref, source_version_in_txn};
@@ -19,7 +17,9 @@ use crate::claim::{ClaimReadStatus, PointRead, ScopedReadResult};
 use crate::dreamer_consolidation::TurnText;
 use crate::memory::{Memory, MemoryError, MemoryResult};
 
-/// The most byte ranges one `vault.evidence.spans` request names.
+/// The most byte ranges one `vault.evidence.spans` request names while the
+/// owner has set no `snapshot_read.evidence.max_ranges` row: that key's
+/// default.
 pub const EVIDENCE_SPANS_MAX_RANGES: usize = 64;
 
 /// The reason code of the refusal a reader other than the owner gets when a
@@ -46,28 +46,10 @@ pub struct EvidenceSpansRequest {
     pub ranges: Vec<EvidenceRange>,
 }
 
-/// One byte range over a TURN's projected text.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct EvidenceRange {
-    /// The first byte, inclusive.
-    pub start: u64,
-    /// The end, exclusive.
-    pub end: u64,
-}
-
-/// Whether the source reads for the caller, and at the version asked.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum EvidenceSourceStatus {
-    /// The source reads, at the version asked when one was named.
-    Current,
-    /// The source reads, but at another version than the one asked: no bytes
-    /// are served.
-    Moved,
-    /// The caller does not read the source, or it is absent.
-    Withheld,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::snapshot_read::evidence_spans::{
+    EvidenceMessageSlice, EvidenceRange, EvidenceSourceStatus, EvidenceSpan,
+};
 
 /// One `vault.evidence.spans` answer.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -89,48 +71,19 @@ pub struct EvidenceSpans {
     pub masked: bool,
 }
 
-/// The exact bytes of one range of a TURN's projected text.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct EvidenceSpan {
-    /// The first byte, inclusive.
-    pub start: u64,
-    /// The end, exclusive.
-    pub end: u64,
-    /// The range's exact text.
-    pub text: String,
-    /// `blake3:<hex>` of the range's exact bytes.
-    pub content_hash: String,
-    /// The MESSAGE-local slices the range covers, for a TURN whose words are
-    /// its MESSAGE rows; empty for a TURN that carries its own words.
-    pub messages: Vec<EvidenceMessageSlice>,
-}
-
-/// One MESSAGE-local slice behind a range of a TURN's text.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct EvidenceMessageSlice {
-    /// The MESSAGE row.
-    pub message: EntityId,
-    /// The first byte within the MESSAGE's own content, inclusive.
-    pub start: u64,
-    /// The end within the MESSAGE's own content, exclusive.
-    pub end: u64,
-    /// `blake3:<hex>`: the evidence hash of the MESSAGE revision read.
-    pub revision: String,
-    /// The MESSAGE's document frontier, in hex, when it has a document.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub frontier: Option<String>,
-}
-
-/// The request's shape checks, run before the caller is resolved.
+/// The request's shape checks, run before the caller is resolved. The bound is
+/// `snapshot_read.evidence.max_ranges` in force, [`EVIDENCE_SPANS_MAX_RANGES`] by default.
 ///
 /// # Errors
 ///
-/// More than [`EVIDENCE_SPANS_MAX_RANGES`] ranges, an empty range, or a
-/// version of another row.
-pub fn validate_evidence_spans(input: &EvidenceSpansRequest) -> MemoryResult<()> {
-    if input.ranges.len() > EVIDENCE_SPANS_MAX_RANGES {
+/// More than `max_ranges` ranges, an empty range, or a version of another row.
+pub fn validate_evidence_spans(
+    input: &EvidenceSpansRequest,
+    max_ranges: usize,
+) -> MemoryResult<()> {
+    if input.ranges.len() > max_ranges {
         return Err(MemoryError::bad_request(format!(
-            "at most {EVIDENCE_SPANS_MAX_RANGES} evidence ranges per request"
+            "at most {max_ranges} evidence ranges per request"
         )));
     }
     if input.ranges.iter().any(|range| range.start >= range.end) {
@@ -175,7 +128,18 @@ pub fn evidence_spans(
     memory: &Memory<'_>,
     input: &EvidenceSpansRequest,
 ) -> MemoryResult<ScopedReadResult<EvidenceSpans>> {
-    validate_evidence_spans(input)?;
+    let vault = memory.vault();
+    let max_ranges = {
+        let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
+        usize::try_from(
+            super::setting_keys::EVIDENCE_SPANS_MAX_RANGES_SETTING
+                .read_in_txn(vault, &txn, &[], None)?
+                .value
+                .max(1),
+        )
+        .unwrap_or(usize::MAX)
+    };
+    validate_evidence_spans(input, max_ranges)?;
     let read = memory.read_lane(ClaimReadStatus::Recorded)?;
     read.read_projected(
         &[PointRead::id(input.source)],
@@ -336,7 +300,7 @@ fn turn_span(turn: &TurnText, text: &str, range: EvidenceRange) -> MemoryResult<
             start: u64::try_from(slice.start).unwrap_or(u64::MAX),
             end: u64::try_from(slice.end).unwrap_or(u64::MAX),
             revision: blake3_ref(&slice.revision),
-            frontier: slice.frontier.as_deref().map(hex),
+            frontier: slice.frontier.as_deref().map(oneiron_hex::encode),
         })
         .collect();
     Ok(EvidenceSpan {
@@ -346,12 +310,4 @@ fn turn_span(turn: &TurnText, text: &str, range: EvidenceRange) -> MemoryResult<
         content_hash: blake3_ref(blake3::hash(bytes).as_bytes()),
         messages,
     })
-}
-
-fn hex(bytes: &[u8]) -> String {
-    let mut out = String::with_capacity(bytes.len() * 2);
-    for byte in bytes {
-        let _ = write!(out, "{byte:02x}");
-    }
-    out
 }

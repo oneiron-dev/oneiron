@@ -181,7 +181,10 @@ async fn core_context_pack_owner_absent_happy_path_clamps_to_scope() {
     let party = seed_text_turn(&server, "hanami party planning needle17");
     // A base-world claim leaves capacity for the other-world claim under the
     // context pack's non-base-world claim fraction.
-    let base_claim = seed_disclosure_claim_in_world(
+    // Unstamped: this reader names no room, so it is homed in an unnamed
+    // vault, where a stamped claim never reads (DEC-0006 #home-clearance).
+    // The world clearance is what this test exercises.
+    let base_claim = seed_unstamped_claim_in_world(
         &server,
         party,
         "party details needle17",
@@ -189,7 +192,7 @@ async fn core_context_pack_owner_absent_happy_path_clamps_to_scope() {
     );
     let diary_world = seeded_test_entity_id(0x1517_00f1);
     let diary =
-        seed_disclosure_claim_in_world(&server, party, "private diary entry needle17", diary_world);
+        seed_unstamped_claim_in_world(&server, party, "private diary entry needle17", diary_world);
     seed_disclosure_scope(
         &server,
         contact_principal,
@@ -215,21 +218,29 @@ async fn core_context_pack_owner_absent_happy_path_clamps_to_scope() {
         body["disclosure"]["notice"].is_null(),
         "notice is Some iff supervised"
     );
-    assert!(
-        body["disclosure"]["clamped_out"].as_u64().unwrap_or(0) > 0,
-        "candidate sweep counted removals: {body:?}"
-    );
     let result_ids: Vec<&str> = body["results"]
         .as_array()
         .expect("results")
         .iter()
         .filter_map(|entity| entity["id"].as_str())
         .collect();
-    assert!(result_ids.contains(&party.to_hex().as_str()));
-    assert!(result_ids.contains(&base_claim.to_hex().as_str()));
-    assert!(
-        !result_ids.contains(&diary.to_hex().as_str()),
-        "out-of-world Tier-B claim absent from the assembled context"
+    // The other-world claim is absent from the assembled context, and the
+    // clamp count does not name it: `clamped_out` counts only clamped rows
+    // the caller would itself retrieve on its own floor (ARCH-0067 H146,
+    // `UnfinalizedContextPack::clamped_out_under`), and this caller's
+    // clearance holds only the base world (the 6bb2488ab0ec run: 0). The
+    // widened leg below retrieves the same claim.
+    assert_eq!(
+        (
+            body["disclosure"]["clamped_out"].clone(),
+            result_ids.contains(&diary.to_hex().as_str()),
+            result_ids.contains(&party.to_hex().as_str()),
+            result_ids.contains(&base_claim.to_hex().as_str()),
+        ),
+        (json!(0), false, true, true),
+        "clamp count, diary, party, base claim; {} results; disclosure {}",
+        result_ids.len(),
+        body["disclosure"]
     );
     let neighbors = body["neighbors"].as_array().expect("neighbors");
     assert!(neighbors.is_empty());
@@ -367,7 +378,10 @@ async fn core_context_pack_n9_scope_smuggling_members_are_ignored() {
     let contact_id = seeded_test_entity_id(0x1517_0022);
     seed_counterparty_contact(&server, contact_id, identity_ref, "kenji@example.com");
     let party = seed_text_turn(&server, "party event needle21");
-    let base_claim = seed_disclosure_claim_in_world(
+    // Unstamped: this reader names no room, so it is homed in an unnamed
+    // vault, where a stamped claim never reads (DEC-0006 #home-clearance).
+    // The world clearance is what this test exercises.
+    let base_claim = seed_unstamped_claim_in_world(
         &server,
         party,
         "party details needle21",
@@ -375,7 +389,7 @@ async fn core_context_pack_n9_scope_smuggling_members_are_ignored() {
     );
     let diary_world = seeded_test_entity_id(0x1517_00f2);
     let diary =
-        seed_disclosure_claim_in_world(&server, party, "private diary needle21", diary_world);
+        seed_unstamped_claim_in_world(&server, party, "private diary needle21", diary_world);
     seed_disclosure_scope(&server, contact_id, disclosure_base_world_clearance());
 
     let clean = json!({
@@ -713,15 +727,19 @@ async fn roster_room_applies_each_members_disclosure_dial_and_owner_presence() {
     // The member joins at the owner-signed birth: its v3 proof signs the
     // roster, and the birth derives the home room from it.
     create_owned_project(&server, owner, project, &roster);
+    // A room member's class-less peer key reads only through a class-agnostic
+    // grant (FIX 9917, FIX 1218): without one the room reads empty for all.
+    put_actor_read_grant(&server.vault, peer, None);
     let room = oneiron::EntityId::from_hex(&roster.home_room).unwrap();
     assert_eq!(
         server.vault.room_audience_members(room).unwrap(),
         vec![owner, peer]
     );
 
-    let identity = seeded_test_entity_id(0x2094_0104);
     let peer_contact = seeded_test_entity_id(0x2094_0106);
-    seed_counterparty_contact(&server, peer_contact, identity, "peer@example.com");
+    // OF-272: the roster reads the member's contact from its identity claim,
+    // so the contact names the peer itself.
+    seed_counterparty_contact(&server, peer_contact, peer, "peer@example.com");
     server
         .vault
         .put_edge(&peer_contact, oneiron::EdgeKind::About, &peer, 1.0)
@@ -814,16 +832,44 @@ async fn roster_room_applies_each_members_disclosure_dial_and_owner_presence() {
         "owner presence alone cannot override a narrower peer clearance: {supervised_narrowed}"
     );
 
+    // OF-272: the roster reads a member's contacts from their identity claims,
+    // and a contact's identity claim stays when the contact is revoked, so a
+    // member's contact list only grows and each denial below is final. The
+    // phases therefore run from the restored dial, which admits Tier B again,
+    // to one second contact naming the same person.
+    seed_disclosure_scope(&server, peer_contact, oneiron::federation::Scope::top());
+    let (status, restored) = room_owner_json(server.clone(), owner, &request(false)).await;
+    assert_eq!(status, StatusCode::OK, "{restored}");
+    assert!(
+        restored["results"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|row| row["id"] == tier_b.to_hex()),
+        "the restored dial admits tier B again: {restored}"
+    );
+
+    let other_contact = seeded_test_entity_id(0x2094_0107);
+    seed_counterparty_contact(&server, other_contact, peer, "ambiguous@example.com");
+    seed_disclosure_scope(&server, other_contact, oneiron::federation::Scope::top());
+    server
+        .vault
+        .put_edge(&other_contact, oneiron::EdgeKind::About, &peer, 1.0)
+        .expect("second contact linked to peer");
+    let (status, two_contacts) = room_owner_json(server.clone(), owner, &request(false)).await;
+    assert_eq!(status, StatusCode::OK, "{two_contacts}");
+    assert!(
+        !two_contacts["results"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|row| row["id"] == tier_b.to_hex()),
+        "two contacts for one person fail closed: {two_contacts}"
+    );
+
     // A client-supplied contact cannot replace a missing roster identity:
     // losing the unique person link makes that member unknown and denies the
     // absent-owner Tier-B read even when the caller names the contact.
-    seed_disclosure_scope(&server, peer_contact, oneiron::federation::Scope::top());
-    assert!(
-        server
-            .vault
-            .delete_edge(&peer_contact, oneiron::EdgeKind::About, &peer)
-            .expect("unlink peer")
-    );
     let (status, unlinked) = room_owner_json(
         server.clone(),
         owner,
@@ -846,57 +892,10 @@ async fn roster_room_applies_each_members_disclosure_dial_and_owner_presence() {
             .any(|row| row["id"] == tier_b.to_hex()),
         "missing roster identity cannot be replaced by a wire party: {unlinked}"
     );
-
-    server
-        .vault
-        .put_edge(&peer_contact, oneiron::EdgeKind::About, &peer, 1.0)
-        .expect("relink peer");
-    let other_contact = seeded_test_entity_id(0x2094_0107);
-    seed_counterparty_contact(&server, other_contact, identity, "ambiguous@example.com");
-    seed_disclosure_scope(&server, other_contact, oneiron::federation::Scope::top());
-    server
-        .vault
-        .put_edge(&other_contact, oneiron::EdgeKind::About, &peer, 1.0)
-        .expect("second contact linked to peer");
-    let (status, two_contacts) = room_owner_json(server.clone(), owner, &request(false)).await;
-    assert_eq!(status, StatusCode::OK, "{two_contacts}");
-    assert!(
-        !two_contacts["results"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|row| row["id"] == tier_b.to_hex()),
-        "two contacts for one person fail closed: {two_contacts}"
-    );
-    server
-        .vault
-        .delete_edge(&other_contact, oneiron::EdgeKind::About, &peer)
-        .expect("remove extra contact");
-    let stranger = seeded_test_entity_id(0x2094_0108);
-    server
-        .vault
-        .put_entity(
-            &stranger,
-            oneiron::registry::ENTITY_TYPE_PERSON,
-            oneiron::TimeRange { start: 1, end: 1 },
-            1,
-            b"stranger",
-        )
-        .expect("other person");
-    server
-        .vault
-        .put_edge(&peer_contact, oneiron::EdgeKind::About, &stranger, 1.0)
-        .expect("contact points to two people");
-    let (status, two_people) = room_owner_json(server.clone(), owner, &request(false)).await;
-    assert_eq!(status, StatusCode::OK, "{two_people}");
-    assert!(
-        !two_people["results"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|row| row["id"] == tier_b.to_hex()),
-        "one contact for two people fails closed: {two_people}"
-    );
+    // A contact names one person (one identity head, OF-272), so a room
+    // member cannot be reached through "one contact for two people"; the
+    // About-edge uniqueness rule for that case serves only an audience
+    // outside a room (api/context_pack/audience.rs).
 
     // Omission is not authenticated presence in a room, even on owner auth.
     let (status, implicit) = room_owner_json(
@@ -1036,6 +1035,7 @@ async fn a_room_with_the_owners_own_agent_reads_its_own_history() {
             occurred_at: 2,
             assertions: Default::default(),
             thread_audience: None,
+            project: None,
         })
         .expect("speak");
 

@@ -16,6 +16,7 @@ use crate::{
     ClaimCandidate, EntityId, Error, Result, TimeRange, Vault, WriteActor, WriteEnvelope,
     WriteProvenance,
 };
+use oneiron_contracts::fingerprint::ContentHash;
 use rmpv::Value;
 
 mod public_admit;
@@ -227,7 +228,7 @@ fn sources_with_caller_in_txn(
     let caller_reads =
         caller.map(|lane| Reader::new(home, actor.entity_ref(), lane.actor_key().clone()));
     let mut context = Vec::new();
-    let mut hasher = blake3::Hasher::new();
+    let mut frontier = StandingFrontier::new();
     let mut sources = Vec::with_capacity(evidence.len() + 1);
     for id in std::iter::once(&unit).chain(evidence.iter()) {
         let proposal = proposals
@@ -292,23 +293,7 @@ fn sources_with_caller_in_txn(
                 return Err(Error::EntityNotFound);
             }
         }
-        hasher.update(id.as_bytes());
-        hasher.update(&(raw.len() as u64).to_be_bytes());
-        hasher.update(&raw);
-        #[cfg(feature = "sync")]
-        let entity_doc = crate::entity_doc::source_frontier_in_txn(&vault.store, txn, id)?;
-        #[cfg(not(feature = "sync"))]
-        let entity_doc: Option<Vec<u8>> = None;
-        if header.entity_type == crate::registry::ENTITY_TYPE_NOTE && entity_doc.is_none() {
-            let frontier = crate::note::live_frontier_in_txn(vault, txn, *id)?;
-            hasher.update(&(frontier.len() as u64).to_be_bytes());
-            hasher.update(&frontier);
-        }
-        if let Some(frontier) = entity_doc {
-            hasher.update(b"entity-document");
-            hasher.update(&(frontier.len() as u64).to_be_bytes());
-            hasher.update(&frontier);
-        }
+        frontier.add(vault, txn, id, header.entity_type, &raw)?;
         let scope = crate::federation::record_scope::scope_for_blob(&vault.store, txn, *id, &raw)?
             .ok_or(Error::EntityNotFound)?;
         // A NOTE source sits at one world it is in that both readers hold,
@@ -350,7 +335,7 @@ fn sources_with_caller_in_txn(
         {
             return Err(Error::EntityNotFound);
         }
-        if caller.is_some() {
+        if let Some(caller) = caller {
             let body = &raw[ENTITY_METADATA_HEADER_LEN..];
             if !super::graph_ask::kind_is_graph_evidence(header.entity_type)
                 || body.is_empty()
@@ -358,16 +343,129 @@ fn sources_with_caller_in_txn(
             {
                 return Err(Error::EntityNotFound);
             }
-            context.push(super::GraphContextSource {
-                id: *id,
-                entity_type: header.entity_type,
-                hash: *blake3::hash(body).as_bytes(),
-                body: body.to_vec(),
-            });
+            // The caller's answerer is shown the body as the caller is
+            // served it (ruling EXPORTDOORS Q4 = A).
+            context.push(super::graph_ask::source(
+                caller.reads_stored_bodies_in(txn)?,
+                *id,
+                header.entity_type,
+                body.to_vec(),
+            )?);
         }
         sources.push(Source::of_row(header.entity_type, &raw, &scope)?);
     }
-    Ok((*hasher.finalize().as_bytes(), sources, context))
+    Ok((frontier.finish(), sources, context))
+}
+
+/// A standing frontier as the writer takes it: plain BLAKE3 over each
+/// source's share ([`Self::add`]) in visit order, the unit first. Stored
+/// answers and backfill keys hold these bytes.
+struct StandingFrontier(blake3::Hasher);
+
+impl StandingFrontier {
+    fn new() -> Self {
+        Self(blake3::Hasher::new())
+    }
+
+    /// One source's share: its id, its row framed by its length, then its
+    /// live document position framed the same way (its entity document's
+    /// when it has one, else a NOTE's own frontier).
+    fn add(
+        &mut self,
+        vault: &Vault,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+        entity_type: u8,
+        raw: &[u8],
+    ) -> Result<()> {
+        self.0.update(id.as_bytes());
+        self.0.update(&(raw.len() as u64).to_be_bytes());
+        self.0.update(raw);
+        #[cfg(feature = "sync")]
+        let entity_doc = crate::entity_doc::source_frontier_in_txn(&vault.store, txn, id)?;
+        #[cfg(not(feature = "sync"))]
+        let entity_doc: Option<Vec<u8>> = None;
+        if entity_type == crate::registry::ENTITY_TYPE_NOTE && entity_doc.is_none() {
+            let frontier = crate::note::live_frontier_in_txn(vault, txn, *id)?;
+            self.0.update(&(frontier.len() as u64).to_be_bytes());
+            self.0.update(&frontier);
+        }
+        if let Some(frontier) = entity_doc {
+            self.0.update(b"entity-document");
+            self.0.update(&(frontier.len() as u64).to_be_bytes());
+            self.0.update(&frontier);
+        }
+        Ok(())
+    }
+
+    fn finish(self) -> [u8; 32] {
+        *self.0.finalize().as_bytes()
+    }
+}
+
+/// Whether `answer`'s frontier is a standing frontier its sources still
+/// hold: the standing writer's hash ([`StandingFrontier`]) over the unit,
+/// then its evidence, taken now. A backfill hashed each source's stored
+/// row, and a public admission the row its caller was served, so both are
+/// taken: the stored row, and the row in `served`, which holds each source
+/// as the trial lane was served it. A source the trial did not read never
+/// matches, and neither does a frontier another writer saved, nor one from
+/// before a source moved.
+pub(super) fn standing_frontier_holds_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    answer: &AnswerRecord,
+    served: &[(EntityId, Vec<u8>)],
+) -> Result<bool> {
+    let mut stored = StandingFrontier::new();
+    let mut served_rows = StandingFrontier::new();
+    for id in std::iter::once(&answer.unit).chain(answer.decision.evidence.iter()) {
+        let Some((_, served_raw)) = served.iter().find(|(read, _)| read == id) else {
+            return Ok(false);
+        };
+        let raw = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, id)?
+            .ok_or(Error::EntityNotFound)?;
+        let raw = vault.materialized_row_in_txn(txn, id, raw)?;
+        let header = EntityMetadataHeader::parse(&raw)
+            .ok_or(Error::CorruptedIndex("standing source header"))?;
+        stored.add(vault, txn, id, header.entity_type, &raw)?;
+        served_rows.add(vault, txn, id, header.entity_type, served_raw)?;
+    }
+    Ok(stored.finish() == answer.frontier || served_rows.finish() == answer.frontier)
+}
+
+/// What a host's own backfill rests on: each source as the question's
+/// principal is served it in this snapshot, unit first, as a graph
+/// prediction pins its context ([`super::graph_ask::source_versions`]).
+/// `None` when the principal is not served one of them (a NOTE whose head
+/// document this host does not hold yet): no partial set is kept.
+fn served_versions_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    record: &QuestionRecord,
+    unit: EntityId,
+    evidence: &[EntityId],
+    current: Option<&ScopedReadActorKey>,
+) -> Result<Option<Vec<crate::llm::decision::EvidenceVersion>>> {
+    let key = super::saved_reader::saved_reader_in_txn_with_current(
+        vault,
+        txn,
+        record.principal,
+        &record.read_lane,
+        current,
+    )?;
+    let lane = super::saved_reader::current_reader_lane(vault, key, current);
+    let mut versions = Vec::with_capacity(evidence.len() + 1);
+    for id in std::iter::once(&unit).chain(evidence.iter()) {
+        let Some((_, _, body)) = lane.graph_ask_parts_in_txn(txn, id)? else {
+            return Ok(None);
+        };
+        versions.push(crate::llm::decision::EvidenceVersion {
+            id: *id,
+            body_hash: ContentHash::of(&body).into_bytes(),
+        });
+    }
+    Ok(Some(versions))
 }
 
 /// Resolve the complete source set under the principal and writing actor in
@@ -474,12 +572,12 @@ pub(super) fn prepare_graph_answer(
         {
             return Err(Error::EntityNotFound);
         }
-        sources.push(super::GraphContextSource {
-            id: *id,
-            entity_type: kind,
-            hash: *blake3::hash(&body).as_bytes(),
+        sources.push(super::graph_ask::source(
+            lane.reads_stored_bodies_in(&txn)?,
+            *id,
+            kind,
             body,
-        });
+        )?);
     }
     Ok((
         record,
@@ -598,7 +696,8 @@ pub(super) fn backfill_graph_decision(
 
 /// What the engine pins beside a standing answer's providers.
 enum Measured {
-    /// Nothing more: a host's own backfill.
+    /// A host's own backfill: the engine pins each source as the principal
+    /// is served it ([`served_versions_in_txn`]), and nothing more.
     Bare,
     /// A graph prediction's source versions and cost.
     Graph(Vec<crate::llm::decision::EvidenceVersion>, f64),
@@ -824,7 +923,21 @@ fn backfill_answer_with_caller(
             omitted: Vec::new(),
         };
         match &measurement {
-            Measured::Bare => {}
+            Measured::Bare => {
+                // The host's answer rests on the sources whose frontier it
+                // was checked against above, in this same snapshot: the
+                // engine pins them as a graph prediction's are, so a model
+                // trial can re-read them (FIX-LIST MODEL-TRIAL-REFUSES-STANDING-ANSWERS).
+                answer.decision.receipt.evidence_versions = served_versions_in_txn(
+                    vault,
+                    txn,
+                    &record,
+                    answer.unit,
+                    &answer.decision.evidence,
+                    current,
+                )?
+                .unwrap_or_default();
+            }
             Measured::Graph(versions, cost) => {
                 answer.decision.receipt.evidence_versions = versions.clone();
                 answer.decision.receipt.cost_per_thousand = Some(*cost);

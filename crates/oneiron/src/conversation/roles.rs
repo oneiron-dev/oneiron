@@ -57,15 +57,16 @@ pub(crate) fn person_role_in(
     }
     if (fold.vault_id.is_none()
         && (creator.as_deref() == Some(id.as_bytes().as_slice())
-            || (human && id == crate::vault::embedded_owner_actor_id()?)))
+            || (human
+                && id == crate::vault::embedded_owner_actor_id()?
+                && crate::memory::embedded_owner_shortcut_holds_in_txn(vault, txn)?)))
         || (fold.vault_id.is_some()
             && human
             && crate::memory::verify_owner_actor_binding_in_txn(vault, txn, id).is_ok())
     {
         return Ok(RoomRole::Owner);
     }
-    let rows = membership::rows_in(&vault.store, txn, room)?;
-    if !membership::members_at_rows(&rows, u64::MAX).contains(&id) {
+    if !membership::is_member_in(&vault.store, txn, room, id)? {
         return Err(denied());
     }
     let Some(role) = ROLE_GRANTS.get(&vault.store, txn, &(room, id))? else {
@@ -79,6 +80,44 @@ pub(crate) fn person_role_in(
 
 /// Who may admit to a room (OF-531): its owner, or a member whose role the
 /// room policy lets delegate.
+/// The PERSONs who own `room`, read in `txn`, each acting as a human
+/// ([`person_role_in`] answers Owner): of the vault's live owners, its
+/// embedded owner, the room's creator and the PERSONs the role door seated
+/// as Owner, those whose standing holds now. Sorted, once each; a closed room's ask asks them
+/// (ARCH-0082 #closed-room).
+pub(crate) fn room_owners_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    room: EntityId,
+) -> Result<Vec<EntityId>> {
+    let body = body::body_in(vault, txn, room)?;
+    let mut candidates: std::collections::BTreeSet<EntityId> =
+        crate::policy_model::owners_in_txn(vault, txn)?
+            .into_iter()
+            .collect();
+    let creator = ROOM_CREATORS
+        .get_bytes(&vault.store, txn, &room)?
+        .and_then(|bytes| <[u8; 16]>::try_from(bytes.as_slice()).ok())
+        .and_then(|bytes| EntityId::from_bytes(bytes).ok());
+    candidates.extend(creator);
+    candidates.insert(crate::vault::embedded_owner_actor_id()?);
+    candidates.extend(
+        body.roles
+            .iter()
+            .filter(|(_, role)| **role == RoomRole::Owner)
+            .filter_map(|(person, _)| EntityId::from_hex(person).ok()),
+    );
+    let mut owners = Vec::new();
+    for id in candidates {
+        match person_role_in(vault, txn, room, id, true) {
+            Ok(RoomRole::Owner) => owners.push(id),
+            Ok(_) | Err(Error::Record(crate::error::RecordError::ConversationDenied)) => {}
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(owners)
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum RoomHost {
     Owner,
@@ -122,6 +161,20 @@ impl Vault {
         role: RoomRole,
         actor: WriteActor,
     ) -> Result<()> {
+        self.set_room_role_recorded(room, person, role, actor)
+            .map(drop)
+    }
+
+    /// [`Self::set_room_role`], returning the engine's recorded time of the
+    /// write, read in the write's own transaction: the time the
+    /// `vault.rooms.members.role.set` receipt names.
+    pub(crate) fn set_room_role_recorded(
+        &self,
+        room: EntityId,
+        person: EntityId,
+        role: RoomRole,
+        actor: WriteActor,
+    ) -> Result<u64> {
         self.with_write_txn_grouped(|txn| {
             let actor_role = role_in(self, txn, room, actor)?;
             let policy = crate::gate::resolve_policy_manifest(&self.store, txn)?;
@@ -135,9 +188,7 @@ impl Vault {
             }
             require_kind(self, txn, person, ENTITY_TYPE_PERSON)?;
             let mut body = body::body_in(self, txn, room)?;
-            if !membership::members_at_rows(&membership::rows_in(&self.store, txn, room)?, u64::MAX)
-                .contains(&person)
-            {
+            if !membership::is_member_in(&self.store, txn, room, person)? {
                 return Err(denied());
             }
             body.roles.insert(person.to_hex(), role);
@@ -159,7 +210,7 @@ impl Vault {
                 .apply(txn)?;
             ROLE_GRANTS.put(&self.store, txn, &(room, person), &role)?;
             ROLE_UPDATES.delete(&self.store, txn, &room)?;
-            Ok(())
+            crate::ports::recorded_at_in_txn(&self.store, txn)
         })
     }
 }

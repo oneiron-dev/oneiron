@@ -84,30 +84,10 @@ pub const CONNECTION_CALL_ACTOR_CLASS: &str = "connection";
 
 pub use crate::store::receipt_identity::ERASED_CALL_IDENTITY;
 
-/// The wire a call arrived on.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum CallTransport {
-    /// `/v1/core/facade/<verb>`.
-    HttpFacade,
-    /// An MCP `tools/call`.
-    Mcp,
-    /// A WS app-tier RPC.
-    Ws,
-    /// A raw OpenAI-compatible `/v1/chat/completions` call (FIX 3389).
-    OpenAiProxy,
-}
-
-/// How a call ended.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum CallOutcome {
-    /// The call answered.
-    Ok,
-    /// The call was refused; `code` is the engine or transport error code
-    /// the reply carried.
-    Refused { code: String },
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::receipt::call::{
+    CallAttemptRef, CallOutcome, CallReceiptRequest, CallTransport,
+};
 
 /// One call's lasting receipt.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -189,19 +169,6 @@ pub struct CallReceiptInput {
     pub served: Vec<String>,
 }
 
-/// The attempt a call ran inside, as its receipt states it (OF-568 L4): the
-/// try whose live run the call held, and the lease generation it held it at.
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, schemars::JsonSchema,
-)]
-#[serde(deny_unknown_fields)]
-pub struct CallAttemptRef {
-    /// The attempt's id, as 32 hex.
-    pub attempt: EntityId,
-    /// The lease generation the call held it at.
-    pub generation: u32,
-}
-
 /// The host's witness that a call held one attempt's live run (OF-568 L4):
 /// minted from the host binding a live run seals
 /// ([`crate::task_verb::HostBinding::call_attempt_witness`]), never from
@@ -238,9 +205,10 @@ impl CallAttemptWitness {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ActionInputs(BTreeMap<String, String>);
 
-/// The domain an action digest is taken in, so it never equals another
-/// digest of the same bytes.
-const ACTION_DIGEST_DOMAIN: &str = "oneiron.action_digest.v1";
+#[doc(hidden)]
+pub use oneiron_records::receipt::call::call_json_digest;
+#[doc(hidden)]
+use oneiron_records::receipt::call::{ACTION_DIGEST_DOMAIN, write_canonical};
 
 impl ActionInputs {
     #[must_use]
@@ -281,8 +249,10 @@ pub fn call_reads_world(verb: &str) -> bool {
     verb.starts_with(WORLD_VERB_ROOT)
 }
 
-/// At most this many named entities are versioned for one action: a request
-/// that names more reads inputs too many to capture, and states no digest.
+/// The default of `receipt.action.max_input_entities`: at most this many named
+/// entities are versioned for one action unless the owner sets another cap; a
+/// request that names more reads inputs too many to capture, and states no
+/// digest.
 pub const MAX_ACTION_INPUT_ENTITIES: usize = 64;
 
 /// The entity ids `value` names as 32-hex strings, at any depth: the
@@ -304,26 +274,8 @@ pub fn json_entity_refs(value: &serde_json::Value) -> BTreeSet<EntityId> {
     named
 }
 
-/// `vault.receipts.get`'s one input.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct CallReceiptRequest {
-    /// The `call:<32hex>` ref a reply carried.
-    pub receipt_ref: String,
-}
-
 const CALL_RECEIPTS: SideTable<EntityId, CallReceipt, Named> =
     SideTable::new(&side_table::CALL_RECEIPT);
-
-/// BLAKE3 of `value` serialized canonically (object keys sorted at every
-/// depth), lowercase hex: the digest a receipt states for a JSON input or
-/// result, stable however the caller ordered its keys.
-#[must_use]
-pub fn call_json_digest(value: &serde_json::Value) -> String {
-    let mut hasher = blake3::Hasher::new();
-    write_canonical(&mut hasher, value);
-    hasher.finalize().to_hex().to_string()
-}
 
 /// [`call_json_digest`] of a JSON object one member of which its host holds
 /// outside memory (FIX 22074): `head` is every other member, and
@@ -451,41 +403,6 @@ pub fn call_refusal_digest(code: &str, message: &str) -> String {
     call_json_digest(&serde_json::json!({ "code": code, "message": message }))
 }
 
-fn write_canonical(hasher: &mut blake3::Hasher, value: &serde_json::Value) {
-    match value {
-        serde_json::Value::Object(map) => {
-            let mut keys: Vec<&String> = map.keys().collect();
-            keys.sort();
-            hasher.update(b"{");
-            for (index, key) in keys.into_iter().enumerate() {
-                if index > 0 {
-                    hasher.update(b",");
-                }
-                write_canonical(hasher, &serde_json::Value::String(key.clone()));
-                hasher.update(b":");
-                if let Some(item) = map.get(key) {
-                    write_canonical(hasher, item);
-                }
-            }
-            hasher.update(b"}");
-        }
-        serde_json::Value::Array(items) => {
-            hasher.update(b"[");
-            for (index, item) in items.iter().enumerate() {
-                if index > 0 {
-                    hasher.update(b",");
-                }
-                write_canonical(hasher, item);
-            }
-            hasher.update(b"]");
-        }
-        scalar => {
-            // A scalar's JSON text is already canonical.
-            hasher.update(scalar.to_string().as_bytes());
-        }
-    }
-}
-
 /// `text` cut to at most [`MAX_CALL_RECEIPT_FIELD_BYTES`] at a character
 /// boundary.
 fn bounded(mut text: String) -> String {
@@ -520,7 +437,8 @@ impl Vault {
     /// (every committed document edit, FIX 2860), its graph version (every
     /// edge change), and each named entity's live revision. A change log,
     /// head or revision the vault does not hold reads `-`, never equal to
-    /// one it holds. `None` past [`MAX_ACTION_INPUT_ENTITIES`].
+    /// one it holds. `None` past the owner's `receipt.action.max_input_entities`
+    /// (default [`MAX_ACTION_INPUT_ENTITIES`]), read in the same snapshot.
     ///
     /// Not seen: other side-table state and the world outside the vault. A
     /// caller whose action reads the world captures nothing.
@@ -529,10 +447,13 @@ impl Vault {
     ///
     /// Storage errors.
     pub fn action_inputs(&self, named: &BTreeSet<EntityId>) -> Result<Option<ActionInputs>> {
-        if named.len() > MAX_ACTION_INPUT_ENTITIES {
+        let txn = self.store.env.read_txn()?;
+        let cap = super::setting_keys::ACTION_MAX_INPUT_ENTITIES
+            .read_in_txn(self, &txn, &[], None)?
+            .value;
+        if named.len() > usize::try_from(cap).unwrap_or(usize::MAX) {
             return Ok(None);
         }
-        let txn = self.store.env.read_txn()?;
         let head = self.port_changelog_head(&txn)?.map_or_else(
             || "-".to_owned(),
             |(id, _)| crate::entity_id::bytes_to_hex_lower(&id),

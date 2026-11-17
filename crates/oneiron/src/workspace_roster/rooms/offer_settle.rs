@@ -13,6 +13,12 @@
 //! through the room's speech door ("accepted, it becomes her turn"). The
 //! card stores that turn once: a replay returns it and lands no second one.
 //!
+//! A join answer is the room's admission yes, the add of the card's agent,
+//! so it is judged by check-in under `room_add` in the first write
+//! (ROLES-CHECKIN P2.6a; P26-SHAPE Q2 = A): an agent host's join waits
+//! (`CHECK_IN_PENDING`) until the join that names the approved check-in as
+//! `check_in_ref`, which the write landing the acceptance spends.
+//!
 //! Not now records the host's no on the join and lands the decline in the
 //! agent's private diary, in the same write: no seat, no participation fact,
 //! no launch and no spend hold. It settles this card and bars no later ask.
@@ -29,13 +35,16 @@ use super::offers::{
     join_refused,
 };
 use super::participation::{JoinCause, record_participation_in_txn};
+use crate::check_in::DoorCheckIn;
 use crate::edge::EdgeActorClass;
 use crate::error::{ClaimError, Error, Result};
 use crate::memory::{
     MEMORY_CODE_INVALID_STATE, Memory, MemoryError, MemoryResult, WitnessAuthor, WitnessMessage,
     WitnessTurn,
 };
-use crate::workspace_roster::join_door::require_admission_party_in_txn;
+use crate::workspace_roster::join_door::{
+    admission_check_in_in_txn, require_admission_party_in_txn,
+};
 use crate::workspace_roster::join_history::live_join;
 use crate::workspace_roster::{
     ConsentAnswer, ConsentPart, JoinDecision, JoinOutcome, JoinReceiptRef, JoinSubject,
@@ -43,24 +52,10 @@ use crate::workspace_roster::{
 };
 use crate::{EntityId, Vault, WriteActor};
 
-/// The host's verb on a card.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum OfferAnswer {
-    Join,
-    NotNow,
-}
-
-/// An answer to one card. It cannot change the card, its payer, thread or
-/// cap: those are read back from the stored card.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct OfferAnswerRequest {
-    pub offer_id: String,
-    pub action: OfferAnswer,
-    /// The answerer's idempotency key: one or more printable bytes.
-    pub intent_key: String,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::workspace_roster::rooms::offer_settle::{
+    OfferAnswer, OfferAnswerRequest,
+};
 
 /// What an answer left: the card's state, the join as last decided, and the
 /// turn or diary NOTE it landed.
@@ -89,12 +84,18 @@ pub(super) struct RecordedOfferAnswer {
     pub(super) at: u64,
 }
 
+/// The verb whose door answers an offer card.
+const OFFER_ANSWER_VERB: &str = "vault.rooms.offer.answer";
+
 /// What one settlement write leaves to do.
 pub(super) enum Step {
     /// Everything is written: commit.
     Done(Settled),
     /// The join is Ready: the agent's acceptance lands in this same write.
     Land(Box<Acceptance>),
+    /// The host's join answer waits on its pending check-in, this write's
+    /// one write: commit it, and answer `CHECK_IN_PENDING` naming it.
+    Waits(EntityId),
 }
 
 /// A card as one write left it, with the join as last decided.
@@ -186,6 +187,7 @@ impl Acceptance {
             conversation_ref: self.card.room.to_hex(),
             turn_ref: Some(turn.to_hex()),
             thread_audience: None,
+            project: None,
             messages: vec![WitnessMessage {
                 id: None,
                 author: WitnessAuthor::Companion,
@@ -233,12 +235,14 @@ pub(super) fn run_settlement(
     let first = vault.try_with_write_txn_grouped(|txn| {
         let now = crate::ports::recorded_at_in_txn(&vault.store, txn)?;
         match step(txn, now)? {
-            Step::Done(settled) => Ok(settled),
+            Step::Done(settled) => Ok(Ok(settled)),
+            Step::Waits(check_in) => Ok(Err(check_in)),
             Step::Land(acceptance) => Err(Pending::Land(acceptance)),
         }
     });
     let planned = match first {
-        Ok(settled) => return Ok(settled),
+        Ok(Ok(settled)) => return Ok(settled),
+        Ok(Err(check_in)) => return Err(Error::CheckInPending(check_in.to_hex()).into()),
         Err(Pending::Failed(error)) => return Err(error),
         Err(Pending::Land(acceptance)) => acceptance,
     };
@@ -351,17 +355,20 @@ fn decline_in_diary_in_txn(
     }
 }
 
-/// Answers `request` as `caller` in the caller's write. `ended` says the
-/// card's thread has ended, read before the write from the room's fold; a
-/// room-wide card's own time is read here, from the stored card.
+/// Answers `request` as `memory`'s caller in the caller's write, spending
+/// `check_in_ref` for a join that waits. `ended` says the card's thread has
+/// ended, read before the write from the room's fold; a room-wide card's
+/// own time is read here, from the stored card.
 fn answer_in_txn(
-    vault: &Vault,
+    memory: &Memory<'_>,
     txn: &mut heed::RwTxn<'_>,
     request: &OfferAnswerRequest,
-    caller: WriteActor,
+    check_in_ref: Option<&EntityId>,
     ended: bool,
     now: u64,
 ) -> MemoryResult<Step> {
+    let vault = memory.vault();
+    let caller = memory.write_actor();
     vault.verify_write_actor_in_txn(txn, &caller)?;
     let mut stored = live_offer(&vault.store, txn, &request.offer_id)?
         .ok_or_else(|| MemoryError::not_found("no offer card under this offer_id"))?;
@@ -403,9 +410,26 @@ fn answer_in_txn(
         OFFERS.put(&vault.store, txn, &request.offer_id, &stored)?;
         return Ok(Step::Done(Settled::replayed(vault, txn, stored)?));
     }
+    // A join answer adds the card's agent: it is judged before anything is
+    // written. Not now adds no one.
+    let check_in = if request.action == OfferAnswer::Join {
+        match admission_check_in_in_txn(
+            memory,
+            txn,
+            &stored.card.join_ref,
+            OFFER_ANSWER_VERB,
+            check_in_ref,
+        )? {
+            Some(DoorCheckIn::Go(decision)) => Some(decision),
+            Some(DoorCheckIn::Wait(id)) => return Ok(Step::Waits(id)),
+            None => None,
+        }
+    } else {
+        None
+    };
     // An answer engages the card: one that holds keeps it open from now.
     stored.card.last_engaged_at = stored.card.last_engaged_at.max(now);
-    let join = rooms_consent_in_txn(
+    let mut join = rooms_consent_in_txn(
         vault,
         txn,
         &ConsentAnswer {
@@ -413,10 +437,12 @@ fn answer_in_txn(
             part: ConsentPart::Admission,
             grant: request.action == OfferAnswer::Join,
             spend_scope: None,
+            check_in_ref: None,
         },
         caller,
         now,
     )?;
+    join.check_in = check_in;
     let answer = RecordedOfferAnswer {
         action: request.action,
         by: RosterActor::Actor(caller.entity_ref()),
@@ -462,7 +488,7 @@ fn answer_in_txn(
 
 impl Memory<'_> {
     /// Answers an offer card as the room's host: join or not now. See the
-    /// module docs.
+    /// module docs. A join is judged by check-in ([`admission_check_in_in_txn`]).
     pub fn rooms_offer_answer(
         &self,
         request: &OfferAnswerRequest,
@@ -475,6 +501,19 @@ impl Memory<'_> {
         if !super::offers::valid_intent_key(&request.intent_key) {
             return Err(MemoryError::bad_request(
                 "an answer's intent_key is one or more printable bytes",
+            ));
+        }
+        let check_in_ref = request
+            .check_in_ref
+            .as_deref()
+            .map(|hex| {
+                EntityId::from_hex(hex)
+                    .map_err(|_| MemoryError::bad_request("check_in_ref is not a check-in id"))
+            })
+            .transpose()?;
+        if check_in_ref.is_some() && request.action != OfferAnswer::Join {
+            return Err(MemoryError::bad_request(
+                "not now adds no one, so it spends no check-in: drop check_in_ref",
             ));
         }
         let vault = self.vault();
@@ -495,7 +534,7 @@ impl Memory<'_> {
             _ => false,
         };
         let settled = run_settlement(vault, |txn, now| {
-            answer_in_txn(vault, txn, request, caller, ended, now)
+            answer_in_txn(self, txn, request, check_in_ref.as_ref(), ended, now)
         })?;
         // FIX 1794: the answered card, its join and the participation fact
         // an acceptance recorded reach the live window of its room or thread.

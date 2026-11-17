@@ -5,25 +5,20 @@ use super::super::{
     DecisionAnswer, DecisionDial, DecisionQuestion, DecisionQuestionInput, DecisionRung,
     HostRuleRef, PairedReading, ProviderPin, TypedDecision,
 };
-use crate::learning_setting::SettingSpec;
 use crate::{EdgeActorClass, EntityId, Result, Vault};
 use serde::{Deserialize, Serialize};
 
 pub use super::criteria::{MAX_CRITERION_BYTES, QuestionCriteria};
 
-/// The adapter of a standing question over artifact units, asked on each artifact's head
-/// as it changes ([`QuestionDefinition::artifacts`]).
-pub const ARTIFACT_ADAPTER: &str = "artifact";
+#[doc(hidden)]
+pub use oneiron_verb_wire::llm::decision::questions::records::{
+    ARTIFACT_ADAPTER, QUESTION_CALL_BUDGET_MS,
+};
 
-/// One artifact a standing artifact question asks: the artifact its answers land in, and
-/// which of its units are asked, as a `vault.artifacts.ask` names them.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ArtifactUnits {
-    #[serde(with = "super::super::codec::entity")]
-    pub artifact: EntityId,
-    pub selection: crate::blob_artifact::ArtifactAskUnits,
-}
+#[doc(hidden)]
+pub(super) use oneiron_records::llm::decision::questions::records::QuestionHead;
+#[doc(hidden)]
+pub use oneiron_records::llm::decision::questions::records::{ArtifactUnits, ScheduledBackfill};
 
 /// A standing question's definition. Stored, its `question` is the
 /// engine's [`DecisionQuestion`], under the id and version the engine
@@ -160,16 +155,6 @@ impl QuestionDefinition {
     }
 }
 
-/// The vault's question call budget (ARCH-0076): each decision call's clock,
-/// in milliseconds, when neither the question nor the ask names one. It
-/// ships at a graph ask's default, within the asks' own bounds.
-pub const QUESTION_CALL_BUDGET_MS: SettingSpec = SettingSpec {
-    key: "question_call_budget_ms",
-    min: 1.0,
-    max: crate::memory::caps::MAX_RECALL_DEADLINE_MS as f64,
-    seed: crate::receipt::GRAPH_ASK_UNIT_DEADLINE_MS as f64,
-};
-
 /// One decision call's clock: `explicit` milliseconds when the question or
 /// the ask names them, else the vault's [`QUESTION_CALL_BUDGET_MS`] row,
 /// to the nearest millisecond.
@@ -279,33 +264,6 @@ pub struct AnswerRecord {
     /// reasons only, never a body; empty when none was left out.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub omitted: Vec<OmittedNeighbor>,
-}
-
-/// A standing question's scheduled backfill: from `due_at`, the question
-/// pump answers each covered unit with no answer at `version`, once. With
-/// `joins`, it answers each join whose unit has no answer at `version`,
-/// shown the join's own evidence instead of the unit's neighbours (FIX 2383).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ScheduledBackfill {
-    #[serde(with = "super::super::codec::entity")]
-    pub question: EntityId,
-    pub version: u32,
-    pub due_at: u64,
-    /// The explicit recipe: each unit and the exact sources its answer is
-    /// shown. Empty: the default neighbourhood recipe.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub joins: Vec<super::recipe::GraphQuestionInput>,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(super) struct QuestionHead {
-    pub version: u32,
-    pub paused: bool,
-    pub last_refresh: Option<u64>,
-    /// A failed refresh holds the question's work until then.
-    pub retry_at: Option<u64>,
 }
 
 pub use crate::model_decision::questions::{

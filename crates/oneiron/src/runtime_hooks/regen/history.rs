@@ -30,34 +30,8 @@ pub(crate) fn hooks_regen_receipt_accepts_masked(bytes: &[u8]) -> bool {
     crate::side_table::decodes::<HookRegenReceipt, Named>(bytes)
 }
 
-/// Who ran or enacted a regen.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(tag = "by", rename_all = "snake_case")]
-pub enum HookRegenActor {
-    /// The engine's own pass after a verb-table or sandbox-contract change.
-    Engine,
-    /// The vault's owner, on any hook of the vault's own packs.
-    Owner {
-        #[serde(with = "crate::serialize::entity_ref")]
-        #[schemars(with = "String")]
-        actor: EntityId,
-    },
-    /// A resident agent, on a hook it authored.
-    Agent {
-        #[serde(with = "crate::serialize::entity_ref")]
-        #[schemars(with = "String")]
-        agent: EntityId,
-    },
-}
-
-/// What a regen decided, as its receipt keeps it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum HookRegenDecision {
-    AutoAdopt,
-    NeedsHumanStamp,
-    RolledBack,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::runtime_hooks::regen::history::{HookRegenActor, HookRegenDecision};
 
 /// One step in a hook's regen history.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -252,5 +226,181 @@ impl Vault {
             receipts.push(receipt);
         }
         Ok(receipts)
+    }
+}
+
+/// Whether `text` is `len` lowercase hex characters.
+fn is_lower_hex(text: &str, len: usize) -> bool {
+    text.len() == len
+        && text
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
+/// Whether a contract stamp keeps two 64-hex hashes.
+fn archived_contract_holds(stamp: &HookContractStamp) -> bool {
+    is_lower_hex(&stamp.verb_table, 64) && is_lower_hex(&stamp.sandbox, 64)
+}
+
+/// Whether every run key of a golden manifest is 64 hex.
+fn archived_golden_holds(golden: &HookGoldenManifest) -> bool {
+    for run in golden.runs.iter().chain(
+        golden
+            .last_good
+            .cases
+            .keys()
+            .chain(golden.last_good.execution_failed.keys())
+            .chain(golden.last_good.withheld.iter())
+            .chain(golden.last_good.missing_history.iter())
+            .chain(golden.candidate.cases.keys())
+            .chain(golden.candidate.execution_failed.keys())
+            .chain(golden.candidate.withheld.iter())
+            .chain(golden.candidate.missing_history.iter()),
+    ) {
+        if !is_lower_hex(run, 64) {
+            return false;
+        }
+    }
+    for hash in golden
+        .last_good
+        .cases
+        .values()
+        .chain(golden.candidate.cases.values())
+    {
+        if !is_lower_hex(hash, 64) {
+            return false;
+        }
+    }
+    true
+}
+
+/// Whether a golden diff names only 64-hex run keys.
+fn archived_diff_holds(diff: &HookGoldenDiff) -> bool {
+    for run in diff
+        .changed
+        .iter()
+        .chain(diff.execution_failed.iter())
+        .chain(diff.withheld.iter())
+        .chain(diff.missing_history.iter())
+    {
+        if !is_lower_hex(run, 64) {
+            return false;
+        }
+    }
+    true
+}
+
+/// Whether a decoded regen receipt keeps the writer's pure row invariants.
+fn archived_regen_holds(key: &([u8; 32], u64), receipt: &HookRegenReceipt) -> bool {
+    if receipt.sequence != key.1 {
+        return false;
+    }
+    if !is_lower_hex(&receipt.body_hash, 64) {
+        return false;
+    }
+    match &receipt.event {
+        HookRegenEvent::Decided {
+            decision,
+            candidate_hash,
+            target,
+            diff,
+            golden,
+            failure,
+        } => {
+            if !archived_contract_holds(target) {
+                return false;
+            }
+            match decision {
+                HookRegenDecision::AutoAdopt | HookRegenDecision::NeedsHumanStamp => {
+                    let Some(candidate) = candidate_hash else {
+                        return false;
+                    };
+                    if !is_lower_hex(candidate, 64) {
+                        return false;
+                    }
+                    let (Some(diff), Some(golden)) = (diff, golden) else {
+                        return false;
+                    };
+                    if failure.is_some() {
+                        return false;
+                    }
+                    if !archived_diff_holds(diff) || !archived_golden_holds(golden) {
+                        return false;
+                    }
+                }
+                HookRegenDecision::RolledBack => {
+                    if candidate_hash.is_some() || diff.is_some() || golden.is_some() {
+                        return false;
+                    }
+                    if failure.is_none() {
+                        return false;
+                    }
+                }
+            }
+        }
+        HookRegenEvent::Adopted {
+            candidate_hash,
+            target,
+            ..
+        } => {
+            if !is_lower_hex(candidate_hash, 64) {
+                return false;
+            }
+            if !archived_contract_holds(target) {
+                return false;
+            }
+        }
+        HookRegenEvent::Cancelled {
+            candidate_hash,
+            declined,
+        } => {
+            if let Some(candidate) = candidate_hash
+                && !is_lower_hex(candidate, 64)
+            {
+                return false;
+            }
+            if !archived_contract_holds(declined) {
+                return false;
+            }
+        }
+        HookRegenEvent::Reverted {
+            from_hash,
+            to_hash,
+            declined,
+            ..
+        } => {
+            if !is_lower_hex(from_hash, 64) || !is_lower_hex(to_hash, 64) {
+                return false;
+            }
+            if !archived_contract_holds(declined) {
+                return false;
+            }
+        }
+    }
+    true
+}
+
+impl Vault {
+    /// Lands one archived regen receipt at its archived sequence, never touching REGEN or packs.
+    pub(crate) fn land_archived_hooks_regen_receipt_row_in_txn(
+        vault: &Vault,
+        txn: &mut heed::RwTxn<'_>,
+        permit: &crate::batch::export::OwnerArchiveRestorePermit,
+        row: &crate::batch::export::ArchiveRetainedSideRow,
+    ) -> crate::Result<crate::batch::export::archive_side_install::ArchivedSideRowOutcome> {
+        use crate::batch::export::RetainedSideHeldBackReason;
+        use crate::batch::export::archive_side_install::{
+            ArchivedSideRowOutcome, decode_archived_row, install_archived_row,
+        };
+        let (key, receipt) = match decode_archived_row(&RECEIPTS, row) {
+            Ok(decoded) => decoded,
+            Err(reason) => return Ok(ArchivedSideRowOutcome::HeldBack(reason)),
+        };
+        if !archived_regen_holds(&key, &receipt) {
+            return Ok(ArchivedSideRowOutcome::HeldBack(
+                RetainedSideHeldBackReason::InvalidValue,
+            ));
+        }
+        install_archived_row(&RECEIPTS, vault, txn, permit, &key, row)
     }
 }

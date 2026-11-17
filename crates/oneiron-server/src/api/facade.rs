@@ -32,10 +32,14 @@ mod agent_definition_doors;
 mod agent_grant_doors;
 mod agent_run_effect_doors;
 mod agent_verb_class_doors;
+// The owner's writer of an agent's world access (ARCH-0067 #tiers).
+mod agent_world_access_doors;
 mod agent_verbs {
     include!(concat!(env!("OUT_DIR"), "/agent_verbs.rs"));
 }
 mod aging_doors;
+// The output archive's judge door (ARM05 P3).
+mod archive_judge_doors;
 mod artifact_hosting_doors;
 mod asr_doors;
 mod authority_history_doors;
@@ -49,7 +53,9 @@ mod call_context;
 mod campaign_doors;
 mod campaign_split_doors;
 mod channel_doors;
+mod check_in_doors;
 mod checkout_doors;
+mod claim_refinement_doors;
 mod claim_settle_doors;
 mod cleanup_doors;
 pub(crate) mod clock_ingress;
@@ -100,6 +106,7 @@ mod embedding_space_doors;
 // Untangle 6.6d: the engine-control knob verbs, for the owner or a holder.
 mod engine_control_doors;
 mod errors;
+mod esign_rules_doors;
 mod eval_doors;
 pub(super) mod export_transfer;
 mod extraction_doors;
@@ -137,7 +144,10 @@ mod hyde_doors;
 mod identity;
 mod identity_doors;
 mod identity_topology_doors;
+mod image_edit_doors;
 mod inbox_group_doors;
+// The inquiry rows (INQUIRE-1 PR 5): the asking side and the member side.
+mod inquiry_doors;
 mod invocations;
 mod invoke;
 mod learning_doors;
@@ -154,7 +164,6 @@ mod mesh_doors;
 mod model_catalog_doors;
 mod model_manifest_doors;
 mod model_pack_doors;
-mod model_setting_doors;
 mod model_step_doors;
 mod model_stream_doors;
 // The owner's non-base world claim fraction (ARCH-0004 #world-scope).
@@ -177,6 +186,7 @@ mod policy_doors;
 mod proactivity_digest_doors;
 mod program_read_doors;
 mod project_card_doors;
+mod project_room_facet_doors;
 mod proxy_doors;
 mod reaction_doors;
 mod receipts;
@@ -193,11 +203,13 @@ pub(super) mod role_picks;
 // FIX 13274: the owner reviews and settles a retained document-copy edit.
 mod repo_copy_edit_doors;
 mod root_request_doors;
-mod run_read_doors;
+pub(super) mod run_read_doors;
 mod run_review_doors;
 pub(crate) mod run_write_polls;
 mod runner_seat_doors;
 mod saved_query_doors;
+// The Schedule primitive's verbs (DESIGN 15-setting-primitive, stage 0.2).
+mod schedule_doors;
 mod seal_doors;
 mod search_home_doors;
 mod secret_body;
@@ -206,6 +218,8 @@ mod secret_grant_doors;
 mod secret_lift_doors;
 mod secret_use_doors;
 mod self_actor_doors;
+// The Setting primitive's verbs (DESIGN 15-setting-primitive, stage 0.1).
+mod setting_catalogue_doors;
 mod setting_doors;
 mod share_doors;
 mod shared_act_doors;
@@ -214,10 +228,13 @@ mod shared_member_doors;
 mod shared_policy_doors;
 mod sieve_doors;
 mod sieve_observation_doors;
+mod skill_activation_doors;
 mod skill_attribution_doors;
 mod skill_default_doors;
 mod skill_doors;
 mod skill_execution_doors;
+mod skill_merge_doors;
+mod skill_pack_load_doors;
 mod slim_doors;
 pub(crate) use slim_doors::is_slim_lifecycle_observation;
 mod snapshot_read_settings_doors;
@@ -243,6 +260,7 @@ mod usage_repair_doors;
 mod vault_shape_doors;
 mod vector_doors;
 mod voice_bank_doors;
+mod voice_recognition_doors;
 mod wave_doors;
 mod weave_admin_doors;
 mod weave_doors;
@@ -274,6 +292,7 @@ pub(crate) use host_doors::{
 pub(crate) use identity::*;
 pub(crate) use invocations::*;
 use invoke::*;
+pub(crate) use model_step_doors::resume_parked_model_steps;
 pub(crate) use model_stream_doors::ModelStreams;
 use output::*;
 use receipts::*;
@@ -511,6 +530,9 @@ struct FacadeErrorBody {
     /// The engine's held room join, with its intent and missing consents.
     #[serde(rename = "room_join_hold", skip_serializing_if = "Option::is_none")]
     room_join_hold: Option<Box<oneiron::workspace_roster::RoomJoinHold>>,
+    /// What a pending refusal waits on, typed, when the engine supplied one.
+    #[serde(rename = "pending", skip_serializing_if = "Option::is_none")]
+    pending: Option<Box<oneiron::memory::MemoryPending>>,
     /// A reap pause's `bound` and `self_hosted` route, flattened beside its
     /// `writes_frozen` code as the managed HTTP body carries them (L9-61).
     /// Boxed for the same reason `narrowing` is.
@@ -559,6 +581,9 @@ pub(crate) struct MemoryErrorBodySchema {
     #[schema(value_type = Option<crate::error::room_join_hold_schema::RoomJoinHoldSchema>)]
     #[serde(rename = "room_join_hold")]
     room_join_hold: Option<crate::error::room_join_hold_schema::RoomJoinHoldSchema>,
+    #[schema(value_type = Option<crate::error::memory_pending_schema::MemoryPendingSchema>)]
+    #[serde(rename = "pending")]
+    pending: Option<crate::error::memory_pending_schema::MemoryPendingSchema>,
     /// A reap pause's bound: `{kind, resource, phase}` (L9-61).
     #[schema(value_type = Option<Object>)]
     bound: Option<serde_json::Value>,

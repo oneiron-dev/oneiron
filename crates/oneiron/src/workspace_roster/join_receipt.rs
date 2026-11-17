@@ -18,7 +18,6 @@ use super::join_history::{
 };
 use crate::conversation::HistoryChoice;
 use crate::error::{Error, Result};
-use crate::receipt::ERASED_CALL_IDENTITY;
 use crate::side_table::{self, LegacyJson, SideTable};
 use crate::store::Store;
 use crate::workspace_roster::spend_scope::SpendScopeId;
@@ -33,79 +32,15 @@ pub(super) const JOINS: SideTable<String, JoinReceipt, LegacyJson> =
 pub(super) const READY: SideTable<String, String, LegacyJson> =
     SideTable::new(&side_table::ROOMS_JOIN_READY);
 
-const JOIN_REF_DOMAIN: &str = "oneiron.rooms.join.v1";
-const RECEIPT_PREFIX: &str = "rooms.join:";
+#[doc(hidden)]
+pub use oneiron_records::workspace_roster::join_receipt::JoinParticipation;
+#[doc(hidden)]
+pub(super) use oneiron_records::workspace_roster::join_receipt::is_join_ref;
+#[doc(hidden)]
+use oneiron_records::workspace_roster::join_receipt::{JOIN_REF_DOMAIN, RECEIPT_PREFIX, digest};
 
-/// Whose act a roster row records: an actor, or no one once that actor was
-/// erased (FIX 3520). It reads and writes as the actor's hex id, or as
-/// [`ERASED_CALL_IDENTITY`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RosterActor {
-    Actor(EntityId),
-    Erased,
-}
-
-impl RosterActor {
-    /// Whether this is `actor`.
-    #[must_use]
-    pub fn is(self, actor: EntityId) -> bool {
-        self == Self::Actor(actor)
-    }
-
-    /// The actor, while it is not erased.
-    #[must_use]
-    pub const fn id(self) -> Option<EntityId> {
-        match self {
-            Self::Actor(id) => Some(id),
-            Self::Erased => None,
-        }
-    }
-
-    /// Makes this no one when it is `actor`; whether it was.
-    pub(super) fn forget(&mut self, actor: EntityId) -> bool {
-        let named = self.is(actor);
-        if named {
-            *self = Self::Erased;
-        }
-        named
-    }
-}
-
-impl Serialize for RosterActor {
-    fn serialize<S: serde::Serializer>(
-        &self,
-        serializer: S,
-    ) -> std::result::Result<S::Ok, S::Error> {
-        match self {
-            Self::Actor(id) => serializer.serialize_str(&id.to_hex()),
-            Self::Erased => serializer.serialize_str(ERASED_CALL_IDENTITY),
-        }
-    }
-}
-
-impl<'de> Deserialize<'de> for RosterActor {
-    fn deserialize<D: serde::Deserializer<'de>>(
-        deserializer: D,
-    ) -> std::result::Result<Self, D::Error> {
-        let value = String::deserialize(deserializer)?;
-        if value == ERASED_CALL_IDENTITY {
-            return Ok(Self::Erased);
-        }
-        EntityId::from_hex(&value)
-            .map(Self::Actor)
-            .map_err(serde::de::Error::custom)
-    }
-}
-
-impl schemars::JsonSchema for RosterActor {
-    fn schema_name() -> String {
-        "RosterActor".to_owned()
-    }
-
-    fn json_schema(generator: &mut schemars::r#gen::SchemaGenerator) -> schemars::schema::Schema {
-        <String as schemars::JsonSchema>::json_schema(generator)
-    }
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::workspace_roster::join_receipt::RosterActor;
 
 /// What an actor's erase does with a roster row whose remaining act waits on
 /// that actor.
@@ -259,14 +194,6 @@ impl JoinReceiptRef {
     }
 }
 
-/// A join ref: 64 lowercase hex.
-pub(super) fn is_join_ref(value: &str) -> bool {
-    value.len() == 64
-        && value
-            .bytes()
-            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-}
-
 /// The join a request names: its room, thread, subject and intent key. The
 /// same ref asked with another payload is one intent asked two ways.
 pub(super) fn join_ref(request: &JoinRequest) -> Result<String> {
@@ -284,12 +211,6 @@ pub(super) fn intent_digest(request: &JoinRequest) -> Result<String> {
     digest(&(JOIN_REF_DOMAIN, request))
 }
 
-fn digest<T: Serialize>(value: &T) -> Result<String> {
-    let bytes =
-        serde_json::to_vec(value).map_err(|_| Error::InvariantViolation("join request encode"))?;
-    Ok(blake3::hash(&bytes).to_hex().to_string())
-}
-
 /// The Ready index key: the room, the subject, and the thread or `-`.
 pub(super) fn ready_key(room: EntityId, subject: &JoinSubject, branch: Option<EntityId>) -> String {
     format!(
@@ -298,6 +219,25 @@ pub(super) fn ready_key(room: EntityId, subject: &JoinSubject, branch: Option<En
         subject.id().to_hex(),
         branch.map_or_else(|| "-".to_owned(), |branch| branch.to_hex())
     )
+}
+
+/// Whether `room`'s Ready index holds a row, for the room or one of its
+/// threads, whose subject is not `owner`: a reader the room's ledger does
+/// not name. A row is counted whatever its receipt now decides.
+pub(super) fn room_ready_join_for_other_in(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    room: EntityId,
+    owner: EntityId,
+) -> Result<bool> {
+    let own = format!("{}/{}/", room.to_hex(), owner.to_hex());
+    for row in READY.iter_from(store, txn, format!("{}/", room.to_hex()).as_bytes())? {
+        let (key, _) = row?;
+        if !key.starts_with(&own) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 /// Deletes every join receipt a request for `room` filed, whatever its
@@ -386,29 +326,6 @@ pub struct RecordedAnswer {
     pub answer_ref: String,
     /// Unix seconds.
     pub at: u64,
-}
-
-/// What a Ready join committed.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum JoinParticipation {
-    /// The person joined the ordinary room's membership ledger.
-    LedgerSeat,
-    /// The person already sat in the room's ledger; nothing was appended.
-    AlreadySeated,
-    /// A project home room: only its board seats members, so the join seats
-    /// no one and this receipt is the participation evidence.
-    HomeRoomReceipt,
-    /// A thread keeps no ledger of its own, and seating the room would widen
-    /// past the thread: this receipt is the participation evidence.
-    BranchReceipt,
-    /// An agent never takes a room seat: this receipt is its participation
-    /// evidence.
-    AgentReceipt,
-    /// A companion attends through her principal's live standing: a seat of
-    /// her own would outlive it, so this receipt, re-proved on each use, is
-    /// her participation evidence.
-    PrincipalReceipt,
 }
 
 /// Everything a join was filed with: its receipt but the decision.

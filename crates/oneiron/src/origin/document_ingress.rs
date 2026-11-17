@@ -16,25 +16,9 @@ use crate::write_envelope::WriteActor;
 use crate::{EntityId, TimeRange, Vault};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
-/// One push operation, including non-text blobs and mode-only changes.
-/// Git objects remain pinned by the hash-keyed origin change claim.
-#[derive(
-    Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
-)]
-pub struct ReceivedFileOperation {
-    pub operation_id: String,
-    /// The pusher's hex id, or [`ERASED_CALL_IDENTITY`] once that actor was
-    /// erased (FIX 4475).
-    pub actor_id: String,
-    pub session_id: String,
-    pub ref_name: String,
-    pub path: String,
-    pub before_hash: [u8; 32],
-    pub after_hash: [u8; 32],
-    pub old_mode: Option<u32>,
-    pub new_mode: Option<u32>,
-    pub document_edit: bool,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::origin::document_ingress::ReceivedFileOperation;
+
 /// Crash-idempotent receipt of one push's ref: its validated source, first receipt time, the
 /// file operations it landed and the candidate matching attached (G4 PR2), keyed by
 /// provenance then blake3(ref_name). Key: id16 ":" hash32 — the ':' is a literal byte, not a
@@ -71,6 +55,8 @@ pub(super) fn received_update_hash(
     *hasher.finalize().as_bytes()
 }
 
+#[derive(SideKey)]
+#[side_key(sep = b':')]
 pub(super) struct ProvenanceRefKey {
     pub(super) provenance: EntityId,
     pub(super) ref_name_hash: [u8; 32],
@@ -86,24 +72,16 @@ impl ProvenanceRefKey {
     }
 }
 
-impl SideKey for ProvenanceRefKey {
-    fn encode_into(&self, out: &mut Vec<u8>) {
-        out.extend_from_slice(self.provenance.as_bytes());
-        out.push(b':');
-        out.extend_from_slice(&self.ref_name_hash);
-    }
-
-    fn decode_key(bytes: &[u8]) -> Option<Self> {
-        let (id, rest) = bytes.split_at_checked(16)?;
-        let (&separator, hash) = rest.split_first()?;
-        if separator != b':' {
-            return None;
-        }
-        Some(Self {
-            provenance: EntityId::from_bytes(id.try_into().ok()?).ok()?,
-            ref_name_hash: hash.try_into().ok()?,
-        })
-    }
+/// One [`ProvenanceRefKey`] for `test_doors::side_key_pins`.
+#[cfg(oneiron_test_support)]
+pub(crate) fn provenance_ref_key_pin_for_test(
+    provenance: EntityId,
+    ref_name_hash: [u8; 32],
+) -> crate::test_doors::side_key_pins::Pin {
+    crate::test_doors::side_key_pins::Pin::of(&ProvenanceRefKey {
+        provenance,
+        ref_name_hash,
+    })
 }
 
 impl Vault {

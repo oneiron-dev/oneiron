@@ -164,7 +164,8 @@ impl Vault {
     /// at the selector the agent asked, under the owner's envelope, as the
     /// owner's own act. The hook still runs as its agent, at the grant it
     /// reads under. A binding that moved since the ask is refused; the owner
-    /// discards that proposal.
+    /// discards that proposal. A hook whose budget is above the owner's cap in
+    /// force (`runtime_hooks.hook.max_budget_ms`) is refused as its bind is.
     pub fn approve_pack_hook_proposal(
         &self,
         owner: &AuthenticatedOwner,
@@ -189,12 +190,23 @@ impl Vault {
                     "the hook changed since the agent asked; discard this proposal",
                 ));
             }
+            // The owner's cap holds for an approval as for every bind: the owner may have
+            // lowered it since the agent asked.
+            let max_budget_ms =
+                crate::runtime_hooks::setting_keys::hook_max_budget_ms_in_txn(self, txn)?;
+            if proposal.asked.budget_ms > max_budget_ms {
+                return Err(invalid("hook budget_ms is out of bounds"));
+            }
             let mut row = previous.clone();
             row.selector = proposal.asked.clone();
             row.owner = owner_id;
             let envelope = owner_envelope(owner, owner_id, &row.pack, &row.source)?;
+            // The owner's own act: the binding carries the owner's proof past
+            // the criticality floor ([`Self::bind_pack_hooks`]).
+            let owner_authored = owner.owner_answer_in_txn(self, txn)?;
             let at = crate::unix_seconds_now();
             self.batch_in()
+                .with_owner_authored(owner_authored)
                 .claim_candidate(
                     &binding,
                     binding_candidate(&row)?,

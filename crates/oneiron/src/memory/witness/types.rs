@@ -2,23 +2,31 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::gate::{WITNESS_AUTHOR_COMPANION, WITNESS_AUTHOR_SYSTEM, WITNESS_AUTHOR_USER};
+use crate::gate::{
+    WITNESS_AUTHOR_COMPANION, WITNESS_AUTHOR_COUNTERPARTY, WITNESS_AUTHOR_SYSTEM,
+    WITNESS_AUTHOR_USER,
+};
 
 /// Who authored one witnessed message (facade vocabulary; the MESSAGE body
 /// `author` key stores the snake_case string).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum WitnessAuthor {
-    /// The vault owner.
+    /// The conversation's first-party human: the vault owner, or for mail the
+    /// mailbox person whose sent mail it is.
     User,
     /// The companion persona.
     Companion,
     /// System/tooling rows; these get NO `AuthoredBy` edge (design §2.1).
     System,
+    /// Imported speech from somebody else (received mail): foreign speaker
+    /// data, never the importer's words and never the engine's voice. It gets
+    /// no automatic writer `AuthoredBy` edge.
+    Counterparty,
 }
 
 impl WitnessAuthor {
-    /// Stable string form (`user`/`companion`/`system`).
+    /// Stable string form (`user`/`companion`/`system`/`counterparty`).
     ///
     /// The strings are the gate's own author vocabulary (ONE-1686): the
     /// witness ceiling door matches on them, so there is exactly one place
@@ -29,6 +37,7 @@ impl WitnessAuthor {
             Self::User => WITNESS_AUTHOR_USER,
             Self::Companion => WITNESS_AUTHOR_COMPANION,
             Self::System => WITNESS_AUTHOR_SYSTEM,
+            Self::Counterparty => WITNESS_AUTHOR_COUNTERPARTY,
         }
     }
 
@@ -39,9 +48,24 @@ impl WitnessAuthor {
             WITNESS_AUTHOR_USER => Some(Self::User),
             WITNESS_AUTHOR_COMPANION => Some(Self::Companion),
             WITNESS_AUTHOR_SYSTEM => Some(Self::System),
+            WITNESS_AUTHOR_COUNTERPARTY => Some(Self::Counterparty),
             _ => None,
         }
     }
+
+    /// Whether a native row of this bucket names its writer by an
+    /// `AuthoredBy` edge. `user` and `companion` rows do; a `system` row
+    /// carries no author, and a `counterparty` row's speaker is somebody
+    /// else, never its writer.
+    #[must_use]
+    pub(crate) const fn names_writer(self) -> bool {
+        matches!(self, Self::User | Self::Companion)
+    }
+}
+
+/// A message's visibility when its input omits `is_visible`.
+const fn visible_by_default() -> bool {
+    true
 }
 
 /// One message inside a witnessed turn.
@@ -50,7 +74,8 @@ impl WitnessAuthor {
 pub struct WitnessMessage {
     /// Caller-supplied deterministic 32-hex entity id; `None` ⇒ generated.
     pub id: Option<String>,
-    /// Author bucket; `System` rows get no `AuthoredBy` edge.
+    /// Author bucket; `System` and `Counterparty` rows get no writer
+    /// `AuthoredBy` edge.
     pub author: WitnessAuthor,
     /// Message type string (closed set app-side, opaque here).
     pub message_type: String,
@@ -63,7 +88,9 @@ pub struct WitnessMessage {
     pub parts: Option<Vec<crate::ContentPart>>,
     /// Opaque metadata, passed through as MessagePack.
     pub metadata: Option<serde_json::Value>,
-    /// Visibility flag (default true app-side).
+    /// Visibility flag; omitted ⇒ `true`, on every door (UC-02 B1a: the
+    /// engine owns the default the bindings used to fill).
+    #[serde(default = "visible_by_default")]
     pub is_visible: bool,
     /// Position of the message within its turn.
     pub order: u32,
@@ -100,6 +127,16 @@ pub struct WitnessTurn {
     /// room does.
     #[serde(default)]
     pub thread_audience: Option<std::collections::BTreeSet<crate::EntityId>>,
+    /// The PROJECT this turn is born under (FIX
+    /// WITNESS-TURN-NO-PROJECT-POSITION): its TURN and MESSAGE rows take it
+    /// as their record audience at birth, so claims the Dreamer derives
+    /// from them inherit it instead of the default project. Admitted only
+    /// when the caller's slip audience covers it; a transport caller with
+    /// no credential, a session overlay witness, and a leader-chat room
+    /// naming another project refuse it. Absent ⇒ the default project, as
+    /// every witness lands today.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project: Option<crate::EntityId>,
     /// Messages, all attributed to the bound actor unless `System`.
     ///
     /// A TURN is the maximal consecutive run of ONE speaker, so every

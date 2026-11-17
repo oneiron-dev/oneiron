@@ -18,22 +18,20 @@ pub use delivery::{
 };
 pub use disclosure::{ReportDisclosureBasis, ReportTextSendBinding};
 pub use routing::{ReportDisclosureChoice, ReportRoute, ReportRoutedPayload, ReportSignature};
+pub(crate) use store::{ReportRestoreOutcome, restorable_archived_report};
 
-use super::{FEEDBACK_REF_MAX_BYTES, FeedbackProposal};
-use crate::{Error, Result};
+use super::FeedbackProposal;
+use crate::Result;
 use serde::{Deserialize, Serialize};
 
 pub const REPORT_VERB: &str = "report";
 
-#[derive(
-    Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
-)]
-#[serde(rename_all = "snake_case")]
-pub enum ReportKind {
-    #[default]
-    Problem,
-    Proposal,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::feedback::report::{
+    ReportDisclosure, ReportKind, ReportReview, ReportStatus,
+};
+#[doc(hidden)]
+pub(super) use oneiron_verb_wire::feedback::report::{invalid, validate_ref};
 
 /// Only the subject and category participate in identity; the host supplies the actor.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -113,43 +111,23 @@ impl ReportRequest {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+/// Whether a report was filed here or recovered as the owner's archive data.
+#[derive(
+    Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
-pub enum ReportStatus {
-    Accepted,
-    NeedsMoreEvidence,
-    Duplicate,
-    Rejected,
-    Queued,
+pub enum ReportIssueOrigin {
+    /// A report filed through this vault's reporting door.
+    #[default]
+    Filed,
+    /// A report recovered through the owner's whole-vault archive restore.
+    OwnerArchiveRestore,
 }
 
-/// Review is on the ISSUE entity; no queue row owns a second review state.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct ReportReview {
-    pub status: ReportStatus,
-    pub quality_score: Option<f32>,
-    pub duplicate_of: Option<String>,
-}
-
-impl Default for ReportReview {
-    fn default() -> Self {
-        Self {
-            status: ReportStatus::Accepted,
-            quality_score: None,
-            duplicate_of: None,
-        }
+impl ReportIssueOrigin {
+    fn is_filed(&self) -> bool {
+        *self == Self::Filed
     }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum ReportDisclosure {
-    Local,
-    ContentFree,
-    NeedsApproval,
-    Approved,
-    Denied,
 }
 
 /// A provenance-carrying ISSUE record. Free text is untrusted data, not routing policy.
@@ -171,6 +149,10 @@ pub struct ReportIssue {
     /// Number of Deny choices on the issue / disclosure consent round (FIX 9368).
     #[serde(default)]
     pub disclosure_round: u64,
+    /// A report restored from the owner's archive may already have reached its publisher
+    /// from the source vault, so this vault never offers its signature.
+    #[serde(default, skip_serializing_if = "ReportIssueOrigin::is_filed")]
+    pub origin: ReportIssueOrigin,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -200,20 +182,4 @@ impl ReportReceipt {
             disclosure_basis: issue.disclosure_basis.clone(),
         }
     }
-}
-
-pub(super) fn invalid(message: &str) -> Error {
-    Error::InvalidConfig(message.into())
-}
-
-pub(super) fn validate_ref(reference: &str) -> Result<()> {
-    if reference.is_empty()
-        || reference.len() > FEEDBACK_REF_MAX_BYTES
-        || reference
-            .chars()
-            .any(|c| c.is_whitespace() || c.is_control())
-    {
-        return Err(invalid("invalid report reference"));
-    }
-    Ok(())
 }

@@ -34,6 +34,7 @@ use crate::error::Error;
 use crate::secret_custody::retire_connector_resume_in_txn;
 use crate::store::checkpoint_payload::Subtype;
 use crate::store::checkpoint_payload::retirement::{PayloadDisposition, settle_owner_in_txn};
+use oneiron_contracts::lifecycle::Lifecycle;
 
 /// The owner's erase of call `attempt_id`/`call_seq`'s frozen request, in
 /// `wtxn`: the evidence-only disposition. The row keeps its id, attempt
@@ -78,7 +79,7 @@ pub(crate) fn erase_call_request_in_txn(
     if matches!(record.state, IntentState::Pending | IntentState::Deferred) {
         record.delivery_uncertain |=
             record.recorded_outcome.is_none() || record.state == IntentState::Deferred;
-        record.state = IntentState::Abandoned;
+        record.state.transition_to(IntentState::Abandoned)?;
         record.recorded_outcome = Some(RecordedOutboundOutcome::Abandoned(
             IntentEscalationReason::OwnerErased,
         ));
@@ -136,15 +137,26 @@ impl Vault {
         Ok(erased)
     }
 
-    /// The owner's per-call erase, admitted in the erase's own writer.
+    /// The owner's per-call erase, admitted in the erase's own writer, with
+    /// the check-in decision it runs on: the Owner's own proof, and with
+    /// `applied` an asker's approved check-in for this call's erase, spent
+    /// in the same writer (2k2; P25-SHAPE Q1 = A). A call with no row, or
+    /// one already erased, spends it too: the Owner's act ran.
     pub(crate) fn erase_outbound_call_request_as_owner(
         &self,
         owner: &crate::consent::AuthenticatedOwner,
         attempt_id: AttemptId,
         call_seq: u64,
-    ) -> IntentLedgerResult<bool> {
+        applied: Option<&crate::check_in::AppliedCheckIn<'_>>,
+    ) -> IntentLedgerResult<(bool, crate::check_in::CheckInDecision)> {
         let mut wtxn = self.store.env.write_txn().map_err(Error::from)?;
         owner.revalidate_in_txn(self, &wtxn)?;
+        let decision = crate::check_in::owner_act_decision_in_txn(
+            self,
+            &mut wtxn,
+            crate::check_in::ActClass::Erase,
+            applied,
+        )?;
         let (erased, withdrawn) = erase_call_request_in_txn(self, &mut wtxn, attempt_id, call_seq)?;
         wtxn.commit().map_err(Error::from)?;
         let synced = force_sync(self);
@@ -160,7 +172,7 @@ impl Vault {
             self.store
                 .finish_checkpoint_payload_retirements_after_commit();
         }
-        Ok(erased)
+        Ok((erased, decision))
     }
 }
 

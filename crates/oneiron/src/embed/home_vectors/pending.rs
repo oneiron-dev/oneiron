@@ -28,9 +28,9 @@ fn pending_claim_in_txn(
             txn,
             &crate::side_table::HexId(*id),
         ))?;
-    if lease.is_some_and(|lease| {
-        lease.token == token && lease.expires_at_ms > crate::embed::unix_millis_now()
-    }) {
+    if lease
+        .is_some_and(|lease| lease.token == token && lease.expires_at_ms > crate::unix_millis_now())
+    {
         return Ok(None);
     }
     let Some(source) = claim_source_in_txn(vault, txn, id)? else {

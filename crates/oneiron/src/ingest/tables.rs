@@ -7,6 +7,11 @@ crate::side_table::side_tables! {
     /// authority. Key: id16 (MESSAGE).
     CONNECTOR_MESSAGE_ARCHIVE: VaultMeta b"connector.conversation_archive.v1:" Named
         [restore: content] [family: unclassified] [tier: canonical];
+    /// The AG-UI capture assets whose capture claim was erased, owed their own delete after that
+    /// erase commits (Engine RULING L2-15-CAPTURE-SUBJECT). Key: id16(asset). Value: when it was
+    /// owed.
+    INGEST_AG_UI_CAPTURE_ASSET_ERASE: VaultMeta b"ag-ui-capture-asset-erase:v1:" Named
+        [restore: content] [family: structure] [tier: canonical];
     /// Classifier-derived annotation (derivation envelope + annotation body) for one imported docs
     /// page/asset. Key: hex32 ":" hex32.
     INGEST_DOCS_ANNOTATION: VaultMeta b"docs-annotation:v1:" LegacyJson Admitted
@@ -48,4 +53,19 @@ crate::side_table::side_tables! {
     /// (the topic id).
     IMPORT_AUDIENCE_CLUSTER: VaultMeta b"import-audience:cluster:v1:" Named
         [restore: content] [family: unclassified] [tier: canonical];
+    /// The source policy each sharing container of a history import reads under (ARCH-0027
+    /// #import-audience): one per container, its readers set again by each import of it.
+    /// Key: string (`source:container`).
+    INGEST_HISTORY_SHARING_POLICY: VaultMeta b"history-import:sharing:v1:" Named
+        [restore: live] [family: unclassified] [tier: canonical];
+    /// The members of each workspace a shared source was imported from (Engine ruling
+    /// L2-18-CONTACT = A): each member's name, and the PERSON the owner mapped it to or none (a
+    /// contact, who reads nothing). Key: string (`source:workspace:member`).
+    INGEST_HISTORY_SOURCE_MEMBER: VaultMeta b"history-import:member:v1:" Named
+        [restore: live] [family: unclassified] [tier: canonical];
+    /// Each sharing container of such a workspace: the workspace, and the members the source
+    /// shares the container with, so a member mapped later reads it (`members set`). Key:
+    /// string (`source:container`, the key of its sharing policy).
+    INGEST_HISTORY_SOURCE_CONTAINER: VaultMeta b"history-import:container:v1:" Named
+        [restore: live] [family: unclassified] [tier: canonical];
 }

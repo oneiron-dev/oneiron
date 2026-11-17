@@ -99,7 +99,8 @@ pub(super) fn settle_tail(
     };
     let causal = crate::authority::fold_engine::CausalPast::new(&summaries);
     let context = FoldContext {
-        sequence_floors: Some(&log.observations.sequence_floors),
+        // The tail moves no floor and sits past none (`tail_folds_past`).
+        sequence_floors: Some(&crate::authority::fold_engine::SEQUENCE_FLOORS_FROM_ROWS),
         floor_vouched: (!log.observations.unvouched).then_some(&log.observations.vouched),
         install_held: None,
         entry_ancestors: None,
@@ -164,6 +165,9 @@ pub(super) fn settle_tail(
     }) {
         return Ok(None);
     }
+    // No tail row vouches for a covered row past its floor
+    // (`tail_signers_covered_rows_unfloored`), so every covered verdict
+    // stands past the image.
     states.retain(|hash, _| judged.contains_key(hash));
     if states
         .values()
@@ -180,14 +184,10 @@ pub(super) fn settle_tail(
         return Ok(None);
     }
     let revoke_facts = if serial {
-        image.safety.revoke_facts.with_serial_actor_revokes(
-            image
-                .rows
-                .iter()
-                .map(|(hash, row)| (hash, &row.signer, row.seq)),
-            &judged,
-            &states,
-        )
+        image
+            .safety
+            .revoke_facts
+            .with_serial_actor_revokes(&judged, &states)
     } else {
         image.safety.revoke_facts.clone()
     };

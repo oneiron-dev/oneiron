@@ -1,6 +1,7 @@
-//! `can`: the read-only preflight of an ask, or the dated preflight of one
-//! effect (C2:207, FIX 22102). Neither mints a TASK, schedules a send or
-//! records a decision.
+//! `can`: the read-only preflight of an ask, the dated preflight of one
+//! effect (C2:207, FIX 22102), or one verb's gate for an actor (FIX
+//! [UI-GATE-PREVIEW], `can_verb`). None mints a TASK, schedules a send,
+//! records a decision or writes.
 
 use serde::{Deserialize, Serialize};
 
@@ -8,16 +9,20 @@ use super::{Memory, MemoryResult};
 use crate::task_verb::TaskAskPreflight;
 use crate::verbs::{CanEffect, CanRequest};
 
-/// What `can` answers: an ask's preflight, or one effect's dated verdict
-/// (FIX 22102). Untagged, so an ask's answer keeps its wire shape; the two
-/// never decode as each other (an ask's answer has `recipients`, an
-/// effect's `verdict`).
+/// What `can` answers: an ask's preflight, one effect's dated verdict (FIX
+/// 22102), or one verb's gate (FIX [UI-GATE-PREVIEW]). Untagged, so an ask's
+/// answer keeps its wire shape; none decodes as another (an ask's answer has
+/// `recipients`, an effect's `verdict`, a verb's `gate`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum CanAnswer {
     Ask(TaskAskPreflight),
     Effect(CanEffectAnswer),
+    Verb(CanVerbAnswer),
 }
+
+#[doc(hidden)]
+pub use oneiron_records::memory::can::{CanVerbAnswer, CanVerbGate};
 
 /// The dated preflight of one effect (C2:207, FIX 22102): allow, deny,
 /// would-ask or a named hold, judged as the act would be judged.
@@ -107,9 +112,11 @@ impl CanEffectAnswer {
 impl Memory<'_> {
     /// `can`: the read-only preflight of `request`. `{ask}` is the ask's
     /// preflight, exactly as [`Self::tasks_can_ask`] answers it; `{effect}`
-    /// is the dated preflight of that one effect.
+    /// is the dated preflight of that one effect; `{verb}` is that verb's
+    /// gate for its actor.
     pub fn can(&self, request: &CanRequest) -> MemoryResult<CanAnswer> {
         match request {
+            CanRequest::Verb(verb) => Ok(CanAnswer::Verb(self.can_verb(&verb.verb)?)),
             CanRequest::Ask(can_ask) => Ok(CanAnswer::Ask(self.tasks_can_ask(&can_ask.ask)?)),
             CanRequest::Effect(effect) => match &effect.effect {
                 CanEffect::OutboundSchedule(schedule) => Ok(CanAnswer::Effect(

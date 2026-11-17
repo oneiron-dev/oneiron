@@ -57,8 +57,8 @@ const SEAM_STRUCTS: &[&str] = &[];
 
 /// The one path every typed decision takes.
 const DECIDE_DIR: &str = "crates/oneiron/src/llm/decision/";
-/// Adapter crates implement the raw seam; they never choose what to ask.
-const ADAPTER_PREFIX: &str = "crates/oneiron-llm-";
+/// The adapter family crate implements the raw seam; it never chooses what to ask.
+const ADAPTER_PREFIX: &str = "crates/oneiron-llm/";
 
 /// The length of [`BYPASSES`]. Lower it as a surface moves into `decide()`; never raise it.
 const BYPASS_CEILING: usize = 0;
@@ -473,6 +473,12 @@ const OUTSIDE: &[Pin] = &[
         "stream",
         "let source = match ladder.stream(&run, input.request, None) {",
         "model stream door: the admitted raw stream opened for subscribers",
+    ),
+    pin(
+        "crates/oneiron-server/src/api/facade/skill_doors.rs",
+        "generate",
+        ".block_on(ladder.generate(&run, request, None))",
+        "skill conversion refiner: a refined skill document drafted page by page (generation)",
     ),
     pin(
         "crates/oneiron-server/src/api/memory_reason/host/call.rs",
@@ -911,6 +917,12 @@ const OUTSIDE: &[Pin] = &[
         "stream",
         "let bytes = sealed.stream(stream)?;",
         "checkpoint restore: byte stream read back from the sealed payload, no model",
+    ),
+    pin(
+        "crates/oneiron/src/skill_optimize/labels/rubric.rs",
+        "trait JudgeLabelChecker",
+        "pub trait JudgeLabelChecker {",
+        "judge label rechecks: host decides each recheck through the decision ladder on the Coach provider",
     ),
     pin(
         "crates/oneiron/src/test_doors/wake_d1_park_release.rs",

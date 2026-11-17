@@ -21,6 +21,7 @@ use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::note::NoteVerdict;
 use crate::side_table::{self, HexId, Named, Raw, SideKey, SideTable};
 use crate::sync::SyncSelector;
+use oneiron_store::entity_doc::side_keys::HexPair;
 use serde::{Deserialize, Serialize};
 
 /// Recorded NOTE forks awaiting review/decision (owned by `note::proposals`;
@@ -34,27 +35,17 @@ const NOTE_RECEIPT: SideTable<EntityId, NoteLandingReceipt, Named> =
 const NOTE_PROPOSAL_BUNDLE: SideTable<EntityId, NoteReviewBundle, Named> =
     SideTable::new(&side_table::NOTE_PROPOSAL_BUNDLE);
 /// Loro snapshot bytes of a proposal (non-live) NOTE document head, keyed by
-/// [`NoteForkKey`] (owned by `note::documents`; see [`NOTE_FORK`]).
-const NOTE_PROPOSAL_DOC: SideTable<NoteForkKey, Vec<u8>, Raw> =
+/// `hex32(note) ":" hex32(fork)` (owned by `note::documents`; see [`NOTE_FORK`]).
+const NOTE_PROPOSAL_DOC: SideTable<HexPair, Vec<u8>, Raw> =
     SideTable::new(&side_table::NOTE_PROPOSAL_DOC);
 
-/// `hex32(note) ":" hex32(fork)` — the [`NOTE_PROPOSAL_DOC`] key shape
-/// (mirrors `note::side_keys::HexPair`, not visible from this module tree).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct NoteForkKey(HexId, HexId);
-
-impl SideKey for NoteForkKey {
-    fn encode_into(&self, out: &mut Vec<u8>) {
-        self.0.encode_into(out);
-        out.push(b':');
-        self.1.encode_into(out);
-    }
-
-    fn decode_key(bytes: &[u8]) -> Option<Self> {
-        let (a, rest) = bytes.split_at_checked(32)?;
-        let b = rest.strip_prefix(b":")?;
-        Some(Self(HexId::decode_key(a)?, HexId::decode_key(b)?))
-    }
+/// One [`NOTE_PROPOSAL_DOC`] key for `test_doors::side_key_pins`.
+#[cfg(oneiron_test_support)]
+pub(crate) fn note_fork_key_pin_for_test(
+    note: crate::EntityId,
+    fork: crate::EntityId,
+) -> crate::test_doors::side_key_pins::Pin {
+    crate::test_doors::side_key_pins::Pin::of(&HexPair(HexId(note), HexId(fork)))
 }
 
 /// A review bundle as a window carries it.
@@ -146,6 +137,10 @@ enum Attached {
 pub(crate) struct NoteSelection {
     dropped: BTreeSet<EntityId>,
     attached: Attached,
+    /// For a copy bound for another vault, the NOTEs whose review carriers
+    /// hold a credential ([`Self::withholding_credential_carriers`]):
+    /// neither their core nor their attachments ride.
+    withheld: BTreeSet<EntityId>,
 }
 
 impl NoteSelection {
@@ -155,6 +150,7 @@ impl NoteSelection {
         Self {
             dropped: BTreeSet::new(),
             attached: Attached::AsCarried,
+            withheld: BTreeSet::new(),
         }
     }
 
@@ -196,15 +192,45 @@ impl NoteSelection {
         Ok(Self {
             dropped,
             attached: Attached::Judged(attached),
+            withheld: BTreeSet::new(),
         })
+    }
+
+    /// This selection for a copy bound for another vault, where no grant
+    /// admits a credential (SCOPED-EXPORT-RULE = A, ARCH-0027 :382): it also
+    /// keeps home each NOTE, core or attachment, whose review carriers in
+    /// `source` hold text the release check reads a credential in, raw or
+    /// through the typed rule ([`crate::serialize::release_keeps_text`]): an
+    /// undecided fork's proposal value, or the explainer of a bundle that
+    /// holds one of its members. A carrier is never rewritten, so that NOTE
+    /// and its workflow stay home whole.
+    pub(crate) fn withholding_credential_carriers(mut self, source: &LoroDoc) -> Result<Self> {
+        if !is_native(source) {
+            return Ok(self);
+        }
+        let state = codec::read(source)?;
+        for ((note, _), text) in &state.docs {
+            if !crate::serialize::release_keeps_text(text) {
+                self.withheld.insert(*note);
+            }
+        }
+        for carrier in state.bundles.values() {
+            if !crate::serialize::release_keeps_text(&carrier.bundle.explainer) {
+                self.withheld.extend(bundle_notes(&carrier.bundle));
+            }
+        }
+        Ok(self)
     }
 
     /// Whether the export drops `note`'s core.
     pub(crate) fn drops(&self, note: &EntityId) -> bool {
-        self.dropped.contains(note)
+        self.dropped.contains(note) || self.withheld.contains(note)
     }
 
     fn attaches(&self, note: &EntityId) -> bool {
+        if self.withheld.contains(note) {
+            return false;
+        }
         match &self.attached {
             Attached::AsCarried => true,
             Attached::Judged(notes) => notes.contains(note),
@@ -279,7 +305,7 @@ impl Stored {
                 Some(row) if row == waiting && !row.decided => members.push(row),
                 _ => return Ok(false),
             }
-            let key = NoteForkKey(HexId(note), HexId(waiting.fork));
+            let key = HexPair(HexId(note), HexId(waiting.fork));
             let Some(raw) = NOTE_PROPOSAL_DOC.get(&judge.vault.store, judge.txn, &key)? else {
                 return Ok(false);
             };
@@ -437,7 +463,7 @@ impl State {
         let mut key_prefix = Vec::with_capacity(33);
         HexId(note).encode_into(&mut key_prefix);
         key_prefix.push(b':');
-        for (NoteForkKey(_, HexId(fork)), raw) in
+        for (HexPair(_, HexId(fork)), raw) in
             NOTE_PROPOSAL_DOC.scan_from(&judge.vault.store, judge.txn, &key_prefix)?
         {
             if stored

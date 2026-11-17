@@ -68,8 +68,8 @@ pub const NOTIFICATION_PRODUCER_FOUND_KEY: &str = "secret.found_key";
 /// ([`raise_found_key_notices_page`]).
 const NOTICES_PER_WRITE: usize = 64;
 
-/// The scan's reason codes share this prefix; a key's kind is what follows.
-const REASON_PREFIX: &str = "gate.secret_scan.";
+#[doc(hidden)]
+use oneiron_records::secret_custody::found_keys::REASON_PREFIX;
 
 /// Each record's found keys. Key: the record's id.
 const FOUND: SideTable<EntityId, FoundKeys, Named> = SideTable::new(&side_table::SECRET_FOUND_KEY);
@@ -379,6 +379,58 @@ pub(crate) fn move_side_row_custody_in_txn(
             DUE.put(store, wtxn, new, &old_due)?;
         }
         DUE.delete(store, wtxn, old)?;
+    }
+    Ok(())
+}
+
+/// Whether the owner settled a found key the custody record `custody`
+/// holds, in any record's notice: an owner act on it, so a merge keeps
+/// the record (FILE-CUSTODY-MERGE-AFTER-REWRAP).
+pub(crate) fn found_key_settled_in_txn(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    custody: &EntityId,
+) -> Result<bool> {
+    Ok(FOUND.scan(store, txn)?.iter().any(|(_, found)| {
+        found
+            .keys
+            .iter()
+            .any(|key| key.custody == *custody && key.settled.is_some())
+    }))
+}
+
+/// Rebinds the found key the custody record `from` holds, in every record's
+/// notice, to the record `to` and its handle `handle`
+/// (FILE-CUSTODY-MERGE-AFTER-REWRAP): its kind, place and settlement stay.
+/// A notice that already names `to` keeps that key, with the earlier
+/// `found_at`. Each notice keeps one key per record, as
+/// [`note_found_keys_in_txn`] writes it.
+pub(crate) fn rebind_found_key_custody_in_txn(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    from: &EntityId,
+    to: &EntityId,
+    handle: &str,
+) -> Result<()> {
+    // Read whole before the first write: no cursor is held across a put.
+    let notices = FOUND.scan(store, wtxn)?;
+    for (record, mut found) in notices {
+        let Some(at) = found.keys.iter().position(|key| key.custody == *from) else {
+            continue;
+        };
+        let moved = found.keys.remove(at);
+        match found.keys.iter_mut().find(|held| held.custody == *to) {
+            Some(held) => held.found_at = held.found_at.min(moved.found_at),
+            None => found.keys.insert(
+                at,
+                FoundKey {
+                    custody: *to,
+                    handle: handle.to_owned(),
+                    ..moved
+                },
+            ),
+        }
+        FOUND.put(store, wtxn, &record, &found)?;
     }
     Ok(())
 }

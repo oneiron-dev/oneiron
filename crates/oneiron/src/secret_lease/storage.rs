@@ -21,6 +21,7 @@ use crate::side_table::HexId;
 use crate::store::Store;
 use crate::store::secret_name_index::resolve_secret_ref_in_txn;
 use crate::vault::Vault;
+use oneiron_contracts::lifecycle::Lifecycle;
 
 // ---------------------------------------------------------------------------
 // Row IO
@@ -190,8 +191,10 @@ pub(super) fn read_live_lease_in_txn(
             lease_id: *lease_id,
         }));
     };
-    if lease.status == SecretLeaseStatus::Active && now >= lease.expires_at {
-        lease.status = SecretLeaseStatus::Expired;
+    if lease.status == SecretLeaseStatus::Active
+        && oneiron_store::expiry::is_expired(now, lease.expires_at)
+    {
+        lease.status.transition_to(SecretLeaseStatus::Expired)?;
         write_secret_lease_in_txn(store, wtxn, &lease)?;
         teardown_local_registration_in_txn(store, wtxn, lease_id, now)?;
     }
@@ -263,13 +266,13 @@ pub(super) fn stamp_secret_lease_in_txn(
         // The window closed before the lease could be stamped. Returning
         // here leaves the caller's write txn uncommitted, so no row and no
         // value escape a bound this materialization can no longer honour.
-        Some(bound) if now >= bound => {
+        Some(bound) if oneiron_store::expiry::is_expired(now, bound) => {
             return Err(Error::InvariantViolation(
                 "secret lease expiry bound elapsed before materialization stamped the lease",
             ));
         }
-        Some(bound) => now.saturating_add(ttl_secs).min(bound),
-        None => now.saturating_add(ttl_secs),
+        Some(bound) => oneiron_store::expiry::expires_at_saturating(now, ttl_secs).min(bound),
+        None => oneiron_store::expiry::expires_at_saturating(now, ttl_secs),
     };
     // The dial caps actual exposure, not the caller's pre-bound request. A
     // shorter live not_after may make a larger requested TTL safe; both the
@@ -330,14 +333,14 @@ pub(crate) fn stamp_reveal_lease_in_txn(
         &rec.name,
     )?;
     let now = VaultInstant(vault.store.clock.now_recorded_at()).secs();
-    let expires_at = now.saturating_add(ttl_secs);
+    let expires_at = oneiron_store::expiry::expires_at_saturating(now, ttl_secs);
     crate::credential_door::admit_materialization_in_txn(
         &vault.store,
         wtxn,
         authority.effector(),
         Some(ttl_secs),
     )?;
-    let value = reveal_value_in_txn(&vault.store, wtxn, authority)?;
+    let value = reveal_value_in_txn(vault, wtxn, authority)?;
     let lease = write_t1_lease_rows_in_txn(
         vault,
         wtxn,
@@ -381,7 +384,7 @@ pub(crate) fn stamp_use_lease_in_txn(
     // ONE instant stamps `granted_at`, dates the receipt and bounds the
     // lease. A use carries no authority end, so the TTL alone bounds it.
     let now = VaultInstant(vault.store.clock.now_recorded_at());
-    let expires_at = now.secs().saturating_add(ttl_secs);
+    let expires_at = oneiron_store::expiry::expires_at_saturating(now.secs(), ttl_secs);
     // The dial caps actual exposure, under the committing writer, before
     // the value read or either durable row write.
     crate::credential_door::admit_materialization_in_txn(
@@ -435,7 +438,7 @@ pub(crate) fn reread_reveal_lease_in_txn(
     }
     let now = VaultInstant(vault.store.clock.now_recorded_at()).secs();
     if lease.status != SecretLeaseStatus::Active
-        || now >= lease.expires_at
+        || oneiron_store::expiry::is_expired(now, lease.expires_at)
         || lease.value_generation != rec.rotation_generation
         || rec.class != authority.class()
     {
@@ -450,7 +453,7 @@ pub(crate) fn reread_reveal_lease_in_txn(
         rec.class,
         &rec.name,
     )?;
-    reveal_value_in_txn(&vault.store, txn, authority).map(Some)
+    reveal_value_in_txn(vault, txn, authority).map(Some)
 }
 
 /// The rows every T1 materialization writes once its value is read: the
@@ -542,7 +545,7 @@ pub(crate) fn erase_lease_actor_in_txn(
                 None => *at.insert(crate::ports::recorded_at_in_txn(&vault.store, wtxn)?),
             };
             super::grant::retire_lease_in_txn(&vault.store, wtxn, &lease.lease_id, now)?;
-            lease.status = SecretLeaseStatus::Revoked;
+            lease.status.transition_to(SecretLeaseStatus::Revoked)?;
         }
         lease.binding_effector =
             reveal_effector(crate::store::receipt_identity::ERASED_CALL_IDENTITY);

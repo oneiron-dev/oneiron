@@ -25,7 +25,7 @@ mod role_defaults;
 mod solo;
 pub use inference_admission::{
     AuthorizedInference, BoundInference, HostInferenceBinding, HostInferenceContext,
-    InferencePolicySnapshot,
+    InferencePolicySnapshot, InferenceRefusal,
 };
 #[doc(hidden)]
 pub(crate) use oneiron_consent_state::llm::entity_refs;
@@ -99,6 +99,9 @@ pub(crate) use step::{
     prune_step_response_pins_in_txn, release_step_response_pins_in_txn,
     retire_erased_step_responses_in_rows, step_response_version_pinned_in_txn,
 };
+// UC-06: the step-index keys' pin doors (`test_doors::side_key_pins`).
+#[cfg(oneiron_test_support)]
+pub(crate) use step::{step_index_claim_key_pin_for_test, step_index_key_pin_for_test};
 
 pub use oneiron_model::llm::{
     BUDGET_LAND_PROMPT_TEMPLATE, BUDGET_LAND_PROMPT_TEMPLATE_ID,
@@ -169,7 +172,7 @@ pub use oneiron_model::llm::{ReplyAssertionRecord, ReplyAssertions};
 pub use self::autocheck::{
     AUTO_CHECK_VALUE_PREVIEW_BYTES, AUTO_CHECKER_DEADLINE_MS, AutoCheckCandidate,
     AutoCheckCandidateOwned, AutoCheckDecisions, AutoCheckNotes, AutoCheckOutcome,
-    AutoCheckSignals, BoundedAutoChecker,
+    AutoCheckSignals, AutoCheckWorldHold, BoundedAutoChecker,
 };
 pub use self::role_defaults::RoleModelDefaults;
 pub use self::solo::{is_solo, mark_solo};
@@ -190,8 +193,8 @@ pub use oneiron_model::llm::{
     LlmUsage, ModelId, ModelIdError, ModelLocality, ModelTierRef, OwnedDispatchRelease,
     PinnedConfigViolation, PinnedModelConfig, REASONING_BUDGET_PARAM, ReasoningEffort,
     ReasoningPartKind, ResponseFormat, RetryableLlmError, SafeguardModelBinding,
-    SafeguardModelBindingError, SingleRouteBackend, SingleSend, SpentKind, TierPrecedence,
-    TransportFault, TransportFaultKind, UnsupportedCapability,
+    SafeguardModelBindingError, ServedCacheHorizon, SingleRouteBackend, SingleSend, SpentKind,
+    TierPrecedence, TransportFault, TransportFaultKind, UnsupportedCapability,
 };
 
 #[cfg(test)]
@@ -215,7 +218,10 @@ use std::collections::BTreeMap;
 
 /// Typed question and outcome contracts.
 pub mod decision;
+pub(crate) mod setting_keys;
 pub(crate) mod tables;
+pub(crate) use budget::RsiSigning;
+pub(crate) use budget::resident_share_in_txn;
 pub use budget::rsi_doors;
 pub use budget::{
     ResidentShareRead, RsiBudgetConfig, RsiBudgetError, RsiBudgetRead, RsiBudgetShare,

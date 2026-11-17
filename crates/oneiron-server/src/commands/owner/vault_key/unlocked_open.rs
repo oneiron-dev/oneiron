@@ -38,6 +38,9 @@ pub(in crate::commands::owner) struct UnlockRequest<'a> {
     pub(super) capsule: Option<&'a Path>,
     pub(super) pieces: &'a [PathBuf],
     pub(super) vault_id: Option<&'a str>,
+    /// With the kit: the file holding the synced passkey's PRF output, whose
+    /// sealed piece joins `pieces` (census L10-18); `credential` names it.
+    pub(super) kit_passkey_prf_file: Option<&'a Path>,
     pub(super) secret: SecretSourceArgs,
     /// What the command's unlock flags start with after `--`: nothing for
     /// `vault-key add-device`'s own, `unlock-` for the shared ones.
@@ -54,6 +57,7 @@ impl<'a> UnlockRequest<'a> {
             capsule: args.unlock_capsule.as_deref(),
             pieces: &args.unlock_pieces,
             vault_id: args.unlock_vault_id.as_deref(),
+            kit_passkey_prf_file: args.unlock_kit_passkey_prf_file.as_deref(),
             secret: args.secret_source(),
             prefix: "unlock-",
         }
@@ -68,6 +72,7 @@ impl<'a> UnlockRequest<'a> {
             capsule: args.capsule.as_deref(),
             pieces: &args.pieces,
             vault_id: args.vault_id.as_deref(),
+            kit_passkey_prf_file: args.kit_passkey_prf_file.as_deref(),
             secret: args.secret.clone(),
             prefix: "",
         }
@@ -82,6 +87,7 @@ impl<'a> UnlockRequest<'a> {
             capsule: args.capsule.as_deref(),
             pieces: &args.pieces,
             vault_id: args.vault_id.as_deref(),
+            kit_passkey_prf_file: args.kit_passkey_prf_file.as_deref(),
             secret: args.secret.clone(),
             prefix: "",
         }
@@ -93,19 +99,22 @@ impl<'a> UnlockRequest<'a> {
 
     /// Whether reading this unlock takes stdin without a kept-piece count.
     /// Existing-vault kits decide after importing their pieces (FIX 12396).
-    /// A password, a PRF output or
+    /// A password, a PRF output, a sheet's code or
     /// an escrow secret with no file or recovery box named, a kit opened
-    /// with one piece and no passphrase file, and a recovery box program,
-    /// whose `release` inherits stdin for its own sign-in.
+    /// with one piece and no passphrase file (the passkey's sealed piece
+    /// counts as one, census L10-18), and a recovery box program, whose
+    /// `release` inherits stdin for its own sign-in.
     pub(in crate::commands::owner) fn reads_stdin(&self) -> bool {
         let no_file = self.secret.secret_file.is_none();
         match self.method {
             UnlockMethod::Device => false,
-            UnlockMethod::Password | UnlockMethod::Passkey => no_file,
+            UnlockMethod::Password | UnlockMethod::Passkey | UnlockMethod::Sheet => no_file,
             UnlockMethod::Escrow => {
                 self.box_reads_stdin() || (no_file && self.secret.box_dir.is_none())
             }
-            UnlockMethod::Kit => no_file && self.pieces.len() == 1,
+            UnlockMethod::Kit => {
+                no_file && self.pieces.len() + usize::from(self.kit_passkey_prf_file.is_some()) == 1
+            }
         }
     }
 
@@ -115,15 +124,21 @@ impl<'a> UnlockRequest<'a> {
         self.method == UnlockMethod::Escrow && self.secret.box_command.is_some()
     }
 
-    /// Refuses a flag the unlock does not read: the kit's pieces and vault
-    /// id with any other unlock, a capsule with any but escrow, and a
-    /// credential, a label or a recovery box with the kit.
+    /// Refuses a flag the unlock does not read: the kit's pieces, vault id
+    /// and passkey PRF file with any other unlock, a capsule with any but
+    /// escrow, and a label, a recovery box or a credential with no passkey
+    /// PRF file with the kit.
     fn refuse_unused(&self) -> anyhow::Result<()> {
         let kit = self.method == UnlockMethod::Kit;
+        let kit_passkey = self.kit_passkey_prf_file.is_some();
+        // With the kit, the credential names only the passkey whose PRF
+        // output file is given.
+        let credential_unused = self.credential.is_some() && !kit_passkey;
         let unused = [
             ("piece", !kit && !self.pieces.is_empty()),
             ("vault-id", !kit && self.vault_id.is_some()),
-            ("credential", kit && self.credential.is_some()),
+            ("kit-passkey-prf-file", !kit && kit_passkey),
+            ("credential", kit && credential_unused),
             ("label", kit && self.label.is_some()),
             ("box-dir", kit && self.secret.box_dir.is_some()),
             ("box-command", kit && self.secret.box_command.is_some()),

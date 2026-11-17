@@ -1,23 +1,22 @@
 //! The first-observation receipts a stored fold reads of its rows (FIX 1854,
-//! OF-469): each row's first-seen seconds and sequence floor. Both receipts
-//! are write-once: each has one writer, which never puts over a row, no door
-//! deletes one, and a restore keeps the live vault's. So a fold past a
-//! cached base takes a pinned base row's values from the base unread, and
-//! reads the tail's, an arriving row's, and those of a base row whose value
-//! came from the clock or the live high-water mark.
+//! OF-469): each row's first-seen seconds. The receipt is write-once: it has
+//! one writer, which never puts over a row, no door deletes one, and a
+//! restore keeps the live vault's. So a fold past a cached base takes a
+//! pinned base row's value from the base unread, and reads the tail's, an
+//! arriving row's, and that of a base row whose value came from the clock.
+//! No sequence floor is read: each comes from the rows (`rows_floor`).
 
 use super::*;
 use crate::authority::fold_resume::{FoldBase, RowMeta};
-use crate::authority::sequence_observation::authority_local_observations_receipted_in_txn;
+use crate::authority::sequence_observation::authority_local_observations_in_txn;
 
 /// The first-seen seconds and observations a stored fold folds its rows
 /// under.
 pub(super) struct RowReceipts {
     pub(super) first_seen_at_secs: BTreeMap<AuthorityEntryHash, u64>,
     pub(super) observations: AuthorityLocalObservations,
-    /// The rows whose first-seen seconds and sequence floor came from
-    /// present write-once receipts: the base a later fold resumes from
-    /// carries them unread.
+    /// The rows whose first-seen seconds came from present write-once
+    /// receipts: the base a later fold resumes from carries them unread.
     pub(super) pinned: BTreeSet<AuthorityEntryHash>,
 }
 
@@ -45,12 +44,10 @@ impl RowReceipts {
             }
             first_seen_at_secs.insert(hash, first_seen.unwrap_or(now_secs));
         }
-        let (observations, receipted) =
-            authority_local_observations_receipted_in_txn(store, txn, rows)?;
         Ok(Self {
             first_seen_at_secs,
-            observations,
-            pinned: sidecar_held.intersection(&receipted).copied().collect(),
+            observations: authority_local_observations_in_txn(store, txn)?,
+            pinned: sidecar_held,
         })
     }
 

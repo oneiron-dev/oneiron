@@ -118,7 +118,8 @@ impl SyncConnection {
     /// owner's residence directives naming this machine run beside it, across
     /// its reconnects, each time the residence upkeep wakes them (OF-534),
     /// and the home handoff's delivery worker beside both (FIX 5661 C2a), and
-    /// the mode that follows the committed home (FIX 8869).
+    /// the mode that follows the committed home (FIX 8869), and the predicted
+    /// level's upkeep on this machine (ARCH-0023b #predicted-residence).
     async fn drive(
         &self,
         client: SyncClient,
@@ -127,11 +128,13 @@ impl SyncConnection {
         // Under the host's admission, set by now (FIX 12036).
         self.collect_left_env_bodies();
         let directives = self.run_residence_directives(client.event_tx.clone());
+        let predicted = self.run_predicted_residence(client.event_tx.clone());
         let home_handoff = self.run_home_handoff(client.event_tx.clone());
         let residence_mode = self.run_residence_mode(client.event_tx.clone());
         tokio::select! {
             result = self.drive_loop(client, shutdown_rx) => result,
             never = directives => match never {},
+            never = predicted => match never {},
             never = home_handoff => match never {},
             never = residence_mode => match never {},
         }
@@ -236,6 +239,10 @@ impl SyncConnection {
                     // A home session opens once its first round completed:
                     // the home served this machine's sync (FIX 4748).
                     reach.opened(peer);
+                    // The predicted upkeep asks again after a (re)connect, once the
+                    // authority history it needs is in (Engine ruling L7-46-MERGE A).
+                    self.predicted_connected
+                        .store(true, std::sync::atomic::Ordering::Relaxed);
                     // Reset backoff on successful connect
                     // Note: open_sync_session already emits Synced, so we don't emit Connected here
                     // to avoid regressing status for observers.
@@ -617,9 +624,7 @@ impl SyncConnection {
         // peer session reads none (FIX 4748).
         if peer.is_none() && client.config.residence_mode == crate::sync::SyncResidenceMode::Opened
         {
-            let now_secs = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map_or(0, |duration| duration.as_secs());
+            let now_secs = crate::unix_seconds_now();
             client
                 .fetch_current_index_by_side(now_secs)
                 .await
@@ -629,6 +634,17 @@ impl SyncConnection {
                         format!("Fetch residence index failed: {fault}"),
                     )
                 })?;
+        }
+
+        // A followed world's window asked as a follow waits for the home's
+        // answer before the queue replays: a granted window's queued writes
+        // go now, a refused one's stay owed, and the socket stays open. A home
+        // that answers no follow leaves those windows' writes queued.
+        let asked = client.unanswered_follow_requests();
+        if peer.is_none() && !asked.is_empty() {
+            let answered = |client: &SyncClient, key: &WindowKey| client.follow_answered(key);
+            self.pump_until_each(&mut write, &mut read, client, event_tx, &asked, answered)
+                .await?;
         }
 
         // Phase 3: Drain offline queue
@@ -653,29 +669,14 @@ impl SyncConnection {
         }
         let full_resync_markers = self.full_resync_markers()?;
         // FIX 20202: an opened-item session re-bootstraps from the server
-        // each marked window this device promoted and the home may read, over
-        // its promoted exchange, once the queue is replayed. Any other marked
-        // window still needs sync-all.
+        // the marked windows it may recover over this connection
+        // (`opened_resync_markers`), once the queue is replayed.
         let (full_resync_markers, promoted_markers) =
             if client.config.residence_mode == crate::sync::SyncResidenceMode::Opened {
-                for marker in &full_resync_markers {
-                    let recoverable = match WindowKey::try_new(marker.window_key.as_str()) {
-                        Some(key) => {
-                            client
-                                .opened_window_promoted(&key)
-                                .map_err(SessionFault::local)?
-                                && client.home_may_promote(&key)
-                                && client.home_may_request(&key)
-                        }
-                        None => false,
-                    };
-                    if !recoverable {
-                        return Err(SessionFault::local(
-                            "opened-item full-resync requires explicit sync-all recovery",
-                        ));
-                    }
-                }
-                (Vec::new(), full_resync_markers)
+                (
+                    Vec::new(),
+                    Self::opened_resync_markers(client, full_resync_markers)?,
+                )
             } else {
                 (full_resync_markers, Vec::new())
             };
@@ -748,6 +749,30 @@ impl SyncConnection {
             let _ = event_tx.send(SyncEvent::Error(format!(
                 "Failed to record last sync timestamp: {e}"
             )));
+        }
+
+        // L7-47: the first full round under sync all writes this machine's
+        // full-copy mark. A home session only, never a peer's (a peer serves
+        // state-only copies, never a full copy), and never on a federation
+        // lane. A mark that does not land never fails the session.
+        if client.peer_session.is_none()
+            && client.config.federation_peer.is_none()
+            && client.config.residence_mode == crate::sync::SyncResidenceMode::All
+        {
+            let vault = Arc::clone(self.manager.vault());
+            let configured = self.config.client_config.residence_mode;
+            match tokio::task::spawn_blocking(move || vault.mark_first_round_full_copy(configured))
+                .await
+            {
+                Ok(Ok(_)) => {}
+                Ok(Err(error)) => tracing::warn!(
+                    kind = ?error.kind(),
+                    "the full-copy mark was not written"
+                ),
+                Err(error) => {
+                    tracing::warn!("the full-copy mark write did not finish: {error}");
+                }
+            }
         }
 
         Ok(ws_stream)

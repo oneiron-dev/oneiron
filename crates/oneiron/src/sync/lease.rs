@@ -52,6 +52,7 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result, SyncError};
 use crate::side_table::{self, CodecError, Raw, RawValue, SideKey, SideTable};
 use crate::sync::quarantine::{self, QuarantineContainer};
+use oneiron_store::side_table::key::HexU64;
 
 /// The device-lease registry mirror. Key: [`LeaseKey`], value: [`LeaseRecord`]
 /// (the pinned 66 B encoding — [`encode_lease_record`] / [`decode_lease_record`]
@@ -60,28 +61,32 @@ const LEASE: SideTable<LeaseKey, LeaseRecord, Raw> = SideTable::new(&side_table:
 
 /// `{vault_id:016x}:{client_id:016x}` — [`LEASE`]'s key, the bytes after the
 /// `ls:` table prefix (33 B, fixed width).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, SideKey)]
+#[side_key(sep = b':')]
 pub(super) struct LeaseKey {
+    #[side_key(with = HexU64)]
     pub(super) vault_id: u64,
+    #[side_key(with = HexU64)]
     pub(super) client_id: u64,
 }
 
-impl SideKey for LeaseKey {
-    fn encode_into(&self, out: &mut Vec<u8>) {
-        out.extend_from_slice(format!("{:016x}:{:016x}", self.vault_id, self.client_id).as_bytes());
-    }
+/// One [`LeaseKey`] for `test_doors::side_key_pins`.
+#[cfg(oneiron_test_support)]
+pub(crate) fn lease_key_pin_for_test(
+    vault_id: u64,
+    client_id: u64,
+) -> crate::test_doors::side_key_pins::Pin {
+    crate::test_doors::side_key_pins::Pin::of(&LeaseKey {
+        vault_id,
+        client_id,
+    })
+}
 
-    fn decode_key(bytes: &[u8]) -> Option<Self> {
-        if bytes.len() != 33 {
-            return None;
-        }
-        let text = std::str::from_utf8(bytes).ok()?;
-        let (vault, client) = text.split_once(':')?;
-        Some(Self {
-            vault_id: u64::from_str_radix(vault, 16).ok()?,
-            client_id: u64::from_str_radix(client, 16).ok()?,
-        })
-    }
+/// The vault and client ids a [`LeaseKey`] reads from the bytes after its table prefix, or
+/// `None` where it refuses them (`test_doors::side_key_hex_case`).
+#[cfg(oneiron_test_support)]
+pub(crate) fn decode_lease_key_for_test(bytes: &[u8]) -> Option<(u64, u64)> {
+    LeaseKey::decode_key(bytes).map(|key| (key.vault_id, key.client_id))
 }
 
 /// The bytes after the `ls:` table prefix that scope a scan to one vault:
@@ -474,10 +479,10 @@ fn claimed_lease_record_in_txn(
 /// upserted, never silently dropped. N = device count (tiny).
 ///
 /// MISUSE SURFACE (ONE-1140): callers MUST wrap this in the SAME write txn as
-/// the `d:root` persist (`server_state::persist_root_snapshot_in_txn`) so the
-/// root snapshot and its `ls:` mirror commit or roll back together. Using it
-/// outside that atomic boundary re-opens the split-write bug. The cross-crate
-/// caller is `oneiron-server`'s lease registrar.
+/// the `d:root` persist so the root snapshot and its `ls:` mirror commit or
+/// roll back together, and pass the root that persist wrote. Using it outside
+/// that atomic boundary re-opens the split-write bug.
+/// `server_state::persist_root_with_lease_mirror_in_txn` does both.
 #[doc(hidden)]
 pub fn mirror_leases_from_root_in_txn(
     vault: &Vault,

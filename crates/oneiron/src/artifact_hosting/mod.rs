@@ -19,7 +19,7 @@ use crate::secret_rotation::{
     ArtifactTaintState, allow_stale_publish_in_txn, exhaust_taint_refs_in_txn,
     taint_state_for_refs_in_txn,
 };
-use crate::side_table::{self, CodecError, Raw, RawValue, SideKey, SideTable};
+use crate::side_table::{self, CodecError, FixedSideKey, Raw, RawValue, SideKey, SideTable};
 use crate::store::GateDecisionId;
 use crate::store::code_artifact_body::{CodeArtifactClass, decode_code_artifact_body};
 use crate::store::code_snapshot::{
@@ -35,6 +35,7 @@ mod backend_principal;
 /// The KS7 getter of the hosting rows, under each blob artifact (FIX 10436).
 pub(crate) mod checkpoint;
 pub use backend_principal::ArtifactBackendPairing;
+pub(crate) use backend_principal::is_artifact_backend_name;
 /// Typed requests and replies for publication and live-preview host doors.
 pub mod door_types;
 mod pointer_rows;
@@ -47,7 +48,7 @@ mod serving;
 mod serving_blob;
 mod vocabulary;
 use self::pointer_rows::{
-    decode_artifact_pointer_row, hex_nibble, put_artifact_pointer_in_txn, snapshot_file_entry,
+    decode_artifact_pointer_row, put_artifact_pointer_in_txn, snapshot_file_entry,
     validate_artifact_path,
 };
 pub(crate) use self::pointer_rows::{remove_blob_pointers_in_txn, validate_artifact_id};
@@ -70,37 +71,28 @@ const ARTIFACT_ADMISSIONS: SideTable<
     crate::side_table::LegacyJson,
 > = SideTable::new(&side_table::ARTIFACT_PUBLISH_ADMISSION);
 
-const ARTIFACT_CHANNEL_PUBLISHED: u8 = 0;
-const ARTIFACT_CHANNEL_PREVIEW: u8 = 1;
+#[doc(hidden)]
+use oneiron_verb_wire::artifact_hosting::{ARTIFACT_CHANNEL_PREVIEW, ARTIFACT_CHANNEL_PUBLISHED};
 
 /// One channel pointer, keyed by `channel(1) ++ artifact_len(u16 be) ++ artifact`
 /// exactly as `artifact_pointer_key` used to spell it.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, SideKey)]
 struct ArtifactPointerRowKey {
     channel: ArtifactPointerChannel,
+    #[side_key(len = u16)]
     artifact: String,
 }
 
-impl SideKey for ArtifactPointerRowKey {
-    fn encode_into(&self, out: &mut Vec<u8>) {
-        out.push(self.channel.key_byte());
-        out.extend_from_slice(&(self.artifact.len() as u16).to_be_bytes());
-        out.extend_from_slice(self.artifact.as_bytes());
-    }
-
-    fn decode_key(bytes: &[u8]) -> Option<Self> {
-        let (&channel_byte, rest) = bytes.split_first()?;
-        let channel = ArtifactPointerChannel::from_key_byte(channel_byte)?;
-        let (len_bytes, rest) = rest.split_at_checked(2)?;
-        let len = u16::from_be_bytes(len_bytes.try_into().ok()?) as usize;
-        if rest.len() != len {
-            return None;
-        }
-        Some(Self {
-            channel,
-            artifact: String::from_utf8(rest.to_vec()).ok()?,
-        })
-    }
+/// One [`ArtifactPointerRowKey`] for `test_doors::side_key_pins`.
+#[cfg(oneiron_test_support)]
+pub(crate) fn artifact_pointer_row_key_pin_for_test(
+    channel: ArtifactPointerChannel,
+    artifact: &str,
+) -> crate::test_doors::side_key_pins::Pin {
+    crate::test_doors::side_key_pins::Pin::of(&ArtifactPointerRowKey {
+        channel,
+        artifact: artifact.to_owned(),
+    })
 }
 
 /// One pointer row's value: the export frame, then an optional suffix. A
@@ -174,6 +166,24 @@ const ARTIFACT_POINTERS: SideTable<ArtifactPointerRowKey, ArtifactPointerRow, Ra
 /// The trailing stamp records a stale-taint publish override on either kind.
 const ARTIFACT_POINTER_STALE_OVERRIDE_STAMP: u8 = 0x01;
 const ARTIFACT_POINTER_BLOB_TAG: u8 = 0x02;
+
+/// A pointer row's channel, as its one key byte.
+impl SideKey for ArtifactPointerChannel {
+    fn encode_into(&self, out: &mut Vec<u8>) {
+        out.push(self.key_byte());
+    }
+
+    fn decode_key(bytes: &[u8]) -> Option<Self> {
+        let &[byte] = bytes else {
+            return None;
+        };
+        Self::from_key_byte(byte)
+    }
+}
+
+impl FixedSideKey for ArtifactPointerChannel {
+    const WIDTH: usize = 1;
+}
 
 impl ArtifactPointerChannel {
     #[must_use]
@@ -310,18 +320,8 @@ impl Vault {
         let entity_id = self
             .resolve_export_owner_in_txn(wtxn, artifact, export)?
             .ok_or(Error::EntityNotFound)?;
-        let refs = exhaust_taint_refs_in_txn(&self.store, wtxn, &entity_id)?;
-        let stale_taint_override = match taint_state_for_refs_in_txn(&self.store, wtxn, &refs)? {
-            ArtifactTaintState::Clean | ArtifactTaintState::TaintedLive => false,
-            ArtifactTaintState::TaintedStale => {
-                if !allow_stale_publish_in_txn(&self.store, wtxn)? {
-                    return Err(Error::Secret(SecretError::TaintedArtifactStale {
-                        artifact: artifact.to_owned(),
-                    }));
-                }
-                true
-            }
-        };
+        let stale_taint_override =
+            self.publish_stale_taint_override_in_txn(wtxn, &entity_id, artifact)?;
         put_artifact_pointer_in_txn(
             &self.store,
             wtxn,
@@ -338,6 +338,33 @@ impl Vault {
             stale_taint_override,
             serve_tier,
         })
+    }
+
+    /// The stale-taint stamp a publish of `owner`'s export carries, read in
+    /// the publish's own transaction: none for a clean or live-tainted export;
+    /// for a stale-tainted one, the stamp while the stale-publish policy
+    /// permits it, else [`SecretError::TaintedArtifactStale`] for `artifact`.
+    /// Both publish doors (an export pointer and a code snapshot) admit
+    /// through it.
+    fn publish_stale_taint_override_in_txn(
+        &self,
+        wtxn: &RwTxn<'_>,
+        owner: &EntityId,
+        artifact: &str,
+    ) -> Result<bool> {
+        let refs = exhaust_taint_refs_in_txn(&self.store, wtxn, owner)?;
+        match taint_state_for_refs_in_txn(&self.store, wtxn, &refs)? {
+            ArtifactTaintState::Clean | ArtifactTaintState::TaintedLive => Ok(false),
+            ArtifactTaintState::TaintedStale => {
+                if allow_stale_publish_in_txn(&self.store, wtxn)? {
+                    Ok(true)
+                } else {
+                    Err(Error::Secret(SecretError::TaintedArtifactStale {
+                        artifact: artifact.to_owned(),
+                    }))
+                }
+            }
+        }
     }
 
     pub fn unpublish_artifact_pointer(
@@ -390,30 +417,13 @@ pub fn parse_codebase_fork_hash_hex(value: &str) -> Result<CodebaseForkHash> {
             "forkHash must be 64 lowercase or uppercase hex characters",
         )));
     }
-    let mut out = [0_u8; CODEBASE_FORK_HASH_LEN];
-    let bytes = value.as_bytes();
-    for (index, pair) in bytes.chunks_exact(2).enumerate() {
-        let high = hex_nibble(pair[0]).ok_or(Error::Code(
-            CodeError::InvalidCodebaseSnapshotBody("forkHash must be hexadecimal"),
-        ))?;
-        let low = hex_nibble(pair[1]).ok_or(Error::Code(
-            CodeError::InvalidCodebaseSnapshotBody("forkHash must be hexadecimal"),
-        ))?;
-        out[index] = (high << 4) | low;
-    }
-    Ok(out)
+    oneiron_hex::decode_any_case::<CODEBASE_FORK_HASH_LEN>(value).ok_or(Error::Code(
+        CodeError::InvalidCodebaseSnapshotBody("forkHash must be hexadecimal"),
+    ))
 }
 
-#[must_use]
-pub fn artifact_hex(bytes: &[u8]) -> String {
-    const HEX: &[u8; 16] = b"0123456789abcdef";
-    let mut out = String::with_capacity(bytes.len() * 2);
-    for byte in bytes {
-        out.push(HEX[(byte >> 4) as usize] as char);
-        out.push(HEX[(byte & 0x0f) as usize] as char);
-    }
-    out
-}
+#[doc(hidden)]
+pub use oneiron_records::artifact_hosting::artifact_hex;
 
 mod access;
 pub use self::access::{ArtifactLinkCapability, ArtifactServeTier};

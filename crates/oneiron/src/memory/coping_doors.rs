@@ -1,5 +1,4 @@
 //! Typed coping observations and per-person aggregates over the engine's coping ledger.
-use serde::{Deserialize, Serialize};
 
 use super::{ClaimScope, Memory, MemoryError, MemoryResult, ScopedClaimInput};
 use crate::claim::{ClaimBody, ClaimReadStatus, ClaimSubject, claim_consolidatable};
@@ -7,80 +6,25 @@ use crate::consent::AuthenticatedOwner;
 use crate::provenance::birth::RowBirth;
 use crate::provenance::made_by::MadeByClass;
 use crate::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_TURN};
+use crate::store::gate_reason::GateReceiptOutcome;
 use crate::write_envelope::coping_outcome::{
-    COPING_OUTCOME_PREDICATE, CopingOutcomeValue, CopingStrategy, coping_outcome_value,
-    decode_coping_outcome_claim,
+    COPING_OUTCOME_PREDICATE, CopingOutcomeValue, coping_outcome_value, decode_coping_outcome_claim,
 };
 use crate::{EntityId, Error};
 
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct CopingOutcomeRecordRequest {
-    pub affected_person_ref: String,
-    /// The turn in which the strategy was offered: the canonical strategyRef.
-    pub baseline_turn_ref: String,
-    pub later_turn_ref: String,
-    pub strategy: CopingStrategy,
-    pub confidence: f32,
-    pub scope: ClaimScope,
-    pub sensitivity: Option<u8>,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::memory::coping_doors::{
+    CopingAggregate, CopingAggregateRequest, CopingLookup, CopingLookupBasis, CopingLookupOutcome,
+    CopingLookupRequest, CopingOutcomeReceipt, CopingOutcomeRecordRequest,
+    CopingOutcomeUpdateRequest, CopingOutcomeView, CopingPrior, CopingVadDelta,
+};
 
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct CopingOutcomeUpdateRequest {
-    pub prior_claim_ref: String,
-    pub baseline_turn_ref: String,
-    pub later_turn_ref: String,
-    pub confidence: f32,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct CopingAggregateRequest {
-    pub affected_person_ref: String,
-    pub scope: Option<ClaimScope>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct CopingVadDelta {
-    pub valence: f32,
-    pub arousal: f32,
-    pub dominance: f32,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct CopingOutcomeView {
-    pub claim_ref: String,
-    pub affected_person_ref: String,
-    pub strategy_ref: String,
-    pub strategy: CopingStrategy,
-    pub vad_delta: CopingVadDelta,
-    pub confidence: f32,
-    pub successful: bool,
-    pub observed_n: u64,
-    pub scope: ClaimScope,
-    pub approval: String,
-    pub source: Option<String>,
-    pub valid_from: Option<u64>,
-    pub valid_to: Option<u64>,
-    pub evidence_refs: Vec<String>,
-    pub made_by: Option<crate::provenance::made_by::MadeBy>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct CopingOutcomeReceipt {
-    pub outcome: CopingOutcomeView,
-    pub superseded_claim_refs: Vec<String>,
-    pub receipt_ref: String,
-}
-
-/// Every admitted active strategy aggregate, including unsuccessful observations.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct CopingAggregate {
-    pub affected_person_ref: String,
-    pub outcomes: Vec<CopingOutcomeView>,
-    pub observed_n: u64,
+/// One coping head the aggregate and the lookup read, with the learned-at
+/// stamp of its row.
+pub(super) struct AdmittedCopingHead {
+    pub(super) strategy_ref: EntityId,
+    pub(super) learned_at: u64,
+    pub(super) outcome: CopingOutcomeView,
 }
 
 impl Memory<'_> {
@@ -116,7 +60,7 @@ impl Memory<'_> {
                 value: crate::serialize::msgpack_value_to_json(&coping_outcome_value(&value)),
                 confidence: input.confidence,
                 source: "observed".to_owned(),
-                scope: input.scope.clone(),
+                scope: input.scope.clone().into(),
                 sensitivity: input.sensitivity,
                 evidence_turn_refs: vec![baseline.to_hex(), later.to_hex()],
                 valid_from: Some(now),
@@ -217,20 +161,17 @@ impl Memory<'_> {
                 .vault
                 .get_claim_in_txn(txn, &result.active_claim_id)?
                 .ok_or(Error::EntityNotFound)?;
-            let decision = super::authorship::decision(
+            let receipt = super::authorship::decision(
                 self.write_actor(),
                 "coping_outcome",
-                "approved",
+                GateReceiptOutcome::Approved,
                 "gate.affect.coping.turn_vad",
                 Some(result.active_claim_id),
                 blake3::hash(&crate::claim::encode_claim_body(&active)?)
                     .as_bytes()
                     .to_vec(),
-                now,
             );
-            self.vault
-                .store
-                .append_gate_decision_in_txn(txn, &decision)?;
+            let record = self.vault.store.record_gate_receipt_in_txn(txn, receipt)?;
             Ok(CopingOutcomeReceipt {
                 outcome: self.coping_outcome_view_in_txn(txn, result.active_claim_id, &active)?,
                 superseded_claim_refs: result
@@ -238,7 +179,7 @@ impl Memory<'_> {
                     .iter()
                     .map(EntityId::to_hex)
                     .collect(),
-                receipt_ref: format!("gate:{}", decision.decision_id.to_hex()),
+                receipt_ref: format!("gate:{}", record.decision_id.to_hex()),
             })
         })
     }
@@ -327,8 +268,37 @@ impl Memory<'_> {
         }
         let mut outcomes = Vec::new();
         let mut observed_n = 0_u64;
+        for head in self.admitted_coping_heads_in_txn(txn, &lane, person, scope)? {
+            observed_n = observed_n
+                .checked_add(head.outcome.observed_n)
+                .ok_or_else(|| MemoryError::bad_request("coping observation count overflow"))?;
+            outcomes.push(head.outcome);
+        }
+        outcomes.sort_by(|a, b| a.claim_ref.cmp(&b.claim_ref));
+        self.produced_from([person]);
+        Ok(CopingAggregate {
+            affected_person_ref: person.to_hex(),
+            outcomes,
+            observed_n,
+        })
+    }
+
+    /// The active, consolidatable `coping.outcome` heads on `person` (in
+    /// `scope` when one is named) that the coping reader may consolidate,
+    /// each with its evidence readable on `lane`. The aggregate reads
+    /// exactly these; the lookup takes them as candidates and keeps only
+    /// the heads whose baseline turn has a live VAD.
+    pub(super) fn admitted_coping_heads_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        lane: &crate::claim::ScopedRead<'_>,
+        person: EntityId,
+        scope: Option<&ClaimScope>,
+    ) -> MemoryResult<Vec<AdmittedCopingHead>> {
+        let mut heads = Vec::new();
         for id in self.vault.claims_for_subject_in_txn(txn, &person)? {
-            let Some((_, _, bytes)) = lane.get_entities_parts_in_txn(txn, &[id])?.pop().flatten()
+            let Some((_, learned_at, bytes)) =
+                lane.get_entities_parts_in_txn(txn, &[id])?.pop().flatten()
             else {
                 continue;
             };
@@ -347,18 +317,16 @@ impl Memory<'_> {
                 continue;
             }
             let outcome = self.coping_outcome_view_in_txn(txn, id, &body)?;
-            observed_n = observed_n
-                .checked_add(outcome.observed_n)
-                .ok_or_else(|| MemoryError::bad_request("coping observation count overflow"))?;
-            outcomes.push(outcome);
+            let strategy_ref = decode_coping_outcome_claim(&body)?
+                .ok_or_else(|| MemoryError::bad_request("claim must be coping.outcome"))?
+                .strategy_ref();
+            heads.push(AdmittedCopingHead {
+                strategy_ref,
+                learned_at,
+                outcome,
+            });
         }
-        outcomes.sort_by(|a, b| a.claim_ref.cmp(&b.claim_ref));
-        self.produced_from([person]);
-        Ok(CopingAggregate {
-            affected_person_ref: person.to_hex(),
-            outcomes,
-            observed_n,
-        })
+        Ok(heads)
     }
 
     fn coping_outcome_view_in_txn(

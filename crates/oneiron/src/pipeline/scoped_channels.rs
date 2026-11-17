@@ -6,10 +6,12 @@ use crate::error::{Error, Result};
 use super::builder::PipelineBuilder;
 use super::capabilities::CapabilityLane;
 use super::channels::{
-    execute_temporal, scoped_vector_channel_limit, truncate_widened_channel_results_to_scope,
+    execute_phonetic, execute_temporal, scoped_vector_channel_limit,
+    truncate_widened_channel_results_to_scope,
 };
 use super::filters::{
-    import_claim_gate_decisions_for_scores, pipeline_candidate_matches_filters_and_gate,
+    claim_status_gate_allows, import_claim_gate_decisions_for_scores, made_by_admits,
+    pipeline_candidate_matches_filters_and_gate,
 };
 use super::temporal_bound::{
     ReadableRows, execute_temporal_for_reader, scoped_temporal_channel_limit,
@@ -83,6 +85,68 @@ impl PipelineBuilder<'_> {
         Ok(scores)
     }
 
+    /// The phonetic channel under the call's scope. The sound match keeps
+    /// the nearest few of its rows, so the call's predicate decides inside
+    /// that cut ([`Self::phonetic_candidate_admits`]). Exact codes have no
+    /// cut; the gates after the channel filter them as before. The probe's
+    /// caches are its own, as the vector walk's: a row the cut asks about
+    /// leaves no decision behind.
+    pub(super) fn scoped_phonetic_results(
+        &self,
+        rtxn: &RoTxn<'_>,
+        codes: &[String],
+        filters: PipelineFilterConfig<'_>,
+        claim_gate: &ClaimStatusGateCache,
+    ) -> Result<Vec<ScoredEntity>> {
+        let mut metadata = EntityMetadataCache::default();
+        let mut gate = claim_gate.fresh(filters.authority_filter.include_stale);
+        let mut admits = |id: &crate::EntityId| {
+            self.phonetic_candidate_admits(rtxn, id, filters, &mut metadata, &mut gate)
+        };
+        execute_phonetic(
+            &self.read,
+            rtxn,
+            codes,
+            &self.params,
+            self.deadline,
+            &mut admits,
+        )
+    }
+
+    /// Whether a phonetic list that keeps only the nearest few of its rows
+    /// admits `id` to them: the call's filters and gate, its memory lane,
+    /// and its made_by predicate, which the post-blend filter applies after
+    /// the cut. A row it refuses sets no nearest distance and takes no place
+    /// under the cap (review #8107, both rounds). An unborn claim's class is
+    /// its admitted body's source; under a candidate filter the gate judged
+    /// the row in a cache of its own, so the body is read into `gate` here.
+    pub(super) fn phonetic_candidate_admits(
+        &self,
+        rtxn: &RoTxn<'_>,
+        id: &crate::EntityId,
+        filters: PipelineFilterConfig<'_>,
+        metadata: &mut EntityMetadataCache,
+        gate: &mut ClaimStatusGateCache,
+    ) -> Result<bool> {
+        let scoped = pipeline_candidate_matches_filters_and_gate(
+            &self.read, rtxn, id, filters, metadata, gate,
+        )? && (!self.memory_category
+            || CapabilityLane::Memory.admits(&self.read, rtxn, id)?);
+        if !scoped {
+            return Ok(false);
+        }
+        made_by_admits(&self.read, rtxn, id, self.made_by, || {
+            if !gate.decisions.contains_key(id) {
+                claim_status_gate_allows(&self.read, rtxn, id, metadata, gate)?;
+            }
+            Ok(gate
+                .decisions
+                .get(id)
+                .and_then(Option::as_ref)
+                .and_then(|body| body.made_by_class()))
+        })
+    }
+
     pub(super) fn scoped_temporal_results(
         &self,
         rtxn: &RoTxn<'_>,
@@ -102,6 +166,7 @@ impl PipelineBuilder<'_> {
                 || filters.corpus_scope != &CorpusScope::All
                 || filters.candidate_filter.is_some()
                 || self.memory_category,
+            &self.params,
         )?);
         // Widen the collector's window, scan caps and score truncation, not
         // the request sigma settles on.
@@ -110,6 +175,7 @@ impl PipelineBuilder<'_> {
                 &self.read,
                 rtxn,
                 &scoped_config,
+                &self.params,
                 now,
                 metadata_cache,
                 filters.deadline,
@@ -133,6 +199,7 @@ impl PipelineBuilder<'_> {
             &self.read,
             rtxn,
             &scoped_config,
+            &self.params,
             now,
             metadata_cache,
             filters.deadline,
