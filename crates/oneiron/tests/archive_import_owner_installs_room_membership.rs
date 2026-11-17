@@ -1,0 +1,611 @@
+#![cfg(oneiron_test_support)]
+//! The owner's restore installs the room membership ledger live.
+//!
+//! Public doors only; neutral fixtures (`owen`, `yuki`); vaults in tempdirs. Each destination
+//! opens at least one wall-clock second after its source (sleep 1100 ms), as in
+//! `archive_import_retained_side_rows.rs`.
+//!
+//! * `the_owner_restore_seats_a_room_and_installs_its_admin_grant_on_a_fresh_vault`: a fresh owner restore
+//!   succeeds; the destination holds exactly two ledger rows, its current members read
+//!   `owen` and `yuki`, its ledger equals the source ledger, the report counts two installed
+//!   `CONVERSATION_MEMBERSHIP_ROW` rows, one installed `CONVERSATION_MEMBERSHIP_SEQ` row and
+//!   one installed `CONVERSATION_ROLE_GRANT` row, and yuki's Admin-only act succeeds while
+//!   owen's stays refused.
+//! * `a_repeat_owner_restore_reports_the_ledger_unchanged`: a repeat owner restore
+//!   of the same archive installs nothing and reports two unchanged live
+//!   `CONVERSATION_MEMBERSHIP_ROW` rows, one unchanged live `CONVERSATION_MEMBERSHIP_SEQ`
+//!   row and one unchanged live `CONVERSATION_ROLE_GRANT` row; the ledger and members stay
+//!   the source's.
+//! * `a_member_who_left_stays_out_after_the_owner_restore`: the source seats owen and
+//!   yuki and yuki leaves, so its ledger holds Join owen, Join yuki and Leave yuki; the
+//!   owner restore installs three `CONVERSATION_MEMBERSHIP_ROW` rows and one
+//!   `CONVERSATION_MEMBERSHIP_SEQ` row, the destination ledger equals the source ledger and
+//!   only owen reads current.
+//! * `a_destination_that_seats_the_room_itself_keeps_its_own_ledger`: the source and the
+//!   destination seat the same room and persons with the same entity stamps but different
+//!   ledger times, so the room put meets byte-identical rows and never refuses; the owner
+//!   import keeps the destination ledger live, reports two kept-live
+//!   `CONVERSATION_MEMBERSHIP_ROW` rows and one kept-live `CONVERSATION_MEMBERSHIP_SEQ`
+//!   row, and the destination ledger and members stay its own.
+//!
+//! New report counts are read through `serde_json::to_value` of the SIDE-1 summary, so this
+//! file compiles where the landing is absent; an absent field fails its assertion as a
+//! missing outcome, never as a setup panic. The semantic role read goes through the public
+//! Admin-only act (`Vault::erase_room_person`), never through the body's roles map alone.
+//! `cargo test --locked -p oneiron --all-features --test archive_import_owner_installs_room_membership`.
+
+#[path = "archive_import_retained_side_rows.rs"]
+mod retained_side_rows;
+
+use std::io::Cursor;
+
+use oneiron::conversation::{
+    ConversationBody, ConversationKind, HistoryChoice, MembershipAction, RoomRole,
+};
+use oneiron::registry::ENTITY_TYPE_PERSON;
+use oneiron::{EdgeActorClass, EntityId, TimeRange, Vault, WriteActor};
+use retained_side_rows::{
+    export_whole, open_later_vault, open_source_vault, owner_proof, retained_rows, rows_for,
+};
+
+/// A fixed entity id from one repeated byte. The banned bytes (00, 11, 42,
+/// 47, A1..A6, D7, E1, FF) belong to other fixtures.
+fn fixed_id(byte: u8) -> EntityId {
+    EntityId::from_bytes([byte; 16]).expect("a non-reserved repeated byte is a valid entity id")
+}
+
+/// The `field` count for `table` in a `retained_side_rows` JSON summary, when
+/// the table entry and the field are both present.
+fn table_count(summary: &serde_json::Value, table: &str, field: &str) -> Option<u64> {
+    summary
+        .get("tables")?
+        .as_array()?
+        .iter()
+        .find(|entry| entry.get("source_table").and_then(|name| name.as_str()) == Some(table))?
+        .get(field)?
+        .as_u64()
+}
+
+/// Puts a PERSON row for `id` holding `name`, at `occurred`/`learned_at`.
+fn put_person_at(vault: &Vault, id: EntityId, name: &[u8], occurred: TimeRange, learned_at: u64) {
+    vault
+        .put_entity(&id, ENTITY_TYPE_PERSON, occurred, learned_at, name)
+        .expect("the vault stores the fixture person");
+}
+
+/// Asserts yuki's Admin grant semantically on `vault`: yuki manages owen's room records (the
+/// Admin-only act the room policy opens to Admin and shuts for Member), while owen's matching
+/// act stays refused.
+fn assert_admin_semantics(
+    vault: &Vault,
+    room: EntityId,
+    owen: EntityId,
+    yuki: EntityId,
+    side: &str,
+) {
+    let manages = vault.erase_room_person(room, owen, WriteActor::new(yuki, EdgeActorClass::Human));
+    assert!(
+        manages.is_ok(),
+        "the Admin grant lets yuki manage owen's room records on {side}: {manages:?}"
+    );
+    let refused = vault.erase_room_person(room, yuki, WriteActor::new(owen, EdgeActorClass::Human));
+    assert!(
+        refused.is_err(),
+        "a Member cannot manage another member's room records on {side}: {refused:?}"
+    );
+}
+
+/// Seats owen and yuki in a group room at `occurred`/`learned_at`, with no role granted: the
+/// vault owner creates the room empty (so the creator's implicit Owner never falls on owen,
+/// and no initial member's entry mints a reserved TASK fact, which the actorless import
+/// refuses and whose id two vaults would share), then joins owen and yuki. Returns the room,
+/// owen and yuki.
+fn seat_room(
+    vault: &Vault,
+    occurred: TimeRange,
+    learned_at: u64,
+) -> (EntityId, EntityId, EntityId) {
+    seat_room_with_join_at(vault, occurred, learned_at, occurred.start)
+}
+
+/// Builds the room seating owen and yuki ([`seat_room`]) with yuki holding the Admin grant,
+/// at `occurred`/`learned_at`. Returns the room, owen and yuki. Asserts the grant's semantic
+/// effect on the source.
+fn build_admin_grant_room(
+    source: &Vault,
+    occurred: TimeRange,
+    learned_at: u64,
+) -> (EntityId, EntityId, EntityId) {
+    let (room, owen, yuki) = seat_room(source, occurred, learned_at);
+    let owner = source
+        .ensure_embedded_owner_actor()
+        .expect("the source names its embedded owner actor");
+    source
+        .set_room_role(
+            room,
+            yuki,
+            RoomRole::Admin,
+            WriteActor::new(owner, EdgeActorClass::Human),
+        )
+        .expect("the owner grants yuki the Admin role");
+    assert_admin_semantics(source, room, owen, yuki, "the source");
+    (room, owen, yuki)
+}
+
+/// Seats owen and yuki as [`seat_room`] does but joins at `join_at` while the PERSON rows
+/// and the room keep `occurred`/`learned_at`: the entity bytes stay the caller's stamps
+/// while the ledger rows carry `join_at`. Test 4 seats the source and the destination with
+/// the same entity stamps and different `join_at`, so the room put meets byte-identical
+/// rows and only the ledger times differ.
+fn seat_room_with_join_at(
+    vault: &Vault,
+    occurred: TimeRange,
+    learned_at: u64,
+    join_at: u64,
+) -> (EntityId, EntityId, EntityId) {
+    let room = fixed_id(0x6B);
+    let owen = fixed_id(0x6C);
+    let yuki = fixed_id(0x6D);
+    put_person_at(vault, owen, b"owen", occurred, learned_at);
+    put_person_at(vault, yuki, b"yuki", occurred, learned_at);
+    let owner = vault
+        .ensure_embedded_owner_actor()
+        .expect("the vault names its embedded owner actor");
+    vault
+        .create_conversation_with_text(
+            room,
+            &ConversationBody {
+                kind: ConversationKind::Group,
+                member_ids: vec![],
+                ..Default::default()
+            },
+            WriteActor::new(owner, EdgeActorClass::Human),
+            occurred,
+            learned_at,
+            &[],
+        )
+        .expect("the owner creates the empty group room");
+    for (member, name) in [(owen, "owen"), (yuki, "yuki")] {
+        vault
+            .join_member(
+                room,
+                member,
+                WriteActor::new(owner, EdgeActorClass::Human),
+                join_at,
+                HistoryChoice::Share,
+            )
+            .unwrap_or_else(|err| panic!("{name} joins the room: {err:?}"));
+    }
+    (room, owen, yuki)
+}
+
+/// The shared entity stamps for the independently seated room: the source and the
+/// destination write the room and its persons at these, so each destination row is the row
+/// the archive carries and the import never refuses it.
+const ENTITY_OCCURRED: TimeRange = TimeRange { start: 10, end: 10 };
+const ENTITY_LEARNED_AT: u64 = 10;
+
+/// The ledger times for the independently seated room: the source joins at the first, the
+/// destination at the second, so the ledgers differ by `at` alone.
+const SOURCE_JOIN_AT: u64 = 100;
+const DEST_JOIN_AT: u64 = 200;
+
+#[test]
+fn the_owner_restore_seats_a_room_and_installs_its_admin_grant_on_a_fresh_vault() {
+    let (_source_dir, source) = open_source_vault();
+    let now = source.now_recorded_at();
+    let (room, owen, yuki) = build_admin_grant_room(
+        &source,
+        TimeRange {
+            start: now,
+            end: now,
+        },
+        now,
+    );
+    let source_ledger = source
+        .membership_ledger(room)
+        .expect("read the source ledger");
+    assert_eq!(
+        source_ledger.len(),
+        2,
+        "the source ledger holds two join rows"
+    );
+    let source_members = source.members(room).expect("read the source members");
+    assert_eq!(
+        source_members,
+        vec![owen, yuki],
+        "owen and yuki read current on the source"
+    );
+    let archive = export_whole(&source);
+    let source_rows = retained_rows(&archive);
+    let source_row_tuples = rows_for(&source_rows, "CONVERSATION_MEMBERSHIP_ROW");
+    let source_seq_tuples = rows_for(&source_rows, "CONVERSATION_MEMBERSHIP_SEQ");
+    let source_grant_tuples = rows_for(&source_rows, "CONVERSATION_ROLE_GRANT");
+    assert_eq!(
+        source_grant_tuples.len(),
+        1,
+        "the source archive holds one role-grant tuple"
+    );
+
+    let (_dest_dir, dest) = open_later_vault();
+    let dest_owner = owner_proof(&dest);
+    let receipt = dest
+        .import_whole_vault_archive_from_as_owner(Cursor::new(&archive), &dest_owner)
+        .expect("the owner import succeeds into a fresh vault");
+    let summary =
+        serde_json::to_value(&receipt.retained_side_rows).expect("the summary serializes");
+    assert_eq!(
+        table_count(&summary, "CONVERSATION_MEMBERSHIP_ROW", "installed_rows"),
+        Some(2),
+        "the owner import reports two installed CONVERSATION_MEMBERSHIP_ROW rows; an absent field means it installed nothing: {summary}"
+    );
+    assert_eq!(
+        table_count(&summary, "CONVERSATION_MEMBERSHIP_SEQ", "installed_rows"),
+        Some(1),
+        "the owner import reports one installed CONVERSATION_MEMBERSHIP_SEQ row; an absent field means it installed nothing: {summary}"
+    );
+    assert_eq!(
+        table_count(&summary, "CONVERSATION_ROLE_GRANT", "installed_rows"),
+        Some(1),
+        "the owner import reports one installed CONVERSATION_ROLE_GRANT row; an absent field means it installed nothing: {summary}"
+    );
+
+    let dest_ledger = dest
+        .membership_ledger(room)
+        .expect("read the restored ledger");
+    assert_eq!(
+        dest_ledger.len(),
+        2,
+        "the restored ledger holds exactly two rows"
+    );
+    assert_eq!(
+        dest_ledger, source_ledger,
+        "the restored ledger equals the source ledger"
+    );
+    assert_eq!(
+        dest.members(room).expect("read the restored members"),
+        source_members,
+        "the restored members equal the source members"
+    );
+    assert_eq!(
+        dest.members(room).expect("read the restored members"),
+        vec![owen, yuki],
+        "owen and yuki read current on the destination"
+    );
+    assert_admin_semantics(&dest, room, owen, yuki, "the destination");
+    assert_eq!(
+        dest.conversation_body(room)
+            .expect("read the restored room")
+            .roles
+            .get(&yuki.to_hex()),
+        Some(&RoomRole::Admin),
+        "the restored twin entry names yuki's Admin grant"
+    );
+    let dest_rows = retained_rows(&export_whole(&dest));
+    assert_eq!(
+        rows_for(&dest_rows, "CONVERSATION_MEMBERSHIP_ROW"),
+        source_row_tuples,
+        "the destination archive carries the installed row tuples byte for byte"
+    );
+    assert_eq!(
+        rows_for(&dest_rows, "CONVERSATION_MEMBERSHIP_SEQ"),
+        source_seq_tuples,
+        "the destination archive carries the installed seq tuple byte for byte"
+    );
+    assert_eq!(
+        rows_for(&dest_rows, "CONVERSATION_ROLE_GRANT"),
+        source_grant_tuples,
+        "the destination archive carries the installed grant tuple byte for byte"
+    );
+}
+
+#[test]
+fn a_repeat_owner_restore_reports_the_ledger_unchanged() {
+    let (_source_dir, source) = open_source_vault();
+    let now = source.now_recorded_at();
+    let (room, owen, yuki) = build_admin_grant_room(
+        &source,
+        TimeRange {
+            start: now,
+            end: now,
+        },
+        now,
+    );
+    let source_ledger = source
+        .membership_ledger(room)
+        .expect("read the source ledger");
+    let source_members = source.members(room).expect("read the source members");
+    let archive = export_whole(&source);
+
+    let (_dest_dir, dest) = open_later_vault();
+    let dest_owner = owner_proof(&dest);
+    dest.import_whole_vault_archive_from_as_owner(Cursor::new(&archive), &dest_owner)
+        .expect("the first owner import succeeds");
+    assert_eq!(
+        dest.membership_ledger(room)
+            .expect("read the restored ledger"),
+        source_ledger,
+        "the first restore lands the source ledger"
+    );
+
+    let repeat = dest
+        .import_whole_vault_archive_from_as_owner(Cursor::new(&archive), &dest_owner)
+        .expect("the repeat owner import succeeds");
+    let repeat_summary =
+        serde_json::to_value(&repeat.retained_side_rows).expect("the repeat summary serializes");
+    for (table, unchanged) in [
+        ("CONVERSATION_MEMBERSHIP_ROW", 2),
+        ("CONVERSATION_MEMBERSHIP_SEQ", 1),
+        ("CONVERSATION_ROLE_GRANT", 1),
+    ] {
+        assert_eq!(
+            table_count(&repeat_summary, table, "unchanged_live_rows"),
+            Some(unchanged),
+            "the repeat owner import reports {unchanged} unchanged live {table} rows; an absent field means it counted no live outcome: {repeat_summary}"
+        );
+        assert_eq!(
+            table_count(&repeat_summary, table, "installed_rows"),
+            Some(0),
+            "the repeat owner import installs no {table} row; an absent field means it counted no live outcome: {repeat_summary}"
+        );
+    }
+    assert_eq!(
+        dest.membership_ledger(room)
+            .expect("read the ledger after the repeat"),
+        source_ledger,
+        "the repeat keeps the two-row ledger"
+    );
+    assert_eq!(
+        dest.members(room)
+            .expect("read the members after the repeat"),
+        source_members,
+        "the repeat keeps owen and yuki current"
+    );
+    assert_eq!(
+        dest.members(room)
+            .expect("read the members after the repeat"),
+        vec![owen, yuki],
+        "owen and yuki stay current after the repeat"
+    );
+    assert_admin_semantics(&dest, room, owen, yuki, "the destination after the repeat");
+}
+
+#[test]
+fn a_member_who_left_stays_out_after_the_owner_restore() {
+    let (_source_dir, source) = open_source_vault();
+    let now = source.now_recorded_at();
+    let (room, owen, yuki) = seat_room(
+        &source,
+        TimeRange {
+            start: now,
+            end: now,
+        },
+        now,
+    );
+    let owner = source
+        .ensure_embedded_owner_actor()
+        .expect("the source names its embedded owner actor");
+    source
+        .leave_member(
+            room,
+            yuki,
+            WriteActor::new(owner, EdgeActorClass::Human),
+            now + 1,
+        )
+        .expect("yuki leaves the room");
+    let source_ledger = source
+        .membership_ledger(room)
+        .expect("read the source ledger");
+    assert_eq!(
+        source_ledger.len(),
+        3,
+        "the source ledger holds two joins and one leave"
+    );
+    assert_eq!(
+        source_ledger
+            .iter()
+            .map(|row| (row.person, row.action))
+            .collect::<Vec<_>>(),
+        vec![
+            (owen, MembershipAction::Join),
+            (yuki, MembershipAction::Join),
+            (yuki, MembershipAction::Leave),
+        ],
+        "the source ledger joins owen and yuki, then leaves yuki"
+    );
+    assert_eq!(
+        source.members(room).expect("read the source members"),
+        vec![owen],
+        "only owen reads current on the source"
+    );
+    let archive = export_whole(&source);
+    let source_rows = retained_rows(&archive);
+    let source_row_tuples = rows_for(&source_rows, "CONVERSATION_MEMBERSHIP_ROW");
+    let source_seq_tuples = rows_for(&source_rows, "CONVERSATION_MEMBERSHIP_SEQ");
+    assert!(
+        rows_for(&source_rows, "CONVERSATION_ROLE_GRANT").is_empty(),
+        "the grant-free source archive holds no role-grant tuple"
+    );
+
+    let (_dest_dir, dest) = open_later_vault();
+    let dest_owner = owner_proof(&dest);
+    let receipt = dest
+        .import_whole_vault_archive_from_as_owner(Cursor::new(&archive), &dest_owner)
+        .expect("the owner import succeeds into a fresh vault");
+    let summary =
+        serde_json::to_value(&receipt.retained_side_rows).expect("the summary serializes");
+    assert_eq!(
+        table_count(&summary, "CONVERSATION_MEMBERSHIP_ROW", "installed_rows"),
+        Some(3),
+        "the owner import reports three installed CONVERSATION_MEMBERSHIP_ROW rows; an absent field means it installed nothing: {summary}"
+    );
+    assert_eq!(
+        table_count(&summary, "CONVERSATION_MEMBERSHIP_SEQ", "installed_rows"),
+        Some(1),
+        "the owner import reports one installed CONVERSATION_MEMBERSHIP_SEQ row; an absent field means it installed nothing: {summary}"
+    );
+    assert!(
+        matches!(
+            table_count(&summary, "CONVERSATION_ROLE_GRANT", "installed_rows"),
+            None | Some(0)
+        ),
+        "the grant-free import installs no CONVERSATION_ROLE_GRANT row: {summary}"
+    );
+
+    let dest_ledger = dest
+        .membership_ledger(room)
+        .expect("read the restored ledger");
+    assert_eq!(
+        dest_ledger.len(),
+        3,
+        "the restored ledger preserves all three rows"
+    );
+    assert_eq!(
+        dest_ledger, source_ledger,
+        "the restored ledger equals the source ledger"
+    );
+    assert_eq!(
+        dest.members(room).expect("read the restored members"),
+        vec![owen],
+        "only owen reads current on the destination"
+    );
+    assert_eq!(
+        dest.conversation_body(room)
+            .expect("read the restored room")
+            .member_ids,
+        vec![owen],
+        "the restored body lists only owen"
+    );
+    let dest_rows = retained_rows(&export_whole(&dest));
+    assert_eq!(
+        rows_for(&dest_rows, "CONVERSATION_MEMBERSHIP_ROW"),
+        source_row_tuples,
+        "the destination archive carries the three row tuples byte for byte"
+    );
+    assert_eq!(
+        rows_for(&dest_rows, "CONVERSATION_MEMBERSHIP_SEQ"),
+        source_seq_tuples,
+        "the destination archive carries the seq tuple byte for byte"
+    );
+}
+
+#[test]
+fn a_destination_that_seats_the_room_itself_keeps_its_own_ledger() {
+    let (_source_dir, source) = open_source_vault();
+    let (room, owen, yuki) =
+        seat_room_with_join_at(&source, ENTITY_OCCURRED, ENTITY_LEARNED_AT, SOURCE_JOIN_AT);
+    let source_ledger = source
+        .membership_ledger(room)
+        .expect("read the source ledger");
+    assert_eq!(
+        source_ledger.len(),
+        2,
+        "the source ledger holds two join rows"
+    );
+    assert!(
+        source_ledger.iter().all(|row| row.at == SOURCE_JOIN_AT),
+        "the source ledger joins at its own time"
+    );
+    let archive = export_whole(&source);
+    let source_rows = retained_rows(&archive);
+    let source_row_tuples = rows_for(&source_rows, "CONVERSATION_MEMBERSHIP_ROW");
+    let source_seq_tuples = rows_for(&source_rows, "CONVERSATION_MEMBERSHIP_SEQ");
+
+    let (_dest_dir, dest) = open_later_vault();
+    let (dest_room, dest_owen, dest_yuki) =
+        seat_room_with_join_at(&dest, ENTITY_OCCURRED, ENTITY_LEARNED_AT, DEST_JOIN_AT);
+    assert_eq!(dest_room, room, "the destination seats the same room id");
+    assert_eq!(dest_owen, owen, "the destination seats the same owen id");
+    assert_eq!(dest_yuki, yuki, "the destination seats the same yuki id");
+    let dest_pre_ledger = dest
+        .membership_ledger(room)
+        .expect("read the destination ledger before the import");
+    assert_eq!(
+        dest_pre_ledger.len(),
+        2,
+        "the destination ledger holds two join rows before the import"
+    );
+    assert!(
+        dest_pre_ledger.iter().all(|row| row.at == DEST_JOIN_AT),
+        "the destination ledger joins at its own later time"
+    );
+    assert_ne!(
+        dest_pre_ledger, source_ledger,
+        "the two ledgers differ by their join times before the import"
+    );
+    assert_eq!(
+        dest.members(room).expect("read the destination members"),
+        vec![owen, yuki],
+        "owen and yuki read current on the destination before the import"
+    );
+    let dest_pre_rows = retained_rows(&export_whole(&dest));
+    let dest_pre_row_tuples = rows_for(&dest_pre_rows, "CONVERSATION_MEMBERSHIP_ROW");
+
+    // The room put meets byte-identical rows (same entity stamps, same body), so it never
+    // refuses; only the ledger times differ. Keep the strong success assertion.
+    let dest_owner = owner_proof(&dest);
+    let receipt = dest
+        .import_whole_vault_archive_from_as_owner(Cursor::new(&archive), &dest_owner)
+        .expect("the owner import succeeds over byte-identical room rows");
+    let summary =
+        serde_json::to_value(&receipt.retained_side_rows).expect("the summary serializes");
+    assert_eq!(
+        table_count(&summary, "CONVERSATION_MEMBERSHIP_ROW", "kept_live_rows"),
+        Some(2),
+        "the owner import reports two kept-live CONVERSATION_MEMBERSHIP_ROW rows; an absent field means it counted no live outcome: {summary}"
+    );
+    assert_eq!(
+        table_count(&summary, "CONVERSATION_MEMBERSHIP_ROW", "installed_rows"),
+        Some(0),
+        "the kept-live import installs no CONVERSATION_MEMBERSHIP_ROW row; an absent field means it counted no live outcome: {summary}"
+    );
+    // A differing ledger is kept as a whole, including its byte-identical row count.
+    assert_eq!(
+        table_count(&summary, "CONVERSATION_MEMBERSHIP_SEQ", "kept_live_rows"),
+        Some(1),
+        "the owner import reports one kept-live CONVERSATION_MEMBERSHIP_SEQ row: {summary}"
+    );
+    assert_eq!(
+        table_count(&summary, "CONVERSATION_MEMBERSHIP_SEQ", "installed_rows"),
+        Some(0),
+        "the kept-live import installs no CONVERSATION_MEMBERSHIP_SEQ row; an absent field means it counted no live outcome: {summary}"
+    );
+
+    assert_eq!(
+        dest.membership_ledger(room)
+            .expect("read the destination ledger after the import"),
+        dest_pre_ledger,
+        "the destination keeps its own two-row ledger"
+    );
+    assert_ne!(
+        dest.membership_ledger(room)
+            .expect("read the destination ledger after the import"),
+        source_ledger,
+        "the destination ledger is not the source ledger"
+    );
+    assert_eq!(
+        dest.members(room)
+            .expect("read the destination members after the import"),
+        vec![owen, yuki],
+        "owen and yuki stay current on the destination"
+    );
+    let dest_post_rows = retained_rows(&export_whole(&dest));
+    let dest_post_row_tuples = rows_for(&dest_post_rows, "CONVERSATION_MEMBERSHIP_ROW");
+    assert_eq!(
+        dest_post_row_tuples.len(),
+        4,
+        "the destination keeps both live and retained row values after a kept-live import"
+    );
+    assert!(
+        dest_post_row_tuples.contains(&source_row_tuples[0])
+            && dest_post_row_tuples.contains(&source_row_tuples[1])
+            && dest_post_row_tuples.contains(&dest_pre_row_tuples[0])
+            && dest_post_row_tuples.contains(&dest_pre_row_tuples[1]),
+        "the destination archive holds its live tuples and the retained source tuples byte for byte"
+    );
+    assert_eq!(
+        rows_for(&dest_post_rows, "CONVERSATION_MEMBERSHIP_SEQ"),
+        source_seq_tuples,
+        "the seq tuple stays byte-identical after a kept-live import"
+    );
+}
