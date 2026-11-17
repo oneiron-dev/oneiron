@@ -1232,8 +1232,10 @@ impl Vault {
     /// [`Self::adopt_unsigned_task_facts`] in the caller's transaction. It twins every fact
     /// the written-here index holds that this install's carrier did not sign and that does
     /// not prove itself here: an unsigned one, and one an owner's restore landed under
-    /// another machine's signature ([`Self::restore_archived_task_fact_in_txn`]). A twin
-    /// carries this install's signature, so a second call twins nothing.
+    /// another machine's signature ([`Self::restore_archived_task_fact_in_txn`]), or under
+    /// a carrier that names this install's machine without its verified signature (blind
+    /// review round 2 P1, REVIEW-9365). A twin carries this install's signature, so a
+    /// second call twins nothing.
     pub(crate) fn adopt_task_facts_in_txn(&self, wtxn: &mut heed::RwTxn<'_>) -> Result<usize> {
         if !fact_proof::signs_in_txn(self, wtxn)? {
             return Ok(0);
@@ -1254,15 +1256,14 @@ impl Vault {
                 continue;
             }
             let carried = decode_carried_task_authority_fact_body(body)?;
-            if let Some(carrier) = &carried.carrier
-                && (fact_proof::carried_by_this_install_in_txn(self, wtxn, carrier)?
-                    || proof.proves(
-                        &fact_ref,
-                        &encode_task_authority_fact_body(&carried.fact),
-                        carrier,
-                    ))
-            {
-                continue;
+            if let Some(carrier) = &carried.carrier {
+                let unsigned = encode_task_authority_fact_body(&carried.fact);
+                if fact_proof::signed_by_this_install_in_txn(
+                    self, wtxn, &fact_ref, &unsigned, carrier,
+                )? || proof.proves(&fact_ref, &unsigned, carrier)
+                {
+                    continue;
+                }
             }
             // The same fact on a new row: it counts exactly when the
             // indexed row did, so it asks no door's rule again.
