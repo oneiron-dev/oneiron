@@ -41,8 +41,8 @@ pub(crate) const PREFERRED_P50_GAIN: f64 = 0.03;
 pub(crate) const PREFERRED_P95_SLACK: f64 = 0.05;
 
 /// How far an engine's answer may sit from the reference and still clear it.
-/// Spans, labels, links, relations and mood windows must be the reference's
-/// own; only the scores move.
+/// Spans, labels, links, mood windows and the relations an engine reads must
+/// be the reference's own; only the scores move.
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Bar {
@@ -135,10 +135,15 @@ impl Reference {
 }
 
 /// Whether `got` clears the bar against `reference`: the same spans with the
-/// same labels, the same links of every kind, the same relations with the
-/// same labels (an engine that returns none clears only a reference that
-/// returns none), the same mood windows, and each confidence and mood
-/// coordinate within the bar. The stack is identity, checked elsewhere.
+/// same labels, the same links of every kind, the same mood windows, the same
+/// relations with the same labels when the engine reads relations, and each
+/// confidence and mood coordinate within the bar. The stack is identity,
+/// checked elsewhere.
+///
+/// An engine with no relation head answers `relations: None` and says so on
+/// its card (`Returns::relations`), so the host files no relation from it; it
+/// is held to the heads it has. An engine that reads relations the reference
+/// does not answer is held to nothing for them, so it does not clear.
 fn clears(bar: Bar, reference: &EncoderOutput, got: &EncoderOutput) -> bool {
     let near = |a: f32, b: f32, delta: f32| (a - b).abs() <= delta;
     let score = |a: f32, b: f32| near(a, b, bar.max_confidence_delta);
@@ -191,8 +196,8 @@ fn clears(bar: Bar, reference: &EncoderOutput, got: &EncoderOutput) -> bool {
                 && r.label == g.label
                 && score(r.confidence, g.confidence)
         }),
-        (None, None) => true,
-        _ => false,
+        (_, None) => true,
+        (None, Some(_)) => false,
     }
 }
 

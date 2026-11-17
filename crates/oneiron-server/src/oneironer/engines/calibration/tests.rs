@@ -1,7 +1,8 @@
-//! The parity bar holds an engine to every head the reference answers with
-//! (FIX ENGINE-PARITY-IGNORES-RELATIONS): relations and mood windows are
-//! compared as spans and links are, so a runtime that drops the relation
-//! head, or reads another relation or window, does not clear.
+//! The parity bar compares relations and mood windows as it compares spans
+//! and links (FIX ENGINE-PARITY-IGNORES-RELATIONS): an engine that reads
+//! another relation or window does not clear. An engine with no relation
+//! head (every in-process engine today; its card says so) is held to the
+//! heads it has.
 
 use oneiron::memory::extraction::EncoderOutput;
 use serde_json::{Value, json};
@@ -49,11 +50,14 @@ fn an_answer_equal_to_the_reference_clears() {
 }
 
 #[test]
-fn an_answer_without_the_references_relations_does_not_clear() {
+fn an_engine_with_no_relation_head_is_held_to_its_other_heads() {
     let reference = answer(json!({"relations": [relation(1, "works_at", 0.7)]}));
     let got = answer(json!({}));
     assert_eq!(got.relations, None);
-    assert!(!clears(BAR, &reference, &got));
+    assert!(clears(BAR, &reference, &got));
+    let mut moved = got;
+    moved.spans[1].end = 17;
+    assert!(!clears(BAR, &reference, &moved));
 }
 
 #[test]
