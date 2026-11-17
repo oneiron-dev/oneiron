@@ -1344,8 +1344,9 @@ impl OfferLadder {
     /// that time, so a caller can say when. Any other last failure is
     /// returned as it came, as is an outage: every rung resting rests for
     /// its health, so the call ends with its provider's own failure, never a
-    /// rate refusal. Every rung parked, the owner is asked about the spent
-    /// ones.
+    /// rate refusal. A call that met no failure and passed rungs for their
+    /// hours refuses as outside them, with when the first opens. Every rung
+    /// parked, the owner is asked about the spent ones.
     fn unanswered(&self, call: Call<'_>, walk: Walk) -> LlmError {
         self.ask_parked(&walk, call.needs, call.run.principal());
         // The world's own order refused every rung the call met: that
@@ -1387,6 +1388,13 @@ impl OfferLadder {
             }
             .into();
         }
+        // A call that met no failure and passed rungs for their hours: no
+        // rung serves at this hour, until the first of them opens.
+        let closed = if walk.last.is_none() {
+            self.outside_hours_refusal(&walk)
+        } else {
+            None
+        };
         match back.filter(|_| walk.limited()) {
             Some((retry_after, resets_at)) => RetryableLlmError::RateLimited {
                 retry_after,
@@ -1395,6 +1403,7 @@ impl OfferLadder {
             .into(),
             None => walk
                 .last
+                .or(closed)
                 .unwrap_or_else(|| FatalLlmError::InvalidRequest.into()),
         }
     }

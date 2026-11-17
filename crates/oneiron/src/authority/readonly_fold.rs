@@ -13,6 +13,8 @@ use std::ops::ControlFlow;
 use std::sync::{Arc, Mutex, PoisonError};
 
 mod adopted;
+#[cfg(oneiron_test_support)]
+pub(crate) mod adopted_door;
 mod arriving;
 mod held_rows;
 mod row_receipts;

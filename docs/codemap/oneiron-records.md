@@ -543,7 +543,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/memory/key_value/types.rs` | src | s | 3 struct · 4 re-export | KeyValueDeleteReceipt, KeyValueItem, KeyValuePutReceipt | Moved from `crates/oneiron/src/memory/key_value/types.rs` (lib split R2: record types below the lib) |
 | `src/memory/merge_queue_doors/check_receipt.rs` | src | s | 4 struct · 1 re-export | CodeCheckAttemptView, CodeCheckCommandResult, CodeCheckReceiptView, CodeCheckReuseSource | Moved from `crates/oneiron/src/memory/merge_queue_doors/check_receipt.rs` (lib split R2: record types below… |
 | `src/memory/merge_queue_doors/checker_types.rs` | src | s | 1 struct · 2 enum · 5 re-export | MergeQueueCheckState, MergeQueueCheckWorkKind, MergeQueueCheckWorkView | Moved from `crates/oneiron/src/memory/merge_queue_doors/checker_types.rs` (lib split R1: record types below… |
-| `src/memory/merge_queue_doors/mod.rs` | src | s | 3 mod · 12 re-export | — | — |
+| `src/memory/merge_queue_doors/mod.rs` | src | s | 3 mod · 7 re-export | — | — |
 | `src/memory/merge_queue_doors/types.rs` | src | s | 5 struct · 4 re-export | MergeQueueBatchView, MergeQueueObservation, MergeQueuePathView, MergeQueuePointersView, MergeQueueRequeueView | Moved from `crates/oneiron/src/memory/merge_queue_doors/types.rs` (lib split R2: record types below the lib) |
 | `src/memory/mod.rs` | src | s | 24 mod · 273 re-export | — | — |
 | `src/memory/origin_doors/mod.rs` | src | s | 1 mod · 30 re-export | — | — |
