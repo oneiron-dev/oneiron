@@ -273,12 +273,14 @@ pub(crate) fn row_phone_marked(raw: &[u8]) -> bool {
 /// they are a peer's, so they withhold their own row and never fail the
 /// lane), word sources that do not resolve, an association that does not
 /// decode, and a named word source not held here each count as phone words.
-/// So does a birth's input that is gone from this vault or held only as an
-/// erased phone-kind shell (`erased_phone_kind_shell`): the words of a row
-/// made from it stay in that row (FIX 8192), and the erase took the mark
-/// that said whose they were (#8609 review r1 P1). An edge or a dependency
-/// naming a row gone from this vault carries no words to judge, as in the
-/// source-audience walk.
+/// So does a birth's input that is gone from this vault or held only as the
+/// shell a delete keeps of a row of any kind (`erased_row_shell`): the words
+/// of a row made from it stay in that row (FIX 8192), and the erase took
+/// what said whose they were: a phone row's mark (#8609 review r1 P1), or
+/// the body and birth through which a deleted CLAIM learnt from a caller's
+/// TURN named it (review r2 P1: a CLAIM learnt from that CLAIM). An edge or
+/// a dependency naming a row gone from this vault carries no words to
+/// judge, as in the source-audience walk.
 ///
 /// # Errors
 ///
@@ -346,7 +348,7 @@ impl PhoneLineagePass {
                 walk.missing.insert(row);
                 continue;
             };
-            let shell = erased_phone_kind_shell(&raw);
+            let shell = erased_row_shell(&raw);
             if shell && walk.erased_shell(row) {
                 return Ok(true);
             }
@@ -379,7 +381,7 @@ impl PhoneLineagePass {
 /// none is); a phone row's own lineage stays in its thread, so the walk
 /// stops at it. `None` in the cases [`phone_words_in`] counts as phone
 /// words (a lineage that does not read here, a named word source or a
-/// birth's input not held here or held only as an erased phone-kind shell)
+/// birth's input not held here or held only as the shell a delete keeps)
 /// and for a phone row whose mark names no thread.
 ///
 /// # Errors
@@ -411,7 +413,7 @@ pub(crate) fn phone_lineage_threads_in(
         }
         while let Some(source) = walk.pending.pop() {
             if let Some(stored) = vault.get_raw_in(txn, &source)? {
-                if erased_phone_kind_shell(&stored) && walk.erased_shell(source) {
+                if erased_row_shell(&stored) && walk.erased_shell(source) {
                     return Ok(None);
                 }
                 next = Some((source, stored));
@@ -451,17 +453,17 @@ struct LineageWalk {
     seen: std::collections::BTreeSet<EntityId>,
     pending: Vec<EntityId>,
     /// Rows whose words a walked row holds (a named word source, a birth's
-    /// input): each must be held here, and not as an erased phone-kind shell.
+    /// input): each must be held here, and not as the shell a delete keeps.
     required: std::collections::BTreeSet<EntityId>,
     /// Rows found gone from this vault.
     missing: std::collections::BTreeSet<EntityId>,
-    /// Rows found held only as an erased phone-kind shell.
+    /// Rows found held only as the shell a delete keeps.
     shells: std::collections::BTreeSet<EntityId>,
 }
 
 impl LineageWalk {
     /// Queues `row` once; true when it must be held here and is not, or is
-    /// held only as an erased phone-kind shell.
+    /// held only as the shell a delete keeps.
     fn push(&mut self, row: EntityId, required: bool) -> bool {
         if required {
             self.required.insert(row);
@@ -475,7 +477,7 @@ impl LineageWalk {
         false
     }
 
-    /// Remembers `row` as held only as an erased phone-kind shell; true when
+    /// Remembers `row` as held only as the shell a delete keeps; true when
     /// its words must be held here.
     fn erased_shell(&mut self, row: EntityId) -> bool {
         self.shells.insert(row);
@@ -483,7 +485,7 @@ impl LineageWalk {
     }
 
     /// Queues every row of `lineage`; true when a named row is gone or held
-    /// only as an erased phone-kind shell.
+    /// only as the shell a delete keeps.
     fn push_all(&mut self, lineage: RowLineage) -> bool {
         let mut gone = false;
         for row in lineage.named {
@@ -507,13 +509,14 @@ struct RowLineage {
     recorded: Vec<EntityId>,
 }
 
-/// Whether `raw` is the header-only shell a delete keeps of a row of a kind
-/// a phone mark binds: the mark went with the body, so whether its words
-/// were a caller's no longer reads here (#8609 review r1 P1).
-fn erased_phone_kind_shell(raw: &[u8]) -> bool {
+/// Whether `raw` is the header-only shell a delete keeps of a row, of any
+/// kind: what said whose its words were went with its body and its birth.
+/// A phone row's mark goes so (#8609 review r1 P1), and so does the lineage
+/// of a CLAIM learnt from a caller's TURN, which a row learnt from that
+/// CLAIM still holds the words of (review r2 P1).
+fn erased_row_shell(raw: &[u8]) -> bool {
     raw.len() == crate::batch::ENTITY_METADATA_HEADER_LEN
-        && crate::batch::EntityMetadataHeader::parse(raw)
-            .is_some_and(|header| phone_marked_kind(header.entity_type))
+        && crate::batch::EntityMetadataHeader::parse(raw).is_some()
 }
 
 /// The lineage of the row `raw` of `id`; `None` when the row is a phone row
