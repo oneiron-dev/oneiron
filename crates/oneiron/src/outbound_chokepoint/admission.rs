@@ -875,9 +875,12 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
         )?;
     }
     if let Some(admission) = invite_admission {
+        // The commit's own verdict (a passport that moved since the
+        // admission, a booking identity it cannot bind) reaches the facade as
+        // the admission's does, never as a stale state.
         admission
             .commit_in_txn(vault, &mut wtxn, dedupe_now)
-            .map_err(|_| IntentLedgerError::InvalidInput("calendar.invite publication failed"))?;
+            .map_err(IntentLedgerError::Calendar)?;
     }
     if let Some(key) = dedupe_key.as_deref() {
         dedupe::reserve(vault, &mut wtxn, key, &pending.id, dedupe_now)?;
@@ -992,7 +995,7 @@ fn calendar_admission_at_in_txn(
         &prepared.payload,
         now,
     )
-    .map_err(|_| IntentLedgerError::InvalidInput("calendar.invite failed calendar admission"))
+    .map_err(IntentLedgerError::Calendar)
 }
 
 /// An absent binding means an ordinary non-step effect. A present binding is

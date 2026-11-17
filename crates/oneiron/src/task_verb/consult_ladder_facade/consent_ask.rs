@@ -25,7 +25,7 @@ use crate::task_verb::{
     ConsultPayload, TaskAskDefault, TaskAskQuestion, TaskAskSpec, TaskAskTarget,
 };
 
-use super::super::ask_record;
+use super::super::{ask_intent, ask_record};
 use super::finish::frozen_case_in;
 
 /// What every case ask's intent key starts with:
@@ -34,22 +34,17 @@ use super::finish::frozen_case_in;
 const INTENT_PREFIX: &str = "consult_case/";
 
 /// The case intent of `case_ref`, which a case ask's anchor is derived for.
-fn case_intent(case_ref: EntityId) -> String {
-    format!("{INTENT_PREFIX}{}", case_ref.to_hex())
+pub(crate) fn case_intent(case_ref: EntityId) -> String {
+    ask_intent::join(INTENT_PREFIX, &[case_ref.to_hex().as_str()])
 }
 
 /// The case intent and anchor `intent_key` names when it is the intent of
 /// the case ask kept under `id`; `None` for every other ask.
-pub(in crate::task_verb) fn case_ask_anchor(
-    intent_key: &str,
-    id: EntityId,
-) -> Option<(String, EntityId)> {
-    let (case_hex, anchor_hex) = intent_key.strip_prefix(INTENT_PREFIX)?.split_once('/')?;
-    let case_ref = EntityId::from_hex(case_hex).ok()?;
-    let anchor = EntityId::from_hex(anchor_hex).ok()?;
-    let intent = case_intent(case_ref);
-    (case_ref == id && format!("{intent}/{}", anchor.to_hex()) == intent_key)
-        .then_some((intent, anchor))
+pub(crate) fn case_ask_anchor(intent_key: &str, id: EntityId) -> Option<(String, EntityId)> {
+    let [case_hex, anchor_hex] = ask_intent::split::<2>(intent_key, INTENT_PREFIX)?;
+    let case_ref = ask_intent::id(case_hex)?;
+    let anchor = ask_intent::id(anchor_hex)?;
+    (case_ref == id).then(|| (case_intent(case_ref), anchor))
 }
 
 impl Memory<'_> {
