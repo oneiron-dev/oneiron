@@ -37,6 +37,14 @@ pub const TOPOLOGY_UNREAD: &str = "gate.deny.derive.topology_unread";
 /// table or seal refuses.
 pub const TOPOLOGY_REJECTED: &str = "gate.deny.derive.topology_rejected";
 
+/// The refusal of an applied facet judgment whose fork would close a claim
+/// restricting someone's access (`federation::claim_removal_widens_in`: a
+/// delivery window, an opt-out, a do-not-contact, a held campaign member,
+/// ...): the fork supersedes its origin. A derivation is no person's act,
+/// and lifting a restriction is a widening, which asks a person (RULING
+/// RESTRICTION-CLOSE-BY-DERIVE-ARCHIVE-TOPOLOGY; canon #widen-world-floor).
+pub const TOPOLOGY_RESTRICTION: &str = "gate.deny.derive.topology_restriction";
+
 /// The reason a landed topology judgment's receipt names.
 const TOPOLOGY_ALLOWED: &str = "gate.allow.derive.topology";
 
@@ -224,6 +232,28 @@ pub(super) fn stage_topology_in_txn(
         .any(Option::is_none)
     {
         return refuse_about(vault, txn, context, about, TOPOLOGY_UNREAD);
+    }
+    // An applied facet forks each claim it assigns and the fork closes the
+    // origin: the same set the apply door forks, read in this write. A claim
+    // the actor does not read is refused as unread, so the refusal tells it
+    // nothing about that claim.
+    if item.apply
+        && let IdentityTopologyOp::Facet(facet) = &item.op
+    {
+        let origins = crate::identity_topology::facet_fork_origins_in_txn(
+            &vault.store,
+            txn,
+            &facet.entity,
+            &facet.reassignment,
+        )?;
+        for origin in origins {
+            let Some(body) = super::supersede::claim_body_in(&read, txn, origin)? else {
+                return refuse_about(vault, txn, context, about, TOPOLOGY_UNREAD);
+            };
+            if crate::federation::claim_removal_widens_in(vault, txn, &body)? {
+                return refuse_about(vault, txn, context, about, TOPOLOGY_RESTRICTION);
+            }
+        }
     }
     let seal = TopologySeal::decision(ActAuthority::Agent(granted));
     let write = IdentityOpWrite {
