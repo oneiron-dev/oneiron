@@ -50,7 +50,7 @@ impl Memory<'_> {
                 VadAnnotationSource::UserSelfReport => "user_stated",
             }
             .to_owned(),
-            scope: input.scope.clone(),
+            scope: input.scope.clone().into(),
             sensitivity: input.sensitivity,
             evidence_turn_refs: vec![turn.to_hex()],
             valid_from: body.valid_from,
