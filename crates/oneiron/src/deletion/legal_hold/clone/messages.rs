@@ -7,7 +7,9 @@
 //! Nothing here writes live-vault state or follows another reference: an
 //! asset or a model-call record is not part of this extent. An owner's hold
 //! copies stored records of any type through the same rows
-//! (`RowKind::Records`).
+//! (`RowKind::Records`), with what an erase would take beside them: a NOTE's
+//! text plane, which NOTE storage keeps under no entity document head, and a
+//! file-plane ASSET's body file (review P1s on #8423).
 
 use std::io::{self, Read};
 use std::ops::Bound;
@@ -29,7 +31,7 @@ use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::memory::MessageResultAttachment;
 use crate::ports::{DocumentSlot, DocumentUpdateKey};
-use crate::registry::ENTITY_TYPE_MESSAGE;
+use crate::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_NOTE};
 use crate::side_table::{self, Named, Raw, SideTable};
 use crate::store::ManifestDbs;
 use crate::store::owned_body::OwnedBody;
@@ -75,6 +77,10 @@ const REVISION_IDENTITIES: SideTable<[u8; 16], Vec<u8>, Raw> =
 
 /// The family label a held result body's stored key is digested under.
 pub(super) const RESULT_BODY_FAMILY: &str = "code_run:raw_output";
+
+/// The family label a held ASSET body file's source key, the ASSET's entity
+/// key, is digested under.
+const ASSET_BODY_FAMILY: &str = "asset:body_file";
 
 /// One exact stored row of a selected record.
 struct RecordRow {
@@ -167,6 +173,9 @@ pub(super) fn capture_rows_in_txn<S: CaptureSink>(
                 &check,
             )?;
         }
+        if kind == RowKind::Records {
+            asset_body_file(collector, vault, txn, id, &rows[0].value, revision, &check)?;
+        }
         // Only a MESSAGE carries a result body: every id of a host capture,
         // and the MESSAGE rows of an owner capture.
         let carries_body = match kind {
@@ -227,10 +236,51 @@ pub(super) fn capture_rows_in_txn<S: CaptureSink>(
     })
 }
 
+/// Streams the body file of a file-plane ASSET whose stored row is `row`,
+/// under the snapshot that found the row: an erase releases that file, and
+/// the row keeps only its manifest (review P1 on #8423). The file is pinned
+/// while it streams, and checked against the manifest's length and BLAKE3 as
+/// its end is read, so a capture of other bytes fails before its summary. Any
+/// other record, an inline ASSET's included, has no body file.
+fn asset_body_file<S: CaptureSink>(
+    collector: &mut Collector<'_, S>,
+    vault: &Vault,
+    txn: &RoTxn<'_>,
+    id: &[u8; 16],
+    row: &[u8],
+    revision: [u8; 32],
+    check: impl Fn() -> Result<()>,
+) -> Result<()> {
+    if EntityMetadataHeader::parse(row).map(|header| header.entity_type) != Some(ENTITY_TYPE_ASSET)
+    {
+        return Ok(());
+    }
+    let entity = EntityId::from_bytes(*id)?;
+    let Some(manifest) = crate::store::asset_file_of_raw_in_txn(&vault.store, txn, &entity, row)?
+    else {
+        return Ok(());
+    };
+    let _pin = vault.pin_result_body(manifest.facts.blake3);
+    let mut body = vault.admitted_asset_file_in_txn(txn, &manifest)?;
+    collector.component(
+        SourceComponent::AssetBodyFile,
+        CaptureSource::Message(*id),
+        ASSET_BODY_FAMILY,
+        &id[..],
+        revision,
+        manifest.facts.len,
+        manifest.facts.blake3,
+        &mut body,
+        &check,
+    )?;
+    body.finish()
+}
+
 /// The exact stored rows of record `id`: its entity row first, then its
-/// document head and that slot's rows and updates, then its outgoing edges,
-/// then its revision ledger. A host capture takes MESSAGE rows only; an
-/// owner's hold takes a stored record of any type.
+/// document head and that slot's rows and updates (a NOTE's: its text
+/// plane's head rows, then each of its head documents' rows), then its
+/// outgoing edges, then its revision ledger. A host capture takes MESSAGE
+/// rows only; an owner's hold takes a stored record of any type.
 fn record_rows(
     vault: &Vault,
     txn: &RoTxn<'_>,
@@ -263,6 +313,7 @@ fn record_rows(
         value,
     }];
     let entity = EntityId::from_bytes(*id)?;
+    let mut slots = Vec::new();
     if let Some((key, value, slot)) =
         crate::entity_doc::record_head_row_in_txn(store, txn, &entity)?
     {
@@ -272,29 +323,31 @@ fn record_rows(
             key,
             value,
         });
-        for (family, table) in SLOT_ROWS {
-            if let Some(value) = table.get_bytes(store, txn, &slot)? {
-                rows.push(RecordRow {
-                    component: SourceComponent::MessageDocument,
-                    family,
-                    key: table.key_bytes(&slot),
-                    value,
-                });
-            }
-        }
-        let mut prefix = slot.to_hex().into_bytes();
-        prefix.push(b':');
-        for row in UPDATES.iter_raw_from(store, txn, &prefix)? {
-            let (suffix, value) = row?;
-            let mut key = UPDATES.decl().prefix.to_vec();
-            key.extend_from_slice(&suffix);
+        slots.push(slot);
+    }
+    // A NOTE keeps its text in its head's document through NOTE storage,
+    // which no entity document head names (review P1 on #8423).
+    if EntityMetadataHeader::parse(&rows[0].value).map(|header| header.entity_type)
+        == Some(ENTITY_TYPE_NOTE)
+    {
+        let (plane, heads) = crate::note::documents::text_plane_rows_in_txn(store, txn, entity)?;
+        for (family, key, value) in plane {
             rows.push(RecordRow {
                 component: SourceComponent::MessageDocument,
-                family: "document:update",
+                family,
                 key,
                 value,
             });
         }
+        for head in heads {
+            let slot = DocumentSlot::of(head);
+            if !slots.contains(&slot) {
+                slots.push(slot);
+            }
+        }
+    }
+    for slot in &slots {
+        slot_rows(store, txn, slot, &mut rows)?;
     }
     let edges = store
         .edges_out()
@@ -313,6 +366,40 @@ fn record_rows(
     }
     revision_rows(store, txn, id, &entity, &mut rows)?;
     Ok(rows)
+}
+
+/// Document slot `slot`'s rows, as stored: each single-row family it holds,
+/// then its updates in key order.
+fn slot_rows(
+    store: &crate::store::Store,
+    txn: &RoTxn<'_>,
+    slot: &DocumentSlot,
+    rows: &mut Vec<RecordRow>,
+) -> Result<()> {
+    for (family, table) in SLOT_ROWS {
+        if let Some(value) = table.get_bytes(store, txn, slot)? {
+            rows.push(RecordRow {
+                component: SourceComponent::MessageDocument,
+                family,
+                key: table.key_bytes(slot),
+                value,
+            });
+        }
+    }
+    let mut prefix = slot.to_hex().into_bytes();
+    prefix.push(b':');
+    for row in UPDATES.iter_raw_from(store, txn, &prefix)? {
+        let (suffix, value) = row?;
+        let mut key = UPDATES.decl().prefix.to_vec();
+        key.extend_from_slice(&suffix);
+        rows.push(RecordRow {
+            component: SourceComponent::MessageDocument,
+            family: "document:update",
+            key,
+            value,
+        });
+    }
+    Ok(())
 }
 
 /// Message `id`'s revision ledger rows, as stored: the history document that
