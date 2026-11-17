@@ -231,8 +231,6 @@ impl HypnosRecoveryBoxHold {
                 }
             }
             Err(error) => {
-                // The box may have taken the wait this report sent.
-                follow.reported = None;
                 if follow.warned {
                     tracing::debug!(
                         kind = ?error.kind(),
@@ -304,8 +302,6 @@ impl HypnosRecoveryBoxHold {
                 }
             }
             Err(error) => {
-                // The box may have taken the choice this hold sent.
-                follow.acknowledged = None;
                 if follow.hold_warned == Some(fact) {
                     tracing::debug!(
                         kind = ?error.kind(),
