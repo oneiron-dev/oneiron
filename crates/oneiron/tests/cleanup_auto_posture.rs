@@ -12,11 +12,11 @@
 
 use oneiron::attempt_queue::AttemptId;
 use oneiron::receipt::{ReceiptKind, ReceiptQuery, ReceiptRecord};
+use oneiron::setting::{SetSetting, SetSettingOutcome, SettingCaller};
 use oneiron::store::GateDecisionId;
 use oneiron::vault_cleanup::{
     CleanupDecision, CleanupPosture, CleanupRevertOutcome, CleanupRunRevertAnswer, cleanup_digests,
     cleanup_posture, cleanup_proposals, cleanup_runs, is_vault_cleanup_receipt, run_vault_cleanup,
-    set_cleanup_posture,
 };
 use oneiron::{ClaimSource, EntityId, TimeRange, Vault, VaultConfig};
 
@@ -56,6 +56,21 @@ fn owner(vault: &Vault) -> oneiron::consent::AuthenticatedOwner {
     vault
         .authenticate_owner(actor, "principal:owner", true, GateDecisionId::now())
         .expect("authenticate owner")
+}
+
+/// The owner sets the cleanup posture: the Setting key `cleanup.posture`,
+/// which only the vault's owner sets (SETTING-PLAIN PLAIN-2 deleted the
+/// posture's table and its setter).
+fn set_cleanup_posture(vault: &Vault, posture: CleanupPosture) -> TestResult {
+    let outcome = vault.set_setting(
+        SettingCaller::Owner(&owner(vault)),
+        SetSetting::vault_value("cleanup.posture", serde_json::to_value(posture)?),
+    )?;
+    assert!(
+        matches!(outcome, SetSettingOutcome::Applied { .. }),
+        "the owner's posture applies: {outcome:?}"
+    );
+    Ok(())
 }
 
 /// Every cleanup digest receipt the vault projects, newest first.
