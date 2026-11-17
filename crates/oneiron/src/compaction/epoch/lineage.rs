@@ -25,9 +25,13 @@ use crate::store::Store;
 /// conversation's turns within a SESSION. A lineage's epochs number from 1
 /// and its turn ranges continue one another; another lineage's epochs are
 /// never its prior, in the same SESSION or not.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+///
+/// A floor row's key: the SESSION's 16 bytes, then the conversation's for a
+/// conversation's lineage.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, SideKey)]
 pub(crate) struct EpochScope {
     pub(crate) session: EntityId,
+    #[side_key(rest)]
     pub(crate) conversation: Option<EntityId>,
 }
 
@@ -46,30 +50,6 @@ impl EpochScope {
             session,
             conversation: Some(conversation),
         }
-    }
-}
-
-/// A floor row's key: the SESSION's 16 bytes, then the conversation's for a
-/// conversation's lineage.
-impl SideKey for EpochScope {
-    fn encode_into(&self, out: &mut Vec<u8>) {
-        self.session.encode_into(out);
-        if let Some(conversation) = &self.conversation {
-            conversation.encode_into(out);
-        }
-    }
-
-    fn decode_key(bytes: &[u8]) -> Option<Self> {
-        let (session, rest) = bytes.split_at_checked(16)?;
-        let conversation = if rest.is_empty() {
-            None
-        } else {
-            Some(EntityId::decode_key(rest)?)
-        };
-        Some(Self {
-            session: EntityId::decode_key(session)?,
-            conversation,
-        })
     }
 }
 
