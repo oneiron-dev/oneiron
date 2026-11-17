@@ -33,6 +33,8 @@ mod retry;
 mod settled;
 mod source;
 mod step_claim;
+#[cfg(oneiron_test_support)]
+pub(crate) use step_claim::request_params_hash_for_test;
 // FIX 4816: the memo index's keys, admission, lookup and deindex.
 mod step_index;
 mod step_only;

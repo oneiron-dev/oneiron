@@ -57,6 +57,8 @@ pub mod score_scraper;
 pub mod seat;
 mod step;
 pub use step::public as model_step;
+#[cfg(oneiron_test_support)]
+pub(crate) use step::request_params_hash_for_test;
 pub mod tagger;
 
 pub use step::{

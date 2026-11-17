@@ -4,6 +4,8 @@
 //! activation offer, but this module never edits a route or a historical answer.
 
 mod evidence;
+#[cfg(oneiron_test_support)]
+pub(crate) use evidence::trial_measurements_hash_for_test;
 mod progress;
 mod types;
 pub use progress::TrialProgressCounts;

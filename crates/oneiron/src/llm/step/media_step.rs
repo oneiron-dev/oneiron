@@ -11,7 +11,7 @@ use super::execute::{BudgetTrapCause, budget_trap};
 use super::{DurableStepContext, DurableStepResult, StepOutcome, TrapRef};
 use crate::entity_id::bytes_to_hex_lower;
 use crate::llm::media::{MediaReplayKey, MediaRequest, MediaResponse};
-use crate::llm::{BudgetDenied, DreamerFailureDecision, LlmError, LlmResult, canonical_json_bytes};
+use crate::llm::{BudgetDenied, DreamerFailureDecision, LlmError, LlmResult};
 
 /// The replay key of `request`, sent as `ctx`'s step.
 ///
@@ -64,7 +64,7 @@ where
     SendCall: FnOnce(MediaRequest) -> CallFuture,
     CallFuture: Future<Output = LlmResult<MediaResponse>>,
 {
-    let step_hash = *blake3::hash(&canonical_json_bytes(&request)?).as_bytes();
+    let step_hash = request.canonical_hash()?;
     match send(request).await {
         Ok(response) => Ok(MediaStepOutcome::Finished(response)),
         Err(LlmError::BudgetDenied(
