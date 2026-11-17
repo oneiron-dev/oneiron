@@ -50,4 +50,5 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/lib.rs` | src | m | 1 struct · 13 fn · 1 const · 8 re-export | Oneiron | The UniFFI binding of the Oneiron SDK: the shared Rust client, language-bound |
 | `src/native_limit_questions.rs` | src | s | 1 struct · 1 fn | NativeLimitQuestion | `Oneiron::native_limit_questions`: the engine `[limits]` rows this client's own vault crossed, served from… |
 | `src/pairing.rs` | src | s | 6 struct · 3 enum | CheckpointPin, CheckpointPinBinding, CheckpointPinKey, CheckpointPinPolicy, CheckpointPinPosture, CheckpointPinRoot, CheckpointPinSignature, CheckpointPinSuite +1 | The checkpoint pin `pair` returns (OF-469, FIX 3376), lifted whole from… |
-| `src/receipt_page.rs` | src | s | 1 struct | FacadeReceiptPage | `vault.receipts`'s page as UniFFI crosses it (FIX 10186): the receipts as [`FacadeReceipt`] records, and the… |
+| `src/receipt_page.rs` | src | s | 2 struct · 1 enum | FacadeActorAttribution, FacadeActorAttributionKind, FacadeReceiptPage | `vault.receipts`'s page as UniFFI crosses it (FIX 10186): the receipts as [`FacadeReceipt`] records, the… |
+| `tests/uniffi_receipt_page_actor_table.rs` | test | s | — | — | The native `vault.receipts` page carries the actor table ([UNIFFI-RECEIPT-PAGE-ACTOR-TABLE]): `actors` names… |

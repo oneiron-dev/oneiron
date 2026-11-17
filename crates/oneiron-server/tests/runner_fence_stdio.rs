@@ -524,7 +524,9 @@ fn a_stdio_connectors_endpoint_names_its_settings_and_its_env_holds_no_credentia
         endpoint.starts_with("stdio:notes:"),
         "the endpoint names the connector: {endpoint}"
     );
-    assert_eq!(endpoint.len(), "stdio:notes:".len() + 16);
+    // 32 hex (128 bits): no config writer finds two settings with one
+    // endpoint.
+    assert_eq!(endpoint.len(), "stdio:notes:".len() + 32);
     assert_eq!(endpoint, plain.installed_endpoint("notes"));
     assert_ne!(
         endpoint,
