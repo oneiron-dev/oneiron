@@ -108,6 +108,7 @@ mod files;
 mod grant;
 mod grant_doors;
 mod grant_redeem;
+pub(crate) mod setting_keys;
 mod storage;
 mod types;
 mod verification;
