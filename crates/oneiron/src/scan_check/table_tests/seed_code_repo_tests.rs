@@ -22,9 +22,39 @@ pub(super) fn seed(vault: &Vault, scan: EngineScan) -> Option<(usize, Read<'_>)>
                 }),
             ))
         }
-        // NO-FIXTURE: peel count lives in private `origin::document_ingress::read_files`,
-        // reachable only via a full receive-pack push landing with attribution.
-        EngineScan::OriginTagPeelSteps => None,
+        EngineScan::OriginTagPeelSteps => {
+            let (dir, root, head) = git_seeded_repo("peel", 1);
+            for (name, target) in [("peel-inner", "HEAD"), ("peel-outer", "peel-inner")] {
+                git_run(
+                    &root,
+                    &[
+                        "-c",
+                        "user.name=Oneiron",
+                        "-c",
+                        "user.email=oneiron@example.invalid",
+                        "tag",
+                        "-a",
+                        name,
+                        "-m",
+                        name,
+                        target,
+                    ],
+                );
+            }
+            let tip =
+                crate::git_wire::GitOid::parse_hex(git_run(&root, &["rev-parse", "peel-outer"]))
+                    .expect("outer tag");
+            let wire = crate::git_wire::GitWire::new(vault).expect("wire");
+            let repo = git_open_repo(&wire, &root, &head);
+            Some((
+                1,
+                Box::new(move || {
+                    let _keep = &dir;
+                    let wire = crate::git_wire::GitWire::new(vault)?;
+                    Ok(crate::origin::peel_tag_files_for_scan_tests(&wire, &repo, &tip)?.len())
+                }),
+            ))
+        }
         EngineScan::GitWirePlanObjects => {
             // One commit pins the repo; 3 blobs written and counted per call.
             let (dir, root, head) = git_seeded_repo("base", 1);
