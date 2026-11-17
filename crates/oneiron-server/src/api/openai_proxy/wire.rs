@@ -184,6 +184,11 @@ fn upstream_class(failure: &LlmError) -> (StatusCode, &'static str, &'static str
             "api_error",
             "world_route_not_admitted",
         ),
+        LlmError::Retryable(RetryableLlmError::OutsideHours { .. }) => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            "api_error",
+            "outside_hours",
+        ),
         LlmError::Retryable(_) => (StatusCode::BAD_GATEWAY, "api_error", "upstream_error"),
     }
 }

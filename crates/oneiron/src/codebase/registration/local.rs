@@ -8,6 +8,8 @@
 //! portable id. The first registration mints the CODE id; a later call that
 //! names it, or names the same folder in the same PROJECT, updates that
 //! record. The folder is config, never identity: a moved folder keeps its id.
+//! A delegate's first registration names the agent as its registrant; a
+//! later update, by anyone, keeps the registrant the record holds.
 
 use std::path::Path;
 
@@ -76,7 +78,7 @@ impl Vault {
         let parts = local_registration_parts(folder, editable)?;
         let (bound, written) = self.with_write_txn_grouped(|txn| {
             owner.revalidate_in_txn(self, txn)?;
-            self.register_local_in_txn(txn, project, anchor, &parts)
+            self.register_local_in_txn(txn, project, anchor, &parts, None)
         })?;
         Ok(self.settled_local_registration(bound, written))
     }
@@ -87,8 +89,8 @@ impl Vault {
     /// `codebase.registration.agent_may_register` are checked in the writer,
     /// and the agent's own verified `credential` must read the PROJECT (a
     /// call with none reads nothing), then the registration writes as the
-    /// owner's does.
-    /// `anchor` and `editable` behave as the owner's.
+    /// owner's does. A registration this call mints names `agent` as its
+    /// registrant. `anchor` and `editable` behave as the owner's.
     ///
     /// # Errors
     /// `FORBIDDEN` when the setting reads false at the agent or no live Grant
@@ -113,7 +115,7 @@ impl Vault {
                     NOT_A_PROJECT.into(),
                 )));
             }
-            self.register_local_in_txn(txn, project, anchor, &parts)
+            self.register_local_in_txn(txn, project, anchor, &parts, Some(agent))
                 .map_err(MemoryError::from)
         })?;
         Ok(self.settled_local_registration(bound, written))
@@ -121,12 +123,15 @@ impl Vault {
 
     /// The registration [`Self::register_local_repository_as_owner`] and
     /// [`Self::register_local_repository_as_delegate`] write, once admitted.
+    /// `registrant` is the delegate agent of the call; only a fresh record
+    /// takes it, and a held one keeps its own.
     fn register_local_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         project: EntityId,
         anchor: Option<EntityId>,
         parts: &LocalRegistrationParts,
+        registrant: Option<EntityId>,
     ) -> Result<(RegisteredRepository, bool)> {
         let LocalRegistrationParts {
             path,
@@ -191,14 +196,20 @@ impl Vault {
                 (repo, None)
             }
         };
-        let registration = match (
-            named,
-            stored.as_ref().and_then(|body| body.registration.clone()),
-        ) {
+        let kept = stored.as_ref().and_then(|body| body.registration.clone());
+        // The registrant is whoever minted the registration, so a repeat
+        // still changes nothing.
+        let registrant = if stored.is_some() {
+            kept.as_ref().and_then(CodeRepoRegistration::registrant)
+        } else {
+            registrant
+        };
+        let registration = match (named, kept) {
             (Some(named), _) => named.clone(),
             (None, Some(kept)) => kept.with_source(source.clone()),
             (None, None) => CodeRepoRegistration::new(source.clone(), Vec::<String>::new())?,
-        };
+        }
+        .with_registrant(registrant);
         let body = CodeArtifactBody::new(
             format!("The registered local repository at {path}."),
             *blake3::hash(repo.as_bytes()).as_bytes(),
