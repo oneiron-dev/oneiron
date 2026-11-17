@@ -29,6 +29,7 @@ impl FacadeApiError {
                     legal_hold: None,
                     room_join_hold: None,
                     pending: None,
+                    reap_pause: None,
                     program_steps: Vec::new(),
                 },
                 narrowing: None,
@@ -142,6 +143,9 @@ impl From<MemoryError> for FacadeApiError {
             // FIX 10011: the owner's model pin stands and no offered seat
             // serves it. The owner's setting refuses it, as `error_map` does.
             oneiron_contracts::memory::MEMORY_CODE_MODEL_PIN_UNAVAILABLE => StatusCode::CONFLICT,
+            // L3-39: this machine holds no bytes of the revision a memory
+            // fork names; the row stands, so the state refuses, not the call.
+            oneiron_contracts::memory::MEMORY_CODE_HISTORY_NOT_HELD => StatusCode::CONFLICT,
             // FIX 8189: an OpenAI proxy call the caller's own deadline cut,
             // as its raw door answers it.
             crate::api::openai_proxy::TIMEOUT_CODE => StatusCode::GATEWAY_TIMEOUT,
@@ -251,6 +255,10 @@ impl From<MemoryError> for FacadeApiError {
         } else if browser_doors::browser_refusal_status(&error.code).is_some() {
             tracing::info!(code = %error.code, error = %error.message, "browser verb refused");
         }
+        // L9-61: a reap pause names its capacity bound and the self-host
+        // route here as on every door that serves it.
+        let reap_pause = (error.code == crate::managed::WRITES_FROZEN_TAG)
+            .then(|| Box::new(crate::managed::REAP_PAUSE_BOUND));
         Self {
             status,
             hook_notice: matches!(
@@ -280,6 +288,7 @@ impl From<MemoryError> for FacadeApiError {
                     legal_hold: error.legal_hold,
                     room_join_hold: error.room_join_hold,
                     pending: error.pending,
+                    reap_pause,
                     program_steps: Vec::new(),
                 },
                 narrowing: error.read_receipt,

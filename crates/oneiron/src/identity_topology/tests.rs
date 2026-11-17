@@ -173,7 +173,7 @@ fn force_edge(vault: &Vault, src: EntityId, kind: EdgeKind, tgt: EntityId) {
 /// The owner pairs `writer` into `receiver`'s vault as their own machine, so
 /// `receiver` counts `writer`'s seals (H161).
 fn pair_as_mine(receiver: &Vault, writer: &Vault) {
-    use crate::authority::{MachineOwnership, MachineRole};
+    use crate::authority::{ActSurface, MachineOwnership, MachineRole};
     let issuer = crate::test_support::test_host_issuer();
     receiver.ensure_host_root_slip(&issuer).expect("host root");
     let person = crate::vault::embedded_owner_actor_id().expect("owner id");
@@ -205,10 +205,11 @@ fn pair_as_mine(receiver: &Vault, writer: &Vault) {
         .expect("enrolment request");
     receiver
         .enroll_machine(
-            &issuer,
             &owner,
+            ActSurface::ThisInstall,
             &request,
             MachineRole::Owned(MachineOwnership::Yours),
+            None,
         )
         .expect("pair as yours");
 }
@@ -1472,6 +1473,7 @@ fn put_identity_event_record(vault: &Vault, event_id: EntityId, record: &StoredI
                         end: record.at,
                     },
                     learned_at: record.at,
+                    row_version: None,
                     data: body.clone(),
                     allow_maintenance: true,
                     allow_reserved_predicate: true,
@@ -2796,6 +2798,7 @@ fn replicated_resolution_is_validated_against_the_same_door_rule() {
                 actor: PROPOSAL_SCOPE_ACTOR_UNATTRIBUTED.to_owned(),
             },
             amended_body: None,
+            applied: None,
         },
     };
     let error = {
@@ -2835,6 +2838,7 @@ fn replicated_resolution_is_validated_against_the_same_door_rule() {
                 actor: PROPOSAL_SCOPE_ACTOR_UNATTRIBUTED.to_owned(),
             },
             amended_body: None,
+            applied: None,
         },
     };
     let error = {

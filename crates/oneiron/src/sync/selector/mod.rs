@@ -60,8 +60,6 @@ mod tombstones;
 mod validators;
 pub(crate) use note_admission::admit_note_in_txn;
 pub(in crate::sync) use text_egress::document_sources_readable_in_txn;
-// FIX [LIBTEST-QUARANTINE-SYNC-SELECTOR-TESTS]: the lib test target's type check fails here (8 errors: E0061 x4, E0063 x4); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;
 

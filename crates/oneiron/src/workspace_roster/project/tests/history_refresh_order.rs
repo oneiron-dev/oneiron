@@ -27,6 +27,7 @@ fn deliver_together(vault: &Vault, rows: &[(EntityId, &ProjectRecord)], at: u64)
                 kind,
                 TimeRange { start: at, end: at },
                 at,
+                None,
                 &revision.canonical_bytes()?,
             );
         }

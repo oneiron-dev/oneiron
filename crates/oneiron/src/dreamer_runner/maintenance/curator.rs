@@ -478,11 +478,24 @@ pub(crate) fn finding_lifts_restriction_in(
     txn: &heed::RoTxn<'_>,
     finding: &crate::claim::ClaimBody,
 ) -> Result<bool> {
-    if finding.predicate != PROPOSAL_PREDICATE {
+    proposal_lifts_restriction_in(vault, txn, &finding.predicate, &finding.value)
+}
+
+/// [`finding_lifts_restriction_in`] on a finding's `predicate` and `value`
+/// before any body of it is stored: a conflict's retained alternative
+/// carries both, and a Keep that approves it applies its rung as it lands.
+/// Read by the conflict settlement, so a Keep of such a finding by no person
+/// is refused (RULING RESTRICTION-CLOSE-BY-CURATOR-APPROVAL).
+pub(crate) fn proposal_lifts_restriction_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    predicate: &str,
+    value: &Value,
+) -> Result<bool> {
+    if predicate != PROPOSAL_PREDICATE {
         return Ok(false);
     }
-    let Some(value) = finding
-        .value
+    let Some(value) = value
         .as_str()
         .and_then(|text| serde_json::from_str::<serde_json::Value>(text).ok())
     else {
