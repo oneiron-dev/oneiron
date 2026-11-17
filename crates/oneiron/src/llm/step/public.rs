@@ -50,7 +50,8 @@ const WORKER: &str = "model-step-door";
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::llm::step::public::{
-    ModelStepReceipt, ModelStepReceiptRequest, ModelStepSubmitRequest,
+    DecisionStepQuestion, DecisionStepSubmit, ModelStepReceipt, ModelStepReceiptRequest,
+    ModelStepSubmitRequest, StepSubmit, StepSubmitAnswer,
 };
 
 /// Submit or resume the caller's own logical step. Successes AND terminal
