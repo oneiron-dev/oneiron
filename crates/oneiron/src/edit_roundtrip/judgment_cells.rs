@@ -281,6 +281,33 @@ mod tests {
     }
 
     #[test]
+    fn inline_rich_text_runs_read_as_their_joined_text() -> Result<()> {
+        // Excel writes formatted inline text as runs (<is><r><t>), each with
+        // optional run properties; the cell's value is the runs' text joined.
+        // A phonetic reading (<rPh>) is not part of the value.
+        let ask = bundle("Data & Co", None, CellValue::Text("Ready & Yes".into()));
+        let blank = package("<worksheet><sheetData/></worksheet>", false);
+        for rich in [
+            r#"<worksheet><sheetData><row r="2"><c r="B2" t="inlineStr"><is><r><t>Ready &amp; Yes</t></r></is></c></row></sheetData></worksheet>"#,
+            r#"<worksheet><sheetData><row r="2"><c r="B2" t="inlineStr"><is><r><rPr><b/></rPr><t>Ready</t></r><r><t xml:space="preserve"> &amp; Yes</t></r></is></c></row></sheetData></worksheet>"#,
+            r#"<worksheet><sheetData><row r="2"><c r="B2" t="inlineStr"><is><r><t>Ready &amp; </t></r><r><t>Yes</t></r><rPh sb="0" eb="5"><t>No</t></rPh></is></c></row></sheetData></worksheet>"#,
+        ] {
+            verify_sheet_answer_bytes(&ask, Some(&blank), Some(&package(rich, false)))?;
+        }
+        // Runs that spell another value do not ground the answer.
+        for other in [
+            r#"<worksheet><sheetData><row r="2"><c r="B2" t="inlineStr"><is><r><t>Ready</t></r></is></c></row></sheetData></worksheet>"#,
+            r#"<worksheet><sheetData><row r="2"><c r="B2" t="inlineStr"><is><r><t>Ready &amp; </t></r><rPh><t>Yes</t></rPh></is></c></row></sheetData></worksheet>"#,
+        ] {
+            assert!(
+                verify_sheet_answer_bytes(&ask, Some(&blank), Some(&package(other, false)))
+                    .is_err()
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
     fn joins_named_sheet_relationship_and_shared_string_not_sheet_position() -> Result<()> {
         let source = package(
             r#"<worksheet><sheetData><row r="2"><c r="B2" t="s"><v>1</v></c></row></sheetData></worksheet>"#,
