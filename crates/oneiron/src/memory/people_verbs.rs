@@ -184,6 +184,7 @@ impl Memory<'_> {
         let ceiling = (!applied.deny_all).then_some(applied.max_sensitivity_band);
         people.set_about(&mut |person| self.vault.person_about_sourced(person, ceiling))?;
         people.disclose_names(self.vault, read.actor_key())?;
+        read.charge_served(people.rows().iter().map(|row| row.person));
         Ok(people)
     }
 
@@ -194,7 +195,8 @@ impl Memory<'_> {
     /// caller whose credential grants it no read names no one at all. The
     /// table labels a page already served, never admits it: a caller this
     /// read refuses (an unbound handle whose actor the vault does not hold)
-    /// keeps its page and names no one too.
+    /// keeps its page and names no one too. Each PERSON it names counts
+    /// toward the caller's read exposure (L8-65), as the roster's do.
     pub(crate) fn actor_attributions(
         &self,
         actors: BTreeSet<String>,
@@ -220,6 +222,7 @@ impl Memory<'_> {
                     &mut |person| read.is_entity_readable(&person),
                 )?;
                 people.disclose_names(self.vault, read.actor_key())?;
+                read.charge_served(people.rows().iter().map(|row| row.person));
                 people
             }
             None => People::default(),

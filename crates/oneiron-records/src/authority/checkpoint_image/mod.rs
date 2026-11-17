@@ -66,13 +66,19 @@ use serde::Serialize;
 /// 42: a `RevokeDevice` of an owner key counts only with an owner key's proof, as its signer or a
 /// cosign; the custodial root alone never ends one, and every row above such a revoke is refused
 /// with it (row HOSTED-ROOT-REVOKES-OWNER-KEY).
-/// 43: a counted root appointment folds its line as its own ancestry's fold did, and a
+/// 43: each covered row's sequence floor comes from the covered rows, not from the order
+/// they arrived in, and a row that only takes away is never floored (FIX
+/// [SEQUENCE-FLOOR-DELIVERY-ORDER], [CHECKPOINT-RAW-FLOOR-CLEARED-ROW]); below its floor a
+/// row that grants counts in full, a world key record included, and the image records its fork
+/// as a `SequenceFork` issue (Engine RULINGs SEQ-FLOOR-SHAPE-S = B, SEQ-FLOOR-S-WORLD-KEY-FLOOR
+/// = A).
+/// 44: a counted root appointment folds its line as its own ancestry's fold did, and a
 /// rootless roster names itself (OWNER-ANCHOR-ROOT-RECOVERY).
-/// 44: the fold keeps every key it ever held as the owner's, and a vault that held one asks for
+/// 45: the fold keeps every key it ever held as the owner's, and a vault that held one asks for
 /// an owner key until the owner switches it back to web sign-in (the owner's ruling AUTH-5); an
 /// image's projected fold carries what the vault asks of its owner and how each act of the web
 /// sign-in setting landed.
-pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 44;
+pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 45;
 
 /// The domain every encoded image starts with.
 pub const AUTHORITY_CHECKPOINT_V2_DOMAIN: &[u8] = b"oneiron/authority/checkpoint/v2";
