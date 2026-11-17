@@ -1,22 +1,16 @@
-//! The owner restore lands customer hold protection before its dependent markers and history.
+//! The owner restore lands customer hold rows before their history.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 use super::events::EVENTS;
-use super::notice::retaining_holds_in_txn;
-use super::use_limit::USE_LIMITS;
-use super::{
-    ERASE_LINKS, EraseLink, HeldKey, ROWS, TARGETS, check_opaque, distinct, partition_hold_id,
-};
+use super::{HeldKey, ROWS, TARGETS, check_opaque, distinct, partition_hold_id};
 use crate::batch::export::archive_side_install::{
     ArchivedSideRowOutcome, decode_archived_row, install_archived_row,
 };
 use crate::batch::export::{
     ArchiveRetainedSideRow, OwnerArchiveRestorePermit, RetainedSideHeldBackReason,
 };
-use crate::deletion::{
-    LegalHold, LegalHoldEvent, LegalHoldKind, LegalHoldReason, LegalHoldTarget, LegalHoldUseLimit,
-};
+use crate::deletion::{LegalHold, LegalHoldEvent, LegalHoldKind, LegalHoldTarget};
 use crate::entity_id::EntityId;
 use crate::error::{Error, RecordError, Result};
 use crate::side_table::{self, SideKey};
@@ -30,10 +24,6 @@ enum DecodedRow {
     Hold(EntityId, LegalHold),
     /// A target index envelope, never an independent write source.
     Target((HeldKey, EntityId)),
-    /// A record's privacy-erase use marker.
-    UseLimit(EntityId, LegalHoldUseLimit),
-    /// A record's confirmed-erase completion links.
-    EraseLink(EntityId, EraseLink),
     /// A customer hold event at its archived sequence.
     Event((EntityId, u64), LegalHoldEvent),
 }
@@ -48,14 +38,6 @@ fn decode_row(
         }
         name if name == side_table::LEGAL_HOLD_TARGET.name => {
             decode_archived_row(&TARGETS, row).map(|(key, ())| DecodedRow::Target(key))
-        }
-        name if name == side_table::LEGAL_HOLD_USE_LIMIT.name => {
-            decode_archived_row(&USE_LIMITS, row)
-                .map(|(key, value)| DecodedRow::UseLimit(key, value))
-        }
-        name if name == side_table::LEGAL_HOLD_ERASE_LINK.name => {
-            decode_archived_row(&ERASE_LINKS, row)
-                .map(|(key, value)| DecodedRow::EraseLink(key, value))
         }
         name if name == side_table::LEGAL_HOLD_EVENT.name => {
             decode_archived_row(&EVENTS, row).map(|(key, value)| DecodedRow::Event(key, value))
@@ -97,8 +79,9 @@ fn valid_hold(key: &EntityId, hold: &LegalHold) -> bool {
     true
 }
 
-/// Lands hold rows, use limits, erase links and ordered events. No hold indexes
-/// its targets (LEGAL-HOLD-USE = B), so an archived target index row lands nowhere.
+/// Lands hold rows and their ordered events. No hold indexes its targets or keeps
+/// a record in the vault (LEGAL-HOLD-USE = B), so an archived target index row
+/// lands nowhere.
 pub(crate) fn land_archived_legal_hold_rows_in_txn(
     vault: &crate::Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -170,59 +153,6 @@ pub(crate) fn land_archived_legal_hold_rows_in_txn(
         outcomes[index] = match ROWS.get(vault, txn, &key.1)? {
             None => HeldBack(MissingCompanion),
             Some(_) => HeldBack(InconsistentCompanion),
-        };
-    }
-
-    for (index, row) in decoded.iter().enumerate() {
-        let Ok(DecodedRow::UseLimit(key, limit)) = row else {
-            continue;
-        };
-        if *key != limit.record || limit.reason != LegalHoldReason::PrivacyEraseKept {
-            outcomes[index] = HeldBack(InvalidValue);
-            continue;
-        }
-        if !crate::vault::live_entity_row_in_txn(&vault.store, txn, key)?.is_live() {
-            outcomes[index] = HeldBack(MissingLiveEntity);
-            continue;
-        }
-        if retaining_holds_in_txn(vault, txn, key)?.is_empty() {
-            outcomes[index] = HeldBack(MissingCompanion);
-            continue;
-        }
-        if USE_LIMITS.get_bytes(vault, txn, key)?.is_none() {
-            crate::dreamer_consolidation::mark_person_about_dropped_in_txn(&vault.store, txn, key)?;
-        }
-        outcomes[index] = install_archived_row(&USE_LIMITS, vault, txn, permit, key, &rows[index])?;
-    }
-
-    for (index, row) in decoded.iter().enumerate() {
-        let Ok(DecodedRow::EraseLink(key, link)) = row else {
-            continue;
-        };
-        // The link writer never stores an empty or repeated hold list.
-        let named: BTreeSet<_> = link.holds.iter().collect();
-        if link.holds.is_empty() || named.len() != link.holds.len() {
-            outcomes[index] = HeldBack(InvalidValue);
-            continue;
-        }
-        let mut backed = true;
-        for hold in &link.holds {
-            let landed = primary_inputs
-                .get(hold)
-                .is_some_and(|primary| matches!(outcomes[*primary], Installed | Unchanged));
-            if !landed
-                || !ROWS
-                    .get(vault, txn, hold)?
-                    .is_some_and(|row| row.kind == LegalHoldKind::Customer)
-            {
-                backed = false;
-                break;
-            }
-        }
-        outcomes[index] = if backed {
-            install_archived_row(&ERASE_LINKS, vault, txn, permit, key, &rows[index])?
-        } else {
-            HeldBack(MissingCompanion)
         };
     }
 

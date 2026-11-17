@@ -8,14 +8,12 @@
 //! backup expiry and key retirement run as they would without it. A hold is
 //! not an in-place retention pin or an erase-completion gate.
 //!
-//! The target index beside a hold stays empty for every new write
-//! ([`put_hold_in_txn`]); every byte-destroying path still reads it inside
-//! the transaction that destroys ([`Store::reject_legal_holds_in_txn`]), and
-//! only a cooperative restriction refuses now. Several holds may name one
-//! record; each lifts on its own.
+//! Every byte-destroying path still calls [`Store::reject_legal_holds_in_txn`]
+//! inside the transaction that destroys; only a cooperative restriction
+//! refuses there now. Several holds may name one record; each lifts on its
+//! own.
 //!
-//! Customer holds, their log, confirmed-erase links and use limits are
-//! canonical rows a restore keeps live. Host-order holds and their log sit
+//! Customer holds and their log are canonical rows a restore keeps live. Host-order holds and their log sit
 //! under `legal_hold:host:`, a runtime prefix no checkpoint image carries, so
 //! an owner backup or export never holds an order or its reference (C2). The
 //! owner reads a host order's rows through the one permitted view
@@ -25,65 +23,39 @@
 pub(crate) mod archive;
 pub(crate) mod events;
 mod notice;
-mod pending;
-mod settlement;
 mod use_limit;
 
 pub(crate) use use_limit::{
-    CooperativeRestriction, CooperativeRestrictionKey, cooperative_restriction_active_in_txn,
-    held_in_txn, legal_hold_held_in_txn, legal_hold_use_limit_in_txn, partition_held_in_txn,
+    CooperativeRestriction, CooperativeRestrictionKey, any_cooperative_restriction_in_txn,
+    cooperative_restriction_active_in_txn, held_in_txn, partition_held_in_txn,
     records_under_cooperative_restriction_in_txn, rows_keep_record, use_limit_in_txn,
 };
-use use_limit::{USE_LIMITS, keep_use_limited_in_txn};
 
-use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Mutex, PoisonError};
 
 use heed::{RoTxn, RwTxn};
-use serde::{Deserialize, Serialize};
 
 pub(crate) use events::{host_events_in_txn, log_in_txn, owner_events_in_txn};
-pub(crate) use pending::{
-    PendingErase, PendingEraseKind, drop_pending_erase_in_txn, due_erases_in_txn,
-    erases_without_act_in_txn, pending_erase_in_txn, put_pending_erase_in_txn,
-    set_pending_veto_act_in_txn, withdraw_pending_erase_in_txn,
-};
-pub(crate) use settlement::RefusalBatch;
-#[cfg(feature = "sync")]
-pub(crate) use settlement::is_hold_refusal;
 
 use crate::deletion::{
-    LEGAL_HOLD_LOG_RETENTION_MONTHS, LegalHold, LegalHoldActorKind, LegalHoldEventKind,
-    LegalHoldKind, LegalHoldReason, LegalHoldTarget,
+    HoldCloneCapture, LEGAL_HOLD_LOG_RETENTION_MONTHS, LegalHold, LegalHoldActorKind,
+    LegalHoldEvent, LegalHoldEventKind, LegalHoldKind, LegalHoldReason, LegalHoldTarget,
 };
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::side_table::{self, Named, Raw, SideTable, SideTableDbs};
+use crate::side_table::{self, Named, SideTable, SideTableDbs};
 use crate::store::Store;
 
-/// The index spelling of what a hold holds: `1` then the id for a record or
+/// The 17-byte spelling of a hold target: `1` then the id for a record or
 /// a claim's partition (the two hold together), all zero for the
 /// claim-free partition.
 type HeldKey = [u8; 17];
 type Rows = SideTable<EntityId, LegalHold, Named>;
-type Targets = SideTable<(HeldKey, EntityId), (), Raw>;
 
 /// Customer holds. Key: id16 (hold).
 const ROWS: Rows = SideTable::new(&side_table::LEGAL_HOLD_ROW);
-/// What each standing customer hold keeps in the vault. Key: held key (17) +
-/// id16 (hold).
-const TARGETS: Targets = SideTable::new(&side_table::LEGAL_HOLD_TARGET);
 /// Host-order holds. Key: id16 (hold).
 const HOST_ROWS: Rows = SideTable::new(&side_table::LEGAL_HOLD_HOST_ROW);
-/// The customer holds an owner's confirm lifted from a record, until its
-/// deletion receipt completes. Key: id16 (record).
-const ERASE_LINKS: SideTable<EntityId, EraseLink, Named> =
-    SideTable::new(&side_table::LEGAL_HOLD_ERASE_LINK);
-#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct EraseLink {
-    holds: Vec<EntityId>,
-}
 
 const fn rows_of(kind: LegalHoldKind) -> Rows {
     match kind {
@@ -106,11 +78,6 @@ fn held_key(target: &LegalHoldTarget) -> HeldKey {
         }
         LegalHoldTarget::GatePartition(None) => [0; 17],
     }
-}
-
-/// Whether `target` holds the record or claim partition `id`.
-pub(crate) fn names_id(target: &LegalHoldTarget, id: &EntityId) -> bool {
-    held_key(target) == id_key(id.as_bytes())
 }
 
 /// Who a hold event names (C3).
@@ -146,22 +113,6 @@ impl HoldActor {
     pub(crate) fn privacy(mut self, privacy_erase: bool) -> Self {
         self.privacy_erase = privacy_erase;
         self
-    }
-}
-
-/// One refused delete, waiting for its hold log.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct RefusalNote {
-    hold: EntityId,
-    target: LegalHoldTarget,
-    actor: HoldActor,
-    at: u64,
-}
-
-impl RefusalNote {
-    /// The same refusal, whenever it happened.
-    fn same(&self, other: &Self) -> bool {
-        self.hold == other.hold && self.target == other.target && self.actor == other.actor
     }
 }
 
@@ -208,59 +159,6 @@ impl ProspectiveWake {
     }
 }
 
-/// Refusals not yet in a hold log, outside any door's own attempt
-/// (`settlement`). The refusing transaction rolls back, so the door that owns
-/// it logs them once that writer has ended, before it returns
-/// ([`Store::flush_legal_hold_refusals_settled`]). A note a failed log write
-/// put back waits here for the next flush. Never persisted.
-#[derive(Debug, Default)]
-pub(crate) struct LegalHoldRefusals(Mutex<Vec<RefusalNote>>);
-
-impl LegalHoldRefusals {
-    fn note(&self, note: RefusalNote) {
-        let mut queue = self.0.lock().unwrap_or_else(PoisonError::into_inner);
-        // One delete checks before publication and again in its writer.
-        if queue.iter().any(|queued| queued.same(&note)) {
-            return;
-        }
-        queue.push(note);
-    }
-
-    fn is_empty(&self) -> bool {
-        self.0
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .is_empty()
-    }
-
-    fn take(&self) -> Vec<RefusalNote> {
-        std::mem::take(&mut *self.0.lock().unwrap_or_else(PoisonError::into_inner))
-    }
-
-    /// Puts back refusals a failed flush did not write.
-    fn restore(&self, notes: Vec<RefusalNote>) {
-        for note in notes {
-            self.note(note);
-        }
-    }
-}
-
-/// The ids of the holds that keep `key` in the vault: none any more. No hold
-/// indexes its targets here (LEGAL-HOLD-USE = B, ARCH-0038
-/// #legal-hold-clone-ruling), so new writes leave the index empty; an update
-/// drops any row an older write left.
-fn standing_on_in_txn(
-    dbs: &impl SideTableDbs,
-    txn: &RoTxn<'_>,
-    key: &HeldKey,
-) -> Result<Vec<EntityId>> {
-    Ok(TARGETS
-        .scan_keys(dbs, txn, key)?
-        .into_iter()
-        .map(|(_, hold)| hold)
-        .collect())
-}
-
 /// The hold row `id`, customer or host-order.
 pub(crate) fn hold_in_txn(
     dbs: &impl SideTableDbs,
@@ -282,30 +180,6 @@ pub(crate) fn holds_in_txn(dbs: &impl SideTableDbs, txn: &RoTxn<'_>) -> Result<V
         .collect();
     holds.extend(HOST_ROWS.scan(dbs, txn)?.into_iter().map(|(_, hold)| hold));
     Ok(holds)
-}
-
-/// The holds that keep `target` in the vault: the standing customer holds
-/// that name it.
-pub(crate) fn holds_on_in_txn(
-    dbs: &impl SideTableDbs,
-    txn: &RoTxn<'_>,
-    target: &LegalHoldTarget,
-) -> Result<Vec<LegalHold>> {
-    standing_on_in_txn(dbs, txn, &held_key(target))?
-        .iter()
-        .map(|id| standing_row_in_txn(dbs, txn, id))
-        .collect()
-}
-
-fn standing_row_in_txn(
-    dbs: &impl SideTableDbs,
-    txn: &RoTxn<'_>,
-    id: &EntityId,
-) -> Result<LegalHold> {
-    let Some(hold) = hold_in_txn(dbs, txn, id)? else {
-        return Err(Error::CorruptedIndex("legal hold target"));
-    };
-    Ok(hold)
 }
 
 /// An opaque reference: ids only, never free text (C3).
@@ -338,20 +212,13 @@ pub(crate) fn distinct(targets: Vec<LegalHoldTarget>) -> Result<Vec<LegalHoldTar
 }
 
 /// Writes `hold`. No hold indexes its targets (LEGAL-HOLD-USE = B, ARCH-0038
-/// #legal-hold-clone-ruling): an update drops every index row an older write
-/// left for the hold's previous targets.
+/// #legal-hold-clone-ruling).
 pub(crate) fn put_hold_in_txn(
     dbs: &impl SideTableDbs,
     txn: &mut RwTxn<'_>,
     hold: &LegalHold,
 ) -> Result<()> {
-    let rows = rows_of(hold.kind);
-    if let Some(old) = rows.get(dbs, txn, &hold.hold_id)? {
-        for target in &old.targets {
-            TARGETS.delete(dbs, txn, &(held_key(target), hold.hold_id))?;
-        }
-    }
-    rows.put(dbs, txn, &hold.hold_id, hold)
+    rows_of(hold.kind).put(dbs, txn, &hold.hold_id, hold)
 }
 
 impl Store {
@@ -361,20 +228,16 @@ impl Store {
     /// (LEGAL-HOLD-USE = B, ARCH-0038 #legal-hold-clone-ruling): every hold
     /// keeps its sealed copy outside the vault, and erases, deletes and
     /// backup expiry run as they would without it. Only a cooperative
-    /// restriction refuses now, with absence (`EntityNotFound`).
+    /// restriction refuses now, with absence (`EntityNotFound`), and no
+    /// refusal is logged, so `_actor` names no one in any log.
     pub(crate) fn reject_legal_holds_in_txn(
         &self,
         txn: &RoTxn<'_>,
         ids: &[EntityId],
-        actor: &HoldActor,
+        _actor: &HoldActor,
     ) -> Result<()> {
         for id in ids {
-            self.reject_held_key_in_txn(
-                txn,
-                &id_key(id.as_bytes()),
-                Some(LegalHoldTarget::Record(*id)),
-                actor,
-            )?;
+            self.reject_held_key_in_txn(txn, Some(LegalHoldTarget::Record(*id)))?;
         }
         Ok(())
     }
@@ -383,250 +246,28 @@ impl Store {
     /// no actor.
     pub(crate) fn reject_legal_hold_in_txn(&self, txn: &RoTxn<'_>, id: &[u8; 16]) -> Result<()> {
         let target = EntityId::from_bytes(*id).ok().map(LegalHoldTarget::Record);
-        self.reject_held_key_in_txn(txn, &id_key(id), target, &HoldActor::UNATTRIBUTED)
+        self.reject_held_key_in_txn(txn, target)
     }
 
+    /// Absence while a cooperative restriction stands on the record `target`
+    /// names; no hold refuses.
     fn reject_held_key_in_txn(
         &self,
         txn: &RoTxn<'_>,
-        key: &HeldKey,
         target: Option<LegalHoldTarget>,
-        actor: &HoldActor,
     ) -> Result<()> {
-        let holds = standing_on_in_txn(self, txn, key)?;
-        if holds.is_empty() {
-            if let Some(LegalHoldTarget::Record(record)) = target
-                && cooperative_restriction_active_in_txn(self, txn, &record)?
-            {
-                return Err(Error::EntityNotFound);
-            }
-            return Ok(());
-        }
-        let now = self.clock.now_recorded_at();
-        for id in holds {
-            standing_row_in_txn(self, txn, &id)?;
-            if let Some(target) = target {
-                let note = RefusalNote {
-                    hold: id,
-                    target,
-                    actor: actor.clone(),
-                    at: now,
-                };
-                settlement::note(self, note);
-            }
-        }
-        Err(notice::held_refusal())
-    }
-
-    /// Writes the queued refusals to their hold logs in one raw write of its
-    /// own, never through the group commit (whose writer logs its own). Only
-    /// on a thread that holds no writer. A failed write puts them back.
-    /// Returns how many were written.
-    pub(crate) fn flush_legal_hold_refusals_now(&self) -> Result<u64> {
-        let notes = self.legal_hold_refusals.take();
-        if notes.is_empty() {
-            return Ok(0);
-        }
-        let hosted = hosts_bytes(self);
-        let written = self.env.write_txn().and_then(|mut txn| {
-            let written = flush_refusals_in_txn(self, &mut txn, &notes, hosted)?;
-            txn.commit()?;
-            Ok(written)
-        });
-        if written.is_err() {
-            self.legal_hold_refusals.restore(notes);
-        }
-        written
-    }
-
-    /// The door's flush, once the writer that refused has ended: its refusals
-    /// reach their logs before the door returns. A failed write leaves them
-    /// queued for the next flush and never replaces the door's own result.
-    /// A thread still holding a session segment permit leaves them queued
-    /// too: that permit is taken under the base writer, never before it.
-    pub(crate) fn flush_legal_hold_refusals_settled(&self) {
-        if self.legal_hold_refusals.is_empty() || crate::session_overlay::txn_segment_installed() {
-            return;
-        }
-        if let Err(error) = self.flush_legal_hold_refusals_now() {
-            tracing::warn!(
-                error = %error,
-                "legal hold refusals kept for the next flush"
-            );
-        }
-    }
-}
-
-/// Oneiron hosts this vault's bytes: Cloud, or our relay copy of a
-/// self-hosted vault.
-fn hosts_bytes(store: &Store) -> bool {
-    matches!(
-        store.privacy_posture,
-        crate::HostingPrivacyPosture::Hosted | crate::HostingPrivacyPosture::Relay
-    )
-}
-
-/// Writes queued refusals to their hold logs. A refused privacy erasure keeps
-/// the held record for that reason only: where Oneiron hosts the bytes it
-/// gets a use limit under the standing customer holds that keep it (C5, C6,
-/// WILL-PLAN L01 row 03, FIX 8849), and the PEOPLE `about` lines of a fact
-/// it kept hide (FIX 3196). A host order refuses nothing, so it limits no
-/// record's use here: its use limits are its clone's, in the host's
-/// legal-hold store. Returns how many were written.
-pub(crate) fn flush_refusals_in_txn(
-    store: &Store,
-    txn: &mut RwTxn<'_>,
-    notes: &[RefusalNote],
-    hosted: bool,
-) -> Result<u64> {
-    let mut written = 0_u64;
-    for note in notes {
-        // A hold its retention already dropped has no log left.
-        let Some(hold) = hold_in_txn(store, txn, &note.hold)? else {
-            continue;
-        };
-        let reason = if note.actor.privacy_erase {
-            LegalHoldReason::PrivacyEraseKept
-        } else {
-            LegalHoldReason::HeldRecord
-        };
-        log_in_txn(
-            store,
-            txn,
-            &hold,
-            LegalHoldEventKind::DeleteRefused,
-            reason,
-            vec![note.target],
-            &note.actor,
-            note.at,
-            None,
-        )?;
-        if let LegalHoldTarget::Record(record) = note.target
-            && note.actor.privacy_erase
-            && hosted
-            && notice::restricts_use(&hold)
+        if let Some(LegalHoldTarget::Record(record)) = target
+            && cooperative_restriction_active_in_txn(self, txn, &record)?
         {
-            keep_use_limited_in_txn(store, txn, record, note.at)?;
+            return Err(Error::EntityNotFound);
         }
-        written = written.saturating_add(1);
+        Ok(())
     }
-    Ok(written)
 }
 
-/// A privacy erasure request over `records` (C5): returns the records no
-/// customer hold keeps, for the caller to erase, and the held ones it keeps.
-/// Each held record logs a refusal with its reason; where Oneiron hosts the
-/// bytes it is kept under a use limit (C6). It never lifts or skips a hold.
-/// A host order keeps nothing here, so a record only it names is erased.
-pub(crate) fn split_privacy_erase_in_txn(
-    store: &Store,
-    txn: &mut RwTxn<'_>,
-    records: &[EntityId],
-    actor: &HoldActor,
-) -> Result<(Vec<EntityId>, Vec<EntityId>)> {
-    let now = store.clock.now_recorded_at();
-    let hosted = hosts_bytes(store);
-    let actor = actor.clone().privacy(true);
-    let (mut erase, mut kept) = (Vec::new(), Vec::new());
-    for record in records {
-        let target = LegalHoldTarget::Record(*record);
-        let holds = holds_on_in_txn(store, txn, &target)?;
-        if holds.is_empty() {
-            erase.push(*record);
-            continue;
-        }
-        let notes: Vec<RefusalNote> = holds
-            .iter()
-            .map(|hold| RefusalNote {
-                hold: hold.hold_id,
-                target,
-                actor: actor.clone(),
-                at: now,
-            })
-            .collect();
-        flush_refusals_in_txn(store, txn, &notes, hosted)?;
-        kept.push(*record);
-    }
-    Ok((erase, kept))
-}
-
-/// Links `record`'s coming deletion receipt to `hold`, for its "erase
-/// completed" event (C4).
-pub(crate) fn link_erase_in_txn(
-    dbs: &impl SideTableDbs,
-    txn: &mut RwTxn<'_>,
-    record: &EntityId,
-    hold: &LegalHold,
-) -> Result<()> {
-    let mut link = ERASE_LINKS.get(dbs, txn, record)?.unwrap_or_default();
-    if !link.holds.contains(&hold.hold_id) {
-        link.holds.push(hold.hold_id);
-        ERASE_LINKS.put(dbs, txn, record, &link)?;
-    }
-    Ok(())
-}
-
-/// Drops the links `record`'s coming erase holds to the holds its confirm
-/// met, once the owner withdrew that erase (FIX 10401): no erase of it is
-/// coming, so none of them is owed an "erase completed" event. Returns those
-/// holds, for their logs.
-pub(crate) fn unlink_erase_in_txn(
-    dbs: &impl SideTableDbs,
-    txn: &mut RwTxn<'_>,
-    record: &EntityId,
-) -> Result<Vec<LegalHold>> {
-    let mut holds = Vec::new();
-    if let Some(link) = ERASE_LINKS.get(dbs, txn, record)? {
-        for id in &link.holds {
-            holds.extend(hold_in_txn(dbs, txn, id)?);
-        }
-        ERASE_LINKS.delete(dbs, txn, record)?;
-    }
-    Ok(holds)
-}
-
-/// "Erase completed" (C4): the erase over `records` is now complete, its
-/// deletion receipt's signed final row appended once the hard purge, the
-/// historical sweep and every custody retirement it bound had finished (FIX
-/// 5844). Logs one event, with the receipt's `request_id`, for each hold an
-/// owner's confirm lifted or met on each record, then drops the link, so a
-/// retried finalization logs it once.
-pub(crate) fn note_erase_completed_in_txn(
-    dbs: &impl SideTableDbs,
-    txn: &mut RwTxn<'_>,
-    records: &[String],
-    request_id: &str,
-    at: u64,
-) -> Result<()> {
-    for hex in records {
-        let Ok(record) = EntityId::from_hex(hex) else {
-            continue;
-        };
-        let Some(link) = ERASE_LINKS.get(dbs, txn, &record)? else {
-            continue;
-        };
-        for id in &link.holds {
-            if let Some(hold) = hold_in_txn(dbs, txn, id)? {
-                log_in_txn(
-                    dbs,
-                    txn,
-                    &hold,
-                    LegalHoldEventKind::EraseCompleted,
-                    LegalHoldReason::ReceiptCompleted,
-                    vec![LegalHoldTarget::Record(record)],
-                    &HoldActor::TIMER,
-                    at,
-                    Some(request_id.to_owned()),
-                )?;
-            }
-        }
-        ERASE_LINKS.delete(dbs, txn, &record)?;
-    }
-    Ok(())
-}
-
-/// The id of the partition door's hold on `target`, derived from the partition.
-fn partition_hold_id(target: &LegalHoldTarget) -> Result<EntityId> {
+/// The gate-decision partition door's hold id on `target`: derived from the
+/// partition, so the door names one hold per partition.
+pub(crate) fn partition_hold_id(target: &LegalHoldTarget) -> Result<EntityId> {
     let mut seed = b"legal_hold:gate_partition:v1".to_vec();
     seed.extend_from_slice(&held_key(target));
     let digest = blake3::hash(&seed);
@@ -636,38 +277,48 @@ fn partition_hold_id(target: &LegalHoldTarget) -> Result<EntityId> {
 }
 
 /// The gate-decision partition door's own hold on `target`: one row per
-/// partition, its id derived from the partition, so placing it twice is one
-/// hold and releasing it lifts that hold alone.
+/// partition, its id [`partition_hold_id`], so placing it twice is one hold
+/// and releasing it lifts that hold alone. No hold keeps a partition in place
+/// (LEGAL-HOLD-USE = B), so a placement writes the hold's sealed copy through
+/// `capture`, inside this writer and before the row, as an owner's placement
+/// does, and its `Placed` event carries the copy's fingerprint. `capture` runs
+/// only when this call places the hold. A placement after a release whose
+/// `CloneDestroyed` was never logged logs it first: `capture` removes what
+/// that release left before it writes the new copy. Returns the partition's
+/// hold row as this call leaves it; a released row's copy is destroyed by
+/// [`finish_partition_release_in_txn`] after the release commits.
 pub(crate) fn set_partition_hold_in_txn(
     dbs: &impl SideTableDbs,
     txn: &mut RwTxn<'_>,
     target: LegalHoldTarget,
     held: bool,
     now: u64,
-) -> Result<()> {
+    capture: impl FnOnce(&RoTxn<'_>, EntityId) -> Result<Vec<HoldCloneCapture>>,
+) -> Result<Option<LegalHold>> {
     let hold_id = partition_hold_id(&target)?;
     let existing = ROWS.get(dbs, txn, &hold_id)?;
     let actor = HoldActor::new(LegalHoldActorKind::Host, None);
     match (existing, held) {
-        (Some(hold), true) if hold.stands() => Ok(()),
-        (Some(mut hold), true) => {
-            hold.lifted_at = None;
-            hold.placed_at = now;
-            put_hold_in_txn(dbs, txn, &hold)?;
-            log_in_txn(
-                dbs,
-                txn,
-                &hold,
-                LegalHoldEventKind::Placed,
-                LegalHoldReason::HostPlaced,
-                hold.targets.clone(),
-                &actor,
-                now,
-                None,
-            )
-        }
-        (None, true) => {
-            let hold = LegalHold {
+        (Some(hold), true) if hold.stands() => Ok(Some(hold)),
+        (existing, true) => {
+            let undestroyed = match &existing {
+                Some(hold) if !hold.clone_captures.is_empty() => !events::logged_since_in_txn(
+                    dbs,
+                    txn,
+                    hold,
+                    LegalHoldEventKind::CloneDestroyed,
+                    LegalHoldEventKind::Lifted,
+                )?,
+                _ => false,
+            };
+            let captures = capture(&**txn, hold_id)?;
+            let fingerprint = captures
+                .first()
+                .ok_or(Error::InvariantViolation(
+                    "a legal hold wrote no sealed capture",
+                ))?
+                .fingerprint;
+            let mut hold = existing.unwrap_or_else(|| LegalHold {
                 hold_id,
                 kind: LegalHoldKind::Customer,
                 targets: vec![target],
@@ -684,19 +335,38 @@ pub(crate) fn set_partition_hold_in_txn(
                 owner_told: true,
                 requires_non_use: false,
                 clone_captures: Vec::new(),
-            };
+            });
+            if undestroyed {
+                log_in_txn(
+                    dbs,
+                    txn,
+                    &hold,
+                    LegalHoldEventKind::CloneDestroyed,
+                    LegalHoldReason::HostReleased,
+                    hold.targets.clone(),
+                    &actor,
+                    now,
+                    None,
+                )?;
+            }
+            hold.lifted_at = None;
+            hold.placed_at = now;
+            hold.clone_captures = captures;
             put_hold_in_txn(dbs, txn, &hold)?;
-            log_in_txn(
-                dbs,
-                txn,
-                &hold,
-                LegalHoldEventKind::Placed,
-                LegalHoldReason::HostPlaced,
-                vec![target],
-                &actor,
-                now,
-                None,
-            )
+            let row = LegalHoldEvent {
+                clone_fingerprint: Some(fingerprint),
+                ..events::event_row(
+                    &hold,
+                    LegalHoldEventKind::Placed,
+                    LegalHoldReason::HostPlaced,
+                    hold.targets.clone(),
+                    &actor,
+                    now,
+                    None,
+                )
+            };
+            events::append_event_in_txn(dbs, txn, &hold, &row)?;
+            Ok(Some(hold))
         }
         (Some(mut hold), false) if hold.stands() => {
             hold.lifted_at = Some(now);
@@ -711,59 +381,54 @@ pub(crate) fn set_partition_hold_in_txn(
                 &actor,
                 now,
                 None,
-            )
+            )?;
+            Ok(Some(hold))
         }
-        (_, false) => Ok(()),
+        (existing, false) => Ok(existing),
     }
 }
 
-/// The age sweep met a held partition with rows past the horizon: one
-/// timer refusal per hold, not one per pass while the hold stands.
-pub(crate) fn log_timer_refusal_in_txn(
+/// After a release of the partition door's hold `hold_id` commits: runs
+/// `destroy`, which removes the hold's sealed copy, and logs `CloneDestroyed`
+/// once for that release. A hold placed again since, a release already
+/// logged as destroyed, or a hold with no copy leaves `destroy` unrun. The
+/// caller runs this inside a writer, so no placement of the same partition
+/// can write its new copy between the read and the removal; a repeat release
+/// finishes a removal a failure cut short.
+pub(crate) fn finish_partition_release_in_txn(
     dbs: &impl SideTableDbs,
     txn: &mut RwTxn<'_>,
-    target: LegalHoldTarget,
-    at: u64,
+    hold_id: &EntityId,
+    now: u64,
+    destroy: impl FnOnce() -> Result<()>,
 ) -> Result<()> {
-    for hold in holds_on_in_txn(dbs, txn, &target)? {
-        let last = events::last_event_in_txn(dbs, txn, &hold)?;
-        let repeated = last.is_some_and(|last| {
-            last.event == LegalHoldEventKind::DeleteRefused
-                && last.actor_kind == LegalHoldActorKind::Timer
-                && last.targets == [target]
-        });
-        if !repeated {
-            log_in_txn(
-                dbs,
-                txn,
-                &hold,
-                LegalHoldEventKind::DeleteRefused,
-                LegalHoldReason::HeldRecord,
-                vec![target],
-                &HoldActor::TIMER,
-                at,
-                None,
-            )?;
-        }
+    let Some(hold) = ROWS.get(dbs, txn, hold_id)? else {
+        return Ok(());
+    };
+    if hold.stands()
+        || hold.clone_captures.is_empty()
+        || events::logged_since_in_txn(
+            dbs,
+            txn,
+            &hold,
+            LegalHoldEventKind::CloneDestroyed,
+            LegalHoldEventKind::Lifted,
+        )?
+    {
+        return Ok(());
     }
-    Ok(())
-}
-
-/// The `vault_meta` prefix of the target index, for the checkpoint custody
-/// reader. Only customer holds index targets.
-pub(crate) fn target_prefixes() -> [&'static [u8]; 1] {
-    [TARGETS.decl().prefix]
-}
-
-/// Whether `rows` (a checkpoint's, or a live vault's custody rows) hold a
-/// standing hold on the claim partition `claim`.
-pub(crate) fn rows_hold_claim(rows: &[(Vec<u8>, Vec<u8>)], claim: &[u8; 16]) -> bool {
-    let key = id_key(claim);
-    target_prefixes().iter().any(|prefix| {
-        let mut wanted = prefix.to_vec();
-        wanted.extend_from_slice(&key);
-        rows.iter().any(|(stored, _)| stored.starts_with(&wanted))
-    })
+    destroy()?;
+    log_in_txn(
+        dbs,
+        txn,
+        &hold,
+        LegalHoldEventKind::CloneDestroyed,
+        LegalHoldReason::HostReleased,
+        hold.targets.clone(),
+        &HoldActor::new(LegalHoldActorKind::Host, None),
+        now,
+        None,
+    )
 }
 
 /// When a released hold's log rows expire: its release plus 24 calendar
@@ -783,7 +448,6 @@ fn retention_end(lifted_at: u64) -> u64 {
 /// hold's expiry never touches another's. Returns the rows removed.
 pub(crate) fn expire_in_txn(dbs: &impl SideTableDbs, txn: &mut RwTxn<'_>, now: u64) -> Result<u64> {
     let mut removed = 0_u64;
-    let mut gone = BTreeSet::new();
     for rows in [ROWS, HOST_ROWS] {
         for (id, hold) in rows.scan(dbs, txn)? {
             let Some(lifted) = hold.lifted_at else {
@@ -795,33 +459,7 @@ pub(crate) fn expire_in_txn(dbs: &impl SideTableDbs, txn: &mut RwTxn<'_>, now: u
             let dropped = events::drop_events_in_txn(dbs, txn, &id)?;
             rows.delete(dbs, txn, &id)?;
             removed = removed.saturating_add(dropped).saturating_add(1);
-            gone.insert(id);
-        }
-    }
-    if gone.is_empty() {
-        return Ok(removed);
-    }
-    let mut changed = BTreeMap::new();
-    for (record, mut link) in ERASE_LINKS.scan(dbs, txn)? {
-        let before = link.holds.len();
-        link.holds.retain(|hold| !gone.contains(hold));
-        if link.holds.len() != before {
-            changed.insert(record, link);
-        }
-    }
-    for (record, link) in changed {
-        if link.holds.is_empty() {
-            ERASE_LINKS.delete(dbs, txn, &record)?;
-        } else {
-            ERASE_LINKS.put(dbs, txn, &record, &link)?;
         }
     }
     Ok(removed)
-}
-
-/// Drops what this store keys by an erased record: its use limit and its
-/// waiting erase. Its erase links stay for the receipt's completion.
-pub(crate) fn erase_in_txn(store: &Store, txn: &mut RwTxn<'_>, id: &EntityId) -> Result<()> {
-    USE_LIMITS.delete(store, txn, id)?;
-    pending::erase_pending_in_txn(store, txn, id)
 }

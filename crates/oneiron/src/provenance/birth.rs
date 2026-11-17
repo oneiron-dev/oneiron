@@ -120,11 +120,11 @@ pub(crate) fn births_made_by_in_txn(
     Ok(false)
 }
 
-/// Whether a legal hold keeps `row`'s birth: a hold on the row itself or,
-/// for a key pad, on its world or a claim its key seals. These are the holds
-/// the row's own erase refuses on (`erase_row_provenance_in_txn`), read here
-/// as a bool, so an actor's scrub leaves the birth rather than refusing the
-/// whole erase (OF-470).
+/// Whether a cooperative restriction keeps `row`'s birth: a restriction on
+/// the row itself or, for a key pad, on its world or a claim its key seals.
+/// These are the restrictions the row's own erase refuses on
+/// (`erase_row_provenance_in_txn`), read here as a bool, so an actor's scrub
+/// leaves the birth rather than refusing the whole erase.
 ///
 /// # Errors
 ///

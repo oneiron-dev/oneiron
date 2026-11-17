@@ -207,9 +207,6 @@ pub(super) fn compact_all_windows(
                         state = WindowSweepState::Deferred;
                     }
                 }
-                Err(err) if super::holds::refused_by_hold(&err) => {
-                    super::holds::defer_held(run, &mut state);
-                }
                 Err(err) => state = WindowSweepState::Failed(format!("{:?}", err.kind())),
                 Ok(true) => run.windows_compacted += 1,
             }
@@ -693,7 +690,7 @@ pub(super) fn compact_window_with(
             ));
         }
 
-        // A legal hold keeps every row it names (OF-470): one this
+        // A cooperative restriction keeps every row it names: one this
         // compaction would destroy keeps the window as it is.
         if let Err(refused) = destroyed.reject_held_in_txn(
             &vault.store,
@@ -707,7 +704,7 @@ pub(super) fn compact_window_with(
                     "sweep: indexed legal hold row missing — compaction deferred"
                 );
             }
-            held.set(super::holds::refused_by_hold(&refused) || missing_hold);
+            held.set(missing_hold);
             return Err(refused);
         }
 
@@ -748,8 +745,9 @@ pub(super) fn compact_window_with(
 
 /// Settles a window a cut would store as it is (census L6-07). The compaction
 /// write's guards run read-only and nothing is written: a `d:w:` snapshot
-/// replaced or a `u:w:` row landed since the read defers it as raced, and a
-/// legal hold on a row it carries keeps it, as for a cut.
+/// replaced or a `u:w:` row landed since the read defers it as raced. A legal
+/// hold keeps no window (LEGAL-HOLD-USE = B); a cooperative restriction on a
+/// row it carries fails it, as it fails a cut.
 #[cfg(feature = "sync")]
 fn settle_unchanged_window(
     vault: &Vault,
@@ -776,7 +774,6 @@ fn settle_unchanged_window(
         &crate::store::legal_hold::HoldActor::TIMER,
     ) {
         Ok(()) => Ok(CompactOutcome::Unchanged),
-        Err(refused) if super::holds::refused_by_hold(&refused) => Ok(CompactOutcome::HeldDefer),
         Err(Error::CorruptedIndex("legal hold target")) => {
             tracing::warn!("sweep: indexed legal hold row missing — window kept as it is");
             Ok(CompactOutcome::HeldDefer)

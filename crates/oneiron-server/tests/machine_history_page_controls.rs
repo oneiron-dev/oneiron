@@ -23,14 +23,17 @@
 //! machine birth is no surfaceable target): the member's page serves rows.
 //! Test 5 births T public and unlabelled on a Hosted vault, with a secret
 //! word in the birth the successor drops, then use-limits the birth control
-//! through a held privacy erase: the member's and the co-Owner's pages are
-//! refused as not found, and no reply holds the word.
+//! with a cooperative-review restriction: the member's and the co-Owner's
+//! pages are refused as not found, and no reply holds the word. A legal hold
+//! keeps no record in place (LEGAL-HOLD-USE = B: a held privacy erase
+//! completes and the hold's sealed copy outlives it), so the restriction is
+//! the record use limit left to judge.
 //!
 //! Needs `oneiron/test-hooks` (`put_selector_test_federation_grant`) and
 //! `oneiron/test-support` (`bind_host_owner`), plus its `[[test]]` stanza.
-//! Test 5 also drives the public owner doors `place_legal_hold`,
-//! `preview_entity_delete` with `confirm_entity_erase`, and the
-//! `legal_hold_use_limit` read.
+//! Test 5 also uses the door
+//! `oneiron::test_doors::campaign_member_index::restrict_record`, which writes
+//! the row the cooperative-deletion answer writes.
 //!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron-server
 //! --features oneiron/test-support,oneiron/test-hooks
@@ -43,14 +46,11 @@ use base64::Engine;
 use futures_util::{SinkExt, StreamExt};
 use loro::LoroDoc;
 use oneiron::authority::{CapabilitySlip, HostSlipIssuer};
-use oneiron::deletion::LegalHoldTarget;
 use oneiron::federation::{
     FederationGrant, FederationGrantPreset, FederationGrantRole, Scope, ScopeAxis,
     own_device_residence_scope,
 };
-use oneiron::memory::{EraseOptions, EraseReason};
 use oneiron::registry::{ENTITY_TYPE_MACHINE, ENTITY_TYPE_PERSON, ENTITY_TYPE_RELATIONSHIP};
-use oneiron::store::GateDecisionId;
 use oneiron::sync::transport::{self, TAG_RPC, TAG_WINDOW_SYNC, window_sub_tags};
 use oneiron::sync::{
     SyncSelector, SyncSelectorWorld, WindowKey, encode_selector_vv_request, encode_sync_selector,
@@ -1030,44 +1030,12 @@ fn birth_control_id(page: &Json, word: &str) -> EntityId {
     EntityId::from_hex(id).expect("FIXTURE: the birth id parses")
 }
 
-/// The owner places a hold on the birth control `birth`, then confirms a
-/// privacy (GDPR) erase of it. The erase is refused for the held record, and
-/// Hosted privacy-erasure retention installs the use limit on it.
+/// Use-limits the birth control `birth`: a cooperative-review restriction,
+/// in the row the cooperative-deletion answer writes, which the history
+/// page's use-limit read judges.
 fn install_birth_use_limit(vault: &Vault, birth: EntityId) {
-    let owner = vault
-        .ensure_embedded_owner_actor()
-        .expect("FIXTURE: the vault owner");
-    let proof = vault
-        .authenticate_owner(owner, &owner.to_hex(), true, GateDecisionId::now())
-        .expect("FIXTURE: the owner proof");
-    vault
-        .place_legal_hold(&proof, vec![LegalHoldTarget::Record(birth)], None)
-        .expect("FIXTURE: the hold on the birth control lands");
-    let memory = vault.memory(owner, EdgeActorClass::Human);
-    let preview = memory
-        .preview_entity_delete(&birth)
-        .expect("FIXTURE: the birth control previews for erase");
-    let outcome = memory
-        .confirm_entity_erase(
-            &preview,
-            EraseOptions {
-                reason: EraseReason::GdprDelete,
-                also_same_bytes: false,
-                veto_starter: None,
-            },
-        )
-        .expect("FIXTURE: the privacy erase runs");
-    assert_eq!(
-        outcome.first.reason, "privacy_erase_kept",
-        "FIXTURE: the held birth control is kept, not erased"
-    );
-    assert!(
-        vault
-            .legal_hold_use_limit(&birth)
-            .expect("FIXTURE: the use limit reads")
-            .is_some(),
-        "FIXTURE: the use limit is in force on the birth control"
-    );
+    oneiron::test_doors::campaign_member_index::restrict_record(vault, birth)
+        .expect("FIXTURE: the birth control is restricted");
 }
 
 /// The refused page both callers meet once the birth control is use-limited:
@@ -1163,11 +1131,10 @@ async fn fixture_use_limited() -> Seeded {
 /// public and unlabelled on a Hosted vault, with a secret word the owner's
 /// ordinary successor drops, so T is a surfaceable target. Before the limit
 /// both pages serve rows holding the word and the member's selector fetch
-/// carries T. The owner then holds the birth control and confirms a privacy
-/// erase of it: the erase is refused for the held record, and Hosted
-/// retention installs the use limit. After it the member's page is refused
-/// as not found and no reply holds the word; the co-Owner's page is refused
-/// too, since storage only binds the owner.
+/// carries T. A cooperative-review restriction then use-limits the birth
+/// control. After it the member's page is refused as not found and no reply
+/// holds the word; the co-Owner's page is refused too, since storage only
+/// binds the owner.
 #[tokio::test]
 async fn a_use_limited_birth_control_refuses_the_history_page() {
     let seeded = fixture_use_limited().await;

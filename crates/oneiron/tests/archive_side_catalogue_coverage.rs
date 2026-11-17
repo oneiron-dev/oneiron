@@ -70,14 +70,14 @@ fn the_archive_dispositions_name_existing_canonical_tables() {
     let coverage = canonical_archive_side_coverage();
     let canonical: BTreeSet<&str> = coverage.iter().map(|(name, _)| *name).collect();
     let dispositions = archive_side_disposition_names();
-    assert_eq!(dispositions.len(), 123, "the dispositions name 123 tables");
+    assert_eq!(dispositions.len(), 120, "the dispositions name 120 tables");
     let count = |class: &str| {
         dispositions
             .iter()
             .filter(|(_, known)| *known == class)
             .count()
     };
-    assert_eq!(count("retained"), 95, "the dispositions retain 95 tables");
+    assert_eq!(count("retained"), 92, "the dispositions retain 92 tables");
     assert_eq!(count("omitted"), 23, "the dispositions omit 23 tables");
     assert_eq!(
         count("other_section"),

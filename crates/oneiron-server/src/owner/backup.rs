@@ -15,10 +15,9 @@
 //! never list or prune each other's files, then a sequence number one past
 //! the highest already there. Retention orders by that number, never by the
 //! clock, so a clock that steps back cannot make a new backup look oldest.
-//! A backup holds every record its image carries, so while a customer legal
-//! hold stands none expires (ARCH-0038 #legal-hold). A host order keeps no
-//! backup: its order-scoped clone lives in the host's separate legal-hold
-//! store (LEGAL-HOLD-USE = B as a clone, owner 2026-11-05). A label whose handoff policy
+//! No legal hold keeps a backup: a hold's sealed copy lives in the host's
+//! separate legal-hold store (LEGAL-HOLD-USE = B as a clone, owner
+//! 2026-11-05). A label whose handoff policy
 //! a managed setup installed keeps each backup until its node's supervisor
 //! acks the stage copy (`handoff`).
 //!
@@ -173,8 +172,7 @@ pub(crate) struct BackupOutcome {
     pub(crate) backup: BackupRecord,
     /// BLAKE3 of the checkpoint image; a rehearsal reports the same id.
     pub(crate) checkpoint_id: String,
-    /// Older backups deleted to honour `keep`; none while a customer legal
-    /// hold stands.
+    /// Older backups deleted to honour `keep`.
     pub(crate) pruned: Vec<String>,
     /// Why a hosted vault's backup carries none of its host-order legal
     /// holds, for its host to alert on (FIX 6598); absent where it carries
@@ -356,12 +354,12 @@ fn parse_sequence(field: &str) -> Option<u64> {
 
 /// Deletes this vault's oldest backups beyond `plan.keep`; returns their
 /// names. `spared`, the backup a `take` just wrote, is never deleted and
-/// counts as one kept; with none spared, the newest `keep` stay. Nothing
-/// goes while a customer legal hold stands: the listing and acks are read first, then
-/// the holds are read and each unlink and directory sync runs while the
-/// vault's writer is held ([`oneiron::Vault::with_backup_hold_exclusion`]),
-/// so a hold placed meanwhile commits before the read or after the sync
-/// (FIX 1488). A label whose handoff policy is installed deletes only the
+/// counts as one kept; with none spared, the newest `keep` stay. The listing
+/// and acks are read first, then whether the vault's Owners deleted it is
+/// read and each unlink and directory sync runs while the vault's writer is
+/// held ([`oneiron::Vault::with_backup_hold_exclusion`]), so a deletion
+/// commits before the read or after the sync (FIX 1488, FIX 11432). A label
+/// whose handoff policy is installed deletes only the
 /// ones its node's supervisor acked, and keeps the rest pending, an error
 /// included (`handoff`). The caller holds the backup lock.
 pub(crate) fn prune(
@@ -382,9 +380,8 @@ fn prune_with(
     spared: Option<&str>,
     spare_on_deletion: bool,
 ) -> anyhow::Result<Vec<String>> {
-    // A standing hold keeps them all; the exclusion below reads it again. So
-    // does a held prune (FIX 6705).
-    if plan.prune_held || vault.legal_hold_keeps_backups()? {
+    // A held prune keeps them all (FIX 6705).
+    if plan.prune_held {
         payload_retention::settle(vault, plan, &[], Vec::new());
         return Ok(Vec::new());
     }
@@ -407,7 +404,7 @@ fn prune_with(
     let Some(handoff) = handoff::pinned(&plan.dir, &plan.label) else {
         let gone = vault.with_backup_hold_exclusion(|holds| -> anyhow::Result<Vec<String>> {
             let mut pruned = Vec::new();
-            if holds.keeps_backups() || (spare_on_deletion && holds.vault_deleted()) {
+            if spare_on_deletion && holds.vault_deleted() {
                 return Ok(pruned);
             }
             for record in excess {
@@ -442,7 +439,7 @@ fn prune_with(
     };
     let (released, mut pending) = handoff::released(&handoff, &plan.label, excess);
     let pruned = vault.with_backup_hold_exclusion(|holds| {
-        if holds.keeps_backups() || (spare_on_deletion && holds.vault_deleted()) {
+        if spare_on_deletion && holds.vault_deleted() {
             return None;
         }
         let mut pruned = Vec::new();
@@ -463,7 +460,7 @@ fn prune_with(
         }
         Some(pruned)
     })?;
-    // A standing hold keeps them all, acked or not.
+    // A deleted vault keeps them all, acked or not, when sparing.
     let Some(pruned) = pruned else {
         payload_retention::settle(vault, plan, &[], Vec::new());
         return Ok(Vec::new());
@@ -477,9 +474,8 @@ fn prune_with(
 /// `backup_retain_until` has passed on the vault's clock (OF-163, FIX 1931);
 /// returns their names. `None` while that has not happened: no marker, or a
 /// deadline still ahead, when the schedule backs up and prunes as before.
-/// A standing customer legal hold defers the drop as it holds [`prune`]: the holds
-/// are read again and each unlink and directory sync runs while the vault's
-/// writer is held. Neither `keep`, a held prune nor a handoff pin keeps one:
+/// Each unlink and directory sync runs while the vault's writer is held.
+/// Neither `keep`, a held prune nor a handoff pin keeps one:
 /// the Owners' deletion let them go, and their stage acks go with them. The
 /// caller holds the backup lock. The automatic custody companion beside
 /// these backups expires under the same deletion deadline and hold recheck;
@@ -495,18 +491,11 @@ pub(crate) fn prune_deleted_vault_backups(
     if vault.now_recorded_at() < deletion.backup_retain_until {
         return Ok(None);
     }
-    if vault.legal_hold_keeps_backups()? {
-        payload_retention::settle(vault, plan, &[], Vec::new());
-        return Ok(Some(Vec::new()));
-    }
     let records = list(plan)?;
     // Where each payload inventory sits, read while its backup is there.
     let inventories = payload_retention::inventories_of(&records);
-    let gone = vault.with_backup_hold_exclusion(|holds| -> anyhow::Result<Vec<String>> {
+    let gone = vault.with_backup_hold_exclusion(|_holds| -> anyhow::Result<Vec<String>> {
         let mut dropped = Vec::new();
-        if holds.keeps_backups() {
-            return Ok(dropped);
-        }
         for record in records {
             match std::fs::remove_file(&record.path) {
                 Ok(()) => {

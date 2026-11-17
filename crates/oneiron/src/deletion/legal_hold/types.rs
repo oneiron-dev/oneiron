@@ -7,17 +7,9 @@ use crate::entity_id::EntityId;
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::deletion::legal_hold::types::{
-    ErasePendingReason, EraseWithdrawal, HoldCloneCapture, LIFT_AND_ERASE_PROMPT,
-    LIFT_AND_ERASE_TITLE, LegalHold, LegalHoldActorKind, LegalHoldEvent, LegalHoldEventKind,
+    HoldCloneCapture, LegalHold, LegalHoldActorKind, LegalHoldEvent, LegalHoldEventKind,
     LegalHoldKind, LegalHoldReason, LegalHoldTarget,
 };
-
-/// What an owner erase shows until its deletion receipt completes or its
-/// shared vault's veto window clears (C4).
-pub const ERASE_COMPLETION_PENDING: &str = "erase confirmed; completion pending";
-
-/// The named refusal a delete of a held record fails with.
-pub const LEGAL_HOLD_REFUSAL: &str = "legal hold: a hold names this record, so it is not deleted";
 
 /// How long a hold's log rows outlive the hold, in calendar months (C3: the
 /// hold's life, then 24 months).
@@ -78,60 +70,16 @@ pub struct HostOrderHold {
     /// Who issued the order, as an opaque ref.
     pub issuing_authority_ref: Option<String>,
     /// The order's own terms also forbid using what it keeps (C6), recorded
-    /// as its term. A refused hosted privacy erasure keeps the record under a
-    /// use limit while any hold stands, whether this is set or not (FIX 8849).
+    /// as the order's data; no vault path reads it; never set on a customer
+    /// hold.
     pub requires_non_use: bool,
 }
-
-/// What the owner's one confirm did to one record. One rule wherever the
-/// bytes live (WILL-PLAN L01 row 04).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum LiftAndEraseStatus {
-    /// The hold is lifted and the record erased: its deletion receipt is
-    /// complete, its signed final row appended once the hard purge, the
-    /// historical sweep and every custody retirement the erase bound had
-    /// finished (C4, FIX 5844). No receipt when nothing was there to erase.
-    Erased { receipt_ref: Option<String> },
-    /// "Erase confirmed; completion pending" ([`ERASE_COMPLETION_PENDING`]):
-    /// the erase still waits on its receipt's `reason` or on its shared
-    /// vault's veto window.
-    CompletionPending {
-        receipt_ref: Option<String>,
-        reason: Option<ErasePendingReason>,
-    },
-    /// The hold was lifted, then the erase failed; a plain delete retries it.
-    Failed { message: String },
-}
-
-/// The owner's one confirm's result.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct LiftAndEraseOutcome {
-    /// The customer holds lifted, or narrowed to what is left.
-    pub holds: Vec<EntityId>,
-    pub records: Vec<(EntityId, LiftAndEraseStatus)>,
-    /// What the owner confirmed is not what the vault holds now: nothing was
-    /// lifted or erased, and this is what the confirm shows now, to confirm
-    /// again in one step (FIX 1462).
-    pub changed: Option<super::LiftAndEraseShownState>,
-    /// The check-in decision the confirm ran on (2k2; P25-SHAPE Q1 = A): the
-    /// Owner on their own proof, and the approved check-in of another asker
-    /// it applied, with its requester. Each `erase` act a veto window starts
-    /// records it too. None when nothing was lifted or erased (`changed`).
-    pub check_in: Option<crate::check_in::CheckInDecision>,
-}
-
-#[doc(hidden)]
-pub use oneiron_records::deletion::legal_hold::types::LegalHoldUseLimit;
 
 /// One legal-hold maintenance pass.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct LegalHoldMaintenance {
     /// Host orders whose end date passed, now lifted.
     pub lapsed: u64,
-    /// Confirmed erases run now that nothing holds their records.
-    pub erased: u64,
-    /// Refusals written to the hold logs.
-    pub refusals: u64,
     /// Log rows and released holds past their retention.
     pub expired: u64,
 }

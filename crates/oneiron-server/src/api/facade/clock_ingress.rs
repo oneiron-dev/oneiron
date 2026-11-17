@@ -59,19 +59,15 @@ const MCP_PATHS: [&str; 2] = ["/mcp", "/mcp/tool-first"];
 use oneiron_vault_contract::MCP_CREDENTIAL_HEADER;
 
 /// The owner routes that share a facade verb, by full path (FIX 11523):
-/// H1-H4, the four owner doors whose `hooked_row` runs the same row as the
+/// H1-H3, the three owner doors whose `hooked_row` runs the same row as the
 /// facade. Each classifies as a direct call of its verb, so the owner's
 /// revoke lands over a damaged floor; any other owner route keeps today's
 /// path.
-const OWNER_VERBS: [(&str, &str); 4] = [
+const OWNER_VERBS: [(&str, &str); 3] = [
     ("/v1/owner/guests/revoke", "vault.guests.revoke"),
     (
         "/v1/owner/support-grants/revoke",
         "vault.support_grants.revoke",
-    ),
-    (
-        "/v1/owner/legal-holds/lift-and-erase",
-        "vault.legal_holds.lift_and_erase",
     ),
     (
         "/v1/owner/embedding-spaces/probes/delete",

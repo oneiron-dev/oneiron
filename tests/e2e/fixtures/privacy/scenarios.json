@@ -115,7 +115,6 @@
       "kind": "customer",
       "refusalEvent": "delete_refused",
       "refusalReason": "held_record",
-      "confirmEvent": "lift_and_erase_confirmed",
       "unprivilegedLiftStatus": 403,
       "ownerEraseState": "erased"
     }

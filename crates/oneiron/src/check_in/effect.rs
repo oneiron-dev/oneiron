@@ -392,34 +392,6 @@ pub(crate) fn owner_act_decision_in_txn(
     Ok(decision)
 }
 
-/// The digest of the Owner's one "Lift the hold and erase?" confirm over
-/// `records`, and the claim-free gate-decision partition with
-/// `claim_free_partition`: the effect an asker's `vault.check_in.open` names
-/// for `vault.legal_holds.lift_and_erase`, and the one the confirm spends
-/// (2k2; P25-SHAPE Q1 = A). The order of `records` and a repeat do not
-/// change it. BLAKE3, key derived from `oneiron check_in legal hold erase
-/// v1`, over the count of distinct records as eight big-endian bytes, their
-/// 16 id bytes each in id order, and one byte, 1 when the confirm releases
-/// the claim-free partition.
-#[must_use]
-pub fn legal_hold_erase_effect_digest(
-    records: &[EntityId],
-    claim_free_partition: bool,
-) -> [u8; 32] {
-    let records: std::collections::BTreeSet<&EntityId> = records.iter().collect();
-    let mut hasher = blake3::Hasher::new_derive_key("oneiron check_in legal hold erase v1");
-    hasher.update(
-        &u64::try_from(records.len())
-            .unwrap_or(u64::MAX)
-            .to_be_bytes(),
-    );
-    for record in records {
-        hasher.update(record.as_bytes());
-    }
-    hasher.update(&[u8::from(claim_free_partition)]);
-    *hasher.finalize().as_bytes()
-}
-
 /// The digest of erasing `entity`'s text history through `through`, or
 /// through the engine's own boundary when `None` (a NOTE's oldest pin, as
 /// `vault.notes.history_purge` always asks): the effect an asker's

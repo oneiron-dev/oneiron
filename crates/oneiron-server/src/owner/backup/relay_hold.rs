@@ -1,18 +1,14 @@
-//! The relay delete guard over one vault's backup holds (FIX 1488): the
-//! adapter L14's relay locker delete takes ([`crate::managed::RelayDeleteHoldGuard`]).
+//! The relay delete guard over one vault's backups (FIX 1488): the adapter
+//! L14's relay locker delete takes
+//! ([`crate::managed::RelayDeleteHoldGuard`]).
 //!
-//! It reads the vault's standing legal holds the way backup expiry does,
-//! under the vault's writer ([`oneiron::Vault::with_backup_hold_exclusion`]),
-//! and runs the delete's unlink inside that exclusion. Any standing hold
-//! defers the delete until release, with only whether the owner may see a
-//! hold that stands, read in that same exclusion (FIX 9500); a vault it
-//! cannot open, a target of another vault, or a hold read that fails defers
-//! it as unknown. It never reports a delete it did not make.
+//! It runs the delete's unlink inside the vault-deletion exclusion backup
+//! expiry takes, under the vault's writer
+//! ([`oneiron::Vault::with_backup_hold_exclusion`]). A vault it cannot open,
+//! a target of another vault, or an exclusion that fails defers it as
+//! unknown. It never reports a delete it did not make.
 
 use std::sync::Arc;
-
-use oneiron::recovery::checkpoint::BackupHoldVisibility;
-use oneiron_vault_contract::relay_delete::RelayHoldVisibility;
 
 use crate::managed::{
     RelayDeleteDeferral, RelayDeleteHoldError, RelayDeleteHoldGuard, RelayDeleteHoldOutcome,
@@ -101,15 +97,7 @@ impl RelayDeleteHoldGuard for VaultRelayHoldGuard {
         if vault.vault_key_vault_id() != self.vault_id {
             return Ok(HOLD_STATE_UNKNOWN);
         }
-        let guarded = vault.with_backup_hold_exclusion(|holds| {
-            if let Some(held) = holds.held_visibility() {
-                let visibility = match held {
-                    BackupHoldVisibility::Visible => RelayHoldVisibility::Visible,
-                };
-                return Ok(RelayDeleteHoldOutcome::Deferred(
-                    RelayDeleteDeferral::Held { visibility },
-                ));
-            }
+        let guarded = vault.with_backup_hold_exclusion(|_holds| {
             unlink()
                 .map(|()| RelayDeleteHoldOutcome::Deleted)
                 .map_err(RelayDeleteHoldError::StorageIo)
@@ -119,7 +107,7 @@ impl RelayDeleteHoldGuard for VaultRelayHoldGuard {
             Err(error) => {
                 tracing::warn!(
                     kind = ?error.kind(),
-                    "relay delete deferred: the vault's legal holds did not read"
+                    "relay delete deferred: the vault's deletion marker did not read"
                 );
                 Ok(HOLD_STATE_UNKNOWN)
             }

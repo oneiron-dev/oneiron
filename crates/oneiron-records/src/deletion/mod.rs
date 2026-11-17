@@ -1,7 +1,6 @@
 pub use crate::deletion::coop_delivery::parse_hex;
 pub use crate::deletion::coop_delivery::types::CooperativeDeletionDisposition;
 pub use crate::deletion::coop_delivery::types::CooperativeLocalRedaction;
-pub use crate::deletion::legal_hold::types::LegalHoldUseLimit;
 pub use crate::deletion::timeline::HydratedShortIdDeletion;
 pub use crate::deletion::timeline::HydratedShortIdDeletionReason;
 pub use crate::deletion::timeline::HydratedShortIdDeletionSource;
@@ -46,10 +45,6 @@ pub use oneiron_store::deletion::delete::outcome::DeleteEntityOutcome;
 pub use oneiron_store::deletion::sweep_queue::REDIRECT_CARRIER_CLASS;
 pub use oneiron_store::deletion::sweep_queue::arch0038_carrier_classes;
 pub use oneiron_verb_wire::deletion::coop_delivery::types::CooperativeDeletionDispositionKind;
-pub use oneiron_verb_wire::deletion::legal_hold::types::ErasePendingReason;
-pub use oneiron_verb_wire::deletion::legal_hold::types::EraseWithdrawal;
-pub use oneiron_verb_wire::deletion::legal_hold::types::LIFT_AND_ERASE_PROMPT;
-pub use oneiron_verb_wire::deletion::legal_hold::types::LIFT_AND_ERASE_TITLE;
 pub use oneiron_verb_wire::deletion::legal_hold::types::LegalHold;
 pub use oneiron_verb_wire::deletion::legal_hold::types::LegalHoldActorKind;
 pub use oneiron_verb_wire::deletion::legal_hold::types::LegalHoldEvent;

@@ -3,17 +3,17 @@
 //! An erase's initial receipt R never changes. Its historical sweep appends
 //! the factual sweep row C (`receipt_completion`). Once the sweep, when R
 //! queued one, every custody retirement R binds by name and every scrub a
-//! legal hold kept from R's ids (`legal_hold::held_scrubs`, FIX 6386, 7993,
-//! 7994) have finished, one more row F is appended: R's body with C's sweep
-//! time and `erase_complete_at`, freshly signed (OD-6) over F's own id,
-//! which is derived from R's under its own domain. The legal hold's "erase
-//! completed" is logged with F, once. Whichever finishes last appends F: an
-//! erase that queued no sweep and owes nothing else gets it in its own
-//! transaction, the sweep in its finalize transaction, a custody
-//! publication pass once its locks are released, a due legal-hold pass once
-//! a released hold's scrubs settle, and the custody tick of a running server
-//! retries it, settled or not. A missing proof keeps F owed; nothing waits
-//! on F: not the erase, its response nor a backup.
+//! cooperative restriction kept from R's ids (`legal_hold::held_scrubs`, FIX
+//! 6386, 7993, 7994) have finished, one more row F is appended: R's body
+//! with C's sweep time and `erase_complete_at`, freshly signed (OD-6) over
+//! F's own id, which is derived from R's under its own domain. Whichever
+//! finishes last appends F: an erase that queued no sweep and owes nothing
+//! else gets it in its own transaction, the sweep in its finalize
+//! transaction, a custody publication pass once its locks are released, a
+//! settle pass once a released restriction's scrubs settle, and the custody
+//! tick of a running server retries it, settled or not. A missing proof
+//! keeps F owed; nothing waits on F: not the erase, its response nor a
+//! backup.
 
 use crate::Vault;
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
@@ -82,8 +82,8 @@ enum EraseFinal {
     /// Its final row is there.
     Appended,
     /// Owed now: its sweep, if it queued one, finished at this time, every
-    /// custody retirement it binds has finished, and no scrub a legal hold
-    /// kept is owed for its ids.
+    /// custody retirement it binds has finished, and no scrub a cooperative
+    /// restriction kept is owed for its ids.
     Due(Option<u64>),
     /// Its sweep, a custody retirement it binds or a held scrub has not
     /// finished.
@@ -126,8 +126,8 @@ fn erase_final_in_txn(
     if !retired {
         return Ok(EraseFinal::Pending);
     }
-    // A row a legal hold keeps from the erase keeps it owed (FIX 6386, 7993,
-    // 7994): the erase stands, and reads completion pending.
+    // A row a cooperative restriction keeps from the erase keeps it owed
+    // (FIX 6386, 7993, 7994): the erase stands, and reads completion pending.
     let owed = super::legal_hold::held_scrubs_owed_in_txn(vault, txn, &receipt.scope.entity_ids);
     let held = owed.unwrap_or_else(|error| {
         tracing::warn!(
@@ -148,13 +148,11 @@ fn erase_final_in_txn(
 
 /// Appends the initial receipt `receipt`'s overall final row, completed at
 /// `now`, once its sweep, if it queued one, every custody retirement it
-/// binds and every scrub a legal hold kept from its ids have finished, and
-/// logs a legal hold's "erase completed" for its request in the same
-/// transaction (C4), the one place that event is written. `false` when it is
-/// not owed yet or is there already, when another device attested the
-/// receipt (FIX 2596), or when a different row sits at a linked id (logged
-/// there, never overwritten). The device key must already be on the handle
-/// (P6c).
+/// binds and every scrub a cooperative restriction kept from its ids have
+/// finished. `false` when it is not owed yet or is there already, when
+/// another device attested the receipt (FIX 2596), or when a different row
+/// sits at a linked id (logged there, never overwritten). The device key
+/// must already be on the handle (P6c).
 pub(crate) fn finish_redaction_erase_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -184,13 +182,6 @@ pub(crate) fn finish_redaction_erase_in_txn(
     validate_redaction_receipt_body(&body)?;
     crate::off_record::FloorWrites::new(&vault.store)
         .append_redaction_audit(wtxn, &final_id, now, &body)?;
-    crate::store::legal_hold::note_erase_completed_in_txn(
-        &vault.store,
-        wtxn,
-        &receipt.scope.entity_ids,
-        &receipt.request_id,
-        now,
-    )?;
     Ok(true)
 }
 

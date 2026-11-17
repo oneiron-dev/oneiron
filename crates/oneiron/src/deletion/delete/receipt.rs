@@ -18,7 +18,7 @@ use super::super::tombstone::{DeleteReason, HARD_DELETE_MARKER, TombstoneValueV2
 use super::super::topology_delete_intent::{
     TopologyDeletePhase, clear_own_topology_delete_in_txn, reserve_topology_delete_in_txn,
 };
-use super::{DeleteEntityOutcome, PendingConfirmedErase};
+use super::DeleteEntityOutcome;
 
 impl Vault {
     /// Purges the active store in one transaction, then writes the hard
@@ -29,7 +29,6 @@ impl Vault {
         reason: DeleteReason,
         gate: &Option<GatedDeletion<'_>>,
         allow_replay_test: bool,
-        due: Option<&PendingConfirmedErase>,
         requested_at: u64,
         header: EntityMetadataHeader,
         request_uuid: Uuid,
@@ -61,17 +60,12 @@ impl Vault {
         // FORBIDDEN to the caller with the tombstone already on the wire and
         // peers tearing.
         reverify_deletion_authority_when_unpublished(gate.as_ref(), authority_settled, &wtxn)?;
-        // A due confirmed erase nothing has published re-proves here that it
-        // still waits, before any marker, scrub or purge (FIX 6337).
-        let requester = due
-            .map(|due| due.prove_when_unpublished(self, &wtxn, id, authority_settled))
-            .transpose()?;
-        self.reject_erase_hold_in_txn(&wtxn, id, requester.as_ref())?;
+        self.store.reject_legal_hold_in_txn(&wtxn, id.as_bytes())?;
         crate::world_keys::reject_held_pad_world_as_in_txn(
             &self.store,
             &wtxn,
             &[*id],
-            requester.as_ref().unwrap_or(&HoldActor::UNATTRIBUTED),
+            &HoldActor::UNATTRIBUTED,
         )?;
         if !authority_settled {
             self.guard_active_merge_hard_delete_in_txn(&wtxn, id)?;

@@ -2,8 +2,7 @@
 //! default drops one record and its own hold on shared bytes; the same-bytes flag is a live
 //! vault owner's act by hand. A record another owner wrote waits out the shared vault's
 //! `erase` veto window first, and in a shared vault with two or more Owners every erase does,
-//! the confirmed record's included (ARCH-0043). A GDPR request erases what no legal hold names
-//! and keeps the held part, its reason logged (OF-470 C5).
+//! the confirmed record's included (ARCH-0043). A GDPR request erases every match.
 
 use std::collections::BTreeMap;
 
@@ -14,12 +13,11 @@ use super::{
 };
 use crate::check_in::CheckInDecision;
 use crate::consent::AuthenticatedOwner;
-use crate::deletion::{DeleteEntityPreview, DeleteReason, LegalHoldActorKind};
-use crate::edge::EdgeActorClass;
+use crate::deletion::{DeleteEntityPreview, DeleteReason};
 use crate::entity_id::EntityId;
 use crate::error::Error;
 use crate::federation::{ActExecution, PendingAuthorityAct, SharedVaultPreset};
-use crate::store::legal_hold::{self, HoldActor};
+use crate::store::legal_hold::HoldActor;
 use crate::write_envelope::WriteActor;
 
 /// The shared vault's act a held record waits on.
@@ -206,24 +204,8 @@ impl Memory<'_> {
             }
             (plan, shared_vault_id, veto)
         };
-        let kept = if options.reason == EraseReason::GdprDelete {
-            let records: Vec<EntityId> = std::iter::once(preview.entity())
-                .chain(plan.iter().map(|planned| planned.holder))
-                .collect();
-            self.keep_legally_held(&records)?
-        } else {
-            BTreeMap::new()
-        };
         let mut first_act = None;
-        let first = if let Some(hold) = kept.get(&preview.entity()) {
-            DeleteReceipt {
-                existed: true,
-                reason: hold.code().to_owned(),
-                receipt_ref: None,
-                state: DeleteRequestState::CompletionPending,
-                check_in: None,
-            }
-        } else if let (true, Some((starter, vault_id))) =
+        let first = if let (true, Some((starter, vault_id))) =
             (veto, options.veto_starter.zip(shared_vault_id))
         {
             // The confirmed record's own act: no bytes are named, so its
@@ -264,13 +246,6 @@ impl Memory<'_> {
         let same_bytes = plan
             .into_iter()
             .map(|planned| {
-                if let Some(reason) = kept.get(&planned.holder) {
-                    let outcome = SameBytesOutcome::Held {
-                        reason: reason.clone(),
-                        act_id: None,
-                    };
-                    return (planned.holder, outcome);
-                }
                 let outcome = match (
                     planned.hold.clone(),
                     options.veto_starter.zip(shared_vault_id),
@@ -447,7 +422,6 @@ impl Memory<'_> {
                 check_in: None,
             })
         });
-        self.vault.store.flush_legal_hold_refusals_settled();
         if erased.is_ok() {
             self.vault
                 .store
@@ -553,26 +527,6 @@ impl Memory<'_> {
             "this act's erase is claimed and under way",
             &["Its deletion recovery finishes it; ask again later."],
         ))
-    }
-
-    /// Of the records a GDPR request names, the ones a legal hold keeps: none
-    /// any more (LEGAL-HOLD-USE = B, ARCH-0038 #legal-hold-clone-ruling). A
-    /// GDPR request erases every match.
-    fn keep_legally_held(
-        &self,
-        records: &[EntityId],
-    ) -> MemoryResult<BTreeMap<EntityId, SameBytesHold>> {
-        let store = &self.vault.store;
-        let kind = match self.actor_class {
-            EdgeActorClass::Human => LegalHoldActorKind::Owner,
-            EdgeActorClass::Agent => LegalHoldActorKind::Agent,
-            EdgeActorClass::System => LegalHoldActorKind::Unattributed,
-        };
-        let actor = HoldActor::new(kind, Some(self.actor.to_hex()));
-        Ok(self.vault.with_write_txn_grouped(|txn| {
-            let _ = legal_hold::split_privacy_erase_in_txn(store, txn, records, &actor)?;
-            Ok(BTreeMap::new())
-        })?)
     }
 
     /// One planned match through its own checked delete.
@@ -809,55 +763,6 @@ impl crate::Vault {
             .flatten()
             .filter(|held| held.v == 1)
             .and_then(|held| EntityId::from_bytes(held.record).ok())
-    }
-
-    /// The shared vault whose `erase` veto window an owner's erase other
-    /// than a GDPR request waits out, read in `txn` as
-    /// [`Memory::confirm_entity_erase`] reads it: one not on the Personal
-    /// preset, with two or more live Owners (FIX 9781). `None` elsewhere.
-    pub(crate) fn owner_erase_veto_vault_in_txn(
-        &self,
-        txn: &heed::RoTxn<'_>,
-    ) -> crate::Result<Option<u64>> {
-        let Some(creation) = self
-            .shared_vault_creation_in_txn(txn)?
-            .filter(|creation| creation.preset != Some(SharedVaultPreset::Personal))
-        else {
-            return Ok(None);
-        };
-        let owners = self.live_shared_owner_count_in_txn(txn, creation.vault_id)?;
-        Ok((owners >= 2).then_some(creation.vault_id))
-    }
-
-    /// Starts `record`'s own `erase` act in shared vault `vault_id` under
-    /// `starter`'s proof, naming no bytes, as a confirmed record's own act
-    /// is started (FIX 9781), recording `check_in`, the decision the erase
-    /// runs on, when one is given (2k2). Returns its id; its starter
-    /// executes it once it completes, as any `erase` act.
-    pub(crate) fn start_record_erase_act(
-        &self,
-        starter: &AuthenticatedOwner,
-        vault_id: u64,
-        record: EntityId,
-        check_in: Option<&CheckInDecision>,
-    ) -> crate::Result<String> {
-        let payload = serde_json::to_vec(&HeldErase {
-            v: 1,
-            record: *record.as_bytes(),
-            hashes: Vec::new(),
-        })
-        .map_err(|_| Error::InvariantViolation("erase act payload"))?;
-        Ok(match check_in {
-            Some(decision) => self.start_authority_act_recorded(
-                starter,
-                vault_id,
-                ERASE_ACT,
-                payload,
-                decision.clone(),
-            )?,
-            None => self.start_authority_act(starter, vault_id, ERASE_ACT, payload)?,
-        }
-        .id)
     }
 }
 

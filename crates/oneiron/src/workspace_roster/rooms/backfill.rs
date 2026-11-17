@@ -117,13 +117,6 @@ pub(crate) fn backfill_room_turns_on_open(vault: &Vault) -> Result<RoomTurnBackf
             {
                 continue;
             }
-            // A room with a waiting erase is retried on a later open; no
-            // write is opened for it now.
-            if crate::store::legal_hold::pending_erase_in_txn(&vault.store, &txn, &room)?.is_some()
-            {
-                report.rooms_deferred += 1;
-                continue;
-            }
             due.push(room);
         }
         due
@@ -166,10 +159,6 @@ fn backfill_room_in_txn(
     if TURN_BACKFILL.get(store, txn, &room)? == Some(ROOM_TURN_BACKFILL_VERSION)
         || !live_room_in(vault, txn, room)?
     {
-        return Ok(report);
-    }
-    if crate::store::legal_hold::pending_erase_in_txn(store, txn, &room)?.is_some() {
-        report.rooms_deferred = 1;
         return Ok(report);
     }
     let home = super::super::project::ROOM_PROJECT.contains(store, txn, &room)?;

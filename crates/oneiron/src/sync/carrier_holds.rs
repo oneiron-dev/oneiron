@@ -160,19 +160,14 @@ impl CarrierInventory {
         Ok(())
     }
 
-    /// Whether a legal hold keeps a row this inventory holds, read in `txn`
-    /// as the timer's act ([`Self::reject_held_in_txn`]). An indexed hold row
-    /// that is missing keeps the rows too, as a cut treats it (census L6-05).
+    /// Whether a legal hold keeps a row this inventory holds: none does any
+    /// more (LEGAL-HOLD-USE = B: a hold keeps its sealed copy, never the
+    /// rows in place). The check, read in `txn` as the timer's act
+    /// ([`Self::reject_held_in_txn`]), still answers a cooperative
+    /// restriction on a row with absence, which fails the caller.
     pub(crate) fn held_in_txn(&self, store: &Store, txn: &RoTxn<'_>) -> Result<bool> {
-        match self.reject_held_in_txn(store, txn, &HoldActor::TIMER) {
-            Ok(()) => Ok(false),
-            Err(refused) if crate::store::legal_hold::is_hold_refusal(&refused) => Ok(true),
-            Err(crate::error::Error::CorruptedIndex("legal hold target")) => {
-                tracing::warn!("legal hold: indexed hold row missing — its rows are kept");
-                Ok(true)
-            }
-            Err(err) => Err(err),
-        }
+        self.reject_held_in_txn(store, txn, &HoldActor::TIMER)?;
+        Ok(false)
     }
 }
 
