@@ -7,6 +7,7 @@
 use super::charter::{
     CharterApproveRequest, CharterDiscardRequest, CharterProposeRequest, CharterView,
 };
+use super::qualify::Attested;
 use super::{
     AcceptRequest, AttestRequest, EnabledRequest, KeyView, QualifyRequest, RefreshRequest,
     Refreshed, RegisterRequest, Registered, SlateView,
@@ -43,9 +44,16 @@ pub(crate) fn qualify_request_body_schema() -> serde_json::Value {
 }
 
 /// The OpenAPI schema of `POST /v1/owner/connectors/attest`'s body
-/// (CONNECTOR-QUALIFY = A): [`AttestRequest`]. Its answer is [`KeyView`].
+/// (CONNECTOR-QUALIFY = A): [`AttestRequest`].
 pub(crate) fn attest_request_body_schema() -> serde_json::Value {
     oneiron_contracts::code_run::vault_read::request_schema::<AttestRequest>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/connectors/attest`'s answer:
+/// [`Attested`], the key with what a stdio connector runs and where it
+/// sends a credential.
+pub(crate) fn attested_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<Attested>()
 }
 
 /// The OpenAPI schema of `POST /v1/owner/connectors/qualify`'s answer (FIX 11611),

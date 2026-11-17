@@ -83,6 +83,11 @@ pub struct ScopedReadActorKey {
     /// Set on every key that names a base agent (untangle 6.3, X04); see
     /// [`Self::for_engine_actor`].
     system_agent: Option<EntityId>,
+    /// Set only on a write-only credential's target key (FIX 8155, see
+    /// [`Self::from_verified_slip_as_target`]): its reads judge a write's
+    /// reach and serve its holder nothing, so they count toward no read
+    /// exposure (L8-65).
+    judges_write_target: bool,
     /// Set only on a credential's key whose reader is neither the vault's
     /// owner nor one of its own agents reading on its own; see
     /// [`Self::homed_unnamed`].
@@ -412,6 +417,7 @@ impl ScopedReadActorKey {
             owner_by_census: false,
             record_bound: None,
             system_agent,
+            judges_write_target: false,
             home_unnamed: false,
             standing_room: None,
         })
@@ -458,6 +464,7 @@ impl ScopedReadActorKey {
             owner_by_census: false,
             record_bound: None,
             system_agent: None,
+            judges_write_target: false,
             home_unnamed: false,
             standing_room: None,
         }
@@ -580,6 +587,23 @@ impl ScopedReadActorKey {
     #[must_use]
     pub fn reads_as_vault_owner(&self) -> bool {
         self.owner.is_some()
+    }
+
+    /// The reader whose lifetime read exposure the records this key is served
+    /// count toward (L8-65, ruling WHO = A): a key bound to a credential its
+    /// caller presented, unless it reads as the vault owner or as a narrower
+    /// credential of the owner's, or only judges a write's target. `None` for
+    /// every key the engine or the owner holds, and for the host's own
+    /// credential, whose holder is no entity.
+    pub(super) fn exposure_reader(&self) -> Option<EntityId> {
+        if self.proof.is_none()
+            || self.owner.is_some()
+            || self.owner_exemption.is_some()
+            || self.judges_write_target
+        {
+            return None;
+        }
+        EntityId::from_hex(&self.actor_ref).ok()
     }
 
     /// How a reader holding this key sees a stored key: as stored for the
@@ -964,6 +988,7 @@ impl ScopedReadActorKey {
         }
         key.authority = Some(authority);
         key.proof = Some(proof.clone());
+        key.judges_write_target = true;
         Some(key)
     }
 
