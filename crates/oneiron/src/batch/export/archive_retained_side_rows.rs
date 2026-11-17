@@ -1,6 +1,6 @@
-//! SIDE-1 retained side-table rows: the inert envelope that carries one archived source row
-//! with its table name and original key suffix and value bytes, the identity hash over them, and
-//! the collection, secret, import and erase passes over them.
+//! Retained side-table envelopes carry source table names, original key suffixes and value
+//! bytes, with identity hashes and collection, credential, import and erase passes. The owner
+//! door installs tables with a landing group and retains the rest; other doors retain only.
 
 use std::collections::BTreeMap;
 use std::io::{Read, Seek};
@@ -266,19 +266,23 @@ fn opaque_withholds_credential(bytes: &[u8]) -> bool {
     crate::batch::secret_scan::scan_file_content("", bytes).is_some()
 }
 
-/// The retained-family rows of one archive, kept inert in the retained table in the import's
-/// write transaction: a row already stored equal is unchanged, an absent row is put, and a row
-/// colliding with different stored bytes is an invalid archive. Writes only the retained table:
-/// no source table, no effect, no live-row check.
-pub(crate) fn retain_side_rows_in_txn<R: Read + Seek>(
-    store: &Store,
+/// Installs the owner's supported source tables and otherwise keeps envelopes inert in the
+/// import transaction; actor and actorless doors retain only, with the original inert counts.
+pub(crate) fn install_or_retain_side_rows_in_txn<R: Read + Seek>(
+    vault: &crate::Vault,
     wtxn: &mut RwTxn<'_>,
     archive: &IndexedArchive<'_, R>,
+    permit: Option<&super::OwnerArchiveRestorePermit>,
 ) -> Result<RetainedSideImportSummary> {
+    use super::archive_side_install::{
+        ArchivedSideGroup, ArchivedSideRowOutcome, archived_side_group,
+        land_archived_side_group_in_txn,
+    };
+
     let mut files = |file: &ExportBodyFile| file.read(&archive.files);
-    let mut inserted_rows = 0usize;
-    let mut unchanged_rows = 0usize;
-    let mut tables: BTreeMap<String, (usize, usize)> = BTreeMap::new();
+    let mut tables: BTreeMap<String, RetainedSideTableCount> = BTreeMap::new();
+    let mut groups: BTreeMap<ArchivedSideGroup, Vec<([u8; 32], Vec<u8>, ArchiveRetainedSideRow)>> =
+        BTreeMap::new();
     let mut after: Option<Vec<u8>> = None;
     while let Some((key, value)) = archive.index.next(Tag::Side, &[], after.as_deref())? {
         let row = archive
@@ -300,39 +304,115 @@ pub(crate) fn retain_side_rows_in_txn<R: Read + Seek>(
                 "retained side row key is not its envelope identity",
             ));
         }
-        match RETAINED_SIDE_ROWS.get_bytes(store, wtxn, &typed)? {
-            Some(stored) if stored == row.value => {
-                unchanged_rows += 1;
-                tables.entry(envelope.source_table.clone()).or_default().1 += 1;
-            }
-            Some(_) => {
-                return Err(invalid(
-                    "retained side row collides with a different stored row",
-                ));
-            }
-            None => {
-                RETAINED_SIDE_ROWS.put(store, wtxn, &typed, &envelope)?;
-                inserted_rows += 1;
-                tables.entry(envelope.source_table.clone()).or_default().0 += 1;
-            }
+        let count = tables
+            .entry(envelope.source_table.clone())
+            .or_insert_with(|| RetainedSideTableCount {
+                source_table: envelope.source_table.clone(),
+                ..Default::default()
+            });
+        if let Some(group) = permit.and_then(|_| archived_side_group(&envelope.source_table)) {
+            groups
+                .entry(group)
+                .or_default()
+                .push((typed, row.value, envelope));
+        } else {
+            retain_envelope_in_txn(vault, wtxn, &typed, &row.value, &envelope, count)?;
         }
         after = Some(key);
     }
-    Ok(RetainedSideImportSummary {
-        inserted_rows,
-        unchanged_rows,
-        tables: tables
-            .into_iter()
-            .map(
-                |(source_table, (inserted_rows, unchanged_rows))| RetainedSideTableCount {
-                    source_table,
-                    inserted_rows,
-                    unchanged_rows,
-                },
-            )
-            .collect(),
+    if let Some(permit) = permit {
+        // The enum declaration order is the fixed owning-group dependency order.
+        for (group, staged) in groups {
+            let (identities, rows): (Vec<_>, Vec<_>) = staged
+                .into_iter()
+                .map(|(key, value, row)| ((key, value), row))
+                .unzip();
+            let outcomes = land_archived_side_group_in_txn(group, vault, wtxn, permit, &rows)?;
+            if outcomes.len() != rows.len() {
+                return Err(Error::InvariantViolation(
+                    "an archive landing group must return one outcome per envelope",
+                ));
+            }
+            for (((key, value), envelope), outcome) in identities.iter().zip(&rows).zip(outcomes) {
+                let count =
+                    tables
+                        .get_mut(&envelope.source_table)
+                        .ok_or(Error::InvariantViolation(
+                            "a staged archive envelope must have its table count",
+                        ))?;
+                match outcome {
+                    ArchivedSideRowOutcome::Installed => {
+                        RETAINED_SIDE_ROWS.delete(vault, wtxn, key)?;
+                        count.installed_rows += 1;
+                    }
+                    ArchivedSideRowOutcome::Unchanged => {
+                        RETAINED_SIDE_ROWS.delete(vault, wtxn, key)?;
+                        count.unchanged_live_rows += 1;
+                    }
+                    ArchivedSideRowOutcome::KeptLive => {
+                        retain_envelope_in_txn(vault, wtxn, key, value, envelope, count)?;
+                        count.kept_live_rows += 1;
+                    }
+                    ArchivedSideRowOutcome::HeldBack(reason) => {
+                        retain_envelope_in_txn(vault, wtxn, key, value, envelope, count)?;
+                        add_held_back_count(&mut count.held_back, reason, 1);
+                    }
+                }
+            }
+        }
+    }
+    let mut summary = RetainedSideImportSummary {
+        tables: tables.into_values().collect(),
         omissions: archive.manifest.side_table_omissions.clone(),
-    })
+        ..Default::default()
+    };
+    for count in &summary.tables {
+        summary.inserted_rows += count.inserted_rows;
+        summary.unchanged_rows += count.unchanged_rows;
+        summary.installed_rows += count.installed_rows;
+        summary.unchanged_live_rows += count.unchanged_live_rows;
+        summary.kept_live_rows += count.kept_live_rows;
+        for held in &count.held_back {
+            add_held_back_count(&mut summary.held_back, held.reason, held.rows);
+        }
+    }
+    Ok(summary)
+}
+
+/// Keeps one envelope with SIDE-1's physical collision rules and inert-copy counters.
+fn retain_envelope_in_txn(
+    vault: &crate::Vault,
+    wtxn: &mut RwTxn<'_>,
+    key: &[u8; 32],
+    value: &[u8],
+    envelope: &ArchiveRetainedSideRow,
+    count: &mut RetainedSideTableCount,
+) -> Result<()> {
+    match RETAINED_SIDE_ROWS.get_bytes(vault, wtxn, key)? {
+        Some(stored) if stored == value => count.unchanged_rows += 1,
+        Some(_) => {
+            return Err(invalid(
+                "retained side row collides with a different stored row",
+            ));
+        }
+        None => {
+            RETAINED_SIDE_ROWS.put(vault, wtxn, key, envelope)?;
+            count.inserted_rows += 1;
+        }
+    }
+    Ok(())
+}
+
+/// Adds a reason count while preserving enum order without a second stored total.
+fn add_held_back_count(
+    counts: &mut Vec<super::RetainedSideHeldBackCount>,
+    reason: super::RetainedSideHeldBackReason,
+    rows: usize,
+) {
+    match counts.binary_search_by_key(&reason, |count| count.reason) {
+        Ok(index) => counts[index].rows += rows,
+        Err(index) => counts.insert(index, super::RetainedSideHeldBackCount { reason, rows }),
+    }
 }
 
 /// An actor's erase over the retained rows: deletes each retained copy whose source table's
