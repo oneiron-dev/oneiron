@@ -277,9 +277,23 @@ pub(super) fn seed(vault: &Vault, scan: EngineScan) -> Option<(usize, Read<'_>)>
                 crate::claim::ClaimLifecycleStatus::Active,
             )
             .expect("body");
-            original.evidence = Some(Value::Map(
-                vec![(Value::from("actor_class"), Value::from(crate::edge::EdgeActorClass::System as u8)),, (Value::from("actor_entity_ref"), Value::Binary(machine.as_bytes().to_vec())),, (Value::from("machine_signature"), Value::Array(vec![Value::Binary(key.to_vec()), Value::Binary(vec![0; 64])])),],
-            ));
+            original.evidence = Some(Value::Map(vec![
+                (
+                    Value::from("actor_class"),
+                    Value::from(crate::edge::EdgeActorClass::System as u8),
+                ),
+                (
+                    Value::from("actor_entity_ref"),
+                    Value::Binary(machine.as_bytes().to_vec()),
+                ),
+                (
+                    Value::from("machine_signature"),
+                    Value::Array(vec![
+                        Value::Binary(key.to_vec()),
+                        Value::Binary(vec![0; 64]),
+                    ]),
+                ),
+            ]));
             let transcript =
                 crate::authority::machine_claim_transcript(&vault_id, &target, &original)
                     .expect("transcript");

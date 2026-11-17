@@ -8,7 +8,7 @@ use super::*;
 /// A project body over `id`: parentless, leader and claims scope at fixed
 /// seeds. Validates in a fresh vault; the depth row resolves implicitly.
 fn project_body(id: EntityId) -> crate::workspace_roster::ProjectRecord {
-    crate::workspace_roster::ProjectRecord::new(id, None, id(0x90, 1), id(0x90, 2))
+    crate::workspace_roster::ProjectRecord::new(id, None, super::id(0x90, 1), super::id(0x90, 2))
         .expect("project body")
 }
 
@@ -348,7 +348,7 @@ pub(super) fn seed(vault: &Vault, scan: EngineScan) -> Option<(usize, Read<'_>)>
             let id = id(0x90, 10);
             let mut body = project_body(id);
             body.tasks = (20..20 + PAST)
-                .map(|index| id(0x90, index).to_hex())
+                .map(|index| super::id(0x90, index).to_hex())
                 .collect();
             let bytes = rmp_serde::to_vec_named(&body).expect("encode");
             Some((
@@ -579,7 +579,7 @@ pub(super) fn seed(vault: &Vault, scan: EngineScan) -> Option<(usize, Read<'_>)>
             let id = id(0x90, 11);
             let mut body = project_body(id);
             body.board = (30..30 + PAST)
-                .map(|index| id(0x90, index).to_hex())
+                .map(|index| super::id(0x90, index).to_hex())
                 .collect();
             let bytes = rmp_serde::to_vec_named(&body).expect("encode");
             Some((
@@ -629,7 +629,7 @@ pub(super) fn seed(vault: &Vault, scan: EngineScan) -> Option<(usize, Read<'_>)>
             let id = id(0x90, 13);
             let mut body = project_body(id);
             body.parents = (40..40 + PAST)
-                .map(|index| id(0x90, index).to_hex())
+                .map(|index| super::id(0x90, index).to_hex())
                 .collect();
             let bytes = rmp_serde::to_vec_named(&body).expect("encode");
             Some((
