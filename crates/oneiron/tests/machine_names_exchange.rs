@@ -13,6 +13,12 @@
 //! Red at the base (`opus-fix-sync/machine-reported-name-hosts`): the test does not build, as no
 //! exchange exists there (no door, no residence function).
 //!
+//! Name provenance (lead ruling 17 Nov 06:5x; Engine TASK 08:18): an owner name carries its
+//! source, `owner_set` for a rename and `owner_confirmed` for the name the owner confirmed when he
+//! signed a device his; a later report never overwrites either, and every machine of his shows
+//! the same source. Red at `opus-fix-sync/display-edit-proposals` 9ebec41d7926: these cases do not
+//! build (no confirm door, no source values).
+//!
 //! Run: RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features \
 //!   --test machine_names_exchange
 #![cfg(oneiron_test_support)]
@@ -22,10 +28,14 @@ use std::sync::Arc;
 
 use oneiron::authority::{ActSurface, HostSlipIssuer, MachineOwnership, MachineRole, PeerMachine};
 use oneiron::consent::AuthenticatedOwner;
-use oneiron::machine_names::{MachineListing, MachineNameCell, MachineNameSource};
+use oneiron::machine_names::{
+    MachineListing, MachineNameCell, MachineNameSource, MachineOwnerNameSource,
+};
 use oneiron::store::GateDecisionId;
 use oneiron::sync::residence::machine_names_residence_exchange;
-use oneiron::test_doors::machine_names::{cells_to_send, take_answer};
+use oneiron::test_doors::machine_names::{
+    cells_to_send, confirm_shown_name, prompt_name, take_answer,
+};
 use oneiron::test_support::bind_host_owner;
 use oneiron::{EntityId, Vault, VaultConfig};
 
@@ -211,7 +221,7 @@ fn a_rename_made_on_the_phone_reaches_the_home_and_the_laptop() {
     let at_home = shown(&home.vault, phone.machine);
     assert_eq!(
         (at_home.name.as_str(), at_home.name_source),
-        ("Maya's phone", MachineNameSource::Owner),
+        ("Maya's phone", MachineNameSource::OwnerSet),
         "the home shows the name the owner gave on the phone"
     );
     assert_eq!(
@@ -224,7 +234,7 @@ fn a_rename_made_on_the_phone_reaches_the_home_and_the_laptop() {
     let at_laptop = shown(&laptop.vault, phone.machine);
     assert_eq!(
         (at_laptop.name.as_str(), at_laptop.name_source),
-        ("Maya's phone", MachineNameSource::Owner),
+        ("Maya's phone", MachineNameSource::OwnerSet),
         "the laptop shows the name the owner gave on the phone"
     );
     assert_eq!(at_laptop.reported_name.as_deref(), Some("Pixel 9"));
@@ -314,6 +324,7 @@ fn a_machine_cannot_write_another_machines_report_or_cell() {
             written_at: later,
             writer: phone.machine,
             receipt: "00".repeat(16),
+            source: MachineOwnerNameSource::OwnerSet,
         },
     ];
     machine_names_residence_exchange(&home.vault, laptop.proven(), forged)
@@ -327,5 +338,124 @@ fn a_machine_cannot_write_another_machines_report_or_cell() {
         shown(&home.vault, home.machine()).owner_name,
         None,
         "only the cell's writer sends it"
+    );
+}
+
+#[test]
+fn a_confirmed_name_outlives_a_later_report_and_reaches_every_machine() {
+    let (home, phone, laptop) = vault_of_three();
+    phone.pass(&home);
+    let receipt = confirm_shown_name(&home.vault, &proof(&home.vault), phone.machine, "Pixel 9")
+        .expect("the owner signs the phone his on the home");
+    assert!(receipt.is_some(), "the name he was shown becomes his own");
+
+    let later_report = vec![MachineNameCell::Reported {
+        machine: phone.machine,
+        name: Some("Pixel 10".to_owned()),
+        model: None,
+        written_at: u64::MAX / 2,
+    }];
+    machine_names_residence_exchange(&home.vault, phone.proven(), later_report)
+        .expect("the home answers a machine of the owner's");
+    let at_home = shown(&home.vault, phone.machine);
+    assert_eq!(
+        (at_home.name.as_str(), at_home.name_source),
+        ("Pixel 9", MachineNameSource::OwnerConfirmed),
+        "a later report does not overwrite the confirmed name"
+    );
+    assert_eq!(at_home.owner_name.as_deref(), Some("Pixel 9"));
+    assert_eq!(
+        at_home.reported_name.as_deref(),
+        Some("Pixel 10"),
+        "the later report is held beside it"
+    );
+    assert_eq!(
+        prompt_name(&home.vault, phone.machine, at_home.class).expect("the prompt's read"),
+        ("Pixel 9".to_owned(), MachineNameSource::OwnerConfirmed),
+        "a prompt that names the phone reads the confirmed name and its source"
+    );
+
+    laptop.pass(&home);
+    let at_laptop = shown(&laptop.vault, phone.machine);
+    assert_eq!(
+        (at_laptop.name.as_str(), at_laptop.name_source),
+        ("Pixel 9", MachineNameSource::OwnerConfirmed),
+        "the laptop shows the confirmed name with the same source"
+    );
+
+    laptop
+        .vault
+        .set_machine_owner_name(&proof(&laptop.vault), phone.machine, Some("Maya's phone"))
+        .expect("the owner renames the phone on the laptop");
+    laptop.pass(&home);
+    let renamed = shown(&home.vault, phone.machine);
+    assert_eq!(
+        (renamed.name.as_str(), renamed.name_source),
+        ("Maya's phone", MachineNameSource::OwnerSet),
+        "a later rename wins over the confirm, as owner_set"
+    );
+}
+
+#[test]
+fn a_confirm_keeps_a_held_owner_name_and_replaces_a_clear() {
+    let (home, phone, _laptop) = vault_of_three();
+    phone.pass(&home);
+    home.vault
+        .set_machine_owner_name(&proof(&home.vault), phone.machine, Some("Maya's phone"))
+        .expect("the owner renames the phone on the home");
+    assert_eq!(
+        confirm_shown_name(&home.vault, &proof(&home.vault), phone.machine, "Pixel 9")
+            .expect("a confirm over a held name answers"),
+        None,
+        "a held owner name stays, and nothing is written"
+    );
+    let kept = shown(&home.vault, phone.machine);
+    assert_eq!(
+        (kept.name.as_str(), kept.name_source),
+        ("Maya's phone", MachineNameSource::OwnerSet)
+    );
+
+    home.vault
+        .set_machine_owner_name(&proof(&home.vault), phone.machine, None)
+        .expect("the owner clears the phone's name");
+    assert!(
+        confirm_shown_name(&home.vault, &proof(&home.vault), phone.machine, "Pixel 9")
+            .expect("a confirm over a clear answers")
+            .is_some(),
+        "a cleared row is replaced by the confirmed name"
+    );
+    let confirmed = shown(&home.vault, phone.machine);
+    assert_eq!(
+        (confirmed.name.as_str(), confirmed.name_source),
+        ("Pixel 9", MachineNameSource::OwnerConfirmed)
+    );
+    assert!(
+        confirm_shown_name(&home.vault, &proof(&home.vault), phone.machine, "  ").is_err(),
+        "a blank name is never confirmed"
+    );
+}
+
+#[test]
+fn a_clear_that_says_it_was_confirmed_is_left_out() {
+    let (home, _phone, laptop) = vault_of_three();
+    laptop
+        .vault
+        .set_machine_owner_name(&proof(&laptop.vault), laptop.machine, Some("Work laptop"))
+        .expect("the owner names the laptop on the laptop");
+    laptop.pass(&home);
+    let forged = vec![MachineNameCell::Owner {
+        machine: laptop.machine,
+        name: None,
+        written_at: u64::MAX / 2,
+        writer: laptop.machine,
+        receipt: "00".repeat(16),
+        source: MachineOwnerNameSource::OwnerConfirmed,
+    }];
+    machine_names_residence_exchange(&home.vault, laptop.proven(), forged)
+        .expect("the home answers a machine of the owner's");
+    assert_eq!(
+        shown(&home.vault, laptop.machine).owner_name.as_deref(),
+        Some("Work laptop"),
+        "a confirm always names a name: such a clear is no act of the owner's"
     );
 }

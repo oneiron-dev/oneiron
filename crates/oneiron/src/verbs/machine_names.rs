@@ -43,7 +43,9 @@ pub struct MachineListItem {
     pub live: bool,
     /// The name it is shown by.
     pub name: String,
-    /// Where `name` comes from: `owner`, `reported`, `model` or `class`.
+    /// Where `name` comes from: `owner_set` (the owner's rename),
+    /// `owner_confirmed` (the name it was shown by when the owner signed it
+    /// his), `reported`, `model` or `class`.
     pub name_source: MachineNameSource,
     /// The owner's own name for it.
     pub owner_name: Option<String>,
