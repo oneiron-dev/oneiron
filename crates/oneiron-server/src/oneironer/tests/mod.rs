@@ -206,7 +206,7 @@ fn a_zero_first_retry_delay_is_refused() {
     )
     .expect_err("a zero first retry delay");
     assert!(
-        refused.to_string().contains("retry_backoff_secs"),
+        format!("{refused:#}").contains("retry_backoff_secs"),
         "{refused}"
     );
     let section = resolve(

@@ -301,6 +301,8 @@ pub(crate) fn raise_verdict_spend(
             source: CrossingSource::Spend,
             raised_at,
             summary: json!({
+                // Mirrored by `oneiron::own_rate::VERDICT_SPEND_KIND`: the
+                // erase's spend matcher.
                 "kind": "ai.verdict.spend",
                 "caller": caller.to_hex(),
                 "spent_units": spent_units,
@@ -430,8 +432,12 @@ fn superseded(mut earlier: HealthCheck, by: &str) -> HealthCheck {
 /// ([`superseded`]), and becomes the set's newest. The checks, the set's
 /// revision row and the cursor past the crossing are kept in one write, so a
 /// crossing is never counted twice nor skipped. A crossing an erase took
-/// after it was read only moves its cursor ([`still_kept`]).
-pub(super) fn fold(vault: &Vault, crossing: Crossing) -> Result<()> {
+/// after it was read only moves its cursor ([`still_kept`]), and one that
+/// still names an actor an erase took folds without that actor, judged in
+/// this write: a kept wire or limit question is not taken where it was
+/// kept, and a live window can count an erased actor into a crossing kept
+/// after its erase (FIX 3520).
+pub(super) fn fold(vault: &Vault, mut crossing: Crossing) -> Result<()> {
     let key = format!("{CHECK}{}", crossing.subject);
     vault.with_write_txn_grouped(|txn| {
         if !still_kept(vault, txn, &crossing)? {
@@ -440,6 +446,7 @@ pub(super) fn fold(vault: &Vault, crossing: Crossing) -> Result<()> {
             }
             return Ok(());
         }
+        vault.health_crossing_drop_erased_in_write_txn(txn, &mut crossing.summary)?;
         let existing: Option<HealthCheck> = vault
             .sync_state_get_in_write_txn(txn, &key)?
             .map(|b| decode(&b))
