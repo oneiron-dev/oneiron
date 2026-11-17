@@ -21,10 +21,12 @@ use crate::write_envelope::ClaimCandidate;
 
 /// The batch door with mask on write. `masks` is false for a replayed batch,
 /// which keeps the plain door: a hit refuses it, save in a file marked
-/// before. `at` stamps each custody record the batch mints. It also returns
-/// each MACHINE claim candidate the minted pass rewrote with its pre-mask
-/// body, in op order, so the candidate apply can renew its proof over what
-/// is stored (FIX 11356); a replayed batch reports none.
+/// before. `at` stamps each custody record the batch mints. When it mints,
+/// it also returns each claim candidate op in op order, with its pre-mask
+/// body when the minted pass rewrote it, so the candidate apply can renew a
+/// MACHINE proof over what is stored (FIX 11356) and read its preflight
+/// receipt against the body that receipt judged; a replayed batch reports
+/// none.
 #[expect(
     clippy::too_many_arguments,
     reason = "the batch's own apply parts, its origin and its time"
@@ -38,7 +40,7 @@ pub(in crate::batch) fn mask_batch_ops(
     text_index_trusted: bool,
     masks: bool,
     at: u64,
-) -> Result<(MaskedFiles, Vec<(EntityId, ClaimCandidate)>)> {
+) -> Result<(MaskedFiles, Vec<(EntityId, Option<ClaimCandidate>)>)> {
     let refusal = match scan_batch_ops(store, &*wtxn, ops) {
         // A clean batch that is replayed, or that holds no put, claim or
         // text for a pass to read, places nothing whatever custody knows:

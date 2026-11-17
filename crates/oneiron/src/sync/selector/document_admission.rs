@@ -9,6 +9,7 @@ use super::scope::{CoreferenceExportContext, entity_selector_decision, facet_fil
 use super::text_egress::{source_selected, text_backed};
 use crate::authority::AuthorityFold;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
+use crate::claim::history_projection::MachineHistoryReadCache;
 use crate::edge::EdgeKind;
 use crate::error::{Error, Result, SyncSelectorValidation as SelectorError};
 use crate::federation::decode_federation_grant_body;
@@ -266,6 +267,7 @@ pub(super) fn admit_selected_in_txn(
     // Facet rule C: a text is written only by a reader of every source it
     // was written from, judged as an export reads them; no write authority
     // over a source is asked.
+    let history = MachineHistoryReadCache::new(vault);
     if !text_backed(vault, txn, &id, None, |source, raw| {
         source_selected(
             vault,
@@ -275,6 +277,7 @@ pub(super) fn admit_selected_in_txn(
             selector,
             admission.position.as_scope(),
             &Default::default(),
+            &history,
         )
     })? {
         return Err(denied());
