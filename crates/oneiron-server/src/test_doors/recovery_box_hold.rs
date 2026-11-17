@@ -4,7 +4,7 @@
 //! serves and with a bound the test picks (Fable pass 27 R7), the boot heal
 //! over a vault the test owns, the heal gate held shut for the bound row, and
 //! the watch that follows the owner's kit-only fact, with a fact reader the
-//! test picks.
+//! test picks, and its recovery wait report.
 
 use std::future::Future;
 use std::path::Path;
@@ -14,11 +14,15 @@ use std::time::Duration;
 
 use oneiron_vault_contract::TokenHex;
 
-use crate::managed::recovery_box_hold::kit_only_watch::{KitOnlyFollow, fold_kit_only_fact};
+use crate::managed::recovery_box_hold::kit_only_watch::{
+    KitOnlyFollow, WaitReportFollow, fold_kit_only_fact,
+};
 use crate::managed::recovery_box_hold::{HealRunning, HypnosRecoveryBoxHold};
 use crate::server::HousekeepingAdmission;
 
-pub use crate::managed::recovery_box_hold::{KitOnlyFact, KitOnlyFactRead, KitOnlyLook};
+pub use crate::managed::recovery_box_hold::{
+    KitOnlyFact, KitOnlyFactRead, KitOnlyLook, WaitReport,
+};
 
 /// The caller for `vault` with spawn token `token_hex`, on `socket`, each
 /// call bounded by `timeout`.
@@ -59,6 +63,13 @@ pub fn heal_at_boot_reading(
     client.heal_at_boot(vault, admission(admitted), read)
 }
 
+/// Managed boot's kit-only fact reader: the fold's
+/// ([`oneiron::Vault::recovery_box_kit_only_fact`]).
+#[must_use]
+pub fn fold_kit_only_fact_read() -> KitOnlyFactRead {
+    fold_kit_only_fact()
+}
+
 /// The background admission: `admitted` or a refusal, every time.
 fn admission(admitted: bool) -> HousekeepingAdmission {
     Arc::new(move || admitted.then(|| Box::new(()) as Box<dyn Send>))
@@ -78,13 +89,14 @@ pub fn close_heal_gate(client: &HypnosRecoveryBoxHold) -> HealGateClosed {
 
 /// The watch that follows the owner's kit-only fact, one look per call, as
 /// managed boot's cadence runs them, over `vault` with `read` as the fact
-/// reader.
+/// reader, and the wait report that follows each look.
 pub struct KitOnlyWatch {
     client: HypnosRecoveryBoxHold,
     vault: Arc<oneiron::Vault>,
     admit: HousekeepingAdmission,
     read: KitOnlyFactRead,
     follow: KitOnlyFollow,
+    wait: WaitReportFollow,
 }
 
 impl KitOnlyWatch {
@@ -92,6 +104,12 @@ impl KitOnlyWatch {
     pub fn look(&mut self) -> KitOnlyLook {
         self.client
             .look_at_kit_only_fact(&self.vault, &self.admit, &self.read, &mut self.follow)
+    }
+
+    /// One wait report: what managed boot's watch does after each look.
+    pub fn report_wait(&mut self) -> WaitReport {
+        self.client
+            .report_wait_when_changed(&self.vault, &self.admit, &mut self.wait)
     }
 }
 
@@ -110,12 +128,13 @@ pub fn kit_only_watch(
         admit: admission(admitted),
         read,
         follow: KitOnlyFollow::default(),
+        wait: WaitReportFollow::default(),
     }
 }
 
-/// Managed boot's cadence of the kit-only watch over `vault`: a look at once,
-/// then one every `every`, until `stopped` resolves (a stop that came first
-/// ends it with no look). Needs a Tokio runtime.
+/// Managed boot's cadence of the kit-only watch over `vault`: a look and a
+/// wait report at once, then both every `every`, until `stopped` resolves (a
+/// stop that came first ends it with no look). Needs a Tokio runtime.
 pub fn follow_kit_only_fact(
     client: &HypnosRecoveryBoxHold,
     vault: Arc<oneiron::Vault>,

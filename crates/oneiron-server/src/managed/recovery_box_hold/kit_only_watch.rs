@@ -19,11 +19,21 @@
 //! Until a switch writes the fact, the gap is status only: the switch's
 //! rotation of the recovery-authority key already leaves the box a revoked
 //! key's seed (FIX RECOVERY-BOX-DEAD-RECORD-AFTER-DEVICE-SWITCH).
+//!
+//! The same cadence reports the vault's recovery wait to the box
+//! (WAYBACK-BOX-WAIT-ENGINE-HOLD-ONE-WAIT = A): the box waits it before it
+//! releases the recovery-authority seed. The first look reports it, and a
+//! later look only when the wait differs from the one the box took in this
+//! process, so a changed `recovery.wait` reaches the box within one look and
+//! a report the box refused goes again at the next. Like every wait report,
+//! it does not wait for the boot heal.
 
+use std::cell::Cell;
 use std::future::Future;
 use std::sync::Arc;
 use std::time::Duration;
 
+use oneiron::world_keys::{RecoveryBoxCanceller, RecoveryBoxHold};
 use oneiron_contracts::authority::AuthorityEntryHash;
 
 use super::HypnosRecoveryBoxHold;
@@ -69,12 +79,10 @@ pub type KitOnlyFactRead =
 pub(crate) fn fold_kit_only_fact() -> KitOnlyFactRead {
     Arc::new(
         |vault: &oneiron::Vault| -> oneiron::Result<Option<KitOnlyFact>> {
-            Ok(vault
-                .recovery_box_kit_only_fact()?
-                .map(|fact| KitOnlyFact {
-                    kit_only: fact.kit_only,
-                    entry: fact.entry,
-                }))
+            Ok(vault.recovery_box_kit_only_fact()?.map(|fact| KitOnlyFact {
+                kit_only: fact.kit_only,
+                entry: fact.entry,
+            }))
         },
     )
 }
@@ -109,7 +117,115 @@ pub enum KitOnlyLook {
     Failed,
 }
 
+/// What the watch keeps of the wait report between looks, in this process
+/// only: the wait the box last took, and whether a failure was already
+/// warned about.
+#[derive(Debug, Default)]
+pub(crate) struct WaitReportFollow {
+    reported: Option<Duration>,
+    warned: bool,
+}
+
+/// What one wait report did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WaitReport {
+    /// The vault is paused for a reap or deleted: nothing read or sent.
+    NotAdmitted,
+    /// The box already took this wait in this process: nothing sent.
+    Unchanged,
+    /// The box took the wait.
+    Reported {
+        /// The wait the box took, in whole seconds.
+        wait_secs: u64,
+    },
+    /// The wait did not read, or the box did not take it; the next look
+    /// reports it again.
+    Failed,
+}
+
+/// The box seam a wait report goes through: the relay, except that a wait
+/// equal to the one the box last took in this process is not sent again.
+/// `sent` holds the wait this report sent and the box took.
+struct ReportWhenChanged<'a> {
+    hold: &'a HypnosRecoveryBoxHold,
+    reported: Option<Duration>,
+    sent: Cell<Option<Duration>>,
+}
+
+impl RecoveryBoxHold for ReportWhenChanged<'_> {
+    fn hold_kit_only(&self, kit_only: bool) -> oneiron::Result<()> {
+        HypnosRecoveryBoxHold::hold_kit_only(self.hold, kit_only)
+    }
+
+    fn report_recovery_wait(&self, wait: Duration) -> oneiron::Result<()> {
+        if self.reported == Some(wait) {
+            return Ok(());
+        }
+        HypnosRecoveryBoxHold::report_recovery_wait(self.hold, wait)?;
+        self.sent.set(Some(wait));
+        Ok(())
+    }
+
+    fn cancel_pending_box_release(
+        &self,
+        cancelled_by: &RecoveryBoxCanceller,
+        release_receipt: Option<u64>,
+    ) -> oneiron::Result<bool> {
+        RecoveryBoxHold::cancel_pending_box_release(self.hold, cancelled_by, release_receipt)
+    }
+}
+
 impl HypnosRecoveryBoxHold {
+    /// One wait report: reads the vault's recovery wait and reports it to
+    /// the box when it differs from the one the box took in this process.
+    /// Admitted as a background pass and held through the send.
+    pub(crate) fn report_wait_when_changed(
+        &self,
+        vault: &oneiron::Vault,
+        admit: &HousekeepingAdmission,
+        follow: &mut WaitReportFollow,
+    ) -> WaitReport {
+        let Some(_admitted) = admit() else {
+            return WaitReport::NotAdmitted;
+        };
+        let seam = ReportWhenChanged {
+            hold: self,
+            reported: follow.reported,
+            sent: Cell::new(None),
+        };
+        match vault.report_recovery_wait_to_box(&seam) {
+            Ok(()) => {
+                follow.warned = false;
+                let Some(wait) = seam.sent.get() else {
+                    return WaitReport::Unchanged;
+                };
+                follow.reported = Some(wait);
+                tracing::info!(
+                    wait_secs = wait.as_secs(),
+                    "the recovery box took the vault's recovery wait"
+                );
+                WaitReport::Reported {
+                    wait_secs: wait.as_secs(),
+                }
+            }
+            Err(error) => {
+                if follow.warned {
+                    tracing::debug!(
+                        kind = ?error.kind(),
+                        "the recovery box still does not take the vault's recovery wait"
+                    );
+                } else {
+                    tracing::warn!(
+                        kind = ?error.kind(),
+                        "the recovery box did not take the vault's recovery wait; the next look reports it again"
+                    );
+                    follow.warned = true;
+                }
+                WaitReport::Failed
+            }
+        }
+    }
+
     /// One look: reads the owner's kit-only fact and, when the box has not
     /// acknowledged it in this process, sends its hold, after the boot heal
     /// as a switch's hold goes. Admitted as a background pass and held
@@ -185,9 +301,9 @@ impl HypnosRecoveryBoxHold {
 
     /// Follows the owner's kit-only fact for the life of this process: one
     /// look at once, then one every `every`, until `stopped` resolves. Each
-    /// look runs on a blocking thread, one at a time, and a stop ends the
-    /// watch between looks, never during one; a stop that came before the
-    /// first look ends it with no look.
+    /// look, and the wait report after it, runs on a blocking thread, one at
+    /// a time, and a stop ends the watch between looks, never during one; a
+    /// stop that came before the first look ends it with no look.
     pub(crate) fn follow_kit_only_fact(
         &self,
         vault: Arc<oneiron::Vault>,
@@ -200,7 +316,7 @@ impl HypnosRecoveryBoxHold {
         let hold = Arc::new(self.clone());
         tokio::spawn(async move {
             let mut stopped = std::pin::pin!(stopped);
-            let mut follow = KitOnlyFollow::default();
+            let mut follow = (KitOnlyFollow::default(), WaitReportFollow::default());
             // The first look goes at once, but not past a stop that came first.
             let mut wait = Duration::ZERO;
             loop {
@@ -217,9 +333,10 @@ impl HypnosRecoveryBoxHold {
                     Arc::clone(&read),
                 );
                 let looked = tokio::task::spawn_blocking(move || {
-                    let mut follow = follow;
-                    hold.look_at_kit_only_fact(&vault, &admit, &read, &mut follow);
-                    follow
+                    let (mut fact_follow, mut wait_follow) = follow;
+                    hold.look_at_kit_only_fact(&vault, &admit, &read, &mut fact_follow);
+                    hold.report_wait_when_changed(&vault, &admit, &mut wait_follow);
+                    (fact_follow, wait_follow)
                 })
                 .await;
                 follow = match looked {
@@ -229,7 +346,7 @@ impl HypnosRecoveryBoxHold {
                             panicked = error.is_panic(),
                             "a look at the owner's kit-only fact did not finish; the next look starts afresh"
                         );
-                        KitOnlyFollow::default()
+                        (KitOnlyFollow::default(), WaitReportFollow::default())
                     }
                 };
             }

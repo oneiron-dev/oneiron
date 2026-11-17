@@ -33,8 +33,9 @@
 //! recovery-authority seed waits, and
 //! [`HypnosRecoveryBoxHold::cancel_pending_box_release`] carries an owner
 //! device's cancel of the box's pending release. Their callers retry (the
-//! next boot or setting change; the owner's next cancel), and neither waits
-//! for the boot heal, which is the kit-only hold's alone.
+//! kit-only watch's next look reports the wait again; the owner sends the
+//! next cancel), and neither waits for the boot heal, which is the kit-only
+//! hold's alone.
 //!
 //! The call is a blocking `std` socket under one deadline, so it needs no
 //! runtime and is safe on a runtime's thread or off one. A self-hosted
@@ -49,7 +50,7 @@ use std::sync::{Arc, Condvar, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
 use oneiron::EntityId;
-use oneiron::world_keys::RecoveryBoxHold;
+use oneiron::world_keys::{RecoveryBoxCanceller, RecoveryBoxHold};
 use oneiron_vault_contract::{
     MAX_CTL_LINE, RECOVERY_BOX_CANCEL_OP, RECOVERY_BOX_KIT_ONLY_OP, RECOVERY_BOX_WAIT_MAX_SECS,
     RECOVERY_BOX_WAIT_OP, RecoveryBoxCancel, RecoveryBoxCancelAck, RecoveryBoxCancelledBy,
@@ -60,7 +61,7 @@ use zeroize::Zeroizing;
 
 pub(crate) mod kit_only_watch;
 
-pub use self::kit_only_watch::{KitOnlyFact, KitOnlyFactRead, KitOnlyLook};
+pub use self::kit_only_watch::{KitOnlyFact, KitOnlyFactRead, KitOnlyLook, WaitReport};
 
 /// How long one hold's connect, write and the supervisor's ack may take, in
 /// all. The supervisor's own call to the control plane ends within 20 s, so
@@ -484,6 +485,21 @@ impl RecoveryBoxHold for HypnosRecoveryBoxHold {
     fn report_recovery_wait(&self, wait: Duration) -> oneiron::Result<()> {
         // The inherent method, as above: the relay call.
         HypnosRecoveryBoxHold::report_recovery_wait(self, wait)
+    }
+
+    fn cancel_pending_box_release(
+        &self,
+        cancelled_by: &RecoveryBoxCanceller,
+        release_receipt: Option<u64>,
+    ) -> oneiron::Result<bool> {
+        // The inherent method, as above: the owner and the key that signed
+        // the Cancel the node checked go to the box's receipt and notice.
+        HypnosRecoveryBoxHold::cancel_pending_box_release(
+            self,
+            cancelled_by.owner,
+            &cancelled_by.key,
+            release_receipt,
+        )
     }
 }
 

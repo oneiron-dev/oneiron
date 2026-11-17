@@ -10,15 +10,19 @@
 //! boot heal sends the fact's choice over this install's own preset, and the
 //! preset switch holds the box through the hosted client when it runs here,
 //! but a `Standard` call on a vault already on `Standard` sends no release.
+//! The same cadence reports the vault's recovery wait: once, again after a
+//! refused report, never again while it is unchanged.
 //!
-//! The fact reader is the test's: the fold's reader comes with the switch's
-//! fact (OPUS-WAYBACK's fact PR).
+//! Most tests pick the fact reader; one mints the owner-signed fact in a
+//! real fold (OPUS-WAYBACK's #9270 door) and reads it with managed boot's
+//! reader.
 //!
 //! Needs the doors (`--features oneiron/test-support` is for the steward
 //! fixture, as in `recovery_box_boot_heal.rs`):
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron-server
 //! --all-features --features oneiron/test-support --test recovery_box_kit_only_watch`.
 
+use std::collections::BTreeSet;
 use std::io::{BufRead as _, BufReader, Write as _};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
@@ -26,12 +30,22 @@ use std::sync::{Arc, Mutex, mpsc};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
-use oneiron::Vault;
+use ed25519_dalek::{Signer as _, SigningKey};
+use oneiron::authority::{
+    ActAuthority, ActSurface, AuthorityKey, CheckpointRootSigner, MachineRole, OwnerKeyEnrollment,
+};
+use oneiron::consent::AuthenticatedOwner;
+use oneiron::recovery::{CodeKeeping, KitIssue, PassphraseCost, PieceHome};
+use oneiron::store::GateDecisionId;
+use oneiron::test_doors::recovery_box_kit_only_fact::append_recovery_box_kit_only_fact;
 use oneiron::test_doors::steward::{open_owner_carrier_vault, owner};
-use oneiron::world_keys::{NoRecoveryBox, RecoveryBoxHold, RecoveryPreset};
+use oneiron::test_support::bind_host_owner;
+use oneiron::world_keys::{NoRecoveryBox, RecoveryBoxCanceller, RecoveryBoxHold, RecoveryPreset};
+use oneiron::{EntityId, Vault, VaultConfig};
 use oneiron_server::test_doors::recovery_box_hold::{
-    KitOnlyFact, KitOnlyFactRead, KitOnlyLook, close_heal_gate, follow_kit_only_fact,
-    heal_at_boot_reading, hold_client, kit_only_watch,
+    KitOnlyFact, KitOnlyFactRead, KitOnlyLook, WaitReport, close_heal_gate,
+    fold_kit_only_fact_read, follow_kit_only_fact, heal_at_boot_reading, hold_client,
+    kit_only_watch,
 };
 
 const VAULT: &str = "vault-7";
@@ -162,6 +176,15 @@ fn serve(mut stream: UnixStream, entry: Script, lines: &mpsc::Sender<String>) {
 fn expected_line(kit_only: bool) -> String {
     format!(
         "{{\"op\":\"recovery_box_kit_only\",\"vault\":\"{VAULT}\",\"token\":\"{}\",\"kit_only\":{kit_only}}}\n",
+        token()
+    )
+}
+
+/// The wait report's line: `recovery.wait` reads its 24-hour default until
+/// the Setting lands.
+fn expected_wait_line() -> String {
+    format!(
+        "{{\"op\":\"recovery_box_wait\",\"vault\":\"{VAULT}\",\"token\":\"{}\",\"wait_secs\":86400}}\n",
         token()
     )
 }
@@ -381,11 +404,19 @@ fn the_boot_heal_sends_the_facts_choice_over_this_installs_preset() {
                 )))
             }
         }
-    }
 
         fn report_recovery_wait(&self, _wait: Duration) -> oneiron::Result<()> {
             Ok(())
         }
+
+        fn cancel_pending_box_release(
+            &self,
+            _cancelled_by: &RecoveryBoxCanceller,
+            _release_receipt: Option<u64>,
+        ) -> oneiron::Result<bool> {
+            Ok(false)
+        }
+    }
 
     // this install's preset reads `Standard` with a marker left, as on a
     // managed node, whose own preset never leaves `Standard`
@@ -482,7 +513,7 @@ fn the_cadence_looks_at_once_follows_a_new_fact_and_ends_at_shutdown() {
     let directory = tempfile::tempdir().expect("temp dir");
     let vault = keyed_vault(&directory.path().join("vault"));
     let fold = TestFold::new(Fold::Fact(fact(true, 1)));
-    let (_dir, socket, lines, supervisor) = stub(vec![Script::Held, Script::Held]);
+    let (_dir, socket, lines, supervisor) = stub(vec![Script::Held, Script::Held, Script::Held]);
     let client = hold_client(&socket, VAULT, &token(), BOUND);
     let runtime = tokio::runtime::Runtime::new().expect("runtime");
     let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
@@ -505,11 +536,18 @@ fn the_cadence_looks_at_once_follows_a_new_fact_and_ends_at_shutdown() {
     );
     fold.set(Fold::Fact(fact(false, 2)));
     assert_eq!(
+        lines
+            .recv_timeout(ANSWER)
+            .expect("the first look's wait report"),
+        expected_wait_line()
+    );
+    assert_eq!(
         lines.recv_timeout(ANSWER).expect("a later look's line"),
         expected_line(false)
     );
     supervisor.join().expect("supervisor");
-    // The acknowledged fact is never sent again: no call over three more looks.
+    // The acknowledged fact and the wait the box took are never sent again:
+    // no call over three more looks.
     let silent = rebind_silent(&socket);
     std::thread::sleep(Duration::from_millis(350));
     assert_no_call(&silent);
@@ -576,4 +614,175 @@ fn a_standard_call_on_a_standard_vault_sends_no_release_through_the_hosted_clien
     );
     assert_no_call(&listener);
     assert_eq!(vault.recovery_box_hold_pending().expect("marker"), None);
+}
+
+#[test]
+fn the_wait_report_goes_once_again_after_a_refusal_and_never_while_unchanged() {
+    let directory = tempfile::tempdir().expect("temp dir");
+    let vault = keyed_vault(&directory.path().join("vault"));
+    let fold = TestFold::new(Fold::NoFact);
+    let (_dir, socket, lines, supervisor) = stub(vec![Script::Refused, Script::Held]);
+    let client = hold_client(&socket, VAULT, &token(), BOUND);
+    let mut watch = kit_only_watch(&client, Arc::clone(&vault), true, fold.reader());
+
+    assert_eq!(watch.report_wait(), WaitReport::Failed);
+    assert_eq!(
+        watch.report_wait(),
+        WaitReport::Reported { wait_secs: 86_400 },
+        "a refused report goes again"
+    );
+    for _ in 0..2 {
+        assert_eq!(
+            lines.recv_timeout(ANSWER).expect("the report's line"),
+            expected_wait_line()
+        );
+    }
+    supervisor.join().expect("supervisor");
+    let silent = rebind_silent(&socket);
+    assert_eq!(watch.report_wait(), WaitReport::Unchanged);
+    assert_eq!(watch.report_wait(), WaitReport::Unchanged);
+    assert_no_call(&silent);
+}
+
+#[test]
+fn a_paused_vault_reports_no_wait() {
+    let directory = tempfile::tempdir().expect("temp dir");
+    let vault = keyed_vault(&directory.path().join("vault"));
+    let fold = TestFold::new(Fold::NoFact);
+    let (_dir, socket, listener) = silent_supervisor();
+    let client = hold_client(&socket, VAULT, &token(), BOUND);
+    let mut watch = kit_only_watch(&client, Arc::clone(&vault), false, fold.reader());
+
+    assert_eq!(watch.report_wait(), WaitReport::NotAdmitted);
+    assert_no_call(&listener);
+}
+
+// The owner-signed fact in a real fold (#9270): minted as oneiron's
+// `tests/kit_only_authority_rotation.rs` mints it, read with managed boot's
+// reader.
+
+/// Seed of the owner device key the vault handle holds to prove the fact.
+const PROVING_KEY_SEED: u8 = 61;
+
+/// An owner device key held on the vault handle: what an owner act's proof
+/// is signed with, as on the owner's device.
+struct KeySigner(SigningKey);
+
+impl CheckpointRootSigner for KeySigner {
+    fn root(&self) -> AuthorityKey {
+        AuthorityKey::Ed25519(self.0.verifying_key().to_bytes())
+    }
+
+    fn sign_checkpoint_statement(&self, statement: &[u8]) -> oneiron::Result<Vec<u8>> {
+        Ok(self.0.sign(statement).to_bytes().to_vec())
+    }
+
+    fn sign_owner_proof(&self, transcript: &[u8]) -> oneiron::Result<Vec<u8>> {
+        Ok(self.0.sign(transcript).to_bytes().to_vec())
+    }
+}
+
+fn owner_proof(vault: &Vault, person: EntityId) -> AuthenticatedOwner {
+    vault
+        .authenticate_owner(person, &person.to_hex(), true, GateDecisionId::now())
+        .expect("an owner proof")
+}
+
+/// A vault whose fold can hold the owner's kit-only fact: rooted under a host
+/// root with its world kit confirmed, and an owner device key enrolled and
+/// held on this handle, as oneiron's `tests/kit_only_authority_rotation.rs`
+/// builds it. Answers the vault and its owner.
+fn vault_proving_owner_acts(path: &Path) -> (Arc<Vault>, EntityId) {
+    let vault = Vault::open(path, VaultConfig::device()).expect("the vault");
+    vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
+    vault.prepare_install_signing().expect("install signing");
+    let issuer = vault.bootstrap_host_slip_issuer().expect("the host seed");
+    vault.ensure_host_root_slip(&issuer).expect("the host root");
+    vault
+        .provision_engine_machine_identities(&issuer)
+        .expect("engine machines");
+    vault
+        .ensure_serving_install_profile(&issuer, MachineRole::HostedNode)
+        .expect("this install's live machine profile");
+    let person = vault.ensure_embedded_owner_actor().expect("the owner");
+    bind_host_owner(&vault, &issuer, person).expect("the owner's binding");
+    vault.ensure_vault_key().expect("the data key");
+    let machine = vault
+        .prepare_install_signing()
+        .expect("this install's machine");
+    let vault_id = vault
+        .authority_fold()
+        .expect("the fold")
+        .vault_id
+        .expect("a rooted vault");
+    let issued = vault
+        .issue_world_kit(
+            &owner_proof(&vault, person),
+            &KitIssue {
+                vault_id,
+                homes: [
+                    PieceHome::RecoveryCode(CodeKeeping::Paper),
+                    PieceHome::TrustedPerson,
+                    PieceHome::SecurityKey,
+                ],
+                passphrase: None,
+                cost: PassphraseCost::FLOOR,
+                only_machine: false,
+            },
+        )
+        .expect("a kit");
+    let refs: Vec<_> = issued.pieces.iter().take(2).collect();
+    vault
+        .confirm_world_kit(&owner_proof(&vault, person), &refs, None, &BTreeSet::new())
+        .expect("the kit confirms");
+    let key = SigningKey::from_bytes(&[PROVING_KEY_SEED; 32]);
+    let authority = ActAuthority::Owner(owner_proof(&vault, person), ActSurface::ThisInstall);
+    let public_key = key.verifying_key().to_bytes();
+    let challenge = vault
+        .owner_key_enrollment_challenge_as(&authority, machine, &public_key)
+        .expect("the challenge");
+    vault
+        .enrol_owner_signing_key_as_host(
+            &authority,
+            OwnerKeyEnrollment {
+                machine,
+                public_key,
+                proof: key.sign(&challenge).to_bytes().to_vec(),
+            },
+            &issuer,
+        )
+        .expect("the owner enrols a device key");
+    vault.hold_checkpoint_root_signer(Arc::new(KeySigner(key)));
+    (Arc::new(vault), person)
+}
+
+#[test]
+fn the_folds_kit_only_fact_holds_and_releases_the_box() {
+    let directory = tempfile::tempdir().expect("temp dir");
+    let (vault, person) = vault_proving_owner_acts(directory.path());
+    let (_dir, socket, lines, supervisor) = stub(vec![Script::Held, Script::Held]);
+    let client = hold_client(&socket, VAULT, &token(), BOUND);
+    let mut watch = kit_only_watch(&client, Arc::clone(&vault), true, fold_kit_only_fact_read());
+
+    assert_eq!(
+        watch.look(),
+        KitOnlyLook::NoFact,
+        "a vault whose owner never switched holds no fact"
+    );
+    append_recovery_box_kit_only_fact(&vault, &owner_proof(&vault, person), true)
+        .expect("the owner's device signs kit-only on");
+    assert_eq!(watch.look(), KitOnlyLook::Held { kit_only: true });
+    assert_eq!(
+        lines.recv_timeout(ANSWER).expect("the hold's line"),
+        expected_line(true)
+    );
+    assert_eq!(watch.look(), KitOnlyLook::Acknowledged);
+    append_recovery_box_kit_only_fact(&vault, &owner_proof(&vault, person), false)
+        .expect("the owner's device signs kit-only off");
+    assert_eq!(watch.look(), KitOnlyLook::Held { kit_only: false });
+    assert_eq!(
+        lines.recv_timeout(ANSWER).expect("the release's line"),
+        expected_line(false)
+    );
+    supervisor.join().expect("supervisor");
 }
