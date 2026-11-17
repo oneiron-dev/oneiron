@@ -205,6 +205,7 @@ pub mod seat_park_model_step;
 pub mod secret_same_value;
 pub mod setting;
 pub mod setting_keys;
+pub mod share_claim_refs;
 pub mod shared_act_family;
 pub mod shared_invitation_rows;
 pub mod side_key_hex_case;
