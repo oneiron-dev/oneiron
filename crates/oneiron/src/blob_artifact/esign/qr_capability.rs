@@ -39,9 +39,9 @@ use super::{
 use crate::consent::AuthenticatedOwner;
 use crate::side_table::{self, CodecError, Named, Raw, RawValue, SideTable};
 use crate::{EntityId, Result, Vault};
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
 use rand_core::{OsRng, RngCore};
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 
 /// QR capability row. Key: bytes32 (the capability's SHA-256 digest).
 const QR_TOKENS: SideTable<[u8; 32], QrCapabilityBinding, Named> =
@@ -147,7 +147,15 @@ impl EsignQrCapability {
     }
 
     fn digest(&self) -> [u8; 32] {
-        Sha256::digest(self.0.as_bytes()).into()
+        LegacyDigest::new(purposes::blob_artifact::ESIGN_QR_CAPABILITY)
+            .raw(self.0.as_bytes())
+            .finish()
+    }
+
+    /// The digest that keys this capability's QR token row.
+    #[cfg(oneiron_test_support)]
+    pub(crate) fn digest_for_test(&self) -> [u8; 32] {
+        self.digest()
     }
 
     /// 256 fresh random bits as 64 lower-hex characters.
@@ -406,7 +414,7 @@ impl Vault {
         let bytes = self
             .read_blob_artifact_version_in_txn(&txn, &artifact, sealed.sealed_version)?
             .ok_or_else(|| invalid("sealed artifact version missing"))?;
-        if <[u8; 32]>::from(Sha256::digest(&bytes)) != sealed.sha256 {
+        if super::public_read::sealed_pdf_sha256(&bytes) != sealed.sha256 {
             return Err(invalid("sealed artifact hash mismatch"));
         }
         Ok(bytes)

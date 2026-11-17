@@ -6,6 +6,7 @@ pub(crate) use oneiron_store::blob_artifact::esign::dispatch_key::*;
 use super::outbound::EsignOutboundVerb;
 use crate::store::verb_invocation::InvocationId;
 use crate::{EntityId, Vault};
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
 use oneiron_contracts::memory::{MemoryError, MemoryResult};
 
 /// One e-sign act's OF-327 intent ref: its logical send ref and ledger
@@ -45,9 +46,10 @@ pub(super) fn esign_dispatch_key(
     }
 }
 
-/// The key a no-key call named `invocation` derives: BLAKE3 over the domain,
-/// the actor, the act, the document and the invocation, each length-framed
-/// (u64 little-endian), and the principal tagged present (1) or absent (0).
+/// The key a no-key call named `invocation` derives
+/// ([`purposes::blob_artifact::ESIGN_NO_KEY_CALL`]): the actor, the act, the
+/// document and the invocation, each length-framed (u64 little-endian), and
+/// the principal tagged present (1) or absent (0).
 fn invocation_key(
     verb: EsignOutboundVerb,
     document: EntityId,
@@ -55,26 +57,39 @@ fn invocation_key(
     on_behalf_of: Option<&str>,
     invocation: InvocationId,
 ) -> String {
-    let mut hasher = blake3::Hasher::new();
-    hasher.update(NO_KEY_CALL_DOMAIN);
+    let mut digest = LegacyDigest::new(purposes::blob_artifact::ESIGN_NO_KEY_CALL);
     for part in [
         actor.to_hex().as_str(),
         verb.as_str(),
         document.to_hex().as_str(),
         invocation.to_hex().as_str(),
     ] {
-        hasher.update(&(part.len() as u64).to_le_bytes());
-        hasher.update(part.as_bytes());
+        digest.len_u64_le(part.len()).raw(part.as_bytes());
     }
     match on_behalf_of {
         Some(principal) => {
-            hasher.update(&[1]);
-            hasher.update(&(principal.len() as u64).to_le_bytes());
-            hasher.update(principal.as_bytes());
+            digest
+                .raw(&[1])
+                .len_u64_le(principal.len())
+                .raw(principal.as_bytes());
         }
         None => {
-            hasher.update(&[0]);
+            digest.raw(&[0]);
         }
     }
-    crate::entity_id::bytes_to_hex_lower(&hasher.finalize().as_bytes()[..NO_KEY_CALL_KEY_BYTES])
+    crate::entity_id::bytes_to_hex_lower(&digest.finish()[..NO_KEY_CALL_KEY_BYTES])
+}
+
+impl EsignOutboundVerb {
+    /// The key a no-key call of this act derives from `invocation`.
+    #[cfg(oneiron_test_support)]
+    pub(crate) fn no_key_call_key_for_test(
+        self,
+        document: EntityId,
+        actor: EntityId,
+        on_behalf_of: Option<&str>,
+        invocation: InvocationId,
+    ) -> String {
+        invocation_key(self, document, actor, on_behalf_of, invocation)
+    }
 }

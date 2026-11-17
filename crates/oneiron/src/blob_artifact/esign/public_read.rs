@@ -6,7 +6,7 @@ use super::{
     model::*,
 };
 use crate::{EntityId, Result, Vault};
-use sha2::{Digest, Sha256};
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
 
 /// A preview read's vault error or input-memory refusal. File-plane and plain
 /// inline ASSET bytes reserve memory before their output allocation. UTF-8
@@ -207,7 +207,7 @@ impl Vault {
         let pair = read(&txn, &pdf.artifact, pdf.version)?
             .ok_or_else(|| E::from(invalid(pdf.missing())))?;
         if let Some(sha256) = pdf.sealed_sha256
-            && <[u8; 32]>::from(Sha256::digest(&pair.0)) != sha256
+            && sealed_pdf_sha256(&pair.0) != sha256
         {
             return Err(E::from(invalid("sealed artifact hash mismatch")));
         }
@@ -285,7 +285,7 @@ impl Vault {
             .read_blob_artifact_version_in_txn(txn, &pdf.artifact, pdf.version)?
             .ok_or_else(|| invalid(pdf.missing()))?;
         if let Some(sha256) = pdf.sealed_sha256
-            && <[u8; 32]>::from(Sha256::digest(&bytes)) != sha256
+            && sealed_pdf_sha256(&bytes) != sha256
         {
             return Err(invalid("sealed artifact hash mismatch"));
         }
@@ -446,5 +446,22 @@ impl PinnedPdf {
         } else {
             "original missing"
         }
+    }
+}
+
+/// The SHA-256 a seal stores for its output PDF, which every read of the
+/// sealed PDF compares its bytes with
+/// ([`purposes::blob_artifact::SEALED_PDF_SHA256`]).
+pub(super) fn sealed_pdf_sha256(bytes: &[u8]) -> [u8; 32] {
+    LegacyDigest::new(purposes::blob_artifact::SEALED_PDF_SHA256)
+        .raw(bytes)
+        .finish()
+}
+
+impl Vault {
+    /// The sealed-PDF SHA-256 a read of `bytes` compares with its seal's.
+    #[cfg(oneiron_test_support)]
+    pub(crate) fn esign_sealed_pdf_sha256_for_test(bytes: &[u8]) -> [u8; 32] {
+        sealed_pdf_sha256(bytes)
     }
 }

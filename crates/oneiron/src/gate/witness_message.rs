@@ -32,6 +32,8 @@ use rmpv::Value;
 
 mod binding;
 use binding::witness_message_binding;
+#[cfg(oneiron_test_support)]
+pub(crate) use binding::witness_message_binding_for_test;
 
 use crate::entity_id::EntityId;
 use crate::error::Result;
