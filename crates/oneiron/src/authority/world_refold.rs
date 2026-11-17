@@ -103,7 +103,7 @@ pub(super) fn carried_request_kind(
 pub(super) fn refold_world_edits(
     states: &mut BTreeMap<AuthorityEntryHash, FoldState>,
     by_hash: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
-    ancestors: &BTreeMap<AuthorityEntryHash, BTreeSet<AuthorityEntryHash>>,
+    ancestors: &AncestorIndex,
     context: FoldContext<'_>,
     issues: &mut Vec<AuthorityFoldIssue>,
     fenced: impl Fn(&AuthorityEntryHash) -> bool,
@@ -111,7 +111,7 @@ pub(super) fn refold_world_edits(
     let kind_of = |request: &AuthorityEntryHash| by_hash.get(request).and_then(request_kind);
     let causal = |hashes: BTreeSet<AuthorityEntryHash>| {
         let mut hashes: Vec<_> = hashes.into_iter().collect();
-        hashes.sort_by_key(|hash| (ancestors.get(hash).map_or(0, BTreeSet::len), *hash));
+        hashes.sort_by_key(|hash| (ancestors.get(hash).map_or(0, |past| past.len()), *hash));
         hashes
     };
     let crossable = |hash: &AuthorityEntryHash| {
@@ -131,7 +131,7 @@ pub(super) fn refold_world_edits(
                     && !fenced(*hash)
                     && ancestors
                         .get(*hash)
-                        .is_some_and(|past| past.iter().any(crossable))
+                        .is_some_and(|past| past.iter_unordered().any(crossable))
             })
             .map(|(hash, _)| *hash)
             .collect(),
@@ -145,7 +145,7 @@ pub(super) fn refold_world_edits(
     let crossed = causal(
         lost.iter()
             .filter_map(|hash| ancestors.get(hash))
-            .flatten()
+            .flat_map(|past| past.iter_unordered())
             .filter(|hash| crossable(hash))
             .copied()
             .collect(),
