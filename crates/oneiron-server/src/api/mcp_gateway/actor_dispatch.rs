@@ -135,6 +135,7 @@ impl McpCallEffect {
             Effect::AgentVerb | Effect::Context | Effect::InferenceDefaultsRead => Self::Reads,
             Effect::Speak
             | Effect::Think
+            | Effect::ThinkAloud
             | Effect::Express
             | Effect::TasksAsk
             | Effect::TasksWait
