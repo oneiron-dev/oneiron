@@ -265,6 +265,21 @@ impl FixedSideKey for u16 {
 }
 
 /// Big-endian, so keys order by number.
+impl SideKey for u32 {
+    fn encode_into(&self, out: &mut Vec<u8>) {
+        out.extend_from_slice(&self.to_be_bytes());
+    }
+
+    fn decode_key(bytes: &[u8]) -> Option<Self> {
+        Some(u32::from_be_bytes(bytes.try_into().ok()?))
+    }
+}
+
+impl FixedSideKey for u32 {
+    const WIDTH: usize = 4;
+}
+
+/// Big-endian, so keys order by number.
 impl SideKey for u64 {
     fn encode_into(&self, out: &mut Vec<u8>) {
         out.extend_from_slice(&self.to_be_bytes());
@@ -409,6 +424,18 @@ impl<const N: usize> FieldSpelling<[u8; N]> for HexLower<N> {
 
     fn into_field(self) -> [u8; N] {
         self.0
+    }
+}
+
+/// Text that is already `2 * N` lower-case hex characters, such as a hash's `to_hex()`: written as
+/// it is, and read back only from that spelling.
+impl<const N: usize> FieldSpelling<String> for HexLower<N> {
+    fn encode_field(field: &String, out: &mut Vec<u8>) {
+        out.extend_from_slice(field.as_bytes());
+    }
+
+    fn into_field(self) -> String {
+        oneiron_hex::encode(&self.0)
     }
 }
 

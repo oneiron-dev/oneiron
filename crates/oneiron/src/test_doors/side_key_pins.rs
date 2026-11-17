@@ -1,4 +1,4 @@
-//! Doors for `tests/side_key_pins.rs` (UC-06 K-proofs of PRs 2, 3 and 4): one fixture key of
+//! Doors for `tests/side_key_pins.rs` (UC-06 K-proofs of PRs 2 to 5): one fixture key of
 //! each crate-private side-table key type that those PRs derive, with the reader of its type.
 //! Compiled only under `--cfg oneiron_test_support`; never API.
 
@@ -11,6 +11,9 @@ use crate::dreamer_tournament::DreamerTournamentBranchVerdict;
 use crate::entity_id::EntityId;
 use crate::ports::{DocumentSlot, DocumentUpdateKey, UpdateSeq};
 use crate::side_table::SideKey;
+use crate::store::ChannelIdentityLifecycleReceiptId;
+use crate::store::RetrievalRunId;
+use crate::store::vad_annotation::VadAnnotationMetaKey;
 
 /// One fixture key: the bytes it spells after its table prefix, and what its type reads from
 /// any bytes (the key read, spelled again; `None` where the type refuses them).
@@ -254,6 +257,99 @@ pub fn proposal_key(actor: EntityId, proposal_ref: &str) -> Pin {
 /// big-endian bytes.
 pub fn history_key(actor: EntityId, count: u64) -> Pin {
     crate::gate::proposal_observation::history_key_pin_for_test(actor, count)
+}
+
+/// `note::side_keys::HexPair`: two ids in lower-case hex, `:`-joined.
+pub fn hex_pair(a: EntityId, b: EntityId) -> Pin {
+    crate::note::hex_pair_pin_for_test(a, b)
+}
+
+/// `note::side_keys::HexTriple`: three ids in lower-case hex, `:`-joined.
+pub fn hex_triple(a: EntityId, b: EntityId, c: EntityId) -> Pin {
+    crate::note::hex_triple_pin_for_test(a, b, c)
+}
+
+/// `note::side_keys::HexHexHash`: two ids in lower-case hex and a hash's hex text, `:`-joined.
+pub fn hex_hex_hash(a: EntityId, b: EntityId, hash: &str) -> Pin {
+    crate::note::hex_hex_hash_pin_for_test(a, b, hash)
+}
+
+/// `outbound_intent_ledger::store::AttemptCallKey`: the raw attempt id, then the call sequence
+/// as eight big-endian bytes.
+pub fn attempt_call_key(attempt_id: [u8; 16], call_seq: u64) -> Pin {
+    crate::outbound_intent_ledger::attempt_call_key_pin_for_test(attempt(attempt_id), call_seq)
+}
+
+/// `receipt::dispatch_observation::DispatchObservationKey`: the raw attempt id, then the attempt
+/// count as four big-endian bytes.
+pub fn dispatch_observation_key(attempt_id: [u8; 16], attempt_count: u32) -> Pin {
+    crate::receipt::dispatch_observation_key_pin_for_test(attempt(attempt_id), attempt_count)
+}
+
+/// `recovery::document::DocKey`: the note id and the head id in lower-case hex, `:`-joined.
+pub fn doc_key(note: EntityId, head: EntityId) -> Pin {
+    crate::recovery::doc_key_pin_for_test(note, head)
+}
+
+/// `repo_mutation::proposal::OpKey`: the 64-byte repo key hash, `:`, the sequence as eight
+/// big-endian bytes.
+pub fn op_key(repo_key_hash: [u8; 64], seq: u64) -> Pin {
+    crate::repo_mutation::proposal::op_key_pin_for_test(repo_key_hash, seq)
+}
+
+/// `store::ChannelIdentityLifecycleReceiptId`: its 16 bytes.
+pub fn channel_identity_lifecycle_receipt_id(bytes: [u8; 16]) -> Pin {
+    Pin::of(&ChannelIdentityLifecycleReceiptId::from_bytes(bytes))
+}
+
+/// `store::RetrievalRunId`: its 16 bytes.
+pub fn retrieval_run_id(bytes: [u8; 16]) -> Pin {
+    Pin::of(&RetrievalRunId::from_bytes(bytes))
+}
+
+/// `store::skill_resident::LoadedSkillKey`: the receipt id's length as a big-endian `u64`, the
+/// receipt id, the raw skill id.
+pub fn loaded_skill_key(receipt: &str, skill: EntityId) -> Pin {
+    crate::store::skill_resident::loaded_skill_key_pin_for_test(receipt, skill)
+}
+
+/// `store::vad_annotation::VadAnnotationMetaKey`: the entity type byte, then the raw id.
+pub fn vad_annotation_meta_key(entity_type: u8, id: EntityId) -> Pin {
+    Pin::of(&VadAnnotationMetaKey { entity_type, id })
+}
+
+/// `sync::lease::LeaseKey`: the vault id and the client id as 16 lower-case hex digits each,
+/// `:`-joined.
+pub fn lease_key(vault_id: u64, client_id: u64) -> Pin {
+    crate::sync::lease::lease_key_pin_for_test(vault_id, client_id)
+}
+
+/// `sync::note::workflows::NoteForkKey`: the note id and the fork id in lower-case hex,
+/// `:`-joined.
+pub fn note_fork_key(note: EntityId, fork: EntityId) -> Pin {
+    crate::sync::note::note_fork_key_pin_for_test(note, fork)
+}
+
+/// `task_verb::ask_band::BandKey`: the raw owner id, the class's length as a big-endian `u16`,
+/// the class.
+pub fn band_key(owner: EntityId, class: &str) -> Pin {
+    crate::task_verb::band_key_pin_for_test(owner, class)
+}
+
+/// `task_verb::ask_band::MarkerKey`: a band key, `:`, the raw word id.
+pub fn marker_key(owner: EntityId, class: &str, word: EntityId) -> Pin {
+    crate::task_verb::marker_key_pin_for_test(owner, class, word)
+}
+
+/// `task_verb::follow_up::TaskFollowUpKey`: the raw task id, NUL, the stage.
+pub fn task_follow_up_key(task_ref: EntityId, stage: &str) -> Pin {
+    crate::task_verb::task_follow_up_key_pin_for_test(task_ref, stage)
+}
+
+/// `vault_cleanup::attempt_retention::TaskAttemptKey`: the 32-byte task digest, then the raw
+/// 16-byte attempt.
+pub fn task_attempt_key(task_digest: [u8; 32], attempt: [u8; 16]) -> Pin {
+    crate::vault_cleanup::task_attempt_key_pin_for_test(task_digest, attempt)
 }
 
 fn attempt(bytes: [u8; 16]) -> AttemptId {
