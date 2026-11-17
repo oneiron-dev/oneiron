@@ -44,8 +44,8 @@ pub(super) fn refolds(
 }
 
 /// An act that gives or ends a Grant on its grant line (pass 28 R1): the
-/// owner's agent Grant mint or revoke, a slip grant revoke and a membership
-/// execution record. Folded again, it folds before the rows crossed above
+/// owner's agent Grant mint or revoke, a general grant act (pass 28 R2), a
+/// slip grant revoke and a membership execution record. Folded again, it folds before the rows crossed above
 /// it, as a root request does, so a giving or end above it there reads it: a
 /// stand-in built without it would leave a later giving on the same Grant
 /// beside it, unordered, and the Grant would stand on neither.
@@ -53,6 +53,7 @@ pub(super) fn on_grant_line(op: &AuthorityOp) -> bool {
     matches!(
         op,
         AuthorityOp::AgentGrantAct(_)
+            | AuthorityOp::GrantAct(_)
             | AuthorityOp::SlipGrantRevoke { .. }
             | AuthorityOp::MembershipExecution(_)
     )

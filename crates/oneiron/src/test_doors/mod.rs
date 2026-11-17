@@ -108,6 +108,7 @@ pub mod frontier_walk;
 #[cfg(feature = "sync")]
 pub mod full_copy_mark;
 pub mod gate_receipt_rows;
+pub mod grant_act;
 pub mod grant_roles;
 pub mod grant_standing;
 pub mod graph_ask_centre;

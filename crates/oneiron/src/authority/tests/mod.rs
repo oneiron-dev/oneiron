@@ -46,6 +46,7 @@ mod anchor_independence;
 #[cfg(any())]
 mod causal_claim;
 mod grant_end_arrival;
+mod grant_end_slips;
 mod handoff_arrival_order;
 // FIX [LIBTEST-QUARANTINE-AUTHORITY-TESTS-HANDOFF-SETTLEMENT]: the lib test target's type check fails here (2 errors: E0061 x2); port it, then drop this gate
 #[cfg(any())]

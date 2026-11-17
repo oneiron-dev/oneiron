@@ -84,6 +84,7 @@ fn carries_body(op: &AuthorityOp) -> bool {
                 | AuthorityOp::ConversationTrainingSet(_)
                 | AuthorityOp::ConversationTrainingVaultSet(_)
                 | AuthorityOp::AgentGrantAct(_)
+                | AuthorityOp::GrantAct(_)
                 | AuthorityOp::PolicySettingSet(_)
                 | AuthorityOp::ExportAct(_)
                 | AuthorityOp::FrontierJoin(_)

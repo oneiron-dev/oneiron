@@ -21,7 +21,8 @@ use super::{AuthorityAuditEventKind, AuthorityAuditRow, OpFields};
 use crate::Vault;
 use crate::error::Result;
 use oneiron_authority::authority::{
-    AgentGrantActRecord, AgentGrantChange, AuthorityOp, MembershipExecution,
+    AgentGrantActRecord, AgentGrantChange, AuthorityOp, GrantActChange, GrantActRecord,
+    MembershipExecution,
 };
 
 /// The detail of a counted mint's row whose Grant this vault marks withdrawn
@@ -113,6 +114,29 @@ pub(super) fn classify_membership_execution(
                 _ => None,
             },
             holder_ref: Some(record.person.to_hex()),
+            ..OpFields::default()
+        },
+    )
+}
+
+/// The class, op name and fields of a general grant act (pass 28 R2): a giving is a grant and
+/// an end a revoke. Its subject is the deciding person (none for a rule's end), its grant the
+/// row, its detail the family and the change. The terms stay in the row: the act carries only
+/// their keyed commitment, and no page copies it.
+pub(super) fn classify_grant_act(
+    record: &GrantActRecord,
+) -> (AuthorityAuditEventKind, &'static str, OpFields) {
+    let (kind, change) = match record.change {
+        GrantActChange::Give { .. } => (AuthorityAuditEventKind::Grant, "give"),
+        GrantActChange::End => (AuthorityAuditEventKind::Revoke, "end"),
+    };
+    (
+        kind,
+        "grant_act",
+        OpFields {
+            detail: Some(format!("{} {change}", record.family.as_str())),
+            subject_ref: record.decider_person().map(|person| person.to_hex()),
+            grant_ref: Some(record.subject.to_hex()),
             ..OpFields::default()
         },
     )

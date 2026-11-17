@@ -344,6 +344,7 @@ pub(in crate::authority) fn admits_past(
         | AuthorityOp::HomeCandidacy(_)
         | AuthorityOp::FullCopyMark(_)
         | AuthorityOp::AgentGrantAct(_)
+        | AuthorityOp::GrantAct(_)
         | AuthorityOp::PolicySettingSet(_)
         | AuthorityOp::ExportAct(_)
         | AuthorityOp::OwnerWorkRequest(_)

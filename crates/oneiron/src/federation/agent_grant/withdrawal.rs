@@ -185,6 +185,13 @@ impl Vault {
                 AuthorityOp::MembershipExecution(record) => {
                     grants.membership_revoked.extend(record.withdrawn_grants);
                 }
+                // A lapse's end (pass 28 R2): no person took the Grant back, so it is no
+                // owner revoke.
+                AuthorityOp::GrantAct(record) => {
+                    grants
+                        .membership_revoked
+                        .extend(record.ended_owner_agent_grant());
+                }
                 _ => {}
             }
         }

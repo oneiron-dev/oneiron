@@ -17,9 +17,11 @@ struct VerifiedRestriction {
     kind: Restriction,
     /// The rows its proven branch folded through an owner anchor's branch.
     routed: BTreeSet<AuthorityEntryHash>,
-    /// The Grants whose line its proven branch's fold ended at this row (pass 28 R1): a
-    /// dropped end still ends its Grant's line, as its slip withdrawal still withdraws.
-    ended_grants: BTreeSet<EntityId>,
+    /// The Grants whose line its proven branch's fold ended at this row (pass 28 R1), each
+    /// with the family its act named (pass 28 R2): a dropped end still ends its Grant's line,
+    /// as its slip withdrawal still withdraws, and an end of another family than the line's
+    /// still ends nothing.
+    ended_grants: BTreeMap<EntityId, Option<GrantFamily>>,
 }
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
@@ -108,8 +110,8 @@ impl RevokeFacts {
                 Restriction::DeviceRevoke(key) => super::op_apply::revoke_key(state, key),
                 Restriction::GrantEnd => {}
             }
-            for grant in &fact.ended_grants {
-                state.grant_lines.end(*grant, fact.entry_hash);
+            for (grant, family) in &fact.ended_grants {
+                state.grant_lines.end_as(*grant, fact.entry_hash, *family);
             }
         }
     }
@@ -247,7 +249,7 @@ pub(super) fn derive_revoke_facts(
                 entry_hash: *hash,
                 kind,
                 routed,
-                ended_grants: BTreeSet::new(),
+                ended_grants: BTreeMap::new(),
             },
         );
     }
@@ -294,6 +296,19 @@ impl RevokeFacts {
                 AuthorityOp::SlipConsume { .. } | AuthorityOp::RemovalArchiveConsume { .. } => {
                     Restriction::SlipBurn(BTreeSet::new())
                 }
+                // A general grant act's end withdraws the slips minted under its row, as
+                // `grant_lines::apply_grant_act_line` does, only where it would count: an end of
+                // another family than a surviving line holds ends nothing there.
+                AuthorityOp::GrantAct(record) => match record.ended_grant() {
+                    Some(grant)
+                        if survivors
+                            .values()
+                            .all(|state| state.grant_lines.admits(grant, record.family)) =>
+                    {
+                        Restriction::SlipGrantRevoke(grant.to_hex())
+                    }
+                    _ => continue,
+                },
                 AuthorityOp::AgentGrantAct(record)
                     if matches!(record.change, AgentGrantChange::Revoke { .. }) =>
                 {
@@ -363,7 +378,7 @@ impl RevokeFacts {
                         epoch: *epoch,
                     },
                     routed: state.anchor_entries.clone(),
-                    ended_grants: BTreeSet::new(),
+                    ended_grants: BTreeMap::new(),
                 },
             );
         }

@@ -597,8 +597,8 @@ impl Vault {
     }
 
     /// Each retained authority-log entry the authority fold counted whose op
-    /// is an agent Grant act or a membership withdrawal, in log-row id
-    /// order. An entry whose body this vault no longer holds (an adopted
+    /// is an agent Grant act, a membership withdrawal or a lapse's end of an
+    /// agent Grant (a general grant act, pass 28 R2), in log-row id order. An entry whose body this vault no longer holds (an adopted
     /// checkpoint covers it) is not among them.
     pub(super) fn counted_grant_acts_in_txn(
         &self,
@@ -620,16 +620,25 @@ impl Vault {
             let Ok(entry) = decode_authority_log_entry_body(&row.body) else {
                 continue;
             };
-            if !matches!(
-                &entry.op,
+            let wanted = match &entry.op {
                 AuthorityOp::AgentGrantAct(_)
-                    | AuthorityOp::SlipGrantRevoke { .. }
-                    | AuthorityOp::MembershipExecution(_)
-            ) {
+                | AuthorityOp::SlipGrantRevoke { .. }
+                | AuthorityOp::MembershipExecution(_) => true,
+                AuthorityOp::GrantAct(record) => record.ended_owner_agent_grant().is_some(),
+                _ => false,
+            };
+            if !wanted {
                 continue;
             }
             let hash = authority_entry_hash(&entry)?;
             if !fold.valid_entries.contains(&hash) {
+                continue;
+            }
+            // A lapse's end the fold holds without effect (a line of another family) ends
+            // nothing.
+            if matches!(entry.op, AuthorityOp::GrantAct(_))
+                && fold.held_back_entries().contains(&hash)
+            {
                 continue;
             }
             acts.push(CountedGrantAct {
@@ -665,7 +674,9 @@ impl Vault {
     /// with `include_revoked` (an expired grant shows as revoked). A row
     /// re-put at a withdrawn Grant's id (FIX-LIST 5107) stands for nothing
     /// and shows as revoked, with its revoke action, so the owner still finds
-    /// it and revokes it.
+    /// it and revokes it; so does a live row whose Grant is withdrawn on the
+    /// record ([`withdrawal::LoggedOwnerGrants::withdrew`]: a lapse's end among them,
+    /// pass 28 R2) before its row is erased.
     pub(crate) fn agent_grant_registry_rows_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -680,9 +691,11 @@ impl Vault {
             txn,
             grants.iter().map(|standing| &standing.grant),
         )?;
+        let logged = self.logged_owner_grants_in_txn(txn)?;
         for standing in grants {
             let withdrawn =
-                crate::authority::grant_known_withdrawn_in_txn(&self.store, txn, standing.id);
+                crate::authority::grant_known_withdrawn_in_txn(&self.store, txn, standing.id)
+                    || logged.withdrew(self, txn, standing.id, FederationGrantKind::Access)?;
             if !include_revoked && (withdrawn || !standing.stands_at(now)) {
                 continue;
             }
@@ -698,7 +711,6 @@ impl Vault {
             rows.push(row);
         }
         if include_revoked {
-            let logged = self.logged_owner_grants_in_txn(txn)?;
             for (id, (record, created_at)) in &logged.mints {
                 if shown.contains(id)
                     || !logged.withdrew(self, txn, *id, FederationGrantKind::Access)?

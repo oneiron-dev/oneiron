@@ -94,6 +94,7 @@ mod frontier_join;
 #[cfg(oneiron_test_support)]
 pub(crate) mod frontier_walk_door;
 mod full_copy_mark;
+mod grant_act;
 mod grant_lines;
 mod grant_travel;
 mod grant_travel_door;
@@ -511,6 +512,7 @@ pub(crate) use current_scope::current_grant_scope;
 pub(crate) use first_seen_clock::*;
 pub use first_seen_clock::{RestrictionOnlyClock, restriction_only_clock};
 pub(crate) use frontier_join::FrontierSigner;
+pub(crate) use grant_act::GrantActBy;
 pub(crate) use handoff_equivocation::{HandoffEquivocations, door_refuses_retired_standing};
 pub(crate) use handover_evidence::HandoverEvidence;
 pub(crate) use held_answers::{drop_held_answer_dismissals_in_txn, is_dismissed_held_answer_row};

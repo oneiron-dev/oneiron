@@ -11,11 +11,12 @@ use super::*;
 /// does; this install never counts what it grants. A frontier join, which
 /// grants nothing, lands so too, so such an act above it keeps its effect;
 /// so does a custody permit piece, which has no effect alone (FIX 11866).
-/// So do a Grant's ends (pass 28 R1; review #8845 P1-1): a membership
-/// record's withdrawals and the owner's revoke of his agent Grant still end
-/// their lines. The owner's mint of his agent Grant stays refused: the
-/// funding and history readers count any valid mint until they read its line
-/// (pass 28 R3b).
+/// So do a Grant's acts (pass 28; Astra r1-r2d F1): a general grant act's
+/// end, a membership record's withdrawals and the owner's revoke of his
+/// agent Grant still end their lines, and a giving or statement still
+/// replaces the ones its parents carry but counts nowhere. The owner's mint
+/// of his agent Grant stays refused: the funding and history readers count
+/// any valid mint until they read its line (pass 28 R3b).
 pub(super) fn lands_restriction_only(op: &AuthorityOp) -> bool {
     match op {
         AuthorityOp::AgentGrantAct(record) => {
@@ -35,6 +36,7 @@ pub(super) fn lands_restriction_only(op: &AuthorityOp) -> bool {
                 | AuthorityOp::MachineProfile(_)
                 | AuthorityOp::FrontierJoin(_)
                 | AuthorityOp::CustodyPermitPiece(_)
+                | AuthorityOp::GrantAct(_)
                 | AuthorityOp::MembershipExecution(_)
         ),
     }
