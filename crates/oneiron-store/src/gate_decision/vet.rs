@@ -144,9 +144,13 @@ pub fn valid_gate_receipt_reason(reason: &str) -> bool {
     // Policy-row IDs are bounded, lowercase manifest tokens. Keep them exact
     // on the durable receipt, not a lossy hash; only these three shapes enter
     // the new family. A malformed identifier cannot poison a ledger read.
+    // A check-in `mode` row's ref names the row that set an agent send's mode
+    // (PLAN L3-35), in the same charset; its decoder bounds the ref so the
+    // token fits.
     if let Some(row) = reason
         .strip_prefix("policy_row_")
         .or_else(|| reason.strip_prefix("policy_precedence_row_"))
+        .or_else(|| reason.strip_prefix("check_in_row_"))
     {
         return !row.is_empty()
             && reason.len() <= GATE_RECEIPT_REASON_MAX_LEN
@@ -167,8 +171,10 @@ pub fn valid_gate_receipt_reason(reason: &str) -> bool {
     // blueprint SPINE-COMM/ONE-1752 Leg 4 item 8),
     // charter_* (GOV-10 drift / never-list), connector_manifest_drift
     // (OF-189), checker_* (ONE-1296 host
-    // auto-check hold), copy_review_* (ARCH-0059 campaign copy review). The
-    // charset and length rules below apply to every family.
+    // auto-check hold), copy_review_* (ARCH-0059 campaign copy review),
+    // check_in_* (PLAN L3-35: an agent send's check-in, its mode's source
+    // and its answer). The charset and length rules below apply to every
+    // family.
     //
     // Adding a family LOOSENS the read path too, so a row an older binary
     // would have called corrupt now decodes. That direction is safe for
@@ -187,6 +193,7 @@ pub fn valid_gate_receipt_reason(reason: &str) -> bool {
             )
             || reason.starts_with("charter_")
             || reason.starts_with("copy_review_")
+            || reason.starts_with("check_in_")
             || reason.starts_with(GATE_RECEIPT_REASON_CHECKER_PREFIX))
         && reason
             .bytes()
