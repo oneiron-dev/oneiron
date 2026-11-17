@@ -3,11 +3,16 @@
 //! asker's own key, narrowed by the version's frozen lane, and the lane
 //! that reads with the asker's own live owner authority (FIX 7461). For an
 //! asker of any row type, the reader the question's own reads build
-//! (`saved_question_reader`).
+//! (`saved_question_reader`). A standing question stored in its own writer
+//! with no caller's lane, as a review's dissent stores one, and a key under
+//! the relationship-only grant gate (FIX
+//! SAVED-PRINCIPAL-LANE-STORED-BEFORE-BASIS).
 
 use crate::claim::{FrozenReadLane, ScopedRead, ScopedReadActorKey};
-use crate::llm::decision::questions::{question_lane, saved_reader};
-use crate::{EntityId, Error, Result, Vault};
+use crate::llm::decision::questions::{
+    QuestionDefinitionInput, QuestionRecord, create_question_in_txn, question_lane, saved_reader,
+};
+use crate::{EntityId, Error, Result, Vault, WriteActor};
 
 /// The reader a saved question's own reads build (`saved_reader`): the
 /// asker's own live key, its class taken from its row's type
@@ -38,6 +43,31 @@ pub fn asker_reader(
         .ok_or(Error::InvariantViolation("canonical ask principal"))?
         .exempt_while_owner(asker);
     read_lane.narrow(vault, key)
+}
+
+/// `asker`'s standing question from `definition`, stored in a writer of its
+/// own with no caller's lane, as a review's dissent stores the question of
+/// its overruled prediction (`critic::review::dissent`,
+/// `questions::create_question_in_txn`): it keeps
+/// [`FrozenReadLane::principal`].
+///
+/// # Errors
+/// As `questions::create_question_in_txn`.
+pub fn create_question_in_writer(
+    vault: &Vault,
+    asker: WriteActor,
+    definition: QuestionDefinitionInput,
+    now: u64,
+) -> Result<QuestionRecord> {
+    vault.with_write_txn_grouped(|txn| create_question_in_txn(vault, txn, asker, definition, now))
+}
+
+/// `key` under the relationship-only grant gate bound to `principal`, as a
+/// delegate's credential key and the engine's own maintenance readers read:
+/// a MESSAGE or SUMMARY that names no relationship stays readable.
+#[must_use]
+pub fn under_relationship_gate(key: ScopedReadActorKey, principal: EntityId) -> ScopedReadActorKey {
+    key.require_relationship_grants(Some(principal))
 }
 
 /// Whether `key` reads under the relationship-only grant gate, which keeps
