@@ -996,9 +996,12 @@ const SUPPRESSED: SideTable<EntityId, [u8; 1], side_table::Raw> =
     SideTable::new(&side_table::TASK_FACT_SUPPRESSED);
 
 /// Each task authority fact refused at admission because its id was deleted here before it
-/// arrived, as it arrived: its body, under its task and its id. The task's read judges each
-/// as the fold judges any fact, at the time of the read ([`Vault::task_authority_facts_in`]).
-const REFUSED: SideTable<(EntityId, EntityId), Vec<u8>, side_table::Raw> =
+/// arrived, as it arrived: its body, under its task, its id and the body's content hash. The
+/// task's read judges each as the fold judges any fact, at the time of the read
+/// ([`Vault::task_authority_facts_in`]). Each body an id arrived with is kept apart, so a
+/// replay of the id with a body no carrier signed cannot replace one that counts (blind
+/// review round 2 P1, REVIEW-9438).
+const REFUSED: SideTable<(EntityId, EntityId, [u8; 32]), Vec<u8>, side_table::Raw> =
     SideTable::new(&side_table::TASK_FACT_REFUSED);
 
 /// A replicated row `id` refused because it was deleted here: when it is a task authority
@@ -1030,7 +1033,13 @@ pub(crate) fn note_suppressed_fact_in_txn(
     if carried.carrier.is_none() && !fact_proof::written_here_in(store, wtxn, id, body)? {
         return Ok(());
     }
-    REFUSED.put(store, wtxn, &(carried.fact.task_ref, *id), &body.to_vec())
+    let hash = oneiron_contracts::fingerprint::ContentHash::of(body).into_bytes();
+    REFUSED.put(
+        store,
+        wtxn,
+        &(carried.fact.task_ref, *id, hash),
+        &body.to_vec(),
+    )
 }
 
 /// [`note_suppressed_fact_in_txn`] for a window document's entity carrier,
@@ -1497,7 +1506,7 @@ impl Vault {
     ) -> Result<bool> {
         let mut refused = Vec::new();
         for row in REFUSED.iter_from(&self.store, rtxn, task_ref.as_bytes())? {
-            let ((_, fact_ref), body) = row?;
+            let ((_, fact_ref, _), body) = row?;
             if let Some(fact) = count.counted(self, rtxn, &fact_ref, &body, task_ref)? {
                 refused.push(fact);
             }

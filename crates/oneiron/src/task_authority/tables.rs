@@ -8,7 +8,8 @@ crate::side_table::side_tables! {
         [restore: live] [family: unclassified] [tier: canonical];
     /// An authority fact refused at admission because its id was deleted here first, as it
     /// arrived: the TASK row's body. Its task's read judges it as the fold judges any fact, at
-    /// the time of the read. Key: id16 (task) + id16 (fact).
+    /// the time of the read. Key: id16 (task) + id16 (fact) + the body's content hash (32
+    /// bytes), so each body an id arrived with is kept apart.
     TASK_FACT_REFUSED: VaultMeta b"tasks.fact_refused.v1/" Raw
         [restore: live] [family: unclassified] [tier: canonical];
     /// An authority fact this install's own door wrote: the content hash of the exact body it
