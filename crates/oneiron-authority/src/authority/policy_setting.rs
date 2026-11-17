@@ -23,6 +23,13 @@
 //! value is no digest of a row: the act that switches a hosted vault back to
 //! web sign-in carries [`web_sign_in_value`] over the owner keys it speaks
 //! for, and any other value asks for an owner key again.
+//!
+//! A second one has no local row either: the recovery box's kit-only switch
+//! ([`PolicySetting::RecoveryBoxKitOnly`], WAYBACK-BOX-HOLD-FROM-DEVICE-SWITCH
+//! = A, 17 Nov). The recovery preset is a row of the install that changed
+//! it, so the switch's own write signs this act for the managed node that
+//! holds the box. Its value is [`recovery_box_kit_only_value`] of on or off,
+//! and only an owner key's proof counts it.
 
 use std::collections::BTreeSet;
 
@@ -82,6 +89,24 @@ pub fn web_sign_in_value(owner_keys: &BTreeSet<AuthorityKey>) -> [u8; 32] {
     *hasher.finalize().as_bytes()
 }
 
+/// The value of an act of [`PolicySetting::RecoveryBoxKitOnly`]: BLAKE3 over
+/// `true` (the recovery preset is kit-only) or `false` as JSON, as every
+/// setting act's value is a digest of the value it left as JSON.
+#[must_use]
+pub fn recovery_box_kit_only_value(kit_only: bool) -> [u8; 32] {
+    let json: &[u8] = if kit_only { b"true" } else { b"false" };
+    oneiron_contracts::fingerprint::ContentHash::of(json).into_bytes()
+}
+
+/// Which switch `value` is as an act of [`PolicySetting::RecoveryBoxKitOnly`]
+/// ([`recovery_box_kit_only_value`]): `None` for any other digest.
+#[must_use]
+pub fn recovery_box_kit_only_of(value: &[u8; 32]) -> Option<bool> {
+    [true, false]
+        .into_iter()
+        .find(|kit_only| recovery_box_kit_only_value(*kit_only) == *value)
+}
+
 /// The target an owner act names when it changes no row of its own: a
 /// vault-wide setting, by its name, or a whole-vault export
 /// (`vault.export`). Reserved and derived from the name (BLAKE3 under a
@@ -136,6 +161,13 @@ pub enum PolicySetting {
     /// switches the vault back, and any other value asks for an owner key
     /// again.
     WebSignIn,
+    /// Whether the vault's recovery preset is kit-only ("Nobody but me" or
+    /// "any 2 pieces"), for the recovery box a managed node holds
+    /// (WAYBACK-BOX-HOLD-FROM-DEVICE-SWITCH = A). The fold reads it and no
+    /// install keeps a row of it: its value is
+    /// [`recovery_box_kit_only_value`] of on or off, and an act counts only
+    /// with an owner key's proof.
+    RecoveryBoxKitOnly,
 }
 
 impl PolicySetting {
@@ -154,6 +186,7 @@ impl PolicySetting {
             Self::UndoSend => "settings.undo_send",
             Self::AgentWorldAccess => "settings.agent_world_access",
             Self::WebSignIn => "settings.web_sign_in",
+            Self::RecoveryBoxKitOnly => "settings.recovery_box_kit_only",
         }
     }
 
@@ -171,6 +204,7 @@ impl PolicySetting {
             Self::UndoSend => "undo_send",
             Self::AgentWorldAccess => "agent_world_access",
             Self::WebSignIn => "web_sign_in",
+            Self::RecoveryBoxKitOnly => "recovery_box_kit_only",
         }
     }
 
@@ -188,6 +222,7 @@ impl PolicySetting {
             "undo_send" => Self::UndoSend,
             "agent_world_access" => Self::AgentWorldAccess,
             "web_sign_in" => Self::WebSignIn,
+            "recovery_box_kit_only" => Self::RecoveryBoxKitOnly,
             _ => return None,
         })
     }
@@ -204,7 +239,8 @@ impl PolicySetting {
             | Self::DefaultFacet
             | Self::UndoSend
             | Self::AgentWorldAccess
-            | Self::WebSignIn => OwnerActKind::PolicySetting,
+            | Self::WebSignIn
+            | Self::RecoveryBoxKitOnly => OwnerActKind::PolicySetting,
             Self::FreeTimePolicy => OwnerActKind::FreeTimePolicy,
         }
     }
@@ -243,12 +279,20 @@ impl PolicySettingSet {
     /// reserved target; the free-time policy's act names its agent, which
     /// only the writer knows to be one. An agent's act stands only on the
     /// free-time policy, under a Grant line that names it, no ask answers a
-    /// setting act, and only the free-time policy is ever cleared.
+    /// setting act, and only the free-time policy is ever cleared. A
+    /// kit-only act leaves one of its two values
+    /// ([`recovery_box_kit_only_value`]).
     pub fn validate(&self) -> Result<()> {
         let free_time = self.setting == PolicySetting::FreeTimePolicy;
+        let kit_only_value = self
+            .value
+            .as_ref()
+            .and_then(recovery_box_kit_only_of)
+            .is_some();
         if (matches!(self.act.by, ActBy::Agent { .. }) && !free_time)
             || self.act.answer.is_some()
             || (self.value.is_none() && !free_time)
+            || (self.setting == PolicySetting::RecoveryBoxKitOnly && !kit_only_value)
         {
             return Err(invalid_authority());
         }

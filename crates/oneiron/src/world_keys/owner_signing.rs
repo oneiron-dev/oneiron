@@ -29,8 +29,9 @@ use oneiron_keystore::{DeviceKeystore, KeystoreSlot, SlotKind};
 use crate::authority::{
     ACTOR_CLASS_HUMAN, ActAuthority, AuthorityEntryHash, AuthorityKey, AuthorityLogEntry,
     AuthorityOp, AuthorityVaultId, CheckpointRootSigner, EnrolledOwnerKey, HostSlipIssuer,
-    OwnerKeyEnrollment, OwnerKeyEnrollmentReceipt, RecoveryRootId, authority_transcript,
-    checkpoint_statement_domain, invalid_authority, root_appointment_challenge,
+    OwnerKeyEnrollment, OwnerKeyEnrollmentReceipt, RecoveryBoxCancelProof, RecoveryRootId,
+    authority_transcript, checkpoint_statement_domain, invalid_authority,
+    root_appointment_challenge,
 };
 use crate::entity_id::EntityId;
 use crate::error::{Error, RecordError, Result};
@@ -115,6 +116,21 @@ impl OwnerRootSigner {
             .to_bytes()
             .to_vec())
     }
+
+    /// This key's signature over `proof`'s transcript for the vault
+    /// `vault_id` ([`RecoveryBoxCancelProof::transcript`]): an owner's Cancel
+    /// of the release pending at the recovery box. It builds the transcript
+    /// itself, so it signs nothing outside that domain.
+    pub(crate) fn sign_recovery_box_cancel(
+        &self,
+        proof: &RecoveryBoxCancelProof,
+        vault_id: &AuthorityVaultId,
+    ) -> Vec<u8> {
+        self.signing
+            .sign(&proof.transcript(vault_id))
+            .to_bytes()
+            .to_vec()
+    }
 }
 
 impl CheckpointRootSigner for OwnerRootSigner {
@@ -154,6 +170,23 @@ impl Vault {
         let machine = self.prepare_install_signing()?;
         let seed = super::slot_seed(keystore.as_ref(), &self.owner_signing_slot(machine))?;
         Ok(OwnerRootSigner::from_seed(&seed))
+    }
+
+    /// This install's owner signing key when its slot already holds a
+    /// seed: `None` when it holds none. It never creates a seed, so a read
+    /// answers what this install holds, and a door that needs the key (a
+    /// recovery hold's answer) refuses instead of minting one.
+    ///
+    /// # Errors
+    /// `KeystoreUnavailable` while the host installed no keystore; the
+    /// keystore's own refusal.
+    pub(crate) fn existing_device_owner_signing_key(&self) -> Result<Option<OwnerRootSigner>> {
+        let keystore = self.device_keystore()?;
+        let machine = self.prepare_install_signing()?;
+        Ok(keystore
+            .get(&self.owner_signing_slot(machine))
+            .map_err(super::keystore_error)?
+            .map(|seed| OwnerRootSigner::from_seed(&seed)))
     }
 
     /// This install's [`SlotKind::OwnerSigning`] slot and the keystore that

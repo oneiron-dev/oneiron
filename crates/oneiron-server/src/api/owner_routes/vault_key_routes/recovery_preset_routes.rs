@@ -1,6 +1,8 @@
 //! The recovery preset routes: read the vault key's recovery preset, and set
 //! it, with the kit for a switch to Nobody but me.
 
+use oneiron::world_keys::RecoveryBoxHold;
+
 use super::*;
 
 /// `GET /v1/owner/vault-key/recovery-preset`: the owner's recovery preset.
@@ -69,6 +71,12 @@ pub(super) async fn set_recovery_preset(
         // The answer is the sheet's only hand-over: the engine enters the
         // preset only while this install's device wrap stays, so a lost
         // answer locks no one out (review of #7766, round 2).
+        // A hosted vault's recovery box follows the switch through the
+        // supervisor relay; a self-hosted vault has no box.
+        let box_hold: &dyn RecoveryBoxHold = match server.recovery_box_hold() {
+            Some(hold) => hold,
+            None => &NoRecoveryBox,
+        };
         let change = match request.kit {
             Some(kit) => {
                 let kit = Kit::parse(kit.pieces, kit.passphrase)?;
@@ -79,12 +87,10 @@ pub(super) async fn set_recovery_preset(
                     request.preset,
                     &pieces,
                     kit.passphrase.as_ref(),
-                    &NoRecoveryBox,
+                    box_hold,
                 )?
             }
-            None => {
-                vault.set_recovery_preset_answered_as(&owner, request.preset, &NoRecoveryBox)?
-            }
+            None => vault.set_recovery_preset_answered_as(&owner, request.preset, box_hold)?,
         };
         let (mut set, sheet) = RecoveryPresetSet::of(&vault.vault_key_vault_id(), change);
         set.sheet_code = sheet.map(|sheet| sheet.code().as_str().to_owned());
