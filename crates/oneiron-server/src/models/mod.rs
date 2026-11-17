@@ -568,6 +568,7 @@ fn rung(
             backend: Arc::clone(backend),
         },
         media: None,
+        hours: None,
     })
 }
 
@@ -700,6 +701,7 @@ fn native_rung(
         prompt,
         offer,
         media: None,
+        hours: None,
     })
 }
 
