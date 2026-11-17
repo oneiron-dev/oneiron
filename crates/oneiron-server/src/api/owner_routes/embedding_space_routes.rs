@@ -44,7 +44,7 @@ pub(super) fn owner_table() -> OwnerTable {
             OwnerRoute {
                 method: "get",
                 path: "/embedding-spaces",
-                summary: "Every unanswered contradiction, oldest first.",
+                summary: "Every space, slot, move and probe count.",
                 row: Some("vault.embedding_spaces.list"),
                 shape: None,
             },

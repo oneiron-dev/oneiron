@@ -24,7 +24,7 @@ mod value;
 
 pub use self::decide::{Decided, FoundFit, FoundRow, decide};
 pub use self::key::{RowKey, check_item, check_name};
-pub use self::scope::{ScopeKind, SettingScope};
+pub use self::scope::{LEARNED_SCOPES, ScopeKind, SettingScope};
 pub use self::value::{EncodedValue, SettingValue, higher_is_tighter, lower_is_tighter};
 
 use oneiron_contracts::entity_id::EntityId;

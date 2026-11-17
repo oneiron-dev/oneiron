@@ -1,7 +1,7 @@
 //! Tombstone apply/export/replay plus window rebuild from updates.
 
 use super::bridge::{self, BRIDGE_ORIGIN};
-use super::egress::export_scrubbed_window_snapshot;
+use super::egress::export_scrubbed_window_state;
 use super::loro_support::{
     TombstoneIndex, doc_version_vector, import_doc, map_delete, map_for_each_bytes,
     map_insert_bytes,
@@ -353,11 +353,14 @@ fn replay_tombstone_markers(
     let delete_update = export_tombstone_commit_delta(doc, &vv_before)?;
 
     // Persist BEFORE clearing the markers — the marker may only be cleared
-    // after CRDT commit + snapshot persistence succeed.
-    let snapshot = export_scrubbed_window_snapshot(vault, window_key, doc)?;
+    // after CRDT commit + snapshot persistence succeed. The export reads the
+    // pin; a legal hold read in the writer keeps the history a pinned export
+    // dropped (census L6-05).
+    let snapshot = export_scrubbed_window_state(vault, window_key, doc)?;
     let vv = doc_version_vector(doc);
     vault.with_write_txn_grouped(|wtxn| {
-        persist_window_doc_in_txn(vault, wtxn, window_key, &snapshot, &vv)?;
+        let (stored, history_free) = snapshot.stored_in_txn(vault, wtxn)?;
+        persist_window_doc_in_txn(vault, wtxn, window_key, stored, &vv, history_free)?;
         if any_hard {
             crate::sync::queue::scrub_window_updates_in_txn(vault, wtxn, window_key.as_str())?;
             prune_subsumed_window_updates_in_txn(vault, wtxn, window_key, merged_update_keys)?;
