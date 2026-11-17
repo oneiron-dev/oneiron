@@ -165,6 +165,8 @@ mod sequence_ancestry;
 pub(crate) mod sequence_floor_door;
 mod sequence_observation;
 pub(crate) mod setting_keys;
+#[cfg(oneiron_test_support)]
+pub(crate) mod signed_branch_door;
 mod slip;
 mod slip_pairing;
 mod slip_renewal;

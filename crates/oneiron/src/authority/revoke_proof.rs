@@ -8,6 +8,20 @@ use crate::entity_id::EntityId;
 
 use super::*;
 
+#[cfg(oneiron_test_support)]
+thread_local! {
+    /// How many row transitions this thread's restriction proofs tried,
+    /// while the work door counts (Some; `signed_branch_door`).
+    pub(super) static PROOF_TRIES: std::cell::Cell<Option<u64>> =
+        const { std::cell::Cell::new(None) };
+}
+
+/// Counts one row transition a restriction proof tries, for the work door.
+fn note_proof_try() {
+    #[cfg(oneiron_test_support)]
+    PROOF_TRIES.with(|tries| tries.set(tries.get().map(|count| count + 1)));
+}
+
 /// One fully verified restrictive fact. Scratch ancestry is proof only; it
 /// never enters `valid_entries`, the roster, or the permissive merged state.
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
@@ -411,6 +425,7 @@ fn verify_signed_branch(
     loop {
         let mut progressed = false;
         for hash in pending.clone() {
+            note_proof_try();
             match super::ancestry_evaluator::evaluate_entry(
                 &entries[&hash],
                 hash,
@@ -461,6 +476,7 @@ fn verify_signed_branch(
             if !restrictive_withdrawal(&entries[&hash].op) {
                 continue;
             }
+            note_proof_try();
             if let EntryFold::Ready(state) = super::ancestry_evaluator::evaluate_entry(
                 &entries[&hash],
                 hash,
