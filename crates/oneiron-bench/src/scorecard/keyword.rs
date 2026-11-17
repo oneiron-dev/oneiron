@@ -7,6 +7,7 @@ use std::collections::BTreeMap;
 use std::path::Path;
 use std::time::Instant;
 
+use oneiron::analyzer::{AnalyzerMode, MultilingualAnalyzer};
 use oneiron::config::Bm25RankProfile;
 use oneiron::{EntityId, Vault, VaultConfig};
 use oneiron_ruler::pack::LoadedPack;
@@ -23,12 +24,43 @@ pub(crate) const RETRIEVER: &str = "bm25f";
 pub(crate) const RETRIEVER_DICTS: &str = "bm25f+dicts";
 
 /// The retriever id for a keyword run: `bm25f`, or `bm25f+dicts` with `--dict-dir`.
+///
+/// A `--dict-dir` is checked by [`check_dict_dir`] before any run, so
+/// `bm25f+dicts` always names the arm with every CJK dictionary loaded.
 pub(crate) fn retriever_id(dict_dir: Option<&Path>) -> &'static str {
     if dict_dir.is_some() {
         RETRIEVER_DICTS
     } else {
         RETRIEVER
     }
+}
+
+/// Refuse a dictionary dir that does not load the ja, zh and ko dictionaries.
+///
+/// `bm25f+dicts` names the arm with all three CJK dictionaries loaded. The
+/// analyzer downgrades a missing dictionary to the portable path without an
+/// error, so a dir that holds fewer would run another arm under that id.
+pub(crate) fn check_dict_dir(dict_dir: &Path) -> Result<(), ScorecardFailure> {
+    let shown = dict_dir.display();
+    let analyzer = MultilingualAnalyzer::discover(&[dict_dir.to_path_buf()])
+        .map_err(|error| ScorecardFailure::Input(format!("--dict-dir {shown}: {error}")))?;
+    let mut missing = Vec::new();
+    for (lang, mode) in [
+        ("ja", analyzer.japanese().mode()),
+        ("zh", analyzer.chinese().mode()),
+        ("ko", analyzer.korean().mode()),
+    ] {
+        if mode != AnalyzerMode::Morphological {
+            missing.push(lang);
+        }
+    }
+    if missing.is_empty() {
+        return Ok(());
+    }
+    let missing = missing.join(", ");
+    Err(ScorecardFailure::Input(format!(
+        "--dict-dir {shown} loads no {missing} dictionary; {RETRIEVER_DICTS} needs ja, zh and ko"
+    )))
 }
 
 /// One throwaway vault per corpus of a loaded slice, filled once without vectors.
@@ -55,10 +87,15 @@ struct CorpusVault {
 
 impl KeywordVaults {
     /// Open one throwaway vault per corpus and fill each once, without vectors.
+    ///
+    /// A dictionary dir that does not load every CJK dictionary is refused first.
     pub(crate) fn open(
         loaded: &LoadedPack,
         dict_dir: Option<&Path>,
     ) -> Result<Self, ScorecardFailure> {
+        if let Some(dicts) = dict_dir {
+            check_dict_dir(dicts)?;
+        }
         let mut ordinal_of: BTreeMap<&str, usize> = BTreeMap::new();
         for (ordinal, record) in loaded.slice.records.iter().enumerate() {
             ordinal_of.insert(record.record_id.as_str(), ordinal);

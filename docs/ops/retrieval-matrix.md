@@ -78,7 +78,8 @@ oneiron-bench scorecard grade-run \
 ```
 
 `grade-run` refuses the sealed slice: a reference run file is graded on
-`search` or `held_out` only.
+`search` or `held_out` only. It grades the first `--budget-rows` lines of
+each query by rank, as an engine run at that budget returns no more.
 
 ## 4. Tune on search
 
@@ -102,6 +103,13 @@ surface weight (the anchor), the overlay length norm (inert under
 `NoNorm`), the formula and k1 stay fixed. It reads only the search
 slice and refuses any other. Rerun without `--dict-dir` for the Floor
 arm.
+
+`--dict-dir` must load all three CJK dictionaries: `ja/system.dic`
+(Sudachi), `zh/jieba.dict.utf8` (jieba) and the Lindera `ko/` dictionary.
+The analyzer silently falls back to the portable path for a missing one,
+so `run`, `tune-bm25f` and the sealed run refuse a dir that loads fewer
+(exit 2, before the sealed claim) rather than label a portable run
+`bm25f+dicts`.
 
 ## 5. Judge on held_out
 

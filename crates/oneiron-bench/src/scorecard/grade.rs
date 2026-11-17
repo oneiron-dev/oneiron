@@ -78,11 +78,15 @@ pub(crate) fn run(args: &[String]) -> Result<serde_json::Value, ScorecardFailure
     for line in lines {
         by_query.entry(line.query_id).or_default().push(line);
     }
+    // An engine run returns at most budget_rows hits per query, so a run file
+    // is graded on its first budget_rows lines by rank, never on more.
+    let budget = usize::try_from(budget_rows).unwrap_or(usize::MAX);
     let mut runs = Vec::with_capacity(loaded.slice.queries.len());
     for query in &loaded.slice.queries {
         let mut hits = Vec::new();
         if let Some(lines) = by_query.get_mut(query.query_id.as_str()) {
             lines.sort_by_key(|line| line.rank);
+            lines.truncate(budget);
             for line in lines {
                 hits.push(Hit {
                     record_id: line.record_id.to_owned(),

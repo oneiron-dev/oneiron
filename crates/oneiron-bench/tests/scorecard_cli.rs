@@ -680,7 +680,10 @@ fn scorecard_run_sealed_for_a_proposal_checks_its_retriever_and_budget_first() {
         &search_out_arg,
     ]);
     let search_stderr = String::from_utf8_lossy(&search.stderr);
-    assert!(search.status.success(), "keyword run failed: {search_stderr}");
+    assert!(
+        search.status.success(),
+        "keyword run failed: {search_stderr}"
+    );
     let summary: Value = serde_json::from_slice(&search.stdout).expect("run prints JSON");
     let profile_digest = summary["params_digest"]
         .as_str()
@@ -714,6 +717,22 @@ fn scorecard_run_sealed_for_a_proposal_checks_its_retriever_and_budget_first() {
         decided_at: 1_700_000_000,
     };
     store.put_held_out(&record).expect("record writes");
+    // A second proposal for the same candidate, judged with dictionaries (bm25f+dicts).
+    let dicts_incumbent = ExperimentIdentity {
+        params_digest: "cc".repeat(32),
+        ..record.incumbent.clone()
+    };
+    let dicts_id = proposal_id("fixture-campaign", &dicts_incumbent, &record.candidate)
+        .expect("dicts proposal id");
+    let dicts_record = HeldOutProposal {
+        proposal_id: dicts_id.clone(),
+        incumbent: dicts_incumbent,
+        model_id: "bm25f+dicts".to_owned(),
+        ..record.clone()
+    };
+    store
+        .put_held_out(&dicts_record)
+        .expect("dicts record writes");
     let out = dir.path().join("sealed-scorecard.json");
     let out_arg = out.to_str().expect("sealed path").to_owned();
     let sealed_run = |extra: &[&str]| {
@@ -741,12 +760,43 @@ fn scorecard_run_sealed_for_a_proposal_checks_its_retriever_and_budget_first() {
         args.extend_from_slice(extra);
         scorecard(&args)
     };
-    // The proposal's profile with dictionaries is another retriever (bm25f+dicts).
+    // The proposal's profile with a dictionary dir is another retriever
+    // (bm25f+dicts); this dir also loads no dictionary, and either refuses it.
     let with_dicts = sealed_run(&["--dict-dir", dicts_arg.as_str()]);
     assert_eq!(with_dicts.status.code(), Some(2));
     assert!(
         !ledger.join("sealed-once").exists(),
         "no sealed-once marker for another retriever"
+    );
+    // The bm25f+dicts proposal with a dir that loads no dictionary is refused
+    // before the claim: it would run the portable analyzer under that id.
+    let no_dicts = scorecard(&[
+        "run",
+        "--arm",
+        "keyword",
+        "--pack-dir",
+        pack_dir.as_str(),
+        "--slice",
+        "sealed",
+        "--engine-commit",
+        ENGINE_COMMIT,
+        "--out",
+        out_arg.as_str(),
+        "--sealed-ledger",
+        ledger_arg.as_str(),
+        "--campaign",
+        campaign_arg.as_str(),
+        "--proposal",
+        dicts_id.as_str(),
+        "--proposals",
+        proposals_arg.as_str(),
+        "--dict-dir",
+        dicts_arg.as_str(),
+    ]);
+    assert_eq!(no_dicts.status.code(), Some(2));
+    assert!(
+        !ledger.join("sealed-once").exists(),
+        "no sealed-once marker for a dict dir that loads no dictionary"
     );
     // The proposal's arm at another budget is another run.
     let other_budget = sealed_run(&["--budget-rows", "5"]);

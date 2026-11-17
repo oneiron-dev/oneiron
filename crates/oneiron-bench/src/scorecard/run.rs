@@ -234,6 +234,15 @@ fn run_sealed(
             dict_dir: flags.get("dict-dir").map(|dir| PathBuf::from(dir.as_str())),
         },
     };
+    // Before the claim: a dictionary dir that loads fewer than the ja, zh and
+    // ko dictionaries would spend the sealed run under the bm25f+dicts id.
+    if let OwnedArm::Keyword {
+        dict_dir: Some(dicts),
+        ..
+    } = &owned
+    {
+        keyword::check_dict_dir(dicts)?;
+    }
     let campaign = campaign::load_campaign(campaign_path)?;
     let identity = ExperimentIdentity {
         engine_commit: engine_commit.to_owned(),

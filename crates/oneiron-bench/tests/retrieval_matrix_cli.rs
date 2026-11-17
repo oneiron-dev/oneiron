@@ -512,3 +512,111 @@ fn compare_reports_each_language_against_the_lucene_scorecard() {
     ]);
     assert_eq!(sealed.status.code(), Some(2));
 }
+
+#[test]
+fn grade_run_grades_only_the_first_budget_rows_lines() {
+    let (dir, pack_dir, _convert) = convert_mini();
+    // The relevant ja passage at rank 2, behind a judged negative at rank 1.
+    let run_path = dir.path().join("relevant-second.run");
+    std::fs::write(
+        &run_path,
+        "miracl-ja-dev:q1 Q0 miracl-ja-dev:tokyo#1 1 10.0 fixture\n\
+         miracl-ja-dev:q1 Q0 miracl-ja-dev:tokyo#0 2 9.0 fixture\n",
+    )
+    .expect("run file write");
+    let run_arg = run_path.to_str().expect("run path").to_owned();
+    let ja_row = |budget: &str, name: &str| {
+        let out = dir.path().join(name);
+        let out_arg = out.to_str().expect("scorecard path").to_owned();
+        let result = scorecard(&[
+            "grade-run",
+            "--pack-dir",
+            &pack_dir,
+            "--slice",
+            "held_out",
+            "--run",
+            &run_arg,
+            "--retriever",
+            "fixture-run",
+            "--engine-commit",
+            ENGINE_COMMIT,
+            "--out",
+            &out_arg,
+            "--budget-rows",
+            budget,
+        ]);
+        let stderr = String::from_utf8_lossy(&result.stderr);
+        assert!(result.status.success(), "grade-run failed: {stderr}");
+        let file = read_json(&out);
+        let rows = file["per_query"].as_array().expect("per-query rows");
+        rows.iter()
+            .find(|row| row["query_id"].as_str() == Some("miracl-ja-dev:q1"))
+            .expect("ja row")
+            .clone()
+    };
+    // At budget 1 only the rank-1 negative is graded, as an engine run at budget 1 returns.
+    let one = ja_row("1", "budget-1.json");
+    assert_eq!(one["returned"], json!(1));
+    assert_close(one["mrr"].as_f64().expect("mrr"), 0.0);
+    assert_close(one["ndcg_at_10"].as_f64().expect("ndcg"), 0.0);
+    // At budget 2 the relevant passage at rank 2 counts.
+    let two = ja_row("2", "budget-2.json");
+    assert_eq!(two["returned"], json!(2));
+    assert_close(two["mrr"].as_f64().expect("mrr"), 0.5);
+}
+
+#[test]
+fn keyword_arm_refuses_a_dict_dir_that_loads_no_dictionary() {
+    let (dir, pack_dir, _convert) = convert_mini();
+    let dicts = dir.path().join("empty-dicts");
+    std::fs::create_dir(&dicts).expect("dict dir");
+    let dicts_arg = dicts.to_str().expect("dict path").to_owned();
+    let run_out = dir.path().join("run.json");
+    let run_out_arg = run_out.to_str().expect("run path").to_owned();
+    let run = scorecard(&[
+        "run",
+        "--arm",
+        "keyword",
+        "--pack-dir",
+        &pack_dir,
+        "--slice",
+        "held_out",
+        "--engine-commit",
+        ENGINE_COMMIT,
+        "--out",
+        &run_out_arg,
+        "--dict-dir",
+        &dicts_arg,
+    ]);
+    assert_eq!(run.status.code(), Some(2));
+    let body: Value = serde_json::from_slice(&run.stdout).expect("refusal prints JSON");
+    let error = body["error"].as_str().expect("refusal names its error");
+    assert!(
+        error.contains("ja, zh, ko"),
+        "the refusal names the missing dictionaries: {error}"
+    );
+    assert!(!run_out.exists(), "no scorecard for a refused dict dir");
+    let tuned = dir.path().join("tuned.json");
+    let tuned_arg = tuned.to_str().expect("tuned path").to_owned();
+    let steps = dir.path().join("steps.json");
+    let steps_arg = steps.to_str().expect("steps path").to_owned();
+    let tune = scorecard(&[
+        "tune-bm25f",
+        "--pack-dir",
+        &pack_dir,
+        "--slice",
+        "search",
+        "--start",
+        START_PROFILE,
+        "--out",
+        &tuned_arg,
+        "--steps-out",
+        &steps_arg,
+        "--engine-commit",
+        ENGINE_COMMIT,
+        "--dict-dir",
+        &dicts_arg,
+    ]);
+    assert_eq!(tune.status.code(), Some(2));
+    assert!(!tuned.exists(), "no tuned profile for a refused dict dir");
+}
