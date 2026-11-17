@@ -9,7 +9,13 @@
 //! A child that keeps exiting (five starts within a minute) is not started
 //! again until that minute has passed: its calls are not sent meanwhile.
 //! A changed command, environment, working directory or pinned revision
-//! starts a new child.
+//! starts a new child. So does a call that presents another credential to
+//! its upstream than the child's calls so far, or none after one: a child
+//! keeps in memory what its calls fetched, as a single-user server does,
+//! and must never answer one caller from what another's credential fetched
+//! (FIX [STDIO-CHILD-SHARED-ACROSS-CREDENTIALS]). Such a change stops a
+//! child that did not exit, so its new start does not count toward that
+//! limit.
 //!
 //! A writer thread owns the child's input, so no write waits past its
 //! request's bound: writing a request and reading its answer share one
@@ -58,7 +64,9 @@ use crate::runtime::runner_fence::{HostRunnerFence, runner_session_manifest};
 
 pub mod upstream;
 
-use upstream::{UpstreamDoors, UpstreamEnv, UpstreamHeld, UpstreamIssuer, UpstreamTicket};
+use upstream::{
+    PresentedCredential, UpstreamDoors, UpstreamEnv, UpstreamHeld, UpstreamIssuer, UpstreamTicket,
+};
 
 /// The backend a stdio connector child's session manifest names.
 pub const STDIO_RUNNER_BACKEND: &str = "runner:connector-stdio";
@@ -156,6 +164,8 @@ pub struct StdioChild {
     stop: Option<Arc<AtomicBool>>,
     /// The child's upstream door, closed once the child is stopped.
     door: Option<UpstreamTicket>,
+    /// The credential its calls present to its upstream.
+    presented: PresentedCredential,
 }
 
 /// Sets the connector's arguments, its environment (the inherited names,
@@ -256,6 +266,7 @@ impl StdioChild {
             scratch,
             stop: start.stop.map(Arc::clone),
             door: None,
+            presented: PresentedCredential::default(),
         };
         let stdin = stdin.ok_or("the connector's input is not writable")?;
         let stdout = stdout.ok_or("the connector's output is not readable")?;
@@ -699,8 +710,8 @@ struct StdioSlot {
 
 impl ConnectorStdioRegistry {
     /// Sends one `tools/call` to the connector's child, starting it first
-    /// when none runs for its current settings. A call waits for the one
-    /// in flight on the same child.
+    /// when none runs for its current settings and the credential the call
+    /// presents. A call waits for the one in flight on the same child.
     pub fn call_tool(&self, call: StdioToolCall<'_>) -> StdioToolOutcome {
         let not_sent = || StdioToolOutcome {
             delivery: StdioDelivery::NotSent,
@@ -716,7 +727,8 @@ impl ConnectorStdioRegistry {
         if self.stopping.load(Ordering::Acquire) {
             return not_sent();
         }
-        let Some(child) = slot.live(&name, &call, &self.stopping, &self.upstream) else {
+        let presented = self.upstream.presented(&call.held);
+        let Some(child) = slot.live(&name, &call, presented, &self.stopping, &self.upstream) else {
             return not_sent();
         };
         // Read again once the call has its child: a change that came to hold
@@ -772,28 +784,37 @@ impl ConnectorStdioRegistry {
 }
 
 impl StdioSlot {
-    /// The child for `call`'s connector settings and revision, started
-    /// when none runs for them, with a door of its own when its connector
-    /// names an upstream; `None` when it cannot start, keeps exiting, or
-    /// names an upstream and this server has no loopback origin.
+    /// The child for `call`'s connector settings and revision and the
+    /// credential it `presented`, started when none runs for them, with a
+    /// door of its own when its connector names an upstream; `None` when it
+    /// cannot start, keeps exiting, or names an upstream and this server has
+    /// no loopback origin.
     fn live(
         &mut self,
         name: &str,
         call: &StdioToolCall<'_>,
+        presented: PresentedCredential,
         stop: &Arc<AtomicBool>,
         doors: &Arc<UpstreamDoors>,
     ) -> Option<&mut StdioChild> {
         let identity = call.connector.installed_endpoint(name);
-        let current = self.child.as_mut().is_some_and(|child| {
+        let runs = self.child.as_mut().is_some_and(|child| {
             child.identity == identity && child.revision == call.revision && child.running()
         });
+        let current = runs
+            && self
+                .child
+                .as_ref()
+                .is_some_and(|child| child.presented == presented);
         if !current {
-            // Dropping the old child stops it.
+            // Dropping the old child stops it. One that runs for these
+            // settings is stopped only for the credential the call presents:
+            // it did not exit, so its new start is not counted.
             self.child = None;
             let now = Instant::now();
             self.starts
                 .retain(|started| now.duration_since(*started) < RESTART_WINDOW);
-            if self.starts.len() >= STARTS_PER_WINDOW {
+            if !runs && self.starts.len() >= STARTS_PER_WINDOW {
                 tracing::warn!(
                     connector = name,
                     "a stdio connector keeps exiting; it is not started again until a minute has passed"
@@ -812,7 +833,9 @@ impl StdioSlot {
                     return None;
                 }
             };
-            self.starts.push_back(now);
+            if !runs {
+                self.starts.push_back(now);
+            }
             let accepts = |answered: &str| answered == call.revision;
             let start = StdioStart {
                 name,
@@ -826,6 +849,7 @@ impl StdioSlot {
             match StdioChild::start(&start) {
                 Ok(mut child) => {
                     child.door = door.map(|(ticket, _)| ticket);
+                    child.presented = presented;
                     self.child = Some(child);
                 }
                 Err(reason) => {
