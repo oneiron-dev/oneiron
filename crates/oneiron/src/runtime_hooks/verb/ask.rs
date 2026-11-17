@@ -256,7 +256,7 @@ pub(super) fn retry(
                     && crate::verbs::is_inquire_row(&row.verb)
                 {
                     let args = serde_json::from_str(&row.args).unwrap_or(Value::Null);
-                    crate::verbs::restore_held_statements(vault, row.actor, &args, result)?;
+                    crate::verbs::restore_held_statements(vault, row.actor, &args, result);
                 }
                 return Ok(Retry::Stop(stop));
             }

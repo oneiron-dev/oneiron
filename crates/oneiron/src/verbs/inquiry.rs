@@ -403,20 +403,25 @@ pub(crate) fn kept_inquiry_answer(output: &serde_json::Value) -> serde_json::Val
 /// has ended, its `valid_until` has come or the process restarted, the
 /// answer stays withheld, and the agent asks again.
 ///
-/// # Errors
-///
-/// Storage errors while the holder reads the held tasks' state.
+/// Only an answer that still holds both stand-ins the kept form left (the
+/// empty list and `statements_withheld`) takes them back: an answer a post
+/// hook changed, such as one whose `statements` it redacted, stays as the
+/// hook left it, as the caller's view does at the post chain. A holder that
+/// cannot read its tasks' state leaves the answer withheld, so a retry
+/// never fails on it.
 pub(crate) fn restore_held_statements(
     vault: &Vault,
     actor: EntityId,
     args: &serde_json::Value,
     answer: &mut serde_json::Value,
-) -> crate::Result<()> {
+) {
     let Some(fields) = answer.as_object_mut() else {
-        return Ok(());
+        return;
     };
-    if fields.get("statements_withheld") != Some(&serde_json::Value::Bool(true)) {
-        return Ok(());
+    if fields.get("statements_withheld") != Some(&serde_json::Value::Bool(true))
+        || fields.get("statements") != Some(&serde_json::Value::Array(Vec::new()))
+    {
+        return;
     }
     let task = serde_json::from_value::<InquireRequest>(args.clone())
         .ok()
@@ -425,10 +430,15 @@ pub(crate) fn restore_held_statements(
         .get("inquiry_id")
         .and_then(|id| serde_json::from_value::<EntityId>(id.clone()).ok());
     let (Some(task), Some(inquiry)) = (task, inquiry) else {
-        return Ok(());
+        return;
     };
-    let Some(statements) = vault.held_inquiry_answer(actor, task, inquiry)? else {
-        return Ok(());
+    let statements = match vault.held_inquiry_answer(actor, task, inquiry) {
+        Ok(Some(statements)) => statements,
+        Ok(None) => return,
+        Err(error) => {
+            tracing::warn!(%error, "a held inquiry answer was not read: the retry reads it withheld");
+            return;
+        }
     };
     let statements = statements
         .iter()
@@ -442,7 +452,6 @@ pub(crate) fn restore_held_statements(
         serde_json::Value::Array(statements),
     );
     fields.remove("statements_withheld");
-    Ok(())
 }
 
 fn decider_token(decider: &InquiryDecider) -> &'static str {
