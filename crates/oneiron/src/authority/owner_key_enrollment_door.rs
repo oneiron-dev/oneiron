@@ -28,7 +28,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use ed25519_dalek::Signer;
 
-use crate::error::{Error, RecordError, Result};
+use crate::error::{Error, OwnerKeyMoveStep, RecordError, Result};
 use crate::{EntityId, TimeRange, Vault};
 
 use super::*;
@@ -652,7 +652,10 @@ impl Vault {
     }
 
     /// [`Self::enrolled_owner_keys`] in the caller's transaction.
-    fn enrolled_owner_keys_in_txn(&self, txn: &heed::RoTxn<'_>) -> Result<Vec<EnrolledOwnerKey>> {
+    pub(super) fn enrolled_owner_keys_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+    ) -> Result<Vec<EnrolledOwnerKey>> {
         let fold = self.authority_view_readonly_in_txn(txn)?;
         let managed = CheckpointPosture::from(self.privacy_posture()) == CheckpointPosture::Managed;
         let mut keys = BTreeMap::new();
@@ -770,7 +773,11 @@ impl Vault {
                 None
             } else {
                 let proof = self.owner_proof_signer(&fold).ok_or(Error::Record(
-                    RecordError::OwnerKeyMoveRefused { member: person },
+                    RecordError::OwnerKeyMoveRefused {
+                        member: person,
+                        step: OwnerKeyMoveStep::Unavailable,
+                        act: None,
+                    },
                 ))?;
                 let proof_key = proof.root();
                 keys.sort_by_key(|key| *key == proof_key);
