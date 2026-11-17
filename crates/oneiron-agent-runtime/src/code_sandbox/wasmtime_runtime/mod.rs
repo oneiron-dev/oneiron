@@ -46,9 +46,13 @@ pub struct WasmtimeComponentRuntime {
     /// (FIX 7650); none spools them as before.
     proposal_spool: Option<std::sync::Arc<dyn super::ProposalSpoolFloor>>,
     /// The isolating backends the run's vault carries (F1-6), its isolated
-    /// lane's only source of a backend; none bound selects none, so every
-    /// tier that needs isolation is refused.
-    sandbox_backends: Option<std::sync::Arc<dyn super::microvm::SandboxBackends>>,
+    /// lane's only source of a backend, bound with the vault's sandbox
+    /// provider switch (L8-43); none bound selects none, so every tier that
+    /// needs isolation is refused.
+    sandbox_backends: Option<(
+        std::sync::Arc<dyn super::microvm::SandboxBackends>,
+        super::SandboxProvider,
+    )>,
     budget: ComponentBudget,
     adapter: Option<Box<dyn SandboxBoundaryAdapter + Send>>,
 }
@@ -476,8 +480,9 @@ impl JsCodeModeRuntime for WasmtimeComponentRuntime {
     fn bind_sandbox_backends(
         &mut self,
         backends: std::sync::Arc<dyn super::microvm::SandboxBackends>,
+        provider: super::SandboxProvider,
     ) {
-        self.sandbox_backends = Some(backends);
+        self.sandbox_backends = Some((backends, provider));
     }
 
     fn run_step(
@@ -516,11 +521,18 @@ impl JsCodeModeRuntime for WasmtimeComponentRuntime {
             ..step
         };
         let backends: &dyn super::microvm::SandboxBackends = match &self.sandbox_backends {
-            Some(backends) => &**backends,
+            Some((backends, _)) => &**backends,
             None => &super::microvm::NoSandboxBackends,
         };
-        let outcome = match super::microvm::select_backend_for_tier(backends, step.boundary.tier())?
-        {
+        let provider = self
+            .sandbox_backends
+            .as_ref()
+            .map_or(super::SandboxProvider::Ours, |(_, provider)| *provider);
+        let outcome = match super::microvm::select_backend_for_tier(
+            backends,
+            provider,
+            step.boundary.tier(),
+        )? {
             Some(backend) => isolated::run(self, step, prepared, backend, cancel, host),
             None => self.execute_cancellable(step, prepared, host, cancel),
         };

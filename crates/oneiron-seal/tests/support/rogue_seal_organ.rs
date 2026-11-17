@@ -63,6 +63,7 @@ mod rogue_evidence;
 mod rogue {
     use std::future::Future;
     use std::pin::pin;
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex, PoisonError};
     use std::task::{Context, Poll, Wake, Waker};
     use std::thread::{self, Thread};
@@ -600,19 +601,42 @@ mod rogue {
         let (timestamp_authorities, fetcher): (Vec<TsaEndpoint>, Arc<dyn SealFetcher>) =
             match fixture {
                 None => (Vec::new(), Arc::new(OfflineFetcher) as Arc<dyn SealFetcher>),
-                Some(fixture) => (
-                    vec![TsaEndpoint {
-                        url: url::Url::parse("https://tsa.test/").map_err(bad)?,
-                        expected_policy_oid: Some(FIXTURE_TSA_POLICY.to_owned()),
-                    }],
-                    Arc::new(FixtureFetcher {
-                        tsa_key: signing_key(&fixture.tsa_key)?,
-                        tsa_certificate: fixture.tsa_certificate.to_vec(),
-                        crl: fixture.crl.to_vec(),
-                        memory: memory.clone(),
-                        now: now_ms / 1000,
-                    }) as Arc<dyn SealFetcher>,
-                ),
+                Some(fixture) => {
+                    let second = if fixture.second_tsa_certificate.is_empty() {
+                        None
+                    } else {
+                        Some((
+                            signing_key(&fixture.second_tsa_key)?,
+                            fixture.second_tsa_certificate.to_vec(),
+                        ))
+                    };
+                    let endpoint = |url: &str| -> Result<TsaEndpoint, OrganError> {
+                        Ok(TsaEndpoint {
+                            url: url::Url::parse(url).map_err(bad)?,
+                            expected_policy_oid: Some(FIXTURE_TSA_POLICY.to_owned()),
+                        })
+                    };
+                    let mut endpoints = vec![endpoint(FIRST_TSA_URL)?];
+                    if second.is_some() {
+                        endpoints.push(endpoint(SECOND_TSA_URL)?);
+                    }
+                    (
+                        endpoints,
+                        Arc::new(FixtureFetcher {
+                            tsa_key: signing_key(&fixture.tsa_key)?,
+                            tsa_certificate: fixture.tsa_certificate.to_vec(),
+                            second,
+                            token_delays_secs: fixture.token_delays_secs.clone(),
+                            first_authority_unavailable: fixture
+                                .first_authority_unavailable
+                                .clone(),
+                            timestamp_requests: AtomicUsize::new(0),
+                            crl: fixture.crl.to_vec(),
+                            memory: memory.clone(),
+                            now: now_ms / 1000,
+                        }) as Arc<dyn SealFetcher>,
+                    )
+                }
             };
         NativeSealEngine::new(
             SealConfig {
@@ -631,13 +655,24 @@ mod rogue {
         .map_err(bad)
     }
 
+    /// Where an evidence mode's engine asks its fixture authorities, in
+    /// their configured order.
+    const FIRST_TSA_URL: &str = "https://tsa.test/";
+    const SECOND_TSA_URL: &str = "https://tsa-2.test/";
+
     /// The network an evidence mode's engine sees, served from the
-    /// fixture: a timestamp request gets a token the fixture's authority
-    /// mints over its imprint and nonce at the call's time, a CRL request
-    /// the fixture's CRL, and anything else nothing.
+    /// fixture: a timestamp request gets a token the asked authority
+    /// mints over its imprint and nonce at the call's time plus that
+    /// request's delay (or nothing, when the first authority is to fail
+    /// it), a CRL request the fixture's CRL, and anything else nothing.
     struct FixtureFetcher {
         tsa_key: p256::ecdsa::SigningKey,
         tsa_certificate: Vec<u8>,
+        second: Option<(p256::ecdsa::SigningKey, Vec<u8>)>,
+        token_delays_secs: Vec<u64>,
+        first_authority_unavailable: Vec<usize>,
+        /// How many timestamp requests the call has made, to either.
+        timestamp_requests: AtomicUsize,
         crl: Vec<u8>,
         memory: SealMemoryProvider,
         now: u64,
@@ -648,14 +683,29 @@ mod rogue {
         async fn fetch(&self, request: FetchRequest) -> Result<FetchResponse, FetchError> {
             let body = match request.purpose {
                 FetchPurpose::Timestamp => {
+                    let request_number = self.timestamp_requests.fetch_add(1, Ordering::SeqCst);
+                    let (key, certificate) = match &self.second {
+                        Some((key, certificate)) if request.url.as_str() == SECOND_TSA_URL => {
+                            (key, certificate)
+                        }
+                        _ if self.first_authority_unavailable.contains(&request_number) => {
+                            return Err(FetchError::Unavailable);
+                        }
+                        _ => (&self.tsa_key, &self.tsa_certificate),
+                    };
+                    let delay = self
+                        .token_delays_secs
+                        .get(request_number)
+                        .copied()
+                        .unwrap_or(0);
                     let query = x509_tsp::TimeStampReq::from_der(&request.request_body)
                         .map_err(|_| FetchError::InvalidResponse)?;
                     let token = mint_token(
-                        &self.tsa_key,
-                        &self.tsa_certificate,
+                        key,
+                        certificate,
                         query.message_imprint.hashed_message.as_bytes(),
                         query.nonce,
-                        self.now,
+                        self.now.saturating_add(delay),
                     )
                     .map_err(|_| FetchError::InvalidResponse)?;
                     // TimeStampResp { status { granted }, timeStampToken }

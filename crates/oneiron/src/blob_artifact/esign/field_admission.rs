@@ -1,7 +1,8 @@
-//! Admit saved and final field marks against the immutable original page geometry.
+//! Admit drafted, saved and final field marks against the immutable
+//! original page geometry.
 //!
-//! The original PDFs a field save or a sign act lays its fields on are
-//! inspected before its writer (FIX 9609): in the host's isolated worker
+//! The original PDFs a draft, a field save or a sign act lays its fields on
+//! are inspected before its writer (FIX 9609): in the host's isolated worker
 //! when it has one, else natively. The writer lays the fields out on that
 //! inspection when it is of the exact bytes the writer's snapshot pins; it
 //! reads and parses only an item that inspection does not hold.
@@ -12,9 +13,11 @@ use std::borrow::Cow;
 use std::collections::BTreeMap;
 use std::collections::btree_map::Entry;
 
-/// The fields an event's admission lays out (FIX 9609): the one field a
-/// `FieldSaved` saves, or every field of the recipient a `Signed` signs for.
+/// The fields an event's admission lays out (FIX 9609): every field a
+/// `Drafted` drafts, the one field a `FieldSaved` saves, or every field of
+/// the recipient a `Signed` signs for.
 pub(super) enum EventFields {
+    Drafted,
     Saved(String),
     Signer(String),
 }
@@ -23,6 +26,7 @@ impl EventFields {
     /// The fields `event` lays out; `None` for an event that lays out none.
     fn of(event: &EsignEvent) -> Option<Self> {
         match event {
+            EsignEvent::Drafted { .. } => Some(Self::Drafted),
             EsignEvent::FieldSaved { signature } => Some(Self::Saved(signature.field.clone())),
             EsignEvent::Signed { recipient, .. } => Some(Self::Signer(recipient.clone())),
             _ => None,
@@ -32,6 +36,7 @@ impl EventFields {
     /// Whether `field` is one of these fields.
     fn selects(&self, field: &EsignField) -> bool {
         match self {
+            Self::Drafted => true,
             Self::Saved(id) => field.id == *id,
             Self::Signer(recipient) => field.recipient == *recipient,
         }
@@ -98,9 +103,11 @@ struct InspectedItem {
 #[derive(Default)]
 pub(super) struct InspectedPages(BTreeMap<u32, InspectedItem>);
 
-/// Lays out each field `event` saves or signs on its item's original page,
-/// refusing one that cannot be presented. An item's pages come from
-/// `inspected` when it holds the bytes this snapshot pins (FIX 9609).
+/// Lays out each field `event` drafts, saves or signs on its item's
+/// original page, refusing one that cannot be presented. An item's pages
+/// come from `inspected` when it holds the bytes this snapshot pins
+/// (FIX 9609). A drafted field has no saved value yet; it is laid out
+/// without one, as [`render::layout_field`] lays out an empty field.
 pub(super) fn validate_event_fields(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -221,6 +228,22 @@ pub(super) fn inspect_event_pages(
         );
     }
     InspectedPages(inspected)
+}
+
+/// Inspects, before any writer, the original PDFs a draft will lay its
+/// fields on: the state the writer folds from `document` alone, with every
+/// drafted field selected, as [`inspect_event_pages`] inspects a save's or
+/// a sign act's. A draft that does not fold inspects nothing: the writer
+/// then reads, and answers, for itself.
+pub(super) fn inspect_draft_pages(
+    vault: &Vault,
+    document: &EsignDocument,
+    now: u64,
+) -> InspectedPages {
+    let draft = document.clone();
+    inspect_event_pages(vault, move |_txn| {
+        Ok(Some((EsignState::draft(draft, now)?, EventFields::Drafted)))
+    })
 }
 
 /// The distinct items, by index, that the fields `read` selects lie on.
