@@ -927,9 +927,8 @@ pub(super) fn seed(vault: &Vault, scan: EngineScan) -> Option<(usize, Read<'_>)>
             ))
         }
 
-        // NO-FIXTURE: all 3 count sites use ScanCount::start_at with the fixed
-        // MAX_SYNC_STATE_KEYS (10_000) threshold, never the vault row: 3 rows
-        // cannot cross, and threshold==ROW could never pass.
+        // Its threshold test: crate::scan_check::table_tests::seed_runtime_records_tests::sync_prefix_rows_reads_past_its_fixed_row.
+        // start_at uses MAX_SYNC_STATE_KEYS, so the table's threshold == ROW cannot hold.
         EngineScan::SyncPrefixRows => None,
 
         // DependentWalkRows — counted at ports/dependent_walk.rs:329-330
@@ -973,11 +972,142 @@ pub(super) fn seed(vault: &Vault, scan: EngineScan) -> Option<(usize, Read<'_>)>
             ))
         }
 
-        // NO-FIXTURE: planting 3 executed roots needs per-root binds (private BINDING
-        // table) via bind_research: run-carrying attempts, a CampaignConfig literal,
-        // a trusted selection-policy manifest and dispatchable AGENT_DEFs; >40 lines.
-        EngineScan::ResearchContinuationRoots => None,
+        EngineScan::ResearchContinuationRoots => {
+            use crate::autoreason_campaign::general::{
+                BudgetLease, CampaignConfig, DecideRules, MetricAxis, MetricDirection, MetricRole,
+                MetricSet, SearchAxis,
+            };
+            use crate::autoreason_campaign::research::{ResearchBinding, ResearchTarget};
+            use crate::autoreason_campaign::{CampaignDatasetRef, CampaignSplits};
+            // The counted unit is every BINDING row, before execution is filtered.
+            // Three workflow-driven roots are all read; no host work is served.
+            // Mirror the private table, as rv_turns does for room fixtures.
+            let bindings: crate::side_table::SideTable<
+                [u8; 16],
+                ResearchBinding,
+                crate::side_table::Named,
+            > = crate::side_table::SideTable::new(&crate::side_table::AUTORESEARCH_BINDING);
+            let dataset = |name: &str| CampaignDatasetRef {
+                dataset_id: name.to_owned(),
+                revision: "1".to_owned(),
+            };
+            let config = CampaignConfig {
+                campaign_id: "scan-check-continuation".to_owned(),
+                search_axes: vec![SearchAxis {
+                    name: "prompt".to_owned(),
+                    values: vec!["base".to_owned()],
+                }],
+                metric_set: MetricSet {
+                    set_id: "scan-check".to_owned(),
+                    revision: "1".to_owned(),
+                    axes: vec![MetricAxis {
+                        name: "quality".to_owned(),
+                        direction: MetricDirection::Higher,
+                        role: MetricRole::Primary,
+                        tolerance: 0.0,
+                    }],
+                },
+                splits: CampaignSplits {
+                    search: dataset("search"),
+                    held_out: dataset("held-out"),
+                    sealed: dataset("sealed"),
+                },
+                budget: BudgetLease {
+                    budget_id: "scan-check".to_owned(),
+                    max_units: 10,
+                    exploration_units: 1,
+                },
+                decide: DecideRules::Dominance,
+                knobs: Default::default(),
+            };
+            config.validate().expect("valid config");
+            let config_sha256 = {
+                use sha2::Digest;
+                format!(
+                    "{:x}",
+                    sha2::Sha256::digest(serde_json::to_vec(&config).expect("config"))
+                )
+            };
+            vault
+                .with_write_txn(|txn| {
+                    for index in 0..PAST {
+                        let root = crate::attempt_queue::AttemptId::from_bytes(
+                            id(0xcd, index).as_bytes(),
+                        )?;
+                        let binding = ResearchBinding {
+                            root,
+                            run_id: format!("scan-check-root-{index}"),
+                            config: config.clone(),
+                            config_sha256: config_sha256.clone(),
+                            target: ResearchTarget::Config {
+                                subject: "scan-check".to_owned(),
+                            },
+                            goal: None,
+                            holder: None,
+                            policy_digest: "scan-check-unused-policy".to_owned(),
+                            confirmation: None,
+                            share: None,
+                            prior_ladder: Vec::new(),
+                            execution: None,
+                            bound_at: LEARNED_AT,
+                        };
+                        bindings.put(&vault.store, txn, root.as_bytes(), &binding)?;
+                    }
+                    Ok(())
+                })
+                .expect("bindings");
+            let coach = crate::attempt_queue::AttemptId::from_bytes(id(0xcd, PAST).as_bytes())
+                .expect("coach id");
+            Some((
+                0,
+                Box::new(move || {
+                    crate::autoreason_campaign::research::advance_research_continuations(
+                        vault, coach, LEARNED_AT,
+                    )?;
+                    Ok(0)
+                }),
+            ))
+        }
 
         other => unreachable!("{} is seeded in another module", other.code()),
+    }
+}
+
+/// `SyncPrefixRows` reads past its FIXED row (rule 5): 10_001 `rm:w:` rows
+/// past MAX_SYNC_STATE_KEYS (10_000), served twice, one check at 10_000.
+/// Separate from the table because the count sites use `start_at` with the
+/// fixed threshold, never the vault row `set_scan_threshold` lowers.
+#[test]
+fn sync_prefix_rows_reads_past_its_fixed_row() {
+    const FIXED: u64 = crate::vault::MAX_SYNC_STATE_KEYS as u64;
+    const ROWS: usize = crate::vault::MAX_SYNC_STATE_KEYS + 1;
+    const PREFIX: &str = "rm:w:2099-12:scancheck:";
+    let dir = tempfile::tempdir().expect("vault dir");
+    let vault = Vault::open(dir.path(), crate::VaultConfig::default()).expect("open");
+    vault
+        .with_write_txn(|wtxn| {
+            for index in 0..ROWS {
+                let key = format!("{PREFIX}{index:05}");
+                vault.sync_state_put_in_write_txn(&mut *wtxn, &key, b"scancheck")?;
+            }
+            Ok(())
+        })
+        .expect("seed 10_001 rows");
+    for _ in 0..2 {
+        let keys = vault.sync_state_keys_with_prefix(PREFIX).expect("read");
+        assert_eq!(keys.len(), ROWS, "serves every row past the fixed row");
+    }
+    let checks = vault.scan_checks().expect("checks");
+    let raised: Vec<_> = checks
+        .iter()
+        .filter(|check| check.scan == EngineScan::SyncPrefixRows.code())
+        .collect();
+    match raised.as_slice() {
+        [check] if check.threshold == FIXED && check.rows == ROWS as u64 => {}
+        [check] => panic!(
+            "raised its check at threshold {} rows {}, not {FIXED} rows {ROWS}",
+            check.threshold, check.rows
+        ),
+        _ => panic!("raised its check {} times, not once", raised.len()),
     }
 }
