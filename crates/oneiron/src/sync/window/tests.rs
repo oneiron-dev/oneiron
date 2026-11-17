@@ -4760,29 +4760,24 @@ fn forward_remat_quarantines_bad_machine_proof_and_commits_signed_sibling() -> R
     Ok(())
 }
 
-// FIX [LIBTEST-QUARANTINE-SYNC-WINDOW-TESTS-ITEMS]: calls crate::workspace_roster::create_project_signed_for_test, which [LIBTEST-QUARANTINE-WORKSPACE-ROSTER-PROJECT-TESTS-SUPPORT-ITEMS] gates; drop this gate with that port
-#[cfg(any())]
+/// The signed birth and edit replay to existing and new replicas, survive
+/// reopen and membership restore, and quarantine a tampered fact.
+/// (Owner-authorized birth: a person-authorized birth by a non-owner is no
+/// longer reachable; the door revalidates the writer as the vault owner.)
 #[test]
 fn signed_owner_project_depth_replays_to_existing_and_new_replicas() -> Result<()> {
     let (_a_dir, a) = test_vault();
     let root_a = a.root_project()?;
     let lead = EntityId::from_hex(&a.project(root_a)?.unwrap().leader)?;
     let project = EntityId::now();
-    let owner_id = EntityId::now();
-    a.put_entity(
-        &owner_id,
-        crate::registry::ENTITY_TYPE_PERSON,
-        TimeRange { start: 1, end: 1 },
-        1,
-        b"person",
-    )?;
-    let owner = crate::write_envelope::WriteActor::new(owner_id, EdgeActorClass::Human);
-    crate::subject_model::tests::authorization::root_owner(&a, owner, 0xB6)?;
+    let owner = crate::subject_model::tests::authorization::root_host_owner(&a, 0xB6)?;
     crate::workspace_roster::create_project_signed_for_test(
         &a, project, root_a, lead, &owner, 1, 0xB6,
     )?;
     let history = a.export_signed_authority_history()?;
-    crate::workspace_roster::set_project_depth_signed_for_test(&a, project, 2, &owner, 2, 0xB6)?;
+    crate::subject_model::tests::authorization::set_project_depth_with_host(
+        &a, project, 2, &owner, 2, 0xB6,
+    )?;
     assert_eq!(a.project(project)?.unwrap().depth, 2);
     let contributions = crate::gate::project_depth::contributions_for_test(&a, project)?;
     assert_eq!(contributions.len(), 2); // immutable birth + signed edit
@@ -4799,13 +4794,7 @@ fn signed_owner_project_depth_replays_to_existing_and_new_replicas() -> Result<(
                 .unwrap(),
             1,
         )?;
-        b.put_entity(
-            &owner_id,
-            crate::registry::ENTITY_TYPE_PERSON,
-            TimeRange { start: 1, end: 1 },
-            1,
-            b"person",
-        )?;
+        crate::subject_model::tests::authorization::host_owner_writer(b)?;
         b.import_signed_authority_history(&history)?;
         if existing {
             let (birth_id, birth_bytes) = contributions
@@ -5008,8 +4997,10 @@ fn project_depth_edit_waits_for_owner_binding_through_retry_drain() -> Result<()
     Ok(())
 }
 
-// FIX [LIBTEST-QUARANTINE-SYNC-WINDOW-TESTS-ITEMS]: calls crate::workspace_roster::create_project_signed_for_test, which [LIBTEST-QUARANTINE-WORKSPACE-ROSTER-PROJECT-TESTS-SUPPORT-ITEMS] gates; drop this gate with that port
-#[cfg(any())]
+/// Concurrent offline depth facts merge alike in either exchange order:
+/// the union of immutable facts converges every replica.
+/// (Owner-authorized birth: a person-authorized birth by a non-owner is no
+/// longer reachable; the door revalidates the writer as the vault owner.)
 #[test]
 fn concurrent_signed_project_depth_facts_follow_loro_winner_in_either_exchange_order() -> Result<()>
 {
@@ -5038,35 +5029,64 @@ fn concurrent_signed_project_depth_facts_follow_loro_winner_in_either_exchange_o
             let base =
                 crate::workspace_roster::ProjectRecord::new(project, Some(root_a), root_a, leader)
                     .unwrap();
-            let owner_id = EntityId::now();
-            let writer = crate::write_envelope::WriteActor::new(owner_id, EdgeActorClass::Human);
-            for vault in [&a, &b] {
-                vault.put_entity(
-                    &owner_id,
-                    crate::registry::ENTITY_TYPE_PERSON,
-                    TimeRange { start: 1, end: 1 },
-                    1,
-                    b"owner",
-                )?;
-            }
-            crate::subject_model::tests::authorization::root_owner(&a, writer, 0xBC)?;
-            let authority = a.export_signed_authority_history()?;
-            b.import_signed_authority_history(&authority)?;
+            let writer = crate::subject_model::tests::authorization::root_host_owner(&a, 0xBC)?;
             crate::workspace_roster::create_project_signed_for_test(
                 &a, project, root_a, leader, &writer, 1, 0xBC,
             )?;
-            crate::workspace_roster::create_project_signed_for_test(
-                &b, project, root_a, leader_b, &writer, 1, 0xBC,
+            // After A's birth: the export carries A's project-slip mint, so
+            // the birth's frontier verifies on B.
+            let authority = a.export_signed_authority_history()?;
+            crate::subject_model::tests::authorization::host_owner_writer(&b)?;
+            b.import_signed_authority_history(&authority)?;
+            // B takes A's birth instead of birthing: each birth mints its
+            // vault's own project slip, so two births would fork the birth
+            // frontier into two birth ids (a quarantined pair), while the
+            // seed world gave both replicas the same birth. The offline
+            // concurrency the test pins is the edits'.
+            let (birth_id, birth_bytes) =
+                crate::gate::project_depth::contributions_for_test(&a, project)?
+                    .into_iter()
+                    .find(|(_, bytes)| {
+                        matches!(
+                            crate::gate::project_depth::decode_contribution(bytes).ok(),
+                            Some(crate::gate::project_depth::ProjectDepthContribution::Birth(
+                                _
+                            ))
+                        )
+                    })
+                    .ok_or(Error::EntityNotFound)?;
+            b.with_write_txn(|txn| {
+                b.batch_in()
+                    .put_replicated(
+                        &birth_id,
+                        crate::registry::ENTITY_TYPE_POLICY_MANIFEST,
+                        TimeRange { start: 1, end: 1 },
+                        1,
+                        None,
+                        &birth_bytes,
+                    )
+                    .apply(txn)
+            })?;
+            b.put_project(
+                project,
+                &crate::workspace_roster::ProjectRecord::new(
+                    project,
+                    Some(root_a),
+                    root_a,
+                    leader_b,
+                )
+                .unwrap(),
+                1,
             )?;
-            crate::workspace_roster::set_project_depth_signed_for_test(
+            crate::subject_model::tests::authorization::set_project_depth_with_host(
                 &a, project, 2, &writer, 2, 0xBC,
             )?;
             if unequal {
-                crate::workspace_roster::set_project_depth_signed_for_test(
+                crate::subject_model::tests::authorization::set_project_depth_with_host(
                     &a, project, 6, &writer, 3, 0xBC,
                 )?;
             }
-            crate::workspace_roster::set_project_depth_signed_for_test(
+            crate::subject_model::tests::authorization::set_project_depth_with_host(
                 &b, project, 0, &writer, 2, 0xBC,
             )?;
             assert_eq!(
@@ -5163,13 +5183,7 @@ fn concurrent_signed_project_depth_facts_follow_loro_winner_in_either_exchange_o
                     .unwrap(),
                 1,
             )?;
-            fresh.put_entity(
-                &owner_id,
-                crate::registry::ENTITY_TYPE_PERSON,
-                TimeRange { start: 1, end: 1 },
-                1,
-                b"owner",
-            )?;
+            crate::subject_model::tests::authorization::host_owner_writer(&fresh)?;
             fresh.import_signed_authority_history(&authority)?;
             for _ in 0..2 {
                 forward_rematerialize(&fresh, &first, &Materializer::new(), &window)?;
@@ -5379,31 +5393,24 @@ fn pre_regrant_depth_edit_stays_refused_through_both_replay_doors() -> Result<()
     Ok(())
 }
 
-// FIX [LIBTEST-QUARANTINE-SYNC-WINDOW-TESTS-ITEMS]: calls crate::workspace_roster::create_project_signed_for_test, which [LIBTEST-QUARANTINE-WORKSPACE-ROSTER-PROJECT-TESTS-SUPPORT-ITEMS] gates; drop this gate with that port
-#[cfg(any())]
+/// An edit that arrives before its predecessor survives the forward retry
+/// drain and applies once the predecessor lands.
+/// (Owner-authorized birth: a person-authorized birth by a non-owner is no
+/// longer reachable; the door revalidates the writer as the vault owner.)
 #[test]
 fn signed_project_edit_before_predecessor_survives_forward_retry_drain() -> Result<()> {
     let (_source_dir, source) = test_vault();
     let root = source.root_project()?;
     let leader = EntityId::from_hex(&source.project(root)?.unwrap().leader)?;
-    let person = EntityId::now();
-    source.put_entity(
-        &person,
-        crate::registry::ENTITY_TYPE_PERSON,
-        TimeRange { start: 1, end: 1 },
-        1,
-        b"owner",
-    )?;
-    let writer = crate::write_envelope::WriteActor::new(person, EdgeActorClass::Human);
-    crate::subject_model::tests::authorization::root_owner(&source, writer, 0xC2)?;
+    let writer = crate::subject_model::tests::authorization::root_host_owner(&source, 0xC2)?;
     let project = EntityId::now();
     crate::workspace_roster::create_project_signed_for_test(
         &source, project, root, leader, &writer, 1, 0xC2,
     )?;
-    crate::workspace_roster::set_project_depth_signed_for_test(
+    crate::subject_model::tests::authorization::set_project_depth_with_host(
         &source, project, 2, &writer, 2, 0xC2,
     )?;
-    crate::workspace_roster::set_project_depth_signed_for_test(
+    crate::subject_model::tests::authorization::set_project_depth_with_host(
         &source, project, 12, &writer, 3, 0xC2,
     )?;
     let mut birth = None;
@@ -5444,13 +5451,7 @@ fn signed_project_edit_before_predecessor_survives_forward_retry_drain() -> Resu
         .unwrap(),
         1,
     )?;
-    target.put_entity(
-        &person,
-        crate::registry::ENTITY_TYPE_PERSON,
-        TimeRange { start: 1, end: 1 },
-        1,
-        b"owner",
-    )?;
+    crate::subject_model::tests::authorization::host_owner_writer(&target)?;
     target.import_signed_authority_history(&source.export_signed_authority_history()?)?;
     let window = WindowKey::new("2026-03");
     let stamp = window.start_timestamp().expect("window start") + 60;

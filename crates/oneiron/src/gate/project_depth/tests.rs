@@ -93,6 +93,13 @@ fn owner(vault: &Vault, seed: u8) -> Result<crate::write_envelope::WriteActor> {
     Ok(writer)
 }
 
+/// The writer the rooted signed-birth tests birth and edit as: the vault's
+/// embedded owner under the host `seed` names. The seed-key `owner` above
+/// stays for the seed-rooted merge test, whose edits still sign with it.
+fn host_owner(vault: &Vault, seed: u8) -> Result<crate::write_envelope::WriteActor> {
+    crate::subject_model::tests::authorization::root_host_owner(vault, seed)
+}
+
 fn project(vault: &Vault, parent: EntityId, project: EntityId) -> Result<()> {
     let leader = EntityId::from_hex(&vault.project(parent)?.ok_or(Error::EntityNotFound)?.leader)?;
     vault.put_project(
@@ -103,8 +110,9 @@ fn project(vault: &Vault, parent: EntityId, project: EntityId) -> Result<()> {
     )
 }
 
-// FIX [LIBTEST-QUARANTINE-GATE-PROJECT-DEPTH-TESTS-ITEMS]: not ported: create_project_with_owner now takes an AuthenticatedOwner that must revalidate as the vault owner equal to the writer, and an OwnerProjectSigner from a host the authority fold holds; this fixture's writer is a fresh PERSON, not the vault owner; port with a rooted fixture (ensure_host_root_slip + owner_project_signer, writer = the owner), then drop this gate
-#[cfg(any())]
+/// Owner-authorized child birth for the rooted tests: the vault must
+/// already be rooted under the host `seed` names (see [`host_owner`]), and
+/// `writer` must be that bound owner.
 fn project_with_owner(
     vault: &Vault,
     parent: EntityId,
@@ -115,7 +123,15 @@ fn project_with_owner(
 ) -> Result<()> {
     use ed25519_dalek::Signer;
     let leader = EntityId::from_hex(&vault.project(parent)?.ok_or(Error::EntityNotFound)?.leader)?;
-    let signing = ed25519_dalek::SigningKey::from_bytes(&[seed; 32]);
+    let issuer = crate::subject_model::tests::authorization::host_issuer_for_seed(seed)?;
+    let signing = crate::subject_model::tests::authorization::host_signing_for_seed(seed);
+    let authenticated = vault.authenticate_owner(
+        writer.entity_ref(),
+        &writer.entity_ref().to_hex(),
+        true,
+        crate::store::GateDecisionId::now(),
+    )?;
+    let project_signer = vault.owner_project_signer(&issuer)?;
     vault.create_project_with_owner(
         id,
         &crate::workspace_roster::ProjectRecord::new(id, Some(parent), parent, leader).unwrap(),
@@ -123,6 +139,8 @@ fn project_with_owner(
         at,
         crate::authority::AuthorityKey::Ed25519(signing.verifying_key().to_bytes()),
         |message| Ok(signing.sign(message).to_bytes().to_vec()),
+        &authenticated,
+        &project_signer,
     )
 }
 
@@ -202,19 +220,25 @@ fn immutable_edits_merge_restrictively_and_causal_raise_supersedes_seen_heads() 
     Ok(())
 }
 
-// FIX [LIBTEST-QUARANTINE-GATE-PROJECT-DEPTH-TESTS-ITEMS]: calls project_with_owner, gated (not ported: create_project_with_owner needs the vault owner as writer and an OwnerProjectSigner); port it with that item, then drop this gate
-#[cfg(any())]
+/// A late predecessor and a late owner history never widen: edits that
+/// arrive before what authorizes them hold at depth 0 until it lands.
+/// (Owner-authorized birth: a person-authorized birth by a non-owner is no
+/// longer reachable; the door revalidates the writer as the vault owner.)
 #[test]
 fn predecessor_and_owner_history_can_arrive_after_edits_without_widening() -> Result<()> {
     let _src_dir = tempfile::tempdir()?;
     let source = Vault::open(_src_dir.path(), crate::VaultConfig::default())?;
     let parent = source.root_project()?;
     let id = EntityId::now();
-    let writer = owner(&source, 0xB9)?;
+    let writer = host_owner(&source, 0xB9)?;
     project_with_owner(&source, parent, id, &writer, 0xB9, 1)?;
     let history = source.export_signed_authority_history()?;
-    crate::workspace_roster::set_project_depth_signed_for_test(&source, id, 2, &writer, 2, 0xB9)?;
-    crate::workspace_roster::set_project_depth_signed_for_test(&source, id, 12, &writer, 3, 0xB9)?;
+    crate::subject_model::tests::authorization::set_project_depth_with_host(
+        &source, id, 2, &writer, 2, 0xB9,
+    )?;
+    crate::subject_model::tests::authorization::set_project_depth_with_host(
+        &source, id, 12, &writer, 3, 0xB9,
+    )?;
     let entries = contributions_for_test(&source, id)?;
     let (birth, first, second) = {
         let mut birth = None;
@@ -248,14 +272,8 @@ fn predecessor_and_owner_history_can_arrive_after_edits_without_widening() -> Re
     let target = Vault::open(_dst_dir.path(), crate::VaultConfig::default())?;
     let root_b = target.root_project()?;
     project(&target, root_b, parent)?;
-    target.put_entity(
-        &writer.entity_ref(),
-        crate::registry::ENTITY_TYPE_PERSON,
-        crate::TimeRange { start: 1, end: 1 },
-        1,
-        b"owner",
-    )?;
-    target.import_signed_authority_history(&history[..1])?; // genesis, not BindActor
+    crate::subject_model::tests::authorization::host_owner_writer(&target)?;
+    target.import_signed_authority_history(&history[..1])?; // genesis, not the binding
     put_manifest_for_test(&target, birth.0, &birth.1, 3)?;
     let leader = EntityId::from_hex(&target.project(parent)?.unwrap().leader)?;
     target.put_project(
@@ -291,13 +309,7 @@ fn predecessor_and_owner_history_can_arrive_after_edits_without_widening() -> Re
     let fresh = Vault::open(_fresh_dir.path(), crate::VaultConfig::default())?;
     let fresh_root = fresh.root_project()?;
     project(&fresh, fresh_root, parent)?;
-    fresh.put_entity(
-        &writer.entity_ref(),
-        crate::registry::ENTITY_TYPE_PERSON,
-        crate::TimeRange { start: 1, end: 1 },
-        1,
-        b"owner",
-    )?;
+    crate::subject_model::tests::authorization::host_owner_writer(&fresh)?;
     fresh.import_signed_authority_history(&history)?;
     put_manifest_for_test(&fresh, second.0, &second.1, 8)?;
     assert!(fresh.project(id)?.is_none());
@@ -313,108 +325,61 @@ fn predecessor_and_owner_history_can_arrive_after_edits_without_widening() -> Re
     Ok(())
 }
 
-// FIX [LIBTEST-QUARANTINE-GATE-PROJECT-DEPTH-TESTS-ITEMS]: calls project_with_owner, gated (not ported: create_project_with_owner needs the vault owner as writer and an OwnerProjectSigner); port it with that item, then drop this gate
-#[cfg(any())]
+/// A revoked edit stays non-authorizing after the regrant until a
+/// post-regrant edit lands; a stale writer cannot borrow the regrant.
+/// (Owner-authorized birth: a person-authorized birth by a non-owner is no
+/// longer reachable; the door revalidates the writer as the vault owner.)
 #[test]
 fn revoked_edit_stays_non_authorizing_after_regrant_until_post_regrant_edit() -> Result<()> {
-    use ed25519_dalek::Signer;
     let _dir = tempfile::tempdir()?;
     let vault = Vault::open(_dir.path(), crate::VaultConfig::default())?;
     let root = vault.root_project()?;
     let id = EntityId::now();
-    let writer = owner(&vault, 0xBD)?;
+    let writer = host_owner(&vault, 0xBD)?;
     project_with_owner(&vault, root, id, &writer, 0xBD, 1)?;
-    // `owner` created a live signed genesis and binding. Obtain the matching
-    // signed revocation from the shared authority test fixture on a separate
-    // first-party vault would create a second genesis, so reconstruct it from
-    // this vault's current binding head with the same authority key.
-    let signing = ed25519_dalek::SigningKey::from_bytes(&[0xBD; 32]);
-    let authority = vault.export_signed_authority_history()?;
-    let bind: crate::authority::AuthorityLogEntry =
-        crate::authority::decode_authority_log_entry_body(&authority[1])?;
-    crate::workspace_roster::set_project_depth_signed_for_test(&vault, id, 2, &writer, 2, 0xBD)?;
+    // `host_owner` bound the owner under the host root. Revoke and regrant
+    // through the host test doors, which log the same entries (revoke the
+    // binding epoch, then bind one epoch on) under the host key.
+    let issuer = crate::subject_model::tests::authorization::host_issuer_for_seed(0xBD)?;
+    crate::subject_model::tests::authorization::set_project_depth_with_host(
+        &vault, id, 2, &writer, 2, 0xBD,
+    )?;
     assert_eq!(vault.project(id)?.unwrap().depth, 2);
-    let mut revoke = crate::authority::AuthorityLogEntry {
-        schema_version: bind.schema_version,
-        vault_id: bind.vault_id,
-        seq: 2,
-        parent_hashes: vec![crate::authority::authority_entry_hash(&bind)?],
-        op: crate::authority::AuthorityOp::RevokeActor {
-            authority_key: bind.signer.public_key.clone(),
-            epoch: 1,
-        },
-        signer: bind.signer.clone(),
-        cosigns: Vec::new(),
-        ts: 102,
-    };
-    revoke.signer.signature = signing
-        .sign(&crate::authority::authority_transcript(&revoke)?)
-        .to_bytes()
-        .to_vec();
-    vault.put_authority_log_entry(
-        &revoke,
-        crate::TimeRange {
-            start: 102,
-            end: 102,
-        },
-        102,
-    )?;
+    vault.revoke_host_actor_for_test(&issuer)?;
     assert_eq!(vault.project(id)?.unwrap().depth, 0);
-    let mut regrant = crate::authority::AuthorityLogEntry {
-        schema_version: bind.schema_version,
-        vault_id: bind.vault_id,
-        seq: 3,
-        parent_hashes: vec![crate::authority::authority_entry_hash(&revoke)?],
-        op: crate::authority::AuthorityOp::BindActor {
-            authority_key: bind.signer.public_key.clone(),
-            actor_ref: writer.entity_ref(),
-            actor_class: "human".into(),
-            epoch: 2,
-        },
-        signer: bind.signer,
-        cosigns: Vec::new(),
-        ts: 103,
-    };
-    regrant.signer.signature = signing
-        .sign(&crate::authority::authority_transcript(&regrant)?)
-        .to_bytes()
-        .to_vec();
-    vault.put_authority_log_entry(
-        &regrant,
-        crate::TimeRange {
-            start: 103,
-            end: 103,
-        },
-        103,
-    )?;
+    vault.bind_host_actor_for_test(&issuer, writer.entity_ref(), "human")?;
     assert_eq!(
         vault.project(id)?.unwrap().depth,
         0,
         "regrant cannot retroactively bless a pre-regrant edit"
     );
     assert!(
-        crate::workspace_roster::set_project_depth_signed_for_test(
+        crate::subject_model::tests::authorization::set_project_depth_with_host(
             &vault, id, 12, &writer, 4, 0xBD,
         )
         .is_err(),
         "stale writer frontier cannot borrow a regrant"
     );
     let current = vault.observed_write_actor(writer)?;
-    crate::workspace_roster::set_project_depth_signed_for_test(&vault, id, 12, &current, 5, 0xBD)?;
+    crate::subject_model::tests::authorization::set_project_depth_with_host(
+        &vault, id, 12, &current, 5, 0xBD,
+    )?;
     assert_eq!(vault.project(id)?.unwrap().depth, 12);
     Ok(())
 }
 
-// FIX [LIBTEST-QUARANTINE-GATE-PROJECT-DEPTH-TESTS-ITEMS]: calls project_with_owner, gated (not ported: create_project_with_owner needs the vault owner as writer and an OwnerProjectSigner); its put_replicated row version is ported; port it with that item, then drop this gate
-#[cfg(any())]
+/// An unsigned forged birth cannot reset an owner-changed creation
+/// default: neither the replicated door nor a raw row mints authority.
+/// (Owner-authorized birth: a person-authorized birth by a non-owner is no
+/// longer reachable; the door revalidates the writer as the vault owner.)
 #[test]
 fn unsigned_seed_birth_cannot_reset_an_owner_changed_creation_default() -> Result<()> {
     use ed25519_dalek::Signer;
     let _dir = tempfile::tempdir()?;
     let vault = Vault::open(_dir.path(), crate::VaultConfig::default())?;
     let root = vault.root_project()?;
-    let writer = owner(&vault, 0xBF)?;
-    let signing = ed25519_dalek::SigningKey::from_bytes(&[0xBF; 32]);
+    let writer = host_owner(&vault, 0xBF)?;
+    let signing = crate::subject_model::tests::authorization::host_signing_for_seed(0xBF);
     let key = crate::authority::AuthorityKey::Ed25519(signing.verifying_key().to_bytes());
     vault.set_project_creation_depth_default(8, &writer, 2, key, |message| {
         Ok(signing.sign(message).to_bytes().to_vec())
@@ -467,15 +432,17 @@ fn unsigned_seed_birth_cannot_reset_an_owner_changed_creation_default() -> Resul
     Ok(())
 }
 
-// FIX [LIBTEST-QUARANTINE-GATE-PROJECT-DEPTH-TESTS-ITEMS]: not ported: create_project_with_owner now takes an AuthenticatedOwner that must revalidate as the vault owner equal to the writer, and an OwnerProjectSigner from a host the authority fold holds; this fixture's writer is a fresh PERSON, not the vault owner; port with a rooted fixture (ensure_host_root_slip + owner_project_signer, writer = the owner), then drop this gate
-#[cfg(any())]
+/// A signed birth sourced at an orphan default edit is refused:
+/// cryptographic signatures do not turn an orphan default into authority.
+/// (Owner-authorized birth: a person-authorized birth by a non-owner is no
+/// longer reachable; the door revalidates the writer as the vault owner.)
 #[test]
 fn signed_birth_cannot_use_an_orphan_default_edit_as_its_source() -> Result<()> {
     use ed25519_dalek::Signer;
     let dir = tempfile::tempdir()?;
     let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
-    let owner = owner(&vault, 0xC4)?;
-    let signing = ed25519_dalek::SigningKey::from_bytes(&[0xC4; 32]);
+    let owner = host_owner(&vault, 0xC4)?;
+    let signing = crate::subject_model::tests::authorization::host_signing_for_seed(0xC4);
     let key = crate::authority::AuthorityKey::Ed25519(signing.verifying_key().to_bytes());
     let fold = vault.authority_fold()?;
     let frontier = *fold
@@ -551,6 +518,14 @@ fn signed_birth_cannot_use_an_orphan_default_edit_as_its_source() -> Result<()> 
         "cryptographic signatures do not turn an orphan default into authority"
     );
     let other = EntityId::now();
+    let issuer = crate::subject_model::tests::authorization::host_issuer_for_seed(0xC4)?;
+    let authenticated = vault.authenticate_owner(
+        owner.entity_ref(),
+        &owner.entity_ref().to_hex(),
+        true,
+        crate::store::GateDecisionId::now(),
+    )?;
+    let project_signer = vault.owner_project_signer(&issuer)?;
     assert!(
         vault
             .create_project_with_owner(
@@ -561,6 +536,8 @@ fn signed_birth_cannot_use_an_orphan_default_edit_as_its_source() -> Result<()> 
                 5,
                 key,
                 |message| Ok(signing.sign(message).to_bytes().to_vec()),
+                &authenticated,
+                &project_signer,
             )
             .is_err()
     );

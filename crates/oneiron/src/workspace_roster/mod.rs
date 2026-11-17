@@ -141,8 +141,6 @@ pub(crate) use self::{
 mod tests;
 
 pub(crate) mod project;
-// FIX [LIBTEST-QUARANTINE-WORKSPACE-ROSTER-PROJECT-TESTS-SUPPORT-ITEMS]: re-exports create_project_signed_for_test, gated for the lib test target's type check; port it with that item, then drop this gate
-#[cfg(any())]
 #[cfg(all(test, feature = "sync"))]
 pub(crate) use project::create_project_signed_for_test;
 pub(crate) use project::index_extra_room;

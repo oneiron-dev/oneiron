@@ -5377,25 +5377,18 @@ fn observer_b_project_depth_authority_dependency_survives_retry_until_bind() -> 
     Ok(())
 }
 
-// FIX [LIBTEST-QUARANTINE-SYNC-BRIDGE-TESTS-ITEMS]: calls crate::workspace_roster::create_project_signed_for_test, which [LIBTEST-QUARANTINE-WORKSPACE-ROSTER-PROJECT-TESTS-SUPPORT-ITEMS] gates; drop this gate with that port
-#[cfg(any())]
+/// A fresh replica bootstraps the signed default, birth and edit through
+/// Observer B and reads the same depths.
+/// (Owner-authorized birth: a person-authorized birth by a non-owner is no
+/// longer reachable; the door revalidates the writer as the vault owner.)
 #[test]
 fn observer_b_bootstraps_signed_default_birth_and_edit_on_fresh_replica() -> crate::Result<()> {
     use ed25519_dalek::Signer;
     let a = test_vault();
     let root_a = a.root_project()?;
     let leader = EntityId::from_hex(&a.project(root_a)?.unwrap().leader)?;
-    let person = EntityId::now();
-    a.put_entity(
-        &person,
-        crate::registry::ENTITY_TYPE_PERSON,
-        TimeRange { start: 1, end: 1 },
-        1,
-        b"owner",
-    )?;
-    let writer = crate::write_envelope::WriteActor::new(person, EdgeActorClass::Human);
-    crate::subject_model::tests::authorization::root_owner(&a, writer, 0xC1)?;
-    let signing = SigningKey::from_bytes(&[0xC1; 32]);
+    let writer = crate::subject_model::tests::authorization::root_host_owner(&a, 0xC1)?;
+    let signing = crate::subject_model::tests::authorization::host_signing_for_seed(0xC1);
     let key = crate::authority::AuthorityKey::Ed25519(signing.verifying_key().to_bytes());
     a.set_project_creation_depth_default(8, &writer, 2, key, |message| {
         Ok(signing.sign(message).to_bytes().to_vec())
@@ -5405,7 +5398,9 @@ fn observer_b_bootstraps_signed_default_birth_and_edit_on_fresh_replica() -> cra
         &a, id, root_a, leader, &writer, 3, 0xC1,
     )?;
     assert_eq!(a.project(id)?.unwrap().depth, 8);
-    crate::workspace_roster::set_project_depth_signed_for_test(&a, id, 2, &writer, 4, 0xC1)?;
+    crate::subject_model::tests::authorization::set_project_depth_with_host(
+        &a, id, 2, &writer, 4, 0xC1,
+    )?;
     let project_facts = crate::gate::project_depth::contributions_for_test(&a, id)?;
     let default_id = crate::gate::project_depth::seeded_default_carrier()?.0;
     let default_facts = crate::gate::project_depth::contributions_for_test(&a, default_id)?;
@@ -5421,13 +5416,7 @@ fn observer_b_bootstraps_signed_default_birth_and_edit_on_fresh_replica() -> cra
             .unwrap(),
         1,
     )?;
-    b.put_entity(
-        &person,
-        crate::registry::ENTITY_TYPE_PERSON,
-        TimeRange { start: 1, end: 1 },
-        1,
-        b"owner",
-    )?;
+    crate::subject_model::tests::authorization::host_owner_writer(&b)?;
     b.import_signed_authority_history(&a.export_signed_authority_history()?)?;
     let doc = LoroDoc::new();
     let materializer = Arc::new(Materializer::new());
