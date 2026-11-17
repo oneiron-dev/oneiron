@@ -21,6 +21,7 @@ use oneiron::{
 };
 use tokio::sync::{broadcast, watch};
 
+use super::attempt_retry::retry_backoff_until;
 use super::{AiHandle, CHAT_ROLE};
 use crate::config::models::{DreamerWording, ModelsConfig};
 use crate::models::{SourceAdmission, SourceOffer};
@@ -123,8 +124,13 @@ async fn word(
     if !active(vault, attempt) {
         return Err("wording_attempt_stopped");
     }
-    let payload: CommitmentReminderWordingPayload =
-        serde_json::from_slice(&attempt.payload).map_err(|_| "wording_payload_invalid")?;
+    // The payload bytes never change, so a retry would fail the same way for
+    // ever; the fixed wording is sent while none is filed, so the try ends.
+    let Ok(payload) = serde_json::from_slice::<CommitmentReminderWordingPayload>(&attempt.payload)
+    else {
+        tracing::warn!(attempt = ?attempt.id, "reminder wording payload does not decode");
+        return Ok(());
+    };
     let present = blocking(|| vault.commitment_reminder_wording_request(&payload))
         .map_err(|_| "wording_source_read_failed")?
         .is_some();
@@ -383,7 +389,7 @@ fn settle(vault: &Vault, attempt: &AttemptRecord, result: Result<(), &'static st
                     id: attempt.id,
                     lease_owner: LEASE_OWNER.to_owned(),
                     attempt_count: attempt.attempt_count,
-                    backoff_until: now.saturating_add(backoff),
+                    backoff_until: retry_backoff_until(vault, attempt, backoff, now),
                     last_error: Some(reason.to_owned()),
                     now,
                 })

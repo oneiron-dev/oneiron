@@ -476,7 +476,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/memory/chat.rs` | src | s | 1 fn | — | Moved from `crates/oneiron/src/memory/chat.rs` (lib split W2: wire types below the lib) |
 | `src/memory/checkout_doors/mod.rs` | src | s | 1 mod · 1 re-export | — | — |
 | `src/memory/checkout_doors/types.rs` | src | s | 11 struct · 5 enum | CheckoutAction, CheckoutClaimInput, CheckoutClass, CheckoutGetInput, CheckoutLeaseView, CheckoutPublishInput, CheckoutPublished, CheckoutReclaimInput +8 | Moved from `crates/oneiron/src/memory/checkout_doors/types.rs` (lib split W2: wire types below the lib) |
-| `src/memory/claim_admission.rs` | src | s | 3 struct · 2 enum · 1 fn | AllRelationships, ClaimRelationships, ClaimScope, ScopedClaimInput, ScopedCommitRequest | Moved from `crates/oneiron/src/memory/claim_admission.rs` (lib split W1: wire types below the lib) |
+| `src/memory/claim_admission.rs` | src | s | 4 struct · 2 enum · 1 fn | AllRelationships, ClaimRelationships, ClaimScope, ClaimScopeInput, ScopedClaimInput, ScopedCommitRequest | Moved from `crates/oneiron/src/memory/claim_admission.rs` (lib split W1: wire types below the lib) |
 | `src/memory/claim_stale.rs` | src | s | 4 struct · 1 enum · 1 re-export | ClaimDemoteActionInput, ClaimDemoteRequest, ClaimDemoteView, ClaimFilteredListRequest, ClaimFilteredReadRequest | Moved from `crates/oneiron/src/memory/claim_stale.rs` (lib split W2: wire types below the lib) |
 | `src/memory/claims/mod.rs` | src | s | 1 struct · 1 mod · 11 re-export | ClaimInput | — |
 | `src/memory/claims/settle.rs` | src | s | 5 struct · 5 enum · 1 fn | ClaimChangeVerdict, ClaimProposalReviewRequest, ClaimSettleDecision, ClaimSettleRequest, ClaimSettlementAnswer, ClaimSettlementReason, ClaimSettlementRevert, ClaimSettlementVerdict +2 | Moved from `crates/oneiron/src/memory/claims/settle.rs` (lib split W1: wire types below the lib) |
@@ -528,7 +528,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/memory/merge_queue_doors/mod.rs` | src | s | 5 mod · 9 re-export | — | — |
 | `src/memory/merge_queue_doors/review_policy.rs` | src | s | 3 struct · 2 enum | QueueReviewMode, QueueReviewPolicyInput, QueueReviewPolicySetRequest, QueueReviewPolicyState, QueueReviewPolicyView | Moved from `crates/oneiron/src/memory/merge_queue_doors/review_policy.rs` (lib split W2: wire types below… |
 | `src/memory/merge_queue_doors/types.rs` | src | s | 4 struct | MergeQueueBatchRequest, MergeQueueEnqueueRequest, MergeQueueObserveRequest, MergeQueueRepoRequest | Moved from `crates/oneiron/src/memory/merge_queue_doors/types.rs` (lib split W2: wire types below the lib) |
-| `src/memory/mod.rs` | src | m | 67 mod · 241 re-export | — | — |
+| `src/memory/mod.rs` | src | m | 67 mod · 242 re-export | — | — |
 | `src/memory/origin_doors/import_types.rs` | src | s | 4 struct · 1 enum · 2 re-export | CodeImportManifestFile, CodeImportManifestView, CodeRepoImportRequest, CodeRepoImportState, CodeRepoImportView | Moved from `crates/oneiron/src/memory/origin_doors/import_types.rs` (lib split W2: wire types below the lib) |
 | `src/memory/origin_doors/mod.rs` | src | s | 3 mod · 32 re-export | — | — |
 | `src/memory/origin_doors/types.rs` | src | s | 16 struct · 1 enum | CheckoutDoorBindRequest, CheckoutDoorBinding, CodeExportRequest, CodeExportResult, OriginAuthoritySetRequest, OriginAuthorityView, OriginMirrorCleared, OriginMirrorSetRequest +9 | Moved from `crates/oneiron/src/memory/origin_doors/types.rs` (lib split W2: wire types below the lib) |
