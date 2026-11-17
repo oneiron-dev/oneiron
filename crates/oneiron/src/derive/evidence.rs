@@ -35,6 +35,10 @@ pub const EVIDENCE_SPAN_UNBOUND: &str = "gate.deny.derive.evidence_span_unbound"
 /// savepoint of `txn`. A gate refusal rolls the savepoint back and keeps a
 /// refusal receipt.
 ///
+/// When the committing actor's read credential is not live, the item is
+/// refused with `gate.deny.derive.read_not_live` before it reads: the head
+/// read would fail the whole batch, and only hard errors abort it.
+///
 /// # Errors
 ///
 /// Storage errors: each aborts the whole commit.
@@ -52,6 +56,12 @@ pub(super) fn stage_in_txn(
         .collect::<Result<BTreeSet<_>>>()?;
     let actor = context.stamp.actor;
     let read = super::actor_read(vault, actor)?;
+    // A read whose credential is not live serves nothing, so the head read
+    // below would fail the whole batch: refuse the item with its row token
+    // instead, as the settle and supersede items do.
+    if !read.proof_live_in(txn)? {
+        return refuse(vault, txn, context, head, super::READ_NOT_LIVE);
+    }
     let Some((ENTITY_TYPE_CLAIM, _, body)) = read
         .get_entities_parts_in_txn(txn, &[head])?
         .pop()

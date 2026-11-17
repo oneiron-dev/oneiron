@@ -16,8 +16,10 @@ pub const DREAMER_TRAP_PREDICATE: &str = "dreamer.trap";
 /// Current pinned `dreamer.step` claim value schema version.
 pub const DREAMER_STEP_VALUE_SCHEMA_VERSION: u64 = 1;
 
-/// Pinned MessagePack key set for `dreamer.step` claim values.
-pub const DREAMER_STEP_VALUE_KEYS: [&str; 14] = [
+/// Pinned MessagePack key set for `dreamer.step` claim values. Every key but
+/// `input_versions` is written by every terminal step; `input_versions` is
+/// optional and only a bound step writes it.
+pub const DREAMER_STEP_VALUE_KEYS: [&str; 15] = [
     "schema_version",
     "job_id",
     "step_hash",
@@ -32,6 +34,7 @@ pub const DREAMER_STEP_VALUE_KEYS: [&str; 14] = [
     "response_version",
     "response_hash",
     "at",
+    "input_versions",
 ];
 
 /// Current pinned `dreamer.trap` claim value schema version.

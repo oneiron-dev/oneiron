@@ -93,6 +93,7 @@ mod repo_copy_edit;
 mod repo_manifest_conflict;
 mod research;
 mod research_advance;
+mod research_authoring;
 mod research_root;
 mod reservoir_sources;
 mod residence;
@@ -443,6 +444,7 @@ pub use self::repo_copy_edit::*;
 pub use self::repo_manifest_conflict::*;
 pub use self::research::*;
 pub use self::research_advance::*;
+pub use self::research_authoring::*;
 pub use self::research_root::*;
 pub use self::reservoir_sources::*;
 pub use self::residence::*;
@@ -753,6 +755,7 @@ fn a_recall_the_engine_refuses_never_embeds_its_query() {
         query_affect: None,
         telemetry: None,
         filter: None,
+        operation_id: None,
     };
     let call = |deadline_ms| RecallRequest {
         effort: Some(crate::memory::RecallEffort::Call),

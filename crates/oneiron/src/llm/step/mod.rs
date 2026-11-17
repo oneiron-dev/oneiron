@@ -69,7 +69,7 @@ pub use self::peer_wait::{
 #[cfg(oneiron_test_support)]
 pub(crate) use self::request_hash_step::step_state_present_for_attempt;
 pub(crate) use self::request_hash_step::{
-    request_hash_step_receipt_in_txn, request_hash_submit_receipt,
+    bind_step_input_versions, request_hash_step_receipt_in_txn, request_hash_submit_receipt,
 };
 pub(crate) use self::retry::stated_reset_at;
 pub(crate) use self::trap::{
@@ -110,6 +110,8 @@ pub(crate) use self::response_pins::{
     prune_step_response_pins_in_txn, release_step_response_pins_in_txn,
     retire_erased_step_responses_in_rows, step_response_version_pinned_in_txn,
 };
+#[cfg(oneiron_test_support)]
+pub(crate) use self::step_index::{step_index_claim_key_pin_for_test, step_index_key_pin_for_test};
 pub(crate) use self::step_state::{
     dreamer_step_state_accepts_masked, erase_step_state_owner_in_txn, owner_gone_in_txn,
     step_state_carriage, step_state_owners,

@@ -5,6 +5,7 @@
 //! in private LMDB rows and is not sync materialized as vault entities.
 
 mod admission;
+pub(crate) mod archive_restore;
 mod attempt_binding;
 mod claim_authoring;
 mod codec;
@@ -113,7 +114,8 @@ pub use self::program::{
 };
 // FIX 5880: the owner's release of a held turn program.
 pub use self::program::{
-    ProgramHoldReleaseAction, ProgramHoldReleaseView, ReleaseTurnProgramHoldRequest,
+    PROGRAM_HOLD_RELEASE_VERB, ProgramHoldReleaseAction, ProgramHoldReleaseView,
+    ReleaseTurnProgramHoldRequest, release_turn_program_hold_as_delegate,
     release_turn_program_hold_as_owner,
 };
 // FIX 11429: the waking actor's rebind of a turn program to a live slip.
@@ -170,3 +172,8 @@ pub(crate) use self::maintenance::digest::dreamer_proactivity_digest_accepts_mas
 pub(crate) use self::maintenance::dreamer_curator_rubric_accepts_masked;
 pub(crate) use self::maintenance::stewardship::dreamer_stewardship_rules_accepts_masked;
 pub(crate) use self::store::dreamer_parked_accepts_masked;
+
+#[cfg(oneiron_test_support)]
+pub(crate) use self::{
+    admission::budget_reservation_key_pin_for_test, milestone::milestone_candidate_key_pin_for_test,
+};

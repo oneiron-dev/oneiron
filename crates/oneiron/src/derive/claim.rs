@@ -45,6 +45,11 @@ use crate::{ClaimCandidate, EntityId, TimeRange, Vault};
 /// row that does not bind refuses the item alone. An item without span
 /// locators stores the refs-only envelope it always stored.
 ///
+/// When the committing actor's read credential is not live, the item is
+/// refused with `gate.deny.derive.read_not_live` before it stages or binds a
+/// span: the gate would fail it on its first read, and only hard errors
+/// abort the batch.
+///
 /// # Errors
 ///
 /// A value that does not encode, and any error other than the gate's
@@ -77,6 +82,15 @@ pub(super) fn stage_in_txn(
     // earlier item of this batch landed still reads to the item citing it.
     let read = super::actor_read(vault, context.stamp.actor)?
         .with_claim_status(crate::ports::ClaimReadStatus::Recorded);
+    // A read whose credential is not live serves nothing, so the gate would
+    // fail the item on its first read: refuse it with its row token instead
+    // of aborting the batch, as the settle and supersede items do.
+    if !read.proof_live_in(txn)? {
+        let id = EntityId::now();
+        let reasons = vec![super::READ_NOT_LIVE.to_owned()];
+        let receipt = refusal_receipt_in_txn(vault, txn, context, Some(id), &reasons)?;
+        return Ok(ItemOutcome::Refused { reasons, receipt });
+    }
     // Span locators bind every cited row; an item without them cites as
     // before and binds nothing.
     let verified = if claim.spans.is_empty() {

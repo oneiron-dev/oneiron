@@ -173,6 +173,8 @@ pub use self::dials::{
     set_skill_optimize_min_outcomes, skill_optimize_min_outcomes,
 };
 pub use self::eval_set::doors as eval_doors;
+#[cfg(oneiron_test_support)]
+pub(crate) use self::eval_set::fail_execution_writes;
 pub use self::eval_set::{
     AuditCase, AuditCoverage, AuditMethodPin, CandidateLabel, CaseDecision, CohortRetirement,
     CohortSummary, CoverageGap, CutDecision, DerivationKind, EvalAuthoringInventory,
@@ -233,7 +235,8 @@ pub use self::labels::{
     set_judge_digest_minutes,
 };
 pub(crate) use self::labels::{
-    judge_ask_room, recheck_judge_labels, take_digest_asks_in_txn, take_digest_eval_asks_in_txn,
+    judge_ask_room, pinned_judge_rubric_in_txn, recheck_judge_labels, take_digest_asks_in_txn,
+    take_digest_eval_asks_in_txn,
 };
 pub use self::offer::{
     ComputeDestination, OFFER_SKILL_AXIS, OfferAnswer, OfferAnswerRecord, OfferCandidate,
@@ -271,6 +274,8 @@ pub use self::tradeoff_route::{
     TRADEOFF_ROUTE_NOTIFICATION_PRODUCER, TradeoffRouteChannel, TradeoffRouteIssue,
     TradeoffRouteReport,
 };
+#[cfg(oneiron_test_support)]
+pub(crate) use gate::live_axis_plan_digest_for_test;
 pub use gate::{
     AnchorLabelScore, AuditPair, BlindPreference, DEFAULT_SKILL_EDIT_CYCLE_CAP, GoalAxisKind,
     GoalAxisScore, GoalAxisSpec, HELD_OUT_REPLAY_SCORER, HELD_OUT_RESERVE_DIVISOR,

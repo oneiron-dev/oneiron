@@ -6,6 +6,12 @@
 use serde::{Deserialize, Serialize};
 
 use crate::Vault;
+use crate::batch::export::archive_side_install::{
+    ArchivedSideRowOutcome, decode_archived_row, install_archived_row,
+};
+use crate::batch::export::{
+    ArchiveRetainedSideRow, OwnerArchiveRestorePermit, RetainedSideHeldBackReason,
+};
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, Result};
 use crate::side_table::{self, Named, SideTable};
@@ -150,7 +156,9 @@ impl Vault {
     }
 
     /// Replaces the bounds under the owner's proof. The returned bounds are
-    /// the ones this transaction stored; the next page reads them.
+    /// the ones this transaction stored; the next page reads them, and a page
+    /// being read when they change is judged against them when its rows are
+    /// counted.
     ///
     /// # Errors
     ///
@@ -179,8 +187,10 @@ impl Vault {
     /// own expiry is not a bound of this row and does not move.
     ///
     /// The next page of any handle is held to the new page and handle
-    /// bounds. A handle that is already open keeps the lifetime it was
-    /// opened with, and stays open when fewer may now be open at once.
+    /// bounds, and so is a page being read when they change: the write that
+    /// counts its rows judges it against them. A handle that is already open
+    /// keeps the lifetime it was opened with, and stays open when fewer may
+    /// now be open at once.
     /// Returns the receipt.
     ///
     /// # Errors
@@ -229,4 +239,25 @@ impl Vault {
             bounds,
         )
     }
+}
+
+/// Lands one archived snapshot-bounds envelope under the owner permit:
+/// [`SnapshotReadSettings::validate`], then an absent-key exact-bytes install, never the
+/// holder-only lower clamp and never an engine-control receipt.
+pub(super) fn land_archived_snapshot_read_row_in_txn(
+    vault: &crate::Vault,
+    txn: &mut heed::RwTxn<'_>,
+    permit: &OwnerArchiveRestorePermit,
+    row: &ArchiveRetainedSideRow,
+) -> Result<ArchivedSideRowOutcome> {
+    let (key, value) = match decode_archived_row(&SETTINGS, row) {
+        Ok(decoded) => decoded,
+        Err(reason) => return Ok(ArchivedSideRowOutcome::HeldBack(reason)),
+    };
+    if value.validate().is_err() {
+        return Ok(ArchivedSideRowOutcome::HeldBack(
+            RetainedSideHeldBackReason::InvalidValue,
+        ));
+    }
+    install_archived_row(&SETTINGS, vault, txn, permit, &key, row)
 }

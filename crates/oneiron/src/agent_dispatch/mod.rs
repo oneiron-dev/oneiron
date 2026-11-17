@@ -26,6 +26,7 @@ mod attenuation;
 mod brief;
 pub mod budget_doors;
 mod budget_hold;
+mod budget_trap_ask;
 mod caller_origin;
 pub use caller_origin::CallerOrigin;
 mod codec;
@@ -80,6 +81,7 @@ mod research_root;
 pub(crate) use self::research_root::ResearchRootRequest;
 mod resident;
 mod room_join;
+mod run_budget_ask;
 mod run_effects;
 pub use self::run_effects::AgentRunEffectAnswerOutcome;
 pub(crate) use self::run_effects::{
@@ -112,6 +114,7 @@ pub(crate) use scope::project_descends_from_in_txn;
 mod skill_default;
 pub(crate) use skill_default::workflow_default;
 mod spend_calibration;
+mod spend_custody;
 #[cfg(feature = "sync")]
 pub(crate) mod spend_handoff;
 mod spend_lease;
@@ -129,6 +132,11 @@ mod workflow_host;
 mod workflow_pump;
 mod workflow_record;
 pub(crate) use workflow::tool_wait::checkpoint as workflow_tool_checkpoint;
+#[cfg(oneiron_test_support)]
+pub(crate) use workflow::tool_wait::{
+    CheckpointRow, test_checkpoint_body_owner, test_checkpoint_key, test_checkpoint_row_bound,
+    test_checkpoint_row_unbound,
+};
 pub use workflow::tool_wait::{
     WorkflowToolAnswer, WorkflowToolCheckpointWriter, WorkflowToolContinuation, WorkflowToolCursor,
     WorkflowToolProgress, WorkflowToolTranscript, WorkflowToolWait,
@@ -178,6 +186,11 @@ pub(crate) use self::budget_hold::erase_plan_hold_actor_in_txn;
 pub use self::budget_hold::{
     BudgetHoldLease, BudgetHoldNotice, BudgetHoldState, HeldAttempt, PartialResultHold,
 };
+pub use self::budget_trap_ask::{BudgetTrapLimit, BudgetTrapQuestion, budget_trap_questions};
+pub(crate) use self::budget_trap_ask::{
+    apply_budget_trap_answer_in_txn, is_budget_trap_ask, queue_budget_trap_ask_in_txn,
+    withdraw_budget_trap_ask_in_txn,
+};
 pub use self::codec::{
     agent_dispatch_actor, agent_dispatch_payload_agent_id, agent_dispatch_run_actor,
     decode_agent_dispatch_input, encode_agent_dispatch_input,
@@ -196,6 +209,12 @@ pub use self::planner::{
     resolve_care, top_shapes,
 };
 pub use self::planner_live::{LivePlanRequest, PlannerSeat, PlannerSkills};
+pub use self::run_budget_ask::{
+    FundsPrice, LocalRouteChoice, RUN_BUDGET_DEFAULT_OVERDRAFT_UNITS, RunBudgetChoice,
+    RunBudgetForecast, RunBudgetQuestion, RunFunds, RunFundsEntry, RunLocalRoute, RunOverdraft,
+    run_budget_questions,
+};
+pub(crate) use self::run_budget_ask::{apply_run_budget_answer_in_txn, is_run_budget_ask};
 pub use self::task_type_tree::{
     SourcedTypeTree, TASK_TYPE_TREE_FILE, load_team_type_tree, load_team_type_tree_at,
     load_vault_type_tree_sourced, store_team_type_tree, team_shape_skill_in_force,

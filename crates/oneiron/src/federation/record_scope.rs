@@ -30,6 +30,8 @@ mod comm_source;
 mod birth_placement;
 mod delete;
 mod export;
+// FIX DISTINCT-EVENT-DEFAULT-PROJECT-STAMP: an AssertDistinct event stands where its CLAIM stands.
+mod identity_event;
 pub(crate) mod note_world;
 #[cfg(feature = "sync")]
 pub(crate) mod origin_positions;
@@ -52,7 +54,7 @@ pub(crate) use self::stamping::{
     has_stored_position, restrict_stamp_in_txn, room_row_placed, settle_epoch_birth,
     settle_source_birth, stage_session_position, stamp_blob_project, stamp_import_audience_birth,
     stamp_leader_project, stamp_put, stamp_queue_check_exhaust_birth, stamp_task_birth,
-    stamp_task_fact, unstage_session_position,
+    stamp_task_fact, stamp_witness_project, stored_witness_project, unstage_session_position,
 };
 pub(crate) use comm_source::{ScopedCommRead, read_scoped_comm_in_txn};
 
@@ -247,6 +249,10 @@ pub(crate) fn candidate_put_position(
 /// A FACET or RELATIONSHIP keeps the sensitivity its body declares. `None`
 /// for a NOTE or ASSET whose `FacetOf` is not written: no position is
 /// inferred.
+///
+/// An identity topology event that asserts a distinct pair, and the
+/// disposition that signs it, take its CLAIM's project and world
+/// (`identity_event`).
 fn derived_position(
     store: &impl ManifestDbs,
     txn: &heed::RoTxn<'_>,
@@ -319,6 +325,11 @@ fn derived_position(
             _ => substrate,
         };
         (default_stamp(kind, facet), facet)
+    } else if kind == crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT {
+        // FIX DISTINCT-EVENT-DEFAULT-PROJECT-STAMP: an AssertDistinct event,
+        // and the disposition that signs it, are born in its CLAIM's project
+        // and world.
+        identity_event::identity_event_position(store, txn, id, kind, data)?
     } else {
         let facet = crate::claim::substrate_facet_id(id)?;
         (default_stamp(kind, facet), facet)
@@ -531,6 +542,8 @@ fn stamp_bound_on(
 /// worlds do (`note_world`, FIX 22223). A BLOB_ARTIFACT uses its kind- and
 /// birth-facet-bound singleton stamp, retaining base reality when no such
 /// single world is proved.
+/// An identity topology event sits in the one world its birth stamp names,
+/// else base reality (`identity_event`, FIX DISTINCT-EVENT-WORLD-RESIDENCE).
 /// Every other record, and any other SUMMARY, is base reality (`Some(None)`).
 /// `None` where the row cannot prove its world (an erased CLAIM, a TASK or epoch
 /// SUMMARY whose stamp is gone or was never settled, a NOTE in no single world),
@@ -567,6 +580,11 @@ pub(crate) fn record_world_in(
     // (FIX 9433, FIX 22223).
     if note_world::takes_live_worlds(kind) {
         return Ok(note_world::live_worlds_in(store, txn, id, kind).world());
+    }
+    // FIX DISTINCT-EVENT-WORLD-RESIDENCE: an AssertDistinct event, and its
+    // sidecars, sit in the world their CLAIM was born in.
+    if kind == crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT {
+        return identity_event::identity_event_world(store, txn, id, kind);
     }
     let summary = kind == crate::registry::ENTITY_TYPE_SUMMARY;
     let blob = kind == crate::registry::ENTITY_TYPE_BLOB_ARTIFACT;
