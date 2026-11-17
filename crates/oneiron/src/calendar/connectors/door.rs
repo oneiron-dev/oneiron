@@ -134,12 +134,14 @@ pub(crate) fn seat_of_system_in_txn(
 /// cursor or kill switch outlives its seat. A seat never imports under the system of an
 /// installed ICS feed: each complete poll of the feed cancels every event of its system that
 /// the feed body lacks, the seat's events too. A system whose feed was uninstalled is open to a
-/// seat, since no poll of that feed runs again.
+/// seat, since no poll of that feed runs again. Nor does a seat take a pack calendar source's
+/// system, whose complete listings sweep it the same way.
 ///
 /// # Errors
 ///
 /// `InvalidConfig` for a pin, a row with no seat ref, a value naming another seat ref, a change
-/// to an installed seat, a seat ref used before, or the system of an installed ICS feed.
+/// to an installed seat, a seat ref used before, the system of an installed ICS feed, or a
+/// system with the pack calendar prefix.
 pub(crate) fn seat_setup_changed_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -177,6 +179,7 @@ pub(crate) fn seat_setup_changed_in_txn(
                 "this seat_ref named an earlier seat; use a new seat_ref".into(),
             ));
         }
+        crate::mail_pack::refuse_calendar_source_system(&setup.config.system)?;
         if feed_door::registration_in_txn(vault, txn, &setup.config.system)?.is_some() {
             return Err(crate::Error::InvalidConfig(
                 "an installed ICS feed imports under this system, and its complete polls would \
