@@ -151,10 +151,25 @@ enum Variant {
     /// The effect-changed program, then a `store` and a `describe` of what it stored: the walk
     /// is dry by then, so neither may run.
     EffectChangedThenStores,
+    /// Entry 1's search names a token the side-row wall lifts into a handle; entry 2 asks the
+    /// same query with another limit: a pure change, so the search that ran is what commits.
+    SecretLimitChanged,
+    /// The pure-changed search, then a `store` of new bytes, then the changed claim put: the
+    /// store comes while the walk still has the recorded put ahead.
+    StoresBeforeEffectChange,
+}
+
+/// A query naming a GitHub token, in a shape the side-row wall reads as a secret.
+fn secret_query() -> String {
+    let token = ["gh", "p_", "0123456789abcdefghijklmnopqrstuvwxyz"].concat();
+    format!("notes {token}")
 }
 
 /// The name entry 2's `store` binds in [`Variant::EffectChangedThenStores`].
 const HELD_VALUE: &str = "held_value";
+
+/// The name entry 2's `store` binds in [`Variant::StoresBeforeEffectChange`].
+const EARLY_VALUE: &str = "early_value";
 
 /// Entry 1 parks after a memory search and a claim put; entry 2 runs `reentered`.
 struct TwoEntryRuntime {
@@ -169,7 +184,20 @@ struct TwoEntryRuntime {
 
 impl TwoEntryRuntime {
     fn search_call(query: &str) -> SelfCall {
-        SelfCall::MemorySearch(SelfMemorySearchCall::new(query, 5))
+        Self::search_call_limited(query, 5)
+    }
+
+    fn search_call_limited(query: &str, limit: usize) -> SelfCall {
+        SelfCall::MemorySearch(SelfMemorySearchCall::new(query, limit))
+    }
+
+    /// The search entry 1 makes before its claim put.
+    fn parked_search(&self) -> SelfCall {
+        if self.reentered == Variant::SecretLimitChanged {
+            Self::search_call(&secret_query())
+        } else {
+            Self::search_call("alpha")
+        }
     }
 
     fn put_call(&self, id: EntityId, object: &str) -> SelfCall {
@@ -210,7 +238,7 @@ impl JsCodeModeRuntime for TwoEntryRuntime {
         self.entry += 1;
         match self.entry {
             1 => {
-                let search = Self::search_call("alpha");
+                let search = self.parked_search();
                 let put = self.put_call(self.claim, "green tea");
                 Self::run_entry(host, vec![search, put], true)
             }
@@ -240,6 +268,24 @@ impl JsCodeModeRuntime for TwoEntryRuntime {
                 self.result_answers.push(described.ok());
                 Ok(JsCodeModeStepOutcome::pending("probe observation"))
             }
+            2 if self.reentered == Variant::StoresBeforeEffectChange => {
+                let _ = host.dispatch_self(Self::search_call("alpha "))?;
+                let stored = host
+                    .write_output(
+                        JsCodeModeStream::Store { start: true },
+                        br#""a value made before the walk turned""#,
+                    )
+                    .and_then(|_| {
+                        host.result_call(JsResultCall::Store {
+                            name: Some(EARLY_VALUE.to_owned()),
+                            sources: Vec::new(),
+                            receipt: None,
+                        })
+                    });
+                self.result_answers.push(stored.ok());
+                let _ = host.dispatch_self(self.put_call(self.new_claim, "black tea"))?;
+                Ok(JsCodeModeStepOutcome::pending("probe observation"))
+            }
             2 => {
                 let calls = match self.reentered {
                     Variant::Same => {
@@ -254,7 +300,9 @@ impl JsCodeModeRuntime for TwoEntryRuntime {
                             self.put_call(self.claim, "green tea"),
                         ]
                     }
-                    Variant::EffectChanged | Variant::EffectChangedThenStores => {
+                    Variant::EffectChanged
+                    | Variant::EffectChangedThenStores
+                    | Variant::StoresBeforeEffectChange => {
                         vec![
                             Self::search_call("alpha"),
                             self.put_call(self.new_claim, "black tea"),
@@ -264,6 +312,12 @@ impl JsCodeModeRuntime for TwoEntryRuntime {
                         vec![
                             Self::search_call("alpha"),
                             Self::search_call("beta"),
+                            self.put_call(self.claim, "green tea"),
+                        ]
+                    }
+                    Variant::SecretLimitChanged => {
+                        vec![
+                            Self::search_call_limited(&secret_query(), 6),
                             self.put_call(self.claim, "green tea"),
                         ]
                     }
@@ -461,6 +515,38 @@ fn pure_change_proceeds_with_divergence_recorded() {
 }
 
 #[test]
+fn changed_search_naming_a_lifted_secret_commits_as_it_ran() {
+    let mut fixture = Fixture::open(Variant::SecretLimitChanged);
+    fixture.park();
+    let parked_search = fixture.recorded_request(0);
+    // Precondition: the wall stored the parked search with a handle in the token's place.
+    assert!(
+        format!("{parked_search:?}").contains("[secret sc"),
+        "the parked search keeps a lifted handle, got {parked_search:?}",
+    );
+    let outcome = fixture
+        .reenter()
+        .expect("the pure-changed step resumes and commits");
+    assert_eq!(
+        outcome.status,
+        EngineExecutorStatus::Yielded { next_step_seq: 1 },
+        "the resumed step commits, then the run yields",
+    );
+    assert_eq!(
+        report_line(&outcome),
+        Some(
+            "step 1 replays free \u{00b7} step 0 changed \u{00b7} 0 effect steps would re-fire"
+                .to_owned()
+        ),
+    );
+    assert_ne!(
+        fixture.recorded_request(0),
+        parked_search,
+        "the committed record keeps the limit-6 search that ran at seq 0, not the parked one",
+    );
+}
+
+#[test]
 fn dry_walk_stores_and_reads_nothing() {
     let mut fixture = Fixture::open(Variant::EffectChangedThenStores);
     fixture.park();
@@ -482,6 +568,38 @@ fn dry_walk_stores_and_reads_nothing() {
             "step 0 replays free \u{00b7} step 1 changed \u{00b7} 1 effect step would re-fire"
                 .to_owned()
         ),
+    );
+}
+
+#[test]
+fn store_before_a_later_effect_change_publishes_nothing() {
+    let mut fixture = Fixture::open(Variant::StoresBeforeEffectChange);
+    fixture.park();
+    let error = fixture
+        .reenter()
+        .expect_err("the walk ends at the new body on an effect tail and holds");
+    assert_eq!(
+        fixture.runtime.result_answers,
+        vec![Some(serde_json::json!({
+            "denied": "resume_preflight_held",
+            "reasonCodes": ["resume_preflight_held"],
+        }))],
+        "a store of new bytes with the recorded put still ahead publishes nothing: it answers the hold",
+    );
+    assert_eq!(
+        divergence_line(&error),
+        Some(
+            "step 0 changed \u{00b7} step 1 unreached \u{00b7} 1 effect step would re-fire"
+                .to_owned()
+        ),
+    );
+    assert!(
+        fixture
+            .vault
+            .get_claim(&fixture.runtime.new_claim)
+            .expect("a claim read")
+            .is_none(),
+        "the changed put past the held store fires nothing",
     );
 }
 
