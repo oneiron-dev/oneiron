@@ -23,6 +23,7 @@ pub mod lens_frames;
 pub mod lfs_install_line;
 pub mod live_fork_rung;
 pub mod live_lease;
+pub mod live_merge_queue_checker_pass;
 pub mod live_run_payer;
 pub mod live_run_step;
 pub mod mcp_carrier_release;
