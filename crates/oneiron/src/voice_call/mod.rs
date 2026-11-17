@@ -273,8 +273,12 @@ pub(crate) fn row_phone_marked(raw: &[u8]) -> bool {
 /// they are a peer's, so they withhold their own row and never fail the
 /// lane), word sources that do not resolve, an association that does not
 /// decode, and a named word source not held here each count as phone words.
-/// An edge, a dependency or a prompt input naming a row gone from this vault
-/// carries no words to judge, as in the source-audience walk.
+/// So does a birth's input that is gone from this vault or held only as an
+/// erased phone-kind shell (`erased_phone_kind_shell`): the words of a row
+/// made from it stay in that row (FIX 8192), and the erase took the mark
+/// that said whose they were (#8609 review r1 P1). An edge or a dependency
+/// naming a row gone from this vault carries no words to judge, as in the
+/// source-audience walk.
 ///
 /// # Errors
 ///
@@ -342,13 +346,21 @@ impl PhoneLineagePass {
                 walk.missing.insert(row);
                 continue;
             };
+            let shell = erased_phone_kind_shell(&raw);
+            if shell && walk.erased_shell(row) {
+                return Ok(true);
+            }
             let Some(lineage) = row_lineage(vault, txn, &row, &raw)? else {
                 return Ok(true);
             };
             if walk.push_all(lineage) {
                 return Ok(true);
             }
-            visited.push(row);
+            // A shell answers by what names it, so a later ask that needs
+            // its words reads it again.
+            if !shell {
+                visited.push(row);
+            }
         }
         // Every row read here had its whole lineage read, and none of it was
         // a phone row.
@@ -366,8 +378,9 @@ impl PhoneLineagePass {
 /// the thread of every phone row found, the row itself included (empty when
 /// none is); a phone row's own lineage stays in its thread, so the walk
 /// stops at it. `None` in the cases [`phone_words_in`] counts as phone
-/// words (a lineage that does not read here, a named word source not held
-/// here) and for a phone row whose mark names no thread.
+/// words (a lineage that does not read here, a named word source or a
+/// birth's input not held here or held only as an erased phone-kind shell)
+/// and for a phone row whose mark names no thread.
 ///
 /// # Errors
 ///
@@ -398,6 +411,9 @@ pub(crate) fn phone_lineage_threads_in(
         }
         while let Some(source) = walk.pending.pop() {
             if let Some(stored) = vault.get_raw_in(txn, &source)? {
+                if erased_phone_kind_shell(&stored) && walk.erased_shell(source) {
+                    return Ok(None);
+                }
                 next = Some((source, stored));
                 break;
             }
@@ -434,18 +450,22 @@ fn marked_row_thread(id: &EntityId, raw: &[u8]) -> Option<EntityId> {
 struct LineageWalk {
     seen: std::collections::BTreeSet<EntityId>,
     pending: Vec<EntityId>,
-    /// Rows a word-source decoder named: each must be held here.
+    /// Rows whose words a walked row holds (a named word source, a birth's
+    /// input): each must be held here, and not as an erased phone-kind shell.
     required: std::collections::BTreeSet<EntityId>,
     /// Rows found gone from this vault.
     missing: std::collections::BTreeSet<EntityId>,
+    /// Rows found held only as an erased phone-kind shell.
+    shells: std::collections::BTreeSet<EntityId>,
 }
 
 impl LineageWalk {
-    /// Queues `row` once; true when it must be held here and is not.
+    /// Queues `row` once; true when it must be held here and is not, or is
+    /// held only as an erased phone-kind shell.
     fn push(&mut self, row: EntityId, required: bool) -> bool {
         if required {
             self.required.insert(row);
-            if self.missing.contains(&row) {
+            if self.missing.contains(&row) || self.shells.contains(&row) {
                 return true;
             }
         }
@@ -455,7 +475,15 @@ impl LineageWalk {
         false
     }
 
-    /// Queues every row of `lineage`; true when a named row is gone.
+    /// Remembers `row` as held only as an erased phone-kind shell; true when
+    /// its words must be held here.
+    fn erased_shell(&mut self, row: EntityId) -> bool {
+        self.shells.insert(row);
+        self.required.contains(&row)
+    }
+
+    /// Queues every row of `lineage`; true when a named row is gone or held
+    /// only as an erased phone-kind shell.
     fn push_all(&mut self, lineage: RowLineage) -> bool {
         let mut gone = false;
         for row in lineage.named {
@@ -470,11 +498,22 @@ impl LineageWalk {
 
 /// What the words of one row came from, as [`phone_words_in`] reads them.
 struct RowLineage {
-    /// The rows `scope_summary::word_sources_in` names: each must be held.
+    /// The rows whose words this row holds, each of which must be held: the
+    /// rows `scope_summary::word_sources_in` names and the birth's inputs of
+    /// every role.
     named: Vec<EntityId>,
     /// Every other row: the source-audience walk's, the source-dependency
-    /// index's, the birth's inputs of every role, and a carried summary.
+    /// index's, and a carried summary.
     recorded: Vec<EntityId>,
+}
+
+/// Whether `raw` is the header-only shell a delete keeps of a row of a kind
+/// a phone mark binds: the mark went with the body, so whether its words
+/// were a caller's no longer reads here (#8609 review r1 P1).
+fn erased_phone_kind_shell(raw: &[u8]) -> bool {
+    raw.len() == crate::batch::ENTITY_METADATA_HEADER_LEN
+        && crate::batch::EntityMetadataHeader::parse(raw)
+            .is_some_and(|header| phone_marked_kind(header.entity_type))
 }
 
 /// The lineage of the row `raw` of `id`; `None` when the row is a phone row
@@ -488,7 +527,7 @@ fn row_lineage(
     if crate::batch::EntityMetadataHeader::parse(raw).is_none() || row_phone_marked(raw) {
         return Ok(None);
     }
-    let named = match crate::scope_summary::word_sources_in(vault, txn, id, raw) {
+    let mut named = match crate::scope_summary::word_sources_in(vault, txn, id, raw) {
         Ok(crate::scope_summary::WordSources::Own) => Vec::new(),
         Ok(crate::scope_summary::WordSources::From(sources)) => sources,
         Ok(crate::scope_summary::WordSources::Unresolved)
@@ -508,7 +547,9 @@ fn row_lineage(
     // A row made from rows that carried phone words holds them: a model's
     // prompt (FIX 8192; R1 review 3 F2: an exchange CLAIM's answer) or a
     // door's evidence (R1 review 5 N1: a concluded CLAIM's evidence TURNs).
-    recorded.extend(crate::store::birth_record::input_rows_in_txn(
+    // Those words stay in the row when an input is erased, so each input
+    // must be held here, as a named word source must (#8609 review r1 P1).
+    named.extend(crate::store::birth_record::input_rows_in_txn(
         &vault.store,
         txn,
         id,
