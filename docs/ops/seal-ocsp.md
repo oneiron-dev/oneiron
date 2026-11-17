@@ -28,6 +28,8 @@ cap. An operator can override the row through the ordinary `[limits]` setting.
 
 Gathering reuses the native DSS verifier's successful-response, exact CertID,
 GOOD status, responder authorization/signature, freshness and producedAt checks.
+A response without nextUpdate is never fresh, so it is skipped like a stale one
+(the host refuses it as well) and the gather tries the next responder URL.
 Its certificate context is the requested certificate and its actual key-bound
 issuer. A delegated responder embedded in the response is admitted and checked by
 the same verifier. A responder available only in another configured certificate,

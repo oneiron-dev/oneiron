@@ -727,9 +727,10 @@ impl Vault {
                 }),
             ) => {
                 let id = EntityId::now();
-                let def = actor::shape_agent_definition(agent_id, (*ceiling).into(), *enabled);
-                owner.revalidate(self)?;
-                self.put_agent_definition(&id, &def, occurred, now)?;
+                let author = owner.revalidate(self)?;
+                let def =
+                    actor::shape_agent_definition(agent_id, (*ceiling).into(), *enabled, &author);
+                self.create_agent_definition_as(owner, &id, &def, occurred, now)?;
                 sources.list(id);
                 Ok(id.to_hex())
             }
