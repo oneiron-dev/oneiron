@@ -7,7 +7,7 @@
 //! answers none, and the run is refused as the vendor unavailable: ours never
 //! runs in its place (L8-43-SWITCH = A).
 //!
-//! Daytona and E2B are the vendors served so far (L8-43-VENDORS = A:
+//! Daytona, E2B and Modal are the vendors served so far (L8-43-VENDORS = A:
 //! Daytona, then E2B, Modal, boat, InstaBox). A vendor's batch backend runs
 //! on Linux only, as `VendorBatchBackend` does.
 
@@ -15,6 +15,12 @@
 mod daytona;
 #[cfg(target_os = "linux")]
 mod e2b;
+#[cfg(target_os = "linux")]
+mod grpc;
+#[cfg(target_os = "linux")]
+mod modal;
+#[cfg(target_os = "linux")]
+mod protobuf;
 #[cfg(target_os = "linux")]
 mod vendor_http;
 
@@ -30,6 +36,8 @@ use oneiron_agent_runtime::code_sandbox::CompiledSandboxBackends;
 pub(crate) use daytona::DaytonaEndpoints;
 #[cfg(target_os = "linux")]
 pub(crate) use e2b::E2bEndpoints;
+#[cfg(target_os = "linux")]
+pub(crate) use modal::ModalEndpoints;
 
 /// The backends of one vault on this server: ours as compiled, and the
 /// vendors this server serves. It holds its vault weakly, since the vault
@@ -41,6 +49,8 @@ pub(crate) struct ServedSandboxBackends {
     daytona: DaytonaEndpoints,
     #[cfg(target_os = "linux")]
     e2b: E2bEndpoints,
+    #[cfg(target_os = "linux")]
+    modal: ModalEndpoints,
     /// Where each vendor run keeps its private scratch.
     #[cfg(target_os = "linux")]
     scratch_root: PathBuf,
@@ -56,6 +66,8 @@ impl ServedSandboxBackends {
             daytona: DaytonaEndpoints::default(),
             #[cfg(target_os = "linux")]
             e2b: E2bEndpoints::default(),
+            #[cfg(target_os = "linux")]
+            modal: ModalEndpoints::default(),
             #[cfg(target_os = "linux")]
             scratch_root: std::env::temp_dir().join("oneiron-vendor-sandbox"),
         }
@@ -87,6 +99,21 @@ impl ServedSandboxBackends {
         }
     }
 
+    /// The backends of `vault`, reaching Modal's control API at `modal` and
+    /// keeping each run's scratch under `scratch_root`.
+    #[cfg(all(target_os = "linux", oneiron_test_support))]
+    pub(crate) fn with_modal(
+        vault: &Arc<Vault>,
+        modal: ModalEndpoints,
+        scratch_root: PathBuf,
+    ) -> Self {
+        Self {
+            modal,
+            scratch_root,
+            ..Self::new(vault)
+        }
+    }
+
     /// `vendor`'s batch backend on the owner's key named `key_name`.
     #[cfg(target_os = "linux")]
     fn vendor_backend(
@@ -110,7 +137,12 @@ impl ServedSandboxBackends {
                 key_name,
                 self.e2b.clone(),
             )),
-            SandboxVendor::Modal | SandboxVendor::Boat | SandboxVendor::Instabox => return None,
+            SandboxVendor::Modal => Arc::new(modal::ModalClient::new(
+                Arc::downgrade(vault),
+                key_name,
+                self.modal.clone(),
+            )),
+            SandboxVendor::Boat | SandboxVendor::Instabox => return None,
         };
         Some(Box::new(VendorBatchBackend::new(
             client,
