@@ -351,6 +351,7 @@ fn seed_turns(vault: &Vault, actor: EntityId, lines: &[&str]) -> Vec<EntityId> {
                     conversation_ref: conversation.clone(),
                     turn_ref: Some(turn.to_hex()),
                     thread_audience: None,
+                    project: None,
                     messages: vec![WitnessMessage {
                         id: None,
                         author: WitnessAuthor::User,
