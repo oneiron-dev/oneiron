@@ -54,7 +54,9 @@
 //! row. Bound to the room's stretch, their pack passes rule 1 for the
 //! stretch's own rows as any seated reader's does: a public claim the owner
 //! staged there reaches them, served in the pack's L2 base as every claim
-//! about the owner is.
+//! about the owner is. A person who joined with no history after the
+//! stretch staged such a claim reads none of it: every row the stretch
+//! staged meets the member's own windows, whatever it hangs under.
 //!
 //! The owner cases that name no room drive the real route with the owner's
 //! host-root credential (on a profiled install, as a serving start enrols
@@ -311,6 +313,10 @@ struct RoomPlan {
     person_member: bool,
     /// Stage one public claim about the owner saying [`CLAIM_WORD`].
     public_claim: bool,
+    /// Seat a person who is not the vault's owner with no history, after the
+    /// stretch staged a public claim about the owner saying [`CLAIM_WORD`]
+    /// (staged 50 s back, the join 10 s back).
+    person_joins_late: bool,
 }
 
 impl Host {
@@ -486,7 +492,7 @@ impl Host {
                 )
                 .expect("seat the member agent");
         }
-        let person = plan.person_member.then(|| {
+        let person = (plan.person_member || plan.person_joins_late).then(|| {
             let person = EntityId::now();
             vault
                 .put_entity(
@@ -497,15 +503,17 @@ impl Host {
                     b"a person in the room",
                 )
                 .expect("the person");
-            vault
-                .join_member(
-                    room,
-                    person,
-                    by_owner(),
-                    now.saturating_sub(100),
-                    HistoryChoice::Share,
-                )
-                .expect("seat the person");
+            if !plan.person_joins_late {
+                vault
+                    .join_member(
+                        room,
+                        person,
+                        by_owner(),
+                        now.saturating_sub(100),
+                        HistoryChoice::Share,
+                    )
+                    .expect("seat the person");
+            }
             person
         });
         let stretch = vault
@@ -534,6 +542,21 @@ impl Host {
                 .expect("seat the member agent with no history");
             first_message(&early)
         });
+        if let Some(person) = person.filter(|_| plan.person_joins_late) {
+            vault
+                .memory(self.owner, EdgeActorClass::Human)
+                .claim_upsert_in_session(&stretch, &self.public_claim_at(now.saturating_sub(50)))
+                .expect("the owner's public claim in the room stretch before the join");
+            vault
+                .join_member(
+                    room,
+                    person,
+                    by_owner(),
+                    now.saturating_sub(10),
+                    HistoryChoice::None,
+                )
+                .expect("seat the person with no history");
+        }
         let receipt = witness(owner_turn(format!("the room says {ROOM_WORD}"), now));
         let thread_message = plan.private_thread.then(|| {
             let mut root = owner_turn(format!("between us, {THREAD_WORD}"), now);
@@ -570,7 +593,11 @@ impl Host {
     /// A claim about the owner saying [`CLAIM_WORD`], stamped public (band
     /// 0), under the vault's default facet and project in base reality.
     fn public_claim(&self) -> ScopedClaimInput {
-        let now = self.vault.now_recorded_at();
+        self.public_claim_at(self.vault.now_recorded_at())
+    }
+
+    /// [`Self::public_claim`] occurred and learned at `at`.
+    fn public_claim_at(&self, at: u64) -> ScopedClaimInput {
         ScopedClaimInput {
             id: Some(EntityId::now().to_hex()),
             predicate: "profile.hobby".to_owned(),
@@ -592,8 +619,8 @@ impl Host {
             evidence_turn_refs: Vec::new(),
             valid_from: None,
             valid_to: None,
-            occurred_at: Some(now),
-            learned_at: Some(now),
+            occurred_at: Some(at),
+            learned_at: Some(at),
             salience: None,
         }
     }
@@ -1354,6 +1381,50 @@ fn a_persons_pack_naming_the_room_reads_a_public_staged_claim() {
         assert!(
             l2_base_holds_claim_word(&persons),
             "the person's pack naming the room serves the public staged claim {CLAIM_WORD}: {}",
+            l2_report(&persons)
+        );
+    });
+}
+
+/// A person who joined the room with no history after the stretch staged a
+/// public claim about the owner reads none of it in a pack naming the room
+/// (#8104 review round 2): the claim hangs under no conversation, only an
+/// edge to its subject, and the stretch staged it, so the person's own
+/// windows judge it as they judge a staged turn. The owner's pack naming the
+/// room serves the claim, so the person's windows keep it out, not the
+/// fixture.
+#[test]
+fn a_late_joining_persons_pack_reads_no_claim_staged_before_the_join() {
+    run_on_engine_stack("room-stretch-late-person-claim", async {
+        let host = host();
+        let room = host.room_stretch_planned(RoomPlan {
+            person_joins_late: true,
+            ..RoomPlan::default()
+        });
+        let owner = host.owner_full_slip(0x79);
+        let owners = room_pack(
+            &host,
+            Caller::Principal(&owner),
+            &room,
+            room_request(&room, CLAIM_WORD),
+        )
+        .await;
+        assert!(
+            l2_base_holds_claim_word(&owners),
+            "the owner's pack naming the room serves the claim staged before the join: {}",
+            l2_report(&owners)
+        );
+        let person = room.person.as_ref().expect("the person on the roster");
+        let persons = room_pack(
+            &host,
+            Caller::Principal(person),
+            &room,
+            room_request(&room, CLAIM_WORD),
+        )
+        .await;
+        assert!(
+            !l2_base_holds_claim_word(&persons),
+            "a person who joined with no history reads no claim staged before the join: {}",
             l2_report(&persons)
         );
     });
