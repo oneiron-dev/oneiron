@@ -29,8 +29,9 @@ use oneiron_keystore::{DeviceKeystore, KeystoreSlot, SlotKind};
 use crate::authority::{
     ACTOR_CLASS_HUMAN, ActAuthority, AuthorityEntryHash, AuthorityKey, AuthorityLogEntry,
     AuthorityOp, AuthorityVaultId, CheckpointRootSigner, EnrolledOwnerKey, HostSlipIssuer,
-    OwnerKeyEnrollment, OwnerKeyEnrollmentReceipt, RecoveryRootId, authority_transcript,
-    checkpoint_statement_domain, invalid_authority, root_appointment_challenge,
+    OwnerKeyEnrollment, OwnerKeyEnrollmentReceipt, RecoveryBoxCancelProof, RecoveryRootId,
+    authority_transcript, checkpoint_statement_domain, invalid_authority,
+    root_appointment_challenge,
 };
 use crate::entity_id::EntityId;
 use crate::error::{Error, RecordError, Result};
@@ -114,6 +115,21 @@ impl OwnerRootSigner {
             .sign(&authority_transcript(entry)?)
             .to_bytes()
             .to_vec())
+    }
+
+    /// This key's signature over `proof`'s transcript for the vault
+    /// `vault_id` ([`RecoveryBoxCancelProof::transcript`]): an owner's Cancel
+    /// of the release pending at the recovery box. It builds the transcript
+    /// itself, so it signs nothing outside that domain.
+    pub(crate) fn sign_recovery_box_cancel(
+        &self,
+        proof: &RecoveryBoxCancelProof,
+        vault_id: &AuthorityVaultId,
+    ) -> Vec<u8> {
+        self.signing
+            .sign(&proof.transcript(vault_id))
+            .to_bytes()
+            .to_vec()
     }
 }
 

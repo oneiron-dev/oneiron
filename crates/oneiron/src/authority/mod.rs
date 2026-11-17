@@ -252,7 +252,8 @@ pub use oneiron_authority::authority::{
     RecoveryHold, RecoveryHoldAnswer, RecoveryHoldAnswerKind, RecoveryHoldEnrolment,
 };
 pub use recovery_hold::{
-    RECOVERY_WAIT_DEFAULT, RecoveryHoldLanding, RecoveryHoldState, RecoveryHoldView,
+    RECOVERY_WAIT_DEFAULT, RecoveryBoxCancelProof, RecoveryHoldLanding, RecoveryHoldState,
+    RecoveryHoldView,
 };
 // The export secret work body and its sealed result (FIX 4624(b)).
 pub use export_secret_work::{
