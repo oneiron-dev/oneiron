@@ -430,6 +430,7 @@ pub(super) fn consult_refusal(code: &str, message: &str, suggestion: &str) -> Me
         reason_codes: Vec::new(),
         legal_hold: None,
         room_join_hold: None,
+        pending: None,
     }
 }
 

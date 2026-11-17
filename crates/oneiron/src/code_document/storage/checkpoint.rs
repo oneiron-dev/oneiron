@@ -12,19 +12,22 @@
     reason = "KS7-2b and KS7-5 call the getters; CHECKPOINT_PAYLOADS_ENABLED is false until KS7-6"
 )]
 
-use heed::{RoTxn, RwTxn};
+use heed::RoTxn;
 
 use super::receipt_actor::ReceiptActor;
 use super::{
     CODE_DOCUMENT_FRONTIER, CODE_DOCUMENT_HEAD, CODE_DOCUMENT_INGRESS, CODE_DOCUMENT_PATH, HeadRow,
+    ReceiptRow, SnapshotRow,
 };
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::store::ManifestDbs;
+use crate::store::Store;
 use crate::store::checkpoint_payload::Subtype;
+use crate::store::checkpoint_payload::rows::descriptor::{
+    Adapter, Capture, Check, Join, PlacedTable, Restore,
+};
 use crate::store::checkpoint_payload::rows::{
-    self, ActorPart, Captured, OpenedOwnerRows, OwnerRef, OwnerRows, Restored, RowLocator,
-    Unresolved,
+    self, ActorPart, Captured, OwnerRef, RowLocator, TypedRow, Unresolved,
 };
 
 /// The field a head receipt's actor fills, before the operation's id.
@@ -32,6 +35,35 @@ const RECEIPT: &str = "receipt ";
 
 /// The field an ingress receipt's actor fills.
 const ACTOR: &str = "actor";
+
+/// Every code-document row by document: snapshots and path rows exact, each
+/// receipt's actor split out. A row whose own document ids disagree has no
+/// one owner and is not compartmented.
+pub(crate) static ADAPTER: Adapter = Adapter {
+    tables: &[
+        &PlacedTable {
+            table: CODE_DOCUMENT_HEAD,
+            place: place_head,
+        },
+        &PlacedTable {
+            table: CODE_DOCUMENT_FRONTIER,
+            place: place_frontier,
+        },
+        &PlacedTable {
+            table: CODE_DOCUMENT_INGRESS,
+            place: place_ingress,
+        },
+        &PlacedTable {
+            table: CODE_DOCUMENT_PATH,
+            place: place_path,
+        },
+    ],
+    capture: Capture::ByTable,
+    check: Check::ByTable,
+    row_owner: None,
+    join: Join::Row(join),
+    restore: Restore::Parts,
+};
 
 /// A code document's compartment: its canonical 32-byte id.
 fn document(id: &[u8; 32]) -> Result<OwnerRef> {
@@ -77,84 +109,55 @@ fn put_head_actor(head: &mut HeadRow, field: &str, actor: EntityId) -> Result<()
     fill(&mut receipt.actor, actor)
 }
 
-/// Every code-document row in `txn`, by document. A row whose own document
-/// ids disagree has no one owner and is not compartmented.
-pub(crate) fn capture(dbs: &impl ManifestDbs, txn: &RoTxn<'_>) -> Result<Captured> {
-    let mut out = Captured::default();
-    for row in rows::typed_rows(dbs, txn, CODE_DOCUMENT_HEAD, &mut out)? {
-        if row.value.state.frontier.document_id != row.key {
-            out.unclassified(row.at, None, Unresolved::NoOwner);
-            continue;
-        }
-        let owner = document(&row.key)?;
-        rows::split_actors(&mut out, owner, CODE_DOCUMENT_HEAD, row, take_head_actors)?;
+/// A head under its document, each receipt's actor split out.
+fn place_head(out: &mut Captured, row: TypedRow<[u8; 32], HeadRow>) -> Result<()> {
+    if row.value.state.frontier.document_id != row.key {
+        out.unclassified(row.at, None, Unresolved::NoOwner);
+        return Ok(());
     }
-    for row in rows::typed_rows(dbs, txn, CODE_DOCUMENT_FRONTIER, &mut out)? {
-        let (id, _) = row.key;
-        if row.value.frontier.document_id != id {
-            out.unclassified(row.at, None, Unresolved::NoOwner);
-            continue;
-        }
-        out.exact(document(&id)?, row.at, row.bytes);
-    }
-    for row in rows::typed_rows(dbs, txn, CODE_DOCUMENT_INGRESS, &mut out)? {
-        let id = row.value.before.document_id;
-        if row.value.after.document_id != id {
-            out.unclassified(row.at, None, Unresolved::NoOwner);
-            continue;
-        }
-        rows::split_actors(
-            &mut out,
-            document(&id)?,
-            CODE_DOCUMENT_INGRESS,
-            row,
-            |receipt| {
-                take_actor(&mut receipt.actor)
-                    .map(|actor| (ACTOR.to_owned(), actor))
-                    .into_iter()
-                    .collect()
-            },
-        )?;
-    }
-    for row in rows::typed_rows(dbs, txn, CODE_DOCUMENT_PATH, &mut out)? {
-        out.exact(document(&row.value)?, row.at, row.bytes);
-    }
-    Ok(out)
+    let owner = document(&row.key)?;
+    rows::split_actors(out, owner, CODE_DOCUMENT_HEAD, row, take_head_actors)
 }
 
-fn owns(at: &RowLocator) -> bool {
-    [
-        CODE_DOCUMENT_HEAD.decl(),
-        CODE_DOCUMENT_FRONTIER.decl(),
-        CODE_DOCUMENT_INGRESS.decl(),
-        CODE_DOCUMENT_PATH.decl(),
-    ]
-    .into_iter()
-    .any(|decl| at.in_table(decl))
-}
-
-/// The bundle framing of `rows`' code-document parts.
-pub(crate) fn bytes_for_owner(rows: &OwnerRows) -> Result<Vec<u8>> {
-    rows::frame_owner(rows, owns)
-}
-
-fn check(at: &RowLocator, value: &[u8]) -> Result<()> {
-    if at.in_table(CODE_DOCUMENT_HEAD.decl()) {
-        rows::check_row(CODE_DOCUMENT_HEAD, at, value)
-    } else if at.in_table(CODE_DOCUMENT_FRONTIER.decl()) {
-        rows::check_row(CODE_DOCUMENT_FRONTIER, at, value)
-    } else if at.in_table(CODE_DOCUMENT_INGRESS.decl()) {
-        rows::check_row(CODE_DOCUMENT_INGRESS, at, value)
-    } else if at.in_table(CODE_DOCUMENT_PATH.decl()) {
-        rows::check_row(CODE_DOCUMENT_PATH, at, value)
-    } else {
-        Err(rows::bad_part())
+/// A tested frontier under its document, exact.
+fn place_frontier(
+    out: &mut Captured,
+    row: TypedRow<([u8; 32], [u8; 32]), SnapshotRow>,
+) -> Result<()> {
+    let (id, _) = row.key;
+    if row.value.frontier.document_id != id {
+        out.unclassified(row.at, None, Unresolved::NoOwner);
+        return Ok(());
     }
+    out.exact(document(&id)?, row.at, row.bytes);
+    Ok(())
+}
+
+/// An ingress receipt under its document, its actor split out.
+fn place_ingress(out: &mut Captured, row: TypedRow<EntityId, ReceiptRow>) -> Result<()> {
+    let id = row.value.before.document_id;
+    if row.value.after.document_id != id {
+        out.unclassified(row.at, None, Unresolved::NoOwner);
+        return Ok(());
+    }
+    rows::split_actors(out, document(&id)?, CODE_DOCUMENT_INGRESS, row, |receipt| {
+        take_actor(&mut receipt.actor)
+            .map(|actor| (ACTOR.to_owned(), actor))
+            .into_iter()
+            .collect()
+    })
+}
+
+/// A path row under the document it names, exact.
+fn place_path(out: &mut Captured, row: TypedRow<[u8; 32], [u8; 32]>) -> Result<()> {
+    out.exact(document(&row.value)?, row.at, row.bytes);
+    Ok(())
 }
 
 /// A head or ingress receipt with its opened actors back; a receipt whose
 /// actor did not open names no one, as the erase leaves it.
 fn join(
+    _: &Store,
     _: &RoTxn<'_>,
     at: &RowLocator,
     value: &[u8],
@@ -179,14 +182,4 @@ fn join(
         return CODE_DOCUMENT_INGRESS.encode_value(&receipt).map(Some);
     }
     Err(rows::bad_part())
-}
-
-/// Puts `opened`'s code-document rows back: snapshots and path rows as they
-/// are, and each receipt with the actors that opened.
-pub(crate) fn restore_in_txn(
-    dbs: &impl ManifestDbs,
-    txn: &mut RwTxn<'_>,
-    opened: OpenedOwnerRows,
-) -> Result<Restored> {
-    rows::restore_parts(dbs, txn, &opened, check, join)
 }

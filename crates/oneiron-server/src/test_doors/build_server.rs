@@ -45,3 +45,37 @@ pub async fn build_served_server(
 pub fn bind_managed_usage_metering(server: &SyncServer, tenancy: VaultTenancy) {
     crate::managed::usage_meter::bind_tenancy_usage_metering(server, tenancy);
 }
+
+/// For `tests/hosted_egress_guard_wiring.rs` (HOSTED-EGRESS-OPERATOR-SETTING):
+/// the egress guards of a server over `vault` whose config carries
+/// `managed`'s hosted egress exceptions as managed boot carries them
+/// (`ManagedArgs::carry_hosted_egress`). Returns the hosted guard a managed
+/// node checks its owner's fetches with, `None` unless `managed_node`, and
+/// the guard for a URL an outside party names. A managed node here has no
+/// host root issuer.
+///
+/// # Errors
+///
+/// What `SyncServer::new` returns.
+pub fn egress_guards(
+    vault: Arc<oneiron::Vault>,
+    managed: &crate::managed::ManagedArgs,
+    managed_node: bool,
+) -> Result<
+    (
+        Option<Arc<oneiron::web_fetch::HostedEgressGuard>>,
+        Arc<oneiron::web_fetch::HostedEgressGuard>,
+    ),
+    oneiron::Error,
+> {
+    let mut config = crate::config::SyncServerConfig::default();
+    managed.carry_hosted_egress(&mut config);
+    let mut server = SyncServer::new(vault, config)?;
+    if managed_node {
+        server.managed_issuer = Some(crate::server::ManagedIssuer::new(None));
+    }
+    Ok((
+        server.hosted_egress_guard(),
+        server.untrusted_url_egress_guard(),
+    ))
+}

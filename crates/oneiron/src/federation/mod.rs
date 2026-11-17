@@ -24,7 +24,8 @@ mod agent_grant_brief;
 // OF-449 L4, and a record's own).
 mod delete_authority;
 pub(crate) use delete_authority::{
-    DeleteAuthority, DeleteCaller, DeleteRefusal, DeleteTarget, require_delete_authority_in_txn,
+    DeleteAuthority, DeleteCaller, DeleteRefusal, DeleteTarget, claim_removal_widens_in,
+    require_delete_authority_in_txn, stored_removal_widens_in,
 };
 // The old path of the role the deletion gate now names at
 // `deletion::archive_role`; kept for callers of the federation path.
@@ -82,7 +83,7 @@ pub(crate) use ruling_integrity::{
     witness_grant_rulings_in_txn,
 };
 mod own_device;
-mod pending_act;
+pub(crate) mod pending_act;
 mod shared_act;
 mod shared_creation;
 pub(crate) use own_device::is_own_device_grant;
@@ -289,6 +290,6 @@ pub use oneiron_authority::federation::{
     ScopeId, Sensitivity, SensitivityCeiling, WalletRef, WorkingViewEditBounds,
 };
 
-mod org_admin;
+pub(crate) mod org_admin;
 pub(crate) mod tables;
 pub use org_admin::{OrgAdminError, OrgAdminPolicy, OrgAdminPower};

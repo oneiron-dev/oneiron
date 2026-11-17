@@ -311,13 +311,37 @@ async fn fetch_valid_crl_rejects_stale_next_update() {
 }
 
 #[tokio::test]
+async fn fetch_valid_crl_rejects_absent_next_update() {
+    // FIX SEAL-EVIDENCE-NO-NEXTUPDATE: the host refuses a CRL without
+    // nextUpdate, so the organ never gathers one.
+    let ca = crl_ca();
+    let crl = signed_crl(&ca, CRL_NOW_SECS - 60, None);
+    let config = SealConfig {
+        trust_anchors_der: Vec::new(),
+        timestamp_authorities: Vec::new(),
+        fetch_policy: FetchPolicy::default(),
+        resource_limits: operation_limits(),
+    };
+    let backend: Arc<dyn SealBackend> = Arc::new(NoopBackend);
+    let fetcher: Arc<dyn SealFetcher> = Arc::new(StaticFetcher(crl));
+    let ctx = crl_ctx(&config, &backend, &fetcher);
+    let url = url::Url::parse("https://crl.example.test/ca.crl").unwrap();
+    assert!(
+        fetch_valid_crl(&ctx, &ca.cert_der, url)
+            .await
+            .unwrap()
+            .is_none()
+    );
+}
+
+#[tokio::test]
 async fn fetch_valid_crl_rejects_delta_and_idp_scoped_crls() {
     // The seal side mirrors the verify-side complete-scope posture: a
     // delta or IDP-scoped CRL gathered here would fail the embedded
     // self-verify, so it is refused at fetch time instead.
     for ext in [
         x509_cert::ext::Extension {
-            extn_id: der::asn1::ObjectIdentifier::new_unwrap("2.5.29.46"),
+            extn_id: der::asn1::ObjectIdentifier::new_unwrap("2.5.29.27"),
             critical: false,
             extn_value: der::asn1::OctetString::new(
                 der::asn1::Int::new(&[1]).unwrap().to_der().unwrap(),
@@ -464,4 +488,38 @@ async fn gather_chain_cert_without_crl_dp_degrades_not_zero_evidence_lt() {
         Some(2),
         "fully advertised chains still gather every CRL"
     );
+}
+
+#[tokio::test]
+async fn gather_crl_without_next_update_degrades_to_b_t() {
+    // FIX SEAL-EVIDENCE-NO-NEXTUPDATE: the leaf's only CRL (the
+    // intermediate's) has no nextUpdate and the leaf has no OCSP. The host
+    // refuses such evidence, so the gather fails closed (B-T) instead of
+    // publishing material that leaves the seal retryable at every attempt.
+    let root = crl_ca();
+    let inter = child_path_ca(&root, "inter-dp", Some("https://crl.example.test/r.crl"));
+    let leaf = leaf_with_crl_dp(&inter, "leaf", "https://crl.example.test/i.crl");
+    let root_crl = signed_crl(&root, CRL_NOW_SECS - 3600, Some(CRL_NOW_SECS + 3600));
+    let config = gather_config(vec![root.cert_der.clone()]);
+    let backend: Arc<dyn SealBackend> = Arc::new(NoopBackend);
+    for (inter_next, gathered) in [(None, None), (Some(CRL_NOW_SECS + 3600), Some(2))] {
+        let inter_crl = signed_crl(&inter, CRL_NOW_SECS - 3600, inter_next);
+        let mut map = std::collections::HashMap::new();
+        map.insert("https://crl.example.test/i.crl".to_string(), inter_crl);
+        map.insert(
+            "https://crl.example.test/r.crl".to_string(),
+            root_crl.clone(),
+        );
+        let fetcher: Arc<dyn SealFetcher> = Arc::new(MapFetcher(map));
+        let ctx = crl_ctx(&config, &backend, &fetcher);
+        let identity = p256_identity_for(leaf.clone(), vec![inter.cert_der.clone()]);
+        let material = gather_validation_material(&ctx, &identity, None)
+            .await
+            .unwrap();
+        assert_eq!(
+            material.map(|m| m.crls_der.len()),
+            gathered,
+            "intermediate CRL nextUpdate {inter_next:?}"
+        );
+    }
 }

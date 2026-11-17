@@ -126,6 +126,10 @@ pub(crate) use self::evidence::erase_receive_pack_evidence_actor_in_txn;
 pub use self::held::{AtDiskFloor, HeldBytes, SpillFloor};
 pub use self::hooks::DoorHooksDir;
 pub use self::intent::{ReceivePackRefResult, ReceivePackRefStatus};
+#[cfg(oneiron_test_support)]
+pub(crate) use self::intent::{
+    receive_pack_intent_key_pin_for_test, receive_pack_progress_key_pin_for_test,
+};
 pub(crate) use self::intent_erase::erase_receive_pack_intent_actor_in_txn;
 pub use self::landing::{
     ReceivePackAttribution, ReceivePackCertificate, ReceivePackLanding, refs_already_applied,
@@ -144,6 +148,7 @@ pub use self::push_admission::{admit_receive_pack, serve_bounded_as};
 pub(crate) use self::recipient_serve::store_may_need_masked_copy_in_txn;
 pub use self::recipient_serve::{RepoGitReadContext, serve_bounded_for_recipient};
 pub use self::secret_marks::ReceiveSecretMarks;
+pub(in crate::origin) use self::serve::repo_common_dir;
 pub use self::serve::{
     ServeReport, ServeSink, push_queue_key, serve, serve_bounded, serve_bounded_with_authority,
     serve_with_authority, serve_with_provenance,
