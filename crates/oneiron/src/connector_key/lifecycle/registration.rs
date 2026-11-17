@@ -8,6 +8,7 @@ use crate::ports::EntityStoreRead;
 use crate::registry::ENTITY_TYPE_CONNECTOR_KEY;
 use crate::secret_custody::resolve_secret_ref_in_txn;
 use crate::temporal::TimeRange;
+use oneiron_store::side_table::key::TextIdKey;
 
 use super::super::codec::{decode_connector_key_body, encode_connector_key_body};
 use super::super::record::{
@@ -15,9 +16,8 @@ use super::super::record::{
     EffectorBudget, invalid_body, normalize_connector_key,
 };
 use super::super::txn::{
-    CATALOG_NAME_INDEX, CONNECTOR_INDEX, ConnectorIndexKey, ConnectorKeyGeneration,
-    append_connector_key_op_record, read_connector_key_in_txn,
-    write_connector_key_generation_in_txn,
+    CATALOG_NAME_INDEX, CONNECTOR_INDEX, ConnectorKeyGeneration, append_connector_key_op_record,
+    read_connector_key_in_txn, write_connector_key_generation_in_txn,
 };
 use crate::error::RecordError;
 
@@ -226,8 +226,8 @@ impl Vault {
         data: Vec<u8>,
     ) -> Result<()> {
         let new_record = decode_connector_key_body(&data)?;
-        let new_index_key = ConnectorIndexKey {
-            connector: new_record.connector,
+        let new_index_key = TextIdKey {
+            text: new_record.connector,
             id: *id,
         };
         let old_connector = if let Some(raw) = self
@@ -271,13 +271,13 @@ impl Vault {
             true,
         )?;
         if let Some(old_connector) = old_connector
-            && old_connector != new_index_key.connector
+            && old_connector != new_index_key.text
         {
             CONNECTOR_INDEX.delete(
                 &self.store,
                 wtxn,
-                &ConnectorIndexKey {
-                    connector: old_connector,
+                &TextIdKey {
+                    text: old_connector,
                     id: *id,
                 },
             )?;

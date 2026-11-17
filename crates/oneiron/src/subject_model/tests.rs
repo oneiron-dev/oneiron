@@ -130,7 +130,11 @@ fn seed(vault: &Vault, id: EntityId, entity_type: u8) -> EntityId {
 }
 
 fn writer() -> WriteActor {
-    WriteActor::new(entity(0x9F), EdgeActorClass::Human)
+    // The fixture writer is the embedded owner, so owner writes pass the live owner census.
+    WriteActor::new(
+        crate::vault::embedded_owner_actor_id().expect("owner"),
+        EdgeActorClass::Human,
+    )
 }
 
 #[test]
@@ -211,7 +215,11 @@ fn writes_stamp_the_authenticated_writer() -> Result<()> {
     let (_dir, vault) = unrooted_test_vault();
     let person = seed(&vault, entity(0x31), ENTITY_TYPE_PERSON);
     let actor = seed(&vault, entity(0x32), ENTITY_TYPE_AGENT_DEF);
-    let author_ref = seed(&vault, entity(0x33), ENTITY_TYPE_PERSON);
+    let author_ref = seed(
+        &vault,
+        crate::vault::embedded_owner_actor_id()?,
+        ENTITY_TYPE_PERSON,
+    );
     let author = WriteActor::new(author_ref, EdgeActorClass::Human);
     authorization::root_owner(&vault, author, 0xE7)?;
 
@@ -292,7 +300,11 @@ fn merged_subject_resolves_to_survivor() -> Result<()> {
 fn typed_vault_subject_doors_check_kind_and_provenance() -> Result<()> {
     let (_dir, vault) = unrooted_test_vault();
     let actor = seed(&vault, entity(0x61), ENTITY_TYPE_AGENT_DEF);
-    let person = seed(&vault, entity(0x62), ENTITY_TYPE_PERSON);
+    let person = seed(
+        &vault,
+        crate::vault::embedded_owner_actor_id()?,
+        ENTITY_TYPE_PERSON,
+    );
     let anchor = ActorSubjectAnchor {
         actor_ref: actor,
         subject_ref: person,

@@ -19,7 +19,7 @@ use crate::secret_rotation::{
     ArtifactTaintState, allow_stale_publish_in_txn, exhaust_taint_refs_in_txn,
     taint_state_for_refs_in_txn,
 };
-use crate::side_table::{self, CodecError, Raw, RawValue, SideKey, SideTable};
+use crate::side_table::{self, CodecError, FixedSideKey, Raw, RawValue, SideKey, SideTable};
 use crate::store::GateDecisionId;
 use crate::store::code_artifact_body::{CodeArtifactClass, decode_code_artifact_body};
 use crate::store::code_snapshot::{
@@ -76,32 +76,23 @@ use oneiron_verb_wire::artifact_hosting::{ARTIFACT_CHANNEL_PREVIEW, ARTIFACT_CHA
 
 /// One channel pointer, keyed by `channel(1) ++ artifact_len(u16 be) ++ artifact`
 /// exactly as `artifact_pointer_key` used to spell it.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, SideKey)]
 struct ArtifactPointerRowKey {
     channel: ArtifactPointerChannel,
+    #[side_key(len = u16)]
     artifact: String,
 }
 
-impl SideKey for ArtifactPointerRowKey {
-    fn encode_into(&self, out: &mut Vec<u8>) {
-        out.push(self.channel.key_byte());
-        out.extend_from_slice(&(self.artifact.len() as u16).to_be_bytes());
-        out.extend_from_slice(self.artifact.as_bytes());
-    }
-
-    fn decode_key(bytes: &[u8]) -> Option<Self> {
-        let (&channel_byte, rest) = bytes.split_first()?;
-        let channel = ArtifactPointerChannel::from_key_byte(channel_byte)?;
-        let (len_bytes, rest) = rest.split_at_checked(2)?;
-        let len = u16::from_be_bytes(len_bytes.try_into().ok()?) as usize;
-        if rest.len() != len {
-            return None;
-        }
-        Some(Self {
-            channel,
-            artifact: String::from_utf8(rest.to_vec()).ok()?,
-        })
-    }
+/// One [`ArtifactPointerRowKey`] for `test_doors::side_key_pins`.
+#[cfg(oneiron_test_support)]
+pub(crate) fn artifact_pointer_row_key_pin_for_test(
+    channel: ArtifactPointerChannel,
+    artifact: &str,
+) -> crate::test_doors::side_key_pins::Pin {
+    crate::test_doors::side_key_pins::Pin::of(&ArtifactPointerRowKey {
+        channel,
+        artifact: artifact.to_owned(),
+    })
 }
 
 /// One pointer row's value: the export frame, then an optional suffix. A
@@ -175,6 +166,24 @@ const ARTIFACT_POINTERS: SideTable<ArtifactPointerRowKey, ArtifactPointerRow, Ra
 /// The trailing stamp records a stale-taint publish override on either kind.
 const ARTIFACT_POINTER_STALE_OVERRIDE_STAMP: u8 = 0x01;
 const ARTIFACT_POINTER_BLOB_TAG: u8 = 0x02;
+
+/// A pointer row's channel, as its one key byte.
+impl SideKey for ArtifactPointerChannel {
+    fn encode_into(&self, out: &mut Vec<u8>) {
+        out.push(self.key_byte());
+    }
+
+    fn decode_key(bytes: &[u8]) -> Option<Self> {
+        let &[byte] = bytes else {
+            return None;
+        };
+        Self::from_key_byte(byte)
+    }
+}
+
+impl FixedSideKey for ArtifactPointerChannel {
+    const WIDTH: usize = 1;
+}
 
 impl ArtifactPointerChannel {
     #[must_use]
@@ -427,3 +436,74 @@ pub(crate) use self::publish::{artifact_publish_gate_refs_in_txn, artifact_publi
 pub(crate) mod tables;
 #[cfg(test)]
 mod tests;
+
+/// Puts a channel pointer for the checkpoint-pins door: `channel`'s pointer
+/// of `artifact` at `export`, with no outbox mark.
+#[cfg(oneiron_test_support)]
+pub(crate) fn put_pins_artifact_pointer_in_txn(
+    store: &impl crate::store::ManifestDbs,
+    txn: &mut RwTxn<'_>,
+    channel: ArtifactPointerChannel,
+    artifact: &str,
+    export: ArtifactExportRef,
+    stale_taint_override: bool,
+    serve_tier: ArtifactServeTier,
+) -> Result<()> {
+    ARTIFACT_POINTERS.put(
+        store,
+        txn,
+        &ArtifactPointerRowKey {
+            channel,
+            artifact: artifact.to_owned(),
+        },
+        &ArtifactPointerRow {
+            export,
+            stale_taint_override,
+            serve_tier,
+        },
+    )
+}
+
+/// Puts a publish admission for the checkpoint-pins door: `publish_id`'s
+/// receipt of `artifact`'s `channel` publish of `export` by `actor` under
+/// `gate_id`, as the publish writer files it.
+#[cfg(oneiron_test_support)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "one argument per admission field, as the publish writer files them"
+)]
+pub(crate) fn put_pins_artifact_admission_in_txn(
+    store: &impl crate::store::ManifestDbs,
+    txn: &mut RwTxn<'_>,
+    publish_id: &EntityId,
+    artifact: &str,
+    channel: ArtifactPointerChannel,
+    export: ArtifactExportRef,
+    export_entity_id: &EntityId,
+    actor: &WriteActor,
+    gate_id: &GateDecisionId,
+    occurred_at: u64,
+    stale_taint_override: bool,
+    serve_tier: ArtifactServeTier,
+) -> Result<()> {
+    ARTIFACT_ADMISSIONS.put(
+        store,
+        txn,
+        publish_id,
+        &ArtifactPublishAdmission {
+            artifact: artifact.to_owned(),
+            channel: channel.key_byte(),
+            export,
+            export_entity_id: *export_entity_id,
+            actor: actor.entity_ref(),
+            actor_class: actor.actor_class().gate_actor_class().to_owned(),
+            gate_id: *gate_id,
+            occurred_at,
+            stale_taint_override,
+            serve_tier,
+        },
+    )
+}
+
+#[cfg(oneiron_test_support)]
+pub(crate) use self::serving_blob::put_pins_serving_blob_in_txn;

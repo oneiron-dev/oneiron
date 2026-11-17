@@ -98,13 +98,24 @@ impl ScopedRead<'_> {
         counted: &mut Vec<EntityId>,
         named: &mut Vec<EntityId>,
     ) -> Result<Vec<String>> {
-        crate::reaction::grouped_lines_in(self.vault, rtxn, *record, named, |row| {
-            let admitted = self.row_admitted_in(rtxn, admission, &row.id)?;
-            if admitted {
-                counted.push(row.id);
-            }
-            Ok(admitted)
-        })
+        crate::reaction::grouped_lines_in(
+            self.vault,
+            rtxn,
+            *record,
+            named,
+            |row| {
+                let admitted = self.row_admitted_in(rtxn, admission, &row.id)?;
+                if admitted {
+                    counted.push(row.id);
+                }
+                Ok(admitted)
+            },
+            // A reactor is named only where this read admits their PERSON
+            // row, under the same admission and clamp as the reaction: a
+            // PERSON known only from a relationship's words stays unnamed
+            // outside it (FIX REACTION-NAMES-UNGATED).
+            |person| self.row_admitted_in(rtxn, admission, &person),
+        )
     }
 
     /// Whether `disclosure`, when the read runs under one, admits the stored
@@ -325,6 +336,7 @@ impl<'a> ScopedRead<'a> {
             room_ceiling: Mutex::new(room_ceiling),
             room_ceilings_built: AtomicUsize::new(0),
             session_view: self.session_view,
+            stretch: self.stretch,
             claim_status: ClaimReadStatus::Recorded,
             recall_authority: Mutex::new(None),
             room_peer: self.room_peer,
