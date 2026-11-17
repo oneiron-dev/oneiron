@@ -1,7 +1,6 @@
 //! Each lookup below reads one key of a stored MessagePack map. A map that holds the key twice,
-//! which no writer ever wrote (K-proof
-//! /Users/olety/Desktop/temp/vibe-build-20261017/lanes/kimi/OPUS-UC08-MSGPACK/legs/kproof-pr5a/KPROOF.md),
-//! reads as absent or is refused. Red on the base, where each lookup returned the first value.
+//! which no writer ever wrote (K-proof in the PR description), reads as absent or is refused. Red
+//! on the base, where each lookup returned the first value.
 #![cfg(oneiron_test_support)]
 
 use oneiron::test_doors::repeated_key_lib_rows as door;
