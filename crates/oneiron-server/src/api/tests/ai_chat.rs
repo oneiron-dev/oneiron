@@ -143,7 +143,23 @@ async fn a_chat_turn_streams_deltas_to_subscribers_and_saves_its_terminal_once()
         .iter()
         .map(|message| message["content"].as_str().unwrap_or_default().to_owned())
         .collect();
-    assert_eq!(texts[texts.len() - 3..], ["earlier", "noted", "say hello"]);
+    // The turn's now-time opener closes a call its board does not ride (FIX
+    // 14676), and the board's omission note sits at the board's place, before
+    // the newest user message (recall.rs BoardOmission); history comes first.
+    let (opener, before) = texts.split_last().expect("the call carries messages");
+    assert!(
+        oneiron::context_board::is_turn_opener_line(opener),
+        "{opener}"
+    );
+    let before: Vec<&str> = before
+        .iter()
+        .map(String::as_str)
+        .filter(|text| !text.starts_with("The vault's context board is not part of this turn"))
+        .collect();
+    assert_eq!(
+        before[before.len() - 3..],
+        ["earlier", "noted", "say hello"]
+    );
     host.shutdown().await;
 }
 
@@ -213,16 +229,7 @@ async fn a_quiet_model_keeps_its_message_open_under_a_short_idle_timeout() {
     .await;
     let (_dir, server, host) = ai_server(Some(&fake.base_url)).await;
     let vault = Arc::clone(server.vault());
-    let owner = oneiron::EntityId::now();
-    vault
-        .put_entity(
-            &owner,
-            oneiron::registry::ENTITY_TYPE_PERSON,
-            oneiron::TimeRange { start: 1, end: 1 },
-            1,
-            b"owner",
-        )
-        .unwrap();
+    let owner = vault.ensure_embedded_owner_actor().unwrap();
     crate::test_credentials::bind_owner(&vault, TEST_SECRET, owner);
     vault
         .memory(owner, oneiron::EdgeActorClass::Human)

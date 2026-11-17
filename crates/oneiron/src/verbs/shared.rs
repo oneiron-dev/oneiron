@@ -9,8 +9,8 @@ use serde::{Deserialize, Serialize};
 
 use super::owner_confirm;
 use crate::authority::{
-    ActAuthority, ActSurface, AuthorityHandoffAlarm, HostSlipIssuer, OWNER_KEY_MOVE_NOT_PLANNED,
-    OwnerKeyMovePlan, OwnerKeyMoveSigner,
+    ActAuthority, ActSurface, AuthorityHandoffAlarm, AuthorityKey, HostSlipIssuer,
+    OWNER_KEY_MOVE_NOT_PLANNED, OwnerKeyMovePlan, OwnerKeyMoveSigner,
 };
 use crate::consent::AuthenticatedOwner;
 use crate::edge::EdgeActorClass;
@@ -509,7 +509,7 @@ fn owner_key_move_plan_wire(plan: OwnerKeyMovePlan) -> SharedOwnerKeyMovePlan {
         authority_vault_id: oneiron_hex::encode(&plan.vault_id),
         member: plan.member.to_hex(),
         parents: hex_all(&plan.parents),
-        revoked: hex_all(&plan.revoked),
+        revoked: plan.revoked.iter().map(owner_key_hex).collect(),
         signers: plan
             .signers
             .iter()
@@ -523,6 +523,16 @@ fn owner_key_move_plan_wire(plan: OwnerKeyMovePlan) -> SharedOwnerKeyMovePlan {
     }
 }
 
+/// An owner key as a plan's wire names it: its key bytes in lowercase hex,
+/// 64 digits for an Ed25519 key, 66 for a passkey's compressed P-256 key
+/// (row WEB-PASSKEY-OWNER-KEY).
+fn owner_key_hex(key: &AuthorityKey) -> String {
+    match key {
+        AuthorityKey::Ed25519(bytes) => oneiron_hex::encode(bytes),
+        AuthorityKey::P256(bytes) => oneiron_hex::encode(bytes),
+    }
+}
+
 /// The plan the wire `plan` carries; a field that is not its hex is a bad
 /// request.
 fn owner_key_move_plan_from_wire(plan: SharedOwnerKeyMovePlan) -> MemoryResult<OwnerKeyMovePlan> {
@@ -533,11 +543,25 @@ fn owner_key_move_plan_from_wire(plan: SharedOwnerKeyMovePlan) -> MemoryResult<O
     fn bytes32_all(field: &str, texts: &[String]) -> MemoryResult<Vec<[u8; 32]>> {
         texts.iter().map(|text| bytes32(field, text)).collect()
     }
+    fn owner_key(field: &str, text: &str) -> MemoryResult<AuthorityKey> {
+        if let Some(bytes) = oneiron_hex::decode::<32>(text) {
+            return Ok(AuthorityKey::Ed25519(bytes));
+        }
+        oneiron_hex::decode::<33>(text)
+            .map(|bytes| AuthorityKey::P256(bytes.to_vec()))
+            .ok_or_else(|| {
+                MemoryError::bad_request(format!("{field} is not 64 or 66 lowercase hex"))
+            })
+    }
     Ok(OwnerKeyMovePlan {
         vault_id: bytes32("plan.authority_vault_id", &plan.authority_vault_id)?,
         member: person_id("plan.member", &plan.member)?,
         parents: bytes32_all("plan.parents", &plan.parents)?,
-        revoked: bytes32_all("plan.revoked", &plan.revoked)?,
+        revoked: plan
+            .revoked
+            .iter()
+            .map(|text| owner_key("plan.revoked", text))
+            .collect::<MemoryResult<_>>()?,
         signers: plan
             .signers
             .iter()

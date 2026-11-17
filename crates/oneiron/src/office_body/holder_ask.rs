@@ -38,6 +38,8 @@ mod live_edit;
 use super::support::{loro_kind, open_fork};
 use super::{MemberVerdict, ProposalAsk, ProposalSettleRequest, ReviewedFork, SettleVerdict};
 pub(super) use live_edit::LIVE_EDIT_GROUPS;
+#[cfg(oneiron_test_support)]
+pub(crate) use live_edit::put_pins_live_edit_route_in_txn;
 pub(crate) use live_edit::{
     LiveEditAskOutcome, live_edit_asked_owners_in, live_edit_offered_owners_in,
     resolve_live_edit_holder_ask_in_txn,

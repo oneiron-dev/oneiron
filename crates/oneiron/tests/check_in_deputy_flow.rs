@@ -259,6 +259,7 @@ impl Flow {
                 }],
                 occurred_at: self.vault.now_recorded_at(),
                 assertions: Default::default(),
+                project: None,
             })
             .expect("the owner speaks");
     }
