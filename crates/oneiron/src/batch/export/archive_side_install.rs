@@ -144,6 +144,14 @@ pub(crate) enum ArchivedSideGroup {
     ConversationRole,
     /// Connector slates retained as nonportable references.
     ConnectorSlate,
+    /// Immutable org-admin policy.
+    OrgAdmin,
+    /// Shared-act policy change requests.
+    SharedAct,
+    /// Edit-distance escalation standing policies.
+    EscalationPolicy,
+    /// Mail compliance switch.
+    MailCompliance,
 }
 
 /// Selects only the tables with a landing group; every other envelope stays retained-only.
@@ -196,7 +204,11 @@ pub(crate) fn archived_side_group(source_table: &str) -> Option<ArchivedSideGrou
         name if name == side_table::POLICY_SETTING_ACT.name => Some(Group::PolicySetting),
         name if name == side_table::OWNER_POLICY_CHANGE_EVENT.name => Some(Group::PolicyModel),
         name if name == side_table::OWNER_POLICY_SECRET_SCAN_RECEIPT.name
-            || name == side_table::OWNER_POLICY_SECRET_SCAN_MODE.name =>
+            || name == side_table::OWNER_POLICY_SECRET_SCAN_MODE.name
+            || name == side_table::OWNER_POLICY_WORLD_PRIVACY_RECEIPT.name
+            || name == side_table::OWNER_POLICY_WORLD_PRIVACY_REQUEST.name
+            || name == side_table::OWNER_POLICY_WORLD_PRIVACY_UNANIMITY.name
+            || name == side_table::OWNER_POLICY_WORLD_PRIVACY_UNANIMITY_OFF.name =>
         {
             Some(Group::PolicyModel)
         }
@@ -235,6 +247,14 @@ pub(crate) fn archived_side_group(source_table: &str) -> Option<ArchivedSideGrou
         }
         name if name == side_table::CONVERSATION_ROLE_GRANT.name => Some(Group::ConversationRole),
         name if name == side_table::CONNECTOR_GRANT_SLATE.name => Some(Group::ConnectorSlate),
+        name if name == side_table::ORG_ADMIN_POLICY.name => Some(Group::OrgAdmin),
+        name if name == side_table::SHARED_ACT_POLICY_CHANGE.name => Some(Group::SharedAct),
+        name if name == side_table::EDIT_DISTANCE_ESCALATION_POLICY.name => {
+            Some(Group::EscalationPolicy)
+        }
+        name if name == side_table::MAIL_PACK_COMPLIANCE_SETTING.name => {
+            Some(Group::MailCompliance)
+        }
         _ => None,
     }
 }
@@ -386,6 +406,26 @@ pub(crate) fn land_archived_side_group_in_txn(
         }
         ArchivedSideGroup::ConnectorSlate => {
             crate::connector_key::land_archived_connector_slate_rows_in_txn(
+                vault, txn, permit, rows,
+            )
+        }
+        ArchivedSideGroup::OrgAdmin => {
+            crate::federation::org_admin::land_archived_org_admin_rows_in_txn(
+                vault, txn, permit, rows,
+            )
+        }
+        ArchivedSideGroup::SharedAct => {
+            crate::federation::pending_act::policy_change::land_archived_shared_act_policy_change_rows_in_txn(
+                vault, txn, permit, rows,
+            )
+        }
+        ArchivedSideGroup::EscalationPolicy => {
+            crate::edit_distance::escalation::archive_restore::land_archived_escalation_policy_rows_in_txn(
+                vault, txn, permit, rows,
+            )
+        }
+        ArchivedSideGroup::MailCompliance => {
+            crate::mail_pack::compliance::land_archived_mail_compliance_rows_in_txn(
                 vault, txn, permit, rows,
             )
         }
