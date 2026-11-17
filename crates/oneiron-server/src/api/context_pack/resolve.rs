@@ -79,6 +79,8 @@ const CONTEXT_PACK_ROUTE_CONTROLS: &[&str] = &[
     "signals_person",
     "query_affect",
     "queryAffect",
+    "packet_id",
+    "packetId",
     "hydrate",
     "include_edges",
     "includeEdges",
@@ -232,6 +234,7 @@ pub(crate) async fn execute_context_pack(
         skill_reliability,
         candidate_limit,
         query_affect,
+        packet,
         ranking,
         time,
         signals,
@@ -364,6 +367,9 @@ pub(crate) async fn execute_context_pack(
     }
     if let Some(vad) = query_affect {
         builder = builder.query_affect(vad);
+    }
+    if let Some(summary) = packet {
+        builder = builder.rehydrate_from(summary);
     }
     builder = ranking.applied(builder);
     builder = time.applied(builder);

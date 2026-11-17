@@ -621,6 +621,7 @@ impl ScopedRead<'_> {
                     txn,
                     policy,
                     filter,
+                    authority,
                     &hydrated.id,
                     hydrated.entity_type,
                 )?)
@@ -669,6 +670,7 @@ impl ScopedRead<'_> {
         txn: &heed::RoTxn<'_>,
         policy: &crate::gate::PolicyManifestResolution,
         filter: &crate::gate::ResolvedRetrievalFilter,
+        authority: &HeldAuthority,
         id: &EntityId,
         entity_type: u8,
     ) -> Result<bool> {
@@ -689,7 +691,21 @@ impl ScopedRead<'_> {
                 policy,
                 &self.actor_key,
                 &oneiron_authority::federation::scope_codec::read_preset(),
-            ))
+            )
+            // Every position, and the shell's facets, under one agent Grant
+            // alone (FIX AGENT-GRANT-ENVELOPE-ONLY-PATHS).
+            && self.one_grant_alternative_admits_record_in(
+                txn,
+                authority,
+                policy,
+                &oneiron_authority::federation::scope_codec::read_preset(),
+                Some((
+                    id,
+                    self.entity_record_in(txn, id)?
+                        .map(|row| row.encode())
+                        .as_deref(),
+                )),
+            )?)
     }
 
     /// For each withdrawn entity `(id, entity_type)`, whether this reader may
@@ -702,10 +718,12 @@ impl ScopedRead<'_> {
         withdrawn: &[(EntityId, u8)],
     ) -> Result<Vec<bool>> {
         let (filter, policy) = self.resolve_retrieval_filter_in(txn, None)?;
+        // One read of the holder's Grants for the whole feed page.
+        let authority = HeldAuthority::for_request(None);
         withdrawn
             .iter()
             .map(|(id, entity_type)| {
-                self.deletion_revealed_in(txn, &policy, &filter, id, *entity_type)
+                self.deletion_revealed_in(txn, &policy, &filter, &authority, id, *entity_type)
             })
             .collect()
     }
