@@ -256,6 +256,7 @@ fn unrooted_anchor_uses_canonical_human_owner_semantics() -> Result<()> {
     seed(&vault, writer().entity_ref(), ENTITY_TYPE_PERSON);
     let actor = seed(&vault, entity(0x7C), ENTITY_TYPE_AGENT_DEF);
     let person = seed(&vault, entity(0x7D), ENTITY_TYPE_PERSON);
+    let stranger = seed(&vault, entity(0x9F), ENTITY_TYPE_PERSON);
     let machine = seed(&vault, entity(0x7E), crate::registry::ENTITY_TYPE_MACHINE);
     let err = anchor_actor_subject(
         &vault,
@@ -268,8 +269,14 @@ fn unrooted_anchor_uses_canonical_human_owner_semantics() -> Result<()> {
     assert_eq!(err.kind(), ErrorKind::ActorLacksClaimAuthority);
     // With no authority root the owner is the vault's embedded owner alone
     // (H149): another Human PERSON is no owner capability either.
-    let err = anchor_actor_subject(&vault, actor, person, writer(), 101)
-        .expect_err("a PERSON who is not the vault's owner");
+    let err = anchor_actor_subject(
+        &vault,
+        actor,
+        person,
+        WriteActor::new(stranger, EdgeActorClass::Human),
+        101,
+    )
+    .expect_err("a PERSON who is not the vault's owner");
     assert_eq!(err.kind(), ErrorKind::ActorLacksClaimAuthority);
     let owner = WriteActor::new(
         vault
