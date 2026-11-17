@@ -2,6 +2,9 @@
 //! the setting catalogue reads from this file. Each default is the fixed size these verbs had
 //! before; a larger value loosens, so an agent holding a key's set line asks the owner before it
 //! raises one.
+//!
+//! The lens slot's agent select is here too: off by default, so the owner alone selects a
+//! proposed lens for its slot.
 
 use std::num::NonZeroU32;
 
@@ -9,8 +12,9 @@ use serde::{Deserialize, Serialize};
 
 use super::{LensText, RECORD_LINKS_TURN_PAGE_MAX};
 use crate::Vault;
+use crate::check_in::ActClass;
 use crate::error::{Error, Result};
-use crate::setting::{Kind, Setting, SettingValue, lower_is_tighter};
+use crate::setting::{Kind, ScopeKind, Setting, SettingValue, lower_is_tighter};
 
 /// A byte count one lens text holds whole: at most [`LensText::MAX_BYTES`], the wire's bound on a
 /// lens text, so a larger value is refused when it is set rather than cut when it is read.
@@ -92,6 +96,11 @@ fn no_bytes() -> LensTextBytes {
     LensTextBytes(0)
 }
 
+/// Off: the owner alone selects a proposed lens for its slot.
+fn owner_alone() -> bool {
+    false
+}
+
 crate::setting::setting_keys! {
     /// The most proposals one `vault.lenses.list` page returns; a longer inventory pages on
     /// through `after`. 200 by default; an unreadable row reads as 1.
@@ -140,6 +149,19 @@ crate::setting::setting_keys! {
         kind: Kind::new(lenses_default_excerpt_bytes)
             .strictest(no_bytes)
             .tighter(lower_is_tighter::<LensTextBytes>),
+    };
+    /// Let this agent select a proposed lens revision for its slot, or clear the slot
+    /// (restriction census C33; Engine RULING RESTRICTION-WAVE-9-CANON C33 = A). Off by default:
+    /// the owner alone selects, as before. On for an agent, that agent selects a revision, never
+    /// one its own lineage proposed, which the engine refuses whatever this key says. An agent's
+    /// row decides before the vault row. On is the looser value, so only the owner turns it on;
+    /// an agent's change waits on the owner's answer.
+    pub(crate) LENS_SLOT_AGENT_SELECT: bool = "lens.slot.agent_select" {
+        kind: Kind::new(owner_alone)
+            .strictest(owner_alone)
+            .tighter(lower_is_tighter::<bool>),
+        scopes: &[ScopeKind::Agent],
+        act: ActClass::GrantWiden,
     };
 }
 
