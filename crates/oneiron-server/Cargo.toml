@@ -340,6 +340,13 @@ name = "vault_weave_doors"
 path = "tests/vault_weave_doors.rs"
 required-features = ["oneiron/test-support"]
 
+# The retrieval ledger door promise tests serve the owner's root from a `MemoryKeystore`
+# too; the Steward read grant stands through `oneiron::test_doors` (`--cfg oneiron_test_support`).
+[[test]]
+name = "vault_retrieval_ledger_doors"
+path = "tests/vault_retrieval_ledger_doors.rs"
+required-features = ["oneiron/test-support"]
+
 [[test]]
 name = "managed_mode"
 path = "tests/managed_mode.rs"
@@ -481,6 +488,13 @@ required-features = ["oneiron/test-support"]
 [[test]]
 name = "broker_followup_job_binding"
 path = "tests/broker_followup_job_binding.rs"
+required-features = ["oneiron/test-support", "oneiron-broker/test-support"]
+
+# #7827's System One broker leg registers its seat key in a test vault and
+# answers from the paid-leg TLS fake provider.
+[[test]]
+name = "system_one_broker_budget"
+path = "tests/system_one_broker_budget.rs"
 required-features = ["oneiron/test-support", "oneiron-broker/test-support"]
 
 # The self-browser door refusals root their server on a `MemoryKeystore` too.

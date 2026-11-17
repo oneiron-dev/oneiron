@@ -5,8 +5,9 @@ use axum::extract::rejection::PathRejection;
 use axum::http::header::{CACHE_CONTROL, CONTENT_DISPOSITION, LOCATION, X_CONTENT_TYPE_OPTIONS};
 use axum::http::{HeaderValue, StatusCode};
 use oneiron::booking::{
-    BookingPageLens, BookingPageModel, BookingPagePresentation, BookingPagePublication, BookingVerb,
-    PUBLIC_BOOKING_ROUTE_PREFIX, PublicBookingAction, PublicBookingPageToken, slot_mask,
+    BookingPageLens, BookingPageModel, BookingPagePresentation, BookingPagePublication,
+    BookingVerb, PUBLIC_BOOKING_ROUTE_PREFIX, PublicBookingAction, PublicBookingPageToken,
+    slot_mask,
 };
 use oneiron::settings::ReadDestination;
 
