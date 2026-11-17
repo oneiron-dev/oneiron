@@ -86,6 +86,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/cua/taskgen.rs` | src | s | 6 crate-vis | — | Freeze paired seeds, disjoint holdouts and rotated arm assignments |
 | `src/eval.rs` | src | m | 2 crate-vis | — | ONE-218 eval-side driver for the telemetry-v0 retrieval-outcome loop |
 | `src/eval/outcome_ingest.rs` | src | s | 1 crate-vis | — | JSONL terminal retrieval outcome ingest for the explicit eval command |
+| `src/eval/phonetic.rs` | src | m | 1 crate-vis | — | `eval phonetic` (CROSS-ARCH-0013 §11): the cross-script name bench that decides whether a learned phonetic… |
 | `src/eval/route_calibration.rs` | src | s | 1 crate-vis | — | `eval route-calibration` (Engine row 22229, PR 2): the known-answer bench that gives route-conditioned… |
 | `src/eval/route_calibration/cases.rs` | src | s | 8 crate-vis | — | The bench's two operator inputs, each checked whole before any vault exists: the one standing question… |
 | `src/eval/route_calibration/house_read.rs` | src | s | 5 crate-vis | — | The house model's decision read as the ladder's escalation rung, built from the `--models-toml` file as the… |
@@ -181,6 +182,19 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/perf/wake.rs` | src | s | 1 crate-vis | — | ONE-1579 axis 2: process spawn-to-ready wake latency |
 | `src/retrieval_trace_export.rs` | src | m | 4 crate-vis | — | — |
 | `src/retrieval_turn_corpus.rs` | src | m | 1 crate-vis | — | Offline replay of finalized, turn-indexed retrieval runs |
+| `src/scorecard/campaign.rs` | src | s | 8 crate-vis | — | The campaign file behind `scorecard compare` and the sealed run |
+| `src/scorecard/compare.rs` | src | m | 1 crate-vis | — | `scorecard compare`: judge a candidate against the incumbent, on held_out or sealed |
+| `src/scorecard/convert.rs` | src | s | 1 crate-vis | — | `scorecard convert`: LongMemEval-S JSON into pack slices and their split file |
+| `src/scorecard/convert_trec.rs` | src | s | 1 crate-vis | — | `scorecard convert-trec`: TREC-shaped collections into pack slices |
+| `src/scorecard/embed.rs` | src | m | 1 crate-vis | — | `scorecard pack-embed`: fill one pack slice's vectors from the served embedder |
+| `src/scorecard/grade.rs` | src | s | 1 crate-vis | — | `scorecard grade-run`: grade a TREC run file into a scorecard |
+| `src/scorecard/keyword.rs` | src | s | 7 crate-vis | — | The keyword arm: one throwaway vault per corpus, scored with a rank profile |
+| `src/scorecard/mod.rs` | src | s | 6 crate-vis | — | The retrieval ruler (RESEARCH-0651 Tier 0): replay a fixed query pack, grade the run, judge candidates |
+| `src/scorecard/params.rs` | src | s | 4 crate-vis | — | The `oneiron.retrieval_eval_params.v1` eval params file: blend weights for one run |
+| `src/scorecard/profile.rs` | src | s | 6 crate-vis | — | The `oneiron.bm25_rank_profile.v1` rank profile file: BM25F weights for one keyword run |
+| `src/scorecard/record.rs` | src | s | 2 crate-vis | — | `scorecard proposals` and `scorecard stamp`: list proposals, record the owner's stamp |
+| `src/scorecard/run.rs` | src | L | 6 crate-vis | — | `scorecard run`: replay one pack slice through fresh throwaway vaults, grade the run |
+| `src/scorecard/tune.rs` | src | m | 1 crate-vis | — | `scorecard tune-bm25f`: coordinate ascent over the BM25F rank profile on the search slice |
 | `src/swarm.rs` | src | m | 1 crate-vis | — | Seeded single-vault, in-process agent-swarm baseline |
 | `src/teacher_probe.rs` | src | s | 1 crate-vis | — | Offline extraction-teacher admission over the fixed CoNLL BIO probe |
 | `src/teacher_probe_tests.rs` | test | s | — | — | — |
@@ -192,4 +206,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/beam_picks_for_cli.rs` | test | s | — | — | `oneiron-bench beam measure --picks-for` (census L9-32; Engine ruling L9-32-PICK-WRITER, Sat 14 Nov 07:43)… |
 | `tests/cleanup_retrieval.rs` | test | s | — | — | ANN recall corpus `ann_seed42.v1` (source: ec9cbdec92e7dbcc865b9958dd1ff8652714d6c7). rand 0.8.8 StdRng seed… |
 | `tests/e2e_approved_manifest_fixture.rs` | test | s | — | — | Runs the shipped bench flow to produce and check the approved E2E manifest fixture |
+| `tests/retrieval_matrix_cli.rs` | test | m | — | — | The retrieval matrix CLI end to end: the mini pack converts, the keyword arm grades it to hand-counted… |
+| `tests/scorecard_cli.rs` | test | L | — | — | Drive the shipped `scorecard` CLI end to end: fixtures in, JSON out |
+| `tests/scorecard_compare.rs` | test | L | — | — | Drive `scorecard compare`, `proposals` and `stamp` end to end: fixtures in, JSON out |
 | `tests/teacher_probe_cli.rs` | test | s | — | — | Run the shipped binary, not only its Rust scoring function, against CI fixtures |

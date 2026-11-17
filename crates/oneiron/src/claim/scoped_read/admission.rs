@@ -277,12 +277,41 @@ impl<'a> ScopedRead<'a> {
         {
             return Ok(false);
         }
+        // A key rebuilt from a saved lane carries that lane's credential with
+        // no proof (OF-506): it reads only while the credential still holds
+        // in this snapshot, as its rebuild judged it, so a key rebuilt while
+        // a grant stood and kept past the grant's withdrawal reads nothing
+        // (FIX OWN-DEVICE-GRANT-NOT-RECHECKED, review R1 of #8029).
+        for credential in &self.actor_key.saved_credentials {
+            if !credential.holds_in(self.vault, txn)? {
+                return Ok(false);
+            }
+        }
         let Some(proof) = &self.actor_key.proof else {
             return Ok(true);
         };
         let claims = proof.claims();
         let now = self.vault.instant_in_txn(txn)?.secs();
         if now < claims.issued_at || now >= claims.expires_at {
+            return Ok(false);
+        }
+        // A slip follows its holder's row (RULING DELETED-ACTOR-SLIP-AUTH =
+        // A): a key kept from a holder's verified slip reads nothing once
+        // that holder is deleted, as the slip's own doors refuse it then
+        // (Astra review of #8289, finding 1).
+        if crate::authority::slip_holder_is_deleted_in_txn(
+            &self.vault.store,
+            txn,
+            &claims.holder_ref,
+        )? {
+            return Ok(false);
+        }
+        // A grant-bound slip reads only while its grant stands in this
+        // snapshot, judged at each use as a fresh verification judges it
+        // (FIX OWN-DEVICE-GRANT-NOT-RECHECKED): withdrawing an own-device
+        // grant appends no slip revoke, so the fold alone still calls the
+        // slip live, and a key held past its verification would read on.
+        if claims.grant_ref.is_some() && !self.vault.slip_refs_stand_in_txn(txn, claims, now)? {
             return Ok(false);
         }
         if let Some(share) = &claims.share_ref {

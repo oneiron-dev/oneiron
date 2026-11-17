@@ -71,4 +71,8 @@ impl RunReceiptSink for CapturedSink {
     fn budget_hit(&self, seat: &str, guard: &BudgetGuard, denied: &BudgetDenied) {
         self.sink.budget_hit(seat, guard, denied);
     }
+
+    fn source_worlds(&self, rows: &[crate::EntityId]) -> Option<Vec<crate::EntityId>> {
+        self.sink.source_worlds(rows)
+    }
 }

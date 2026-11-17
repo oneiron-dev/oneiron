@@ -514,6 +514,7 @@ const GUEST_FAILURE_CODES: &[&str] = &[
     "finding_not_own",
     "finding_tainted",
     "finding_not_json",
+    "finding_source_gone",
     "reader_task_settled",
     "task_wait_unbound",
     "task_wait_invalid",
@@ -699,7 +700,13 @@ fn reply_body(outcome: &SelfDispatchOutcome, park: ParkReply) -> Result<Value> {
             json!({"receipt":receipt.to_hex()})
         }
         SelfDispatchOutcome::InferenceDefaults(json) => json!({"json": json}),
-        SelfDispatchOutcome::StoredReply(value) => json!({"output": value.output}),
+        SelfDispatchOutcome::StoredReply(value) => {
+            let mut body = json!({"output": value.output});
+            if !value.program_steps.is_empty() {
+                body["programSteps"] = json!(value.program_steps);
+            }
+            body
+        }
         SelfDispatchOutcome::Fold(answer) => {
             let output: Value = serde_json::from_str(&answer.json)
                 .map_err(|_| failure("fold answer is not JSON"))?;

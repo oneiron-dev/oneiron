@@ -6,6 +6,7 @@ use crate::EntityId;
 use crate::access_grant::{AccessContext, AccessContextSnapshot};
 use crate::claim::ClaimRecordScope;
 use crate::claim::{ClaimBody, RelationshipScope, decode_claim_body};
+use crate::conversation_dag::RoomVerdicts;
 use crate::edge::EdgeKind;
 use crate::error::Result;
 use crate::registry::{
@@ -52,7 +53,9 @@ pub(crate) fn claim_access_axes(body: &ClaimBody) -> (RelationshipScope, bool) {
 /// Claim names ([`Self::judge_cited`]): the provenance rule is not re-entered.
 /// The sixth names the status claim whose endpoints a worklist judges
 /// ([`Self::judge_cited_coreference`]); only that row leaves its endpoint
-/// check to the walk.
+/// check to the walk. The seventh holds each room's admission of a
+/// retrieval hit for this read in this serving txn ([`Self::room_verdicts`],
+/// L9-52); no other row checks share it.
 #[derive(Default)]
 pub(super) struct HeldAuthority(
     RefCell<Option<AccessContextSnapshot>>,
@@ -61,6 +64,7 @@ pub(super) struct HeldAuthority(
     ClassVerdicts,
     bool,
     Option<EntityId>,
+    RoomVerdicts,
 );
 
 impl HeldAuthority {
@@ -74,6 +78,7 @@ impl HeldAuthority {
             ClassVerdicts::default(),
             false,
             None,
+            RoomVerdicts::default(),
         )
     }
 
@@ -88,6 +93,7 @@ impl HeldAuthority {
             ClassVerdicts::default(),
             self.4,
             self.5,
+            RoomVerdicts::default(),
         )
     }
 
@@ -104,6 +110,7 @@ impl HeldAuthority {
             self.3.clone(),
             self.4,
             self.5,
+            RoomVerdicts::default(),
         )
     }
 
@@ -119,6 +126,7 @@ impl HeldAuthority {
             self.3.clone(),
             self.4,
             self.5,
+            RoomVerdicts::default(),
         )
     }
 
@@ -156,6 +164,7 @@ impl HeldAuthority {
             self.3.clone(),
             true,
             id,
+            RoomVerdicts::default(),
         );
         let judged = judge(&cited);
         *self.0.borrow_mut() = cited.0.into_inner();
@@ -189,6 +198,12 @@ impl HeldAuthority {
     /// The CLAIM access class verdicts this serving txn holds, by reader.
     pub(super) fn class_verdicts(&self) -> &ClassVerdicts {
         &self.3
+    }
+
+    /// The room admissions of retrieval hits these row checks hold, by room
+    /// (L9-52).
+    pub(super) fn room_verdicts(&self) -> &RoomVerdicts {
+        &self.6
     }
 
     /// `judge` over the relationship authority of `principal` this serving
@@ -645,7 +660,7 @@ pub(crate) fn owner_only_audience_change() -> crate::error::Error {
 /// [`relationship_read_keyed`] for an identity topology event (FIX
 /// DISTINCT-EVENT-UNGATED, OPUS-LEAKS). An AssertDistinct event names its
 /// pair and its `entity.distinct_from` CLAIM, and that CLAIM carries the
-/// audience of the words that asserted it (`narrow_distinct_claim_in_txn`).
+/// audience of the words that asserted it (`DistinctClaimPlace`).
 /// So the event reads as its CLAIM reads, on the CLAIM's live axes in the
 /// same transaction. A CLAIM that is gone, deleted, or not the event's pair
 /// withholds the event. Every other topology action keeps today's verdict.

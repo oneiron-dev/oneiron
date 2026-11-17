@@ -38,6 +38,8 @@ mod agent_verbs {
     include!(concat!(env!("OUT_DIR"), "/agent_verbs.rs"));
 }
 mod aging_doors;
+// The output archive's judge door (ARM05 P3).
+mod archive_judge_doors;
 mod artifact_hosting_doors;
 mod asr_doors;
 mod authority_history_doors;
@@ -104,6 +106,7 @@ mod embedding_space_doors;
 // Untangle 6.6d: the engine-control knob verbs, for the owner or a holder.
 mod engine_control_doors;
 mod errors;
+mod esign_rules_doors;
 mod eval_doors;
 pub(super) mod export_transfer;
 mod extraction_doors;
@@ -205,6 +208,8 @@ mod run_review_doors;
 pub(crate) mod run_write_polls;
 mod runner_seat_doors;
 mod saved_query_doors;
+// The Schedule primitive's verbs (DESIGN 15-setting-primitive, stage 0.2).
+mod schedule_doors;
 mod seal_doors;
 mod search_home_doors;
 mod secret_body;
@@ -287,6 +292,7 @@ pub(crate) use host_doors::{
 pub(crate) use identity::*;
 pub(crate) use invocations::*;
 use invoke::*;
+pub(crate) use model_step_doors::resume_parked_model_steps;
 pub(crate) use model_stream_doors::ModelStreams;
 use output::*;
 use receipts::*;
@@ -524,6 +530,9 @@ struct FacadeErrorBody {
     /// The engine's held room join, with its intent and missing consents.
     #[serde(rename = "room_join_hold", skip_serializing_if = "Option::is_none")]
     room_join_hold: Option<Box<oneiron::workspace_roster::RoomJoinHold>>,
+    /// What a pending refusal waits on, typed, when the engine supplied one.
+    #[serde(rename = "pending", skip_serializing_if = "Option::is_none")]
+    pending: Option<Box<oneiron::memory::MemoryPending>>,
     /// A failed run's program type feedback (FIX 10389), beside the refusal
     /// and never among its words: each item released whole, or withheld
     /// with none of its text when its own release check holds it.
@@ -567,6 +576,9 @@ pub(crate) struct MemoryErrorBodySchema {
     #[schema(value_type = Option<crate::error::room_join_hold_schema::RoomJoinHoldSchema>)]
     #[serde(rename = "room_join_hold")]
     room_join_hold: Option<crate::error::room_join_hold_schema::RoomJoinHoldSchema>,
+    #[schema(value_type = Option<crate::error::memory_pending_schema::MemoryPendingSchema>)]
+    #[serde(rename = "pending")]
+    pending: Option<crate::error::memory_pending_schema::MemoryPendingSchema>,
     #[schema(value_type = Option<Vec<Object>>)]
     program_steps: Option<Vec<serde_json::Value>>,
 }
