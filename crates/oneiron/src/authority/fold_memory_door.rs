@@ -303,8 +303,14 @@ pub fn fold(entries: &[AuthorityLogEntry]) -> Folded {
     }
 }
 
-/// The bytes the memory floor projects a fold of `rows` rows and `pairs`
-/// ancestor pairs to hold (`log_budget::fold_projected_bytes`).
-pub fn projected_bytes(rows: usize, pairs: u64) -> u64 {
-    super::log_budget::fold_projected_bytes(rows, pairs)
+/// The bytes the memory floor projects a fold to hold, for an index of
+/// `ids` ids, `pairs` ancestor pairs, `runs` runs and `merge_gain` merge gain
+/// entries (`log_budget::fold_projected_bytes`).
+pub fn projected_bytes(ids: u64, pairs: u64, runs: u64, merge_gain: u64) -> u64 {
+    super::log_budget::fold_projected_bytes(super::log_budget::AncestryFootprint {
+        ids,
+        pairs,
+        runs,
+        merge_gain,
+    })
 }

@@ -999,7 +999,9 @@ fn measure(family: &str, shape: &str, rows: usize) -> f64 {
     let ids = index.ids();
     let runs = index.runs();
     let gain = door::merge_gain(&by_hash, &index);
-    let projected = door::projected_bytes(entries.len(), pairs);
+    let projected = door::projected_bytes(ids, pairs, runs, gain);
+    // The floor's margin on this run: projected over the whole fold's peak.
+    let fit = projected as f64 / fold_weight.peak.max(1) as f64;
     println!(
         "FOLD-MEASURE family={family} shape={shape} rows={} pairs={pairs} counted_pairs={} \
          fold_counted_pairs={} folded_rows={folded_rows} valid={} grown_entries={grown} \
@@ -1010,7 +1012,7 @@ fn measure(family: &str, shape: &str, rows: usize) -> f64 {
          index_bytes_per_pair={} states_bytes_per_grown_entry={} states_bytes_per_row={} \
          fold_peak_bytes_per_pair={} ids={ids} runs={runs} merge_gain={gain} \
          deepest_family={deepest_family} merged_family={merged_family} \
-         states_family={states_family} index_bytes_per_run={}",
+         states_family={states_family} index_bytes_per_run={} fit={fit:.3}",
         entries.len(),
         index.counted_pairs(),
         folded.counted_pairs,
