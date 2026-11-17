@@ -90,6 +90,7 @@ pub mod dreamer_stage_line;
 pub mod enum_name_rows;
 pub mod epoch_lineage_pointer;
 pub mod esign_commitments;
+pub mod esign_send_binding;
 pub mod eval_authoring_execution_fault;
 pub mod extra_room_index;
 pub mod extraction_probe;
