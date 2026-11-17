@@ -34,7 +34,10 @@ pub use self::retry::ReportDeliveryRetryRequest;
 pub(crate) use self::wire::received_issue_signature;
 use self::wire::{SignatureSink, signature_request, wire_body};
 use super::store;
-use super::{ReportDisclosure, ReportIssue, ReportRoute, ReportRoutedPayload, ReportStatus};
+use super::{
+    ReportDisclosure, ReportIssue, ReportIssueOrigin, ReportRoute, ReportRoutedPayload,
+    ReportStatus,
+};
 use crate::consent::StandingConsentGrant;
 use crate::dreamer_runner::DreamerAdmittedAttempt;
 use crate::edit_distance::publisher::{
@@ -275,7 +278,8 @@ impl Vault {
 
     /// Offers one issue's content-free signature to its publisher's bound
     /// endpoint and records the lane. `Ok(None)` when the issue is not
-    /// routed to a publisher. A finished lane answers its record and sends
+    /// routed to a publisher or was restored from the owner's archive.
+    /// A finished lane answers its record and sends
     /// nothing. The gate admits the send on the participation grant that
     /// [`Self::run_coach_feedback_delivery`] keeps; without it the send is
     /// held like any other. One merged issue read feeds both the routed
@@ -371,6 +375,10 @@ impl Vault {
         now: u64,
         join_cell: &std::cell::RefCell<Option<ReportImportJoin>>,
     ) -> Result<Option<ReportDeliveryRecord>> {
+        // Archive history may already have reached its publisher from the source vault.
+        if issue.origin == ReportIssueOrigin::OwnerArchiveRestore {
+            return Ok(None);
+        }
         let ReportRoute::Publisher { publisher_ref } = &payload.route else {
             return Ok(None);
         };
