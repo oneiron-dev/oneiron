@@ -170,6 +170,7 @@ pub mod off_record_shell;
 pub mod off_record_side_row;
 pub mod outbound_grant_index;
 pub mod outbound_wait_setting_keys;
+pub mod owed_grant_end;
 pub mod own_device_message_replay;
 pub mod owner_device_answer;
 pub mod owner_key_release;
