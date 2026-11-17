@@ -77,7 +77,8 @@ use serde::Serialize;
 /// 45: on a hosted fold a `human` bind or rebind, and a bind or rebind of any class of a key whose
 /// binding, live or revoked, is `human` or of a live key a `human` binding could name (an owner
 /// or admin key, the custodial root's too), counts only with the proof of an owner key no cloud
-/// key holds (rows OLD-PARENTS-OWNER-BINDING-REVOKE, OLD-PARENTS-OWNER-BINDING-CONFLICT).
+/// key holds and no passkey limit holds (rows OLD-PARENTS-OWNER-BINDING-REVOKE,
+/// OLD-PARENTS-OWNER-BINDING-CONFLICT).
 pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 45;
 
 /// The domain every encoded image starts with.

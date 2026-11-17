@@ -281,6 +281,14 @@ pub(super) fn asking_owner_choices(state: &FoldState) -> BTreeSet<AuthorityEntry
 /// key's consent. A revoke never asks (ONE-REVOKE-DURABILITY), so the root
 /// alone can still end a binding an owner key made (row
 /// HOSTED-OWNER-BIND-ROOT-REVOKE).
+///
+/// A passkey-limited key ([`FoldState::passkey_limited`]) gives no proof
+/// here, as it gives none to a carried answer or to a revoke of an owner
+/// key: such a key authorizes no actor binding from any signature position
+/// (lead ruling WEBPASSKEY-BLIND-SIGNATURE = B), and every rule that reads a
+/// participant as the owner's proof leaves it out (REVIEW2 #8451 P2-1). Else
+/// the host, which serves the page a passkey signs on, binds a person with
+/// its root and the cosign of a key it had the passkey vouch for blind.
 pub(super) fn human_bind_proved(
     state: &FoldState,
     op: &AuthorityOp,
@@ -312,7 +320,7 @@ pub(super) fn human_bind_proved(
     !touches_a_person
         || participants
             .iter()
-            .any(|key| owner_key_outside_cloud_custody(state, key))
+            .any(|key| !state.passkey_limited(key) && owner_key_outside_cloud_custody(state, key))
 }
 
 /// Whether `key` is a live owner key on `state`'s roster that no cloud key
