@@ -109,15 +109,27 @@ impl ScopedRead<'_> {
             return Ok(false);
         };
         for facets in limits.axes() {
-            let inside = match self.session_view {
-                Some(view) => facets_admit_in(self.vault, view, txn, *id, raw, facets)?,
-                None => facets_admit_in(self.vault, &self.vault.store, txn, *id, raw, facets)?,
-            };
-            if !inside {
+            if !self.row_inside_facets_in(txn, id, raw, facets)? {
                 return Ok(false);
             }
         }
         Ok(true)
+    }
+
+    /// Whether the stored row `id`, with header and body `raw`, sits inside
+    /// `facets` as this read's store holds it (`facets_admit_in`): a whole
+    /// axis holds every row, an empty one none.
+    pub(super) fn row_inside_facets_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+        raw: &[u8],
+        facets: &ScopeAxis<ScopeId>,
+    ) -> Result<bool> {
+        match self.session_view {
+            Some(view) => facets_admit_in(self.vault, view, txn, *id, raw, facets),
+            None => facets_admit_in(self.vault, &self.vault.store, txn, *id, raw, facets),
+        }
     }
 }
 

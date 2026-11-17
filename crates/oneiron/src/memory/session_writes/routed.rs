@@ -17,12 +17,12 @@
 //! here, before the segment opens, and kept whether or not the room reads
 //! them as TURNs (Engine 10-22: no new refusal).
 
+use super::super::claim_admission::StampedClaimScope;
 use super::super::session_reads::resolve_room_write_subject;
 use super::super::support::{id_from_optional_hex, json_to_rmpv, requested_approval};
 use super::super::{
-    AllRelationships, ClaimInput, ClaimRelationships, CommitReceipt, EntityRefReceipt,
-    MEMORY_CODE_INVALID_STATE, Memory, MemoryError, MemoryResult, ScopedClaimInput,
-    SessionReadContext,
+    ClaimInput, CommitReceipt, EntityRefReceipt, MEMORY_CODE_INVALID_STATE, Memory, MemoryError,
+    MemoryResult, ScopedClaimInput, SessionReadContext,
 };
 use crate::batch::BatchOp;
 use crate::claim::{ClaimApprovalStatus, ClaimSubject};
@@ -251,17 +251,12 @@ impl Memory<'_> {
                 &["Write it through its own door, on record."],
             ));
         }
-        let world = self.resolve_ref(&input.scope.world_id)?;
-        let facet = self.resolve_ref(&input.scope.scope_facet_id)?;
-        let project = self.resolve_ref(&input.scope.scope_project_id)?;
-        let relationship = match &input.scope.scope_relationship_id {
-            ClaimRelationships::All(AllRelationships::All) => None,
-            ClaimRelationships::Relationships(ids) => Some(
-                ids.iter()
-                    .map(|id| self.resolve_ref(id))
-                    .collect::<Result<crate::claim::RelationshipSet, _>>()?,
-            ),
-        };
+        let StampedClaimScope {
+            world,
+            facet,
+            project,
+            relationship,
+        } = self.stamp_claim_scope(&input.scope)?;
         if input.sensitivity.is_some_and(|band| band > 3) {
             return Err(MemoryError::bad_request("sensitivity must be in 0..=3"));
         }

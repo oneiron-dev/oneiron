@@ -11,11 +11,12 @@
 //! An empty pick on the live socket renegotiates again, and the next socket
 //! asks for no world window.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use base64::Engine;
 use ed25519_dalek::SigningKey;
 use futures_util::{SinkExt, StreamExt};
 use oneiron::EntityId;
@@ -43,7 +44,7 @@ const STEP_WAIT: Duration = Duration::from_secs(20);
 
 /// What the fake home saw, in the order it saw it.
 #[derive(Debug)]
-enum HomeEvent {
+pub(super) enum HomeEvent {
     /// A sync socket opened: its number, counted from 1.
     SyncOpened(usize),
     /// A sync socket asked about a world window.
@@ -71,15 +72,33 @@ struct RpcRequest {
     id: u64,
     method: String,
     window: String,
+    params: serde_json::Value,
 }
 
-struct FakeHome {
+/// What the fake home serves and records for the predicted residence tests.
+#[derive(Debug, Default)]
+pub(super) struct PredictedHome {
+    /// The selectors of the `residence.predict` asks, in order.
+    pub(super) asks: Mutex<Vec<String>>,
+    /// The set bodies `residence.predicted_set` serves, by 64-hex digest.
+    pub(super) sets: Mutex<HashMap<String, Vec<u8>>>,
+    /// The windows of the `residence.promote` asks, in order.
+    pub(super) promotes: Mutex<Vec<String>>,
+    /// The windows of the `residence.window.vv` asks, in order.
+    pub(super) vvs: Mutex<Vec<String>>,
+    /// Every predicted residence RPC method seen, in order.
+    pub(super) methods: Mutex<Vec<String>>,
+}
+
+pub(super) struct FakeHome {
     /// The root image every sync socket gets for its root vector.
     root: Vec<u8>,
     events: mpsc::UnboundedSender<HomeEvent>,
     sync_sockets: AtomicUsize,
     /// Released by the test; taken by the first thin index read.
     held_index: Mutex<Option<oneshot::Receiver<()>>>,
+    /// The predicted residence RPCs' state, when a predicted test serves them.
+    predicted: Option<Arc<PredictedHome>>,
 }
 
 impl FakeHome {
@@ -107,6 +126,43 @@ impl FakeHome {
             events,
             sync_sockets: AtomicUsize::new(0),
             held_index: Mutex::new(Some(held)),
+            predicted: None,
+        });
+        tokio::spawn(async move {
+            while let Ok((stream, _)) = listener.accept().await {
+                tokio::spawn(Arc::clone(&home).serve(stream));
+            }
+        });
+        (url, seen, release)
+    }
+
+    /// Listens like [`Self::start`], serving the predicted residence RPCs from `predicted`:
+    /// `residence.predict` answers unchanged, `residence.predicted_set` serves a planted body,
+    /// `residence.promote` records the ask and refuses it, and `residence.window.vv` answers an
+    /// empty vector.
+    pub(super) async fn start_predicted(
+        root: Vec<u8>,
+        predicted: Arc<PredictedHome>,
+    ) -> (
+        String,
+        mpsc::UnboundedReceiver<HomeEvent>,
+        oneshot::Sender<()>,
+    ) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("loopback listener");
+        let url = format!(
+            "ws://{}/ws",
+            listener.local_addr().expect("listener address")
+        );
+        let (events, seen) = mpsc::unbounded_channel();
+        let (release, held) = oneshot::channel();
+        let home = Arc::new(Self {
+            root,
+            events,
+            sync_sockets: AtomicUsize::new(0),
+            held_index: Mutex::new(Some(held)),
+            predicted: Some(predicted),
         });
         tokio::spawn(async move {
             while let Ok((stream, _)) = listener.accept().await {
@@ -206,6 +262,16 @@ impl FakeHome {
         if request.id == BIND_ID {
             return vec![bind_reply()];
         }
+        if let Some(predicted) = &self.predicted
+            && request.method != "residence.index"
+        {
+            predicted
+                .methods
+                .lock()
+                .expect("the recorded methods")
+                .push(request.method.clone());
+            return answer_predicted(predicted, request).await;
+        }
         if request.method != "residence.index" {
             return vec![rpc_envelope(
                 "rpc.err",
@@ -244,7 +310,96 @@ fn rpc_request(frame: &[u8]) -> Option<RpcRequest> {
             .as_str()
             .unwrap_or_default()
             .to_owned(),
+        params: envelope["payload"]["params"].clone(),
     })
+}
+
+/// Answers one predicted residence RPC: `residence.predict` records the ask and answers
+/// unchanged, `residence.predicted_set` serves the planted body from the asked offset,
+/// `residence.promote` records the window and refuses it (the tests assert on the recorded
+/// request), and `residence.window.vv` answers an empty vector. Anything else is refused.
+async fn answer_predicted(predicted: &PredictedHome, request: RpcRequest) -> Vec<Vec<u8>> {
+    let RpcRequest {
+        id,
+        method,
+        window,
+        params,
+    } = request;
+    match method.as_str() {
+        "residence.predict" => {
+            predicted
+                .asks
+                .lock()
+                .expect("the recorded asks")
+                .push(params["selector"].as_str().unwrap_or_default().to_owned());
+            let page = serde_json::json!({ "state": "unchanged" });
+            vec![rpc_envelope(
+                "rpc.res",
+                id,
+                Value::Binary(
+                    rmp_serde::to_vec_named(&page).expect("encode the prediction answer"),
+                ),
+            )]
+        }
+        "residence.predicted_set" => {
+            let digest = params["digest"].as_str().unwrap_or_default();
+            let offset = params["offset"].as_u64().unwrap_or(u64::MAX);
+            let sets = predicted.sets.lock().expect("the served sets");
+            let (Some(body), Ok(offset)) = (sets.get(digest), usize::try_from(offset)) else {
+                return vec![refusal(id)];
+            };
+            if offset > body.len() {
+                return vec![refusal(id)];
+            }
+            let total = u64::try_from(body.len()).expect("a served set fits its total");
+            let page = serde_json::json!({
+                "digest": digest,
+                "offset": offset,
+                "total": total,
+                "part": base64::engine::general_purpose::STANDARD.encode(&body[offset..]),
+            });
+            vec![rpc_envelope(
+                "rpc.res",
+                id,
+                Value::Binary(rmp_serde::to_vec_named(&page).expect("encode the set part")),
+            )]
+        }
+        "residence.promote" => {
+            predicted
+                .promotes
+                .lock()
+                .expect("the recorded promotes")
+                .push(window);
+            vec![refusal(id)]
+        }
+        "residence.window.vv" => {
+            predicted
+                .vvs
+                .lock()
+                .expect("the recorded vv asks")
+                .push(window.clone());
+            let page = serde_json::json!({
+                "window": window,
+                "vv": base64::engine::general_purpose::STANDARD
+                    .encode(loro::VersionVector::new().encode()),
+            });
+            vec![rpc_envelope(
+                "rpc.res",
+                id,
+                Value::Binary(rmp_serde::to_vec_named(&page).expect("encode the vv answer")),
+            )]
+        }
+        _ => vec![refusal(id)],
+    }
+}
+
+/// The fake home's refusal of one residence RPC.
+fn refusal(id: u64) -> Vec<u8> {
+    rpc_envelope(
+        "rpc.err",
+        id,
+        Value::Map(vec![(Value::from("code"), Value::from("REFUSED"))]),
+    )
 }
 
 /// One reply envelope, as the home writes it.
