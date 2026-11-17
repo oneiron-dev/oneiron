@@ -361,16 +361,27 @@ impl ScopedReadActorKey {
         }
         // The trailing folds, each only when set, so every other key keeps
         // its fingerprint. First, the credentials saved lanes froze, each
-        // judged in every serving txn (FIX OWN-DEVICE-GRANT-NOT-RECHECKED).
+        // judged in every serving txn (FIX OWN-DEVICE-GRANT-NOT-RECHECKED),
+        // and the earlier end a caveat set one (FIX
+        // SAVED-LANE-OUTLIVES-CAVEAT-EXPIRY).
         if !self.saved_credentials.is_empty() {
             key_fold_len(&mut hasher, self.saved_credentials.len());
             for credential in &self.saved_credentials {
                 let judged = match credential {
-                    SavedCredential::Live(_) => 0u8,
+                    SavedCredential::Live {
+                        expires_at: None, ..
+                    } => 0u8,
                     SavedCredential::Standing(_) => 1u8,
+                    SavedCredential::Live {
+                        expires_at: Some(_),
+                        ..
+                    } => 2u8,
                 };
                 hasher.update(&[judged]);
                 hasher.update(&credential.slip_id());
+                if let Some(end) = credential.expires_at() {
+                    hasher.update(&end.to_be_bytes());
+                }
             }
         }
         // Then a key whose reader's own owner authority is withheld (Sol F3
