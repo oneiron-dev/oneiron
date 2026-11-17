@@ -688,6 +688,9 @@ impl KeptTurn {
             // was sent, so no live fork is captured (FIX 9463): the flight
             // writes on the cheap writer, as the agent.
             sources: None,
+            // Only a turn outside a no-record stretch is kept (`Turn::run`),
+            // so its flight's runs keep their record (census L5-25).
+            keeps_no_record: false,
         };
         match ai.enter_chat_breakpoint(call, admitted, answering) {
             Ok(()) | Err(ConversationCompactionUnavailable::Quiet) => {}
@@ -950,6 +953,10 @@ impl KeptTurn {
             budget_units,
             message,
             sources: None,
+            // Only a kept turn compacts its thread, and only a turn outside a
+            // no-record stretch is kept (`Turn::run`), so the flight's runs
+            // keep their record (census L5-25).
+            keeps_no_record: false,
         };
         match ai.enter_chat_breakpoint(call, admitted, answering) {
             Ok(()) | Err(ConversationCompactionUnavailable::Quiet) => {}
