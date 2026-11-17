@@ -511,8 +511,6 @@ fn offer_lines(
         .collect()
 }
 
-/// Sends a kept first send through the native mail pack: the cold-send law
-/// holds a first send to a stranger for the owner's one-send press.
 /// The continuation the session's no-fit turn kept, while it is live.
 pub(super) fn kept_continuation(
     page_ref: EntityId,
@@ -539,6 +537,8 @@ pub(super) fn continuation_listing(
     })
 }
 
+/// Sends a kept first send through the native mail pack: the cold-send law
+/// holds a first send to a stranger for the owner's one-send press.
 fn dispatch_on_pack(
     pack: &NativeMailPack,
     vault: &Vault,
