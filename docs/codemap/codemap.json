@@ -1795,9 +1795,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/agent_dispatch/skill_default.rs",
-     "purpose": "Default-hub workflow references, with the existing derived fallback",
+     "purpose": "Default-hub workflow references and the loop's bootstrap skill roots, with the existing derived fallback",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 4
      }
     },
     {
@@ -33506,13 +33506,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/dreamer_runner/maintenance/agent_health/policy.rs",
      "purpose": "The reviewer's policy (FIX 8075, agent-mind §3.8: \"The recipe is a skill\"): the in-force…",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 11
      }
     },
     {
@@ -34020,7 +34020,7 @@
      "surface": {
       "const": 2,
       "crate-vis": 2,
-      "fn": 2
+      "fn": 3
      }
     },
     {
@@ -64119,10 +64119,18 @@
      "path": "src/persona_snapshot/mod.rs",
      "purpose": "OF-325 persona snapshot: compile + export the shareable person-card (PSNAP-1, mode A)",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "mod": 1,
       "re-export": 3
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/persona_snapshot/setting_keys.rs",
+     "purpose": "The persona snapshot's owner Setting key (owner principle, 16 Nov 00:44: a restriction that is not a…",
+     "surface": {}
     },
     {
      "bucket": "m",
@@ -76199,7 +76207,7 @@
      "path": "src/skill_hub/bootstrap.rs",
      "purpose": "Build-embedded bootstrap skills; import and activation commit together on first open",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 14
      }
     },
     {
@@ -76314,13 +76322,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/skill_hub/fork_source.rs",
      "purpose": "A fork copies real files and edits source identity before hashing the new tree",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 6
      }
     },
     {
@@ -76461,7 +76469,7 @@
      "path": "src/skill_hub/index.rs",
      "purpose": "Skill provenance and capability indexes",
      "surface": {
-      "crate-vis": 16,
+      "crate-vis": 17,
       "re-export": 1
      }
     },
@@ -76497,7 +76505,7 @@
      "path": "src/skill_hub/mod.rs",
      "purpose": "Skill-hub records, provenance aliases, adapter contracts, and update gates",
      "surface": {
-      "crate-vis": 23,
+      "crate-vis": 24,
       "mod": 2,
       "re-export": 24
      }
@@ -76826,7 +76834,7 @@
      "path": "src/skill_hub/pack_catalog/mod.rs",
      "purpose": "Exact, inert PACK.md source catalogs",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "mod": 1,
       "re-export": 24
      }
@@ -77101,7 +77109,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "PackSection",
@@ -77110,7 +77118,7 @@
      "path": "src/skill_hub/pack_catalog/source.rs",
      "purpose": "Validated exact source trees",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 12,
       "struct": 2
      }
@@ -77472,20 +77480,22 @@
      "notable": [
       "RejectedSkillEdit",
       "RejectedSkillEditReason",
+      "SkillBriefFile",
       "SkillEditDraft",
       "SkillFailureContext",
       "SkillFailureReport",
+      "SkillFileEdit",
       "SkillOptimizeAuthor",
       "SkillOptimizeBrief"
      ],
      "path": "src/skill_optimize/brief.rs",
      "purpose": "The author seam and the dev-partitioned evidence brief handed across it",
      "surface": {
-      "const": 3,
+      "const": 7,
       "crate-vis": 3,
       "enum": 2,
       "fn": 3,
-      "struct": 4,
+      "struct": 6,
       "trait": 1
      }
     },
@@ -78034,7 +78044,7 @@
      "path": "src/skill_optimize/gate/rule_policy.rs",
      "purpose": "The instructions the gate compares for a rule skill (FIX 10878): its description, then the dial seeds the…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -78147,8 +78157,8 @@
      "path": "src/skill_optimize/job.rs",
      "purpose": "One attempt end to end: rank, read, ask the author, re-check the target under the write txn, land one gated…",
      "surface": {
-      "const": 8,
-      "crate-vis": 10,
+      "const": 9,
+      "crate-vis": 11,
       "fn": 3,
       "struct": 1
      }
@@ -78268,7 +78278,7 @@
      "path": "src/skill_optimize/mod.rs",
      "purpose": "SKILL-OPT-1 (ONE-1448, ARCH-0026 dreamer-v2 \"Optimize skills\"): the Coach's job on the Dreamer's runner that…",
      "surface": {
-      "crate-vis": 24,
+      "crate-vis": 25,
       "mod": 3,
       "re-export": 21
      }
@@ -83176,7 +83186,7 @@
      "path": "src/store/skill_package/site_folder.rs",
      "purpose": "A site skill's folder (CUA E10): `site.json` names the skill's site by exact origins and path routes, and…",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 14
      }
     },
     {
@@ -91893,6 +91903,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/test_doors/bootstrap_skills.rs",
+     "purpose": "Door for `tests/bootstrap_loop_skills.rs` (FIX BOOTSTRAP-SEED-ADDED-SKILL-MISSES-SEEDED-VAULTS…",
+     "surface": {
+      "fn": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/test_doors/builtin_pack_seed.rs",
      "purpose": "Door for `tests/booking_feed_move_held.rs`: an emergency's apology goes out on `email`, a channel a built-in…",
      "surface": {
@@ -93327,7 +93347,7 @@
      "purpose": "Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD)",
      "surface": {
       "fn": 1,
-      "mod": 248,
+      "mod": 250,
       "re-export": 1
      }
     },
@@ -94024,6 +94044,20 @@
      "purpose": "Door for `tests/skill_judgment_cut_instructions.rs`: score one held-out replay case",
      "surface": {
       "fn": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "MarkerScorer"
+     ],
+     "path": "src/test_doors/skill_optimize_files.rs",
+     "purpose": "Door for `tests/skill_optimize_file_edits.rs` (census L9-02): enqueues the Coach's optimize attempt, drafts…",
+     "surface": {
+      "const": 1,
+      "fn": 4,
+      "struct": 1
      }
     },
     {
@@ -102968,6 +103002,14 @@
      "bucket": "m",
      "kind": "test",
      "notable": [],
+     "path": "tests/bootstrap_loop_skills.rs",
+     "purpose": "The loop's shipped skills (ARCH-0053:273 #r4b-hubs: they \"version with\" the engine, and restore defaults…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
      "path": "tests/budget_scope_hosts.rs",
      "purpose": "Row B3 of BUDGET-TRAP-UNTYPED-NO-SENDER: the hosts whose steps spend under a spend scope",
      "surface": {}
@@ -107144,6 +107186,14 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/persona_snapshot_restricted_band_key.rs",
+     "purpose": "The owner's opt-out for the persona snapshot's restricted-band clamp…",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -108844,6 +108894,14 @@
      "surface": {}
     },
     {
+     "bucket": "L",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/skill_optimize_file_edits.rs",
+     "purpose": "Census L9-02 (Engine ruling 13 Nov 22:39): a skill_optimize draft may replace whole the existing text and…",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -109097,6 +109155,14 @@
      "notable": [],
      "path": "tests/stranger_parent_settled.rs",
      "purpose": "FIX [STRANGER-WITHHELD-PARENT-STALLS-PEER-SETTLED]: a stranger's withheld parent stalls no peer route, while…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/stream_seed_sitting.rs",
+     "purpose": "A message stream's TURN joins the sitting its opener's handle was bound to (`Memory::with_session`), at its…",
      "surface": {}
     },
     {
@@ -111017,7 +111083,7 @@
      "purpose": "Node-local OF-520 own-rate windows"
     },
     "persona_snapshot": {
-     "files": 10,
+     "files": 11,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -111493,7 +111559,7 @@
      "purpose": "`TimeRange`, temporal expressions/parsing, granularity/anchor enums"
     },
     "test_doors": {
-     "files": 252,
+     "files": 254,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -111670,8 +111736,8 @@
    },
    "over_bar": 301,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 7963,
-   "test_files": 1748
+   "source_files": 7966,
+   "test_files": 1752
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -119592,6 +119658,14 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/guest_pressure_fenced.rs",
+     "purpose": "A fenced guest's pids-pressure reads (FIX [GUEST-PRESSURE-FENCED-ZERO-INSPECT-UNTESTED]): `observe_pressure`…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/guest_pressure_lease.rs",
      "purpose": "A guest's pids-limit hits read through its session lease (FIX 8013 follow-ups…",
      "surface": {}
@@ -119701,7 +119775,7 @@
    "over_bar": 0,
    "purpose": "Container sessions with an engine-owned Linux Landlock/seccomp fence",
    "source_files": 35,
-   "test_files": 4
+   "test_files": 5
   },
   "oneiron-contracts": {
    "files": [
@@ -159695,6 +159769,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/config/server_config/artifact_localhost.rs",
+     "purpose": "The host a local vault answers on under `*.localhost` (APP-HOST = A), which serve names on the operator's…",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/config/server_config/debug.rs",
      "purpose": "The redacting `Debug` of [`SyncServerConfig`] and [`ServeConfig`]: a secret prints as redacted, never its…",
      "surface": {}
@@ -172275,7 +172359,7 @@
      "purpose": "The native serve listener is intentionally plain TCP: TLS terminates at a reverse proxy"
     },
     "config": {
-     "files": 79,
+     "files": 80,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -172767,7 +172851,7 @@
    },
    "over_bar": 68,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1971,
+   "source_files": 1972,
    "test_files": 449
   },
   "oneiron-setting-contract": {
