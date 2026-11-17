@@ -6,9 +6,10 @@
  * oneiron_*_free function from this header. Do not pass Rust-owned pointers
  * to free(), and do not free the same value twice.
  *
- * Boundary validation: EntityId inputs must be exactly 16 bytes. Text queries
- * are capped at 8 KiB; dimensions are the vault's configured width with no
- * ceiling; a search limit is served whole.
+ * Boundary validation: EntityId inputs must be exactly 16 bytes. A text query
+ * is served whole at any length; past the vault's [limits] recall_query_bytes
+ * row it asks the installed limit port, if any. Dimensions are the vault's
+ * configured width with no ceiling; a search limit is served whole.
  *
  * Intentionally absent: start_sync and stop_sync are not exported while sync
  * remains disabled pre-launch.

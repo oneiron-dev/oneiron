@@ -123,6 +123,15 @@ impl SenderKind {
     }
 }
 
+/// The PERSON a Known `stamp` names; `None` for an unknown sender or a
+/// counterparty ref that is no entity id.
+fn known_person(stamp: &SurfaceCounterpartyStamp) -> Option<EntityId> {
+    let SurfaceCounterpartyStamp::Known { counterparty_ref } = stamp else {
+        return None;
+    };
+    EntityId::from_hex(counterparty_ref).ok()
+}
+
 /// The classifier's read of one message, as its record keeps it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -258,31 +267,37 @@ impl AgentDispatcher<'_> {
     }
 
     /// Who `stamp` names, and the PERSON when it names one. Every agent is a
-    /// PERSON of model substrate (`context_board/people.rs`), so the
-    /// substrate, not the entity type, tells a human.
+    /// PERSON (`context_board/people.rs`), so the substrate, not the entity
+    /// type, tells a human ([`crate::subject_model::person_is_agent_in_txn`]).
+    /// A PERSON whose substrate does not read is no known human: it is
+    /// `Unknown`, and the error is logged (FIX
+    /// RESIDENT-SENDER-SUBSTRATE-ERR-READS-HUMAN).
     fn sender_kind(
         &self,
         stamp: &SurfaceCounterpartyStamp,
         now: u64,
     ) -> Result<(SenderKind, Option<EntityId>)> {
-        let SurfaceCounterpartyStamp::Known { counterparty_ref } = stamp else {
+        let Some(person) = known_person(stamp) else {
             return Ok((SenderKind::Unknown, None));
         };
-        let Ok(person) = EntityId::from_hex(counterparty_ref) else {
-            return Ok((SenderKind::Unknown, None));
-        };
-        if self.vault.get_entity_type(&person)? != Some(crate::registry::ENTITY_TYPE_PERSON) {
-            return Ok((SenderKind::Unknown, None));
-        }
-        if matches!(
-            self.vault.person_substrate(&person, now),
-            Ok(Some(
-                crate::write_envelope::subject_record::PersonSubstrate::Model
-            ))
-        ) {
-            return Ok((SenderKind::Agent, Some(person)));
-        }
         let txn = self.vault.store.env.read_txn()?;
+        if self.vault.get_entity_type_in_txn(&txn, &person)?
+            != Some(crate::registry::ENTITY_TYPE_PERSON)
+        {
+            return Ok((SenderKind::Unknown, None));
+        }
+        match crate::subject_model::person_is_agent_in_txn(self.vault, &txn, &person, now) {
+            Ok(true) => return Ok((SenderKind::Agent, Some(person))),
+            Ok(false) => {}
+            Err(error) => {
+                tracing::warn!(
+                    %error,
+                    person = %person.to_hex(),
+                    "a message sender's substrate did not read; the sender is unknown, not human"
+                );
+                return Ok((SenderKind::Unknown, None));
+            }
+        }
         let of_vault = crate::policy_model::is_live_vault_owner_in_txn(self.vault, &txn, &person)?
             || crate::policy_model::is_live_writing_member_for_store_in_txn(
                 &self.vault.store,
@@ -298,6 +313,38 @@ impl AgentDispatcher<'_> {
             },
             Some(person),
         ))
+    }
+
+    /// Whether `stamp` names a human PERSON at `now`: a known PERSON that is
+    /// no agent ([`crate::subject_model::person_is_agent_in_txn`]). A
+    /// resident's human-messages mode wakes on these alone. A sender whose
+    /// substrate does not read is no known human; that is logged at debug,
+    /// since an unwoken message is read again on every pass.
+    pub(super) fn sender_is_human(
+        &self,
+        stamp: &SurfaceCounterpartyStamp,
+        now: u64,
+    ) -> Result<bool> {
+        let Some(person) = known_person(stamp) else {
+            return Ok(false);
+        };
+        let txn = self.vault.store.env.read_txn()?;
+        if self.vault.get_entity_type_in_txn(&txn, &person)?
+            != Some(crate::registry::ENTITY_TYPE_PERSON)
+        {
+            return Ok(false);
+        }
+        match crate::subject_model::person_is_agent_in_txn(self.vault, &txn, &person, now) {
+            Ok(agent) => Ok(!agent),
+            Err(error) => {
+                tracing::debug!(
+                    %error,
+                    person = %person.to_hex(),
+                    "a message sender's substrate did not read; it wakes no human-messages resident"
+                );
+                Ok(false)
+            }
+        }
     }
 
     /// `classifier`'s read of `message` from a `sender` sender. `None` when

@@ -1,32 +1,10 @@
 //! JSON and MessagePack wire helpers: conversion, body decoding, provenance and requested approval.
-//! `json_to_rmpv` and `encode_rmpv` are its call surface.
-//! `memory::support` re-exports these at their old reach.
+//! `json_to_msgpack_value` (the engine's one conversion, from `crate::serialize`) and `encode_rmpv`
+//! are its call surface. `memory::support` re-exports these at their old reach.
 
 use super::*;
 
-pub(in crate::memory) fn json_to_rmpv(value: &serde_json::Value) -> Value {
-    match value {
-        serde_json::Value::Null => Value::Nil,
-        serde_json::Value::Bool(b) => Value::Boolean(*b),
-        serde_json::Value::Number(n) => {
-            if let Some(u) = n.as_u64() {
-                Value::from(u)
-            } else if let Some(i) = n.as_i64() {
-                Value::from(i)
-            } else {
-                Value::from(n.as_f64().unwrap_or(0.0))
-            }
-        }
-        serde_json::Value::String(s) => Value::from(s.as_str()),
-        serde_json::Value::Array(items) => Value::Array(items.iter().map(json_to_rmpv).collect()),
-        serde_json::Value::Object(entries) => Value::Map(
-            entries
-                .iter()
-                .map(|(k, v)| (Value::from(k.as_str()), json_to_rmpv(v)))
-                .collect(),
-        ),
-    }
-}
+pub(in crate::memory) use crate::serialize::json_to_msgpack_value;
 
 pub(in crate::memory) fn encode_rmpv(value: &Value) -> MemoryResult<Vec<u8>> {
     let mut out = Vec::new();
@@ -89,6 +67,6 @@ fn sensitivity_stamp_admits_auto(scope: Option<&serde_json::Value>) -> bool {
     else {
         return true;
     };
-    crate::claim::sensitivity_band_from_value(&json_to_rmpv(stamp))
+    crate::claim::sensitivity_band_from_value(&json_to_msgpack_value(stamp))
         .is_some_and(|band| band < FIRST_PROPOSED_SENSITIVITY_BAND)
 }

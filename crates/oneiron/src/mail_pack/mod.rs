@@ -68,9 +68,13 @@ pub mod pack;
 mod provider_delete;
 mod reply;
 mod reply_ask;
+mod reply_attachments;
+mod reply_custody;
+mod reply_erase;
 mod reply_mime;
 mod reply_recipients;
 mod reply_send;
+mod reply_smtp;
 mod rest;
 #[cfg(oneiron_test_support)]
 pub(crate) use rest::GrantIssuer;
@@ -133,8 +137,16 @@ pub use reply::{
     MailReplyDraftState, MailReplyDraftView, MailReplyDraftsRequest,
 };
 pub(crate) use reply::{approved_source_reply_in_txn, erase_reply_drafter_in_txn};
+#[cfg(oneiron_test_support)]
+pub(crate) use reply::{mail_reply_draft_as_stored_for_test, reply_draft_manifest_digest_for_test};
 pub(crate) use reply_ask::MAIL_REPLY_ASK_PRODUCER;
+pub use reply_attachments::{MailReplyAttachment, MailReplyAttachmentView};
+pub(crate) use reply_erase::erase_reply_attachment_dependents_in_txn;
 pub use reply_send::SMTP_SUBMISSION_CONNECTOR_EFFECTOR;
+pub(crate) use reply_smtp::MailHostSlot;
+pub use reply_smtp::{
+    DEFAULT_SMTP_MAX_MESSAGE_OCTETS_UNADVERTISED, MailBlockingRunner, MailHostSettings,
+};
 pub use search::{MailSearchReport, MailSourceSearchRequest};
 pub use share::{MailThreadShareReceipt, MailThreadShareRequest};
 pub use source::{

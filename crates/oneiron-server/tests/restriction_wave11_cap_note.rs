@@ -1,10 +1,11 @@
 //! Restriction wave 11, PR 1: the confirm sheet's line for letting an agent
-//! pay (RESTRICTION-WAVE-11-CAP-NOTE; CAP-SCOPE = B). Turning on `top_up` or
-//! `pay_as_you_go` of `models.quota.agent_may_answer` states the hard cap of
-//! the open roots the row's scope reaches: every open root for the vault row,
-//! only the roots over that agent's open attempts for an agent's row. With
-//! none in reach it states "no cap" and the provider's account. The answers
-//! that spend nothing state no line.
+//! pay (RESTRICTION-WAVE-11-CAP-NOTE; CAP-SCOPE = B). Turning on `top_up`,
+//! `pay_as_you_go` or `use_fallback` (the standing fallback, paid models
+//! included; WAVE11-QUOTA-CANON) of `models.quota.agent_may_answer` states
+//! the hard cap of the open roots the row's scope reaches: every open root
+//! for the vault row, only the roots over that agent's open attempts for an
+//! agent's row. With none in reach it states "no cap" and the provider's
+//! account. The answers that spend nothing state no line.
 //!
 //! Read through the engine's pub `Vault::setting_loosening_note`, the line the
 //! sheet shows, and through `Vault::setting_ask_as_owner`, the agent's pending
@@ -78,21 +79,21 @@ fn quota_note(vault: &Vault, scope: &SettingScope, item: &str) -> Option<String>
         .expect("read the confirm sheet's line")
 }
 
-/// With no open root: "no cap" and the provider's account, for `top_up` and
-/// `pay_as_you_go`, at the vault row and at an agent's row; no line for the
-/// answers that spend nothing.
+/// With no open root: "no cap" and the provider's account, for `top_up`,
+/// `pay_as_you_go` and `use_fallback`, at the vault row and at an agent's
+/// row; no line for the answers that spend nothing.
 #[test]
 fn a_payment_answer_states_no_cap_without_an_open_root() {
     let (_dir, vault) = open_vault();
     for scope in [SettingScope::Vault, SettingScope::Agent(EntityId::now())] {
-        for item in ["top_up", "pay_as_you_go"] {
+        for item in ["top_up", "pay_as_you_go", "use_fallback"] {
             assert_eq!(
                 quota_note(&vault, &scope, item).as_deref(),
                 Some(NO_CAP_LINE),
                 "{scope:?} {item}"
             );
         }
-        for item in ["wait", "add_account", "use_fallback"] {
+        for item in ["wait", "add_account"] {
             assert_eq!(quota_note(&vault, &scope, item), None, "{scope:?} {item}");
         }
     }
@@ -104,7 +105,7 @@ fn a_payment_answer_states_no_cap_without_an_open_root() {
 fn a_payment_answer_states_the_open_root_cap() {
     let (_dir, vault) = open_vault();
     open_root(&vault, "launch-wave11-a", 5_000);
-    for item in ["top_up", "pay_as_you_go"] {
+    for item in ["top_up", "pay_as_you_go", "use_fallback"] {
         assert_eq!(
             quota_note(&vault, &SettingScope::Vault, item).as_deref(),
             Some("spend cap in force: 5000 tokens"),
@@ -141,10 +142,13 @@ fn an_agent_row_states_only_the_roots_over_its_own_attempts() {
         .expect("the agent's run spends under its root");
     open_root(&vault, "launch-wave11-other", 9_000);
 
-    assert_eq!(
-        quota_note(&vault, &SettingScope::Agent(agent), "top_up").as_deref(),
-        Some("spend cap in force: 5000 tokens")
-    );
+    for item in ["top_up", "use_fallback"] {
+        assert_eq!(
+            quota_note(&vault, &SettingScope::Agent(agent), item).as_deref(),
+            Some("spend cap in force: 5000 tokens"),
+            "{item}"
+        );
+    }
     assert_eq!(
         quota_note(&vault, &SettingScope::Vault, "top_up").as_deref(),
         Some("spend cap in force: up to 9000 tokens per run, across 2 open runs")
