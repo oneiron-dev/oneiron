@@ -162,6 +162,7 @@ fn speak(
             }],
             occurred_at: fixture.vault.now_recorded_at(),
             assertions: Default::default(),
+            project: None,
         })
         .map(|_| ());
     (turn, spoken)

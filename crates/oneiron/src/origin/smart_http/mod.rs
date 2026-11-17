@@ -126,6 +126,10 @@ pub(crate) use self::evidence::erase_receive_pack_evidence_actor_in_txn;
 pub use self::held::{AtDiskFloor, HeldBytes, SpillFloor};
 pub use self::hooks::DoorHooksDir;
 pub use self::intent::{ReceivePackRefResult, ReceivePackRefStatus};
+#[cfg(oneiron_test_support)]
+pub(crate) use self::intent::{
+    receive_pack_intent_key_pin_for_test, receive_pack_progress_key_pin_for_test,
+};
 pub(crate) use self::intent_erase::erase_receive_pack_intent_actor_in_txn;
 pub use self::landing::{
     ReceivePackAttribution, ReceivePackCertificate, ReceivePackLanding, refs_already_applied,

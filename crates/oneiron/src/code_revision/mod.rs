@@ -25,6 +25,10 @@ mod tree_codec;
 mod tree_inventory;
 mod types;
 pub(crate) use self::keys::archive_revision_tables;
+#[cfg(oneiron_test_support)]
+pub(crate) use self::keys::{
+    put_pins_code_revision_frontier_in_txn, put_pins_code_revision_integrity_in_txn,
+};
 pub(crate) use self::promotion::archive_promotion_table;
 pub(crate) use self::proposals::archive_proposal_table;
 // The author is erasable attribution (FIX 6258).
