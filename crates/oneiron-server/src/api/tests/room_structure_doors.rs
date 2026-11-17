@@ -220,6 +220,7 @@ fn relationship_room(room: &Room, space: oneiron::EntityId) -> oneiron::EntityId
             occurred_at: 4,
             assertions: Default::default(),
             thread_audience: None,
+            project: None,
         })
         .expect("speak in the relationship's room");
     id
@@ -436,6 +437,7 @@ async fn a_direct_conversations_turn_reads_by_its_lane() {
             occurred_at: 4,
             assertions: Default::default(),
             thread_audience: None,
+            project: None,
         })
         .expect("speak in the direct");
     let turn = first_turn(&room.server, direct).await;
