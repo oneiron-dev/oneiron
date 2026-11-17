@@ -425,12 +425,7 @@ fn shape_identity(tree: &XmlTree, at: usize) -> Option<(u32, Option<String>)> {
 
 /// The SHA-256 of `bytes` as lower-case hex.
 pub fn sha256_hex(bytes: &[u8]) -> String {
-    let digest: [u8; 32] = sha2::Sha256::digest(bytes).into();
-    let mut out = String::with_capacity(64);
-    for byte in digest {
-        out.push_str(&format!("{byte:02x}"));
-    }
-    out
+    oneiron_hex::encode(&sha2::Sha256::digest(bytes))
 }
 
 /// What `write_run` wrote: the manifest, and which cases have candidates.
@@ -646,11 +641,6 @@ fn options(mut args: impl Iterator<Item = String>) -> Result<Options, String> {
     })
 }
 
-/// A recorded source revision: 40 hex digits.
-fn is_source(given: &str) -> bool {
-    given.len() == 40 && given.bytes().all(|byte| byte.is_ascii_hexdigit())
-}
-
 /// Run the engine half from `args` (the program name skipped) as `name`. Exit status: 0 when every case has a candidate, 1 when some case was refused, 2 when no manifest was written.
 pub fn main_with(name: &str, args: impl Iterator<Item = String>) -> std::process::ExitCode {
     let mut stdout = std::io::stdout();
@@ -663,7 +653,7 @@ pub fn main_with(name: &str, args: impl Iterator<Item = String>) -> std::process
         }
     };
     if let Some(given) = options.source.as_deref()
-        && !is_source(given)
+        && !oneiron_hex::is_hex_any_case(given, Some(40))
     {
         let _ = writeln!(
             stderr,

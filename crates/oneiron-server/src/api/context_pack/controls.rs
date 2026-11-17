@@ -191,6 +191,12 @@ pub(crate) struct CoreDisclosureAssembly {
     #[serde(rename = "clamped_out")]
     #[schema(example = 2)]
     clamped_out: u64,
+    /// The home vault's id (64 hex) when the pack serves a conversation
+    /// another vault holds: claims stamped above the owner's home clearance
+    /// for that vault are left out (DEC-0006 #home-clearance). Absent for a
+    /// conversation of this vault.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    home: Option<String>,
 }
 
 /// Per-speaker interlocutor stamp echoed with a context pack (OF-365 ILD-1).
@@ -260,6 +266,25 @@ impl ContextPackQueryAffect {
     }
 }
 
+/// The caller's vector of a name from the learned phonetic rung's model
+/// (CROSS-ARCH-0013 `#ladder` rung 2), searched against the names that model
+/// embedded. The vector is the caller's, as phonetic codes are.
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+#[schema(example = json!({"model_id": "symphonym-v7", "vector": [0.12, -0.4, 0.33, 0.05]}))]
+pub(crate) struct ContextPackPhoneticVector {
+    /// The model's id, as the server's `[phonetic_embedder]` names it.
+    #[serde(alias = "modelId")]
+    #[schema(example = "symphonym-v7")]
+    pub(super) model_id: String,
+    /// The vector, of the model's width: another width is refused.
+    pub(super) vector: Vec<f32>,
+    /// Candidates the learned list takes: 200 unless set, at most 1000.
+    #[serde(default)]
+    #[schema(example = 200)]
+    pub(super) limit: Option<usize>,
+}
+
 /// Context-pack request on the canonical core route.
 #[derive(Debug, Deserialize, ToSchema)]
 #[schema(example = json!({
@@ -274,6 +299,15 @@ pub(crate) struct CoreContextPackRequest {
     /// explicit owner_present signal is needed for supervised room disclosure.
     #[serde(default)]
     pub(super) conversation_id: Option<String>,
+    /// The vault that holds the conversation this pack serves, as its
+    /// authority id (64 hex), when that is another vault: claims stamped
+    /// with any band but public are then read only up to the owner's home
+    /// clearance for it (DEC-0006 #home-clearance). A room named by
+    /// `conversation_id` is this vault's, so it takes no other home. Omitted
+    /// with no room, the owner and the vault's own agents read as homed
+    /// here and any other caller as homed in an unnamed vault.
+    #[serde(default)]
+    pub(super) conversation_home: Option<String>,
     /// Optional actor-bound read-session id; omission uses the active session.
     #[serde(default)]
     pub(super) session_id: Option<String>,
@@ -324,11 +358,25 @@ pub(crate) struct CoreContextPackRequest {
     /// and `query_vector`.
     #[serde(default)]
     pub(super) media: Option<ContextPackMediaQuery>,
+    /// Optional vector of a name from the learned phonetic model, searched
+    /// as one more list of the phonetic channel. It seeds the pack on its
+    /// own, as `media` does.
+    #[serde(default, alias = "phoneticVector")]
+    pub(super) phonetic_vector: Option<ContextPackPhoneticVector>,
     /// Optional affect the query is asked in (OF-423): emotion congruence
     /// ranks a candidate by how near its own valence, arousal and dominance
     /// sit.
     #[serde(default, alias = "queryAffect")]
     pub(super) query_affect: Option<ContextPackQueryAffect>,
+    /// The stored compaction packet to rehydrate from (CROSS-ARCH-0002b
+    /// #ep-6-2-3 `packetId`): the 32-hex id of the epoch summary a
+    /// `host.compact` minted. The rows it carries lead the pack, before the
+    /// ranked fill, each read under the caller's own read. A stale packet (no
+    /// epoch summary the caller reads, a withdrawn one, or one a later epoch
+    /// of its lineage passed) leaves today's pack; a malformed id is a 400.
+    #[serde(default, alias = "packetId")]
+    #[schema(example = "0123456789abcdef0123456789abcdef")]
+    pub(super) packet_id: Option<String>,
     /// Maximum primary candidates to retrieve, served whole. The response's
     /// `limit_clamped` stays false.
     #[serde(default = "default_limit")]
@@ -389,6 +437,12 @@ pub(crate) struct CoreContextPackRequest {
     /// whole requested limit is served.
     #[serde(skip)]
     pub(super) limit_clamped: bool,
+    /// The chat host's TURN this pack's recall serves, stamped on its
+    /// retrieval run (the convention on [`oneiron::store::RetrievalTurn`]):
+    /// a live chat turn sets it; never on the wire, so no caller names one.
+    #[serde(skip)]
+    #[schema(ignore)]
+    pub(crate) retrieval_turn: Option<oneiron::store::RetrievalTurn>,
 }
 
 impl CoreContextPackRequest {

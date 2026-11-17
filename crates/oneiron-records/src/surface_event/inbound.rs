@@ -95,13 +95,7 @@ pub enum SurfaceEventDispatchRoute {
 }
 
 pub fn hash_hex(raw_hash: &[u8; 32]) -> String {
-    const HEX: &[u8; 16] = b"0123456789abcdef";
-    let mut encoded = String::with_capacity(64);
-    for byte in raw_hash {
-        encoded.push(HEX[(byte >> 4) as usize] as char);
-        encoded.push(HEX[(byte & 0x0f) as usize] as char);
-    }
-    encoded
+    oneiron_hex::encode(raw_hash)
 }
 
 /// Stable rejection reasons for inbound SurfaceEvent routing receipts.

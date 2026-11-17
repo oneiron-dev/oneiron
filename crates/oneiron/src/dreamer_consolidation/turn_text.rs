@@ -39,6 +39,7 @@ use crate::ports::EdgeDirection;
 use crate::registry::{ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};
 use crate::write_envelope::WriteActor;
 use crate::{EntityId, Error, Result, Vault};
+use oneiron_contracts::fingerprint::LegacyDigest;
 use oneiron_model::llm::{Scope, ScopeResource};
 
 mod attribution;
@@ -92,22 +93,21 @@ pub(crate) struct MessageSpan {
 impl MessageSpan {
     /// Folds every field into an identity hash. A slice with no source
     /// attribution folds exactly the bytes it folded before slices carried
-    /// one.
-    pub(crate) fn hash_into(&self, hasher: &mut blake3::Hasher) {
-        hasher.update(self.message.as_bytes());
-        hasher.update(&(self.start as u64).to_be_bytes());
-        hasher.update(&(self.end as u64).to_be_bytes());
-        hasher.update(&self.revision);
+    /// one. The evidence attachment id and source revision it feeds are
+    /// stored, so it keeps its bytes (K, PLAN-UC-04 3.4c).
+    pub(crate) fn hash_into(&self, hasher: &mut LegacyDigest) {
+        hasher
+            .raw(self.message.as_bytes())
+            .raw(&(self.start as u64).to_be_bytes())
+            .raw(&(self.end as u64).to_be_bytes())
+            .raw(&self.revision);
         if let Some(frontier) = &self.frontier {
-            hasher.update(&[1]);
-            hasher.update(&(frontier.len() as u64).to_be_bytes());
-            hasher.update(frontier);
+            hasher.raw(&[1]).len_u64_be(frontier.len()).raw(frontier);
         } else {
-            hasher.update(&[0]);
+            hasher.raw(&[0]);
         }
         if let Some(attribution) = &self.attribution {
-            hasher.update(b"source_attribution");
-            hasher.update(attribution);
+            hasher.raw(b"source_attribution").raw(attribution);
         }
     }
 }
@@ -205,6 +205,12 @@ impl TurnText {
     /// sorted by id. None for inline text.
     pub(crate) fn message_ids(&self) -> impl Iterator<Item = EntityId> + '_ {
         self.messages.iter().flatten().map(|pin| pin.id)
+    }
+
+    /// Where each projected MESSAGE sits in [`Self::text`]: its id, the byte
+    /// offset its words start at and their length, in text order.
+    pub(super) fn message_places(&self) -> &[(EntityId, usize, usize)] {
+        &self.layout
     }
 
     /// The one PERSON the source names as the speaker of every MESSAGE this
@@ -659,7 +665,7 @@ pub(crate) fn live_turn_text_in(
 /// no text.
 pub(super) fn read_turn_text(vault: &Vault, id: &EntityId) -> Result<TurnText> {
     let read = dreamer_read(vault)?;
-    let txn = snapshot(vault)?;
+    let txn = read_only_snapshot(vault)?;
     // A TURN the Dreamer may not read has no text here, like an absent one.
     let Some((_, _, body)) = read
         .get_entities_parts_in_txn(&txn, std::slice::from_ref(id))?
@@ -688,6 +694,15 @@ pub(super) fn dreamer_read(vault: &Vault) -> Result<ScopedRead<'_>> {
 /// expiry is judged at a real floor, never inside the snapshot.
 pub(super) fn snapshot(vault: &Vault) -> Result<heed::RoTxn<'_>> {
     vault.store.authorization_now()?;
+    Ok(vault.store.env.read_txn()?)
+}
+
+/// A read snapshot for the side doors, opened without persisting the grant
+/// clock, so a read-only side door writes nothing. A grant's expiry is
+/// still judged inside the snapshot, at the committed floor: the read
+/// takes no time of its own, so it judges nothing past what the vault
+/// committed or this store already judged.
+fn read_only_snapshot(vault: &Vault) -> Result<heed::RoTxn<'_>> {
     Ok(vault.store.env.read_txn()?)
 }
 

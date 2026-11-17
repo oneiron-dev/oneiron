@@ -46,16 +46,15 @@ use super::{ADMISSION, ARM, DECIDED, DISARMED, WAKE};
 use crate::Vault;
 use crate::batch::secret_scan::LiftedKeys;
 use crate::entity_id::EntityId;
-use crate::error::{Error, Result};
+use crate::error::Result;
 use crate::sync::WindowKey;
 
 /// The largest row either map carries whole; an arming or wake past it stays
 /// on its machine, as an arming that names a custody handle does.
 pub(crate) const MAX_ROW_BYTES: usize = 1 << 16;
 
-fn refused(reason: &'static str) -> Error {
-    Error::InvalidConfig(format!("turn program row refused: {reason}"))
-}
+#[doc(hidden)]
+use oneiron_records::dreamer_runner::program::replica::{encode, refused};
 
 /// What a carried arming row says.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -119,10 +118,6 @@ impl WakeRow {
             } => (*turn, *registration),
         }
     }
-}
-
-fn encode<T: Serialize>(row: &T) -> Result<Vec<u8>> {
-    serde_json::to_vec(row).map_err(|_| refused("does not encode"))
 }
 
 fn decode_arming(bytes: &[u8]) -> Result<ArmingRow> {
@@ -362,7 +357,8 @@ pub(crate) fn merge_arming_row_in_txn(
 /// arming, its pinned SKILL and its TURN arrive, or while the TURN's ChildOf
 /// edge is deferred here, it is left in the window, and a held row keeps its
 /// hold. An `Admitted` row consumes the riding wake this machine recorded
-/// under its key, on any machine.
+/// under its key, on any machine; a row that names an occurrence's wake is
+/// refused.
 pub(crate) fn merge_wake_row_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -375,13 +371,7 @@ pub(crate) fn merge_wake_row_in_txn(
     let wake = match decode_wake(bytes)? {
         WakeRow::Owed(wake) => wake,
         WakeRow::Admitted { admission, .. } => {
-            return Ok(
-                if consume_decided_wake_in_txn(vault, txn, map_key, admission)? {
-                    RowMerge::Written
-                } else {
-                    RowMerge::Held
-                },
-            );
+            return consume_decided_wake_in_txn(vault, txn, map_key, admission);
         }
     };
     if home_here_in_txn(vault, txn)? != Some(true) {
@@ -430,25 +420,31 @@ pub(crate) fn merge_wake_row_in_txn(
 /// recorded). The decision's identity is kept here (`DECIDED`), with or
 /// without a wake to consume, so no later landing of the turn records the
 /// wake again (FIX 5266). Only a wake whose own authority rides and whose
-/// admission the row names goes. Answers whether a row changed.
+/// admission the row names goes. An occurrence's wake is admitted where it
+/// was recorded, so a row that names one is refused, and no decision is kept
+/// for it.
 fn consume_decided_wake_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     map_key: &str,
     admission: [u8; 32],
-) -> Result<bool> {
+) -> Result<RowMerge> {
     let Some(key) = wake_key_ids(map_key) else {
-        return Ok(false);
+        return Ok(RowMerge::Held);
     };
+    let owed = WAKE.get(vault, &*txn, &key)?;
+    if owed.as_ref().is_some_and(|wake| wake.occurrence.is_some()) {
+        return Ok(RowMerge::Refused("names an occurrence's wake"));
+    }
     let kept = if DECIDED.get(vault, &*txn, &key)? == Some(admission)
         || ADMISSION.contains(vault, &*txn, &admission)?
     {
-        false
+        RowMerge::Held
     } else {
         DECIDED.put(vault, txn, &key, &admission)?;
-        true
+        RowMerge::Written
     };
-    let Some(wake) = WAKE.get(vault, &*txn, &key)? else {
+    let Some(wake) = owed else {
         return Ok(kept);
     };
     if !wake.authority.rides_to_home() || wake.admission_id() != admission {
@@ -456,7 +452,7 @@ fn consume_decided_wake_in_txn(
     }
     WAKE.delete(vault, txn, &key)?;
     super::index::unindex_wake_in_txn(vault, txn, wake.authority.actor(), key)?;
-    Ok(true)
+    Ok(RowMerge::Written)
 }
 
 /// Drops, in the caller's writer, the riding wake this machine recorded
@@ -597,7 +593,8 @@ pub(crate) fn owed_wake_arming_row_in_txn(
 }
 
 /// The `Admitted` rows TURN `turn` owes the window from this machine's own
-/// decisions (FIX 5266): each riding wake of the turn this machine admitted,
+/// decisions (FIX 5266): each riding wake of the turn this machine admitted
+/// (never an occurrence's, which is admitted where it was recorded),
 /// whether or not a machine carried it as owed (the home admits its own
 /// turns' wakes, which no `Owed` row ever carried), and each decision it
 /// imported. A machine elected home later then holds every decision, and no
@@ -613,7 +610,7 @@ pub(crate) fn turn_decided_rows_in_txn(
         let Some(record) = ADMISSION.get(vault, txn, &admission)? else {
             continue;
         };
-        if !record.wake.authority.rides_to_home() {
+        if record.wake.occurrence.is_some() || !record.wake.authority.rides_to_home() {
             continue;
         }
         let (turn, registration) = record.wake.key();
@@ -656,6 +653,11 @@ pub(crate) fn admitted_row_in_txn(
     let Ok(WakeRow::Owed(wake)) = decode_wake(bytes) else {
         return Ok(None);
     };
+    // An occurrence's wake is admitted where it was recorded, never through
+    // a carried row.
+    if wake.occurrence.is_some() {
+        return Ok(None);
+    }
     let admission = wake.admission_id();
     if !ADMISSION.contains(vault, txn, &admission)? {
         return Ok(None);
@@ -668,6 +670,22 @@ pub(crate) fn admitted_row_in_txn(
     })?))
 }
 
+/// The `Admitted` row for the owed wake `wake`: its map key and bytes, as
+/// the decision mirror encodes them. For the integration tests alone, which
+/// carry a row no emitter builds: an occurrence's decision.
+#[cfg(oneiron_test_support)]
+pub(super) fn admitted_row_for_test(wake: &TurnProgramWake) -> Result<(String, Vec<u8>)> {
+    let (turn, registration) = wake.key();
+    Ok((
+        wake_key((turn, registration)),
+        encode(&WakeRow::Admitted {
+            turn,
+            registration,
+            admission: wake.admission_id(),
+        })?,
+    ))
+}
+
 /// Where a carried row of either map goes in a checkpoint.
 pub(crate) enum RowPlacement {
     /// In its actor's compartment, held while each dependency is.
@@ -677,12 +695,22 @@ pub(crate) enum RowPlacement {
     },
     /// Ids alone, dropped with each entity it names.
     Structure { dependencies: Vec<EntityId> },
+    /// A row whose own key differs from the key that files it, which admit
+    /// refuses and no writer files (FIX SYNC-DISCARD-KEEPS-UNBOUND-WHOLE-ROW).
+    KeyMismatch,
 }
 
-/// Where the arming row `bytes` goes: its actor's, held while the
-/// conversation it listens to is.
-pub(crate) fn arming_row_placement(bytes: &[u8]) -> Option<RowPlacement> {
-    Some(match decode_arming(bytes).ok()? {
+/// Where the arming row `bytes`, filed under `map_key`, goes: its actor's,
+/// held while the conversation it listens to is. A key mismatch for an
+/// arming filed under another registration (FIX
+/// SYNC-CHECKPOINT-TURN-PROGRAM-KEY-UNUSED). `None` for bytes that read as
+/// no arming.
+pub(crate) fn arming_row_placement(map_key: &str, bytes: &[u8]) -> Option<RowPlacement> {
+    let row = decode_arming(bytes).ok()?;
+    if arming_key(row.registration()) != map_key {
+        return Some(RowPlacement::KeyMismatch);
+    }
+    Some(match row {
         ArmingRow::Armed(arming) => RowPlacement::Owned {
             owner: arming.actor,
             dependencies: arming.conversation.into_iter().collect(),
@@ -694,11 +722,16 @@ pub(crate) fn arming_row_placement(bytes: &[u8]) -> Option<RowPlacement> {
     })
 }
 
-/// Where the wake row `bytes` goes: an `Owed` row is its actor's, held while
-/// its turn and conversation are; an `Admitted` row is ids alone, held while
-/// its turn is.
-pub(crate) fn wake_row_placement(bytes: &[u8]) -> Option<RowPlacement> {
-    Some(match decode_wake(bytes).ok()? {
+/// Where the wake row `bytes`, filed under `map_key`, goes: an `Owed` row is
+/// its actor's, held while its turn and conversation are; an `Admitted` row
+/// is ids alone, held while its turn is. A key mismatch for a wake filed
+/// under another wake's key. `None` for bytes that read as no wake.
+pub(crate) fn wake_row_placement(map_key: &str, bytes: &[u8]) -> Option<RowPlacement> {
+    let row = decode_wake(bytes).ok()?;
+    if wake_key(row.key()) != map_key {
+        return Some(RowPlacement::KeyMismatch);
+    }
+    Some(match row {
         WakeRow::Owed(wake) => RowPlacement::Owned {
             owner: wake.authority.actor(),
             dependencies: vec![wake.turn.turn, wake.turn.conversation],
