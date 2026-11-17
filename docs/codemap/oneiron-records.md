@@ -544,7 +544,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/memory/merge_queue_doors/checker_types.rs` | src | s | 1 struct · 2 enum · 5 re-export | MergeQueueCheckState, MergeQueueCheckWorkKind, MergeQueueCheckWorkView | Moved from `crates/oneiron/src/memory/merge_queue_doors/checker_types.rs` (lib split R1: record types below… |
 | `src/memory/merge_queue_doors/mod.rs` | src | s | 3 mod · 12 re-export | — | — |
 | `src/memory/merge_queue_doors/types.rs` | src | s | 5 struct · 4 re-export | MergeQueueBatchView, MergeQueueObservation, MergeQueuePathView, MergeQueuePointersView, MergeQueueRequeueView | Moved from `crates/oneiron/src/memory/merge_queue_doors/types.rs` (lib split R2: record types below the lib) |
-| `src/memory/mod.rs` | src | s | 24 mod · 272 re-export | — | — |
+| `src/memory/mod.rs` | src | s | 24 mod · 273 re-export | — | — |
 | `src/memory/origin_doors/mod.rs` | src | s | 1 mod · 30 re-export | — | — |
 | `src/memory/origin_doors/workbench_types.rs` | src | s | 8 struct · 3 re-export | CodeForkDocumentView, CodeForkView, CodeIngressRef, CodePushIngressView, CodeRepoImportLink, CodeRepoView, CodeRunWorkFile, CodeRunWorkLink | Moved from `crates/oneiron/src/memory/origin_doors/workbench_types.rs` (lib split R2: record types below the… |
 | `src/memory/outbound/mod.rs` | src | s | 1 mod · 8 re-export | — | — |
