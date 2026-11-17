@@ -23,7 +23,7 @@ use oneiron_model::llm::ScopeResource;
 
 mod bindings;
 pub(super) use bindings::{MintNamespace, PersonBindings, bind_people, original_try};
-pub(crate) use bindings::{delete_lineage_origin_in_txn, pin_lineage_origin_in_txn};
+pub(crate) use bindings::{delete_lineage_origin_in_txn, origin_in_txn, pin_lineage_origin_in_txn};
 
 pub(super) fn mint_extracted_people(
     vault: &Vault,
@@ -222,9 +222,28 @@ fn put_person(
     Ok(())
 }
 
+/// Whether the speaker of TURN `turn` is one whose words people are minted
+/// from, by the rule this writer applies to each source: a derivation's
+/// Person item reads it too.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn speaker_admissible_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    turn: &EntityId,
+) -> Result<bool> {
+    let facts = read_turn_facts_in_txn(vault, txn, turn)?;
+    Ok(dreamer_extraction_role_admissible(dreamer_turn_role(
+        facts.speaker.as_deref(),
+        &vault.config.assistant_display_names,
+    )))
+}
+
 // Normalize spelling and whitespace, but never strip punctuation or accents:
 // separate words must not collapse into evidence for a different name.
-fn normalize_name_span(text: &str) -> String {
+pub(crate) fn normalize_name_span(text: &str) -> String {
     let normalized = nfkc(text);
     casefold(&normalized)
         .split_whitespace()
@@ -232,7 +251,7 @@ fn normalize_name_span(text: &str) -> String {
         .join(" ")
 }
 
-fn has_name_span(text: &str, normalized_name: &str) -> bool {
+pub(crate) fn has_name_span(text: &str, normalized_name: &str) -> bool {
     if normalized_name.is_empty() {
         return false;
     }

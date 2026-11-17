@@ -21,6 +21,11 @@
 //!   (scripts/sdk/verbs/vault.residence.*.json, `host_door_proof: owner`): no
 //!   person or agent but the owner opens one, and a credential short of
 //!   `core:write` stops at the scope guard of every write door.
+//! - `vault.sync.outbox` (FIX 3966), the owner's read of what a machine still
+//!   owes its home, a host door of the same proof: through the machine's
+//!   connection here, every queued update by window, as its digest and size;
+//!   a machine with no live connection here answers `unreached` and nothing
+//!   waits as a directive; no person or agent but the owner reads it.
 //!
 //! The applied leg runs on this host's own machine connection, registered
 //! through `oneiron_server::test_doors::residence_connection` as the device
@@ -75,6 +80,7 @@ const OPEN: &str = "vault.residence.open";
 const INDEX: &str = "vault.residence.index";
 const PRUNE: &str = "vault.residence.prune";
 const DIRECTIVES: &str = "vault.residence.directives";
+const OUTBOX: &str = "vault.sync.outbox";
 
 /// The family's doors that write: each takes `core:write` at its scope
 /// guard.
@@ -899,5 +905,120 @@ fn no_residence_door_opens_for_anyone_but_the_owner() {
         let (_, mode) = &doors[0];
         let queued = host.owner_ok(MODE, mode.clone()).await;
         assert_eq!(queued["state"], "queued", "{queued}");
+    })
+}
+
+/// FIX 3966 `vault.sync.outbox`: through the machine's connection here, the
+/// owner reads every update it still owes its home, in queue order and
+/// grouped by window, each as the digest and size of its raw row, with no
+/// answer from a home it never reached; a second read finds the same. A
+/// machine the owner enrolled that runs no connection here, and this machine
+/// once its connection ended, answer `unreached`, and no read leaves a
+/// directive waiting.
+#[test]
+fn the_owner_reads_the_updates_a_machine_still_owes_its_home() {
+    run_on_engine_stack("residence-doors-outbox", || async {
+        let host = Host::new("vault-residence-doors-outbox");
+        let (machine, connection) = host.connect();
+        let machine_hex = machine.to_hex();
+        let ask = json!({"machine": machine_hex});
+        assert_eq!(
+            host.owner_ok(OUTBOX, ask.clone()).await,
+            json!({"state": "read", "machine": machine_hex, "owed": 0, "windows": []}),
+            "nothing is owed before a write"
+        );
+
+        let earlier_window = "2026-09";
+        let first: &[u8] = b"a ferry note written offline in October";
+        let second: &[u8] = b"a September rota line edited on the train";
+        let third: &[u8] = b"a second October note, still unsent";
+        let first_seq = connection
+            .queue()
+            .push(WINDOW, first)
+            .expect("queue the first update");
+        let second_seq = connection
+            .queue()
+            .push(earlier_window, second)
+            .expect("queue the second update");
+        let third_seq = connection
+            .queue()
+            .push(WINDOW, third)
+            .expect("queue the third update");
+        let owed = |seq: u64, raw: &[u8]| {
+            json!({
+                "seq": seq,
+                "digest": blake3::hash(raw).to_hex().to_string(),
+                "bytes": raw.len(),
+                "receipt": null,
+            })
+        };
+        let expected = json!({
+            "state": "read",
+            "machine": machine_hex,
+            "owed": 3,
+            "windows": [
+                {"window_key": WINDOW, "rows": [owed(first_seq, first), owed(third_seq, third)]},
+                {"window_key": earlier_window, "rows": [owed(second_seq, second)]},
+            ],
+        });
+        assert_eq!(host.owner_ok(OUTBOX, ask.clone()).await, expected);
+        assert_eq!(
+            host.owner_ok(OUTBOX, ask.clone()).await,
+            expected,
+            "a read leaves every update owed"
+        );
+
+        let (_install, other) = host.enrolled_machine();
+        let other = other.to_hex();
+        assert_eq!(
+            host.owner_ok(OUTBOX, json!({"machine": other})).await,
+            json!({"state": "unreached", "machine": other}),
+            "a machine with no connection here is read on the machine itself"
+        );
+        drop(connection);
+        assert_eq!(
+            host.owner_ok(OUTBOX, ask).await,
+            json!({"state": "unreached", "machine": machine_hex}),
+            "an ended connection reaches nothing"
+        );
+        for named in [&machine_hex, &other] {
+            assert_eq!(
+                host.owner_ok(DIRECTIVES, json!({"machine": named})).await,
+                json!([]),
+                "an outbox read queues no directive"
+            );
+        }
+    })
+}
+
+/// `vault.sync.outbox` is the owner's (`host_door_proof: owner`) and a read
+/// door: a PERSON and a FullAccess agent holding `core:read` and
+/// `core:write`, and a ReadOnly agent holding `core:read`, are each refused
+/// as the owner's, though the machine runs its connection here and owes its
+/// home an update. The owner then reads that update.
+#[test]
+fn no_one_but_the_owner_reads_a_machines_outbox() {
+    run_on_engine_stack("residence-doors-outbox-owner-only", || async {
+        let host = Host::new("vault-residence-doors-outbox-owner-only");
+        let (machine, connection) = host.connect();
+        let ask = json!({"machine": machine.to_hex()});
+        let seq = connection
+            .queue()
+            .push(WINDOW, b"an edit the laptop still owes its home")
+            .expect("queue the update");
+        let mina = host.person("Mina Okafor", 0xb1);
+        let keeper = host.agent("outbox-keeper", 0xb2, AgentTier::FullAccess, READ_WRITE);
+        let reader = host.agent("outbox-reader", 0xb3, AgentTier::ReadOnly, READ_ONLY);
+
+        for caller in [&mina, &keeper, &reader] {
+            host.call(Caller::As(caller), OUTBOX, ask.clone())
+                .await
+                .forbidden(OUTBOX, &format!("{OUTBOX} is the vault owner's"));
+        }
+
+        let read = host.owner_ok(OUTBOX, ask).await;
+        assert_eq!(read["state"], "read", "{read}");
+        assert_eq!(read["owed"], 1, "{read}");
+        assert_eq!(read["windows"][0]["rows"][0]["seq"], seq, "{read}");
     })
 }
