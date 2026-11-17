@@ -219,10 +219,12 @@ const CHANGE_MACHINE: SentenceForms = SentenceForms {
 };
 /// The line under a held answer's question: its machine key as a code
 /// ([`machine_key_code`]), for the owner to compare with the code that
-/// device shows.
+/// device shows. A name that is only the device's own report is not said:
+/// the line reads as for no name, and the check is said once, in
+/// [`MACHINE_CODE_CHECK`] (CODE-CHECK-SAID-TWICE-FOR-REPORTED-NAME = A).
 const MACHINE_CODE: SentenceForms = SentenceForms {
     named: "Code shown on {name}: {code}",
-    claimed: "Code shown on that {kind}: {code}\nCheck it on the device itself, not by its name.",
+    claimed: "Code shown on that {kind}: {code}",
     by_kind: "Code shown on that {kind}: {code}",
 };
 /// The line under [`MACHINE_CODE`]: what the owner does with the code. A
@@ -262,8 +264,9 @@ pub fn machine_key_code(machine_key: &[u8; 32]) -> String {
 
 /// What a surface shows under a held answer's question: the answer's machine
 /// key as its code, said of a device of `device_class` that `name` names. A
-/// device named only by its own report gets a second line: the owner checks
-/// the code on the device itself.
+/// device named only by its own report is said by its kind, as a device
+/// with no name is; [`machine_code_check_line`] then sends the owner to the
+/// device itself.
 #[must_use]
 pub fn machine_code_line(
     machine_key: &[u8; 32],

@@ -357,8 +357,9 @@ fn a_held_answer_for_a_node_asks_whether_the_device_may_run_work() {
 
 /// A machine key's code is derived as a recovery root's code is, so the
 /// owner compares like with like. The line under a held answer's question
-/// shows it, and sends the owner to the device itself when the device's name
-/// is only its own report.
+/// shows it, and says a device whose name is only its own report by its
+/// kind, as a device with no name: the line under the code sends the owner
+/// to the device itself, once.
 #[test]
 fn a_machine_key_code_is_derived_as_a_root_code_is() {
     assert_eq!(machine_key_code(&ROOT.0), ROOT_CODE);
@@ -380,10 +381,7 @@ fn a_machine_key_code_is_derived_as_a_root_code_is() {
             MachineDeviceClass::Computer,
             PromptDeviceName::ReportedByDevice("office-mini")
         ),
-        format!(
-            "Code shown on that computer: {ROOT_CODE}\nCheck it on the device itself, not by its \
-             name."
-        )
+        format!("Code shown on that computer: {ROOT_CODE}")
     );
 }
 
@@ -490,9 +488,6 @@ fn a_name_cannot_start_a_line_or_close_its_quotation() {
             MachineDeviceClass::Phone,
             PromptDeviceName::ReportedByDevice("{name}")
         ),
-        format!(
-            "Code shown on that phone: {ROOT_CODE}\nCheck it on the device itself, not by its \
-             name."
-        )
+        format!("Code shown on that phone: {ROOT_CODE}")
     );
 }
