@@ -48,16 +48,15 @@ fn refused() -> Error {
     Error::InvalidConfig("Connect delivery does not match the live reciprocal pact".into())
 }
 
+/// The pact's Connect guest Grant `id`, as the verified fold stands behind it (pass 28 R3c):
+/// its owner's counted giving, which no counted act ended, states the row, and its one Active
+/// pact binds it. A row no counted act gives, or one widened in place, exports nothing.
 fn grant(vault: &crate::Vault, id: EntityId) -> Result<crate::federation::FederationGrant> {
     let txn = vault.store.env.read_txn()?;
-    let crate::vault::LiveEntityRow::Live {
-        entity_type: crate::registry::ENTITY_TYPE_FEDERATION_GRANT,
-        body,
-    } = crate::vault::live_entity_row_in_txn(&vault.store, &txn, &id)?
-    else {
-        return Err(Error::EntityNotFound);
-    };
-    crate::federation::decode_federation_grant_body(&body)
+    vault
+        .guest_grant_standing_in_txn(&txn, id, vault.store.clock.now_recorded_at())?
+        .map(crate::federation::StandingGrant::into_grant)
+        .ok_or(Error::EntityNotFound)
 }
 
 fn id(value: &str) -> Result<[u8; 32]> {

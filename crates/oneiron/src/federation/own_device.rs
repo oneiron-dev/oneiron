@@ -182,7 +182,9 @@ impl Vault {
     }
 
     /// Whether `grant_ref` is `member`'s (PERSON hex) own-device grant, live
-    /// and conferring at `now`. A paired slip naming it stands while it does.
+    /// and conferring at `now`, and standing as the fold reads it: a row whose
+    /// id a counted act names stands only on that act's line (review #8855
+    /// P1-1). A paired slip naming it stands while it does.
     pub(crate) fn own_device_grant_stands_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -200,6 +202,7 @@ impl Vault {
         let grant = decode_federation_grant_body(&body)?;
         Ok(is_own_device_grant(&grant)
             && grant.member_ref.to_hex() == member
-            && grant.confers_at(now))
+            && grant.confers_at(now)
+            && self.grant_row_stands_in_txn(txn, grant_ref, &body, now)?)
     }
 }

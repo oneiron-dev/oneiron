@@ -11,11 +11,13 @@ use oneiron_authority::authority::{
 use oneiron_contracts::EntityId;
 use rmpv::Value;
 
-const FAMILIES: [GrantFamily; 5] = [
+const FAMILIES: [GrantFamily; 7] = [
     GrantFamily::SharedMember,
     GrantFamily::Delegate,
     GrantFamily::HouseLink,
     GrantFamily::InquiryEdge,
+    GrantFamily::Connect,
+    GrantFamily::AskGuest,
     GrantFamily::OwnerAgent,
 ];
 

@@ -141,8 +141,9 @@ fn move_revokes_slips(from: Role, to: Option<Role>) -> bool {
 
 impl Vault {
     /// Every Grant over `vault_id` that confers to a membership reader, delegates included:
-    /// each row the fold stands behind (pass 28 R3), never a row alone, and a base agent's
-    /// or a guest's row still read from itself ([`crate::federation::SharedGrantRow`]). A
+    /// each row the fold stands behind (pass 28 R3; a guest's row on its counted giving since
+    /// R3c), never a row alone, and a base agent's engine-default Steward row still read from
+    /// itself until R4 ([`crate::federation::SharedGrantRow`]). A
     /// row put back after its counted end is none, so a writer that re-gives the ids read
     /// here gives a fresh id in its place (REVIEW r2b P2-3).
     pub(crate) fn vault_grants_in_txn(

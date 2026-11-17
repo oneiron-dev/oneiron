@@ -104,13 +104,15 @@ pub struct AdmittedTaskGrant {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum TaskGrantStanding {
     /// The exact grant its ask recorded for its guest still proves the
-    /// call's actor: live, not withdrawn, naming it and conferring now.
+    /// call's actor: standing on its counted giving with no counted end
+    /// (pass 28 R3c), unexpired, naming it and conferring now.
     Proven(AdmittedTaskGrant),
     /// The grant names another member than the call's actor.
     OtherActor,
     /// The ask now records another grant for its guest, or none.
     AskChanged,
-    /// The grant is withdrawn, past its lifetime or gone.
+    /// The grant stands on no counted giving, its line ended (a revoke),
+    /// it is past its lifetime or gone.
     Lapsed,
 }
 
@@ -131,8 +133,9 @@ impl AdmittedTaskGrant {
 impl Vault {
     /// Admits the guest grant the ask `ask` recorded for guest `person`, for
     /// that guest's companion `member`: only that ask's own grant, never
-    /// another grant the companion holds, and only while it is live, not
-    /// withdrawn, names `member` and confers now. An ask that recorded no
+    /// another grant the companion holds, and only while the verified fold
+    /// stands behind it (its counted giving, which no counted act ended; pass
+    /// 28 R3c), it names `member` and confers now. An ask that recorded no
     /// grant for `person`, or one that no longer holds, is refused.
     pub fn admit_ask_guest_grant(
         &self,
@@ -169,8 +172,8 @@ impl Vault {
 
     /// Proves `admitted` again for a call by `actor` in the caller's `txn`
     /// (FIX 4743). Its member must be `actor`. Its ask must still record
-    /// this grant for its guest, never a newer one. The grant must be live,
-    /// not withdrawn, name `actor` and confer now. It answers that same
+    /// this grant for its guest, never a newer one. The grant must stand on
+    /// its counted giving, name `actor` and confer now. It answers that same
     /// grant when it stands and never looks for another grant `actor`
     /// holds. A storage failure is an error, not a lapse.
     pub(crate) fn prove_admitted_task_grant_in_txn(
@@ -194,8 +197,8 @@ impl Vault {
         })
     }
 
-    /// Whether `admitted`'s grant is live, not withdrawn, names its member
-    /// and confers at this snapshot's instant. Only a storage failure is an
+    /// Whether `admitted`'s grant stands on its counted giving, names its
+    /// member and confers at this snapshot's instant. Only a storage failure is an
     /// error; any other failed check is a grant that does not confer.
     fn task_grant_confers_in_txn(
         &self,

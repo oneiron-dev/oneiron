@@ -258,7 +258,7 @@ impl AuthenticatedWeaveAdmin {
             _ => return Err(not_current()),
         }
         if vault
-            .guest_grant_withdrawn_in_txn(txn, &self.membership_grant)
+            .grant_line_ended_in_txn(txn, self.membership_grant)
             .map_err(&checked)?
         {
             return Err(not_current());

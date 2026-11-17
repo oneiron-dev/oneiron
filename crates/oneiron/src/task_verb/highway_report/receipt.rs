@@ -336,11 +336,21 @@ impl Memory<'_> {
         note: Option<&str>,
     ) -> MemoryResult<Option<TaskAskHandle>> {
         let opened = match rt.txn.as_deref_mut() {
-            None => self
-                .with_verified_actor_write_txn(|txn| {
+            None => {
+                // A block ask to guests gives their Grants in its writer (pass 28 R3c): this
+                // install's key loads before it opens (GRANT-ACT-FAILURE-POLICY = A). A
+                // runner's write loaded it with its report turn.
+                if matches!(
+                    brief.brief.escalation.to,
+                    crate::task_verb::TaskAskTarget::Guests(_)
+                ) {
+                    self.vault().load_membership_carrier();
+                }
+                self.with_verified_actor_write_txn(|txn| {
                     self.open_block_ask_in_txn(txn, task_ref, brief, continuation, key, note)
                 })
-                .and_then(|opened| opened),
+                .and_then(|opened| opened)
+            }
             Some(txn) => {
                 self.open_block_ask_in_txn(txn, task_ref, brief, continuation, key, note)?
             }

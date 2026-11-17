@@ -123,7 +123,7 @@ impl QueuedRequester {
                 }
             }
             RequesterStanding::TaskGrant { grant } => {
-                match vault.guest_grant_withdrawn_in_txn(txn, &grant.grant()) {
+                match vault.grant_line_ended_in_txn(txn, grant.grant()) {
                     Ok(true) => Some(RequesterWithdrawn::GrantWithdrawn),
                     Ok(false) => None,
                     Err(error) => {

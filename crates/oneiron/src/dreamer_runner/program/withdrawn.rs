@@ -59,12 +59,13 @@ fn chain_revoked(fold: &AuthorityFold, slip: &[u8; 32]) -> bool {
 }
 
 /// Whether `grant` is positively known withdrawn here: the FEDERATION_GRANT
-/// marker first, then the guest leg's, whichever the withdrawal wrote.
+/// marker first, then a counted end of its line (a guest's revoke, pass 28
+/// R3c).
 fn grant_withdrawn_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>, grant: EntityId) -> Result<bool> {
     if crate::authority::grant_known_withdrawn_in_txn(&vault.store, txn, grant) {
         return Ok(true);
     }
-    vault.guest_grant_withdrawn_in_txn(txn, &grant)
+    vault.grant_line_ended_in_txn(txn, grant)
 }
 
 /// Whether the vault records `authority`'s actor binding revoked at its
