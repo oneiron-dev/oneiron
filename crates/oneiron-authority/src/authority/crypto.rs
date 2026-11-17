@@ -186,7 +186,9 @@ pub struct AuthoritySignature {
     pub suite: AuthoritySignatureSuite,
     /// Authority public key that verifies the signature.
     pub public_key: AuthorityKey,
-    /// Raw signature bytes: 64 bytes for Ed25519 and fixed-width P-256 ECDSA.
+    /// Signature bytes: 64 raw bytes for Ed25519; for P-256 ECDSA, 64 raw
+    /// bytes r || s over the transcript, or a passkey's assertion over it in
+    /// its envelope ([`decode_webauthn_assertion`]).
     pub signature: Vec<u8>,
 }
 
@@ -195,15 +197,19 @@ impl AuthoritySignature {
         if self.suite != self.public_key.suite() {
             return Err(invalid_authority());
         }
-        match self.suite {
-            AuthoritySignatureSuite::Ed25519 if self.signature.len() == 64 => {}
-            AuthoritySignatureSuite::P256 if self.signature.len() == 64 => {}
-            _ => return Err(invalid_authority()),
-        }
+        let raw: &[u8] = match self.suite {
+            AuthoritySignatureSuite::Ed25519 if self.signature.len() == 64 => &self.signature,
+            AuthoritySignatureSuite::P256 if self.signature.len() == 64 => &self.signature,
+            AuthoritySignatureSuite::P256 => {
+                decode_webauthn_assertion(&self.signature)
+                    .ok_or_else(invalid_authority)?
+                    .signature
+            }
+            AuthoritySignatureSuite::Ed25519 => return Err(invalid_authority()),
+        };
         self.public_key.validate()?;
         if self.suite == AuthoritySignatureSuite::P256 {
-            let signature =
-                P256Signature::from_slice(&self.signature).map_err(|_| invalid_authority())?;
+            let signature = P256Signature::from_slice(raw).map_err(|_| invalid_authority())?;
             if signature.normalize_s().is_some() {
                 return Err(invalid_authority());
             }
@@ -260,6 +266,10 @@ fn verify_authority_signature_uncached(signature: &AuthoritySignature, transcrip
             let Ok(key) = P256VerifyingKey::from_sec1_bytes(public_key) else {
                 return false;
             };
+            if signature.signature.len() != 64 {
+                // A passkey's assertion over the transcript (WEB-PASSKEY-OWNER-KEY).
+                return webauthn_assertion_verifies(&key, &signature.signature, transcript);
+            }
             let Ok(sig) = P256Signature::from_slice(&signature.signature) else {
                 return false;
             };
