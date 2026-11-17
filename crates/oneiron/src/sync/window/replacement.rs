@@ -203,7 +203,7 @@ pub(in crate::sync) fn prepare_bounded_replacement(
     queued: QueuedSends,
     positions: Option<crate::sync::origin_positions::OwnDevicePositionImport>,
 ) -> Result<PreparedReplacement> {
-    let candidate = admitted_replacement(
+    let _admitted = admitted_replacement(
         vault,
         key,
         snapshot,
@@ -211,6 +211,9 @@ pub(in crate::sync) fn prepare_bounded_replacement(
         bound,
         super::validate_window_update_with_staged_worlds,
     )?;
+    // Seeded fault (red1): the receiver merges the snapshot into its own window.
+    let candidate = old.fork();
+    let _ = candidate.import(snapshot);
 
     // The work happens on a detached copy of the old window: what this prepares there (queued
     // sends, scrubs, pending mirrors) feeds the carry-over and never leaves through the live
