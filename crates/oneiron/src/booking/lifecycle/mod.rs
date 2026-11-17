@@ -60,6 +60,7 @@ mod hold_source;
 mod occurrence;
 mod passport;
 mod public_authority;
+pub(crate) mod setting_keys;
 mod storage;
 #[cfg(oneiron_test_support)]
 pub(crate) use self::storage::{confirm_receipt_key_for_test, revision_receipt_key_for_test};

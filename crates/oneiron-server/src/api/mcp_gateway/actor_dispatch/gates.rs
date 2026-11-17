@@ -220,7 +220,7 @@ pub(in crate::api::mcp_gateway) fn mcp_run_speech_gate(
 /// admission job's call. The live session, then the row's own effect
 /// (`McpCallEffect::of_host_verb`): none of them waits for review, so a
 /// writing row needs Write.
-pub(in crate::api::mcp_gateway) fn mcp_host_verb_gate(
+pub(crate) fn mcp_host_verb_gate(
     server: &Arc<SyncServer>,
     actor: &McpCallContext,
     verb: oneiron::task_verb::sdk::AgentVerb,

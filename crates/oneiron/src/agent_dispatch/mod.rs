@@ -41,6 +41,8 @@ pub(crate) use self::comm_widen::{
     comm_widen_children_in, comm_widen_in, comm_widen_recipient_in_txn, effective_comm_in_txn,
     erase_comm_widen_actor_in_txn, put_comm_widen_in,
 };
+#[cfg(oneiron_test_support)]
+pub(crate) mod comm_widen_test_door;
 mod context;
 mod continuation;
 pub use self::continuation::{ConcernPromptInjectOutcome, ConcernPromptInjectRequest};
@@ -102,6 +104,9 @@ pub(crate) use self::run_task::{
 pub use self::run_task::{
     AGENT_RUN_TASK_SUBKIND, AgentRunExecutorLease, AgentRunFence, AgentRunOutcome,
 };
+#[cfg(oneiron_test_support)]
+pub(crate) use self::run_task::{proven_agent_run_task_writer_in, put_peer_agent_run_task_in_txn};
+mod run_writer_proof;
 mod scope;
 pub(crate) use scope::project_descends_from_in_txn;
 mod skill_default;
@@ -179,7 +184,9 @@ pub use self::codec::{
     agent_dispatch_actor, agent_dispatch_payload_agent_id, agent_dispatch_run_actor,
     decode_agent_dispatch_input, encode_agent_dispatch_input,
 };
-pub(crate) use self::codec::{attempt_task_type_ref, attempt_team_stamp, record_dispatch_input};
+pub(crate) use self::codec::{
+    attempt_task_type_ref, attempt_team_stamp, record_dispatch_input, record_spawn_parent_in_txn,
+};
 pub use self::dispatch::AgentDispatcher;
 pub(crate) use self::dispatch::AgentSpawnAdmission;
 pub use self::leader_planner::VaultLeaderTeamPlanner;

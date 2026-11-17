@@ -540,7 +540,7 @@ fn answer_verdict_reasoned(
             &["Change the question, its options or its state as the ladder asks."],
         )
     };
-    let reversibility = request.reversibility.into();
+    let reversibility = request.reversibility;
     // A Box or Point question asks the host's presence question first.
     if question.contract.locates() {
         let located = ladder
