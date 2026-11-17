@@ -214,6 +214,7 @@ pub mod re_root_stale_sweep;
 pub mod read_exposure;
 pub mod removal_import_passes;
 pub mod replay_rows;
+pub mod reply_attachments;
 pub mod repo_base_manifest;
 pub mod repo_secret_marks;
 pub mod research_continuation;
