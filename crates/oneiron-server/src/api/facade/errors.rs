@@ -28,6 +28,7 @@ impl FacadeApiError {
                     reason_codes: Vec::new(),
                     legal_hold: None,
                     room_join_hold: None,
+                    pending: None,
                     program_steps: Vec::new(),
                 },
                 narrowing: None,
@@ -282,6 +283,7 @@ impl From<MemoryError> for FacadeApiError {
                     reason_codes: error.reason_codes,
                     legal_hold: error.legal_hold,
                     room_join_hold: error.room_join_hold,
+                    pending: error.pending,
                     program_steps: Vec::new(),
                 },
                 narrowing: error.read_receipt,
@@ -298,6 +300,7 @@ impl From<ApiError> for FacadeApiError {
     fn from(error: ApiError) -> Self {
         let legal_hold = error.legal_hold().cloned().map(Box::new);
         let room_join_hold = error.room_join_hold().cloned().map(Box::new);
+        let pending = error.pending().cloned().map(Box::new);
         let mut refusal = Self::new(
             error.status(),
             error.code().as_str(),
@@ -306,6 +309,7 @@ impl From<ApiError> for FacadeApiError {
         );
         refusal.body.error.legal_hold = legal_hold;
         refusal.body.error.room_join_hold = room_join_hold;
+        refusal.body.error.pending = pending;
         refusal
     }
 }
@@ -388,6 +392,7 @@ impl FacadeApiError {
         replayed.reason_codes = replayed_field(error, "reasonCodes").unwrap_or_default();
         replayed.legal_hold = replayed_field(error, "legal_hold").map(Box::new);
         replayed.room_join_hold = replayed_field(error, "room_join_hold").map(Box::new);
+        replayed.pending = replayed_field(error, "pending").map(Box::new);
         replayed.program_steps = replayed_field(error, "programSteps").unwrap_or_default();
         refusal.body.narrowing = replayed_field(body, "narrowing").map(Box::new);
         Some(refusal)
@@ -427,6 +432,7 @@ impl FacadeApiError {
         refusal.reason_codes = error.reason_codes;
         refusal.legal_hold = error.legal_hold;
         refusal.room_join_hold = error.room_join_hold;
+        refusal.pending = error.pending;
         refusal
     }
 
@@ -458,7 +464,7 @@ impl IntoResponse for FacadeApiError {
 
 /// Every member a facade refusal's `error` states on the wire
 /// ([`FacadeErrorBody`], its wrong-root correction flattened in).
-const REPLAYED_ERROR_FIELDS: [&str; 15] = [
+const REPLAYED_ERROR_FIELDS: [&str; 16] = [
     "code",
     "message",
     "requestId",
@@ -473,6 +479,7 @@ const REPLAYED_ERROR_FIELDS: [&str; 15] = [
     "reasonCodes",
     "legal_hold",
     "room_join_hold",
+    "pending",
     "programSteps",
 ];
 

@@ -110,10 +110,18 @@ impl Vault {
             let mut row = PRESET
                 .get(&self.store, txn, &key)?
                 .ok_or(Error::EntityNotFound)?;
-            require_settings_authority_in_txn(self, txn, row.preset.workspace_vault_id, owner)?;
+            let actor =
+                require_settings_authority_in_txn(self, txn, row.preset.workspace_vault_id, owner)?;
             if row.work_companion != policy {
                 row.work_companion = policy;
                 PRESET.put(&self.store, txn, &key, &row)?;
+                log_workspace_setting_in_txn(
+                    self,
+                    txn,
+                    row.preset.workspace_vault_id,
+                    actor,
+                    &key,
+                )?;
             }
             Ok(())
         })
@@ -165,6 +173,7 @@ impl Vault {
                     work_companion: policy,
                 };
                 PRESET.put(&self.store, txn, &key, &row)?;
+                log_workspace_setting_in_txn(self, txn, preset.workspace_vault_id, actor, &key)?;
             }
             if published {
                 super::companion_bind::require_org_companion_split_in_txn(
@@ -222,6 +231,29 @@ fn require_settings_authority_in_txn(
             other => other,
         })
         .map(|()| actor)
+}
+
+/// Logs `actor`'s change to workspace `workspace`'s settings to every live
+/// Owner, Admin and Deputy of shared vault `vault_id`, in the change's writer
+/// (`SharedVaultChange::WorkspaceSettingsChanged`).
+pub(super) fn log_workspace_setting_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    vault_id: u64,
+    actor: EntityId,
+    workspace: &str,
+) -> Result<()> {
+    let now = crate::ports::recorded_at_in_txn(&vault.store, txn)?;
+    vault.record_admin_act_in_txn(
+        txn,
+        vault_id,
+        actor,
+        crate::federation::SharedVaultChange::WorkspaceSettingsChanged {
+            workspace: workspace.to_owned(),
+        },
+        now,
+    )?;
+    Ok(())
 }
 
 impl Memory<'_> {
