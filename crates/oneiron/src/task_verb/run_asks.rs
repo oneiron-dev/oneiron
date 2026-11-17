@@ -73,8 +73,11 @@ pub struct WorkflowRunAsks {
 /// ask, a Coach's training offer, training swap or contribution pair ask, an
 /// office proposal's or live edit's holder ask. None is ever a form's
 /// question; nor is a commitment question, whose companion answer needs a
-/// soft confirm of its own, nor one that offers no option to choose. (A
-/// consult case's ask names its consult TASK, never a run's, so the run's
+/// soft confirm of its own, nor one that offers no option to choose, nor one
+/// whose class requires sources: a form answers with an option alone, and a
+/// word that names none of its required sources settles the ask as
+/// unknown (`ask_settlement`'s MissingSource), never as the option chosen.
+/// (A consult case's ask names its consult TASK, never a run's, so the run's
 /// TASK rule leaves it out.)
 fn is_form_question(group: &AskGroup) -> bool {
     let intent = group.requested.intent_key.as_str();
@@ -87,7 +90,12 @@ fn is_form_question(group: &AskGroup) -> bool {
         || crate::office_body::is_office_holder_ask_intent(intent)
         || crate::office_body::is_live_edit_ask(intent);
     let what = &group.effective.what;
-    !engine_family && !what.commitment && !what.options.is_empty()
+    let needs_sources = group
+        .effective
+        .class
+        .as_ref()
+        .is_some_and(|class| !class.required_sources.is_empty());
+    !engine_family && !what.commitment && !what.options.is_empty() && !needs_sources
 }
 
 /// `vault.workflows.asks` (L1-03): the questions the saved-workflow run

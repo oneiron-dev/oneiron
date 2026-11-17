@@ -26,7 +26,7 @@
 //! -p oneiron-server --all-features --features oneiron/test-support
 //! --test mcp_task_forms`.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use axum::Router;
@@ -44,8 +44,8 @@ use oneiron::policy_manifest_doors::{
 };
 use oneiron::registry::ENTITY_TYPE_TURN;
 use oneiron::task_verb::{
-    ConsultPayloadRef, TaskAskHandle, TaskAskOption, TaskAskOptionId, TaskAskQuestion, TaskAskSpec,
-    TaskAskStatus, TaskAskTarget,
+    ConsultPayloadRef, TaskAskClass, TaskAskDefault, TaskAskHandle, TaskAskOption, TaskAskOptionId,
+    TaskAskQuestion, TaskAskSpec, TaskAskStatus, TaskAskTarget,
 };
 use oneiron::test_doors::label_writers::embedded_owner;
 use oneiron::test_doors::verb_hook_ask::HookAsk;
@@ -292,6 +292,56 @@ impl Fixture {
         revision: u64,
         options: &[&str],
     ) -> TestResult<TaskAskHandle> {
+        let spec = self.spec_offering(intent_key, label, revision, options)?;
+        Ok(self
+            .vault
+            .memory(self.agent, EdgeActorClass::Agent)
+            .tasks_ask(&spec)?
+            .handle)
+    }
+
+    /// The step's agent asks the owner one question about the TURN under
+    /// `intent_key`, with the two options, under a class that requires the
+    /// TURN itself as a source of every word.
+    fn ask_needing_sources(&self, intent_key: &str, label: &str) -> TestResult<TaskAskHandle> {
+        let mut spec = self.spec_offering(intent_key, label, 1, &OPTIONS)?;
+        let turn = ConsultPayloadRef::Turn(self.question);
+        spec.class = Some(TaskAskClass {
+            key: "forms-sourced".into(),
+            version: 1,
+            governance: false,
+            deadline_seconds: 3600,
+            allowed_recipients: BTreeSet::from([self.owner]),
+            required_people: BTreeSet::new(),
+            minimum_responses: 1,
+            required_sources: BTreeSet::from([turn]),
+            decision: None,
+            disclosure: BTreeMap::from([(self.owner, BTreeSet::from([turn]))]),
+            fallback: BTreeSet::from([
+                TaskAskDefault::Proceed,
+                TaskAskDefault::Hold,
+                TaskAskDefault::AskMe,
+            ]),
+            guest_fact_limit: None,
+            soft_confirm_surface: None,
+            remind: Vec::new(),
+        });
+        Ok(self
+            .vault
+            .memory(self.agent, EdgeActorClass::Agent)
+            .tasks_ask(&spec)?
+            .handle)
+    }
+
+    /// The spec of one question the step's agent asks the owner about the
+    /// TURN under `intent_key`, at `revision`, offering `options`.
+    fn spec_offering(
+        &self,
+        intent_key: &str,
+        label: &str,
+        revision: u64,
+        options: &[&str],
+    ) -> TestResult<TaskAskSpec> {
         let mut what = TaskAskQuestion::new(ConsultPayloadRef::Turn(self.question));
         what.revision = revision;
         what.label = Some(label.to_owned());
@@ -306,11 +356,7 @@ impl Fixture {
             Default::default(),
         );
         spec.intent_key = intent_key.to_owned();
-        Ok(self
-            .vault
-            .memory(self.agent, EdgeActorClass::Agent)
-            .tasks_ask(&spec)?
-            .handle)
+        Ok(spec)
     }
 
     /// An ask's status, as its asker reads it.
@@ -752,6 +798,38 @@ fn an_ask_from_before_the_run_or_with_no_choice_is_never_its_question() -> TestR
             properties.keys().cloned().collect::<BTreeSet<_>>(),
             BTreeSet::from([property(plain, 1)]),
             "{polled}"
+        );
+        Ok(())
+    })
+}
+
+#[test]
+fn a_question_whose_class_requires_sources_is_never_a_form_question() -> TestResult {
+    on_engine_stack(|| async {
+        let fixture = Fixture::new()?;
+        let task = fixture.task("forms-sources").await?;
+        let sourced =
+            fixture.ask_needing_sources("forms-sources-cited", "Ship the cited notes?")?;
+        let plain = fixture.ask("forms-sources-plain", "Tag the release?", 1)?;
+
+        let polled = fixture.get(&task, Elicitation::Form).await?;
+        assert_eq!(polled["status"], "input_required", "{polled}");
+        assert_eq!(polled["statusMessage"], "waiting on 1 question", "{polled}");
+        let (_, properties) = form(&polled)?;
+        // A form answers with an option alone: a word that names none of
+        // the class's required sources would settle the ask as unknown.
+        assert_eq!(
+            properties.keys().cloned().collect::<BTreeSet<_>>(),
+            BTreeSet::from([property(plain, 1)]),
+            "{polled}"
+        );
+        assert!(
+            !polled.to_string().contains(&sourced.group_ref.to_hex()),
+            "the source-required ask is named nowhere in the task: {polled}"
+        );
+        assert!(
+            !matches!(fixture.status(sourced)?, TaskAskStatus::Settled(_)),
+            "the source-required ask stays open for an answer that names its sources"
         );
         Ok(())
     })
