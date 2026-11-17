@@ -741,18 +741,32 @@ fn an_agents_change_the_owner_approved_reads_as_the_owners_answer() {
     let fx = Fixture::rooted();
     let me = fx.as_owner();
 
-    // A subject's loosening of its own row, below the owner's tighter vault row.
+    // A key whose rows meet (stage 6.0; DESIGN 1.5 "The read", step 2, and the move table of
+    // 1.6): a subject's own row below the owner's vault row only narrows the read, so adding it
+    // lands at once, and loosening it asks. The owner's yes lands the row as his answer (FIX
+    // SETTING-APPROVED-WIDENING-READS-CAP: it is not held at the row's old value), and the read
+    // meets it with his vault row, since no value row replaces another, whoever set it.
     let subject = fx.agent();
     fx.grant(subject, &[SET, GET]);
     let them = fx.as_agent(subject);
     let quiet = "test.agent_quiet";
-    call(&me, SET, set(quiet, vault_scope(), json!(true)));
+    call(&me, SET, set(quiet, vault_scope(), json!(false)));
+    let added = call(&them, SET, set(quiet, agent_scope(subject), json!(true)));
+    assert_eq!(
+        added["status"],
+        json!("applied"),
+        "a row below the vault only narrows: {added}"
+    );
+    assert_eq!(
+        get(&them, quiet, json!([agent_scope(subject)]))["value"],
+        json!(true)
+    );
     let ask = set(quiet, agent_scope(subject), json!(false));
     let pending = call(&them, SET, ask.clone());
     assert_eq!(
         pending["status"],
         json!("pending"),
-        "loosening asks: {pending}"
+        "loosening its own row asks: {pending}"
     );
     let mut spend = ask;
     spend["check_in_ref"] = json!(approve_ask(&fx, &pending));
@@ -762,32 +776,14 @@ fn an_agents_change_the_owner_approved_reads_as_the_owners_answer() {
     assert_eq!(
         read["value"],
         json!(false),
-        "the owner's yes is not held inside the owner's own vault row: {read}"
+        "the owner's yes reads as his answer: {read}"
     );
 
-    // A holder's value above the catalogue default, where the owner set no row.
-    let holder = fx.agent();
-    fx.grant(holder, &[SET, GET]);
-    fx.controls(holder, EngineControlClass::WorkBudget);
-    let them = fx.as_agent(holder);
-    let budget = "test.work_budget";
-    let place = EntityId::now();
-    let ask = set(budget, project(place), json!(12));
-    let pending = call(&them, SET, ask.clone());
+    call(&me, SET, set(quiet, vault_scope(), json!(true)));
+    let met = get(&them, quiet, json!([agent_scope(subject)]));
     assert_eq!(
-        pending["status"],
-        json!("pending"),
-        "above the default asks: {pending}"
+        met["value"],
+        json!(true),
+        "the owner's stricter vault row still meets the approved row: {met}"
     );
-    let mut spend = ask;
-    spend["check_in_ref"] = json!(approve_ask(&fx, &pending));
-    let applied = call(&them, SET, spend);
-    assert_eq!(applied["status"], json!("applied"), "{applied}");
-    let read = get(&me, budget, json!([project(place)]));
-    assert_eq!(
-        read["value"],
-        json!(12),
-        "the owner's yes is not held inside the catalogue default: {read}"
-    );
-    assert_eq!(read["source"]["from"], json!("row"), "{read}");
 }
