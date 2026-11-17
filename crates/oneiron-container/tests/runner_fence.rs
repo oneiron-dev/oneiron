@@ -5,7 +5,9 @@
 //! the runner, unproven (canon `#fence-unproven`).
 #![cfg(unix)]
 
-use oneiron_container::{GuestSeccomp, RunnerFence, RunnerFenceMechanism};
+use oneiron_container::{
+    GuestSeccomp, RunnerFence, RunnerFenceMechanism, RunnerFenceOutcome, SessionManifest,
+};
 use std::ffi::OsString;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -302,4 +304,25 @@ fn a_relative_missing_or_root_tree_is_refused() {
     assert_eq!(none.kind(), std::io::ErrorKind::InvalidInput);
     let root = RunnerFence::for_host([PathBuf::from("/")]).expect_err("the root");
     assert_eq!(root.kind(), std::io::ErrorKind::InvalidInput);
+}
+
+#[test]
+fn a_proven_runner_session_manifest_reads_back_from_its_record() {
+    // A proven outcome as the proof gives it, without a host that proves.
+    let outcome = RunnerFenceOutcome {
+        mechanism: RunnerFenceMechanism::Landlock { abi: 3 },
+        ruleset_hash: "a".repeat(64),
+        proven: true,
+        sandbox_generation: "generation".to_owned(),
+        launcher_digest: "b".repeat(64),
+    };
+    let manifest = outcome.session_manifest("runner:seat", "claude", &[OsString::from("claude")]);
+    assert!(!manifest.fence_unproven);
+    let record = serde_json::to_value(&manifest).expect("manifest json");
+    assert!(
+        record.get("fence_unproven").is_none(),
+        "a proven session's record leaves the flag out"
+    );
+    let read: SessionManifest = serde_json::from_value(record).expect("the record reads back");
+    assert_eq!(read, manifest);
 }
