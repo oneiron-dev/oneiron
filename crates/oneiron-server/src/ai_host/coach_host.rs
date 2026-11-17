@@ -42,8 +42,8 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use oneiron::actor_claims::{
-    ACTOR_DISTILL_CALL_PURPOSE_NAME, ACTOR_NOTE_MAX_BYTES, ActorNote, ActorNoteKind,
-    SessionActorDistiller, SessionDistillBrief,
+    ACTOR_DISTILL_CALL_PURPOSE_NAME, ActorNote, ActorNoteKind, SessionActorDistiller,
+    SessionDistillBrief,
 };
 use oneiron::autoreason_campaign::research::research_work_pending;
 use oneiron::dreamer_runner::maintenance::coach::{
@@ -315,7 +315,7 @@ pub(super) fn run_one(
 ) -> oneiron::Result<()> {
     let vault = server.vault();
     match admitted.status.payload.attempt_type.as_str() {
-        COACH_SKILL_DISTILL_FACET => distill(server, admitted),
+        COACH_SKILL_DISTILL_FACET => distill(server, admitted, now),
         COACH_SKILL_DISCOVERY_FACET => super::skill_discovery::run(server, admitted),
         COACH_JUDGE_SWAP_FACET => super::judge_swap::run(server, admitted, now),
         COACH_TRAINING_OFFER_FACET => {
@@ -407,8 +407,29 @@ pub(super) fn run_one(
     }
 }
 
-/// One bounded pass of the session-end distill on the generative seat.
-fn distill(server: &SyncServer, admitted: &DreamerAdmittedAttempt) -> oneiron::Result<()> {
+/// The skills job: the fixed-code workaround skills (CLIF-STEALS 2), then
+/// one bounded pass of the session-end distill on the generative seat.
+fn distill(
+    server: &SyncServer,
+    admitted: &DreamerAdmittedAttempt,
+    now: u64,
+) -> oneiron::Result<()> {
+    // No model reads the workarounds, so they run on a night with no seat.
+    let workarounds = server.vault().run_coach_workaround_skills(admitted, now)?;
+    for error in &workarounds.errors {
+        tracing::warn!(%error, "a workaround-skill write rolled back");
+    }
+    tracing::info!(
+        captures = workarounds.captures,
+        unread = workarounds.unread,
+        groups = workarounds.groups,
+        nominations = workarounds.nominations,
+        created = workarounds.skills_created,
+        dup = workarounds.skills_dup,
+        collisions = workarounds.collisions,
+        withheld = workarounds.withheld,
+        "the Coach distilled workaround skills"
+    );
     // With no seat the sittings stay pending for a night that has one.
     let runtime = server.ai.model_runtime();
     if runtime.seat(coach_role(runtime)).is_none() {
@@ -556,6 +577,8 @@ impl SessionActorDistiller for HostDistiller<'_> {
         let wire = parse_notes(&text).ok_or_else(|| {
             Error::InvalidConfig("the Coach's distill answer holds no notes".into())
         })?;
+        // The owner's cap on a note this vault writes (`actor_claims.note.max_bytes`).
+        let max_bytes = self.vault.actor_note_max_bytes()?;
         let notes: Vec<ActorNote> = wire
             .notes
             .into_iter()
@@ -567,7 +590,7 @@ impl SessionActorDistiller for HostDistiller<'_> {
                     _ => return None,
                 };
                 let text = note.text.trim();
-                if text.is_empty() || text.len() > ACTOR_NOTE_MAX_BYTES {
+                if text.is_empty() || text.len() > max_bytes {
                     return None;
                 }
                 Some(ActorNote {

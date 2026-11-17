@@ -151,12 +151,29 @@ pub fn cancel_root_request_as(
 }
 
 /// One root request naming this install with no result yet, as
-/// `vault.roots.requests.list` answers it: its change and its receipt.
+/// `vault.roots.requests.list` answers it: its change, its receipt, the
+/// machine it names as its carrier, and this install's own reading of the
+/// key that signed it ([`crate::authority::CarrierReading`]). A surface names
+/// who asked from `carrier_role` and `carrier_is_yours`, never from the
+/// request's own words (CARRIED-PIN-PROMPT-HOSTED-CARRIER = A). With no
+/// `carrier_role` the machine id is the request's word alone, and a surface
+/// names no machine by it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct PendingRootRequestView {
     pub change: RootChangeView,
     pub receipt: OwnerWorkView,
+    /// The machine the request names as its carrier: the request's own word
+    /// until `carrier_role` is set.
+    pub carrier: EntityId,
+    /// The role this install's records give the key that signed the request
+    /// on that machine: `yours`, `work_school`, `rented`, `hosted_node`,
+    /// `execution_node`, `removed` or `unanswered`. `None` when its records
+    /// do not tie that machine to the key.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub carrier_role: Option<String>,
+    /// Whether this install trusts that key as one of the owner's machines.
+    pub carrier_is_yours: bool,
 }
 
 /// `vault.roots.requests.create` (FIX 5598): records the owner's root change
@@ -196,8 +213,8 @@ pub fn create_root_request_as(
 
 /// `vault.roots.requests.list` (FIX 5598): the root requests naming this
 /// install with no result yet, ascending by entry, but those the owner
-/// cancelled or a newer request superseded, through
-/// [`Vault::pending_root_requests`]. Ids only.
+/// cancelled or a newer request superseded, each with the machine that
+/// carried it, through [`Vault::pending_root_request_listing`]. Ids only.
 ///
 /// # Errors
 ///
@@ -207,11 +224,14 @@ pub fn list_root_requests_as(
     owner: &AuthenticatedOwner,
 ) -> MemoryResult<Vec<PendingRootRequestView>> {
     Ok(vault
-        .pending_root_requests(owner)?
+        .pending_root_request_listing(owner)?
         .into_iter()
-        .map(|(_, change, receipt)| PendingRootRequestView {
-            change: change.into(),
-            receipt: receipt.into(),
+        .map(|listed| PendingRootRequestView {
+            change: listed.change.into(),
+            receipt: listed.receipt.into(),
+            carrier: listed.carrier.machine,
+            carrier_role: listed.carrier.role.map(|role| role.wire().to_owned()),
+            carrier_is_yours: listed.carrier.is_mine,
         })
         .collect())
 }

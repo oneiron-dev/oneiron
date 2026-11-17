@@ -43,7 +43,9 @@ pub(crate) use self::eval_measurement::enqueue_coach_eval_measurement_in_txn;
 
 pub use crate::claim::maintenance_kind::COACH_HOST_QUEUE_KIND;
 /// Skill authoring from sessions: the session-end `actor.*` craft-note distill
-/// (ARCH-0003 §G.1 `actor.lesson`).
+/// (ARCH-0003 §G.1 `actor.lesson`), and, with no model, the skills a person's
+/// repeated workaround in an outside app nominates
+/// ([`Vault::run_coach_workaround_skills`], CLIF-STEALS 2).
 pub const COACH_SKILL_DISTILL_FACET: &str = "coach.skill_distill";
 /// Skill discovery from attempt receipts: the task-attribution sweep, whose
 /// `discovery` verdicts become skill edit proposals.
@@ -233,7 +235,7 @@ const HOST_FACETS: [&str; 22] = [
     COACH_TOPOLOGY_AUDIT_FACET,
 ];
 /// The Coach's closed-form nightly jobs, which the wake driver runs.
-const MAINTENANCE_FACETS: [&str; 12] = [
+const MAINTENANCE_FACETS: [&str; 13] = [
     COACH_READ_HARDENING_FACET,
     COACH_TRIPWIRES_FACET,
     COACH_TRADEOFF_ESCALATION_FACET,
@@ -247,6 +249,7 @@ const MAINTENANCE_FACETS: [&str; 12] = [
     COACH_ROOM_UPKEEP_FACET,
     COACH_FOLD_SUGGESTIONS_FACET,
     COACH_LAYOUT_SUGGESTIONS_FACET,
+    super::idle_return_tables::COACH_IDLE_RETURN_TABLES_FACET,
 ];
 const READ_HARDENING_SCOPE: &str = "retrieval";
 /// Hours a pending tradeoff ask waits on one rung before it climbs, a learned
