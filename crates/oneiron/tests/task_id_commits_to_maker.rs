@@ -12,6 +12,12 @@
 //! `the_owner_fact_commits_to_its_maker_and_owner` and `a_nominated_owner_counts` pass there
 //! too: the door mints at the derived id either way. Green on the head.
 //!
+//! A second Owner fact that a device refuses because its row was deleted there marks no
+//! task either (review round 2 of #8666, P1): the fold never counts it, so it cannot fail
+//! the true task's read. Red at the pin opus-task-proof/task-id-commits-to-maker-red-suppression
+//! (the head before that fix, plus this file and its door): the refused second owner marks
+//! the task, and the device's read of it fails as suppressed.
+//!
 //! Run: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test task_id_commits_to_maker`.
 #![cfg(oneiron_test_support)]
@@ -26,11 +32,11 @@ use oneiron::sync::client::ImportTier;
 use oneiron::sync::replay::{ReplicatedEntity, replay_entity};
 use oneiron::task_verb::TaskCreateSpec;
 use oneiron::test_doors::task_fact_actor::{
-    mint_owner_fact, task_ref_of_maker, write_unjudged_owner_fact,
+    mint_fact, mint_owner_fact, note_refused_fact, task_ref_of_maker, write_unjudged_owner_fact,
 };
 use oneiron::test_support::{bind_host_owner, provision_engine_machines};
 use oneiron::{
-    EdgeActorClass, EdgeKind, EntityId, TASK_AUTHORITY_FACT_SUBKIND, TaskAuthorityFactKind,
+    EdgeActorClass, EdgeKind, EntityId, Error, TASK_AUTHORITY_FACT_SUBKIND, TaskAuthorityFactKind,
     TimeRange, Vault, VaultConfig,
 };
 use oneiron_contracts::record_layout::ENTITY_METADATA_HEADER_LEN;
@@ -330,4 +336,63 @@ fn a_nominated_owner_counts() {
         .expect("the task's authority reads")
         .expect("the nominated owner's fact counts");
     assert_eq!(state.owner_ref, nominee);
+}
+
+/// The body of the fact row `row` linked to `task` on `vault`.
+fn fact_body(vault: &Vault, task: EntityId, row: EntityId) -> Vec<u8> {
+    fact_rows(vault, task)
+        .into_iter()
+        .find_map(|(id, body)| (id == row).then_some(body))
+        .expect("the fact row is linked to its task")
+}
+
+fn reads_suppressed(vault: &Vault, task: EntityId) -> bool {
+    matches!(
+        vault.task_authority_state(task),
+        Err(Error::InvariantViolation("task authority fact suppressed"))
+    )
+}
+
+#[test]
+fn a_refused_second_owner_does_not_mark_its_claimed_task() {
+    let host = host();
+    let device = device(&host);
+    let task = owner_task(&host.vault, host.owner, "the owner's task");
+    sync_facts(&host, &device, task);
+    let made = owner_commitment(&host.vault, task);
+    let second =
+        write_unjudged_owner_fact(&host.vault, task, EntityId::now(), made.maker, made.nonce)
+            .expect("the host's carrier signs a second owner");
+    let second_body = fact_body(&host.vault, task, second);
+    note_refused_fact(&device.vault, second, &second_body)
+        .expect("the device refuses the second owner's row, deleted there");
+    let state = device
+        .vault
+        .task_authority_state(task)
+        .expect("the refused second owner marks nothing")
+        .expect("the true owner's fact counts on the device");
+    assert_eq!(state.owner_ref, host.owner);
+
+    // A refused fact that would count still marks its task.
+    let cancelled = owner_task(&host.vault, host.owner, "a task the owner cancels");
+    sync_facts(&host, &device, cancelled);
+    let cancel = mint_fact(
+        &host.vault,
+        cancelled,
+        TaskAuthorityFactKind::Cancelled,
+        host.owner,
+        None,
+    )
+    .expect("the host's door writes the owner's cancel");
+    let cancel_body = fact_body(&host.vault, cancelled, cancel);
+    note_refused_fact(&device.vault, cancel, &cancel_body)
+        .expect("the device refuses the cancel's row, deleted there");
+    assert!(
+        reads_suppressed(&device.vault, cancelled),
+        "a refused cancel the device would count marks its task"
+    );
+    assert!(
+        !reads_suppressed(&device.vault, task),
+        "the mark stays on the cancelled task"
+    );
 }

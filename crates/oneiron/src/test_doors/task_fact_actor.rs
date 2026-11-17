@@ -1,7 +1,8 @@
 //! Door for `tests/task_fact_actor_rule.rs` (Fable pass 28 R5 part 2) and
 //! `tests/task_id_commits_to_maker.rs` (FIX TASK-ID-COMMITS-TO-MAKER): writes one TASK
 //! authority fact under this install's carrier, through the mint door or past its actor
-//! check, and reads what a TASK's facts prove about who may act on it.
+//! check, and reads what a TASK's facts prove about who may act on it. It also hands a
+//! fact row to the step a replicated put takes when it refuses a row deleted here.
 
 use crate::error::Result;
 use crate::task_authority::{
@@ -162,4 +163,23 @@ pub fn proved_standing(vault: &Vault, task: EntityId) -> Result<Option<ProvedSta
             assignee: standing.assignee,
             taker: standing.taker.map(|taker| taker.actor),
         }))
+}
+
+/// The step a replicated put takes when it refuses row `fact` because its id was deleted
+/// here (`task_authority::note_suppressed_fact_in_txn`), with `body` the TASK row's body:
+/// a fact that proves itself here marks its task, so the task's facts read as a refusal.
+///
+/// # Errors
+///
+/// As the write transaction.
+pub fn note_refused_fact(vault: &Vault, fact: EntityId, body: &[u8]) -> Result<()> {
+    vault.with_write_txn(|txn| {
+        crate::task_authority::note_suppressed_fact_in_txn(
+            &vault.store,
+            txn,
+            &fact,
+            crate::registry::ENTITY_TYPE_TASK,
+            body,
+        )
+    })
 }
