@@ -124,7 +124,10 @@ pub fn bind_repo_anchor_as(
             project: bound.project,
         },
         portable: bound.portable.to_hex(),
-        registration: bound.registration.as_ref().map(registration_view),
+        registration: bound
+            .registration
+            .as_ref()
+            .map(|registration| registration_view(registration, None)),
         changed: bound.changed,
     })
 }
@@ -134,7 +137,9 @@ pub fn bind_repo_anchor_as(
 /// setting `codebase.registration.agent_may_register` are checked in the
 /// registration writer, and the agent's own verified `credential` must read
 /// the PROJECT, then the local repository registers as the owner's does. The
-/// served-repo arm never admits a delegate.
+/// served-repo arm never admits a delegate. A registration the call mints
+/// names the agent as its registrant, and the answer names a registrant
+/// only when it is this agent.
 ///
 /// # Errors
 /// `FORBIDDEN` when the setting reads false at the agent, no live Grant
@@ -176,7 +181,10 @@ pub fn bind_repo_anchor_as_delegate(
             project: bound.project,
         },
         portable: bound.portable.to_hex(),
-        registration: bound.registration.as_ref().map(registration_view),
+        registration: bound
+            .registration
+            .as_ref()
+            .map(|registration| registration_view(registration, Some(agent))),
         changed: bound.changed,
     })
 }
@@ -195,10 +203,19 @@ fn served_repo_delegate_refusal() -> MemoryError {
     )
 }
 
-fn registration_view(registration: &CodeRepoRegistration) -> RepoRegistrationView {
+/// The answer's view of `registration`. The owner's answer (`delegate`
+/// `None`) names its registrant; a delegate's names it only when that
+/// delegate is the registrant, so no agent learns another's id here.
+fn registration_view(
+    registration: &CodeRepoRegistration,
+    delegate: Option<EntityId>,
+) -> RepoRegistrationView {
     RepoRegistrationView {
         source: registration.source().spelling(),
         editable: registration.editable().to_vec(),
+        registrant: registration
+            .registrant()
+            .filter(|registrant| delegate.is_none_or(|agent| agent == *registrant)),
     }
 }
 

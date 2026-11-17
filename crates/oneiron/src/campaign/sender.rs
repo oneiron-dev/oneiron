@@ -13,7 +13,10 @@
 //! send plan or the native message is sealed, so the content ref names it
 //! and a retry seals the same ref. A bulk email carries List-Unsubscribe and
 //! List-Unsubscribe-Post for the member's one-click link the leg froze, and
-//! no body line; a bulk envelope without its link is not sendable.
+//! no body line; a bulk envelope without its link is not sendable. The line
+//! is in the member's language, which detection chose from the member's
+//! jurisdiction and the leg froze (FIX [CAMPAIGN-OPT-OUT-LINE-LOCALE]):
+//! Japanese, German or French, else English.
 //!
 //! The envelope decode is strict: any other shape — including a program
 //! written before the body filer, whose raw bytes carry no envelope —
@@ -29,6 +32,7 @@ use std::sync::Arc;
 use serde::Deserialize;
 
 use crate::Vault;
+use crate::campaign::compliance::OptOutLanguage;
 use crate::campaign::send_hygiene::{ListUnsubscribeTarget, list_unsubscribe_headers};
 use crate::channel_identity_provider::EMAIL_CHANNEL;
 use crate::channel_identity_provider::gmail::{
@@ -58,8 +62,10 @@ use crate::outbound_intent_ledger::{
 /// stops the send), and the enrollment event's owner actor and ref. Email
 /// steps (FIX 11641) carry three more keys: the program subject, the
 /// composition time, and the sticky sender; a bulk email step two more:
-/// the send mode and the member's one-click link (ARCH-0059 #opt-out). No
-/// other keys; a non-email leg emits exactly the five base keys.
+/// the send mode and the member's one-click link (ARCH-0059 #opt-out); a
+/// 1:1 email step whose member reads another language than English one
+/// more: that language (FIX [CAMPAIGN-OPT-OUT-LINE-LOCALE]). No other keys;
+/// a non-email leg emits exactly the five base keys.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct CampaignOutboundEnvelope {
@@ -84,6 +90,10 @@ struct CampaignOutboundEnvelope {
     /// Bulk email only: the member's one-click unsubscribe link.
     #[serde(default)]
     list_unsubscribe: Option<String>,
+    /// 1:1 email only: the opt-out line's language tag, present only when
+    /// it is not English.
+    #[serde(default)]
+    opt_out_language: Option<String>,
 }
 
 /// The frozen email keys of one campaign send (FIX 11641), required iff
@@ -99,9 +109,9 @@ struct EmailSendKeys {
 /// (ARCH-0059 #opt-out).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum CampaignEmailOptOut {
-    /// A genuine 1:1 mail: the plain opt-out line in the body, no bulk
-    /// header.
-    BodyLine,
+    /// A genuine 1:1 mail: the plain opt-out line, in this language, in the
+    /// body, and no bulk header.
+    BodyLine(OptOutLanguage),
     /// A bulk send: List-Unsubscribe and List-Unsubscribe-Post for this
     /// one-click link, and no body line.
     ListUnsubscribe(String),
@@ -116,7 +126,7 @@ impl CampaignEmailOptOut {
     /// https URI.
     pub(crate) fn hygiene_headers(&self) -> Result<BTreeMap<String, String>> {
         match self {
-            Self::BodyLine => Ok(BTreeMap::new()),
+            Self::BodyLine(_) => Ok(BTreeMap::new()),
             Self::ListUnsubscribe(uri) => list_unsubscribe_headers(&ListUnsubscribeTarget {
                 mailto_uri: None,
                 https_one_click_uri: uri.clone(),
@@ -125,19 +135,53 @@ impl CampaignEmailOptOut {
     }
 }
 
-/// The opt-out line's words before the sender address (Engine ruling
-/// L3-02-SEND-MODE-SCOPE, 13 Nov 21:23; English only until the line is
-/// localised).
+/// The English opt-out line's words before the sender address (Engine
+/// ruling L3-02-SEND-MODE-SCOPE, 13 Nov 21:23).
 const OPT_OUT_LINE_HEAD: &str = "If you would rather not hear from me again, reply STOP to ";
 
-/// The opt-out line's words after the sender address.
+/// The English opt-out line's words after the sender address.
 const OPT_OUT_LINE_TAIL: &str = " and I will not write to you again.";
 
+/// The Japanese opt-out line's words before the sender address. The reply
+/// it asks for, 配信停止, is a STOP reply keyword.
+const OPT_OUT_LINE_HEAD_JA: &str = "今後のご連絡が不要な場合は、";
+
+/// The Japanese opt-out line's words after the sender address.
+const OPT_OUT_LINE_TAIL_JA: &str = " 宛に「配信停止」とご返信ください。以後ご連絡いたしません。";
+
+/// The German opt-out line's words before the sender address.
+const OPT_OUT_LINE_HEAD_DE: &str =
+    "Wenn Sie keine weiteren Nachrichten von mir erhalten möchten, antworten Sie mit STOP an ";
+
+/// The German opt-out line's words after the sender address.
+const OPT_OUT_LINE_TAIL_DE: &str = ", dann schreibe ich Ihnen nicht mehr.";
+
+/// The French opt-out line's words before the sender address.
+const OPT_OUT_LINE_HEAD_FR: &str =
+    "Si vous ne souhaitez plus recevoir de messages de ma part, répondez STOP à ";
+
+/// The French opt-out line's words after the sender address.
+const OPT_OUT_LINE_TAIL_FR: &str = " et je ne vous écrirai plus.";
+
+/// The opt-out line's words before and after the sender address, in
+/// `language`. Every line asks for a reply the STOP-reply path reads as an
+/// opt-out, and names the address to send it to beside the statement, as
+/// the compliance pack's opt-out rows ask (Japan: an opt-out address with a
+/// statement beside it).
+const fn opt_out_line_parts(language: OptOutLanguage) -> (&'static str, &'static str) {
+    match language {
+        OptOutLanguage::English => (OPT_OUT_LINE_HEAD, OPT_OUT_LINE_TAIL),
+        OptOutLanguage::Japanese => (OPT_OUT_LINE_HEAD_JA, OPT_OUT_LINE_TAIL_JA),
+        OptOutLanguage::German => (OPT_OUT_LINE_HEAD_DE, OPT_OUT_LINE_TAIL_DE),
+        OptOutLanguage::French => (OPT_OUT_LINE_HEAD_FR, OPT_OUT_LINE_TAIL_FR),
+    }
+}
+
 /// The body a campaign email carries (ARCH-0059 #opt-out). A 1:1 mail: the
-/// step body, then a blank line and the plain opt-out line naming
-/// `sender_address`, the mailbox the reader replies to; the step body's
-/// trailing whitespace is dropped, so the line always follows one blank
-/// line. A bulk send: the step body as filed, its opt-out in the headers.
+/// step body, then a blank line and the plain opt-out line, in its
+/// language, naming `sender_address`, the mailbox the reader replies to;
+/// the step body's trailing whitespace is dropped, so the line always
+/// follows one blank line. A bulk send: the step body as filed, its opt-out in the headers.
 /// Deterministic: the same step body, sender and opt-out give the same
 /// bytes.
 fn campaign_email_body(
@@ -146,12 +190,45 @@ fn campaign_email_body(
     opt_out: &CampaignEmailOptOut,
 ) -> String {
     match opt_out {
-        CampaignEmailOptOut::BodyLine => format!(
-            "{}\n\n{OPT_OUT_LINE_HEAD}{sender_address}{OPT_OUT_LINE_TAIL}",
-            step_body.trim_end()
-        ),
+        CampaignEmailOptOut::BodyLine(language) => {
+            let (head, tail) = opt_out_line_parts(*language);
+            format!("{}\n\n{head}{sender_address}{tail}", step_body.trim_end())
+        }
         CampaignEmailOptOut::ListUnsubscribe(_) => step_body.to_owned(),
     }
+}
+
+/// The opt-out a campaign email envelope carries: a bulk envelope's send
+/// mode and one-click link together, or a 1:1 one's opt-out line, in
+/// English when it names no language. `None` for any other shape: a bulk
+/// key beside a language, a link without its mode, an unknown language, or
+/// English named outright, which the leg never freezes.
+fn email_opt_out(envelope: &CampaignOutboundEnvelope) -> Option<CampaignEmailOptOut> {
+    match (
+        envelope.send_mode.as_deref().map(CampaignSendMode::parse),
+        envelope.list_unsubscribe.as_ref(),
+        envelope.opt_out_language.as_deref(),
+    ) {
+        (None, None, None) => Some(CampaignEmailOptOut::BodyLine(OptOutLanguage::English)),
+        (None, None, Some(tag)) => OptOutLanguage::parse(tag)
+            .filter(|language| *language != OptOutLanguage::English)
+            .map(CampaignEmailOptOut::BodyLine),
+        (Some(Some(CampaignSendMode::Bulk)), Some(uri), None) => {
+            Some(CampaignEmailOptOut::ListUnsubscribe(uri.clone()))
+        }
+        _ => None,
+    }
+}
+
+/// The opt-out the campaign email envelope `payload` carries, as the
+/// sender decodes it; `None` when `payload` is not an envelope or its
+/// opt-out keys are not a sendable shape.
+#[cfg(oneiron_test_support)]
+pub(crate) fn campaign_envelope_email_opt_out(payload: &[u8]) -> Option<CampaignEmailOptOut> {
+    serde_json::from_slice::<CampaignOutboundEnvelope>(payload)
+        .ok()
+        .as_ref()
+        .and_then(email_opt_out)
 }
 
 /// Seals one campaign gmail send from the filed step body: the member
@@ -534,7 +611,8 @@ impl OutboundResultSender for CampaignChannelSender {
         // email, and refuses them otherwise, so slack/line envelopes stay
         // exactly the five base keys. ARCH-0059 #opt-out: a bulk email
         // envelope carries its send mode and one-click link together, a 1:1
-        // one neither, and any other shape is not sendable.
+        // one neither and at most its line's language, and any other shape
+        // is not sendable.
         let email_keys = match (
             call.server() == EMAIL_CHANNEL,
             envelope.subject.as_ref(),
@@ -545,15 +623,8 @@ impl OutboundResultSender for CampaignChannelSender {
                 let Ok(sender_ref) = EntityId::from_hex(sender_ref) else {
                     return self.invalid();
                 };
-                let opt_out = match (
-                    envelope.send_mode.as_deref().map(CampaignSendMode::parse),
-                    envelope.list_unsubscribe.as_ref(),
-                ) {
-                    (None, None) => CampaignEmailOptOut::BodyLine,
-                    (Some(Some(CampaignSendMode::Bulk)), Some(uri)) => {
-                        CampaignEmailOptOut::ListUnsubscribe(uri.clone())
-                    }
-                    _ => return self.invalid(),
+                let Some(opt_out) = email_opt_out(&envelope) else {
+                    return self.invalid();
                 };
                 Some(EmailSendKeys {
                     subject: subject.clone(),
@@ -563,7 +634,9 @@ impl OutboundResultSender for CampaignChannelSender {
                 })
             }
             (false, None, None, None)
-                if envelope.send_mode.is_none() && envelope.list_unsubscribe.is_none() =>
+                if envelope.send_mode.is_none()
+                    && envelope.list_unsubscribe.is_none()
+                    && envelope.opt_out_language.is_none() =>
             {
                 None
             }
