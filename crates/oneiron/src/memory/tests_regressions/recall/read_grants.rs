@@ -150,6 +150,7 @@ fn scoped_recall_never_renders_an_unreadable_edge_neighbor() {
             turn_ref: None,
             messages: vec![message],
             occurred_at: crate::unix_seconds_now(),
+            project: None,
         })
         .unwrap();
     let hidden = EntityId::from_hex(
@@ -218,6 +219,7 @@ fn scoped_recall_provenance_does_not_name_a_denied_supersedes_target() {
             turn_ref: None,
             messages: vec![allowed],
             occurred_at: crate::unix_seconds_now(),
+            project: None,
         })
         .expect("allowed witness");
     let anchor_id = EntityId::from_hex(
@@ -238,6 +240,7 @@ fn scoped_recall_provenance_does_not_name_a_denied_supersedes_target() {
             turn_ref: None,
             messages: vec![message],
             occurred_at: crate::unix_seconds_now(),
+            project: None,
         })
         .expect("hidden witness");
     let target = EntityId::from_hex(
@@ -381,6 +384,7 @@ fn a_turn_reaches_a_scoped_reader_only_when_it_may_read_every_message() {
             turn_ref: None,
             messages: vec![granted, withheld],
             occurred_at: crate::unix_seconds_now() - 28 * 86_400,
+            project: None,
         })
         .expect("witness a turn of two messages");
     let turn = EntityId::from_hex(

@@ -872,6 +872,7 @@ fn anchored_thread_binds_verified_room_dag_node_without_copy_or_head_mutation() 
                 is_visible: true,
                 order: 0,
             }],
+            project: None,
         })
         .expect("witness other conversation");
     assert!(

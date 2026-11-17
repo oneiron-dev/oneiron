@@ -46,6 +46,7 @@ fn witness(
             turn_ref: Some(turn.to_hex()),
             messages: vec![message],
             occurred_at: at,
+            project: None,
         })
         .expect("witness a turn");
 }

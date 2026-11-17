@@ -38,6 +38,7 @@ fn witness(
             turn_ref: Some(turn.to_hex()),
             messages,
             occurred_at: at,
+            project: None,
         })
         .expect("witness a turn")
         .message_short_ids

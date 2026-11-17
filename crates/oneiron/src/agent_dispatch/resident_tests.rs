@@ -42,6 +42,7 @@ fn resident_keeps_goal_data_inbox_and_room_pointer_without_prompt_change() {
                 is_visible: true,
                 order: 0,
             }],
+            project: None,
         })
         .unwrap();
     let auth = vault
@@ -133,6 +134,7 @@ mod foreign_owner_proof {
                     is_visible: true,
                     order: 0,
                 }],
+                project: None,
             })
             .unwrap();
         let spec = ResidentAgentSpec {
@@ -209,6 +211,7 @@ fn a_held_resident_binding_never_wakes_the_inbox_but_still_conflicts() {
                 is_visible: true,
                 order: 0,
             }],
+            project: None,
         })
         .expect("room");
     let auth = vault

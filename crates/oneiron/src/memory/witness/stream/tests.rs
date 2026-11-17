@@ -27,6 +27,7 @@ fn input() -> WitnessTurn {
             is_visible: true,
             order: 0,
         }],
+        project: None,
     }
 }
 fn streamed(cadence: StreamCadence) -> MessageWriteMode {

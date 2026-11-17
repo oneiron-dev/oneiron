@@ -290,6 +290,7 @@ fn witness_into(
             turn_ref: Some(turn.to_hex()),
             messages,
             occurred_at: 10,
+            project: None,
         })
         .expect("witnessed turn");
     turn

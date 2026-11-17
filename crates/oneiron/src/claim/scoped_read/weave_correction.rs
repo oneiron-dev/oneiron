@@ -865,6 +865,7 @@ mod tests {
                     is_visible: true,
                     order: 0,
                 }],
+                project: None,
             })
             .expect("witness message");
         vault.put_edge(&person, EdgeKind::Mentions, &message, 0.5)?;

@@ -26,6 +26,7 @@ fn an_in_room_recall_returns_the_turn_only_the_room_holds() {
                     &format!("the room says {ROOM_WORDS}"),
                 )],
                 occurred_at: 900,
+                project: None,
             },
             None,
         )
@@ -118,6 +119,7 @@ fn on_record_a_recall_over_the_rooms_turn_keeps_no_run_in_base() {
                     &format!("the room says {ROOM_WORDS}"),
                 )],
                 occurred_at: 900,
+                project: None,
             },
             None,
         )

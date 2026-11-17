@@ -27,6 +27,7 @@ fn session_witness_lands_in_the_overlay_and_never_in_base() {
                 turn_ref: None,
                 messages: vec![witness_message(0, WitnessAuthor::User, "in-room utterance")],
                 occurred_at: 900,
+                project: None,
             },
             Some("the room's summary"),
         )
@@ -86,6 +87,7 @@ fn session_witness_receipt_carries_session_local_short_ids() {
                 turn_ref: None,
                 messages: vec![witness_message(0, WitnessAuthor::User, "alias probe")],
                 occurred_at: 910,
+                project: None,
             },
             None,
         )
@@ -138,6 +140,7 @@ fn post_flip_session_witness_lands_in_base_under_a_fresh_shell() {
                 turn_ref: None,
                 messages: vec![witness_message(0, WitnessAuthor::User, "off-record turn")],
                 occurred_at: 930,
+                project: None,
             },
             None,
         )
@@ -153,6 +156,7 @@ fn post_flip_session_witness_lands_in_base_under_a_fresh_shell() {
                 turn_ref: None,
                 messages: vec![witness_message(0, WitnessAuthor::User, "on-record turn")],
                 occurred_at: 931,
+                project: None,
             },
             None,
         )
@@ -208,6 +212,7 @@ fn replay_owned_base_witness_race_is_an_exact_no_op() {
         turn_ref: Some(turn_id.to_hex()),
         messages: vec![message],
         occurred_at: 970,
+        project: None,
     };
 
     let winning = std::cell::RefCell::new(None);
@@ -291,6 +296,7 @@ fn a_stale_base_route_session_witness_commits_no_base_rows() {
                     "overtaken by the flip",
                 )],
                 occurred_at: 950,
+                project: None,
             },
             Some(&route),
         )
@@ -381,6 +387,7 @@ fn concurrent_room_witness_and_telemetry_never_invert_the_lock_order() {
                         turn_ref: None,
                         messages: vec![witness_message(0, WitnessAuthor::User, "lockorderneedle")],
                         occurred_at: 960 + round as u64,
+                        project: None,
                     },
                     None,
                 )
@@ -526,6 +533,7 @@ fn a_failed_session_witness_does_not_burn_the_room_shell_claim() {
                 turn_ref: None,
                 messages: vec![malformed],
                 occurred_at: 970,
+                project: None,
             },
             None,
         )
@@ -540,6 +548,7 @@ fn a_failed_session_witness_does_not_burn_the_room_shell_claim() {
                 turn_ref: None,
                 messages: vec![witness_message(0, WitnessAuthor::User, "lands for real")],
                 occurred_at: 971,
+                project: None,
             },
             None,
         )
@@ -601,6 +610,7 @@ fn an_in_transaction_failure_releases_the_room_shell_claim() {
         turn_ref: None,
         messages: vec![witness_message(0, WitnessAuthor::User, &content)],
         occurred_at: at,
+        project: None,
     };
     let refused = facade
         .witness_into_session(&session, &turn("x".repeat(256 * 1024), 980), None)
@@ -663,6 +673,7 @@ fn session_witness_turn_carries_the_mint_contract() {
                     witness_message(1, WitnessAuthor::Companion, "companion row"),
                 ],
                 occurred_at: 940,
+                project: None,
             },
             None,
         )
@@ -677,6 +688,7 @@ fn session_witness_turn_carries_the_mint_contract() {
                 turn_ref: None,
                 messages: vec![witness_message(0, WitnessAuthor::System, "tooling row")],
                 occurred_at: 941,
+                project: None,
             },
             None,
         )
@@ -700,6 +712,7 @@ fn session_witness_turn_carries_the_mint_contract() {
                     witness_message(1, WitnessAuthor::System, "permitted interleave"),
                 ],
                 occurred_at: 942,
+                project: None,
             },
             None,
         )
@@ -783,6 +796,7 @@ fn promoted_session_turn_lands_with_speaker_and_conversation_binding() {
                 turn_ref: None,
                 messages: vec![witness_message(0, WitnessAuthor::User, "publish this turn")],
                 occurred_at: 950,
+                project: None,
             },
             None,
         )

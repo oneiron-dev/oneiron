@@ -642,6 +642,7 @@ fn a_narrower_owner_credential_loses_its_grant_exemption_with_the_binding() {
             turn_ref: None,
             messages,
             occurred_at: 1500,
+            project: None,
         })
         .expect("witness the owner's words");
 
@@ -757,6 +758,7 @@ fn narrower_embedded_owner_reads_past(reason: crate::deletion::DeleteReason) {
             turn_ref: None,
             messages,
             occurred_at: 1500,
+            project: None,
         })
         .expect("witness another person's words");
 

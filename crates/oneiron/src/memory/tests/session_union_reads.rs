@@ -17,6 +17,7 @@ fn room_turn(
                 turn_ref: None,
                 messages: vec![witness_message(0, WitnessAuthor::User, words)],
                 occurred_at: 900,
+                project: None,
             },
             None,
         )
@@ -135,6 +136,7 @@ fn a_walk_in_the_room_reaches_its_rows_past_a_warm_base_cache_and_caches_nothing
             turn_ref: None,
             messages: vec![witness_message(0, WitnessAuthor::User, "said in base")],
             occurred_at: 800,
+            project: None,
         })
         .expect("base witness");
     let warmed = vault

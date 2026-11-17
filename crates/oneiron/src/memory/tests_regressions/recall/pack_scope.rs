@@ -14,6 +14,7 @@ fn recall_returns_versioned_pack_with_provenance() {
                 "aurora borealis sighting over the fjord",
             )],
             occurred_at: 1500,
+            project: None,
         })
         .expect("witness");
 
@@ -420,6 +421,7 @@ fn recall_and_query_verbs_respect_limits() {
                     &format!("pelican count {i}"),
                 )],
                 occurred_at: 1700,
+                project: None,
             })
             .expect("witness");
     }

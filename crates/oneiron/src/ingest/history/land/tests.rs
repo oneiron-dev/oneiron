@@ -249,6 +249,7 @@ fn an_import_leaves_a_plain_conversation_at_its_derived_id_alone() {
                 order: 0,
             }],
             occurred_at: WITNESSED_AT,
+            project: None,
         })
         .expect("plain witness");
     let body = vault.get(&id).expect("read the plain conversation");

@@ -797,6 +797,7 @@ fn a_relationship_message_is_a_standing_source_only_on_the_principals_grant() ->
                 is_visible: true,
                 order: 0,
             }],
+            project: None,
         })?;
     let actor = WriteActor::new(principal, EdgeActorClass::Agent);
     let id = create_question(&vault, principal, definition(message, "Relationship?"), 2)?
@@ -878,6 +879,7 @@ fn an_expired_grant_is_no_standing_source_at_either_door() -> TestResult {
                     is_visible: true,
                     order: 0,
                 }],
+                project: None,
             })?;
         vault.create_access_grant(
             &EntityId::now(),

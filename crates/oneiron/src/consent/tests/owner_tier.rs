@@ -159,6 +159,7 @@ fn a_non_owner_persons_proof_witnesses_nothing_into_a_roomless_stretch() {
             order: 0,
         }],
         occurred_at: 1000,
+        project: None,
     };
     let speak = |proof: &AuthenticatedOwner| {
         let actor = proof.actor_for_read(&vault).expect("a live proof");

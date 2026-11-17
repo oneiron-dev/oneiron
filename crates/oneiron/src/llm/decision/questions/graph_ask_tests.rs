@@ -536,6 +536,7 @@ fn mail_and_private_note_each_get_one_receipted_prediction() -> crate::Result<()
                 order: 0,
             }],
             occurred_at: 10,
+            project: None,
         })
         .expect("witness message");
     assert_eq!(receipt.message_short_ids.len(), 1);
@@ -846,6 +847,7 @@ fn a_relationship_message_reaches_the_answerer_only_on_the_askers_grant() -> cra
                 order: 0,
             }],
             occurred_at: 10,
+            project: None,
         })
         .expect("witness relationship message");
     let (hidden, shown) = (EntityId::now(), EntityId::now());

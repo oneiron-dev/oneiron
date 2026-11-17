@@ -175,6 +175,7 @@ fn turn() -> WitnessTurn {
             is_visible: true,
             order: 0,
         }],
+        project: None,
     }
 }
 

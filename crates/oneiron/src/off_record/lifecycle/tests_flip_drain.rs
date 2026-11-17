@@ -45,6 +45,7 @@ fn witness(
                 }],
                 occurred_at,
                 assertions: Default::default(),
+                project: None,
             },
             None,
             None,
