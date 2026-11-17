@@ -757,9 +757,10 @@ impl Vault {
     /// doors on their own proof), or an active human actor binding that
     /// speaks for them. A limited-purpose slip does not count: a pending
     /// invitation, a share link, a support delegation, a trusted-contact or a
-    /// seat binding reaches only its own doors, so its holder cannot consent
-    /// on their own proof there. A counterparty an agent hears on a call holds
-    /// none.
+    /// seat binding reaches only its own doors, an organization-bound slip
+    /// only its organization's administration powers, and a single-use slip
+    /// only its one consuming door, so its holder cannot consent on their own
+    /// proof there. A counterparty an agent hears on a call holds none.
     pub(crate) fn holds_live_human_credential_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -780,6 +781,8 @@ impl Vault {
                     let claims = &mint.action.claims;
                     EntityId::from_hex(&claims.holder_ref).ok() == Some(person)
                         && claims.actor_class.as_deref() == Some(ACTOR_CLASS_HUMAN)
+                        && !claims.single_use
+                        && claims.org_ref.is_none()
                         && claims.invitation_ref.is_none()
                         && claims.share_ref.is_none()
                         && claims.delegation.is_none()
@@ -803,8 +806,10 @@ impl Vault {
 
     /// `subject`'s withdrawal `event_id` while they may still disown it
     /// (VOICE-WITHDRAW-UNDO-SHAPE = B): a withdrawal someone else recorded
-    /// for them that is still their latest decision (no other consent event
-    /// of theirs is dated at or after it), dated before this vault's clock.
+    /// for them that is still their latest decision, dated before this
+    /// vault's clock. No grant of theirs is dated after it and no other
+    /// withdrawal at or after it; a grant in its own second loses to it, as
+    /// enrolment and recognition order a tie.
     /// Their "that wasn't me" logs a grant dated one second after it, which
     /// the consent door then accepts, and which reverses only that
     /// withdrawal: a later one still voids it. It restores consent only; the
@@ -827,7 +832,11 @@ impl Vault {
         let decided_since = read_consent_events(&self.store, txn, &subject)?
             .iter()
             .any(|other| {
-                other.event_id != withdrawal.event_id && other.occurred_at >= withdrawal.occurred_at
+                other.event_id != withdrawal.event_id
+                    && match other.state {
+                        VoiceConsentState::Granted => other.occurred_at > withdrawal.occurred_at,
+                        VoiceConsentState::Withdrawn => other.occurred_at >= withdrawal.occurred_at,
+                    }
             });
         Ok((!decided_since).then_some(withdrawal))
     }
