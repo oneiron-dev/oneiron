@@ -452,7 +452,8 @@ impl ApiError {
         Self::new(
             "request is not authorized",
             ApiErrorDetails::Unauthorized,
-            ["Send Authorization: Bearer credentials and retry."],
+            ["Send Authorization: Bearer credentials and a fresh \
+                 x-oneiron-binding holder proof, then retry."],
         )
     }
 
