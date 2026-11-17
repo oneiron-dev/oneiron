@@ -977,6 +977,9 @@ const SUPPRESSED: SideTable<EntityId, [u8; 1], side_table::Raw> =
 /// tombstone that reached this vault before a fact would otherwise make a
 /// cancellation or a consent requirement read as never made. A row that
 /// proves nothing marks nothing, so it cannot fail its task's read either.
+/// Nor does an Owner fact whose maker commitment derives another task than
+/// the one it names ([`TaskAuthorityFact::commits_to_its_task`]): the fold
+/// never counts it, so it cannot mark the task it claims.
 pub(crate) fn note_suppressed_fact_in_txn(
     store: &crate::store::Store,
     wtxn: &mut heed::RwTxn<'_>,
@@ -994,10 +997,10 @@ pub(crate) fn note_suppressed_fact_in_txn(
         return Ok(());
     };
     let task = carried.fact.task_ref;
-    if proved_fact(&fact_proof::FactProof::in_txn(store, wtxn)?, id, body, task).is_none() {
-        return Ok(());
+    match proved_fact(&fact_proof::FactProof::in_txn(store, wtxn)?, id, body, task) {
+        Some(fact) if fact.commits_to_its_task() => SUPPRESSED.put(store, wtxn, &task, &[1]),
+        _ => Ok(()),
     }
-    SUPPRESSED.put(store, wtxn, &task, &[1])
 }
 
 /// [`note_suppressed_fact_in_txn`] for a window document's entity carrier,
