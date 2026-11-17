@@ -269,6 +269,7 @@ fn owner_resident_binding_lands_on_its_undeclared_predicate() {
             conversation_ref: room.to_hex(),
             turn_ref: None,
             thread_audience: None,
+            project: None,
             messages: vec![WitnessMessage {
                 id: Some(node.to_hex()),
                 author: WitnessAuthor::User,
