@@ -27,6 +27,7 @@ use oneiron::check_in::{
 };
 use oneiron::receipt::ReceiptKind;
 use oneiron::test_doors::check_in::{FixedChain, answer, open};
+use oneiron_contracts::register::Register;
 
 struct NoModel;
 
@@ -89,7 +90,7 @@ fn opening_runs_nothing_and_receipts_the_open_and_the_climb() {
     let opened = open(&fixture.vault, request(asker, ActClass::Spawn), &chain).expect("open");
 
     assert_eq!(
-        ReceiptKind::parse("check_in"),
+        ReceiptKind::named("check_in"),
         Some(ReceiptKind::CheckIn),
         "the receipt kind's token"
     );

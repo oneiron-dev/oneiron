@@ -78,7 +78,13 @@ impl Instance {
             path.parent()
                 .ok_or_else(|| anyhow::anyhow!("wake config has no parent directory"))?,
         )?;
-        let config: Config = toml::from_str(&fs::read_to_string(&path)?)?;
+        // The config names the programs a wake runs, so it is read only once
+        // no other user can write it, and one that does not parse names the
+        // file and the place, never the parser's message (FIX
+        // CONFIG-SIDE-FILES-MODE-UNCHECKED,
+        // CONFIG-SIDE-FILE-PARSE-ERRORS-PRINT-PARSER-MESSAGE).
+        let raw = crate::config::merge::read_referenced_file(&path)?;
+        let config: Config = crate::config::parse_toml(&path, &raw)?;
         anyhow::ensure!(
             config.inbox
                 || config.helper.is_some()
@@ -103,6 +109,13 @@ impl Instance {
             config,
             inbox: inbox::Inbox::new(directory.join("oneiron-wakes")),
         })
+    }
+
+    /// Whether this host acknowledged envelope id `event_ref` (RC99): a
+    /// helper's zero exit, `wake inbox` or `wake ack` recorded it in the
+    /// local inbox. The bridge's wake pump reports it at its next poll.
+    pub(crate) fn acknowledged(&self, event_ref: &str) -> bool {
+        self.inbox.is_acknowledged(event_ref)
     }
 }
 

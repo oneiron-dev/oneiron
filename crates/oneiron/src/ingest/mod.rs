@@ -11,6 +11,10 @@ pub use ag_ui::{
     AgUiEventLinks, AgUiFileImport, AgUiFileRead, AgUiFileReadInput, AgUiFileReceipt, AgUiFileView,
     AgUiObservationKind, AgUiRepairLink, AgUiRepairLinkStatus, AgUiSource,
 };
+pub(crate) use ag_ui::{
+    StoredAgUiCapture, ag_ui_capture_holds_in_txn, collect_capture_asset_erases,
+    owe_capture_asset_erase_in_txn, standing_ag_ui_captures_in_txn,
+};
 mod fingerprint;
 pub use fingerprint::{BlobBirthDecision, BlobFingerprintSnapshot, FingerprintRung};
 pub(crate) use fingerprint::{
@@ -62,6 +66,7 @@ pub use self::admission::{
 pub(crate) use self::admission::{
     admit_imported_evidence_claim_for_memory, admit_imported_evidence_claim_typed_for_machine,
     admit_imported_evidence_claim_typed_for_machine_in_txn, admit_imported_evidence_in_content,
+    imported_screen_verdict,
 };
 pub use self::bulk_review::{
     ImportedClaimBatch, ImportedClaimBatchEntry, ImportedClaimBatchReceipt,

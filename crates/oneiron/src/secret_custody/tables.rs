@@ -58,6 +58,13 @@ crate::side_table::side_tables! {
     SECRET_CUSTODY_RESTORE_RELEASE: VaultMeta b"secret_custody:restore_release:v1:" Named Engine
         [restore: live] [family: structure] [tier: canonical]
         => crate::secret_custody::erase_pending_restore_actor_in_txn;
+    /// One machine's newest same-value statement this vault holds (FIX [SECRETS-SAME-VALUE-FACT]):
+    /// its writer, the time it signed it, the pairs of custody records it proves hold one value
+    /// sealed to each machine mine there, its signature, and the pairs this install opened from it.
+    /// Never a value. This install's own is derived again on each steady pass and the others come
+    /// from the residence home, so no image carries one. Key: id16 (writer machine).
+    SECRET_CUSTODY_SAME_VALUE: VaultMeta b"secret_custody:same_value:v1:" Named Engine
+        [restore: not_imaged] [family: not_imaged] [tier: runtime];
     /// The latest owner-signed custody transition this vault signed of one portable credential
     /// (OF-422): the record without its value, the value sealed to each machine mine here. Key:
     /// hex32(entity id).

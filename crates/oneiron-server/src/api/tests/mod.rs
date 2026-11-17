@@ -2,6 +2,7 @@ use super::*;
 
 mod agent_definition_doors;
 mod ai_chat;
+mod ai_chat_self_compaction;
 mod depth_quality;
 mod memory_reason_repairs;
 use axum::body::{Body, to_bytes};
@@ -28,10 +29,12 @@ mod asset_forms;
 mod billing_usage;
 mod board_host_events;
 mod board_stream_publisher;
+mod chat_retrieval_turn;
 mod companion;
 mod context_board_history;
 mod context_board_standing;
 mod context_pack_disclosure;
+mod context_pack_phonetic_vector;
 mod context_pack_v4;
 mod contract_snapshots;
 mod conversation_dag;
@@ -76,6 +79,8 @@ mod surface_routes;
 mod vad_and_error_mapping;
 use support_contract::*;
 use support_mcp::*;
+// The facade room tests grant a room member's peer key its read too.
+pub(super) use support_mcp::put_actor_read_grant;
 
 pub(super) const V1_CORE_SUCCESS_CONTRACT_SNAPSHOT: &str =
     include_str!("../../../tests/fixtures/v1_core_success_contract.snapshot.json");
@@ -270,6 +275,61 @@ pub(super) fn seed_active_claim(
         .expect("seed active claim");
 }
 
+/// A companion-profile grant names a live PERSON and a live FACET persona
+/// (`check_companion_profile_target`): seeds each that no row backs yet.
+pub(super) fn seed_companion_profile_targets(
+    server: &SyncServer,
+    person_ref: oneiron::EntityId,
+    persona_ref: oneiron::EntityId,
+) {
+    for (id, kind, body) in [
+        (
+            person_ref,
+            oneiron::registry::ENTITY_TYPE_PERSON,
+            &b"companion person"[..],
+        ),
+        (
+            persona_ref,
+            oneiron::registry::ENTITY_TYPE_FACET,
+            &b"companion persona"[..],
+        ),
+    ] {
+        if !server.vault.entity_exists(&id).expect("read target row") {
+            server
+                .vault
+                .put_entity(&id, kind, oneiron::TimeRange { start: 1, end: 1 }, 1, body)
+                .expect("seed companion profile target");
+        }
+    }
+}
+
+/// Since OF-531 a founding member other than the creator is only invited:
+/// `invitee` accepts its one pending invitation to shared vault `vault_id`.
+/// Returns the member grants the acceptance wrote.
+pub(super) fn accept_founding_invitation(
+    vault: &oneiron::Vault,
+    invitee: oneiron::EntityId,
+    vault_id: u64,
+) -> Vec<String> {
+    let proof = vault
+        .authenticate_owner(
+            invitee,
+            &invitee.to_hex(),
+            true,
+            oneiron::store::GateDecisionId::now(),
+        )
+        .expect("invitee proof");
+    let mut open = vault
+        .shared_invitations(&proof, vault_id)
+        .expect("invitee's open invitations");
+    assert_eq!(open.len(), 1, "one founding invitation per invitee");
+    let invitation = open.remove(0);
+    vault
+        .accept_shared_invitation(&proof, vault_id, &invitation.id)
+        .expect("accept founding invitation")
+        .grants
+}
+
 pub(super) fn seed_companion_profile_access(
     server: &SyncServer,
     grant_id: oneiron::EntityId,
@@ -277,6 +337,7 @@ pub(super) fn seed_companion_profile_access(
     person_ref: oneiron::EntityId,
     persona_ref: oneiron::EntityId,
 ) {
+    seed_companion_profile_targets(server, person_ref, persona_ref);
     let grant = oneiron::AccessGrant::companion_profile_read(
         principal_ref,
         person_ref,
@@ -287,6 +348,46 @@ pub(super) fn seed_companion_profile_access(
         .vault
         .create_access_grant(&grant_id, &grant)
         .expect("seed companion profile grant");
+}
+
+/// Seeds a plain record whose exact words a psych-profile source cites, and
+/// returns the record-native source carrying them (FIX 11766): the row's live
+/// reference as its revision, its content hash as its words. A profile built
+/// from these sources passes the companion read's own source judgement, so it
+/// reads back instead of reading as withheld.
+pub(super) fn seed_profile_source_record(
+    server: &SyncServer,
+    id: oneiron::EntityId,
+) -> oneiron::psych_profile::PsychProfileSource {
+    server
+        .vault
+        .put_entity(
+            &id,
+            oneiron::registry::ENTITY_TYPE_PERSON,
+            oneiron::TimeRange { start: 1, end: 1 },
+            1,
+            b"profile source words",
+        )
+        .expect("seed profile source record");
+    let raw = server
+        .vault
+        .get_raw(&id)
+        .expect("read profile source row")
+        .expect("profile source row stored");
+    let body = &raw[oneiron_contracts::record_layout::ENTITY_METADATA_HEADER_LEN..];
+    let content = oneiron_store::consolidation_evidence::swarm_evidence_content_hash(body);
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(id.as_bytes());
+    hasher.update(&raw);
+    let mut revision = [0u8; 16];
+    revision.copy_from_slice(&hasher.finalize().as_bytes()[..16]);
+    oneiron::psych_profile::PsychProfileSource {
+        revision_ref: id,
+        document_ref: id,
+        world_ref: None,
+        document_revision: oneiron_store::revision_ref::RevisionRef(revision),
+        words: oneiron::psych_profile::PsychProfileSourceWords::Record { content },
+    }
 }
 
 pub(super) fn json_request(method: &str, uri: &str, body: Value) -> Request<Body> {
@@ -745,6 +846,29 @@ fn seed_disclosure_claim_in_world(
     text: &str,
     world: oneiron::EntityId,
 ) -> oneiron::EntityId {
+    seed_claim_in_world(server, subject, text, world, Some("private"))
+}
+
+/// [`seed_disclosure_claim_in_world`] with no sensitivity stamp. An unstamped
+/// claim reads at the sensitive floor for the audience, and a reader homed in
+/// another vault still reads it (DEC-0006 `#home-clearance`): a reader that
+/// names no room of this vault reads no stamped claim.
+fn seed_unstamped_claim_in_world(
+    server: &SyncServer,
+    subject: oneiron::EntityId,
+    text: &str,
+    world: oneiron::EntityId,
+) -> oneiron::EntityId {
+    seed_claim_in_world(server, subject, text, world, None)
+}
+
+fn seed_claim_in_world(
+    server: &SyncServer,
+    subject: oneiron::EntityId,
+    text: &str,
+    world: oneiron::EntityId,
+    stamp: Option<&str>,
+) -> oneiron::EntityId {
     let id = oneiron::EntityId::now();
     let mut claim = oneiron::ClaimBody::new(
         "event.diary",
@@ -759,12 +883,12 @@ fn seed_disclosure_claim_in_world(
     // A TURN subject has no stored FACET of its own, and a CLAIM birth needs
     // one: the claim takes the vault's default facet.
     claim.scope_facet = server.vault.default_facet().expect("default facet");
-    // Tier B is required here: otherwise the tier check rejects this claim
-    // before the test can exercise the contact's world clearance.
-    claim.scope = Some(rmpv::Value::Map(vec![(
-        rmpv::Value::from("sensitivity"),
-        rmpv::Value::from("private"),
-    )]));
+    claim.scope = stamp.map(|stamp| {
+        rmpv::Value::Map(vec![(
+            rmpv::Value::from("sensitivity"),
+            rmpv::Value::from(stamp),
+        )])
+    });
     server
         .vault
         .put_claim(
@@ -904,6 +1028,29 @@ pub(super) fn seed_reactive_turn(vault: &oneiron::Vault, id: &oneiron::EntityId,
         .expect("seed reactive turn");
 }
 
+/// A TURN whose body is the canonical empty `txt` map: the sync plane births
+/// its document lazily on the first edit (FIX 11794). Any other TURN body
+/// stays on the sequence-row plane, which has no head document to edit.
+pub(super) fn seed_reactive_document_turn(
+    vault: &oneiron::Vault,
+    id: &oneiron::EntityId,
+    learned_at: u64,
+) {
+    let body = rmp_serde::to_vec_named(&serde_json::json!({"txt": ""})).unwrap();
+    vault
+        .put_entity(
+            id,
+            oneiron::registry::ENTITY_TYPE_TURN,
+            oneiron::TimeRange {
+                start: learned_at,
+                end: learned_at,
+            },
+            learned_at,
+            &body,
+        )
+        .expect("seed reactive document turn");
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // ONE-1704 MATERIAL7 — fail-closed acceptance
 // ═══════════════════════════════════════════════════════════════════════════
@@ -929,6 +1076,9 @@ pub(super) fn seed_world_claim(
     )
     .unwrap();
     body.world = Some(world);
+    // The subject has no stored row, so no substrate FACET of its own, and a
+    // CLAIM birth needs a stored one: the claim takes the vault's default facet.
+    body.scope_facet = server.vault.default_facet().expect("default facet");
     server
         .vault
         .put_claim(
