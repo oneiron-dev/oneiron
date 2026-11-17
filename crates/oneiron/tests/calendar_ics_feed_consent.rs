@@ -609,10 +609,13 @@ fn another_source_under_the_feed_system_never_settles_under_its_consent() {
         .iter()
         .filter(|(_, body)| body.approval == ClaimApprovalStatus::Proposed)
         .collect();
+    // The event's 502 property claims (calendar.time_kind and the 501
+    // attendees) fill the first pass's 500 admissions; the other source's
+    // continuation admits the last two.
     assert_eq!(
         waiting.len(),
-        1,
-        "the other source's one claim waits on its own consent"
+        2,
+        "the other source's two claims wait on their own consent"
     );
     assert!(
         claims

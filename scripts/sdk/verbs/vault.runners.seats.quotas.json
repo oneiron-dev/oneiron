@@ -3,7 +3,7 @@
   "description": "The owner reads the named runner seats' quotas as their captures last recorded them: each spend, when the seat is back, whether it may take work, and the capture each reading came from.",
   "input": "crate::dispatch_byoa::RunnerSeatQuotasRequest",
   "output": "crate::dispatch_byoa::RunnerSeatQuotasView",
-  "call": "memory.vault().runner_seat_quotas_as_owner(&memory.embedded_owner(\"vault.runners.seats.quotas\")?, &input)?",
+  "call": "memory.with_owner_or_delegate(\"vault.runners.seats.quotas\", |who, _credential| match who { crate::authority::OwnerOrDelegate::Owner(owner) => memory.vault().runner_seat_quotas_as_owner(owner, &input), crate::authority::OwnerOrDelegate::Delegate(agent) => memory.vault().runner_seat_quotas_as_delegate(agent, &input) })?",
   "host_door": true,
   "host_door_lists": true,
   "scope": "Read",

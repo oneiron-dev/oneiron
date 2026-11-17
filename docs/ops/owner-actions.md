@@ -2220,6 +2220,43 @@ A sheet, passkey or capsule handed out before the change still opens the backups
 the data key does not rotate. A backup names the preset it was written under, so a capsule, or a key
 an escrow recipient opened from an earlier backup, opens nothing written after the change.
 
+### A new data-key generation
+
+A new data-key generation replaces the vault's data key: everything written after it is sealed under
+a fresh key, and everything written before still opens with the old one, reached through the link
+chain. Each way you present gets a wrap of the new key; every other wrap of the old key is removed
+only when you confirmed its removal by id. This install's device wrap always gets one. Only you
+start it; an agent may ask you to, and its ask waits in your inbox.
+
+First the preview names, in plain words, every wrap the act would remove:
+
+```sh
+oneiron vault-key new-generation --preview --keep-password
+```
+
+Then present each way you keep, or confirm its removal, and start the act:
+
+```sh
+printf %s "$PASSWORD" | oneiron vault-key new-generation --keep-password --confirm-removal passkey:old-key
+```
+
+`--keep-password` reads the password from stdin or `--secret-file`. `--keep-passkey NAME=FILE` and
+`--keep-escrow LABEL=FILE` keep a passkey or an escrow: FILE is an owner-only file holding the
+passkey's PRF output, or the file holding the recipient's hybrid public key bytes, as
+`reseal-capsule --recipient-file` reads it. `--confirm-removal ID` confirms one wrap's removal; a
+way neither presented nor confirmed refuses the act and changes nothing. A running server takes the
+same steps at `POST /v1/owner/vault-key/generation/preview` with `{"password": true,
+"passkeys": [...], "escrows": [...]}` and `POST /v1/owner/vault-key/generation` with
+`{"password": "...", "passkeys": [{"credential": "...", "prf": "..."}], "escrows": [{"label": "...",
+"recipient": "..."}], "confirmed_removals": [...]}`: a PRF output is 32 bytes, hex or base64url, and
+a recipient is the hybrid public key's bytes, base64url without padding.
+
+Under any recovery preset but `standard` the act runs from the recovery preset switch instead, and
+here the engine refuses it. On a page-sealed vault the act stands, and the answer says so: its
+`notice` reads "this device's stored copy keeps its old key until it is re-keyed"
+(`pages_keep_earlier_key` is true), and `mirror_pending` true means the page-seal mirror is
+rewritten at the vault's next sealed open.
+
 ### Maximum tier
 
 `oneiron init --maximum-tier` creates a vault whose every LMDB page is sealed under a key derived
