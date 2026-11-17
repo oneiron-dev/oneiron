@@ -383,16 +383,10 @@ pub(super) fn purge_stored_history(
     Ok(())
 }
 
-/// One resolver for both direct edits and proposal routing. Whether an edit
-/// lands or waits is the Grant's answer for this actor and this NOTE, never
-/// the writer's authorship (DEC-0006 #10, ARCH-0032 #forks-proposals). The
-/// owner lands everywhere in his own vault; owner authority comes from the
-/// authority log, not merely from an asserted actor class. In a shared
-/// vault a member lands exactly as its live federation grant allows the
-/// content write, whatever its class ([`shared_member_grant_allows`]).
-/// Anyone else, the NOTE's author included, lands only under an automatic
-/// grant and otherwise proposes.
-pub(super) fn grant_allows(
+/// The owner lands everywhere in his own vault; owner authority comes from
+/// the authority log, not merely from an asserted actor class. Anyone else,
+/// the NOTE's author included, lands here only under an automatic grant.
+fn owner_or_automatic_grant(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     note: EntityId,
@@ -403,10 +397,47 @@ pub(super) fn grant_allows(
     {
         return Ok(true);
     }
-    if shared_member_grant_allows(vault, txn, note, actor)? {
+    automatic_edit_grant(vault, txn, note, actor)
+}
+
+/// One resolver for both direct edits and proposal routing. Whether an edit
+/// lands or waits is the Grant's answer for this actor and this NOTE, never
+/// the writer's authorship (DEC-0006 #10, ARCH-0032 #forks-proposals): the
+/// owner's or an automatic grant's ([`owner_or_automatic_grant`]), and in a
+/// shared vault a member's, which lands exactly as its live federation grant
+/// allows the content write, whatever its class
+/// ([`shared_member_grant_allows`]). Anyone else, the NOTE's author
+/// included, proposes.
+pub(super) fn grant_allows(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    note: EntityId,
+    actor: WriteActor,
+) -> Result<bool> {
+    if owner_or_automatic_grant(vault, txn, note, actor)? {
         return Ok(true);
     }
-    automatic_edit_grant(vault, txn, note, actor)
+    shared_member_grant_allows(vault, txn, note, actor)
+}
+
+/// Whether `actor` decides (merges, switches or rejects) a waiting fork of
+/// `note` that `opener` opened. Its own fork it decides as it lands its own
+/// edit ([`grant_allows`]). Another writer's fork is decided by the owner or
+/// an automatic `note.edit` grant holder: a shared-vault member's content
+/// write grant lands that member's own edits (RULING
+/// MEMBER-GRANT-AGENT-LANDS = A) and gives it no say over another writer's
+/// proposal, which no ruling grants.
+pub(super) fn fork_decision_allows(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    note: EntityId,
+    opener: NoteActor,
+    actor: WriteActor,
+) -> Result<bool> {
+    if opener.is(actor.entity_ref()) {
+        return grant_allows(vault, txn, note, actor);
+    }
+    owner_or_automatic_grant(vault, txn, note, actor)
 }
 
 /// True when this is a shared vault and `actor`'s live federation grant
@@ -611,7 +642,7 @@ impl Vault {
                     .get(&self.store, txn, &id)?
                     .ok_or_else(|| invalid("missing proposal record"))?;
                 for fork in &mut bundle.waiting {
-                    if !grant_allows(self, txn, fork.note, actor)? {
+                    if !fork_decision_allows(self, txn, fork.note, fork.actor, actor)? {
                         return Err(invalid("no grant to accept this fork").into());
                     }
                     // A merge or switch moves a sealed NOTE's text; a reject
