@@ -261,6 +261,7 @@ fn tagged_fixture() -> Fixture {
             conversation_ref: EntityId::now().to_hex(),
             turn_ref: Some(turn.to_hex()),
             thread_audience: None,
+            project: None,
             messages: vec![
                 message(
                     shared_message,
@@ -487,6 +488,7 @@ fn a_pronoun_in_an_open_message_does_not_open_a_name_read_only_in_a_relationship
             conversation_ref: EntityId::now().to_hex(),
             turn_ref: Some(turn.to_hex()),
             thread_audience: None,
+            project: None,
             messages: vec![
                 message(
                     r_message,
