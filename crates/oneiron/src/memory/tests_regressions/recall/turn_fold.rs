@@ -29,6 +29,7 @@ fn witness_turn(
                 .collect(),
             occurred_at,
             thread_audience: None,
+            project: None,
             assertions: Default::default(),
         })
         .expect("witness a turn");
@@ -326,6 +327,7 @@ fn a_turn_the_reader_may_not_retrieve_leaves_room_for_one_it_may() {
             ],
             occurred_at,
             thread_audience: None,
+            project: None,
             assertions: Default::default(),
         })
         .expect("witness the partly withheld turn");
@@ -336,6 +338,7 @@ fn a_turn_the_reader_may_not_retrieve_leaves_room_for_one_it_may() {
             messages: vec![in_space(0, ALLOWED)],
             occurred_at,
             thread_audience: None,
+            project: None,
             assertions: Default::default(),
         })
         .expect("witness the readable turn");

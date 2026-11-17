@@ -212,3 +212,6 @@ pub(crate) use self::plugin::context_board_plugin_block_accepts_masked;
 
 pub mod agent_run_status;
 pub(crate) mod tables;
+
+#[cfg(oneiron_test_support)]
+pub(crate) use self::plugin::block_key_pin_for_test;
