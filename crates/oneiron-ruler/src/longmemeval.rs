@@ -42,7 +42,7 @@ pub struct LmeQuestion {
 }
 
 /// One turn of a LongMemEval-S haystack session.
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
 pub struct LmeTurn {
     /// `user` or `assistant`.
     pub role: String,
@@ -164,7 +164,8 @@ pub enum ConvertError {
         /// The dataset the split names.
         found: String,
     },
-    /// One haystack names a session twice.
+    /// One haystack names a session twice, and the repeat is an answer
+    /// session or differs from the first copy in its turns.
     #[error("duplicate session {session_id} in haystack of {question_id}")]
     DuplicateSessionInHaystack {
         /// The question.
@@ -402,7 +403,10 @@ impl Split {
 /// Convert the questions a split assigns to `slice` into a pack slice. With
 /// `only`, convert just those ids (each must sit in the converted slice).
 /// Records keep first-seen order across the file; the slice holds only its
-/// own questions and the sessions they read.
+/// own questions and the sessions they read. A repeated haystack session
+/// whose turns equal its first copy and that answers nothing is skipped: the
+/// first copy (and its date) stands. Upstream repeats 13 distractor sessions
+/// this way in `longmemeval_s_cleaned.json`, each under a second date.
 pub fn convert(
     questions: &[LmeQuestion],
     split: &Split,
@@ -472,14 +476,19 @@ pub fn convert(
             });
         }
         let mut sessions: Vec<HaystackSession> = Vec::new();
-        let mut seen_sessions = BTreeSet::new();
+        let mut first_copy: BTreeMap<&str, usize> = BTreeMap::new();
         for (h, session_id) in question.haystack_session_ids.iter().enumerate() {
-            if !seen_sessions.insert(session_id.as_str()) {
+            if let Some(&first) = first_copy.get(session_id.as_str()) {
+                let same_turns = question.haystack_sessions[first] == question.haystack_sessions[h];
+                if same_turns && !question.answer_session_ids.contains(session_id) {
+                    continue;
+                }
                 return Err(ConvertError::DuplicateSessionInHaystack {
                     question_id: entry.question_id.clone(),
                     session_id: session_id.clone(),
                 });
             }
+            first_copy.insert(session_id.as_str(), h);
             let time = lme_time(&question.haystack_dates[h])?;
             let mut turns: Vec<(String, bool)> = Vec::new();
             for (t, turn) in question.haystack_sessions[h].iter().enumerate() {
