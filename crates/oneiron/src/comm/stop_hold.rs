@@ -118,7 +118,7 @@ pub(crate) fn send_stop_reason_in_txn(
         }
     }
     if pending_stop_holds_in_txn(store, txn, &subjects, channel_class)? {
-        return Ok(Some(OPT_OUT_REASON_STOP));
+        return Ok(None);
     }
     // A party-wide head covers every contact of the party, whatever its
     // channel (ONE-1752), and no channel the party has no contact on
