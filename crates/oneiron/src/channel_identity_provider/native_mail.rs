@@ -21,6 +21,7 @@ use super::shared_validate::{
     normalize_domain, normalize_email_address, split_email_address,
     validate_email_inbound_metadata, validate_provision_intent,
 };
+use super::stalwart::{native_mail_message_id, native_mail_send_key};
 use super::{
     ChannelIdentityProviderAdapter, ChannelIdentityProviderInbound,
     ChannelIdentityProviderProvision, EmailProviderInbound,
@@ -37,13 +38,17 @@ use crate::gate::{
     ExternalEffectGateInput, ExternalEffectPolicyRisk, GateActor, GateProvenanceHandles,
 };
 use crate::outbound::{
-    OutboundDispatchError, OutboundDispatchRequest, OutboundDispatchResult, OutboundExecutionSink,
+    OutboundDispatchError, OutboundDispatchOutcome, OutboundDispatchRequest,
+    OutboundDispatchResult, OutboundExecutionSink,
 };
 use crate::ports::EntityStoreRead;
 use crate::registry::ENTITY_TYPE_CHANNEL_IDENTITY;
 use crate::store::Store;
 use crate::surface_event::{
     InboundSurfaceEventInput, SurfaceCounterpartyStamp, SurfaceEventAdmission,
+};
+use crate::write_envelope::thread_claim::{
+    CanonicalMessageId, ThreadPassportInput, canonical_message_id,
 };
 use crate::{EntityId, Error, Result, Vault};
 use sha2::{Digest, Sha256};
@@ -153,10 +158,40 @@ impl<H: NativeMailHost> NativeMailAdapter<H> {
         {
             return Err(invalid().into());
         }
+        let send_key = native_mail_send_key(
+            request.engine_send_id.as_ref(),
+            request.intent.idempotency_key.as_deref(),
+            &request.intent_ref,
+        )
+        .to_owned();
         // The common dispatch door canonicalizes and binds the recipient
         // before freezing the intent. This adapter cannot authorize a second
         // delivery path or normalize only the Gate's counterparty copy.
-        vault.dispatch_outbound_intent_recorded(request, sink)
+        let result = vault.dispatch_outbound_intent_recorded(request, sink)?;
+        if result.outcome == OutboundDispatchOutcome::DeliveredToChannel
+            && let Some(actor) = identity.facts.binding.actor_ref()
+        {
+            record_native_sent_passport(
+                vault,
+                identity_ref,
+                actor,
+                identity.facts.binding.facet_ref(),
+                self.send_message_id(&send_key)?,
+                result.receipt.occurred_at,
+            )?;
+        }
+        Ok(result)
+    }
+
+    /// The Message-ID a native send keyed `send_key` goes out under on this
+    /// adapter's domain: the one its sink drafts and submits it under, and
+    /// its sent passport's.
+    ///
+    /// # Errors
+    ///
+    /// A key whose Message-ID is not canonical.
+    pub fn send_message_id(&self, send_key: &str) -> Result<CanonicalMessageId> {
+        canonical_message_id(&native_mail_message_id(&self.domain, send_key))
     }
 
     /// Owner approval for exactly one cold send. This mints no standing
@@ -549,6 +584,28 @@ fn native_mail_identity_in_txn(
     }
     let custody = decode_channel_identity_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
     Ok(Some(NativeMailIdentity { facts, custody }))
+}
+
+/// Files one delivered native send in the thread record: its
+/// `(identity × Message-ID)` passport under the Message-ID its sink drafted
+/// it under, so a reply naming it lands on the thread this send began and
+/// wears its mask. A pack send starts its thread: its sink submits no reply
+/// headers. The time is the durable receipt's, so a replayed Done result
+/// files identically, and the write is idempotent.
+fn record_native_sent_passport(
+    vault: &Vault,
+    identity_ref: EntityId,
+    actor: EntityId,
+    facet: Option<EntityId>,
+    message_id: CanonicalMessageId,
+    observed_at: u64,
+) -> Result<()> {
+    let mut input = ThreadPassportInput::new(identity_ref, actor, message_id, observed_at);
+    if let Some(facet) = facet {
+        input = input.with_facet(facet);
+    }
+    vault.record_thread_passport(input)?;
+    Ok(())
 }
 
 /// Called only by the external-effect Gate on its own transaction. The

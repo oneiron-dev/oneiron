@@ -16,6 +16,28 @@ use crate::{EntityId, Result};
 
 pub const NATIVE_MAIL_MAX_MESSAGE_BYTES: usize = 8 * 1024 * 1024;
 
+/// The key a native send's Message-ID derives from: its engine send id when
+/// a connector-send TASK runs it (FIX 4747), else its idempotency key, else
+/// its logical send reference. The sink drafts under it and the adapter files
+/// the sent passport under it, so both name one Message-ID.
+pub(crate) fn native_mail_send_key<'a>(
+    engine_send_id: Option<&'a EngineSendId>,
+    idempotency_key: Option<&'a str>,
+    intent_ref: &'a str,
+) -> &'a str {
+    engine_send_id
+        .map(EngineSendId::as_str)
+        .or(idempotency_key)
+        .unwrap_or(intent_ref)
+}
+
+/// The Message-ID of the native mail send keyed `send_key` on `domain`: its
+/// draft is found by it, its submission looked up by it, and its sent
+/// passport filed under it.
+pub(crate) fn native_mail_message_id(domain: &str, send_key: &str) -> String {
+    format!("{}@{domain}", blake3::hash(send_key.as_bytes()).to_hex())
+}
+
 /// Agent-visible fields only. Sender, headers and route come from the host and
 /// frozen dispatch request. Unsupported fields fail deserialization, not send.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -137,11 +159,11 @@ impl StalwartSendSink<'_> {
         // the id a lookup asks for; a connector-send TASK's send derives
         // it from its engine send id, the same on every machine (FIX
         // 4747).
-        let key = request
-            .engine_send_id
-            .map(EngineSendId::as_str)
-            .or(request.intent.idempotency_key.as_deref())
-            .unwrap_or(request.intent_ref);
+        let key = native_mail_send_key(
+            request.engine_send_id,
+            request.intent.idempotency_key.as_deref(),
+            request.intent_ref,
+        );
         if key.trim().is_empty() {
             return Err(invalid("native mail send lacks a logical send reference"));
         }
@@ -207,11 +229,7 @@ impl StalwartClient {
     /// logical reference or its engine send id: its draft is found by it and
     /// its submission looked up by it.
     fn native_message_id(&self, send_key: &str) -> String {
-        format!(
-            "{}@{}",
-            blake3::hash(send_key.as_bytes()).to_hex(),
-            self.config.domain
-        )
+        native_mail_message_id(&self.config.domain, send_key)
     }
 
     /// Whether the served send keyed `send_key` from `identity`'s mailbox at

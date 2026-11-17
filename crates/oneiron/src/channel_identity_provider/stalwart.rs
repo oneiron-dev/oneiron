@@ -14,6 +14,7 @@ pub use reputation::{
     NativeMailWarmupPolicy,
 };
 pub use send::{NATIVE_MAIL_MAX_MESSAGE_BYTES, NativeMailMessage, StalwartSendSink};
+pub(crate) use send::{native_mail_message_id, native_mail_send_key};
 
 use std::collections::BTreeMap;
 use std::io::{Read, Write};

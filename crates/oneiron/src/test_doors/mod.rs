@@ -22,6 +22,7 @@ pub mod authority_view_grant;
 pub mod authority_world_undo;
 pub mod board_child_done;
 pub mod board_task_wakes;
+pub mod booking_rung2_thread;
 pub mod booking_side_table_rows;
 pub mod builtin_pack_seed;
 pub mod call_receipt_damage;
