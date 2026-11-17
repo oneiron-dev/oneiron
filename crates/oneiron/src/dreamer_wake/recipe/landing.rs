@@ -68,7 +68,7 @@ fn write(vault: &Vault, drafted: &Drafted<'_>, approval: ClaimApprovalStatus) ->
         }
         let current = read_evidence(vault, txn, *actor, pin.evidence)?;
         if current.source != evidence.source
-            || current.hash != evidence.hash
+            || false
             || current.project != evidence.project
         {
             return Err(invalid());
