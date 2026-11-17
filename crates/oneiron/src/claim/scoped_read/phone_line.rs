@@ -18,6 +18,16 @@ impl ScopedRead<'_> {
     /// substitute for checking every source row under this same read key.
     /// Ordinary readers have no phone ceiling and return `None`.
     pub fn phone_line_scope(&self) -> Result<Option<crate::federation::Scope>> {
+        Ok(self
+            .phone_line_consent()?
+            .map(|consent| consent.scope().clone()))
+    }
+
+    /// The call's whole current consent: [`Self::phone_line_scope`]'s scope
+    /// and each ceiling's current reach, for invalidating a prepared history
+    /// when any of it changes (#8667 review r2 P1). The same caveat holds:
+    /// it grants no read. Ordinary readers return `None`.
+    pub fn phone_line_consent(&self) -> Result<Option<crate::phone_line::PhoneLineConsent>> {
         if self.actor_key.phone_lines.is_empty() {
             return Ok(None);
         }
@@ -27,7 +37,7 @@ impl ScopedRead<'_> {
         if !self.proof_live_in(&txn)? {
             return Err(crate::phone_line::invalid());
         }
-        self.phone_line_scope_in(&txn)
+        self.phone_line_consent_in(&txn)
     }
 
     /// The actual receiving agent's admitted definition and a reader held to
@@ -138,18 +148,28 @@ impl ScopedRead<'_> {
         &self,
         txn: &heed::RoTxn<'_>,
     ) -> Result<Option<crate::federation::Scope>> {
+        Ok(self
+            .phone_line_consent_in(txn)?
+            .map(|consent| consent.scope().clone()))
+    }
+
+    fn phone_line_consent_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+    ) -> Result<Option<crate::phone_line::PhoneLineConsent>> {
         let mut scope: Option<crate::federation::Scope> = None;
+        let mut reaches = Vec::with_capacity(self.actor_key.phone_lines.len());
         for ceiling in &self.actor_key.phone_lines {
             let current = ceiling
                 .current_reach_in(self.vault, txn, self.actor_key.actor_ref())?
                 .ok_or_else(crate::phone_line::invalid)?;
-            let current = current.scope().clone();
             scope = Some(match scope {
-                Some(prior) => prior.meet(&current),
-                None => current,
+                Some(prior) => prior.meet(current.scope()),
+                None => current.scope().clone(),
             });
+            reaches.push(current);
         }
-        Ok(scope)
+        Ok(scope.map(|scope| crate::phone_line::PhoneLineConsent::new(scope, reaches)))
     }
 
     pub(super) fn phone_lines_allow_in(

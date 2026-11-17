@@ -160,6 +160,7 @@ pub(super) fn validate_public_raw_put(
                     "expression preference lifecycle is owned by set_expression_preference",
                 ));
             }
+            refuse_campaign_member_claim(&body.predicate)?;
         }
         // A NOTE body carries `author_ref`, so a caller who hand-writes one
         // forges another actor's attribution — and no raw put can be made to
@@ -298,6 +299,22 @@ pub(crate) fn reject_family_owned_candidate(candidate: &ClaimCandidate) -> Resul
     ) {
         return Err(Error::InvalidClaimBody(
             "expression preference lifecycle is owned by set_expression_preference",
+        ));
+    }
+    refuse_campaign_member_claim(candidate.predicate())
+}
+
+/// A `campaign.member` head is the campaign's: `vault.campaign.enroll` (a
+/// claim op its intake reconciles) and the saved-query derivation
+/// (`put_claim_in_txn`) write it, and neither passes a raw put or a claim
+/// candidate door (CA-01; the Engine's RULING RESTRICTION-FIX-SCOPE = A, 15
+/// Nov, as `refuse_typed_claim_family` holds the generic claim doors). A head
+/// at a fresh key through those doors outranked an exit the fold had
+/// settled (Astra review on #8153 F4).
+fn refuse_campaign_member_claim(predicate: &str) -> Result<()> {
+    if predicate == crate::write_envelope::cohort_claims::PREDICATE_CAMPAIGN_MEMBER {
+        return Err(Error::InvalidClaimBody(
+            "campaign membership is written through vault.campaign.enroll, not a raw claim door",
         ));
     }
     Ok(())
@@ -588,11 +605,13 @@ pub(super) fn delete_lexical_query_hint_claims_for_target(
 }
 
 /// Every hint CLAIM of `target`, attached or still waiting for it. Only a
-/// CLAIM is a hint target, so any other row has none. For a CLAIM the whole
-/// CLAIM type stream is read; a row with the derive stamp is kept when its
-/// body is a lexical query hint for `target` stored under its own derived
-/// id. Past the scan's threshold row it raises one check and reads on, so no
-/// hint of `target` is left behind.
+/// CLAIM is a hint target, so any other row has none. For a CLAIM the
+/// lookup reads the target's rows of the derived hint index; when the index
+/// cannot answer (a vault older than its backfill, or any doubt about a
+/// hit) the whole CLAIM type stream is read instead, and a row with the
+/// derive stamp is kept when its body is a lexical query hint for `target`
+/// stored under its own derived id. Past the scan's threshold row it raises
+/// one check and reads on, so no hint of `target` is left behind.
 pub(crate) fn lexical_query_hint_claim_ids_for_target(
     store: &Store,
     wtxn: &RoTxn<'_>,
@@ -603,6 +622,12 @@ pub(crate) fn lexical_query_hint_claim_ids_for_target(
         return Ok(hint_ids);
     }
     let mut rows = ScanCount::start(store, wtxn, EngineScan::LexicalHintRows, &[])?;
+    if let Some(indexed) =
+        indexed_lexical_query_hint_claim_ids_for_target(store, wtxn, target, &mut rows)?
+    {
+        rows.defer(store);
+        return Ok(indexed);
+    }
     for candidate in crate::ports::EntityStoreRead::port_entity_ids_by_type(
         store,
         wtxn,

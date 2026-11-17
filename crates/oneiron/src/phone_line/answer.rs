@@ -82,6 +82,30 @@ impl CallReach {
     }
 }
 
+/// A call's live consent, as the context prepared for it depends on it: the
+/// scope every ceiling's current reach meets in, which prepared output is
+/// stamped with, and each of those reaches whole (scope, caller rule, picked
+/// documents). A narrowing of the picked documents or of the caller rule
+/// leaves the scope as it was yet withholds rows a prepared history was read
+/// from, so a history stays valid only while this whole value is unchanged
+/// (#8667 review r2 P1).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PhoneLineConsent {
+    scope: Scope,
+    reaches: Vec<CallReach>,
+}
+
+impl PhoneLineConsent {
+    pub(crate) fn new(scope: Scope, reaches: Vec<CallReach>) -> Self {
+        Self { scope, reaches }
+    }
+
+    /// The scope every ceiling's current reach meets in.
+    pub fn scope(&self) -> &Scope {
+        &self.scope
+    }
+}
+
 /// Call identity and owner consent carried by the read key, never a credential.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct PhoneLineReadCeiling {
