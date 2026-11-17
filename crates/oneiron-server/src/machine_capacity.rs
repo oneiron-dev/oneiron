@@ -42,7 +42,9 @@ pub fn measure_this_machine(data_dir: &Path, measured_at: u64) -> MachineCapacit
     MachineCapacity::from_measurement(
         MachineMeasurement {
             cores: u64::try_from(crate::machine::cores()).unwrap_or(u64::MAX),
-            memory_total_bytes: crate::machine::memory_bytes().unwrap_or(0),
+            memory_total_bytes: oneiron_contracts::limit_ask::machine_memory_bytes()
+                .or_else(crate::machine::memory_bytes)
+                .unwrap_or(0),
             memory_available_bytes: oneiron_contracts::limit_ask::available_memory_bytes()
                 .unwrap_or(0),
             gpu_memory_mib: crate::machine::gpu_memory_mib(),

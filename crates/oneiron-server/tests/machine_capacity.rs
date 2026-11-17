@@ -99,7 +99,10 @@ fn the_probe_records_this_machines_measured_capacity_on_its_machine_entity() -> 
         assert_eq!(recorded.cores, u64::try_from(cores)?);
         assert_eq!(
             recorded.memory_total_bytes,
-            oneiron::host_memory::memory_bytes().unwrap_or(0)
+            oneiron_contracts::limit_ask::machine_memory_bytes()
+                .or_else(oneiron::host_memory::memory_bytes)
+                .unwrap_or(0),
+            "the total is the memory this process may use: the container limit when it is lower"
         );
         assert_eq!(
             recorded.memory_reserve_bytes,
