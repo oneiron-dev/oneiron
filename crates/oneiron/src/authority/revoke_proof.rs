@@ -121,6 +121,47 @@ impl RevokeFacts {
             .map(|fact| fact.entry_hash)
             .collect()
     }
+
+    /// Adds each device revocation a whole fold proves in `tail`, an adopted
+    /// image's tail that folded past it with every covered row in each
+    /// revocation's causal past (FIX 11760). One the tail folds to a state in
+    /// `states` folded on a branch whose every row folds, where the whole
+    /// fold's proof ([`verify_signed_branch`]) is its ordinary state: it takes
+    /// its fact on that state's vault and owner-anchor rows, as
+    /// [`derive_revoke_facts`] takes it on the proof's (FIX
+    /// [CONFIRM-COLLISION-SUBTREE-ROLLBACK]). One with no state adds none: on
+    /// a parent with no state either, the adopted fold leaves it to the whole
+    /// history, whose proof crosses rejected permissive rows to it.
+    pub(super) fn add_serial_device_revokes(
+        &mut self,
+        tail: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+        states: &BTreeMap<AuthorityEntryHash, FoldState>,
+    ) {
+        for (hash, entry) in tail {
+            let AuthorityOp::RevokeDevice { revoked_key } = &entry.op else {
+                continue;
+            };
+            let Some(state) = states.get(hash) else {
+                continue;
+            };
+            self.by_hash.insert(
+                *hash,
+                VerifiedRestriction {
+                    vault_id: state.vault_id,
+                    entry_hash: *hash,
+                    kind: Restriction::DeviceRevoke(revoked_key.clone()),
+                    routed: state.anchor_entries.clone(),
+                },
+            );
+        }
+    }
+
+    /// The rows these facts were proved on, for a test that compares two
+    /// images built over the same rows.
+    #[cfg(oneiron_test_support)]
+    pub(super) fn rows_for_test(&self) -> BTreeSet<AuthorityEntryHash> {
+        self.by_hash.keys().copied().collect()
+    }
 }
 
 #[doc(hidden)]

@@ -122,7 +122,8 @@ pub(super) fn window_reads(op: &AuthorityOp) -> bool {
 
 /// Whether `first_seen` holds every second the window times over `entries`:
 /// each valid approval resting on a key `fold` holds revoked, and each valid
-/// row revoking a key such an approval rests on. A row with none never
+/// row or verified device revocation (Sol review F1 on #8608) revoking a key
+/// such an approval rests on. A row with none never
 /// starts its window, so an approval on it would never expire, or would
 /// expire later than the whole history's: a caller missing one asks for the
 /// history instead (FOLDPAST-COVERED-APPROVAL-CLOCK).
@@ -152,7 +153,8 @@ pub(super) fn stale_roster_clocks_complete<E: LogRow>(
     subjects.iter().all(|hash| first_seen.get(hash).is_some())
         && entries.iter().all(|row| {
             row.entry_hash().is_none_or(|hash| {
-                !fold.valid_entries.contains(&hash)
+                (!fold.valid_entries.contains(&hash)
+                    && !fold.verified_device_revocations.contains(&hash))
                     || !revoked_keys(&row.entry().op, fold)
                         .iter()
                         .any(|key| rested_on.contains(key))
