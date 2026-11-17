@@ -154,7 +154,8 @@ impl HostUnlock {
     /// reads; a registry capsule's report must name that vault, and the
     /// engine opens it only to the key the vault's commitment names. The kit
     /// is bound to the vault id the owner names, never the one a mirror or
-    /// the store carries.
+    /// the store carries; the synced passkey the request names counts its
+    /// sealed piece as one of the kit's (census L10-18).
     pub(super) fn read_for_vault(
         request: &UnlockRequest<'_>,
         vault_id: impl FnOnce() -> anyhow::Result<[u8; 32]>,
@@ -163,10 +164,15 @@ impl HostUnlock {
         before_secret: impl FnOnce(bool) -> anyhow::Result<()>,
     ) -> anyhow::Result<Self> {
         if request.method == UnlockMethod::Kit {
+            let passkey = super::super::recovery_kit::kit_passkey(
+                request.kit_passkey_prf_file,
+                request.credential,
+            )?;
             return super::super::recovery_kit::kit_unlock_existing(
                 request.vault_id,
                 request.pieces,
                 request.secret.secret_file.as_deref(),
+                passkey,
                 |kind, kit| match open_vault {
                     Some(vault) => Ok(vault.keeps_kit_piece_for(kind, kit)),
                     None => match Self::open_kit_keystore(config, &config.vault_path) {
