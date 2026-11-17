@@ -176,6 +176,11 @@ fn assert_case(fixture: &Value, case: &Value) {
             expected["candidate_indexes"],
             "{name}"
         );
+        assert_eq!(
+            json!(set.component_indexes),
+            expected["component_indexes"],
+            "{name}"
+        );
         assert_eq!(json!(set.prior_heads), expected["prior_heads"], "{name}");
         assert_eq!(
             json!(set.identity_token),

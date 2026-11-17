@@ -133,6 +133,9 @@ pub struct CandidateRoute {
 pub struct JudgeSet {
     /// Lists members in native slice order.
     pub candidate_indexes: Vec<usize>,
+    /// Lists the whole nomination component in nomination order, including
+    /// members removed as exact restatements or as observed beside a stated head.
+    pub component_indexes: Vec<usize>,
     /// Carries the identity token of the first nominated member.
     pub identity_token: String,
     /// Lists context heads in sorted claim order.
@@ -255,6 +258,11 @@ pub fn route(
     for set in &mut sets {
         set.candidate_indexes = set
             .candidate_indexes
+            .iter()
+            .map(|pos| ready[*pos])
+            .collect();
+        set.component_indexes = set
+            .component_indexes
             .iter()
             .map(|pos| ready[*pos])
             .collect();
@@ -466,17 +474,18 @@ fn route_sets(
         }
     }
     let mut sets: Vec<JudgeSet> = Vec::new();
-    for members in components {
+    for members in &components {
         let identity_token = ready_obs[members[0]].identity_token.clone();
         let mut ids = BTreeSet::new();
-        for pos in &members {
+        for pos in members {
             for matched in &kept[&ready[*pos]] {
                 ids.insert(observations.priors[matched.prior].claim.clone());
             }
         }
         let prior_heads: Vec<String> = ids.into_iter().collect();
         let after_exact: Vec<usize> = members
-            .into_iter()
+            .iter()
+            .copied()
             .filter(|pos| !exact.contains(pos))
             .collect();
         let remaining = drop_qualifying_members(
@@ -492,6 +501,7 @@ fn route_sets(
         let prior_head = (prior_heads.len() == 1).then(|| prior_heads[0].clone());
         sets.push(JudgeSet {
             candidate_indexes: remaining,
+            component_indexes: members.clone(),
             identity_token,
             prior_heads,
             prior_head,
@@ -515,9 +525,15 @@ fn route_sets(
             .map(|matched| observations.priors[matched.prior].claim.clone())
             .collect();
         let prior_head = (heads.len() == 1).then(|| heads[0].clone());
+        let component_indexes = components
+            .iter()
+            .find(|members| members.contains(&pos))
+            .cloned()
+            .unwrap_or_else(|| vec![pos]);
         in_set[pos] = Some(sets.len());
         sets.push(JudgeSet {
             candidate_indexes: vec![pos],
+            component_indexes,
             identity_token: ready_obs[pos].identity_token.clone(),
             prior_heads: heads,
             prior_head,

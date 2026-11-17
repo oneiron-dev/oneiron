@@ -29,7 +29,8 @@ fn operands(count: usize) -> Vec<Value> {
 }
 fn judge_set(members: Vec<usize>, priors: Vec<String>) -> JudgeSet {
     JudgeSet {
-        candidate_indexes: members,
+        candidate_indexes: members.clone(),
+        component_indexes: members,
         identity_token: "identity".into(),
         prior_head: (priors.len() == 1).then(|| priors[0].clone()),
         prior_heads: priors,

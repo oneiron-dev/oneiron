@@ -180,6 +180,48 @@ pub fn verdict_operands(reply: &BoundExtractionReply) -> Vec<Value> {
     operands
 }
 
+/// Holds complete listed-subject operands and their positions in the decoded reply.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ExtractionOperands {
+    /// Holds operands in listed-subject reply order.
+    pub operands: Vec<Value>,
+    /// Maps each operand position to the candidate's original reply index.
+    pub candidate_indexes: Vec<usize>,
+}
+
+/// Builds complete decision operands without binding declared subjects.
+///
+/// Preserves the existing evidence serialization, validates relationships as
+/// the engine's string array, and carries `topic_key` under the wire name `topic`.
+///
+/// # Errors
+///
+/// Rejects a relationship proposal that is not an array of strings.
+pub fn decision_operands(
+    reply: &BoundExtractionReply,
+) -> Result<ExtractionOperands, serde_json::Error> {
+    let mut operands = verdict_operands(reply);
+    let listed = reply
+        .candidates
+        .iter()
+        .filter(|candidate| matches!(&candidate.subject, BoundExtractionSubject::Listed(_)));
+    let mut candidate_indexes = Vec::with_capacity(operands.len());
+    for (operand, candidate) in operands.iter_mut().zip(listed) {
+        if let Some(rel) = &candidate.rel {
+            let rel: Vec<String> = serde_json::from_value(rel.clone())?;
+            operand["rel"] = json!(rel);
+        }
+        if let Some(topic) = &candidate.topic_key {
+            operand["topic"] = topic.clone();
+        }
+        candidate_indexes.push(candidate.index);
+    }
+    Ok(ExtractionOperands {
+        operands,
+        candidate_indexes,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     //! Tests the reply's decoding and operands over owen and yuki fixtures.
