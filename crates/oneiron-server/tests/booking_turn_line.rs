@@ -27,7 +27,8 @@ use std::time::Duration;
 use oneiron::{Vault, VaultConfig};
 use oneiron_server::config::{LimitsConfig, SyncServerConfig};
 use oneiron_server::test_doors::booking_turn_line::{
-    DroppedWaiter, Pass, TurnEnd, authenticated_hold, hold_dropped_during_its_write, lines_held,
+    AnonymousHead, DroppedWaiter, Pass, TurnEnd, anonymous_head_holds_its_place, anonymous_hold,
+    authenticated_hold, hold_dropped_during_its_write, lines_held,
     waiter_dropped_after_the_head_leaves,
 };
 use oneiron_server::{ENGINE_THREAD_STACK_BYTES, server::SyncServer};
@@ -301,6 +302,71 @@ async fn detached_write_holds_its_line() -> TestResult {
         (seen.lines_held_while_writing, seen.lines_held_after),
         (1, 0),
         "the line is held while A's write runs and forgotten after: {seen:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn an_anonymous_hold_never_takes_the_window_ahead_of_a_waiting_hold() -> TestResult {
+    on_engine_stack(anonymous_hold_behind_a_waiter_is_turned_away)
+}
+
+/// FIX BOOKING-ANON-HOLD-OVERTAKES-LINE: A, authenticated, waits on a full
+/// session. A hold on it is freed, and only then B, an anonymous visitor on
+/// the same page session, arrives. The freed place is A's: B runs no
+/// admission and is answered "retry after 60 s" (the session hold cap's
+/// own hint), and A takes the hold at its recheck. Before, B kept no place,
+/// ran admission at once, took the freed hold, and A waited its deadline
+/// out.
+async fn anonymous_hold_behind_a_waiter_is_turned_away() -> TestResult {
+    let (_dir, server) = server()?;
+    let window = Window::default();
+    let (a, (), b) = tokio::join!(
+        hold(&server, &window, "A", SESSION, Duration::ZERO),
+        async {
+            tokio::time::sleep(Duration::from_millis(300)).await;
+            window.free_one();
+        },
+        async {
+            tokio::time::sleep(Duration::from_millis(500)).await;
+            let end = anonymous_hold(&server, SESSION, window.pass("B")).await;
+            window.note(format!("B {end:?}"));
+            end
+        },
+    );
+    let log = window.log();
+    assert_eq!(
+        (&a, &b),
+        (&TurnEnd::Admitted, &TurnEnd::RetryAfter(60)),
+        "A, which waited first, takes the freed hold; B is turned away: {log:?}"
+    );
+    assert!(
+        position(&log, "B pass").is_none(),
+        "B runs no admission while A waits in the session's line: {log:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn an_anonymous_hold_on_an_empty_line_holds_its_place_until_answered() -> TestResult {
+    on_engine_stack(anonymous_head_holds_the_line)
+}
+
+/// B, anonymous, finds the session's line empty and takes its head. C,
+/// authenticated, joins the same session's line and waits behind B until B
+/// is answered, then takes the head. Before, B kept no place, and C took
+/// the head at once, while B's admission and write still ran.
+async fn anonymous_head_holds_the_line() -> TestResult {
+    let (_dir, server) = server()?;
+    let seen = anonymous_head_holds_its_place(&server, SESSION).await?;
+    assert_eq!(
+        seen,
+        AnonymousHead {
+            waited: true,
+            took_the_head: true,
+            lines_held: 0,
+        },
+        "C waits behind B, takes the head once B is answered, and no line is left"
     );
     Ok(())
 }

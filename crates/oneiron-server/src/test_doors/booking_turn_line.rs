@@ -1,7 +1,8 @@
 //! Door for `tests/booking_turn_line.rs` (census L3-11, ARCH-0062
-//! #booking-turn-divergence): authenticated hold requests on a page
-//! session's hold cap, each run through the booking executor's own turn
-//! (`api::booking::turn::Turn`) over an admission pass the test scripts.
+//! #booking-turn-divergence): authenticated and anonymous hold requests on
+//! a page session's hold cap, each run through the booking executor's own
+//! turn (`api::booking::turn::Turn`) over an admission pass the test
+//! scripts.
 
 use std::future::Future;
 use std::task::{Context, Poll, Waker};
@@ -30,6 +31,9 @@ pub enum TurnEnd {
     Admitted,
     /// Answered `booking_turn_waited_out`: its deadline came first.
     WaitedOut,
+    /// Answered "retry after n seconds" (`booking_retry_after_<n>s`), as an
+    /// anonymous request past a window is.
+    RetryAfter(u64),
     /// Any other answer, with its message.
     Refused(String),
 }
@@ -69,6 +73,104 @@ pub async fn authenticated_hold(
             _ => TurnEnd::Refused(error.message().to_owned()),
         },
     }
+}
+
+/// Runs one anonymous hold request (a public page's visitor) on `server`
+/// for the page session `session` as the executor runs a hold: it asks its
+/// turn for its place in the session's line, then runs one `pass`, and is
+/// answered by it: an anonymous request is never made to wait. Its place,
+/// if it has one, is given up when this returns.
+pub async fn anonymous_hold(
+    server: &SyncServer,
+    session: [u8; 32],
+    mut pass: impl FnMut() -> Pass,
+) -> TurnEnd {
+    let mut turn = BookingTurn::new(server, false);
+    let answered: Result<BookingHttpDisposition, ApiError> = async {
+        turn.line_up(SessionKey(session)).await?;
+        loop {
+            let disposition = match pass() {
+                Pass::Admitted => BookingHttpDisposition::Continue,
+                Pass::Wait { seconds } => BookingHttpDisposition::RetryAfter { seconds, bound: 1 },
+            };
+            if let Some(answer) = turn.after(disposition).await? {
+                return Ok::<_, ApiError>(answer);
+            }
+        }
+    }
+    .await;
+    match answered {
+        Ok(BookingHttpDisposition::RetryAfter { seconds, .. }) => TurnEnd::RetryAfter(seconds),
+        Ok(_) => TurnEnd::Admitted,
+        Err(error) => match error.details() {
+            ApiErrorDetails::InvalidState { state } => {
+                match state.as_deref().and_then(retry_after_seconds) {
+                    Some(seconds) => TurnEnd::RetryAfter(seconds),
+                    None => TurnEnd::Refused(error.message().to_owned()),
+                }
+            }
+            _ => TurnEnd::Refused(error.message().to_owned()),
+        },
+    }
+}
+
+/// The seconds a `booking_retry_after_<n>s` state names.
+fn retry_after_seconds(state: &str) -> Option<u64> {
+    state
+        .strip_prefix("booking_retry_after_")?
+        .strip_suffix('s')?
+        .parse()
+        .ok()
+}
+
+/// What [`anonymous_head_holds_its_place`] saw.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct AnonymousHead {
+    /// The authenticated hold was still waiting in line after its first
+    /// poll, the anonymous hold not yet answered.
+    pub waited: bool,
+    /// The authenticated hold took the head once the anonymous hold was
+    /// answered.
+    pub took_the_head: bool,
+    /// The lines `server` holds once both are gone.
+    pub lines_held: usize,
+}
+
+/// Plays one order by hand: an anonymous hold asks for its place in
+/// `session`'s empty line; an authenticated hold joins and is polled once;
+/// the anonymous hold is answered (dropped), and the authenticated hold is
+/// awaited. `Err` is the anonymous hold's refusal, with its message.
+pub async fn anonymous_head_holds_its_place(
+    server: &SyncServer,
+    session: [u8; 32],
+) -> Result<AnonymousHead, String> {
+    let window = SessionKey(session);
+    let mut head = BookingTurn::new(server, false);
+    head.line_up(window)
+        .await
+        .map_err(|error| error.message().to_owned())?;
+    let mut waiter = BookingTurn::new(server, true);
+    let (waited, took_the_head) = {
+        let mut waiting = std::pin::pin!(waiter.line_up(window));
+        let mut context = Context::from_waker(Waker::noop());
+        let first_poll = waiting.as_mut().poll(&mut context);
+        drop(head);
+        match first_poll {
+            Poll::Ready(answer) => (false, answer.is_ok()),
+            Poll::Pending => (
+                true,
+                tokio::time::timeout(STEP_WAIT, waiting)
+                    .await
+                    .is_ok_and(|answer| answer.is_ok()),
+            ),
+        }
+    };
+    drop(waiter);
+    Ok(AnonymousHead {
+        waited,
+        took_the_head,
+        lines_held: lines_held(server),
+    })
 }
 
 /// How many page sessions have a line on `server`. A line nobody holds or

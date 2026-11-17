@@ -1,8 +1,11 @@
-//! The lines authenticated booking requests wait in (ARCH-0062
+//! The lines booking holds wait in (ARCH-0062
 //! #booking-turn-divergence): one first-in, first-out line per booking
 //! window, so no request takes a window ahead of a request that waited on it
 //! first. The work past a bound waits in a fair queue with a deadline
-//! (ARCH-0044 C5), as the permit queues do.
+//! (ARCH-0044 C5), as the permit queues do. An anonymous request never waits
+//! in one ([`BookingTurnLines::try_join`]): it takes the head of an empty
+//! line and holds it as a waiting request would, or is turned away (FIX
+//! BOOKING-ANON-HOLD-OVERTAKES-LINE).
 //!
 //! The one window an authenticated request still waits on is its page
 //! session's active-hold cap (`booking_anti_abuse::guards::enforce_hold`):
@@ -20,7 +23,7 @@ use oneiron::booking::SessionKey;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use tokio::time::Instant;
 
-/// Every booking window some authenticated request is in line for.
+/// Every booking window some request holds or waits in a line for.
 #[derive(Default)]
 pub(crate) struct BookingTurnLines {
     lines: Lines,
@@ -90,6 +93,29 @@ impl BookingTurnLines {
             // the membership leaves the line as it drops here.
             Ok(Err(_)) | Err(_) => None,
         }
+    }
+
+    /// Takes the head of `window`'s line at once, when nobody is in it: no
+    /// request at its head and none waiting. `None` when someone is, and
+    /// the request holds nothing. The place it takes is held as one a
+    /// waiting request took, so a request that joins later waits behind it.
+    pub(crate) fn try_join(&self, window: SessionKey) -> Option<LinePlace> {
+        let mut lines = self.lines.lock().unwrap_or_else(PoisonError::into_inner);
+        if lines.contains_key(&window) {
+            return None;
+        }
+        let turn = Arc::new(Semaphore::new(1));
+        // A fresh line's one permit: nobody else can ask for it before the
+        // line is filed under the lock held here.
+        let head = Arc::clone(&turn).try_acquire_owned().ok()?;
+        lines.insert(window, Line { turn, members: 1 });
+        Some(LinePlace {
+            _head: head,
+            _membership: LineMembership {
+                lines: Arc::clone(&self.lines),
+                window,
+            },
+        })
     }
 
     /// How many windows have a line: the test door's view of what is held.
