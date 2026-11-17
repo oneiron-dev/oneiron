@@ -26,7 +26,8 @@ use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, MaintenanceError, Result};
 use oneiron_contracts::memory::{
-    MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_INVALID_STATE, MemoryError, MemoryResult,
+    MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INVALID_STATE, MemoryError,
+    MemoryResult,
 };
 
 /// What a decision came to inside its write.
@@ -38,6 +39,9 @@ pub(super) enum Decided {
     /// The review changed since the caller's `expected_revision`, now this
     /// revision; nothing was written.
     Changed(String),
+    /// The caller may not decide (an agent the owner's key or Grant does not
+    /// admit); nothing was written.
+    Refused,
 }
 
 impl Decided {
@@ -61,6 +65,12 @@ impl Decided {
                     proposal.to_hex()
                 ),
                 &["Review the proposal again and decide on what it shows now."],
+            )),
+            // The words an agent's call met before the key (`Memory::embedded_owner`).
+            Ok(Self::Refused) => Err(MemoryError::new(
+                MEMORY_CODE_FORBIDDEN,
+                format!("{} is the vault owner's", super::agent_decide::DECIDE_VERB),
+                &["Call it as the vault's owner."],
             )),
             Err(Error::Maintenance(MaintenanceError::VaultCleanupProposalNotFound { .. })) => {
                 Err(proposal_not_open(proposal))

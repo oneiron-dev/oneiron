@@ -440,7 +440,7 @@ fn a_write_accepted_body_of_wide_numbers_hydrates_its_numbers() -> Result<()> {
             .commit()?;
     }
     let json = |value: rmpv::Value| {
-        serde_json::to_string(&crate::context_pack::hydration::rmpv_to_json(&value)).unwrap()
+        serde_json::to_string(&crate::serialize::msgpack_value_to_json(&value)).unwrap()
     };
     let numbers = json(rmpv::Value::Array(measurements));
     let mut letter_values = vec![rmpv::Value::from("notes")];
