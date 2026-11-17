@@ -1127,6 +1127,89 @@ fn the_line_agents_narrowing_lands_at_the_next_read() {
     );
 }
 
+/// #8667 review r2 P1: under the default preset a call's scope is the top
+/// scope whatever documents the owner picked, so a narrowing of the picked
+/// documents leaves the scope as it was while it withholds a document the
+/// call's history may have been read from. The voice host keys that history
+/// on the call's whole consent, which changes with the documents.
+#[test]
+fn narrowing_the_picked_documents_changes_a_calls_consent_not_its_scope() {
+    let got = reach_fixture(PhoneReach::Default {
+        documents: Vec::new(),
+    });
+    set_reach_as_owner(
+        &got.fixture,
+        PhoneReach::Default {
+            documents: vec![got.doc.to_hex()],
+        },
+    );
+    let key = got
+        .fixture
+        .vault
+        .phone_line_answer_read_key(
+            &got.l_proof,
+            got.fixture.identity,
+            &got.receipt_b.record.payload_ref,
+        )
+        .expect("preset Default{doc}: B's new call key");
+    let picked = got.fixture.vault.scoped_read(key.clone());
+    assert!(
+        picked.is_entity_readable(&got.doc).expect("B's call reads"),
+        "FIXTURE: B's call reads the picked document",
+    );
+    let scope = picked.phone_line_scope().expect("the call's scope reads");
+    let consent = picked
+        .phone_line_consent()
+        .expect("the call's consent reads");
+    assert!(consent.is_some(), "a call has a consent");
+    let outcome = got
+        .fixture
+        .vault
+        .set_setting(
+            SettingCaller::Agent(got.fixture.agent),
+            SetSetting {
+                key: "voice.phone.reach".to_owned(),
+                item: Some(got.fixture.identity.to_hex()),
+                scope: SettingScope::Agent(got.fixture.agent),
+                mode: SettingMode::Value,
+                value: Some(
+                    serde_json::to_value(&PhoneReach::Default {
+                        documents: Vec::new(),
+                    })
+                    .expect("the narrowing encodes"),
+                ),
+                expected_revision: None,
+                why: None,
+                check_in_ref: None,
+                weight_runs: None,
+            },
+        )
+        .expect("the line agent's narrowing sets");
+    assert!(
+        matches!(outcome, SetSettingOutcome::Applied { .. }),
+        "the line agent's narrowing lands; seen {outcome:?}",
+    );
+    let narrowed = got.fixture.vault.scoped_read(key);
+    assert!(
+        !narrowed
+            .is_entity_readable(&got.doc)
+            .expect("narrowed: B's call reads"),
+        "narrowed: B's call no longer reads the document it picked",
+    );
+    assert_eq!(
+        narrowed.phone_line_scope().expect("the call's scope reads"),
+        scope,
+        "the default preset's scope stays the top scope",
+    );
+    assert_ne!(
+        narrowed
+            .phone_line_consent()
+            .expect("the call's consent reads"),
+        consent,
+        "the call's consent changes with its picked documents",
+    );
+}
+
 #[test]
 fn an_agents_widening_of_a_lines_reach_waits_for_the_owner() {
     let got = reach_fixture(PhoneReach::Default {
@@ -2137,6 +2220,92 @@ fn a_restricted_selector_does_not_carry_a_row_drawn_from_an_erased_kept_call() {
     assert!(
         !carried.contains(&drawn),
         "LEAK: the Member restricted window carries a row drawn from A's erased kept MESSAGE",
+    );
+}
+
+/// A CLAIM learned from caller A's kept MESSAGE (its birth's one `Input`, as
+/// the scoped CLAIM upsert names its evidence TURNs) still holds A's words
+/// after the owner erases that MESSAGE by `reason`. The erase takes the
+/// MESSAGE's phone mark with its body, and the CLAIM registers no dependency
+/// on it (#8609 review r1 P1). So B's call does not read the CLAIM, and the
+/// Member's restricted window does not carry it. Its control, learned the
+/// same way from the ordinary MESSAGE, which stays, does both.
+#[cfg(all(feature = "sync", feature = "test-hooks"))]
+fn assert_a_claim_learned_from_an_erased_kept_message_stays_withheld(
+    reason: oneiron::memory::SafeDeleteReason,
+) {
+    use oneiron::provenance::made_by::MadeByInputRole;
+
+    let reach = reach_fixture();
+    let vault = &reach.fixture.vault;
+    let subject = ordinary_subject_person(vault);
+    let from_a = claim_born_from(
+        &reach,
+        subject,
+        reach.msg_a_caller,
+        MadeByInputRole::Input,
+        "from_a",
+    );
+    let from_control = claim_born_from(
+        &reach,
+        subject,
+        reach.control_msg,
+        MadeByInputRole::Input,
+        "from_control",
+    );
+    vault
+        .memory(reach.fixture.owner, EdgeActorClass::Human)
+        .safe_delete(&reach.msg_a_caller.to_hex(), reason)
+        .expect("the owner erases A's kept MESSAGE msg_a_caller");
+    assert!(
+        vault
+            .get(&from_a)
+            .expect("FIXTURE: read the CLAIM from_a")
+            .is_some_and(|body| !body.is_empty()),
+        "FIXTURE: the CLAIM from_a outlives the erase of msg_a_caller by {reason:?}",
+    );
+    let call = vault.scoped_read(reach.b_call_key.clone());
+    assert!(
+        call.is_entity_readable(&from_control)
+            .expect("B's call reads from_control"),
+        "precondition: B's call reads the CLAIM from_control",
+    );
+    let call_reads_from_a = call
+        .is_entity_readable(&from_a)
+        .expect("B's call reads from_a");
+    let carried = member_selector_carries(&reach, |source| {
+        for (id, label) in [(&from_a, "from_a"), (&from_control, "from_control")] {
+            assert!(
+                source.get_map("entities").get(&id.to_hex()).is_some(),
+                "FIXTURE: the packed window holds {label}",
+            );
+        }
+    });
+    assert!(
+        carried.contains(&from_control),
+        "precondition: the Member restricted window carries the CLAIM from_control",
+    );
+    assert!(
+        !call_reads_from_a && !carried.contains(&from_a),
+        "LEAK: a CLAIM learned from A's kept MESSAGE erased by {reason:?} reads on \
+         (B's call reads it: {call_reads_from_a}; the Member restricted window carries it: {})",
+        carried.contains(&from_a),
+    );
+}
+
+#[cfg(all(feature = "sync", feature = "test-hooks"))]
+#[test]
+fn a_claim_learned_from_a_deleted_kept_message_stays_withheld() {
+    assert_a_claim_learned_from_an_erased_kept_message_stays_withheld(
+        oneiron::memory::SafeDeleteReason::UserDelete,
+    );
+}
+
+#[cfg(all(feature = "sync", feature = "test-hooks"))]
+#[test]
+fn a_claim_learned_from_a_hard_deleted_kept_message_stays_withheld() {
+    assert_a_claim_learned_from_an_erased_kept_message_stays_withheld(
+        oneiron::memory::SafeDeleteReason::UserHardDelete,
     );
 }
 
