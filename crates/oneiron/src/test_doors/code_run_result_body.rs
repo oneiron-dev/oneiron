@@ -2,7 +2,8 @@
 //! Compiled only under `--cfg oneiron_test_support`; never API.
 
 use crate::code_run::{
-    CodeRunRawOutput, CodeRunReplayRecord, CodeRunResultBinding, ExecutorStorage, ResultRead,
+    CodeRunRawOutput, CodeRunReplayRecord, CodeRunResultBinding, DelegatedSource, ExecutorStorage,
+    ResultRead,
 };
 use crate::engine_executor::is_result_output_path;
 use crate::secret_lease::SecretTaintRef;
@@ -148,4 +149,107 @@ fn result_output(
         }
     }
     Err(Error::CorruptedIndex("fixture result occurrence missing"))
+}
+
+/// Up to `len` bytes from `offset` of the body this exact owned occurrence's
+/// reads show, as a raw chunk read takes them: `None` when no read shows it.
+///
+/// # Errors
+///
+/// Missing occurrences, and result taint, body or view storage errors.
+pub fn shown_result_range(
+    vault: &Vault,
+    run_id: EntityId,
+    occurrence: EntityId,
+    offset: u64,
+    len: usize,
+) -> Result<Option<Vec<u8>>> {
+    let output = result_output(vault, run_id, occurrence)?;
+    let storage = ExecutorStorage::Canonical(vault);
+    match ResultRead::new(&storage, run_id, output, None, None, false)? {
+        Ok(read) => read.read_shown(&storage, offset, len),
+        Err(_) => Err(Error::InvariantViolation(
+            "a whole-body result read refuses no range",
+        )),
+    }
+}
+
+/// The text a summarizer is shown of bytes `start..end` of this exact owned
+/// occurrence, as a summary job reads its members, or the member's refusal.
+///
+/// # Errors
+///
+/// Missing occurrences, and result taint, body or view storage errors.
+pub fn summary_member_text(
+    vault: &Vault,
+    run_id: EntityId,
+    occurrence: EntityId,
+    start: u64,
+    end: u64,
+) -> Result<std::result::Result<String, String>> {
+    let output = result_output(vault, run_id, occurrence)?;
+    let storage = ExecutorStorage::Canonical(vault);
+    Ok(storage
+        .summary_member_text(run_id, output, (start, end))?
+        .map_err(str::to_owned))
+}
+
+/// The whole of this exact owned occurrence, as a reader child is lent it.
+///
+/// # Errors
+///
+/// Missing occurrences and replay storage errors.
+pub fn lent_result_source(
+    vault: &Vault,
+    run_id: EntityId,
+    occurrence: EntityId,
+) -> Result<DelegatedSource> {
+    let output = result_output(vault, run_id, occurrence)?;
+    Ok(DelegatedSource {
+        owner: run_id,
+        range: (0, output.raw_len),
+        path: output.path,
+        handle: output.handle,
+        rows: Some(Vec::new()),
+        origins: None,
+    })
+}
+
+/// The card reader child `child_run`'s exact owned occurrence `finding`
+/// reports as its finding, as its host admits the report, the child lent
+/// every source in `lent` and `scoped` when it is a scoped child; or the
+/// report's refusal.
+///
+/// # Errors
+///
+/// Missing occurrences, and result taint, mark, body or view storage errors.
+pub fn reader_finding_card(
+    vault: &Vault,
+    child_run: EntityId,
+    finding: EntityId,
+    lent: &[DelegatedSource],
+    scoped: bool,
+) -> Result<std::result::Result<serde_json::Value, String>> {
+    let output = result_output(vault, child_run, finding)?;
+    let storage = ExecutorStorage::Canonical(vault);
+    Ok(storage
+        .reader_finding_card(child_run, &output, lent, scoped)?
+        .map_err(str::to_owned))
+}
+
+/// Whether any read of this exact owned occurrence shows its body, as
+/// `self.spawn` checks a source before it lends it to a Read child.
+///
+/// # Errors
+///
+/// Missing occurrences, and result taint, body or view storage errors.
+pub fn result_shows_body(vault: &Vault, run_id: EntityId, occurrence: EntityId) -> Result<bool> {
+    let output = result_output(vault, run_id, occurrence)?;
+    let storage = ExecutorStorage::Canonical(vault);
+    match ResultRead::new(&storage, run_id, output, None, None, false)? {
+        Ok(read) => read.shows_body(&storage),
+        Err(_) => Err(Error::InvariantViolation(
+            "a whole-body result read refuses no range",
+        )),
+    }
 }

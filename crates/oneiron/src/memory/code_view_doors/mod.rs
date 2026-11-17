@@ -2,6 +2,7 @@
 //! No account-vault path, foreign account lookup, secret value, or caller result is admitted.
 mod edit;
 mod execution;
+mod grant_read;
 mod types;
 pub use edit::CodeViewEditProof;
 pub use types::*;
@@ -305,6 +306,25 @@ impl Memory<'_> {
         let view = input.view.clone();
         let why = input.why.clone();
         let file = self.code_view_read_as(owner, input)?;
+        self.project_view_file(&view, file, why.as_deref(), || {
+            self.admitted_view(owner, &view).map(drop)
+        })
+    }
+
+    /// The masked reader's read of `file`, a file of the view `view` names
+    /// as its door read it: the projection a repo mark or a document's
+    /// history gives it, or with a `why` the file reveal, which runs
+    /// `readmit` again before it releases anything.
+    fn project_view_file<R>(
+        &self,
+        view: &CodeViewRequest,
+        file: CodeViewFileBytes,
+        why: Option<&str>,
+        readmit: R,
+    ) -> MemoryResult<CodeViewFileBytes>
+    where
+        R: FnOnce() -> MemoryResult<()>,
+    {
         // A view file a code document holds reads by that document state's
         // history first, whoever made the view: an edit of a marked file is
         // its placeholder, and a `why` reveals only the stored blob a grant
@@ -323,7 +343,7 @@ impl Memory<'_> {
         };
         let projected = match (sourced, why) {
             (Some(opaque), _) => RepoBodyProjection::Opaque(opaque),
-            (None, Some(why)) => return self.code_view_read_with_why(owner, view, file, &why),
+            (None, Some(why)) => return self.code_view_read_with_why(view, file, why, readmit),
             (None, None) => project_repo_file(self.vault, file.bytes)?,
         };
         let projection = projected.view();
@@ -339,17 +359,19 @@ impl Memory<'_> {
     /// [`Self::code_view_read_projected_as`] for a read that says `why`
     /// (FIX 8960): the view's file read as the marked blob it holds through
     /// the file reveal, its stored bytes only under a committed delivery,
-    /// else its masked copy; the view is admitted again before release.
-    fn code_view_read_with_why(
+    /// else its masked copy; `readmit` admits the view again before release.
+    fn code_view_read_with_why<R>(
         &self,
-        owner: &AuthenticatedOwner,
-        view: CodeViewRequest,
+        view: &CodeViewRequest,
         file: CodeViewFileBytes,
         why: &str,
-    ) -> MemoryResult<CodeViewFileBytes> {
+        readmit: R,
+    ) -> MemoryResult<CodeViewFileBytes>
+    where
+        R: FnOnce() -> MemoryResult<()>,
+    {
         let readmit = || -> crate::error::Result<()> {
-            self.admitted_view(owner, &view)
-                .map(|_| ())
+            readmit()
                 .map_err(|_| crate::Error::ConcurrentWrite("the view read's admission changed"))
         };
         let read = self.view_file_read_with_why(

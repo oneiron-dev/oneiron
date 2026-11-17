@@ -366,7 +366,7 @@ impl ScopedRead<'_> {
 /// Whether `recipe` fits the policy row of `role` held by `id`: every
 /// section one the row allows, each predicate a token, edge kinds only on a
 /// Links section.
-pub(super) fn validate_weave_recipe_for(
+pub(crate) fn validate_weave_recipe_for(
     policy: &crate::gate::PolicyManifestResolution,
     role: &str,
     id: EntityId,

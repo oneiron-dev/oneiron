@@ -135,7 +135,7 @@ async fn serve_with_handles(
     // process attests the owner on each route: a request with no credential
     // is anonymous. The Linear mirror checks this declaration, not a secret.
     server_config.ingress = crate::config::IngressAuth::Supervisor;
-    server_config.hosted_private_origins = managed.hosted_private_origins.clone();
+    managed.carry_hosted_egress(&mut server_config);
     // The host root signs with this vault's own independent issuer seed,
     // kept in this install's keystore slot under the supervisor's key
     // directory (FIX-LIST 3018): never the delivered DEK, which escrow
@@ -417,7 +417,8 @@ async fn serve_with_handles(
     );
     // Fact hooks (ARCH-0080) and the settled verb-ask drain on their runner,
     // unless `--no-hooks`: each pass admitted like a served write. The sandbox
-    // loads before ready, as plain serve loads it, so no verb waits on it.
+    // loads before ready, so no verb waits on it; plain serve builds it off
+    // its gated startup instead (FIX 25667).
     let (hooks_stop, hooks_stopped) = watch::channel(false);
     #[cfg(feature = "code-sandbox-wasmtime")]
     let fact_hooks = if config.hooks {
