@@ -37,6 +37,7 @@ pub mod campaign_opt_out_line;
 pub mod check_in;
 pub mod checkpoint_descriptor;
 pub mod checkpoint_pins;
+pub mod checker_masked_candidate;
 pub mod checkpoint_registry;
 pub mod claim_facet_birth;
 pub mod claim_refinement_erase;
