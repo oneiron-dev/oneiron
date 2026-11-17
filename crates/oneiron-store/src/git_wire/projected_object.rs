@@ -338,7 +338,7 @@ pub fn encode_headed(
     let mut dropped = false;
     for line in header_lines(headers) {
         let key = header_key(line);
-        if SIGNATURE_HEADERS.iter().any(|signature| *signature == key) {
+        if SIGNATURE_HEADERS.contains(&key) {
             dropped = true;
             continue;
         }
