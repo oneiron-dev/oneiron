@@ -262,7 +262,9 @@ impl RecordingJsHost<'_, '_> {
     /// text's digest, so the same NOTE read again with the same words is the
     /// same occurrence and its summary's memo holds. The output copies the
     /// NOTE's words, so it is published as a dependent of it (FIX 18924), and
-    /// its rows are the NOTE alone. Its origins are unknown (FIX 7084): no
+    /// its rows are the NOTE alone: its stored occurrence names the NOTE as
+    /// its one input row, so a later read of it is released by the NOTE's
+    /// worlds, as the member is. Its origins are unknown (FIX 7084): no
     /// read the run's ledger noted proves the NOTE's worlds. `Err` is the
     /// typed unavailable content that stands in for text with a secret no
     /// handle can stand for, of which nothing is stored.
@@ -289,7 +291,14 @@ impl RecordingJsHost<'_, '_> {
         let output = match held {
             Some(output) => output,
             None => {
-                match storage.publish_code_run_reply(path, spool, self.run_id, &[note], None)? {
+                match storage.publish_code_run_reply_sourced(
+                    path,
+                    spool,
+                    self.run_id,
+                    &[note],
+                    Some(vec![note]),
+                    None,
+                )? {
                     Ok(output) => {
                         self.captured.push(output.clone());
                         output

@@ -23,7 +23,9 @@
 //! dispatched, and `note_refs` is an unknown field the wire input rejects.
 //! The first test's program then fails instead of parking, and the second
 //! test's program catches the wrapper's TypeError instead of the typed
-//! refusal, so its answer carries the `other:` prefix and misses.
+//! refusal, so its answer carries the `other:` prefix and misses. The third
+//! test's call does not park on main; on the PR head before its review
+//! round 2 fix it parks, but its NOTE outputs carry no input rows.
 //!
 //! The doors build only under the test cfg:
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --features oneiron-agent-runtime/code-sandbox-wasmtime --test summarize_note_set`.
@@ -538,6 +540,80 @@ fn a_summary_over_two_named_notes_answers_one_digest_card() {
     let answer =
         note_doors::observation_text(&vault, &run_id, 1).expect("the step-1 answer reads back");
     assert_card_answer(&answer, &task);
+}
+
+/// Each NOTE member the call captured as a run output names its NOTE as its
+/// one input row in the committed replay record (review round 2 of #8645).
+/// A later read of that output is then released by the NOTE's worlds. With
+/// no input rows it fell back to the run's own read set, which holds no
+/// row of a `summarize` call, so a NOTE whose world turned device-local
+/// after the call still had its words served to a remote reader.
+#[test]
+fn a_captured_note_output_names_its_note_as_its_input_row() {
+    let (_dir, vault) = open_vault();
+    let factory = quickjs_factory();
+    let actor = seed_person(&vault);
+    doors::install_actor_ceiling(&vault, &actor, "auto").expect("an auto ceiling");
+    let note_a = vault
+        .create_note(
+            "research",
+            A_TEXT,
+            WriteActor::new(actor, EdgeActorClass::Agent),
+        )
+        .expect("NOTE A lands");
+    let note_b = vault
+        .create_note(
+            "research",
+            B_TEXT,
+            WriteActor::new(actor, EdgeActorClass::Agent),
+        )
+        .expect("NOTE B lands");
+    let runner = Arc::new(NotingRunner::default());
+    vault.set_reader_job_runner(Arc::clone(&runner));
+    let run_id = fresh_id();
+
+    let (outcome, _) = execute_run(
+        &vault,
+        &factory,
+        actor,
+        run_id,
+        "run-summarize-note-rows",
+        vec![summarize_program(&note_a, &note_b)],
+    );
+    let outcome = outcome.expect("the first call parks");
+    assert!(
+        matches!(outcome.status, EngineExecutorStatus::Waiting(_)),
+        "FIXTURE: the call parks on its summary job"
+    );
+    let record = vault
+        .get_code_run_replay_record(&run_id)
+        .expect("the replay record reads")
+        .expect("the parked run keeps its replay record");
+    let paths: Vec<&str> = record
+        .outputs
+        .iter()
+        .map(|output| output.path.as_str())
+        .collect();
+    for note in [note_a, note_b] {
+        let member = format!("/summarize/{}.", note.to_hex());
+        let outputs: Vec<_> = record
+            .outputs
+            .iter()
+            .filter(|output| output.path.contains(&member))
+            .collect();
+        assert_eq!(
+            outputs.len(),
+            1,
+            "one captured output holds NOTE {}'s words: {paths:?}",
+            note.to_hex()
+        );
+        assert_eq!(
+            outputs[0].input_rows,
+            Some(vec![note]),
+            "the captured output of NOTE {} names that NOTE as its one input row",
+            note.to_hex()
+        );
+    }
 }
 
 /// A NOTE the caller cannot read refuses the whole set: the call answers
