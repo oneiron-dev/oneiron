@@ -581,8 +581,9 @@ fn selector_documents(
 
 /// Bug repro (Bugbot, #1483): a document REQUEST or UPDATE whose open waited past the
 /// live-document row to its deadline was answered as a persistence failure, so its socket closed
-/// as if sync state could not be stored. Done-means: each is answered the typed waited-out
-/// error, and the subscription stays.
+/// as if sync state could not be stored. Done-means: each is answered the nonterminal
+/// DOCUMENT / WAITED_OUT frame on its open socket (docs/ops/document-open-retries.md),
+/// naming its initiator, and the subscription stays.
 #[tokio::test]
 async fn a_document_wait_past_its_deadline_is_waited_out_not_a_persistence_failure() {
     use super::documents::handle_document;
@@ -603,14 +604,20 @@ async fn a_document_wait_past_its_deadline_is_waited_out_not_a_persistence_failu
     remote.get_text("body").insert(0, "placeholder").unwrap();
     remote.commit();
     let update = remote.export(ExportMode::all_updates()).unwrap();
-    let (direct, _replies) = tokio::sync::mpsc::unbounded_channel();
+    let (direct, mut replies) = tokio::sync::mpsc::unbounded_channel();
     for (kind, frame) in [
         (document_sub_tags::REQUEST, request),
         (document_sub_tags::UPDATE, update),
     ] {
-        let error = handle_document(&server, 1, subscribed, kind, &frame, &direct, &mut state)
-            .expect_err("the open did not wait past its deadline");
-        assert_eq!(error.kind(), "waited_out", "sub-tag {kind}: {error}");
+        handle_document(&server, 1, subscribed, kind, &frame, &direct, &mut state)
+            .unwrap_or_else(|error| panic!("sub-tag {kind}: the wait ended the socket: {error}"));
+        let reply = replies
+            .try_recv()
+            .unwrap_or_else(|_| panic!("sub-tag {kind}: the waited-out open was not answered"));
+        let reply = transport::decode_document(&reply[1..]).expect("a document frame");
+        assert_eq!(reply.entity, subscribed, "sub-tag {kind}");
+        assert_eq!(reply.kind, document_sub_tags::WAITED_OUT, "sub-tag {kind}");
+        assert_eq!(reply.payload, [kind], "sub-tag {kind}: names its initiator");
     }
     assert!(state.documents.contains_key(&subscribed));
 }
