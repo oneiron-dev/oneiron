@@ -164,11 +164,12 @@ pub use self::report::{
     ReportDeliveryOutcome, ReportDeliveryPass, ReportDeliveryRecord, ReportDeliveryRetryRequest,
     ReportDeliveryRun, ReportDeliveryRunRequest, ReportDeliveryStatus, ReportDeliveryStatusRequest,
     ReportDisclosure, ReportDisclosureBasis, ReportDisclosureChoice, ReportFrozenSend,
-    ReportFrozenSignature, ReportIssue, ReportKind, ReportPublisherBinding,
+    ReportFrozenSignature, ReportIssue, ReportIssueOrigin, ReportKind, ReportPublisherBinding,
     ReportPublisherBindingRequest, ReportPublisherEndpoint, ReportPublisherMetadata, ReportReceipt,
     ReportRequest, ReportReview, ReportRoute, ReportRoutedPayload, ReportSignature,
     ReportSignatureTransport, ReportSignatureTransportRequest, ReportStatus, ReportTextSendBinding,
 };
+pub(crate) use self::report::{ReportRestoreOutcome, restorable_archived_report};
 pub use self::triage::{
     COACH_FEEDBACK_SWEEP_FACET, COACH_FEEDBACK_TRIAGE_FACET, COACH_FEEDBACK_TRIAGE_PARK_OWNER,
     COACH_FEEDBACK_TRIAGE_PART_FACET, COACH_FEEDBACK_TRIAGE_SYNTHESIS_FACET,
