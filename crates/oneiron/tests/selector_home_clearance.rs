@@ -19,7 +19,7 @@
 //!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test selector_home_clearance`.
-// `put_selector_test_federation_grant` exists only under `test-hooks`.
+// The member's Grant is given through a test door; main gated this file on `test-hooks` too.
 #![cfg(all(oneiron_test_support, feature = "test-hooks"))]
 
 use std::collections::BTreeSet;
@@ -33,7 +33,6 @@ use oneiron::sync::schema::create_window_doc;
 use oneiron::sync::window::reverse_rematerialize;
 use oneiron::sync::{
     SyncSelector, SyncSelectorWorld, WindowKey, authorize_sync_selector, filtered_window_doc,
-    put_selector_test_federation_grant,
 };
 use oneiron::temporal::TimeRange;
 use oneiron::test_doors::label_writers::open_member_vault;
@@ -137,6 +136,20 @@ fn export_through(
     let member = EntityId::now();
     let vault = open_member_vault(dir.path(), VaultConfig::device(), &[member.to_hex()])
         .expect("fixture vault");
+    // A row gives nothing by itself: the member's Grant stands on the
+    // owner's counted giving, which this install carries (its keystore and
+    // live machine profile under the test host root the opener wrote).
+    vault.install_device_keystore(std::sync::Arc::new(
+        oneiron_keystore::MemoryKeystore::default(),
+    ));
+    vault
+        .ensure_serving_install_profile(
+            &oneiron::test_support::test_host_issuer(),
+            oneiron::authority::MachineRole::Unanswered,
+        )
+        .expect("this install's live machine profile, to carry the grant act");
+    let (owner, _) = oneiron::test_doors::label_writers::embedded_owner(&vault)
+        .expect("the embedded owner, bound under the root");
     // Every row is learned now, so all of them pack into one window.
     let now = vault.now_recorded_at();
     let person_body =
@@ -171,8 +184,8 @@ fn export_through(
     // Every test exports under the same Scope, so the role (and, for the
     // agent, the member) is the only difference between them.
     grant.authority_scope = read_preset();
-    put_selector_test_federation_grant(&vault, &grant_id, &grant, now)
-        .expect("the member's federation grant");
+    oneiron::test_doors::grant_act::give_member_grant_as_writer(&vault, grant_id, &grant, owner)
+        .expect("the owner's counted giving of the member's federation grant");
     let selector = SyncSelector::new(grant_id, member, SyncSelectorWorld::All, vec![], vec![]);
     authorize_sync_selector(&vault, scope, &selector)
         .expect("FIXTURE: the member's selector is authorized");

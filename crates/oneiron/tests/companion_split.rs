@@ -128,7 +128,8 @@ struct Fixture {
 fn fixture_with(with_co_owner: bool) -> Result<Fixture> {
     let dir = tempfile::tempdir()?;
     let vault = Vault::open(dir.path(), VaultConfig::default())?;
-    let owner = vault.ensure_embedded_owner_actor().expect("embedded owner");
+    // Sharing gives Grants, whose acts this install carries.
+    let (_, owner) = oneiron::test_support::provision_act_carrier(&vault);
     let owner_proof = proof(&vault, owner)?;
     let now = vault.now_recorded_at();
     let co_owner = if with_co_owner {
@@ -309,11 +310,9 @@ impl Fixture {
     }
 
     /// Merges PERSON `source` into PERSON `survivor`. An identity op is
-    /// sealed with this install's machine key, which a host loads from its
-    /// keystore after each open.
+    /// sealed with this install's machine key, which a host loads from the
+    /// keystore the fixture installed with the act carrier.
     fn merge(&self, source: EntityId, survivor: EntityId) -> Result<()> {
-        self.vault
-            .install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
         self.vault.prepare_install_signing()?;
         let outcome = self.vault.apply_identity_topology_op(
             &IdentityTopologyOp::Merge(MergeOp {
