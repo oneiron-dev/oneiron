@@ -60,6 +60,7 @@ use oneiron::authority::{
     authority_entry_hash, authority_transcript, machine_profile_proof_transcript,
 };
 use oneiron::consent::AuthenticatedOwner;
+use oneiron::setting::{SetSetting, SetSettingOutcome, SettingCaller};
 use oneiron::store::GateDecisionId;
 use oneiron::{EntityId, TimeRange, Vault, VaultConfig};
 
@@ -550,13 +551,24 @@ fn an_approval_by_a_key_revoked_beside_a_collision_expires_after_the_window() {
         .vault
         .authority_observation_policy()
         .expect("the observation policy");
-    rooted
+    let zero_window = AuthorityObservationPolicy {
+        stale_roster_window_secs: 0,
+        ..policy
+    };
+    let outcome = rooted
         .vault
-        .set_authority_observation_policy(AuthorityObservationPolicy {
-            stale_roster_window_secs: 0,
-            ..policy
-        })
+        .set_setting(
+            SettingCaller::Owner(&rooted.proof),
+            SetSetting::vault_value(
+                "authority.observation_policy",
+                serde_json::to_value(zero_window).expect("the policy as JSON"),
+            ),
+        )
         .expect("a zero stale-roster window");
+    assert!(
+        matches!(outcome, SetSettingOutcome::Applied { .. }),
+        "the owner's zero window applies: {outcome:?}"
+    );
     std::thread::sleep(Duration::from_millis(2_500));
     let fold = rooted.vault.authority_fold().expect("the fold");
     assert!(
