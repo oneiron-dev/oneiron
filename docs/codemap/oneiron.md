@@ -490,7 +490,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/authority/mesh_machine/doors.rs` | src | m | 8 fn · 1 re-export · 2 crate-vis | — | Public mesh setup inputs and owner-bound doors over the host's existing binding, ALPN and terminal… |
 | `src/authority/mesh_machine/endpoint_index.rs` | src | s | 8 crate-vis | — | The MACHINE rows by the endpoint key their mesh address names (ARCH-0044 H336, census L3-28B) |
 | `src/authority/mesh_machine/enrolment.rs` | src | s | 2 enum · 1 fn · 2 crate-vis | MeshBindRefusal, MeshEnrolment | The mesh binding a machine link's redemption makes for the machine it enrols (FIX 3374, L02 04:5x) |
-| `src/authority/mod.rs` | src | m | 2 mod · 87 re-export · 76 crate-vis | — | AUTHORITY_LOG record substrate |
+| `src/authority/mod.rs` | src | m | 2 mod · 88 re-export · 77 crate-vis | — | AUTHORITY_LOG record substrate |
 | `src/authority/oauth_server/access_slips.rs` | src | m | 5 crate-vis | — | The native capability slip the server holds for each access token (FIX 4902 slice C; ARCH-0028:91 "The OAuth… |
 | `src/authority/oauth_server/authorization.rs` | src | m | 3 struct · 1 enum · 2 fn · 3 crate-vis | OAuthAuthorizationAllowed, OAuthAuthorizationPending, OAuthAuthorizationStart, OAuthAuthorizationStatus | One sign-in's authorization request: recorded at `/oauth/authorize` with one inbox ask to the vault owner… |
 | `src/authority/oauth_server/clients.rs` | src | m | 1 struct · 1 enum · 6 fn · 1 re-export · 1 crate-vis | OAuthClientRegistration, OAuthRegistrationRefusal | The apps that may sign in, in one table: ones registered at `/oauth/register` (RFC 7591), and ones known by… |
@@ -505,8 +505,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/authority/owner_choice.rs` | src | m | 1 re-export · 18 crate-vis | — | The register every vault-wide single-value owner choice keeps: the checkpoint root policy (mesh PR2c… |
 | `src/authority/owner_delegate.rs` | src | s | 1 enum · 1 fn · 4 crate-vis | OwnerOrDelegate | Who takes an owner act at a door that also admits the owner's delegate (restriction wave 11) |
 | `src/authority/owner_key_enrollment.rs` | src | m | 10 crate-vis | — | The fold's judge of the owner's enrollment of one of his devices' own owner signing keys (FIX 4920; Engine… |
-| `src/authority/owner_key_enrollment_door.rs` | src | XL | 7 struct · 14 fn · 9 crate-vis | EnrolledOwnerKey, EnrolledOwnerPasskey, OwnerKeyEnrollment, OwnerKeyEnrollmentReceipt, OwnerPasskeyEnrollment, OwnerPasskeyEnrollmentReceipt, PreparedOwnerKeyEnrollment | The owner's enrollment of one of his devices' own owner signing keys (FIX 4920 part 2; Engine 10-20 00:5x… |
+| `src/authority/owner_key_enrollment_door.rs` | src | XL | 7 struct · 14 fn · 12 crate-vis | EnrolledOwnerKey, EnrolledOwnerPasskey, OwnerKeyEnrollment, OwnerKeyEnrollmentReceipt, OwnerPasskeyEnrollment, OwnerPasskeyEnrollmentReceipt, PreparedOwnerKeyEnrollment | The owner's enrollment of one of his devices' own owner signing keys (FIX 4920 part 2; Engine 10-20 00:5x… |
 | `src/authority/owner_key_move_confirm.rs` | src | m | 2 struct · 2 fn · 6 const · 3 crate-vis | OwnerKeyMovePlan, OwnerKeyMoveSigner | The owner-key move a device confirms (row HOSTED-OWNER-MOVE-TWO-PHASE; Engine RULING… |
+| `src/authority/owner_key_vouch.rs` | src | m | 1 struct · 1 enum · 8 fn · 2 const · 3 crate-vis | DeviceOwnerKeyVouch, OwnerKeyVouchRequest | An owner key vouches for another device's new owner key (pass 27 R2, "an owner key vouches"; MFA-1 A: "vault… |
 | `src/authority/owner_project_slip.rs` | src | s | 1 fn | — | The host's owner-project slip (OF-497): the host-held project.write slip an [`OwnerProjectSigner`] signs the… |
 | `src/authority/owner_proof.rs` | src | m | 2 fn · 13 crate-vis | — | An owner act's proof (row CARRIER-OWNER-PROOF; the lead's rulings 15 Nov 12:1x and 13:2x, FIX… |
 | `src/authority/owner_roots.rs` | src | s | 2 struct · 2 fn · 2 crate-vis | AwaitedRoot, OwnerRootView | The owner roots this vault stores, as this install sees them (world privacy P6b, R1) |
@@ -8870,7 +8871,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/world_keys/kit_piece.rs` | src | s | 4 fn · 4 crate-vis | — | This machine's own kit pieces on the vault handle (FIX 1957, 2063) |
 | `src/world_keys/machine.rs` | src | s | 3 fn · 2 crate-vis | — | This install's machine secret: a 32-byte seed in the this-device-only keystore, expanded to the hybrid… |
 | `src/world_keys/mod.rs` | src | s | 2 struct · 3 fn · 22 re-export · 30 crate-vis | WorldKey, WorldKeyBinding | Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the… |
-| `src/world_keys/owner_signing.rs` | src | m | 1 struct · 5 fn · 5 crate-vis | OwnerRootSigner | This install's own owner signing key (FIX 4921; owner ruling 10-19, OWNER SIGNING KEYS = B): one Ed25519 key… |
+| `src/world_keys/owner_signing.rs` | src | m | 1 struct · 6 fn · 5 crate-vis | OwnerRootSigner | This install's own owner signing key (FIX 4921; owner ruling 10-19, OWNER SIGNING KEYS = B): one Ed25519 key… |
 | `src/world_keys/owner_work/diagnostics.rs` | src | m | 4 struct · 4 enum · 2 fn · 2 re-export · 5 crate-vis | CapsuleRead, ExecutorObservation, LatestRead, OwnerWorkDiagnostics, PublicationDiagnostics, PublishObserved, ReassertDiagnostics, RelayObservation | What blocks one pending owner work request, as its executor observes it (FIX 4686, 4784, 4785, 4786, 4787)… |
 | `src/world_keys/owner_work/diagnostics/key_plan.rs` | src | s | 2 crate-vis | — | A world's keys and its ensure step on their executor, through the holder's own read checks and the writer's… |
 | `src/world_keys/owner_work/mod.rs` | src | s | 1 struct · 4 re-export · 4 crate-vis | OwnerWorkReceipt | The owner's work an install records for another to do, and what the named install did with it (owner work… |
@@ -9263,6 +9264,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/file_custody_merge_after_rewrap.rs` | test | L | — | — | FILE-CUSTODY-MERGE-AFTER-REWRAP (red): once A's custody opens on B, B rebinds its file marks to A's record… |
 | `tests/fingerprint_keep_archive_retained_side_row.rs` | test | s | 1 crate-vis | — | K-proof (oracle): the archive's retained side row key keeps its bytes |
 | `tests/fingerprint_keep_calendar_ics_consent.rs` | test | s | — | — | K-proof (oracle) for [CAL-ICS-CONSENT-RAW-HASHER]: an installed ICS feed's consent digests keep their bytes |
+| `tests/fingerprint_keep_check_in_effect_digests.rs` | test | m | 5 fn | — | K-proof (oracle) for the check-in effect digests of P2.5's delete and security-control doors: each keeps its… |
 | `tests/fingerprint_keep_custody_digests.rs` | test | s | 2 const · 5 crate-vis | — | K-proof (oracle) for PLAN-UC-04 stage 6.1b: three custody digest helpers keep their bytes |
 | `tests/fingerprint_keep_dreamer.rs` | test | s | 5 crate-vis | — | K-proof (oracle) for PLAN-UC-04 stage 3.2: the agent-health trend replay hash keeps its bytes |
 | `tests/fingerprint_keep_executor_cohort_credit.rs` | test | m | 1 const · 11 crate-vis | — | K-proof (oracle) for PLAN-UC-04 stage 3.4b: the executor's config and step checkpoint hashes, the claim… |
@@ -9582,6 +9584,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/owner_key_move_proof.rs` | test | m | — | — | The membership move that ends a member's owner keys proves each revoke with an owner key (row… |
 | `tests/owner_key_move_two_phase.rs` | test | m | — | — | The owner-key move a device confirms (row HOSTED-OWNER-MOVE-TWO-PHASE; Engine RULING… |
 | `tests/owner_key_revoke_proof.rs` | test | m | — | — | A revoke of an owner key counts only with an owner key's proof (row HOSTED-ROOT-REVOKES-OWNER-KEY; the lead… |
+| `tests/owner_key_vouch.rs` | test | m | — | — | An owner key vouches for another device's new key (pass 27 R2; MFA-1 A: vault authority on a new device… |
 | `tests/owner_lifetime_cap_keys.rs` | test | m | — | — | The owner's four lifetime keys |
 | `tests/owner_pin_over_holder_pin.rs` | test | s | — | — | An owner's pin stands over a holder's pin at every scope a read walks (untangle 6.6d, review round 1 of #6999) |
 | `tests/owner_reason.rs` | test | s | — | — | Public confirm → unsure re-ask → reconfirm → undo contract |

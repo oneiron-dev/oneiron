@@ -142,6 +142,7 @@ mod owner_delegate;
 mod owner_key_enrollment;
 mod owner_key_enrollment_door;
 mod owner_key_move_confirm;
+mod owner_key_vouch;
 mod owner_project_slip;
 mod owner_proof;
 mod owner_roots;
@@ -448,6 +449,11 @@ pub use owner_key_move_confirm::{
     OWNER_KEY_MOVE_NOT_SYNCED, OWNER_KEY_MOVE_PLAN_STALE, OWNER_KEY_MOVE_SIGNER_NOT_EXECUTORS,
     OwnerKeyMovePlan, OwnerKeyMoveSigner, sign_owner_key_move,
 };
+pub use owner_key_vouch::{
+    DeviceOwnerKeyVouch, OWNER_KEY_VOUCH_LABEL_MAX, OWNER_KEY_VOUCH_TEXT_PREFIX,
+    OwnerKeyVouchRequest,
+};
+pub(crate) use owner_key_vouch::{label_is_valid, label_not_valid};
 pub(crate) use owner_roots::anchor_signed_entry;
 pub use owner_roots::{AwaitedRoot, OwnerRootView};
 pub use recover_many::{

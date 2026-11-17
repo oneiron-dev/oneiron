@@ -38,6 +38,7 @@ fn turn(message: EntityId, rel: EntityId) -> WitnessTurn {
         conversation_ref: EntityId::now().to_hex(),
         turn_ref: Some(EntityId::now().to_hex()),
         thread_audience: None,
+        project: None,
         messages: vec![WitnessMessage {
             id: Some(message.to_hex()),
             author: WitnessAuthor::User,
