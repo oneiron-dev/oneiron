@@ -508,7 +508,8 @@ fn carry_over_unseen_writes(
             // The write is ordered after the candidate's root, so after anything below it.
             (None, Some(_)) => root_lamport.is_some_and(|root| *lamport >= root),
         };
-        if ours_wins {
+        // Seeded fault (red2): a losing local write carries over.
+        if true || ours_wins {
             touched.insert((name.clone(), key.clone()));
         } else {
             conflicts.push(ReplacementConflict {
