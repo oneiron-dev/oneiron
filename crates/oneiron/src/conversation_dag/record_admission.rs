@@ -15,6 +15,7 @@
 //! as its room is. A Direct conversation is no room (ARCH-0006a rule 2),
 //! so its rows and turns read by the lane alone.
 
+use std::cell::RefCell;
 use std::collections::HashMap;
 
 use heed::RoTxn;
@@ -119,6 +120,38 @@ impl Vault {
         Ok(kept)
     }
 
+    /// [`Self::room_structure_admitted_in_txn`] for a retrieval or search
+    /// hit (FIX [ROOM-STRUCTURE-RETRIEVAL-HITS], L9-52): a room's row and its
+    /// turns show only to a reader the room admits, as at every door. Each
+    /// room is judged once per `verdicts`, which hold `read`'s judgments in
+    /// `txn` alone, so a search that finds many turns of one room judges it
+    /// once. The vault owner is admitted with no judgment, as
+    /// [`Self::room_admits_in`] admits him to every room.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::room_structure_admitted`].
+    pub(crate) fn room_structure_admitted_held_in(
+        &self,
+        read: &ScopedRead<'_>,
+        txn: &RoTxn<'_>,
+        id: &EntityId,
+        verdicts: &RoomVerdicts,
+    ) -> Result<bool> {
+        if read.actor_key().reads_as_vault_owner() {
+            return Ok(true);
+        }
+        let Some(room) = structure_room_in(&self.store, txn, id)? else {
+            return Ok(true);
+        };
+        if let Some(admitted) = verdicts.0.borrow().get(&room).copied() {
+            return Ok(admitted);
+        }
+        let admitted = self.room_admits_in(read, txn, id, &room)?;
+        verdicts.0.borrow_mut().insert(room, admitted);
+        Ok(admitted)
+    }
+
     /// Whether the live conversation `room` admits `read`'s caller to the
     /// row `id`, the room itself or one of its turns: the vault owner, and
     /// a narrower owner credential while he is still the bound owner, read
@@ -145,6 +178,12 @@ impl Vault {
             .map_err(|refusal| Error::Claim(ClaimError::ScopedReadOwnerNotLive(Box::new(refusal))))
     }
 }
+
+/// The room admissions one read holds in one serving txn, by room
+/// ([`Vault::room_structure_admitted_held_in`]). A fresh value holds none;
+/// a value never passes to another read or txn.
+#[derive(Default)]
+pub(crate) struct RoomVerdicts(RefCell<HashMap<EntityId, bool>>);
 
 /// The room whose structure the row `id` holds: a live room's own id, or the
 /// live room a live TURN was witnessed into. `None` for any other row, for a
