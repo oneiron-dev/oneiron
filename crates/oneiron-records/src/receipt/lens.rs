@@ -29,7 +29,7 @@ pub struct LensProposalReceipt {
 }
 
 /// The owner's decision on one pack lens slot.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum LensSlotDecision {
     Activated,
@@ -39,7 +39,7 @@ pub enum LensSlotDecision {
 /// `vault.lenses.activate` and `vault.lenses.deactivate`'s answer, and their
 /// agent doors' (`vault.lenses.activate_as`, `.deactivate_as`): the slot, the
 /// revision selected or cleared, the one it replaced, and the decision.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct LensActivationReceipt {
     pub decision: LensSlotDecision,
     pub pack_name: String,

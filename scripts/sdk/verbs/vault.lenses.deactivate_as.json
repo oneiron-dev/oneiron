@@ -8,8 +8,7 @@
   "grant_class": "vault.lenses.deactivate_as grant + owner agent-select key",
   "act_class": "reversible_work",
   "admission": {
-    "lane_record_scope": true,
-    "require_granted_scope": true
+    "unrestricted_record_scope": true
   },
   "section": false,
   "mcp_scope": "filtered",
