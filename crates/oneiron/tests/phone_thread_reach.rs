@@ -1071,6 +1071,89 @@ fn the_line_agents_narrowing_lands_at_the_next_read() {
     );
 }
 
+/// #8667 review r2 P1: under the default preset a call's scope is the top
+/// scope whatever documents the owner picked, so a narrowing of the picked
+/// documents leaves the scope as it was while it withholds a document the
+/// call's history may have been read from. The voice host keys that history
+/// on the call's whole consent, which changes with the documents.
+#[test]
+fn narrowing_the_picked_documents_changes_a_calls_consent_not_its_scope() {
+    let got = reach_fixture(PhoneReach::Default {
+        documents: Vec::new(),
+    });
+    set_reach_as_owner(
+        &got.fixture,
+        PhoneReach::Default {
+            documents: vec![got.doc.to_hex()],
+        },
+    );
+    let key = got
+        .fixture
+        .vault
+        .phone_line_answer_read_key(
+            &got.l_proof,
+            got.fixture.identity,
+            &got.receipt_b.record.payload_ref,
+        )
+        .expect("preset Default{doc}: B's new call key");
+    let picked = got.fixture.vault.scoped_read(key.clone());
+    assert!(
+        picked.is_entity_readable(&got.doc).expect("B's call reads"),
+        "FIXTURE: B's call reads the picked document",
+    );
+    let scope = picked.phone_line_scope().expect("the call's scope reads");
+    let consent = picked
+        .phone_line_consent()
+        .expect("the call's consent reads");
+    assert!(consent.is_some(), "a call has a consent");
+    let outcome = got
+        .fixture
+        .vault
+        .set_setting(
+            SettingCaller::Agent(got.fixture.agent),
+            SetSetting {
+                key: "voice.phone.reach".to_owned(),
+                item: Some(got.fixture.identity.to_hex()),
+                scope: SettingScope::Agent(got.fixture.agent),
+                mode: SettingMode::Value,
+                value: Some(
+                    serde_json::to_value(&PhoneReach::Default {
+                        documents: Vec::new(),
+                    })
+                    .expect("the narrowing encodes"),
+                ),
+                expected_revision: None,
+                why: None,
+                check_in_ref: None,
+                weight_runs: None,
+            },
+        )
+        .expect("the line agent's narrowing sets");
+    assert!(
+        matches!(outcome, SetSettingOutcome::Applied { .. }),
+        "the line agent's narrowing lands; seen {outcome:?}",
+    );
+    let narrowed = got.fixture.vault.scoped_read(key);
+    assert!(
+        !narrowed
+            .is_entity_readable(&got.doc)
+            .expect("narrowed: B's call reads"),
+        "narrowed: B's call no longer reads the document it picked",
+    );
+    assert_eq!(
+        narrowed.phone_line_scope().expect("the call's scope reads"),
+        scope,
+        "the default preset's scope stays the top scope",
+    );
+    assert_ne!(
+        narrowed
+            .phone_line_consent()
+            .expect("the call's consent reads"),
+        consent,
+        "the call's consent changes with its picked documents",
+    );
+}
+
 #[test]
 fn an_agents_widening_of_a_lines_reach_waits_for_the_owner() {
     let got = reach_fixture(PhoneReach::Default {

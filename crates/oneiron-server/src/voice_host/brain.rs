@@ -125,7 +125,9 @@ pub struct ChatBrain {
     /// The room's live speakers `history` was heard under, for a call heard
     /// in a room.
     history_live: Option<RoomLiveSpeakerEntries>,
-    history_phone_scope: Option<oneiron::federation::Scope>,
+    /// The call's live consent `history` was read under: any change to it,
+    /// its scope or not, drops that history (#8667 review r2 P1).
+    history_phone_consent: Option<oneiron::phone_line::PhoneLineConsent>,
     turn: Option<Running>,
     retiring: Vec<JoinHandle<()>>,
     /// Each tool context, beside the rows the connector call listed.
@@ -203,10 +205,10 @@ impl ChatBrain {
             .chat_seat()
             .cloned()
             .ok_or_else(|| refused("no [models] rung serves generative_reasoner"))?;
-        let history_phone_scope = bindings
+        let history_phone_consent = bindings
             .phone
             .as_ref()
-            .map(|phone| phone.current_scope())
+            .map(|phone| phone.current_consent())
             .transpose()?;
         // A phone call's thread shows where the call starts; its end is
         // written when the brain drops, however the call ended.
@@ -220,7 +222,7 @@ impl ChatBrain {
             history: Arc::new(Mutex::new(Vec::new())),
             history_revision: None,
             history_live: None,
-            history_phone_scope,
+            history_phone_consent,
             turn: None,
             retiring: Vec::new(),
             foreign: Vec::new(),
@@ -528,14 +530,14 @@ impl ChatBrain {
     /// the caller's words start.
     pub(crate) fn announce(&mut self, request: &BrainRequest) -> oneiron::Result<()> {
         self.abort();
-        let phone_scope = self
+        let phone_consent = self
             .bindings
             .phone
             .as_ref()
-            .map(|phone| phone.current_scope())
+            .map(|phone| phone.current_consent())
             .transpose()
             .map_err(refused)?;
-        if phone_scope.is_some() && phone_scope != self.history_phone_scope {
+        if phone_consent.is_some() && phone_consent != self.history_phone_consent {
             self.history = Arc::new(Mutex::new(Vec::new()));
             self.foreign.clear();
             self.said_by.clear();
@@ -544,8 +546,9 @@ impl ChatBrain {
         let generation = request.generation;
         let said_from = vec![self.bindings.agent];
         if let Some(phone) = &self.bindings.phone {
-            let scope = phone_scope
-                .clone()
+            let scope = phone_consent
+                .as_ref()
+                .map(|consent| consent.scope().clone())
                 .ok_or_else(|| refused("phone context has no captured scope"))?;
             phone
                 .prepare_generation(
@@ -556,7 +559,7 @@ impl ChatBrain {
                 )
                 .map_err(refused)?;
         }
-        self.history_phone_scope = phone_scope;
+        self.history_phone_consent = phone_consent;
         self.said_by.insert(generation, said_from.clone());
         let sources = Arc::new(Mutex::new(Some(TurnSources {
             said: said_from.clone(),
@@ -684,14 +687,14 @@ fn room_audience<'a>(
 impl Brain for ChatBrain {
     fn start(&mut self, request: &BrainRequest) -> oneiron::Result<()> {
         self.abort();
-        let phone_scope = self
+        let phone_consent = self
             .bindings
             .phone
             .as_ref()
-            .map(|phone| phone.current_scope())
+            .map(|phone| phone.current_consent())
             .transpose()
             .map_err(refused)?;
-        if phone_scope.is_some() && phone_scope != self.history_phone_scope {
+        if phone_consent.is_some() && phone_consent != self.history_phone_consent {
             // An aborted task may still own the old Arc on another executor.
             self.history = Arc::new(Mutex::new(Vec::new()));
             self.foreign.clear();
@@ -699,9 +702,15 @@ impl Brain for ChatBrain {
         }
         let (memories, heard, live) = self.memories(request)?;
         self.rebuild_history(request.audience_revision, live)?;
-        let (stream, tainted, memories, said_from, capture) =
-            self.open(request, memories, heard, phone_scope.as_ref())?;
-        self.history_phone_scope = phone_scope;
+        let (stream, tainted, memories, said_from, capture) = self.open(
+            request,
+            memories,
+            heard,
+            phone_consent
+                .as_ref()
+                .map(oneiron::phone_line::PhoneLineConsent::scope),
+        )?;
+        self.history_phone_consent = phone_consent;
         let generation = request.generation;
         // The person's words: no stored row yet; an owner's own call keeps
         // them, with the answer, once the answer stops (UNBUILT-02).
