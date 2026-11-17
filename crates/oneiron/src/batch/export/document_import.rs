@@ -20,8 +20,9 @@ use std::io::{Read, Seek};
 use serde::Deserialize;
 
 use super::archive_index::{
-    ArchiveIndex, EntityAt, FLAG_EXPRESSION, FLAG_PACK_BODY, FLAG_PROVENANCE, IndexedArchive,
-    QUEUE_EXPRESSION, QUEUE_PROVENANCE, QUEUE_ROW, Section, Tag, id_at, id_list, ids_of, ready_key,
+    ArchiveIndex, EntityAt, FLAG_EXPRESSION, FLAG_PACK_BODY, FLAG_PROVENANCE, IndexedArchive, Loc,
+    QUEUE_EXPRESSION, QUEUE_PROVENANCE, QUEUE_ROW, Section, Tag, edge_key, id_at, id_list, ids_of,
+    ready_key,
 };
 use super::bundle_validation::{ReservedClaimImport, ReservedClaimRestore};
 use super::result_import::put_run_results_in_txn;
@@ -739,24 +740,7 @@ impl Vault {
                     continue;
                 }
                 let edge = super::provenance_import::mapped_edge(&edge, &archive.index)?;
-                // FIX 7777: an archived MESSAGE's or NOTE's byline rides
-                // inert in its body; an archive never makes a local author.
-                if let Some(kind) = EdgeKind::try_from_u8(edge.kind)
-                    && super::evidence_import::is_evidence_byline(
-                        &archive,
-                        &parse_id(&edge.source)?,
-                        kind,
-                    )?
-                {
-                    continue;
-                }
-                if archive
-                    .index
-                    .contains(Tag::Omitted, parse_id(&edge.source)?.as_bytes())?
-                    || archive
-                        .index
-                        .contains(Tag::Omitted, parse_id(&edge.target)?.as_bytes())?
-                {
+                if archived_edge_skipped(&archive, &edge)? {
                     continue;
                 }
                 let landed =
@@ -903,7 +887,7 @@ fn mark_ready_rows<R: Read + Seek>(archive: &mut IndexedArchive<'_, R>) -> Resul
 /// comes back as that restore's (`owner_archive_restore::owner_restored_claim`),
 /// and only its restore into a fresh vault sets the default facet. Returns the
 /// reason for a row the destination keeps as archive data instead
-/// (`TargetDefaultFacetKept`).
+/// (`TargetDefaultFacetKept`, `ClaimSubjectEdgeNotRestored`).
 #[expect(
     clippy::too_many_arguments,
     reason = "the import's writer, archive and maps, plus the one row and its owner restore"
@@ -1001,15 +985,31 @@ fn insert_ready_row<R: Read + Seek>(
                     )
                 }
                 // The owner's restore lists each open proposal it inserts in its
-                // inbox group (R1, RULING 02:26 13 Nov).
-                _ => vault
-                    .put_claim_in_txn(wtxn, &id, &claim, occurred, row.learned_at)
-                    .and_then(|()| match owner_restore {
-                        Some(restore) => owner_archive_restore::record_restored_member_in_txn(
-                            vault, wtxn, restore, &id, &claim,
-                        ),
-                        None => Ok(()),
-                    }),
+                // inbox group (R1, RULING 02:26 13 Nov). A claim about a link
+                // goes in after its link, staged here; one whose link does not
+                // come back stays archive data
+                // (WHOLE-VAULT-IMPORT-REFUSES-EDGE-SUBJECT-CLAIMS).
+                _ => {
+                    if let ClaimSubject::Edge {
+                        source,
+                        kind,
+                        target,
+                    } = claim.subject
+                        && !stage_claim_subject_edge(vault, wtxn, archive, source, kind, target)?
+                    {
+                        archive.index.put(Tag::Omitted, id.as_bytes(), &[])?;
+                        archive.index.remove(Tag::Inserted, id.as_bytes())?;
+                        return Ok(Some(ImportOmissionReason::ClaimSubjectEdgeNotRestored));
+                    }
+                    vault
+                        .put_claim_in_txn(wtxn, &id, &claim, occurred, row.learned_at)
+                        .and_then(|()| match owner_restore {
+                            Some(restore) => owner_archive_restore::record_restored_member_in_txn(
+                                vault, wtxn, restore, &id, &claim,
+                            ),
+                            None => Ok(()),
+                        })
+                }
             }
         }
         // FIX 7777: the witness archive owner writes the row as imported
@@ -1129,6 +1129,12 @@ fn insert_ready_row<R: Read + Seek>(
                     row.learned_at,
                     &body,
                 );
+                // The owner's restore of the owner's own archive brings a
+                // room's shared pins, the records its unpins removed and its
+                // pin policy back as the room pin doors wrote them: it writes
+                // under their marker (ROOM-SCOPED-PINS, ROOM-PINS-LWW-MERGE).
+                let room_pins = owner_restore.is_some()
+                    && row.entity_type == crate::registry::ENTITY_TYPE_CONVERSATION;
                 if !sources.is_empty() {
                     let weight =
                         EdgeKind::DerivedFrom
@@ -1140,7 +1146,18 @@ fn insert_ready_row<R: Read + Seek>(
                         batch = batch.edge(&id, EdgeKind::DerivedFrom, source, weight);
                     }
                 }
-                batch.apply(wtxn)
+                if room_pins {
+                    crate::conversation::PIN_UPDATES.put(&vault.store, wtxn, &id, &[1])?;
+                }
+                let applied = batch.apply(wtxn);
+                if room_pins {
+                    // The apply's own error comes back first.
+                    let cleared = crate::conversation::PIN_UPDATES.delete(&vault.store, wtxn, &id);
+                    if applied.is_ok() {
+                        cleared?;
+                    }
+                }
+                applied
             }
         }
     };
@@ -1183,6 +1200,70 @@ fn restore_archived_default_facet<R: Read + Seek>(
     archive.index.put(Tag::Omitted, id.as_bytes(), &[])?;
     archive.index.remove(Tag::Inserted, id.as_bytes())?;
     Ok(Some(ImportOmissionReason::TargetDefaultFacetKept))
+}
+
+/// Whether the edge passes leave archived `edge` out: an archived MESSAGE's
+/// or NOTE's byline rides inert in its body, since an archive never makes a
+/// local author (FIX 7777), and a link with an end left out stays out too.
+fn archived_edge_skipped<R: Read + Seek>(
+    archive: &IndexedArchive<'_, R>,
+    edge: &ExportEdge,
+) -> Result<bool> {
+    let source = parse_id(&edge.source)?;
+    if let Some(kind) = EdgeKind::try_from_u8(edge.kind)
+        && super::evidence_import::is_evidence_byline(archive, &source, kind)?
+    {
+        return Ok(true);
+    }
+    Ok(archive.index.contains(Tag::Omitted, source.as_bytes())?
+        || archive
+            .index
+            .contains(Tag::Omitted, parse_id(&edge.target)?.as_bytes())?)
+}
+
+/// Whether this vault holds the link `source` -`kind`-> `target` an archived
+/// claim is about, once the archive's copy of it is in
+/// (WHOLE-VAULT-IMPORT-REFUSES-EDGE-SUBJECT-CLAIMS). The claim door reads an
+/// EdgeRef subject live, so the link goes in before the claim, as an
+/// edge-provenance cohort stages its subject edge
+/// (`provenance_import::restore`). Only a plain link the edge passes would
+/// restore is staged here, and the plain pass then finds it as the archive
+/// has it. A link of a later pass is proven on rows and links not in yet; a
+/// skipped link, one whose door leaves it out (`merged_into`, `split_into`)
+/// and one the archive does not carry never come back before the claim.
+fn stage_claim_subject_edge<R: Read + Seek>(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    archive: &IndexedArchive<'_, R>,
+    source: EntityId,
+    kind: EdgeKind,
+    target: EntityId,
+) -> Result<bool> {
+    if crate::ports::EdgeStoreRead::port_edge_get(&vault.store, wtxn, &source, kind, &target)?
+        .is_some()
+    {
+        return Ok(true);
+    }
+    let Some(loc) = archive
+        .index
+        .get(Tag::MappedEdge, &edge_key(&source, kind as u8, &target))?
+    else {
+        return Ok(false);
+    };
+    let edge = super::provenance_import::mapped_edge(
+        &archive.spool.parse::<ExportEdge>(Loc::decode(&loc)?)?,
+        &archive.index,
+    )?;
+    if ArchiveEdgePass::of(edge.kind) != ArchiveEdgePass::Plain
+        || archived_edge_skipped(archive, &edge)?
+    {
+        return Ok(false);
+    }
+    super::provenance_import::stage_edge(vault, wtxn, &edge, &archive.index)?;
+    Ok(
+        crate::ports::EdgeStoreRead::port_edge_get(&vault.store, wtxn, &source, kind, &target)?
+            .is_some(),
+    )
 }
 
 /// FIX 1178: stamps the birth the archive carries for `id` beside its landed

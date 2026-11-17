@@ -124,7 +124,7 @@ pub use admission_types::{
     PackInstallDisposition, PackInstallReceipt, PackInstallStatus, PackObservedTool,
     PackPermissions, PackQualification, PackQualifier, PackRuntimeRecipe,
 };
-#[cfg(all(test, feature = "microvm-firecracker", target_os = "linux"))]
+#[cfg(oneiron_test_support)]
 pub(crate) use script_plan::script_output_bytes;
 pub use script_runtime::{PackScriptGrant, PackScriptOutcome, PackScriptRun};
 #[cfg(test)]
