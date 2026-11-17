@@ -261,6 +261,7 @@ impl TestOrigin {
                 member: holder,
                 repos: BTreeSet::from([push_repo]),
                 expires_at: None,
+                check_in_ref: None,
             },
         )
         .expect("mint the holder's git_push Grant");

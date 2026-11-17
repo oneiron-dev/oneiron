@@ -11,6 +11,11 @@
 //! grant can make one: a top Access grant does not, and the agent Grant
 //! mint never gains the `git_push` verb.
 //!
+//! The mint is the owner's own act on their own proof, never gated; with
+//! an asker's approved check-in for this exact mint the writer spends it
+//! after every check and before the act is signed (ROLES-CHECKIN 2k7;
+//! P25-SHAPE Q1 = A).
+//!
 //! A revoke lands his signed revoke act and the row's delete in one writer,
 //! and touches GitPush rows only; a grant already withdrawn on the record,
 //! by the rule the agent grant door reads, changes nothing and signs nothing.
@@ -20,6 +25,7 @@ use std::path::Path;
 
 use crate::authority::{ActSurface, AgentGrantAct, AgentGrantActRef};
 use crate::batch::{BatchOp, apply_ops};
+use crate::check_in::{ActClass, AppliedCheckIn, CheckInDecision};
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -48,6 +54,9 @@ const ALREADY_EXPIRED: &str = "a git_push grant's expires_at must be later than 
 pub(crate) struct GitPushMintOutcome {
     pub(crate) standing: GitPushGrantStanding,
     pub(crate) act: AgentGrantActRef,
+    /// The decision the mint ran on: the owner's own proof, naming the
+    /// asker's approved check-in it applied.
+    pub(crate) check_in: CheckInDecision,
 }
 
 /// What a revoke did. A repeat changed nothing and signed no act.
@@ -64,14 +73,17 @@ impl Vault {
     /// `expires_at` or, when `None`, until he revokes it. `owner` is
     /// revalidated as the vault's live owner in the writer, which signs his
     /// act (`surface` says where he said so, for its audit only) before it
-    /// puts the grant.
+    /// puts the grant. With `applied` the owner applies another asker's
+    /// approved check-in for this exact mint: the writer spends it after
+    /// every check, before the act is signed (2k7; P25-SHAPE Q1 = A).
     ///
     /// # Errors
     /// An owner refusal; `InvalidConfig` for an empty repo set, a holder
     /// that is no live person or agent definition, an expiry already
     /// passed, or a repo that is no served CODE anchor of its PROJECT;
     /// [`crate::error::RecordError::AuthorityRefused`] when this install
-    /// cannot carry the owner's act.
+    /// cannot carry the owner's act; a check-in that is not an approved ask
+    /// for this mint.
     pub(crate) fn mint_git_push_grant(
         &self,
         owner: &AuthenticatedOwner,
@@ -79,6 +91,7 @@ impl Vault {
         member: EntityId,
         bounds: GitPushBounds,
         expires_at: Option<u64>,
+        applied: Option<&AppliedCheckIn<'_>>,
     ) -> Result<GitPushMintOutcome> {
         let serving = crate::origin::smart_http::origin_serving_root(self)?;
         self.with_write_txn_grouped(|txn| {
@@ -101,6 +114,12 @@ impl Vault {
                     return Err(Error::InvalidConfig(NOT_A_SERVED_REPO.into()));
                 }
             }
+            let check_in = crate::check_in::owner_act_decision_in_txn(
+                self,
+                txn,
+                ActClass::GrantWiden,
+                applied,
+            )?;
             let grant = FederationGrant {
                 authority_scope: git_push_scope(&bounds),
                 scope: self.git_push_grant_scope_in_txn(txn)?,
@@ -167,6 +186,7 @@ impl Vault {
                     created_at: now,
                 },
                 act,
+                check_in,
             })
         })
     }
