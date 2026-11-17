@@ -18,11 +18,23 @@ use crate::managed::recovery_box_hold::kit_only_watch::{
     KitOnlyFollow, WaitReportFollow, fold_kit_only_fact,
 };
 use crate::managed::recovery_box_hold::{HealRunning, HypnosRecoveryBoxHold};
-use crate::server::HousekeepingAdmission;
+use crate::server::{HousekeepingAdmission, SyncServer};
 
 pub use crate::managed::recovery_box_hold::{
     KitOnlyFact, KitOnlyFactRead, KitOnlyLook, WaitReport,
 };
+
+/// Installs `client` as `server`'s recovery box hold, as managed boot does
+/// on a hosted vault, so the owner routes reach the box through it.
+///
+/// # Errors
+/// When `server` already has one.
+pub fn install_recovery_box_hold(
+    server: &SyncServer,
+    client: &HypnosRecoveryBoxHold,
+) -> anyhow::Result<()> {
+    server.configure_recovery_box_hold(client.clone())
+}
 
 /// The caller for `vault` with spawn token `token_hex`, on `socket`, each
 /// call bounded by `timeout`.
