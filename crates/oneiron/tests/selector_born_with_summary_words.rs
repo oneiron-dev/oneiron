@@ -127,6 +127,7 @@ fn witness_source(
             }],
             occurred_at: now,
             assertions: WitnessAssertions::default(),
+            project: None,
         })
         .expect("the owner's source MESSAGE");
     assert_eq!(
@@ -359,6 +360,7 @@ fn prompt_message(
             }],
             occurred_at: now,
             assertions: WitnessAssertions::default(),
+            project: None,
         })
         .expect("FIXTURE: the owner witnesses a prompt MESSAGE");
     vault

@@ -1,8 +1,9 @@
 //! Scoped NOTE replacement and immutable-workflow preflight in one transaction.
 
-use super::{DocKey, NOTE_FORK, NOTE_PROPOSAL_BUNDLE, NOTE_PROPOSAL_DOC, NOTE_RECEIPT, workflow};
+use super::{HexPair, NOTE_FORK, NOTE_PROPOSAL_BUNDLE, NOTE_PROPOSAL_DOC, NOTE_RECEIPT, workflow};
 use crate::entity_id::EntityId;
 use crate::recovery::canonical::{CanonicalSnapshot, id, invalid};
+use crate::side_table::HexId;
 use crate::{
     Vault,
     error::Result,
@@ -22,7 +23,7 @@ enum StaleMetadata {
 }
 
 struct Cleanup {
-    docs: Vec<DocKey>,
+    docs: Vec<HexPair>,
     metadata: Vec<StaleMetadata>,
 }
 /// The fork recovery installs over `previous`, the row held here, or `None`
@@ -100,7 +101,7 @@ fn plan(
         crate::note::recovery::guard(vault, txn, note)?;
         let note_prefix = [note.to_hex().as_bytes(), b":".as_slice()].concat();
         for key in NOTE_PROPOSAL_DOC.scan_keys(&vault.store, txn, &note_prefix)? {
-            let DocKey(_, head) = key;
+            let HexPair(_, HexId(head)) = key;
             if !expected_docs.contains(&(note, head)) {
                 cleanup.docs.push(key);
             }
@@ -345,7 +346,7 @@ pub(crate) fn run_in_txn(
                 )?;
             }
         } else {
-            let key = DocKey(note, id(row.head)?);
+            let key = HexPair(HexId(note), HexId(id(row.head)?));
             // Proposal equality is a text-value claim, never proof that a
             // nested Loro snapshot has no erased history. Rebuild even when
             // the current text matches; live value-equal docs remain untouched.
