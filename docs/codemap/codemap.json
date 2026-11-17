@@ -72511,6 +72511,56 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/scan_check/table_tests/seed_agent_definition.rs",
+     "purpose": "Threshold fixtures of the agent_definition scans for `no_engine_scan_refuses_for_its_row_count` (FIX…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "L",
+     "kind": "src",
+     "notable": [],
+     "path": "src/scan_check/table_tests/seed_code_repo.rs",
+     "purpose": "Threshold fixtures of the code_repo scans for `no_engine_scan_refuses_for_its_row_count` (FIX…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/scan_check/table_tests/seed_project.rs",
+     "purpose": "Threshold fixtures of the project scans for `no_engine_scan_refuses_for_its_row_count` (FIX…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "L",
+     "kind": "src",
+     "notable": [],
+     "path": "src/scan_check/table_tests/seed_room_thread.rs",
+     "purpose": "Threshold fixtures of the room_thread scans for `no_engine_scan_refuses_for_its_row_count` (FIX…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "L",
+     "kind": "src",
+     "notable": [],
+     "path": "src/scan_check/table_tests/seed_runtime_records.rs",
+     "purpose": "Threshold fixtures of the runtime_records scans for `no_engine_scan_refuses_for_its_row_count` (FIX…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -113774,9 +113824,9 @@
      "purpose": "SAVED_QUERY — durable standing queries with staged evaluation (CA-02)"
     },
     "scan_check": {
-     "files": 5,
+     "files": 10,
      "impl_vault": true,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "file+dir",
      "purpose": "Engine scans never refuse for how many rows they read (rule 5: ARCH-0044 C5, OF-520)"
     },
@@ -114229,9 +114279,9 @@
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     }
    },
-   "over_bar": 299,
+   "over_bar": 302,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 8108,
+   "source_files": 8113,
    "test_files": 1857
   },
   "oneiron-agent-runtime": {

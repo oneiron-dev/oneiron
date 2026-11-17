@@ -6212,6 +6212,11 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/scan_check/engine_scan.rs` | src | s | 1 re-export | — | Engine scan vocabulary is defined in the store layer |
 | `src/scan_check/engine_scan_table.rs` | src | s | 1 crate-vis | — | Scan thresholds are defined with the store-layer counter |
 | `src/scan_check/table_tests.rs` | test | m | — | — | The code's own list of engine scans: none refuses for how many rows it reads (rule 5) |
+| `src/scan_check/table_tests/seed_agent_definition.rs` | src | m | 1 crate-vis | — | Threshold fixtures of the agent_definition scans for `no_engine_scan_refuses_for_its_row_count` (FIX… |
+| `src/scan_check/table_tests/seed_code_repo.rs` | src | L | 1 crate-vis | — | Threshold fixtures of the code_repo scans for `no_engine_scan_refuses_for_its_row_count` (FIX… |
+| `src/scan_check/table_tests/seed_project.rs` | src | m | 1 crate-vis | — | Threshold fixtures of the project scans for `no_engine_scan_refuses_for_its_row_count` (FIX… |
+| `src/scan_check/table_tests/seed_room_thread.rs` | src | L | 1 crate-vis | — | Threshold fixtures of the room_thread scans for `no_engine_scan_refuses_for_its_row_count` (FIX… |
+| `src/scan_check/table_tests/seed_runtime_records.rs` | src | L | 1 crate-vis | — | Threshold fixtures of the runtime_records scans for `no_engine_scan_refuses_for_its_row_count` (FIX… |
 | `src/scan_check/tables.rs` | src | s | — | — | The side tables `scan_check` keeps (core split slice 1): each row declares one, and the crate's build script… |
 | `src/schedule/arm.rs` | src | m | 1 struct · 19 crate-vis | ScheduleView | Arming and disarming a job, the rows that record it, and who may do either |
 | `src/schedule/jobs.rs` | src | s | 1 crate-vis | — | The job registry: every kind of job the engine runs on a schedule |
