@@ -161,6 +161,16 @@ pub(super) fn run(
             });
         }
         HousekeepingSweep::FoundKeyNotices => return found_key_notices(vault, deadline),
+        HousekeepingSweep::ExportAuditOwed => {
+            let (delivered, failed, left) =
+                crate::memory::deliver_owed_export_audits(vault, || deadline.passed())?;
+            return Ok(Run {
+                work: SweepWork::ExportAuditOwed { delivered, failed },
+                complete: left == 0,
+                cursor: None,
+                covered_until: None,
+            });
+        }
         HousekeepingSweep::BodyLineIndexRebuild => return body_line_index_rebuild(vault, deadline),
         HousekeepingSweep::AnnotationBodyAnchors => {
             let (moved, failed, cursor) =

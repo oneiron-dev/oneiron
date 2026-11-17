@@ -47,6 +47,10 @@ pub enum HousekeepingSweep {
     /// Raises the found-key notices left due past one write's share (OF-560,
     /// FIX 2648), for a vault no later write comes to.
     FoundKeyNotices,
+    /// Writes each export audit an Owner's copy still owes (L5-17): the
+    /// audit row and the private threads' notices whose write did not
+    /// commit when the copy left.
+    ExportAuditOwed,
     /// Rebuilds whole-body line indexes reads found missing or short (FIX
     /// 1186b): a read notes the body, this sweep streams it once and
     /// publishes the derived sidecar.
@@ -151,6 +155,7 @@ impl HousekeepingSweep {
         Self::SecretLiftHistory,
         Self::ClaimVadDebt,
         Self::FoundKeyNotices,
+        Self::ExportAuditOwed,
         Self::BodyLineIndexRebuild,
         Self::AnnotationBodyAnchors,
         Self::DrafterCorpusSweep,
@@ -182,6 +187,7 @@ impl HousekeepingSweep {
             Self::SecretLiftHistory => "secret_lift_history",
             Self::ClaimVadDebt => "claim_vad_debt",
             Self::FoundKeyNotices => "found_key_notices",
+            Self::ExportAuditOwed => "export_audit_owed",
             Self::BodyLineIndexRebuild => "body_line_index_rebuild",
             Self::AnnotationBodyAnchors => "annotation_body_anchors",
             Self::DrafterCorpusSweep => "drafter_corpus_sweep",
@@ -211,7 +217,8 @@ impl HousekeepingSweep {
     /// VAD work runs at open, for an approval a stopped process left, and
     /// every fifteen minutes, behind the payment worker each write wakes
     /// (FIX 11702). The found-key drain looks for due notices every
-    /// fifteen minutes. The line-index rebuild drain looks for queued bodies
+    /// fifteen minutes. An owed export audit is written at open, for a copy
+    /// a stopped process left owing, and every fifteen minutes. The line-index rebuild drain looks for queued bodies
     /// every fifteen minutes. Comments follow their live body every minute
     /// and at open, so a stopped process leaves none behind. The drafter
     /// corpus sweep runs at open and daily, beside the night's own sweeps
@@ -251,7 +258,7 @@ impl HousekeepingSweep {
             },
             Self::HardEraseSweep | Self::PprCacheEviction => engine(DAY),
             Self::SharedActMaturity => engine(HOUR),
-            Self::ClaimVadDebt => Runner::Engine {
+            Self::ClaimVadDebt | Self::ExportAuditOwed => Runner::Engine {
                 every: 15 * MINUTE,
                 at_open: true,
             },

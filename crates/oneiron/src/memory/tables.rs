@@ -23,6 +23,16 @@ crate::side_table::side_tables! {
     /// means off). Value: one byte, 1 on, 0 off. Key: id16 (agent).
     DIARY_READ_REVIEW: VaultMeta b"diary:read_review:v1:" Raw
         [restore: live] [family: unclassified] [tier: canonical];
+    /// The export audit an Owner's copy still owes (L5-17): the audit row to write, and the root
+    /// of each private thread the copy carries with the binding the copy's own read resolved,
+    /// whose audience names members. Written before the copy leaves; the audit's own write, or a
+    /// housekeeping pass after it, writes the row and the threads' notices and drops it. Never a
+    /// byte of the copy. Key: id16(export).
+    EXPORT_AUDIT_OWED: VaultMeta b"export:audit_owed:v1:" Named
+        // Restore class: An owed audit records a copy that already left the vault, as the audit's
+        // rows do.
+        [restore: live] [family: unclassified] [tier: canonical]
+        => crate::memory::erase_export_audit_owed_actor_in_txn;
     /// The export audit (FIX 6427): one row per Owner copy that left the vault, the whole vault
     /// or an off-record room's talk. It holds the export id, scope, exporter, time, format and
     /// actor, and the copy's length and digest where its door read the copy back; never the

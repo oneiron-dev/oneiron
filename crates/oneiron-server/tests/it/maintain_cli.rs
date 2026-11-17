@@ -19,6 +19,7 @@ const ENGINE_SWEEPS: [&str; 20] = [
     "secret_lift_history",
     "claim_vad_debt",
     "found_key_notices",
+    "export_audit_owed",
     "body_line_index_rebuild",
     "annotation_body_anchors",
     "drafter_corpus_sweep",
