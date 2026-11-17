@@ -70,6 +70,10 @@ pub struct CallHeader {
 impl CallHeader {
     /// A call for `body`, with its digest.
     #[must_use]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "one parameter per part of the call header"
+    )]
     pub fn new(
         call: String,
         shape: Shape,
@@ -89,6 +93,10 @@ impl CallHeader {
     /// whole turn while `body` is its planned delta. Responses uses this: the
     /// daemon binds the whole turn before checkout, and [`Self::check_responses`]
     /// checks that the delta belongs to that admitted turn.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "one parameter per part of the call header"
+    )]
     pub fn new_with_digest_body(
         call: String,
         shape: Shape,
@@ -97,7 +105,7 @@ impl CallHeader {
         headers: Vec<(String, String)>,
         wire_model: String,
         cloud: bool,
-        body: &[u8],
+        _body: &[u8],
         digest_body: &[u8],
     ) -> Self {
         let method = shape.method().to_owned();
