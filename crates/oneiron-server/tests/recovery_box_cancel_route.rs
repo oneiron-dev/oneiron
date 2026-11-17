@@ -121,8 +121,6 @@ enum Script {
     Cancelled(bool),
     /// The refusal line a supervisor answers a stale choice with.
     Refused,
-    /// Close the connection without answering.
-    HungUp,
 }
 
 fn stub(
@@ -159,16 +157,13 @@ fn serve_connection(mut stream: UnixStream, entry: Script, lines: &mpsc::Sender<
     reader.read_line(&mut line).expect("read the request");
     drop(reader);
     lines.send(line).expect("the test reads each line");
-    let answer: Option<&[u8]> = match entry {
-        Script::Cancelled(true) => Some(br#"{"held":true,"cancelled":true}"#),
-        Script::Cancelled(false) => Some(br#"{"held":true,"cancelled":false}"#),
-        Script::Refused => Some(br#"{"held":false,"error":"stale_generation"}"#),
-        Script::HungUp => None,
+    let answer: &[u8] = match entry {
+        Script::Cancelled(true) => br#"{"held":true,"cancelled":true}"#,
+        Script::Cancelled(false) => br#"{"held":true,"cancelled":false}"#,
+        Script::Refused => br#"{"held":false,"error":"stale_generation"}"#,
     };
-    if let Some(answer) = answer {
-        stream.write_all(answer).ok();
-        stream.write_all(b"\n").ok();
-    }
+    stream.write_all(answer).ok();
+    stream.write_all(b"\n").ok();
 }
 
 fn silent_supervisor() -> (tempfile::TempDir, PathBuf, UnixListener) {
@@ -404,6 +399,46 @@ fn a_fresh_owner_proof_cancels_the_pending_release_at_the_box() {
         assert!(
             lines.recv_timeout(Duration::from_millis(200)).is_err(),
             "exactly one line"
+        );
+        supervisor.join().expect("supervisor");
+        Ok::<(), TestError>(())
+    });
+}
+
+#[test]
+fn a_proof_with_no_release_receipt_cancels_whichever_release_is_pending() {
+    run_on_engine_stack("cancel-any-release", async {
+        let host = Host::new()?;
+        let (_dir, socket, lines, supervisor) = stub(vec![Script::Cancelled(true)]);
+        let client = hold_client(&socket, VAULT, &token(), BOUND);
+        install_recovery_box_hold(&host.server, &client)?;
+        let now = host.vault.now_recorded_at();
+        let proof = host.signed_proof(host.person, now, None);
+        let mut body = host.proof_body(&proof);
+        body.as_object_mut()
+            .expect("the body is an object")
+            .remove("release_receipt");
+        let (status, answer) = host.cancel(body, true).await?;
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "a proof naming no release cancels: {answer}"
+        );
+        assert_eq!(
+            answer["cancelled"].as_bool(),
+            Some(true),
+            "the box voided the pending release: {answer}"
+        );
+        let line = lines.recv_timeout(ANSWER).expect("the cancel's line");
+        let request: Value = serde_json::from_str(&line).expect("the line is JSON");
+        assert_eq!(
+            request["op"].as_str(),
+            Some("recovery_box_cancel"),
+            "the op: {line}"
+        );
+        assert!(
+            request.get("release_receipt").is_none(),
+            "the line names no release: {line}"
         );
         supervisor.join().expect("supervisor");
         Ok::<(), TestError>(())
