@@ -611,6 +611,8 @@ fn scorecard_run_sealed_for_a_proposal_checks_its_record_first() {
         incumbent,
         candidate,
         candidate_params: json!({"contract": "oneiron.retrieval_eval_params.v1"}),
+        model_id: "test/fixture-embed@v1".to_owned(),
+        budget_rows: 20,
         incumbent_scorecard_sha256: "ee".repeat(32),
         candidate_scorecard_sha256: "ff".repeat(32),
         axes: Vec::new(),
@@ -642,6 +644,210 @@ fn scorecard_run_sealed_for_a_proposal_checks_its_record_first() {
         !ledger.join("sealed-once").exists(),
         "no sealed-once marker on a params mismatch"
     );
+}
+
+#[test]
+fn scorecard_run_sealed_for_a_proposal_checks_its_retriever_and_budget_first() {
+    let dir = tempfile::tempdir().expect("arm check fixture dir");
+    write_slice(dir.path(), "search", true);
+    write_slice(dir.path(), "sealed", true);
+    let digest = load_slice(dir.path(), Slice::Sealed)
+        .expect("sealed slice loads")
+        .pack_digest;
+    let campaign = write_run_campaign(dir.path(), &digest);
+    let pack_dir = dir.path().to_str().expect("fixture dir").to_owned();
+    let campaign_arg = campaign.to_str().expect("campaign path").to_owned();
+    let ledger = dir.path().join("ledger");
+    let ledger_arg = ledger.to_str().expect("ledger path").to_owned();
+    let proposals = dir.path().join("proposals");
+    let proposals_arg = proposals.to_str().expect("proposals path").to_owned();
+    let dicts = dir.path().join("dicts");
+    std::fs::create_dir(&dicts).expect("dict dir");
+    let dicts_arg = dicts.to_str().expect("dict path").to_owned();
+    let search_out = dir.path().join("search-scorecard.json");
+    let search_out_arg = search_out.to_str().expect("search path").to_owned();
+    let search = scorecard(&[
+        "run",
+        "--arm",
+        "keyword",
+        "--pack-dir",
+        &pack_dir,
+        "--slice",
+        "search",
+        "--engine-commit",
+        ENGINE_COMMIT,
+        "--out",
+        &search_out_arg,
+    ]);
+    let search_stderr = String::from_utf8_lossy(&search.stderr);
+    assert!(
+        search.status.success(),
+        "keyword run failed: {search_stderr}"
+    );
+    let summary: Value = serde_json::from_slice(&search.stdout).expect("run prints JSON");
+    let profile_digest = summary["params_digest"]
+        .as_str()
+        .expect("params digest")
+        .to_owned();
+    let incumbent = ExperimentIdentity {
+        engine_commit: ENGINE_COMMIT.to_owned(),
+        params_digest: "dd".repeat(32),
+        pack_digest: digest,
+    };
+    let candidate = ExperimentIdentity {
+        engine_commit: ENGINE_COMMIT.to_owned(),
+        params_digest: profile_digest,
+        pack_digest: incumbent.pack_digest.clone(),
+    };
+    let id = proposal_id("fixture-campaign", &incumbent, &candidate).expect("proposal id");
+    let store = ProposalStore::open(&proposals).expect("proposals open");
+    let record = HeldOutProposal {
+        contract: PROPOSAL_CONTRACT.to_owned(),
+        proposal_id: id.clone(),
+        campaign_id: "fixture-campaign".to_owned(),
+        incumbent,
+        candidate,
+        candidate_params: json!({"contract": "oneiron.bm25_rank_profile.v1"}),
+        model_id: "bm25f".to_owned(),
+        budget_rows: 20,
+        incumbent_scorecard_sha256: "ee".repeat(32),
+        candidate_scorecard_sha256: "ff".repeat(32),
+        axes: Vec::new(),
+        bootstrap: Vec::new(),
+        decided_at: 1_700_000_000,
+    };
+    store.put_held_out(&record).expect("record writes");
+    // A second proposal for the same candidate, judged with dictionaries (bm25f+dicts).
+    let dicts_incumbent = ExperimentIdentity {
+        params_digest: "cc".repeat(32),
+        ..record.incumbent.clone()
+    };
+    let dicts_id = proposal_id("fixture-campaign", &dicts_incumbent, &record.candidate)
+        .expect("dicts proposal id");
+    let dicts_record = HeldOutProposal {
+        proposal_id: dicts_id.clone(),
+        incumbent: dicts_incumbent,
+        model_id: "bm25f+dicts".to_owned(),
+        ..record.clone()
+    };
+    store
+        .put_held_out(&dicts_record)
+        .expect("dicts record writes");
+    let out = dir.path().join("sealed-scorecard.json");
+    let out_arg = out.to_str().expect("sealed path").to_owned();
+    let sealed_run = |extra: &[&str]| {
+        let mut args = vec![
+            "run",
+            "--arm",
+            "keyword",
+            "--pack-dir",
+            pack_dir.as_str(),
+            "--slice",
+            "sealed",
+            "--engine-commit",
+            ENGINE_COMMIT,
+            "--out",
+            out_arg.as_str(),
+            "--sealed-ledger",
+            ledger_arg.as_str(),
+            "--campaign",
+            campaign_arg.as_str(),
+            "--proposal",
+            id.as_str(),
+            "--proposals",
+            proposals_arg.as_str(),
+        ];
+        args.extend_from_slice(extra);
+        scorecard(&args)
+    };
+    // The proposal's profile with a dictionary dir is another retriever
+    // (bm25f+dicts); this dir also loads no dictionary, and either refuses it.
+    let with_dicts = sealed_run(&["--dict-dir", dicts_arg.as_str()]);
+    assert_eq!(with_dicts.status.code(), Some(2));
+    assert!(
+        !ledger.join("sealed-once").exists(),
+        "no sealed-once marker for another retriever"
+    );
+    // The bm25f+dicts proposal with a dir that loads no dictionary is refused
+    // before the claim: it would run the portable analyzer under that id.
+    let no_dicts = scorecard(&[
+        "run",
+        "--arm",
+        "keyword",
+        "--pack-dir",
+        pack_dir.as_str(),
+        "--slice",
+        "sealed",
+        "--engine-commit",
+        ENGINE_COMMIT,
+        "--out",
+        out_arg.as_str(),
+        "--sealed-ledger",
+        ledger_arg.as_str(),
+        "--campaign",
+        campaign_arg.as_str(),
+        "--proposal",
+        dicts_id.as_str(),
+        "--proposals",
+        proposals_arg.as_str(),
+        "--dict-dir",
+        dicts_arg.as_str(),
+    ]);
+    assert_eq!(no_dicts.status.code(), Some(2));
+    assert!(
+        !ledger.join("sealed-once").exists(),
+        "no sealed-once marker for a dict dir that loads no dictionary"
+    );
+    // The proposal's arm at another budget is another run.
+    let other_budget = sealed_run(&["--budget-rows", "5"]);
+    assert_eq!(other_budget.status.code(), Some(2));
+    assert!(
+        !ledger.join("sealed-once").exists(),
+        "no sealed-once marker for another budget"
+    );
+    // The proposal's own arm spends the claim and runs.
+    let own = sealed_run(&[]);
+    let own_stderr = String::from_utf8_lossy(&own.stderr);
+    assert!(own.status.success(), "own sealed run failed: {own_stderr}");
+    assert!(
+        ledger.join("sealed-once").exists(),
+        "the proposal's own run spends the claim"
+    );
+}
+
+#[test]
+fn scorecard_run_returns_no_more_rows_than_the_budget() {
+    let dir = tempfile::tempdir().expect("budget fixture dir");
+    write_slice(dir.path(), "search", true);
+    let pack_dir = dir.path().to_str().expect("fixture dir").to_owned();
+    for arm in ["pipeline", "keyword"] {
+        let out = dir.path().join(format!("{arm}-scorecard.json"));
+        let out_arg = out.to_str().expect("scorecard path").to_owned();
+        let result = scorecard(&[
+            "run",
+            "--arm",
+            arm,
+            "--pack-dir",
+            &pack_dir,
+            "--slice",
+            "search",
+            "--budget-rows",
+            "1",
+            "--engine-commit",
+            ENGINE_COMMIT,
+            "--out",
+            &out_arg,
+        ]);
+        let stderr = String::from_utf8_lossy(&result.stderr);
+        assert!(result.status.success(), "{arm} run failed: {stderr}");
+        let file = read_json(&out);
+        let rows = file["per_query"].as_array().expect("per-query rows");
+        assert_eq!(rows.len(), 2);
+        for row in rows {
+            let returned = row["returned"].as_u64().expect("returned");
+            assert!(returned <= 1, "{arm} returned {returned} rows at budget 1");
+        }
+    }
 }
 
 #[test]
