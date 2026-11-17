@@ -91,6 +91,34 @@ pub(crate) enum ArchivedSideGroup {
     RetrievalPins,
     /// Drafter policy and serving binding repair.
     Drafter,
+    /// Owner grant act history.
+    AccessGrant,
+    /// Owner setting act history.
+    PolicySetting,
+    /// Owner policy change and scan history.
+    PolicyModel,
+    /// Hold override history and its time index.
+    AttemptQueue,
+    /// Compliance pack decision history.
+    CampaignCompliance,
+    /// Check-in history and its time index.
+    CheckIn,
+    /// Passive e-sign audit chains.
+    Esign,
+    /// Hook execution and regeneration history.
+    RuntimeHooks,
+    /// Inquiry send history and its time index.
+    Inquiry,
+    /// Note landing history.
+    Note,
+    /// Completed secret lift history with accounting support.
+    SecretLift,
+    /// Secret rotation and revocation history.
+    SecretRotation,
+    /// Send attempt audit before supported summaries.
+    SendReceipts,
+    /// Team receipt history.
+    Team,
 }
 
 /// Selects only the tables with a landing group; every other envelope stays retained-only.
@@ -120,13 +148,42 @@ pub(crate) fn archived_side_group(source_table: &str) -> Option<ArchivedSideGrou
         name if name == side_table::HOUSEKEEPING_WAKE.name => Some(Group::HousekeepingWake),
         name if name == side_table::AUTHORITY_WITHDRAWN_GRANT.name => Some(Group::WithdrawnGrant),
         name if name == side_table::PROJECT_HISTORY_POLICY.name => Some(Group::ProjectHistory),
-        name if name == side_table::MESSAGE_STREAM_POLICY.name => Some(Group::Memory),
-        name if name == side_table::DREAMER_ACTION_MODE_POLICY.name => Some(Group::DreamerRunner),
+        name if name == side_table::MESSAGE_STREAM_POLICY.name
+            || name == side_table::EXPORT_RECEIPT.name =>
+        {
+            Some(Group::Memory)
+        }
+        name if name == side_table::DREAMER_ACTION_MODE_POLICY.name
+            || name == side_table::DREAMER_FREE_TIME_RECEIPT.name =>
+        {
+            Some(Group::DreamerRunner)
+        }
         name if name == side_table::ORIGIN_LFS_PATH_POLICY.name => Some(Group::OriginLfs),
         name if name == side_table::MERGE_QUEUE_REVIEW_POLICY.name => Some(Group::MergeQueue),
         name if name == side_table::LEARNING_SETTING.name => Some(Group::LearningSetting),
         name if name == side_table::RETRIEVAL_POLICY_PINS.name => Some(Group::RetrievalPins),
         name if name == side_table::DRAFTER_POLICY.name => Some(Group::Drafter),
+        name if name == side_table::ACCESS_GRANT_OWNER_ACT.name => Some(Group::AccessGrant),
+        name if name == side_table::POLICY_SETTING_ACT.name => Some(Group::PolicySetting),
+        name if name == side_table::OWNER_POLICY_CHANGE_EVENT.name => Some(Group::PolicyModel),
+        name if name == side_table::OWNER_POLICY_SECRET_SCAN_RECEIPT.name => {
+            Some(Group::PolicyModel)
+        }
+        name if name == side_table::ATTEMPT_HOLD_OVERRIDE_RECEIPT.name => Some(Group::AttemptQueue),
+        name if name == side_table::CAMPAIGN_COMPLIANCE_RECEIPT.name => {
+            Some(Group::CampaignCompliance)
+        }
+        name if name == side_table::CHECK_IN_RECEIPT.name => Some(Group::CheckIn),
+        name if name == side_table::ESIGN_AUDIT.name => Some(Group::Esign),
+        name if name == side_table::HOOKS_RECEIPT.name => Some(Group::RuntimeHooks),
+        name if name == side_table::HOOKS_REGEN_RECEIPT.name => Some(Group::RuntimeHooks),
+        name if name == side_table::INQUIRY_RECEIPT.name => Some(Group::Inquiry),
+        name if name == side_table::NOTE_RECEIPT.name => Some(Group::Note),
+        name if name == side_table::SECRET_LIFT_RECEIPT.name => Some(Group::SecretLift),
+        name if name == side_table::SECRET_ROTATION_RECEIPT.name => Some(Group::SecretRotation),
+        name if name == side_table::SEND_RECEIPT_ATTEMPT_AUDIT.name => Some(Group::SendReceipts),
+        name if name == side_table::SEND_RECEIPT_SUMMARY.name => Some(Group::SendReceipts),
+        name if name == side_table::TEAM_RECEIPT.name => Some(Group::Team),
         _ => None,
     }
 }
@@ -204,6 +261,52 @@ pub(crate) fn land_archived_side_group_in_txn(
         }
         ArchivedSideGroup::Drafter => {
             crate::Vault::land_archived_drafter_rows_in_txn(vault, txn, permit, rows)
+        }
+        ArchivedSideGroup::AccessGrant => {
+            crate::Vault::land_archived_access_grant_rows_in_txn(vault, txn, permit, rows)
+        }
+        ArchivedSideGroup::PolicySetting => {
+            crate::Vault::land_archived_policy_setting_rows_in_txn(vault, txn, permit, rows)
+        }
+        ArchivedSideGroup::PolicyModel => {
+            crate::Vault::land_archived_policy_model_rows_in_txn(vault, txn, permit, rows)
+        }
+        ArchivedSideGroup::AttemptQueue => {
+            crate::Vault::land_archived_attempt_queue_rows_in_txn(vault, txn, permit, rows)
+        }
+        ArchivedSideGroup::CampaignCompliance => {
+            crate::Vault::land_archived_campaign_compliance_rows_in_txn(vault, txn, permit, rows)
+        }
+        ArchivedSideGroup::CheckIn => {
+            crate::Vault::land_archived_check_in_rows_in_txn(vault, txn, permit, rows)
+        }
+        ArchivedSideGroup::Esign => {
+            crate::blob_artifact::esign::archive_restore::land_archived_esign_rows_in_txn(
+                vault, txn, permit, rows,
+            )
+        }
+        ArchivedSideGroup::RuntimeHooks => {
+            crate::Vault::land_archived_runtime_hooks_rows_in_txn(vault, txn, permit, rows)
+        }
+        ArchivedSideGroup::Inquiry => {
+            crate::Vault::land_archived_inquiry_rows_in_txn(vault, txn, permit, rows)
+        }
+        ArchivedSideGroup::Note => {
+            crate::Vault::land_archived_note_rows_in_txn(vault, txn, permit, rows)
+        }
+        ArchivedSideGroup::SecretLift => {
+            crate::Vault::land_archived_secret_lift_rows_in_txn(vault, txn, permit, rows)
+        }
+        ArchivedSideGroup::SecretRotation => {
+            crate::secret_rotation::land_archived_secret_rotation_rows_in_txn(
+                vault, txn, permit, rows,
+            )
+        }
+        ArchivedSideGroup::SendReceipts => {
+            crate::store::Store::land_archived_send_receipts_rows_in_txn(vault, txn, permit, rows)
+        }
+        ArchivedSideGroup::Team => {
+            crate::team::receipt::land_archived_team_rows_in_txn(vault, txn, permit, rows)
         }
     }?;
     refresh.record(group, &outcomes);
