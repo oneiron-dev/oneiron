@@ -357,7 +357,12 @@ pub(crate) async fn run_relay_with_hold_guard(
     hold_guard: Option<Arc<dyn RelayDeleteHoldGuard>>,
 ) -> anyhow::Result<()> {
     crate::commands::init_tracing("info");
-    let config: RelayConfig = serde_json::from_slice(&std::fs::read(config_path)?)?;
+    // A room file that does not parse names itself and the place, never the
+    // parser's message (FIX CONFIG-SIDE-FILE-PARSE-ERRORS-PRINT-PARSER-MESSAGE).
+    // Its host places it, so who may write it is the host's to keep.
+    let raw = std::fs::read_to_string(config_path)
+        .map_err(|error| anyhow::anyhow!("read relay config {}: {error}", config_path.display()))?;
+    let config: RelayConfig = crate::config::merge::parse_json(config_path, &raw)?;
     config.validate()?;
     let cors = crate::web_client::cors_layer(&config.allowed_origins)?;
     let token_file = Zeroizing::new(std::fs::read_to_string(&config.access_token_file)?);
