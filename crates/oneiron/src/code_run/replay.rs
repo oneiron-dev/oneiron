@@ -223,22 +223,18 @@ fn cached_rows(
     cached.rows.clone()
 }
 
-/// Whether a stored row's value names a lifted secret's handle in any of its
-/// text (OF-067): the side-row wall left it there in place of the value.
-fn names_a_handle(value: &rmpv::Value) -> bool {
-    match value {
-        rmpv::Value::String(text) => text
-            .as_str()
-            .is_some_and(crate::batch::secret_scan::LiftedKeys::names_a_handle),
-        rmpv::Value::Binary(bytes) => {
-            crate::batch::secret_scan::LiftedKeys::names_a_handle(&String::from_utf8_lossy(bytes))
-        }
-        rmpv::Value::Array(items) => items.iter().any(names_a_handle),
-        rmpv::Value::Map(entries) => entries
-            .iter()
-            .any(|(key, value)| names_a_handle(key) || names_a_handle(value)),
-        _ => false,
+/// Whether `kept`, the row the store holds at a live call's seq, stands for
+/// `call`, the call that ran there: the same request as replay meets it, so
+/// the form the side-row wall admitted the same request in (OF-067), an
+/// erased request by its identity, and a held input by its digests. A call
+/// whose request changed (a pure change or an owner's refire, L8-23) does not.
+fn held_row_stands_for(call: &CodeRunBridgeCall, kept: &CodeRunBridgeCall) -> Result<bool> {
+    if spawn_replay::replay_request_match(call.effect, &kept.request, &call.request)?.is_hit() {
+        return Ok(true);
     }
+    Ok(call.effect == SelfEffect::AgentVerb
+        && super::actions::held_request_form(&kept.request)
+            .is_some_and(|stored| Some(stored) == super::actions::held_request_form(&call.request)))
 }
 
 /// Persisted replay record for a first-party code run. Imported result
@@ -455,13 +451,17 @@ impl CodeRunReplayRecord {
     ///
     /// A resumed step that runs a changed call live at its recorded seq (a pure
     /// change or an owner's refire, L8-23) puts another call at the same seq,
-    /// effect and stamps: the held row stands in its place only when it holds
-    /// the same request, or when its request names a lifted handle, the form
-    /// the wall left the same call's request in. Otherwise the live row stays,
-    /// so the record keeps the call that ran, not the one it replaced.
-    pub(crate) fn over_held(&self, held: Option<&CodeRunReplayHeld>) -> Cow<'_, Self> {
+    /// effect and stamps: the held row stands in its place only when replay
+    /// would meet the live request with it (`held_row_stands_for`). Otherwise
+    /// the live row stays, so the record keeps the call that ran, not the one
+    /// it replaced.
+    ///
+    /// # Errors
+    ///
+    /// A request the side-row wall cannot compare.
+    pub(crate) fn over_held(&self, held: Option<&CodeRunReplayHeld>) -> Result<Cow<'_, Self>> {
         let Some(held) = held.filter(|held| held.run_id == self.run_id) else {
-            return Cow::Borrowed(self);
+            return Ok(Cow::Borrowed(self));
         };
         let mut record = self.clone();
         record.birth_world = held.birth_world.or(record.birth_world);
@@ -470,7 +470,7 @@ impl CodeRunReplayRecord {
                 && call.effect == kept.effect
                 && call.started_at_ms == kept.started_at_ms
                 && call.finished_at_ms == kept.finished_at_ms
-                && (call.request == kept.request || names_a_handle(&kept.request))
+                && held_row_stands_for(call, kept)?
             {
                 // A parked call keeps the rows its delivered reply listed
                 // (FIX 5455), which the held copy has not kept yet.
@@ -481,7 +481,7 @@ impl CodeRunReplayRecord {
                 }
             }
         }
-        Cow::Owned(record)
+        Ok(Cow::Owned(record))
     }
 
     /// Unions newly witnessed callable/result rows into the record. Unknown

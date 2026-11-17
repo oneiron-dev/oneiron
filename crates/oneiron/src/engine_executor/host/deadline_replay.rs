@@ -347,6 +347,17 @@ impl DeadlineReplay {
         }
     }
 
+    /// A body no recorded store holds is about to publish while recorded calls remain (L8-23):
+    /// the walk ends there, as at a call past its rows, so no later turn of it can leave the body
+    /// committed beside a pending step that never names it. A tail holding an effect step turns
+    /// the walk dry; a pure tail is dropped. Whether the pass holds after it.
+    fn end_walk_at_new_output(&mut self, results: &[CodeRunRawOutput]) -> bool {
+        if self.held.is_none() && !self.dry && self.unreached() {
+            self.end_walk(results);
+        }
+        self.dry || self.held.is_some()
+    }
+
     /// Puts a drained tail back where the walk left it, in order (L8-23).
     fn restore_tail(&mut self, tail: Vec<(CodeRunBridgeCall, Vec<CodeRunBridgeCall>)>) {
         for (row, nested) in tail.into_iter().rev() {
@@ -660,6 +671,23 @@ impl RecordingJsHost<'_, '_> {
         self.deadline_replay
             .as_ref()
             .is_some_and(DeadlineReplay::unreached)
+    }
+
+    /// Whether a resumed step's walk still has recorded calls ahead (L8-23): a later call could
+    /// still turn it dry.
+    pub(super) fn pending_walk_open(&self) -> bool {
+        self.deadline_replay
+            .as_ref()
+            .is_some_and(|replay| replay.held.is_none() && !replay.dry() && replay.unreached())
+    }
+
+    /// Ends an open walk at a body no recorded store holds (L8-23), as at a call past its rows:
+    /// whether the pass holds after it.
+    pub(super) fn end_walk_at_new_output(&mut self) -> bool {
+        let results = &self.results;
+        self.deadline_replay
+            .as_mut()
+            .is_some_and(|replay| replay.end_walk_at_new_output(results))
     }
 
     /// Whether a resumed step's replay turned dry: an effect step changed or went unreached
