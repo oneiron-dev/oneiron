@@ -14,6 +14,8 @@ pub mod archive_import;
 pub mod archive_producers;
 pub mod archive_provenance;
 pub mod archive_side_catalogue;
+#[cfg(feature = "sync")]
+pub mod artifact_publication_pump;
 pub mod ask_answer_proof;
 pub mod authority_ancestor_index;
 pub mod authority_sequence_floor;
