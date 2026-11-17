@@ -197,11 +197,9 @@ fn extraction_step_loan_rechecks_its_step_gate_each_call() -> ExtractionStepTest
         .as_array()
         .ok_or("the extraction inputs page serves its turns")?;
     assert_eq!(turns.len(), 2);
+    // The submit cites the first TURN alone, so it spans one native slice.
     let request = json!({
-        "evidence": [
-            {"turn": turns[0]["turn"], "version": turns[0]["version"]},
-            {"turn": turns[1]["turn"], "version": turns[1]["version"]},
-        ],
+        "evidence": [{"turn": turns[0]["turn"], "version": turns[0]["version"]}],
     });
     let step_backend = Arc::new(CountingExtractionStepBackend {
         calls: AtomicUsize::new(0),
@@ -362,11 +360,9 @@ fn a_verdict_only_gate_never_lends_a_step() -> ExtractionStepTestResult<()> {
         .as_array()
         .ok_or("the extraction inputs page serves its turns")?;
     assert_eq!(turns.len(), 2);
+    // The submit cites the first TURN alone, so it spans one native slice.
     let request = json!({
-        "evidence": [
-            {"turn": turns[0]["turn"], "version": turns[0]["version"]},
-            {"turn": turns[1]["turn"], "version": turns[1]["version"]},
-        ],
+        "evidence": [{"turn": turns[0]["turn"], "version": turns[0]["version"]}],
     });
     let step_backend = Arc::new(CountingExtractionStepBackend {
         calls: AtomicUsize::new(0),

@@ -60,7 +60,9 @@ mod step;
 pub use step::public as model_step;
 #[cfg(oneiron_test_support)]
 pub(crate) use step::step_state_present_for_attempt;
-pub(crate) use step::{request_hash_step_receipt_in_txn, request_hash_submit_receipt};
+pub(crate) use step::{
+    bind_step_input_versions, request_hash_step_receipt_in_txn, request_hash_submit_receipt,
+};
 
 pub mod tagger;
 

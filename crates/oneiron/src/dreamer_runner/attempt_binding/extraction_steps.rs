@@ -22,6 +22,12 @@ use oneiron_model::llm::BudgetGuard;
 pub struct ExtractionStepRequest {
     /// Lists the pinned evidence entries in their transcript order.
     pub evidence: Vec<TurnEvidence>,
+    /// Names the zero-based listing page the step shows when its slice pages.
+    ///
+    /// Absent means the only page. A slice whose listing pages refuses
+    /// without a valid page.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub page: Option<usize>,
 }
 
 /// Borrows the extraction role and the original attempt's pass resources for one step.
@@ -33,6 +39,9 @@ pub struct ExtractionStepLoan<'a> {
     pub call: RoleCall<'a>,
     /// Borrows the host's extraction prompt, the words the native pass asks in.
     pub prompt: &'a ExtractionPrompt,
+    /// Holds the material this wake's admitted `host.wake` pre-hooks
+    /// added, FIX 10665, which native's slices lead with.
+    pub material: &'a [String],
     /// Borrows the admitted attempt's own pass guard.
     pub guard: &'a BudgetGuard,
     /// Borrows the original wake-pass deadline and finalize window.
@@ -84,7 +93,10 @@ impl DreamerAttemptBinding {
     /// Reads this attempt's saved step without borrowing, admitting or charging a backend.
     ///
     /// This door has no served pieces, so it keeps the terminal record's JSON rather
-    /// than decoding the bound extraction reply as submit and resubmit do.
+    /// than decoding the bound extraction reply as submit and resubmit do. It answers only
+    /// while every queued TURN still serves and every row the step's request was read
+    /// from still reads for this actor at the version the request named; otherwise every
+    /// hash answers as an unknown hash does.
     pub(super) fn extraction_step_receipt(
         &self,
         input: ModelStepReceiptRequest,
@@ -108,17 +120,35 @@ impl DreamerAttemptBinding {
             if !self.serves_every_queued_turn_in_txn(txn, &read, reader_scope.as_ref())? {
                 return Err(MemoryError::from(crate::Error::EntityNotFound));
             }
-            crate::llm::request_hash_step_receipt_in_txn(vault, txn, self.lease.attempt(), &hash)
-                .map_err(MemoryError::from)
+            let still_reads =
+                |version: &crate::snapshot_read::SourceVersion| -> crate::Result<bool> {
+                    Ok(crate::snapshot_read::observed_claim_reads_in_txn(
+                        vault,
+                        txn,
+                        &read,
+                        reader_scope.as_ref(),
+                        version.entity,
+                    )? && version.recheck_in_txn(&read, txn)?
+                        == crate::snapshot_read::SourceVersionCheck::Current)
+                };
+            crate::llm::request_hash_step_receipt_in_txn(
+                vault,
+                txn,
+                self.lease.attempt(),
+                &hash,
+                still_reads,
+            )
+            .map_err(MemoryError::from)
         })?;
         Ok(receipt.value)
     }
 
     /// Whether this actor's live read still serves every TURN the attempt queued.
     ///
-    /// A saved reply quotes the attempt's TURNs, and its record lists none of them. So a
-    /// receipt answers only while the inputs page would still serve every queued TURN; once
-    /// one is withheld, every hash answers as an unknown hash does.
+    /// A saved reply quotes the attempt's TURNs. So a receipt answers only while the inputs
+    /// page would still serve every queued TURN; once one is withheld, every hash answers as
+    /// an unknown hash does. The rows a step was read from are checked beside this, by the
+    /// versions its record names.
     fn serves_every_queued_turn_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,

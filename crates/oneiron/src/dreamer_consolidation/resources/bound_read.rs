@@ -87,6 +87,8 @@ pub(crate) struct BoundBranchRead {
     texts: BTreeMap<EntityId, TurnText>,
     /// Each queued TURN's declared part conversation, by TURN id.
     turns: BTreeMap<EntityId, EntityId>,
+    /// Each queued TURN's part line, so the bound step groups by the native slice line.
+    lines: BTreeMap<EntityId, u32>,
     /// Every declared part's conversation, including parts with no queued TURNs.
     parents: BTreeSet<EntityId>,
     /// The queued attempt, so a candidate vector read recomputes the native
@@ -164,16 +166,34 @@ impl BoundBranchRead {
         self.turns.get(&turn).copied()
     }
 
+    /// The part line of queued TURN `turn`, defaulting to zero when
+    /// the branch queued no such TURN.
+    pub(crate) fn turn_line(&self, turn: EntityId) -> u32 {
+        self.lines.get(&turn).copied().unwrap_or_default()
+    }
+
+    /// The branch listing the native neighbourhood code rebuilt.
+    pub(crate) fn neighbourhood(&self) -> &Neighbourhood {
+        &self.neighbourhood
+    }
+
+    /// The frozen text of queued TURN `turn`, or none when the
+    /// branch queued no such TURN.
+    pub(crate) fn turn_text(&self, turn: EntityId) -> Option<&TurnText> {
+        self.texts.get(&turn)
+    }
+
     /// The attenuated scope for a bound extraction step over `cited`, with the
     /// MESSAGE rows its transcript was read from. The base is the authoritative
     /// scope without the heads the listing does not show, narrowed through the
-    /// shared extraction helper with no retained prior or membership; an unbound
+    /// shared extraction helper with the slice's kept listing and shown heads; an unbound
     /// scope binds over the passed snapshot transaction. A TURN cited twice reads once.
     pub(crate) fn extraction_scope(
         &self,
         vault: &Vault,
         txn: &heed::RoTxn<'_>,
         cited: &[EntityId],
+        kept: &Neighbourhood,
     ) -> Result<BoundExtractionScope> {
         let mut seen = BTreeSet::new();
         let ordered: Vec<EntityId> = cited
@@ -193,7 +213,7 @@ impl BoundBranchRead {
             base.writable.remove(version);
         }
         let is_parent = |id: &EntityId| self.parents.contains(id);
-        let shows = |_id: EntityId| false;
+        let shows = |id: EntityId| kept.shows(id);
         let inputs = super::extraction_scope::ExtractionScopeInputs {
             sources: &self.sources,
             turns: &self.turns,
@@ -203,7 +223,7 @@ impl BoundBranchRead {
             cited_parents: &cited_parents,
             is_part_parent: &is_parent,
             shows_prior: &shows,
-            kept_listing: None,
+            kept_listing: Some(kept),
             whole_listing: &self.neighbourhood,
         };
         let scope = super::extraction_scope::attenuate_extraction_scope(&base, &inputs, || {
@@ -324,6 +344,7 @@ pub(crate) fn project_bound_branch(
     let branch = input.branch;
     let turn_ids = branch.turn_ids();
     let turn_parts = branch.turn_parts();
+    let lines = super::slices::branch_turn_lines(branch);
     let parents: BTreeSet<EntityId> = branch.conversations().collect();
     let buckets: BTreeSet<ScopeResource> = branch
         .partition_keys()
@@ -569,6 +590,7 @@ pub(crate) fn project_bound_branch(
         sources,
         texts,
         turns: turn_parts,
+        lines,
         parents,
         attempt: input.attempt,
         signals,

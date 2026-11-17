@@ -5,8 +5,8 @@ use oneiron::memory::MemoryResult;
 use oneiron::test_doors::consolidation::open_dreamer_vault;
 use oneiron::{
     AttemptId, BudgetLease, ContentPart, FatalLlmError, LlmBackend, LlmCapability, LlmError,
-    LlmGenerateFuture, LlmRequest, LlmStreamResult, ModelId, UnsupportedCapability, Vault,
-    VaultConfig,
+    LlmGenerateFuture, LlmMessageRole, LlmRequest, LlmStreamResult, ModelId, UnsupportedCapability,
+    Vault, VaultConfig,
 };
 use oneiron_testkit::{ScriptedBackend, Step};
 use serde_json::{Value, json};
@@ -180,6 +180,36 @@ impl CapturingStepBackend {
                     })
                     .collect::<Vec<_>>()
                     .join("\n")
+            })
+            .collect()
+    }
+
+    /// Returns the final user message's joined text parts of every request served, in order.
+    ///
+    /// The extraction request carries its source transcript as its final user message, after
+    /// any prompt examples, so this is the exact user transcript each generation read.
+    pub(crate) fn request_transcripts(&self) -> Vec<String> {
+        self.seen
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .iter()
+            .map(|request| {
+                request
+                    .messages
+                    .iter()
+                    .rfind(|message| message.role == LlmMessageRole::User)
+                    .map(|message| {
+                        message
+                            .content
+                            .iter()
+                            .filter_map(|part| match part {
+                                ContentPart::Text { text, .. } => Some(text.clone()),
+                                _ => None,
+                            })
+                            .collect::<Vec<_>>()
+                            .join("\n")
+                    })
+                    .unwrap_or_default()
             })
             .collect()
     }
