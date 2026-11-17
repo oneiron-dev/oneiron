@@ -147,7 +147,7 @@ pub(super) fn narrowed_reply_lane<'m>(
     if frozen.is_principal() {
         return Ok(Some(lane));
     }
-    let key = frozen.narrow(vault, lane.actor_key().clone())?;
+    let key = frozen.narrow_row_key(vault, lane.actor_key().clone())?;
     Ok(Some(
         vault
             .scoped_read(key)

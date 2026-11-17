@@ -3,7 +3,8 @@
 //! asker's own key, narrowed by the version's frozen lane, and the lane
 //! that reads with the asker's own live owner authority (FIX 7461). For an
 //! asker of any row type, the reader the question's own reads build
-//! (`saved_question_reader`). A standing question stored in its own writer
+//! (`saved_question_reader`), and the one its refresh, artifact and wake
+//! reads build (`saved_source_reader`). A standing question stored in its own writer
 //! with no caller's lane, as a review's dissent stores one, and a key under
 //! the relationship-only grant gate (FIX
 //! SAVED-PRINCIPAL-LANE-STORED-BEFORE-BASIS).
@@ -11,6 +12,7 @@
 use crate::claim::{FrozenReadLane, ScopedRead, ScopedReadActorKey};
 use crate::llm::decision::questions::{
     QuestionDefinitionInput, QuestionRecord, create_question_in_txn, question_lane, saved_reader,
+    saved_source_key_in_txn,
 };
 use crate::{EntityId, Error, Result, Vault, WriteActor};
 
@@ -29,11 +31,29 @@ pub fn saved_question_reader(
     saved_reader(vault, asker, read_lane)
 }
 
-/// The asker's own key, as `graph_ask::asker_reader_in_txn` builds it for a
-/// live PERSON, narrowed by `read_lane` (`saved_reader::saved_reader`).
+/// The reader a saved question's refresh, artifact and wake reads build
+/// (`saved_reader::saved_source_key_in_txn`): the principal's own key, its
+/// class taken from its row's type, under the access gate on its own
+/// grants, narrowed by `read_lane`, in a snapshot of its own.
 ///
 /// # Errors
-/// As `FrozenReadLane::narrow`.
+/// As `saved_reader::saved_source_key_in_txn`, and a store failure opening
+/// the snapshot.
+pub fn saved_source_reader(
+    vault: &Vault,
+    principal: EntityId,
+    read_lane: &FrozenReadLane,
+) -> Result<ScopedReadActorKey> {
+    let txn = vault.store.env.read_txn()?;
+    saved_source_key_in_txn(vault, &txn, principal, read_lane)
+}
+
+/// The asker's own key, as `graph_ask::asker_reader_in_txn` builds it for a
+/// live PERSON, narrowed by `read_lane` as a key built from the asker's row
+/// (`saved_reader::saved_reader`).
+///
+/// # Errors
+/// As `FrozenReadLane::narrow_row_key`.
 pub fn asker_reader(
     vault: &Vault,
     asker: EntityId,
@@ -42,7 +62,7 @@ pub fn asker_reader(
     let key = ScopedReadActorKey::with_actor_class(asker.to_hex(), "human")
         .ok_or(Error::InvariantViolation("canonical ask principal"))?
         .exempt_while_owner(asker);
-    read_lane.narrow(vault, key)
+    read_lane.narrow_row_key(vault, key)
 }
 
 /// `asker`'s standing question from `definition`, stored in a writer of its

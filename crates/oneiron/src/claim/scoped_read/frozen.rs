@@ -30,7 +30,10 @@
 //! with no basis: the lane of any other actor keeps its key's basis, and a
 //! lane with none, saved before the basis was kept or by an engine path
 //! that froze no live lane, rebuilds for an asker that is no live owner
-//! under the access gate (FIX SAVED-PRINCIPAL-LANE-STORED-BEFORE-BASIS).
+//! under the access gate (FIX SAVED-PRINCIPAL-LANE-STORED-BEFORE-BASIS). The
+//! basis keeps the actor class that key was proved as, which policy rows
+//! match on: a rebuild reads under it, never under the class its
+//! principal's row type gives (FIX SAVED-LANE-REBUILD-SUBSTITUTES-ACTOR-CLASS).
 //!
 //! A rebuilt key carries the lane's credential ([`SavedCredential`]), and
 //! every read under it judges that credential again in its own snapshot: a
@@ -47,6 +50,7 @@ use std::collections::BTreeSet;
 
 use serde::{Deserialize, Serialize};
 
+use super::actor_key::KeyClassOrigin;
 use super::*;
 use crate::claim::world_access::WorldAuthoritySet;
 use oneiron_authority::federation::{Scope, ScopeAxis, ScopeId};
@@ -138,8 +142,12 @@ fn earlier_end(first: Option<u64>, second: Option<u64>) -> Option<u64> {
 /// principal's own key, or over a current caller's, reads under the meet of
 /// that key and this basis (`ScopedReadActorKey::within_native_basis`): it
 /// never regains an owner standing the live key lacked, nor reads a row
-/// either gate refused (Sol R1/R2 on #8061).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+/// either gate refused (Sol R1/R2 on #8061), and it reads as the actor
+/// class the live key was proved as: a key built from the principal's row
+/// takes that class, and a caller's key of another class reads nothing
+/// (`ScopedReadActorKey::within_saved_actor_class`, Sol F1 on #8134). A
+/// basis that kept no class leaves the key's own (Astra F1/F2 on #8134).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct NativeReadBasis {
     /// The owner standing the live key held. Each read still proves the
@@ -151,6 +159,15 @@ pub(crate) struct NativeReadBasis {
     /// no gate, and under a gate bound to no principal, which admitted no
     /// row on a grant (Sol F5 on #8065).
     pub(crate) grant_principal: Option<EntityId>,
+    /// The actor class the live key read as, which each policy row's class
+    /// matched (`scoped_read_actor_matches`): a credential's from its proof,
+    /// so an agent-class credential on a PERSON keeps `agent` (FIX
+    /// SAVED-LANE-REBUILD-SUBSTITUTES-ACTOR-CLASS). `None` for a key that
+    /// named no class, and for a basis saved before the class was kept: a
+    /// rebuild then reads under its own key's class, as before (Astra F1/F2
+    /// on #8134).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) actor_class: Option<String>,
 }
 
 /// The owner standing a saved lane's live key held ([`NativeReadBasis`]).
@@ -191,7 +208,7 @@ impl NativeReadBasis {
     /// this basis, and each rebuild refuses them again. The owner's floor
     /// under the access gate refused them too: the floor passes the policy
     /// check, not the grant gate.
-    fn closes_unscoped_rows(self) -> bool {
+    fn closes_unscoped_rows(&self) -> bool {
         self.grant_gate == NativeGrantGate::Access
     }
 }
@@ -245,10 +262,10 @@ pub struct FrozenReadLane {
     /// stamped claim outside a room of this vault, as the saving key did.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     home_unnamed: bool,
-    /// The grant basis the saved lane's live key read under (FIX 14344):
-    /// kept on every lane that keeps a Scope, and on a lane under the access
-    /// gate or of an actor that is no live owner, which keeps no Scope its
-    /// live key lacked (Sol F1/F2/F3 on #8065; FIX
+    /// The grant basis the saved lane's live key read under (FIX 14344), its
+    /// actor class among it: kept on every lane that keeps a Scope, and on a
+    /// lane under the access gate or of an actor that is no live owner,
+    /// which keeps no Scope its live key lacked (Sol F1/F2/F3 on #8065; FIX
     /// SAVED-PRINCIPAL-LANE-STORED-BEFORE-BASIS). `None` on a live owner's
     /// lane that reads as its principal's own, and on one saved before the
     /// basis was kept, which rebuilds under the access gate for an asker
@@ -591,10 +608,16 @@ impl FrozenReadLane {
         matches!(error, Error::InvalidConfig(message) if message.as_str() == GUEST_LANE_NOT_SAVED)
     }
 
-    /// `key`, the principal's own live key, narrowed by this frozen lane in
-    /// `txn`: held to the saved key's grant basis, the frozen Scope, records
-    /// caveat, worlds and room facets, each only narrowing. A lane whose credential no longer holds
-    /// in `txn` (`SavedCredential`) reads nothing, and the rebuilt key
+    /// `key`, a caller's own key for the lane's principal, narrowed by this
+    /// frozen lane in `txn`: held to the saved key's grant basis and actor
+    /// class, the frozen Scope, records caveat, worlds and room facets, each
+    /// only narrowing. A key of another class than the saved one has no meet
+    /// with the lane and reads nothing, whether a proof or the caller named
+    /// its class (FIX SAVED-LANE-REBUILD-SUBSTITUTES-ACTOR-CLASS; Sol F1 on
+    /// #8134). A rebuild over a key built from the principal's row narrows
+    /// it with `Self::narrow_row_key_in_txn` instead. A lane whose
+    /// credential no longer holds in `txn` (`SavedCredential`) reads
+    /// nothing, and the rebuilt key
     /// carries that credential, so each later read judges it again in its
     /// own snapshot. The principal's own lane returns `key` unchanged, and a
     /// lane that reads as its principal's own
@@ -611,6 +634,37 @@ impl FrozenReadLane {
         vault: &crate::Vault,
         txn: &heed::RoTxn<'_>,
         key: ScopedReadActorKey,
+    ) -> Result<ScopedReadActorKey> {
+        self.narrow_key_in_txn(vault, txn, key, KeyClassOrigin::Caller)
+    }
+
+    /// `key`, built from the principal's row for this rebuild (its class
+    /// the row type's, or the class a saved declaration stored for its
+    /// actor), narrowed by this frozen lane in `txn` as
+    /// [`Self::narrow_in_txn`] narrows a caller's key, except that a key
+    /// with no proof reads as the class the lane was saved under: its own
+    /// class is the row's, not one any live key was proved as (FIX
+    /// SAVED-LANE-REBUILD-SUBSTITUTES-ACTOR-CLASS).
+    ///
+    /// # Errors
+    /// As [`Self::narrow_in_txn`].
+    pub(crate) fn narrow_row_key_in_txn(
+        &self,
+        vault: &crate::Vault,
+        txn: &heed::RoTxn<'_>,
+        key: ScopedReadActorKey,
+    ) -> Result<ScopedReadActorKey> {
+        self.narrow_key_in_txn(vault, txn, key, KeyClassOrigin::PrincipalRow)
+    }
+
+    /// [`Self::narrow_in_txn`] or [`Self::narrow_row_key_in_txn`], by
+    /// where `key` took its class from.
+    fn narrow_key_in_txn(
+        &self,
+        vault: &crate::Vault,
+        txn: &heed::RoTxn<'_>,
+        key: ScopedReadActorKey,
+        origin: KeyClassOrigin,
     ) -> Result<ScopedReadActorKey> {
         if self.is_principal() {
             return rebuild_without_basis_in(vault, txn, key);
@@ -649,9 +703,14 @@ impl FrozenReadLane {
             return rebuild_without_basis_in(vault, txn, key);
         }
         // The principal's own key never lends the rebuild an owner standing
-        // the saved key lacked (FIX 14344, Astra F2 on #8029).
-        if let Some(basis) = self.native_basis {
-            key = key.within_native_basis(basis);
+        // the saved key lacked (FIX 14344, Astra F2 on #8029), nor a class it
+        // was not proved as: policy rows match on class (FIX
+        // SAVED-LANE-REBUILD-SUBSTITUTES-ACTOR-CLASS).
+        if let Some(basis) = &self.native_basis {
+            key = key
+                .within_saved_actor_class(basis.actor_class.as_deref(), origin)
+                .ok_or(Error::InvariantViolation("frozen read lane actor"))?
+                .within_native_basis(basis.clone());
         }
         // A lane kept for its grant basis alone holds no Scope its live key
         // lacked (Sol F1/F2 on #8065); a lane saved before the basis was
@@ -708,6 +767,20 @@ impl FrozenReadLane {
     ) -> Result<ScopedReadActorKey> {
         let txn = vault.store.env.read_txn()?;
         self.narrow_in_txn(vault, &txn, key)
+    }
+
+    /// [`Self::narrow_row_key_in_txn`] in its own snapshot.
+    ///
+    /// # Errors
+    /// As [`Self::narrow_row_key_in_txn`], and a store failure opening the
+    /// snapshot.
+    pub(crate) fn narrow_row_key(
+        &self,
+        vault: &crate::Vault,
+        key: ScopedReadActorKey,
+    ) -> Result<ScopedReadActorKey> {
+        let txn = vault.store.env.read_txn()?;
+        self.narrow_row_key_in_txn(vault, &txn, key)
     }
 }
 
@@ -829,10 +902,13 @@ fn rebuild_without_basis_in(
         return Ok(key);
     }
     let grant_principal = key.principal_ref;
+    // No class was saved: the key keeps its own.
+    let actor_class = key.actor_class().map(str::to_owned);
     Ok(key.within_native_basis(NativeReadBasis {
         owner_standing: NativeOwnerStanding::Absent,
         grant_gate: NativeGrantGate::Access,
         grant_principal,
+        actor_class,
     }))
 }
 

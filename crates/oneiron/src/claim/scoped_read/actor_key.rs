@@ -116,6 +116,20 @@ pub struct ScopedReadActorKey {
 
 pub use crate::settings::CallerLocality;
 
+/// Where a key a saved lane is rebuilt over took its actor class from
+/// (Sol F1 on #8134): it decides whether the key may read as the class the
+/// lane was saved under ([`ScopedReadActorKey::within_saved_actor_class`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum KeyClassOrigin {
+    /// A caller's own key: its class bounds what it reads, so a lane saved
+    /// under another class has no meet with it.
+    Caller,
+    /// A key the rebuild built from its principal's row, or from the actor
+    /// a saved declaration stored: its class is the row's, not one any live
+    /// key was proved as, so a key with no proof reads as the saved class.
+    PrincipalRow,
+}
+
 /// A room turn's read ceiling (ARCH-0067 §8). It travels with the key, so
 /// every lane built from it reads inside the room's Scope and roster.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -987,11 +1001,11 @@ impl ScopedReadActorKey {
     /// its frozen Scope (FIX 14344): its owner standing (the vault owner's
     /// floor, a narrower credential's owner exemption, or neither; each
     /// proved again at every read), its grant gate (none, the
-    /// relationship-only gate, or the access gate) and the principal that
-    /// gate admitted rows on the grants of. A key rebuilt under a floor's
-    /// basis holds the floor its owner alternative reads under, so a lane
-    /// frozen again from it keeps that standing (blind review round 2 P1 on
-    /// #8065).
+    /// relationship-only gate, or the access gate), the principal that
+    /// gate admitted rows on the grants of, and the actor class it reads as.
+    /// A key rebuilt under a floor's basis holds the floor its owner
+    /// alternative reads under, so a lane frozen again from it keeps that
+    /// standing (blind review round 2 P1 on #8065).
     pub(super) fn native_read_basis(&self) -> super::frozen::NativeReadBasis {
         use super::frozen::{NativeGrantGate, NativeOwnerStanding};
         let owner_standing = if self.owner.is_some() || self.rebuilt_under_floor_basis {
@@ -1012,7 +1026,44 @@ impl ScopedReadActorKey {
             owner_standing,
             grant_gate,
             grant_principal: self.principal_ref.filter(|_| self.enforce_access_grants),
+            actor_class: self.actor_class.clone(),
         }
+    }
+
+    /// This key read as `class`, the actor class a saved lane's live key
+    /// read as (FIX SAVED-LANE-REBUILD-SUBSTITUTES-ACTOR-CLASS): policy rows
+    /// match on class, so a rebuild under another class reads what its live
+    /// key's row refused. A key with no proof that a rebuild built from its
+    /// principal's row ([`KeyClassOrigin::PrincipalRow`]) takes `class`.
+    /// Any other key of another class has no meet with it, a caller's own
+    /// key with no proof among them (Sol F1 on #8134): the answer reads
+    /// nothing, as [`Self::read_nothing`] keys it. A lane that kept no
+    /// class (`class` is `None`: its live key named none, or its basis was
+    /// saved before the class was kept) leaves this key's own class, as
+    /// every rebuild read before the class was kept: taking no class would
+    /// free a key built from its principal's row from each row bound to the
+    /// row's class, and the lane's frozen Scope would stand as read
+    /// authority its live key lacked (Astra F1/F2 on #8134). `None` only for
+    /// a blank actor ref, which no key holds.
+    #[must_use]
+    pub(super) fn within_saved_actor_class(
+        self,
+        class: Option<&str>,
+        origin: KeyClassOrigin,
+    ) -> Option<Self> {
+        let Some(class) = class else {
+            return Some(self);
+        };
+        if self.actor_class.as_deref() == Some(class) {
+            return Some(self);
+        }
+        if self.proof.is_some() || origin == KeyClassOrigin::Caller {
+            return Self::read_nothing(self.actor_ref, self.actor_class.unwrap_or_default());
+        }
+        Some(Self {
+            actor_class: Some(class.to_owned()),
+            ..self
+        })
     }
 
     /// This key held to `basis`, the grant basis a saved lane's live key
