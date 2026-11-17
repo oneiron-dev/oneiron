@@ -605,6 +605,14 @@ impl OmissionLedger {
 /// dropping the proof would pass a signed write off as an unsigned one, as
 /// the guest-claim rule (FIX 3497) holds. Only the owner's restore brings it
 /// back, as the owner's restore of it, its MACHINE author and proof inert.
+///
+/// Each maintenance kind the raw entity walk exports and no import door
+/// restores is named here, so one such row never stops the whole import
+/// (L10-23, OF-222): a WORLD_KEY_PAD is key material that only a recovery-kit
+/// restore carries (`world_keys::bundle`); a RECEIPT_RECORD and an ISSUE are
+/// audit evidence, never a permit here; a raw EMBEDDING_SETUP row is the
+/// published form of the spaces and slot bindings the import admits from the
+/// archive's own sections, and the import publishes it again from them.
 pub(super) fn archive_only_reason(row: &ExportEntity) -> Option<ImportOmissionReason> {
     match row.entity_type {
         ENTITY_TYPE_SKILL_CONTENT_ANCHOR => Some(ImportOmissionReason::SkillAnchorRecomputed),
@@ -616,17 +624,19 @@ pub(super) fn archive_only_reason(row: &ExportEntity) -> Option<ImportOmissionRe
         | crate::registry::ENTITY_TYPE_CONNECTOR_KEY
         | crate::registry::ENTITY_TYPE_CHANNEL_IDENTITY
         | crate::registry::ENTITY_TYPE_COUNTERPARTY_CONTACT
-        | crate::registry::ENTITY_TYPE_OUTBOUND_GRANT => {
+        | crate::registry::ENTITY_TYPE_OUTBOUND_GRANT
+        | crate::registry::ENTITY_TYPE_WORLD_KEY_PAD => {
             Some(ImportOmissionReason::LocalAuthorityNotRestored)
         }
         crate::registry::ENTITY_TYPE_DIAGNOSTIC
         | crate::registry::ENTITY_TYPE_REDACTION_AUDIT
         | crate::registry::ENTITY_TYPE_PERSONA_SNAPSHOT_EXPORT
         | crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT
-        | crate::registry::ENTITY_TYPE_COMM_RECORD => {
-            Some(ImportOmissionReason::LocalHistoryNotRestored)
-        }
-        crate::registry::ENTITY_TYPE_PSYCH_PROFILE => {
+        | crate::registry::ENTITY_TYPE_COMM_RECORD
+        | crate::registry::ENTITY_TYPE_RECEIPT_RECORD
+        | crate::registry::ENTITY_TYPE_ISSUE => Some(ImportOmissionReason::LocalHistoryNotRestored),
+        crate::registry::ENTITY_TYPE_PSYCH_PROFILE
+        | crate::registry::ENTITY_TYPE_EMBEDDING_SETUP => {
             Some(ImportOmissionReason::LocalProjectionNotRestored)
         }
         ENTITY_TYPE_CLAIM => {
