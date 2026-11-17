@@ -51,6 +51,9 @@ pub(super) fn validate_public_request(
         BookingOperationRequest::Book(BookingBookInput::Hold(input)) => {
             (&input.event_type, input.constraint.is_some())
         }
+        BookingOperationRequest::Waitlist(BookingWaitlistInput::Join(input)) => {
+            (&input.event_type, false)
+        }
         _ => return Ok(()),
     };
     if !publication

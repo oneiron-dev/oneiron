@@ -667,7 +667,7 @@ pub(crate) fn feature_flags(server: &SyncServer) -> FeatureFlags {
     )
 }
 
-/// Advertises the versioned booking instructions document and its four HTTP
+/// Advertises the versioned booking instructions document and its five HTTP
 /// operations (ONE-1819).
 ///
 /// Derived, not hand-listed: the version comes from the engine constant the
