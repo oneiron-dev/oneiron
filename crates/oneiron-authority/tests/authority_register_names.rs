@@ -52,7 +52,7 @@ fn comm_reach_parse_reads_each_name_back() {
 }
 
 /// Every row of `MembershipExecutionCause`, as its hand table spelled it.
-const MEMBERSHIP_EXECUTION_CAUSE_ROWS: [(MembershipExecutionCause, &str); 5] = [
+const MEMBERSHIP_EXECUTION_CAUSE_ROWS: [(MembershipExecutionCause, &str); 6] = [
     (MembershipExecutionCause::AssignRole, "assign_role"),
     (MembershipExecutionCause::RemoveMember, "remove_member"),
     (MembershipExecutionCause::Leave, "leave"),
@@ -61,6 +61,7 @@ const MEMBERSHIP_EXECUTION_CAUSE_ROWS: [(MembershipExecutionCause, &str); 5] = [
         "transfer_ownership",
     ),
     (MembershipExecutionCause::RemoveOwner, "remove_owner"),
+    (MembershipExecutionCause::HostHandover, "host_handover"),
 ];
 
 #[test]
@@ -76,6 +77,10 @@ fn every_membership_execution_cause_keeps_its_name() {
         "transfer_ownership"
     );
     assert_eq!(MembershipExecutionCause::RemoveOwner.wire(), "remove_owner");
+    assert_eq!(
+        MembershipExecutionCause::HostHandover.wire(),
+        "host_handover"
+    );
 }
 
 #[test]

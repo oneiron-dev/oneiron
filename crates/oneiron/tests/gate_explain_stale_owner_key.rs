@@ -59,7 +59,9 @@ fn role_of(vault: &Vault, member: EntityId) -> Option<Role> {
 /// the door records an allow receipt whose writer is the owner and which
 /// names no claim. Returns the owner and the receipt id (`gate:<hex>`).
 fn owner_policy_receipt(vault: &Vault) -> (EntityId, String) {
-    let owner = vault.ensure_embedded_owner_actor().expect("owner");
+    // The co-owner's seating gives Grants, whose acts this install carries;
+    // the root comes first so the receipt and the seating share one root.
+    let (_, owner) = oneiron::test_support::provision_act_carrier(vault);
     let owner_proof = proof(vault, owner);
     let policies = policy_manifests_as_owner(
         vault,

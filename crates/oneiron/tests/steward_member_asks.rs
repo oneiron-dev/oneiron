@@ -8,6 +8,7 @@
 //!
 //! Runs on public paths: `cargo test -p oneiron --all-features --test
 //! steward_member_asks`.
+use oneiron::authority::MachineRole;
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::federation::{
     FederationGrantRole as Role, InitialSharedMember, MemberAskChange, MemberAskStatus,
@@ -16,6 +17,7 @@ use oneiron::federation::{
 use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::store::GateDecisionId;
 use oneiron::temporal::TimeRange;
+use oneiron::test_support::{bind_host_owner, provision_act_carrier, provision_engine_machines};
 use oneiron::{DeleteReason, EntityId, Vault, VaultConfig};
 
 const SHARED: u64 = 42;
@@ -44,7 +46,7 @@ fn proof(vault: &Vault, person: EntityId) -> AuthenticatedOwner {
 fn a_stewards_add_member_call_becomes_an_ask_an_owner_applies() {
     let dir = tempfile::tempdir().expect("tempdir");
     let vault = Vault::open(dir.path(), VaultConfig::default()).expect("vault");
-    let owner = vault.ensure_embedded_owner_actor().expect("owner");
+    let (_, owner) = provision_act_carrier(&vault);
     let steward = person(&vault);
     let invitee = person(&vault);
     let (owner_proof, steward_proof, invitee_proof) = (
@@ -239,7 +241,7 @@ fn a_stewards_add_member_call_becomes_an_ask_an_owner_applies() {
 fn a_steward_cannot_ask_to_add_a_person_who_holds_an_open_invitation() {
     let dir = tempfile::tempdir().expect("tempdir");
     let vault = Vault::open(dir.path(), VaultConfig::default()).expect("vault");
-    let owner = vault.ensure_embedded_owner_actor().expect("owner");
+    let (_, owner) = provision_act_carrier(&vault);
     let steward = person(&vault);
     let invitee = person(&vault);
     let (owner_proof, steward_proof, invitee_proof) = (
@@ -326,7 +328,7 @@ fn a_steward_cannot_ask_to_add_a_person_who_holds_an_open_invitation() {
 fn an_ask_is_not_applied_once_its_steward_has_lost_the_role() {
     let dir = tempfile::tempdir().expect("tempdir");
     let vault = Vault::open(dir.path(), VaultConfig::default()).expect("vault");
-    let owner = vault.ensure_embedded_owner_actor().expect("owner");
+    let (_, owner) = provision_act_carrier(&vault);
     let steward = person(&vault);
     let invitee = person(&vault);
     let (owner_proof, steward_proof, invitee_proof) = (
@@ -415,7 +417,12 @@ fn a_hard_erase_deletes_the_asks_that_name_the_erased_person() {
     vault.install_device_keystore(std::sync::Arc::new(
         oneiron_keystore::MemoryKeystore::default(),
     ));
+    let issuer = provision_engine_machines(&vault);
+    vault
+        .ensure_serving_install_profile(&issuer, MachineRole::Unanswered)
+        .expect("this install's live machine profile, to carry acts");
     let owner = vault.ensure_embedded_owner_actor().expect("owner");
+    bind_host_owner(&vault, &issuer, owner).expect("the owner's binding under the host root");
     let steward = person(&vault);
     let erased = person(&vault);
     let other = person(&vault);

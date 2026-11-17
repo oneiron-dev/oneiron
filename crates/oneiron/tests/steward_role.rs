@@ -19,6 +19,7 @@ use oneiron::federation::{
 use oneiron::registry::{ENTITY_TYPE_FEDERATION_GRANT, ENTITY_TYPE_PERSON};
 use oneiron::store::GateDecisionId;
 use oneiron::temporal::TimeRange;
+use oneiron::test_support::provision_act_carrier;
 use oneiron::write_envelope::WriteActor;
 use oneiron::{EntityId, Vault, VaultConfig};
 
@@ -100,6 +101,7 @@ fn now_secs() -> u64 {
 fn a_steward_cannot_widen_a_grant() {
     let dir = tempfile::tempdir().expect("tempdir");
     let vault = Vault::open(dir.path(), VaultConfig::default()).expect("vault");
+    provision_act_carrier(&vault);
     let steward = EntityId::now();
     let other = EntityId::now();
     let (grant_id, grant) = shared_with_steward(&vault, steward);
@@ -165,6 +167,7 @@ fn a_steward_cannot_widen_a_grant() {
 fn a_shared_vault_steward_cannot_read_a_members_personal_vault() {
     let shared_dir = tempfile::tempdir().expect("tempdir");
     let shared = Vault::open(shared_dir.path(), VaultConfig::default()).expect("shared vault");
+    provision_act_carrier(&shared);
     let personal_dir = tempfile::tempdir().expect("tempdir");
     let personal =
         Vault::open(personal_dir.path(), VaultConfig::default()).expect("personal vault");

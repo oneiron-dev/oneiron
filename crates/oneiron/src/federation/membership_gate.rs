@@ -35,24 +35,20 @@ impl Vault {
         self.authorize_shared_vault_write_in_txn(&txn, vault_id, writer, requested)
     }
 
-    pub(crate) fn authorize_shared_vault_write_in_txn(
+    /// The writer a shared-vault write is judged as, in `txn`. A folder's
+    /// note-import MACHINE writes as the member its own stored record names
+    /// as both its importer and its maker, as for the member's own write.
+    /// Every other writer, and a MACHINE that names no such member, writes on
+    /// its own standing. A writer that gives a Grant names this principal as
+    /// its giver (pass 28 R2), the one whose power the gate judged.
+    pub(crate) fn shared_write_principal_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
-        vault_id: u64,
         writer: &WriteActor,
-        requested: &SharedVaultWrite,
-    ) -> Result<()> {
-        // A folder's note-import MACHINE writes as the member its own stored
-        // record names as both its importer and its maker: that member's
-        // binding and live grant decide, as for the member's own write, and
-        // a refusal there is final. The stored actor stays the MACHINE. Every
-        // other writer, and a MACHINE that names no such member, writes on
-        // its own standing.
-        let principal = match crate::note::folder_import_creator_in_txn(
-            &self.store,
-            txn,
-            &writer.entity_ref(),
-        )? {
+    ) -> Result<WriteActor> {
+        let importer =
+            crate::note::folder_import_creator_in_txn(&self.store, txn, &writer.entity_ref())?;
+        Ok(match importer {
             Some(importer) => {
                 let member = WriteActor::new(importer, EdgeActorClass::Human);
                 match writer.authority_frontier() {
@@ -61,7 +57,19 @@ impl Vault {
                 }
             }
             None => *writer,
-        };
+        })
+    }
+
+    pub(crate) fn authorize_shared_vault_write_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        vault_id: u64,
+        writer: &WriteActor,
+        requested: &SharedVaultWrite,
+    ) -> Result<()> {
+        // The principal's binding and live grant decide, and a refusal there
+        // is final. The stored actor stays the writer.
+        let principal = self.shared_write_principal_in_txn(txn, writer)?;
         let fold = self.verify_write_actor_in_txn(txn, &principal)?;
         // A deleted shared vault takes no further write of any kind.
         if vault_id == 0

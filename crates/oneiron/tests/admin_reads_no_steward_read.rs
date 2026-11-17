@@ -20,6 +20,7 @@ use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::store::GateDecisionId;
 use oneiron::task_verb::sdk::invoke;
 use oneiron::temporal::TimeRange;
+use oneiron::test_support::provision_act_carrier;
 use oneiron::{EdgeActorClass, EntityId, Vault, VaultConfig};
 use serde_json::{Value, json};
 
@@ -72,8 +73,7 @@ fn read(vault: &Vault, actor: EntityId, verb: &str, input: Value) -> MemoryResul
 fn an_admin_is_refused_every_steward_only_read() {
     let dir = tempfile::tempdir().expect("tempdir");
     let vault = Vault::open(dir.path(), VaultConfig::device()).expect("vault");
-    oneiron::test_support::provision_engine_machines(&vault);
-    let owner = vault.ensure_embedded_owner_actor().expect("owner");
+    let (_, owner) = provision_act_carrier(&vault);
     let (admin, steward) = (EntityId::now(), EntityId::now());
     person(&vault, admin);
     person(&vault, steward);

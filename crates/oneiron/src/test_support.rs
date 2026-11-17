@@ -71,6 +71,35 @@ pub fn bind_host_actor(
     vault.bind_host_actor_for_test(issuer, actor, class)
 }
 
+/// Readies this install to carry authority acts, as a serving host's install
+/// is: installs an in-memory device keystore, roots the vault under the test
+/// host with the engine's MACHINE writers ([`provision_engine_machines`]),
+/// gives this install its live machine profile, and binds the embedded owner
+/// under the host root ([`bind_host_owner`]). A membership giving refuses on
+/// an install that cannot carry its signed act (pass 28 R2b), so a fixture
+/// that creates a shared vault or gives a member a role starts here, on a
+/// vault with no keystore and no root yet. Returns the host issuer and the
+/// owner.
+///
+/// # Panics
+/// When the root, the engine's writers, the profile, the owner or the
+/// owner's binding cannot be written.
+#[doc(hidden)]
+pub fn provision_act_carrier(vault: &Vault) -> (HostSlipIssuer, EntityId) {
+    vault.install_device_keystore(std::sync::Arc::new(
+        oneiron_keystore::MemoryKeystore::default(),
+    ));
+    let issuer = provision_engine_machines(vault);
+    vault
+        .ensure_serving_install_profile(&issuer, crate::authority::MachineRole::Unanswered)
+        .expect("this install's live machine profile, to carry acts");
+    let owner = vault
+        .ensure_embedded_owner_actor()
+        .expect("the embedded owner");
+    bind_host_owner(vault, &issuer, owner).expect("the owner's binding under the host root");
+    (issuer, owner)
+}
+
 /// Appends `Sent` to an esign document's ledger, as sending it does.
 ///
 /// # Errors

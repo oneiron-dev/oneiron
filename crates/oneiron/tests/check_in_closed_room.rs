@@ -136,7 +136,13 @@ impl Room {
     fn build(vault_admins: bool) -> Self {
         let dir = tempfile::tempdir().expect("tempdir");
         let vault = Vault::open_owned(dir.path(), VaultConfig::default()).expect("open vault");
-        let owner = vault.ensure_embedded_owner_actor().expect("embedded owner");
+        // Sharing the vault gives Grants, whose acts this install carries;
+        // the room-role fixture shares nothing and stays unrooted.
+        let owner = if vault_admins {
+            oneiron::test_support::provision_act_carrier(&vault).1
+        } else {
+            vault.ensure_embedded_owner_actor().expect("embedded owner")
+        };
         let co_owner = put_person(&vault);
         let admin = put_person(&vault);
         let newcomers = std::array::from_fn(|_| put_person(&vault));

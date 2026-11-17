@@ -27,7 +27,8 @@ use super::{
     SharedActKind, SharedVaultChange, admin_act_recipients, decode, invalid, live_owners, non_root,
 };
 use crate::authority::{
-    CapabilitySlip, HostSlipIssuer, MembershipExecutionCause, OwnerHandover, OwnerHandoverCause,
+    CapabilitySlip, GrantFamily, HostSlipIssuer, MembershipExecutionCause, OwnerHandover,
+    OwnerHandoverCause,
 };
 use crate::batch::{BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, apply_ops};
 use crate::check_in::{ActClass, CheckInScope, DoorAct, DoorCheckIn, RolePreset};
@@ -37,7 +38,7 @@ use crate::error::{Error, Result};
 use crate::federation::record_scope::ScopedRecord;
 use crate::federation::{
     FederationGrant, FederationGrantRole as Role, FederationGrantScope, OrgAdminPower, Scope,
-    ScopeAxis, SharedVaultWrite, decode_federation_grant_body, encode_federation_grant_body,
+    ScopeAxis, SharedVaultWrite, decode_federation_grant_body,
 };
 use crate::registry::ENTITY_TYPE_FEDERATION_GRANT;
 use crate::write_envelope::WriteActor;
@@ -48,8 +49,8 @@ use std::collections::BTreeSet;
 /// minted, deleted or retired, as the receipt lists them; the own-device
 /// grant ids it retired, which `grants` lists too; the slips it revoked; and
 /// the detach report, when a genuine leave released bound Connect grants.
-/// the Grants an owner's signed mint made that it deleted with no signed
-/// withdrawal, for want of an issuer (FIX 12335).
+/// every Grant it deleted that no host-signed withdrawal names, which the
+/// change's carrier-signed record names (FIX 12335; pass 28 R2).
 pub(super) struct MemberMove {
     pub(super) grants: Vec<EntityId>,
     pub(super) retired_own_device: Vec<EntityId>,
@@ -220,12 +221,15 @@ impl Vault {
         giver: EntityId,
         role: Role,
     ) -> Result<()> {
-        if matches!(role, Role::Steward | Role::Deputy)
+        // Owner: only a founding invitation names it, and its inviter gives it
+        // on accepting, so an Owner made an Admin while it waited gives none
+        // (REVIEW r2b-sol P1-1). Every other caller refuses Owner before this.
+        if matches!(role, Role::Owner | Role::Steward | Role::Deputy)
             && self.member_role_in_txn(txn, vault_id, giver)? != Some(Role::Owner)
         {
             return Err(crate::error::Error::Claim(
                 crate::error::ClaimError::ActorLacksClaimAuthority {
-                    reason: "only an owner of the vault gives the Steward or Deputy role",
+                    reason: "only an owner of the vault gives the Owner, Steward or Deputy role",
                 },
             ));
         }
@@ -384,22 +388,35 @@ impl Vault {
     /// Give `member` `role`: rewrite each of its membership grants in place,
     /// or mint one when it holds none. Default authority is resolved in this
     /// writer, as at creation.
+    ///
+    /// Each row is `giver`'s giving (pass 28 R2): its own act, committing to
+    /// its terms under a key fresh for that row, in this writer. The caller
+    /// judged in `txn` that `giver` may give `role`. An install that cannot
+    /// carry the act refuses the change (GRANT-ACT-FAILURE-POLICY = A).
     fn set_member_role_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         vault_id: u64,
         member: EntityId,
         role: Role,
+        giver: EntityId,
         now: u64,
     ) -> Result<Vec<EntityId>> {
         // A base agent's grant is no membership: no role is set on it here.
         if crate::federation::holds_system_agent_grant(member) {
             return Err(invalid());
         }
+        // A Steward's attached `engine.controls` grant is the owner's agent Grant, given by
+        // its own act: no role is given on it here (REVIEW r2b-sol P2-1); a move off
+        // Steward drops it ([`Self::move_member_in_txn`]).
         let mut ids: Vec<EntityId> = self
             .member_grants_in_txn(txn, vault_id)?
             .into_iter()
-            .filter(|(_, grant)| grant.member_ref == member && grant.role != Role::Delegate)
+            .filter(|(_, grant)| {
+                grant.member_ref == member
+                    && grant.role != Role::Delegate
+                    && !crate::federation::is_engine_controls_grant(grant)
+            })
             .map(|(id, _)| id)
             .collect();
         if ids.is_empty() {
@@ -412,10 +429,11 @@ impl Vault {
             crate::federation::shared_creation::role_preset(role)?,
         );
         grant.authority_scope = self.grant_default_scope_in_txn(txn, role, vault_id, member)?;
-        let data = encode_federation_grant_body(&grant)?;
-        let ops = ids
-            .iter()
-            .map(|id| BatchOp::Put {
+        let mut ops = Vec::with_capacity(ids.len());
+        for id in &ids {
+            let data =
+                self.give_grant_in_txn(txn, giver, *id, GrantFamily::SharedMember, &grant)?;
+            ops.push(BatchOp::Put {
                 id: *id,
                 entity_type: ENTITY_TYPE_FEDERATION_GRANT,
                 occurred: TimeRange {
@@ -424,12 +442,12 @@ impl Vault {
                 },
                 learned_at: now,
                 row_version: None,
-                data: data.clone(),
+                data,
                 allow_maintenance: true,
                 allow_reserved_predicate: false,
                 hub_sync_imported: false,
-            })
-            .collect();
+            });
+        }
         self.apply_grant_ops(txn, ops)?;
         // FIX 3393: a member who becomes an Owner holds the own-device grant
         // pairing would have minted, so the devices they paired before it
@@ -445,8 +463,11 @@ impl Vault {
     /// grant or an owner's agent grant) gets the host's signed withdrawal in
     /// this writer (FIX 7135), so the authority audit pairs its mint with a
     /// revoke this membership change made, never one an owner signed. The
-    /// deleted ids, then each such Grant no host signed a withdrawal of,
-    /// which the change's pending record names (FIX 12335).
+    /// deleted ids, then each deleted Grant no host signed a withdrawal of,
+    /// which the change's carrier-signed record names (FIX 12335): every
+    /// Grant's line ends by a counted act (pass 28 R2), a member's or a
+    /// delegate's included, and the record waits pending, never refusing,
+    /// while this install cannot carry it.
     fn drop_member_grants_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
@@ -464,13 +485,30 @@ impl Vault {
         } else {
             Vec::new()
         };
-        let dropped: Vec<(EntityId, bool)> = self
+        let dropped: Vec<(EntityId, FederationGrant)> = self
             .member_grants_in_txn(txn, vault_id)?
             .into_iter()
             .filter(|(_, grant)| {
                 (leaves && (grant.member_ref == member || actors.contains(&grant.member_ref)))
                     || grant.delegated_by == Some(member)
             })
+            .collect();
+        self.drop_grant_rows_in_txn(txn, dropped, slips, receipt)
+    }
+
+    /// Deletes `dropped`, a membership change's Grant rows, in `txn`: each withdrawal known
+    /// here and to the vault's peers, and with `slips` an owner's signed mint (a GitPush grant
+    /// or an owner's agent grant) gets the host's signed withdrawal (FIX 7135). The deleted
+    /// ids, then each no host signed a withdrawal of, which the change's record names.
+    fn drop_grant_rows_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        dropped: Vec<(EntityId, FederationGrant)>,
+        slips: Option<&HostSlipIssuer>,
+        receipt: &str,
+    ) -> Result<(Vec<EntityId>, Vec<EntityId>)> {
+        let dropped: Vec<(EntityId, bool)> = dropped
+            .into_iter()
             .map(|(id, grant)| (id, grant.is_git_push() || grant.owner_agent))
             .collect();
         // Each withdrawal stays known here and reaches its peers, in this
@@ -478,14 +516,11 @@ impl Vault {
         let mut unsigned = Vec::new();
         for (id, signed_mint) in &dropped {
             crate::authority::withdraw_grant_row_in_txn(&self.store, txn, *id)?;
-            if !*signed_mint {
-                continue;
-            }
             let signed = match slips {
-                Some(issuer) => {
+                Some(issuer) if *signed_mint => {
                     self.log_membership_grant_withdrawal_in_txn(txn, issuer, *id, receipt)?
                 }
-                None => false,
+                _ => false,
             };
             if !signed {
                 unsigned.push(*id);
@@ -503,7 +538,8 @@ impl Vault {
     /// Owner held (FIX 3294) and, with `slips`, its slips and, when its
     /// Owner standing ends or it leaves, the owner keys and `human` bindings
     /// that name it (OWNER-ENROL); without `slips` such a move is refused
-    /// while any of those is live (REVIEW-7931).
+    /// while any of those is live (REVIEW-7931). A role `to` is `giver`'s
+    /// giving.
     #[allow(clippy::too_many_arguments)]
     fn move_member_in_txn(
         &self,
@@ -512,14 +548,28 @@ impl Vault {
         member: EntityId,
         from: Role,
         to: Option<Role>,
+        giver: EntityId,
         slips: Option<&HostSlipIssuer>,
         receipt: &str,
         now: u64,
     ) -> Result<MemberMove> {
         refuse_house_mind_move_in_txn(self, txn, &member)?;
+        // A Steward's attached `engine.controls` grant goes with the Steward membership
+        // (ruling on FIX ENGINE-CONTROLS-GRANT-READS-AS-MEMBERSHIP, Engine 11 Nov), read now,
+        // while the roster still reads it with that membership (REVIEW r2b-sol P2-1).
+        let controls: Vec<(EntityId, FederationGrant)> = if to == Some(Role::Steward) {
+            Vec::new()
+        } else {
+            self.member_grants_in_txn(txn, vault_id)?
+                .into_iter()
+                .filter(|(_, grant)| {
+                    grant.member_ref == member && crate::federation::is_engine_controls_grant(grant)
+                })
+                .collect()
+        };
         let mut grants = Vec::new();
         if let Some(role) = to {
-            grants.extend(self.set_member_role_in_txn(txn, vault_id, member, role, now)?);
+            grants.extend(self.set_member_role_in_txn(txn, vault_id, member, role, giver, now)?);
         }
         let mut unsigned_withdrawals = Vec::new();
         if to.is_none_or(|role| !role.is_admin()) {
@@ -533,6 +583,17 @@ impl Vault {
             )?;
             grants.extend(dropped);
             unsigned_withdrawals = unsigned;
+        }
+        // A leave dropped them with the membership already; any other move off Steward drops
+        // them here, their ends riding the change's record.
+        let controls: Vec<(EntityId, FederationGrant)> = controls
+            .into_iter()
+            .filter(|(id, _)| !grants.contains(id))
+            .collect();
+        if !controls.is_empty() {
+            let (dropped, unsigned) = self.drop_grant_rows_in_txn(txn, controls, slips, receipt)?;
+            grants.extend(dropped);
+            unsigned_withdrawals.extend(unsigned);
         }
         let mut retired_own_device = Vec::new();
         if crate::federation::own_device::own_device_grant_retires(from, to) {
@@ -584,8 +645,9 @@ impl Vault {
         })
     }
 
-    /// Add one Owner without moving or revoking any existing Owner's grants.
-    /// The embedded owner added back is bound again under `slips`
+    /// Add one Owner without moving or revoking any existing Owner's grants:
+    /// `giver`, the live Owner executing the act, gives the role. The
+    /// embedded owner added back is bound again under `slips`
     /// ([`Vault::restore_embedded_owner_binding_in_txn`]).
     #[allow(clippy::too_many_arguments)]
     pub(super) fn add_owner_in_txn(
@@ -595,11 +657,12 @@ impl Vault {
         owners: &BTreeSet<EntityId>,
         starter: EntityId,
         owner: EntityId,
+        giver: EntityId,
         slips: Option<&HostSlipIssuer>,
         now: u64,
     ) -> Result<MemberMove> {
         self.check_add_owner_in_txn(txn, owners, starter, owner)?;
-        let grants = self.set_member_role_in_txn(txn, vault_id, owner, Role::Owner, now)?;
+        let grants = self.set_member_role_in_txn(txn, vault_id, owner, Role::Owner, giver, now)?;
         self.restore_embedded_owner_binding_in_txn(txn, slips, owner)?;
         Ok(MemberMove {
             grants,
@@ -612,7 +675,8 @@ impl Vault {
 
     /// The handover both Owner acts apply, revalidated at execution: `loser`
     /// stops being an Owner and keeps `keeps` (or leaves), `gainer` becomes
-    /// one, and at least one live Owner remains.
+    /// one, and at least one live Owner remains. `giver`, the live Owner
+    /// executing the act, gives each role.
     #[allow(clippy::too_many_arguments)]
     pub(super) fn hand_over_in_txn(
         &self,
@@ -622,6 +686,7 @@ impl Vault {
         loser: EntityId,
         keeps: Option<Role>,
         gainer: Option<EntityId>,
+        giver: EntityId,
         slips: Option<&HostSlipIssuer>,
         receipt: &str,
         now: u64,
@@ -629,7 +694,14 @@ impl Vault {
         self.check_handover_in_txn(txn, owners.clone(), loser, keeps, gainer)?;
         let mut grants = Vec::new();
         if let Some(gainer) = gainer {
-            grants.extend(self.set_member_role_in_txn(txn, vault_id, gainer, Role::Owner, now)?);
+            grants.extend(self.set_member_role_in_txn(
+                txn,
+                vault_id,
+                gainer,
+                Role::Owner,
+                giver,
+                now,
+            )?);
             self.restore_embedded_owner_binding_in_txn(txn, slips, gainer)?;
         }
         let mut moved = self.move_member_in_txn(
@@ -638,6 +710,7 @@ impl Vault {
             loser,
             Role::Owner,
             keeps,
+            giver,
             slips,
             receipt,
             now,
@@ -755,6 +828,9 @@ impl Vault {
             &str,
         ) -> Result<(Effect, Option<UnsignedExecution>)>,
     ) -> Result<SharedActExecutionReceipt> {
+        // A role this change gives is an act this install's key signs in
+        // the writer (pass 28 R2): the key loads before the writer opens.
+        self.load_membership_carrier();
         let mut txn = self.store.env.write_txn()?;
         // Person tier; the named power is checked against the live roster.
         let actor_id = actor.revalidate_person_in_txn(self, &txn)?;
@@ -1009,6 +1085,7 @@ impl Vault {
                     member,
                     from,
                     Some(role),
+                    giver,
                     slips,
                     receipt,
                     now,
@@ -1080,7 +1157,7 @@ impl Vault {
                 check_in_ref,
             }),
             ask,
-            |txn, _, now, receipt| {
+            |txn, remover, now, receipt| {
                 let from = self
                     .member_role_in_txn(txn, vault_id, member)?
                     .ok_or_else(invalid)?;
@@ -1095,8 +1172,9 @@ impl Vault {
                     detach,
                     unsigned_withdrawals,
                     ..
-                } = self
-                    .move_member_in_txn(txn, vault_id, member, from, None, slips, receipt, now)?;
+                } = self.move_member_in_txn(
+                    txn, vault_id, member, from, None, remover, slips, receipt, now,
+                )?;
                 let effect = Effect {
                     change: SharedVaultChange::MemberRemoved {
                         member: member.to_hex(),
@@ -1129,6 +1207,17 @@ impl Vault {
     /// lands in the authority log in the same writer as the receipt and its
     /// notices, keeping the BLAKE3 of the authorization's note (never the
     /// note), so the log records what the recovery rested on.
+    ///
+    /// The claimant's Owner grant is a giving this install's key signs in
+    /// the same writer (pass 28 R2), so an install with no live install key
+    /// refuses the recovery. The claimant gives the role to themselves and
+    /// holds no grant before it: no roster rule admits that giving, the
+    /// host's handover does. Its `affected_grants` names the claimant's new
+    /// grant id, `to` names the claimant, and the R3 reader admits a
+    /// self-giving of the Owner role at a grant id only beside a counted
+    /// `proof_of_control` handover naming both. Each Grant of `from`'s no
+    /// host signed a withdrawal of ends by a carrier-signed record of cause
+    /// `host_handover`.
     pub fn recover_shared_owner_authorized(
         &self,
         issuer: &HostSlipIssuer,
@@ -1139,6 +1228,7 @@ impl Vault {
     ) -> Result<SharedActExecutionReceipt> {
         let proof = Some(authorization.note());
         let authorizer = authorization.authorizer();
+        self.load_membership_carrier();
         let mut txn = self.store.env.write_txn()?;
         super::check_vault(self, &txn, vault_id)?;
         authorization.holds_in(self, &txn)?;
@@ -1153,7 +1243,7 @@ impl Vault {
         }
         let id = self.store.clock.entity_id()?.to_hex();
         let mut grants =
-            self.set_member_role_in_txn(&mut txn, vault_id, claimant, Role::Owner, now)?;
+            self.set_member_role_in_txn(&mut txn, vault_id, claimant, Role::Owner, claimant, now)?;
         self.restore_embedded_owner_binding_in_txn(&mut txn, Some(issuer), claimant)?;
         let mut moved = self.move_member_in_txn(
             &mut txn,
@@ -1161,6 +1251,7 @@ impl Vault {
             from,
             Role::Owner,
             None,
+            claimant,
             Some(issuer),
             &id,
             now,
@@ -1172,6 +1263,7 @@ impl Vault {
             grants,
             revoked_slips,
             detach,
+            unsigned_withdrawals,
             ..
         } = moved;
         let authority_entry = self.append_owner_handover_in_txn(
@@ -1189,6 +1281,22 @@ impl Vault {
                 receipt: id.clone(),
                 affected_grants,
                 retired_own_device_grants,
+            },
+        )?;
+        // The receipt names the host's handover; the record ending the
+        // dropped Grants settles apart, pending until this install carries it.
+        self.file_membership_execution_in_txn(
+            &mut txn,
+            vault_id,
+            &id,
+            claimant,
+            now,
+            UnsignedExecution {
+                cause: MembershipExecutionCause::HostHandover,
+                member: from,
+                act: None,
+                withdrawn_grants: unsigned_withdrawals,
+                handover: None,
             },
         )?;
         let receipt = self.record_shared_change_in_txn(
@@ -1243,7 +1351,8 @@ impl Vault {
                 detach,
                 unsigned_withdrawals,
                 ..
-            } = self.move_member_in_txn(txn, vault_id, actor, from, None, slips, receipt, now)?;
+            } = self
+                .move_member_in_txn(txn, vault_id, actor, from, None, actor, slips, receipt, now)?;
             let effect = Effect {
                 change: SharedVaultChange::MemberLeft {
                     member: actor.to_hex(),
@@ -1262,23 +1371,23 @@ impl Vault {
 
     /// This install's own host issuer for a membership change given no
     /// `slips` (FIX 5898), read before the change's writer opens; `None`
-    /// with `slips`. With no `slips`, this install's key is loaded too, so
-    /// the writer can sign the record of a change no issuer signs (FIX
-    /// 12335).
+    /// with `slips`. This install's key is loaded too, so the writer can
+    /// sign a role's giving (pass 28 R2) and the record of a change no
+    /// issuer signs (FIX 12335).
     pub(super) fn membership_issuer(
         &self,
         slips: Option<&HostSlipIssuer>,
     ) -> Option<HostSlipIssuer> {
+        self.load_membership_carrier();
         if slips.is_some() {
             return None;
         }
-        self.load_membership_carrier();
         self.load_host_slip_issuer().ok()
     }
 }
 
-/// A member change's half no issuer signed: the signed-mint Grants it
-/// deleted with no signed withdrawal; `None` when there are none.
+/// A member change's half no issuer signed: the Grants it deleted with no
+/// host-signed withdrawal; `None` when there are none.
 fn member_execution(
     cause: MembershipExecutionCause,
     member: EntityId,

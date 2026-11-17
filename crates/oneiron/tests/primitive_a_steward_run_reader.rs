@@ -17,6 +17,7 @@ use oneiron::federation::FederationGrantRole;
 use oneiron::llm::model_step::SettledStepRequest;
 use oneiron::store::GateDecisionId;
 use oneiron::test_doors::membership::stand_member_grant;
+use oneiron::test_support::provision_act_carrier;
 use oneiron::{EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig};
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
@@ -30,6 +31,7 @@ fn open_vault() -> Result<(tempfile::TempDir, Vault), Box<dyn std::error::Error>
     config.dimensions = 4;
     config.embedding_model = None;
     let vault = Vault::open_owned(dir.path(), config)?;
+    provision_act_carrier(&vault);
     Ok((dir, vault))
 }
 

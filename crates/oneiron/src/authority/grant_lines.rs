@@ -223,11 +223,30 @@ impl GrantLines {
     }
 
     /// Records the counted act `hash` of `family` that ends `grant`.
-    fn end_in_family(&mut self, grant: EntityId, hash: AuthorityEntryHash, family: GrantFamily) {
+    pub(super) fn end_in_family(
+        &mut self,
+        grant: EntityId,
+        hash: AuthorityEntryHash,
+        family: GrantFamily,
+    ) {
         self.ends
             .entry(grant)
             .or_default()
             .insert(hash, Some(family));
+    }
+
+    /// Whether the act `hash` counted here as an end of `grant`, of `family` (`None`: a
+    /// membership withdrawal or a slip revoke). A valid act carried without effect is no end.
+    pub(super) fn counted_end(
+        &self,
+        grant: EntityId,
+        hash: &AuthorityEntryHash,
+        family: Option<GrantFamily>,
+    ) -> bool {
+        self.ends
+            .get(&grant)
+            .and_then(|ends| ends.get(hash))
+            .is_some_and(|counted| *counted == family)
     }
 
     /// Every family the acts naming `grant` hold: its givings, live or replaced, and its ends.
@@ -263,28 +282,6 @@ impl GrantLines {
         frontier
             .live
             .insert(hash, Arc::new(FrontierEdit { replaced, ..edit }));
-    }
-
-    /// The Grants the counted act `hash` ended, each with the family its act named: what a
-    /// dropped end's proof ([`super::revoke_proof`]) ends again through [`Self::end_as`].
-    pub(super) fn ended_by(
-        &self,
-        hash: &AuthorityEntryHash,
-    ) -> BTreeMap<EntityId, Option<GrantFamily>> {
-        self.ends
-            .iter()
-            .filter_map(|(grant, ends)| ends.get(hash).map(|family| (*grant, *family)))
-            .collect()
-    }
-
-    /// Records the counted act `hash` that ends `grant` as `family`'s end, or of none.
-    pub(super) fn end_as(
-        &mut self,
-        grant: EntityId,
-        hash: AuthorityEntryHash,
-        family: Option<GrantFamily>,
-    ) {
-        self.ends.entry(grant).or_default().insert(hash, family);
     }
 
     /// Records the counted general grant act `hash` of `family` that ends `grant` and

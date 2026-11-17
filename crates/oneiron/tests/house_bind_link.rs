@@ -35,6 +35,7 @@ use oneiron::receipt::{ReceiptKind, ReceiptQuery, ReceiptRecord};
 use oneiron::registry::{ENTITY_TYPE_FEDERATION_GRANT, ENTITY_TYPE_ORG, ENTITY_TYPE_PERSON};
 use oneiron::store::GateDecisionId;
 use oneiron::subject_model::actor_subject_anchor;
+use oneiron::test_support::provision_act_carrier;
 use oneiron::workspace_roster::{WorkCompanionPolicy, WorkspaceRosterPreset};
 use oneiron::{EntityId, Result, TimeRange, Vault, VaultConfig, WriteActor};
 
@@ -67,9 +68,7 @@ fn workspace() -> Result<Workspace> {
 fn workspace_shared(shared: bool) -> Result<Workspace> {
     let dir = tempfile::tempdir()?;
     let vault = Vault::open(dir.path(), VaultConfig::default())?;
-    let owner = vault.ensure_embedded_owner_actor().expect("embedded owner");
-    let issuer = oneiron::test_support::provision_engine_machines(&vault);
-    oneiron::test_support::bind_host_owner(&vault, &issuer, owner)?;
+    let (issuer, owner) = provision_act_carrier(&vault);
     let owner_proof =
         vault.authenticate_owner(owner, &owner.to_hex(), true, GateDecisionId::now())?;
     let root = vault.root_project()?;
@@ -523,7 +522,7 @@ fn join(
 fn an_admin_who_set_a_house_role_clears_it_and_a_member_is_refused() -> Result<()> {
     let dir = tempfile::tempdir()?;
     let vault = Vault::open(dir.path(), VaultConfig::default())?;
-    let owner = vault.ensure_embedded_owner_actor().expect("embedded owner");
+    let (_, owner) = provision_act_carrier(&vault);
     let owner_proof =
         vault.authenticate_owner(owner, &owner.to_hex(), true, GateDecisionId::now())?;
     let row = |entity_type: u8| -> Result<EntityId> {

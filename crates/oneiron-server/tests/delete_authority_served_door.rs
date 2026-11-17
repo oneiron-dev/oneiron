@@ -17,9 +17,10 @@
 //! owner's path (red at the door's previous head, which answered it
 //! `unresolved_actor`). A key with no principal is refused
 //! `unresolved_actor`. On a rooted vault a Member's key, which carries no
-//! vault slip, is refused `account_key_unbound`; on a rootless vault the role
-//! table judges it: its own NOTE deletes, another Member's is
-//! `not_owner_of_item`.
+//! vault slip, is refused `account_key_unbound`. A rootless vault can no
+//! longer share (pass 28 R2b: its install carries no signed act, so the
+//! founding giving refuses), so a Member's key there has no role to judge and
+//! keeps the owner refusal, `OWNER_BINDING_REQUIRED`.
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p
 //! oneiron-server --all-features --features oneiron/test-support --test
 //! delete_authority_served_door`.
@@ -33,7 +34,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use axum::body::{Body, to_bytes};
 use axum::http::{Request, StatusCode};
 use ed25519_dalek::SigningKey;
-use oneiron::authority::{ActSurface, CapabilitySlip, HostSlipIssuer, SlipCaveat, holder_proof};
+use oneiron::authority::{
+    ActSurface, CapabilitySlip, HostSlipIssuer, MachineRole, SlipCaveat, holder_proof,
+};
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::federation::{FederationGrantRole as Role, InitialSharedMember, Scope, ScopeAxis};
 use oneiron::note::TakeTarget;
@@ -129,6 +132,11 @@ fn served_on(rooted: bool) -> Served {
         )))),
     );
     let issuer = rooted.then(|| vault.bootstrap_host_slip_issuer().expect("host issuer"));
+    if let Some(issuer) = issuer.as_ref() {
+        vault
+            .ensure_serving_install_profile(issuer, MachineRole::Unanswered)
+            .expect("this install's live machine profile, to carry acts");
+    }
     assert_eq!(
         vault
             .authority_vault_id()
@@ -594,29 +602,36 @@ fn a_members_account_key_is_refused_unbound_on_a_rooted_vault() {
 }
 
 #[test]
-fn a_members_account_key_deletes_its_own_note_on_a_rootless_vault() {
+fn a_rootless_vault_cannot_share_so_a_members_account_key_keeps_the_owner_refusal() {
     on_engine_stack(|| async {
-        let fx = shared_served_on(false);
-        let note = fx.member_note();
-        let key = fx.served.account_key(Some(fx.member_a));
-        let (status, body) = fx.served.delete_by_key(&key, &note).await;
-        assert_eq!(status, StatusCode::OK, "{body}");
-        assert_eq!(body["delete"]["existed"], true, "{body}");
-        assert!(
-            fx.served.deleted(&note),
-            "the Member's NOTE is a deleted shell"
+        let fx = served_on(false);
+        let member = EntityId::now();
+        person(&fx.vault, member);
+        let founding = fx.vault.initialize_shared_vault(
+            &fx.owner_proof,
+            SHARED,
+            None,
+            &[
+                InitialSharedMember {
+                    member_ref: fx.owner,
+                    role: Some(Role::Owner),
+                },
+                InitialSharedMember {
+                    member_ref: member,
+                    role: Some(Role::Member),
+                },
+            ],
+            1,
         );
-    });
-}
-
-#[test]
-fn a_members_account_key_is_refused_another_members_note_on_a_rootless_vault() {
-    on_engine_stack(|| async {
-        let fx = shared_served_on(false);
-        let note = fx.member_note();
-        let key = fx.served.account_key(Some(fx.member_b));
-        let (status, body) = fx.served.delete_by_key(&key, &note).await;
-        assert_refused(status, &body, "not_owner_of_item");
-        assert!(!fx.served.deleted(&note), "the refused NOTE is untouched");
+        assert!(
+            founding.is_err(),
+            "a rootless install refuses the founding giving: it carries no signed act"
+        );
+        let note = fx.note_by(fx.owner);
+        let key = fx.account_key(Some(member));
+        let (status, body) = fx.delete_by_key(&key, &note).await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+        assert_eq!(body["error"]["code"], "OWNER_BINDING_REQUIRED", "{body}");
+        assert!(!fx.deleted(&note), "the refused NOTE is untouched");
     });
 }
