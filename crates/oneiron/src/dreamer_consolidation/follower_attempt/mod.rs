@@ -167,6 +167,8 @@ impl ConsolidationExecutor<'_> {
         let mut charges = StepChargeTally {
             units,
             step_bindings,
+            #[cfg(oneiron_test_support)]
+            spent_observations: Vec::new(),
         };
         let call = RoleCall::resolve(
             &self.roles,

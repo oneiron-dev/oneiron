@@ -517,7 +517,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/serialize/token_budget.rs` | src | s | 7 fn | — | Grouping, section/type token-budget enforcement, size estimation, and pack token-stats collection |
 | `src/serialize/toon_format.rs` | src | m | 1 fn | — | Native TOON encoder for prepared pack sections |
 | `src/serialize/types.rs` | src | s | 1 enum · 1 type · 2 const | GroupKey | Cross-cutting types shared by every `serialize` submodule |
-| `src/serialize/value_json.rs` | src | s | 3 fn | — | The opaque MessagePack value a record carries, to and from the JSON public APIs read and write |
+| `src/serialize/value_json.rs` | src | s | 5 fn | — | The opaque MessagePack value a record carries, to and from the JSON public APIs read and write |
 | `src/serialize/yaml_format.rs` | src | s | 3 fn | — | YAML section writer and YAML scalar/key quoting rules |
 | `src/session_overlay/dump_suppression.rs` | src | s | 2 fn · 3 const · 1 crate-vis | — | Core-dump suppression for a process that holds off-record room bytes (ARCH-0052 threat-model note… |
 | `src/session_overlay/hygiene_tests.rs` | test | s | 1 struct · 1 enum · 7 fn | ObservedAllocator, ShortIdScratch | Allocation-boundary teardown observer for session-owned buffers |
@@ -674,6 +674,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/fingerprint_keep_vault_import_receipt.rs` | test | s | 2 fn · 2 const | — | K-proof (oracle) for PLAN-UC-04 stage 6.3c: the foreign vault import receipt id keeps its bytes |
 | `tests/gate_engine_part_names.rs` | test | s | — | — | `GateEnginePart`'s names, one line per row, generated from `scripts/ratchet/hand_name_tables.py --names… |
 | `tests/gate_receipt_outcome_tokens.rs` | test | s | — | — | UC-03 PR 0: `GateReceiptOutcome`, the closed outcome a Gate receipt records (DESIGN fable/21 §2) |
+| `tests/lmdb_page_split.rs` | test | s | — | — | FIX row TRAP-REGISTER-WAIT-PAGE-FULL: a put that splits a leaf of rows whose key and data are both odd-sized… |
 | `tests/msgpack_store_rows.rs` | test | s | — | — | PLAN-UC-08 PR 2; a lookup that took the first of two equal keys now refuses (or, for `map_value`, reads the… |
 | `tests/phonetic_han_codes.rs` | test | s | — | — | L10-08 (CROSS-ARCH-0013 `#ladder` rung 1, G2P → IPA → NPD): a Han name and a kana name with a company-form… |
 | `tests/phonetic_ipa.rs` | test | s | — | — | L10-08 (CROSS-ARCH-0013 `#ladder` rung 1, G2P → IPA → NPD): the readings of a name and the Normalized… |

@@ -42,6 +42,7 @@ mod embedding_space;
 mod engine_controls;
 mod eval_cohort;
 mod explain;
+mod extraction_verdict;
 mod fanout_launch;
 mod federation;
 #[cfg(feature = "sync")]
@@ -111,6 +112,7 @@ mod self_actor;
 mod self_model_read;
 mod self_verbs;
 mod setting;
+pub(crate) mod setting_keys;
 mod share;
 mod shared;
 mod shared_admin;
@@ -133,6 +135,8 @@ mod support_grant;
 mod sync_outbox;
 #[cfg(feature = "sync")]
 mod sync_quarantine;
+// ROLE-TRAINING-RUN: the owner's role prepare and the bounded run read.
+mod training_runs;
 mod trusted_contact;
 mod uncertain_send;
 mod verb_table;
@@ -395,6 +399,7 @@ pub use self::embedding_space::*;
 pub use self::engine_controls::*;
 pub use self::eval_cohort::*;
 pub use self::explain::*;
+pub use self::extraction_verdict::*;
 pub use self::fanout_launch::*;
 pub use self::federation::*;
 #[cfg(feature = "sync")]
@@ -479,6 +484,7 @@ pub use self::support_grant::*;
 pub use self::sync_outbox::*;
 #[cfg(feature = "sync")]
 pub use self::sync_quarantine::*;
+pub use self::training_runs::*;
 pub use self::trusted_contact::*;
 pub use self::uncertain_send::*;
 pub use self::voice_bank::*;
@@ -663,8 +669,6 @@ fn verb_input_schema_is_built_once_per_process() {
     assert!(std::ptr::eq(first, second));
 }
 
-// FIX [LIBTEST-QUARANTINE-VERBS-ITEMS]: the lib test target's type check fails here (5 errors: E0599 x5); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 #[test]
 fn sdk_catalog_drives_scoped_projections_and_round_trips_names() {
@@ -680,11 +684,12 @@ fn sdk_catalog_drives_scoped_projections_and_round_trips_names() {
             verb.as_str()
         );
     }
-    assert!(AgentVerb::TasksAsk.is_section());
-    assert!(AgentVerb::RoomsSpeak.writes());
-    assert!(AgentVerb::RoomsList.is_facade());
-    assert!(!AgentVerb::BoardExpand.is_facade());
-    assert_eq!(AgentVerb::Recall.argument_fields(), &["spec"]);
+    assert!(AgentVerb::Ask.is_section());
+    assert!(AgentVerb::VaultRoomsSpeak.writes());
+    assert!(AgentVerb::VaultRoomsList.is_facade());
+    // A host-served row (the browser context) is no facade verb; board.expand, the old pin, is gone.
+    assert!(!AgentVerb::SelfBrowserClick.is_facade());
+    assert_eq!(AgentVerb::VaultRecall.argument_fields(), &["spec"]);
     assert!(AgentVerb::from_name("not.a.verb").is_none());
 }
 

@@ -22,10 +22,6 @@ mod agent_verb_regressions;
 mod code_check;
 #[cfg(feature = "code-sandbox-wasmtime")]
 mod compaction_host;
-// FIX [LIBTEST-AGENT-RUNTIME-TIER]: move to an integration test with test doors; real QuickJS / CompiledSandboxBackends live in oneiron-agent-runtime, which links a second, non-test oneiron (pub use oneiron::code_sandbox::*)
-#[cfg(any())]
-#[cfg(feature = "code-sandbox-wasmtime")]
-mod host_services;
 mod memory_rows;
 mod output_decay;
 mod speech_identity_regressions;
@@ -46,12 +42,42 @@ fn open_test_vault() -> (tempfile::TempDir, Vault) {
     (dir, vault)
 }
 
+struct RecordingLimitAsk {
+    calls: Mutex<Vec<(crate::limit_ask::EngineLimit, u64, u64)>>,
+}
+
+impl crate::limit_ask::LimitAsk for RecordingLimitAsk {
+    fn crossed(&self, row: crate::limit_ask::EngineLimit, bound: u64, measured: u64) {
+        self.calls
+            .lock()
+            .expect("limit ask lock")
+            .push((row, bound, measured));
+    }
+}
+
+fn open_test_vault_with_step_bound() -> (tempfile::TempDir, Vault, std::sync::Arc<RecordingLimitAsk>)
+{
+    let mut config = embedding_test_config();
+    config
+        .limits
+        .set(crate::limit_ask::EngineLimit::ExecutorRunSteps, 1);
+    let dir = tempfile::tempdir().expect("tempdir");
+    let vault = Vault::open(dir.path(), config).expect("open vault");
+    let ask = std::sync::Arc::new(RecordingLimitAsk {
+        calls: Mutex::new(Vec::new()),
+    });
+    vault.set_limit_ask(ask.clone());
+    (dir, vault, ask)
+}
+
 fn prompt_package_root() -> std::path::PathBuf {
     crate::prompt::workspace_test_prompt_package_root().expect("workspace test prompt package")
 }
 
 use crate::error::{ArtifactError, GateError};
 use crate::test_util::{embedding_test_config, entity};
+
+use super::record::StepResultDigests;
 
 fn range(at: u64) -> TimeRange {
     TimeRange { start: at, end: at }
@@ -127,10 +153,15 @@ fn llm_response_with_finish(text: impl Into<String>, finish_reason: FinishReason
     LlmResponse {
         message: LlmMessage {
             role: LlmMessageRole::Assistant,
-            content: vec![ContentPart::Text { text: text.into() }],
+            content: vec![ContentPart::Text {
+                text: text.into(),
+                signature: None,
+            }],
         },
         usage: LlmUsage::zero(),
         finish_reason,
+        reply_assertions: Default::default(),
+        token_scores: None,
     }
 }
 
@@ -293,7 +324,7 @@ fn executor_blocks_later_self_calls_after_durable_wait() {
 
 #[test]
 fn executor_self_writes_route_through_gated_actor_write_trap() {
-    let (_dir, vault) = open_test_vault();
+    let (_dir, vault, ask) = open_test_vault_with_step_bound();
     let backend = FixtureBackend::new(["await self.memory.put_edge(src, 'mentions', tgt);"]);
     let lease = BudgetLease::for_test("executor-lease");
     let src = seed_person(&vault, 0xB1);
@@ -306,13 +337,7 @@ fn executor_self_writes_route_through_gated_actor_write_trap() {
             0.7,
         ))]]);
     let gated_write = gated_actor_write(&vault, "run-gated-write");
-    let config = executor_config(
-        entity(0x85),
-        EngineExecutorLimits {
-            soft_steps: 1,
-            hard_steps: 1,
-        },
-    );
+    let config = executor_config(entity(0x85), EngineExecutorLimits { soft_steps: 1 });
     let before = gate_decision_count(&vault);
 
     let mut executor =
@@ -339,8 +364,8 @@ fn executor_self_writes_route_through_gated_actor_write_trap() {
     assert_eq!(bridge_outcome_kind(&stored.bridge_calls[0]), "denied");
     assert_eq!(stored.step_checkpoints.len(), 1);
 
-    let retry_backend = FixtureBackend::new(std::iter::empty::<&str>());
-    let mut retry_runtime = FixtureRuntime::new(std::iter::empty::<JsCodeModeStepOutcome>());
+    let retry_backend = FixtureBackend::new(["const second = true;"]);
+    let mut retry_runtime = FixtureRuntime::new([JsCodeModeStepOutcome::complete("recovered")]);
     let mut retry = EngineNativeExecutor::new(
         &vault,
         &retry_backend,
@@ -348,24 +373,29 @@ fn executor_self_writes_route_through_gated_actor_write_trap() {
         &mut retry_runtime,
         &gated_write,
     );
-    let retry_outcome = block_on_ready(retry.run(&config)).expect("retry reads checkpoint");
+    let retry_outcome = block_on_ready(retry.run(&config)).expect("retry completes");
+    assert_eq!(retry_outcome.status, EngineExecutorStatus::Complete);
+    assert_eq!(retry_outcome.steps_run, 1);
+    assert_eq!(retry_runtime.seen.len(), 1);
+    assert_eq!(retry_runtime.seen[0].seq, 1);
+    let steps_asks: Vec<_> = ask
+        .calls
+        .lock()
+        .expect("limit ask lock")
+        .iter()
+        .filter(|entry| entry.0 == crate::limit_ask::EngineLimit::ExecutorRunSteps)
+        .copied()
+        .collect();
+    assert_eq!(steps_asks.len(), 1);
     assert_eq!(
-        retry_outcome.status,
-        EngineExecutorStatus::HardStepLimitReached
-    );
-    assert!(retry_runtime.seen.is_empty());
-    assert!(
-        retry_backend
-            .requests
-            .lock()
-            .expect("requests lock")
-            .is_empty()
+        steps_asks[0],
+        (crate::limit_ask::EngineLimit::ExecutorRunSteps, 1, 2)
     );
 }
 
 #[test]
 fn executor_persists_bridge_calls_when_audited_write_fails() {
-    let (_dir, vault) = open_test_vault();
+    let (_dir, vault, ask) = open_test_vault_with_step_bound();
     let backend = FixtureBackend::new(["<exec>\nawait self.memory.put_claim(claim);\n</exec>"]);
     let lease = BudgetLease::for_test("executor-lease");
     let missing_subject = entity(0xD5);
@@ -381,13 +411,7 @@ fn executor_persists_bridge_calls_when_audited_write_fails() {
             SelfCall::MemoryPutClaim(SelfMemoryPutClaimCall::new(claim, candidate, range(11), 12)),
         ]]);
     let gated_write = gated_actor_write(&vault, "run-audited-write-failure");
-    let config = executor_config(
-        entity(0x8E),
-        EngineExecutorLimits {
-            soft_steps: 1,
-            hard_steps: 1,
-        },
-    );
+    let config = executor_config(entity(0x8E), EngineExecutorLimits { soft_steps: 1 });
     let before = gate_decision_count(&vault);
 
     let mut executor =
@@ -420,8 +444,8 @@ fn executor_persists_bridge_calls_when_audited_write_fails() {
         "a healed host-bridge failure counts with its replay checkpoint"
     );
 
-    let retry_backend = FixtureBackend::new(std::iter::empty::<&str>());
-    let mut retry_runtime = FixtureRuntime::new(std::iter::empty::<JsCodeModeStepOutcome>());
+    let retry_backend = FixtureBackend::new(["const second = true;"]);
+    let mut retry_runtime = FixtureRuntime::new([JsCodeModeStepOutcome::complete("recovered")]);
     let mut retry = EngineNativeExecutor::new(
         &vault,
         &retry_backend,
@@ -429,24 +453,29 @@ fn executor_persists_bridge_calls_when_audited_write_fails() {
         &mut retry_runtime,
         &gated_write,
     );
-    let retry_outcome = block_on_ready(retry.run(&config)).expect("retry reads checkpoint");
+    let retry_outcome = block_on_ready(retry.run(&config)).expect("retry completes");
+    assert_eq!(retry_outcome.status, EngineExecutorStatus::Complete);
+    assert_eq!(retry_outcome.steps_run, 1);
+    assert_eq!(retry_runtime.seen.len(), 1);
+    assert_eq!(retry_runtime.seen[0].seq, 1);
+    let steps_asks: Vec<_> = ask
+        .calls
+        .lock()
+        .expect("limit ask lock")
+        .iter()
+        .filter(|entry| entry.0 == crate::limit_ask::EngineLimit::ExecutorRunSteps)
+        .copied()
+        .collect();
+    assert_eq!(steps_asks.len(), 1);
     assert_eq!(
-        retry_outcome.status,
-        EngineExecutorStatus::HardStepLimitReached
-    );
-    assert!(retry_runtime.seen.is_empty());
-    assert!(
-        retry_backend
-            .requests
-            .lock()
-            .expect("requests lock")
-            .is_empty()
+        steps_asks[0],
+        (crate::limit_ask::EngineLimit::ExecutorRunSteps, 1, 2)
     );
 }
 
 #[test]
 fn executor_persists_bridge_calls_when_runtime_errors_after_dispatch() {
-    let (_dir, vault) = open_test_vault();
+    let (_dir, vault, ask) = open_test_vault_with_step_bound();
     let backend = FixtureBackend::new(["```js\nawait self.memory.write_fixture(claim);\n```"]);
     let lease = BudgetLease::for_test("executor-lease");
     let subject = seed_person(&vault, 0xD1);
@@ -461,13 +490,7 @@ fn executor_persists_bridge_calls_when_runtime_errors_after_dispatch() {
         SelfMemoryWriteFixtureCall::new(claim, candidate, range(7), 8),
     )]);
     let gated_write = gated_actor_write(&vault, "run-error-after-dispatch");
-    let config = executor_config(
-        entity(0x8B),
-        EngineExecutorLimits {
-            soft_steps: 1,
-            hard_steps: 1,
-        },
-    );
+    let config = executor_config(entity(0x8B), EngineExecutorLimits { soft_steps: 1 });
 
     let mut executor =
         EngineNativeExecutor::new(&vault, &backend, &lease, &mut runtime, &gated_write);
@@ -510,8 +533,8 @@ fn executor_persists_bridge_calls_when_runtime_errors_after_dispatch() {
         "a healed failed-step turn counts when its bridge/checkpoint commit succeeds"
     );
 
-    let retry_backend = FixtureBackend::new(std::iter::empty::<&str>());
-    let mut retry_runtime = FixtureRuntime::new(std::iter::empty::<JsCodeModeStepOutcome>());
+    let retry_backend = FixtureBackend::new(["const second = true;"]);
+    let mut retry_runtime = FixtureRuntime::new([JsCodeModeStepOutcome::complete("recovered")]);
     let mut retry = EngineNativeExecutor::new(
         &vault,
         &retry_backend,
@@ -519,24 +542,29 @@ fn executor_persists_bridge_calls_when_runtime_errors_after_dispatch() {
         &mut retry_runtime,
         &gated_write,
     );
-    let retry_outcome = block_on_ready(retry.run(&config)).expect("retry reads checkpoint");
+    let retry_outcome = block_on_ready(retry.run(&config)).expect("retry completes");
+    assert_eq!(retry_outcome.status, EngineExecutorStatus::Complete);
+    assert_eq!(retry_outcome.steps_run, 1);
+    assert_eq!(retry_runtime.seen.len(), 1);
+    assert_eq!(retry_runtime.seen[0].seq, 1);
+    let steps_asks: Vec<_> = ask
+        .calls
+        .lock()
+        .expect("limit ask lock")
+        .iter()
+        .filter(|entry| entry.0 == crate::limit_ask::EngineLimit::ExecutorRunSteps)
+        .copied()
+        .collect();
+    assert_eq!(steps_asks.len(), 1);
     assert_eq!(
-        retry_outcome.status,
-        EngineExecutorStatus::HardStepLimitReached
-    );
-    assert!(retry_runtime.seen.is_empty());
-    assert!(
-        retry_backend
-            .requests
-            .lock()
-            .expect("requests lock")
-            .is_empty()
+        steps_asks[0],
+        (crate::limit_ask::EngineLimit::ExecutorRunSteps, 1, 2)
     );
 }
 
 #[test]
 fn executor_persists_bridge_calls_when_output_recording_fails_after_dispatch() {
-    let (_dir, vault) = open_test_vault();
+    let (_dir, vault, ask) = open_test_vault_with_step_bound();
     let backend = FixtureBackend::new(["```js\nawait self.memory.write_fixture(claim);\n```"]);
     let lease = BudgetLease::for_test("executor-lease");
     let subject = seed_person(&vault, 0xD3);
@@ -557,13 +585,7 @@ fn executor_persists_bridge_calls_when_output_recording_fails_after_dispatch() {
             SelfMemoryWriteFixtureCall::new(claim, candidate, range(9), 10),
         )]]);
     let gated_write = gated_actor_write(&vault, "run-output-error-after-dispatch");
-    let config = executor_config(
-        entity(0x8C),
-        EngineExecutorLimits {
-            soft_steps: 1,
-            hard_steps: 1,
-        },
-    );
+    let config = executor_config(entity(0x8C), EngineExecutorLimits { soft_steps: 1 });
 
     let mut executor =
         EngineNativeExecutor::new(&vault, &backend, &lease, &mut runtime, &gated_write);
@@ -605,8 +627,8 @@ fn executor_persists_bridge_calls_when_output_recording_fails_after_dispatch() {
         "a healed output-recording failure counts with its replay checkpoint"
     );
 
-    let retry_backend = FixtureBackend::new(std::iter::empty::<&str>());
-    let mut retry_runtime = FixtureRuntime::new(std::iter::empty::<JsCodeModeStepOutcome>());
+    let retry_backend = FixtureBackend::new(["const second = true;"]);
+    let mut retry_runtime = FixtureRuntime::new([JsCodeModeStepOutcome::complete("recovered")]);
     let mut retry = EngineNativeExecutor::new(
         &vault,
         &retry_backend,
@@ -614,18 +636,23 @@ fn executor_persists_bridge_calls_when_output_recording_fails_after_dispatch() {
         &mut retry_runtime,
         &gated_write,
     );
-    let retry_outcome = block_on_ready(retry.run(&config)).expect("retry reads checkpoint");
+    let retry_outcome = block_on_ready(retry.run(&config)).expect("retry completes");
+    assert_eq!(retry_outcome.status, EngineExecutorStatus::Complete);
+    assert_eq!(retry_outcome.steps_run, 1);
+    assert_eq!(retry_runtime.seen.len(), 1);
+    assert_eq!(retry_runtime.seen[0].seq, 1);
+    let steps_asks: Vec<_> = ask
+        .calls
+        .lock()
+        .expect("limit ask lock")
+        .iter()
+        .filter(|entry| entry.0 == crate::limit_ask::EngineLimit::ExecutorRunSteps)
+        .copied()
+        .collect();
+    assert_eq!(steps_asks.len(), 1);
     assert_eq!(
-        retry_outcome.status,
-        EngineExecutorStatus::HardStepLimitReached
-    );
-    assert!(retry_runtime.seen.is_empty());
-    assert!(
-        retry_backend
-            .requests
-            .lock()
-            .expect("requests lock")
-            .is_empty()
+        steps_asks[0],
+        (crate::limit_ask::EngineLimit::ExecutorRunSteps, 1, 2)
     );
 }
 
@@ -637,13 +664,7 @@ fn executor_preserves_durable_wait_when_runtime_errors_after_wait() {
     let mut runtime =
         ErrorAfterCallsRuntime::new(vec![SelfCall::Ask(SelfAskCall::new("continue?"))]);
     let gated_write = gated_actor_write(&vault, "run-wait-then-error");
-    let config = executor_config(
-        entity(0x8D),
-        EngineExecutorLimits {
-            soft_steps: 1,
-            hard_steps: 1,
-        },
-    );
+    let config = executor_config(entity(0x8D), EngineExecutorLimits { soft_steps: 1 });
 
     let mut executor =
         EngineNativeExecutor::new(&vault, &backend, &lease, &mut runtime, &gated_write);
@@ -691,13 +712,7 @@ fn executor_preserves_durable_wait_when_runtime_errors_after_wait() {
 fn executor_resumes_from_persisted_repl_record() {
     let (_dir, vault) = open_test_vault();
     let lease = BudgetLease::for_test("executor-lease");
-    let config = executor_config(
-        entity(0x83),
-        EngineExecutorLimits {
-            soft_steps: 1,
-            hard_steps: 3,
-        },
-    );
+    let config = executor_config(entity(0x83), EngineExecutorLimits { soft_steps: 1 });
     let gated_write = gated_actor_write(&vault, "run-resume");
 
     let first_backend = FixtureBackend::new(["const first = true;"]);
@@ -747,13 +762,7 @@ fn executor_resumes_from_persisted_repl_record() {
 fn executor_rejects_resume_with_mismatched_config_identity() {
     let (_dir, vault) = open_test_vault();
     let lease = BudgetLease::for_test("executor-lease");
-    let config = executor_config(
-        entity(0x88),
-        EngineExecutorLimits {
-            soft_steps: 1,
-            hard_steps: 3,
-        },
-    );
+    let config = executor_config(entity(0x88), EngineExecutorLimits { soft_steps: 1 });
     let gated_write = gated_actor_write(&vault, "run-config-drift");
 
     let first_backend = FixtureBackend::new(["const first = true;"]);
@@ -799,13 +808,7 @@ fn executor_rejects_resume_with_mismatched_config_identity() {
 fn executor_ignores_runtime_outputs_that_look_like_terminal_markers() {
     let (_dir, vault) = open_test_vault();
     let lease = BudgetLease::for_test("executor-lease");
-    let config = executor_config(
-        entity(0x8B),
-        EngineExecutorLimits {
-            soft_steps: 1,
-            hard_steps: 3,
-        },
-    );
+    let config = executor_config(entity(0x8B), EngineExecutorLimits { soft_steps: 1 });
     let gated_write = gated_actor_write(&vault, "run-terminal-output-shadow");
 
     let first_backend = FixtureBackend::new(["const first = true;"]);
@@ -848,13 +851,7 @@ fn executor_ignores_runtime_outputs_that_look_like_terminal_markers() {
 fn replay_record_guard_rejects_stale_append_generation() {
     let (_dir, vault) = open_test_vault();
     let lease = BudgetLease::for_test("executor-lease");
-    let config = executor_config(
-        entity(0x8A),
-        EngineExecutorLimits {
-            soft_steps: 1,
-            hard_steps: 3,
-        },
-    );
+    let config = executor_config(entity(0x8A), EngineExecutorLimits { soft_steps: 1 });
     let gated_write = gated_actor_write(&vault, "run-stale-append");
     let backend = FixtureBackend::new(["const first = true;"]);
     let mut runtime = FixtureRuntime::new([JsCodeModeStepOutcome::pending("first")]);
@@ -929,13 +926,7 @@ fn replay_refuses_resolved_prompt_drift_before_the_next_llm_call() {
     let lease = BudgetLease::for_test("executor-lease");
     let gated_write = gated_actor_write(&vault, "run-prompt-fingerprint");
     let run_id = entity(0xB8);
-    let mut config = executor_config(
-        run_id,
-        EngineExecutorLimits {
-            soft_steps: 1,
-            hard_steps: 2,
-        },
-    );
+    let mut config = executor_config(run_id, EngineExecutorLimits { soft_steps: 1 });
     config.prompt_package_root = package.path().to_path_buf();
     let first_backend = FixtureBackend::new(["const first = 1;"]);
     let mut first_runtime = FixtureRuntime::new([JsCodeModeStepOutcome::pending("continue")]);
@@ -997,22 +988,16 @@ fn replay_refuses_resolved_prompt_drift_before_the_next_llm_call() {
 #[test]
 fn step_state_hash_frames_variable_length_boundaries() {
     let request_hash = [0x11; 32];
-    let left = JsCodeModeStepOutcome {
-        done: false,
-        observation: "observed".to_owned(),
-        outputs: vec![
-            JsCodeModeOutput::new("a", b"bc".to_vec()),
-            JsCodeModeOutput::new("def", Vec::new()),
-        ],
-    };
-    let right = JsCodeModeStepOutcome {
-        done: false,
-        observation: "observed".to_owned(),
-        outputs: vec![
-            JsCodeModeOutput::new("ab", b"c".to_vec()),
-            JsCodeModeOutput::new("de", b"f".to_vec()),
-        ],
-    };
+    let mut left = StepResultDigests::of("observed", false);
+    left.outputs = vec![
+        ("a".to_owned(), *blake3::hash(b"bc").as_bytes()),
+        ("def".to_owned(), *blake3::hash(b"").as_bytes()),
+    ];
+    let mut right = StepResultDigests::of("observed", false);
+    right.outputs = vec![
+        ("ab".to_owned(), *blake3::hash(b"c").as_bytes()),
+        ("de".to_owned(), *blake3::hash(b"f").as_bytes()),
+    ];
 
     let left_hash = step_state_hash([0; 32], 7, &request_hash, "const x = 1;", &left, None, &[])
         .expect("left hash");
@@ -1025,7 +1010,7 @@ fn step_state_hash_frames_variable_length_boundaries() {
 #[test]
 fn step_state_hash_frames_bridge_call_values() {
     let request_hash = [0x22; 32];
-    let outcome = JsCodeModeStepOutcome::pending("observed");
+    let outcome = StepResultDigests::of("observed", false);
     let left = CodeRunBridgeCall {
         seq: 0,
         effect: SelfEffect::MemorySearch,
@@ -1033,6 +1018,10 @@ fn step_state_hash_frames_bridge_call_values() {
         outcome: Value::Map(vec![(Value::from("result"), Value::from("ok"))]),
         started_at_ms: 0,
         finished_at_ms: 0,
+        action_digest: None,
+        spawn_targets: Default::default(),
+        hook_view_served: false,
+        rewritten_request: None,
     };
     let right = CodeRunBridgeCall {
         seq: 0,
@@ -1041,6 +1030,10 @@ fn step_state_hash_frames_bridge_call_values() {
         outcome: Value::Map(vec![(Value::from("result"), Value::from("ok"))]),
         started_at_ms: 0,
         finished_at_ms: 0,
+        action_digest: None,
+        spawn_targets: Default::default(),
+        hook_view_served: false,
+        rewritten_request: None,
     };
 
     let left_hash = step_state_hash(
@@ -1070,7 +1063,7 @@ fn step_state_hash_frames_bridge_call_values() {
 #[test]
 fn step_state_hash_binds_checkpointed_implicit_speech() {
     let request_hash = [0x33; 32];
-    let outcome = JsCodeModeStepOutcome::complete("runtime observation");
+    let outcome = StepResultDigests::of("runtime observation", true);
     let without = step_state_hash(
         [0; 32],
         0,
@@ -1176,7 +1169,8 @@ impl JsCodeModeRuntime for ConcurrentAppendRuntime<'_> {
             .ok_or(Error::CorruptedIndex("test replay record"))?;
         let generation = record.generation()?;
         let output = CodeRunRawOutput::from_bytes("executor/repl/room-mate.txt", b"room-mate")?;
-        self.vault.put_code_run_raw_output(&output, b"room-mate")?;
+        self.vault
+            .put_code_run_raw_output(None, &output, b"room-mate")?;
         record.outputs.push(output);
         self.vault
             .put_code_run_replay_record_if_generation(&record, Some(generation))?;
@@ -1196,13 +1190,7 @@ fn same_run_id_is_refused_after_off_record_route_target_changes() {
     let session = sessions.bind("sess-replay-route-epoch").expect("bind room");
     let actor = seed_person(&vault, 0xB9);
     let lease = BudgetLease::for_test("executor-lease");
-    let config = executor_config(
-        entity(0xBA),
-        EngineExecutorLimits {
-            soft_steps: 1,
-            hard_steps: 2,
-        },
-    );
+    let config = executor_config(entity(0xBA), EngineExecutorLimits { soft_steps: 1 });
 
     let overlay_write = GatedActorWrite::for_off_record_session(
         &session,
@@ -1381,13 +1369,7 @@ fn rebuilt_history_is_engine_authored_and_never_replays_provider_bytes() {
         JsCodeModeStepOutcome::complete("done"),
     ]);
     let gated_write = gated_actor_write(&vault, "run-canonical-history");
-    let config = executor_config(
-        entity(0x99),
-        EngineExecutorLimits {
-            soft_steps: 2,
-            hard_steps: 3,
-        },
-    );
+    let config = executor_config(entity(0x99), EngineExecutorLimits { soft_steps: 2 });
 
     let mut executor =
         EngineNativeExecutor::new(&vault, &backend, &lease, &mut runtime, &gated_write);
@@ -1459,13 +1441,7 @@ fn console_payload_cannot_close_engine_framing() {
         JsCodeModeStepOutcome::complete("done"),
     ]);
     let gated_write = gated_actor_write(&vault, "run-framing-forgery");
-    let config = executor_config(
-        entity(0x9A),
-        EngineExecutorLimits {
-            soft_steps: 2,
-            hard_steps: 3,
-        },
-    );
+    let config = executor_config(entity(0x9A), EngineExecutorLimits { soft_steps: 2 });
 
     let mut executor =
         EngineNativeExecutor::new(&vault, &backend, &lease, &mut runtime, &gated_write);
@@ -1511,7 +1487,7 @@ fn text_message(message: &LlmMessage) -> String {
         .content
         .iter()
         .filter_map(|part| match part {
-            ContentPart::Text { text } => Some(text.as_str()),
+            ContentPart::Text { text, .. } => Some(text.as_str()),
             _ => None,
         })
         .collect::<Vec<_>>()
@@ -1706,13 +1682,7 @@ fn trailing_implicit_speech_is_checkpoint_bound_across_conflict_and_retry() {
     )
     .expect("session dispatcher");
     let lease = BudgetLease::for_test("executor-lease");
-    let config = executor_config(
-        entity(0xDA),
-        EngineExecutorLimits {
-            soft_steps: 1,
-            hard_steps: 3,
-        },
-    );
+    let config = executor_config(entity(0xDA), EngineExecutorLimits { soft_steps: 1 });
 
     let first_backend = FixtureBackend::new(["const pending = true;"]);
     let mut first_runtime = FixtureRuntime::new([JsCodeModeStepOutcome::pending("pending")]);
@@ -2121,7 +2091,8 @@ impl JsCodeModeRuntime for SpeakThenLoseTheAppendRuntime<'_> {
             .ok_or(Error::CorruptedIndex("test replay record"))?;
         let generation = record.generation()?;
         let output = CodeRunRawOutput::from_bytes("executor/repl/room-mate.txt", b"room-mate")?;
-        self.vault.put_code_run_raw_output(&output, b"room-mate")?;
+        self.vault
+            .put_code_run_raw_output(None, &output, b"room-mate")?;
         record.outputs.push(output);
         self.vault
             .put_code_run_replay_record_if_generation(&record, Some(generation))?;
@@ -2159,13 +2130,7 @@ fn explicit_speech_survives_a_failed_replay_append_without_a_second_bubble() {
     )
     .expect("session dispatcher");
     let lease = BudgetLease::for_test("executor-lease");
-    let config = executor_config(
-        entity(0xE9),
-        EngineExecutorLimits {
-            soft_steps: 1,
-            hard_steps: 3,
-        },
-    );
+    let config = executor_config(entity(0xE9), EngineExecutorLimits { soft_steps: 1 });
 
     // One committed step first, so the replay row the losing attempt races
     // against exists. It speaks nothing, so the bridge ordering the next step
@@ -2625,13 +2590,7 @@ fn lineage_tamper_rejected() {
     let (_dir, vault) = open_test_vault();
     let subject = seed_person(&vault, 0xD1);
     let claim = entity(0xD2);
-    let config = executor_config(
-        entity(0xD3),
-        EngineExecutorLimits {
-            soft_steps: 1,
-            hard_steps: 3,
-        },
-    );
+    let config = executor_config(entity(0xD3), EngineExecutorLimits { soft_steps: 1 });
 
     park_first_step(&vault, &config, "run-lineage-outbound");
     append_durable_bridge_call(

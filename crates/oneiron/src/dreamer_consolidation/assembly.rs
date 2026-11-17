@@ -205,6 +205,59 @@ pub(super) fn tournament_claim_of_verified(
     })
 }
 
+/// The evidence timing and diversity inputs for one selection candidate.
+/// Native assembly and the bound read share this shape.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct SelectionEvidenceFacts {
+    /// The native verified citation count.
+    pub(crate) evidence_count: usize,
+    /// The earliest evidence time, with the native candidate-time fallback.
+    pub(crate) first_seen_ms: u64,
+    /// The latest verified evidence time in Unix milliseconds.
+    pub(crate) latest_ms: u64,
+    /// The native distinct diversity-key set size: a claim's own id, a TURN's
+    /// sitting and speaker (`strength::turn_diversity_key`).
+    pub(crate) diversity: usize,
+}
+
+/// Fold verified signal sources into selection timing and diversity.
+/// Each source contributes its stored time, a turn with a speaker contributes the diversity key of that speaker and the sitting it joined, and a claim contributes its own id.
+/// `sitting_of` is asked only for a turn that has a speaker; a turn that joined no sitting counts by its speaker alone.
+/// An empty source list falls back to the candidate time.
+pub(super) fn selection_evidence_facts(
+    signal_sources: &[(EntityId, bool)],
+    evidence_count: usize,
+    learned_at_fallback_ms: u64,
+    mut time_ms_of: impl FnMut(&EntityId) -> Result<u64>,
+    mut speaker_of: impl FnMut(&EntityId) -> Result<Option<String>>,
+    mut sitting_of: impl FnMut(&EntityId) -> Result<Option<EntityId>>,
+) -> Result<SelectionEvidenceFacts> {
+    let mut earliest = None;
+    let mut latest = 0;
+    let mut diversity_keys = BTreeSet::new();
+    for (id, claim) in signal_sources {
+        let learned_at = time_ms_of(id)?;
+        earliest = Some(earliest.map_or(learned_at, |at: u64| at.min(learned_at)));
+        latest = latest.max(learned_at);
+        if *claim {
+            diversity_keys.insert(id.to_hex());
+        } else if let Some(speaker) = speaker_of(id)? {
+            let sitting = sitting_of(id)?;
+            diversity_keys.insert(super::strength::turn_diversity_key(
+                &speaker,
+                sitting.as_ref(),
+            ));
+        }
+    }
+    Ok(SelectionEvidenceFacts {
+        evidence_count,
+        first_seen_ms: earliest.unwrap_or(learned_at_fallback_ms),
+        latest_ms: latest,
+        diversity: diversity_keys.len(),
+    })
+}
+
+/// The selection row for one verified candidate.
 fn selection_input(
     resources: &BranchResources<'_>,
     candidate: &VerifiedCandidate,
@@ -214,39 +267,35 @@ fn selection_input(
     new_refs: u64,
 ) -> Result<SelectionCandidate> {
     let facts = candidate_facts(&candidate.proposal.candidate)?;
-    let mut earliest = None;
-    let mut latest = 0;
-    let mut diversity_keys = BTreeSet::new();
-    for (id, _hash, claim) in candidate.evidence.signal_sources() {
-        let learned_at = resources
-            .evidence_time(resources.scope(), &id)?
-            .saturating_mul(1_000);
-        earliest = Some(earliest.map_or(learned_at, |at: u64| at.min(learned_at)));
-        latest = latest.max(learned_at);
-        if claim {
-            diversity_keys.insert(id.to_hex());
-        } else if let Some(speaker) = resources.turn(resources.scope(), &id)?.speaker {
-            let sitting = resources.turn_sitting(&id)?;
-            diversity_keys.insert(super::strength::turn_diversity_key(
-                &speaker,
-                sitting.as_ref(),
-            ));
-        }
-    }
+    let signal_sources: Vec<(EntityId, bool)> = candidate
+        .evidence
+        .signal_sources()
+        .into_iter()
+        .map(|(id, _hash, claim)| (id, claim))
+        .collect();
     let count = candidate.evidence.count();
+    let scope = resources.scope();
+    // A candidate's learned_at is Unix seconds (FIX 8695).
+    let evidence = selection_evidence_facts(
+        &signal_sources,
+        count,
+        candidate.learned_at.saturating_mul(1_000),
+        |id| Ok(resources.evidence_time(scope, id)?.saturating_mul(1_000)),
+        |id| Ok(resources.turn(scope, id)?.speaker),
+        |id| resources.turn_sitting(id),
+    )?;
     let signals = StrengthSignals::from_evidence(
         &facts.predicate,
-        count,
-        latest,
-        diversity_keys.len(),
+        evidence.evidence_count,
+        evidence.latest_ms,
+        evidence.diversity,
         now,
         config,
     );
     Ok(SelectionCandidate {
         claim_id: candidate.claim_id,
-        // A candidate's learned_at is Unix seconds (FIX 8695).
-        first_seen_ms: earliest.unwrap_or(candidate.learned_at.saturating_mul(1_000)),
-        evidence_count: count,
+        first_seen_ms: evidence.first_seen_ms,
+        evidence_count: evidence.evidence_count,
         fan_in,
         new_refs,
         signals,
