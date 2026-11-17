@@ -273,7 +273,7 @@ impl Vault {
                 continue;
             }
             listed.insert(proposal_ref);
-            offers.push(offer_of(proposal_ref, &proposal, signal.connector, cause));
+            drop(offer_of(proposal_ref, &proposal, signal.connector, cause));
         }
         for (connector, proposal_ref, cause) in
             super::credential_binding::open_issuer_revisions_in_txn(&self.store, &txn)?
