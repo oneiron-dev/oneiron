@@ -63,6 +63,21 @@ fn refusal(status: StatusCode, code: &str) -> Response {
     let response = (status, Json(serde_json::json!({"error":{"code":code}}))).into_response();
     coded(response, code, "")
 }
+/// The vault's inference policy refused a call: `code`'s body names the
+/// authorizer's typed reason as its `message`, and a server line logs it
+/// (STEP-DOOR-REFUSAL-REASON). Any other error the authorizer returns (a
+/// store or decode fault) keeps the code-only body, and its line names only
+/// the error's kind.
+fn policy_refusal(status: StatusCode, code: &str, error: &oneiron::Error) -> Response {
+    let Some(refused) = oneiron::llm::InferenceRefusal::of(error) else {
+        tracing::warn!(code, kind = ?error.kind(), "the inference policy did not admit a call");
+        return refusal(status, code);
+    };
+    let reason = refused.reason();
+    tracing::info!(code, reason, "the inference policy refused a call");
+    let body = serde_json::json!({"error":{"code":code,"message":reason}});
+    coded((status, Json(body)).into_response(), code, reason)
+}
 /// A param or provider option that would pick the model or the route
 /// (`LlmRequest::route_selector_override`), named as `key` or `namespace.key`,
 /// with `*` for a namespace no adapter reads.
@@ -252,12 +267,12 @@ fn admit_owner(
     let authorized = server
         .vault
         .authorize_raw_inference(request.clone(), &context)
-        .map_err(|_| {
+        .map_err(|error| {
             let admitted = oneiron::llm::admitted_as(&original_purpose);
             Box::new(if *admitted == oneiron::CallPurpose::Extraction {
-                refusal(StatusCode::FORBIDDEN, "extraction_egress_denied")
+                policy_refusal(StatusCode::FORBIDDEN, "extraction_egress_denied", &error)
             } else {
-                refusal(StatusCode::BAD_REQUEST, "invalid_request")
+                policy_refusal(StatusCode::BAD_REQUEST, "invalid_request", &error)
             })
         })?;
     *request = authorized.into_request();
@@ -278,6 +293,25 @@ pub(crate) fn record_raw_response(
     response: &LlmResponse,
     binding: Option<&ModelCallBinding>,
     no_record: bool,
+) {
+    record_reply_response(
+        vault, ladder, run, request, response, binding, no_record, None,
+    );
+}
+
+/// [`record_raw_response`] for a call whose answer streams into the MESSAGE
+/// `reply`, when it names one: the record is linked to it in the same write
+/// (TURN-MODEL-LINK), so a thread reads which call answered each reply.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn record_reply_response(
+    vault: &oneiron::Vault,
+    ladder: &OfferLadder,
+    run: &RunAdmission,
+    request: &LlmRequest,
+    response: &LlmResponse,
+    binding: Option<&ModelCallBinding>,
+    no_record: bool,
+    reply: Option<oneiron::EntityId>,
 ) {
     if no_record {
         tracing::debug!("model-call record skipped: off-record session or room");
@@ -365,9 +399,12 @@ pub(crate) fn record_raw_response(
         summary_requested: false,
         erased: false,
     };
-    if let Err(error) =
-        vault.with_write_txn_grouped(|txn| record_model_call_in_txn(vault, txn, &record))
-    {
+    if let Err(error) = vault.with_write_txn_grouped(|txn| match reply {
+        Some(reply) => oneiron::code_run::model_call::record_reply_model_call_in_txn(
+            vault, txn, &record, reply,
+        ),
+        None => record_model_call_in_txn(vault, txn, &record),
+    }) {
         tracing::warn!(%error, "model-call record failed");
     }
 }

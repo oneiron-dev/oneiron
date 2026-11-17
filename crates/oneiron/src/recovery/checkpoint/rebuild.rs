@@ -179,6 +179,13 @@ pub(super) fn rebuild(
                         body,
                     )?;
                 }
+                // The extra-room index is derived from the room body's
+                // `project_group` at every put, so a restore rebuilds it
+                // from the body it kept: an image that does not carry the
+                // row leaves the index empty until then (FIX 23301).
+                crate::registry::ENTITY_TYPE_CONVERSATION => {
+                    crate::workspace_roster::index_extra_room(&vault.store, txn, *id, body)?;
+                }
                 _ => {}
             }
             if has_embedding_source(raw)? {
@@ -241,8 +248,13 @@ pub(super) fn rebuild(
             WINDOW_FULL_RESYNC_MARKER.put(&vault.store, txn, &window, &[1u8])?;
         }
         crate::conversation_dag::rebuild_thread_meta_projection_in_txn(vault, txn)?;
+        // Restored ledgers bypassed the append that maintains the membership index.
+        crate::conversation::rebuild_membership_index_in_txn(vault, txn)?;
         crate::attempt_queue::rebuild_checkpoint_indexes(&vault.store, txn, opaque_attempts)?;
         vault.store.rebuild_commitment_due_sidecars(txn)?;
+        // The armed jobs' due index is not imaged: the restored rows rebuild it (DESIGN
+        // 15-setting-primitive, stage 0.2).
+        crate::schedule::rebuild_schedule_due_in_txn(&vault.store, txn)?;
         vault.store.rebuild_pending_gate_consent_sidecars(txn)?;
         crate::workspace_roster::rebuild_project_revision_indexes(&vault.store, txn)?;
         // Restored authority rows bypassed the put that sequences them (FIX 12369).
@@ -274,6 +286,8 @@ pub(super) fn rebuild_auxiliary(vault: &Vault, checkpoint_time: u64) -> Result<(
     crate::edit_distance::reservoir::rebuild_reservoir_index(vault)?;
     // Restored ACCESS_GRANT rows bypassed the body stage's companion index writer.
     vault.backfill_companion_grant_index(true)?;
+    // Restored CLAIM rows bypassed the body stage's hint index writer.
+    vault.backfill_lexical_query_hint_index(true)?;
     vault.rebuild_ramp_stats_from_receipts()?;
     crate::human_task::HumanTaskFollowupDriver::new(vault).rebuild_cursors(checkpoint_time)?;
     Ok(())

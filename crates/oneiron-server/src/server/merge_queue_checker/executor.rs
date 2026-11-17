@@ -11,23 +11,24 @@
 //! command's actual exit status and output out. No terminal frame, an
 //! ended guest or the host's stop holds the check; none is a failed test.
 
-use std::collections::BTreeMap;
+mod protocol;
+#[cfg(all(oneiron_test_support, unix))]
+mod test_door;
+
 use std::ffi::OsString;
-use std::io::{self, Read, Write};
+use std::io;
 use std::net::{SocketAddr, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, PoisonError, mpsc};
-use std::time::Duration;
+use std::sync::{Arc, Mutex, PoisonError};
 
 use oneiron::code_sandbox::SandboxGuestTier;
 use oneiron::code_sandbox::microvm::{MicroVmBackend, SandboxBackends, select_backend_for_session};
 use oneiron::host_net_floor::ProcessDescriptorFloor;
 use oneiron::merge_queue::{
     QueueCheckEnvironment, QueueCheckExecution, QueueCheckHold, QueueCheckHoldReason,
-    QueueCheckHost, QueueCheckInputs, QueueCheckInvocation, QueueCheckNeed, QueueCheckRun,
-    QueueCommandReceipt,
+    QueueCheckHost, QueueCheckInputs, QueueCheckInvocation, QueueCheckNeed,
 };
 use oneiron_container::{
     EgressRelay, GuestLimits, GuestSeccomp, GuestSpec, HostNetFloor, HttpRequest, HttpResponse,
@@ -35,20 +36,10 @@ use oneiron_container::{
 };
 use serde::{Deserialize, Serialize};
 
-use super::tree::{
-    FRAME_DONE, FRAME_HEADER, FRAME_INPUTS, FRAME_OUTPUT, FRAME_RESULT, FRAME_STDERR, FRAME_STDOUT,
-    Sent, read_frame, send_tree, write_frame,
-};
+use self::protocol::drive;
+#[cfg(all(oneiron_test_support, unix))]
+pub(crate) use self::test_door::run_empty_isolated_check;
 use crate::config::{CheckerBackend, MergeQueueCheckerConfig};
-
-/// Where the helper materializes its private scratch copy, in the guest
-/// and for the host child alike; the plan's environment names paths under
-/// it.
-const CHECK_SCRATCH: &str = "/tmp/queue-check";
-
-/// How often a waiting executor looks at the host's stop and its guest's
-/// liveness. A poll, not a deadline: nothing ends a check for taking long.
-const STOP_POLL: Duration = Duration::from_millis(500);
 
 /// One check's executor, chosen by the operator's setting.
 pub(super) struct QueueCheckExecutor {
@@ -202,7 +193,10 @@ impl QueueCheckExecutor {
             .iter()
             .map(OsString::from)
             .collect();
-        let transport = match backend.start_session(
+        // The helper leaves after its terminal frame. A held session keeps
+        // its container, and so its cgroup, until the helper's input closes
+        // (FIX 8013).
+        let transport = match backend.start_session_until_stdin_closes(
             &spec,
             &command,
             Arc::clone(&relay) as Arc<dyn EgressRelay>,
@@ -220,14 +214,21 @@ impl QueueCheckExecutor {
             .as_deref()
             .and_then(|dir| record_guest(dir, &started));
         let mut lease = transport.lease;
+        let mut input = transport.writer;
         let driven = drive(
             transport.reader,
-            transport.writer,
+            input.as_mut(),
             &mut || lease.is_running() && !lease.abandoned(),
             invocation,
             inputs,
             stop,
         )?;
+        // The held container outlives its helper until the helper's input
+        // closes, so its cgroup still reads here: the run's manifest carries
+        // the pressure its guest showed (FIX 8013). Then its input closes,
+        // as it did at the drive's end, and the container ends.
+        let pressure = lease.observe_pressure();
+        drop(input);
         let abandoned = lease.abandoned() || relay.abandoned.load(Ordering::Acquire);
         // The guest ends with its lease, after its output is read; its
         // record goes with it.
@@ -235,12 +236,15 @@ impl QueueCheckExecutor {
         if let Some(record) = record {
             let _removed = std::fs::remove_file(record);
         }
-        let manifest = relay
+        let mut manifest = relay
             .manifest
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .take()
             .unwrap_or(started);
+        if pressure.is_some() {
+            manifest.guest_pressure = pressure;
+        }
         let refused = relay
             .refused
             .lock()
@@ -304,19 +308,20 @@ impl QueueCheckExecutor {
                 )));
             }
         };
-        let (Some(stdin), Some(stdout)) = (child.stdin.take(), child.stdout.take()) else {
+        let (Some(mut stdin), Some(stdout)) = (child.stdin.take(), child.stdout.take()) else {
             let _ = child.kill();
             let _ = child.wait();
             return Ok(unavailable("the check helper has no pipes".to_owned()));
         };
         let driven = drive(
             Box::new(stdout),
-            Box::new(stdin),
+            &mut stdin,
             &mut || matches!(child.try_wait(), Ok(None)),
             invocation,
             inputs,
             stop,
         );
+        drop(stdin);
         let _ = child.kill();
         let _ = child.wait();
         driven
@@ -385,287 +390,6 @@ fn unavailable(detail: String) -> QueueCheckExecution {
         QueueCheckHoldReason::ExecutorUnavailable,
         detail,
     ))
-}
-
-fn interrupted(detail: &str) -> QueueCheckExecution {
-    QueueCheckExecution::Held(QueueCheckHold::new(
-        QueueCheckHoldReason::Interrupted,
-        detail,
-    ))
-}
-
-/// The header the helper reads first.
-#[derive(Serialize)]
-struct Header<'h> {
-    version: u8,
-    scratch: &'h str,
-    /// The pinned commit the guest's object store names as HEAD (FIX 7228).
-    commit: &'h str,
-    commands: Vec<HeaderCommand<'h>>,
-    contract_outputs: Vec<HeaderCommand<'h>>,
-}
-
-#[derive(Serialize)]
-struct HeaderCommand<'h> {
-    name: Option<&'h str>,
-    argv: &'h [String],
-    env: &'h BTreeMap<String, String>,
-    /// The output files the helper reads back after it runs (FIX 7235).
-    declared_outputs: &'h [String],
-}
-
-/// One command result the helper reports.
-#[derive(Deserialize)]
-struct ResultFrame {
-    kind: String,
-    #[serde(default)]
-    index: Option<usize>,
-    #[serde(default)]
-    name: Option<String>,
-    status: Option<i32>,
-    signal: Option<i32>,
-    #[serde(default)]
-    missing: Option<String>,
-}
-
-#[derive(Deserialize)]
-struct InputsFrame {
-    before: String,
-    after: String,
-}
-
-/// Drives the helper over `reader` and `writer`: header and tree in, then
-/// its frames until the terminal one, the host's stop, or its end.
-fn drive(
-    mut reader: Box<dyn Read + Send>,
-    mut writer: Box<dyn Write + Send>,
-    alive: &mut dyn FnMut() -> bool,
-    invocation: &QueueCheckInvocation<'_>,
-    inputs: &QueueCheckInputs,
-    stop: &dyn Fn() -> bool,
-) -> oneiron::Result<QueueCheckExecution> {
-    let commit = invocation.target.commit();
-    let header = Header {
-        version: 1,
-        scratch: CHECK_SCRATCH,
-        commit,
-        commands: inputs
-            .commands
-            .iter()
-            .map(|command| HeaderCommand {
-                name: None,
-                argv: &command.argv,
-                env: &command.env_allowlist,
-                declared_outputs: &command.declared_outputs,
-            })
-            .collect(),
-        contract_outputs: inputs
-            .contract_outputs
-            .iter()
-            .map(|(name, command)| HeaderCommand {
-                name: Some(name.as_str()),
-                argv: &command.argv,
-                env: &command.env_allowlist,
-                declared_outputs: &command.declared_outputs,
-            })
-            .collect(),
-    };
-    let header = serde_json::to_vec(&header).map_err(io::Error::other)?;
-    if write_frame(writer.as_mut(), FRAME_HEADER, &header).is_err() {
-        return Ok(interrupted("the check helper closed before its header"));
-    }
-    let sent = match send_tree(writer.as_mut(), invocation.tree, commit)? {
-        Sent::Tree(digest) => digest,
-        Sent::Closed(error) => {
-            return Ok(interrupted(&format!(
-                "the check helper closed before the tree was in: {error}"
-            )));
-        }
-    };
-    let (frames, received) = mpsc::channel();
-    crate::engine_thread("merge-check-reader".into())
-        .spawn(move || {
-            loop {
-                match read_frame(reader.as_mut()) {
-                    Ok(Some(frame)) => {
-                        if frames.send(frame).is_err() {
-                            return;
-                        }
-                    }
-                    Ok(None) | Err(_) => return,
-                }
-            }
-        })
-        .expect("failed to spawn thread");
-    let mut collected = Collected::default();
-    let mut ended = false;
-    loop {
-        match received.recv_timeout(STOP_POLL) {
-            Ok((kind, payload)) => {
-                if kind == FRAME_DONE {
-                    break;
-                }
-                if let Err(detail) = collected.take(kind, payload) {
-                    return Ok(interrupted(&detail));
-                }
-            }
-            Err(mpsc::RecvTimeoutError::Timeout) => {
-                if stop() {
-                    return Ok(interrupted("the host stopped during the check"));
-                }
-                // An ended executor's frames already read drain first; one
-                // more quiet poll after its end holds the check.
-                if ended {
-                    return Ok(interrupted(
-                        "the check executor ended before its terminal frame",
-                    ));
-                }
-                ended = !alive();
-            }
-            Err(mpsc::RecvTimeoutError::Disconnected) => {
-                return Ok(interrupted(
-                    "the check helper ended before its terminal frame",
-                ));
-            }
-        }
-    }
-    // The helper's input stays open until its terminal frame is read.
-    drop(writer);
-    collected.finish(&sent, inputs)
-}
-
-/// The frames read so far.
-#[derive(Default)]
-struct Collected {
-    pending: Option<(ResultFrame, Option<Vec<u8>>)>,
-    commands: Vec<QueueCommandReceipt>,
-    contract_outputs: BTreeMap<String, QueueCommandReceipt>,
-    /// The contract command reported last, whose declared outputs follow;
-    /// `None` after a phase command.
-    last_contract: Option<String>,
-    missing: Option<String>,
-    inputs: Option<InputsFrame>,
-}
-
-impl Collected {
-    fn take(&mut self, kind: u8, payload: Vec<u8>) -> Result<(), String> {
-        match kind {
-            FRAME_RESULT => {
-                let result: ResultFrame = serde_json::from_slice(&payload)
-                    .map_err(|_| "the check helper sent an unreadable result".to_owned())?;
-                self.pending = Some((result, None));
-            }
-            FRAME_STDOUT => {
-                let Some((_, stdout)) = self.pending.as_mut() else {
-                    return Err("the check helper sent output out of order".to_owned());
-                };
-                if stdout.is_some() {
-                    return Err("the check helper sent output out of order".to_owned());
-                }
-                *stdout = Some(payload);
-            }
-            FRAME_STDERR => {
-                let Some((result, Some(stdout))) = self.pending.take() else {
-                    return Err("the check helper sent output out of order".to_owned());
-                };
-                self.push(result, stdout, payload)?;
-            }
-            FRAME_OUTPUT => self.output(&payload)?,
-            FRAME_INPUTS => {
-                self.inputs = Some(
-                    serde_json::from_slice(&payload)
-                        .map_err(|_| "the check helper sent unreadable digests".to_owned())?,
-                );
-            }
-            _ => return Err("the check helper sent an unknown frame".to_owned()),
-        }
-        Ok(())
-    }
-
-    /// One declared output file of the command reported last (FIX 7235).
-    fn output(&mut self, payload: &[u8]) -> Result<(), String> {
-        let malformed = || "the check helper sent an unreadable output".to_owned();
-        let (length, rest) = payload.split_at_checked(4).ok_or_else(malformed)?;
-        let length = u32::from_be_bytes(length.try_into().map_err(|_| malformed())?) as usize;
-        let (path, bytes) = rest.split_at_checked(length).ok_or_else(malformed)?;
-        let path = String::from_utf8(path.to_vec()).map_err(|_| malformed())?;
-        let receipt = match &self.last_contract {
-            Some(name) => self.contract_outputs.get_mut(name),
-            None => self.commands.last_mut(),
-        };
-        let Some(receipt) = receipt.filter(|_| self.pending.is_none()) else {
-            return Err("the check helper sent an output out of order".to_owned());
-        };
-        receipt.declared_outputs.insert(path, bytes.to_vec());
-        Ok(())
-    }
-
-    fn push(
-        &mut self,
-        result: ResultFrame,
-        stdout: Vec<u8>,
-        stderr: Vec<u8>,
-    ) -> Result<(), String> {
-        if let Some(missing) = &result.missing {
-            self.missing.get_or_insert_with(|| missing.clone());
-        }
-        let receipt = |argv: Vec<String>| QueueCommandReceipt {
-            argv,
-            status: result.status,
-            signal: result.signal,
-            stdout,
-            stderr,
-            declared_outputs: BTreeMap::new(),
-        };
-        match (result.kind.as_str(), result.index, &result.name) {
-            ("phase", Some(index), _) if index == self.commands.len() => {
-                self.commands.push(receipt(Vec::new()));
-                self.last_contract = None;
-            }
-            ("contract", _, Some(name)) => {
-                self.contract_outputs
-                    .insert(name.clone(), receipt(Vec::new()));
-                self.last_contract = Some(name.clone());
-            }
-            _ => return Err("the check helper sent a result out of order".to_owned()),
-        }
-        Ok(())
-    }
-
-    fn finish(self, sent: &str, inputs: &QueueCheckInputs) -> oneiron::Result<QueueCheckExecution> {
-        let Some(digests) = self.inputs else {
-            return Ok(interrupted("the check helper sent no input digests"));
-        };
-        if digests.before != sent {
-            return Ok(QueueCheckExecution::Held(QueueCheckHold::new(
-                QueueCheckHoldReason::UnstableInputs,
-                "the executor did not receive the pinned tree",
-            )));
-        }
-        if let Some(missing) = self.missing {
-            return Ok(QueueCheckExecution::Held(QueueCheckHold::new(
-                QueueCheckHoldReason::MissingOfflineInput,
-                missing,
-            )));
-        }
-        let mut commands = self.commands;
-        for (receipt, command) in commands.iter_mut().zip(&inputs.commands) {
-            receipt.argv.clone_from(&command.argv);
-        }
-        let mut contract_outputs = self.contract_outputs;
-        for (name, receipt) in &mut contract_outputs {
-            if let Some(command) = inputs.contract_outputs.get(name) {
-                receipt.argv.clone_from(&command.argv);
-            }
-        }
-        Ok(QueueCheckExecution::Completed(QueueCheckRun {
-            commands,
-            contract_outputs,
-            session: None,
-            input_before: digests.before,
-            input_after: digests.after,
-        }))
-    }
 }
 
 /// A check guest's relay: every off-session destination is denied

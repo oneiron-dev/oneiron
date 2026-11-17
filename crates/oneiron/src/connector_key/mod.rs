@@ -24,6 +24,7 @@ mod meter;
 pub mod qualification;
 mod qualification_kit;
 mod record;
+pub(crate) mod setting_keys;
 mod setup;
 mod slate;
 mod slate_draft;
@@ -73,6 +74,7 @@ pub use self::record::{
     EffectorBudgetOnExhaust, EffectorBudgetReservePolicy, EffectorBudgetWindow,
     PendingConnectorCharter, PendingConnectorManifest,
 };
+pub use self::setting_keys::openai_proxy_recall_limit;
 pub(crate) use self::setup::GrantAccess;
 pub use self::setup::{
     AuthorizationCodeGrant, BROWSER_SESSION_CHECK, GMAIL_PROFILE_CHECK, GOOGLE_TOKEN_CHECK,
@@ -93,6 +95,7 @@ pub(crate) use self::charter::{
 pub(crate) use self::credential_binding::{
     connector_issuer_hold_in_txn, connector_issuer_hold_reason_in_txn,
 };
+pub(crate) use self::lifecycle::PROXY_EXCHANGE_PREDICATE;
 pub(crate) use self::lifecycle::catalog_charter_in_txn;
 pub(crate) use self::meter::{
     BudgetBlock, EffectorBudgetChargeOutcome, SpendReserve, append_effector_steering_message,
@@ -108,7 +111,8 @@ pub(crate) use self::record::{
     normalize_connector_key,
 };
 pub(crate) use self::slate::{
-    erase_grant_slate_holder_narrows_in_txn, read_connector_slate_in_txn,
+    erase_grant_slate_holder_narrows_in_txn, land_archived_connector_slate_rows_in_txn,
+    read_connector_slate_in_txn,
 };
 pub(crate) use self::slate_holder::erase_holder_narrows_in_txn;
 pub(crate) use self::tool_effect::scoped_tool_effect_in_txn;
@@ -195,3 +199,6 @@ pub(crate) fn read_key_for_pack_in_txn(
 ) -> crate::Result<Option<ConnectorKeyRecord>> {
     txn::read_connector_key_in_txn(&vault.store, txn, id)
 }
+
+#[cfg(oneiron_test_support)]
+pub(crate) use self::txn::connector_index_key_pin_for_test;

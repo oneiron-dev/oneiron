@@ -30,8 +30,13 @@ pub use self::legal_hold::{
 pub use self::maintenance::{CompactionPacketError, MaintenanceError};
 pub use self::off_record::OffRecordError;
 pub use self::record::{
-    ErasedHoldTarget, HOLD_TARGET_ERASED_SUGGESTION, RecordError, RoomLiveSpeakersHold,
-    SEAL_STANDING_RECONCILE_TEXT,
+    ErasedHoldTarget, HOLD_TARGET_ERASED_SUGGESTION, OWNER_KEY_ACT_REASON_PREFIX,
+    OWNER_KEY_MEMBER_REASON_PREFIX, OWNER_KEY_MOVE_CONFIRM_STEP, OWNER_KEY_MOVE_CONFIRM_SUGGESTION,
+    OWNER_KEY_MOVE_CONFIRM_TEXT, OWNER_KEY_MOVE_DEVICE_CONFIRM_OWN_TEXT,
+    OWNER_KEY_MOVE_DEVICE_CONFIRM_TEXT, OWNER_KEY_MOVE_ENROL_STEP, OWNER_KEY_MOVE_ENROL_SUGGESTION,
+    OWNER_KEY_MOVE_ENROL_TEXT, OWNER_KEY_MOVE_NEXT_STEP, OWNER_KEY_MOVE_REFUSAL_TEXT,
+    OWNER_KEY_MOVE_SUGGESTION, OWNER_KEY_NEXT_STEP_REASON_PREFIX, OWNER_KEY_REQUIRED,
+    OwnerKeyMoveStep, RecordError, RoomLiveSpeakersHold, SEAL_STANDING_RECONCILE_TEXT,
 };
 pub use self::registry::RegistryError;
 pub use self::relay::RelayError;
@@ -90,6 +95,9 @@ pub enum ErrorKind {
     CheckpointPolicyRefused,
     /// The owner's checkpoint policy choice named a stale revision.
     CheckpointPolicyRevisionStale,
+    /// An owner choice door could not prove the act the owner's on this
+    /// install.
+    OwnerKeyRequired,
     /// The owner's world recipient choice keeps rows from this destination.
     WorldRecipientLimit,
     /// A world's placement or a result's producing rows cannot be verified.
@@ -334,6 +342,8 @@ pub enum ErrorKind {
     UnverifiedKitRestore,
     KitConfirmationStale,
     MicroVmBackendUnavailable,
+    /// The vault's sandbox switch names a vendor this host cannot serve (L8-43).
+    SandboxVendorUnavailable,
     MicroVmBackendError,
     /// A foreign guest's proposal spool append would cross the host's disk
     /// floor.
@@ -404,6 +414,8 @@ pub enum ErrorKind {
     InvalidConversationDag,
     InvalidScopeSummary,
     InvalidPairingScope,
+    /// A link named verbs for an app backend that no Grant row names.
+    AppBackendGrantRequired,
     OverlayLimit,
     CooperativeDeletionRequiresTerminalPact,
     InvalidCooperativeDeletionRequest,

@@ -2,6 +2,7 @@ use super::*;
 
 mod agent_definition_doors;
 mod ai_chat;
+mod ai_chat_self_compaction;
 mod depth_quality;
 mod memory_reason_repairs;
 use axum::body::{Body, to_bytes};
@@ -28,10 +29,12 @@ mod asset_forms;
 mod billing_usage;
 mod board_host_events;
 mod board_stream_publisher;
+mod chat_retrieval_turn;
 mod companion;
 mod context_board_history;
 mod context_board_standing;
 mod context_pack_disclosure;
+mod context_pack_phonetic_vector;
 mod context_pack_v4;
 mod contract_snapshots;
 mod conversation_dag;
@@ -42,6 +45,7 @@ mod credential_reads;
 mod device_local_reads;
 mod facet_read;
 mod feedback_inbox;
+mod mcp_body_budget;
 mod mcp_booking_publication;
 #[cfg(feature = "code-sandbox-wasmtime")]
 mod mcp_code_admission;
@@ -64,6 +68,7 @@ mod retrieval_bounds;
 mod retrieval_bounds_rows;
 mod retrieval_depth_quality;
 mod retrieval_shaping;
+mod room_structure_doors;
 mod run_gate;
 mod run_tree;
 mod search_deadline;
@@ -73,6 +78,7 @@ mod support_mcp_credentials;
 use support_mcp_credentials::*;
 mod surface_events;
 mod surface_routes;
+mod turn_action_retrieval_turn;
 mod vad_and_error_mapping;
 use support_contract::*;
 use support_mcp::*;
@@ -345,6 +351,46 @@ pub(super) fn seed_companion_profile_access(
         .vault
         .create_access_grant(&grant_id, &grant)
         .expect("seed companion profile grant");
+}
+
+/// Seeds a plain record whose exact words a psych-profile source cites, and
+/// returns the record-native source carrying them (FIX 11766): the row's live
+/// reference as its revision, its content hash as its words. A profile built
+/// from these sources passes the companion read's own source judgement, so it
+/// reads back instead of reading as withheld.
+pub(super) fn seed_profile_source_record(
+    server: &SyncServer,
+    id: oneiron::EntityId,
+) -> oneiron::psych_profile::PsychProfileSource {
+    server
+        .vault
+        .put_entity(
+            &id,
+            oneiron::registry::ENTITY_TYPE_PERSON,
+            oneiron::TimeRange { start: 1, end: 1 },
+            1,
+            b"profile source words",
+        )
+        .expect("seed profile source record");
+    let raw = server
+        .vault
+        .get_raw(&id)
+        .expect("read profile source row")
+        .expect("profile source row stored");
+    let body = &raw[oneiron_contracts::record_layout::ENTITY_METADATA_HEADER_LEN..];
+    let content = oneiron_store::consolidation_evidence::swarm_evidence_content_hash(body);
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(id.as_bytes());
+    hasher.update(&raw);
+    let mut revision = [0u8; 16];
+    revision.copy_from_slice(&hasher.finalize().as_bytes()[..16]);
+    oneiron::psych_profile::PsychProfileSource {
+        revision_ref: id,
+        document_ref: id,
+        world_ref: None,
+        document_revision: oneiron_store::revision_ref::RevisionRef(revision),
+        words: oneiron::psych_profile::PsychProfileSourceWords::Record { content },
+    }
 }
 
 pub(super) fn json_request(method: &str, uri: &str, body: Value) -> Request<Body> {
@@ -718,6 +764,7 @@ pub(super) fn witness_vad_message_fixture(
             occurred_at,
             assertions: Default::default(),
             thread_audience: None,
+            project: None,
         })
         .expect("witness fixture turn");
 }

@@ -91,6 +91,7 @@ fn witness_messages(
         conversation_ref: ROOM.into(),
         turn_ref: Some(turn_ref.to_owned()),
         thread_audience: None,
+        project: None,
         occurred_at,
         messages,
         assertions: Default::default(),
@@ -177,6 +178,7 @@ impl ExtractionEncoder for Names {
                 context_links: Vec::new(),
                 speaker_links: Vec::new(),
                 mood_parts: Vec::new(),
+                relations: None,
                 stack_sha16: self.stack.map(str::to_owned),
             }),
         }

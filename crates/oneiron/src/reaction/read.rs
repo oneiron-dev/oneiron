@@ -87,15 +87,18 @@ pub fn reaction_line(glyph: &str, count: usize, names: &[String]) -> String {
 
 /// One grouped line per glyph for the reactions `admit` lets through. A
 /// record carrying more claims than one read may walk yields no lines rather
-/// than failing the recall or pack that returned it. Each reactor a line
-/// names is added to `named`: the line's name is read from that row
-/// (FIX 1435).
+/// than failing the recall or pack that returned it. A line names only
+/// reactors `nameable` admits: another reactor counts in the line's total and
+/// falls into its `+N`, never named (Engine RULING REACTOR-NAME-WITHHELD = A,
+/// 17 Nov 00:0x; FIX REACTION-NAMES-UNGATED). Each reactor a line names is
+/// added to `named`: the line's name is read from that row (FIX 1435).
 pub(crate) fn grouped_lines_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     record: EntityId,
     named: &mut Vec<EntityId>,
     admit: impl FnMut(&StoredReaction) -> Result<bool>,
+    mut nameable: impl FnMut(EntityId) -> Result<bool>,
 ) -> Result<Vec<String>> {
     let fold = admission_in(vault, txn)?;
     let pills = match pills_in(
@@ -117,8 +120,16 @@ pub(crate) fn grouped_lines_in(
     pills
         .iter()
         .map(|pill| {
-            let shown = &pill.by[..pill.by.len().min(NAMED_REACTORS)];
-            named.extend_from_slice(shown);
+            let mut shown = Vec::with_capacity(NAMED_REACTORS);
+            for person in &pill.by {
+                if shown.len() == NAMED_REACTORS {
+                    break;
+                }
+                if nameable(*person)? {
+                    shown.push(*person);
+                }
+            }
+            named.extend_from_slice(&shown);
             let names = shown
                 .iter()
                 .map(|person| display_name_in(vault, txn, *person))
@@ -180,6 +191,27 @@ pub(crate) fn person_name_in(
     person: EntityId,
 ) -> Result<Option<String>> {
     Ok(body_map(vault, txn, person)?.and_then(|body| first_string(&body, &PERSON_NAME_KEYS)))
+}
+
+/// Every name a PERSON's stored body carries: its `display_name`, then its
+/// `name`, each when it is not blank, without repeats.
+pub(crate) fn person_body_names_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    person: EntityId,
+) -> Result<Vec<String>> {
+    let Some(body) = body_map(vault, txn, person)? else {
+        return Ok(Vec::new());
+    };
+    let mut names = Vec::new();
+    for key in PERSON_NAME_KEYS {
+        if let Some(name) = first_string(&body, &[key])
+            && !names.contains(&name)
+        {
+            names.push(name);
+        }
+    }
+    Ok(names)
 }
 
 fn display_name_in(vault: &Vault, txn: &heed::RoTxn<'_>, person: EntityId) -> Result<String> {

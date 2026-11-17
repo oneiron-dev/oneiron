@@ -10,12 +10,20 @@ use crate::booking::{
 use crate::calendar::outcome::{EventOutcome, read_event_outcome};
 use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus};
 use crate::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_PERSON};
-use crate::test_util::{entity as id, open_test_vault_with};
+use crate::test_util::open_test_vault_with;
 use crate::{DreamerRunnerStore, VaultConfig};
 
 const NOW: u64 = 1_772_409_600;
 const OWNER: u8 = 0x51;
 const PAGE: u8 = 0x52;
+
+fn id(byte: u8) -> crate::EntityId {
+    if byte == OWNER {
+        // The fixture owner is the embedded owner, so the bound owner passes the live owner census.
+        return crate::vault::embedded_owner_actor_id().expect("owner");
+    }
+    crate::test_util::entity(byte)
+}
 
 fn request() -> EmergencyRescheduleRequest {
     let window = TimeRange {
@@ -95,6 +103,7 @@ impl SlotOracle for Offered {
                 rank: 1.0,
             }],
             flex_used: false,
+            full_days: Vec::new(),
             host_bindings: vec![crate::booking::SlotHostBinding {
                 start_utc: self.0.start,
                 end_utc: self.0.end,
@@ -155,6 +164,7 @@ fn page(vault: &Vault, page_seed: u8, host_seed: u8) {
             }],
             preferred_hours: Vec::new(),
         }],
+        flex_with_ordinary: false,
         flex_windows: Vec::new(),
     };
     let body = ClaimBody::new(
@@ -216,6 +226,7 @@ fn book_as(vault: &Vault, page_seed: u8, start: u64, host: u8) -> ConfirmReceipt
             constraint: None,
             lease: HoldLeaseSpec::Ordinary,
             idempotency_key: None,
+            cap_override: None,
         }),
         slot,
     );

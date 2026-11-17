@@ -787,8 +787,6 @@ async fn a_shared_vaults_member_saves_and_its_viewer_does_not() {
     let (dir, server) = auth_test_server();
     let owner_id = server.vault().ensure_embedded_owner_actor().unwrap();
     let (gil, ana) = (person(&server, "Gil"), person(&server, "Ana"));
-    // One authority key binds one actor: the Member writes, so it is bound.
-    crate::test_credentials::bind_actor(server.vault(), "secret", ana, "human");
     let room = conversation(&server, owner_id, &[owner_id, gil, ana]);
     let proof = server
         .vault()
@@ -813,9 +811,13 @@ async fn a_shared_vaults_member_saves_and_its_viewer_does_not() {
         .initialize_shared_vault(&proof, 42, None, &members, 10)
         .unwrap();
     // Both invitees accept, so the Viewer's refusal below rests on its role.
+    // The accepts run while the key still binds the inviter: each acceptance
+    // spends the inviter's AddMember power under that binding.
     for invitee in [gil, ana] {
         accept_founding_invitation(server.vault(), invitee, 42);
     }
+    // One authority key binds one actor: the Member writes, so it is bound.
+    crate::test_credentials::bind_actor(server.vault(), "secret", ana, "human");
     let (viewer, member) = (slip("gil", gil, "human"), slip("ana", ana, "human"));
 
     start(&server, member.clone(), room, "attic").await;
@@ -1379,6 +1381,7 @@ async fn a_rostered_viewer_learns_nothing_from_another_rooms_message_ids() {
             occurred_at: 50,
             assertions: Default::default(),
             thread_audience: None,
+            project: None,
         })
         .unwrap();
     for (id, reason) in [
@@ -1423,6 +1426,7 @@ async fn a_rostered_viewer_learns_nothing_from_another_rooms_message_ids() {
                     occurred_at: 90,
                     assertions: Default::default(),
                     thread_audience: None,
+                    project: None,
                 },
                 None,
                 None,

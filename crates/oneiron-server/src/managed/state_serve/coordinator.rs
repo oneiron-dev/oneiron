@@ -135,7 +135,7 @@ async fn serve_with_handles(
     // process attests the owner on each route: a request with no credential
     // is anonymous. The Linear mirror checks this declaration, not a secret.
     server_config.ingress = crate::config::IngressAuth::Supervisor;
-    server_config.hosted_private_origins = managed.hosted_private_origins.clone();
+    managed.carry_hosted_egress(&mut server_config);
     // The host root signs with this vault's own independent issuer seed,
     // kept in this install's keystore slot under the supervisor's key
     // directory (FIX-LIST 3018): never the delivered DEK, which escrow
@@ -315,6 +315,9 @@ async fn serve_with_handles(
     crate::managed_owner_check::ServerManagedOwnerCheck::install(&sync_server);
     // Served sends reach this host's provider APIs and mail server (FIX 4435).
     crate::builtin_host::install_served_transports(&sync_server, config.models.as_ref());
+    // Bulk campaign email names this host's one-click unsubscribe links
+    // (ARCH-0059 #opt-out), as plain serve installs them.
+    crate::api::install_one_click_unsubscribe_origin(&sync_server);
     // Queued Continue and Retry are taken up from here, on this server (FIX 6920).
     ai.bind_turn_actions(&sync_server);
     // An answered code consent wait's effect runs on this server, as plain
@@ -348,6 +351,9 @@ async fn serve_with_handles(
         managed.hypnos_socket.clone(),
         &credentials,
     )?);
+    // The recovery box's kit-only hold rides the ledger's socket and spawn
+    // identity; the recovery preset switch is its only caller.
+    sync_server.configure_recovery_box_hold(ledger.recovery_box_hold())?;
     // The native preview socket has only exact held-lease origins. No flag
     // means no registration caller or listener, preserving standalone hosts.
     let previews = managed
@@ -411,7 +417,8 @@ async fn serve_with_handles(
     );
     // Fact hooks (ARCH-0080) and the settled verb-ask drain on their runner,
     // unless `--no-hooks`: each pass admitted like a served write. The sandbox
-    // loads before ready, as plain serve loads it, so no verb waits on it.
+    // loads before ready, so no verb waits on it; plain serve builds it off
+    // its gated startup instead (FIX 25667).
     let (hooks_stop, hooks_stopped) = watch::channel(false);
     #[cfg(feature = "code-sandbox-wasmtime")]
     let fact_hooks = if config.hooks {
@@ -776,6 +783,10 @@ async fn serve_with_handles(
     // `quiescent: true` is a claim about a gate that nothing reaches. Each
     // socket upgraded on it or the mesh sees the shutdown, and is waited
     // for with the calls it admitted before any worker stops (FIX 4757).
+    // The event-loop watchdog (L8-11): a hung or recovering vault takes no
+    // new work, and `Ping` tells the supervisor. It runs until serve returns.
+    let _process_watchdog = sync_server
+        .start_process_watchdog(crate::process_readiness::ProcessHealthSettings::managed());
     let (app, upgrades) = crate::embedded::upgrade_lifetime(
         build_managed_app(Arc::clone(&sync_server), Arc::clone(&state)).layer(cors),
         shutdown.0.subscribe(),

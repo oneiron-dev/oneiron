@@ -60,7 +60,7 @@ pub use history::TaggingTraceRecord;
 pub use marker::{
     DEFAULT_LIVE_WINDOW_TOKENS, DEFAULT_TRACE_MAX_AGE_SECS, DEFAULT_TRACES_PER_TURN,
     MAX_LIVE_WINDOW_TOKENS, MAX_TRACES_PER_TURN, TAGGING_MARKER_KIND, TaggingMarkerConfig,
-    TaggingMode, TaggingTraceHistory, label_kind_admitted,
+    TaggingMode, TaggingTraceHistory, label_kind_admitted, relation_row_refusal,
 };
 pub use output::OutputRefusal;
 pub use provisional::ProvisionalEntity;
@@ -69,31 +69,34 @@ pub use reconciler::{
 };
 pub use tags::{
     DerivationEnvelope, MentionHit, MentionLink, MentionReference, MergeEvidence, TaggedMention,
-    TurnTags,
+    TaggedRelation, TurnTags,
 };
 pub use trace::{HandBackReason, SkipReason, TaggingFailure, TaggingOutcome, TaggingTrace};
 pub use vector::LINKER_VECTOR_MARGIN;
 pub use verbs::{
     DerivationEnvelopeView, MentionLinkView, MentionReferenceView, MergeEvidenceView,
-    TaggedMentionView, TaggingFailureView, TaggingHistoryView, TaggingMarkerState,
-    TaggingMarkerView, TaggingMentionHitView, TaggingMentionsRequest, TaggingMentionsView,
-    TaggingOutcomeView, TaggingSpeakerTarget, TaggingStatusView, TaggingTagsView, TaggingTraceView,
-    TaggingTurnRequest, TaggingVadView, TurnTagsView,
+    TaggedMentionView, TaggedRelationView, TaggingFailureView, TaggingHistoryView,
+    TaggingMarkerState, TaggingMarkerView, TaggingMentionHitView, TaggingMentionsRequest,
+    TaggingMentionsView, TaggingOutcomeView, TaggingSpeakerTarget, TaggingStatusView,
+    TaggingTagsView, TaggingTraceView, TaggingTurnRequest, TaggingVadView, TurnTagsView,
 };
 pub(crate) use verbs::{envelope_view, mention_view};
 
+pub(crate) use freshness::tagging_freshness_in_txn;
 pub(crate) use held::{settle_held_tags_in_txn, settle_held_tags_scoped_in_txn};
 pub(crate) use input::{shown_message_text, turn_members_in_txn, turn_messages_in_txn, turn_role};
 pub(crate) use marker::text_entity_type_in_txn;
 pub(crate) use marker::{mark_on_publication_in_txn, mark_turn_in_txn, same_marker_identity};
-pub(crate) use output::{check_links, check_mood_parts, check_span_order};
+pub(crate) use output::{check_links, check_mood_parts, check_relations, check_span_order};
 pub(crate) use owed::{forget_tag_pass_in_txn, owe_tag_pass_in_txn, tag_pass_owed_in_txn};
 pub(crate) use provisional::{
-    confirm_in_txn as confirm_provisional_in_txn, mint_for_span_in_txn, provisional_in_txn,
-    refuse_held_id_in_txn, release_held_id_in_txn, resolve_in_txn as resolve_provisional_in_txn,
+    confirm_in_txn as confirm_provisional_in_txn, mint_for_span_in_txn,
+    naming_rows_audience_in_txn, provisional_in_txn, refuse_held_id_in_txn, release_held_id_in_txn,
+    resolve_in_txn as resolve_provisional_in_txn,
 };
 #[cfg(feature = "sync")]
 pub(crate) use provisional::{demote_in_txn as demote_tags_in_txn, demotion_kept_origins_in_txn};
+pub(crate) use role::possessor_in_txn;
 pub(crate) use save::{
     role_hits_in_txn, save_shadow_output_in_txn, shares_world_in_txn, sounds_like_in_txn,
 };

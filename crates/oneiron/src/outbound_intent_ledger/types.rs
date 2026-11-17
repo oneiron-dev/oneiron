@@ -29,6 +29,12 @@ pub enum IntentLedgerError {
     Engine(#[from] Error),
     #[error("invalid outbound intent input: {0}")]
     InvalidInput(&'static str),
+    /// The calendar invite admission's own verdict on a `calendar.invite`
+    /// send: a hygiene refusal keeps the law that refused it, so the facade
+    /// answers it as a bad request naming that law, and a store failure as
+    /// an internal one (FIX CALENDAR-COLD-INVITE-INVALID-STATE).
+    #[error("calendar invite admission: {0}")]
+    Calendar(crate::calendar::CalendarError),
     #[error("the verified outbound actor is no longer valid")]
     InvalidBoundActor,
     #[error("the durable step failure is not eligible for an effect")]
@@ -39,6 +45,15 @@ pub enum IntentLedgerError {
     InvalidRecord(&'static str),
     #[error("invalid outbound intent transition: {from:?} -> {to:?}")]
     InvalidTransition { from: IntentState, to: IntentState },
+}
+
+impl From<oneiron_contracts::lifecycle::IllegalTransition<IntentState>> for IntentLedgerError {
+    fn from(illegal: oneiron_contracts::lifecycle::IllegalTransition<IntentState>) -> Self {
+        Self::InvalidTransition {
+            from: illegal.from,
+            to: illegal.to,
+        }
+    }
 }
 
 /// Durable state of one effectful outbound intent.
@@ -52,38 +67,29 @@ pub enum IntentState {
     Deferred,
 }
 
-impl IntentState {
-    /// Stable on-disk state spelling.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Pending => "pending",
-            Self::Done => "done",
-            Self::Abandoned => "abandoned",
-            Self::Deferred => "deferred",
-        }
+impl oneiron_contracts::lifecycle::Lifecycle for IntentState {
+    type Kind = Self;
+
+    fn kind(&self) -> Self::Kind {
+        *self
     }
 
-    pub(super) fn parse(value: &str) -> Option<Self> {
-        match value {
-            "pending" => Some(Self::Pending),
-            "done" => Some(Self::Done),
-            "abandoned" => Some(Self::Abandoned),
-            "deferred" => Some(Self::Deferred),
-            _ => None,
+    fn next_kinds(kind: Self::Kind) -> &'static [Self::Kind] {
+        match kind {
+            Self::Pending => &[Self::Done, Self::Abandoned, Self::Deferred],
+            Self::Deferred => &[Self::Done, Self::Abandoned],
+            Self::Done | Self::Abandoned => &[],
         }
     }
+}
 
-    pub(super) const fn may_transition_to(self, next: Self) -> bool {
-        matches!(
-            (self, next),
-            (Self::Pending, Self::Done)
-                | (Self::Pending, Self::Abandoned)
-                | (Self::Pending, Self::Deferred)
-                | (Self::Deferred, Self::Done)
-                | (Self::Deferred, Self::Abandoned)
-        )
-    }
+impl oneiron_contracts::lifecycle::LifecycleWords for IntentState {
+    const WORDS: &'static [(Self::Kind, &'static str)] = &[
+        (Self::Pending, "pending"),
+        (Self::Done, "done"),
+        (Self::Abandoned, "abandoned"),
+        (Self::Deferred, "deferred"),
+    ];
 }
 
 /// MCP-style tool annotation hints consumed by the fail-closed classifier.

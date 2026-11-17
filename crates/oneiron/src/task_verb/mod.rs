@@ -7,7 +7,9 @@ mod ask_band;
 mod ask_effect;
 mod ask_facade;
 mod ask_forward;
+mod ask_guard;
 mod ask_guest;
+pub(crate) mod ask_intent;
 mod ask_limits;
 mod ask_option_link;
 mod ask_policy;
@@ -113,6 +115,7 @@ pub mod run_doors;
 pub(crate) mod run_rows;
 mod runner_done;
 mod scheduling;
+pub(crate) mod setting_keys;
 pub(crate) mod settlement_anchor;
 mod subproject;
 mod symbol_lease;
@@ -188,9 +191,9 @@ pub(crate) use room_thread::{
     task_roster_in as room_thread_task_roster_in, thread_tasks as room_thread_tasks,
 };
 pub use route_receipts::{
-    DEFAULT_TASK_CANCEL_MODE, TaskCancelMode, TaskCancelReceipt, TaskCancelTarget,
-    TaskCreateReceipt, TaskDescription, TaskResultInput, TaskRouteLane, TaskRouteOutcome,
-    TaskStartedReceipt, TaskUpdateReceipt,
+    DEFAULT_TASK_CANCEL_MODE, TaskCancelReceipt, TaskCancelTarget, TaskCreateReceipt,
+    TaskDescription, TaskResultInput, TaskRouteLane, TaskRouteOutcome, TaskStartedReceipt,
+    TaskUpdateReceipt,
 };
 pub use terminal_state::{
     ConsultResultPresence, ConsultResultSummary, TaskExecutionState, TaskTerminalDisposition,
@@ -408,10 +411,30 @@ pub(crate) use scheduling::{acquire_task_symbols, task_dispatch_ready, terminal_
 #[cfg(test)]
 mod symbol_lease_tests;
 
+#[cfg(oneiron_test_support)]
+pub(crate) use ask_record::ask_group_route;
+#[cfg(oneiron_test_support)]
+pub(crate) use code_consent_word::{
+    intent_key as code_consent_intent_key, intent_wait as code_consent_intent_wait,
+};
+#[cfg(oneiron_test_support)]
+pub(crate) use comm_widen::{
+    intent_key as comm_widen_intent_key, intent_parts as comm_widen_intent_parts,
+};
+#[cfg(oneiron_test_support)]
+pub(crate) use consult_ladder_facade::{
+    case_ask_anchor as consult_case_ask_anchor, case_intent as consult_case_intent,
+};
+#[cfg(oneiron_test_support)]
+pub(crate) use contribution_pair::{pair_handle, pair_intent_key};
 pub(crate) use fanout_launch::follow_fanout_hold_override_in_txn;
 #[cfg(oneiron_test_support)]
 pub(crate) use fanout_launch::launch_override_actors_in_txn;
 pub use fanout_launch::{FanoutCheckChoice, FanoutLaunchReceipt};
+#[cfg(oneiron_test_support)]
+pub(crate) use training_offer_ask::intent_key as training_offer_intent_key;
+#[cfg(oneiron_test_support)]
+pub(crate) use training_swap_ask::intent_key as training_swap_intent_key;
 pub use wave_port::{VaultWaveTaskPort, WaveDispatchGeneration, WaveDispatchPage};
 
 pub use linear_store::VaultLinearTaskStore;
@@ -565,3 +588,9 @@ pub struct TaskUpdateRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub attempt: Option<crate::task_verb::AttemptHandle>,
 }
+
+#[cfg(oneiron_test_support)]
+pub(crate) use self::{
+    ask_band::{band_key_pin_for_test, marker_key_pin_for_test},
+    follow_up::task_follow_up_key_pin_for_test,
+};

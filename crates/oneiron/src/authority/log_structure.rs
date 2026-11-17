@@ -428,15 +428,16 @@ impl<'a> StructureBuilder<'a> {
     /// Takes a machine revision's install key when a slip issuer or an
     /// owner anchor signed it, as a stranger's when that anchor is not this
     /// install's own, or files it under its signer. An owner answer is
-    /// taken when its carrier's install key signed it alone, as its
-    /// carrier's key stands: own, or a stranger's (mesh PR1b).
+    /// taken when its carrier's install key signed it, alone or beside one
+    /// owner key's proof that the fold judges (row CARRIER-OWNER-PROOF), as
+    /// its carrier's key stands: own, or a stranger's (mesh PR1b).
     fn file_profile(&mut self, entry: &'a AuthorityLogEntry) {
         let AuthorityOp::MachineProfile(profile) = &entry.op else {
             return;
         };
         let signer = entry.signer_key();
         let (own, stranger) = match profile.carrier {
-            Some(_) if !entry.cosigns.is_empty() => return,
+            Some(_) if entry.cosigns.len() > 1 => return,
             Some(carrier) => {
                 let key = (carrier, signer.clone());
                 (
@@ -542,9 +543,11 @@ impl AuthorityStructure {
                 None => self.is_anchor(entry.signer_key()) && entry.cosigns.is_empty(),
             },
             AuthorityOp::OwnerRoot(_) => self_signed_root(entry).is_some(),
-            // An owner answer: its carrier's install key, alone (mesh PR1b).
+            // An owner answer: its carrier's install key, alone or beside one
+            // owner key's proof, which the fold judges (mesh PR1b, row
+            // CARRIER-OWNER-PROOF).
             AuthorityOp::MachineProfile(profile) if profile.carrier.is_some() => {
-                entry.cosigns.is_empty() && profile.carrier.is_some_and(install_key)
+                entry.cosigns.len() <= 1 && profile.carrier.is_some_and(install_key)
             }
             AuthorityOp::MachineProfile(_)
                 if self.is_anchor(entry.signer_key()) && entry.cosigns.is_empty() =>
@@ -642,8 +645,31 @@ impl AuthorityStructure {
             if self.anchors.contains(anchor) || self.own_anchors.contains(anchor))
     }
 
-    fn is_own_anchor(&self, key: &AuthorityKey) -> bool {
+    pub(super) fn is_own_anchor(&self, key: &AuthorityKey) -> bool {
         matches!(key, AuthorityKey::Ed25519(anchor) if self.own_anchors.contains(anchor))
+    }
+
+    /// Whether this install believes `entry` (design pass 29: "a chain is
+    /// read only by a reader that believes its admitter"): a key may vouch
+    /// for it, it vouches as no stranger's, and no anchor this install only
+    /// awaits signed it. The roster's rows and the rows of this install's own
+    /// anchors (the pin's and the earlier admitter's) are believed. A foreign
+    /// anchor's rows, an awaited root's own rows, the rows of install keys
+    /// only such marks name, a removed machine's frontier joins (every row
+    /// [`Self::is_stranger`] reads as a stranger's), and rows no key vouches
+    /// for are not: the fold
+    /// trusts an anchor's chains only under the pin (`FoldedMachine::trusted`),
+    /// and awaiting widens only what the gate stores.
+    pub(super) fn believes(&self, entry: &AuthorityLogEntry) -> bool {
+        self.vouches_for(entry)
+            && !self.is_stranger(entry)
+            && (signed_by(entry, &self.admitters) || !self.is_awaited_only(entry.signer_key()))
+    }
+
+    /// An anchor of a root this install awaits and does not take as its own.
+    fn is_awaited_only(&self, key: &AuthorityKey) -> bool {
+        matches!(key, AuthorityKey::Ed25519(anchor)
+            if self.awaited_anchors.contains(anchor) && !self.own_anchors.contains(anchor))
     }
 
     /// Whether `key` signs rows the fold may come to admit: an admitter, an

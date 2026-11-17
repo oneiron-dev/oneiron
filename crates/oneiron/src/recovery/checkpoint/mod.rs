@@ -82,7 +82,9 @@ pub use pad_custody::PadRestoreNote;
 pub use pad_objects::PadObjectNote;
 pub use pad_reopen::{PadReopenFault, PadReopenReport, PadReopenStage};
 #[cfg(oneiron_test_support)]
-pub(crate) use payload::side_table_registry_gaps;
+pub(crate) use payload::{
+    getter_bytes_for_owner, getter_capture, getter_restore_in_txn, side_table_registry_gaps,
+};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 #[cfg(unix)]
@@ -90,8 +92,8 @@ use std::time::{Duration, Instant};
 pub use tiers::{StorageTier, storage_tier};
 pub use watermark::{
     BACKUP_WATERMARK_MARKER_SUFFIX, BackupArtifactEvidence, BackupMarker, BackupSelection,
-    BackupSnapshotReceipt, BackupWatermark, backup_marker, backup_marker_with_pins, inspect_backup,
-    last_backed_up, verify_with_pins,
+    BackupSnapshotReceipt, BackupWatermark, HeldVerdict, backup_marker, backup_marker_with_pins,
+    inspect_backup, last_backed_up, verify_with_pins,
 };
 pub use write_budget::{AtWriteFloor, RecoveryWriteBudget};
 type CanonicalRows = Vec<(Vec<u8>, Vec<u8>)>;

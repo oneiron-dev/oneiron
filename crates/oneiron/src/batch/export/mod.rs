@@ -13,17 +13,28 @@ pub(crate) mod agent_knowledge_selection;
 mod archive_index;
 mod archive_project;
 mod archive_read;
+/// Inert copies of source side-table rows carried by whole-vault archives.
+pub(crate) mod archive_retained_side_rows;
+/// The archive disposition of each decided canonical side table.
+pub(crate) mod archive_side_dispositions;
+/// Owner-permitted landing groups for retained archive rows.
+pub(crate) mod archive_side_install;
 mod archive_side_tables;
 mod archive_spool;
 pub(crate) use archive_project::project_stored_archive;
 pub(crate) use archive_read::{
     ArchiveFileSource, ArchiveFiles, checked_archive_manifest, read_vault_archive_indexed,
 };
+pub use archive_retained_side_rows::ArchiveRetainedSideRow;
+#[cfg(oneiron_test_support)]
+pub(crate) use archive_side_tables::archive_side_family_table_names;
 pub use archive_side_tables::{
     ArchiveLfsObject, ArchiveSideFamily, ArchiveSideKeyPart, ArchiveSideRow, ArchiveSideTree,
     ArchiveSideValue, ArchiveSideWithheld, ArchiveSideWithheldReason,
 };
 pub(crate) use archive_side_tables::{LentSideTable, SideRowBytes, archive_side_rows_in_txn};
+/// The canonical table holding inert archive source rows.
+pub(crate) mod tables;
 pub(crate) use archive_spool::{FileSpool, RecordSpool};
 pub use archive_types::*;
 use oneiron_store::batch::export::archive_types;
@@ -75,6 +86,7 @@ mod document_import;
 pub(crate) use document_import::{
     OwnerArchiveRestorePermit, owner_restore_group_head_in_txn, owner_restore_groups_in_txn,
     owner_restore_members_in_txn, owner_restore_opened_claim_in_txn, owner_restore_receipt_in_txn,
+    record_deferred_hook_grant_in_txn, take_deferred_hook_grants_in_txn,
 };
 mod document_snapshot;
 mod document_types;

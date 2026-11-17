@@ -179,6 +179,7 @@ pub(super) fn apply_conversation_training_vault(
         machine: set.machine,
         choice: Some(&choice),
         context: CONVERSATION_TRAINING_VAULT_REVISION_CONTEXT,
+        persons_own_narrowing: false,
     };
     let landing = owner_choice_landing(
         state,
@@ -372,7 +373,7 @@ impl Vault {
             current.0,
         );
         let now = self.instant_in_txn(txn)?.secs();
-        let entry = sign_side_entry(
+        let entry = sign_side_entry_with_owner_proof(
             &fold,
             &key,
             seq,
@@ -384,6 +385,7 @@ impl Vault {
                 allow_opt_out,
             }),
             now,
+            self.owner_proof_signer(&fold).as_deref(),
         )?;
         let entry_hash = authority_entry_hash(&entry)?;
         let at = TimeRange {
@@ -392,6 +394,7 @@ impl Vault {
         };
         self.put_authority_log_entries_in_txn(txn, &[(entry, at, now)])?;
         let after = self.authority_view_readonly_in_txn(txn)?;
+        after.refuse_waiting_choice(&entry_hash)?;
         if !after
             .conversation_training_vault
             .choices
@@ -402,6 +405,21 @@ impl Vault {
             return Err(authority_refused(NOT_COUNTED));
         }
         let view = self.setting_view_in_txn(txn, &after)?;
+        // In a shared vault the choice is an admin act: every live Owner,
+        // Admin and Deputy hears of it (UNBUILT06-SHAPE Q3 = A).
+        if let Some(creation) = self.shared_vault_creation_in_txn(txn)? {
+            let recorded = crate::ports::recorded_at_in_txn(&self.store, txn)?;
+            self.record_admin_act_in_txn(
+                txn,
+                creation.vault_id,
+                person,
+                crate::federation::SharedVaultChange::ConversationLearningChanged {
+                    on,
+                    allow_opt_out,
+                },
+                recorded,
+            )?;
+        }
         Ok((entry_hash, view, now))
     }
 

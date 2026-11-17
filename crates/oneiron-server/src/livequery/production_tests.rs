@@ -160,6 +160,7 @@ pub(super) fn witness(server: &SyncServer, text: &str) -> WitnessReceipt {
             occurred_at: AT,
             assertions: Default::default(),
             thread_audience: None,
+            project: None,
         })
         .unwrap()
 }
@@ -251,6 +252,11 @@ async fn verified_actor_classes_are_mapped_exactly_and_missing_class_is_forbidde
             "Reconnect with a differently scoped slip to act as another actor.",
         ])
     );
+    // A socket's subscriptions, membership and projection refuse the same
+    // slip with the facade's own words (T0I-ACTOR-CLASS-SUGGESTION-TWO-TEXTS).
+    let socket_refusal = error_body(bound_actor_class(&auth).unwrap_err());
+    assert_eq!(socket_refusal["message"], reply["error"]["message"]);
+    assert_eq!(socket_refusal["suggestions"], reply["error"]["suggestions"]);
     let payload_actor = rpc(
         &server,
         &auth,
@@ -267,6 +273,9 @@ async fn verified_actor_classes_are_mapped_exactly_and_missing_class_is_forbidde
         reply["error"]["message"],
         "facade routes bind writes to an authenticated principal"
     );
+    let socket_refusal = error_body(bound_reader(&owner).unwrap_err());
+    assert_eq!(socket_refusal["message"], reply["error"]["message"]);
+    assert_eq!(socket_refusal["suggestions"], reply["error"]["suggestions"]);
     let (issuer, _) =
         crate::test_credentials::rooting_host_issuer(server.vault(), SECRET.as_bytes());
     let template = server.vault().ensure_host_root_slip(&issuer).unwrap();
@@ -710,6 +719,31 @@ async fn receipt_limit_is_applied_after_actor_scoping() {
             b"fixture actor",
         )
         .unwrap();
+    // The writer reads the record its claim names (FIX 1218): `other` holds
+    // no read permit (the fixture installs one for ACTOR only), so its
+    // upsert below would deny with gate.deny.unresolved_record_reference.
+    // A second `install_read_permit_for_test` is refused once the default
+    // policy changed, so the grant folds beside it as its own owner-authored
+    // test manifest, as `put_actor_read_grant` does.
+    let mut read = oneiron::federation::Scope::top();
+    read.verbs = oneiron::federation::ScopeAxis::Some(["read".to_owned()].into());
+    let owner = server.vault().ensure_embedded_owner_actor().unwrap();
+    oneiron::conversation_dag::test_support::put_test_policy_manifest(
+        server.vault(),
+        WriteActor::new(owner, EdgeActorClass::Human),
+        EntityId::from_hex("77777777777777777777777777777777").unwrap(),
+        &json!({
+            "schema_version": "1.2", "pack_id": "test-read-grant", "pack_version": "1",
+            "min_engine_version": "0.0.0", "defaults": {}, "rules": [], "actor_ceilings": [],
+            "scoped_grants": [json!({
+                "actor_ref": other.to_hex(),
+                "effector": "core:read",
+                "scope": serde_json::to_value(read).unwrap(),
+                "receipt_required": false,
+            })],
+        }),
+    )
+    .unwrap();
     server
         .vault()
         .memory(other, EdgeActorClass::Human)
@@ -1884,7 +1918,7 @@ fn owner_feed_fixture() -> (
         oneiron::registry::TypeByteFamily::Productivity,
     )
     .unwrap();
-    let actor = EntityId::from_hex(ACTOR).unwrap();
+    let actor = server.vault().ensure_embedded_owner_actor().unwrap();
     let anchor = EntityId::now();
     let body = oneiron::ClaimBody::new(
         "profile.name",
@@ -1905,7 +1939,10 @@ fn owner_feed_fixture() -> (
         )
         .unwrap();
     crate::test_credentials::bind_owner(server.vault(), SECRET, actor);
-    let owner_recipe = format!("principal_ref={ACTOR};actor_class=human;jti=watch-owner");
+    let owner_recipe = format!(
+        "principal_ref={};actor_class=human;jti=watch-owner",
+        actor.to_hex()
+    );
     let owner = crate::test_credentials::authenticate(&server, &owner_recipe);
     assert!(owner.is_owner_grade());
     (_dir, server, actor, anchor, owner)
@@ -2245,6 +2282,7 @@ async fn erasing_a_folded_message_refreshes_the_live_recall_of_its_turn() {
                 occurred_at: AT,
                 assertions: Default::default(),
                 thread_audience: None,
+                project: None,
             })
             .unwrap();
         let id_of = |short_id: &str| {

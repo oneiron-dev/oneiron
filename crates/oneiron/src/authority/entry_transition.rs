@@ -17,8 +17,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use super::*;
 
 pub(super) use super::entry_transition_predicates::{
-    active_participant_keys, entry_is_retired, has_authority_consent, lands_restriction_only,
-    op_is_retired_device_op,
+    active_participant_keys, changes_roster, entry_is_retired, floor_refuses,
+    has_authority_consent, lands_restriction_only, op_is_retired_device_op,
 };
 
 #[expect(clippy::large_enum_variant, reason = "transient per-entry fold value")]
@@ -34,6 +34,33 @@ thread_local! {
     /// watches (Some).
     pub(super) static TRANSITIONED_FOR_TEST: std::cell::RefCell<Option<Vec<AuthorityEntryHash>>> =
         const { std::cell::RefCell::new(None) };
+}
+
+/// Whether `entry` sits below its sequence floor in `context`: the highest
+/// sequence among its signer's rows in its scope that do not descend from it
+/// (`rows_floor`).
+pub(super) fn below_its_floor(
+    entry: &AuthorityLogEntry,
+    hash: AuthorityEntryHash,
+    context: FoldContext<'_>,
+) -> bool {
+    context
+        .sequence_floors
+        .and_then(|floors| floors.get(&hash))
+        .is_some_and(|floor| entry.seq < *floor)
+}
+
+/// Whether a counted `entry` shows its signer forked its sequence: it sits
+/// below its floor (`below_its_floor`) and grants, so it is no roster row,
+/// restriction or row that only takes away (`floor_refuses`). It counts in
+/// full; the fold records the fork as `AuthorityFoldIssue::SequenceFork`
+/// (Engine RULING SEQ-FLOOR-SHAPE-S = B, 16 Nov 02:37).
+pub(super) fn forks_its_sequence(
+    entry: &AuthorityLogEntry,
+    hash: AuthorityEntryHash,
+    context: FoldContext<'_>,
+) -> bool {
+    floor_refuses(&entry.op) && below_its_floor(entry, hash, context)
 }
 
 pub(super) fn fold_entry_state(
@@ -58,26 +85,30 @@ pub(super) fn fold_entry_state(
         return EntryFold::Invalid(AuthorityFoldIssue::InvalidEntry(hash));
     }
 
-    // A strictly older observed sequence is rollback. Equal-sequence siblings
-    // have separate hashes and fold under their own ancestry, not a fork alarm.
-    // A restriction still lands (Astra #1430): a machine revision and a world
-    // edit keep their restrictive effect when a later row of their signer
-    // arrived first, as restriction only. A machine removal so stays terminal
-    // on every replica and in the log, where a later edit finds it among its
-    // parents (Sol P2 round 3, F3), but acknowledges nothing here (Astra
-    // #1430b). A row a handoff or a removal vouches for is never refused, and
-    // still lands restriction only, as does every row the fold with no vouch
-    // holds back or only the vouch admits (`install_fold::NoVouch`).
-    let past_floor = context
-        .sequence_floors
-        .and_then(|floors| floors.get(&hash))
-        .is_some_and(|floor| entry.seq < *floor);
-    let vouched = context
-        .floor_vouched
-        .is_some_and(|vouched| vouched.contains(&hash));
-    if past_floor && !vouched && !lands_restriction_only(&entry.op) {
-        return EntryFold::Invalid(AuthorityFoldIssue::NonMonotonicSeq(hash));
-    }
+    // A row below its floor, the highest sequence among its signer's rows
+    // in its scope that do not descend from it (`rows_floor`), forks its
+    // signer's sequence, whatever order its rows arrived in. Such a row
+    // counts in full and the fold records the fork
+    // (`AuthorityFoldIssue::SequenceFork`, `forks_its_sequence`): refusing it
+    // would refuse every later row on it, its signer's revocation included
+    // (Engine RULING SEQ-FLOOR-SHAPE-S = B, 16 Nov 02:37). A world key record
+    // counts so too: refusing it would refuse every later record of its world
+    // that names it, so one row a removed machine's key signs on an old parent
+    // could take the world's key from every install (Astra
+    // anchorsec-seq-floor-s T5; Engine RULING SEQ-FLOOR-S-WORLD-KEY-FLOOR = A,
+    // 16 Nov 03:39). No row is refused for its floor. Equal-sequence
+    // siblings have separate hashes and fold under their own ancestry, not a
+    // fork alarm. A row that only takes away is never floored
+    // (`only_takes_away`). A restriction lands restriction only (Astra
+    // #1430): a machine revision and a world edit keep their restrictive
+    // effect below a later row of their signer that does not descend from
+    // them. A machine removal so stays terminal on every replica and in the
+    // log, where a later edit finds it among its parents (Sol P2 round 3,
+    // F3), but acknowledges nothing here (Astra #1430b). So does every row the
+    // fold with no vouch holds back (`install_fold::NoVouch`). No floor
+    // touches a roster row (`changes_roster`); its signer's own order binds
+    // it below.
+    let past_floor = below_its_floor(entry, hash, context);
     let restriction_only = lands_restriction_only(&entry.op)
         && (past_floor
             || context
@@ -111,6 +142,10 @@ pub(super) fn fold_entry_state(
         if *entry.signer_key() != device.key || entry.seq != 0 {
             return EntryFold::Invalid(AuthorityFoldIssue::SignerNotInAncestry(hash));
         }
+        // No passkey is enrolled before genesis, so none signs it.
+        if !super::owner_key_enrollment::passkey_signatures_in_context(None, entry) {
+            return EntryFold::Invalid(AuthorityFoldIssue::InvalidEntry(hash));
+        }
         let Ok(vault_id) = genesis_vault_id(entry) else {
             return EntryFold::Invalid(AuthorityFoldIssue::InvalidEntry(hash));
         };
@@ -133,6 +168,7 @@ pub(super) fn fold_entry_state(
             seqs: BTreeMap::new(),
             machines: BTreeMap::new(),
             machine_keys: BTreeMap::new(),
+            held_machine_answers: BTreeMap::new(),
             root_anchors: BTreeMap::new(),
             anchor_entries: BTreeSet::new(),
             host_custody_keys: BTreeSet::new(),
@@ -160,6 +196,9 @@ pub(super) fn fold_entry_state(
             hosted: context.hosted,
             actor_rows: BTreeSet::new(),
             residence_directives: BTreeMap::new(),
+            passkey_contexts: BTreeMap::new(),
+            passkey_vouched_keys: BTreeSet::new(),
+            passkey_vouch_confirmations: BTreeSet::new(),
         };
         upsert_device(&mut state, device, None);
         state.seqs.insert(device.key.clone(), 0);
@@ -188,6 +227,15 @@ pub(super) fn fold_entry_state(
 
     if entry.vault_id != Some(state.vault_id) {
         return EntryFold::Invalid(AuthorityFoldIssue::WrongVault(hash));
+    }
+    // A passkey signs only where its enrollment's assertion was made (row
+    // WEB-PASSKEY-OWNER-KEY; Sol xhigh F2): a sibling origin under the same
+    // RP id gets no owner signature.
+    if !super::owner_key_enrollment::passkey_signatures_in_context(
+        Some(&state.passkey_contexts),
+        entry,
+    ) {
+        return EntryFold::Invalid(AuthorityFoldIssue::InvalidEntry(hash));
     }
     // A frontier join stands for its parents' merge, signed by the key that
     // signs the act it leads to (FIX 7908): only its signer's sequence moves.
@@ -475,12 +523,22 @@ pub(super) fn fold_entry_state(
     // root signs it and his act's carrier cosigns it (FIX 4920), so its own
     // judge reads the roster before the generic participant rule.
     if let AuthorityOp::OwnerKeyEnroll(enroll) = &entry.op {
-        if let Err(issue) = super::owner_key_enrollment::judge_owner_key_enroll(
+        use super::owner_key_enrollment::OwnerKeyEnrollReading;
+        match super::owner_key_enrollment::judge_owner_key_enroll(
             &state, entry, enroll, hash, context,
         ) {
-            return EntryFold::Invalid(issue);
+            Err(issue) => return EntryFold::Invalid(issue),
+            Ok(OwnerKeyEnrollReading::Enrolment) => {
+                apply_op(&mut state, &entry.op, hash, entry.signer_key());
+                super::owner_key_enrollment::remember_passkey_context(&mut state, enroll);
+                super::owner_key_enrollment::remember_passkey_vouch(&mut state, entry, enroll);
+            }
+            Ok(OwnerKeyEnrollReading::Confirmation) => {
+                state
+                    .passkey_vouch_confirmations
+                    .insert(enroll.device.key.clone());
+            }
         }
-        apply_op(&mut state, &entry.op, hash, entry.signer_key());
         state.seqs.insert(entry.signer_key().clone(), entry.seq);
         return EntryFold::Ready(state);
     }
@@ -514,6 +572,9 @@ pub(super) fn fold_entry_state(
     if !has_authority_consent(&state, &participants, context) {
         return EntryFold::Invalid(AuthorityFoldIssue::MissingAuthorityConsent(hash));
     }
+    if !super::owner_proof::owner_key_revoke_proved(&state, &entry.op, &participants) {
+        return EntryFold::Invalid(AuthorityFoldIssue::MissingAuthorityConsent(hash));
+    }
     if let Some(prior_seq) = state.seqs.get(&signer).copied()
         && entry.seq <= prior_seq
     {
@@ -523,6 +584,33 @@ pub(super) fn fold_entry_state(
         let old_root = &state.roster[&signer];
         if old_root.roles & ROLE_OWNER == 0
             || new_device.roles & !(old_root.roles | ROLE_CLOUD) != 0
+        {
+            return EntryFold::Invalid(AuthorityFoldIssue::MissingAuthorityConsent(hash));
+        }
+    }
+
+    // A passkey signs from a page its host serves, and WebAuthn shows no act
+    // text: a passkey, and a key only a passkey vouched for until a
+    // non-passkey, owner-held key vouches for it too, neither re-root (nor
+    // rotate) nor enrol a device nor revoke another owner key (nor a key the
+    // parents do not hold, which a sibling branch may enrol as one), and lend
+    // no consent to one as a cosign (lead ruling WEBPASSKEY-BLIND-SIGNATURE =
+    // B; Engine ruling WEBPASSKEY-PASSKEY-OWN-REVOKE = B; Sol xhigh stack
+    // review F1, F2; Astra stack review finding 1), nor the owner key's proof
+    // a revoke of an owner key needs (row HOSTED-ROOT-REVOKES-OWNER-KEY;
+    // REVIEW2 #8451 P2-1): the rest must give both.
+    let barred =
+        super::owner_key_enrollment::passkey_barred_participants(&state, &entry.op, &participants);
+    if barred.contains(&signer) {
+        return EntryFold::Invalid(AuthorityFoldIssue::MissingAuthorityConsent(hash));
+    }
+    if !barred.is_empty() {
+        let counted = participants
+            .difference(&barred)
+            .cloned()
+            .collect::<BTreeSet<_>>();
+        if !has_authority_consent(&state, &counted, context)
+            || !super::owner_proof::owner_key_revoke_proved(&state, &entry.op, &counted)
         {
             return EntryFold::Invalid(AuthorityFoldIssue::MissingAuthorityConsent(hash));
         }

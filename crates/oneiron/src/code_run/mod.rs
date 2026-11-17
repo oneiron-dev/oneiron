@@ -47,12 +47,15 @@ mod scoped_call_control;
 mod scoped_child;
 mod scoped_child_io;
 mod scoped_generation;
+mod speech_rows;
 pub use self::scoped_generation::{ScopedChildGeneration, ScopedChildGenerationCall};
+pub(crate) mod setting_keys;
 pub mod shadow_runner;
 mod spawn_replay;
 pub(crate) use self::spawn_replay::barrier_spawn_call;
 mod storage;
 pub(crate) use storage::erase_reader_caller_actor_in_txn;
+pub(crate) use storage::replay_rows;
 mod support;
 pub(crate) mod tables;
 mod task_reporting;
@@ -168,6 +171,8 @@ pub(crate) use self::replay_context::{
 pub use self::repo_calls::RepoRunCall;
 pub use self::repo_model::RepoModelGenerateInput;
 pub use self::result_read::ResultFacet;
+#[cfg(oneiron_test_support)]
+pub(crate) use self::result_read::search_text_for_test;
 pub(crate) use self::result_read::{
     DeliveredRanges, Reply as ResultReply, ResultRead, cannot as result_cannot,
     card as result_card, read_result_in, refusal as result_refusal, resolve as resolve_result,
@@ -216,6 +221,7 @@ pub(crate) use self::storage::{
     ReadWorldSeal, ReadWorldSnapshot, captured_step_read_scopes_in_txn, read_world_snapshot_in_txn,
 };
 pub(crate) use self::storage::{ReplyBody, SessionCheckpointBody};
+// L2-37: a parked run's idle fold rechecks its park and lands in one write.
 pub(crate) use self::storage::{
     StagedSinks, clear_parked_wait_in_txn, code_run_body_file_of_row, code_run_body_held_in_txn,
     code_run_body_in_file_in_txn, code_run_body_row_key, code_run_inline_body_of_row,
@@ -235,6 +241,9 @@ pub(crate) use self::storage::{
     seed_continuation_run, step_replay_capsules_in_txn,
 };
 pub use self::storage::{SummaryMember, SummaryRead};
+pub(crate) use self::storage::{
+    base_code_run_folds_in_txn, land_code_run_folds_in_txn, wait_still_parked_in_txn,
+};
 pub(crate) use self::storage::{bind_owner_pair_ask_in_txn, owner_pair_in_txn};
 pub(crate) use self::storage::{
     canonical_wait_ids, deliver_changed_wait_in_txn, has_parked_run_in_txn, observe_wait_change,
@@ -279,12 +288,12 @@ pub(crate) use self::wait_rows::{keep_wait_rows, parks_on};
 pub use self::reader::{
     ClaimOutcome, DEFAULT_READER_FOLD_RESERVE_MS, DEFAULT_READER_WINDOW_TOKENS, DelegatedSource,
     ReaderActor, ReaderFindingRef, ReaderJob, ReaderJobKind, ReaderJobRunner, ReaderJobState,
-    ReaderJobWake, ReaderParent, ReaderQueueCursor, ReaderQueuePage, ReaderReportReceipt,
-    ReaderRoute, ReaderRunEnd, ReaderSpawnReceipt, ReaderSpend, ResultOrigins, RunDeadline,
-    SUMMARY_GROUP_EXCEEDS_WINDOW, SUMMARY_READ_BYTES_PER_TOKEN, SUMMARY_WINDOW_DIVISOR,
-    SelfReaderReportCall, SelfReaderSpawnCall, SelfSummarizeCall, SourceDeliveryWitness,
-    SpawnHostSeat, SpawnParentBinding, SummarizeEffort, SummarizeRecipe, SummarizeReply,
-    TaskWaitFailure, TaskWaitFinding, TaskWaitPolicy, TaskWaitSet, TaskWaitSetCall,
+    ReaderJobStatus, ReaderJobWake, ReaderParent, ReaderQueueCursor, ReaderQueuePage,
+    ReaderReportReceipt, ReaderRoute, ReaderRunEnd, ReaderSpawnReceipt, ReaderSpend, ResultOrigins,
+    RunDeadline, SUMMARY_GROUP_EXCEEDS_WINDOW, SUMMARY_READ_BYTES_PER_TOKEN,
+    SUMMARY_WINDOW_DIVISOR, SelfReaderReportCall, SelfReaderSpawnCall, SelfSummarizeCall,
+    SourceDeliveryWitness, SpawnHostSeat, SpawnParentBinding, SummarizeEffort, SummarizeRecipe,
+    SummarizeReply, TaskWaitFailure, TaskWaitFinding, TaskWaitPolicy, TaskWaitSet, TaskWaitSetCall,
     TaskWaitSetResult, summary_exceeds_window, summary_exceeds_window_bytes, summary_token_budget,
 };
 pub(crate) use self::reader::{
@@ -317,6 +326,7 @@ pub(crate) use self::storage::executor_speech_message_id;
 #[cfg(test)]
 pub(crate) use self::storage::require_facet_placement_in;
 pub(crate) use self::types::FoldWordRef;
+pub(crate) use self::types::SaidResult;
 pub use self::types::{
     FoldAnswer, SelfAgentDefinitionPutCall, SelfAgentDefinitionPutResult, SelfAgentSpawnCall,
     SelfAgentSpawnResult, SelfAskCall, SelfCall, SelfContextCall, SelfContextResult,
@@ -324,9 +334,10 @@ pub use self::types::{
     SelfEffect, SelfFailedResult, SelfFixtureEffectCall, SelfLeaderCall, SelfMemoryEdgeWriteResult,
     SelfMemoryPutClaimCall, SelfMemoryPutEdgeCall, SelfMemorySearchCall, SelfMemorySearchResult,
     SelfMemorySupersedeClaimCall, SelfMemoryWriteFixtureCall, SelfMemoryWriteResult,
-    SelfSandboxProposalDiskFloor, SelfSkillCall, SelfSkillCallResult, SelfSpawnAsk, SelfSpeechCall,
-    SelfSpeechResult, SelfStoredReply, SelfStoredReplyKind, SelfTaskRefusalResult,
-    SelfTaskRefuseCall, SelfTeamResult, SelfWakePolicyWriteCall, peer_result_wait,
+    SelfSandboxProposalDiskFloor, SelfSayResultCall, SelfSkillCall, SelfSkillCallResult,
+    SelfSpawnAsk, SelfSpeechCall, SelfSpeechResult, SelfStoredReply, SelfStoredReplyKind,
+    SelfTaskRefusalResult, SelfTaskRefuseCall, SelfTeamResult, SelfWakePolicyWriteCall,
+    peer_result_wait,
 };
 pub use run_verbs::{
     AgentSpawnInput, JS_SAFE_INTEGER, LeaderAdviceInput, LeaderPatternInput, LeaderSplitInput,
@@ -340,6 +351,7 @@ pub use run_verbs::{
     MemoryEdgeOutput, MemorySearchHit, MemorySearchOutput, MemoryWriteOutput, ReportBlockedOutput,
     TaskRefuseOutput, TaskWaitOutput,
 };
+pub use speech_rows::{SpeechOutput, SpokenText, ThinkAloudInput};
 pub use types::{
     AGENT_VERB_DOOR_UNBOUND, AGENT_VERB_SESSION_BOUND, AgentVerbAnswer, AgentVerbDoor,
     AgentVerbRefusal, AgentVerbRefusalWords, RunCall, RunObservation, RunSpeechDestination,

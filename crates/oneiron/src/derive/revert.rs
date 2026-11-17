@@ -8,11 +8,14 @@
 use serde::{Deserialize, Serialize};
 
 use super::record::{AppliedEdge, ItemRecord, batch_record_in_txn};
+use crate::claim::PREDICATE_CONFLICT_RESOLVED;
 use crate::consent::AuthenticatedOwner;
+use crate::dreamer_promotion::KeptConflictLink;
 use crate::edge::EdgeKind;
 use crate::error::{Error, GateError, Result};
 use crate::gate::{DeriveCapability, derive_verdict_in_txn};
-use crate::store::{GateDecisionContext, GateDecisionId, GateDecisionRecord};
+use crate::store::gate_reason::GateReceiptOutcome;
+use crate::store::{GateReceipt, PolicyBasis, ReceiptActor};
 use crate::write_envelope::WriteActor;
 use crate::{EntityId, Vault};
 
@@ -29,6 +32,13 @@ pub const REVERT_NO_INVERSE: &str = "derive.revert.no_inverse";
 
 /// Why an item was left alone: its inverse refused, so it stands.
 pub const REVERT_INVERSE_REFUSED: &str = "derive.revert.inverse_refused";
+
+/// Why an item was left alone: its inverse would close a claim that
+/// restricts someone's access, and no owner reverts. A batch's own
+/// restriction, or the winner its settlement landed, is lifted only by the
+/// owner's revert (RULING RESTRICTION-CLOSE-BY-DERIVE-ITEM; the direct
+/// retract door asks the same, RESTRICTION-CLAIM-OVERWRITE-AND-SELF-RETRACT).
+pub const REVERT_LIFTS_RESTRICTION: &str = "derive.revert.lifts_restriction";
 
 /// The refusal of a revert by an actor that is neither the batch's
 /// committing actor, with its derive verdict standing, nor the owner.
@@ -55,7 +65,8 @@ pub struct DeriveRevertReceipt {
 /// cleanup-archive marker. So an `archive` item's revision also covers that
 /// marker as stored (its request id and time included), and a claim that was
 /// restored, or restored and archived again by a later act, no longer stands
-/// at the revision its first archive left.
+/// at the revision its first archive left. A `person` item's revision covers
+/// its PERSON's marker the same way, since its revert archives the row.
 pub(super) fn row_revision_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -67,7 +78,7 @@ pub(super) fn row_revision_in(
     }
     let stored = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, &row)?
         .map_or([0; 32], |raw| *blake3::hash(&raw).as_bytes());
-    if kind != "archive" {
+    if kind != "archive" && kind != "person" {
         return Ok(stored);
     }
     let marker = crate::ports::TombstoneStoreRead::port_deletion_marker(
@@ -165,8 +176,19 @@ impl Vault {
                 left.push((item.local.clone(), REVERT_CHANGED_SINCE.to_owned()));
                 continue;
             }
+            if owner.is_none() && self.inverse_lifts_restriction_in(txn, item)? {
+                left.push((item.local.clone(), REVERT_LIFTS_RESTRICTION.to_owned()));
+                continue;
+            }
             let mut savepoint = self.store.env.nested_write_txn(txn)?;
-            match self.undo_item_in_txn(&mut savepoint, &record.actor, reverter, item, now_ms) {
+            match self.undo_item_in_txn(
+                &mut savepoint,
+                &record.actor,
+                reverter,
+                item,
+                now_ms,
+                &reverted_rows,
+            ) {
                 Ok(true) => {
                     savepoint.commit()?;
                     reverted_rows.extend(item.rows.iter().copied());
@@ -185,14 +207,7 @@ impl Vault {
                 }
             }
         }
-        let receipt = revert_receipt(
-            self,
-            txn,
-            reverter,
-            batch,
-            !reverted.is_empty(),
-            now_ms / 1_000,
-        )?;
+        let receipt = revert_receipt(self, txn, reverter, batch, !reverted.is_empty())?;
         Ok(DeriveRevertReceipt {
             batch,
             reverted,
@@ -201,8 +216,51 @@ impl Vault {
         })
     }
 
-    /// Undoes one landed item in `txn`. `false` when its kind has no inverse
-    /// here.
+    /// Whether undoing `item` would close a claim that restricts someone's
+    /// access (`federation::claim_removal_widens_in`): a claim item whose
+    /// row stands, which its inverse retracts, or a settlement whose answer
+    /// names a winner it landed from retained candidates
+    /// (`dreamer_consolidation::settlement_revert_lifts_restriction_in`). A
+    /// claim item whose row is a settlement answer reverts as a settlement
+    /// (`dreamer_consolidation::revert` routes it so), so it is judged as
+    /// one too (Muse delta review on #8238). Reopening a superseded claim or
+    /// an archived row, and taking back an edge, close nothing.
+    fn inverse_lifts_restriction_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        item: &ItemRecord,
+    ) -> Result<bool> {
+        match item.kind.as_str() {
+            "claim" => {
+                for row in &item.rows {
+                    if let Some(body) = self.get_claim_in_txn(txn, row)?
+                        && body.lifecycle == crate::claim::ClaimLifecycleStatus::Active
+                        && crate::federation::claim_removal_widens_in(self, txn, &body)?
+                    {
+                        return Ok(true);
+                    }
+                    if crate::dreamer_consolidation::settlement_revert_lifts_restriction_in(
+                        self, txn, *row,
+                    )? {
+                        return Ok(true);
+                    }
+                }
+                Ok(false)
+            }
+            "settle" => match item.rows.first() {
+                Some(resolved) => {
+                    crate::dreamer_consolidation::settlement_revert_lifts_restriction_in(
+                        self, txn, *resolved,
+                    )
+                }
+                None => Ok(false),
+            },
+            _ => Ok(false),
+        }
+    }
+
+    /// Undoes one landed item in `txn`, after this revert took back the rows
+    /// `taken_back` names. `false` when its kind has no inverse here.
     fn undo_item_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
@@ -210,6 +268,7 @@ impl Vault {
         reverter: WriteActor,
         item: &ItemRecord,
         now_ms: u64,
+        taken_back: &std::collections::BTreeSet<EntityId>,
     ) -> Result<bool> {
         let first = || {
             item.rows
@@ -245,17 +304,51 @@ impl Vault {
                     return Err(Error::InvalidClaimBody("the superseded claim stays closed"));
                 }
             }
+            // A settlement's first row is its answer or its staged Keep.
+            // Only a staged Keep linked to this item's marker is retracted.
             "settle" => {
-                crate::dreamer_consolidation::revert_settlement_in_txn(
-                    self,
-                    txn,
-                    first()?,
-                    reverter,
-                    now_ms,
-                )?;
+                let staged = first()?;
+                let claim = self
+                    .get_claim_in_txn(txn, &staged)?
+                    .ok_or(Error::EntityNotFound)?;
+                if claim.predicate == PREDICATE_CONFLICT_RESOLVED {
+                    crate::dreamer_consolidation::revert_settlement_in_txn(
+                        self, txn, staged, reverter, now_ms,
+                    )?;
+                } else {
+                    if !KeptConflictLink::of_claim(&claim)
+                        .is_some_and(|link| item.rows.get(1) == Some(&link.marker))
+                    {
+                        return Err(Error::InvalidClaimBody(
+                            "the staged Keep does not name this item's marker",
+                        ));
+                    }
+                    self.retract_claim_in_txn_as(txn, &staged, now_ms / 1_000, Some(reverter))?;
+                }
             }
             "archive" => {
                 self.restore_archived_in_txn(txn, &first()?)?;
+            }
+            "person" => {
+                // The extraction mint's inverse is the cleanup's archive, by
+                // the cleanup's own rule: a PERSON still minted at its stored
+                // revision, with no live claim about it but those this revert
+                // took back first. Never an unbirth: the owner's cleanup
+                // restore lifts it.
+                let person = first()?;
+                if !crate::vault_cleanup::person_mint_unclaimed_in_txn(
+                    self, txn, &person, taken_back,
+                )? {
+                    return Err(Error::InvalidClaimBody(
+                        "a person another row names stays born",
+                    ));
+                }
+                let marker = crate::deletion::TombstoneValueV2 {
+                    reason: crate::deletion::TombstoneReason::ArchivedByCleanup,
+                    deleted_at: now_ms / 1_000,
+                    request_id: self.store.clock.ulid()?,
+                };
+                self.put_archive_tombstone_in_txn(txn, &person, &marker)?;
             }
             "same_as" => {
                 crate::dreamer_consolidation::revert_authored_change_in_txn(
@@ -327,35 +420,20 @@ fn revert_receipt(
     reverter: WriteActor,
     batch: EntityId,
     any: bool,
-    now: u64,
 ) -> Result<[u8; 16]> {
     let frontier = crate::gate::resolve_policy_manifest(&vault.store, txn)?.read_frontier_hash()?;
-    let record = GateDecisionRecord {
-        version: crate::store::GATE_DECISION_LEDGER_VERSION,
-        decision_id: GateDecisionId::now(),
-        created_at: now,
-        outcome: "approved".to_owned(),
-        reason_codes: vec![
-            if any {
-                "gate.allow.derive.revert"
-            } else {
-                "gate.allow.derive.revert_left_all"
-            }
-            .to_owned(),
-        ],
-        receipt_reasons: Vec::new(),
-        system_notices: Vec::new(),
-        actor_class: reverter.actor_class().gate_actor_class().to_owned(),
-        actor_ref: Some(reverter.entity_ref().to_hex()),
-        content_kind: DERIVE_REVERT_CONTENT_KIND.to_owned(),
-        policy_manifest_version: crate::gate::POLICY_SCHEMA_VERSION.to_owned(),
-        claim_id: None,
-        grant_ref: None,
-        diff_handle: batch.as_bytes().to_vec(),
-        read_frontier_hash: frontier,
-        context: GateDecisionContext::default(),
-        redacted_at: None,
-    };
-    vault.store.append_gate_decision_in_txn(txn, &record)?;
+    let mut receipt = GateReceipt::new(
+        GateReceiptOutcome::Approved,
+        DERIVE_REVERT_CONTENT_KIND,
+        if any {
+            "gate.allow.derive.revert"
+        } else {
+            "gate.allow.derive.revert_left_all"
+        },
+        ReceiptActor::Row(reverter),
+        batch.as_bytes().to_vec(),
+        PolicyBasis::frontier(frontier),
+    );
+    let record = vault.store.record_gate_receipt_in_txn(txn, receipt)?;
     Ok(record.decision_id.as_bytes())
 }
