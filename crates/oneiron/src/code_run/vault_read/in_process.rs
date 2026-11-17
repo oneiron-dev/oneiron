@@ -52,6 +52,7 @@ pub struct InProcessVaultReadAdapter<'v> {
     media_memory: Option<&'v crate::host_memory::MachineMemory>,
     image_pick: Option<crate::memory::ImagePick<'v>>,
     deferred_forms: Option<&'v DeferredServedForms>,
+    room: Option<&'v crate::off_record::RoomPackRead<'v>>,
     projection_body_bytes: Option<usize>,
 }
 
@@ -96,6 +97,7 @@ impl<'v> InProcessVaultReadAdapter<'v> {
             media_memory: None,
             image_pick: None,
             deferred_forms: None,
+            room: None,
             projection_body_bytes: None,
         }
     }
@@ -144,6 +146,20 @@ impl<'v> InProcessVaultReadAdapter<'v> {
     #[must_use]
     pub fn with_image_pick(mut self, pick: Option<crate::memory::ImagePick<'v>>) -> Self {
         self.image_pick = pick;
+        self
+    }
+
+    /// Reads a context pack inside the live stretch `room` reads
+    /// (ARCH-0052 #e5-read-union-open, ONE-1729), as the accepted route's
+    /// pack in that stretch reads it: through a reader composed over the
+    /// stretch's view, with its retrieval run landing through the stretch's
+    /// telemetry door, so nothing the pack derives from the room's rows lands
+    /// in base. The host binds `room` for this adapter's own reader, by the
+    /// accepted route's rule of who may read a stretch. `None` reads base.
+    /// Every other method reads base alone.
+    #[must_use]
+    pub fn with_room_pack(mut self, room: Option<&'v crate::off_record::RoomPackRead<'v>>) -> Self {
+        self.room = room;
         self
     }
 
@@ -381,8 +397,16 @@ impl<'v> InProcessVaultReadAdapter<'v> {
             .scoped_read
             .context_pack_plan()
             .map_err(|error| engine_failure(METHOD, &error))?;
-        let mut builder = plan
-            .admit(self.scoped_read.vault().context_pack())
+        // Inside a stretch the pack reads its view and registers its run
+        // through the stretch's telemetry door; `admit_in_room` refuses a
+        // read not composed over that stretch.
+        let admitted = match self.room {
+            Some(room) => plan
+                .admit_in_room(self.scoped_read.vault().context_pack(), room)
+                .map_err(|error| engine_failure(METHOD, &error))?,
+            None => plan.admit(self.scoped_read.vault().context_pack()),
+        };
+        let mut builder = admitted
             .limit(candidate_limit)
             .hydrate(true)
             .include_edges(false)
@@ -900,6 +924,22 @@ impl sealed::Backend for InProcessVaultReadAdapter<'_> {
         reader.image_pick = self.image_pick.clone();
         reader.projection_body_bytes = self.projection_body_bytes;
         let request = request.into_inner();
+        // A context pack inside a bound stretch reads through a fresh reader
+        // composed over it; every other method reads base.
+        if let (VaultReadRequest::ContextPack(_), Some(room)) = (&request, self.room) {
+            let vault = self.scoped_read.vault();
+            reader.scoped_read = vault
+                .scoped_read_in_room(self.scoped_read.actor_key().clone(), room)
+                .ok_or_else(|| {
+                    engine_failure(
+                        VaultReadMethod::ContextPack,
+                        &crate::Error::InvalidConfig(
+                            "a room's context pack reads a stretch of this vault".to_owned(),
+                        ),
+                    )
+                })?;
+            reader.room = Some(room);
+        }
         // The caller's own filter binds this request's fresh reader alone,
         // never the backend's (FIX 3977).
         let filter = match &request {

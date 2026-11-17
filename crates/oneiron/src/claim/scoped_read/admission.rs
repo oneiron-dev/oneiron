@@ -58,6 +58,24 @@ impl crate::vault::Vault {
             read_filter: None,
         }
     }
+
+    /// A fresh scoped read composed over a context pack's read of a live
+    /// stretch (ARCH-0052 #e5-read-union-open, ONE-1729), as
+    /// [`OwnedScopedRead::into_borrowed_in_room`] composes one: the union the
+    /// stretch can see, with the stretch's room carried for the rows it
+    /// staged. `None` for a stretch of another vault.
+    pub(crate) fn scoped_read_in_room<'a>(
+        &'a self,
+        actor_key: ScopedReadActorKey,
+        room: &'a crate::off_record::RoomPackRead<'a>,
+    ) -> Option<ScopedRead<'a>> {
+        if !room.is_of(self) {
+            return None;
+        }
+        let mut read = self.scoped_read_in_session(actor_key, &room.view);
+        read.stretch = room.stretch;
+        Some(read)
+    }
 }
 
 impl<'a> ScopedRead<'a> {
