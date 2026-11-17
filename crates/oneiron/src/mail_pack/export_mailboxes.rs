@@ -147,9 +147,9 @@ const fn member_mailbox_decision(
 }
 
 /// Why an Owner's whole-vault export left a mailbox out.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum MailboxLeftOutReason {
+pub enum MailboxLeftOutReason {
     /// Another member's personal mailbox, in a vault a person owns, while
     /// "Owners can export members' mail" is off.
     MemberMailbox,
@@ -161,17 +161,18 @@ pub(crate) enum MailboxLeftOutReason {
 }
 
 /// One mailbox an Owner's whole-vault export left out, named to the Owner
-/// who exported: never a word of its mail.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub(crate) struct MailboxExportNotice {
+/// who exported: never a word of its mail. Every Owner copy's answer
+/// carries these beside its world notices, never inside them.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MailboxExportNotice {
     /// The source, 32-hex; absent for rows whose source this vault cannot
     /// name.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    source_ref: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_ref: Option<String>,
     /// The mailbox's address.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    address: Option<String>,
-    reason: MailboxLeftOutReason,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub address: Option<String>,
+    pub reason: MailboxLeftOutReason,
 }
 
 /// What an export does with one other member's personal mailbox.
@@ -400,6 +401,7 @@ impl MemberMailboxPlan {
 }
 
 /// One other member's personal mailbox an export's copy carries.
+#[derive(Debug, Clone)]
 struct CarriedMailbox {
     source: EntityId,
     /// The source policy its rows were born under.
@@ -411,6 +413,7 @@ struct CarriedMailbox {
 /// The other members' personal mailboxes an export's copy carries, each
 /// person to be told before a byte of it leaves, and the approved requests
 /// it uses, each used and its person told in that same write.
+#[derive(Debug, Clone)]
 pub(crate) struct CarriedMemberMailboxes {
     exporter: EntityId,
     /// The PERSON the export pass read the exporter's requests under

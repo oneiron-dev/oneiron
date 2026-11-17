@@ -21,7 +21,10 @@ use crate::store::Store;
 /// A floor whose session or conversation the archive leaves here stays here,
 /// as that row does: one a world in `device_only` keeps, outside the owner's
 /// own export (`owner_export` false); his own export carries one his
-/// recipient choice alone keeps (owner ruling 1-EXPORT = B).
+/// recipient choice alone keeps (owner ruling 1-EXPORT = B). One whose
+/// session or conversation `carries` refuses stays here too: an Owner's copy
+/// judges each by the members' mailbox rule (fix list row 15416). Answers
+/// the ids of every floor written.
 pub(super) fn write_epoch_floors_in_txn(
     store: &Store,
     rtxn: &RoTxn<'_>,
@@ -29,7 +32,9 @@ pub(super) fn write_epoch_floors_in_txn(
     owner_export: bool,
     sources: &mut BTreeSet<EntityId>,
     writer: &mut DocumentWriter<'_>,
-) -> Result<()> {
+    mut carries: impl FnMut(EntityId) -> Result<bool>,
+) -> Result<Vec<EntityId>> {
+    let mut written = Vec::new();
     for (scope, epoch, turn_end) in crate::compaction::epoch_floors_in_txn(store, rtxn)? {
         let ids: Vec<EntityId> = std::iter::once(scope.session)
             .chain(scope.conversation)
@@ -46,18 +51,25 @@ pub(super) fn write_epoch_floors_in_txn(
             )?
             .is_none();
         }
+        for id in &ids {
+            if withheld {
+                break;
+            }
+            withheld = !carries(*id)?;
+        }
         if withheld {
             continue;
         }
-        sources.extend(ids);
+        sources.extend(ids.iter().copied());
         writer.epoch_floor(&ExportEpochFloor {
             session: scope.session.to_hex(),
             conversation: scope.conversation.as_ref().map(EntityId::to_hex),
             epoch,
             turn_end,
         })?;
+        written.extend(ids);
     }
-    Ok(())
+    Ok(written)
 }
 
 /// The lineage an archived floor names, its ids canonical hex.

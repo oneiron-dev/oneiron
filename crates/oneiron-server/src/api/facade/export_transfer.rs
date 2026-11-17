@@ -110,6 +110,7 @@ impl ExportTransfers {
             digest: receipt.digest.clone(),
             holder_requests: receipt.holder_requests.clone(),
             notices: receipt.notices.clone(),
+            mailbox_notices: receipt.mailbox_notices.clone(),
         };
         let kept = KeptExport {
             exporter: exporter_of(auth),

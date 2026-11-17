@@ -48,6 +48,115 @@ pub(crate) fn archive_settlement_table() -> crate::batch::export::LentSideTable 
     &RECORD
 }
 
+/// Each entity row a stored settlement record names, read through its table's
+/// own codec (fix list row 15416): its settling actor, each exported
+/// comment's thread, asker and answerer, each moved anchor's thread, each
+/// typed answer's and judgment's thread, principal, question and decision (the
+/// rows it read and its receipt's questions, rule and project), a deck's
+/// maker and thread, and the same in the review it keeps once its words
+/// left. A brief, a grant and a proposal ref are refs of their own, no rows.
+/// `None` when the record does not read.
+pub(crate) fn archive_settlement_rows(value: &[u8]) -> Option<Vec<EntityId>> {
+    let record = RECORD.decode_value(value).ok()?;
+    let mut rows = Vec::new();
+    rows.extend(
+        record
+            .actor_ref
+            .as_deref()
+            .and_then(|actor| EntityId::from_hex(actor).ok()),
+    );
+    for identity in &record.pptx_review_identities {
+        rows.extend([identity.thread_id, identity.asked_by, identity.answered_by]);
+    }
+    rows.extend(record.anchors.iter().map(|anchor| anchor.thread_id));
+    if let Some(bundle) = &record.sheet_answers {
+        sheet_answer_rows(bundle, &mut rows);
+    }
+    for judgment in &record.pptx_judgments {
+        slide_judgment_rows(judgment, &mut rows);
+    }
+    for judgment in &record.docx_judgments {
+        decision_rows(&judgment.decision, &mut rows);
+    }
+    if let Some(deck) = &record.deck {
+        rows.extend(deck.context.made_by);
+        rows.extend(deck.context.thread);
+    }
+    if let Some(kept) = &record.discarded_words {
+        if let Some(bundle) = &kept.sheet_answers {
+            sheet_answer_rows(bundle, &mut rows);
+        }
+        for judgment in &kept.slide_judgments {
+            slide_judgment_rows(judgment, &mut rows);
+        }
+        for judgment in &kept.paragraph_judgments {
+            decision_rows(&judgment.decision, &mut rows);
+        }
+        if let Some(deck) = &kept.deck {
+            rows.extend(deck.context.made_by);
+            rows.extend(deck.context.thread);
+        }
+    }
+    Some(rows)
+}
+
+/// The rows a typed sheet answer bundle names: its principal, its question
+/// and each answer's decision and source file.
+fn sheet_answer_rows(bundle: &crate::edit_roundtrip::SheetAnswerBundle, rows: &mut Vec<EntityId>) {
+    rows.extend([bundle.principal, bundle.question.id]);
+    for answer in &bundle.answers {
+        decision_rows(&answer.decision, rows);
+        rows.extend(answer.source.as_ref().map(|source| source.id));
+    }
+}
+
+/// The rows a slide judgment names: its thread, its decisions and the
+/// evidence each medium it read is of.
+fn slide_judgment_rows(
+    judgment: &crate::edit_roundtrip::slides_review::SlideJudgment,
+    rows: &mut Vec<EntityId>,
+) {
+    rows.push(judgment.thread_id);
+    decision_rows(&judgment.decision, rows);
+    if let Some(presence) = &judgment.presence {
+        decision_rows(presence, rows);
+    }
+    rows.extend(
+        judgment
+            .media
+            .iter()
+            .map(|media| media.reference.evidence().id),
+    );
+}
+
+/// The rows a typed decision names: its evidence, and its receipt's question,
+/// principal, read versions, paired and person questions, image evidence,
+/// rule row and the projects its ask names.
+fn decision_rows(decision: &crate::llm::decision::TypedDecision, rows: &mut Vec<EntityId>) {
+    rows.extend(decision.evidence.iter().copied());
+    let receipt = &decision.receipt;
+    rows.extend([receipt.question, receipt.principal]);
+    rows.extend(receipt.evidence_versions.iter().map(|version| version.id));
+    rows.extend(
+        receipt
+            .paired
+            .iter()
+            .chain(&receipt.person)
+            .map(|reading| reading.question),
+    );
+    rows.extend(receipt.images.iter().map(|image| image.evidence.id));
+    rows.extend(receipt.rule.map(|rule| rule.id));
+    if let Some(asked) = &receipt.asked {
+        rows.extend(asked.project);
+        rows.extend(
+            asked
+                .answered
+                .as_ref()
+                .and_then(|answerer| answerer.project),
+        );
+    }
+}
+
 pub(super) fn settlement_key_parts(
     artifact_id: &EntityId,
     proposal_ref: &str,

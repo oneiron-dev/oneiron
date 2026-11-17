@@ -174,6 +174,7 @@ pub(crate) use invalidation::{
 mod lifecycle;
 pub mod made_by;
 mod queries;
+pub(crate) mod side_sources;
 pub(crate) use queries::EdgeProvenanceAudit;
 pub mod text_commit;
 mod writes;

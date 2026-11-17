@@ -6,14 +6,17 @@ use std::io::{Read, Seek, SeekFrom, Write};
 use serde::{Deserialize, Serialize};
 
 use super::export_audit::{ExportAuditScope, ExportCopy, record_export};
+use super::export_owner_copy::{render_owner_copy, unknown_format};
 use super::{MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INVALID_STATE, Memory, MemoryError, MemoryResult};
 use crate::Vault;
 use crate::authority::{
     ActSurface, HolderExportRequest, HostActionAuthority, OwnerAct, OwnerActKind, VerifiedSlip,
 };
+use crate::batch::export::written_digest;
 use crate::consent::AuthenticatedOwner;
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
+use crate::mail_pack::MailboxExportNotice;
 use crate::memory::verify_actor_binding_in_txn;
 use crate::settings::ReadDestination;
 use crate::share_travel::WorldRecipientNotice;
@@ -45,6 +48,11 @@ pub struct MemoryExport {
     /// device.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub notices: Vec<WorldRecipientNotice>,
+    /// Fix list row 15416: each other member's personal mailbox the
+    /// owner's own copy left out, named to him with why, beside the world
+    /// notices and never inside them. Absent when there is none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub mailbox_notices: Vec<MailboxExportNotice>,
 }
 
 /// One export written to the caller's file (FIX 2766): its format, length and
@@ -62,6 +70,9 @@ pub struct MemoryExportReceipt {
     /// As [`MemoryExport::notices`].
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub notices: Vec<WorldRecipientNotice>,
+    /// As [`MemoryExport::mailbox_notices`].
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub mailbox_notices: Vec<MailboxExportNotice>,
     /// The owner's act the render carried out, on a door that records one
     /// (FIX 11596): a server keeping the archive checks its exact owner at
     /// every read. `None` from a door that records no act.
@@ -86,6 +97,10 @@ pub struct ExportTransfer {
     /// them; the archive it keeps is read as bytes.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub notices: Vec<WorldRecipientNotice>,
+    /// As [`MemoryExport::mailbox_notices`], named in the creation answer as
+    /// the world notices are.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub mailbox_notices: Vec<MailboxExportNotice>,
 }
 
 /// What `vault.export` answers (FIX 3676): the archive inline, or the
@@ -611,9 +626,9 @@ fn validate_verified_owner(
 /// Who an export is by, as its receipt records it: the exporting actor as
 /// hex (or `host`), and the owner's act when the door named where the owner
 /// said so.
-struct ExportBy<'a> {
-    name: &'a str,
-    act: Option<OwnerAct>,
+pub(super) struct ExportBy<'a> {
+    pub(super) name: &'a str,
+    pub(super) act: Option<OwnerAct>,
 }
 
 impl<'a> ExportBy<'a> {
@@ -642,15 +657,21 @@ fn export_act(owner: EntityId, surface: ActSurface) -> MemoryResult<OwnerAct> {
 /// The export both owner paths render in one frame, for a door that answers
 /// with the whole archive, beside the rows its snapshot read: built through a
 /// spool file under the vault's staging directory (FIX 2766) and read back
-/// whole only here.
+/// whole only here, the owner's own copy once it is recorded (fix list row
+/// 15416).
 fn render_export(
     vault: &Vault,
     opts: &ExportOptions,
     by: ExportBy<'_>,
     destination: impl Into<ReadDestination>,
     reader: WriteActor,
-    admit: impl FnOnce(&heed::RoTxn<'_>) -> MemoryResult<()>,
+    admit: impl Fn(&heed::RoTxn<'_>) -> MemoryResult<()>,
 ) -> MemoryResult<(MemoryExport, Vec<EntityId>)> {
+    if !opts.in_code_run {
+        let (receipt, sources, mut copy) =
+            render_owner_copy(vault, opts, by, destination, reader, admit)?;
+        return Ok((read_back(receipt, &mut copy.file)?, sources));
+    }
     let mut spool = vault.archive_spool_file()?;
     let (receipt, sources) =
         render_export_to(vault, opts, by, destination, reader, admit, &mut spool)?;
@@ -674,22 +695,25 @@ fn read_back(
         digest: receipt.digest,
         holder_requests: receipt.holder_requests,
         notices: receipt.notices,
+        mailbox_notices: receipt.mailbox_notices,
     })
 }
 
-/// One export written to `sink` as it is built (FIX 2766): the archive is
-/// never held whole, and its digest and length are read back from `sink`
-/// for the export's receipt. The receipt is the vault's export audit row,
-/// the copy `reader`'s, and each private thread the archive carries that
-/// he is not in is told of it (FIX 6427).
+/// One export written to `sink` (FIX 2766): the archive is never held
+/// whole, and its receipt carries its digest and length. The receipt is the
+/// vault's export audit row, the copy `reader`'s, and each private thread
+/// the archive carries that he is not in is told of it (FIX 6427). The
+/// owner's own copy is made where only this engine reads it and reaches
+/// `sink` once it is recorded ([`render_owner_copy`]); an export a code run
+/// calls is written to `sink` as it is built and recorded after.
 fn render_export_to<W: Read + Write + Seek>(
     vault: &Vault,
     opts: &ExportOptions,
     by: ExportBy<'_>,
     destination: impl Into<ReadDestination>,
     reader: WriteActor,
-    admit: impl FnOnce(&heed::RoTxn<'_>) -> MemoryResult<()>,
-    sink: W,
+    admit: impl Fn(&heed::RoTxn<'_>) -> MemoryResult<()>,
+    mut sink: W,
 ) -> MemoryResult<(MemoryExportReceipt, Vec<EntityId>)> {
     let name = opts.format.as_deref().unwrap_or(EXPORT_TARGET_ARCHIVE);
     let include_secrets = opts.include_secrets.unwrap_or(true);
@@ -697,6 +721,12 @@ fn render_export_to<W: Read + Write + Seek>(
     // The owner's own export carries every world (owner ruling 1-EXPORT =
     // B); one a code run calls follows the world settings.
     let owner_export = !opts.in_code_run;
+    if owner_export {
+        let (receipt, sources, mut copy) =
+            render_owner_copy(vault, opts, by, destination, reader, admit)?;
+        copy.release_to(&mut sink)?;
+        return Ok((receipt, sources));
+    }
     let (mut sink, mut export) = match name {
         EXPORT_TARGET_ARCHIVE => vault.export_whole_vault_with_admission(
             destination,
@@ -709,12 +739,7 @@ fn render_export_to<W: Read + Write + Seek>(
         EXPORT_TARGET_OKF => {
             vault.export_okf_with_admission(destination, reader, owner_export, admit, sink)?
         }
-        _ => {
-            return Err(MemoryError::bad_request_with(
-                format!("unknown export format {name:?}"),
-                &["Use one of: archive, okf."],
-            ));
-        }
+        _ => return Err(unknown_format(name)),
     };
     let format = export.manifest().format.clone();
     let (bytes, digest) = written_digest(&mut sink).map_err(crate::Error::from)?;
@@ -750,18 +775,11 @@ fn render_export_to<W: Read + Write + Seek>(
             digest,
             holder_requests,
             notices,
+            mailbox_notices: std::mem::take(&mut export.mailbox_notices),
             act,
         },
         export.sources,
     ))
-}
-
-/// The length and BLAKE3 of what `sink` holds, read back from its start.
-fn written_digest<R: Read + Seek>(sink: &mut R) -> std::io::Result<(u64, String)> {
-    sink.seek(SeekFrom::Start(0))?;
-    let mut hasher = blake3::Hasher::new();
-    let bytes = std::io::copy(sink, &mut hasher)?;
-    Ok((bytes, hasher.finalize().to_hex().to_string()))
 }
 
 fn export_forbidden() -> MemoryError {

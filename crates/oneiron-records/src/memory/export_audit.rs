@@ -8,7 +8,8 @@ use serde::Serialize;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ExportAuditScope {
-    /// The whole vault: the archive, the OKF bundle or the JSON bundle.
+    /// The whole vault: the archive, the OKF bundle, the JSON bundle or the
+    /// Owner's copy of every record.
     WholeVault,
     /// An off-record room's talk, as its Owner's membership shows it.
     OffRecordRoom,
