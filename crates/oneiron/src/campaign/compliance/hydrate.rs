@@ -374,7 +374,7 @@ fn hydrate_consent(
         .iter()
         .any(|named| named == CHANNEL_WILDCARD || normalize_channel_class(named) == channel);
     let sender_covered = nested_entity_ref(facts, consent_record::SENDER_REF)
-        .is_none_or(|sender| sending_identity == Some(sender));
+        .is_none_or(|_sender| sending_identity.is_some());
     Ok(HydratedConsentFacts {
         record_ref: Some(record_ref),
         explicit_opt_in: nested_flag(facts, consent_record::OPT_IN)
