@@ -134,7 +134,7 @@ pub(crate) fn retained_envelope_source_table(value: &[u8]) -> Option<String> {
         .map(|envelope| envelope.source_table)
 }
 
-/// Every retained row this export carries, in physical key order: the live rows of the 95
+/// Every retained row this export carries, in physical key order: the live rows of the
 /// retained source tables read raw and marked `source_live`, unioned with the inert envelopes
 /// already stored, deduplicated by [`retained_side_row_key`] with the live row kept. Collected
 /// into memory like the 41-family writer.
