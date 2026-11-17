@@ -31,6 +31,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/purposes/skill.rs` | src | s | — | — | Purposes of a skill's canonical identity (`oneiron-store` `write_envelope::skill_record`) |
 | `src/purposes/skill_attribution.rs` | src | s | — | — | Purposes of skill attribution (`crates/oneiron/src/skill_attribution`) |
 | `src/purposes/skill_optimize.rs` | src | s | — | — | Purposes of skill optimization (`crates/oneiron/src/skill_optimize`) |
+| `src/purposes/store.rs` | src | s | — | — | Legacy store digests that existing rows, files and acks hold |
 | `src/purposes/testing.rs` | src | s | — | — | Purposes for tests only |
 | `src/purposes/vault_import.rs` | src | s | — | — | Purposes of a staged foreign vault import (`oneiron-store` `batch::export::foreign_stage`, sync builds) |
 | `src/purposes/vault_shape.rs` | src | s | — | — | Purposes of the vault shape (`crates/oneiron/src/vault_shape`) |

@@ -79791,7 +79791,7 @@
      "path": "src/store/body_store.rs",
      "purpose": "File-backed result bodies beside `data.mdb` (OF-597, OF-190 B++)",
      "surface": {
-      "crate-vis": 35
+      "crate-vis": 36
      }
     },
     {
@@ -80395,7 +80395,7 @@
      "path": "src/store/critical_confirm_record.rs",
      "purpose": "Core half of `store::critical_confirm_record`: its store-layer items live in…",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 4,
       "re-export": 1,
       "struct": 1
      }
@@ -80595,7 +80595,7 @@
      "path": "src/store/drafter_custody.rs",
      "purpose": "A vault's own drafter artifact keys (FIX 12569): each sealed artifact of one drafter version is sealed under…",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 11
      }
     },
     {
@@ -81030,7 +81030,7 @@
      "path": "src/store/grant_scope_custody.rs",
      "purpose": "A federation grant's scope opening keys (FIX 7907, 7958, L04's half): the secret each pact epoch's scope…",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -81461,7 +81461,7 @@
      "path": "src/store/key_custody/mod.rs",
      "purpose": "Typed key custody (KS-1): one storage and lifecycle service for the independent, erasable secrets a vault…",
      "surface": {
-      "crate-vis": 40,
+      "crate-vis": 41,
       "mod": 1,
       "re-export": 2
      }
@@ -81714,7 +81714,7 @@
      "path": "src/store/key_custody/targets.rs",
      "purpose": "The all-target acknowledgement journal (KS-4A2, FIX 5685), kept beside the keyless log in…",
      "surface": {
-      "crate-vis": 29
+      "crate-vis": 30
      }
     },
     {
@@ -81724,7 +81724,7 @@
      "path": "src/store/key_custody/targets/drain.rs",
      "purpose": "The journal's half of a member drain (FIX 5843, ruled 10-20): the owner's door out of the required set…",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 11
      }
     },
     {
@@ -81953,7 +81953,7 @@
      "path": "src/store/mod.rs",
      "purpose": "LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the…",
      "surface": {
-      "crate-vis": 167,
+      "crate-vis": 169,
       "mod": 69,
       "re-export": 89
      }
@@ -82889,7 +82889,7 @@
      "path": "src/store/row_birth.rs",
      "purpose": "Row birth derivation envelopes and copy-scoped withheld identities",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "fn": 7,
       "re-export": 1,
       "struct": 2
@@ -92756,6 +92756,16 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/test_doors/fingerprint_keep_store_digests.rs",
+     "purpose": "K-proof door for store digests that existing rows, files and acks hold",
+     "surface": {
+      "fn": 11
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "Audience",
       "MessageSlice",
@@ -93317,7 +93327,7 @@
      "purpose": "Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD)",
      "surface": {
       "fn": 1,
-      "mod": 247,
+      "mod": 248,
       "re-export": 1
      }
     },
@@ -93835,13 +93845,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/test_doors/scope_summary.rs",
      "purpose": "Doors for `tests/summary_as_record_permit.rs` (SUMMARY-AS-RECORD-PERMIT): a summary minted as the Dreamer…",
      "surface": {
-      "fn": 5
+      "fn": 6
      }
     },
     {
@@ -104820,6 +104830,18 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/fingerprint_keep_store_digests.rs",
+     "purpose": "K-proof for store legacy digests at c715a39b45b5: existing stored, sent and compared identities keep main's…",
+     "surface": {
+      "const": 2,
+      "crate-vis": 25,
+      "fn": 3
+     }
+    },
+    {
      "bucket": "L",
      "kind": "test",
      "notable": [],
@@ -109121,6 +109143,14 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/summary_read_withholds_unreadable_sources.rs",
+     "purpose": "The summary read doors serve a summary only to a reader of every source",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/sweep_unchanged_window.rs",
      "purpose": "Census L6-07 (ARCH-0038, RD-23): the erasure sweep reads and scrubs every persisted window on each pass, and…",
      "surface": {}
@@ -111463,7 +111493,7 @@
      "purpose": "`TimeRange`, temporal expressions/parsing, granularity/anchor enums"
     },
     "test_doors": {
-     "files": 251,
+     "files": 252,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -111640,8 +111670,8 @@
    },
    "over_bar": 301,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 7962,
-   "test_files": 1746
+   "source_files": 7963,
+   "test_files": 1748
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -116901,6 +116931,7 @@
       "BrowserAnswer",
       "DesktopAnswer",
       "SessionFenceProof",
+      "SessionGuestPressure",
       "SessionManifest",
       "SessionSeccomp",
       "TakeoverRecord",
@@ -116910,7 +116941,7 @@
      "path": "src/answer.rs",
      "purpose": "What the run's door adds to a guest's answer (CUA-001): the record of a person's takeover that ended, and…",
      "surface": {
-      "enum": 2,
+      "enum": 3,
       "fn": 2,
       "struct": 6
      }
@@ -118108,6 +118139,14 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/answer_manifest_guest_pressure.rs",
+     "purpose": "A browser or desktop answer's typed manifest keeps the guest's pressure (FIX…",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -118324,7 +118363,7 @@
    "over_bar": 0,
    "purpose": "Browser verbs for code mode (`self.browser.*`), and the CDP driver behind them (feature `driver`)",
    "source_files": 89,
-   "test_files": 1
+   "test_files": 2
   },
   "oneiron-code-check": {
    "files": [
@@ -125748,6 +125787,14 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/purposes/store.rs",
+     "purpose": "Legacy store digests that existing rows, files and acks hold",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/purposes/testing.rs",
      "purpose": "Purposes for tests only",
      "surface": {}
@@ -125807,7 +125854,7 @@
      "purpose": "The K door: a digest that main already stores or sends keeps its exact bytes"
     },
     "purposes": {
-     "files": 22,
+     "files": 23,
      "impl_vault": false,
      "largest_src_bucket": "s",
      "layout": "dir",
@@ -125823,7 +125870,7 @@
    },
    "over_bar": 0,
    "purpose": "One fingerprint rule for engine digests (fable pass 22; PLAN-UC-04 stage 0)",
-   "source_files": 25,
+   "source_files": 26,
    "test_files": 1
   },
   "oneiron-gen": {
@@ -146575,7 +146622,17 @@
      "path": "src/native/cms/parse.rs",
      "purpose": "Strict CMS ContentInfo/SignerInfo parsing with version gating",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/native/cms/parse/issuer_link.rs",
+     "purpose": "Bounded certificate-signature issuer walks for CMS certificate bags",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -146585,7 +146642,7 @@
      "path": "src/native/cms/policy.rs",
      "purpose": "Attribute/ESS binding and frozen signature-suite verification gates",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 11
      }
     },
     {
@@ -146966,7 +147023,7 @@
      "path": "src/native/verify/verify_evidence.rs",
      "purpose": "Private, bounded evidence collected before trust, time, and profile decisions",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -147208,6 +147265,14 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/seal_covered_set_includes_unrelated_cms_certs.rs",
+     "purpose": "An unrelated certificate carried in a CMS certificate bag is on no selected certification path",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -147284,7 +147349,7 @@
      "purpose": "Memory the native seal reserves before its PDF decodes allocate it (FIX 7654)"
     },
     "native": {
-     "files": 58,
+     "files": 59,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -147307,8 +147372,8 @@
    },
    "over_bar": 4,
    "purpose": "Native Rust PAdES seal and verification engine (ONE-1837)",
-   "source_files": 65,
-   "test_files": 16
+   "source_files": 66,
+   "test_files": 17
   },
   "oneiron-server": {
    "files": [
@@ -157392,7 +157457,7 @@
      "purpose": "`oneiron hook`: the flags of the Python example it replaces (`oneiron_hook.py`), with the same defaults and…",
      "surface": {
       "enum": 3,
-      "fn": 3,
+      "fn": 2,
       "struct": 5
      }
     },
@@ -171855,7 +171920,7 @@
      "surface": {}
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "test",
      "notable": [],
      "path": "tests/vault_policy_doors.rs",
@@ -177215,7 +177280,7 @@
      "path": "src/key_custody/protocol/drain.rs",
      "purpose": "The custody member drain's contract (FIX 5843, ruled 10-20): how the owner takes a member out of the…",
      "surface": {
-      "const": 4,
+      "const": 2,
       "fn": 3,
       "struct": 1
      }

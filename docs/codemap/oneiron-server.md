@@ -1021,7 +1021,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/cli/deployment_args.rs` | src | s | 1 struct | HostRelayArgs | Host-only deployment commands; neither opens a local vault |
 | `src/cli/files_args.rs` | src | s | 5 struct · 1 enum | FilesAttachArgs, FilesCommand, FilesConvertArgs, FilesListArgs, FilesPathArgs, FilesRescanArgs | `oneiron files`: the Files world on a stopped vault (FIX 6942), the folders this install keeps searchable on… |
 | `src/cli/graph_fs_args.rs` | src | s | 1 enum · 1 crate-vis | GraphFsCommand | Named CLI bindings for the typed file-face rows, using the same paired credential and transport as `oneiron… |
-| `src/cli/hook_args.rs` | src | s | 5 struct · 3 enum · 3 fn | HookArgs, HookBindArgs, HookCommonArgs, HookEffort, HookEvent, HookHandOverArgs, HookHost, HookRecallArgs | `oneiron hook`: the flags of the Python example it replaces (`oneiron_hook.py`), with the same defaults and… |
+| `src/cli/hook_args.rs` | src | s | 5 struct · 3 enum · 2 fn | HookArgs, HookBindArgs, HookCommonArgs, HookEffort, HookEvent, HookHandOverArgs, HookHost, HookRecallArgs | `oneiron hook`: the flags of the Python example it replaces (`oneiron_hook.py`), with the same defaults and… |
 | `src/cli/hosted_args.rs` | src | s | 3 struct · 1 enum | HostedCommand, HostedLoginArgs, HostedLogoutArgs, HostedSelectArgs | `oneiron hosted`: the hosted vaults this user signed in to here and the one selected, which `oneiron hook`… |
 | `src/cli/learning_setting_args.rs` | src | s | 3 struct · 2 enum | LearningSettingClearArgs, LearningSettingListArgs, LearningSettingModeArg, LearningSettingPutArgs, LearningSettingsCommand | `oneiron learning-settings`: the owner's learned-setting rows on a stopped vault… |
 | `src/cli/model_workers_args.rs` | src | s | 1 struct | ModelWorkersArgs | — |
@@ -2400,7 +2400,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/vault_off_record_doors.rs` | test | L | — | — | Promise tests for the off-record session doors a stretch's manager calls (ruling L4-23 = A: each test proves… |
 | `tests/vault_off_record_rooms_doors.rs` | test | L | — | — | Promise tests for the off-record doors a room's participants call (ruling L4-23 = A: each test proves a… |
 | `tests/vault_people_doors.rs` | test | L | — | — | The `vault.people` doors (ARCH-0067's People, oneiron/agents/oneiron-arch-0067-context-board-v1.md), each… |
-| `tests/vault_policy_doors.rs` | test | L | — | — | The vault policy doors (`vault.policy.*`), entered as the SDK enters them: HTTP `POST… |
+| `tests/vault_policy_doors.rs` | test | XL | — | — | The vault policy doors (`vault.policy.*`), entered as the SDK enters them: HTTP `POST… |
 | `tests/vault_questions_doors.rs` | test | L | — | — | The `vault.questions.*` rows at the public door: each test proves one canon promise of a standing question… |
 | `tests/vault_residence_doors.rs` | test | L | — | — | The `vault.residence` doors (ARCH-0023b's residence, oneiron/sync/oneiron-arch-0023b-crdt-sync-implementation… |
 | `tests/vault_retrieval_config_doors.rs` | test | L | — | — | Promise tests for the retrieval configuration doors (ruling L4-23 = A: each test proves a promise at its… |
