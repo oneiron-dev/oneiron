@@ -219,6 +219,10 @@ pub(crate) const SIDE_TABLE_DISPOSITIONS: &[(&str, ArchiveSideDisposition)] = &[
         ArchiveSideDisposition::Retained,
     ),
     ("SEND_RECEIPT_SUMMARY", ArchiveSideDisposition::Retained),
+    ("SETTING", ArchiveSideDisposition::Retained),
+    ("SETTING_CHANGE", ArchiveSideDisposition::Retained),
+    ("SETTING_CHANGE_NEXT", ArchiveSideDisposition::Retained),
+    ("SETTING_CONTENT", ArchiveSideDisposition::Retained),
     ("SHARED_ACT_POLICY_CHANGE", ArchiveSideDisposition::Retained),
     (
         "SKILL_ATTRIBUTION_AUDIT",

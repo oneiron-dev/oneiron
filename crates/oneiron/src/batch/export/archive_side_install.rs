@@ -33,6 +33,8 @@ pub(crate) struct ArchivedSideRowRefresh {
     proactivity: bool,
     /// Consent settlers must recheck newly restored answers.
     consent_answer: bool,
+    /// The after-commit wake of each setting key with an installed row.
+    setting_wakes: Vec<crate::setting::OnCommitted>,
 }
 
 impl ArchivedSideRowRefresh {
@@ -66,12 +68,18 @@ impl ArchivedSideRowRefresh {
         if self.consent_answer {
             vault.notify_consent_answer();
         }
+        for wake in self.setting_wakes {
+            wake(vault);
+        }
     }
 }
 
 /// The fixed dependency order of the owning landing groups.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum ArchivedSideGroup {
+    /// Setting catalogue rows, their change history and its counter: first, because later
+    /// groups read choices that are catalogue keys.
+    SettingRows,
     /// Independent owner settings.
     Settings,
     /// Grants whose holders have already been restored.
@@ -158,6 +166,13 @@ pub(crate) enum ArchivedSideGroup {
 pub(crate) fn archived_side_group(source_table: &str) -> Option<ArchivedSideGroup> {
     use ArchivedSideGroup as Group;
     match source_table {
+        name if name == side_table::SETTING.name
+            || name == side_table::SETTING_CHANGE.name
+            || name == side_table::SETTING_CHANGE_NEXT.name
+            || name == side_table::SETTING_CONTENT.name =>
+        {
+            Some(Group::SettingRows)
+        }
         name if name == side_table::BOARD_LAYOUT_SETTINGS.name
             || name == side_table::MODEL_OWNER_FALLBACK.name
             || name == side_table::NON_BASE_WORLD_CLAIM_FRACTION.name
@@ -269,6 +284,15 @@ pub(crate) fn land_archived_side_group_in_txn(
     refresh: &mut ArchivedSideRowRefresh,
 ) -> Result<Vec<ArchivedSideRowOutcome>> {
     let outcomes = match group {
+        ArchivedSideGroup::SettingRows => {
+            crate::setting::archive_restore::land_archived_setting_rows_in_txn(
+                vault,
+                txn,
+                permit,
+                rows,
+                &mut refresh.setting_wakes,
+            )
+        }
         ArchivedSideGroup::Settings => {
             crate::settings::archive_restore::land_archived_settings_rows_in_txn(
                 vault, txn, permit, rows,
