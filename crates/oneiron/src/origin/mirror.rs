@@ -215,10 +215,12 @@ pub(super) fn put_mirror_state_in_txn(
 /// served name moves, the strategy's revision moved by one when the strategy
 /// does, and the history only for the same URL; moved work pauses. A clear
 /// drops the state row and the LFS census and stops the work. A row at any
-/// scope but a repository's is refused: a mirror is per repository.
+/// scope but a repository's is refused: a mirror is per repository. So is a
+/// pin: the key's one value row at the repository is then the row in force,
+/// and the changed row's value and prior are the mirror's before and after.
 ///
 /// # Errors
-/// That refusal, the custody refusal, a repository id no served repository
+/// Those refusals, the custody refusal, a repository id no served repository
 /// has, or a store failure.
 pub(crate) fn mirror_setup_changed_in_txn(
     vault: &Vault,
@@ -230,6 +232,9 @@ pub(crate) fn mirror_setup_changed_in_txn(
             "origin.mirror is set per served repository: name the repository's scope",
         ));
     };
+    if change.mode != crate::setting::SettingMode::Value {
+        return Err(invalid("origin.mirror takes no pin"));
+    }
     let decode = |value: Option<&crate::setting::EncodedValue>| {
         value
             .and_then(crate::setting::Kind::<Option<OriginMirrorSetup>>::decode)

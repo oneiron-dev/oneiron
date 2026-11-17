@@ -25,7 +25,8 @@ crate::setting::setting_keys! {
     };
     /// A served repository's outbound mirror: its https URL, the custody name of its push
     /// token (bound to origin:mirror-push and checked when set), the basic-auth user, the
-    /// seconds between pushes, the sync strategy and who can read it. Set per repository only.
+    /// seconds between pushes, the sync strategy and who can read it. Set per repository only,
+    /// as a value row: the key takes no pin.
     /// None until the owner sets one; a clear stops the pushes and the mirror keeps what it has.
     pub(crate) MIRROR: Option<OriginMirrorSetup> = "origin.mirror" {
         kind: Kind::new(no_mirror).strictest(no_mirror),
