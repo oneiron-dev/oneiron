@@ -236,8 +236,8 @@ pub use system_agent_grant::{
     SystemAgentGrantNarrowing, SystemAgentNarrowing, SystemFunction,
 };
 pub(crate) use system_agent_grant::{
-    StewardRows, SystemAgent, holds_system_agent_grant, steward_grant_of_in, steward_reach_in,
-    steward_rows_rewrite,
+    StewardRows, SystemAgent, base_agent_steward_reach_in, holds_system_agent_grant,
+    steward_grant_of_in, steward_reach_in, steward_rows_rewrite,
 };
 pub(crate) use system_agent_grant::{is_engine_default_row, is_system_agent_steward_grant};
 mod engine_controls;

@@ -661,10 +661,11 @@ pub fn steward_grant_rows(vault: &Vault, agent: EntityId) -> Result<Vec<(EntityI
     Ok(rows)
 }
 
-/// The scope the standing Steward grant rows naming base agent `agent` hold
-/// together: the meet of their authority scopes, so each data axis is the
-/// narrowest any row holds. `None` while no row stands. Read from the stored
-/// rows alone.
+/// The scope the standing Steward grant rows naming `agent` hold together:
+/// the meet of their authority scopes, so each data axis is the narrowest any
+/// row holds. `None` while no row stands. A base agent's rows are read alone,
+/// within its default table; any other actor's count only when the fold
+/// stands behind them (pass 28 R4b).
 ///
 /// # Errors
 ///
