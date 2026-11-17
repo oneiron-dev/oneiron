@@ -23,7 +23,9 @@ use std::time::Duration;
 use oneiron::Vault;
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::test_doors::steward::{open_owner_carrier_vault, owner};
-use oneiron::world_keys::{NoRecoveryBox, RecoveryBoxHold, RecoveryBoxHoldPending, RecoveryPreset};
+use oneiron::world_keys::{
+    NoRecoveryBox, RecoveryBoxCanceller, RecoveryBoxHold, RecoveryBoxHoldPending, RecoveryPreset,
+};
 use oneiron_server::test_doors::recovery_box_hold::{close_heal_gate, heal_at_boot, hold_client};
 
 const VAULT: &str = "vault-7";
@@ -84,6 +86,18 @@ impl RecoveryBoxHold for DiesAfterHolding {
         self.calls.lock().expect("calls").push(kit_only);
         panic!("the process dies after the box held");
     }
+
+    fn report_recovery_wait(&self, _wait: std::time::Duration) -> oneiron::Result<()> {
+        Ok(())
+    }
+
+    fn cancel_pending_box_release(
+        &self,
+        _cancelled_by: &RecoveryBoxCanceller,
+        _release_receipt: Option<u64>,
+    ) -> oneiron::Result<bool> {
+        Ok(false)
+    }
 }
 
 /// The box holds but never releases.
@@ -99,6 +113,18 @@ impl RecoveryBoxHold for FailsToRelease {
             )))
         }
     }
+
+    fn report_recovery_wait(&self, _wait: std::time::Duration) -> oneiron::Result<()> {
+        Ok(())
+    }
+
+    fn cancel_pending_box_release(
+        &self,
+        _cancelled_by: &RecoveryBoxCanceller,
+        _release_receipt: Option<u64>,
+    ) -> oneiron::Result<bool> {
+        Ok(false)
+    }
 }
 
 /// The box refuses a new hold but releases.
@@ -113,6 +139,18 @@ impl RecoveryBoxHold for RefusesToHold {
         } else {
             Ok(())
         }
+    }
+
+    fn report_recovery_wait(&self, _wait: std::time::Duration) -> oneiron::Result<()> {
+        Ok(())
+    }
+
+    fn cancel_pending_box_release(
+        &self,
+        _cancelled_by: &RecoveryBoxCanceller,
+        _release_receipt: Option<u64>,
+    ) -> oneiron::Result<bool> {
+        Ok(false)
     }
 }
 

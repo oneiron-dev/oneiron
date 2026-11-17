@@ -21,18 +21,26 @@ use oneiron::authority::{
     EnrolledOwnerKeyKind, HostSlipIssuer, MachineRole, RootMaterial, RootRecovery, RootSuccessor,
     authority_entry_hash, decode_authority_log_entry_body,
 };
-use oneiron::authority::{AuthorityAttestation, AuthorityTier, ROLE_OWNER};
+use oneiron::authority::{AuthorityAttestation, AuthorityTier, CheckpointRootSigner, ROLE_OWNER};
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::recovery::{
     CodeKeeping, KitIssue, KitSecretKind, PassphraseCost, PieceHome, restore_kit,
 };
 use oneiron::store::GateDecisionId;
-use oneiron::test_doors::root_recovery::released_authority_seed;
+use oneiron::test_doors::owner_key_release::release_owner_keys;
+use oneiron::test_doors::recovery_box_kit_only_fact::{
+    append_recovery_box_kit_only_fact, append_unproven_recovery_box_kit_only_fact,
+};
+use oneiron::test_doors::root_recovery::{recover_owner_root_waiting, released_authority_seed};
 use oneiron::test_support::{bind_host_owner, provision_engine_machines};
 use oneiron::world_keys::{
-    NoRecoveryBox, RecoveryBoxHold, RecoveryBoxHoldPending, RecoveryPreset, RecoveryRootSeed,
+    NoRecoveryBox, RecoveryBoxCanceller, RecoveryBoxHold, RecoveryBoxHoldPending,
+    RecoveryBoxKitOnlyFact, RecoveryPreset, RecoveryRootSeed,
 };
 use oneiron::{EntityId, ErrorKind, HostingPrivacyPosture, Vault, VaultConfig};
+use oneiron_authority::authority::{
+    ActBy, OwnerAct, OwnerActKind, PolicySetting, PolicySettingSet, recovery_box_kit_only_value,
+};
 
 /// Decision 5 words, asserted with `contains`.
 const KIT_ONLY_NEEDS_KIT: &str = "switching to Nobody but me needs your recovery kit, so the key the recovery box could release is replaced; bring the kit; nothing was written";
@@ -492,16 +500,18 @@ fn switching_back_to_standard_changes_no_roster_and_released_1_serves() {
         "released 0 is refused as not live: {refused}"
     );
 
-    let answer = fixture
-        .vault
-        .recover_owner_root(
-            &fixture.owner(),
-            ActSurface::ThisInstall,
-            fixture.released_material(1),
-            RootSuccessor::Device(fixture.enrollment(&new_key)),
-            std::slice::from_ref(&lost_key),
-        )
-        .expect("released generation 1 serves back on Standard");
+    // A zero wait: the nonzero default holds (OPUS-WAYBACK, covered in
+    // `owner_root_recovery_wait.rs`).
+    let answer = recover_owner_root_waiting(
+        &fixture.vault,
+        &fixture.owner(),
+        ActSurface::ThisInstall,
+        fixture.released_material(1),
+        RootSuccessor::Device(fixture.enrollment(&new_key)),
+        std::slice::from_ref(&lost_key),
+        std::time::Duration::from_secs(0),
+    )
+    .expect("released generation 1 serves back on Standard");
     assert!(
         matches!(answer, RootRecovery::Vouched { .. }),
         "generation 1 vouches"
@@ -806,6 +816,18 @@ impl RecoveryBoxHold for RecordingBoxHold<'_> {
             )));
         }
         Ok(())
+    }
+
+    fn report_recovery_wait(&self, _wait: std::time::Duration) -> oneiron::Result<()> {
+        Ok(())
+    }
+
+    fn cancel_pending_box_release(
+        &self,
+        _cancelled_by: &RecoveryBoxCanceller,
+        _release_receipt: Option<u64>,
+    ) -> oneiron::Result<bool> {
+        Ok(false)
     }
 }
 
@@ -1163,5 +1185,245 @@ fn the_marker_clear_compares_the_attempt() {
             .recovery_box_hold_pending()
             .expect("the marker reads"),
         None,
+    );
+}
+
+// The kit-only fact (WAYBACK-BOX-HOLD-FROM-DEVICE-SWITCH = A): the switch's
+// own write signs kit-only on or off for the managed node that holds the
+// recovery box; only an owner key's proof counts it.
+
+/// The kit-only fact in force.
+fn kit_only_fact(fixture: &Fixture) -> Option<RecoveryBoxKitOnlyFact> {
+    fixture
+        .vault
+        .recovery_box_kit_only_fact()
+        .expect("the fact reads")
+}
+
+/// Seed of the owner device key this handle holds to prove the fact.
+const PROVING_KEY_SEED: u8 = 61;
+
+/// An owner device key held on this handle: what an owner act's proof is
+/// signed with. A test double for the owner's device install.
+struct KeySigner(SigningKey);
+
+impl CheckpointRootSigner for KeySigner {
+    fn root(&self) -> AuthorityKey {
+        key_of(&self.0)
+    }
+
+    fn sign_checkpoint_statement(&self, statement: &[u8]) -> oneiron::Result<Vec<u8>> {
+        Ok(self.0.sign(statement).to_bytes().to_vec())
+    }
+
+    fn sign_owner_proof(&self, transcript: &[u8]) -> oneiron::Result<Vec<u8>> {
+        Ok(self.0.sign(transcript).to_bytes().to_vec())
+    }
+}
+
+/// Enrols an owner device key and holds it on this handle, so this install
+/// proves an owner act as the owner's device does.
+fn hold_the_owner_key(fixture: &Fixture) {
+    let key = fixture.enrol_lost_key(PROVING_KEY_SEED);
+    fixture
+        .vault
+        .hold_checkpoint_root_signer(Arc::new(KeySigner(key)));
+}
+
+#[test]
+fn the_kit_only_switch_signs_the_fact_on_and_the_switch_back_signs_it_off() {
+    let fixture = fixture();
+    hold_the_owner_key(&fixture);
+    assert_eq!(
+        kit_only_fact(&fixture),
+        None,
+        "a vault that never switched holds no fact"
+    );
+    let history = fixture.history().len();
+
+    fixture.switch_with_kit().expect("the switch with the kit");
+    let on = kit_only_fact(&fixture).expect("the switch signs the fact");
+    assert!(on.kit_only, "the fact says kit-only");
+    assert_eq!(
+        fixture.history().len(),
+        history + 3,
+        "the rotation's two rows and the fact, in one write"
+    );
+    let row = fixture.row(&on.entry);
+    let AuthorityOp::PolicySettingSet(set) = &row.op else {
+        panic!("the fact is a setting act: {:?}", row.op);
+    };
+    assert_eq!(set.setting, PolicySetting::RecoveryBoxKitOnly);
+    assert_eq!(set.machine, fixture.machine, "this install carries it");
+    assert_eq!(set.value, Some(recovery_box_kit_only_value(true)));
+    assert_eq!(set.prior, recovery_box_kit_only_value(false));
+    assert_eq!(row.cosigns.len(), 1, "one owner key proves it");
+
+    fixture
+        .vault
+        .set_recovery_preset_as(
+            &fixture.owner(),
+            RecoveryPreset::Standard,
+            |_| Ok(()),
+            &NoRecoveryBox,
+        )
+        .expect("the switch back");
+    let off = kit_only_fact(&fixture).expect("the switch back signs the fact");
+    assert!(!off.kit_only, "the fact says kit-only is off");
+    assert_ne!(off.entry, on.entry, "a new act");
+}
+
+#[test]
+fn the_any_two_switch_signs_the_fact_on() {
+    let fixture = fixture();
+    hold_the_owner_key(&fixture);
+    let issue = KitIssue {
+        vault_id: fixture.vault.vault_key_vault_id(),
+        homes: [
+            PieceHome::RecoveryCode(CodeKeeping::Paper),
+            PieceHome::TrustedPerson,
+            PieceHome::SecurityKey,
+        ],
+        passphrase: None,
+        cost: PassphraseCost::DEFAULT,
+        only_machine: false,
+    };
+    fixture
+        .vault
+        .set_recovery_preset_any_two_with_kit_as(
+            &fixture.authority(),
+            &issue,
+            None,
+            &fixture.kit_refs(),
+            None,
+            |_| Ok(()),
+            &NoRecoveryBox,
+        )
+        .expect("the any-two switch with the kit");
+    let fact = kit_only_fact(&fixture).expect("the any-two switch signs the fact");
+    assert!(fact.kit_only, "any 2 pieces is kit-only");
+}
+
+#[test]
+fn a_switch_on_an_install_that_holds_no_owner_key_signs_no_fact() {
+    let fixture = fixture();
+    let history = fixture.history().len();
+    fixture.switch_with_kit().expect("the switch with the kit");
+    assert_eq!(
+        fixture.vault.recovery_preset().expect("the preset"),
+        RecoveryPreset::NobodyButMe,
+        "the switch stands"
+    );
+    assert_eq!(
+        kit_only_fact(&fixture),
+        None,
+        "no key here could prove the act, so none is signed"
+    );
+    assert_eq!(fixture.history().len(), history + 2, "the rotation alone");
+}
+
+#[test]
+fn a_kit_only_act_with_no_owner_key_proof_waits_and_never_moves_the_fact() {
+    let fixture = fixture();
+    hold_the_owner_key(&fixture);
+    fixture.switch_with_kit().expect("the switch with the kit");
+    let on = kit_only_fact(&fixture).expect("the fact");
+
+    release_owner_keys(&fixture.vault);
+    let unproven =
+        append_unproven_recovery_box_kit_only_fact(&fixture.vault, &fixture.owner(), false)
+            .expect("this install carries the act alone");
+    assert_eq!(
+        kit_only_fact(&fixture),
+        Some(on),
+        "a carrier's word alone never moves the fact"
+    );
+    assert!(
+        fixture
+            .vault
+            .authority_fold()
+            .expect("the fold")
+            .waiting_owner_choices()
+            .contains(&unproven),
+        "the act waits for the owner's proof"
+    );
+}
+
+#[test]
+fn the_test_door_signs_the_fact_and_refuses_one_the_fact_already_says() {
+    let fixture = fixture();
+    hold_the_owner_key(&fixture);
+    let on = append_recovery_box_kit_only_fact(&fixture.vault, &fixture.owner(), true)
+        .expect("the door signs kit-only on");
+    assert_eq!(
+        kit_only_fact(&fixture),
+        Some(RecoveryBoxKitOnlyFact {
+            kit_only: true,
+            entry: on,
+        })
+    );
+    append_recovery_box_kit_only_fact(&fixture.vault, &fixture.owner(), true)
+        .expect_err("the fact already says kit-only: nothing is appended");
+    let off = append_recovery_box_kit_only_fact(&fixture.vault, &fixture.owner(), false)
+        .expect("the door signs kit-only off");
+    assert_eq!(
+        kit_only_fact(&fixture),
+        Some(RecoveryBoxKitOnlyFact {
+            kit_only: false,
+            entry: off,
+        })
+    );
+}
+
+#[test]
+fn an_agents_kit_only_act_and_any_third_value_are_no_valid_act() {
+    let target = PolicySetting::RecoveryBoxKitOnly
+        .reserved_target()
+        .expect("the target")
+        .expect("a vault-wide setting");
+    let act = OwnerAct::by_owner(
+        EntityId::now(),
+        OwnerActKind::PolicySetting,
+        target,
+        ActSurface::ThisInstall,
+        [0; 32],
+    );
+    let set = |act: OwnerAct, value: Option<[u8; 32]>| PolicySettingSet {
+        act,
+        machine: EntityId::now(),
+        setting: PolicySetting::RecoveryBoxKitOnly,
+        prior: recovery_box_kit_only_value(false),
+        value,
+    };
+    assert!(
+        set(act, Some(recovery_box_kit_only_value(true)))
+            .validate()
+            .is_ok()
+    );
+    assert!(
+        set(act, Some(recovery_box_kit_only_value(false)))
+            .validate()
+            .is_ok()
+    );
+    assert!(
+        set(act, Some([7; 32])).validate().is_err(),
+        "a third value is no valid act"
+    );
+    assert!(
+        set(act, None).validate().is_err(),
+        "the fact is never cleared"
+    );
+    let agents = OwnerAct {
+        by: ActBy::Agent {
+            agent: EntityId::now(),
+            grant: EntityId::now(),
+        },
+        ..act
+    };
+    assert!(
+        set(agents, Some(recovery_box_kit_only_value(true)))
+            .validate()
+            .is_err(),
+        "an agent's kit-only act is no valid act"
     );
 }

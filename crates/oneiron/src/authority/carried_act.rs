@@ -191,7 +191,7 @@ impl Vault {
     /// Signs, appends and folds the act `op` builds in `txn`, naming the
     /// main-log heads alone, as every owner act does; returns only once the
     /// fold in `txn` counted it.
-    fn append_carried_act_in_txn(
+    pub(super) fn append_carried_act_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         op: impl FnOnce(EntityId) -> AuthorityOp,

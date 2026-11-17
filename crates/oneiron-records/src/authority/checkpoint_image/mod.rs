@@ -72,7 +72,9 @@ use serde::Serialize;
 /// an owner key until the owner switches it back to web sign-in (the owner's ruling AUTH-5); an
 /// image's projected fold carries what the vault asks of its owner and how each act of the web
 /// sign-in setting landed.
-pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 44;
+/// 45: the fold keeps every key ever enrolled as the recovery root's authority key, so a
+/// recovery hold's signer R and an answer's owner key judge apart (OPUS-WAYBACK).
+pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 45;
 
 /// The domain every encoded image starts with.
 pub const AUTHORITY_CHECKPOINT_V2_DOMAIN: &[u8] = b"oneiron/authority/checkpoint/v2";
