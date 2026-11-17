@@ -127,6 +127,7 @@ pub(crate) use super::outbox_diverged_doors::*;
 pub(crate) use super::sandbox_provider_doors::*;
 pub(crate) use super::snapshot_read_settings_doors::*;
 pub(crate) use super::web_connector_doors::*;
+pub(crate) use super::world_vectors_doors::*;
 // The owner's committed-run reads (DOOR-141 A/B), likewise.
 pub(crate) use super::run_read_doors::*;
 // A turn program's reads (DOOR-141 PR3a), on the caller's own lane.

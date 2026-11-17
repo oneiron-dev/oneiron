@@ -134,6 +134,8 @@ mod workflow;
 mod workflow_host;
 mod workflow_pump;
 mod workflow_record;
+#[cfg(oneiron_test_support)]
+pub(crate) use self::workflow_record::dedupe_key_hash_for_test as workflow_dedupe_key_hash_for_test;
 pub(crate) use workflow::tool_wait::checkpoint as workflow_tool_checkpoint;
 #[cfg(oneiron_test_support)]
 pub(crate) use workflow::tool_wait::{

@@ -88,6 +88,31 @@ impl LlmBackend for CountedBackend {
         })
     }
 
+    /// The step's call with the rows the engine names for its request (FIX
+    /// 7104), admitted and settled on the count as [`Self::generate`] is.
+    fn generate_sourced<'a>(
+        &'a self,
+        request: LlmRequest,
+        lease: &'a BudgetLease,
+        sources: Option<Vec<EntityId>>,
+    ) -> LlmGenerateFuture<'a> {
+        Box::pin(async move {
+            if self.stop.code().is_some() || !self.count.admit() {
+                return Err(LlmError::BudgetDenied(BudgetDenied::AdmissionDenied));
+            }
+            let sourced = self.inner.generate_sourced(request, lease, sources).await;
+            let units = sourced.as_ref().map_or(0, |response| {
+                response
+                    .usage
+                    .input
+                    .total
+                    .saturating_add(response.usage.output.total)
+            });
+            self.count.settle(units);
+            sourced
+        })
+    }
+
     fn stream<'a>(&'a self, request: LlmRequest, lease: &'a BudgetLease) -> LlmStreamResult<'a> {
         if self.stop.code().is_some() || !self.count.admit() {
             return Err(LlmError::BudgetDenied(BudgetDenied::AdmissionDenied));
