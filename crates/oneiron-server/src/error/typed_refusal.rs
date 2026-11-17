@@ -85,4 +85,11 @@ impl ApiError {
     pub(crate) fn room_join_hold(&self) -> Option<&oneiron::workspace_roster::RoomJoinHold> {
         self.room_join_hold.as_deref()
     }
+
+    /// What a pending refusal waits on, typed, when the error carries it.
+    /// There is no `with_` builder: no direct-vocabulary arm produces one,
+    /// it only rides a `MemoryError` that already carries it.
+    pub(crate) fn pending(&self) -> Option<&oneiron::memory::MemoryPending> {
+        self.pending.as_deref()
+    }
 }

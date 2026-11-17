@@ -237,6 +237,7 @@ pub(crate) use ledgers::attempt_pack_receipt_page;
 pub(crate) use ledgers::attempt_pack_receipt_in_txn;
 
 mod archive_source;
+pub(crate) mod setting_keys;
 pub(crate) mod tables;
 pub(crate) use archive_source::{
     archived_receipt_carriers_in_txn, is_receipt_archive_source, receipt_archive_custody_exists,
@@ -252,3 +253,6 @@ pub(crate) use archive_source::{receipt_archive_holder, receipt_archive_matches_
 pub(crate) use self::direct_dispatch::outbound_direct_receipt_accepts_masked;
 pub(crate) use self::dispatch_observation::dispatch_observation_accepts_masked;
 pub(crate) use self::pack_attribution::attempt_pack_attribution_accepts_masked;
+
+#[cfg(oneiron_test_support)]
+pub(crate) use self::dispatch_observation::dispatch_observation_key_pin_for_test;

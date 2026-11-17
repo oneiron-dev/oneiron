@@ -111,7 +111,9 @@ fn admit_machine(rooted: &Rooted) -> EntityId {
             MachineRole::Owned(MachineOwnership::Yours),
             None,
         )
-        .expect("the owner admits the machine");
+        .expect("the owner admits the machine")
+        .into_standing()
+        .expect("the owner's admission stands");
     assert!(folded.is_mine(None), "the admitted machine is the owner's");
     machine
 }

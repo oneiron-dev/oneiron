@@ -556,7 +556,13 @@ fn tail_folds_past(
 /// review R2 of [SEQUENCE-FLOOR-DELIVERY-ORDER]): a row, covered or tail,
 /// that names a side row of another world is none of them. It is no top and
 /// sets no floor, and no walk passes through it to the rows below, as no
-/// ancestry of the whole fold does.
+/// ancestry of the whole fold does. No walk passes through a covered row the
+/// image holds rejected either (review round 2 of #8449): the image does not
+/// tell a row the fold refused from one it never judged, so a tail row that
+/// reaches a top only across such a row sends the tail to the whole history.
+/// Every image build decodes each row it covers through
+/// `decode_authority_log_entry_body`, which refuses a bad signature, so no
+/// top is a row the whole fold leaves unjudged.
 fn rows_floors_unmoved(
     image: &AuthorityCheckpointV2,
     tail: &BTreeMap<AuthorityEntryHash, &AuthorityLogEntry>,
@@ -604,6 +610,7 @@ fn rows_floors_unmoved(
             None => image
                 .rows
                 .get(hash)
+                .filter(|_| !image.holds_rejected(hash))
                 .map(|row| (row.parents.as_slice(), row.world))?,
         };
         (!violates(world, parents)).then_some((parents, world))

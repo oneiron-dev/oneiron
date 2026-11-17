@@ -8021,6 +8021,7 @@ dependencies = [
  "oneiron-crypto",
  "oneiron-delivery-vocabulary",
  "oneiron-docedit",
+ "oneiron-esign-render",
  "oneiron-guest",
  "oneiron-hex",
  "oneiron-keystore",
@@ -8033,6 +8034,7 @@ dependencies = [
  "oneiron-retrieval",
  "oneiron-run-budget",
  "oneiron-sandbox-contract",
+ "oneiron-schedule-contract",
  "oneiron-sdk-build",
  "oneiron-setting-contract",
  "oneiron-skill-attribution",
@@ -8447,6 +8449,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "oneiron-esign-render"
+version = "0.1.0"
+dependencies = [
+ "encoding_rs",
+ "lopdf",
+]
+
+[[package]]
 name = "oneiron-ffi"
 version = "0.1.0"
 dependencies = [
@@ -8800,6 +8810,7 @@ dependencies = [
  "oneiron-policy-vocabulary",
  "oneiron-retrieval",
  "oneiron-run-budget",
+ "oneiron-setting-contract",
  "oneiron-skill-attribution",
  "oneiron-store",
  "oneiron-vault-contract",
@@ -8892,6 +8903,14 @@ name = "oneiron-sandbox-contract"
 version = "0.1.0"
 
 [[package]]
+name = "oneiron-schedule-contract"
+version = "0.1.0"
+dependencies = [
+ "schemars 0.8.22",
+ "serde",
+]
+
+[[package]]
 name = "oneiron-sdk-build"
 version = "0.1.0"
 dependencies = [
@@ -8916,12 +8935,12 @@ dependencies = [
  "cms",
  "const-oid 0.9.6",
  "der 0.7.10",
- "encoding_rs",
  "flate2",
  "futures-util",
  "ipnet",
  "lopdf",
  "oneiron",
+ "oneiron-esign-render",
  "oneiron-hex",
  "oneiron-keystore",
  "oneiron-organ-host",
@@ -9180,7 +9199,6 @@ dependencies = [
  "base64 0.22.1",
  "blake3",
  "ed25519-dalek 2.2.0",
- "encoding_rs",
  "half",
  "heed",
  "image",
@@ -9195,6 +9213,7 @@ dependencies = [
  "oneiron-crypto",
  "oneiron-delivery-vocabulary",
  "oneiron-docedit",
+ "oneiron-esign-render",
  "oneiron-hex",
  "oneiron-lens-wire",
  "oneiron-linkedin-policy",
@@ -9235,6 +9254,7 @@ dependencies = [
  "oneiron-base",
  "oneiron-contracts",
  "oneiron-model",
+ "oneiron-setting-contract",
  "oneiron-store",
  "schemars 0.8.22",
  "serde",

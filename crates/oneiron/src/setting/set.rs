@@ -11,11 +11,11 @@ use super::read::{
     StoredRow, in_force_in_txn, key_line_grant_in_txn, load_in_txn, names_subject, table_of,
 };
 use super::{
-    EncodedValue, Restore, SetBy, Setter, SettingChange, SettingMode, SettingScope, SettingSpec,
-    set_line, spec_named,
+    EncodedValue, SetBy, Setter, SettingChange, SettingMode, SettingScope, SettingSpec, set_line,
+    spec_named,
 };
 use crate::Vault;
-use crate::batch::secret_scan::admit_typed;
+use crate::batch::secret_scan::{FieldRule, admit_typed_with_rule};
 use crate::check_in::{
     CheckInMode, CheckInScope, NoAgentVerdict, OpenPendingCheckIn, VerifiedChain, WaitReason,
     consume_pending_check_in_in_txn, open_keyed_pending_check_in_in_txn, pending_check_in_in_txn,
@@ -226,12 +226,15 @@ impl Vault {
         let value = match request.value.clone() {
             Some(mut json) => {
                 // The side-row wall reads the value before it is encoded (SETTING-ROWS-SIDE-ROW-
-                // WALL = A): a secret goes to custody and the value keeps its handle.
-                admit_typed(
+                // WALL = A): a secret goes to custody and the value keeps its handle. The key's
+                // type fixes each member's shape, so the field rule lifts only text under a
+                // credential name (FIX SETTING-WALL-CREDENTIAL-NAMED-MEMBERS).
+                admit_typed_with_rule(
                     self,
                     txn,
-                    (wall_place(spec), key.encode().as_slice()),
+                    (wall_place(spec).as_str(), key.encode().as_slice()),
                     &mut json,
+                    FieldRule::TextOnly,
                 )?;
                 Some(spec.kind.from_json(json)?)
             }
@@ -247,12 +250,10 @@ impl Vault {
     }
 }
 
-/// Where the side-row wall says it found a secret in a setting value (OF-067).
-const fn wall_place(spec: &SettingSpec) -> &'static str {
-    match spec.restore {
-        Restore::Live => "side:SETTING",
-        Restore::Content => "side:SETTING_CONTENT",
-    }
+/// Where the side-row wall says it found a secret in a setting value (OF-067): `side:` and the
+/// declared name of the table the key's rows live in.
+fn wall_place(spec: &SettingSpec) -> String {
+    format!("side:{}", table_of(spec).decl().name)
 }
 
 /// Runs the `after_commit` of each key whose change applied with a sequence, once per change,
