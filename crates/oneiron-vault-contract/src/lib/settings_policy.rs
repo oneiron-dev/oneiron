@@ -14,18 +14,21 @@
 /// the machine's declared class, the credential broker's process and roots,
 /// the voice loop's socket, the key directory, the publisher training
 /// outbox and the direct Linear mirror's response custody, which the host
-/// derives beside the data directory. The training outbox and the last
-/// ten are reserved argv-only bindings the server's schema has no key for:
-/// the guests' container CLIs, the pack organ directory, the mesh
+/// derives beside the data directory. The training outbox and eleven more
+/// are reserved argv-only bindings the server's schema has no key for: the
+/// guests' container CLIs, the pack organ directory, the mesh
 /// listener's bind and relays, the node's shared model root
 /// ([`crate::settings_paths::SharedModelRoot`]), the container CLI's
 /// `HOME` and `XDG_RUNTIME_DIR`, the guest runtime fact
-/// ([`crate::GuestRuntimeFact`]) and the hosted fetch's private origins,
-/// which the supervisor passes as
+/// ([`crate::GuestRuntimeFact`]) and the hosted fetch's private origins and
+/// private networks, which the supervisor passes as
 /// `--browser-runtime`, `--desktop-runtime`, `--organ-dir`, `--mesh-bind`,
 /// `--mesh-relays`, `--shared-model-root`, `--container-home`,
-/// `--container-runtime-dir`, `--guest-runtime-fact` and
-/// `--hosted-private-origin`. An owner's `[browser] runtime` and
+/// `--container-runtime-dir`, `--guest-runtime-fact`,
+/// `--hosted-private-origin` and `--hosted-private-network`. Which private
+/// networks a hosted node's fetch reaches is the hosting operator's
+/// setting, never a vault owner's key (HOSTED-EGRESS-OPERATOR-SETTING).
+/// An owner's `[browser] runtime` and
 /// `[desktop] runtime` stay his, inside the vault's own storage. The vault's
 /// clock (`[runtime] clock` and `clock_file`) is never the settings file's:
 /// a managed vault reads its host's clock. Nor is the core-dump switch for
@@ -69,6 +72,7 @@ pub const SUPERVISOR_OWNED: &[&str] = &[
     "container_runtime_dir",
     "guest_runtime_fact",
     "hosted_private_origins",
+    "hosted_private_networks",
     "runtime.clock",
     "runtime.clock_file",
     "off_record_dump_suppression",

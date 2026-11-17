@@ -67,7 +67,7 @@ pub(crate) use self::descriptor::{
 };
 pub(crate) use self::descriptor::{
     check_claim_against_descriptor_in_txn, claim_class_descriptor_in_txn,
-    is_restrictive_comm_predicate, seed_claim_class_descriptors,
+    enforced_claim_classes_in_txn, is_restrictive_comm_predicate, seed_claim_class_descriptors,
 };
 pub(crate) use self::descriptor::{
     import_claim_class_descriptor_in_txn, imported_claim_class_descriptor,
@@ -578,5 +578,8 @@ use rmpv::Value;
 pub(crate) use thread_membership::active_thread_refs_in_txn;
 #[cfg(oneiron_test_support)]
 pub(crate) use thread_membership::take_thread_member_claim_reads;
+
+#[cfg(oneiron_test_support)]
+pub(crate) use parties::take_comm_party_row_reads;
 
 pub(crate) use projector::record_comm_thread_event_in_txn;
