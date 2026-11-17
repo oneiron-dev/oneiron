@@ -1,7 +1,7 @@
 use oneiron::{
-    ingest::IMAGE_SOURCE_ID, ingest::INGEST_SOURCE_REGISTRY, ingest::ImageTextRecognizer,
-    ingest::IngestResult, ingest::LocalityRung, ingest::RecognizedText,
-    ingest::register_image_text_recognizer,
+    ingest::IMAGE_SOURCE_ID, ingest::INGEST_SOURCE_REGISTRY, ingest::ImageIngestSource,
+    ingest::ImageTextRecognizer, ingest::IngestResult, ingest::IngestSource, ingest::LocalityRung,
+    ingest::RecognizedText,
 };
 
 struct CannedHostLocal;
@@ -21,12 +21,11 @@ const RECEIPT: &[u8] = include_bytes!("../fixtures/image_receipt.jpg");
 
 #[test]
 fn public_injection_normalizes_with_provenance_and_exif() {
-    register_image_text_recognizer(&RECOGNIZER).expect("first registration");
-    assert!(register_image_text_recognizer(&RECOGNIZER).is_err());
+    // The seat holds its own recognizer: no process registration, so this
+    // test cannot change what any other test in this binary sees.
+    let seat = ImageIngestSource::new().with_text_recognizer(&RECOGNIZER);
 
-    let batch = INGEST_SOURCE_REGISTRY
-        .normalize_binary(IMAGE_SOURCE_ID, RECEIPT)
-        .expect("receipt normalizes");
+    let batch = seat.normalize_binary(RECEIPT).expect("receipt normalizes");
     let entity = &batch.entities[0];
     assert!(entity.body.contains("[OCR]\ninjected receipt text"));
     assert!(entity.body.contains("[PROVENANCE recognizer_locality=1]"));

@@ -76,6 +76,8 @@ mod claim_merge;
 mod doors;
 mod native_capture;
 mod notes;
+#[cfg(oneiron_test_support)]
+mod question_head_door;
 mod refresh;
 
 pub(crate) use adapters::description_notes;
@@ -823,7 +825,8 @@ impl SystemOneRung {
             }
             (None, None) => anyhow::bail!("it names no key_env or key_secret"),
         }
-        .map_err(|error| anyhow::anyhow!("invalid System One seat: {error}"))?;
+        .map_err(|error| anyhow::anyhow!("invalid System One seat: {error}"))?
+        .with_native_budget(settings.native_budget);
         // A bearer held from bind sits in this process's memory; a broker key stays
         // behind the vault's custody door.
         let custody = if settings.key_env.is_some() {
