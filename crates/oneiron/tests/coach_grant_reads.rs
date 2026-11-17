@@ -23,15 +23,17 @@ use oneiron::test_doors::coach::{
     ENGINE_CONTROLS_VERBS, ENGINE_CONTROLS_WORK_BUDGET_VERB, coach, define_agent,
     read_and_engine_controls,
 };
-use oneiron::test_doors::steward::{STEWARD_READ_VERB, stand_steward_grant};
+use oneiron::test_doors::steward::{
+    STEWARD_READ_VERB, open_owner_carrier_vault, stand_steward_grant,
+};
 use oneiron::test_doors::substrate_reads::stand_project_steward_grant;
 use oneiron::{EdgeActorClass, EntityId, Vault, VaultConfig};
 use serde_json::{Value, json};
 
+/// A device vault whose install carries the owner's acts: an agent's Steward grant on a
+/// personal vault stands only on the owner's counted mint (pass 28 R3b3).
 fn open(dir: &tempfile::TempDir) -> Vault {
-    let vault = Vault::open(dir.path(), VaultConfig::device()).expect("vault");
-    oneiron::test_support::provision_engine_machines(&vault);
-    vault
+    open_owner_carrier_vault(dir.path()).expect("owner carrier vault")
 }
 
 /// Each evidence read, by verb and input.

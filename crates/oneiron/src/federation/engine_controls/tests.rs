@@ -217,7 +217,9 @@ fn the_coach_tunes_the_engine_and_reads_through_its_default_grant() {
 fn only_an_owners_grant_gives_engine_controls() {
     let dir = tempfile::tempdir().expect("tempdir");
     let vault = Vault::open(dir.path(), crate::VaultConfig::device()).expect("vault");
-    crate::test_util::provision_engine_machines(&vault);
+    // An agent's Steward grant on a personal vault stands only on the owner's counted mint
+    // (pass 28 R3b3), so the install carries his act.
+    crate::test_support::provision_act_carrier(&vault);
     let agent = EntityId::now();
 
     // A Steward grant on the default four verbs holds no engine.controls.

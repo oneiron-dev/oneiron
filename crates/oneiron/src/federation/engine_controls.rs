@@ -24,7 +24,7 @@ use serde::Serialize;
 use super::system_agent_grant::{SystemAgent, steward_reach_in};
 use super::{
     FederationGrantKind, FederationGrantPreset, FederationGrantRole, Scope, ScopeAxis,
-    decode_federation_grant_body, grant_scope,
+    decode_federation_grant_body_keyed, grant_scope,
 };
 use crate::Vault;
 use crate::consent::AuthenticatedOwner;
@@ -73,9 +73,10 @@ impl Vault {
     ///   that grant stands with the class's verb and its MACHINE binding is
     ///   live.
     /// - Any other actor holds it through a live Steward grant on this
-    ///   vault's root that names the class's verb itself: a grant whose
-    ///   verbs are left open (an Owner's or an Admin's) does not count, so
-    ///   only an owner's grant gives it.
+    ///   vault's root that names the class's verb itself and that the
+    ///   verified fold stands behind (on a personal vault, the owner's
+    ///   counted mint): a grant whose verbs are left open (an Owner's or an
+    ///   Admin's) does not count, so only an owner's grant gives it.
     pub(crate) fn engine_control_actor_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -159,7 +160,9 @@ impl Vault {
     }
 
     /// The live Steward grant on this vault's root that names `holder` and
-    /// the verb `verb` itself, and reaches as far as `reach` asks, if any.
+    /// the verb `verb` itself, reaches as far as `reach` asks and stands in
+    /// the verified fold, if any: a row no counted act gives, or one whose
+    /// terms are not its act's, gives nothing (pass 28 R3b3).
     fn root_steward_grant_with_verb_in(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -168,15 +171,15 @@ impl Vault {
         reach: GrantReach,
     ) -> Result<Option<EntityId>> {
         let root = self.steward_root_scope_in_txn(txn)?;
+        // The root's shape never tells a shared vault from a personal one: the own-device
+        // residence is a `Vault` scope too.
+        let shared = self.shared_vault_creation_in_txn(txn)?.is_some();
         let now = self.store.clock.now_recorded_at();
-        // Over a shared vault only a Grant the fold stands behind holds a verb (pass 28 R3),
-        // never a row alone; an own-device root's Grants are read as derived in R4. The root's
-        // shape never tells the two apart: the own-device residence is a `Vault` scope too.
-        let fold = if self.shared_vault_creation_in_txn(txn)?.is_some() {
-            Some(self.authority_fold_readonly_in_txn(txn)?)
-        } else {
-            None
-        };
+        // Only a Grant the fold stands behind holds a verb, never a row alone (pass 28 R3):
+        // over a shared vault one that stands in its row's families; over this install's own
+        // residence the owner's counted Steward mint (`Vault::grant_engine_controls`), term
+        // for term. A base agent's engine-default Grant is read through its marker, never here.
+        let fold = self.authority_fold_readonly_in_txn(txn)?;
         for id in self
             .store
             .port_entity_ids_by_type(txn, ENTITY_TYPE_FEDERATION_GRANT, None)?
@@ -190,7 +193,7 @@ impl Vault {
             {
                 continue;
             }
-            let Ok(grant) = decode_federation_grant_body(&raw.body) else {
+            let Ok((grant, terms_key)) = decode_federation_grant_body_keyed(&raw.body) else {
                 continue;
             };
             if grant.member_ref == holder
@@ -202,9 +205,12 @@ impl Vault {
                 && matches!(&grant.authority_scope.verbs, ScopeAxis::Some(verbs)
                     if verbs.contains(verb))
                 && (reach == GrantReach::Any || reaches_whole_vault(&grant.authority_scope))
-                && fold.as_ref().is_none_or(|fold| {
-                    super::shared_grant_row_in_fold(fold, id, &raw.body, now).is_some()
-                })
+                && if shared {
+                    super::shared_grant_row_in_fold(&fold, id, &raw.body, now).is_some()
+                } else {
+                    super::owner_agent_mint_in_fold(&fold, id, &grant, terms_key.as_ref(), &root)
+                        .is_some()
+                }
             {
                 return Ok(Some(id));
             }

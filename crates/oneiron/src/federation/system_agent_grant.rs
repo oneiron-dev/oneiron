@@ -951,27 +951,93 @@ impl Vault {
 #[cfg(any(test, oneiron_test_support))]
 impl Vault {
     /// TEST-ONLY: stands `agent`'s Steward grant with `verbs` as the one
-    /// row that stands, as a first mint leaves it, without the owner's
-    /// signed act (a library fixture holds no machine profile to carry one).
-    /// Every row that stood before is deleted first, so a later call
-    /// replaces the earlier grant.
+    /// row that stands, as a first mint leaves it; a later call replaces the
+    /// earlier grant ([`Self::stand_steward_grant_with_axes_for_test`] with
+    /// every data axis whole).
     pub(crate) fn stand_steward_grant_for_test(
         &self,
         agent: EntityId,
         verbs: &[&str],
     ) -> Result<EntityId> {
+        self.stand_steward_grant_with_axes_for_test(agent, verbs, None)
+    }
+
+    /// TEST-ONLY: stands `agent`'s Steward grant with `verbs` and the data
+    /// axes of `data_axes` (`None` leaves each axis whole) as the one row
+    /// that stands.
+    /// - A base agent's row stands with no act, as the host's first mint
+    ///   leaves it (its engine-default Grant is read from its marker until
+    ///   pass 28 R4). Every row that stood before is deleted first.
+    /// - Any other agent's row is the embedded owner's signed Steward mint,
+    ///   as [`Self::grant_engine_controls`] writes it, after his signed revoke
+    ///   of every row that stood: a row gives such an agent nothing without
+    ///   its counted mint (pass 28 R3b3), so the vault needs an act carrier
+    ///   (`test_doors::steward::open_owner_carrier_vault` or
+    ///   `test_support::provision_act_carrier`).
+    pub(crate) fn stand_steward_grant_with_axes_for_test(
+        &self,
+        agent: EntityId,
+        verbs: &[&str],
+        data_axes: Option<&Scope>,
+    ) -> Result<EntityId> {
+        let verbs: BTreeSet<String> = verbs.iter().map(|verb| (*verb).to_owned()).collect();
+        if SystemAgent::of(agent).is_none() {
+            return self.mint_steward_grant_for_test(agent, verbs, data_axes, true);
+        }
         self.with_write_txn_grouped(|txn| {
             for standing in self.standing_steward_grants_of_in(txn, agent)? {
                 self.delete_agent_grant_row_in_txn(txn, standing)?;
             }
-            let (id, _) = self.put_steward_grant_row_in_txn(
-                txn,
-                agent,
-                verbs.iter().map(|verb| (*verb).to_owned()).collect(),
-                None,
-            )?;
+            let (id, _) = self.put_steward_grant_row_in_txn(txn, agent, verbs, data_axes)?;
             Ok(id)
         })
+    }
+
+    /// TEST-ONLY: the embedded owner's signed Steward mint of `agent`'s
+    /// grant with `verbs` and the data axes of `data_axes`, as
+    /// [`Self::grant_engine_controls`] writes it, after his signed revoke of
+    /// every row that stood when `replace` holds; else beside them. The
+    /// install loads its key first, as a giving door does.
+    pub(crate) fn mint_steward_grant_for_test(
+        &self,
+        agent: EntityId,
+        verbs: BTreeSet<String>,
+        data_axes: Option<&Scope>,
+        replace: bool,
+    ) -> Result<EntityId> {
+        let owner = self.ensure_embedded_owner_actor().map_err(|error| {
+            crate::error::Error::InvalidConfig(format!("embedded owner: {error:?}"))
+        })?;
+        let owner = self.authenticate_owner(
+            owner,
+            &owner.to_hex(),
+            true,
+            crate::store::GateDecisionId::now(),
+        )?;
+        self.load_membership_carrier();
+        let id = self.with_write_txn_grouped(|txn| {
+            if replace {
+                self.revoke_standing_steward_grants_in_txn(txn, &owner, agent)?;
+            }
+            self.mint_steward_grant_in_txn(txn, &owner, agent, verbs, data_axes)
+        })?;
+        self.apply_pending_rebinds_after_commit();
+        Ok(id)
+    }
+
+    /// TEST-ONLY: the data axes a Steward grant row on this vault's root
+    /// holds when no axis is narrowed: what
+    /// [`Self::stand_steward_grant_with_axes_for_test`] narrows from.
+    #[cfg(oneiron_test_support)]
+    pub(crate) fn steward_row_axes_for_test(&self, agent: EntityId) -> Result<Scope> {
+        let txn = self.store.env.read_txn()?;
+        Ok(FederationGrant::new(
+            self.steward_root_scope_in_txn(&txn)?,
+            agent,
+            FederationGrantRole::Steward,
+            FederationGrantPreset::Steward,
+        )
+        .authority_scope)
     }
 
     /// TEST-ONLY: leaves `agent` opted out, as a first mint over a policy

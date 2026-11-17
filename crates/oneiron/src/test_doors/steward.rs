@@ -87,7 +87,11 @@ pub fn record_strength_observations(
 
 /// Stands `agent`'s Steward grant with `verbs` as the one row that stands,
 /// as a first mint leaves it; a later call stands a fresh grant that
-/// replaces it.
+/// replaces it. A base agent's row stands with no act; any other agent's is
+/// the embedded owner's signed mint, which needs a vault that can carry
+/// it ([`open_owner_carrier_vault`], `test_support::provision_act_carrier`):
+/// on a personal vault a row gives such an agent nothing without its counted
+/// mint (pass 28 R3b3).
 ///
 /// # Errors
 ///
@@ -100,7 +104,8 @@ pub fn stand_steward_grant(vault: &Vault, agent: EntityId, verbs: &[&str]) -> Re
 /// [`stand_steward_grant`] does, then holds the grant row to the record kinds
 /// `bands` and every other data axis whole. The host's mint leaves every axis
 /// whole, and no owner door narrows one yet: this door writes the row such a
-/// door would leave.
+/// door would leave. For an agent that is no base agent, the row is the
+/// owner's signed mint of those axes ([`stand_steward_grant`]).
 ///
 /// # Errors
 ///
@@ -113,6 +118,11 @@ pub fn stand_steward_grant_in_bands(
 ) -> Result<EntityId> {
     use crate::federation::{decode_federation_grant_body, encode_federation_grant_body};
     use crate::ports::EntityStoreRead;
+    if crate::federation::SystemAgent::of(agent).is_none() {
+        let mut axes = vault.steward_row_axes_for_test(agent)?;
+        axes.bands = bands.iter().copied().collect();
+        return vault.stand_steward_grant_with_axes_for_test(agent, verbs, Some(&axes));
+    }
     let id = vault.stand_steward_grant_for_test(agent, verbs)?;
     vault.with_write_txn_grouped(|txn| {
         let raw = vault
