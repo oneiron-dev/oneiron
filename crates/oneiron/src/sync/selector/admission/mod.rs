@@ -559,8 +559,6 @@ fn reject_federated_tombstones(source: &LoroDoc) -> Result<()> {
     Ok(())
 }
 
-// FIX [LIBTEST-QUARANTINE-SYNC-SELECTOR-ADMISSION-RETIRED-FACET-TESTS]: the lib test target's type check fails here (1 errors: E0599 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(all(test, feature = "sync"))]
 mod retired_facet_tests {
     use super::*;
@@ -572,7 +570,7 @@ mod retired_facet_tests {
         let legacy = crate::companion::tests::support::retired_persona_facet_body(person);
         assert!(matches!(
             validate_admitted_replicated_body(&id, crate::registry::ENTITY_TYPE_FACET, &legacy),
-            Err(Error::Record(RecordError::InvalidCompanionRecordBody(_)))
+            Err(Error::InvalidClaimBody(_))
         ));
         let scenario = rmp_serde::to_vec_named(&serde_json::json!({
             "kind": "scenario", "person_ref": person.to_hex()

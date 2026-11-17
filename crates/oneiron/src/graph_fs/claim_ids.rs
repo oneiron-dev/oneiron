@@ -12,6 +12,7 @@ use crate::store::EngineScan;
 use crate::store::scan_count::ScanCount;
 use crate::vault::IdScanPage;
 
+use super::memory_fork::{claim_names_subject, served_claim};
 use super::model::{GRAPH_FS_MAX_PAGE_ENTRIES, GraphFsEntry, GraphFsPage, GraphFsResolver};
 use super::paging::PageBuilder;
 use super::readdir::empty_page;
@@ -42,13 +43,26 @@ impl GraphFsResolver<'_, '_> {
         cursor: Option<&str>,
         fetch: usize,
     ) -> Result<GraphFsPage> {
-        let vault = self.scoped_read.vault();
         let count = self.claim_walk_count(EngineScan::TypeIndexRows, &[ENTITY_TYPE_CLAIM])?;
-        self.claim_id_page(path, cursor, fetch, count, |after, limit| {
-            let ids = vault.entities_by_type_page(ENTITY_TYPE_CLAIM, after, limit)?;
-            let resume_after = (ids.len() >= limit).then(|| ids.last().copied()).flatten();
-            Ok(IdScanPage { ids, resume_after })
-        })
+        self.claim_id_page(
+            path,
+            cursor,
+            fetch,
+            count,
+            |after, limit| self.claim_type_run(after, limit),
+            |_| true,
+        )
+    }
+
+    /// Up to `limit` claim ids after `after`, in id order, from the CLAIM
+    /// type index.
+    fn claim_type_run(&self, after: Option<&EntityId>, limit: usize) -> Result<IdScanPage> {
+        let ids =
+            self.scoped_read
+                .vault()
+                .entities_by_type_page(ENTITY_TYPE_CLAIM, after, limit)?;
+        let resume_after = (ids.len() >= limit).then(|| ids.last().copied()).flatten();
+        Ok(IdScanPage { ids, resume_after })
     }
 
     pub(super) fn listdir_claims_for_subject(
@@ -57,8 +71,22 @@ impl GraphFsResolver<'_, '_> {
         subject: &EntityId,
         cursor: Option<&str>,
     ) -> Result<GraphFsPage> {
-        if !self.scoped_read.is_entity_readable(subject)? {
+        if !self.scoped_read.is_entity_readable(subject)? || !self.target_at_fork(subject)? {
             return Ok(empty_page(path, self.options.mount));
+        }
+        // At a memory fork a claim is about the subject it named there. The
+        // live `ClaimOf` edges name its subject now, so the fork walks every
+        // claim in id order and keeps those about this subject as they stood.
+        if self.memory_fork().is_some() {
+            let count = self.claim_walk_count(EngineScan::TypeIndexRows, &[ENTITY_TYPE_CLAIM])?;
+            return self.claim_id_page(
+                path,
+                cursor,
+                GRAPH_FS_MAX_PAGE_ENTRIES,
+                count,
+                |after, limit| self.claim_type_run(after, limit),
+                |row| served_claim(row).is_some_and(|body| claim_names_subject(&body, subject)),
+            );
         }
         let vault = self.scoped_read.vault();
         let count = self.claim_walk_count(EngineScan::EdgePeerRows, &claim_edge_scope(subject))?;
@@ -76,6 +104,7 @@ impl GraphFsResolver<'_, '_> {
                     limit,
                 )
             },
+            |_| true,
         )
     }
 
@@ -89,9 +118,10 @@ impl GraphFsResolver<'_, '_> {
     }
 
     /// One page of the claims `ids_after` names in id order, of those this
-    /// reader may read. A run of `fetch` ids that fills before the page does
-    /// may stop on a claim the page passed over, so the cursor is sealed.
-    /// `count` counts the walk's rows; past its row it raises its check.
+    /// reader may read at this mount and `member` keeps. A run of `fetch`
+    /// ids that fills before the page does may stop on a claim the page
+    /// passed over, so the cursor is sealed. `count` counts the walk's rows;
+    /// past its row it raises its check.
     fn claim_id_page(
         &self,
         path: &str,
@@ -99,6 +129,7 @@ impl GraphFsResolver<'_, '_> {
         fetch: usize,
         mut count: ScanCount,
         ids_after: impl FnMut(Option<&EntityId>, usize) -> Result<IdScanPage>,
+        member: impl Fn(&crate::ports::ReadRow) -> bool,
     ) -> Result<GraphFsPage> {
         let scope = self.cursor_scope(path);
         let after: Option<EntityId> = scope.open(cursor)?;
@@ -109,7 +140,10 @@ impl GraphFsResolver<'_, '_> {
         let run = self.device_admitted_run(None, after, fetch, &mut count, ids_after)?;
         count.finish(self.scoped_read.vault());
         for id in &run.ids {
-            if self.read_live_into(*id, &mut receipt)?.is_none() {
+            if !self
+                .read_live_into(*id, &mut receipt)?
+                .is_some_and(|row| member(&row))
+            {
                 continue;
             }
             let entry = GraphFsEntry::file(id.to_hex(), None);

@@ -376,7 +376,7 @@ impl Memory<'_> {
             let mut candidate = ClaimCandidate::new(
                 &input.predicate,
                 crate::claim::ClaimSubject::Entity(subject),
-                super::support::json_to_rmpv(&input.value),
+                super::support::json_to_msgpack_value(&input.value),
                 input.confidence,
             )
             .with_world(world)

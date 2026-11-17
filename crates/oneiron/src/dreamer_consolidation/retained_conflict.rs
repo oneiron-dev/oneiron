@@ -52,7 +52,7 @@ pub struct RetainedAlternative {
     /// The Keeps of it staged in their import's review that the owner
     /// declined there (FIX 7072): a Keep after them stages it at a fresh id,
     /// and the Dreamer's own ruling never offers it again.
-    pub(super) declined: Vec<EntityId>,
+    pub(crate) declined: Vec<EntityId>,
     /// The whole retained entry, read in full only when it is kept.
     entry: Value,
 }

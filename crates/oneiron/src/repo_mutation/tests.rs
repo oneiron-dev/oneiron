@@ -1733,6 +1733,9 @@ fn vote_proposal(
     passed: bool,
 ) {
     use crate::critic::{CritiqueArtifact, CritiqueProvenance, CritiqueSeverity};
+    use crate::edge::EdgeActorClass;
+    use crate::learning::{LearningCell, LearningPredicate, TypeRef};
+    use crate::write_envelope::WriteActor;
     let critic = EntityId::now();
     vault
         .put_entity(
@@ -1743,13 +1746,27 @@ fn vote_proposal(
             b"critic",
         )
         .unwrap();
+    let provenance = CritiqueProvenance::new(
+        WriteActor::new(critic, EdgeActorClass::Human),
+        "test_model",
+        None,
+    )
+    .unwrap();
+    let calibration = LearningCell::new(LearningPredicate::Reliability, critic)
+        .executor(provenance.executor().unwrap())
+        .type_ref(TypeRef {
+            node_id: "code_review".to_owned(),
+            tree_version: 1,
+        })
+        .axis("quality");
     let critique = CritiqueArtifact::new(
         format!("review_{}", critic.to_hex()),
         "repo_review",
         crate::attempt_queue::AttemptId::from_bytes(proposal.id.as_bytes()).unwrap(),
         proposal.id.to_hex(),
-        &proposal.catalog.lenses[0],
-        CritiqueProvenance::new(critic.to_hex(), "test_model", None).unwrap(),
+        &proposal.review.catalog().unwrap().lenses[0],
+        provenance,
+        calibration,
         verdict,
         CritiqueSeverity::High,
         Some(passed),
@@ -1821,7 +1838,7 @@ fn repository_proposed_gate_retains_split_and_hard_veto_then_applies_unanimous()
     vote_proposal(&vault, &accepted, CritiqueVerdict::Accept, true);
     let receipt = vault.apply_repo_proposal(accepted.id).unwrap();
     assert_eq!(receipt.entry.status, RepoMutationStatus::Applied);
-    assert_eq!(receipt.entry.actor_id, Some(accepted.actor));
+    assert_eq!(receipt.entry.actor_id, accepted.actor.id());
     assert_eq!(
         vault.get_claim(&accepted.id).unwrap().unwrap().approval,
         ClaimApprovalStatus::Approved
@@ -2310,7 +2327,7 @@ fn promotion_requires_reviewed_document_frontiers_for_every_changed_file() {
         .record_code_session_run(
             &CodeSessionRun {
                 session: proposal.session,
-                actor: proposal.actor,
+                actor: proposal.actor.id().unwrap(),
                 model: "test-model".into(),
                 prompt_hash: [1; 32],
                 content_hash: [2; 32],
@@ -2359,7 +2376,7 @@ fn promotion_requires_reviewed_document_frontiers_for_every_changed_file() {
         .apply_code_file_edit(
             &mut extra,
             &CodeFileEdit::between("unreviewed.rs", "", "fn unreviewed() {}"),
-            WriteActor::new(proposal.actor, EdgeActorClass::Agent),
+            WriteActor::new(proposal.actor.id().unwrap(), EdgeActorClass::Agent),
         )
         .unwrap();
     let child = EntityId::now();
@@ -2417,7 +2434,7 @@ fn standalone_reviewed_document_crash_resumes_exact_commit_once() {
     );
     assert_eq!(
         std::fs::read(repo.path().join("README.md")).unwrap(),
-        proposal.content
+        proposal.ordinary_file().unwrap().1.to_vec()
     );
     assert_eq!(
         vault.code_file_edit_receipt(proposal.id).unwrap().unwrap(),
@@ -2484,7 +2501,7 @@ fn standalone_reviewed_noop_crash_resumes_pinned_commit_without_edit_receipt() {
         message: "reviewed empty file creation".into(),
     };
     let proposal = vault
-        .propose_repo_mutation(request, template.catalog)
+        .propose_repo_mutation(request, template.review.catalog().unwrap().clone())
         .unwrap();
     vote_proposal(&vault, &proposal, CritiqueVerdict::Accept, true);
     vote_proposal(&vault, &proposal, CritiqueVerdict::Accept, true);
