@@ -16,6 +16,7 @@ use super::GeneratedLens;
 use super::proposal::{LensSlotRecord, PROPOSALS, SLOTS, active_at, invalid_state, slot_key};
 use super::setting_keys::LENS_SLOT_AGENT_SELECT;
 use crate::agent_dispatch::{LineageStart, settling_lineage_in_txn};
+use crate::attempt_queue::AttemptId;
 use crate::consent::AuthenticatedOwner;
 use crate::edge::EdgeActorClass;
 use crate::memory::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
@@ -52,6 +53,11 @@ struct SlotDecider {
     actor_class: EdgeActorClass,
     /// The agent's admitting Grant; `None` for the owner.
     grant: Option<EntityId>,
+    /// The run attempt the agent's handle writes from, when its host bound
+    /// one: a dispatch at the dispatcher's own ceiling pins no delegation
+    /// parent on the child, so its lineage is read from the run as well as
+    /// from its id (DEC-0006). `None` for the owner and for a run-less call.
+    run_attempt: Option<AttemptId>,
 }
 
 impl SlotDecider {
@@ -66,6 +72,7 @@ impl SlotDecider {
             authenticated_under: owner.decision_id().to_hex(),
             actor_class: EdgeActorClass::Human,
             grant: None,
+            run_attempt: None,
         })
     }
 
@@ -77,6 +84,10 @@ impl SlotDecider {
         memory.prove_read_authority_in_txn(txn)?;
         let vault = memory.vault();
         let agent = memory.actor();
+        let run_attempt = memory
+            .write_actor()
+            .run_attempt()
+            .and_then(|bytes| AttemptId::from_bytes(&bytes).ok());
         let grant = crate::authority::principal_standing_in_txn(
             vault,
             txn,
@@ -112,6 +123,7 @@ impl SlotDecider {
             authenticated_under: format!("grant:{}", grant.to_hex()),
             actor_class: EdgeActorClass::Agent,
             grant: Some(grant),
+            run_attempt,
         })
     }
 
@@ -142,7 +154,9 @@ impl SlotDecider {
         let Ok(proposer) = EntityId::from_hex(proposed_by) else {
             return Err(refused());
         };
-        let decider = settling_lineage_in_txn(vault, txn, &[LineageStart::Actor(self.actor)])?;
+        let mut starts = vec![LineageStart::Actor(self.actor)];
+        starts.extend(self.run_attempt.map(LineageStart::Attempt));
+        let decider = settling_lineage_in_txn(vault, txn, &starts)?;
         let proposer = settling_lineage_in_txn(vault, txn, &[LineageStart::Actor(proposer)])?;
         match (decider, proposer) {
             (Some(decider), Some(proposer)) if decider.is_disjoint(&proposer) => Ok(()),
