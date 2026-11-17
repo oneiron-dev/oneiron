@@ -72512,9 +72512,9 @@
     },
     {
      "bucket": "m",
-     "kind": "src",
+     "kind": "test",
      "notable": [],
-     "path": "src/scan_check/table_tests/seed_agent_definition.rs",
+     "path": "src/scan_check/table_tests/seed_agent_definition_tests.rs",
      "purpose": "Threshold fixtures of the agent_definition scans for `no_engine_scan_refuses_for_its_row_count` (FIX…",
      "surface": {
       "crate-vis": 1
@@ -72522,9 +72522,9 @@
     },
     {
      "bucket": "L",
-     "kind": "src",
+     "kind": "test",
      "notable": [],
-     "path": "src/scan_check/table_tests/seed_code_repo.rs",
+     "path": "src/scan_check/table_tests/seed_code_repo_tests.rs",
      "purpose": "Threshold fixtures of the code_repo scans for `no_engine_scan_refuses_for_its_row_count` (FIX…",
      "surface": {
       "crate-vis": 1
@@ -72532,9 +72532,9 @@
     },
     {
      "bucket": "m",
-     "kind": "src",
+     "kind": "test",
      "notable": [],
-     "path": "src/scan_check/table_tests/seed_project.rs",
+     "path": "src/scan_check/table_tests/seed_project_tests.rs",
      "purpose": "Threshold fixtures of the project scans for `no_engine_scan_refuses_for_its_row_count` (FIX…",
      "surface": {
       "crate-vis": 1
@@ -72542,9 +72542,9 @@
     },
     {
      "bucket": "L",
-     "kind": "src",
+     "kind": "test",
      "notable": [],
-     "path": "src/scan_check/table_tests/seed_room_thread.rs",
+     "path": "src/scan_check/table_tests/seed_room_thread_tests.rs",
      "purpose": "Threshold fixtures of the room_thread scans for `no_engine_scan_refuses_for_its_row_count` (FIX…",
      "surface": {
       "crate-vis": 1
@@ -72552,9 +72552,9 @@
     },
     {
      "bucket": "L",
-     "kind": "src",
+     "kind": "test",
      "notable": [],
-     "path": "src/scan_check/table_tests/seed_runtime_records.rs",
+     "path": "src/scan_check/table_tests/seed_runtime_records_tests.rs",
      "purpose": "Threshold fixtures of the runtime_records scans for `no_engine_scan_refuses_for_its_row_count` (FIX…",
      "surface": {
       "crate-vis": 1
@@ -87053,7 +87053,7 @@
      "path": "src/sync/home_handoff/delivery.rs",
      "purpose": "FIX 5661 C2a: what delivery asks of the carrier, additive beside C1",
      "surface": {
-      "crate-vis": 20
+      "crate-vis": 21
      }
     },
     {
@@ -87103,7 +87103,7 @@
      "path": "src/sync/home_handoff/mod.rs",
      "purpose": "FIX 5661 C1: the typed home-to-home handoff carrier",
      "surface": {
-      "crate-vis": 23
+      "crate-vis": 24
      }
     },
     {
@@ -87276,7 +87276,7 @@
      "path": "src/sync/ingest/mod.rs",
      "purpose": "One ingest entry per replicated container: every entities-map value and every tombstone takes the same…",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 16,
       "re-export": 1
      }
     },
@@ -87308,7 +87308,7 @@
      "path": "src/sync/ingest/peer_import.rs",
      "purpose": "Which rows of a window a federation peer's import brought (Docs Q04)",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 13
      }
     },
     {
@@ -87566,7 +87566,7 @@
      "path": "src/sync/mod.rs",
      "purpose": "CRDT sync layer for Oneiron",
      "surface": {
-      "crate-vis": 28,
+      "crate-vis": 29,
       "mod": 27,
       "re-export": 20
      }
@@ -87658,7 +87658,7 @@
      "path": "src/sync/office_proposals.rs",
      "purpose": "FIX 2691 (OF-505 slice D): an office artifact's proposals on the window plane",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
      }
     },
     {
@@ -87919,7 +87919,7 @@
      "purpose": "Device-local maintenance ingest shares and their fair admission",
      "surface": {
       "const": 2,
-      "crate-vis": 9,
+      "crate-vis": 12,
       "fn": 3,
       "re-export": 1,
       "struct": 2
@@ -88002,7 +88002,7 @@
      "purpose": "Grant-checked, per-item residence projections over a window document",
      "surface": {
       "const": 2,
-      "crate-vis": 24,
+      "crate-vis": 25,
       "fn": 10,
       "re-export": 31
      }
@@ -88596,7 +88596,7 @@
      "purpose": "A residence search served in pages (FIX 8865, FIX 196), from one final grant-selected ranked list read at…",
      "surface": {
       "const": 1,
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 3,
       "re-export": 1
      }
@@ -89047,7 +89047,7 @@
      "path": "src/sync/selector/secret_projection.rs",
      "purpose": "The masked copy every sync peer gets of a marked repo item (FIX 7608 slice 4; ruling A3: sync always carries…",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "re-export": 3
      }
     },
@@ -89084,7 +89084,7 @@
      "path": "src/sync/selector/secret_projection/documents/settlement.rs",
      "purpose": "Owner settlement of a retained document-copy lineage (FIX12419, document-only)",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 7,
       "fn": 5,
       "struct": 1
      }
@@ -89498,7 +89498,7 @@
      "path": "src/sync/transport/window_pads/parts.rs",
      "purpose": "A window pad envelope put back together on its socket (KS-5, FIX 7107): the first frame, then its…",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 5,
       "enum": 1,
       "fn": 2,
       "struct": 3
@@ -89521,7 +89521,7 @@
      "path": "src/sync/typed_body_rows.rs",
      "purpose": "FIX 12470: a typed body's rows on the window plane",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 11
      }
     },
     {
@@ -94140,6 +94140,16 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/test_doors/fingerprint_keep_sync_digests.rs",
+     "purpose": "K-proof door for sync digests that existing records store, send or compare",
+     "surface": {
+      "fn": 13
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "Audience",
       "MessageSlice",
@@ -94754,7 +94764,7 @@
      "purpose": "Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD)",
      "surface": {
       "fn": 1,
-      "mod": 290,
+      "mod": 291,
       "re-export": 1
      }
     },
@@ -106893,6 +106903,17 @@
      "bucket": "L",
      "kind": "test",
      "notable": [],
+     "path": "tests/fingerprint_keep_sync_digests.rs",
+     "purpose": "K-proof for sync legacy digests at 62d2d72f5c1b: existing stored, sent and compared identities keep main's…",
+     "surface": {
+      "crate-vis": 21,
+      "fn": 3
+     }
+    },
+    {
+     "bucket": "L",
+     "kind": "test",
+     "notable": [],
      "path": "tests/fingerprint_keep_typed_feeds.rs",
      "purpose": "K-proof (oracle) for PLAN-UC-04 stage 3.4c: the three typed feeds and the digests they write into keep their…",
      "surface": {
@@ -113873,7 +113894,7 @@
     "scan_check": {
      "files": 10,
      "impl_vault": true,
-     "largest_src_bucket": "L",
+     "largest_src_bucket": "m",
      "layout": "file+dir",
      "purpose": "Engine scans never refuse for how many rows they read (rule 5: ARCH-0044 C5, OF-520)"
     },
@@ -114151,7 +114172,7 @@
      "purpose": "`TimeRange`, temporal expressions/parsing, granularity/anchor enums"
     },
     "test_doors": {
-     "files": 296,
+     "files": 297,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -114326,10 +114347,10 @@
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     }
    },
-   "over_bar": 302,
+   "over_bar": 299,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 8115,
-   "test_files": 1859
+   "source_files": 8111,
+   "test_files": 1865
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -129144,6 +129165,14 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/purposes/sync.rs",
+     "purpose": "Legacy sync digests stored, sent or compared by existing records and peers",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/purposes/task.rs",
      "purpose": "Purposes of tasks (`crates/oneiron/src/task_verb`, `task_type`, `campaign`)",
      "surface": {}
@@ -129211,7 +129240,7 @@
      "purpose": "The K door: a digest that main already stores or sends keeps its exact bytes"
     },
     "purposes": {
-     "files": 31,
+     "files": 32,
      "impl_vault": false,
      "largest_src_bucket": "s",
      "layout": "dir",
@@ -129227,7 +129256,7 @@
    },
    "over_bar": 0,
    "purpose": "One fingerprint rule for engine digests (fable pass 22; PLAN-UC-04 stage 0)",
-   "source_files": 34,
+   "source_files": 35,
    "test_files": 1
   },
   "oneiron-gen": {
