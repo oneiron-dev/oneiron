@@ -269,6 +269,7 @@ pub mod skill_optimize_files;
 pub mod skill_package;
 pub mod skill_read_hold;
 pub mod slack_install_rows;
+pub mod slate_scope_signals;
 pub mod snapshot_page_accounting;
 pub mod sound_match_birth;
 pub mod source_audience;
