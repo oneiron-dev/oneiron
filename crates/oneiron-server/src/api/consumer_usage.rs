@@ -4,7 +4,7 @@ use crate::{
     config::SyncServerConfig,
     error::{ApiError, ApiErrorDetails},
     server::SyncServer,
-    usage::{UsageError, UsageEvent, UsageMode, UsageRecordResult, UsageRollup},
+    usage::{UsageError, UsageEvent, UsageMode, UsageRecordResult, UsageRollup, UsageScope},
 };
 use axum::{
     extract::{Path, State},
@@ -21,6 +21,19 @@ pub(crate) async fn record_usage_event(
     Json(event): Json<UsageEvent>,
 ) -> Result<Json<UsageRecordResult>, ApiError> {
     check_request_auth(&parts, &server)?;
+    // A posted event lands only in the vault this server's meter is bound
+    // to, as a repair reads only that scope: the body's vault never picks
+    // another vault's partition in this ledger. Its billing owner may
+    // differ, as a room-paid payer's does (FIX 7035). With no meter bound
+    // there is no scope to hold it to, and the post records as before.
+    if let Some(scope) = UsageScope::of(&server)
+        && !scope.matches_vault(&event.vault_id)
+    {
+        return Err(ApiError::bad_request(
+            "usage event vaultId must match this server's metering vault",
+            Some("vaultId"),
+        ));
+    }
     let mode = usage_mode_for_event(&server.config, &event)?;
     // A posted event counts as it always has; its record says it was posted.
     server

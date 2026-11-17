@@ -1,0 +1,17 @@
+{
+  "name": "vault.affect.coping.lookup",
+  "description": "Ranks one person's admitted coping outcomes by how near their baseline state is to a current turn's VAD, then worked, recency and confidence; below the cold-start floor it adds generic priors at low confidence.",
+  "input": "crate::memory::coping_doors::CopingLookupRequest",
+  "output": "crate::memory::coping_doors::CopingLookup",
+  "call": "memory.coping_lookup_as_owner(&memory.embedded_owner(\"vault.affect.coping.lookup\")?, &input)?",
+  "scope": "Read",
+  "act_class": "read",
+  "host_door": true,
+  "host_door_lists": true,
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}
