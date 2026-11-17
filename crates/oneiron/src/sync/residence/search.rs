@@ -3,6 +3,8 @@
 //! revision of that whole list, so no page mixes two lists and none is cut
 //! short as complete. A search one page holds keeps its single call.
 
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
+
 use super::{ResolvedRecallSelection, recall_scope_transcript, residence_window_for_blob};
 use crate::Vault;
 use crate::claim::{CallerLocality, ScopedReadActorKey};
@@ -189,16 +191,28 @@ pub fn residence_search_revision(
     if let Some(filter) = &filter {
         fields.push(filter.as_slice());
     }
-    let mut hasher = blake3::Hasher::new();
-    hasher.update(b"oneiron.residence.search.page.v1");
+    search_page_revision(&fields, hits)
+}
+
+/// The page revision sent to peers and compared for changes (K, PLAN-UC-04 stage 7).
+fn search_page_revision(fields: &[&[u8]], hits: &[(EntityId, WindowKey)]) -> String {
+    let mut hasher = LegacyDigest::new(purposes::sync::RESIDENCE_SEARCH_PAGE);
     for field in fields {
-        hasher.update(&(field.len() as u64).to_be_bytes());
-        hasher.update(field);
+        hasher.len_u64_be(field.len());
+        hasher.raw(field);
     }
     for (id, window) in hits {
-        hasher.update(id.as_bytes());
-        hasher.update(&(window.as_str().len() as u64).to_be_bytes());
-        hasher.update(window.as_str().as_bytes());
+        hasher.raw(id.as_bytes());
+        hasher.len_u64_be(window.as_str().len());
+        hasher.raw(window.as_str().as_bytes());
     }
-    hasher.finalize().to_hex().to_string()
+    oneiron_hex::encode(&hasher.finish())
+}
+
+#[cfg(oneiron_test_support)]
+pub(crate) fn search_page_revision_for_test(
+    fields: &[&[u8]],
+    hits: &[(EntityId, WindowKey)],
+) -> String {
+    search_page_revision(fields, hits)
 }
