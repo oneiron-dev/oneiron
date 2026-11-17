@@ -303,8 +303,7 @@ impl Fixture {
     fn model_person(&self, actor: EntityId) -> Result<EntityId> {
         Ok(
             actor_subject_anchor(&self.vault, &actor, self.vault.now_recorded_at())?
-                .expect("a seeded agent is anchored to its model PERSON")
-                .subject_ref,
+                .expect("a seeded agent is anchored to its model PERSON"),
         )
     }
 

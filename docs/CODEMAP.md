@@ -14,7 +14,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | crate | purpose | source files | test files | over 800-line bar |
 |---|---|---|---|---|
-| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 8112 | 1866 | 299 |
+| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 8113 | 1868 | 299 |
 | [oneiron-agent-runtime](codemap/oneiron-agent-runtime.md) | `oneiron-agent-runtime`: the sandbox backends above the `oneiron` core crate (core split slice 5b.1) | 23 | 11 | 1 |
 | [oneiron-android](codemap/oneiron-android.md) | Minimal JNI/Kotlin ownership adapter | 4 | 0 | 0 |
 | [oneiron-authority](codemap/oneiron-authority.md) | Authority vocabulary of the oneiron engine: the AUTHORITY_LOG wire layer, the federation scope codecs, the… | 73 | 7 | 0 |
@@ -35,7 +35,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | [oneiron-driver](codemap/oneiron-driver.md) | oneiron-driver — the in-process starter motor (ONE-1683 / ONE-1684, M8 agent runtime RT-01/RT-02) | 39 | 26 | 3 |
 | [oneiron-esign-render](codemap/oneiron-esign-render.md) | One shared e-sign field renderer for the pre-seal burn-in | 6 | 0 | 0 |
 | [oneiron-ffi](codemap/oneiron-ffi.md) | C ABI for on-device iOS and macOS access to the Oneiron vault | 13 | 1 | 0 |
-| [oneiron-fingerprint](codemap/oneiron-fingerprint.md) | One fingerprint rule for engine digests (fable pass 22; PLAN-UC-04 stage 0) | 38 | 1 | 0 |
+| [oneiron-fingerprint](codemap/oneiron-fingerprint.md) | One fingerprint rule for engine digests (fable pass 22; PLAN-UC-04 stage 0) | 39 | 1 | 0 |
 | [oneiron-gen](codemap/oneiron-gen.md) | Image, video and music job wire adapters for Oneiron's media and image seams, one module per wire protocol… | 11 | 3 | 0 |
 | [oneiron-guest](codemap/oneiron-guest.md) | Linux microVM guest agent and an unprivileged protocol conformance adapter | 12 | 3 | 0 |
 | [oneiron-hex](codemap/oneiron-hex.md) | Hex text for bytes: encode, decode and check in one place | 1 | 0 | 0 |
@@ -92,7 +92,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `anchored_annotation` | dir | 31 | L | yes | ARTL-2 (OF-368 D2/D3/D4): anchored-comment threads over versioned blob artifacts, plus thread → task-brief… |
 | `artifact_hosting` | dir | 16 | m | yes | Local artifact hosting over pinned code snapshots and blob exports |
 | `attempt_queue` | dir | 86 | L | yes | Generic LMDB-backed background attempt queue |
-| `authority` | dir | 303 | XL | yes | AUTHORITY_LOG record substrate |
+| `authority` | dir | 304 | XL | yes | AUTHORITY_LOG record substrate |
 | `autoreason_campaign` | file+dir | 28 | L | yes | Engine-side AR-3 campaign reports and read-only experiment selection |
 | `batch` | dir | 202 | XL | yes | — |
 | `blob_artifact` | dir | 96 | L | yes | ARTL-1 (OF-368 D1): versioned blob artifact store for foreign binary (office) files |
@@ -656,7 +656,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | module | layout | files | largest src bucket | purpose |
 |---|---|---|---|---|
 | `legacy` | file | 1 | s | The K door: a digest that main already stores or sends keeps its exact bytes |
-| `purposes` | dir | 35 | s | The purpose registry: every [`Purpose`] and every [`LegacyPurpose`] the engine uses, one file per engine area |
+| `purposes` | dir | 36 | s | The purpose registry: every [`Purpose`] and every [`LegacyPurpose`] the engine uses, one file per engine area |
 | `record` | file | 1 | s | The one canonical byte form of a structured value (DESIGN section 1.5) |
 
 ## oneiron-gen
@@ -1417,7 +1417,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `golden_day` | dir | 3 | m | The golden day: one scripted day on a fresh vault, and the normalised dump of what it leaves behind (Fable's… |
 | `lint` | file | 1 | L | The test lint: no sleeps, no wall clock, no network and no real model in tests (Fable's verdict, sections 3… |
 | `model` | dir | 4 | m | A reference model of the vault and seeded step sequences checked against the engine (Fable's verdict 52… |
-| `pending_door` | file | 1 | s | The nightly pending-door filter (Engine ruling 03:32, 10 Nov; Fable's verdict, section 1, "Door waits")… |
+| `pending_door` | file | 1 | m | The nightly pending-door filter (Engine ruling 03:32, 10 Nov; Fable's verdict, section 1, "Door waits")… |
 | `provider` | dir | 6 | m | Scripted model doors: answers from a script keyed by prompt digest, never from a model |
 | `quarantine` | file | 1 | s | The flaky-test quarantine and the three nextest tiers |
 | `receipt` | file | 1 | s | The receipt reader: governance receipts read back through the public `vault.receipts` verb, newest first, as… |

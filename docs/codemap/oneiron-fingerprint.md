@@ -19,6 +19,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/purposes/broker.rs` | src | s | — | — | Purposes of the credential broker (`oneiron-broker`; ARCH-0069 `#broker-digest`) |
 | `src/purposes/calendar.rs` | src | s | — | — | Purposes of calendar ingest (`oneiron` `calendar::ingest`) |
 | `src/purposes/channel_identity.rs` | src | s | — | — | Purposes of channel identities (`crates/oneiron/src/channel_identity`) |
+| `src/purposes/check_in.rs` | src | s | — | — | Purposes of a person's check-in effects (`oneiron` `check_in::effect`; ARCH-0082 #composing) |
 | `src/purposes/cluster.rs` | src | s | — | — | Purposes of claim clustering (`oneiron::cluster`, `crates/oneiron/src/memory/claim_cluster.rs`) |
 | `src/purposes/dreamer.rs` | src | s | — | — | Purposes of the Dreamer (`crates/oneiron/src/dreamer_consolidation`, `crates/oneiron/src/dreamer_promotion`… |
 | `src/purposes/engine_executor.rs` | src | s | — | — | Purposes of the engine executor (`crates/oneiron/src/engine_executor`) |
