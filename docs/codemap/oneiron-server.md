@@ -748,7 +748,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/operator_routes.rs` | src | m | 1 crate-vis | — | `/v1/operator`: the host operator's own acts |
 | `src/api/org_admin.rs` | src | s | 2 crate-vis | — | Owner-only setup and the Console's closed organization action list |
 | `src/api/owner_origin.rs` | src | m | 8 crate-vis | — | `/v1/owner/origin-authority`: the owner's origin cutover (ARCH-0068 RA7) |
-| `src/api/owner_routes.rs` | src | L | 74 crate-vis | — | `/v1/owner`: the vault owner's own actions over HTTP |
+| `src/api/owner_routes.rs` | src | L | 75 crate-vis | — | `/v1/owner`: the vault owner's own actions over HTTP |
 | `src/api/owner_routes/account_routes.rs` | src | s | 1 crate-vis | — | `/v1/owner/cloud-registration`: the owner links this vault to the Oneiron cloud account and manages that… |
 | `src/api/owner_routes/agent_grant_routes.rs` | src | s | 1 crate-vis | — | `/v1/owner/agent-grants`: the owner grants a named agent (the seeded Coach included) an explicit verb list… |
 | `src/api/owner_routes/agent_run_effect_routes.rs` | src | s | 1 crate-vis | — | `/v1/owner/agent/run-effects/answer`: the owner's answer to the inbox ask a moved agent run's replayed step… |
@@ -1640,7 +1640,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/model_artifacts/catalog.rs` | src | m | 2 crate-vis | — | The house models the deploy scripts serve today, pinned file by file (`deploy/house-model/`… |
 | `src/model_artifacts/install.rs` | src | m | 11 crate-vis | — | Placing a manifest's files on this machine, verifying an operator's directory, and reading what is on disk |
 | `src/model_artifacts/install/quarantine.rs` | src | s | 1 crate-vis | — | Retaining a mismatched installed model before its replacement is fetched |
-| `src/model_artifacts/licence.rs` | src | s | 6 crate-vis | — | Which licences let a model download start (the owner's standing grant: any licence that does not hurt us… |
+| `src/model_artifacts/licence.rs` | src | s | 11 crate-vis | — | Which licences let a model download start (the owner's standing grant: any licence that does not hurt us… |
 | `src/model_artifacts/manifest.rs` | src | s | 10 crate-vis | — | The pinned-artifact manifest: one model, one commit, every file by size and SHA-256, with its licence… |
 | `src/model_artifacts/mod.rs` | src | s | 5 crate-vis | — | Pinned model weights beyond the embedder: LLM targets, speculative drafters, voice checkpoints and, later… |
 | `src/models/anthropic.rs` | src | m | 5 crate-vis | — | The Anthropic-compatible transport: any `/v1/messages` server |
@@ -2090,7 +2090,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/test_doors/mcp_surface.rs` | src | s | 2 fn | — | Door for `tests/mcp_surface_registration_latency.rs`: the MCP surface a server serves, read through the… |
 | `src/test_doors/media_job_spend.rs` | src | s | 2 struct · 11 fn | ScopedJobSpend, ScopedMediaJob | Doors for `tests/media_job_staged_spend.rs` ([MEDIA-JOB-SPEND-LOST-ON-PROCESS-DEATH], S7299-P1): a scoped… |
 | `src/test_doors/merge_queue_checker_pressure.rs` | src | s | 1 fn | — | Doors for `tests/merge_queue_checker_pressure.rs` ([GUEST-PIDS-PRESSURE-MERGE-QUEUE-CHECKER], FIX 8013… |
-| `src/test_doors/mod.rs` | src | s | 58 mod | — | Doors for the integration tests to crate-private items, as in `oneiron::test_doors` |
+| `src/test_doors/mod.rs` | src | s | 59 mod | — | Doors for the integration tests to crate-private items, as in `oneiron::test_doors` |
+| `src/test_doors/model_licence.rs` | src | s | 1 fn | — | The model licence admission under the owner's choice (`models.install.allow_noncommercial_licences`), read… |
 | `src/test_doors/native_board.rs` | src | s | 2 fn | — | Doors for `tests/room_pins_native.rs` (ROOM-SCOPED-PINS P2c): what a pumped run's native board and self… |
 | `src/test_doors/off_router_wire_counts.rs` | src | s | 2 fn | — | Doors for `tests/wire_counts_off_runtime.rs`: the wire counts an e-sign QR capability refusal and an MCP… |
 | `src/test_doors/one_click_wire_counter.rs` | src | s | 1 fn | — | Door for `tests/campaign_one_click_unsubscribe.rs`: runs a closure while the wire window's counter lock is… |
@@ -2349,6 +2350,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/mesh_door_refusal_status.rs` | test | s | — | — | [MESH-DOOR-REFUSAL-STATUS-500]: a mesh door the host cannot sign for answers the refusal's own status, not a… |
 | `tests/mesh_listener_bind_gate.rs` | test | s | — | — | The shipped server's default features carry `mesh`, and its paired-machine mesh listener still starts only… |
 | `tests/model_binding_proposer_grant.rs` | test | m | — | — | An agent whose Grant names `vault.models.bindings.propose` may propose a binding; the owner still decides… |
+| `tests/model_licence_owner_key.rs` | test | s | — | — | The owner's opt-out for the model licence refusal (`models.install.allow_noncommercial_licences`; owner… |
 | `tests/model_rung_hours.rs` | test | m | — | — | A role's rung may keep daily hours, such as a GPU box the owner runs batch models on at night (UNBUILT-14… |
 | `tests/model_step_health_rest.rs` | test | m | — | — | A durable model step whose provider is down waits out its offer's health rest without spending a declared… |
 | `tests/native_budget_binding.rs` | test | s | — | — | L9-19 (ARCH-0036 #system-one-codec): the System One binding's `native_budget` row is the codec row that says… |
@@ -2366,6 +2368,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/origin_cutover_redirect.rs` | test | m | — | — | RA7 (ARCH-0068): after a cutover the old origin redirects a push to the host that writes the new epoch (FIX… |
 | `tests/own_rate_health_ask.rs` | test | m | — | — | An own actor's acts past their advisory rate (ARCH-0044 C5) join the health check as their own crossing… |
 | `tests/owner_backup_setting.rs` | test | m | — | — | The owner's backup setting through its routes (FIX-LIST row 5822): `GET` and `PUT /v1/owner/settings/backup`… |
+| `tests/owner_disclosure_confirm_stale_refusal.rs` | test | s | — | — | A stale disclosure confirm names the refusal, never a server fault ([DISCLOSURE-CONFIRM-STALE-500]) |
 | `tests/owner_embedding_spaces_list_summary.rs` | test | s | — | — | `GET /v1/owner/embedding-spaces` lists the declared spaces, not the conflict queue: its OpenAPI summary must… |
 | `tests/owner_plane_refusal_answers.rs` | test | s | — | — | The owner plane's refusal maps make the same owner refusal of each engine code before and after they share… |
 | `tests/owner_refusal_catch_all.rs` | test | s | — | — | `POST /v1/owner/steer`, `POST /v1/owner/inbox/concern/move` and `GET /v1/owner/inbox` answer an engine… |
@@ -2390,6 +2393,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/room_pins_boards.rs` | test | m | — | — | Room-scoped shared pins through the real signed HTTP board route |
 | `tests/room_pins_native.rs` | test | m | — | — | A pumped run's native board and self brief join its work room's shared pins |
 | `tests/room_reader_transferred_slip.rs` | test | m | — | — | A transferred slip of one of the vault's own agents is not the room's proven own-agent reader… |
+| `tests/run_backend_source_rows.rs` | test | s | — | — | A run backend's sourced call names the rows its request was read from (FIX-LIST… |
 | `tests/run_reader_record_scope.rs` | test | s | — | — | The HTTP facade refuses facet-limited credentials before reading run branches or spend leases, while an… |
 | `tests/run_settlements_own_agent.rs` | test | m | — | — | RUN-SETTLEMENTS-OWN-AGENT-READ: `vault.budgets.settlements` over the facade |
 | `tests/run_step_live_run.rs` | test | m | — | — | [RUN-STEP-DOOR-SERVER-TEST] (FIX-LIST 23040, 23150, 23621): `ai.steps.submit` on an agent's attached live… |
