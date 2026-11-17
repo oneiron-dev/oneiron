@@ -54,6 +54,8 @@ mod silence;
 mod sources;
 pub mod steer;
 mod targeted;
+#[cfg(oneiron_test_support)]
+pub(crate) mod test_door;
 mod trend;
 mod trend_output;
 mod trend_policy;
