@@ -87,7 +87,8 @@ pub struct SharedOwnerKeyMovePlan {
     pub member: String,
     /// The heads the first revoke names, 64 hex each.
     pub parents: Vec<String>,
-    /// The member's live owner keys, one revoke each, 64 hex each.
+    /// The member's live owner keys, one revoke each, in hex: 64 digits for
+    /// an Ed25519 key, 66 for a passkey's compressed P-256 key.
     pub revoked: Vec<String>,
     /// The executing Owner's keys that may sign.
     pub signers: Vec<SharedOwnerKeyMoveSigner>,

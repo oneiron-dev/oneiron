@@ -122,12 +122,20 @@ struct ResidentRunView {
     /// a held wake carries, and each message a wake took between its steps,
     /// once applied or while that wake has not ended.
     woken: HashSet<String>,
+    /// The wake keys of the messages and room turns that landed on a wake
+    /// of its run which has not ended, and that no step has applied yet.
+    /// Each is also in `woken`; a room turn among them stays staged until a
+    /// step applies it, and wakes the resident again if its wake ends
+    /// without one.
+    landed: HashSet<String>,
     /// Whether a wake of its run is queued, scheduled or running. A busy
-    /// resident gets no second wake for a message. A wake parked on a
-    /// durable wait, or paused, is not busy: nothing of it runs, so a
-    /// message wakes the resident as it would a sleeping one.
+    /// resident gets no second wake for a message, a room turn or a diary
+    /// review. A wake parked on a durable wait, or paused, is not busy:
+    /// nothing of it runs, so a message wakes the resident as it would a
+    /// sleeping one.
     busy: bool,
-    /// The wake of its run that is running, which a message lands on.
+    /// The wake of its run that is running, which a message, or a turn of
+    /// the room it was woken for, lands on.
     running: Option<AttemptId>,
 }
 
@@ -268,8 +276,12 @@ impl AgentDispatcher<'_> {
     /// whose thread's open TASK it holds, wakes it next, under its wake mode
     /// (FIX 15647), and then each message to its inbox. Turns of one room,
     /// and messages, hold for its wake hold and join one wake (AGM-4 = C).
-    /// A message to a busy resident wakes nothing: its class decides when it
-    /// reaches the resident (AGM-2 = C).
+    /// A busy resident gets no second wake (AGM-2 = C): a message's class
+    /// decides when it reaches the resident; a room turn lands on the
+    /// running wake when that wake is a room wake of the turn's room, and
+    /// otherwise waits (BUSY-ROOM-TURN-ROUTE = C); a diary review waits
+    /// (BUSY-DIARY-REVIEW-ROUTE = A). Whatever waits wakes the resident once
+    /// its run has ended.
     pub fn dispatch_resident_inbox(
         &self,
         agent: EntityId,
@@ -292,7 +304,10 @@ impl AgentDispatcher<'_> {
         let view = self.resident_run_view(agent)?;
         let woken = &view.woken;
         let mut pass = ResidentInboxDispatch::default();
-        if diary_review_wakes(spec.wake) {
+        // BUSY-DIARY-REVIEW-ROUTE = A (Engine 17 Nov 00:11): a review is no
+        // message, so it never lands on the running wake; it stays in the
+        // inbox and wakes the resident once the run has ended.
+        if diary_review_wakes(spec.wake) && !view.busy {
             for item in self.vault.diary_read_inbox_items()? {
                 let Some(review) = item
                     .diary_review
@@ -350,7 +365,7 @@ impl AgentDispatcher<'_> {
             }
         }
         // FIX 15647: its staged room wakes; Manual settles them unwoken.
-        self.dispatch_resident_room_wakes(&spec, woken, limit, now, &mut pass)?;
+        self.dispatch_resident_room_wakes(&spec, &view, limit, now, &mut pass)?;
         if spec.wake == ResidentWakeMode::Manual {
             return Ok(pass);
         }
@@ -369,6 +384,7 @@ impl AgentDispatcher<'_> {
         let carrier = format!("{AGENT_DISPATCH_ATTEMPT_TYPE}:resident:{}:", agent.to_hex());
         let mut view = ResidentRunView {
             woken: HashSet::new(),
+            landed: HashSet::new(),
             busy: false,
             running: None,
         };
@@ -379,7 +395,11 @@ impl AgentDispatcher<'_> {
                 if matches!(signal.kind, RunSignalKind::Interject { .. })
                     && (signal.state == RunSignalState::Settled || !ended)
                 {
-                    woken.insert(format!("{AGENT_DISPATCH_ATTEMPT_TYPE}:{}", signal.key));
+                    let key = format!("{AGENT_DISPATCH_ATTEMPT_TYPE}:{}", signal.key);
+                    if signal.state == RunSignalState::Pending && !ended {
+                        view.landed.insert(key.clone());
+                    }
+                    woken.insert(key);
                 }
             }
             // A wake parked on a durable wait (or on an outage or its payer)
