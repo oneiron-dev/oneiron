@@ -170,3 +170,42 @@ fn a_foreign_lease_with_a_closed_leases_id_stays_foreign() {
     ));
     assert_eq!(foreign.lease_open(&theirs), Some(true));
 }
+
+#[test]
+fn a_lease_observation_reads_a_closed_lease_through_its_handle() {
+    let guard = guard();
+    let foreign = self::guard();
+    let settled = bound_lease(&guard);
+    let theirs = bound_lease(&foreign);
+    guard.begin_dispatch(&settled, &call()).expect("dispatch");
+    assert_eq!(
+        guard.lease_observation(&settled),
+        Some(BudgetLeaseState::Open {
+            reserve_units: 6,
+            dispatched: true,
+        })
+    );
+    guard.settle_usage(&settled, 4).expect("settle");
+    let aborted = bound_lease(&guard);
+    guard.abort(&aborted).expect("abort");
+    for handle in [&settled, &settled.clone()] {
+        assert_eq!(
+            guard.lease_observation(handle),
+            Some(BudgetLeaseState::Settled { used_units: 4 })
+        );
+    }
+    assert_eq!(
+        guard.lease_observation(&aborted),
+        Some(BudgetLeaseState::Aborted)
+    );
+    // Another meter's lease with the same id is not this meter's lease.
+    assert_eq!(theirs.id(), settled.id());
+    assert_eq!(guard.lease_observation(&theirs), None);
+    assert_eq!(
+        foreign.lease_observation(&theirs),
+        Some(BudgetLeaseState::Open {
+            reserve_units: 6,
+            dispatched: false,
+        })
+    );
+}

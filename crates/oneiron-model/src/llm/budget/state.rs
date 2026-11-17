@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use super::dispatch::DispatchBinding;
 use super::ledger::{
-    BudgetRowTally, FloorAllocation, LeaseRecord, LeaseState, ReserveAllocation, ReservePlan,
+    BudgetRowTally, FloorAllocation, LeaseEntry, LeaseRecord, ReserveAllocation, ReservePlan,
 };
 use super::policy::{BudgetPolicyRow, BudgetPolicyTable};
 use super::types::{BudgetAdmission, BudgetExhaustionPolicy, BudgetRead, BudgetThreshold};
@@ -23,6 +23,10 @@ pub(super) struct BudgetState {
     pub(super) reserved_units: u64,
     pub(super) next_lease_seq: u64,
     pub(super) fired_thresholds: BTreeSet<BudgetThreshold>,
+    /// The open leases, by id. A lease leaves as it settles or aborts, so a
+    /// line that lives as long as the server holds no record per call it ever
+    /// made; a closed lease answers through its handle's cell
+    /// (FIX BUDGET-LINE-LEASE-TABLE-UNBOUNDED).
     pub(super) leases: BTreeMap<String, LeaseRecord>,
     /// Engine-stamped actor this meter is bound to, for actor selectors.
     pub(super) actor: Option<EntityId>,
@@ -101,6 +105,16 @@ impl BudgetState {
         } else {
             Err(BudgetDenied::LeaseInvalid)
         }
+    }
+
+    /// The lease as this meter answers for it, for a caller that checked its
+    /// provenance: its record while it is open, then what its handles keep;
+    /// `None` for a lease this meter never issued.
+    pub(super) fn lease_entry<'a>(&'a self, lease: &'a BudgetLease) -> Option<LeaseEntry<'a>> {
+        if let Some(record) = self.leases.get(lease.id()) {
+            return Some(LeaseEntry::Open(record));
+        }
+        lease.closed.get().map(LeaseEntry::Closed)
     }
 
     pub(super) fn reserve(&mut self, reserve_units: u64) -> Result<BudgetLease, BudgetDenied> {
@@ -353,13 +367,13 @@ impl BudgetState {
             LeaseRecord {
                 reserve_units,
                 metered,
-                state: LeaseState::Open,
                 matched_rows: allocation.matched_rows,
                 floor_allocations: allocation.floor_allocations,
                 shared_reserved_units: allocation.shared_units,
                 binding,
                 dispatched: false,
                 physical_attempts: lease.physical_attempt_evidence(),
+                closed: lease.closed.clone(),
             },
         );
         lease

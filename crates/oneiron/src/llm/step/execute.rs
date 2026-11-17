@@ -991,7 +991,7 @@ fn settle_failed_usage(guard: &BudgetGuard, lease: &super::BudgetLease, usage: &
     // lease before it failed (FIX 7218); settling again is a no-op, where an
     // abort would be refused as an invalid lease.
     let settled_already = matches!(
-        guard.lease_observation(lease.id()),
+        guard.lease_observation(lease),
         Some(super::super::BudgetLeaseState::Settled { .. })
     );
     let settled = if settled_already || usage.input.total > 0 || usage.output.total > 0 {

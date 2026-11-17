@@ -4,7 +4,7 @@
 use serde::{Deserialize, Serialize};
 
 use super::guard::BudgetGuard;
-use super::ledger::LeaseState;
+use super::ledger::LeaseEntry;
 use super::types::{BudgetAdmission, BudgetRead};
 use crate::llm::{BudgetDenied, BudgetLease, CallPurpose, LlmUsage, ModelLocality};
 
@@ -149,13 +149,14 @@ impl BudgetGuard {
         state
             .check_lease_provenance(lease)
             .map_err(|_| DispatchRefused::ForeignLease)?;
-        let record = state
-            .leases
-            .get_mut(lease.id())
-            .ok_or(DispatchRefused::ForeignLease)?;
-        if record.state != LeaseState::Open {
-            return Err(DispatchRefused::Closed);
-        }
+        let Some(record) = state.leases.get_mut(lease.id()) else {
+            // The meter's table holds only open leases.
+            return Err(if lease.closed.outcome().is_some() {
+                DispatchRefused::Closed
+            } else {
+                DispatchRefused::ForeignLease
+            });
+        };
         let binding = record.binding.as_ref().ok_or(DispatchRefused::Unbound)?;
         if record.dispatched {
             return Err(DispatchRefused::AlreadyDispatched);
@@ -184,12 +185,9 @@ impl BudgetGuard {
         let state = self.lock_state();
         state.check_lease_provenance(lease).ok()?;
         state
-            .leases
-            .get(lease.id())?
-            .binding
-            .as_ref()?
-            .request_digest
-            .clone()
+            .lease_entry(lease)?
+            .request_digest()
+            .map(str::to_owned)
     }
 
     /// Whether [`Self::begin_dispatch`] started this lease; `None` for a
@@ -198,7 +196,7 @@ impl BudgetGuard {
     pub fn dispatched(&self, lease: &BudgetLease) -> Option<bool> {
         let state = self.lock_state();
         state.check_lease_provenance(lease).ok()?;
-        state.leases.get(lease.id()).map(|record| record.dispatched)
+        state.lease_entry(lease).map(LeaseEntry::dispatched)
     }
 
     /// Clears a premature dispatch mark for a call that sent nothing. Later
@@ -216,11 +214,12 @@ impl BudgetGuard {
     pub fn mark_unsent(&self, lease: &BudgetLease) -> Result<(), BudgetDenied> {
         let mut state = self.lock_state();
         state.check_lease_provenance(lease)?;
+        // The meter's table holds only open leases.
         let record = state
             .leases
             .get_mut(lease.id())
             .ok_or(BudgetDenied::LeaseInvalid)?;
-        if record.state != LeaseState::Open || record.physical_attempts.count() > 0 {
+        if record.physical_attempts.count() > 0 {
             return Err(BudgetDenied::LeaseInvalid);
         }
         record.dispatched = false;
@@ -233,10 +232,7 @@ impl BudgetGuard {
     pub fn lease_open(&self, lease: &BudgetLease) -> Option<bool> {
         let state = self.lock_state();
         state.check_lease_provenance(lease).ok()?;
-        state
-            .leases
-            .get(lease.id())
-            .map(|record| record.state == LeaseState::Open)
+        state.lease_entry(lease).map(LeaseEntry::is_open)
     }
 
     /// Moves this meter's limit and per-call reservation: an owner's or a
@@ -254,10 +250,7 @@ impl BudgetGuard {
     pub fn reserved_for(&self, lease: &BudgetLease) -> Option<u64> {
         let state = self.lock_state();
         state.check_lease_provenance(lease).ok()?;
-        state
-            .leases
-            .get(lease.id())
-            .map(|record| record.reserve_units)
+        state.lease_entry(lease).map(LeaseEntry::reserve_units)
     }
 }
 
