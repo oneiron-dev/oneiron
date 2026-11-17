@@ -42,6 +42,7 @@ pub mod claim_transition;
 pub mod claim_value_redaction;
 pub mod cleanup_archive;
 pub mod coach;
+pub mod coach_retrieval_review;
 pub mod code_mode_capture;
 pub mod code_reply_healer;
 pub mod code_result_search;
