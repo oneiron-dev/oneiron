@@ -25,7 +25,7 @@ use super::{CanVerbAnswer, CanVerbGate, WitnessTurn};
 use super::{MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INTERNAL, Memory, MemoryError, MemoryResult};
 use crate::error::Error;
 use crate::verbs::{AgentVerb, CanVerb, TaskAnswerRequest};
-use crate::workspace_roster::{JoinRequest, RoomPinPolicySet, RoomPinRequest};
+use crate::workspace_roster::{JoinRequest, RoomClosedSet, RoomPinPolicySet, RoomPinRequest};
 use crate::{EdgeActorClass, EntityId};
 
 /// The reason `person` carries for a verb whose row asks a person's proof.
@@ -116,6 +116,10 @@ impl Memory<'_> {
                 )?),
                 true,
             ),
+            "vault.rooms.closed.set" => (
+                self.rooms_closed_set_admission(&verb_input::<RoomClosedSet>(name, params)?),
+                true,
+            ),
             "vault.rooms.invite" => (
                 self.rooms_invite_admission(&verb_input::<JoinRequest>(name, params)?),
                 true,
@@ -124,6 +128,15 @@ impl Memory<'_> {
                 self.rooms_speak_admission(&verb_input::<WitnessTurn>(name, params)?),
                 false,
             ),
+            // RESTRICTION-WAVE-10 C43: an agent the owner's key and Grant admit decides itself;
+            // any other non-person needs a person, as the owner-proof door answered before.
+            "vault.cleanup.decide" if !person => {
+                return Ok(if self.agent_decides_cleanup()? {
+                    (CanVerbGate::Auto, Vec::new())
+                } else {
+                    (CanVerbGate::Person, vec![PERSON_PROOF.to_owned()])
+                });
+            }
             "tasks.answer" => {
                 let input = verb_input::<TaskAnswerRequest>(name, params)?;
                 match self.tasks_answer_admission(&input.handle, &input.word) {

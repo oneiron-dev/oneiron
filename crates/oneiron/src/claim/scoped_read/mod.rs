@@ -24,6 +24,14 @@ mod claim_admission;
 mod context_pack_filter;
 mod diagnostic_reads;
 mod edge_claims;
+mod exposure;
+pub use exposure::ActorReadExposure;
+#[cfg(oneiron_test_support)]
+pub(crate) use exposure::exposed_records_in;
+pub(crate) use exposure::{
+    PendingReadExposure, erase_read_exposure_reader_in_txn,
+    erase_read_exposure_record_reader_in_txn, erase_read_exposure_records_in_txn,
+};
 mod facet_gate;
 mod frozen;
 mod graph_reads;
@@ -136,6 +144,13 @@ pub struct ScopedRead<'a> {
     /// this field is unchanged — the union widens what is VISIBLE, never what
     /// is permitted.
     session_view: Option<&'a crate::store::SessionStoreView<'a>>,
+    /// The room a room stretch's staged rows belong to, set only on a read
+    /// composed over that stretch for a context pack
+    /// (`OwnedScopedRead::into_borrowed_in_room`): each rule that finds a
+    /// row's room maps the stretch's shell to it, and a member reads a
+    /// staged row only inside their own windows. `None` everywhere else, so
+    /// every other read is judged exactly as before.
+    stretch: Option<crate::off_record::StretchRoom>,
     claim_status: ClaimReadStatus,
     recall_authority: Mutex<Option<crate::authority::AuthorityFold>>,
     /// Set only on a member's read a personal room ceiling conjoins (see

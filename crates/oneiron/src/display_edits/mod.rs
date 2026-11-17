@@ -155,9 +155,10 @@ impl Vault {
     /// multi-line why, a value past its door's cap or holding a line break
     /// or NUL, and an agent at its open cap; the scan's refusal for a
     /// credential in either. What handle resolution returns for a secret no
-    /// live custody record names, and the reveal door's refusal of another
-    /// run's secret. [`Error::EntityNotFound`] for a machine id that is not
-    /// 32 hex or names no machine of this vault.
+    /// live custody record names, and the reveal door's refusals (a secret
+    /// no model may hold, another run's secret). [`Error::EntityNotFound`]
+    /// for a machine id that is not 32 hex or names no machine of this
+    /// vault, and for a proposing agent that is no longer a live agent.
     pub(crate) fn propose_display_edit(
         &self,
         proposer: &DisplayEditProposer,
@@ -170,6 +171,20 @@ impl Vault {
         let value = proposed_value(target, value)?;
         let id = self.store.clock.entity_id()?;
         self.with_write_txn_grouped(|txn| {
+            // The proposer is judged again in this writer: an erase that ran
+            // after the verb's check scrubbed the agent's proposals, and none
+            // may be written after it.
+            if !crate::vault::live_entity_row_in_txn(&self.store, txn, &proposer.agent)?.is_live()
+                || crate::memory::verify_actor_binding_in_txn(
+                    self,
+                    txn,
+                    proposer.agent,
+                    crate::edge::EdgeActorClass::Agent,
+                )
+                .is_err()
+            {
+                return Err(Error::EntityNotFound);
+            }
             let (subject, subject_ref) = match target {
                 DisplayEditTarget::SecretLabel | DisplayEditTarget::SecretPurpose => self
                     .display_edit_secret_subject_in_txn(txn, subject, proposer.attempt.as_ref())?,

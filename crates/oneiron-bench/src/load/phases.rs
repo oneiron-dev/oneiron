@@ -412,7 +412,7 @@ impl Ctx<'_> {
 }
 
 /// The server's warning when an embedding pass fails and it backs off.
-const PASS_FAILED: &str = "embedding reconciliation failed";
+pub(super) const PASS_FAILED: &str = "embedding reconciliation failed";
 /// The server's info line after an embedding pass that leased work, logged
 /// once its fills have committed. A pass that finds no work logs nothing.
 pub(super) const PASS_DONE: &str = "embedding reconcile pass";

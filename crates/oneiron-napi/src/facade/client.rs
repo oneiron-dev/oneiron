@@ -248,6 +248,16 @@ impl NativeClient {
         Ok(self.rebound(inner))
     }
 
+    /// Returns a NEW handle that answers asks as this install's owner device
+    /// (UC-05): each ask word it gives carries the proof the owner key this
+    /// install holds mints for it, and refuses `owner_key_required` where it
+    /// holds none. Refuses when connected.
+    #[napi]
+    pub fn as_owner_device(&self) -> napi::Result<Self> {
+        let inner = self.inner.as_owner_device().map_err(facade_error)?;
+        Ok(self.rebound(inner))
+    }
+
     /// Returns a NEW handle whose every verb runs as a turn in `room_ref`.
     #[napi]
     pub fn in_room_turn(&self, room_ref: String) -> napi::Result<Self> {

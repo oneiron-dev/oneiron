@@ -199,6 +199,37 @@ impl ModelRuntime {
         self.route_role_with_pack(vault, role, seat, false)
     }
 
+    /// The one model an exact call of `role` sends now, and where this host
+    /// serves it: [`Self::route_role`]'s model when its ladder is that one
+    /// picked model; when the route walks a ladder (the seat's own, with no
+    /// manifest or pack binding the role, or a seat id a manifest pins),
+    /// the first of its rungs, in ladder order, that this host serves alone
+    /// within the route. An exact call never walks a ladder, so a seat id is
+    /// never its model (FIX-LIST SELF-WRITER-HOUSE-FALLBACK-SEAT-EXACT-REFUSED).
+    pub fn exact_route_role(
+        &self,
+        vault: &Vault,
+        role: ModelRole,
+        seat: &Seat,
+    ) -> Result<(ModelId, ModelLocality), RoleRefusal> {
+        let route = self.route_role(vault, role, seat)?;
+        if route.ladder.is_exact() {
+            return Ok((route.model, route.locality));
+        }
+        let router = self.router.as_ref();
+        route
+            .ladder
+            .rung_models()
+            .find_map(|(model, _)| {
+                let (served, _) = router?.served(model)?;
+                (served <= route.locality).then(|| (model.clone(), served))
+            })
+            .ok_or(RoleRefusal::RouteNotServed {
+                model: route.model,
+                route: route.locality,
+            })
+    }
+
     fn route_role_with_pack(
         &self,
         vault: &Vault,
@@ -221,7 +252,7 @@ impl ModelRuntime {
             return Ok(RoleRoute {
                 model: seat.model.clone(),
                 locality: seat.locality,
-                ladder: Arc::clone(&seat.ladder),
+                ladder: self.ladder_for_role(role, &seat.ladder),
                 seat_bound: true,
             });
         };
@@ -276,7 +307,7 @@ impl ModelRuntime {
                     return Err(RoleRefusal::RouteNotServed { model, route });
                 }
                 Ok(RoleRoute {
-                    ladder: rung.unwrap_or(ladder),
+                    ladder: self.ladder_for_role(role, &rung.unwrap_or(ladder)),
                     model,
                     locality: served,
                     seat_bound: false,
@@ -334,7 +365,7 @@ impl ModelRuntime {
             ladder
         };
         Ok(Some(RoleRoute {
-            ladder,
+            ladder: self.ladder_for_role(role, &ladder),
             model,
             locality: served,
             seat_bound: true,
@@ -361,6 +392,22 @@ impl ModelRuntime {
         self.raw_router
             .served_at(choice.model(), route)
             .filter(|(served, _)| *served <= widest)
+    }
+
+    /// `ladder` for a call of `role`: for a role whose work never leaves the
+    /// device, a call-local copy whose owner's fallbacks keep the call there
+    /// ([`OfferLadder::with_stays_on_device`]); else `ladder` itself. Every
+    /// ladder a role's call takes passes here, since it may be one the
+    /// role's seat does not scope: a model's bare ladder that a manifest
+    /// pin or the model pack's pick routes on, or the seat or rung of
+    /// another role the call comes with (FIX-LIST
+    /// ROLE-LEAVE-DEVICE-LOST-ON-BARE-LADDER-FALLBACK).
+    fn ladder_for_role(&self, role: ModelRole, ladder: &Arc<OfferLadder>) -> Arc<OfferLadder> {
+        if self.stays_on_device.contains(&role) {
+            ladder.with_stays_on_device()
+        } else {
+            Arc::clone(ladder)
+        }
     }
 
     /// Admits `request` as a call of `role` against the vault's live policy.
@@ -454,6 +501,66 @@ impl ModelRuntime {
             )
             .map_err(RoleRefusal::refused)?
             .into_request();
+        Ok(RoleCall {
+            request,
+            ladder: self.ladder_for_role(role, &ladder),
+        })
+    }
+
+    /// The free local chat model a run held at its spend cap may continue on
+    /// (ARCH-0026 depletion ladder: continue on local): the first rung of
+    /// `role`'s seat, in ladder order, that this server serves on the device,
+    /// else on the owner's own server, as free work and within the role's
+    /// configured route (`free_local_route`). `None` when no rung is served
+    /// so. A configured, served model, not a live probe of its capacity.
+    #[must_use]
+    pub fn free_local_model(&self, vault: &Vault, role: ModelRole) -> Option<ModelId> {
+        let seat = self.seat(role)?;
+        let route = self.configured_route_role(vault, role, seat).ok()?.locality;
+        let router = self.router.as_ref()?;
+        seat.rung_models()
+            .into_iter()
+            .map(|(model, _)| model)
+            .find(|model| free_local_route(router, model, route).is_some())
+    }
+
+    /// Admits `request` as a call of `role` on `model` alone, on its free
+    /// local route (`free_local_route`), read now: the route the owner chose
+    /// to continue a held run on. The role's configured route still clamps
+    /// it, under the policy a raw call naming the model meets, as
+    /// [`Self::admit_seat_bound`] does. A model no longer served there as
+    /// free work is refused.
+    pub fn admit_free_local(
+        &self,
+        vault: &Vault,
+        role: ModelRole,
+        mut request: LlmRequest,
+        model: &ModelId,
+    ) -> Result<RoleCall, RoleRefusal> {
+        let seat = self.seat(role).ok_or(RoleRefusal::NoSeat)?;
+        let route = self.configured_route_role(vault, role, seat)?.locality;
+        let (served, ladder) = self
+            .router
+            .as_ref()
+            .and_then(|router| free_local_route(router, model, route))
+            .ok_or_else(|| RoleRefusal::RouteNotServed {
+                model: model.clone(),
+                route,
+            })?;
+        request.model = model.clone();
+        request.envelope.locality = served;
+        // The call still names its role's seat on its usage event.
+        request.envelope.tier.seat = Some(ModelTierRef(role_key(role)));
+        let request = vault
+            .authorize_raw_inference(
+                request,
+                &HostInferenceContext {
+                    binding: ladder.host_binding(model.clone(), served, false),
+                    extraction_egress: None,
+                },
+            )
+            .map_err(RoleRefusal::refused)?
+            .into_request();
         Ok(RoleCall { request, ladder })
     }
 
@@ -492,14 +599,10 @@ impl ModelRuntime {
         // widens nothing; a choice the owner has since turned off or
         // narrowed refuses it for its own reason (Engine ruling 13 Nov). A
         // role whose work never leaves the device takes no third party's
-        // fallback, read from the role itself: a manifest's pin off the
-        // role's seat routes on the model's bare ladder, whose scope does not
-        // carry the role's rule (review of #7309).
-        let kept_on_device =
-            self.stays_on_device.contains(&role) && locality == ModelLocality::ThirdParty;
-        if locality > route.locality
-            && (kept_on_device || !route.ladder.owner_fallback_serves(&model, locality))
-        {
+        // fallback: the route's ladder carries the role's rule, whatever
+        // ladder it routes on (review of #7309; FIX-LIST
+        // ROLE-LEAVE-DEVICE-LOST-ON-BARE-LADDER-FALLBACK).
+        if locality > route.locality && !route.ladder.owner_fallback_serves(&model, locality) {
             return Err(RoleRefusal::FallbackNoLongerAllowed {
                 model: model.clone(),
                 locality,
@@ -539,4 +642,24 @@ impl ModelRuntime {
             },
         })
     }
+}
+
+/// Where `router` serves `model` as free work: on the device, else on the
+/// owner's own server, at exactly that locality and no wider than `route`,
+/// every rung of its ladder free by the run admission's rule
+/// ([`OfferLadder::all_free_work`]: a paid on-device worker or a keyed own
+/// server is not free). The ladder comes back with its owner's fallbacks held
+/// at that locality. `None` when it is served so nowhere.
+fn free_local_route(
+    router: &super::ModelRouter,
+    model: &ModelId,
+    route: ModelLocality,
+) -> Option<(ModelLocality, Arc<OfferLadder>)> {
+    [ModelLocality::OnDevice, ModelLocality::OwnServer]
+        .into_iter()
+        .find_map(|locality| {
+            let (served, ladder) = router.served_at(model, locality)?;
+            (served == locality && served <= route && ladder.all_free_work())
+                .then(|| (served, Arc::new(ladder.with_locality_ceiling(served))))
+        })
 }
