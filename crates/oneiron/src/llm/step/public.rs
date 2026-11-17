@@ -639,21 +639,24 @@ fn keep_correction(vault: &Vault, id: AttemptId, point: &CorrectionPoint) -> boo
 }
 
 /// The result a step's outcome is saved as on its submission row. An offer
-/// that rests for its health past this submission's wait (FIX 11226) parks
-/// the step, unsent and unfailed, until the offer is back, keeping the sends
-/// it made. Every other outcome is saved by the shared conversion
-/// ([`step_result`]): a persistence fault is no result, so a later submission
-/// can finish that write path.
+/// that rests for its health past this submission's wait (FIX 11226), or no
+/// rung serves at this hour (UNBUILT-14), parks the step, unsent and unfailed,
+/// until the offer is back, keeping the sends it made. Every other outcome is
+/// saved by the shared conversion ([`step_result`]): a persistence fault is
+/// no result, so a later submission can finish that write path.
 fn submitted_step_result(
     vault: &Vault,
     id: AttemptId,
     row: &Submission,
     outcome: DurableStepResult<StepOutcome>,
 ) -> MemoryResult<ModelStepResult> {
-    if let Err(DurableStepError::Llm(LlmError::Retryable(RetryableLlmError::HealthRest {
-        resets_at,
-        ..
-    }))) = &outcome
+    // Its offer rests for its health past this submission's wait (FIX 11226),
+    // or no rung serves at this hour (UNBUILT-14): the step parks, unsent and
+    // unfailed, until the offer is back, keeping the sends it made.
+    if let Err(DurableStepError::Llm(LlmError::Retryable(
+        RetryableLlmError::HealthRest { resets_at, .. }
+        | RetryableLlmError::OutsideHours { resets_at, .. },
+    ))) = &outcome
     {
         return Ok(ModelStepResult::Parked {
             until: resets_at.first().copied(),

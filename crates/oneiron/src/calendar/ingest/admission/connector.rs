@@ -115,6 +115,31 @@ pub(in crate::calendar) fn admit_connector_event<'a>(
     admission.queue_property_continuations_reading(source_version)?;
     Ok(admission.owed_booking_moves > 0)
 }
+
+/// A pulled cancellation the echo law acknowledged: `passport`, the source's
+/// live passport, already carries its SEQUENCE and content hash, so nothing
+/// of it is admitted again. When an admission of pulled bytes committed that
+/// passport (it keeps their archived source), the cancellation's deposit
+/// refund is asked again, as a feed poll asks it on an unchanged sighting:
+/// the passport commits before the refund does, so a stop between them
+/// leaves the next pull of the same bytes here, and this is where the refund
+/// is repaired. A passport the seat's own write committed keeps no source:
+/// its echo is the owner's own write coming back, not a cancellation made in
+/// that calendar, and moves no money.
+pub(in crate::calendar) fn repeat_connector_host_cancel_refund<'a>(
+    vault: &'a Vault,
+    system: &'a str,
+    source: ConnectorAdmissionSource<'a>,
+    event_ref: EntityId,
+    passport: &CalendarPassportValue,
+    event: &ParsedVEvent,
+    now: u64,
+) -> Result<(), CalendarError> {
+    if !event.cancelled || passport.source.is_none() {
+        return Ok(());
+    }
+    connector_admission(vault, system, source, now).repeat_host_cancel_refund(event_ref, event)
+}
 /// Sweeps one resource's omitted events under the source's screen, as a
 /// complete feed's sweep runs under its poll's.
 pub(in crate::calendar) fn sweep_connector_resource<'a>(

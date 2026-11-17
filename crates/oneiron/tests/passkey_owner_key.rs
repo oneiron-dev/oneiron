@@ -2049,3 +2049,85 @@ fn the_move_plan_verb_names_the_members_passkey_in_hex() {
     assert_eq!(passkey_hex.len(), 66, "guard: a compressed P-256 key");
     assert_eq!(plan.revoked, vec![passkey_hex], "{plan:?}");
 }
+
+/// The custodial root signs a `BindActor` of the passkey-vouched key as a
+/// person's, another person than the owner, cosigned by `cosigner` (one of
+/// the keys this file holds, or the passkey); true when it counted.
+fn custodial_root_binds_host_key_to_a_person_with(
+    hosted: &HostedVault,
+    cosigner: AuthorityKey,
+) -> bool {
+    let root = hosted.issuer.public_key();
+    let counted = append_signed_rows(
+        &hosted.vault,
+        vec![SignedRow {
+            op: AuthorityOp::BindActor {
+                authority_key: ed_key(&host_held()),
+                actor_ref: oneiron::EntityId::now(),
+                actor_class: "human".to_owned(),
+                epoch: 1,
+            },
+            signer: root.clone(),
+            cosigners: vec![cosigner],
+        }],
+        |key, transcript| {
+            if *key == root {
+                sign_as_host_root(&hosted.issuer, transcript)
+            } else if *key == passkey_roster_key() {
+                passkey_signs(transcript, FLAGS_PRESENT_VERIFIED)
+            } else {
+                signs_as(key, transcript)
+            }
+        },
+    )
+    .expect("the row is stored");
+    counted == vec![true]
+}
+
+/// Rows OLD-PARENTS-OWNER-BINDING-REVOKE and -CONFLICT (#9137): on a hosted
+/// vault the custodial root's bind of a person counts only with an owner
+/// key's proof, and a passkey-limited key gives none, as it gives none to
+/// the root's revoke of an owner key above (lead ruling
+/// WEBPASSKEY-BLIND-SIGNATURE = B): the root's bind of the key only the
+/// passkey vouched for as another person's, cosigned by that key or by the
+/// passkey itself, counts for nothing. Main: the root's bind counts with any
+/// cosign; #9137 before this fix: both cosigns proved it. Each on its own
+/// vault, so the first bind cannot decide the second.
+#[test]
+fn a_passkey_limited_cosign_proves_no_custodial_roots_bind_of_a_person() {
+    let counted: Vec<bool> = [ed_key(&host_held()), passkey_roster_key()]
+        .into_iter()
+        .map(|cosigner| {
+            let hosted = HostedVault::open();
+            passkey_vouched_host_key(&hosted);
+            custodial_root_binds_host_key_to_a_person_with(&hosted, cosigner)
+        })
+        .collect();
+    assert_eq!(
+        counted,
+        vec![false, false],
+        "[the passkey-vouched key's cosign, the passkey's cosign]: neither proves the root's bind"
+    );
+}
+
+/// The control of the test above: once the owner's device key confirms the
+/// passkey-vouched key, its cosign is an owner key's proof, and the same
+/// custodial root's bind counts.
+#[test]
+fn once_confirmed_the_passkey_vouched_keys_cosign_proves_the_custodial_roots_bind() {
+    let hosted = HostedVault::open();
+    let machine = passkey_vouched_host_key(&hosted);
+    hosted
+        .vault
+        .confirm_owner_key_as(
+            &hosted.owner(),
+            keyed_enrollment(&hosted, machine, &host_held()),
+            ed_key(&owner_device()),
+            |transcript| Ok(owner_device().sign(transcript).to_bytes().to_vec()),
+        )
+        .expect("the owner's device key confirms the passkey-vouched key");
+    assert!(
+        custodial_root_binds_host_key_to_a_person_with(&hosted, ed_key(&host_held())),
+        "a confirmed key's cosign proves the root's bind"
+    );
+}
