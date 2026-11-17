@@ -628,6 +628,134 @@ fn settlement_sets_state(held: MailReplyDraftState, settled: MailReplyDraftState
     }
 }
 
+/// Whether the outbound intent ledger holds the send of the revision `row`
+/// is: its call was admitted and is not stopped definitely unsent, the rule
+/// a send's sibling route meets (FIX 11029). A send it holds may still go,
+/// or went, so the revision is neither discarded nor drafted again before
+/// that send's outcome settles it.
+///
+/// # Errors
+///
+/// Storage failures; a ledger row that does not decode.
+fn reply_send_holds_revision_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    row: &MailReplyDraftRow,
+) -> Result<bool> {
+    use crate::outbound_intent_ledger::{
+        IntentEscalationReason, IntentLedgerError, IntentResolution, UnconfirmedDelivery,
+        read_intent_for_attempt_in_txn,
+    };
+    let ledger = |error: IntentLedgerError| match error {
+        IntentLedgerError::Engine(error) => error,
+        _ => crate::Error::CorruptedIndex("outbound intent ledger row"),
+    };
+    let attempt = crate::outbound::outbound_dispatch_attempt_id(&row.send_ref)
+        .map_err(|error| crate::Error::InvalidConfig(error.to_string()))?;
+    let Some(record) = read_intent_for_attempt_in_txn(vault, txn, attempt, 0).map_err(ledger)?
+    else {
+        return Ok(false);
+    };
+    Ok(!matches!(
+        IntentResolution::from_record(&record).map_err(ledger)?,
+        IntentResolution::Stopped {
+            delivery: UnconfirmedDelivery::DefiniteNonDelivery,
+            reason,
+        } if reason != IntentEscalationReason::RemoteTaskFailed
+    ))
+}
+
+/// Whether the draft `id` still holds the revision `revision` of the frozen
+/// plan `plan_ref`, proposed, in `txn`: the one state a drafter's send is
+/// admitted from.
+///
+/// # Errors
+///
+/// A draft discarded, approved, settled or drafted again; storage failures.
+fn drafter_send_admits_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    revision: u64,
+    plan_ref: &str,
+) -> Result<()> {
+    match DRAFTS.get(&vault.store, txn, id)? {
+        Some(row)
+            if row.revision == revision
+                && row.plan_ref == plan_ref
+                && row.state == MailReplyDraftState::Proposed =>
+        {
+            Ok(())
+        }
+        _ => Err(crate::Error::InvalidConfig(
+            "the draft was discarded, approved or drafted again since its send read it".to_owned(),
+        )),
+    }
+}
+
+/// A drafter's send's sink: `inner`, its call admitted only while the draft
+/// still holds the revision it sends, proposed, judged under the writer that
+/// records the call's Gate decision ([`OutboundExecutionSink::admit_in`]).
+/// The draft is read before that writer, so without this a discard landing
+/// between the read and the dispatch would leave a sent reply recorded as
+/// discarded. Every other call goes to `inner` unchanged.
+struct DrafterSendSink<'s, S> {
+    vault: &'s Vault,
+    draft: EntityId,
+    revision: u64,
+    plan_ref: String,
+    inner: &'s mut S,
+}
+
+impl<'s, S> DrafterSendSink<'s, S> {
+    fn new(vault: &'s Vault, draft: EntityId, row: &MailReplyDraftRow, inner: &'s mut S) -> Self {
+        Self {
+            vault,
+            draft,
+            revision: row.revision,
+            plan_ref: row.plan_ref.clone(),
+            inner,
+        }
+    }
+}
+
+impl<S: OutboundExecutionSink> OutboundExecutionSink for DrafterSendSink<'_, S> {
+    fn execute(
+        &mut self,
+        request: &crate::outbound::OutboundExecutionRequest<'_>,
+    ) -> crate::outbound::OutboundExecutionOutcome {
+        self.inner.execute(request)
+    }
+
+    fn admit_in(&self, txn: &heed::RoTxn<'_>) -> Result<()> {
+        drafter_send_admits_in(self.vault, txn, &self.draft, self.revision, &self.plan_ref)?;
+        self.inner.admit_in(txn)
+    }
+
+    fn known_non_delivery(&self, intent_ref: &str, idempotency_key: Option<&str>) -> bool {
+        self.inner.known_non_delivery(intent_ref, idempotency_key)
+    }
+
+    fn lookup_sent(
+        &mut self,
+        engine_send_id: &crate::outbound::EngineSendId,
+        target: &crate::outbound::SentLookupTarget<'_>,
+    ) -> crate::outbound::SentLookup {
+        self.inner.lookup_sent(engine_send_id, target)
+    }
+
+    fn read_back_delivery(
+        &self,
+        request: &crate::outbound::OutboundExecutionRequest<'_>,
+    ) -> crate::outbound_intent_ledger::DeliveryReadBack {
+        self.inner.read_back_delivery(request)
+    }
+
+    fn delivers_recipient_lists(&self) -> bool {
+        self.inner.delivers_recipient_lists()
+    }
+}
+
 /// Whether `person`, a mailbox's own person, is the vault's Owner: a live
 /// owner the vault records, or the person the embedded owner of a vault with
 /// no authority root stands for. The vault's send grant reaches only the
@@ -839,6 +967,15 @@ impl Memory<'_> {
                     "the draft changed while it was redrafted".to_owned(),
                 ));
             }
+            // A revision whose send the ledger holds is not replaced: that
+            // send may still go, and its outcome settles the revision.
+            if let Some(prior) = &prior
+                && reply_send_holds_revision_in(vault, txn, prior)?
+            {
+                return Err(crate::Error::InvalidConfig(
+                    "the draft's send was admitted; draft again once it settles".to_owned(),
+                ));
+            }
             DRAFTS.put(&vault.store, txn, &id, &row)?;
             // The revision it replaces is no longer asked; this one is.
             if let Some(prior) = &prior {
@@ -896,7 +1033,9 @@ impl Memory<'_> {
     }
 
     /// Discards a draft that has not sent: its drafter or the mailbox's
-    /// owner may. It never sends.
+    /// owner may. It never sends. A revision whose send the outbound ledger
+    /// holds (admitted, and not stopped unsent) is not discarded: that send
+    /// may still go, and its outcome settles the revision.
     pub fn mail_reply_discard(
         &self,
         input: &MailReplyDraftRef,
@@ -916,6 +1055,11 @@ impl Memory<'_> {
             if row.state != MailReplyDraftState::Proposed {
                 return Err(invalid_state(
                     "only a draft that was not approved is discarded",
+                ));
+            }
+            if reply_send_holds_revision_in(vault, txn, &row)? {
+                return Err(invalid_state(
+                    "the draft's send was admitted; its outcome settles the draft",
                 ));
             }
             row.state = MailReplyDraftState::Discarded;
@@ -950,13 +1094,17 @@ impl Memory<'_> {
     /// that sends through the mailbox's delegated identity, is not
     /// dispatched: it waits for its person (module doc). Sending again after
     /// a held send dispatches it again, and the ledger replays what it
-    /// recorded rather than sending twice.
+    /// recorded rather than sending twice. The send is admitted only while
+    /// the draft still holds its revision, proposed, under the writer that
+    /// records the Gate's decision ([`DrafterSendSink`]): a discard or a
+    /// redraft that lands first wins, and nothing is sent.
     ///
     /// # Errors
     ///
     /// The caller no agent; the draft unknown, not the caller's, of another
     /// revision, approved, discarded or uncertain; the mailbox unable to
-    /// send; the dispatch refused.
+    /// send; the dispatch refused, a discard or redraft before its admission
+    /// too.
     pub fn mail_reply_send(
         &self,
         input: &MailReplySendRequest,
@@ -1055,11 +1203,17 @@ impl Memory<'_> {
             crate::unix_seconds_now(),
         );
         let answer = match account_sink {
-            Some(sink) => vault.dispatch_outbound_intent_recorded(request, sink),
+            Some(sink) => vault.dispatch_outbound_intent_recorded(
+                request,
+                &mut DrafterSendSink::new(vault, id, &row, sink),
+            ),
             None => {
                 let mail_source = vault.mail_sync_source(row.source)?.ok_or_else(unknown)?;
                 let mut sink = ReplySink::new(vault, mail_source, message, transport);
-                vault.dispatch_outbound_intent_recorded(request, &mut sink)
+                vault.dispatch_outbound_intent_recorded(
+                    request,
+                    &mut DrafterSendSink::new(vault, id, &row, &mut sink),
+                )
             }
         };
         // Sent or unsettled, the revision no longer waits for its person,
