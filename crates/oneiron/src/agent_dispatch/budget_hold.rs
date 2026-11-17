@@ -345,7 +345,9 @@ impl AgentDispatcher<'_> {
     ///
     /// # Errors
     ///
-    /// A blank or reserved actor, a run with no hold, or storage errors.
+    /// A blank or reserved actor, a run with no hold, a run whose scope has
+    /// nothing left until the owner tops it up (`InvalidConfig`,
+    /// RESUME-SPEND-CAP-OWNER-DOORS = A), or storage errors.
     pub fn resume_budget_hold(
         &self,
         root: AttemptId,
@@ -365,7 +367,9 @@ impl AgentDispatcher<'_> {
     ///
     /// # Errors
     ///
-    /// The owner refusal, a run with no hold, or storage errors.
+    /// The owner refusal, a run with no hold, a run whose scope has nothing
+    /// left until the owner tops it up (`InvalidConfig`,
+    /// RESUME-SPEND-CAP-OWNER-DOORS = A), or storage errors.
     pub fn resume_budget_hold_as_owner(
         &self,
         root: AttemptId,
