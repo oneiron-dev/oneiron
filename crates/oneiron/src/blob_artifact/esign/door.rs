@@ -426,6 +426,7 @@ impl Memory<'_> {
             None,
             input.on_behalf_of.as_deref(),
             input.idempotency_key.as_deref(),
+            None,
         )
     }
 
@@ -492,7 +493,9 @@ impl Memory<'_> {
             EsignOutboundVerb::SendForSignature => {
                 self.send_for_signature_check_in(document, recipient_count, check_in_ref)?
             }
-            EsignOutboundVerb::Remind | EsignOutboundVerb::Void => None,
+            EsignOutboundVerb::Remind
+            | EsignOutboundVerb::Extend { .. }
+            | EsignOutboundVerb::Void => None,
         };
         let request =
             esign_dispatch_request(vault, verb, document, actor, class, on_behalf_of, key);
