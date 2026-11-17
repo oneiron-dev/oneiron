@@ -17,7 +17,8 @@
 //! owner driving the board route).
 //!
 //! Fleet command: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked
-//! -p oneiron-server --all-features --test board_replay_conversation_home`.
+//! -p oneiron-server --all-features --features oneiron/test-support
+//! --test board_replay_conversation_home`.
 
 #[path = "support/engine_stack.rs"]
 mod engine_stack;
@@ -37,6 +38,7 @@ use oneiron::conversation::{ConversationBody, ConversationKind};
 use oneiron::disclosure::DisclosureBand;
 use oneiron::federation::Scope;
 use oneiron::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_TURN};
+use oneiron::workspace_roster::RoomPinRequest;
 use oneiron::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
     EdgeActorClass, EntityId, HomeClearanceRequest, HomeClearanceSet, TimeRange, Vault,
@@ -359,6 +361,74 @@ fn a_keyed_board_replay_keeps_its_retrieval_home_separate_from_its_board_room() 
             "the board room does not become the retrieval's room on retry: {retried}"
         );
         assert_eq!(retried, first);
+        Ok(())
+    })
+}
+
+#[test]
+fn a_keyed_replay_keeps_a_room_pin_admitted_under_a_foreign_retrieval_home() -> TestResult {
+    on_engine_stack(|| async {
+        let host = Host::new()?;
+        let room = EntityId::now();
+        host.vault.create_conversation(
+            room,
+            &ConversationBody {
+                kind: ConversationKind::Group,
+                member_ids: vec![host.owner],
+                ..Default::default()
+            },
+            WriteActor::new(host.owner, EdgeActorClass::Human),
+            host.vault.now_recorded_at(),
+        )?;
+        host.vault
+            .memory(host.owner, EdgeActorClass::Human)
+            .rooms_pins_pin(&RoomPinRequest {
+                room,
+                target: host.private_stamped,
+            })?;
+        let turn = host.put_turn()?;
+        // The owner alone in this room adds no P7 clearance term. Its pin
+        // is local; only retrieval names the uncleared foreign home.
+        let mut body = host.board_body(turn);
+        body["room"] = json!({"conversation_id": room.to_hex()});
+
+        let (status, first) = host.post(BOARD, &body, Some(KEY)).await?;
+        assert_eq!(status, StatusCode::OK, "{first}");
+        assert_eq!(first["board_turn"]["turn"], turn.to_hex(), "{first}");
+        assert!(
+            !board_pack_ids(&first).contains(&host.private_stamped.to_hex()),
+            "foreign-home retrieval must still withhold the private claim: {first}"
+        );
+        let pin = first["memories"]["rows"]
+            .as_array()
+            .expect("the board carries its room pin")
+            .iter()
+            .find(|row| row["id"] == host.private_stamped.to_hex())
+            .expect("the room admits the private stamped claim");
+        assert_eq!(pin["tier"], "pinned", "{first}");
+        assert_eq!(pin["room_pin"]["target"], host.private_stamped.to_hex());
+        assert_eq!(pin["room_pin"]["pinned_by"], host.owner.to_hex());
+
+        let (status, retried) = host.post(BOARD, &body, Some(KEY)).await?;
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "a room pin keeps its own authority on replay: {retried}"
+        );
+        assert_eq!(retried, first);
+
+        host.vault
+            .memory(host.owner, EdgeActorClass::Human)
+            .rooms_pins_unpin(&RoomPinRequest {
+                room,
+                target: host.private_stamped,
+            })?;
+        let (status, refused) = host.post(BOARD, &body, Some(KEY)).await?;
+        assert_eq!(status, StatusCode::CONFLICT, "{refused}");
+        assert!(
+            refused.to_string().contains("board_document_unreadable"),
+            "a removed room pin cannot replay through another producer: {refused}"
+        );
         Ok(())
     })
 }
