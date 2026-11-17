@@ -173,6 +173,7 @@ pub mod pad_offer_invalidation;
 pub mod pairing_pending_rows;
 pub mod park_typed_wait;
 pub mod parked_own_retract;
+pub mod passkey_vouch_limits;
 pub mod payment_credential;
 #[cfg(feature = "sync")]
 pub mod peer_author_redaction;

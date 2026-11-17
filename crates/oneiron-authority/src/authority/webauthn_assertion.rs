@@ -170,7 +170,9 @@ fn length_prefixed(bytes: &[u8]) -> Option<(&[u8], &[u8])> {
 }
 
 /// The fields of the client data the check reads. Any other field is
-/// ignored; a repeated field or one of another JSON type refuses the parse.
+/// ignored; a repeated field or one of another JSON type refuses the parse,
+/// a null `crossOrigin` among them, and `topOrigin` is only marked present
+/// (Sol xhigh stack review F6).
 #[derive(serde::Deserialize)]
 struct ClientData<'a> {
     #[serde(rename = "type", borrow)]
@@ -179,21 +181,44 @@ struct ClientData<'a> {
     challenge: &'a str,
     #[serde(borrow)]
     origin: &'a str,
-    #[serde(rename = "crossOrigin", default)]
+    #[serde(rename = "crossOrigin", default, deserialize_with = "present_bool")]
     cross_origin: Option<bool>,
-    #[serde(rename = "topOrigin", borrow, default)]
-    top_origin: Option<&'a str>,
+    #[serde(rename = "topOrigin", default, deserialize_with = "present_member")]
+    top_origin: bool,
 }
 
-/// The client data of a well-formed envelope, when it parses as an
-/// assertion made by a top-level page (no `crossOrigin` true, no
-/// `topOrigin`).
+/// A member that, when present, is a JSON boolean: a null is refused, not
+/// read as absent.
+fn present_bool<'de, D>(deserializer: D) -> std::result::Result<Option<bool>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    <bool as serde::Deserialize>::deserialize(deserializer).map(Some)
+}
+
+/// Whether a member is present, whatever its value, a null included.
+fn present_member<'de, D>(deserializer: D) -> std::result::Result<bool, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    <serde::de::IgnoredAny as serde::Deserialize>::deserialize(deserializer).map(|_| true)
+}
+
+/// The client data of a well-formed envelope, when it is a JSON object (an
+/// array of the members' values is none) that parses as an assertion made
+/// by a top-level page (no `crossOrigin` true, no `topOrigin`).
 fn top_level_client_data<'a>(assertion: &WebAuthnAssertion<'a>) -> Option<ClientData<'a>> {
+    let opens_object = assertion
+        .client_data_json
+        .iter()
+        .find(|byte| !matches!(byte, b' ' | b'\t' | b'\n' | b'\r'))
+        == Some(&b'{');
+    if !opens_object {
+        return None;
+    }
     let client = serde_json::from_slice::<ClientData<'a>>(assertion.client_data_json).ok()?;
-    (client.kind == WEBAUTHN_GET
-        && client.cross_origin != Some(true)
-        && client.top_origin.is_none())
-    .then_some(client)
+    (client.kind == WEBAUTHN_GET && client.cross_origin != Some(true) && !client.top_origin)
+        .then_some(client)
 }
 
 /// The context `envelope`'s assertion names ([`WebAuthnContext`]), when the

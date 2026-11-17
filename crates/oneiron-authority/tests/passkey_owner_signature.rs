@@ -11,7 +11,11 @@
 //! and refuses an assertion that is a registration, names another
 //! transcript or a challenge without the domain, comes from a cross-origin
 //! frame, repeats a client data field, lacks user verification, carries a
-//! high S or a trailing byte, or rides an Ed25519 key.
+//! high S or a trailing byte, or rides an Ed25519 key. Client data that is
+//! no JSON object, or names a null `crossOrigin` or any `topOrigin`, is
+//! refused too. Only the entry gate takes the passkey form: the shared
+//! verifier other signed records call takes 64 raw bytes alone (Sol xhigh
+//! stack review F4, F6).
 //!
 //! The envelope is built here by hand, byte for byte as the wire names it:
 //! format byte 1, the authenticator data and the client data JSON each after
@@ -216,12 +220,42 @@ fn a_passkey_assertion_over_the_transcript_is_its_p256_roster_keys_signature() {
         "the envelope is a valid P-256 signature form"
     );
     assert!(
-        verify_authority_signature(&entry.signer, &transcript),
-        "the passkey's assertion verifies over the transcript"
-    );
-    assert!(
         gate_admits(&entry),
         "the entry gate the fold runs takes a passkey-signed entry"
+    );
+}
+
+/// Sol xhigh stack review F4: the fold pins a passkey's context only on an
+/// authority log entry, so the shared verifier, which every other signed
+/// record calls (project-depth edits, backup signer delegations, coop
+/// requests), takes 64 raw bytes alone; the passkey form counts only through
+/// the entry gate.
+#[test]
+fn the_shared_verifier_takes_no_passkey_assertion() {
+    let transcript = transcript();
+    let entry = revoke_signed_by(passkey_assertion(
+        &transcript,
+        "webauthn.get",
+        FLAGS_PRESENT_VERIFIED,
+    ));
+    assert!(
+        gate_admits(&entry),
+        "guard: the entry gate takes the passkey-signed entry"
+    );
+    assert!(
+        !verify_authority_signature(&entry.signer, &transcript),
+        "outside an authority log entry, a passkey's assertion is no signature"
+    );
+    let signature: P256Signature = passkey().sign(&transcript);
+    let signature = signature.normalize_s().unwrap_or(signature);
+    let raw = AuthoritySignature {
+        suite: AuthoritySignatureSuite::P256,
+        public_key: passkey_key(),
+        signature: signature.to_bytes().to_vec(),
+    };
+    assert!(
+        verify_authority_signature(&raw, &transcript),
+        "guard: the shared verifier still takes a raw P-256 signature"
     );
 }
 
@@ -393,4 +427,38 @@ fn client_data_that_repeats_a_field_is_refused() {
         !gate_admits(&revoke_signed_by(repeated)),
         "two origins in one client data are no origin"
     );
+}
+
+/// Sol xhigh stack review F6: the client data is a JSON object, its
+/// `crossOrigin` a boolean when present and its `topOrigin` absent. An
+/// array in the members' order, and a null for either member, are refused.
+#[test]
+fn client_data_that_is_no_object_or_names_null_is_refused() {
+    let transcript = transcript();
+    let challenge = challenge_of(&transcript);
+    let array = format!(
+        r#"["webauthn.get","{}","https://oneiron.test",false,null]"#,
+        base64url(&challenge)
+    )
+    .into_bytes();
+    assert!(
+        !gate_admits(&revoke_signed_by(signed_envelope(
+            &array,
+            FLAGS_PRESENT_VERIFIED
+        ))),
+        "client data that is an array is no client data"
+    );
+    for tail in [
+        r#","crossOrigin":null"#,
+        r#","crossOrigin":false,"topOrigin":null"#,
+    ] {
+        let nulled = signed_envelope(
+            &client_data_with("webauthn.get", &challenge, tail),
+            FLAGS_PRESENT_VERIFIED,
+        );
+        assert!(
+            !gate_admits(&revoke_signed_by(nulled)),
+            "a null security member is refused: {tail}"
+        );
+    }
 }
