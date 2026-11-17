@@ -235,6 +235,12 @@ impl EngineNativeExecutor<'_> {
         }
         // A dry replay never parks at its deadline, nor does a left one turn dry (L8-23).
         let parks_at_deadline = slice.ran && !slice.cancelled && host.parks_at_deadline();
+        // A program that ended before its recorded tail meets the owner's answer there as at a
+        // later call: a refire drops the approved tail, a leave keeps it, and an unapproved effect
+        // tail turns the walk dry (L8-23).
+        if slice.ran && !slice.cancelled && !parks_at_deadline {
+            host.answer_unreached_tail();
+        }
         // A pass that re-fired a call live parks where it would hold: committing nothing would
         // lose the record of an effect that fired (L8-23). No ask is raised here: the next entry
         // meets the refired row free and asks about the drift left.

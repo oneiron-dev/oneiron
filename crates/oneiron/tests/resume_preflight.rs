@@ -169,6 +169,8 @@ enum Variant {
     /// The pure-changed search, then a `store` of new bytes, then the changed claim put: the
     /// store comes while the walk still has the recorded put ahead.
     StoresBeforeEffectChange,
+    /// Only the recorded search: the program ends with the recorded claim put unreached.
+    EndsBeforeEffectTail,
 }
 
 /// A query naming a GitHub token, in a shape the side-row wall reads as a secret.
@@ -389,6 +391,7 @@ impl JsCodeModeRuntime for TwoEntryRuntime {
                             self.put_call(self.claim, "green tea"),
                         ]
                     }
+                    Variant::EndsBeforeEffectTail => vec![Self::search_call("alpha")],
                 };
                 self.run_entry(host, calls, false)
             }
@@ -1142,6 +1145,78 @@ fn owner_leave_on_unreached_tail_keeps_its_row() {
             .collect::<Vec<_>>(),
         parked,
         "the record keeps the search at 0 and the put of C1 at 1",
+    );
+}
+
+/// The program ends before its recorded claim put; the owner answers `choice`; the next entry
+/// meets that answer at the program's end and commits instead of asking again.
+fn answer_at_program_end(choice: &str) -> (Fixture, EngineExecutorResult<EngineExecutorOutcome>) {
+    let mut fixture = Fixture::open(Variant::EndsBeforeEffectTail);
+    fixture.park(&[0, 1]);
+    let error = fixture
+        .reenter()
+        .expect_err("the program that ends before its effect tail holds");
+    assert_eq!(
+        divergence_line(&error),
+        Some(
+            "step 0 replays free \u{00b7} step 1 unreached \u{00b7} 1 effect step would re-fire"
+                .to_owned()
+        ),
+    );
+    assert!(
+        answer(&fixture, choice).is_some(),
+        "the owner's {choice} is taken"
+    );
+    let asks = owner_asks(&fixture.vault);
+    let answered = fixture.reenter();
+    assert_eq!(owner_asks(&fixture.vault), asks, "no fresh ask is raised");
+    (fixture, answered)
+}
+
+#[test]
+fn owner_refire_applies_when_the_program_ends_before_its_effect_tail() {
+    let (fixture, answered) = answer_at_program_end("refire");
+    let outcome = answered.unwrap_or_else(|error| {
+        panic!("the refired step commits without its dropped tail, got {error}")
+    });
+    assert_eq!(
+        outcome.status,
+        EngineExecutorStatus::Yielded { next_step_seq: 1 },
+        "the resumed step commits, then the run yields",
+    );
+    let record = fixture
+        .vault
+        .get_code_run_replay_record(&fixture.run_id)
+        .expect("the committed record reads")
+        .expect("the committed record is present");
+    assert!(record.pending_step.is_none(), "no step is pending");
+    assert_eq!(
+        record.bridge_calls.len(),
+        1,
+        "only the search the program made stands"
+    );
+}
+
+#[test]
+fn owner_leave_applies_when_the_program_ends_before_its_effect_tail() {
+    let (fixture, answered) = answer_at_program_end("leave");
+    let outcome = answered
+        .unwrap_or_else(|error| panic!("the left step commits with its kept tail, got {error}"));
+    assert_eq!(
+        outcome.status,
+        EngineExecutorStatus::Yielded { next_step_seq: 1 },
+        "the resumed step commits, then the run yields",
+    );
+    let record = fixture
+        .vault
+        .get_code_run_replay_record(&fixture.run_id)
+        .expect("the committed record reads")
+        .expect("the committed record is present");
+    assert!(record.pending_step.is_none(), "no step is pending");
+    assert_eq!(
+        record.bridge_calls.len(),
+        2,
+        "the kept put of C1 stands beside the search"
     );
 }
 

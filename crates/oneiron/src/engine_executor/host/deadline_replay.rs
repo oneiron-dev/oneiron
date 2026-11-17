@@ -561,6 +561,21 @@ impl DeadlineReplay {
         self.dry || self.held.is_some()
     }
 
+    /// The program ended with recorded calls unreached, under the owner's answer to this step's
+    /// ask (L8-23): the walk ends there as at a call past its rows, so an approved effect tail
+    /// drops to re-fire or stays kept as left, as it would at a later call. An unapproved effect
+    /// tail turns the walk dry and holds as before.
+    fn end_walk_at_program_end(&mut self, results: &[CodeRunRawOutput]) {
+        if self.answer.is_some()
+            && self.held.is_none()
+            && !self.dry
+            && !self.left
+            && self.unreached()
+        {
+            self.end_walk(results);
+        }
+    }
+
     /// Puts a drained tail back where the walk left it, in order (L8-23).
     fn restore_tail(&mut self, tail: Vec<PoppedProgramCall>) {
         for (row, nested) in tail.into_iter().rev() {

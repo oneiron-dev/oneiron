@@ -255,6 +255,24 @@ impl RecordingJsHost<'_, '_> {
         })
     }
 
+    /// Applies the owner's answer at the program's end when it left recorded calls unreached
+    /// (L8-23): an approved refire drops the tail, an approved leave keeps it for the commit.
+    pub(in crate::engine_executor) fn answer_unreached_tail(&mut self) {
+        let results = &self.results;
+        if let Some(replay) = self.deadline_replay.as_mut() {
+            replay.end_walk_at_program_end(results);
+        }
+    }
+
+    /// Ends an open walk at a body no recorded store holds (L8-23), as at a call past its rows:
+    /// whether the pass holds after it.
+    pub(in crate::engine_executor::host) fn end_walk_at_new_output(&mut self) -> bool {
+        let results = &self.results;
+        self.deadline_replay
+            .as_mut()
+            .is_some_and(|replay| replay.end_walk_at_new_output(results))
+    }
+
     /// Whether a resumed step's replay turned dry: an effect step changed or went unreached
     /// (L8-23).
     pub(in crate::engine_executor) fn pending_replay_dry(&self) -> bool {
