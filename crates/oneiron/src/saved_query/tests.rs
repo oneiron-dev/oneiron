@@ -289,19 +289,10 @@ fn memory_watch_is_durable_owner_bound_and_reversible() {
     let vault = crate::Vault::open_unseeded_for_test(dir.path(), VaultConfig::device())
         .expect("open vault");
     register_crm_pack(&vault, 107, 108, TypeByteFamily::Productivity).expect("pack");
-    let owner = id(0xB1);
+    let owner = vault.ensure_embedded_owner_actor().expect("owner");
     let other = id(0xB2);
     let anchor = id(0xB3);
     let subject = id(0xB4);
-    vault
-        .put_entity(
-            &owner,
-            crate::registry::ENTITY_TYPE_PERSON,
-            TimeRange { start: 1, end: 1 },
-            1,
-            b"owner",
-        )
-        .expect("owner");
     vault
         .put_entity(
             &subject,

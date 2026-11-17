@@ -132,7 +132,7 @@ fn rows(outcome: &EntityEraseOutcome) -> BTreeMap<EntityId, SameBytesOutcome> {
 fn without_the_flag_an_erase_leaves_shared_bytes_to_the_other_record() {
     for erase_door in [true, false] {
         let (_dir, vault) = blob_vault();
-        let person = put_person(&vault, 0xE1);
+        let person = put_owner(&vault);
         // Deleting is an owner verb, which holds only for a bound owner (H149).
         crate::test_util::bind_test_owner(&vault, person);
         let memory = facade_for(&vault, person);
@@ -212,13 +212,17 @@ fn only_a_live_vault_owner_confirms_a_same_bytes_erase() {
     let b = artifact(&mine, &[SHARED]);
     let m = artifact(&theirs, &[SHARED]);
     let owner_preview = mine.preview_entity_delete(&a).expect("owner preview");
-    // The member deletes its own record only as a bound human (H149); the
-    // flag still asks for a live owner of the vault, which a member is not.
+    // The member holds a human binding but is not a live Owner, so the
+    // owner-only preview refuses it with the binding code.
     crate::test_util::bind_test_owner(&vault, member);
-    let previews = [
-        owner_preview,
-        theirs.preview_entity_delete(&m).expect("member preview"),
-    ];
+    assert_eq!(
+        theirs
+            .preview_entity_delete(&m)
+            .expect_err("member preview")
+            .code,
+        MEMORY_CODE_OWNER_BINDING_REQUIRED
+    );
+    let previews = [owner_preview];
     let agent = vault.memory(owner, EdgeActorClass::Agent);
 
     for preview in &previews {
@@ -228,11 +232,14 @@ fn only_a_live_vault_owner_confirms_a_same_bytes_erase() {
                 also_same_bytes: true,
                 veto_starter: None,
             };
-            for (who, facade) in [("member", &theirs), ("agent", &agent)] {
+            for (who, facade, expected) in [
+                ("member", &theirs, MEMORY_CODE_OWNER_BINDING_REQUIRED),
+                ("agent", &agent, MEMORY_CODE_FORBIDDEN),
+            ] {
                 let refused = facade
                     .confirm_entity_erase(preview, options)
                     .expect_err(who);
-                assert_eq!(refused.code, MEMORY_CODE_FORBIDDEN, "{who}");
+                assert_eq!(refused.code, expected, "{who}");
             }
         }
     }

@@ -1253,6 +1253,7 @@ async fn conversation_list_previews_witness_message_content_not_turn_speaker() {
             occurred_at: at,
             assertions: Default::default(),
             thread_audience: None,
+            project: None,
         })
         .unwrap();
     let bearer = owner_reader_bearer(&server);
@@ -1285,19 +1286,9 @@ async fn owner_watch_persists_and_timeline_renders_stored_before_after() {
         oneiron::registry::TypeByteFamily::Productivity,
     )
     .expect("register saved query");
-    let owner = seeded_test_entity_id(0x1261_0900);
+    let owner = server.vault.ensure_embedded_owner_actor().unwrap();
     let old = seeded_test_entity_id(0x1261_0901);
     let new = seeded_test_entity_id(0x1261_0902);
-    server
-        .vault
-        .put_entity(
-            &owner,
-            oneiron::registry::ENTITY_TYPE_PERSON,
-            oneiron::TimeRange { start: 1, end: 1 },
-            1,
-            b"owner",
-        )
-        .expect("owner");
     crate::test_credentials::bind_owner(&server.vault, "secret", owner);
     seed_active_claim(&server, old, owner, "before", 100);
     seed_active_claim(&server, new, owner, "after", 200);

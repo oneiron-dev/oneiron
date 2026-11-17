@@ -160,4 +160,29 @@ impl Vault {
         }
         Ok(true)
     }
+
+    /// The project and world the stored row `id` is read at, its
+    /// [`scope_for_blob`] position, when that names one of each: where a
+    /// record derived from the row's words is born, so the derivation keeps
+    /// its source's exposure (ONE-1592 P3; ARCH-0022 #task-facet-not-built).
+    /// `None` for a row that is absent, has no position, or is read at more
+    /// than one project or world.
+    pub(crate) fn derivation_project_and_world_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: EntityId,
+    ) -> Result<Option<(EntityId, EntityId)>> {
+        let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(&self.store, txn, &id)?
+        else {
+            return Ok(None);
+        };
+        let Some(scope) = scope_for_blob(&self.store, txn, id, &raw)? else {
+            return Ok(None);
+        };
+        let one = |axis: &ScopeAxis<ScopeId>| match axis {
+            ScopeAxis::Some(ids) if ids.len() == 1 => ids.first().map(|id| id.0),
+            _ => None,
+        };
+        Ok(one(&scope.audience).zip(one(&scope.worlds)))
+    }
 }
