@@ -10,8 +10,9 @@
 //! roots the vault and provisions the engine's MACHINE writers; the test signs
 //! with that issuer, loaded back (`Vault::load_host_slip_issuer`). The
 //! self-hosted root credential acts as the vault's embedded owner. A summary is
-//! minted with no model through `test_doors::scope_summary::mint_scope_summary`,
-//! as the Dreamer writes one (`tests/disclosure_summary_word_sources.rs`). Every
+//! minted with no model through `test_doors::scope_summary::mint_born_scope_summary`,
+//! as the Dreamer writes one, with its document born, so a read serves its text
+//! (a bare mint has no document, and its read answers 404). Every
 //! body runs on the engine's stack, because the facade dispatch overflows a test
 //! thread's stack.
 //!
@@ -83,7 +84,7 @@ use oneiron::conversation_dag::{ScopePath, ScopeSelector};
 use oneiron::core_write::{ConversationCreateInput, DagRecordAppendInput};
 use oneiron::registry::ENTITY_TYPE_SUMMARY;
 use oneiron::scope_summary::{ScopeSummaryBody, SummaryCreateRequest, encode_scope_summary_body};
-use oneiron::test_doors::scope_summary::mint_scope_summary;
+use oneiron::test_doors::scope_summary::mint_born_scope_summary;
 use oneiron::{EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig};
 use oneiron_keystore::MemoryKeystore;
 use oneiron_server::{build_app, config::SyncServerConfig, server::SyncServer};
@@ -182,7 +183,7 @@ impl Door {
                 "the first step",
             ))
             .unwrap();
-        let summary = mint_scope_summary(
+        let summary = mint_born_scope_summary(
             &self.vault,
             &ScopeSelector {
                 conversation,

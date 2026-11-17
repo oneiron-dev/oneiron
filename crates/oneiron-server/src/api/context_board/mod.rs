@@ -1141,6 +1141,7 @@ pub(crate) async fn chat_board(
 /// turn's message, and `query` what that message read, which rides right
 /// after it. One hydration under one budget, as the one frame's.
 /// `chat_layout_actor` is as [`chat_board`]'s.
+/// `retrieval_turn` is as [`chat_turn_board_deferred`]'s.
 pub(crate) async fn chat_turn_board(
     server: &Arc<SyncServer>,
     auth: CoreAuth,
@@ -1148,6 +1149,7 @@ pub(crate) async fn chat_turn_board(
     reader: oneiron::EntityId,
     query: &str,
     chat_layout_actor: Option<oneiron::EntityId>,
+    retrieval_turn: Option<oneiron::store::RetrievalTurn>,
 ) -> Result<ChatBoard, axum::http::StatusCode> {
     read_chat_board(
         server,
@@ -1158,7 +1160,7 @@ pub(crate) async fn chat_turn_board(
         true,
         false,
         chat_layout_actor,
-        None,
+        retrieval_turn,
     )
     .await
 }
