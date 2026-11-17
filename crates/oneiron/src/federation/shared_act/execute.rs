@@ -37,6 +37,19 @@ impl Vault {
         act_id: &str,
         slips: Option<&HostSlipIssuer>,
     ) -> Result<SharedActExecution> {
+        self.execute_completed_shared_act_with_owner_key_revokes(executor, act_id, slips, &[])
+    }
+
+    /// The run [`Self::execute_completed_shared_act`] describes, with a
+    /// device's `owner_key_revokes` landed in its writer before the move
+    /// (row HOSTED-OWNER-MOVE-TWO-PHASE; none for a plain run).
+    pub(super) fn execute_shared_act_in_writer(
+        &self,
+        executor: &AuthenticatedOwner,
+        act_id: &str,
+        slips: Option<&HostSlipIssuer>,
+        owner_key_revokes: &[Vec<u8>],
+    ) -> Result<SharedActExecution> {
         let mut export = self
             .removal_export(executor, act_id)?
             .map(|(member, records)| {
@@ -120,6 +133,21 @@ impl Vault {
             request_id.clone(),
             Some(receipt_id.clone()),
         )?;
+        // A device's confirm of a move that ends an Owner's keys lands its
+        // owner-key revokes here, before the move, which then finds none
+        // left to revoke (row HOSTED-OWNER-MOVE-TWO-PHASE).
+        if !owner_key_revokes.is_empty() {
+            let member =
+                super::owner_key_confirm::owner_standing_ends(&act)?.ok_or_else(invalid)?;
+            let root = slips.map(HostSlipIssuer::public_key);
+            self.land_owner_key_move_in_txn(
+                &mut txn,
+                actor,
+                member,
+                root.as_ref(),
+                owner_key_revokes,
+            )?;
+        }
         // The grant ids an Owner handover wrote and retired, for its signed
         // entry (FIX 5765), and the signed-mint Grants it deleted with no
         // signed withdrawal (FIX 12335).
