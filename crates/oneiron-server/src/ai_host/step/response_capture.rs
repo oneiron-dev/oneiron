@@ -120,6 +120,7 @@ pub(super) fn record_workflow_response(
         read_world_epoch: None,
         read_worlds: None,
         read_world_unknown: vec![ReadWorldUnknown::Uncaptured],
+        context: None,
         tools_present: !request.tools.is_empty(),
         summary_requested: false,
         erased: false,

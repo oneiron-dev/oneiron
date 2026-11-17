@@ -105,6 +105,60 @@ pub enum ModelCallKind {
     },
 }
 
+/// What a chat call's request was assembled from, taken where the request is
+/// assembled (FIX HANDOFF-CONTEXT): ids and counts only, never words. A call
+/// whose capture names none reads as unknown, as every non-chat capture and
+/// every call recorded before the form existed does. A request digest never
+/// picks a form.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "form", rename_all = "snake_case", deny_unknown_fields)]
+pub enum ModelCallContext {
+    /// A chat turn: its earlier lines and its context board.
+    Turn {
+        history: ModelCallHistory,
+        board: ModelCallBoard,
+    },
+    /// A turn action answering a saved turn again, its history rebuilt
+    /// from the conversation's ledger.
+    TurnAction { action: ModelCallTurnAction },
+}
+
+/// The earlier lines a chat turn's request carried.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum ModelCallHistory {
+    /// No earlier line: the thread's first turn.
+    Cold,
+    /// The answering agent's own retained log: the compaction summaries
+    /// standing in it, then the raw turns after them, oldest first.
+    RetainedLog {
+        summaries: Vec<EntityId>,
+        raw_turns: Vec<EntityId>,
+    },
+    /// The caller's own lines: the latest `kept` rode; the `dropped` lines
+    /// before them were past the turn's history bound.
+    CallerLines { kept: u64, dropped: u64 },
+}
+
+/// Whether a chat turn's context board rode its call.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ModelCallBoard {
+    Rode,
+    /// Read, then left out: refused, held by its route, or not admitted.
+    Omitted,
+    /// No board for the turn.
+    Absent,
+}
+
+/// The turn action a call answered.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ModelCallTurnAction {
+    Continue,
+    Retry,
+}
+
 pub fn invalid(message: &str) -> Error {
     Error::InvalidConfig(message.to_owned())
 }

@@ -1,6 +1,6 @@
 {
   "name": "vault.conversations.turns.models",
-  "description": "Reads, for each listed TURN in the order given, the model id and provider of every call that answered into its saved replies: unknown where no call was linked, withheld where the caller reads no such turn.",
+  "description": "Reads, for each listed TURN in the order given, the model id, provider and context form of every call that answered into its saved replies: unknown where no call was linked, withheld where the caller reads no such turn.",
   "input": "crate::verbs::ConversationTurnModelsRequest",
   "output": "crate::claim::ScopedReadResult<crate::verbs::ConversationTurnModelsView>",
   "call": "crate::verbs::conversation_turn_models(memory, input)?",
