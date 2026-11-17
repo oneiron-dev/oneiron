@@ -741,7 +741,7 @@ impl Vault {
                 &rtxn,
                 &included,
                 only.is_none() && (owner_export || locality == CallerLocality::OnDevice),
-                judge.as_mut(),
+                judge.as_mut().zip(Some(&mut lineage)),
             )?;
             for mut row in rows {
                 let names = std::mem::take(&mut row.names);

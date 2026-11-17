@@ -31,6 +31,7 @@ use heed::{RoTxn, RwTxn};
 use serde::{Deserialize, Serialize};
 
 use super::archive_index::{ArchiveIndex, IndexedArchive, Loc, Tag};
+use super::copy_release::MailboxLineage;
 use super::document_import::parse_id;
 use super::side_names::{DocumentHistories, side_names};
 use crate::code_revision::ArchivedRevisionRow;
@@ -753,10 +754,13 @@ impl ArchiveSideRow {
 /// index row no record owns, stay unnamed (FIX 3681: a records archive never
 /// names what its reader could not read).
 ///
-/// In an Owner's copy, `member_mail` is its pass's mailbox judge (fix list row
-/// 15416): a row that would go is read through its family's own codec, every
-/// typed record inside it too ([`side_names`]), and goes only when the judge
-/// carries every entity row it names. A record's row that names one the judge
+/// In an Owner's copy, `member_mail` is its pass's mailbox judge and the
+/// pass's lineage (fix list row 15416): a row that would go is read through
+/// its family's own codec, every typed record inside it too ([`side_names`]),
+/// and goes only when the judge carries every entity row it names, each with
+/// every row the side ledgers, its birth and its words record it was made
+/// from, as the copy's entity rows are judged
+/// ([`MailboxLineage::side_names_carried`]). A record's row that names one the judge
 /// leaves out, or that does not read, holds out the record's rows of its
 /// group, as a carrier the export lacks does, so a version's record, its head
 /// and its born-from row go or stay together; each family is named once under
@@ -771,7 +775,7 @@ pub(crate) fn archive_side_rows_in_txn(
     rtxn: &RoTxn<'_>,
     included: &BTreeSet<EntityId>,
     include_vault_wide: bool,
-    mut member_mail: Option<&mut ExportJudge<'_, '_, '_>>,
+    mut member_mail: Option<(&mut ExportJudge<'_, '_, '_>, &mut MailboxLineage)>,
 ) -> Result<(Vec<SideRowBytes>, Vec<ArchiveSideWithheld>)> {
     let mut stored = Vec::new();
     for family in ArchiveSideFamily::ALL {
@@ -791,12 +795,12 @@ pub(crate) fn archive_side_rows_in_txn(
     for (family, key, value) in &stored {
         let mut travel = context.travel(*family, key, value)?;
         let mut verdict = None;
-        if let Some(judge) = member_mail.as_deref_mut()
+        if let Some((judge, lineage)) = member_mail.as_mut()
             && travel.goes(included, include_vault_wide)
         {
             let names = side_names(*family, key, value)?;
             let carried = match &names.rows {
-                Some(rows) => judge.carries_all(Some(rows.as_slice()))?,
+                Some(rows) => lineage.side_names_carried(judge, rows)?,
                 None => false,
             };
             if !carried {

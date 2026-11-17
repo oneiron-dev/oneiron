@@ -45,6 +45,44 @@ impl ExportJudge<'_, '_, '_> {
         recorded.of(&self.judge.vault.store, self.judge.txn, id)
     }
 
+    /// What the words of the row `id` came from, as [`Self::carries`] walks
+    /// them (its bytes `raw`, else as the pass's view holds them): the rows
+    /// each of which must go, and a CLAIM's supports, one of which must.
+    /// Nothing for a row gone from the view, and nothing in a pass whose
+    /// rows' own stamps alone decide (no policy and no held row here), as
+    /// [`Self::carries`] reads no lineage there.
+    ///
+    /// # Errors
+    ///
+    /// Storage failures, and a row shorter than its header.
+    pub(crate) fn word_sources_of(
+        &self,
+        id: EntityId,
+        raw: Option<&[u8]>,
+    ) -> Result<(Vec<EntityId>, Vec<EntityId>)> {
+        if self.quiet {
+            return Ok((Vec::new(), Vec::new()));
+        }
+        let read;
+        let bytes = match raw {
+            Some(raw) => raw,
+            None => {
+                match crate::ports::EntityStoreRead::port_entity_raw(
+                    self.judge.dbs,
+                    self.judge.txn,
+                    &id,
+                )? {
+                    Some(bytes) => {
+                        read = bytes;
+                        read.as_slice()
+                    }
+                    None => return Ok((Vec::new(), Vec::new())),
+                }
+            }
+        };
+        super::word_sources(self.judge.vault, self.judge.dbs, self.judge.txn, id, bytes)
+    }
+
     /// The pass's settled verdicts, kept past its snapshot, for a copy
     /// whose rows are known only once that snapshot is gone.
     pub(crate) fn settle(self) -> ExportVerdicts {

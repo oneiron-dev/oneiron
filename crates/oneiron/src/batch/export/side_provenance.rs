@@ -2,7 +2,9 @@
 //! record its body was made from (fix list rows 15416, 22344 and 22345),
 //! before it reads a body. The records come from the one shared reader
 //! ([`SideSources`], Engine ruling EXPORT-EDGES = C); this module only
-//! judges them.
+//! judges them, at every row its walk meets, whether a record or an edge
+//! led there (the rows a row's words came from, as the judge's own lineage
+//! walk reads them).
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -18,7 +20,8 @@ use crate::store::Store;
 /// read once in an Owner's copy's own snapshot, and the copy's verdict on
 /// each row it judged by them: a body whose words came from a member's
 /// mailbox the copy leaves out stays home though no edge or stamp names
-/// that row, however many recorded hops lie between them.
+/// that row, however many hops lie between them, recorded or linked: a row
+/// derived from one whose records name that mailbox stays home with it.
 #[derive(Default)]
 pub(crate) struct SideProvenance {
     recorded: SideSources,
@@ -30,12 +33,17 @@ pub(crate) struct SideProvenance {
     named: BTreeMap<EntityId, Vec<EntityId>>,
 }
 
-/// One row on the walk: every row its records name must go, and, for bytes a
-/// blob version holds, every row of one recorded use of them.
+/// One row on the walk: every row its records name and every row its words
+/// came from must go, one of a CLAIM's supports when it has any, and, for
+/// bytes a blob version holds, every row of one recorded use of them.
 struct Frame {
     id: EntityId,
-    /// The row's requirements in order: its named sources, then each use.
+    /// The row's requirements in order: its named sources and the rows its
+    /// words came from, then each use.
     groups: Vec<Vec<EntityId>>,
+    /// A CLAIM's supports, judged once every group is: one must go, as the
+    /// judge's lineage walk asks.
+    supports: Vec<EntityId>,
     /// Whether it has uses to meet (groups past the first).
     has_uses: bool,
     /// Whether one of its uses does not read.
@@ -48,6 +56,8 @@ struct Frame {
     use_ok: bool,
     /// Whether some use went whole.
     kept_use: bool,
+    /// Whether one of its supports went.
+    kept_support: bool,
     /// The lowest walk depth of a row still being judged that this frame
     /// took as carried; its own depth when none.
     low: usize,
@@ -94,7 +104,7 @@ impl SideProvenance {
             return Ok(settled.then(|| self.named.get(&id).cloned().unwrap_or_default()));
         }
         let own = judge.carries(id, raw)?;
-        let recorded = self.walk(judge, id)?.filter(|_| own);
+        let recorded = self.walk(judge, id, raw)?.filter(|_| own);
         self.settled.insert(id, recorded.is_some());
         match &recorded {
             Some(sources) => self.named.insert(id, sources.clone()),
@@ -103,16 +113,23 @@ impl SideProvenance {
         Ok(recorded)
     }
 
-    /// Whether every row the records of `id` name goes, as
+    /// Whether every row the records of `id` (its bytes `raw`, else as the
+    /// pass's view holds them) and its words name goes, as
     /// [`Self::admitted`] judges each, and the rows that count as carried
-    /// with it; `id`'s own lineage is its caller's. Settles each row below
-    /// `id` that no row still on the walk stood in for.
+    /// with it; `id`'s own binding is its caller's. Settles each row below
+    /// `id` that no row still on the walk stood in for, and, once `id` goes
+    /// and no row the walk opened stayed home, every row below it.
     fn walk(
         &mut self,
         judge: &mut ExportJudge<'_, '_, '_>,
         id: EntityId,
+        raw: Option<&[u8]>,
     ) -> Result<Option<Vec<EntityId>>> {
-        let mut walk = vec![self.frame(judge, id, 0)?];
+        let mut walk = vec![self.frame(judge, id, raw, 0)?];
+        // The rows that went only while a row still on the walk stood in for
+        // them, and whether a row the walk opened stayed home.
+        let mut conditional = Vec::new();
+        let mut denied = false;
         loop {
             let depth = walk.len() - 1;
             let (current, next) = {
@@ -137,7 +154,7 @@ impl SideProvenance {
                 match carried {
                     Some(carried) => walk[depth].took(child, carried),
                     None => {
-                        let opened = self.frame(judge, child, depth + 1)?;
+                        let opened = self.frame(judge, child, None, depth + 1)?;
                         walk.push(opened);
                     }
                 }
@@ -148,6 +165,13 @@ impl SideProvenance {
             ))?;
             let carried = frame.carried(judge)?;
             let Some(parent) = walk.last_mut() else {
+                // Every row the walk opened went, each taking a row on the
+                // walk as carried at most: so each of them goes.
+                if carried && !denied {
+                    for row in conditional {
+                        self.settled.insert(row, true);
+                    }
+                }
                 return Ok(carried.then_some(frame.sources));
             };
             parent.low = parent.low.min(frame.low);
@@ -157,7 +181,10 @@ impl SideProvenance {
             }
             if !carried || frame.low >= depth {
                 self.settled.insert(frame.id, carried);
+            } else {
+                conditional.push(frame.id);
             }
+            denied |= !carried;
         }
     }
 
@@ -200,13 +227,17 @@ impl SideProvenance {
         reached
     }
 
-    /// The walk's frame for `id` at depth `depth`: what the shared reader
-    /// records its body was made from. A record that does not read is a
-    /// source this vault cannot name, and the judge is told.
+    /// The walk's frame for `id` (its bytes `raw`, else as the pass's view
+    /// holds them) at depth `depth`: what the shared reader records its body
+    /// was made from, and what its words came from as the judge's lineage
+    /// walk reads them ([`ExportJudge::word_sources_of`]), so the records of
+    /// every row on that lineage are judged too. A record that does not read
+    /// is a source this vault cannot name, and the judge is told.
     fn frame(
         &self,
         judge: &mut ExportJudge<'_, '_, '_>,
         id: EntityId,
+        raw: Option<&[u8]>,
         depth: usize,
     ) -> Result<Frame> {
         let sources = judge.recorded_sources(&self.recorded, id)?;
@@ -214,7 +245,16 @@ impl SideProvenance {
             Some(_) => true,
             None => judge.carries_all(None)?,
         };
-        let mut groups = vec![sources.named.into_iter().flatten().collect::<Vec<_>>()];
+        let (words, supports) = judge.word_sources_of(id, raw)?;
+        let mut seen = BTreeSet::from([id]);
+        let named = sources
+            .named
+            .into_iter()
+            .flatten()
+            .chain(words)
+            .filter(|row| seen.insert(*row))
+            .collect::<Vec<_>>();
+        let mut groups = vec![named];
         groups.extend(
             sources
                 .uses
@@ -227,11 +267,13 @@ impl SideProvenance {
             has_uses: !sources.uses.is_empty(),
             unreadable_use: sources.uses.iter().any(Option::is_none),
             groups,
+            supports,
             group: 0,
             at: 0,
             named_ok,
             use_ok: true,
             kept_use: false,
+            kept_support: false,
             low: depth,
             sources: Vec::new(),
         })
@@ -239,10 +281,10 @@ impl SideProvenance {
 }
 
 impl Frame {
-    /// The next row to judge, closing each finished use on the way.
+    /// The next row to judge, closing each finished use on the way, then
+    /// each support until one goes.
     fn next(&mut self) -> Option<EntityId> {
-        loop {
-            let group = self.groups.get(self.group)?;
+        while let Some(group) = self.groups.get(self.group) {
             if let Some(row) = group.get(self.at) {
                 return Some(*row);
             }
@@ -254,12 +296,22 @@ impl Frame {
             self.at = 0;
             self.use_ok = true;
         }
+        if self.kept_support {
+            return None;
+        }
+        self.supports.get(self.at).copied()
     }
 
     /// The row `row` the walk judged for this frame went (`carried`) or
     /// stays home.
     fn took(&mut self, row: EntityId, carried: bool) {
-        if self.group == 0 {
+        if self.group >= self.groups.len() {
+            // A support: the first that goes is the one the row needs.
+            if carried {
+                self.kept_support = true;
+                self.sources.push(row);
+            }
+        } else if self.group == 0 {
             self.named_ok &= carried;
             if carried {
                 self.sources.push(row);
@@ -270,13 +322,16 @@ impl Frame {
         self.at += 1;
     }
 
-    /// Whether the body goes: every named source went, and one use went
-    /// whole when it has any. A use whose made_by does not read keeps
-    /// nothing, and is of a source this vault cannot name when no use went.
+    /// Whether the body goes: every named source went, one use went whole
+    /// when it has any, and one support went when it has any. A use whose
+    /// made_by does not read keeps nothing, and is of a source this vault
+    /// cannot name when no use went.
     fn carried(&self, judge: &mut ExportJudge<'_, '_, '_>) -> Result<bool> {
         if self.has_uses && !self.kept_use && self.unreadable_use {
             judge.carries_all(None)?;
         }
-        Ok(self.named_ok && (!self.has_uses || self.kept_use))
+        Ok(self.named_ok
+            && (!self.has_uses || self.kept_use)
+            && (self.supports.is_empty() || self.kept_support))
     }
 }
