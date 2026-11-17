@@ -9,9 +9,9 @@ use std::path::Path;
 use base64::Engine as _;
 use oneiron::recovery::checkpoint::{ArtifactKind, ArtifactUnlocks, CheckpointSigner};
 use oneiron::world_keys::{
-    DataKeyGenerationOutcome, EscrowRetirement, HybridSecretKey, RecoveryPreset,
-    RecoveryPresetChange, RecoverySheet, ResealedEscrowCapsule, VaultKeyStatus, VaultKeyWrapInfo,
-    VaultKeyWrapKind,
+    DATA_KEY_GENERATION_PAGE_SEAL_NOTICE, DataKeyGenerationOutcome, EscrowRetirement,
+    HybridSecretKey, RecoveryPreset, RecoveryPresetChange, RecoverySheet, ResealedEscrowCapsule,
+    VaultKeyStatus, VaultKeyWrapInfo, VaultKeyWrapKind,
 };
 use oneiron_vault_contract::escrow::{
     ESCROW_REPORT_SCHEMA_VERSION, ESCROW_REPORT_TYPE, EscrowCapsuleReport,
@@ -177,6 +177,16 @@ pub(crate) struct DataKeyGenerationView {
     pub(crate) removed: Vec<WrapView>,
     /// The wraps the act sealed of the new key.
     pub(crate) rewrapped: Vec<WrapView>,
+    /// The page-seal mirror rewrite pends: the act stands, and the vault's
+    /// next sealed open repairs the mirror.
+    pub(crate) mirror_pending: bool,
+    /// The vault's pages are sealed and keep their earlier key until a
+    /// re-key (DATAKEY-GEN-PAGE-SEAL = A).
+    pub(crate) pages_keep_earlier_key: bool,
+    /// What the owner is told when the pages keep their earlier key; absent
+    /// otherwise.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) notice: Option<String>,
 }
 
 impl DataKeyGenerationView {
@@ -194,6 +204,11 @@ impl DataKeyGenerationView {
                 .into_iter()
                 .map(|info| WrapView::of(vault_id, info))
                 .collect(),
+            mirror_pending: outcome.mirror_pending,
+            pages_keep_earlier_key: outcome.pages_keep_earlier_key,
+            notice: outcome
+                .pages_keep_earlier_key
+                .then(|| DATA_KEY_GENERATION_PAGE_SEAL_NOTICE.to_owned()),
         }
     }
 }

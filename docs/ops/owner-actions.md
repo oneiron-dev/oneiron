@@ -2230,7 +2230,10 @@ same steps at `POST /v1/owner/vault-key/generation/preview` with `{"password": t
 a recipient is the hybrid public key's bytes, base64url without padding.
 
 Under any recovery preset but `standard` the act runs from the recovery preset switch instead, and
-here the engine refuses it. A page-sealed vault is refused for now.
+here the engine refuses it. On a page-sealed vault the act stands, and the answer says so: its
+`notice` reads "this device's stored copy keeps its old key until it is re-keyed"
+(`pages_keep_earlier_key` is true), and `mirror_pending` true means the page-seal mirror is
+rewritten at the vault's next sealed open.
 
 ### Maximum tier
 

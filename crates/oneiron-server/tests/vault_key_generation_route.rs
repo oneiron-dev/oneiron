@@ -255,6 +255,12 @@ fn the_act_rewraps_the_presented_ways_and_removes_the_confirmed_ones() {
             .await;
         assert_eq!(status, StatusCode::OK, "the act lands: {answer}");
         assert_eq!(answer["generation"].as_u64(), Some(1), "{answer}");
+        assert_eq!(answer["mirror_pending"], json!(false), "{answer}");
+        assert_eq!(answer["pages_keep_earlier_key"], json!(false), "{answer}");
+        assert!(
+            answer.get("notice").is_none(),
+            "an unsealed vault gets no notice: {answer}"
+        );
         assert_eq!(
             wrap_ids_in(&answer, "removed"),
             [format!("passkey:{PASSKEY}")],

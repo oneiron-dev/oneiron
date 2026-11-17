@@ -207,8 +207,8 @@ fn recipient_key(recipient: &str) -> OwnerResult<HybridPublicKey> {
 /// what to do. Every such refusal is a fixed sentence or names a wrap id,
 /// never a secret: a way neither presented nor confirmed, a presented secret
 /// that does not open its wrap, a way the vault does not carry, a recovery
-/// preset other than standard, a page-sealed or keyless vault. As a refusal
-/// it answers 409 with those words.
+/// preset other than standard, a page-sealed vault whose mirror is not ready,
+/// a keyless vault. As a refusal it answers 409 with those words.
 fn world_key_refusal_as_refused(error: oneiron::Error) -> OwnerError {
     if error.kind() == oneiron::ErrorKind::WorldKeyRefused {
         OwnerError::Refused(error.to_string())
