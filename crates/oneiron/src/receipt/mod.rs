@@ -72,9 +72,9 @@ pub use self::family::{PendingTrayAsk, PendingTrayQuery};
 pub use self::field_set::{
     ContextReceiptFields, FIELD_BUDGET_REFUSAL, FIELD_EXECUTOR_ROLE, FIELD_EXECUTOR_SEAT,
     FIELD_LEARNING_DECIDED_BY, FIELD_LEARNING_PATTERN, FIELD_LEARNING_TEAM_REF,
-    FIELD_LEASE_GENERATION, append_budget_refusal_field, append_context_receipt_fields,
-    append_pack_attribution_fields, append_pack_manifest_fields, append_task_type_fields,
-    append_team_receipt_fields, memories_state_ref,
+    FIELD_LEASE_GENERATION, FIELD_SCRATCH_REF, append_budget_refusal_field,
+    append_context_receipt_fields, append_pack_attribution_fields, append_pack_manifest_fields,
+    append_task_type_fields, append_team_receipt_fields, memories_state_ref,
 };
 pub(crate) use self::field_set::{FIELD_ATTEMPT_CALLER, budget_refusal_field_value};
 pub use self::grant::{
@@ -93,7 +93,10 @@ pub use self::kernel::{
     FIELD_TYPE_REF_NODE, FIELD_TYPE_REF_TREE_VERSION, ReceiptKind, ReceiptQuery, ReceiptRecord,
     ReceiptScan, ReceiptScanContinuation, ReceiptScanPosition, ReceiptView,
 };
-pub use self::ledgers::{attempt_pack_receipt, attempt_pack_receipt_id, outbound_intent_receipt};
+pub use self::ledgers::{
+    attempt_pack_receipt, attempt_pack_receipt_id, outbound_intent_receipt,
+    parse_attempt_pack_receipt_id,
+};
 pub use self::lens::{LensActivationReceipt, LensApproval, LensProposalReceipt, LensSlotDecision};
 pub use self::pack_attribution::{
     ContributionCheck, CreditOptions, PackAttributionFields, PackLearningContext,
@@ -234,6 +237,7 @@ pub(crate) use ledgers::attempt_pack_receipt_page;
 pub(crate) use ledgers::attempt_pack_receipt_in_txn;
 
 mod archive_source;
+pub(crate) mod setting_keys;
 pub(crate) mod tables;
 pub(crate) use archive_source::{
     archived_receipt_carriers_in_txn, is_receipt_archive_source, receipt_archive_custody_exists,
@@ -249,3 +253,6 @@ pub(crate) use archive_source::{receipt_archive_holder, receipt_archive_matches_
 pub(crate) use self::direct_dispatch::outbound_direct_receipt_accepts_masked;
 pub(crate) use self::dispatch_observation::dispatch_observation_accepts_masked;
 pub(crate) use self::pack_attribution::attempt_pack_attribution_accepts_masked;
+
+#[cfg(oneiron_test_support)]
+pub(crate) use self::dispatch_observation::dispatch_observation_key_pin_for_test;

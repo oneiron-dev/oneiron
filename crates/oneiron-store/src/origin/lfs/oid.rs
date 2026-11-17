@@ -4,7 +4,6 @@ use sha2::{Digest, Sha256};
 
 use crate::side_table::codec::CodecError;
 use crate::side_table::codec::RawValue;
-use crate::side_table::key::FixedSideKey;
 use crate::side_table::key::SideKey;
 use oneiron_base::error::ArtifactError;
 use oneiron_base::error::Error;
@@ -25,7 +24,9 @@ pub const VAULT_LFS_OID_HEX_LEN: usize = 64;
 /// object id addresses BYTES and an entity id addresses an ENTITY, and the two
 /// are never interchangeable even though one deterministically derives the
 /// other.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+///
+/// Its side-table key is the raw 32 bytes (derived), the spelling every LFS OID row has always had.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, SideKey)]
 pub struct LfsOid([u8; VAULT_LFS_OID_LEN]);
 
 impl LfsOid {
@@ -45,13 +46,11 @@ impl LfsOid {
                 "lfs oid must be 64 hex characters",
             )));
         }
-        let mut bytes = [0_u8; VAULT_LFS_OID_LEN];
-        for (slot, pair) in bytes.iter_mut().zip(value.as_bytes().chunks_exact(2)) {
-            let high = hex_nibble(pair[0])?;
-            let low = hex_nibble(pair[1])?;
-            *slot = (high << 4) | low;
-        }
-        Ok(Self(bytes))
+        oneiron_hex::decode_any_case(value)
+            .map(Self)
+            .ok_or(Error::Artifact(ArtifactError::InvalidLfsObject(
+                "lfs oid is not hex",
+            )))
     }
 
     /// The SHA-256 of `bytes` — the first and only hash of an LFS body.
@@ -74,28 +73,8 @@ impl LfsOid {
     /// The 64-character lowercase hex spelling clients send on the wire.
     #[must_use]
     pub fn to_hex(self) -> String {
-        let mut hex = String::with_capacity(VAULT_LFS_OID_HEX_LEN);
-        for byte in self.0 {
-            hex.push(hex_digit(byte >> 4));
-            hex.push(hex_digit(byte & 0x0f));
-        }
-        hex
+        oneiron_hex::encode(&self.0)
     }
-}
-
-/// The raw 32 bytes, unchanged — the side-table key spelling every LFS OID row has always had.
-impl SideKey for LfsOid {
-    fn encode_into(&self, out: &mut Vec<u8>) {
-        out.extend_from_slice(&self.0);
-    }
-
-    fn decode_key(bytes: &[u8]) -> Option<Self> {
-        Some(Self(bytes.try_into().ok()?))
-    }
-}
-
-impl FixedSideKey for LfsOid {
-    const WIDTH: usize = VAULT_LFS_OID_LEN;
 }
 
 /// The raw 32 bytes, unchanged — the side-table value spelling `origin:lfs:manifest:v1:` rows
@@ -111,24 +90,5 @@ impl RawValue for LfsOid {
                 .try_into()
                 .map_err(|_| Error::CorruptedIndex("lfs reverse oid"))?,
         ))
-    }
-}
-
-const fn hex_digit(nibble: u8) -> char {
-    (if nibble < 10 {
-        b'0' + nibble
-    } else {
-        b'a' + (nibble - 10)
-    }) as char
-}
-
-fn hex_nibble(byte: u8) -> Result<u8> {
-    match byte {
-        b'0'..=b'9' => Ok(byte - b'0'),
-        b'a'..=b'f' => Ok(byte - b'a' + 10),
-        b'A'..=b'F' => Ok(byte - b'A' + 10),
-        _ => Err(Error::Artifact(ArtifactError::InvalidLfsObject(
-            "lfs oid is not hex",
-        ))),
     }
 }

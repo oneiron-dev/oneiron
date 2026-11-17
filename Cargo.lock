@@ -8021,7 +8021,9 @@ dependencies = [
  "oneiron-crypto",
  "oneiron-delivery-vocabulary",
  "oneiron-docedit",
+ "oneiron-esign-render",
  "oneiron-guest",
+ "oneiron-hex",
  "oneiron-keystore",
  "oneiron-lens-wire",
  "oneiron-linkedin-policy",
@@ -8031,7 +8033,9 @@ dependencies = [
  "oneiron-retrieval",
  "oneiron-run-budget",
  "oneiron-sandbox-contract",
+ "oneiron-schedule-contract",
  "oneiron-sdk-build",
+ "oneiron-setting-contract",
  "oneiron-skill-attribution",
  "oneiron-spawn",
  "oneiron-store",
@@ -8183,6 +8187,7 @@ dependencies = [
  "futures-util",
  "loro",
  "oneiron",
+ "oneiron-hex",
  "oneiron-llm",
  "oneiron-organ-protocol",
  "oneiron-remote",
@@ -8214,6 +8219,8 @@ dependencies = [
  "futures-util",
  "libc",
  "memchr",
+ "oneiron-fingerprint",
+ "oneiron-hex",
  "oneiron-sandbox-contract",
  "oneiron-spawn",
  "rcgen",
@@ -8304,6 +8311,7 @@ dependencies = [
  "blake3",
  "bytes",
  "libc",
+ "oneiron-hex",
  "oneiron-spawn",
  "serde",
  "serde_json",
@@ -8321,6 +8329,8 @@ dependencies = [
  "heed",
  "libc",
  "loro",
+ "oneiron-derive",
+ "oneiron-fingerprint",
  "oneiron-hex",
  "rand 0.8.8",
  "rand_core 0.6.4",
@@ -8375,6 +8385,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "oneiron-derive"
+version = "0.1.0"
+dependencies = [
+ "oneiron-contracts",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
+]
+
+[[package]]
 name = "oneiron-docedit"
 version = "0.1.0"
 dependencies = [
@@ -8385,6 +8405,7 @@ dependencies = [
  "harfrust",
  "miniz_oxide 0.9.1",
  "oneiron-contracts",
+ "oneiron-hex",
  "png 0.18.1",
  "proptest",
  "quick-xml 0.42.0",
@@ -8427,6 +8448,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "oneiron-esign-render"
+version = "0.1.0"
+dependencies = [
+ "encoding_rs",
+ "lopdf",
+]
+
+[[package]]
 name = "oneiron-ffi"
 version = "0.1.0"
 dependencies = [
@@ -8438,6 +8467,20 @@ dependencies = [
  "serde_json",
  "tempfile",
  "zeroize",
+]
+
+[[package]]
+name = "oneiron-fingerprint"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "oneiron-hex",
+ "rmp",
+ "rmp-serde",
+ "rmpv",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
 ]
 
 [[package]]
@@ -8499,6 +8542,7 @@ dependencies = [
  "objc2",
  "objc2-foundation",
  "objc2-local-authentication",
+ "oneiron-hex",
  "security-framework",
  "security-framework-sys",
  "tempfile",
@@ -8611,6 +8655,7 @@ dependencies = [
  "n0-error",
  "n0-future",
  "oneiron",
+ "oneiron-hex",
  "rmp-serde",
  "serde",
  "tempfile",
@@ -8625,6 +8670,7 @@ dependencies = [
  "blake3",
  "futures-core",
  "oneiron-contracts",
+ "oneiron-hex",
  "rmpv",
  "schemars 0.8.22",
  "serde",
@@ -8660,14 +8706,17 @@ dependencies = [
  "der 0.7.10",
  "ipnet",
  "libc",
+ "lopdf",
  "oneiron",
  "oneiron-container",
  "oneiron-docedit",
+ "oneiron-hex",
  "oneiron-mesh-transport",
  "oneiron-organ-protocol",
  "oneiron-sandbox-contract",
  "oneiron-spawn",
  "p256",
+ "pkix-chain",
  "reqwest 0.12.28",
  "rmp-serde",
  "rmpv",
@@ -8679,6 +8728,8 @@ dependencies = [
  "tokio",
  "toml 0.8.2",
  "x509-cert",
+ "x509-ocsp",
+ "x509-tsp",
 ]
 
 [[package]]
@@ -8713,6 +8764,7 @@ name = "oneiron-py"
 version = "1.0.0"
 dependencies = [
  "oneiron",
+ "oneiron-hex",
  "oneiron-remote",
  "oneiron-sdk-build",
  "oneiron-server",
@@ -8739,12 +8791,14 @@ dependencies = [
  "oneiron-crypto",
  "oneiron-delivery-vocabulary",
  "oneiron-docedit",
+ "oneiron-hex",
  "oneiron-lens-wire",
  "oneiron-linkedin-policy",
  "oneiron-model",
  "oneiron-policy-vocabulary",
  "oneiron-retrieval",
  "oneiron-run-budget",
+ "oneiron-setting-contract",
  "oneiron-skill-attribution",
  "oneiron-store",
  "oneiron-vault-contract",
@@ -8772,6 +8826,7 @@ dependencies = [
  "futures-core",
  "oneiron",
  "oneiron-base",
+ "oneiron-hex",
  "oneiron-sdk-build",
  "rand_core 0.6.4",
  "reqwest 0.12.28",
@@ -8793,6 +8848,7 @@ dependencies = [
  "jieba-rs",
  "lindera",
  "oneiron-contracts",
+ "regex",
  "rmpv",
  "rust-stemmers",
  "serde",
@@ -8811,6 +8867,7 @@ name = "oneiron-ruler"
 version = "0.1.0"
 dependencies = [
  "libc",
+ "oneiron-hex",
  "serde",
  "serde_json",
  "serde_json_canonicalizer",
@@ -8832,6 +8889,14 @@ dependencies = [
 [[package]]
 name = "oneiron-sandbox-contract"
 version = "0.1.0"
+
+[[package]]
+name = "oneiron-schedule-contract"
+version = "0.1.0"
+dependencies = [
+ "schemars 0.8.22",
+ "serde",
+]
 
 [[package]]
 name = "oneiron-sdk-build"
@@ -8858,12 +8923,13 @@ dependencies = [
  "cms",
  "const-oid 0.9.6",
  "der 0.7.10",
- "encoding_rs",
  "flate2",
  "futures-util",
  "ipnet",
  "lopdf",
  "oneiron",
+ "oneiron-esign-render",
+ "oneiron-hex",
  "oneiron-keystore",
  "oneiron-organ-host",
  "oneiron-organ-protocol",
@@ -8931,6 +8997,7 @@ dependencies = [
  "oneiron-docedit",
  "oneiron-driver",
  "oneiron-gen",
+ "oneiron-hex",
  "oneiron-keystore",
  "oneiron-linear",
  "oneiron-llm",
@@ -8979,6 +9046,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "oneiron-setting-contract"
+version = "0.1.0"
+dependencies = [
+ "oneiron-contracts",
+ "rmp-serde",
+ "schemars 0.8.22",
+ "serde",
+]
+
+[[package]]
 name = "oneiron-skill-attribution"
 version = "0.1.0"
 dependencies = [
@@ -8999,6 +9076,7 @@ version = "0.1.0"
 dependencies = [
  "oneiron",
  "oneiron-llm",
+ "serde",
  "serde_json",
 ]
 
@@ -9022,6 +9100,7 @@ dependencies = [
  "oneiron-base",
  "oneiron-contracts",
  "oneiron-crypto",
+ "oneiron-derive",
  "oneiron-docedit",
  "oneiron-hex",
  "oneiron-model",
@@ -9091,6 +9170,8 @@ dependencies = [
  "anyhow",
  "blake3",
  "libc",
+ "oneiron-fingerprint",
+ "oneiron-hex",
  "serde",
  "serde_json",
  "subtle",
@@ -9106,7 +9187,6 @@ dependencies = [
  "base64 0.22.1",
  "blake3",
  "ed25519-dalek 2.2.0",
- "encoding_rs",
  "half",
  "heed",
  "image",
@@ -9121,6 +9201,8 @@ dependencies = [
  "oneiron-crypto",
  "oneiron-delivery-vocabulary",
  "oneiron-docedit",
+ "oneiron-esign-render",
+ "oneiron-hex",
  "oneiron-lens-wire",
  "oneiron-linkedin-policy",
  "oneiron-model",
@@ -9160,6 +9242,7 @@ dependencies = [
  "oneiron-base",
  "oneiron-contracts",
  "oneiron-model",
+ "oneiron-setting-contract",
  "oneiron-store",
  "schemars 0.8.22",
  "serde",
@@ -9173,6 +9256,8 @@ dependencies = [
  "blake3",
  "dom_smoothie",
  "encoding_rs",
+ "oneiron-fingerprint",
+ "oneiron-hex",
  "reqwest 0.12.28",
  "schemars 0.8.22",
  "serde",
@@ -9191,6 +9276,7 @@ dependencies = [
  "formualizer-parse",
  "formualizer-workbook",
  "oneiron-docedit",
+ "oneiron-hex",
  "proptest",
  "rand_core 0.6.4",
  "serde",

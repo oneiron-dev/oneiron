@@ -63,6 +63,7 @@ fn budget_held_row(vault: &Vault, queue: &AttemptQueue<'_>, now: u64) -> Attempt
             None,
             "spend cap",
             now + 2,
+            None,
         )
         .expect("the budget hold is admitted");
     row.id
