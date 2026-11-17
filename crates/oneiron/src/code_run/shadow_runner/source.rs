@@ -108,6 +108,9 @@ pub struct PreparedShadowStep {
     pub(crate) source_actor: EntityId,
     pub(crate) request: LlmRequest,
     pub(crate) request_digest: ShadowRequestDigest,
+    /// Every row the captured request was read from, as its capsule names
+    /// them; `None` when any constituent is unknown (FIX 7104).
+    pub(crate) source_rows: Option<Vec<EntityId>>,
     /// The answering rung, its route prompt by its capsule's body only (FIX
     /// 6255): the model call reads the prompt then ([`shadow_route_prompt`]).
     pub(crate) binding: Option<StoredRungBinding>,
@@ -160,6 +163,14 @@ impl PreparedShadowStep {
     #[must_use]
     pub const fn request_digest(&self) -> ShadowRequestDigest {
         self.request_digest
+    }
+
+    /// Every row its request was read from, as its capsule names them, for
+    /// the arm's call of it to carry (FIX 5760); `None` when any
+    /// constituent is unknown (FIX 7104).
+    #[must_use]
+    pub fn source_rows(&self) -> Option<&[EntityId]> {
+        self.source_rows.as_deref()
     }
 
     /// The rung that answered the captured call, when one did.
@@ -329,6 +340,7 @@ fn prepare_step_source(
         source_actor,
         request,
         request_digest,
+        source_rows: capsule.source_rows.clone(),
         binding: capsule.binding.clone(),
         route_pin: capsule.route_pin.clone(),
         seed: capsule.seed,

@@ -37,6 +37,7 @@ pub mod mcp_surface;
 pub mod media_job_spend;
 #[cfg(unix)]
 pub mod merge_queue_checker_pressure;
+pub mod model_licence;
 pub mod native_board;
 pub mod off_router_wire_counts;
 pub mod one_click_wire_counter;
@@ -60,6 +61,7 @@ pub mod signing_session;
 pub mod siwc_seat;
 pub mod solved_runs;
 pub mod system_one_leg;
+pub mod system_one_rung;
 pub mod voice_call;
 pub mod web_search_count;
 pub mod wire_health_sweep;
