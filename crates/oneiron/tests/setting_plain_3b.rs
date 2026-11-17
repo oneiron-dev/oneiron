@@ -5,8 +5,9 @@
 //! - on a new vault the status reads the shipped default: on, no world excluded, no recipe, at
 //!   revision 0, set by no one;
 //! - the owner's `Vault::set_setting` is what the status reads, at the revision of the change
-//!   that wrote it, with the owner as its setter and the change's time; the change row is the
-//!   record of the set, so a set that moves no binding writes no drafter event;
+//!   that wrote it, with the owner as its setter and the change's time; a set that moves no
+//!   binding records one policy event at that revision (it ends a rollback's stop of new
+//!   candidates, as each policy set did before the key);
 //! - the serving host is told once per applied change, after the write commits; the same value
 //!   again records nothing and tells no one;
 //! - a set at a revision that moved since is refused; a value of another shape is refused; a
@@ -23,8 +24,8 @@ use oneiron::authority::MachineRole;
 use oneiron::check_in::ActClass;
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::drafter::{
-    DrafterActor, DrafterPolicy, DrafterServedView, DrafterServingRuntime, DrafterStatus,
-    DrafterStatusRequest, drafter_status_as_owner,
+    DrafterActor, DrafterEventKind, DrafterPolicy, DrafterServedView, DrafterServingRuntime,
+    DrafterStatus, DrafterStatusRequest, drafter_status_as_owner,
 };
 use oneiron::setting::{
     ReadBy, Restore, SetBy, SetSetting, SetSettingOutcome, SettingCaller, SettingMode,
@@ -240,11 +241,20 @@ fn the_owners_set_is_what_the_status_reads_and_the_host_is_told_after_commit() {
     );
     assert_eq!(status.policy.set_by, Some(DrafterActor::Owner(owner)));
     assert!(status.policy.set_at.is_some(), "the change's time");
-    assert!(
-        status.events.is_empty(),
-        "a set that moves no binding writes no drafter event: {:?}",
+    assert_eq!(
+        status.events.len(),
+        1,
+        "a set that moves no binding records one policy event: {:?}",
         status.events
     );
+    let event = &status.events[0];
+    assert_eq!(
+        event.kind,
+        DrafterEventKind::Policy { revision: sequence },
+        "the event names the change's revision"
+    );
+    assert_eq!(event.by, DrafterActor::Owner(owner));
+    assert!(event.change.is_none(), "no binding moved");
     assert_eq!(fixture.host.told(), 1, "told once, after the commit");
 
     let again = fixture.set_as_owner(value).unwrap();
@@ -252,7 +262,9 @@ fn the_owners_set_is_what_the_status_reads_and_the_host_is_told_after_commit() {
         matches!(again, SetSettingOutcome::Applied { sequence: None, .. }),
         "the value the row already holds records nothing: {again:?}"
     );
-    assert_eq!(fixture.status().policy.revision, sequence);
+    let status = fixture.status();
+    assert_eq!(status.policy.revision, sequence);
+    assert_eq!(status.events.len(), 1, "an equal value records no event");
     assert_eq!(fixture.host.told(), 1, "an equal value tells no one");
 }
 

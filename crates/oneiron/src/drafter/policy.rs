@@ -18,7 +18,7 @@ use serde::{Deserialize, Serialize};
 use super::setting_keys::DRAFTER_POLICY;
 use super::{
     BINDINGS, BindingMove, DrafterActor, DrafterEventKind, DrafterRecipe, DrafterServing,
-    ancestry_names_world, move_binding_in_txn, versions_by_id,
+    ancestry_names_world, move_binding_in_txn, record_event_in_txn, versions_by_id,
 };
 use crate::Vault;
 use crate::entity_id::EntityId;
@@ -141,9 +141,11 @@ const fn actor_of(by: Option<EntityId>, setter: Setter) -> DrafterActor {
 /// The `drafter.policy` key's hook, in the write of each applied change:
 /// with the policy now in force off, every binding returns to stock; with
 /// it on, each binding whose version's ancestry trained on an excluded
-/// world does. Each binding moved gets its own event; the change row is the
-/// record of the set itself. The key's `after_commit` tells the serving
-/// host, which serves each moved binding.
+/// world does. Each binding moved gets its own policy event; a change that
+/// moves none records one policy event by itself, so every applied change
+/// ends a rollback's stop of new candidates (`candidates_stopped_in_txn`),
+/// as each policy set did before the key. The key's `after_commit` tells
+/// the serving host, which serves each moved binding.
 ///
 /// # Errors
 /// Storage faults.
@@ -160,6 +162,7 @@ pub(crate) fn drafter_policy_changed_in_txn(
     };
     let versions = versions_by_id(store, txn)?;
     let bindings = BINDINGS.scan(store, txn)?;
+    let mut moved = false;
     for (key, binding) in bindings {
         let DrafterServing::Version(serving) = binding.serving else {
             continue;
@@ -184,6 +187,10 @@ pub(crate) fn drafter_policy_changed_in_txn(
                 at: change.at,
             },
         )?;
+        moved = true;
+    }
+    if !moved {
+        record_event_in_txn(store, txn, by, kind, None, change.at)?;
     }
     Ok(())
 }
