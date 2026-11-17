@@ -7,21 +7,26 @@
 //! mutable config, never identity. The editable whitelist is an edit ceiling:
 //! exact normalized repo-relative paths, no globs. An empty whitelist means
 //! read-only. It filters no read: a capture still holds every file it reads.
+//! The registrant names the agent that registered the repository as the
+//! owner's delegate (WAVE11-REPO-REGISTRANT-UNRECORDED); it is written only
+//! when present, so a registration the owner made keeps its two keys.
 
 use std::path::Path;
 
 use oneiron_base::error::ArtifactError;
 use oneiron_base::error::Error;
 use oneiron_base::error::Result;
+use oneiron_contracts::entity_id::EntityId;
 use rmpv::Value;
 
 use crate::code_snapshot::validation::validate_manifest_path;
 
 /// The pinned keys of a registration map, in encode order.
-pub const CODE_REPO_REGISTRATION_KEYS: [&str; 2] = ["source", "editable"];
+pub const CODE_REPO_REGISTRATION_KEYS: [&str; 3] = ["source", "editable", "registrant"];
 
 const KEY_SOURCE: &str = CODE_REPO_REGISTRATION_KEYS[0];
 const KEY_EDITABLE: &str = CODE_REPO_REGISTRATION_KEYS[1];
+const KEY_REGISTRANT: &str = CODE_REPO_REGISTRATION_KEYS[2];
 
 /// The spelling prefix of an external local source.
 const LOCAL_SOURCE_PREFIX: &str = "local:";
@@ -90,17 +95,20 @@ impl CodeRepoSource {
     }
 }
 
-/// A registered repository's retained configuration (FIX 4299): its source
-/// and its editable whitelist, kept sorted and unique.
+/// A registered repository's retained configuration (FIX 4299): its source,
+/// its editable whitelist, kept sorted and unique, and the agent that
+/// registered it as the owner's delegate, if one did.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CodeRepoRegistration {
     source: CodeRepoSource,
     editable: Vec<String>,
+    registrant: Option<EntityId>,
 }
 
 impl CodeRepoRegistration {
     /// A registration of `source` whose edit ceiling is exactly the paths of
     /// `editable`, each a normalized repo-relative path; duplicates collapse.
+    /// It names no registrant.
     ///
     /// # Errors
     /// `InvalidCodeArtifactBody` for a path that is not normalized and
@@ -121,7 +129,11 @@ impl CodeRepoRegistration {
             .collect::<Result<Vec<_>>>()?;
         editable.sort();
         editable.dedup();
-        Ok(Self { source, editable })
+        Ok(Self {
+            source,
+            editable,
+            registrant: None,
+        })
     }
 
     /// Where the importer reads the repository.
@@ -145,6 +157,14 @@ impl CodeRepoRegistration {
             .is_ok()
     }
 
+    /// The agent that registered the repository as the owner's delegate
+    /// (WAVE11-REPO-REGISTRANT-UNRECORDED): `None` when the owner did, or
+    /// for a registration stored before the registrant was recorded.
+    #[must_use]
+    pub const fn registrant(&self) -> Option<EntityId> {
+        self.registrant
+    }
+
     /// This registration with `source` as its source, the whitelist kept.
     #[must_use]
     pub fn with_source(mut self, source: CodeRepoSource) -> Self {
@@ -152,10 +172,19 @@ impl CodeRepoRegistration {
         self
     }
 
-    /// The MessagePack map a CODE body nests.
+    /// This registration naming `registrant` as the agent that registered
+    /// it, the source and whitelist kept.
+    #[must_use]
+    pub fn with_registrant(mut self, registrant: Option<EntityId>) -> Self {
+        self.registrant = registrant;
+        self
+    }
+
+    /// The MessagePack map a CODE body nests: the registrant only when
+    /// present, as its 16 bytes.
     #[must_use]
     pub fn to_value(&self) -> Value {
-        Value::Map(vec![
+        let mut entries = vec![
             (Value::from(KEY_SOURCE), Value::from(self.source.spelling())),
             (
                 Value::from(KEY_EDITABLE),
@@ -166,11 +195,19 @@ impl CodeRepoRegistration {
                         .collect(),
                 ),
             ),
-        ])
+        ];
+        if let Some(registrant) = self.registrant {
+            entries.push((
+                Value::from(KEY_REGISTRANT),
+                Value::Binary(registrant.as_bytes().to_vec()),
+            ));
+        }
+        Value::Map(entries)
     }
 
     /// The registration a CODE body's nested map spells, in its one
-    /// spelling: both keys present, the whitelist sorted and unique.
+    /// spelling: source and editable present, the whitelist sorted and
+    /// unique, and at most one registrant, a live entity id.
     ///
     /// # Errors
     /// `InvalidCodeArtifactBody` for any other value.
@@ -180,6 +217,7 @@ impl CodeRepoRegistration {
         };
         let mut source = None;
         let mut editable = None;
+        let mut registrant = None;
         for (key, value) in entries {
             match key.as_str() {
                 Some(KEY_SOURCE) if source.is_none() => {
@@ -203,9 +241,19 @@ impl CodeRepoRegistration {
                             .collect::<Result<Vec<_>>>()?,
                     );
                 }
+                Some(KEY_REGISTRANT) if registrant.is_none() => {
+                    let Value::Binary(bytes) = value else {
+                        return Err(invalid("registration registrant must be 16-byte binary"));
+                    };
+                    let bytes = <[u8; 16]>::try_from(bytes.as_slice())
+                        .map_err(|_| invalid("registration registrant must be 16-byte binary"))?;
+                    registrant = Some(EntityId::from_bytes(bytes).map_err(|_| {
+                        invalid("registration registrant must be a live entity id")
+                    })?);
+                }
                 _ => {
                     return Err(invalid(
-                        "registration keys are source and editable, each once",
+                        "registration keys are source, editable and registrant, each once",
                     ));
                 }
             }
@@ -219,6 +267,6 @@ impl CodeRepoRegistration {
                 "registration editable paths must be sorted and unique",
             ));
         }
-        Ok(registration)
+        Ok(registration.with_registrant(registrant))
     }
 }
