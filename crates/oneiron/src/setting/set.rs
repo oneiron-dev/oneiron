@@ -637,6 +637,8 @@ fn direction_in_txn(
                 value: Some(value.clone()),
             },
             revision: 0,
+            // The door's own change, as it would load once written: not a raced pin.
+            pin_read_as_value: false,
         });
     }
     let layer = layer_default_in_txn(&vault.store, txn, spec)?;
