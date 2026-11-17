@@ -7,7 +7,7 @@ use super::{BoundFacet, DreamerAttemptBinding, facet_refused};
 use crate::llm::decision::{AnswerContract, DecisionRung, Reversibility};
 use crate::memory::{MemoryError, MemoryResult};
 use crate::model_decision::MAX_DECISION_STATE_BYTES;
-use crate::verbs::{AiVerdict, AiVerdictRequest, ExtractionPack, ExtractionRead};
+use crate::verbs::{AiVerdict, AiVerdictRequest, ExtractionPack, ExtractionPart, ExtractionRead};
 
 impl DreamerAttemptBinding {
     /// Dispatches a verdict only to the handler owned by its admitted facet.
@@ -80,10 +80,6 @@ fn check_extraction_request(input: &AiVerdictRequest, pack: &ExtractionPack) -> 
 
 /// Bounds each unbounded native row collection and the conflict selector by the native
 /// decision state bound.
-///
-/// A page part's count and index are not judged here. The pack check compares them with the
-/// rebuilt pages and refuses a part beside them with those pages as a typed layout, before any
-/// loan or charge, so a caller never has to read the message to plan its next part.
 fn check_pack_bounds(pack: &ExtractionPack) -> MemoryResult<()> {
     let lengths = [
         pack.candidates.len(),
@@ -103,6 +99,13 @@ fn check_pack_bounds(pack: &ExtractionPack) -> MemoryResult<()> {
     {
         return Err(MemoryError::bad_request(
             "an extraction pack collection exceeds the native decision state bound",
+        ));
+    }
+    if let ExtractionPart::Page { page, pages } = pack.part
+        && (pages == 0 || page >= pages)
+    {
+        return Err(MemoryError::bad_request(
+            "an extraction page needs pages >= 1 and a zero-based page below pages",
         ));
     }
     Ok(())
