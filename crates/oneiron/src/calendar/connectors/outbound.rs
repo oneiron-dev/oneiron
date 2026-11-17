@@ -637,6 +637,7 @@ fn finish_remote_applied_write_in_txn(
             direction,
             last_seen_at: now,
             presence: CalendarPassportPresence::Live,
+            cancelled_since: None,
         };
         let already_applied = current.as_ref().is_some_and(|(_, value)| {
             value.last_sequence == next.last_sequence

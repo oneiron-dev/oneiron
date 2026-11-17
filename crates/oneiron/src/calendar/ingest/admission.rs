@@ -493,7 +493,18 @@ impl PollAdmission<'_> {
             return Ok(());
         }
         if self.source_was_written_to(event_ref, &event.uid)? {
-            self.refund_host_cancelled_deposit(event_ref, self.now)?;
+            // Dated by the source's first report of the cancellation, which
+            // its passport carries across versions; a path with no such
+            // passport dates it now.
+            let seen_at = crate::calendar::passport::live_passport_for(
+                self.vault,
+                &event_ref,
+                self.system,
+                &event.uid,
+            )?
+            .and_then(|(_, passport)| passport.cancelled_since)
+            .unwrap_or(self.now);
+            self.refund_host_cancelled_deposit(event_ref, seen_at)?;
         }
         let body = screen_body(event);
         let source_record_id = self.source_record_id(event);
@@ -553,11 +564,12 @@ impl PollAdmission<'_> {
     /// between them leaves the next read of the feed here, and this is where
     /// the refund is repaired; a connector pull reaches it through its echo
     /// arm ([`repeat_connector_host_cancel_refund`]). The cancellation was
-    /// seen when that passport committed, so a repair after the booking's
-    /// start still refunds a cancellation first seen before it. An older
-    /// SEQUENCE replay moves no money: the passport it lost to may carry a
-    /// live booking. Nor does a source the EVENT was not written to
-    /// ([`names_written_calendar`]).
+    /// first seen when the source's first cancelled passport committed
+    /// (`cancelled_since`, carried across later cancelled versions), so a
+    /// repair after the booking's start still refunds a cancellation first
+    /// seen before it. An older SEQUENCE replay moves no money: the passport
+    /// it lost to may carry a live booking. Nor does a source the EVENT was
+    /// not written to ([`names_written_calendar`]).
     fn repeat_host_cancel_refund(
         &self,
         event_ref: EntityId,
@@ -579,7 +591,8 @@ impl PollAdmission<'_> {
             && passport.content_hash == event.content_hash
             && names_written_calendar(self.system, &passport)
         {
-            self.refund_host_cancelled_deposit(event_ref, passport.last_seen_at)?;
+            let seen_at = passport.cancelled_since.unwrap_or(passport.last_seen_at);
+            self.refund_host_cancelled_deposit(event_ref, seen_at)?;
         }
         Ok(())
     }
@@ -741,19 +754,26 @@ impl PollAdmission<'_> {
         event: &ParsedVEvent,
         presence: CalendarPassportPresence,
     ) -> Result<CalendarPassportValue, CalendarError> {
-        let direction = if self.preserve_direction {
-            crate::calendar::passport::live_passport_for(
-                self.vault,
-                &event_ref,
-                self.system,
-                &event.uid,
-            )?
-            .map_or(CalendarPassportDirection::Inbound, |(_, value)| {
-                value.direction
-            })
-        } else {
-            CalendarPassportDirection::Inbound
+        let prior = crate::calendar::passport::live_passport_for(
+            self.vault,
+            &event_ref,
+            self.system,
+            &event.uid,
+        )?
+        .map(|(_, value)| value);
+        let direction = match &prior {
+            Some(prior) if self.preserve_direction => prior.direction,
+            _ => CalendarPassportDirection::Inbound,
         };
+        // A cancelled version keeps the first sighting of the cancellation
+        // its source already reported: a newer SEQUENCE of a cancel seen
+        // before a booking's start is not a cancel first seen now.
+        let cancelled_since = event.cancelled.then(|| {
+            prior
+                .as_ref()
+                .and_then(|prior| prior.cancelled_since)
+                .unwrap_or(self.now)
+        });
         Ok(CalendarPassportValue {
             system: self.system.to_owned(),
             uid: event.uid.clone(),
@@ -763,6 +783,7 @@ impl PollAdmission<'_> {
             direction,
             last_seen_at: self.now,
             presence,
+            cancelled_since,
         })
     }
 
