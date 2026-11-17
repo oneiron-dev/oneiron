@@ -66,12 +66,18 @@ use serde::Serialize;
 /// 42: a `RevokeDevice` of an owner key counts only with an owner key's proof, as its signer or a
 /// cosign; the custodial root alone never ends one, and every row above such a revoke is refused
 /// with it (row HOSTED-ROOT-REVOKES-OWNER-KEY).
-/// 43: an owner choice or a carried machine answer outside a proving owner-key enrolment's line
+/// 43: each covered row's sequence floor comes from the covered rows, not from the order
+/// they arrived in, and a row that only takes away is never floored (FIX
+/// [SEQUENCE-FLOOR-DELIVERY-ORDER], [CHECKPOINT-RAW-FLOOR-CLEARED-ROW]); below its floor a
+/// row that grants counts in full, a world key record included, and the image records its fork
+/// as a `SequenceFork` issue (Engine RULINGs SEQ-FLOOR-SHAPE-S = B, SEQ-FLOOR-S-WORLD-KEY-FLOOR
+/// = A).
+/// 44: an owner choice or a carried machine answer outside a proving owner-key enrolment's line
 /// waits for the owner's proof, and an enrolment of the owner's key (a rotation or a handoff that
 /// names it too) outside the line of the enrolment that made it the owner's is refused, and a
 /// device revocation proved through such an enrolment of its key ends nothing (row
 /// CARRIER-PROOF-OLD-PARENTS).
-pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 43;
+pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 44;
 
 /// The domain every encoded image starts with.
 pub const AUTHORITY_CHECKPOINT_V2_DOMAIN: &[u8] = b"oneiron/authority/checkpoint/v2";

@@ -475,9 +475,11 @@ fn successor_replay(
 /// Whether every tail row folds past the image as a resumed fold's tail row
 /// would: each parent on the frontier or in the tail (a covered parent off
 /// the frontier is a late fork), an op that leaves every earlier row's fate
-/// as it was (a world key record among them, FIX 4881), no row a sequence
-/// floor refuses, none signed by a
-/// retired key, none a covered row names, and no withdrawal on a frontier
+/// as it was (a world key record among them, FIX 4881), no row that moves a
+/// covered row's sequence floor or sits past its own ([`rows_floors_unmoved`],
+/// [`tail_signers_covered_rows_unfloored`]: only the whole history judges
+/// those, though a floor refuses no row), none signed by a retired key, none
+/// a covered row names, and no withdrawal on a frontier
 /// row the image holds rejected (only older states could judge it). None for
 /// a residence result past an image that dropped its residence bodies for
 /// [`super::checkpoint_image::AUTHORITY_RESIDENCE_BODY_OVERFLOW`], as at
@@ -499,6 +501,18 @@ fn tail_folds_past(
     // do not show it is judged by the whole log (row
     // CARRIER-PROOF-OLD-PARENTS).
     if super::owner_key_line::tail_reaches_old_parents(image, tail) {
+        return None;
+    }
+    // Only the rows the whole fold judges set or carry a floor
+    // (`fold_engine::judged_entries`): a tail row whose signature fails is
+    // neither a link nor a setter, as it is in no ancestry of the whole fold.
+    let signed: BTreeMap<_, _> = tail
+        .iter()
+        .filter(|(_, entry)| verify_entry_signatures(entry).is_ok())
+        .map(|(hash, entry)| (*hash, *entry))
+        .collect();
+    if !rows_floors_unmoved(image, &signed) || !tail_signers_covered_rows_unfloored(image, &signed)
+    {
         return None;
     }
     let mut confirms = (
@@ -524,15 +538,189 @@ fn tail_folds_past(
         parents_stand
             && !retired
             && !image.safety.missing_parents.contains(hash)
-            && log
-                .observations
-                .sequence_floors
-                .get(hash)
-                .is_none_or(|floor| entry.seq >= *floor)
             && (super::fold_resume::admits_past(&image.aggregate.merged, entry, &mut confirms)
                 || serial_withdrawal(image, tail, log, entry))
     });
     folds_past.then_some(confirms)
+}
+
+/// Whether `tail` moves no covered row's sequence floor and holds no row
+/// past its own (`rows_floor`): per signer and scope, the tail's rows rise
+/// strictly above the image's top, the lowest descends from every covered
+/// row at that top, and each next from the one below it, along that scope's
+/// rows. A covered row under no top sits past its floor with no row at or
+/// above it that vouches for it, so a tail row that misses it changes no
+/// floor; every other covered row is then among each tail row's ancestors.
+/// No tail row vouches for a covered row past its floor
+/// ([`tail_signers_covered_rows_unfloored`]).
+///
+/// Only the rows the whole fold judges count (`fold_engine::judged_entries`,
+/// review R2 of [SEQUENCE-FLOOR-DELIVERY-ORDER]): a row, covered or tail,
+/// that names a side row of another world is none of them. It is no top and
+/// sets no floor, and no walk passes through it to the rows below, as no
+/// ancestry of the whole fold does. No walk passes through a covered row the
+/// image holds rejected either (review round 2 of #8449): the image does not
+/// tell a row the fold refused from one it never judged, so a tail row that
+/// reaches a top only across such a row sends the tail to the whole history.
+/// Every image build decodes each row it covers through
+/// `decode_authority_log_entry_body`, which refuses a bad signature, so no
+/// top is a row the whole fold leaves unjudged.
+fn rows_floors_unmoved(
+    image: &AuthorityCheckpointV2,
+    tail: &BTreeMap<AuthorityEntryHash, &AuthorityLogEntry>,
+) -> bool {
+    let world_of = |hash: &AuthorityEntryHash| match tail.get(hash) {
+        Some(entry) => crate::authority::world_privacy::side_world(&entry.op),
+        None => image.rows.get(hash).and_then(|row| row.world),
+    };
+    let violates = |world: Option<crate::EntityId>, parents: &[AuthorityEntryHash]| {
+        parents
+            .iter()
+            .any(|parent| world_of(parent).is_some_and(|parent_world| world != Some(parent_world)))
+    };
+    let mut scopes = BTreeMap::<_, Vec<(u64, AuthorityEntryHash)>>::new();
+    for (hash, entry) in tail {
+        let world = crate::authority::world_privacy::side_world(&entry.op);
+        if violates(world, &entry.parent_hashes) {
+            continue;
+        }
+        scopes
+            .entry((entry.signer_key(), world))
+            .or_default()
+            .push((entry.seq, *hash));
+    }
+    let mut tops = BTreeMap::<_, (u64, Vec<AuthorityEntryHash>)>::new();
+    for (hash, row) in &image.rows {
+        let key = (&row.signer, row.world);
+        if !scopes.contains_key(&key) || violates(row.world, &row.parents) {
+            continue;
+        }
+        let top = tops.entry(key).or_insert((row.seq, Vec::new()));
+        if row.seq > top.0 {
+            *top = (row.seq, Vec::new());
+        }
+        if row.seq == top.0 {
+            top.1.push(*hash);
+        }
+    }
+    let row = |hash: &AuthorityEntryHash| {
+        let (parents, world) = match tail.get(hash) {
+            Some(entry) => (
+                entry.parent_hashes.as_slice(),
+                crate::authority::world_privacy::side_world(&entry.op),
+            ),
+            None => image
+                .rows
+                .get(hash)
+                .filter(|_| !image.holds_rejected(hash))
+                .map(|row| (row.parents.as_slice(), row.world))?,
+        };
+        (!violates(world, parents)).then_some((parents, world))
+    };
+    scopes.iter_mut().all(|(key, rows)| {
+        rows.sort_unstable();
+        let (mut below_seq, mut below) = tops
+            .get(key)
+            .map_or((None, Vec::new()), |(seq, rows)| (Some(*seq), rows.clone()));
+        rows.iter().all(|(seq, hash)| {
+            let rises = below_seq.is_none_or(|below_seq| *seq > below_seq)
+                && below.iter().all(|lower| {
+                    crate::authority::rows_floor::descends_within_scope(
+                        lower,
+                        &tail[hash].parent_hashes,
+                        key.1,
+                        row,
+                    )
+                });
+            (below_seq, below) = (Some(*seq), vec![*hash]);
+            rises
+        })
+    })
+}
+
+/// Whether every tail row's signer signed its covered rows, in each sequence
+/// scope (`world_privacy::side_world`), as one chain: sequences strictly
+/// rise, and each row descends from the one below it along that scope's rows
+/// (`rows_floor::descends_within_scope`). Then no covered row of a tail
+/// row's signer sits past a floor (`rows_floor::rows_sequence_floors`), and
+/// no tail row vouches for one (`sequence_ancestry`): a row vouches only for
+/// rows of its own signer, and [`rows_floors_unmoved`] keeps the tail from
+/// moving a covered floor. Otherwise a tail row at or above a covered row's
+/// floor that descends from it may lift that floor in the whole fold, so the
+/// row the image holds refused past it (review R1 of
+/// [SEQUENCE-FLOOR-DELIVERY-ORDER]) or landed restriction only (Astra round 1
+/// E1) counts whole there; only the whole history judges that. A forked
+/// signer's tail so folds whole, as a resumed fold's base with a row past
+/// its floor does (`fold_resume::capture`). A false answer only sends the
+/// tail to the whole history. A row that names a side row of another world
+/// is left out and never walked, as in [`rows_floors_unmoved`].
+///
+/// Cost: one parents-first order of the covered rows; then each pair of a
+/// signer's rows next to each other in a scope walks only rows that order
+/// puts between the two, so one signer's walks in a scope pass each covered
+/// row and parent link at most once. Different signers' walks share no such
+/// bound (Astra round 2 F1: signers whose rows sit either side of one long
+/// chain each walk all of it): the gate costs O(K (rows + links) log rows)
+/// for the K tail signers with two or more covered rows in one scope. Each
+/// walk stays inside its upper row's ancestry, and a row is the upper of at
+/// most one pair, so the gate does no more work than building the covered
+/// rows' ancestor index (`entry_ancestor_index`) for the whole fold a false
+/// answer falls back to. It holds one visited set at a time.
+fn tail_signers_covered_rows_unfloored(
+    image: &AuthorityCheckpointV2,
+    tail: &BTreeMap<AuthorityEntryHash, &AuthorityLogEntry>,
+) -> bool {
+    let signers: BTreeSet<_> = tail.values().map(|entry| entry.signer_key()).collect();
+    let violates = |world: Option<crate::EntityId>, parents: &[AuthorityEntryHash]| {
+        parents.iter().any(|parent| {
+            image
+                .rows
+                .get(parent)
+                .and_then(|parent| parent.world)
+                .is_some_and(|parent_world| world != Some(parent_world))
+        })
+    };
+    let mut scopes = BTreeMap::<_, Vec<(u64, AuthorityEntryHash)>>::new();
+    for (hash, row) in &image.rows {
+        if signers.contains(&row.signer) && !violates(row.world, &row.parents) {
+            scopes
+                .entry((&row.signer, row.world))
+                .or_default()
+                .push((row.seq, *hash));
+        }
+    }
+    if scopes.values().all(|rows| rows.len() < 2) {
+        return true;
+    }
+    let parents: BTreeMap<_, _> = image
+        .rows
+        .iter()
+        .map(|(hash, row)| (*hash, row.parents.clone()))
+        .collect();
+    let rank: BTreeMap<_, _> = parents_first_of(&parents)
+        .into_iter()
+        .enumerate()
+        .map(|(rank, hash)| (hash, rank))
+        .collect();
+    scopes.into_iter().all(|((_, world), mut rows)| {
+        rows.sort_unstable();
+        rows.windows(2).all(|pair| {
+            let ((lower_seq, lower), (upper_seq, upper)) = (pair[0], pair[1]);
+            // A row before `lower` in the order has no path to it.
+            let lower_rank = rank[&lower];
+            lower_seq < upper_seq
+                && crate::authority::rows_floor::descends_within_scope(
+                    &lower,
+                    &image.rows[&upper].parents,
+                    world,
+                    |hash| {
+                        let row = image.rows.get(hash)?;
+                        (rank[hash] > lower_rank && !violates(row.world, &row.parents))
+                            .then_some((row.parents.as_slice(), row.world))
+                    },
+                )
+        })
+    })
 }
 
 /// A withdrawal [`super::fold_resume::admits_past`] leaves to the history
@@ -556,11 +744,17 @@ fn serial_withdrawal(
 }
 
 /// Whether every row `image` covers folded valid, with no issue, missing
-/// parent or unsettled handoff: its states are the whole fold's own.
+/// parent or unsettled handoff: its states are the whole fold's own. A fork
+/// record (`AuthorityFoldIssue::SequenceFork`) is no verdict: its row counts
+/// in full, so it leaves the image clean.
 fn clean_image(image: &AuthorityCheckpointV2) -> bool {
     let valid = &image.fold().valid_entries;
     !image.safety.unsettled
-        && image.safety.issues.is_empty()
+        && image
+            .safety
+            .issues
+            .iter()
+            .all(|issue| matches!(issue, AuthorityFoldIssue::SequenceFork(_)))
         && image.safety.missing_parents.is_empty()
         && image.covered.iter().all(|hash| valid.contains(hash))
 }

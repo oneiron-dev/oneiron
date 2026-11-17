@@ -291,6 +291,13 @@ pub(crate) async fn vault_files_sources_search(
         Ok(admitted) => admitted,
         Err(refusal) => return (Err(refusal), Vec::new()),
     };
+    // An owner verified in an off-record session that keeps no model-call
+    // record names no rows on its reranker's runs, as vault.retrieval.recall
+    // does (census L5-25).
+    let off_record = server.vault().model_call_keeps_no_record_for(
+        auth.off_record_session(),
+        crate::api::call_receipt::request_principal(auth),
+    );
     let meaning = match recall {
         Some(request) => Some(
             server
@@ -302,6 +309,7 @@ pub(crate) async fn vault_files_sources_search(
                     None,
                     request,
                     oneiron::memory::HomeRecallCaller::owner(),
+                    off_record,
                 )
                 .await
                 .0,

@@ -134,7 +134,7 @@ pub(super) use oneiron_records::authority::revoke_proof::{
 /// Neither input arrival order nor a persisted node-local marker is involved.
 pub(super) fn derive_revoke_facts(
     entries: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
-    ancestors: &BTreeMap<AuthorityEntryHash, BTreeSet<AuthorityEntryHash>>,
+    ancestors: &AncestorIndex,
     context: FoldContext<'_>,
 ) -> RevokeFacts {
     let mut facts = RevokeFacts::default();
@@ -159,7 +159,7 @@ pub(super) fn derive_revoke_facts(
             ancestors
                 .get(hash)
                 .into_iter()
-                .flatten()
+                .flat_map(|past| past.iter_unordered())
                 .chain([hash])
                 .copied()
                 .collect()
@@ -254,7 +254,7 @@ impl RevokeFacts {
     pub(super) fn add_dropped_slip_restrictions(
         &mut self,
         entries: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
-        ancestors: &BTreeMap<AuthorityEntryHash, BTreeSet<AuthorityEntryHash>>,
+        ancestors: &AncestorIndex,
         context: FoldContext<'_>,
         survivors: &BTreeMap<AuthorityEntryHash, FoldState>,
     ) {
@@ -354,7 +354,7 @@ impl RevokeFacts {
         &mut self,
         retirements: &super::retired_signers::Retirements,
         entries: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
-        ancestors: &BTreeMap<AuthorityEntryHash, BTreeSet<AuthorityEntryHash>>,
+        ancestors: &AncestorIndex,
     ) {
         self.by_hash
             .retain(|hash, fact| !retirements.excludes(hash, entries, ancestors, &fact.routed));
@@ -423,12 +423,12 @@ impl RevokeFacts {
         &mut self,
         settled: &BTreeMap<AuthorityEntryHash, FoldState>,
         entries: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
-        ancestors: &BTreeMap<AuthorityEntryHash, BTreeSet<AuthorityEntryHash>>,
+        ancestors: &AncestorIndex,
     ) {
         self.by_hash.retain(|hash, _| {
             settled.contains_key(hash)
                 || ancestors.get(hash).is_some_and(|line| {
-                    line.iter().all(|ancestor| {
+                    line.iter_unordered().all(|ancestor| {
                         settled.contains_key(ancestor)
                             || !entries
                                 .get(ancestor)
@@ -446,10 +446,10 @@ impl RevokeFacts {
 fn verify_signed_branch(
     target: AuthorityEntryHash,
     entries: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
-    ancestors: &BTreeMap<AuthorityEntryHash, BTreeSet<AuthorityEntryHash>>,
+    ancestors: &AncestorIndex,
     context: FoldContext<'_>,
 ) -> Option<FoldState> {
-    let mut pending = ancestors.get(&target)?.clone();
+    let mut pending = ancestors.get(&target)?.to_set();
     pending.insert(target);
     // Every row of the branch is at hand, and none is its own ancestor.
     for hash in &pending {
@@ -508,7 +508,7 @@ fn verify_signed_branch(
                     && super::ancestry_evaluator::skippable_permissive(&entries[hash].op)
                     && ancestors
                         .get(hash)
-                        .is_some_and(|past| !past.is_disjoint(&rejected))
+                        .is_some_and(|past| past.intersects(&rejected))
             }))
             .collect();
         let mut rescued = false;
