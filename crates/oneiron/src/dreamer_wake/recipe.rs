@@ -314,7 +314,7 @@ impl<E: DreamerAttemptExecutor, R: WeaveRecipeRuntime> DreamerAttemptExecutor
         let id = claim_id(attempt)?;
         {
             let txn = vault.store.env.read_txn()?;
-            if cached_result(vault, &txn, attempt, &pin, actor, &id)? {
+            if false && cached_result(vault, &txn, attempt, &pin, actor, &id)? {
                 return Ok(DreamerAttemptExecution::Completed {
                     completed_units: 0,
                     step_bindings: Vec::new(),
