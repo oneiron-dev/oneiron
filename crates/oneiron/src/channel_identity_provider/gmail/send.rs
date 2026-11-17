@@ -667,7 +667,14 @@ pub struct GmailSendSink<'a, W> {
     identity_id: EntityId,
     wire: W,
     plans: BTreeMap<String, GmailSendPlan>,
+    /// The caller's own admission of each new call, judged under the writer
+    /// that records its Gate decision ([`Self::admitting_only_while`]).
+    admission: Option<GmailSendAdmission<'a>>,
 }
+
+/// A caller's admission of a Gmail send's new call, read under the writer
+/// that would record its Gate decision.
+type GmailSendAdmission<'a> = Box<dyn Fn(&heed::RoTxn<'_>) -> Result<()> + 'a>;
 
 impl<'a, W> GmailSendSink<'a, W> {
     /// Binds the sink to one adapter, its identity row and a send wire.
@@ -684,7 +691,21 @@ impl<'a, W> GmailSendSink<'a, W> {
             identity_id,
             wire,
             plans: BTreeMap::new(),
+            admission: None,
         }
+    }
+
+    /// The sink, its every new call admitted only while `admission` holds,
+    /// read under the writer that records the call's Gate decision before
+    /// any decision is recorded: a drafted reply's send goes only while its
+    /// draft still holds the revision it sends (`mail_pack::reply`).
+    #[must_use]
+    pub(crate) fn admitting_only_while(
+        mut self,
+        admission: impl Fn(&heed::RoTxn<'_>) -> Result<()> + 'a,
+    ) -> Self {
+        self.admission = Some(Box::new(admission));
+        self
     }
 
     /// Registers one frozen plan.
@@ -721,6 +742,13 @@ impl<'a, W> GmailSendSink<'a, W> {
 }
 
 impl<W: GmailSendWire> OutboundExecutionSink for GmailSendSink<'_, W> {
+    fn admit_in(&self, txn: &heed::RoTxn<'_>) -> Result<()> {
+        match &self.admission {
+            Some(admission) => admission(txn),
+            None => Ok(()),
+        }
+    }
+
     fn execute(&mut self, request: &OutboundExecutionRequest<'_>) -> OutboundExecutionOutcome {
         if request.intent.channel != EMAIL_CHANNEL || request.verb_contract.kind != "send" {
             return OutboundExecutionOutcome::failed("gmail_send_requires_email_send");

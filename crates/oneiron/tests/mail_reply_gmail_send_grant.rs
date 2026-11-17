@@ -15,6 +15,9 @@
 //! - Through an identity bound to another agent, or to the owner PERSON,
 //!   the draft is never dispatched even under a full-access row: it stays
 //!   `Proposed` with `held: delegated_identity_keeps_person_press`.
+//! - Once the Gate admits the drafter's Google send, the Owner's discard
+//!   made while Gmail's send runs is refused, and the draft ends `Sent`
+//!   (the pipeline review of #8895).
 //!
 //! The Gmail send goes to a recording wire through
 //! `oneiron::test_doors::mail_reply_send`, and the draft takes the answered
@@ -49,8 +52,8 @@ use oneiron::consent::AuthenticatedOwner;
 use oneiron::mail_pack::{
     MailAddressHeaders, MailAttachmentRef, MailFull, MailHeaders, MailHistoryPage, MailHistoryRead,
     MailIdPage, MailInboxRequest, MailListQuery, MailMessageRef, MailProvider, MailProviderWire,
-    MailReplyDraftRequest, MailReplyDraftState, MailReplyDraftView, MailReplySendRequest,
-    MailSourceConnectRequest, MailSourceKind, MailSyncBudget, MailSyncSource,
+    MailReplyDraftRef, MailReplyDraftRequest, MailReplyDraftState, MailReplyDraftView,
+    MailReplySendRequest, MailSourceConnectRequest, MailSourceKind, MailSyncBudget, MailSyncSource,
     install_mail_calendar_pack_embedded,
 };
 use oneiron::memory::Memory;
@@ -882,5 +885,105 @@ fn an_identity_bound_to_the_owner_keeps_the_owners_press() {
     assert!(
         reply_ask_open(&vault, draft_id, 1).expect("read the revision's Ask"),
         "the waiting revision's Ask stands: {waiting:?}"
+    );
+}
+
+/// The first test's world: the owner's Google mailbox with one landed
+/// parent, its identity bound to a drafter under the owner's full-access
+/// send row, and the drafter's reply. Answers the drafter and the draft.
+fn owner_google_draft(vault: &Vault, owner: EntityId) -> (EntityId, MailReplyDraftView) {
+    install_pack(vault, owner);
+    let owner_memory = vault.memory(owner, EdgeActorClass::Human);
+    let create_proof = owner_memory
+        .embedded_owner("vault.agents.put")
+        .expect("prove the owner to create the drafter");
+    let agent = create_drafter(vault, &create_proof, owner, owner, "gmail-reply.drafter");
+    let (source, _identity) = connect_google_mailbox(vault, &owner_memory, OWNER_MAILBOX, agent);
+    let sync_proof = owner_memory
+        .embedded_owner("vault.mail.sources.sync")
+        .expect("prove the owner for the sync step");
+    land_one_message(
+        vault,
+        &sync_proof,
+        source,
+        COUNTERPARTY,
+        OWNER_MAILBOX,
+        PARENT_MESSAGE_ID,
+    );
+    let install_proof = owner_memory
+        .embedded_owner("vault.policy.put")
+        .expect("prove the owner to install policy");
+    install_policy(vault, &install_proof, agent, true);
+    let agent_memory = vault.memory(agent, EdgeActorClass::Agent);
+    let (thread_ref, turn_ref) = thread_and_parent(&agent_memory, source);
+    (
+        agent,
+        draft_google_reply(&agent_memory, &thread_ref, &turn_ref, OWNER_MAILBOX),
+    )
+}
+
+/// The owner discards the draft from inside Gmail's send, the moment a
+/// discard racing the dispatch would land; records that answer, and
+/// answers that Google took the reply.
+struct DiscardingGmailWire<'a, 'm> {
+    owner_memory: &'a Memory<'m>,
+    draft_ref: String,
+    discard: Rc<RefCell<Option<Result<MailReplyDraftView, String>>>>,
+}
+
+impl GmailSendWire for DiscardingGmailWire<'_, '_> {
+    fn send_message(
+        &self,
+        _authority: &GmailSendAuthority<'_>,
+        _raw: &[u8],
+        gmail_thread_id: Option<&str>,
+    ) -> std::result::Result<GmailSentMessage, GmailSendWireError> {
+        let discard = self
+            .owner_memory
+            .mail_reply_discard(&MailReplyDraftRef {
+                draft_ref: self.draft_ref.clone(),
+            })
+            .map_err(|error| format!("{error:?}"));
+        *self.discard.borrow_mut() = Some(discard);
+        Ok(GmailSentMessage {
+            gmail_message_id: SENT_GMAIL_MESSAGE_ID.to_owned(),
+            gmail_thread_id: gmail_thread_id.unwrap_or(PARENT_THREAD_ID).to_owned(),
+            rfc_message_id: None,
+        })
+    }
+}
+
+#[test]
+fn a_discard_while_the_drafters_google_send_runs_is_refused() {
+    let (_directory, vault, owner) = owned_vault();
+    let (agent, draft) = owner_google_draft(&vault, owner);
+    let owner_memory = vault.memory(owner, EdgeActorClass::Human);
+    let agent_memory = vault.memory(agent, EdgeActorClass::Agent);
+    let discard = Rc::new(RefCell::new(None));
+    let wire = DiscardingGmailWire {
+        owner_memory: &owner_memory,
+        draft_ref: draft.draft_ref.clone(),
+        discard: Rc::clone(&discard),
+    };
+    let sent = mail_reply_send_gmail_into(
+        &agent_memory,
+        &MailReplySendRequest {
+            draft_ref: draft.draft_ref.clone(),
+            revision: 1,
+        },
+        wire,
+    )
+    .expect("send the Google draft under the row");
+    let discard = discard.take().expect("the wire tried the discard");
+    assert!(
+        discard
+            .as_ref()
+            .is_err_and(|error| error.contains("send was admitted")),
+        "a discard while the admitted Google send runs is refused: {discard:?}"
+    );
+    assert_eq!(
+        sent.state,
+        MailReplyDraftState::Sent,
+        "the reply Google took is recorded sent, not discarded: {sent:?}"
     );
 }
