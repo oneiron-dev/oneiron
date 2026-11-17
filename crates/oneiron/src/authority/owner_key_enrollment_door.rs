@@ -1301,42 +1301,11 @@ impl Vault {
     /// its key as a predecessor. Empty before any passkey enrollment.
     pub fn enrolled_owner_passkeys(&self) -> Result<Vec<EnrolledOwnerPasskey>> {
         let txn = self.store.env.read_txn()?;
-        self.enrolled_owner_passkeys_in_txn(&txn)
-    }
-
-    /// [`Self::enrolled_owner_passkeys`] in the caller's transaction.
-    fn enrolled_owner_passkeys_in_txn(
-        &self,
-        txn: &heed::RoTxn<'_>,
-    ) -> Result<Vec<EnrolledOwnerPasskey>> {
         let mut keys = BTreeMap::new();
-        self.visit_authority_entries_in_txn(txn, |fold, hash, entry| {
+        self.visit_authority_entries_in_txn(&txn, |fold, hash, entry| {
             keep_enrolled_passkey(&mut keys, fold, hash, entry);
         })?;
         Ok(keys.into_values().collect())
-    }
-
-    /// Every live owner key whose enrolment names `person`: their device
-    /// keys and their passkeys (row WEB-PASSKEY-OWNER-KEY), whose enrolment
-    /// names its owner as a device key's does.
-    fn live_owner_keys_enrolled_for_in_txn(
-        &self,
-        txn: &heed::RoTxn<'_>,
-        person: EntityId,
-    ) -> Result<Vec<AuthorityKey>> {
-        let mut keys: Vec<AuthorityKey> = self
-            .enrolled_owner_keys_in_txn(txn)?
-            .into_iter()
-            .filter(|key| key.live && key.owner == person)
-            .map(|key| AuthorityKey::Ed25519(key.public_key))
-            .collect();
-        keys.extend(
-            self.enrolled_owner_passkeys_in_txn(txn)?
-                .into_iter()
-                .filter(|passkey| passkey.live && passkey.owner == person)
-                .map(|passkey| AuthorityKey::P256(passkey.public_key)),
-        );
-        Ok(keys)
     }
 
     /// Calls `visit` with the fold in `txn` and each authority entry this
@@ -1362,6 +1331,55 @@ impl Vault {
             }
         }
         Ok(())
+    }
+
+    /// Every live owner key whose enrolment names `person`: their device
+    /// keys and their passkeys (row WEB-PASSKEY-OWNER-KEY), whose enrolment
+    /// names its owner as a device key's does. Each key counts by its
+    /// smallest valid enrollment entry, stored or carried by an adopted
+    /// checkpoint image, as [`Self::enrolled_owner_keys`] counts a device
+    /// key; that listing keeps device keys only (REVIEW-8437 P1).
+    fn live_owner_keys_enrolled_for_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        person: EntityId,
+    ) -> Result<Vec<AuthorityKey>> {
+        let view = self.authority_view_readonly_in_txn(txn)?;
+        let fold: &AuthorityFold = &view;
+        let mut enrolled: BTreeMap<AuthorityKey, (AuthorityEntryHash, EntityId)> = BTreeMap::new();
+        let mut keep = |hash: AuthorityEntryHash, entry: &AuthorityLogEntry| {
+            let AuthorityOp::OwnerKeyEnroll(enroll) = &entry.op else {
+                return;
+            };
+            if !fold.valid_entries.contains(&hash)
+                || enrolled
+                    .get(&enroll.device.key)
+                    .is_some_and(|(kept, _)| *kept <= hash)
+            {
+                return;
+            }
+            enrolled.insert(enroll.device.key.clone(), (hash, enroll.act.owner));
+        };
+        let mut stored = BTreeSet::new();
+        for (_, body) in super::readonly_fold::authority_log_rows_in_txn(&self.store, txn)? {
+            let entry = decode_authority_log_entry_body(&body)?;
+            let hash = authority_entry_hash(&entry)?;
+            stored.insert(hash);
+            keep(hash, &entry);
+        }
+        if let Some(evidence) = super::adopted_evidence::adopted_evidence_in_txn(&self.store, txn)?
+        {
+            for (hash, entry) in evidence.carried_past(&stored) {
+                keep(*hash, entry);
+            }
+        }
+        Ok(enrolled
+            .into_iter()
+            .filter(|(key, (_, owner))| {
+                *owner == person && fold.roster.get(key).is_some_and(|device| !device.revoked)
+            })
+            .map(|(key, _)| key)
+            .collect())
     }
 
     /// Ends the owner authority `person` holds on this vault's log, in the
