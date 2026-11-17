@@ -45,7 +45,7 @@ use oneiron::code_run::{
 use oneiron::code_sandbox::microvm::{NoSandboxBackends, select_backend_for_tier};
 use oneiron::code_sandbox::{
     ComponentBudget, FakeSandboxAdapter, SandboxBoundaryContract, SandboxGuestTier,
-    SandboxMountTable, SandboxVirtualPath,
+    SandboxMountTable, SandboxProvider, SandboxVirtualPath,
 };
 use oneiron::compaction::output::{OutputAffordance, OutputDecayPolicy, OutputRef};
 use oneiron::compaction::{
@@ -478,7 +478,8 @@ fn guest_agents_put_reaches_the_leased_host_and_fences_stale_leases() -> Result<
 #[test]
 fn code_sandbox_microvm_isolating_tiers_never_fall_through_silently() {
     for tier in [SandboxGuestTier::Foreign, SandboxGuestTier::Untrusted] {
-        let Err(error) = select_backend_for_tier(&NoSandboxBackends, tier) else {
+        let Err(error) = select_backend_for_tier(&NoSandboxBackends, SandboxProvider::Ours, tier)
+        else {
             panic!("an isolating tier with no backend fails closed");
         };
         assert_eq!(error.kind(), ErrorKind::MicroVmBackendUnavailable);
