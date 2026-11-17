@@ -327,27 +327,13 @@ pub(crate) const PENDING_TOMBSTONE: SideTable<PendingTombstoneKey, Vec<u8>, Raw>
 /// Key after the `pt:` prefix: the window label, `:`, then the entity's 32
 /// lower-case hex characters. The hex id is fixed width, so it decodes
 /// correctly from the tail even if a window label were to contain `:`.
+#[derive(SideKey)]
+#[side_key(sep = b':')]
 pub(crate) struct PendingTombstoneKey {
+    #[side_key(rest)]
     pub(crate) window: String,
+    #[side_key(with = HexId)]
     pub(crate) id: EntityId,
-}
-
-impl SideKey for PendingTombstoneKey {
-    fn encode_into(&self, out: &mut Vec<u8>) {
-        out.extend_from_slice(self.window.as_bytes());
-        out.push(b':');
-        out.extend_from_slice(self.id.to_hex().as_bytes());
-    }
-
-    fn decode_key(bytes: &[u8]) -> Option<Self> {
-        let split = bytes.len().checked_sub(32)?;
-        let (head, hex) = bytes.split_at(split);
-        let window = head.strip_suffix(b":")?;
-        Some(Self {
-            window: String::from_utf8(window.to_vec()).ok()?,
-            id: EntityId::from_lower_hex(std::str::from_utf8(hex).ok()?).ok()?,
-        })
-    }
 }
 
 /// The window label and entity a [`PendingTombstoneKey`] reads from the bytes after its

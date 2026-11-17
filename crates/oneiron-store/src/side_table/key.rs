@@ -19,6 +19,7 @@ pub use oneiron_derive::SideKey;
 ///   ([`LengthPrefix`]);
 /// - `#[side_key(rest)]` marks the one part, anywhere in the key, that takes the bytes the other
 ///   parts leave. The parts after it are read from the end of the key, so they are fixed width.
+///   An `Option` of a fixed-width part may be the rest part: absent, it spells no bytes.
 ///
 /// `#[side_key(with = P)]` spells a field through the part type `P`, a [`FieldSpelling`] of the
 /// field's type, so the field keeps its own type: [`HexU64`] for a `u64`, [`HexId`] for an
@@ -249,6 +250,21 @@ impl FixedSideKey for u8 {
 }
 
 /// Big-endian, so keys order by number.
+impl SideKey for u16 {
+    fn encode_into(&self, out: &mut Vec<u8>) {
+        out.extend_from_slice(&self.to_be_bytes());
+    }
+
+    fn decode_key(bytes: &[u8]) -> Option<Self> {
+        Some(u16::from_be_bytes(bytes.try_into().ok()?))
+    }
+}
+
+impl FixedSideKey for u16 {
+    const WIDTH: usize = 2;
+}
+
+/// Big-endian, so keys order by number.
 impl SideKey for u64 {
     fn encode_into(&self, out: &mut Vec<u8>) {
         out.extend_from_slice(&self.to_be_bytes());
@@ -282,6 +298,29 @@ impl SideKey for String {
 
     fn decode_key(bytes: &[u8]) -> Option<Self> {
         String::from_utf8(bytes.to_vec()).ok()
+    }
+}
+
+/// An optional fixed-width part, as the rest of a key (`#[side_key(rest)]`): no bytes when absent,
+/// else the part's own. `T` is at least one byte wide, so the two never meet.
+impl<T: FixedSideKey> SideKey for Option<T> {
+    fn encode_into(&self, out: &mut Vec<u8>) {
+        if let Some(part) = self {
+            part.encode_into(out);
+        }
+    }
+
+    fn decode_key(bytes: &[u8]) -> Option<Self> {
+        const {
+            assert!(
+                T::WIDTH > 0,
+                "an absent part and an empty one would spell alike"
+            )
+        };
+        if bytes.is_empty() {
+            return Some(None);
+        }
+        T::decode_key(bytes).map(Some)
     }
 }
 
