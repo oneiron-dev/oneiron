@@ -120,17 +120,6 @@ pub(in crate::code_sandbox) struct GuestProgram<'a> {
     pub source: &'a str,
 }
 
-/// Drops a step's streamed output, for the test exchanges below whose
-/// guests stream none.
-#[cfg(test)]
-#[allow(
-    dead_code,
-    reason = "this file is compiled under two modules, and the tests of only one call it"
-)]
-fn discard_output(_: crate::engine_executor::JsCodeModeStream<'_>, _: Vec<u8>) -> Result<()> {
-    Ok(())
-}
-
 /// [`exchange_cancellable`] for a step nothing cancels and that streams no
 /// output.
 #[cfg(test)]
@@ -157,7 +146,7 @@ pub(in crate::code_sandbox) fn exchange(
         transport,
         None,
         &StepCancellation::never(),
-        &mut discard_output,
+        &mut |_: crate::engine_executor::JsCodeModeStream<'_>, _: Vec<u8>| -> Result<()> { Ok(()) },
     )
 }
 
@@ -310,7 +299,7 @@ fn receive_proposals(
         transport,
         None,
         &StepCancellation::never(),
-        &mut discard_output,
+        &mut |_: crate::engine_executor::JsCodeModeStream<'_>, _: Vec<u8>| -> Result<()> { Ok(()) },
     )
 }
 
