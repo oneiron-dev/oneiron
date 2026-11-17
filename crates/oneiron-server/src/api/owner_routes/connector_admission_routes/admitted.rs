@@ -30,7 +30,7 @@ fn refresh_connector(
     request: RefreshRequest,
 ) -> OwnerResult<Refreshed> {
     let vault = server.vault();
-    let (name, endpoint) = installed(server, &request.connector)?;
+    let (name, installed) = installed_host(server, &request.connector)?;
     let catalog = catalog(vault, &name)?;
     match catalog.record.status {
         ConnectorKeyStatus::Active | ConnectorKeyStatus::Pending => {}
@@ -49,8 +49,8 @@ fn refresh_connector(
     let discovery =
         host::with_credential(vault, catalog.record.secret_ref.as_deref(), &name, |auth| {
             let client = host::client()?;
-            host::discover(&client, &endpoint, auth, Some(&pinned))
-                .or_else(|_| host::discover(&client, &endpoint, auth, None))
+            host::list_tools(&client, &installed, auth, Some(&pinned))
+                .or_else(|_| host::list_tools(&client, &installed, auth, None))
         })
         .map_err(engine)?
         .map_err(engine)?;

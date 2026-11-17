@@ -200,6 +200,7 @@ fn setup_with_secret(
         policy_floor_snapshot: SecretCustodyFloor::default(),
     })?;
     let manifest = vec![SlateToolManifest {
+        resolved_output_schema: None,
         name: "send".into(),
         data_class: SlateDataClass::Personal,
         header_parameters: Vec::new(),
@@ -213,6 +214,7 @@ fn setup_with_secret(
         read_only: false,
         idempotent: false,
         price: None,
+        http: None,
     }];
     let slate = vault.store_connector_slate(
         &manifest,

@@ -149,6 +149,13 @@ pub struct SlateToolManifest {
     /// Unresolved refs/composition are refused rather than guessed at admission.
     #[serde(default)]
     pub resolved_input_schema: Option<serde_json::Value>,
+    /// Host-resolved output declaration (MCP `outputSchema`; L8-31): what the
+    /// caller is told a delivered reply holds, so the owner's stamp covers it
+    /// as it covers the input. Absent when the connector declares none, and
+    /// then absent from the serialized row, so a slate without one hashes as
+    /// it did before the field existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resolved_output_schema: Option<serde_json::Value>,
     #[serde(default)]
     pub trigger: Option<String>,
     pub destroys: bool,
@@ -169,6 +176,13 @@ pub struct SlateToolManifest {
     /// Spend row that preauthorizes reserves it before the call.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub price: Option<super::ConnectorSpendEstimate>,
+    /// Where a call goes, for a tool translated from an API document
+    /// (L8-31): the method and the path under the installed endpoint. It is
+    /// in the stamped row, so the owner's stamp covers where each tool
+    /// sends; a changed path drifts the slate. Absent for an MCP tool, and
+    /// then absent from the serialized row, so its hash is unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub http: Option<super::HttpOperation>,
 }
 impl SlateToolManifest {
     /// Irreversible or header-bearing: `auto` already asks per call for these.
@@ -501,6 +515,10 @@ fn validate(manifest: &SlateManifest, rows: &[SlateDraftRow]) -> Result<()> {
                     .resolved_input_schema
                     .as_ref()
                     .is_some_and(|schema| schema.is_object() && is_resolved_schema(schema))
+                    || tool
+                        .resolved_output_schema
+                        .as_ref()
+                        .is_some_and(|schema| !is_resolved_schema(schema))
                     || row.data_class != tool.row_data_class()
                 {
                     return Err(invalid());
@@ -512,8 +530,9 @@ fn validate(manifest: &SlateManifest, rows: &[SlateDraftRow]) -> Result<()> {
 }
 
 /// Whether the declaration itself reaches further than before: a richer data
-/// class, new headers or effects, a changed trigger, or a schema that is not a
-/// provable restriction.
+/// class, new headers or effects, a changed trigger, an input schema that is
+/// not a provable restriction, or any change to the output schema the caller
+/// reads (L8-31).
 pub(in crate::connector_key) fn declaration_expands(
     old: &SlateToolManifest,
     next: &SlateToolManifest,
@@ -536,6 +555,10 @@ pub(in crate::connector_key) fn declaration_expands(
             old.resolved_input_schema.as_ref(),
             next.resolved_input_schema.as_ref(),
         )
+        || next.resolved_output_schema != old.resolved_output_schema
+        // Where the tool sends (L8-31): a new method or path is a new
+        // destination the owner never stamped.
+        || next.http != old.http
 }
 
 /// Whether the elicitation declaration reaches further than before: a
@@ -972,6 +995,7 @@ mod tests {
         let mut manifest = Vec::new();
         for name in ["read", "send", "header", "legacy.ask"] {
             manifest.push(SlateToolManifest {
+                resolved_output_schema: None,
                 name: name.into(),
                 data_class: SlateDataClass::Personal,
                 header_parameters: if name == "header" {
@@ -988,6 +1012,7 @@ mod tests {
                 read_only: false,
                 idempotent: false,
                 price: None,
+                http: None,
             });
         }
         let rows = draft_connector_slate(&manifest);
@@ -1083,6 +1108,7 @@ mod revision_tests {
 
     fn tool(name: &str) -> SlateToolManifest {
         SlateToolManifest {
+            resolved_output_schema: None,
             name: name.into(),
             data_class: SlateDataClass::Public,
             header_parameters: vec![],
@@ -1096,6 +1122,7 @@ mod revision_tests {
             read_only: false,
             idempotent: false,
             price: None,
+            http: None,
         }
     }
     fn slate(manifest: Vec<SlateToolManifest>, rows: Vec<SlateDraftRow>) -> ConnectorGrantSlate {

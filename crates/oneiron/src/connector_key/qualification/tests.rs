@@ -366,6 +366,7 @@ fn pending_slate_key_only_activates_after_full_probes_and_owner_stamp() -> crate
     let dir = tempfile::tempdir()?;
     let vault = Vault::open(dir.path(), VaultConfig::default())?;
     let manifest = vec![SlateToolManifest {
+        resolved_output_schema: None,
         name: "memory".into(),
         data_class: SlateDataClass::Personal,
         header_parameters: vec![],
@@ -380,6 +381,7 @@ fn pending_slate_key_only_activates_after_full_probes_and_owner_stamp() -> crate
         read_only: false,
         idempotent: false,
         price: None,
+        http: None,
     }];
     let slate_id = vault.store_connector_slate(
         &manifest,
@@ -549,6 +551,7 @@ fn read_only_key_qualifies_and_revision_expansion_needs_graded_consent() -> crat
     let tmp = tempfile::tempdir()?;
     let vault = Vault::open(tmp.path(), VaultConfig::default())?;
     let read_tool = SlateToolManifest {
+        resolved_output_schema: None,
         name: "memory".into(),
         data_class: SlateDataClass::Personal,
         header_parameters: vec![],
@@ -563,6 +566,7 @@ fn read_only_key_qualifies_and_revision_expansion_needs_graded_consent() -> crat
         read_only: false,
         idempotent: false,
         price: None,
+        http: None,
     };
     let make_slate = |manifest: &[SlateToolManifest]| -> crate::error::Result<EntityId> {
         vault.store_connector_slate(
@@ -755,6 +759,7 @@ fn mid_probe_revision_round_trip_cannot_activate_stale_attempt() -> crate::error
     let tmp = tempfile::tempdir()?;
     let vault = Vault::open(tmp.path(), VaultConfig::default())?;
     let tool = SlateToolManifest {
+        resolved_output_schema: None,
         name: "memory".into(),
         data_class: SlateDataClass::Personal,
         header_parameters: vec![],
@@ -769,6 +774,7 @@ fn mid_probe_revision_round_trip_cannot_activate_stale_attempt() -> crate::error
         read_only: false,
         idempotent: false,
         price: None,
+        http: None,
     };
     let slate = vault.store_connector_slate(
         std::slice::from_ref(&tool),
@@ -871,6 +877,7 @@ fn resolved_schema_delta_is_bound_before_effectful_probes() -> crate::error::Res
     let vault = Vault::open(tmp.path(), VaultConfig::default())?;
     let schema = json!({"type":"object","properties":{"query":{"type":"string","enum":["a","b"]}}});
     let mut tool = SlateToolManifest {
+        resolved_output_schema: None,
         name: "memory".into(),
         data_class: SlateDataClass::Public,
         header_parameters: vec![],
@@ -883,6 +890,7 @@ fn resolved_schema_delta_is_bound_before_effectful_probes() -> crate::error::Res
         read_only: false,
         idempotent: false,
         price: None,
+        http: None,
     };
     let make_slate = |tool: &SlateToolManifest| -> crate::error::Result<EntityId> {
         let tools = std::slice::from_ref(tool);
@@ -1023,6 +1031,7 @@ fn reordered_rows_cannot_enable_tool_without_owner_stamp() -> crate::error::Resu
     let tmp = tempfile::tempdir()?;
     let vault = Vault::open(tmp.path(), VaultConfig::default())?;
     let tool = |name: &str| SlateToolManifest {
+        resolved_output_schema: None,
         name: name.into(),
         data_class: SlateDataClass::Public,
         header_parameters: vec![],
@@ -1036,6 +1045,7 @@ fn reordered_rows_cannot_enable_tool_without_owner_stamp() -> crate::error::Resu
         read_only: false,
         idempotent: false,
         price: None,
+        http: None,
     };
     let manifest = vec![tool("A"), tool("B")];
     let mut old_rows = draft_connector_slate(&manifest);
@@ -1118,6 +1128,7 @@ fn manifest_staging_runs_probe_runner_on_exact_candidate() -> crate::error::Resu
     vault.register_connector_key(&id, ConnectorKeyRecord::active("memory", None, vec![], 10))?;
     let candidate = |input_schema: Value| {
         ResolvedConnectorManifest::resolve(vec![ConnectorToolSchema {
+            output_schema: None,
             name: "memory".into(),
             permissions: BTreeSet::from(["read".into()]),
             triggers: BTreeSet::new(),

@@ -48,6 +48,7 @@ fn run_qualification(
         tools
             .iter()
             .map(|tool| super::super::manifest_drift::ConnectorToolSchema {
+                output_schema: None,
                 name: tool.name.clone(),
                 permissions: BTreeSet::new(),
                 triggers: tool.trigger.iter().cloned().collect(),

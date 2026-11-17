@@ -20,6 +20,13 @@ pub struct ConnectorToolSchema {
     pub permissions: BTreeSet<String>,
     pub triggers: BTreeSet<String>,
     pub input_schema: Value,
+    /// The tool's declared output schema (MCP `outputSchema`; L8-31), resolved
+    /// as the input is. It only types the reply for the caller: one that does
+    /// not resolve is dropped, never a reason to refuse the connector. Absent
+    /// from the serialized row when none, so a manifest without one hashes as
+    /// it did before the field existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_schema: Option<Value>,
 }
 
 pub fn resolve_schema(

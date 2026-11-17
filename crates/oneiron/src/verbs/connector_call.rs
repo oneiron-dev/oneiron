@@ -59,9 +59,10 @@ pub use oneiron_verb_wire::verbs::connector_call::{
 };
 
 /// `connector.schema`'s reply: the tool's approved input schema on the
-/// governing key the caller's own grant resolves, or why there is none. The
-/// schema's text is the connector's, approved by the owner: it is marked
-/// foreign too.
+/// governing key the caller's own grant resolves, its output schema when the
+/// connector declares one, and both as TypeScript (L8-31), or why there is
+/// none. The schemas' text is the connector's, approved by the owner: it is
+/// marked foreign too, as the tool's replies are.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ConnectorSchemaReply {
     /// `connector:<name>.<tool>`.
@@ -71,6 +72,17 @@ pub struct ConnectorSchemaReply {
     /// The approved input schema; absent when none is available.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub input_schema: Option<Value>,
+    /// The approved output schema: the shape of a delivered reply's
+    /// `result.structured_content`. Absent when the connector declares none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_schema: Option<Value>,
+    /// The TypeScript type of the call's `args`, rendered from `input_schema`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input_typescript: Option<String>,
+    /// The TypeScript type of a delivered reply's `result.structured_content`,
+    /// rendered from `output_schema`; absent with it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_typescript: Option<String>,
     /// Whether the tool's slate row marks it destructive.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub destructive: Option<bool>,
@@ -81,6 +93,7 @@ pub struct ConnectorSchemaReply {
 }
 
 use crate::code_run::connector_result_source as source;
+use crate::connector_key::typescript;
 
 /// The ledger identity of one served call: the logical invocation its host
 /// resolved (a code-mode step's, or the one HTTP or MCP carried or minted),
@@ -163,11 +176,15 @@ pub fn connector_schema_read(
     Ok(match schema {
         ConnectorToolSchema::Approved {
             input_schema,
+            output_schema,
             destructive_hint,
         } => ConnectorSchemaReply {
             source,
             foreign: true,
+            input_typescript: Some(typescript::input_typescript(&input_schema)),
+            output_typescript: output_schema.as_ref().map(typescript::output_typescript),
             input_schema: Some(input_schema),
+            output_schema,
             destructive: Some(destructive_hint),
             reasons: Vec::new(),
         },
@@ -175,6 +192,9 @@ pub fn connector_schema_read(
             source,
             foreign: true,
             input_schema: None,
+            output_schema: None,
+            input_typescript: None,
+            output_typescript: None,
             destructive: None,
             reasons,
         },

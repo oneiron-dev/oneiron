@@ -81,6 +81,7 @@ fn proxy_slate_draft() -> (Vec<SlateToolManifest>, Vec<SlateDraftRow>) {
     let mut rows = Vec::with_capacity(legs.len());
     for (name, schema, reads, rationale) in legs {
         manifest.push(SlateToolManifest {
+            resolved_output_schema: None,
             name: name.to_owned(),
             data_class: SlateDataClass::Personal,
             header_parameters: Vec::new(),
@@ -93,6 +94,7 @@ fn proxy_slate_draft() -> (Vec<SlateToolManifest>, Vec<SlateDraftRow>) {
             read_only: reads,
             idempotent: reads,
             price: None,
+            http: None,
         });
         rows.push(SlateDraftRow {
             tool: name.to_owned(),

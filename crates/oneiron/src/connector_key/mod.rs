@@ -17,6 +17,7 @@ mod charter;
 mod codec;
 mod credential_binding;
 pub mod events;
+mod http_operation;
 mod lifecycle;
 mod manifest_drift;
 mod measure;
@@ -35,6 +36,7 @@ mod slate_setting;
 mod tool_effect;
 mod tool_remember;
 mod txn;
+pub mod typescript;
 
 pub(crate) mod tables;
 #[cfg(test)]
@@ -185,6 +187,7 @@ pub(crate) use slate_setting::{
     effect_slate_always_allows, governing_slate_in_txn,
 };
 
+pub use http_operation::{HttpMethod, HttpOperation, compile_reserved_pattern};
 pub use manifest_drift::{
     ConnectorDriftKind, ConnectorManifestDrift, ConnectorToolSchema, ResolvedConnectorManifest,
 };
