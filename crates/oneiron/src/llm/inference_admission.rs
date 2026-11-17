@@ -2,6 +2,8 @@
 //! A row requests a route; only a concrete host/catalog binding establishes it.
 use std::collections::BTreeMap;
 
+use oneiron_contracts::register::Register;
+
 use super::{
     CallPurpose, LlmRequest, ModelId, ModelLocality, ValidatedPurposeDefaults, defaults,
     manifest::{self, ModelManifest, ModelRole, ModelSlot},
@@ -205,7 +207,8 @@ fn invalid(refusal: InferenceRefusal) -> Error {
 /// Why the authorizer refused a call: each reason is fixed text that names
 /// no caller field, key or vault row, so an inference door may send it to
 /// its caller and log it (STEP-DOOR-REFUSAL-REASON).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Register)]
+#[register("inference.refusal", rename_all = "snake_case")]
 pub enum InferenceRefusal {
     /// A role call with no manifest, whose purpose default names another
     /// locality than the call's.
@@ -224,15 +227,6 @@ pub enum InferenceRefusal {
     ExtractionEgress,
 }
 impl InferenceRefusal {
-    const ALL: [Self; 7] = [
-        Self::NoDefaultBinding,
-        Self::NoRegisteredModel,
-        Self::HostModelDiffers,
-        Self::LocalityDiffers,
-        Self::RegistryLocalityDiffers,
-        Self::NoLocalBinding,
-        Self::ExtractionEgress,
-    ];
     pub fn reason(self) -> &'static str {
         match self {
             Self::NoDefaultBinding => "no model binding for inference default locality",
@@ -250,8 +244,9 @@ impl InferenceRefusal {
         let Error::InvalidConfig(text) = error else {
             return None;
         };
-        Self::ALL
-            .into_iter()
+        Self::ROWS
+            .iter()
+            .copied()
             .find(|refusal| refusal.reason() == text.as_str())
     }
 }

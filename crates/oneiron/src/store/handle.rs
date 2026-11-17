@@ -359,6 +359,9 @@ pub struct StoreCore {
     /// Scan checks raised since the vault's last write, which keeps them
     /// ([`crate::scan_check`]).
     pub(crate) pending_scan_checks: crate::store::PendingScanChecks,
+    /// Records served to external readers since the vault's last write,
+    /// which keeps them ([`crate::claim::PendingReadExposure`], L8-65).
+    pub(crate) pending_read_exposure: crate::claim::PendingReadExposure,
     /// The engine's `[limits]` rows on this vault: what they are set to,
     /// fixed at open, and the port a crossing asks through
     /// ([`crate::Vault::set_limit_ask`]).
@@ -430,6 +433,10 @@ pub struct StoreCore {
     /// Committed consent answers wake this vault's connector-call settler.
     /// Content-free and in memory only; the durable answer is re-read.
     pub(crate) consent_answers: tokio::sync::Notify,
+    /// A committed per-request Coach host job wakes the host's Coach worker
+    /// beside its tick. Content-free and in memory only; the worker re-reads
+    /// its queue.
+    pub(crate) coach_host_requests: std::sync::Arc<tokio::sync::Notify>,
     /// The committed-notification signal live queries wake on (FIX 3084).
     pub(crate) notification_updates: tokio::sync::watch::Sender<u64>,
     /// Content-free, per-vault: bumped after each commit that revoked a
