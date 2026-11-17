@@ -126,22 +126,30 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/interface_bench/tests_a.rs` | src | s | 2 crate-vis | — | Taskgen, config, and memo tests |
 | `src/interface_bench/tests_b.rs` | src | s | — | — | Pinned-model tests |
 | `src/interface_bench/wire_and_scoring.rs` | src | m | 13 crate-vis | — | Request hashing, memo keys, and provider wire calls |
-| `src/load/client.rs` | src | s | 10 crate-vis | — | One agent on the facade doors: its signed slip, a fresh holder proof per request, and the three verbs the… |
+| `src/load/client.rs` | src | m | 11 crate-vis | — | One agent on the facade doors: its signed slip, a fresh holder proof per request, and the three verbs the… |
 | `src/load/corpus.rs` | src | m | 16 crate-vis | — | The synthetic corpus: invented words drawn with Zipf frequencies from a fixed seed, so two runs of one plan… |
-| `src/load/corpus_recall.rs` | src | m | 1 crate-vis | — | `load corpus-recall` — warm recall latency on a vault seeded from a recorded conversation corpus, on the… |
-| `src/load/dream.rs` | src | m | 1 crate-vis | — | `load dream` — one Dreamer cycle end to end on the shipped server binary (L07 DREAM-BENCH) |
+| `src/load/corpus_recall.rs` | src | m | 2 crate-vis | — | `load corpus-recall` — warm recall latency on a vault seeded from a recorded conversation corpus, on the… |
+| `src/load/dream.rs` | src | m | 6 crate-vis | — | `load dream` — one Dreamer cycle end to end on the shipped server binary (L07 DREAM-BENCH) |
 | `src/load/dream/call_proxy.rs` | src | L | 5 crate-vis | — | The model-call timing proxy of `load dream` (FIX 21929) |
-| `src/load/dream/cycle.rs` | src | m | 20 crate-vis | — | The cycle itself: the session hints that open and end the sitting (`POST /v1/ai/session`, `api/ai/mod.rs`)… |
+| `src/load/dream/cycle.rs` | src | m | 22 crate-vis | — | The cycle itself: the session hints that open and end the sitting (`POST /v1/ai/session`, `api/ai/mod.rs`)… |
 | `src/load/dream/proof.rs` | src | s | 4 crate-vis | — | Whether a recall finds what the cycle landed: the landed claim ids (the stage lines' `landed_ids`, else the… |
 | `src/load/dream/report.rs` | src | m | 4 crate-vis | — | The `load dream` result: the JSON report and the summary lines on stdout |
-| `src/load/dream/server_log.rs` | src | s | 14 crate-vis | — | The server log as `load dream` reads it: the lines written since the last read, the Dreamer's `dreamer… |
-| `src/load/dream/setup.rs` | src | s | 7 crate-vis | — | What `load dream` sets up before the server starts: the model check, the `[models]` section that routes… |
+| `src/load/dream/server_log.rs` | src | s | 15 crate-vis | — | The server log as `load dream` reads it: the lines written since the last read, the Dreamer's `dreamer… |
+| `src/load/dream/setup.rs` | src | s | 9 crate-vis | — | What `load dream` sets up before the server starts: the model check, the `[models]` section that routes… |
 | `src/load/dream/turns.rs` | src | m | 12 crate-vis | — | The recorded corpus `load dream` seeds: one JSON line per turn (world, person, day, conversation_ref… |
 | `src/load/embedder.rs` | src | s | 9 crate-vis | — | A stand-in embedder on loopback: the plain OpenAI `/v1/embeddings` wire, answering bag-of-words vectors |
+| `src/load/lives/answer.rs` | src | m | 9 crate-vis | — | Judged answers (ASK L9-36-ACCURACY = C, its second column): one pinned reader answers each asked question… |
+| `src/load/lives/corpus.rs` | src | m | 12 crate-vis | — | The lives corpus: the synthetic-lives generation run's JSONL as it is (one life per line), every turn's… |
+| `src/load/lives/dreamed.rs` | src | m | 16 crate-vis | — | The `oneiron-dreamed` arm (ASK L9-36-ONEIRON-INGEST = C): the Oneiron store with its Dreamer on, every role… |
+| `src/load/lives/external.rs` | src | s | 3 crate-vis | — | Systems other than Oneiron on the lives screen (L9-36-COMPETITORS = A: this is the seam; each competitor's… |
+| `src/load/lives/mod.rs` | src | m | 4 crate-vis | — | `load lives` — the synthetic-lives screen (ARCH-0042 #lives-bench; census row L9-36): every system ingests… |
+| `src/load/lives/oneiron.rs` | src | m | 2 crate-vis | — | The Oneiron store of the lives screen: the shipped `oneiron-server` spawned on loopback and called as a… |
+| `src/load/lives/report.rs` | src | m | 17 crate-vis | — | The lives screen's JSON report: one row per question per grade per system, with its accuracy and its latency… |
+| `src/load/lives/score.rs` | src | s | 5 crate-vis | — | Context accuracy with no model (ASK L9-36-ACCURACY = C, its first column): whether a system's top-k returned… |
 | `src/load/mod.rs` | src | m | 2 crate-vis | — | `load` subcommand — the engine's load bench on the shipped server binary |
-| `src/load/phases.rs` | src | m | 13 crate-vis | — | The measured cells: ingest by one and by many callers, recall at each grade and agent count, the mixed and… |
+| `src/load/phases.rs` | src | m | 14 crate-vis | — | The measured cells: ingest by one and by many callers, recall at each grade and agent count, the mixed and… |
 | `src/load/report.rs` | src | m | 10 crate-vis | — | The result file, and `load compare`, which reads two of them |
-| `src/load/server.rs` | src | m | 22 crate-vis | — | The shipped `oneiron-server` binary as a child process: `init`, `whoami`, `token agent` on the stopped… |
+| `src/load/server.rs` | src | m | 23 crate-vis | — | The shipped `oneiron-server` binary as a child process: `init`, `whoami`, `token agent` on the stopped… |
 | `src/load/startup.rs` | src | s | 1 crate-vis | — | `load startup`: the server's memory while the shipped local embedding model loads, which is where its… |
 | `src/load/stats.rs` | src | s | 4 crate-vis | — | Latency summaries: nearest-rank percentiles over completed requests, with failures counted beside them and… |
 | `src/main.rs` | src | m | — | — | oneiron-bench — benchmark harness drivers |
@@ -206,6 +214,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/beam_picks_for_cli.rs` | test | s | — | — | `oneiron-bench beam measure --picks-for` (census L9-32; Engine ruling L9-32-PICK-WRITER, Sat 14 Nov 07:43)… |
 | `tests/cleanup_retrieval.rs` | test | s | — | — | ANN recall corpus `ann_seed42.v1` (source: ec9cbdec92e7dbcc865b9958dd1ff8652714d6c7). rand 0.8.8 StdRng seed… |
 | `tests/e2e_approved_manifest_fixture.rs` | test | s | — | — | Runs the shipped bench flow to produce and check the approved E2E manifest fixture |
+| `tests/lives_bench_cli.rs` | test | L | — | — | `oneiron-bench load lives` (census L9-36; ARCH-0042 #lives-bench): the synthetic-lives screen ingests the… |
 | `tests/retrieval_matrix_cli.rs` | test | m | — | — | The retrieval matrix CLI end to end: the mini pack converts, the keyword arm grades it to hand-counted… |
 | `tests/scorecard_cli.rs` | test | L | — | — | Drive the shipped `scorecard` CLI end to end: fixtures in, JSON out |
 | `tests/scorecard_compare.rs` | test | L | — | — | Drive `scorecard compare`, `proposals` and `stamp` end to end: fixtures in, JSON out |
