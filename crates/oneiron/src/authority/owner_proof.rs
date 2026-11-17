@@ -247,14 +247,19 @@ pub(super) fn asking_owner_choices(state: &FoldState) -> BTreeSet<AuthorityEntry
 }
 
 impl AuthorityFold {
-    /// Whether `key` is a key this fold trusts as the owner's: live on the
-    /// roster with `ROLE_OWNER`, and outside the host's custody when the
-    /// vault is `hosted`. The writer's side of `proves_for_the_owner`; the
-    /// fold takes a proof cosign only from such a key in the Ed25519 suite
-    /// ([`owner_proof_key`]), and every signer an install holds is one.
+    /// Whether `key` is a key whose cosign this fold takes as the owner's
+    /// proof: live on the roster with `ROLE_OWNER`, outside the host's
+    /// custody when the vault is `hosted`, and held by no passkey limit (a
+    /// key only a passkey vouched for, until confirmed). The writer's side
+    /// of `gives_owner_proof`, read on the merged history, so an install
+    /// never signs a proof cosign the fold judges forged (REVIEW-8451 P1);
+    /// the fold takes one only in the Ed25519 suite ([`owner_proof_key`]),
+    /// and every signer an install holds is one.
     #[must_use]
     pub(crate) fn proves_owner_acts(&self, key: &AuthorityKey, hosted: bool) -> bool {
-        roster_has_live_owner(&self.roster, key) && !(hosted && self.in_host_custody(key))
+        roster_has_live_owner(&self.roster, key)
+            && !(hosted && self.in_host_custody(key))
+            && !self.passkey_limited_keys.contains(key)
     }
 
     /// A choice door's answer about `act`, the choice it appended in its
