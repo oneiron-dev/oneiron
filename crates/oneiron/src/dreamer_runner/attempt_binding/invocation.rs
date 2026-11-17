@@ -1,37 +1,42 @@
-//! A bound client's verb calls: the strength facet's two operations, each
-//! through its row's one verb-hook boundary, with the binding proved before
-//! the hooks and again in the call's own transaction.
+//! A bound client's verb calls, limited to its admitted maintenance facet.
+//! Each call crosses its row's one verb-hook boundary, with the binding
+//! proved before the hooks and again in the call's own transaction.
 
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 
-use super::{DreamerAttemptBinding, facet_refused, strength_batch};
+use super::{BoundFacet, DreamerAttemptBinding, facet_batch, facet_refused};
 use crate::derive::DeriveCommitInput;
 use crate::memory::{MemoryError, MemoryResult};
 use crate::runtime_hooks::InvocationId;
-use crate::snapshot_read::StrengthObservationsPageRequest;
+use crate::snapshot_read::{ConflictsPageRequest, StrengthObservationsPageRequest};
 use crate::task_verb::verb_hook_boundary::{typed_row, typed_row_validated};
-use crate::verbs::VERB_TABLE;
+use crate::verbs::{AiVerdictRequest, VERB_TABLE};
 
 /// The observations page a strength attempt reads.
 const STRENGTH_PAGE_VERB: &str = "vault.consolidation.strength.observations.page";
-/// The commit a strength attempt lands its Archive items with.
+/// The conflicts page a conflict-settlement attempt reads.
+const CONFLICTS_PAGE_VERB: &str = "vault.consolidation.conflicts.page";
+/// The typed question a conflict-settlement attempt asks the host's ladder.
+const AI_VERDICT_VERB: &str = "ai.verdict";
+/// The commit that lands items admitted by the bound facet.
 const DERIVE_COMMIT_VERB: &str = "vault.derive.commit";
 
 impl DreamerAttemptBinding {
     /// Runs `verb` on `input` as the Dreamer under this binding; with
     /// `invocation`, as the retry of a call a verb hook stopped on an ask.
     ///
-    /// The facet admits two verbs. `vault.consolidation.strength.observations.page`
-    /// takes its usual request. `vault.derive.commit` takes the batch itself,
-    /// `{"items": [...], "sources": [...]}`, Archive items only: the binding
-    /// is the live run, so no `live_run` attachment wraps it.
+    /// Strength admits its observations page and Archive commits. Conflict
+    /// settlement admits its conflicts page, typed verdicts on the host's
+    /// lent ladder and Settle commits. A commit takes the batch itself,
+    /// `{"items": [...], "sources": [...]}`: the binding is the live run,
+    /// so no `live_run` attachment wraps it.
     ///
     /// # Errors
     ///
-    /// `FORBIDDEN` for another verb or a non-Archive item; the binding's
-    /// refusals ([`Vault::bind_dreamer_attempt`](crate::Vault::bind_dreamer_attempt));
+    /// `FORBIDDEN` for another verb or item kind; the binding's refusals
+    /// ([`Vault::bind_dreamer_attempt`](crate::Vault::bind_dreamer_attempt));
     /// a bad request for input the verb does not decode; the verb's own errors.
     pub fn invoke(
         &self,
@@ -39,8 +44,17 @@ impl DreamerAttemptBinding {
         input: Value,
         invocation: Option<InvocationId>,
     ) -> MemoryResult<Value> {
-        if verb != STRENGTH_PAGE_VERB && verb != DERIVE_COMMIT_VERB {
-            return Err(facet_refused());
+        let admitted = match self.facet {
+            BoundFacet::Strength => matches!(verb, STRENGTH_PAGE_VERB | DERIVE_COMMIT_VERB),
+            BoundFacet::ConflictSettle => {
+                matches!(
+                    verb,
+                    CONFLICTS_PAGE_VERB | AI_VERDICT_VERB | DERIVE_COMMIT_VERB
+                )
+            }
+        };
+        if !admitted {
+            return Err(facet_refused(self.facet));
         }
         self.check()?;
         let memory = self
@@ -50,29 +64,52 @@ impl DreamerAttemptBinding {
             Some(invocation) => memory.with_invocation(invocation),
             None => memory,
         };
-        if verb == STRENGTH_PAGE_VERB {
-            let input: StrengthObservationsPageRequest = decode(verb, input)?;
-            encode(&typed_row(&memory, &VERB_TABLE, verb, input, |input| {
-                crate::snapshot_read::strength_observations_page_bound(&memory, &input, self)
-            })?)
-        } else {
-            let input: DeriveCommitInput = decode(verb, input)?;
-            encode(&typed_row_validated(
-                &memory,
-                &VERB_TABLE,
-                verb,
-                input,
-                validate_strength_commit,
-                |input| self.commit(input),
-            )?)
+        match verb {
+            STRENGTH_PAGE_VERB => {
+                let input: StrengthObservationsPageRequest = decode(verb, input)?;
+                encode(&typed_row(&memory, &VERB_TABLE, verb, input, |input| {
+                    crate::snapshot_read::strength_observations_page_bound(&memory, &input, self)
+                })?)
+            }
+            CONFLICTS_PAGE_VERB => {
+                let input: ConflictsPageRequest = decode(verb, input)?;
+                encode(&typed_row(&memory, &VERB_TABLE, verb, input, |input| {
+                    crate::snapshot_read::conflicts_page_bound(&memory, &input, self)
+                })?)
+            }
+            AI_VERDICT_VERB => {
+                let input: AiVerdictRequest = decode(verb, input)?;
+                encode(&typed_row(&memory, &VERB_TABLE, verb, input, |input| {
+                    self.verdict(input)
+                })?)
+            }
+            _ => {
+                let input: DeriveCommitInput = decode(verb, input)?;
+                let validate = match self.facet {
+                    BoundFacet::Strength => validate_strength_commit,
+                    BoundFacet::ConflictSettle => validate_conflict_settle_commit,
+                };
+                encode(&typed_row_validated(
+                    &memory,
+                    &VERB_TABLE,
+                    verb,
+                    input,
+                    validate,
+                    |input| self.commit(input),
+                )?)
+            }
         }
     }
 }
 
-/// The check a hook's rewrite of a bound commit must pass: the batch itself,
-/// Archive items only.
+/// The check a hook's rewrite of a strength commit must pass.
 fn validate_strength_commit(verb: &str, value: &Value) -> MemoryResult<()> {
-    strength_batch(decode(verb, value.clone())?).map(drop)
+    facet_batch(decode(verb, value.clone())?, BoundFacet::Strength).map(drop)
+}
+
+/// The check a hook's rewrite of a conflict-settlement commit must pass.
+fn validate_conflict_settle_commit(verb: &str, value: &Value) -> MemoryResult<()> {
+    facet_batch(decode(verb, value.clone())?, BoundFacet::ConflictSettle).map(drop)
 }
 
 fn decode<T: DeserializeOwned>(verb: &str, value: Value) -> MemoryResult<T> {

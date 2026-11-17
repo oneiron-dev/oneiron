@@ -80,7 +80,7 @@ mod running_buckets;
 mod scope_summary_attempt;
 pub mod selection;
 pub(crate) mod setting_keys;
-mod settle;
+pub(crate) mod settle;
 mod sieve_attempt;
 mod sieve_decisions;
 mod sieve_ports;
