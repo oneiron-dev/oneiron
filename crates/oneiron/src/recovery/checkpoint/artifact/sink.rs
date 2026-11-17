@@ -57,7 +57,7 @@ impl Sealer<'_> {
         };
         let envelope = seal(
             &params,
-            SealKey::SymmetricKek(&self.key.kek),
+            SealKey::SymmetricKek(&self.key.current.kek),
             &compressed,
             &mut SysRng,
         )
@@ -67,6 +67,7 @@ impl Sealer<'_> {
 
     pub(super) fn open(&self, stream: u32, index: u32, envelope: &[u8]) -> Result<Vec<u8>> {
         let recipient = self.recipient(stream, index);
+        let key = self.key.key_for(&self.commitment)?;
         let policy = OpenPolicy {
             purpose: self.purpose,
             vault_id: &self.key.vault_id,
@@ -80,7 +81,7 @@ impl Sealer<'_> {
         };
         let compressed = Envelope::parse(envelope)
             .map_err(|_| codec())?
-            .open(OpenKey::SymmetricKek(&self.key.kek), &policy)
+            .open(OpenKey::SymmetricKek(&key.kek), &policy)
             .map_err(|_| refused("the checkpoint does not open with this key"))?;
         zstd::bulk::decompress(&compressed, CHUNK_LEN).map_err(|_| codec())
     }

@@ -19,7 +19,9 @@ mod pad_custody;
 mod pad_objects;
 mod pad_refill;
 mod pages;
+mod predict;
 mod search;
+mod secret_same_value;
 mod work;
 pub(crate) use work::{ResidenceWorkCall, ResidenceWorkState};
 
@@ -461,6 +463,8 @@ pub(super) fn run(
             "residence.touch.part" => touch_part(server, auth, peer, request.params, touch_stage),
             "residence.promote" => promote(server, auth, peer, request.params),
             "residence.window.vv" => window_vv(server, auth, peer, request.params),
+            "residence.predict" => predict::predict(server, auth, peer, request.params),
+            "residence.predicted_set" => predict::predicted_set(server, auth, peer, request.params),
             "residence.search" => search(
                 server,
                 auth,
@@ -509,6 +513,9 @@ pub(super) fn run(
             }
             "residence.authority.checkpoint.countersign" => {
                 checkpoint_roots::countersign(server, peer, request.params)
+            }
+            "residence.secret_same_value.exchange" => {
+                secret_same_value::exchange(server, auth, peer, request.params)
             }
             "residence.machine-history" => {
                 machine_history::machine_history(server, auth, peer, request.params)
