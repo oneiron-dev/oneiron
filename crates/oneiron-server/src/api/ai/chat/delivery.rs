@@ -393,7 +393,13 @@ pub(in crate::api::ai::chat) async fn produce(producer: Producer) -> Result<(), 
             // spent it whether or not the answer is saved. It asserts the
             // records this host gathered, never the ones it came with.
             let event = assertions.stamp(event);
-            model_call.record(&vault, &credential, container, &event);
+            model_call.record(
+                &vault,
+                &credential,
+                container,
+                handle.recorded_message_id(),
+                &event,
+            );
             if let Err(error) = bus.publish(event) {
                 if credential.live() {
                     cancel(StreamCancelReason::AgentAborted);

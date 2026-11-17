@@ -11,6 +11,7 @@ use owner_archive_restore::OwnerRestore;
 pub(crate) use owner_archive_restore::{
     OwnerArchiveRestorePermit, owner_restore_group_head_in_txn, owner_restore_groups_in_txn,
     owner_restore_members_in_txn, owner_restore_opened_claim_in_txn, owner_restore_receipt_in_txn,
+    record_deferred_hook_grant_in_txn, take_deferred_hook_grants_in_txn,
 };
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -324,6 +325,9 @@ impl Vault {
         };
         let actor = owner_actor.as_ref().or(actor);
         let receipt_ref = permit.as_ref().map(OwnerArchiveRestorePermit::receipt_ref);
+        let restore_receipt_hex = receipt_ref
+            .as_deref()
+            .map(|receipt| receipt.strip_prefix("gate:").unwrap_or(receipt));
         let source_vault = archive.manifest.source_vault.vault_id.clone();
         let owner_restore = owner_actor
             .zip(receipt_ref.as_deref())
@@ -722,6 +726,7 @@ impl Vault {
         // their restored `supersedes` chain, so it lands after the plain
         // links too (WHOLE-VAULT-IMPORT-REFUSES-RESERVED-OWNER-EDGES).
         let mut skipped_unproven_regenerates_edges = 0;
+        let mut unrestored_identity_topology_shells = BTreeSet::new();
         for pass in [
             ArchiveEdgePass::Plain,
             ArchiveEdgePass::ConversationDag,
@@ -756,8 +761,12 @@ impl Vault {
                 }
                 let landed =
                     import_edge_with_seeds(self, &mut wtxn, &edge, &archive.index, Some(&seeds))?;
-                if landed == EdgeImport::UnprovenRegenerates {
-                    skipped_unproven_regenerates_edges += 1;
+                match landed {
+                    EdgeImport::Landed => {}
+                    EdgeImport::UnprovenRegenerates => skipped_unproven_regenerates_edges += 1,
+                    EdgeImport::IdentityTopologyLeftOut => {
+                        unrestored_identity_topology_shells.insert(parse_id(&edge.source)?);
+                    }
                 }
             }
         }
@@ -805,6 +814,7 @@ impl Vault {
                 &mut wtxn,
                 &archive,
                 permit.as_ref(),
+                restore_receipt_hex,
                 &mut side_refresh,
             )?;
         // OF-013: each lineage's floor rises to the archive's and never falls.
@@ -848,6 +858,7 @@ impl Vault {
             unchanged_secrets,
             skipped_revoked_secrets,
             skipped_unproven_regenerates_edges,
+            unrestored_identity_topology_shells: unrestored_identity_topology_shells.len(),
             missing_secrets,
             owed_secrets,
             embedding_setup,
@@ -2099,6 +2110,10 @@ pub(super) enum EdgeImport {
     /// An archived `regenerates` link its restored pair does not prove,
     /// left out (FIX 5972); the import's last edge pass counts it (FIX 6206).
     UnprovenRegenerates,
+    /// An archived `merged_into` or `split_into` link this vault does not
+    /// hold, left out: the type-76 events such a link follows stay archive
+    /// data (OWNEDGES-SHELL-RESTORE = A); the edge passes count its source.
+    IdentityTopologyLeftOut,
 }
 
 /// Writes one archived edge; `inserted` names the rows this import put in or
@@ -2124,6 +2139,21 @@ fn import_edge_with_seeds(
     let source = parse_id(&edge.source)?;
     let target = parse_id(&edge.target)?;
     let kind = EdgeKind::try_from_u8(edge.kind).ok_or_else(|| invalid("unknown edge kind"))?;
+    // OWNEDGES-SHELL-RESTORE = A: a merged_into or split_into link moves only
+    // with a validated type-76 event (ARCH-0055), and the archived events
+    // stay archive data (`LocalHistoryNotRestored`), so the link stays out
+    // and its merged or split row is back here as a separate row. A link this
+    // vault's own events already drew is left as it is.
+    if matches!(kind, EdgeKind::MergedInto | EdgeKind::SplitInto) {
+        let held =
+            crate::ports::EdgeStoreRead::port_edge_get(&vault.store, wtxn, &source, kind, &target)?
+                .is_some();
+        return Ok(if held {
+            EdgeImport::Landed
+        } else {
+            EdgeImport::IdentityTopologyLeftOut
+        });
+    }
     if let Some(existing) =
         crate::ports::EdgeStoreRead::port_edge_get(&vault.store, wtxn, &source, kind, &target)?
     {

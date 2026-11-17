@@ -91,6 +91,8 @@ pub(crate) use super::shared_admin_doors::*;
 pub(crate) use super::shared_member_doors::*;
 // The shared-act policy doors (DOOR-129) too.
 pub(crate) use super::shared_policy_doors::*;
+// The owner's role-training prepare door (ROLE-TRAINING-RUN) too.
+pub(crate) use super::training_run_doors::*;
 // The trusted-contact doors (DOOR-140, OF-527) too.
 pub(crate) use super::trusted_contact_doors::*;
 // The voice-bank doors (DOOR-143, FIX 4393) too.
@@ -122,6 +124,7 @@ pub(crate) use super::model_step_doors::*;
 pub(crate) use super::model_stream_doors::*;
 pub(crate) use super::non_base_world_claim_fraction_doors::*;
 pub(crate) use super::outbox_diverged_doors::*;
+pub(crate) use super::sandbox_provider_doors::*;
 pub(crate) use super::snapshot_read_settings_doors::*;
 pub(crate) use super::web_connector_doors::*;
 // The owner's committed-run reads (DOOR-141 A/B), likewise.

@@ -18,6 +18,7 @@ pub use defaults::{
     PurposeDefaultSubmitter, purpose_default_grant_target,
 };
 mod inference_admission;
+mod quota_delegate;
 mod tagger_admission;
 pub use inference_admission::admitted_as;
 pub use tagger_admission::{TaggerCall, TaggerCallContext, TaggerEgressPredicate};
@@ -57,6 +58,12 @@ pub mod score_scraper;
 pub mod seat;
 mod step;
 pub use step::public as model_step;
+#[cfg(oneiron_test_support)]
+pub(crate) use step::step_state_present_for_attempt;
+pub(crate) use step::{
+    bind_step_input_versions, request_hash_step_receipt_in_txn, request_hash_submit_receipt,
+};
+
 pub mod tagger;
 
 pub use step::{

@@ -187,7 +187,7 @@ pub(crate) use self::attempt_delete_receipts::{
 pub(crate) use self::codec_receipts::{cleanup_digests_in_txn, cleanup_receipts};
 pub(crate) use self::erase::{erase_attempt_references_in_txn, erase_in_txn};
 pub(crate) use self::proposals_archive::cleanup_proposals_in_txn;
-pub(crate) use self::tripwire::zero_live_members_in_txn;
+pub(crate) use self::tripwire::{person_mint_unclaimed_in_txn, zero_live_members_in_txn};
 pub(crate) use visibility::is_archived_in_txn;
 
 use self::cleanup_types::{
@@ -205,8 +205,6 @@ use self::tripwire::{
     CLEANUP_CHECKS, apply_archives_in_txn, cleanup_posture_in_txn, run_cleanup_candidates_in_txn,
 };
 
-// FIX [LIBTEST-QUARANTINE-VAULT-CLEANUP-QODO-TESTS]: the lib test target's type check fails here (1 errors: E0639 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod qodo_tests;
 #[cfg(test)]
@@ -236,8 +234,6 @@ use crate::vault::LiveEntityRow;
 #[cfg(test)]
 use uuid::Uuid;
 
-// FIX [LIBTEST-QUARANTINE-VAULT-CLEANUP-RETENTION-TESTS]: the lib test target's type check fails here (1 errors: E0639 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod retention_tests;
 

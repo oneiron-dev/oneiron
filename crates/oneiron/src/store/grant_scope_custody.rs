@@ -13,6 +13,7 @@
 //! between the two hosts, outside every signed record.
 
 use heed::{RoTxn, RwTxn};
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
 use zeroize::Zeroizing;
 
 use crate::entity_id::EntityId;
@@ -23,15 +24,20 @@ use crate::store::key_custody::{
     put_erasable_ref_in_txn, retirement_in_txn, stage_erasable_retirement_in_txn,
 };
 
-/// The context a pact id and epoch derive a key incarnation under.
-const GRANT_INCARNATION_CONTEXT: &str = "oneiron/grant-scope/erasable-incarnation/v1";
-
-/// The incarnation of the key that keys pact `pact_id` at `epoch`.
+/// The incarnation of the key that keys pact `pact_id` at `epoch`
+/// (`purposes::store::GRANT_INCARNATION`).
 fn incarnation(pact_id: &[u8; 32], epoch: u64) -> [u8; 32] {
-    let mut material = [0u8; 40];
-    material[..32].copy_from_slice(pact_id);
-    material[32..].copy_from_slice(&epoch.to_be_bytes());
-    blake3::derive_key(GRANT_INCARNATION_CONTEXT, &material)
+    LegacyDigest::new(purposes::store::GRANT_INCARNATION)
+        .raw(pact_id)
+        .raw(&epoch.to_be_bytes())
+        .finish()
+}
+
+/// [`incarnation`] for the K door
+/// (`test_doors::fingerprint_keep_store_digests`). Not API.
+#[cfg(oneiron_test_support)]
+pub(crate) fn incarnation_for_test(pact_id: &[u8; 32], epoch: u64) -> [u8; 32] {
+    incarnation(pact_id, epoch)
 }
 
 fn unknown_key() -> Error {
