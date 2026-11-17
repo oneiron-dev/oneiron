@@ -461,3 +461,32 @@ pub struct DiaryReaderList {
     pub diary: Vec<DiaryReader>,
     pub sealed_pads: Vec<SealedPadReader>,
 }
+
+impl Vault {
+    /// Files a pending review of `reader`'s read of `agent`'s diary, stating
+    /// `reason`, as a person's read of a diary whose agent reviews files one
+    /// (the door of `tests/resident_busy_wakes.rs`). Returns its request.
+    #[cfg(oneiron_test_support)]
+    pub(crate) fn file_pending_diary_review(
+        &self,
+        agent: EntityId,
+        reader: EntityId,
+        reason: &str,
+    ) -> Result<EntityId> {
+        self.with_write_txn_grouped(|txn| {
+            let row = DiaryReadRequest {
+                request: self.store.clock.entity_id()?,
+                reader,
+                reader_class: crate::EdgeActorClass::Human.gate_actor_class().to_owned(),
+                reason: reason.to_owned(),
+                asked_at: self.store.clock.now_recorded_at(),
+                state: DiaryReviewState::Pending,
+                answered_at: None,
+                read: None,
+                ruled_reader: None,
+            };
+            DIARY_READ_REQUEST.put(&self.store, txn, &(agent, row.request), &row)?;
+            Ok(row.request)
+        })
+    }
+}

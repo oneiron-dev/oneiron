@@ -63,6 +63,11 @@ pub const DREAMER_CLAIM: &[u8] = b"oneiron:dreamer-claim-id:v1";
 /// name's byte range in it (empty, or `0x01`, start and end as u64 big-endian).
 pub const DREAMER_PERSON: &[u8] = b"oneiron:dreamer-person:v1";
 
+/// A PERSON a derivation batch's Person item mints (`derive::person`, untangle
+/// 6.9h). Parts: the first try of the committing attempt's retry lineage, the
+/// normalized name, then the smallest TURN that names it.
+pub const DERIVE_PERSON: &[u8] = b"oneiron:derive-person:v1";
+
 /// A project's home room (`workspace_roster::project`). Parts: project.
 pub const PROJECT_HOME_ROOM: &[u8] = b"project.home_room.v1/";
 
@@ -571,4 +576,5 @@ pub(crate) const ALL: [&[u8]; 74] = [
     ESIGN_DOCUMENT_COMMITMENT,
     RESIDENT_MESSAGE_ASK,
     COMMITMENT_LAPSE_ACTOR,
+    DERIVE_PERSON,
 ];

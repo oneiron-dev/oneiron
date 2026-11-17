@@ -1,6 +1,12 @@
 //! Claims are the document state machine. The audit copy survives document deletion.
-use super::field_admission::InspectedPages;
+use super::field_admission::{InspectedPages, inspect_draft_pages};
 use super::model::*;
+use crate::batch::export::ArchiveRetainedSideRow;
+use crate::batch::export::OwnerArchiveRestorePermit;
+use crate::batch::export::RetainedSideHeldBackReason;
+use crate::batch::export::archive_side_install::{
+    ArchivedSideRowOutcome, decode_archived_row, install_archived_row,
+};
 use crate::ports::EntityStoreRead;
 use crate::registry::ENTITY_TYPE_FACET;
 use crate::side_table::{self, LegacyJson, SideTable};
@@ -345,15 +351,7 @@ pub(super) fn append_inspected(
     // The commitments the draft names move with the event that lands here:
     // born inert with the draft, opened by `esign.completed`, released by a
     // decline, void or expiry (ARCH-0064 §3).
-    super::commitments::apply_in(
-        vault,
-        txn,
-        document,
-        &state.document,
-        &row.event,
-        claim,
-        now,
-    )?;
+    super::commitments::apply_in(vault, txn, document, &state.document, &row, claim, now)?;
     Ok(state)
 }
 
@@ -373,7 +371,9 @@ fn is_live_owner(vault: &Vault, txn: &heed::RoTxn<'_>, actor: &str) -> Result<bo
 
 /// [`Vault::create_esign_document`]'s draft under `txn`, its document already
 /// validated: the overlay is new, a project's membership holds, each item's
-/// PDF is at its pinned version, and the draft lands, stamped to its project.
+/// PDF is at its pinned version, and the draft lands, stamped to its
+/// project. Its fields are laid out on `inspected`, each item's pages as
+/// they were inspected before this writer.
 pub(super) fn create_document_in(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -381,6 +381,7 @@ pub(super) fn create_document_in(
     body: &EsignDocument,
     actor: EsignAuditActor,
     now: u64,
+    inspected: &InspectedPages,
 ) -> Result<()> {
     if !events_in(vault, txn, document)?.is_empty() {
         return Err(invalid("document already exists"));
@@ -413,7 +414,7 @@ pub(super) fn create_document_in(
             return Err(invalid("signing item is not a PDF"));
         }
     }
-    append(
+    append_inspected(
         vault,
         txn,
         document,
@@ -422,6 +423,7 @@ pub(super) fn create_document_in(
         },
         actor,
         now,
+        inspected,
     )?;
     if let Some(project) = body.project {
         vault
@@ -438,7 +440,9 @@ impl Vault {
     /// A document for a project needs the project live and, under
     /// [`PROJECT_MEMBERS_ONLY`], `actor` among its members or a live vault
     /// owner. The overlay artifact and every event of its trail are then
-    /// scoped to that project's audience.
+    /// scoped to that project's audience. A field that names a page its
+    /// item's PDF does not have is refused; each item's pages are inspected
+    /// before the writer, as for a field save.
     pub fn create_esign_document(
         &self,
         document: EntityId,
@@ -447,7 +451,10 @@ impl Vault {
         now: u64,
     ) -> Result<()> {
         validate_document(body, now)?;
-        self.with_write_txn_grouped(|txn| create_document_in(self, txn, document, body, actor, now))
+        let inspected = inspect_draft_pages(self, body, now);
+        self.with_write_txn_grouped(|txn| {
+            create_document_in(self, txn, document, body, actor, now, &inspected)
+        })
     }
     pub fn esign_document(&self, document: EntityId) -> Result<EsignState> {
         let txn = self.store.env.read_txn()?;
@@ -496,4 +503,118 @@ pub(crate) fn reject_event_delete(
         return Err(Error::InvalidClaimBody("esign events are append-only"));
     }
     Ok(())
+}
+
+/// One staged source audit row awaiting its document's merged-chain preflight.
+struct StagedEsignAuditRow {
+    index: usize,
+    key: (EntityId, u64),
+    row: EsignEventRow,
+}
+
+/// Lands the owner's archived `ESIGN_AUDIT` envelopes in input order: pure value checks run
+/// before collision disposition (C2), and each document's merged audit chain validates with the
+/// ledger's pure checks before any put lands it.
+pub(super) fn land_archived_esign_rows_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    permit: &OwnerArchiveRestorePermit,
+    rows: &[ArchiveRetainedSideRow],
+) -> Result<Vec<ArchivedSideRowOutcome>> {
+    use RetainedSideHeldBackReason::{InconsistentCompanion, InvalidEncoding, InvalidValue};
+
+    let mut outcomes: Vec<Option<ArchivedSideRowOutcome>> = Vec::with_capacity(rows.len());
+    let mut staged: Vec<StagedEsignAuditRow> = Vec::new();
+    for row in rows {
+        let index = outcomes.len();
+        outcomes.push(None);
+        let (key, value) = match decode_archived_row(&AUDIT, row) {
+            Ok(decoded) => decoded,
+            Err(reason) => {
+                outcomes[index] = Some(ArchivedSideRowOutcome::HeldBack(reason));
+                continue;
+            }
+        };
+        if key.1 != value.sequence {
+            outcomes[index] = Some(ArchivedSideRowOutcome::HeldBack(InvalidEncoding));
+            continue;
+        }
+        if value.actor.actor.is_empty() || value.actor.ip.as_ref().is_some_and(|ip| ip.len() > 256)
+        {
+            outcomes[index] = Some(ArchivedSideRowOutcome::HeldBack(InvalidValue));
+            continue;
+        }
+        if let EsignEvent::Drafted { document } = &value.event
+            && validate_document(document, value.at).is_err()
+        {
+            outcomes[index] = Some(ArchivedSideRowOutcome::HeldBack(InvalidValue));
+            continue;
+        }
+        staged.push(StagedEsignAuditRow {
+            index,
+            key,
+            row: value,
+        });
+    }
+    staged.sort_by_key(|staged| (staged.key.0, staged.key.1));
+    let mut cursor = 0;
+    while cursor < staged.len() {
+        let document = staged[cursor].key.0;
+        let mut end = cursor;
+        while end < staged.len() && staged[end].key.0 == document {
+            end += 1;
+        }
+        if merged_audit_chain_invalid_in_txn(vault, txn, document, &staged[cursor..end])? {
+            for staged in &staged[cursor..end] {
+                outcomes[staged.index] =
+                    Some(ArchivedSideRowOutcome::HeldBack(InconsistentCompanion));
+            }
+        }
+        cursor = end;
+    }
+    staged.sort_by_key(|staged| staged.index);
+    for staged in &staged {
+        if outcomes[staged.index].is_none() {
+            outcomes[staged.index] = Some(install_archived_row(
+                &AUDIT,
+                vault,
+                txn,
+                permit,
+                &staged.key,
+                &rows[staged.index],
+            )?);
+        }
+    }
+    Ok(outcomes
+        .into_iter()
+        .map(|outcome| outcome.expect("every archived esign row has an outcome"))
+        .collect())
+}
+
+/// Whether `document`'s merged audit chain (live rows plus `staged` source rows) does not read
+/// as one hash-linked, clock-ordered chain that folds from its draft.
+fn merged_audit_chain_invalid_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    document: EntityId,
+    staged: &[StagedEsignAuditRow],
+) -> Result<bool> {
+    let mut chain = BTreeMap::new();
+    for row in AUDIT.iter_from(&vault.store, txn, document.as_bytes())? {
+        let ((live_document, sequence), event) = row?;
+        if live_document != document {
+            continue;
+        }
+        chain.insert(sequence, event);
+    }
+    for staged in staged {
+        chain
+            .entry(staged.key.1)
+            .or_insert_with(|| staged.row.clone());
+    }
+    let linked_rows = match linked(chain) {
+        Ok(rows) => rows,
+        Err(_) => return Ok(true),
+    };
+    Ok(fold(&linked_rows).is_err())
 }
