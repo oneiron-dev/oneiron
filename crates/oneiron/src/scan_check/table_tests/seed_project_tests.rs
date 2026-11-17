@@ -341,6 +341,195 @@ fn resident_binding(
     (auth, spec)
 }
 
+fn sign_scan_project(
+    project: EntityId,
+    row: &mut crate::workspace_roster::ProjectRecord,
+    issuer: &crate::authority::HostSlipIssuer,
+    slip: &crate::authority::CapabilitySlip,
+    anchor: Vec<crate::workspace_roster::project::ProjectAnchorLink>,
+) -> Result<()> {
+    use crate::workspace_roster::project::{ProjectProofVersion, ProjectWriteProof};
+    let version = ProjectProofVersion::V3;
+    let signed_at = slip.claims.issued_at;
+    let challenge = row
+        .authority_at(version)
+        .write_challenge(project, version, signed_at, &anchor)?;
+    row.write_proof = Some(ProjectWriteProof {
+        slip_wire: slip.to_token()?,
+        holder_signature: issuer.binding_proof(slip, &challenge)?,
+        signed_at,
+        anchor,
+        version,
+    });
+    Ok(())
+}
+
+fn scan_project_head(
+    project: EntityId,
+    row: &crate::workspace_roster::ProjectRecord,
+    parent: crate::workspace_roster::project::ProjectRevisionHash,
+) -> Result<crate::workspace_roster::project::ProjectRevisionHash> {
+    crate::workspace_roster::project::ProjectRevision::Signed {
+        project,
+        authority: row.authority(),
+        proof: row
+            .write_proof
+            .as_ref()
+            .expect("signed row")
+            .revision_proof(),
+        parent: Some(parent),
+    }
+    .hash()
+}
+
+/// Pins the joint-solve bound: `u64::MAX` while planting (no setup solve can
+/// park a check at another threshold), `ROW` once the cycle is closed.
+fn cycle_bind(vault: &Vault, auth: &crate::consent::AuthenticatedOwner, bound: u64) {
+    let mut policy = vault.project_history_policy().expect("policy");
+    policy.cycle_worlds_max = bound;
+    vault
+        .set_project_history_policy(auth, policy)
+        .expect("bind");
+}
+
+/// A 2-cycle planted into `vault` in one batch: A's birth plus `siblings`
+/// open board-siblings over it (depths 1..=`siblings`, each naming B), and
+/// B's birth plus S1 (depth 0) naming A back. The root is pinned to depth
+/// 10 first, so births land at 9 and every later state narrows. Births go
+/// through the live spawn door; every other row lands as engine history, so
+/// no live head rule applies. Returns the members, A first (A is the
+/// JointWork scope: `joint/mod.rs:149-150` observes `ids[0]`).
+///
+/// Member ids use 0xC0, leaders 0xC1: clear of the 0x90 project family and
+/// the 0xB0 depth keys. Panics on failure, like every helper in this file.
+fn plant_parent_cycle(vault: &Vault, siblings: usize) -> (EntityId, EntityId) {
+    use crate::workspace_roster::project::{
+        sign_project_with_for_scan_tests as sign_with,
+        spawn_signed_project_for_scan_tests as spawn_signed,
+    };
+    let owner = vault.ensure_embedded_owner_actor().expect("owner");
+    let auth = vault
+        .authenticate_owner(
+            owner,
+            &owner.to_hex(),
+            true,
+            crate::store::GateDecisionId::now(),
+        )
+        .expect("auth");
+    cycle_bind(vault, &auth, u64::MAX);
+    let root = vault.root_project().expect("root");
+    let prior = vault.project(root).expect("root row").expect("root stored");
+    let mut pinned = prior.clone();
+    pinned.depth_limit = 10;
+    pinned.depth_remaining = 10;
+    sign_with(
+        vault,
+        root,
+        &mut pinned,
+        None,
+        Some(prior.anchor().expect("root anchor")),
+        None,
+    )
+    .expect("root proof");
+    vault.put_project(root, &pinned, 1).expect("pin");
+    let (a, b) = (id(0xC0, 0), id(0xC0, 1));
+    let (lead_a, lead_b) = (id(0xC1, 0), id(0xC1, 1));
+    let row = vault
+        .project(root)
+        .expect("pinned row")
+        .expect("pinned stored");
+    let a0 = spawn_signed(
+        vault,
+        root,
+        a,
+        holder_of(&row),
+        lead_a,
+        row.slice.clone(),
+        2,
+    )
+    .expect("a birth");
+    let b0 = spawn_signed(
+        vault,
+        root,
+        b,
+        holder_of(&row),
+        lead_b,
+        row.slice.clone(),
+        3,
+    )
+    .expect("b birth");
+    let holder = holder_of(&row);
+    let mut rows: Vec<(EntityId, Vec<u8>)> = Vec::new();
+    for depth in 1..=(siblings as u64) {
+        let mut sib = a0.clone();
+        sib.parents = vec![b.to_hex()];
+        sib.depth_remaining = depth;
+        sign_with(
+            vault,
+            a,
+            &mut sib,
+            Some(holder),
+            Some(a0.anchor().expect("birth anchor")),
+            None,
+        )
+        .expect("sib proof");
+        rows.push((a, rmp_serde::to_vec_named(&sib).expect("sib bytes")));
+    }
+    let mut s1 = b0.clone();
+    s1.parents = vec![a.to_hex()];
+    s1.depth_remaining = 0;
+    sign_with(
+        vault,
+        b,
+        &mut s1,
+        Some(holder),
+        Some(b0.anchor().expect("b anchor")),
+        None,
+    )
+    .expect("s1 proof");
+    rows.push((b, rmp_serde::to_vec_named(&s1).expect("s1 bytes")));
+    let kind = vault.project_type_byte().expect("kind");
+    vault
+        .with_write_txn(|txn| {
+            let mut batch = vault.batch_in();
+            for (index, (id, bytes)) in rows.iter().enumerate() {
+                let at = 4 + index as u64;
+                batch = batch.put_engine_history(
+                    id,
+                    kind,
+                    crate::temporal::TimeRange { start: at, end: at },
+                    at,
+                    bytes,
+                );
+            }
+            batch.apply(txn)?;
+            Ok(())
+        })
+        .expect("plant");
+    cycle_bind(vault, &auth, ROW);
+    (a, b)
+}
+
+/// The root row's leader: the board seat every cycle signature uses.
+fn holder_of(row: &crate::workspace_roster::ProjectRecord) -> EntityId {
+    EntityId::from_hex(&row.leader).expect("root leader")
+}
+
+/// Both members' honest frontiers (a ParentCycle disposition still decides);
+/// the count served, twice, without refusal (rule 5).
+fn cycle_read(vault: &Vault, members: [EntityId; 2]) -> Read<'_> {
+    Box::new(move || {
+        let mut served = 0;
+        for id in members {
+            vault
+                .project_frontier(id)?
+                .ok_or(crate::Error::EntityNotFound)?;
+            served += 1;
+        }
+        Ok(served)
+    })
+}
+
 pub(super) fn seed(vault: &Vault, scan: EngineScan) -> Option<(usize, Read<'_>)> {
     match scan {
         EngineScan::ProjectTaskRows => {
@@ -464,10 +653,45 @@ pub(super) fn seed(vault: &Vault, scan: EngineScan) -> Option<(usize, Read<'_>)>
                 }),
             ))
         }
-        // NO-FIXTURE: the owner doors build on one head, so no reachable
-        // write carries three predecessors; signing one by hand needs the
-        // private contribution transcript.
-        EngineScan::ProjectDepthPredecessors => None,
+        EngineScan::ProjectDepthPredecessors => {
+            // One owner-signed edit over three heads, read back through the
+            // public put door, which counts the predecessors past the row.
+            let writer = rooted_writer(vault, 0xB0);
+            let signing = ed25519_dalek::SigningKey::from_bytes(&[0xB0; 32]);
+            let key = crate::authority::AuthorityKey::Ed25519(signing.verifying_key().to_bytes());
+            let heads = [id(0xB1, 1), id(0xB1, 2), id(0xB1, 3)];
+            let txn = vault.store.env.read_txn().expect("read");
+            let (contrib, bytes) = crate::gate::project_depth::signed_edit_for_scan_tests(
+                vault,
+                &txn,
+                id(0xB1, 0),
+                7,
+                &heads,
+                &writer,
+                key,
+                |message| {
+                    Ok(ed25519_dalek::Signer::sign(&signing, message)
+                        .to_bytes()
+                        .to_vec())
+                },
+            )
+            .expect("signed edit");
+            Some((
+                PAST,
+                Box::new(move || {
+                    let txn = vault.store.env.read_txn()?;
+                    crate::gate::project_depth::validate_contribution_put(
+                        &vault.store,
+                        &txn,
+                        contrib,
+                        &bytes,
+                        false,
+                        vault.privacy_posture(),
+                    )?;
+                    Ok(PAST)
+                }),
+            ))
+        }
         EngineScan::ProjectDepthContributionBytes => {
             // A rooted vault with no birth yet: the read stores the local
             // birth, whose bytes dwarf the row; the second read is a no-op.
@@ -662,17 +886,17 @@ pub(super) fn seed(vault: &Vault, scan: EngineScan) -> Option<(usize, Read<'_>)>
                 }),
             ))
         }
-        // NO-FIXTURE: deciding a parent cycle needs several signed projects
-        // whose parents name each other; the signing doors behind that are
-        // private test helpers, far past forty lines from here.
-        EngineScan::ProjectCycleWorlds => None,
-        // NO-FIXTURE: deciding a parent cycle needs several signed projects
-        // whose parents name each other; the signing doors behind that are
-        // private test helpers, far past forty lines from here.
+        EngineScan::ProjectCycleWorlds => {
+            // Four open board-siblings over A's birth, each naming B, and B
+            // S1 naming A back: one 2-cycle. The siblings' depths (1..=4)
+            // fold to distinct views, so A serves past the bound of two
+            // worlds; B holds one open state and stays inside every bound.
+            let (a, b) = plant_parent_cycle(vault, 4);
+            Some((2, cycle_read(vault, [a, b])))
+        }
+        // Its threshold test: crate::scan_check::table_tests::seed_project_tests::project_cycle_assignments_serves_past_its_resolved_rows.
         EngineScan::ProjectCycleAssignments => None,
-        // NO-FIXTURE: deciding a parent cycle needs several signed projects
-        // whose parents name each other; the signing doors behind that are
-        // private test helpers, far past forty lines from here.
+        // Its threshold test: crate::scan_check::table_tests::seed_project_tests::project_cycle_joint_work_serves_past_its_resolved_budget.
         EngineScan::ProjectJointWork => None,
         EngineScan::ProjectProposalEntries => {
             // Three goal axes; the board holds one human and no skill is
@@ -713,14 +937,176 @@ pub(super) fn seed(vault: &Vault, scan: EngineScan) -> Option<(usize, Read<'_>)>
                 }),
             ))
         }
-        // NO-FIXTURE: a three-deep anchor lineage needs three verified
-        // signed revisions; the slip-signing doors behind those are
-        // private test helpers, far past forty lines from here.
-        EngineScan::ProjectAnchorDepth => None,
-        // NO-FIXTURE: a three-deep revision lineage needs three signed
-        // revisions over one another; capturing those needs the same
-        // private signing doors, far past forty lines from here.
-        EngineScan::ProjectFoldDepth => None,
+        EngineScan::ProjectAnchorDepth => {
+            // An overlay-only row carries three verified links, ending at
+            // an unsigned owner-door boundary. No stored row bypasses its
+            // own anchor judgement in visible_body.
+            let root = vault.root_project().expect("root");
+            let project = id(0xd0, 0);
+            let mut row =
+                crate::workspace_roster::ProjectRecord::new(project, Some(root), root, id(0xd0, 1))
+                    .expect("project");
+            let issuer =
+                crate::authority::HostSlipIssuer::from_secret(b"scan anchor").expect("issuer");
+            let slip = vault.ensure_host_root_slip(&issuer).expect("host slip");
+            for _ in 0..PAST {
+                let anchor = row.anchor().expect("anchor");
+                row.depth_limit += 1;
+                sign_scan_project(project, &mut row, &issuer, &slip, anchor).expect("signed link");
+            }
+            let bytes = rmp_serde::to_vec_named(&row).expect("encode");
+            Some((
+                PAST,
+                Box::new(move || {
+                    let txn = vault.store.env.read_txn()?;
+                    let reader = crate::workspace_roster::project::ProjectReader::new(
+                        &vault.store,
+                        &txn,
+                        vault.privacy_posture(),
+                    )?
+                    .expect("project kind");
+                    let (row, _) = reader
+                        .visible_body(project, &bytes)?
+                        .expect("visible overlay");
+                    Ok(row.write_proof.expect("signed row").anchor.len())
+                }),
+            ))
+        }
+        EngineScan::ProjectFoldDepth => {
+            use crate::workspace_roster::project::{ProjectRevision, ProjectRevisionHash};
+            let root = vault.root_project().expect("root");
+            let project = id(0xd1, 0);
+            let mut row =
+                crate::workspace_roster::ProjectRecord::new(project, Some(root), root, id(0xd1, 1))
+                    .expect("project");
+            vault
+                .put_project(project, &row, 1)
+                .expect("unsigned boundary");
+            let issuer =
+                crate::authority::HostSlipIssuer::from_secret(b"scan fold").expect("issuer");
+            let slip = vault.ensure_host_root_slip(&issuer).expect("host slip");
+            let mut parent = ProjectRevision::Boundary {
+                project,
+                authority: row.authority(),
+            }
+            .hash()
+            .expect("boundary hash");
+            let mut least: Option<ProjectRevisionHash> = None;
+            for at in 2..6 {
+                let anchor = row.anchor().expect("anchor");
+                row.depth_limit += 1;
+                sign_scan_project(project, &mut row, &issuer, &slip, anchor)
+                    .expect("signed prefix");
+                parent = scan_project_head(project, &row, parent).expect("prefix hash");
+                least = Some(least.map_or(parent, |least| least.min(parent)));
+                vault
+                    .put_project(project, &row, at)
+                    .expect("install prefix");
+            }
+            let anchor = row.anchor().expect("anchor");
+            // read_facts judges hashes in order. Make the last head sort
+            // before every signed prefix, so memoized prefixes cannot hide
+            // the crossing. Even if the boundary sorts first and judges
+            // its first child, three uncached parent links remain.
+            loop {
+                row.depth_limit += 1;
+                sign_scan_project(project, &mut row, &issuer, &slip, anchor.clone())
+                    .expect("signed head");
+                let head = scan_project_head(project, &row, parent).expect("head hash");
+                if head < least.expect("four signed prefixes") {
+                    break;
+                }
+            }
+            let limit = row.depth_limit;
+            let served = row.write_proof.as_ref().expect("signed").anchor.len();
+            vault.put_project(project, &row, 6).expect("install head");
+            Some((
+                served,
+                Box::new(move || {
+                    let row = vault.project(project)?.expect("visible signed project");
+                    assert_eq!(row.depth_limit, limit, "the final revision is served");
+                    Ok(row.write_proof.expect("signed row").anchor.len())
+                }),
+            ))
+        }
         other => unreachable!("{} is seeded in another module", other.code()),
+    }
+}
+
+/// `project_cycle_assignments` serves past its resolved rows and raises one
+/// check at them: four open siblings over A enumerate sixteen assignments
+/// against 2 * (4 + 1) = 10. B holds one open state (two assignments against
+/// four) and raises none. Twice, without refusal (rule 5).
+#[test]
+fn project_cycle_assignments_serves_past_its_resolved_rows() {
+    let dir = tempfile::tempdir().expect("vault dir");
+    let vault = Vault::open(dir.path(), crate::VaultConfig::default()).expect("open");
+    // The lowered POLICY row: recorded for symmetry, ignored by this scan,
+    // which counts against its resolved formula.
+    vault
+        .set_scan_threshold(EngineScan::ProjectCycleAssignments, ROW)
+        .expect("row");
+    let (a, b) = plant_parent_cycle(&vault, 4);
+    let read = cycle_read(&vault, [a, b]);
+    for _ in 0..2 {
+        assert_eq!(read().expect("read"), 2);
+    }
+    let raised: Vec<_> = vault
+        .scan_checks()
+        .expect("checks")
+        .into_iter()
+        .filter(|check| check.scan == EngineScan::ProjectCycleAssignments.code())
+        .collect();
+    match raised.as_slice() {
+        [check] => {
+            assert_eq!(check.threshold, 10);
+            assert_eq!(check.scope, Some(a.to_hex()));
+            assert!(
+                check.rows >= 16,
+                "assignments served {}, not >= 16",
+                check.rows
+            );
+        }
+        _ => panic!("assignments raised {raised:?}, not one check"),
+    }
+}
+
+/// `project_joint_work` serves past its resolved budget and raises one check
+/// at it: eight open siblings over A (nine held with the birth) plus B's two
+/// held rows decide at a budget of 2 * 64 * (2 + 11) = 1664. Static lower
+/// bound, ordering-independent: the first solve folds all 256 of A's
+/// assignments, each charging `facts.held.rows.len()` = 9 (`worlds.rs:100`),
+/// so work >= 2304 > 1664 before any other charge. Twice, without refusal.
+#[test]
+fn project_cycle_joint_work_serves_past_its_resolved_budget() {
+    let dir = tempfile::tempdir().expect("vault dir");
+    let vault = Vault::open(dir.path(), crate::VaultConfig::default()).expect("open");
+    // The lowered POLICY row: recorded for symmetry, ignored by this scan,
+    // which counts against its resolved budget.
+    vault
+        .set_scan_threshold(EngineScan::ProjectJointWork, ROW)
+        .expect("row");
+    let (a, b) = plant_parent_cycle(&vault, 8);
+    let read = cycle_read(&vault, [a, b]);
+    for _ in 0..2 {
+        assert_eq!(read().expect("read"), 2);
+    }
+    let raised: Vec<_> = vault
+        .scan_checks()
+        .expect("checks")
+        .into_iter()
+        .filter(|check| check.scan == EngineScan::ProjectJointWork.code())
+        .collect();
+    match raised.as_slice() {
+        [check] => {
+            assert_eq!(check.threshold, 1664);
+            assert_eq!(check.scope, Some(a.to_hex()));
+            assert!(
+                check.rows >= 2304,
+                "joint work spent {}, not >= 2304",
+                check.rows
+            );
+        }
+        _ => panic!("joint work raised {raised:?}, not one check"),
     }
 }

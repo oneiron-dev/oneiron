@@ -45055,7 +45055,7 @@
      "path": "src/gate/project_depth/mod.rs",
      "purpose": "Immutable project-scoped policy-manifest contributions",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -45075,7 +45075,7 @@
      "path": "src/gate/project_depth/write.rs",
      "purpose": "Transaction-bound project-policy birth and owner edit doors",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "fn": 1
      }
     },
@@ -61292,7 +61292,7 @@
      "path": "src/origin/document_ingress.rs",
      "purpose": "Crash-idempotent push-to-document lowering under the origin single-writer lock",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "fn": 2,
       "re-export": 1
      }
@@ -61637,7 +61637,7 @@
      "path": "src/origin/mod.rs",
      "purpose": "Vault-as-origin serving plane (ARCH-0068 Phase A)",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 16,
       "mod": 18,
       "re-export": 5
      }
@@ -72531,7 +72531,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/scan_check/table_tests/seed_project_tests.rs",
@@ -101941,7 +101941,7 @@
      "purpose": "Project responsibility records and their derived home-room membership",
      "surface": {
       "const": 1,
-      "crate-vis": 53,
+      "crate-vis": 54,
       "enum": 2,
       "fn": 20,
       "re-export": 20,
@@ -102158,7 +102158,7 @@
      "path": "src/workspace_roster/project/tests.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 4
      }
     },
     {
