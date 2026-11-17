@@ -871,7 +871,8 @@ impl SystemOneRung {
             (None, None) => anyhow::bail!("it names no key_env or key_secret"),
         }
         .and_then(|seat| seat.at_rung(rung))
-        .map_err(|error| anyhow::anyhow!("invalid System One seat: {error}"))?;
+        .map_err(|error| anyhow::anyhow!("invalid System One seat: {error}"))?
+        .with_native_budget(settings.native_budget);
         let (label, meter) = if rung == DecisionRung::Precision {
             ("precision", "precision")
         } else {
