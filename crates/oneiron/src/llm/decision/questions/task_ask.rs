@@ -212,7 +212,7 @@ pub(crate) fn validate_task_answer_unit(
     for party in [principal, holder] {
         // Each party reads with its live class, so a read row that names
         // it ({actor_class: "agent", actor_ref: <agent>}) admits it here.
-        let reader = super::graph_ask::party_read_key_in_txn(vault, txn, party)?;
+        let reader = super::graph_ask::party_read_key_in_txn(&vault.store, txn, party)?;
         if !arrival::readable(&vault.store, txn, &policy, &reader, &unit)?
             && !own_authority_readable_in_txn(vault, txn, &policy, party, &reader, &unit)?
         {
