@@ -47,15 +47,18 @@ use oneiron::test_doors::coach::{define_agent, write_root_goal};
 use oneiron::test_doors::derive::grant_core_read_of_kinds;
 use oneiron::test_doors::steward::{open_owner_carrier_vault, owner};
 use oneiron::verbs::{
-    AgentGrantMintRequest, RecordEraseConfirmRequest, RecordEraseRequest, confirm_record_erase,
-    mint_agent_grant_as, preview_record_erase,
+    AgentGrantMintRequest, OwnerConfirmPreviewRequest, RecordEraseConfirmRequest,
+    confirm_record_erase, mint_agent_grant_as, preview_owner_confirm,
 };
 use oneiron::{EdgeActorClass, EntityId, TimeRange, Vault};
 use serde_json::{Value, json};
 
 const PROPOSE: &str = "vault.records.erase_propose";
-/// The tap a personal vault's erase ask offers its owner.
-const PREVIEW: &str = "vault.records.erase_preview";
+/// The tap a personal vault's erase ask offers its owner: the one-way
+/// confirm preview of the owner's own erase.
+const PREVIEW: &str = "vault.owner_confirm.preview";
+/// The owner's erase the preview shows, and its confirm then calls.
+const ERASE_CONFIRM: &str = "vault.records.erase_confirm";
 /// The inbox producer of a personal vault's agent erase ask.
 const PERSONAL_PRODUCER: &str = "vault.erase_proposal";
 const SHARED: u64 = 42;
@@ -423,20 +426,28 @@ fn the_owners_ask_offers_the_erase_preview_until_the_record_is_erased() {
     let offered = taps();
     assert_eq!(
         offered,
-        vec![json!([{ "verb": PREVIEW, "args": { "record": fx.project.to_hex() } }])],
+        vec![json!([{
+            "verb": PREVIEW,
+            "args": { "verb": ERASE_CONFIRM, "input": { "record": fx.project.to_hex() } },
+        }])],
         "the owner's ask offers the record's erase preview"
     );
-    let input: RecordEraseRequest = serde_json::from_value(offered[0][0]["args"].clone())
+    let input: OwnerConfirmPreviewRequest = serde_json::from_value(offered[0][0]["args"].clone())
         .expect("the tap's args are the preview verb's own input");
-    let shown = preview_record_erase(&owner, input).expect("the owner previews the erase");
+    let shown = preview_owner_confirm(&owner, &fx.owner_proof, input)
+        .expect("the owner previews the erase");
+    assert_eq!(shown.verb, ERASE_CONFIRM, "the preview of the erase");
     assert_eq!(
-        shown.record,
-        fx.project.to_hex(),
+        shown
+            .takes
+            .as_ref()
+            .and_then(|takes| takes["record"].as_str()),
+        Some(fx.project.to_hex().as_str()),
         "of the record the agent named"
     );
     let confirm: RecordEraseConfirmRequest = serde_json::from_value(json!({
         "record": fx.project.to_hex(),
-        "preview_digest": shown.preview_digest,
+        "confirm": shown.confirm,
     }))
     .expect("the confirm input");
     confirm_record_erase(&owner, &fx.owner_proof, confirm)

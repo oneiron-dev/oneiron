@@ -191,6 +191,7 @@ impl Fixture {
                     constraint: None,
                     lease: HoldLeaseSpec::Ordinary,
                     idempotency_key: None,
+                    cap_override: None,
                 }),
                 NOW,
             )
@@ -319,6 +320,7 @@ fn fixture_config() -> EventTypeConfig {
         }],
         flex_with_ordinary: false,
         flex_windows: Vec::new(),
+        deposit: None,
     }
 }
 
