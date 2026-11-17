@@ -208,6 +208,9 @@ pub(crate) use self::facade::{
     ai_video_as_owner, ai_video_cancel_as_owner, ai_video_cancel_for_run, ai_video_for_agent_run,
     ai_video_for_run, ai_video_poll_as_owner, ai_video_poll_for_run, vault_hooks_replay_as_owner,
 };
+// STEP-PARK-BOOT-RESUME: the owner's model steps parked before a restart
+// resume when serve starts.
+pub(crate) use self::facade::resume_parked_model_steps;
 pub(crate) use owner_routes::managed_owner_proof;
 mod packs;
 mod params;
@@ -281,6 +284,12 @@ pub(crate) use self::mcp_gateway::count_parse_error_for_test;
 pub(crate) use self::mcp_gateway::{
     MCP_PROTOCOL_VERSION, McpBoardOmissions, mcp_admit_scoped_call, resolve_mcp_gateway_actor,
 };
+// The integration tests' door to the code-mode host-verb gates (DESKTOP-CODE-MODE-REFUSALS).
+#[cfg(oneiron_test_support)]
+pub(crate) use self::mcp_gateway::{McpCodeModeVerbs, mcp_admit_host_verb, mcp_host_verb_gate};
+// The `#[cfg(test)]` list above names it too; one import per build.
+#[cfg(all(oneiron_test_support, not(test)))]
+pub(crate) use self::mcp_gateway::resolve_mcp_gateway_actor;
 pub(crate) use self::mcp_gateway::{
     McpCallContext, McpCodeRunContinuations, ReaderChildDoor, RunGuests, VerdictAsker,
     WorkflowPreflight, deliver_run_board_hooks, drop_run_board, execute_run_board_verb,

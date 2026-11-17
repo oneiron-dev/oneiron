@@ -418,8 +418,7 @@ impl Vault {
                 thread_id,
                 &task_id,
                 &brief_ref,
-                thread.anchor.version,
-                &thread.anchor.locator,
+                &thread.anchor,
                 assignee.as_ref(),
                 &thread_text,
             );

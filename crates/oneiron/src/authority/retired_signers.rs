@@ -118,7 +118,7 @@ impl Fence {
         row: &AuthorityEntryHash,
         states: &BTreeMap<AuthorityEntryHash, FoldState>,
         entries: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
-        ancestors: &BTreeMap<AuthorityEntryHash, BTreeSet<AuthorityEntryHash>>,
+        ancestors: &AncestorIndex,
     ) -> Self {
         let entry = &entries[row];
         let (kind, keys) = match &entry.op {
@@ -141,7 +141,10 @@ impl Fence {
                 (FenceKind::Handoff, keys)
             }
         };
-        let mut line = ancestors.get(row).cloned().unwrap_or_default();
+        let mut line = ancestors
+            .get(row)
+            .map(|past| past.to_set())
+            .unwrap_or_default();
         line.insert(*row);
         Self {
             row: *row,
@@ -176,12 +179,12 @@ impl Fence {
         &self,
         hash: &AuthorityEntryHash,
         entries: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
-        ancestors: &BTreeMap<AuthorityEntryHash, BTreeSet<AuthorityEntryHash>>,
+        ancestors: &AncestorIndex,
         anchored: &BTreeSet<AuthorityEntryHash>,
     ) -> bool {
         self.signed_outside(hash, entries, anchored)
             || ancestors.get(hash).is_some_and(|past| {
-                past.iter()
+                past.iter_unordered()
                     .any(|a| self.signed_outside(a, entries, anchored))
             })
     }
@@ -215,7 +218,7 @@ impl Retirements {
         hash: &AuthorityEntryHash,
         issue: &AuthorityFoldIssue,
         entries: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
-        ancestors: &BTreeMap<AuthorityEntryHash, BTreeSet<AuthorityEntryHash>>,
+        ancestors: &AncestorIndex,
     ) -> AuthorityFoldIssue {
         let appointments = || {
             self.fences
@@ -277,7 +280,7 @@ impl Retirements {
         &self,
         hash: &AuthorityEntryHash,
         entries: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
-        ancestors: &BTreeMap<AuthorityEntryHash, BTreeSet<AuthorityEntryHash>>,
+        ancestors: &AncestorIndex,
         routed: &BTreeSet<AuthorityEntryHash>,
     ) -> bool {
         let anchored: BTreeSet<_> = self.anchored.union(routed).copied().collect();
@@ -297,7 +300,7 @@ impl Retirements {
 pub(super) fn settle_handoffs(
     states: &mut BTreeMap<AuthorityEntryHash, FoldState>,
     entries: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
-    ancestors: &BTreeMap<AuthorityEntryHash, BTreeSet<AuthorityEntryHash>>,
+    ancestors: &AncestorIndex,
     eligible: Option<&BTreeSet<AuthorityEntryHash>>,
     recovered: &Recovered,
     issues: &mut Vec<AuthorityFoldIssue>,
@@ -328,7 +331,7 @@ pub(super) fn settle_handoffs(
 fn with_descendants(
     states: &BTreeMap<AuthorityEntryHash, FoldState>,
     refused: &BTreeMap<AuthorityEntryHash, AuthorityFoldIssue>,
-    ancestors: &BTreeMap<AuthorityEntryHash, BTreeSet<AuthorityEntryHash>>,
+    ancestors: &AncestorIndex,
 ) -> BTreeSet<AuthorityEntryHash> {
     states
         .keys()
@@ -353,7 +356,7 @@ fn with_descendants(
 fn close_fences(
     states: &BTreeMap<AuthorityEntryHash, FoldState>,
     entries: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
-    ancestors: &BTreeMap<AuthorityEntryHash, BTreeSet<AuthorityEntryHash>>,
+    ancestors: &AncestorIndex,
     recovered: &Recovered,
     refused: &mut BTreeMap<AuthorityEntryHash, AuthorityFoldIssue>,
 ) -> Retirements {

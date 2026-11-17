@@ -471,11 +471,12 @@ fn opened_actors<'s>(
     Ok(actors)
 }
 
-/// Refuses an opened value its family's codec does not read.
+/// Refuses an opened value its family's codec does not read, or reads as a
+/// row filed under another row's key.
 fn check(root: &str, key: &str, value: &[u8]) -> Result<()> {
     match root_entry(root, key, value, &AnyKind) {
         Placement::Unclassified {
-            reason: SyncUnclassified::Undecodable,
+            reason: SyncUnclassified::Undecodable | SyncUnclassified::KeyMismatch,
             ..
         } => Err(bad_part()),
         _ => Ok(()),
