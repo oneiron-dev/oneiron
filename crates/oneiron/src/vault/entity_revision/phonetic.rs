@@ -13,6 +13,30 @@ struct Pending {
     codes: Vec<String>,
 }
 
+/// Puts staged phonetic codes for the checkpoint-pins door: `id`'s codes
+/// for `revision`, sorted as `defer_phonetic` keeps them.
+#[cfg(oneiron_test_support)]
+pub(crate) fn put_pins_pending_phonetic_in_txn(
+    store: &impl crate::store::ManifestDbs,
+    txn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+    revision: [u8; 16],
+    codes: Vec<String>,
+) -> Result<()> {
+    let mut sorted = codes;
+    sorted.sort();
+    sorted.dedup();
+    PENDING.put(
+        store,
+        txn,
+        id,
+        &Pending {
+            revision: RevisionRef(revision),
+            codes: sorted,
+        },
+    )
+}
+
 /// Births publish immediately. Edits are generated from the exact body that
 /// the idle indexer later publishes, not from the live name ahead of it.
 pub(crate) fn index_name_phonetic(

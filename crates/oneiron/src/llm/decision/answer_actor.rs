@@ -133,4 +133,31 @@ pub(crate) fn forget_ask_states_in_txn(
     Ok(())
 }
 
+/// Erasing one actor out of what asks were asked over (FIX 3520): each ask
+/// whose pack state `rewrite` scrubs keeps waiting over the scrubbed state;
+/// its question, evidence, times and any answer stay. One-way, in the
+/// erase's own transaction. It wakes no waiter: its one caller's asks, the
+/// health check's, are polled, never waited on.
+///
+/// # Errors
+///
+/// Storage errors, or an ask row that cannot be read.
+pub(crate) fn rewrite_ask_states_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    rewrite: impl Fn(&mut serde_json::Value) -> bool,
+) -> Result<()> {
+    let mut asks = Vec::new();
+    for (seq, mut ask) in ASKS.scan(&vault.store, wtxn)? {
+        let scrubbed = ask.pack_state.as_mut().is_some_and(|state| rewrite(state));
+        if scrubbed {
+            asks.push((seq, ask));
+        }
+    }
+    for (seq, ask) in asks {
+        ASKS.put(&vault.store, wtxn, &seq, &ask)?;
+    }
+    Ok(())
+}
+
 pub use crate::model_decision::AnswerActor;

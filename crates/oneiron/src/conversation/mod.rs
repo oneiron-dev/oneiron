@@ -2,6 +2,7 @@
 mod attendee;
 mod body;
 mod chat_breakpoint;
+mod closed;
 mod deletion;
 mod live_speakers;
 mod membership;
@@ -30,6 +31,7 @@ pub(crate) use chat_breakpoint::{
     erase_chat_breakpoints_in_txn, forget_chat_breakpoint_in_txn,
     forget_withdrawn_summary_breakpoints_in_txn, scrub_chat_breakpoint_actor_in_txn,
 };
+pub(crate) use closed::CLOSED_UPDATES;
 pub(crate) use deletion::ROOM_ERASURES;
 pub(crate) use deletion::{
     guard_room_message_delete, pin_room_message_edge, record_author, replay_room_message_tombstone,
@@ -46,8 +48,8 @@ pub use output_guard::OutputMark;
 pub(crate) use pins::{PIN_UPDATES, body_without_room_pins, served_room_body};
 pub(crate) use preview::{LatestMessage, PreviewCandidates, snippet, turn_text};
 pub use privacy_erase::RoomPersonEraseOutcome;
-pub(crate) use roles::person_role_in;
 pub(crate) use roles::{RoomHost, room_host_in_txn};
+pub(crate) use roles::{person_role_in, room_owners_in};
 pub use session::{SessionMode, SessionPresence};
 pub use speaker_handoff::{SpeakerHandoff, SpeakerHandoffBoundary, SpeakerHandoffReceipt};
 pub use turn_actions::{
@@ -57,8 +59,8 @@ pub use turn_actions::{
 };
 pub(crate) use visibility::{
     AudienceCache, anchors_own_windows_admit_in, conversation_summary_covers,
-    gate_claim_anchors_in, gate_claim_anchors_store_in, private_thread_word_turns_in,
-    private_threads_readable_with_read_in, room_for_record_in,
+    gate_claim_anchors_in, gate_claim_anchors_store_in, hangs_under_in,
+    private_thread_word_turns_in, private_threads_readable_with_read_in, room_for_record_in,
 };
 
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
