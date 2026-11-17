@@ -23,6 +23,7 @@ use crate::serialize::pack_format::PackFormat;
 use crate::store::retrieval_signal::Signal;
 use crate::tokenizer::PackTokenizer;
 use serde_json::{Map, Number, Value};
+use std::cmp::Ordering;
 use std::collections::HashMap;
 
 /// The world section label (`context_pack::WORLD_SECTION_FIELD`) a hydrated
@@ -65,6 +66,22 @@ impl WorldSectionOrder {
     }
 }
 
+/// The tie order of rows of equal section, criticality and score: results
+/// keep the order the pack gives them, the pipeline's, whose ties can hold a
+/// placement no score shows (RERANK-GROUP-ORDER = A: a reranked row the
+/// access factor took to zero ahead of an unscored row capped there), and
+/// come before neighbors; neighbors sort by id, as the pack's do. A stable
+/// sort applies it.
+fn pack_order_tie(a: &PreparedEntity, b: &PreparedEntity) -> Ordering {
+    use super::pack_entry::PreparedEntitySource as Source;
+    match (a.source, b.source) {
+        (Source::Result, Source::Result) => Ordering::Equal,
+        (Source::Result, Source::Neighbor) => Ordering::Less,
+        (Source::Neighbor, Source::Result) => Ordering::Greater,
+        (Source::Neighbor, Source::Neighbor) => a.id.cmp(&b.id),
+    }
+}
+
 pub(super) fn group_entities(
     entities: Vec<PreparedEntity>,
 ) -> Vec<(GroupKey, Vec<PreparedEntity>)> {
@@ -81,13 +98,13 @@ pub(super) fn group_entities(
     }
 
     for rows in buckets.values_mut() {
-        rows.sort_unstable_by(|a, b| {
+        rows.sort_by(|a, b| {
             sections
                 .rank(a.world_section.as_deref())
                 .cmp(&sections.rank(b.world_section.as_deref()))
                 .then_with(|| b.critical.cmp(&a.critical))
                 .then_with(|| b.score.total_cmp(&a.score))
-                .then_with(|| a.id.cmp(&b.id))
+                .then_with(|| pack_order_tie(a, b))
         });
     }
 

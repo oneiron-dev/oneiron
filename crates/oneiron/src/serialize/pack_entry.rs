@@ -188,6 +188,10 @@ fn collect_projected_json_rows(
     }
 }
 
+/// A stable sort: rows of equal keys keep the pack's order, its results the
+/// pipeline's (RERANK-GROUP-ORDER = A: a tie at a zero score can hold the
+/// reranked block's boundary) and its neighbors by id, as the pack's source
+/// ranking sorts them.
 fn apply_projected_json_rows(
     entities: Vec<ContextEntity>,
     mut projected_rows: HashMap<[u8; 16], Vec<(String, Value)>>,
@@ -214,7 +218,6 @@ fn apply_projected_json_rows(
             .cmp(b_section)
             .then_with(|| b.critical.cmp(&a.critical))
             .then_with(|| b.score.total_cmp(&a.score))
-            .then_with(|| a.id.cmp(&b.id))
     });
     projected.into_iter().map(|(_, entity)| entity).collect()
 }

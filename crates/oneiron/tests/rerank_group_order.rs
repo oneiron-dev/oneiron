@@ -15,16 +15,26 @@
 //! stays first by score (b1 * a >= b2) and its new place scores below the
 //! first row past the block (b2 * a < b3).
 //!
+//! At a weakest reranked score of zero (a zero access factor) no row can
+//! score below it, so a row past the block ties with it there (review round
+//! 2). The pipeline serves the reranked row first; the third test pins that
+//! the rendered pack and its JSON response keep that order among equal
+//! scores, where they broke the tie by id before.
+//!
 //! Public crate surface only: `Vault::put_entity`, `Vault::put_claim`, a
-//! vector batch, the pipeline and the context pack builder.
+//! vector batch, the pipeline, the context pack builder and
+//! `serialize::serialize_pack`.
 //!
 //! Fleet: `cargo test --locked -p oneiron --all-features --test rerank_group_order`
 
 use std::collections::HashMap;
 use std::sync::Mutex;
 
+use oneiron::context_pack::{DEFAULT_MAX_FIELD_CHARS, TokenAllocation};
 use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::rerank::{RerankCandidate, RerankOptions, Reranker};
+use oneiron::serialize::pack_format::{FieldProfile, PackFormat};
+use oneiron::serialize::{SerializeConfig, project_pack_for_json_response, serialize_pack};
 use oneiron::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject, EntityId, TimeRange, Vault,
     VaultConfig,
@@ -256,5 +266,77 @@ fn a_pack_serves_the_reranked_block_before_the_rows_past_it() {
             .iter()
             .map(|entity| (entity.id.to_hex(), entity.score))
             .collect::<Vec<_>>(),
+    );
+}
+
+fn serialize_config(format: PackFormat) -> SerializeConfig {
+    SerializeConfig {
+        format,
+        profile: FieldProfile::Minimal,
+        budget: 8192,
+        allocation: TokenAllocation::default(),
+        include_stats: false,
+        merge_neighbors: true,
+        max_field_chars: DEFAULT_MAX_FIELD_CHARS,
+        max_item_tokens: 0,
+    }
+}
+
+/// The pack as the pipeline serves it at a weakest reranked score of zero:
+/// the reranked row first, then a row past the block with a lower id, both
+/// at zero. Every rendered format and the JSON response keep that order.
+#[test]
+fn a_rendered_pack_keeps_the_pack_order_among_equal_scores() {
+    let fixture = fixture();
+    let mut pack = fixture
+        .vault
+        .context_pack()
+        .search_vector(&QUERY, 10)
+        .limit(10)
+        .hydrate(true)
+        .field_profile(FieldProfile::Minimal)
+        .run()
+        .expect("context pack");
+    let [capped, _, _, reranked] = fixture.claims;
+    pack.results
+        .retain(|entity| entity.id == reranked || entity.id == capped);
+    pack.results
+        .sort_by_key(|entity| std::cmp::Reverse(entity.id));
+    for entity in &mut pack.results {
+        entity.score = 0.0;
+    }
+    let order: Vec<EntityId> = pack.results.iter().map(|entity| entity.id).collect();
+    assert_eq!(
+        order,
+        vec![reranked, capped],
+        "FIXTURE: the reranked row comes first, its id the higher"
+    );
+    // Each claim's text is its value: `note <index>`.
+    let (first, second) = ("note 3", "note 0");
+    for format in [
+        PackFormat::Json,
+        PackFormat::Yaml,
+        PackFormat::Toon,
+        PackFormat::Markdown,
+        PackFormat::Plaintext,
+    ] {
+        let rendered = String::from_utf8(serialize_pack(&pack, &serialize_config(format)))
+            .expect("rendered pack is UTF-8");
+        let at = |text: &str| {
+            rendered
+                .find(text)
+                .unwrap_or_else(|| panic!("{format:?} pack holds {text}: {rendered}"))
+        };
+        assert!(
+            at(first) < at(second),
+            "the {format:?} pack keeps the reranked row first at the tie: {rendered}"
+        );
+    }
+    let projected = project_pack_for_json_response(pack, &serialize_config(PackFormat::Json));
+    let order: Vec<EntityId> = projected.results.iter().map(|entity| entity.id).collect();
+    assert_eq!(
+        order,
+        vec![reranked, capped],
+        "the JSON response keeps the reranked row first at the tie"
     );
 }
