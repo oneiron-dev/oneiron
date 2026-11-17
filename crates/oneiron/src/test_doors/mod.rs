@@ -113,6 +113,7 @@ pub mod graph_ask_centre;
 #[cfg(feature = "sync")]
 pub mod guest_turn_counterparty;
 pub mod held_answer_confirm;
+pub mod held_program;
 pub mod history_import_rows;
 #[cfg(feature = "sync")]
 pub mod home_handoff_retire;
@@ -140,6 +141,7 @@ pub mod learning_setting_sourced;
 pub mod lifted_text;
 pub mod linkedin_seat_settings;
 pub mod live_run_claim_put;
+pub mod live_task;
 #[cfg(feature = "sync")]
 pub mod live_window_import;
 #[cfg(feature = "sync")]
@@ -234,6 +236,7 @@ pub mod source_audience;
 pub mod source_audience_binding;
 pub mod space_move_window;
 pub mod spend;
+pub mod spent_seat;
 pub mod split_phrase_carrier;
 pub mod steward;
 pub mod stretch_pack_finalize;
