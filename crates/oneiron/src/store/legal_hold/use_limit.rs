@@ -33,20 +33,6 @@ pub(crate) fn cooperative_restriction_active_in_txn(
         .is_some())
 }
 
-/// Whether any cooperative restriction row stands: the gate of the owed
-/// births read (`deletion::legal_hold::held_scrubs`), which scans every
-/// `ROW_BIRTH` row.
-pub(crate) fn any_cooperative_restriction_in_txn(
-    dbs: &impl SideTableDbs,
-    txn: &RoTxn<'_>,
-) -> Result<bool> {
-    Ok(COOPERATIVE_RESTRICTIONS
-        .iter_from(dbs, txn, &[])?
-        .next()
-        .transpose()?
-        .is_some())
-}
-
 /// The same record-retention facts as `held_in_txn`, read from a
 /// checkpoint custody plan's captured rows.
 pub(crate) fn rows_keep_record(rows: &[(Vec<u8>, Vec<u8>)], id: &[u8; 16]) -> Result<bool> {
