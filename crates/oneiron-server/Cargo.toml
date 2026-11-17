@@ -60,6 +60,12 @@ doc = false
 # doctest compile pass entirely.
 doctest = false
 
+# The parked-step restart resume holds its host root in a `MemoryKeystore` (STEP-PARK-BOOT-RESUME).
+[[test]]
+name = "model_step_health_rest"
+path = "tests/model_step_health_rest.rs"
+required-features = ["oneiron/test-support"]
+
 # A mailbox's own person approves its drafted replies at the served door (FIX 18868).
 [[test]]
 name = "mail_reply_approve_mailbox_person_door"
@@ -286,12 +292,6 @@ oneiron-broker = { version = "0.1.0", path = "../oneiron-broker" }
 [[test]]
 name = "vault_runners_doors"
 path = "tests/vault_runners_doors.rs"
-required-features = ["oneiron/test-support"]
-
-# The parked-step restart resume holds its host root in a `MemoryKeystore` (STEP-PARK-BOOT-RESUME).
-[[test]]
-name = "model_step_health_rest"
-path = "tests/model_step_health_rest.rs"
 required-features = ["oneiron/test-support"]
 
 # Test-only constructors and fault-injection seams stay out of the shipped graph.
