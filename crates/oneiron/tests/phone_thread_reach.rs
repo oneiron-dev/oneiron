@@ -2180,7 +2180,7 @@ fn assert_a_claim_learned_from_an_erased_kept_message_stays_withheld(
 ) {
     use oneiron::provenance::made_by::MadeByInputRole;
 
-    let reach = reach_fixture();
+    let reach = reach_fixture(custom_base());
     let vault = &reach.fixture.vault;
     let subject = ordinary_subject_person(vault);
     let from_a = claim_born_from(
@@ -2265,7 +2265,7 @@ fn a_claim_learned_from_a_hard_deleted_kept_message_stays_withheld() {
 fn a_claim_learned_through_a_deleted_claim_from_a_kept_message_stays_withheld() {
     use oneiron::provenance::made_by::MadeByInputRole;
 
-    let reach = reach_fixture();
+    let reach = reach_fixture(custom_base());
     let vault = &reach.fixture.vault;
     let subject = ordinary_subject_person(vault);
     let middle = claim_born_from(
