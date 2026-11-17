@@ -18,28 +18,24 @@ pub(super) fn booking_writer_with_publication<T>(
     apply: impl FnOnce(&mut heed::RwTxn<'_>) -> Result<T, BookingError>,
 ) -> Result<T, BookingError> {
     booking_writer(vault, |txn| {
-        let scope = match authority {
-            Some(authority) => {
-                let scope = publication_scope_in_writer(vault, txn, request)?;
-                check_publication_in_writer(vault, txn, authority, &scope, now)?;
-                Some((authority, scope))
-            }
-            None => None,
+        let Some(authority) = authority else {
+            return apply(txn);
         };
+        // The page and event type are read once, before the mutation: a stage
+        // may remove the row they are read from (a waitlist leave deletes its
+        // entry), and no stage moves a request to another page or event type.
+        let (page, event) = publication_scope_in_writer(vault, txn, request)?;
+        check_publication_in_writer(vault, txn, authority, page, &event, now)?;
         let result = apply(txn)?;
-        // Include time spent solving and staging the mutation, on the scope
-        // read before it: the mutation may end the row that scope was read
-        // from (a waitlist leave, a claim whose slot was taken). A refusal
-        // here aborts every staged lifecycle row, not just the response.
-        if let Some((authority, scope)) = &scope {
-            check_publication_in_writer(vault, txn, authority, scope, now)?;
-        }
+        // Include time spent solving and staging the mutation. A refusal here
+        // aborts every staged lifecycle row, not just the response.
+        check_publication_in_writer(vault, txn, authority, page, &event, now)?;
         Ok(result)
     })
 }
 
-/// The page and event type a lifecycle request acts on, read in its writer
-/// before the request mutates anything.
+/// The page and event type a request acts on, read in its writer before the
+/// request stages anything.
 fn publication_scope_in_writer(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -79,7 +75,8 @@ fn check_publication_in_writer(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     authority: &PublicBookingAuthority,
-    (page, event): &(EntityId, EventTypeKey),
+    page: EntityId,
+    event: &EventTypeKey,
     now_utc: u64,
 ) -> Result<(), BookingError> {
     // Admission's sampled clock is not the commit clock. A delayed attempt
@@ -87,7 +84,7 @@ fn check_publication_in_writer(
     authority.check_in_txn(
         vault,
         txn,
-        *page,
+        page,
         event,
         vault.store.clock.now_recorded_at().max(now_utc),
     )

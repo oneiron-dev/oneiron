@@ -14,7 +14,15 @@
 //! booking_waitlist`.
 #![cfg(feature = "test-support")]
 
+use oneiron::booking::lifecycle::enqueue_booking_verb_with_publication;
 use oneiron::booking::lifecycle::waitlist_entry_event_type;
+use oneiron::booking::publication::PublicBookingAuthority;
+use oneiron::booking::{
+    BOOKING_EVENT_TYPE_PREDICATE, BOOKING_EVENT_TYPE_SCHEMA_VERSION, BOOKING_PUBLIC_PAGE_PREDICATE,
+    BOOKING_PUBLIC_PAGE_SCHEMA_VERSION, BookingEventTypeClaimValue, BookingLandingContent,
+    BookingPagePublication, ConstraintFieldConfig, EventTypeCard, PublicBookingAvailability,
+    ThemeTokens, booking_config_hash, encode_event_type_claim_value, load_public_booking_page,
+};
 use oneiron::booking::{
     BookingError, BookingLifecycleConsumerInput, BookingLifecycleTurn, BookingSolver,
     BookingVerbReceipt, BookingVerbRequest, CancelSpec, ConfirmReceipt, ConfirmSpec,
@@ -22,11 +30,13 @@ use oneiron::booking::{
     HoldSpec, HostAvailabilityConfig, OpaqueLifecycleToken, RankedSlot, RescheduleSpec,
     RoutingMode, SessionKey, SlotOracle, SolveRequest, SolveResult, VaultActiveHoldSource,
     WAITLIST_OFFER_TTL_SECS, WaitlistAction, WaitlistClaim, WaitlistJoin, WaitlistReceipt,
-    WaitlistSpec, WeeklyWallWindow, enqueue_booking_verb, run_booking_lifecycle_attempt,
+    WaitlistSpec, WeeklyWallWindow, run_booking_lifecycle_attempt,
 };
+use oneiron::memory::ClaimInput;
 use oneiron::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_PERSON};
 use oneiron::{
-    CalendarSel, DreamerHomeNodeCandidate, DreamerRunnerStore, EntityId, TimeRange, Vault,
+    CalendarSel, ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject,
+    DreamerHomeNodeCandidate, DreamerRunnerStore, EdgeActorClass, EntityId, TimeRange, Vault,
     VaultConfig,
 };
 
@@ -38,6 +48,7 @@ const PAGE_SEED: u8 = 0x51;
 const HOST_SEED: u8 = 0x52;
 const BOOKER_SEED: u8 = 0x57;
 const BUSY_SEED: u8 = 0x61;
+const EVENT_TYPE_CLAIM_SEED: u8 = 0x72;
 const HOME_NODE_ID: u64 = 9;
 
 const fn at(ts: u64) -> TimeRange {
@@ -47,6 +58,14 @@ const fn at(ts: u64) -> TimeRange {
 /// `[seed; 16]`; every seed here is outside the production-pinned id bytes.
 fn test_id(seed: u8) -> EntityId {
     EntityId::from_bytes([seed; 16]).expect("fixture id")
+}
+
+/// The wall clock: a publication's validity window and its checks read it.
+fn wall_now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock after the epoch")
+        .as_secs()
 }
 
 fn session(name: &str) -> SessionKey {
@@ -132,7 +151,23 @@ impl Fixture {
         request: BookingVerbRequest,
         now: u64,
     ) -> Result<BookingVerbReceipt, BookingError> {
-        let id = enqueue_booking_verb(&self.vault, request, now)?;
+        self.run_with_publication(request, now, None)
+    }
+
+    /// [`Self::run`] for a visitor's request on the published page: the
+    /// attempt carries the page's publication, and its writer rechecks it.
+    fn run_with_publication(
+        &self,
+        request: BookingVerbRequest,
+        now: u64,
+        public_authority: Option<&PublicBookingAuthority>,
+    ) -> Result<BookingVerbReceipt, BookingError> {
+        let id = enqueue_booking_verb_with_publication(
+            &self.vault,
+            request,
+            now,
+            public_authority.cloned(),
+        )?;
         let turn = run_booking_lifecycle_attempt(
             &self.vault,
             id,
@@ -249,14 +284,119 @@ impl Fixture {
         action: WaitlistAction,
         now: u64,
     ) -> Result<BookingVerbReceipt, BookingError> {
-        self.run(
+        self.waitlist_with_publication(action, now, None)
+    }
+
+    fn waitlist_with_publication(
+        &self,
+        action: WaitlistAction,
+        now: u64,
+        public_authority: Option<&PublicBookingAuthority>,
+    ) -> Result<BookingVerbReceipt, BookingError> {
+        self.run_with_publication(
             BookingVerbRequest::Waitlist(WaitlistSpec {
                 page_ref: self.page,
                 action,
                 idempotency_key: None,
             }),
             now,
+            public_authority,
         )
+    }
+
+    /// Publishes the page as the vault's embedded owner, with the fixture's
+    /// event type, and answers the authority a visitor's request carries.
+    fn publish(&self) -> PublicBookingAuthority {
+        let config = fixture_config(self.notice_secs);
+        let value = encode_event_type_claim_value(&BookingEventTypeClaimValue {
+            schema_version: BOOKING_EVENT_TYPE_SCHEMA_VERSION,
+            page_ref: self.page,
+            config: config.clone(),
+        })
+        .expect("event type value");
+        let mut body = ClaimBody::new(
+            BOOKING_EVENT_TYPE_PREDICATE,
+            ClaimSubject::Entity(self.page),
+            value,
+            1.0,
+            ClaimApprovalStatus::Auto,
+            ClaimLifecycleStatus::Active,
+        )
+        .expect("event type claim");
+        // A claim about the ASSET page is born under the vault's default
+        // facet: the constructor's derived facet names no stored FACET.
+        body.scope_facet = self.vault.default_facet().expect("default facet");
+        self.vault
+            .put_claim(&test_id(EVENT_TYPE_CLAIM_SEED), &body, at(1), 1)
+            .expect("event type claim");
+        let publication = BookingPagePublication {
+            schema_version: BOOKING_PUBLIC_PAGE_SCHEMA_VERSION,
+            published: true,
+            owner_display: "Page owner".to_owned(),
+            event_types: vec![EventTypeCard {
+                key: event_type(),
+                title: "Intro call".to_owned(),
+                duration_min: u32::from(config.duration_min),
+                description: "A first call".to_owned(),
+            }],
+            event_config_hashes: [(
+                event_type().0,
+                booking_config_hash(&config).expect("config hash"),
+            )]
+            .into(),
+            constraint_field: ConstraintFieldConfig {
+                enabled: false,
+                placeholder: String::new(),
+            },
+            constraint_front: None,
+            theme: ThemeTokens(serde_json::json!({})),
+            landing: BookingLandingContent::default(),
+            initial_availability: PublicBookingAvailability {
+                event_type: event_type(),
+                start_after_secs: 86_400,
+                window_secs: 86_400,
+                visitor_tz: "UTC".to_owned(),
+            },
+            sponsor: None,
+        };
+        // The vault has no authority root, so the one actor whose owner
+        // write it admits is its own live embedded owner.
+        let owner = self
+            .vault
+            .ensure_embedded_owner_actor()
+            .expect("embedded owner");
+        let memory = self.vault.memory(owner, EdgeActorClass::Human);
+        let receipt = memory
+            .claim_upsert(&ClaimInput {
+                id: None,
+                predicate: BOOKING_PUBLIC_PAGE_PREDICATE.to_owned(),
+                subject_ref: self.page.to_hex(),
+                value: serde_json::to_value(publication).expect("publication"),
+                confidence: 1.0,
+                source: "user_stated".to_owned(),
+                world_ref: None,
+                relationship_ref: None,
+                scope: None,
+                valid_from: Some(1),
+                valid_to: Some(wall_now() + 15 * 86_400),
+                occurred_at: None,
+                learned_at: None,
+                salience: None,
+                confidence_details: None,
+            })
+            .expect("owner publication write");
+        if receipt.approval == "proposed" {
+            memory
+                .confirm_booking_publication(&receipt.claim_short_id, wall_now())
+                .expect("owner confirms the publication");
+        }
+        let publication = load_public_booking_page(&self.vault, self.page, wall_now())
+            .expect("read the publication")
+            .expect("the page is published");
+        PublicBookingAuthority {
+            page_ref: self.page,
+            publication,
+        }
     }
 
     fn join(&self, session_key: SessionKey, window: TimeRange, now: u64) -> WaitlistReceipt {
@@ -679,4 +819,55 @@ fn a_restore_keeps_the_waitlist_as_it_stands() {
         Some(event_type()),
         "a waiter who joined after the checkpoint keeps its place"
     );
+}
+
+#[test]
+fn a_visitor_leaves_through_the_published_page_and_its_offer_is_freed() {
+    let fixture = Fixture::open();
+    let authority = fixture.publish();
+    let noon = slot_at(12);
+    let first = fixture.book(session("owen"), noon, NOW);
+    let joined = fixture
+        .waitlist_with_publication(
+            WaitlistAction::Join(WaitlistJoin {
+                event_type: event_type(),
+                window: noon,
+                session_key: session("yuki"),
+                visitor_tz: "UTC".to_owned(),
+            }),
+            NOW + 10,
+            Some(&authority),
+        )
+        .expect("a join on the published page");
+    let BookingVerbReceipt::Waitlisted(WaitlistReceipt::Joined { token, position: 1 }) = joined
+    else {
+        panic!("expected the visitor to wait first, got {joined:?}");
+    };
+    fixture.cancel(&first, NOW + 60);
+    assert!(
+        !fixture.offered_at(NOW + 70).contains(&noon),
+        "the freed slot is held for the waiter"
+    );
+
+    // The leave deletes the entry its publication scope was read from; the
+    // writer's last publication check must still pass, so the leave commits.
+    let leave = |now| {
+        fixture.waitlist_with_publication(
+            WaitlistAction::Leave {
+                token: token.clone(),
+            },
+            now,
+            Some(&authority),
+        )
+    };
+    assert_eq!(
+        leave(NOW + 80).expect("a leave on the published page"),
+        BookingVerbReceipt::Waitlisted(WaitlistReceipt::Left)
+    );
+    assert!(
+        fixture.offered_at(NOW + 90).contains(&noon),
+        "the leave gave the held slot back to everyone"
+    );
+    assert!(refusal(leave(NOW + 100)).contains("no waitlist entry"));
+    assert!(refusal(fixture.claim(&token, NOW + 110)).contains("no waitlist entry"));
 }
