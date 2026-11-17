@@ -204,12 +204,18 @@ fn the_rerank_door_sends_no_turn_with_a_message_whose_body_the_write_door_refuse
             scope: None,
             limit: Some(10),
             format: None,
+            token_budget: None,
+            reader_agent_ref: None,
             as_of: None,
             deadline_ms: None,
+            media: None,
+            query_affect: None,
+            telemetry: None,
             filter: None,
         },
         |_| None,
         &crate::task_verb::sdk::RecallDoor {
+            hyde: None,
             arrived: std::time::Instant::now(),
             on_cut: None,
             rerank: crate::memory::RecallRerank::Host(&host),
@@ -422,6 +428,9 @@ fn turn_doors_serve(
                     format,
                     lease: None,
                     composer: None,
+                    budget: None,
+                    token_budget: None,
+                    reader_agent_ref: None,
                 },
             )
             .expect("chat")

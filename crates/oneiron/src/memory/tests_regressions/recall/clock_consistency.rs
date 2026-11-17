@@ -19,13 +19,9 @@ fn identical_recalls_return_the_same_pack_across_a_clock_tick() {
     let written = crate::unix_seconds_now();
     let dir = tempfile::tempdir().expect("tempdir");
     let clock = crate::ports::ManualClock::new(written);
-    let config = crate::config::VaultConfig {
-        store_clock: crate::ports::StoreClock::new(
-            clock.clone(),
-            std::sync::Arc::new(TimeOrderedIds),
-        ),
-        ..crate::config::VaultConfig::default()
-    };
+    let mut config = crate::config::VaultConfig::device();
+    config.store_clock =
+        crate::ports::StoreClock::new(clock.clone(), std::sync::Arc::new(TimeOrderedIds));
     let vault = crate::Vault::open(dir.path(), config).expect("open vault");
     let actor = vault.ensure_embedded_owner_actor().expect("owner actor");
     let facade = facade_for(&vault, actor);
@@ -35,6 +31,8 @@ fn identical_recalls_return_the_same_pack_across_a_clock_tick() {
             turn_ref: None,
             messages: vec![witness_message(0, WitnessAuthor::User, "window seat")],
             occurred_at: written,
+            thread_audience: None,
+            assertions: Default::default(),
         })
         .expect("witness");
     facade
@@ -53,6 +51,7 @@ fn identical_recalls_return_the_same_pack_across_a_clock_tick() {
             occurred_at: None,
             learned_at: None,
             salience: None,
+            confidence_details: None,
         })
         .expect("claim");
 
@@ -99,6 +98,10 @@ fn world_scoped_last_week_recall_keeps_eligible_hit_at_limit_one() {
     let other_world = EntityId::from_bytes([0xE3; 16]).unwrap();
     let scope = RecallScope {
         world_ref: Some(eligible_world.to_hex()),
+        worlds: None,
+        project_refs: Vec::new(),
+        conversation_refs: Vec::new(),
+        person_ref: None,
         facet: None,
         kinds: None,
     };

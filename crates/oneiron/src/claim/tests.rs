@@ -938,6 +938,8 @@ fn psych_profile_keeps_legacy_profile_claim_body_backward_compatible() {
             "scopeFacetId",
             "scopeProjectId",
             "scopeVersion",
+            "confBand",
+            "confBasis",
         ],
         "PsychProfile snapshots must preserve the pinned Claim body ABI"
     );
@@ -1696,6 +1698,7 @@ fn gate_receipt_horizon_does_not_block_later_retraction_of_a_live_claim() -> Res
         grant_ref: None,
         diff_handle: vec![0xAA],
         read_frontier_hash: [0xBB; 32],
+        context: Default::default(),
         redacted_at: None,
     };
     vault.with_write_txn(|txn| vault.store.append_gate_decision_in_txn(txn, &old))?;
@@ -3079,6 +3082,7 @@ fn expression_preference_claim_input(
         valid_from: Some(5),
         valid_to: None,
         salience: None,
+        confidence_details: None,
     }
 }
 
@@ -3105,13 +3109,19 @@ fn facade_generic_claim_writes_refuse_an_expression_preference() -> Result<()> {
         .commit(std::slice::from_ref(&input))
         .expect("commit reports per element")
     {
-        assert_eq!(receipt.approval, "rejected");
+        assert!(
+            matches!(receipt, crate::memory::CommitOutcome::Refused { .. }),
+            "{receipt:?}"
+        );
     }
     for receipt in facade
         .seed_claims(std::slice::from_ref(&input))
         .expect("seed reports per element")
     {
-        assert_eq!(receipt.approval, "rejected");
+        assert!(
+            matches!(receipt, crate::memory::CommitOutcome::Refused { .. }),
+            "{receipt:?}"
+        );
     }
 
     assert_eq!(
@@ -3659,6 +3669,7 @@ fn a_proposed_preference_arriving_by_sync_never_wins_the_winners_read() -> Resul
             crate::registry::ENTITY_TYPE_CLAIM,
             TimeRange { start: 2, end: 2 },
             2,
+            None,
             &data,
         )
         .commit()?;
@@ -4827,7 +4838,10 @@ fn relationship_candidate_stamps_and_rejects_unknown_deleted_or_wrong_kind() -> 
             2,
         )
         .commit()?;
-    assert_eq!(vault.get_claim(&id)?.unwrap().rel, Some(relationship));
+    assert_eq!(
+        vault.get_claim(&id)?.unwrap().rel,
+        Some(RelationshipSet::from([relationship]))
+    );
     let deleted = EntityId::now();
     vault.put_entity(
         &deleted,

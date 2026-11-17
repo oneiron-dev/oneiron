@@ -149,22 +149,26 @@ fn a_non_owner_persons_proof_witnesses_nothing_into_a_roomless_stretch() {
     let turn = WitnessTurn {
         conversation_ref: String::new(),
         turn_ref: None,
+        thread_audience: None,
         messages: vec![WitnessMessage {
             id: None,
             author: WitnessAuthor::User,
             message_type: "utterance".to_owned(),
             content: "roomless fixture".to_owned(),
+            parts: None,
             metadata: None,
             is_visible: true,
             order: 0,
+            quote: None,
         }],
         occurred_at: 1000,
+        assertions: Default::default(),
     };
     let speak = |proof: &AuthenticatedOwner| {
         let actor = proof.actor_for_read(&vault).expect("a live proof");
         vault
             .memory(actor, crate::edge::EdgeActorClass::Human)
-            .witness_into_session_as(proof, &session, &turn, None)
+            .witness_into_session_as(proof, &session, &turn, None, None)
     };
     let refusal = speak(&person).expect_err("a non-owner spoke in a roomless stretch");
     assert_eq!(refusal.code, MEMORY_CODE_FORBIDDEN, "{refusal:?}");

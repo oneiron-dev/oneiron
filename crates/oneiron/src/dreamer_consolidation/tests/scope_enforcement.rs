@@ -355,6 +355,7 @@ fn production_executor_carries_scope_and_refuses_unlisted_evidence_and_output() 
     executor.inference.binding = crate::llm::HostInferenceBinding::Advertised {
         model: executor.model.clone(),
         locality: crate::ModelLocality::OwnServer,
+        keyless: false,
     };
     // A candidate citing a turn outside the attempt is not written. Since
     // Bugbot on #1427 decode skips it rather than failing the attempt.
@@ -426,7 +427,7 @@ fn derive_id(
         &facts.value,
         facts.world,
         facts.facet,
-        facts.rel,
+        facts.rel.as_ref(),
         facts.project,
         facts.topic.as_deref(),
     )?;
@@ -486,16 +487,22 @@ fn scoped_signals_preserve_ranking_and_filter_foreign_and_private_refs() -> Resu
         b"private author",
     )?;
     let diary = EntityId::now();
-    let diary_body = crate::note::encode_note_body(&crate::note::NoteBody {
+    let diary_body = crate::note::encode_note_core(&crate::note::NoteCore {
         kind: crate::note::NoteKind::parse("diary").expect("shipped kind"),
-        author_ref: author,
-        markdown: "private graph evidence".to_owned(),
+        author_ref: crate::note::NoteActor::Actor(author),
         source_revision_ref: [1; 16],
     })?;
     vault.with_write_txn(|txn| {
         vault
             .batch_in()
-            .put_authored_note(&diary, &author, occurred(1), 1, &diary_body)
+            .put_authored_note(
+                &diary,
+                &author,
+                occurred(1),
+                1,
+                &diary_body,
+                "private graph evidence",
+            )
             .edge(&diary, EdgeKind::AuthoredBy, &author, 1.0)
             .edge(&diary, EdgeKind::About, &subject, 1.0)
             .apply(txn)
@@ -726,7 +733,7 @@ fn queued_four_axis_scope_is_inherited_and_cannot_be_erased() -> Result<()> {
         None,
     )?;
     let mut scope = initial.scope().clone();
-    scope.relationship = Some(relationship);
+    scope.relationship = Some(BTreeSet::from([relationship]));
     scope.project = Some(project);
     // Gap storage is sliced too; project does not change partition/claim ids.
     scope
@@ -949,7 +956,12 @@ fn queued_four_axis_scope_is_inherited_and_cannot_be_erased() -> Result<()> {
     let facts = super::super::conflict::candidate_facts(&sink.accepted[0].candidate)?;
     assert_eq!(
         (facts.world, facts.facet, facts.rel, facts.project),
-        (Some(world), Some(facet), Some(relationship), project)
+        (
+            Some(world),
+            Some(facet),
+            crate::claim::relationship_scope_of(Some(relationship)),
+            project,
+        )
     );
     // The durable codec refuses ambiguity rather than silently dropping scope.
     let mut duplicate = attempt.status.payload.input.clone();
@@ -997,7 +1009,7 @@ fn graph_signals_enforce_relationship_and_exact_project_slice() -> Result<()> {
         None,
     )?;
     let mut scope = initial.scope().clone();
-    scope.relationship = Some(relationship);
+    scope.relationship = Some(BTreeSet::from([relationship]));
     // A project bound admits only its own project's sources: the turn and
     // the reference claims sit in the default project.
     scope.project = Some(crate::claim::default_project_id());
@@ -1276,6 +1288,7 @@ fn scheduled_selection_retry_reextracts_new_admitted_evidence() -> Result<()> {
         let DreamerAttemptExecution::Deferred {
             completed_units,
             retry_at,
+            step_bindings,
         } = result
         else {
             panic!("selection hold must defer");
@@ -1290,6 +1303,7 @@ fn scheduled_selection_retry_reextracts_new_admitted_evidence() -> Result<()> {
                 now: 21,
             },
             retry_at,
+            &step_bindings,
         )?;
         let next_turn = seed_turn(
             &vault,
@@ -1423,16 +1437,22 @@ fn dreamer_consolidation_reads_keep_their_receipts() -> Result<()> {
     let author = EntityId::now();
     vault.put_entity(&author, ENTITY_TYPE_PERSON, occurred(1), 1, b"author")?;
     let diary = EntityId::now();
-    let diary_body = crate::note::encode_note_body(&crate::note::NoteBody {
+    let diary_body = crate::note::encode_note_core(&crate::note::NoteCore {
         kind: crate::note::NoteKind::parse("diary").expect("shipped kind"),
-        author_ref: author,
-        markdown: "private graph evidence".to_owned(),
+        author_ref: crate::note::NoteActor::Actor(author),
         source_revision_ref: [1; 16],
     })?;
     vault.with_write_txn(|txn| {
         vault
             .batch_in()
-            .put_authored_note(&diary, &author, occurred(1), 1, &diary_body)
+            .put_authored_note(
+                &diary,
+                &author,
+                occurred(1),
+                1,
+                &diary_body,
+                "private graph evidence",
+            )
             .edge(&diary, EdgeKind::AuthoredBy, &author, 1.0)
             .edge(&diary, EdgeKind::About, &subject, 1.0)
             .apply(txn)
