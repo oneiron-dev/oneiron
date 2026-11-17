@@ -131,6 +131,9 @@ pub struct PreparedShadowStep {
     pub(crate) replies: Vec<FrozenReply>,
     /// The vault's `[limits]` scan row, frozen for the arm's reads.
     pub(crate) scan_bytes: u64,
+    /// The owner's `code_run.result_search.max_context`, frozen for the
+    /// arm's reads.
+    pub(crate) search_max_context: usize,
 }
 
 impl PreparedShadowStep {
@@ -340,6 +343,7 @@ fn prepare_step_source(
         foreign,
         replies,
         scan_bytes: vault.limit_watch().bound(EngineLimit::CodeResultScanBytes),
+        search_max_context: crate::code_run::setting_keys::result_search_max_context(vault)?,
     }))
 }
 
@@ -557,6 +561,12 @@ fn freeze_replies(
 ) -> Result<Outcome<Vec<FrozenReply>>> {
     let mut replies = Vec::new();
     for row in window.bridge_calls.iter().skip(prefix.bridge_calls.len()) {
+        // A verb hook's view answered the call: the arm's guest reads that
+        // view, and the real result's body is record-only, outside every
+        // read of the run's results (ARCH-0080 Redact).
+        if row.hook_view_served {
+            continue;
+        }
         // Other outcomes are still decoded only when the arm matches them.
         if !row.outcome.as_map().is_some_and(|entries| {
             entries.iter().any(|(key, value)| {

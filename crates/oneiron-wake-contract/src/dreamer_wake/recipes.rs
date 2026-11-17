@@ -3,6 +3,7 @@
 
 use oneiron_base::error::Error;
 use oneiron_base::error::Result;
+use oneiron_setting_contract::SettingValue;
 use serde::Deserialize;
 use serde::Serialize;
 
@@ -53,8 +54,10 @@ pub struct WakeRecipePolicy {
     /// How the follower folds its retained frames into a keyframe.
     pub follower_keyframe_instruction: String,
     /// The follower's packing estimate of bytes per token: a sizing guess,
-    /// never a tokenizer count.
-    pub follower_sizing_bytes_per_token: u32,
+    /// never a tokenizer count. Its name has no credential ending (`_token`):
+    /// the Setting wall lifts a member under such a name into custody whole,
+    /// and the number would then no longer read as this type.
+    pub follower_sizing_token_bytes: u32,
     /// Whether a planned thing's branch runs as one scoped code-mode agent
     /// (FIX 7508): its slices go through the agent's lent extract and decide
     /// ports. A logical attempt that already ran as an agent keeps running
@@ -72,6 +75,13 @@ pub struct WakeRecipePolicy {
     /// window wins whenever it lends one. Shipped at 32768. An unknown
     /// window is never a refusal.
     pub thing_child_fallback_window_tokens: u64,
+}
+
+impl SettingValue for WakeRecipePolicy {
+    fn check(self) -> Result<Self> {
+        self.validate()?;
+        Ok(self)
+    }
 }
 
 impl WakeRecipePolicy {
@@ -93,7 +103,7 @@ impl WakeRecipePolicy {
             || (self.follower_enabled
                 && (self.follower_instruction.trim().is_empty()
                     || self.follower_keyframe_instruction.trim().is_empty()
-                    || self.follower_sizing_bytes_per_token == 0))
+                    || self.follower_sizing_token_bytes == 0))
         {
             return Err(Error::InvalidConfig("invalid Dreamer recipe policy".into()));
         }
