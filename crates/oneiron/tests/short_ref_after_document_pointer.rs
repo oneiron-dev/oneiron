@@ -238,8 +238,9 @@ fn an_atomically_committed_message_resolves_by_its_issued_short_ref() {
     let (_directory, vault) = fresh_vault();
     let memory = owner_memory(&vault);
     let turn = witness_turn(&vault, "a committed message body");
-    // The commit indexes the MESSAGE, then its document birth rewrites the
-    // body to a pointer in the same transaction.
+    // The commit keeps the MESSAGE's words inline: a new MESSAGE births its
+    // document at its first later edit (FIX 4840). The migrated and edited
+    // texts above are the document-backed cases.
     memory
         .commit_message(&turn)
         .expect("the owner commits one MESSAGE");
@@ -258,7 +259,8 @@ fn a_streamed_message_resolves_by_its_issued_short_ref() {
     memory
         .append_to_stream(handle, "a streamed message body")
         .expect("the stream takes text");
-    // Finalizing lands the MESSAGE, its document birth and its parts.
+    // Finalizing lands the MESSAGE with its words inline, and its parts; its
+    // document is born at its first later edit (FIX 4840).
     memory
         .finalize_stream(handle)
         .expect("the stream finalizes");
