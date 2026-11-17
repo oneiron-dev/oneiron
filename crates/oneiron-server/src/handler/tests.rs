@@ -2648,6 +2648,80 @@ async fn real_codec_withholds_a_parked_selector_answer_whose_grant_is_deleted() 
     );
 }
 
+/// Each frame of a selector answer is judged as it leaves, not only the first
+/// (SELECTOR-RELEASE-POINT = B): a grant deleted after an answer's first frame
+/// left withholds its next frame from a peer that reads at once, so no send
+/// ever waits.
+#[tokio::test]
+async fn real_codec_withholds_a_later_selector_answer_frame_whose_grant_is_deleted() {
+    let dir = tempfile::tempdir().unwrap();
+    let vault = Arc::new(oneiron::Vault::open(dir.path(), oneiron::VaultConfig::device()).unwrap());
+    let grant_id = oneiron::EntityId::now();
+    let grant = oneiron::federation::FederationGrant::new(
+        oneiron::FederationGrantScope::vault(7),
+        oneiron::EntityId::now(),
+        oneiron::federation::FederationGrantRole::Member,
+        oneiron::federation::FederationGrantPreset::Member,
+    );
+    oneiron::sync::put_selector_test_federation_grant(&vault, &grant_id, &grant, 1).unwrap();
+    let mut answers = crate::selector_release::SelectorAnswers::default();
+    let basis = crate::selector_release::SelectorReleaseBasis::take(&vault, grant_id);
+    let queued = answers.queue(
+        basis,
+        vec![
+            vec![7u8; UNDER_THRESHOLD_PAYLOAD],
+            vec![8u8; UNDER_THRESHOLD_PAYLOAD],
+        ],
+    );
+
+    let socket = CapturingSocket::default();
+    let registry = Arc::new(MutableRevocations::default());
+    let mut guarded = real_codec_guarded(&socket, &registry, REAL_CODEC_WRITE_BUFFER).await;
+    let first = crate::selector_release::queued_answer_frame(&queued[0]).unwrap();
+    guarded.answer = answers.release(&vault, &first);
+    assert!(
+        guarded.answer.is_some(),
+        "the answer stands at its first frame"
+    );
+    assert!(
+        guarded.send_binary(first.frame.to_vec()).await,
+        "the first frame leaves while the grant stands"
+    );
+    guarded.answer = None;
+    let first_wire = socket.wire().len();
+    assert!(first_wire > 0, "the first frame must reach the wire");
+
+    // The host deletes the grant between the answer's frames; the peer keeps
+    // reading, so the next frame's send never parks.
+    vault.delete_entity(&grant_id).unwrap();
+    let second = crate::selector_release::queued_answer_frame(&queued[1]).unwrap();
+    guarded.answer = answers.release(&vault, &second);
+    assert!(
+        guarded.answer.is_some(),
+        "a later frame is released under its answer, judged as it leaves"
+    );
+    let keep_going = tokio::time::timeout(
+        FLUSH_RECONSULT_INTERVAL * 20,
+        guarded.send_binary(second.frame.to_vec()),
+    )
+    .await
+    .expect("a writable peer must not hold the send");
+
+    assert!(
+        !keep_going,
+        "a frame of an answer whose grant is gone must not be sent"
+    );
+    assert_eq!(
+        socket.wire().len(),
+        first_wire,
+        "no byte of the later frame may reach the wire"
+    );
+    assert!(
+        guarded.socket.is_none(),
+        "the refusal must drop the whole real transport"
+    );
+}
+
 /// The package id a package's named dependency EDGE resolves to.
 ///
 /// `resolve.nodes[].deps[].name` is the extern-crate name the dependent's code
