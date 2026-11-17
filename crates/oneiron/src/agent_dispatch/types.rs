@@ -73,6 +73,9 @@ pub(super) const KEY_FUNDING: &str = AGENT_DISPATCH_INPUT_KEYS[26];
 /// AGM-4: the inbox wake keys a resident's held wake carries besides its own
 /// dedupe key.
 pub(super) const KEY_CARRIED_WAKE_KEYS: &str = AGENT_DISPATCH_INPUT_KEYS[27];
+/// FIX CHECK-IN-SPAWN-PARENT-PRINCIPAL: the principal of the agent whose
+/// attempt spawned this one, frozen at spawn.
+pub(super) const KEY_SPAWN_PARENT: &str = AGENT_DISPATCH_INPUT_KEYS[28];
 
 /// The depth a lineage with no explicit slice once stopped at. Such a
 /// lineage spends no depth (FIX 9560): past this many ancestors its walk
@@ -181,6 +184,14 @@ pub struct AgentDispatchInput {
     /// pass, never read from a briefing; empty for every other dispatch.
     /// Provenance only: never authority, and never part of the spawn intent.
     pub carried_wake_keys: Vec<String>,
+    /// FIX CHECK-IN-SPAWN-PARENT-PRINCIPAL (ARCH-0082 #ladder, rung 2): the
+    /// principal of the agent whose attempt spawned this one, read in the
+    /// dispatch writer from the parent attempt's stored row (its target's
+    /// definition), as the parent's powers are read. A check-in this run
+    /// asks names it as its grantor. `None` for a root, and for a child of
+    /// a parent that is no agent dispatch. It grants nothing, and it is
+    /// never part of `spawn_intent`.
+    pub spawn_parent: Option<EntityId>,
 }
 
 impl AgentDispatchInput {
@@ -213,6 +224,7 @@ impl AgentDispatchInput {
             caller_origin: super::CallerOrigin::Unknown,
             funding: None,
             carried_wake_keys: Vec::new(),
+            spawn_parent: None,
         }
     }
 }

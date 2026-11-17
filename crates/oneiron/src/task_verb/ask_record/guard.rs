@@ -113,7 +113,16 @@ pub(crate) fn guard_ask_fact_put(
                 .requested
                 .effective(&who, group.created_at, group.context_class.clone())
                 .map_err(|_| invalid())?;
+            // A role ask keeps the role it reached, at or above the role it
+            // asked and under its ceiling; no other ask keeps one.
+            let reached = match (&group.requested.who, &group.reached_role) {
+                (Some(crate::task_verb::TaskAskTarget::Role(to)), Some(role)) => {
+                    role.rank() >= to.role.rank() && role.rank() <= to.ceiling
+                }
+                (_, reached) => reached.is_none(),
+            };
             if group.base_policy_version != 1
+                || !reached
                 || group.members.len() != who.len()
                 || effective != group.effective
                 || blake3::hash(&rmp_serde::to_vec_named(&group.requested).map_err(|_| invalid())?)

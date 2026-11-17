@@ -24,9 +24,15 @@ const SERVER_RUNS: [&str; 5] = [
     "raw-inference",
 ];
 
-/// A recall rerank's run: this name, `:` and a random hex suffix
-/// (`server::recall_rerank`).
-const RECALL_RERANK_RUN: &str = "recall-rerank";
+/// The runs this server names with `:` and a random hex suffix after the
+/// name: a recall rerank's (`server::recall_rerank`), and an embedding
+/// request's, on its own line (`EMBEDDING_RUN`) or on the vault's background
+/// line (`BACKGROUND_EMBEDDING_LINE`, `embedder::admitted`).
+const SUFFIXED_SERVER_RUNS: [&str; 3] = [
+    "recall-rerank",
+    "remote-embedding",
+    crate::embedder::BACKGROUND_EMBEDDING_LINE,
+];
 
 /// Writes each run receipt row to the log as JSON.
 #[derive(Debug, Default)]
@@ -71,11 +77,15 @@ fn logged_row(receipt: &RunReceipt) -> Value {
             "rules_enforced": facts.rules_enforced,
             // The world the call named, as an id (DEC-0005 fix 12).
             "world": facts.world.map(|world| world.to_hex()),
+            // The worlds of the rows its input came from, as ids.
+            "source_worlds": worlds_hex(facts.source_worlds.as_deref()),
         }),
         RunEvent::Denied {
             subject,
             lease,
             reason,
+            world,
+            source_worlds,
             ..
         } => json!({
             "event": "denied",
@@ -83,6 +93,8 @@ fn logged_row(receipt: &RunReceipt) -> Value {
             "lease_seq": lease.as_deref().and_then(lease_seq),
             "subject": subject.as_deref().map(model),
             "reason": denial_kind(reason),
+            "world": world.map(|world| world.to_hex()),
+            "source_worlds": worlds_hex(source_worlds.as_deref()),
         }),
         RunEvent::Dispatched {
             lease,
@@ -92,6 +104,8 @@ fn logged_row(receipt: &RunReceipt) -> Value {
             served_model,
             broker_isolation,
             answered,
+            world,
+            source_worlds,
         } => json!({
             "event": "dispatched",
             "revision": revision,
@@ -102,6 +116,8 @@ fn logged_row(receipt: &RunReceipt) -> Value {
             "served_model": served_model.as_deref().map(model),
             "broker_isolation": broker_isolation,
             "answered": answered,
+            "world": world.map(|world| world.to_hex()),
+            "source_worlds": worlds_hex(source_worlds.as_deref()),
         }),
         RunEvent::Settled {
             lease,
@@ -116,6 +132,8 @@ fn logged_row(receipt: &RunReceipt) -> Value {
             stream,
             inference_calls,
             overage,
+            world,
+            source_worlds,
         } => json!({
             "event": "settled",
             "revision": revision,
@@ -135,6 +153,8 @@ fn logged_row(receipt: &RunReceipt) -> Value {
             "inference_calls": inference_calls,
             "refused": error.is_some(),
             "allocation_refused": allocation_error.is_some(),
+            "world": world.map(|world| world.to_hex()),
+            "source_worlds": worlds_hex(source_worlds.as_deref()),
         }),
         RunEvent::Revised { from, .. } => json!({
             "event": "revised",
@@ -185,10 +205,13 @@ fn run_name(run: &str) -> &'static str {
         return name;
     }
     match run.split_once(':') {
-        Some((RECALL_RERANK_RUN, suffix))
+        Some((name, suffix))
             if !suffix.is_empty() && suffix.bytes().all(|byte| byte.is_ascii_hexdigit()) =>
         {
-            RECALL_RERANK_RUN
+            SUFFIXED_SERVER_RUNS
+                .into_iter()
+                .find(|known| *known == name)
+                .unwrap_or(UNRECOGNISED)
         }
         _ => UNRECOGNISED,
     }
@@ -198,6 +221,12 @@ fn run_name(run: &str) -> &'static str {
 /// the id. The id begins with the run's name, so no other part of it is.
 fn lease_seq(lease: &str) -> Option<u64> {
     lease.rsplit(':').next()?.parse().ok()
+}
+
+/// A call's source-row worlds as logged (DEC-0005 fix 12): ids only, in the
+/// receipt's order; null while they are unknown.
+fn worlds_hex(worlds: Option<&[oneiron::EntityId]>) -> Option<Vec<String>> {
+    worlds.map(|worlds| worlds.iter().map(|world| world.to_hex()).collect())
 }
 
 /// A refusal as logged: its closed kind, never a field a variant carries.
@@ -246,7 +275,8 @@ fn id(value: &str) -> &str {
 pub(crate) struct ServerReceipts {
     chosen: RwLock<Option<Arc<dyn RunReceiptSink>>>,
     usage: RwLock<Option<Arc<crate::runtime::VaultUsage>>>,
-    /// The vault whose `host.budget.hit` hooks a spent line runs.
+    /// The vault whose `host.budget.hit` hooks a spent line runs, and whose
+    /// rows' worlds each call's receipts name (DEC-0005 fix 12).
     hooks: Option<Arc<oneiron::Vault>>,
 }
 
@@ -297,5 +327,11 @@ impl RunReceiptSink for ServerReceipts {
         if let Some(vault) = &self.hooks {
             vault.budget_denied_hooks(denied, guard, seat, None, None);
         }
+    }
+
+    /// The worlds of a call's source rows, read from the server's vault; a
+    /// read that fails leaves them unknown, never empty.
+    fn source_worlds(&self, rows: &[oneiron::EntityId]) -> Option<Vec<oneiron::EntityId>> {
+        self.hooks.as_ref()?.source_row_worlds(rows).ok().flatten()
     }
 }
