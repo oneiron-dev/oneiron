@@ -48,13 +48,14 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/host_descriptors.rs` | src | s | 1 fn | — | What the platform says of this process's descriptors: the probe the process's descriptor floor is sized from… |
 | `src/host_memory.rs` | src | m | 2 struct · 1 enum · 17 fn | MachineMemory, MemoryLease, MemoryRefusal | The process's physical-memory admission line for host and native work |
 | `src/identity_topology.rs` | src | s | 2 enum · 4 fn | EntityLifecycleState, IdentityTopologyRejection | Identity-topology lifecycle states and per-op rejections: the values the topology ledger, the sync replay… |
-| `src/lib.rs` | src | s | 30 mod · 4 re-export | — | Shared value vocabulary of the oneiron engine: the lowest engine crate, with no dependency on any… |
+| `src/lib.rs` | src | s | 31 mod · 4 re-export | — | Shared value vocabulary of the oneiron engine: the lowest engine crate, with no dependency on any… |
+| `src/lifecycle.rs` | src | s | 1 struct · 2 trait | IllegalTransition, Lifecycle, LifecycleWords | One declared state machine for a stored lifecycle status (census UC-15) |
 | `src/limit_ask.rs` | src | L | 2 struct · 1 enum · 1 trait · 11 fn · 1 const | EngineLimit, EngineLimits, LimitAsk, LimitWatch | The engine's `[limits]` rows and the port a crossed row asks through (ARCH-0044 C5, OF-520) |
 | `src/limit_ask/cgroup.rs` | src | s | 2 crate-vis | — | The memory cgroup this process runs in (FIX 8067), and what its limits leave (FIX 8066) |
 | `src/limit_ask/engine_rows.rs` | src | m | 2 fn · 1 const | — | The engine rows' tables: every row, its config key and its default (moved out of `limit_ask.rs` whole, so… |
 | `src/limits.rs` | src | s | 3 const | — | Traversal safety caps for the engine's graph walks |
 | `src/memory.rs` | src | s | 11 re-export | — | The memory facade's error vocabulary: `MemoryError`, the stable `MEMORY_CODE_*` strings and the one… |
-| `src/memory/error.rs` | src | m | 4 struct · 7 fn · 1 type · 25 const · 1 re-export | MemoryError, MemoryPolicyDenial, MemoryPolicyExceptionProposal, MemoryWrongRoot | Memory error vocabulary: [`MemoryError`], the stable `MEMORY_CODE_*` strings, and the central engine-error… |
+| `src/memory/error.rs` | src | m | 4 struct · 1 enum · 7 fn · 1 type · 25 const · 1 re-export | MemoryError, MemoryPending, MemoryPolicyDenial, MemoryPolicyExceptionProposal, MemoryWrongRoot | Memory error vocabulary: [`MemoryError`], the stable `MEMORY_CODE_*` strings, and the central engine-error… |
 | `src/memory/error/engine.rs` | src | m | — | — | — |
 | `src/memory/error/gate_denial.rs` | src | s | 1 struct | MemoryGateDenial | The Gate rejection a `MemoryError` carries when its engine cause was a Gate write rejection |
 | `src/msgpack.rs` | src | s | 1 struct · 1 enum · 18 fn | Entries, MsgpackError | The one reader for untyped MessagePack rows (PLAN-UC-08) |
