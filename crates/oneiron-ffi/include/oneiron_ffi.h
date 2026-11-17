@@ -456,6 +456,23 @@ enum OneironStatus oneiron_engine_reply_free(struct OneironReply reply);
 enum OneironStatus oneiron_engine_wake(struct OneironEngine *engine);
 
 /**
+ * What the app shell observes about fetching predictions on this machine:
+ * `unmetered` is 1 on an unmetered network and `powered` is 1 on power (any
+ * other non-zero value counts as 1). A phone at the predicted level asks and
+ * fetches only while both hold, closed until the app reports; the report
+ * holds across `oneiron_engine_stop`, `oneiron_engine_wake` and every
+ * reconnect. Report again on each change the app's monitors see.
+ *
+ * # Safety
+ *
+ * `engine` is null or a live handle from `oneiron_engine_start`, not freed
+ * during the call.
+ */
+enum OneironStatus oneiron_engine_set_fetch_conditions(struct OneironEngine *engine,
+                                                       uint8_t unmetered,
+                                                       uint8_t powered);
+
+/**
  * The app is backgrounding: stop taking requests, drain, stop every worker
  * and return once they have. The vault stays open for the next
  * `oneiron_engine_wake`.
