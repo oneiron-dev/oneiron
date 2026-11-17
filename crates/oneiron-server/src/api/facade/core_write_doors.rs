@@ -220,7 +220,9 @@ pub(crate) async fn write_core_batch(
 /// grants no read, the read its target key gives, which judges what it may
 /// write to without asking the read verb (`Vault::credential_target_key`),
 /// where its connection sits; unbound when that leaves no bounds to judge.
-/// An owner-grade caller whose read is refused writes unbound, as before.
+/// An owner-grade caller whose read is refused writes unbound, as before,
+/// except a hosted operator's root, which keeps its typed support-grant
+/// refusal instead (FIX 2222): it acts as nobody and never writes unbound.
 /// Every other refusal of the read is the error. It is built before any
 /// write opens, so no read snapshot opens inside a writer.
 pub(crate) fn core_write_lane<'a>(
@@ -231,6 +233,15 @@ pub(crate) fn core_write_lane<'a>(
         Ok(read) => return Ok(CoreWriteLane::Read(read)),
         Err(refused) => refused,
     };
+    // A hosted operator's root acts as nobody (FIX 2222): it keeps the
+    // typed support-grant refusal its read got, ahead of the owner-grade
+    // unbound path below. Every other answer of the host resolver keeps
+    // its own path (FIX 8139).
+    if let Some(Err(error @ oneiron::Error::HostActionRequiresSupportGrant)) =
+        crate::api::host_action::host_action_of(vault, auth)
+    {
+        return Err(crate::api::host_action::host_action_refusal(error));
+    }
     if auth.is_owner_grade() {
         return Ok(CoreWriteLane::Unbound);
     }
