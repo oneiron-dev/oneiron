@@ -116,7 +116,8 @@ pub mod ports {
     pub use crate::ports::{
         ChangeLogStoreRead, DeletionFamily, DeletionMarker, DeletionState, EdgeStoreRead,
         EntityStoreRead, EntityTime, EntityWriteSegmentRead, JobQueueRead, PortRows,
-        RetrievalIndexRead, ShortIdStoreRead, TimeAxis, TimelineQuery, TombstoneStoreRead,
+        RetrievalIndexRead, ShortIdStoreRead, SoundMatchAdmission, TimeAxis, TimelineQuery,
+        TombstoneStoreRead,
     };
 }
 
@@ -251,7 +252,9 @@ pub use oneiron_store::snapshot_key;
 pub use oneiron_store::snapshot_lock_result;
 pub(crate) use oneiron_store::source_audience_obligation;
 
-pub(crate) use active_write_txn::{active_write_txn_depth, active_write_txn_guard};
+pub(crate) use active_write_txn::{
+    active_write_txn_depth, active_write_txn_guard, active_write_txn_holds,
+};
 use oneiron_store::active_write_txn;
 mod archive_scratch;
 #[cfg(unix)]
