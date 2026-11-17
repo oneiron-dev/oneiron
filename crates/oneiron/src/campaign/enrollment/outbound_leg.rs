@@ -276,7 +276,6 @@ pub(super) fn run_enrollment_outbound_leg<T: OutboundTransport>(
     // applied or replayed consequence never reaches a paused, suppressed or
     // exited member.
     if !membership_sends(vault, &event) {
-        super::held::observe_nothing_owed(vault, &event, &step);
         return Ok(EnrollmentOutboundLeg::MembershipNotReady);
     }
     // The send waits on a resolvable target (FIX 11513 K12): without one
