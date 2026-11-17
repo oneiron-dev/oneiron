@@ -3297,7 +3297,7 @@ fn every_dreamer_call_names_medium_with_its_budget_unless_the_vault_authors_a_le
         let (_dir, vault) = open_vault();
         let fx = fixture(&vault)?;
         if authored {
-            vault.set_description_policy(&crate::llm::routing::DescriptionPolicy {
+            let policy = crate::llm::routing::DescriptionPolicy {
                 models: vec![crate::llm::routing::ModelDescription {
                     model: crate::ModelId::new("test/model@r1").unwrap(),
                     wire: crate::llm::registry::ModelWireFormat::OpenaiCompat,
@@ -3311,7 +3311,16 @@ fn every_dreamer_call_names_medium_with_its_budget_unless_the_vault_authors_a_le
                 vault_effort: None,
                 purpose_effort: [("extraction".to_owned(), ReasoningEffort::Low)].into(),
                 global_effort: None,
-            })?;
+            };
+            vault.set_setting(
+                crate::setting::SettingCaller::Owner(&crate::test_util::embedded_owner_proof(
+                    &vault,
+                )),
+                crate::setting::SetSetting::vault_value(
+                    "models.description_policy",
+                    serde_json::to_value(&policy).unwrap(),
+                ),
+            )?;
         }
         let backend = ReasoningBackend {
             inner: ScriptedBackend::new(vec![

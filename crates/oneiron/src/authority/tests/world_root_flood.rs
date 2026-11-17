@@ -260,6 +260,7 @@ fn a_root_held_behind_a_flood_pins_in_two_steps() {
         let waiting = AwaitedRoot {
             root: r1.root,
             arrived: false,
+            request: None,
         };
         assert_eq!(awaiting(&b), Some(waiting));
         let owner = b.owner.actor();
@@ -276,6 +277,7 @@ fn a_root_held_behind_a_flood_pins_in_two_steps() {
         let arrived = AwaitedRoot {
             root: r1.root,
             arrived: true,
+            request: None,
         };
         assert_eq!(awaiting(&b), Some(arrived));
         let report = b.vault.pin_owner_root(&b.owner, r1.root).unwrap();
@@ -335,12 +337,14 @@ fn a_carried_re_pin_whose_marks_wait_finishes_on_the_second_pin() {
             let waiting = AwaitedRoot {
                 root: r1.root,
                 arrived: false,
+                request: None,
             };
             assert_eq!(awaiting(&b), Some(waiting));
             assert_eq!(drain(&issuer.vault, &b.vault), 0);
             let arrived = AwaitedRoot {
                 root: r1.root,
                 arrived: true,
+                request: None,
             };
             assert_eq!(awaiting(&b), Some(arrived));
             let report = b.vault.pin_owner_root(&b.owner, r1.root).unwrap();
