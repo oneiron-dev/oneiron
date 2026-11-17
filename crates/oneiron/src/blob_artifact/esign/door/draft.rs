@@ -5,15 +5,17 @@
 //! download switch (`qr_pdf_download`) lands in the draft's own transaction,
 //! and only the vault owner turns it on, on the owner's own live credential
 //! or none (the embedded owner), never one handed to another key.
+use super::super::field_admission::inspect_draft_pages;
 use super::super::lane_scope::{self, EsignScope};
 use super::super::ledger::{create_document_in, state_in};
 use super::super::lifecycle::with_lifecycle;
-use super::super::model::{EsignAuditActor, EsignState, validate_document};
+use super::super::model::{EsignAuditActor, EsignDocument, EsignState, validate_document};
 use super::super::qr_capability::set_pdf_download_in_txn;
+use super::super::rules::lifecycle_default_in_txn;
 use super::{EsignCreateRequest, EsignDraftView, document_id};
-use crate::EntityId;
 use crate::claim::ScopedRead;
 use crate::memory::Memory;
+use crate::{EntityId, Vault};
 use oneiron_contracts::memory::{MemoryError, MemoryResult};
 
 impl Memory<'_> {
@@ -24,8 +26,9 @@ impl Memory<'_> {
     /// # Errors
     /// A `document_ref` that is no id, a QR PDF download asked for by anyone
     /// but the vault owner, or the vault's refusal: a draft that does not
-    /// validate, an item whose PDF moved past its pinned version, a project
-    /// the caller is no member of, or a document already drafted.
+    /// validate, a field on a page its item's PDF does not have, an item
+    /// whose PDF moved past its pinned version, a project the caller is no
+    /// member of, or a document already drafted.
     pub fn esign_create(&self, input: &EsignCreateRequest) -> MemoryResult<EsignDraftView> {
         let document = document_id(&input.document_ref)?;
         // Every envelope is sensitive unless the owner says otherwise
@@ -50,13 +53,11 @@ impl Memory<'_> {
             user_agent: None,
         };
         let now = vault.now_recorded_at();
-        let body = match &input.draft.lifecycle {
-            Some(rules) => with_lifecycle(&input.draft, now, rules)?,
-            None => input.draft.clone(),
-        };
+        let body = draft_body(vault, &input.draft, now)?;
         validate_document(&body, now)?;
+        let inspected = inspect_draft_pages(vault, &body, now);
         vault.try_with_write_txn_grouped(|txn| -> MemoryResult<()> {
-            create_document_in(vault, txn, document, &body, actor, now)?;
+            create_document_in(vault, txn, document, &body, actor, now, &inspected)?;
             if input.qr_pdf_download {
                 self.admit_qr_pdf_download_in(txn)?;
                 set_pdf_download_in_txn(vault, txn, document, true)?;
@@ -92,14 +93,12 @@ impl Memory<'_> {
             user_agent: None,
         };
         let now = vault.now_recorded_at();
-        let body = match &input.draft.lifecycle {
-            Some(rules) => with_lifecycle(&input.draft, now, rules)?,
-            None => input.draft.clone(),
-        };
+        let body = draft_body(vault, &input.draft, now)?;
         validate_document(&body, now)?;
+        let inspected = inspect_draft_pages(vault, &body, now);
         lane_scope::write_artifact(lane, self, document, |txn| {
             lane_scope::reaches_draft_in(lane, txn, &body)?;
-            create_document_in(vault, txn, document, &body, actor, now)?;
+            create_document_in(vault, txn, document, &body, actor, now, &inspected)?;
             if input.qr_pdf_download {
                 self.admit_qr_pdf_download_in(txn)?;
                 set_pdf_download_in_txn(vault, txn, document, true)?;
@@ -164,4 +163,18 @@ fn draft_view(document: EntityId, state: EsignState) -> EsignDraftView {
             .collect(),
         fields: state.document.fields.len(),
     }
+}
+
+/// The draft as it lands: its own lifecycle rules, else the active e-sign rule pack's lifecycle
+/// default row (ARCH-0064 section 2: the ladder, window and cap are pack rows, not engine code).
+/// The rules ride the draft, so a later amend never changes a document already drafted.
+fn draft_body(vault: &Vault, draft: &EsignDocument, now: u64) -> MemoryResult<EsignDocument> {
+    let rules = match &draft.lifecycle {
+        Some(rules) => rules.clone(),
+        None => {
+            let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
+            lifecycle_default_in_txn(&vault.store, &txn)?
+        }
+    };
+    with_lifecycle(draft, now, &rules).map_err(MemoryError::from)
 }
