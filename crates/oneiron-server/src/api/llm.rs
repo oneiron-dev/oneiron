@@ -294,6 +294,25 @@ pub(crate) fn record_raw_response(
     binding: Option<&ModelCallBinding>,
     no_record: bool,
 ) {
+    record_reply_response(
+        vault, ladder, run, request, response, binding, no_record, None,
+    );
+}
+
+/// [`record_raw_response`] for a call whose answer streams into the MESSAGE
+/// `reply`, when it names one: the record is linked to it in the same write
+/// (TURN-MODEL-LINK), so a thread reads which call answered each reply.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn record_reply_response(
+    vault: &oneiron::Vault,
+    ladder: &OfferLadder,
+    run: &RunAdmission,
+    request: &LlmRequest,
+    response: &LlmResponse,
+    binding: Option<&ModelCallBinding>,
+    no_record: bool,
+    reply: Option<oneiron::EntityId>,
+) {
     if no_record {
         tracing::debug!("model-call record skipped: off-record session or room");
         return;
@@ -380,9 +399,12 @@ pub(crate) fn record_raw_response(
         summary_requested: false,
         erased: false,
     };
-    if let Err(error) =
-        vault.with_write_txn_grouped(|txn| record_model_call_in_txn(vault, txn, &record))
-    {
+    if let Err(error) = vault.with_write_txn_grouped(|txn| match reply {
+        Some(reply) => oneiron::code_run::model_call::record_reply_model_call_in_txn(
+            vault, txn, &record, reply,
+        ),
+        None => record_model_call_in_txn(vault, txn, &record),
+    }) {
         tracing::warn!(%error, "model-call record failed");
     }
 }
