@@ -20,7 +20,7 @@ use std::path::Path;
 
 use super::revision_shape;
 use crate::Vault;
-use crate::authority::{ActSurface, VerifiedSlip};
+use crate::authority::ActSurface;
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
 use crate::federation::git_push::{GIT_PUSH_REVOKE_COMMAND, GitPushGrantStanding};
@@ -144,7 +144,7 @@ pub fn bind_repo_anchor_as(
 pub fn bind_repo_anchor_as_delegate(
     vault: &Vault,
     agent: EntityId,
-    credential: Option<&VerifiedSlip>,
+    credential: Option<&crate::authority::VerifiedSlip>,
     input: RepoAnchorBindInput,
 ) -> MemoryResult<RepoAnchorBindOutput> {
     let editable = input.editable.as_deref();
