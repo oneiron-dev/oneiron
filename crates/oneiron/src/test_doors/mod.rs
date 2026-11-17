@@ -184,6 +184,8 @@ pub mod retrieval_policy_default_floor;
 pub mod reveal_ask_window;
 pub mod room_facet_limit;
 pub mod room_facet_set;
+#[cfg(feature = "sync")]
+pub mod room_fact_marks;
 pub mod room_turn_backfill;
 pub mod roster_slot_reservation;
 pub mod run_changes;
