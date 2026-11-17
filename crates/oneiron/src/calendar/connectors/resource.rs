@@ -1,6 +1,9 @@
 //! One UID is one remote resource: master plus every live detached exception.
 use super::{outbound::ingest_error, remote::render_component, seat::CalendarConnectorError};
-use crate::calendar::{claims::*, passport::admitted_passports_for_event_in_txn};
+use crate::calendar::{
+    claims::*,
+    passport::{admitted_passports_for_event_in_txn, live_passports_for_event},
+};
 use crate::claim::ClaimLifecycleStatus;
 use crate::entity_id::derived_domains::CALENDAR_CONNECTOR_SOURCE_BLOB;
 use crate::{EntityId, Vault};
@@ -499,7 +502,17 @@ pub(super) fn archived_source(
     {
         return Ok(Some(bytes));
     }
-    for id in vault.claims_for_subject(&master)? {
+    // The revision each key's ingest diff reads goes first: while a revision
+    // waits for review, its admitted head stays live beside it. Another live
+    // passport for the UID still supplies the archive when that one cites
+    // none (a raw admission carries no source).
+    let current: Vec<EntityId> = live_passports_for_event(vault, &master)?
+        .into_iter()
+        .map(|(id, _)| id)
+        .collect();
+    let mut candidates = vault.claims_for_subject(&master)?;
+    candidates.sort_by_key(|id| !current.contains(id));
+    for id in candidates {
         let Some(body) = vault.get_claim(&id)? else {
             continue;
         };
