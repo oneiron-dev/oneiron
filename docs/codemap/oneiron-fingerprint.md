@@ -23,6 +23,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/purposes/dreamer.rs` | src | s | — | — | Purposes of the Dreamer (`crates/oneiron/src/dreamer_consolidation`, `crates/oneiron/src/dreamer_promotion`… |
 | `src/purposes/engine_executor.rs` | src | s | — | — | Purposes of the engine executor (`crates/oneiron/src/engine_executor`) |
 | `src/purposes/git_wire.rs` | src | s | — | — | Purposes of the git wire (`oneiron-store`'s `git_wire` and `crates/oneiron/src/git_wire`) |
+| `src/purposes/key_custody.rs` | src | s | — | — | Purposes of key custody (`crates/oneiron/src/store/key_custody`, with its store half in `oneiron-store`) |
 | `src/purposes/learning.rs` | src | s | — | — | Purposes of the learning loop (`crates/oneiron/src/edit_distance`, `skill_attribution`) |
 | `src/purposes/mail_pack.rs` | src | s | — | — | Purposes of the mail pack (`crates/oneiron/src/mail_pack`) |
 | `src/purposes/memory.rs` | src | s | — | — | Purposes of memory (`crates/oneiron/src/memory`) |
@@ -34,11 +35,13 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/purposes/retrieval.rs` | src | s | — | — | Purposes of the retrieval crate (`oneiron-retrieval`) |
 | `src/purposes/runtime_hooks.rs` | src | s | — | — | Purposes of runtime hooks (`crates/oneiron/src/runtime_hooks`) |
 | `src/purposes/saved_query.rs` | src | s | — | — | Purposes of saved queries (`crates/oneiron/src/saved_query` and `oneiron-store`'s `query_memo_codec`) |
+| `src/purposes/secret.rs` | src | s | — | — | Purposes of secret scanning (`crates/oneiron/src/batch/secret_scan`) and secret custody (`secret_custody`) |
 | `src/purposes/setting.rs` | src | s | — | — | Purposes of the Setting primitive (`crates/oneiron/src/setting/`) |
 | `src/purposes/skill.rs` | src | s | — | — | Purposes of a skill's canonical identity (`oneiron-store` `write_envelope::skill_record`) |
 | `src/purposes/skill_attribution.rs` | src | s | — | — | Purposes of skill attribution (`crates/oneiron/src/skill_attribution`) |
 | `src/purposes/skill_optimize.rs` | src | s | — | — | Purposes of skill optimization (`crates/oneiron/src/skill_optimize`) |
 | `src/purposes/store.rs` | src | s | — | — | Legacy store digests that existing rows, files and acks hold |
+| `src/purposes/subject_model.rs` | src | s | — | — | Purposes of the subject model (`crates/oneiron/src/subject_model`) |
 | `src/purposes/sync.rs` | src | s | — | — | Legacy sync digests stored, sent or compared by existing records and peers |
 | `src/purposes/task.rs` | src | s | — | — | Purposes of tasks (`crates/oneiron/src/task_verb`, `task_type`, `campaign`) |
 | `src/purposes/testing.rs` | src | s | — | — | Purposes for tests only |
