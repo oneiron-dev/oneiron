@@ -158,6 +158,11 @@ pub(super) fn erase_actor_fields_in_txn(
             wtxn,
             &BTreeSet::from([*actor]),
         )?;
+        crate::booking::rung2::erase_rung2_first_sends_by_authors_in_txn(
+            vault,
+            wtxn,
+            &BTreeSet::from([*actor]),
+        )?;
     }
     // A reply job naming the actor takes its witnessed exchange with its
     // event (FIX 10897). A purge or an erase's scrub erased it before its
@@ -301,6 +306,7 @@ pub(crate) fn rerun_actor_scrubs_in_txn(
         .store
         .rerun_gate_claim_scrubs_in_txn(wtxn, &erased, now)?;
     crate::outbound::erase_connector_reply_bodies_by_authors_in_txn(vault, wtxn, &erased)?;
+    crate::booking::rung2::erase_rung2_first_sends_by_authors_in_txn(vault, wtxn, &erased)?;
     // So do the witnessed exchanges of the reply jobs the image brings back
     // naming any of them, read while those jobs still carry their events
     // (FIX 10897).
