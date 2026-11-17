@@ -73103,7 +73103,7 @@
      "path": "src/secret_custody/control/input.rs",
      "purpose": "The protected input of an active custody change (WILL L04 row 04): what a register, rotate or bind hands its…",
      "surface": {
-      "crate-vis": 35,
+      "crate-vis": 36,
       "re-export": 2
      }
     },
@@ -73191,7 +73191,7 @@
      "path": "src/secret_custody/control/input/witness.rs",
      "purpose": "A relayed custody input's witness in numbered parts (FIX 8088)",
      "surface": {
-      "crate-vis": 22
+      "crate-vis": 23
      }
     },
     {
@@ -73484,7 +73484,7 @@
      "path": "src/secret_custody/mod.rs",
      "purpose": "ARCH-0069 secret custody — SECRET-01 (ONE-1919): custody classes, the custody record that is the secret…",
      "surface": {
-      "crate-vis": 33,
+      "crate-vis": 34,
       "re-export": 21
      }
     },
@@ -82396,7 +82396,7 @@
      "path": "src/store/key_custody/head.rs",
      "purpose": "The sealed custody head (KS-4, FIX 5685): the latest live entries of one lineage and every retirement fact…",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 12
      }
     },
     {
@@ -82406,7 +82406,7 @@
      "path": "src/store/key_custody/head/carried_pads.rs",
      "purpose": "Core half of `store::key_custody::head::carried_pads`: its store-layer items live in…",
      "surface": {
-      "crate-vis": 17
+      "crate-vis": 18
      }
     },
     {
@@ -82496,7 +82496,7 @@
      "path": "src/store/key_custody/mod.rs",
      "purpose": "Typed key custody (KS-1): one storage and lifecycle service for the independent, erasable secrets a vault…",
      "surface": {
-      "crate-vis": 41,
+      "crate-vis": 42,
       "mod": 1,
       "re-export": 2
      }
@@ -82988,7 +82988,7 @@
      "path": "src/store/mod.rs",
      "purpose": "LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the…",
      "surface": {
-      "crate-vis": 169,
+      "crate-vis": 170,
       "mod": 69,
       "re-export": 89
      }
@@ -84661,7 +84661,7 @@
      "path": "src/subject_model.rs",
      "purpose": "Subject model: who, if anyone, stands behind an actor (ARCH-0063 R7)",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 12,
       "fn": 8,
       "re-export": 5
      }
@@ -84675,7 +84675,7 @@
      "path": "src/subject_model/archive.rs",
      "purpose": "Inert subject-fact restore and explicit current-owner activation",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 5,
       "struct": 1
      }
@@ -94042,6 +94042,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/test_doors/fingerprint_keep_custody_digests.rs",
+     "purpose": "Door for `tests/fingerprint_keep_custody_digests.rs` (PLAN-UC-04 stage 6.1b): a custody input witness's…",
+     "surface": {
+      "fn": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/test_doors/fingerprint_keep_dreamer.rs",
      "purpose": "The agent-health trend replay hash, for the K-proof of PLAN-UC-04 stage 3.2…",
      "surface": {
@@ -94764,7 +94774,7 @@
      "purpose": "Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD)",
      "surface": {
       "fn": 1,
-      "mod": 291,
+      "mod": 292,
       "re-export": 1
      }
     },
@@ -106799,6 +106809,17 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/fingerprint_keep_custody_digests.rs",
+     "purpose": "K-proof (oracle) for PLAN-UC-04 stage 6.1b: three custody digest helpers keep their bytes",
+     "surface": {
+      "const": 2,
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/fingerprint_keep_dreamer.rs",
      "purpose": "K-proof (oracle) for PLAN-UC-04 stage 3.2: the agent-health trend replay hash keeps its bytes",
      "surface": {
@@ -114172,7 +114193,7 @@
      "purpose": "`TimeRange`, temporal expressions/parsing, granularity/anchor enums"
     },
     "test_doors": {
-     "files": 297,
+     "files": 298,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -114349,8 +114370,8 @@
    },
    "over_bar": 299,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 8111,
-   "test_files": 1865
+   "source_files": 8112,
+   "test_files": 1866
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -129034,6 +129055,14 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/purposes/key_custody.rs",
+     "purpose": "Purposes of key custody (`crates/oneiron/src/store/key_custody`, with its store half in `oneiron-store`)",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/purposes/learning.rs",
      "purpose": "Purposes of the learning loop (`crates/oneiron/src/edit_distance`, `skill_attribution`)",
      "surface": {}
@@ -129125,6 +129154,14 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/purposes/secret.rs",
+     "purpose": "Purposes of secret scanning (`crates/oneiron/src/batch/secret_scan`) and secret custody (`secret_custody`)",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/purposes/setting.rs",
      "purpose": "Purposes of the Setting primitive (`crates/oneiron/src/setting/`)",
      "surface": {}
@@ -129159,6 +129196,14 @@
      "notable": [],
      "path": "src/purposes/store.rs",
      "purpose": "Legacy store digests that existing rows, files and acks hold",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/purposes/subject_model.rs",
+     "purpose": "Purposes of the subject model (`crates/oneiron/src/subject_model`)",
      "surface": {}
     },
     {
@@ -129240,7 +129285,7 @@
      "purpose": "The K door: a digest that main already stores or sends keeps its exact bytes"
     },
     "purposes": {
-     "files": 32,
+     "files": 35,
      "impl_vault": false,
      "largest_src_bucket": "s",
      "layout": "dir",
@@ -129256,7 +129301,7 @@
    },
    "over_bar": 0,
    "purpose": "One fingerprint rule for engine digests (fable pass 22; PLAN-UC-04 stage 0)",
-   "source_files": 35,
+   "source_files": 38,
    "test_files": 1
   },
   "oneiron-gen": {
@@ -181264,7 +181309,7 @@
      "path": "src/key_custody/head/carried_pads.rs",
      "purpose": "World pad compartments a restore left unopened, carried forward (PAD-3, FIX 11133)",
      "surface": {
-      "const": 6,
+      "const": 4,
       "fn": 3,
       "mod": 1
      }
