@@ -8,6 +8,10 @@
 //! behaviour's red run is `tests/setting_read_on_proofs.rs`, which reads the waiting act as
 //! `Pending` and the refusing door. Green at the 7b-3 head.
 //!
+//! A waiting batch is one proposal per row under its one entry, and a tap names the row
+//! (REVIEW-9332 P1-2): red at the 7b-3 head `881ae2d70739` (run there with its tap by entry
+//! alone, which changes the entry's first row), green at the fix.
+//!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test
 //! setting_proposals`.
 
@@ -18,23 +22,28 @@ use std::sync::Arc;
 
 use oneiron::authority::{ActAuthority, ActSurface, HostSlipIssuer, MachineOwnership, MachineRole};
 use oneiron::consent::AuthenticatedOwner;
+use oneiron::memory::Memory;
 use oneiron::setting::{
     SetSetting, SetSettingOutcome, SettingCaller, SettingMode, SettingProposal, SettingScope,
     SettingStanding,
 };
 use oneiron::store::GateDecisionId;
+use oneiron::task_verb::sdk::invoke;
 use oneiron::test_doors::owner_key_release::release_owner_keys;
 use oneiron::test_doors::setting::{
-    EnrolledMachine, enroll_machine_with_key, land_setting_act_from, ordered_cap_read,
-    setting_frontier,
+    EnrolledMachine, SlotName, enroll_machine_with_key, land_setting_batch_from, ordered_cap_read,
+    setting_frontier_of,
 };
-use oneiron::{EntityId, Vault, VaultConfig};
+use oneiron::{EdgeActorClass, EntityId, Vault, VaultConfig};
 use oneiron_keystore::MemoryKeystore;
 use oneiron_store::ports::manual_clock::ManualClock;
 use serde_json::json;
 
 /// A cap whose rows meet: lower is stricter, its default is 10.
 const CAP: &str = "test.ordered_cap";
+/// A budget whose rows meet: lower is stricter, its default is 10.
+const BUDGET: &str = "test.work_budget";
+const GET: &str = "vault.settings.get";
 const T0: u64 = 1_790_000_000;
 
 struct Fixture {
@@ -51,6 +60,12 @@ impl Fixture {
     /// cap at 6, and a work machine of his (not his own) that carried his change of the cap to 3
     /// without his key's proof. The work machine's MACHINE id.
     fn with_a_proposal() -> (Self, EntityId) {
+        Self::with_waiting(&[(CAP, json!(3))])
+    }
+
+    /// [`Self::with_a_proposal`], with the work machine's one act changing each of `rows` (its
+    /// key and value) on the key's vault value row: a batch where it names several.
+    fn with_waiting(rows: &[(&str, serde_json::Value)]) -> (Self, EntityId) {
         let dir = tempfile::tempdir().expect("tempdir");
         let clock = ManualClock::new(T0);
         let keystore = Arc::new(MemoryKeystore::new());
@@ -87,24 +102,18 @@ impl Fixture {
                 &fx.issuer,
             )
             .expect("the owner key is enrolled");
-        let now = setting_frontier(
-            &fx.vault,
-            CAP,
-            None,
-            SettingMode::Value,
-            SettingScope::Vault,
-        )
-        .expect("frontier");
-        land_setting_act_from(
-            &fx.vault,
-            &signer,
-            fx.owner,
-            &now,
-            (CAP, None, SettingMode::Value, SettingScope::Vault),
-            Some(json!(3)),
-            T0,
-        )
-        .expect("the act is stored");
+        let slots: Vec<SlotName<'_>> = rows
+            .iter()
+            .map(|(key, _)| (*key, None, SettingMode::Value, SettingScope::Vault))
+            .collect();
+        let now = setting_frontier_of(&fx.vault, &slots).expect("frontier");
+        let batch: Vec<_> = slots
+            .iter()
+            .cloned()
+            .zip(rows.iter().map(|(_, value)| Some(value.clone())))
+            .collect();
+        land_setting_batch_from(&fx.vault, &signer, fx.owner, &now, &batch, T0)
+            .expect("the act is stored");
         (fx, machine)
     }
 
@@ -161,6 +170,14 @@ impl Fixture {
     fn proposals(&self) -> Vec<SettingProposal> {
         self.vault.setting_proposals().expect("the proposals")
     }
+
+    /// `key`'s value in force at the vault, as `vault.settings.get` answers the owner.
+    fn value_of(&self, key: &str) -> serde_json::Value {
+        let owner: Memory<'_> = self.vault.memory(self.owner, EdgeActorClass::Human);
+        invoke(&owner, GET, json!({ "key": key }))
+            .unwrap_or_else(|error| panic!("{GET} answers: {error:?}"))["value"]
+            .clone()
+    }
 }
 
 #[test]
@@ -199,10 +216,10 @@ fn a_proposal_is_listed_with_its_row_and_value_and_one_tap_applies_it() {
     );
     assert_eq!(fx.cap(), (6, SettingStanding::Pending));
 
-    let entry = proposal.entry;
+    let proposal = proposal.clone();
     let applied = fx
         .vault
-        .apply_setting_proposal(&fx.owner_proof, entry)
+        .apply_setting_proposal(&fx.owner_proof, proposal.entry)
         .expect("one tap on an install that holds his key");
     assert!(
         matches!(applied, SetSettingOutcome::Applied { .. }),
@@ -211,7 +228,9 @@ fn a_proposal_is_listed_with_its_row_and_value_and_one_tap_applies_it() {
     assert_eq!(fx.cap(), (3, SettingStanding::Settled), "his change lands");
     assert!(fx.proposals().is_empty(), "and ends the ask");
 
-    let again = fx.vault.apply_setting_proposal(&fx.owner_proof, entry);
+    let again = fx
+        .vault
+        .apply_setting_proposal(&fx.owner_proof, proposal.entry);
     assert!(
         format!("{again:?}").contains("ConcurrentWrite"),
         "a tap on an answered proposal names it stale: {again:?}"
@@ -221,14 +240,56 @@ fn a_proposal_is_listed_with_its_row_and_value_and_one_tap_applies_it() {
 #[test]
 fn an_install_that_cannot_prove_the_owners_act_refuses_the_tap_and_the_proposal_keeps_asking() {
     let (fx, _) = Fixture::with_a_proposal();
-    let entry = fx.proposals()[0].entry;
+    let proposal = fx.proposals()[0].clone();
     release_owner_keys(&fx.vault);
 
-    let refused = fx.vault.apply_setting_proposal(&fx.owner_proof, entry);
+    let refused = fx
+        .vault
+        .apply_setting_proposal(&fx.owner_proof, proposal.entry);
     assert!(
         format!("{refused:?}").contains("OwnerKeyRequired"),
         "this install holds no key of his and is not his machine: {refused:?}"
     );
     assert_eq!(fx.proposals().len(), 1, "the proposal keeps asking");
     assert_eq!(fx.cap(), (6, SettingStanding::Pending));
+}
+
+#[test]
+fn a_tap_on_one_row_of_a_waiting_batch_changes_that_row_alone() {
+    let (fx, _) = Fixture::with_waiting(&[(CAP, json!(3)), (BUDGET, json!(4))]);
+    let proposals = fx.proposals();
+    let [first, second] = proposals.as_slice() else {
+        panic!("each row of the batch is its own proposal: {proposals:?}");
+    };
+    assert_eq!(
+        first.entry, second.entry,
+        "both under the batch's one entry"
+    );
+    assert_ne!(first.key, second.key);
+    let unchanged = |key: &str| if key == CAP { json!(6) } else { json!(10) };
+
+    // The second row: a tap that took the entry's first row would change the other key.
+    let applied = fx
+        .vault
+        .apply_setting_proposal(&fx.owner_proof, second.entry)
+        .expect("one tap on an install that holds his key");
+    assert!(
+        matches!(applied, SetSettingOutcome::Applied { .. }),
+        "{applied:?}"
+    );
+    assert_eq!(
+        Some(fx.value_of(&second.key)),
+        second.value,
+        "the tapped row lands"
+    );
+    assert_eq!(
+        fx.value_of(&first.key),
+        unchanged(&first.key),
+        "the batch's other row is unchanged"
+    );
+    assert_eq!(
+        fx.proposals(),
+        vec![first.clone()],
+        "and its proposal still asks"
+    );
 }
