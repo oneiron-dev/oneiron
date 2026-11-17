@@ -306,6 +306,26 @@ impl<T: SettingValue> Setting<T> {
             },
         )
     }
+
+    /// The items of this family key that hold a stored row, each once, in item order. A caller
+    /// that must see every item reads each one with [`Self::read_in_txn`].
+    ///
+    /// # Errors
+    ///
+    /// Storage errors.
+    pub(crate) fn items_in_txn(&self, vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<Vec<String>> {
+        let mut items: Vec<String> = Vec::new();
+        let prefix = RowKey::name_prefix(self.spec.name);
+        for row in table_of(self.spec).iter_raw_from(&vault.store, txn, &prefix)? {
+            let (key, _) = row?;
+            if let Some(item) = RowKey::decode(&key).and_then(|key| key.item)
+                && items.last() != Some(&item)
+            {
+                items.push(item);
+            }
+        }
+        Ok(items)
+    }
 }
 
 /// A key's value in force, as the verbs show it.
