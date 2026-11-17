@@ -88,6 +88,7 @@ impl ExtractionEncoder for Adas {
                 speaker_links: Vec::new(),
                 mood_parts: Vec::new(),
                 stack_sha16: None,
+                relations: None,
             }),
         }
     }
