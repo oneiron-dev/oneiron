@@ -334,11 +334,11 @@ impl ObserverAState {
 pub(super) const ERR_OBSERVER_A_U_SEQ_ROW: &str = "observer a u_seq row";
 
 #[cfg(test)]
-pub(super) fn decode_observer_u_seq(raw: &[u8]) -> Result<u32> {
-    let bytes: [u8; 4] = raw
+pub(super) fn decode_observer_u_seq(raw: &[u8]) -> Result<u64> {
+    let bytes: [u8; 8] = raw
         .try_into()
         .map_err(|_| Error::CorruptedIndex(ERR_OBSERVER_A_U_SEQ_ROW))?;
-    Ok(u32::from_le_bytes(bytes))
+    Ok(u64::from_le_bytes(bytes))
 }
 
 /// Persists one window update to `sync_state` in a single write txn:

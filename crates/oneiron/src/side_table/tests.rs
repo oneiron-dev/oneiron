@@ -803,7 +803,7 @@ fn pre_move_rows_use_reachable_production_bindings() -> crate::Result<()> {
 
 /// The captured pre-move suite deliberately wrote a damaged three-byte
 /// `m:u_seq:w:` counter. It is not a successful codec round trip: the actual
-/// production binding requires four little-endian bytes and refuses this row.
+/// production binding requires eight little-endian bytes and refuses this row.
 #[cfg(feature = "sync")]
 #[test]
 fn pre_move_fixture_corrupt_window_sequence_is_refused() -> crate::Result<()> {

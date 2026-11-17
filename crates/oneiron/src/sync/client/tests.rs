@@ -74,11 +74,11 @@ fn sync_state_values_with_prefix(vault: &Vault, prefix: &str) -> Vec<(String, Ve
         .collect()
 }
 
-fn read_u_seq(vault: &Vault, key: &str) -> Option<u32> {
+fn read_u_seq(vault: &Vault, key: &str) -> Option<u64> {
     vault
         .sync_state_get(&format!("m:u_seq:w:{key}"))
         .unwrap()
-        .map(|raw| u32::from_le_bytes(raw.try_into().unwrap()))
+        .map(|raw| u64::from_le_bytes(raw.try_into().unwrap()))
 }
 
 fn task_body() -> Vec<u8> {
@@ -1032,7 +1032,7 @@ fn noop_echo_after_hard_delete_writes_no_uw_carrier() {
         "Observer B materialized the live payload before the hard delete"
     );
 
-    vault.sync_state_put(&seq_key, &0u32.to_le_bytes()).unwrap();
+    vault.sync_state_put(&seq_key, &0u64.to_le_bytes()).unwrap();
     let outcome = vault
         .delete_entity_with_reason(&id, crate::DeleteReason::UserHardDelete)
         .unwrap();

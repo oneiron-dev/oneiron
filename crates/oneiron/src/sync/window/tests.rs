@@ -750,13 +750,13 @@ fn persist_state_prunes_subsumed_rows_and_spares_other_families() {
     // Observer A persisted the contract rows (ARCH-0023b key table).
     assert!(
         vault
-            .sync_state_get("u:w:2026-03:00000001")
+            .sync_state_get("u:w:2026-03:0000000000000001")
             .unwrap()
             .is_some()
     );
     assert!(
         vault
-            .sync_state_get("u:w:2026-03:00000002")
+            .sync_state_get("u:w:2026-03:0000000000000002")
             .unwrap()
             .is_some()
     );
@@ -765,15 +765,15 @@ fn persist_state_prunes_subsumed_rows_and_spares_other_families() {
             .sync_state_get("m:u_seq:w:2026-03")
             .unwrap()
             .as_deref(),
-        Some(2u32.to_le_bytes().as_slice())
+        Some(2u64.to_le_bytes().as_slice())
     );
 
     // Sentinels the prune must NOT touch. sync_state families:
     vault
-        .sync_state_put("u:w:2026-02:00000001", b"neighbor-window-update")
+        .sync_state_put("u:w:2026-02:0000000000000001", b"neighbor-window-update")
         .unwrap();
     vault
-        .sync_state_put("u:w:2026-030:00000001", b"prefix-adjacent-update")
+        .sync_state_put("u:w:2026-030:0000000000000001", b"prefix-adjacent-update")
         .unwrap();
     let dt_key = format!("dt:{}", EntityId::now().to_hex());
     vault
@@ -809,14 +809,14 @@ fn persist_state_prunes_subsumed_rows_and_spares_other_families() {
     // Subsumed rows pruned; the high-water mark is NOT reset.
     assert!(
         vault
-            .sync_state_get("u:w:2026-03:00000001")
+            .sync_state_get("u:w:2026-03:0000000000000001")
             .unwrap()
             .is_none(),
         "subsumed u:w: row must be pruned after the snapshot persist"
     );
     assert!(
         vault
-            .sync_state_get("u:w:2026-03:00000002")
+            .sync_state_get("u:w:2026-03:0000000000000002")
             .unwrap()
             .is_none()
     );
@@ -825,7 +825,7 @@ fn persist_state_prunes_subsumed_rows_and_spares_other_families() {
             .sync_state_get("m:u_seq:w:2026-03")
             .unwrap()
             .as_deref(),
-        Some(2u32.to_le_bytes().as_slice()),
+        Some(2u64.to_le_bytes().as_slice()),
         "m:u_seq:w: must stay monotonic — never reset by the prune"
     );
     assert!(vault.sync_state_get("d:w:2026-03").unwrap().is_some());
@@ -843,7 +843,7 @@ fn persist_state_prunes_subsumed_rows_and_spares_other_families() {
     // Every sentinel survives byte-identical.
     assert_eq!(
         vault
-            .sync_state_get("u:w:2026-02:00000001")
+            .sync_state_get("u:w:2026-02:0000000000000001")
             .unwrap()
             .as_deref(),
         Some(b"neighbor-window-update".as_slice()),
@@ -851,7 +851,7 @@ fn persist_state_prunes_subsumed_rows_and_spares_other_families() {
     );
     assert_eq!(
         vault
-            .sync_state_get("u:w:2026-030:00000001")
+            .sync_state_get("u:w:2026-030:0000000000000001")
             .unwrap()
             .as_deref(),
         Some(b"prefix-adjacent-update".as_slice()),
@@ -933,7 +933,7 @@ fn prune_spares_updates_persisted_after_the_merge() {
     // Snapshot-persist sequence as persist_state runs it, with a
     // concurrent writer landing BETWEEN the merge and the write txn.
     let merged = merge_persisted_state_into_doc(&vault, &window.doc, &key).unwrap();
-    assert_eq!(merged, vec!["u:w:2026-03:00000001".to_string()]);
+    assert_eq!(merged, vec!["u:w:2026-03:0000000000000001".to_string()]);
 
     let transient = create_window_doc("transient", &key);
     let late_id = EntityId::now();
@@ -958,14 +958,14 @@ fn prune_spares_updates_persisted_after_the_merge() {
 
     assert!(
         vault
-            .sync_state_get("u:w:2026-03:00000001")
+            .sync_state_get("u:w:2026-03:0000000000000001")
             .unwrap()
             .is_none(),
         "the merged row is subsumed and pruned"
     );
     assert_eq!(
         vault
-            .sync_state_get("u:w:2026-03:00000002")
+            .sync_state_get("u:w:2026-03:0000000000000002")
             .unwrap()
             .as_deref(),
         Some(late_bytes.as_slice()),
@@ -1000,7 +1000,7 @@ fn persist_state_marks_svf_stale_when_a_post_merge_uw_row_survives() {
 
     let window = LoadedWindow::new("local", key.clone(), &vault, &materializer);
 
-    // Pre-seed `u:w:2026-03:00000001` with an op the LIVE doc does NOT
+    // Pre-seed `u:w:2026-03:0000000000000001` with an op the LIVE doc does NOT
     // hold, so `persist_state`'s merge import produces a diff (and fires
     // the injection below). This row IS in the merge inventory → pruned.
     let seed = create_window_doc("seed", &key);
@@ -1053,7 +1053,7 @@ fn persist_state_marks_svf_stale_when_a_post_merge_uw_row_survives() {
     // The merged row is pruned …
     assert!(
         vault
-            .sync_state_get("u:w:2026-03:00000001")
+            .sync_state_get("u:w:2026-03:0000000000000001")
             .unwrap()
             .is_none(),
         "the merged row is subsumed and pruned"
@@ -1061,7 +1061,7 @@ fn persist_state_marks_svf_stale_when_a_post_merge_uw_row_survives() {
     // … the post-merge row survives …
     assert!(
         vault
-            .sync_state_get("u:w:2026-03:00000002")
+            .sync_state_get("u:w:2026-03:0000000000000002")
             .unwrap()
             .is_some(),
         "a row persisted during the merge import escapes the prune"
@@ -1072,7 +1072,7 @@ fn persist_state_marks_svf_stale_when_a_post_merge_uw_row_survives() {
             .sync_state_get("m:u_seq:w:2026-03")
             .unwrap()
             .as_deref(),
-        Some(2u32.to_le_bytes().as_slice()),
+        Some(2u64.to_le_bytes().as_slice()),
         "m:u_seq:w: must stay monotonic"
     );
     // … and svf is STALE: the fast-reconnect reader must NOT trust sv:w:.
@@ -1101,7 +1101,7 @@ fn replay_pending_tombstones_soft_keeps_svf_stale_when_merged_uw_survives() {
     let _id = commit_entity(&window, t, b"keep-me");
     assert!(
         vault
-            .sync_state_get("u:w:2026-03:00000001")
+            .sync_state_get("u:w:2026-03:0000000000000001")
             .unwrap()
             .is_some()
     );
@@ -1120,7 +1120,7 @@ fn replay_pending_tombstones_soft_keeps_svf_stale_when_merged_uw_survives() {
     // The merged u:w: row survives the soft branch …
     assert!(
         vault
-            .sync_state_get("u:w:2026-03:00000001")
+            .sync_state_get("u:w:2026-03:0000000000000001")
             .unwrap()
             .is_some(),
         "soft replay must not scrub surviving u:w: rows"
@@ -1143,15 +1143,15 @@ fn prune_refuses_keys_outside_the_window_family() {
     let (_dir, vault) = test_vault();
     let key = WindowKey::new("2026-03");
     vault
-        .sync_state_put("u:w:2026-03:00000001", b"in-scope")
+        .sync_state_put("u:w:2026-03:0000000000000001", b"in-scope")
         .unwrap();
     vault
-        .sync_state_put("u:w:2026-02:00000001", b"foreign")
+        .sync_state_put("u:w:2026-02:0000000000000001", b"foreign")
         .unwrap();
 
     let keys = vec![
-        "u:w:2026-03:00000001".to_string(),
-        "u:w:2026-02:00000001".to_string(),
+        "u:w:2026-03:0000000000000001".to_string(),
+        "u:w:2026-02:0000000000000001".to_string(),
     ];
     let err = vault
         .with_write_txn(|wtxn| prune_subsumed_window_updates_in_txn(&vault, wtxn, &key, &keys))
@@ -1167,7 +1167,7 @@ fn prune_refuses_keys_outside_the_window_family() {
     );
     assert_eq!(
         vault
-            .sync_state_get("u:w:2026-03:00000001")
+            .sync_state_get("u:w:2026-03:0000000000000001")
             .unwrap()
             .as_deref(),
         Some(b"in-scope".as_slice()),
@@ -1175,7 +1175,7 @@ fn prune_refuses_keys_outside_the_window_family() {
     );
     assert_eq!(
         vault
-            .sync_state_get("u:w:2026-02:00000001")
+            .sync_state_get("u:w:2026-02:0000000000000001")
             .unwrap()
             .as_deref(),
         Some(b"foreign".as_slice())
