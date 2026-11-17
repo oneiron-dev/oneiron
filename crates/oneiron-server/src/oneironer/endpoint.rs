@@ -62,7 +62,12 @@ pub(crate) struct Returns {
     pub(crate) links: bool,
     pub(crate) mood: bool,
     /// Relations between the answer's spans, from a relation head. A card
-    /// that does not name it declares none.
+    /// that does not name it declares none. An extract body names no
+    /// relation types, as it names no entity labels: a head prompted with a
+    /// relation schema (a zero-shot head) holds that schema in its stack
+    /// card, so a schema change moves the stack, which enters every tag
+    /// set's derivation envelope. The host's `[oneironer.relations]` table only
+    /// maps the labels returned, at use, and is never sent.
     #[serde(default)]
     pub(crate) relations: bool,
 }
