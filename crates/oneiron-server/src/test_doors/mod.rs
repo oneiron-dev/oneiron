@@ -40,6 +40,7 @@ pub mod pre_idle_reuse;
 pub mod question_heads;
 #[cfg(unix)]
 pub mod recovery_box_hold;
+pub mod refusal_wire;
 pub mod replay_admission;
 pub mod residence_connection;
 pub mod resident_pump;
