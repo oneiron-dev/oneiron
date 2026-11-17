@@ -75,13 +75,14 @@ async fn the_recall_of_a_queued_retry_names_the_user_turn_it_answers_and_its_con
     assert_eq!(user_turn.turn_idx, 0);
 
     // The assistant TURN the Retry names: the conversation's TURN that holds
-    // the reply's MESSAGE.
+    // the reply's MESSAGE. A MESSAGE is PartOf its TURN and a TURN is ChildOf
+    // its conversation (memory/witness/base.rs).
     let message = EntityId::from_hex(lines[0]["message_id"].as_str().unwrap()).unwrap();
     let conversation_turns = vault
         .sources(&conversation, EdgeKind::ChildOf, None)
         .unwrap();
     let reply_turn = vault
-        .targets(&message, EdgeKind::ChildOf, None)
+        .targets(&message, EdgeKind::PartOf, None)
         .unwrap()
         .into_iter()
         .find(|turn| conversation_turns.contains(turn))
