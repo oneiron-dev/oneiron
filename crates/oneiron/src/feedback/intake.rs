@@ -261,7 +261,5 @@ impl Vault {
         })
     }
 }
-// FIX [LIBTEST-QUARANTINE-FEEDBACK-INTAKE-TESTS]: the lib test target's type check fails here (3 errors: E0639 x3); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;

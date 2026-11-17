@@ -690,7 +690,7 @@ pub(crate) struct Cursor {
 
 pub(crate) mod subscriptions;
 
-#[cfg(test)]
+#[cfg(any(test, oneiron_test_support))]
 pub(crate) mod test_wire;
 
 #[cfg(test)]
