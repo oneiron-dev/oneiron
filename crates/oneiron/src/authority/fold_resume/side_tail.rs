@@ -96,12 +96,7 @@ pub(super) fn fold_tail(
         let retired = std::iter::once(&entry.signer)
             .chain(&entry.cosigns)
             .any(|signature| settlement.retired_keys.contains(&signature.public_key));
-        let below_floor = context
-            .sequence_floors
-            .and_then(|floors| floors.get(hash))
-            .is_some_and(|floor| entry.seq < *floor);
         if settlement.missing_parents.contains(hash)
-            || below_floor
             || retired
             || !once.admits(entry, &mut confirms)
         {

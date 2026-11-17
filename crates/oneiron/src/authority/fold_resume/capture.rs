@@ -90,7 +90,7 @@ pub(in crate::authority) struct OnceParts<'a> {
     pub(in crate::authority) states: &'a BTreeMap<AuthorityEntryHash, FoldState>,
     pub(in crate::authority) entry_ancestors:
         &'a BTreeMap<AuthorityEntryHash, BTreeSet<AuthorityEntryHash>>,
-    /// The floors the fold was handed, before causal ancestry cleared any.
+    /// The rows' floors (`rows_floor`), before causal ancestry cleared any.
     pub(in crate::authority) original_floors: Option<&'a BTreeMap<AuthorityEntryHash, u64>>,
     pub(in crate::authority) merged: FoldState,
     pub(in crate::authority) valid_entries: ValidEntries,
