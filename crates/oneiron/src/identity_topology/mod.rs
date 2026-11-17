@@ -129,6 +129,7 @@ pub(crate) use attribution::{
     attribution_carrier_key, author_attribution_redacted_in_txn,
     reconcile_author_attribution_in_txn, redacted_keys_in_txn, redaction_carrier_key,
 };
+pub(crate) use distinct_claim::DistinctClaimPlace;
 pub use distinct_claim::distinct_pair_key;
 pub use ledger_fold::{
     IdentityTopologyAction, IdentityTopologyEvent, IdentityTopologyFold, fold_identity_topology_log,
@@ -180,11 +181,11 @@ pub(crate) use operation_parts::logical_identity_topology_event_for_store_in_txn
 // in a non-sync build of the library.
 #[cfg_attr(not(feature = "sync"), allow(unused_imports))]
 pub(crate) use operation_parts::validate_operation_part_id;
-pub(crate) use reassignment_map::forget_claim_reassignments_in_txn;
 use reassignment_map::{
     REASSIGNMENT_ORIGIN_INDEX, REASSIGNMENT_TARGET_INDEX, ReassignmentContext,
     apply_reassignment_in_txn,
 };
+pub(crate) use reassignment_map::{facet_fork_origins_in_txn, forget_claim_reassignments_in_txn};
 pub(crate) use store_entity_helpers::guard_batch_identity_delete_in_txn;
 // Reached only from the sync bridge's test lane, so a plain re-export would read
 // as unused in a non-sync test build of the library.
