@@ -37,6 +37,8 @@ pub use answer_scope::{
     read_question_in_lane, schedule_backfill_in_lane,
 };
 pub use answers::question_answers;
+#[cfg(oneiron_test_support)]
+pub(crate) use arrival::watch_key_pin_for_test;
 pub(crate) use arrival::{project_arrivals_for_changes_in_txn, project_arrivals_in_txn};
 pub(crate) use artifact_refresh::artifact_unit_receipts;
 pub use artifact_refresh::{

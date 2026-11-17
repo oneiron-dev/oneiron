@@ -15,6 +15,9 @@
 //! `WindowEntityKey` into `WindowEntityHexKey`; the table's `WindowEntityKey` rows keep their name
 //! and now spell `WindowEntityHexKey`, so the same table pins the merged type.
 //!
+//! UC-06 PR 7 derives `LfsOid`'s key (its one 32-byte part); its own table pins it
+//! (`pin_table_model_pr7.py`).
+//!
 //! Run: `cargo test --locked -p oneiron-store --all-features --features oneiron-base/sync
 //! --test side_key_pins -- --nocapture`.
 
@@ -25,12 +28,15 @@ use oneiron_store::attempt_id::AttemptId;
 use oneiron_store::batch::export::foreign_stage::export_foreign_receipt::Hex64;
 use oneiron_store::entity_doc::side_keys::HexPair;
 use oneiron_store::gate_decision::types::GateDecisionId;
+use oneiron_store::origin::lfs::oid::LfsOid;
 use oneiron_store::origin::publication::publication_codec::VisibleRefKey;
 use oneiron_store::query_memos::VerdictMemoKey;
 use oneiron_store::side_table::key::{HexId, SideKey};
 use sha2::{Digest, Sha256};
 
 const STORE_TABLE_SHA256: &str = "9477a35642d244f6a5e9550d95504bad5a6fca31a6fc2163a72ba949195d5783";
+const LFS_OID_TABLE_SHA256: &str =
+    "42a6fbfde898acd001ff52c69fb988df2218efa3f27de57f192fbb1ccd0f71c1";
 
 const ID_A: &str = "0123456789abcdef0123456789abcdef";
 const ID_B: &str = "fedcba9876543210fedcba9876543210";
@@ -295,6 +301,30 @@ fn store_keys_spell_and_read_as_the_hand_impls() {
     );
 
     check_table("store", &table, STORE_TABLE_SHA256);
+}
+
+#[test]
+fn lfs_oid_spells_and_reads_as_the_hand_impl() {
+    let mut table = String::new();
+    pin(
+        &mut table,
+        "LfsOid",
+        vec![
+            ("zero", LfsOid::from_bytes([0; 32])),
+            ("max", LfsOid::from_bytes([0xff; 32])),
+            (
+                "text",
+                LfsOid::from_bytes(*b"0123456789abcdef0123456789abcdef"),
+            ),
+            ("digest", LfsOid::digest(b"lfs object")),
+        ],
+        &[
+            ("empty", Vec::new()),
+            ("short", vec![0x07; 31]),
+            ("long", vec![0x07; 33]),
+        ],
+    );
+    check_table("lfs-oid", &table, LFS_OID_TABLE_SHA256);
 }
 
 #[cfg(feature = "sync")]
