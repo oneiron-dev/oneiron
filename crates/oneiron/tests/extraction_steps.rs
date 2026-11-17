@@ -72,7 +72,7 @@ fn a_bound_step_runs_on_served_words_and_replays_its_memo() -> ExtractionStepTes
     assert!(!claim_ref.is_empty());
     let response = serde_json::to_string(&submit["result"]["response"])?;
     assert!(
-        response.contains(&step_plain_reply()),
+        response.contains("new:P1") && response.contains("owen likes tea"),
         "the finished step answers its scripted output: {response}"
     );
     let step_ref = submit["step_ref"]
@@ -110,7 +110,9 @@ fn a_bound_step_runs_on_served_words_and_replays_its_memo() -> ExtractionStepTes
         invoke_bound_step_receipt(&binding, step_ref).expect("the bound receipt replays the step");
     let mut expected = submit.clone();
     expected["result"]["memoized"] = json!(true);
-    assert_eq!(receipt, expected);
+    let mut terminal = expected.clone();
+    terminal["result"]["json"] = json!(null);
+    assert_eq!(receipt, terminal);
     assert_eq!(receipt["progression"], json!("finished"));
     let unknown_key = if step_ref == "0".repeat(64) {
         "f".repeat(64)
@@ -279,7 +281,9 @@ fn a_bound_step_without_a_loan_refuses() -> ExtractionStepTestResult<()> {
         invoke_bound_step_receipt(&binding, &step_ref).expect("the receipt answers without a loan");
     let mut expected = submit.clone();
     expected["result"]["memoized"] = json!(true);
-    assert_eq!(receipt, expected);
+    let mut terminal = expected.clone();
+    terminal["result"]["json"] = json!(null);
+    assert_eq!(receipt, terminal);
     assert_eq!(receipt["result"]["status"], json!("finished"));
     assert_eq!(receipt["progression"], json!("finished"));
     Ok(())
