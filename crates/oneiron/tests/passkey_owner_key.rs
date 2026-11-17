@@ -31,7 +31,9 @@
 //! actor's for good (Astra delta 2 review finding 1). A device key's
 //! enrolment of a key confirms it, so a passkey's vouch for the same key on
 //! a sibling branch limits nothing once the fold merges the two (Astra
-//! delta review finding 2).
+//! delta review finding 2). An install that holds such a key as its only
+//! owner key proves no owner act with it, as the fold takes no proof from it
+//! (REVIEW-8451 P1).
 //! A passkey that only another passkey vouched for has its own confirmation
 //! door (F5).
 //!
@@ -67,7 +69,11 @@ use oneiron::authority::{
 };
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::error::RecordError;
+use oneiron::federation::{FederationGrantRole, InitialSharedMember};
 use oneiron::receipt::AuthorityAuditQuery;
+use oneiron::registry::ENTITY_TYPE_PERSON;
+use oneiron::store::GateDecisionId;
+use oneiron::temporal::TimeRange;
 use oneiron::test_doors::label_writers::embedded_owner;
 use oneiron::test_doors::passkey_vouch_limits::{
     SignedRow, append_signed_rows, append_signed_rows_on, enrol_owner_key_on, main_log_heads,
@@ -939,6 +945,93 @@ fn once_confirmed_the_passkey_vouched_keys_cosign_proves_a_carried_machine_answe
     );
 }
 
+/// An owner key this install holds as a root signer, as a device holds its
+/// enrolled owner signing key: what [`oneiron::Vault::hold_checkpoint_root_signer`]
+/// takes.
+struct HeldOwnerKey(ed25519_dalek::SigningKey);
+
+impl oneiron::authority::CheckpointRootSigner for HeldOwnerKey {
+    fn root(&self) -> AuthorityKey {
+        ed_key(&self.0)
+    }
+
+    fn sign_checkpoint_statement(&self, statement: &[u8]) -> oneiron::Result<Vec<u8>> {
+        Ok(self.0.sign(statement).to_bytes().to_vec())
+    }
+
+    fn sign_owner_proof(&self, transcript: &[u8]) -> oneiron::Result<Vec<u8>> {
+        Ok(self.0.sign(transcript).to_bytes().to_vec())
+    }
+
+    fn sign_ask_word_proof(&self, transcript: &[u8]) -> oneiron::Result<Vec<u8>> {
+        Ok(self.0.sign(transcript).to_bytes().to_vec())
+    }
+}
+
+/// The writer reads the fold's one proof predicate (REVIEW-8451 P1): an
+/// install whose only owner key is one only the passkey vouched for holds
+/// no key whose cosign the fold takes as the owner's proof (Engine ANSWER
+/// WEBPASSKEY-LIMITED-KEY-OWNER-PROOF = A). So it lists no held answer as
+/// one it can confirm, and a confirm there is refused for want of an owner
+/// key. Otherwise it would sign each owner act it carries with that key's
+/// cosign, which the fold judges a forged proof: the act would fail to land
+/// where, unproven, it stands or is held.
+#[test]
+fn an_install_holding_only_a_key_a_passkey_vouched_for_proves_no_owner_act() {
+    let hosted = HostedVault::open();
+    passkey_vouched_host_key(&hosted);
+    hosted
+        .vault
+        .hold_checkpoint_root_signer(Arc::new(HeldOwnerKey(host_held())));
+    let listing = hosted
+        .vault
+        .held_machine_answers(&hosted.proof)
+        .expect("the held answers");
+    assert!(
+        !listing.can_confirm,
+        "the limited key proves no owner act on this install"
+    );
+    let confirm =
+        hosted
+            .vault
+            .confirm_held_machine_answers(&hosted.proof, ActSurface::ThisInstall, &[]);
+    assert!(
+        matches!(
+            confirm,
+            Err(oneiron::Error::Record(RecordError::OwnerKeyRequired))
+        ),
+        "a confirm on this install is refused for want of an owner key: {confirm:?}"
+    );
+}
+
+/// Once a device key confirms it, the install that holds the
+/// passkey-vouched key proves owner acts with it.
+#[test]
+fn once_confirmed_an_install_holding_the_passkey_vouched_key_proves_owner_acts() {
+    let hosted = HostedVault::open();
+    let machine = passkey_vouched_host_key(&hosted);
+    hosted
+        .vault
+        .confirm_owner_key_as(
+            &hosted.owner(),
+            keyed_enrollment(&hosted, machine, &host_held()),
+            ed_key(&owner_device()),
+            |transcript| Ok(owner_device().sign(transcript).to_bytes().to_vec()),
+        )
+        .expect("the owner's device key confirms the passkey-vouched key");
+    hosted
+        .vault
+        .hold_checkpoint_root_signer(Arc::new(HeldOwnerKey(host_held())));
+    let listing = hosted
+        .vault
+        .held_machine_answers(&hosted.proof)
+        .expect("the held answers");
+    assert!(
+        listing.can_confirm,
+        "the confirmed key proves owner acts on this install"
+    );
+}
+
 /// A fresh key the owner's device key enrols on one branch.
 fn fresh_owner_key() -> ed25519_dalek::SigningKey {
     ed25519_dalek::SigningKey::from_bytes(&[0x55; 32])
@@ -1666,5 +1759,129 @@ fn the_audit_names_the_enrolled_passkey_its_machine_and_its_shape() {
                 && row.subject_ref.as_deref() == Some(key_hex.as_str())
                 && row.holder_ref.as_deref() == Some(receipt.machine.to_hex().as_str())),
         "the enrollment's audit row names the passkey's key, its machine and its shape"
+    );
+}
+
+/// The shared vault [`SharedVault`] runs its membership moves in.
+const SHARED: u64 = 44;
+
+/// A person's proof of their own standing.
+fn person_proof(vault: &Vault, person: oneiron::EntityId) -> AuthenticatedOwner {
+    vault
+        .authenticate_owner(person, &person.to_hex(), true, GateDecisionId::now())
+        .expect("a person proof")
+}
+
+/// Whether `key` is a live owner root on `vault`'s roster.
+fn live_owner_key_on(vault: &Vault, key: &AuthorityKey) -> bool {
+    let fold = vault.authority_fold().expect("authority fold");
+    fold.roster
+        .get(key)
+        .is_some_and(|device| !device.revoked && device.roles & ROLE_OWNER != 0)
+}
+
+/// A self-hosted shared vault whose embedded owner the host root binds,
+/// with a co-Owner the owner added (the fixture of tests/owner_enrol.rs).
+/// The vault drops first.
+struct SharedVault {
+    vault: Vault,
+    issuer: HostSlipIssuer,
+    owner: oneiron::EntityId,
+    co_owner: oneiron::EntityId,
+    _dir: tempfile::TempDir,
+}
+
+impl SharedVault {
+    fn open() -> Self {
+        let dir = tempfile::tempdir().expect("vault directory");
+        let vault = Vault::open(dir.path(), VaultConfig::device()).expect("vault");
+        vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
+        let issuer = oneiron::test_support::provision_engine_machines(&vault);
+        vault
+            .ensure_serving_install_profile(&issuer, MachineRole::Unanswered)
+            .expect("this install's live machine profile");
+        let owner = vault.ensure_embedded_owner_actor().expect("owner");
+        oneiron::test_support::bind_host_owner(&vault, &issuer, owner)
+            .expect("the owner's binding");
+        vault
+            .initialize_shared_vault(
+                &person_proof(&vault, owner),
+                SHARED,
+                None,
+                &[InitialSharedMember {
+                    member_ref: owner,
+                    role: Some(FederationGrantRole::Owner),
+                }],
+                1,
+            )
+            .expect("a shared vault");
+        let co_owner = oneiron::EntityId::now();
+        vault
+            .put_entity(
+                &co_owner,
+                ENTITY_TYPE_PERSON,
+                TimeRange { start: 1, end: 1 },
+                1,
+                b"human",
+            )
+            .expect("a live person");
+        let owner_proof = person_proof(&vault, owner);
+        let act = vault
+            .propose_add_owner(&owner_proof, SHARED, co_owner)
+            .expect("the owner starts add_owner");
+        vault
+            .execute_completed_shared_act(&owner_proof, &act.id, Some(&issuer))
+            .expect("add_owner runs at once");
+        Self {
+            vault,
+            issuer,
+            owner,
+            co_owner,
+            _dir: dir,
+        }
+    }
+}
+
+/// A membership move that ends an Owner's standing revokes their passkey
+/// too (REVIEW-8437 P1, REVIEW-8451 P1): the revoke of a removed Owner's
+/// owner authority (REVIEW-7931) lists their passkeys beside their device
+/// keys. The co-Owner's first owner key is a passkey, with the host root as
+/// predecessor, which binds them (OWNER-ENROL); the owner removes them, and
+/// the passkey is no live owner root after.
+#[test]
+fn a_removed_owner_keeps_no_passkey() {
+    let shared = SharedVault::open();
+    let authority = ActAuthority::Owner(
+        person_proof(&shared.vault, shared.co_owner),
+        ActSurface::ThisInstall,
+    );
+    let challenge = shared
+        .vault
+        .owner_passkey_enrollment_challenge_as(&authority, &passkey_public_key())
+        .expect("the passkey's enrollment challenge");
+    shared
+        .vault
+        .enrol_owner_passkey_as_host(
+            &authority,
+            &passkey_enrollment(assert_over(&challenge, FLAGS_PRESENT_VERIFIED)),
+            &shared.issuer,
+        )
+        .expect("the co-Owner enrols a passkey");
+    assert!(
+        live_owner_key_on(&shared.vault, &passkey_roster_key()),
+        "guard: the co-Owner's passkey is a live owner root"
+    );
+    let owner_proof = person_proof(&shared.vault, shared.owner);
+    let act = shared
+        .vault
+        .propose_remove_owner(&owner_proof, SHARED, shared.co_owner, None, None, false)
+        .expect("the owner starts remove_owner");
+    shared
+        .vault
+        .execute_completed_shared_act(&owner_proof, &act.id, Some(&shared.issuer))
+        .expect("remove_owner runs at once");
+    assert!(
+        !live_owner_key_on(&shared.vault, &passkey_roster_key()),
+        "the removed Owner's passkey is revoked with the removal"
     );
 }
