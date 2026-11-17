@@ -11,7 +11,9 @@
 //! preset switch holds the box through the hosted client when it runs here,
 //! but a `Standard` call on a vault already on `Standard` sends no release.
 //! The same cadence reports the vault's recovery wait: once, again after a
-//! refused report, never again while it is unchanged.
+//! refused report, never again while it is unchanged. A failed hold or
+//! report forgets what the box acknowledged before it, so the earlier value
+//! is sent again when the vault returns to it.
 //!
 //! Most tests pick the fact reader; one mints the owner-signed fact in a
 //! real fold (OPUS-WAYBACK's #9270 door) and reads it with managed boot's
@@ -300,6 +302,36 @@ fn a_failed_hold_is_sent_again_at_the_next_look() {
         assert_eq!(
             lines.recv_timeout(ANSWER).expect("the hold's line"),
             expected_line(true)
+        );
+    }
+    supervisor.join().expect("supervisor");
+    assert_eq!(watch.look(), KitOnlyLook::Acknowledged);
+}
+
+#[test]
+fn a_failed_hold_forgets_the_acknowledged_fact() {
+    let directory = tempfile::tempdir().expect("temp dir");
+    let vault = keyed_vault(&directory.path().join("vault"));
+    let fold = TestFold::new(Fold::Fact(fact(true, 1)));
+    let (_dir, socket, lines, supervisor) = stub(vec![Script::Held, Script::Refused, Script::Held]);
+    let client = hold_client(&socket, VAULT, &token(), BOUND);
+    let mut watch = kit_only_watch(&client, Arc::clone(&vault), true, fold.reader());
+
+    assert_eq!(watch.look(), KitOnlyLook::Held { kit_only: true });
+    // a release whose answer never came back: the box may have released
+    fold.set(Fold::Fact(fact(false, 2)));
+    assert_eq!(watch.look(), KitOnlyLook::Failed);
+    // the act in force moves back to the fact the box acknowledged first
+    fold.set(Fold::Fact(fact(true, 1)));
+    assert_eq!(
+        watch.look(),
+        KitOnlyLook::Held { kit_only: true },
+        "a failed hold may have reached the box, so the earlier fact is sent again"
+    );
+    for kit_only in [true, false, true] {
+        assert_eq!(
+            lines.recv_timeout(ANSWER).expect("the hold's line"),
+            expected_line(kit_only)
         );
     }
     supervisor.join().expect("supervisor");
@@ -642,6 +674,39 @@ fn the_wait_report_goes_once_again_after_a_refusal_and_never_while_unchanged() {
     assert_eq!(watch.report_wait(), WaitReport::Unchanged);
     assert_eq!(watch.report_wait(), WaitReport::Unchanged);
     assert_no_call(&silent);
+}
+
+#[test]
+fn a_failed_wait_report_forgets_the_wait_the_box_took() {
+    let directory = tempfile::tempdir().expect("temp dir");
+    let vault = keyed_vault(&directory.path().join("vault"));
+    let fold = TestFold::new(Fold::NoFact);
+    let (_dir, socket, lines, supervisor) = stub(vec![Script::Refused, Script::Held]);
+    let client = hold_client(&socket, VAULT, &token(), BOUND);
+    let mut watch = kit_only_watch(&client, Arc::clone(&vault), true, fold.reader());
+    // the box took a one-hour wait earlier in this process, and the vault's
+    // wait changed since
+    let earlier = Duration::from_secs(3_600);
+    watch.set_reported_wait(earlier);
+
+    assert_eq!(watch.report_wait(), WaitReport::Failed);
+    assert_eq!(
+        watch.reported_wait(),
+        None,
+        "a failed report may have reached the box, so the watch no longer holds the earlier wait as the box's"
+    );
+    assert_eq!(
+        watch.report_wait(),
+        WaitReport::Reported { wait_secs: 86_400 }
+    );
+    for _ in 0..2 {
+        assert_eq!(
+            lines.recv_timeout(ANSWER).expect("the report's line"),
+            expected_wait_line()
+        );
+    }
+    supervisor.join().expect("supervisor");
+    assert_eq!(watch.reported_wait(), Some(Duration::from_secs(86_400)));
 }
 
 #[test]
