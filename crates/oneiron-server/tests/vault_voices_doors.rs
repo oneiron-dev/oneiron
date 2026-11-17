@@ -1943,3 +1943,138 @@ fn a_withdrawal_dated_past_the_vault_clock_is_refused() {
         );
     });
 }
+
+/// The member's tap stays on offer when a grant shares its withdrawal's
+/// second: enrolment and recognition let a withdrawal beat a grant dated in
+/// the same second, so that withdrawal is still the member's latest
+/// decision, and the restore dated one second after it stands.
+#[test]
+fn a_withdrawal_in_its_grants_second_still_offers_the_members_tap() {
+    run_on_engine_stack("voices-recognition-withdraw-same-second", || async {
+        let served = served().await;
+        let now = served.vault.now_recorded_at();
+        let member = served.person.actor;
+        // `enroll_print` dates the member's grant `now - 20`.
+        served.enroll_print(member, "member-grant", &axis_vector(1), now);
+        served.grant_agent(&[RECOGNITION_CONSENT]).await;
+        served
+            .ok(
+                Caller::Agent,
+                RECOGNITION_WITHDRAW,
+                recognition_withdrawal("member-same-second-withdrawal", now - 20, Some(member)),
+            )
+            .await;
+        assert_eq!(
+            served.recognized("after-same-second-withdrawal", &axis_vector(1)),
+            None,
+            "the withdrawal beats the grant of its own second"
+        );
+
+        let taps = served.subject_withdrawal_taps(member);
+        assert_eq!(
+            taps.len(),
+            1,
+            "a grant of the withdrawal's own second does not hide the tap: {taps:?}"
+        );
+        let tap = &taps[0];
+        let at = tap["args"]["occurred_at"]
+            .as_u64()
+            .expect("the restore's date");
+        assert_eq!(at, now - 19, "the restore is dated one second after it");
+        let restored = served
+            .ok(Caller::Person, RECOGNITION_CONSENT, tap["args"].clone())
+            .await;
+        assert_eq!(restored["replayed"], false, "{restored}");
+        assert!(
+            served.subject_withdrawal_taps(member).is_empty(),
+            "a tapped notice offers it no more"
+        );
+        let event_id = tap["args"]["event_id"]
+            .as_str()
+            .expect("the restore's event id");
+        served
+            .vault
+            .enroll_voice_print(&enrollment(member, event_id, &axis_vector(1), at + 10))
+            .expect("a fresh enrolment on the restored grant");
+        assert_eq!(
+            served.recognized("after-same-second-restore", &axis_vector(1)),
+            Some(member)
+        );
+    });
+}
+
+impl Served {
+    /// A fresh live PERSON holding one human-class slip with core read and
+    /// write, minted on the host issuer; `single_use` makes it one-shot.
+    fn slip_holding_person(&self, slip_id: [u8; 32], single_use: bool) -> EntityId {
+        let person = EntityId::now();
+        self.vault
+            .put_entity(
+                &person,
+                ENTITY_TYPE_PERSON,
+                TimeRange { start: 1, end: 1 },
+                1,
+                b"a slip holder",
+            )
+            .expect("a live PERSON");
+        let key = SigningKey::from_bytes(&slip_id);
+        let mut claims = self.owner_slip.claims.clone();
+        claims.parent_id = None;
+        claims.slip_id = slip_id;
+        claims.holder_ref = person.to_hex();
+        claims.binding_key = key.verifying_key().to_bytes();
+        claims.actor_class = Some("human".to_owned());
+        claims.single_use = single_use;
+        claims.scope = Scope::top();
+        claims.scope.verbs = ScopeAxis::Some(BTreeSet::from([
+            "core:read".to_owned(),
+            "core:write".to_owned(),
+        ]));
+        self.vault
+            .mint_capability_slip(&self.issuer, claims)
+            .expect("the minted slip");
+        person
+    }
+}
+
+/// A single-use human slip makes no member: it serves only the one-shot
+/// door it was minted for, never the inbox or the consent door, so its
+/// holder gets no notice of an agent-logged withdrawal and no tap they
+/// could not send. The holder of an ordinary human slip is told, and the
+/// owner is told of both.
+#[test]
+fn a_single_use_slip_holder_gets_no_member_withdrawal_notice() {
+    run_on_engine_stack("voices-recognition-withdraw-single-use", || async {
+        let served = served().await;
+        let now = served.vault.now_recorded_at();
+        let single_use = served.slip_holding_person([0x77; 32], true);
+        let ordinary = served.slip_holding_person([0x78; 32], false);
+        served.grant_agent(&[RECOGNITION_CONSENT]).await;
+        for (event_id, subject) in [
+            ("single-use-holder-withdrawal", single_use),
+            ("ordinary-holder-withdrawal", ordinary),
+        ] {
+            served
+                .ok(
+                    Caller::Agent,
+                    RECOGNITION_WITHDRAW,
+                    recognition_withdrawal(event_id, now, Some(subject)),
+                )
+                .await;
+        }
+        assert_eq!(
+            served.subject_withdrawal_notices(ordinary).len(),
+            1,
+            "an ordinary human slip's holder is a member and is told"
+        );
+        assert!(
+            served.subject_withdrawal_notices(single_use).is_empty(),
+            "a single-use slip's holder is not"
+        );
+        assert_eq!(
+            served.withdrawal_notices().len(),
+            2,
+            "the owner is told of both"
+        );
+    });
+}
