@@ -229,16 +229,7 @@ async fn a_quiet_model_keeps_its_message_open_under_a_short_idle_timeout() {
     .await;
     let (_dir, server, host) = ai_server(Some(&fake.base_url)).await;
     let vault = Arc::clone(server.vault());
-    let owner = oneiron::EntityId::now();
-    vault
-        .put_entity(
-            &owner,
-            oneiron::registry::ENTITY_TYPE_PERSON,
-            oneiron::TimeRange { start: 1, end: 1 },
-            1,
-            b"owner",
-        )
-        .unwrap();
+    let owner = vault.ensure_embedded_owner_actor().unwrap();
     crate::test_credentials::bind_owner(&vault, TEST_SECRET, owner);
     vault
         .memory(owner, oneiron::EdgeActorClass::Human)
