@@ -22,6 +22,7 @@ pub(crate) use types::{CandidateFilter, CandidateGate, SnapshotCandidateFilter, 
 mod l2_evidence;
 mod media_channel;
 mod media_query_memory;
+mod named_rows;
 mod params;
 mod phonetic_vector_channel;
 pub mod retrieval_policy;

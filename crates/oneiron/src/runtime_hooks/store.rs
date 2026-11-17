@@ -7,6 +7,7 @@ mod cursor;
 mod erase;
 
 use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
+use oneiron_store::receipt_ref::ReceiptRef;
 use serde::{Deserialize, Serialize};
 
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
@@ -538,7 +539,7 @@ pub(super) fn memo_in_txn(
 
 /// The id of the receipt a run writes.
 pub(super) fn receipt_id(key: &RunKey) -> String {
-    format!("hook:{}", hex_lower(key))
+    ReceiptRef::hook(*key).to_string()
 }
 
 /// The rows the run a Hook receipt names (`run_key`, 64 hex) read: a fact
