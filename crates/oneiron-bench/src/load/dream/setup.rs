@@ -25,7 +25,7 @@ sentences: who it is about, what they said about their work and plans, and what 
 State only what the conversation says.";
 
 /// The key in `path`, trimmed. An error names the file, never its text.
-pub(super) fn read_key(path: &Path) -> Result<String, String> {
+pub(in crate::load) fn read_key(path: &Path) -> Result<String, String> {
     let key = std::fs::read_to_string(path)
         .map_err(|e| format!("--model-key-file {}: {}", path.display(), e.kind()))?;
     let key = key.trim().to_owned();
@@ -36,8 +36,8 @@ pub(super) fn read_key(path: &Path) -> Result<String, String> {
 }
 
 /// What the preflight call answered.
-pub(super) struct Preflight {
-    pub(super) reply_model: String,
+pub(in crate::load) struct Preflight {
+    pub(in crate::load) reply_model: String,
     pub(super) ms: f64,
 }
 
@@ -54,7 +54,11 @@ fn text(value: &Value) -> String {
 /// the reply's `model` contains the requested slug less any `-sub` suffix: a
 /// gateway may spell the model its own way, but it may not answer with
 /// another one.
-pub(super) fn preflight(base_url: &str, model: &str, key: &str) -> Result<Preflight, String> {
+pub(in crate::load) fn preflight(
+    base_url: &str,
+    model: &str,
+    key: &str,
+) -> Result<Preflight, String> {
     let http = reqwest::blocking::Client::builder()
         .timeout(Duration::from_secs(120))
         .build()

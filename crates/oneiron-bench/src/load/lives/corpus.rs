@@ -60,6 +60,10 @@ pub(super) struct Question {
     #[serde(rename = "type")]
     pub(super) kind: String,
     pub(super) question: String,
+    /// The gold answer the judge grades against (`unanswerable` for an
+    /// unanswerable question).
+    #[serde(default)]
+    pub(super) answer: Option<String>,
     #[serde(default)]
     pub(super) answer_span: Option<String>,
     /// Turn ids (`d2s1t04`), or tool lines inside a turn (`d2s1t04:L02`).
