@@ -155,7 +155,7 @@ impl Host {
         let vault = Arc::new(Vault::open(dir.path(), VaultConfig::device()).expect("open vault"));
         vault.install_device_keystore(Arc::new(MemoryKeystore::new()));
         let receipts = Arc::new(MemoryReceipts::default());
-        let sink: Arc<dyn RunReceiptSink> = Arc::clone(&receipts);
+        let sink: Arc<dyn RunReceiptSink> = receipts.clone();
         let mut config = SyncServerConfig {
             auth_secret: Some(secret.to_owned()),
             ..Default::default()
