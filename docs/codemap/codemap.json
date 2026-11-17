@@ -72512,9 +72512,9 @@
     },
     {
      "bucket": "m",
-     "kind": "src",
+     "kind": "test",
      "notable": [],
-     "path": "src/scan_check/table_tests/seed_agent_definition.rs",
+     "path": "src/scan_check/table_tests/seed_agent_definition_tests.rs",
      "purpose": "Threshold fixtures of the agent_definition scans for `no_engine_scan_refuses_for_its_row_count` (FIX…",
      "surface": {
       "crate-vis": 1
@@ -72522,9 +72522,9 @@
     },
     {
      "bucket": "L",
-     "kind": "src",
+     "kind": "test",
      "notable": [],
-     "path": "src/scan_check/table_tests/seed_code_repo.rs",
+     "path": "src/scan_check/table_tests/seed_code_repo_tests.rs",
      "purpose": "Threshold fixtures of the code_repo scans for `no_engine_scan_refuses_for_its_row_count` (FIX…",
      "surface": {
       "crate-vis": 1
@@ -72532,9 +72532,9 @@
     },
     {
      "bucket": "m",
-     "kind": "src",
+     "kind": "test",
      "notable": [],
-     "path": "src/scan_check/table_tests/seed_project.rs",
+     "path": "src/scan_check/table_tests/seed_project_tests.rs",
      "purpose": "Threshold fixtures of the project scans for `no_engine_scan_refuses_for_its_row_count` (FIX…",
      "surface": {
       "crate-vis": 1
@@ -72542,9 +72542,9 @@
     },
     {
      "bucket": "L",
-     "kind": "src",
+     "kind": "test",
      "notable": [],
-     "path": "src/scan_check/table_tests/seed_room_thread.rs",
+     "path": "src/scan_check/table_tests/seed_room_thread_tests.rs",
      "purpose": "Threshold fixtures of the room_thread scans for `no_engine_scan_refuses_for_its_row_count` (FIX…",
      "surface": {
       "crate-vis": 1
@@ -72552,9 +72552,9 @@
     },
     {
      "bucket": "L",
-     "kind": "src",
+     "kind": "test",
      "notable": [],
-     "path": "src/scan_check/table_tests/seed_runtime_records.rs",
+     "path": "src/scan_check/table_tests/seed_runtime_records_tests.rs",
      "purpose": "Threshold fixtures of the runtime_records scans for `no_engine_scan_refuses_for_its_row_count` (FIX…",
      "surface": {
       "crate-vis": 1
@@ -113873,7 +113873,7 @@
     "scan_check": {
      "files": 10,
      "impl_vault": true,
-     "largest_src_bucket": "L",
+     "largest_src_bucket": "m",
      "layout": "file+dir",
      "purpose": "Engine scans never refuse for how many rows they read (rule 5: ARCH-0044 C5, OF-520)"
     },
@@ -114326,10 +114326,10 @@
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     }
    },
-   "over_bar": 302,
+   "over_bar": 299,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 8115,
-   "test_files": 1859
+   "source_files": 8110,
+   "test_files": 1864
   },
   "oneiron-agent-runtime": {
    "files": [
