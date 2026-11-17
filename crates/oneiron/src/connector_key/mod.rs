@@ -202,3 +202,13 @@ pub(crate) fn read_key_for_pack_in_txn(
 
 #[cfg(oneiron_test_support)]
 pub(crate) use self::txn::connector_index_key_pin_for_test;
+
+/// Every scope signal the vault holds, for the cfg test door
+/// `test_doors::connector_scope_signals`: the scan stays this module's.
+#[cfg(oneiron_test_support)]
+pub(crate) fn scope_signals_for_test(
+    vault: &crate::Vault,
+) -> crate::Result<Vec<ConnectorSlateScopeSignal>> {
+    let txn = vault.store.env.read_txn()?;
+    slate_scope_signal::scan_signals_in_txn(&vault.store, &txn)
+}
