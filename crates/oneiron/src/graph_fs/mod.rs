@@ -10,6 +10,7 @@ mod claim_ids;
 mod coreutils;
 mod coreutils_text;
 mod device_scan;
+mod memory_fork;
 mod model;
 mod paging;
 mod read_link;

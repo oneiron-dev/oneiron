@@ -35,6 +35,10 @@ pub const MEMORY_CODE_LEASE_REQUIRED: &str = "LEASE_REQUIRED";
 /// (OF-123). The caller settles it with `self.identity.settle`, then acts.
 pub const MEMORY_CODE_IDENTITY_UNSETTLED: &str = "IDENTITY_UNSETTLED";
 
+/// A one-way act's call carried no confirm, or one that is not the caller's
+/// live preview of this call as it stands now (DEC-0006 #undo-class).
+pub const MEMORY_CODE_OWNER_CONFIRM_REQUIRED: &str = "OWNER_CONFIRM_REQUIRED";
+
 /// A paid call's budget line cannot cover it: the line the host admitted the
 /// request on is spent, or the vault's budget policy refuses the call. Distinct
 /// from `LEASE_REQUIRED`: the caller held a lease, and the line ran out.
@@ -47,6 +51,11 @@ pub const MEMORY_CODE_MODEL_UNAVAILABLE: &str = "MODEL_UNAVAILABLE";
 
 /// The owner pinned a spawn's model and no offered seat serves it (FIX 10011).
 pub const MEMORY_CODE_MODEL_PIN_UNAVAILABLE: &str = "MODEL_PIN_UNAVAILABLE";
+
+/// A graph-FS memory fork names a revision of a row this machine holds no
+/// bytes of (L3-39, ruling L3-39-UNRETAINED = B). The reader may read the row
+/// now; the request was sound.
+pub const MEMORY_CODE_HISTORY_NOT_HELD: &str = "HISTORY_NOT_HELD";
 
 /// The canonical door was asked to witness into a conversation owned by a live
 /// off-record session (ARCH-0052 D2 backstop (a), ONE-1728 K7). Distinct from

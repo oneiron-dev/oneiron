@@ -51,6 +51,8 @@ use crate::write_envelope::WriteActor;
 use crate::{Result, Vault};
 #[cfg(oneiron_test_support)]
 pub(crate) use bound_read::extraction_routing_door;
+#[cfg(oneiron_test_support)]
+pub(crate) use bound_read::open_conflict_door;
 use oneiron_model::llm::{LlmResponse, Scope, ScopeResource};
 pub use write::ScopedConsolidationWrite;
 pub(crate) use write::{ConsolidationFence, RowRevision};

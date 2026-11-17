@@ -33,6 +33,8 @@ mod branch_scope;
 mod participation;
 mod policy;
 mod quote;
+#[cfg(oneiron_test_support)]
+pub(crate) use quote::quote_field_for_test;
 mod quote_birth;
 mod quote_strips;
 mod record_admission;
@@ -40,6 +42,7 @@ mod redacted;
 mod reply;
 pub(crate) mod retained_path;
 mod scopes;
+pub(crate) mod setting_keys;
 mod thread_projection;
 mod types;
 mod writes;

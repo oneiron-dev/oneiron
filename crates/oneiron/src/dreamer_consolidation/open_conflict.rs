@@ -9,6 +9,24 @@ use crate::{
 };
 use rmpv::Value;
 
+/// One open-conflict marker as its conflict, members and decisions make it,
+/// built without a write. [`write_open_marker_in_txn`] lands it.
+struct OpenMarkerParts {
+    /// The marker's id: its attempt's and its conflict identity's.
+    id: EntityId,
+    /// The marker claim, carrying its members' joined evidence.
+    candidate: ClaimCandidate,
+    /// The provenance every marker carries. The writer adds the import
+    /// review when the evidence is imported words.
+    provenance: Vec<(Value, Value)>,
+    /// The members' verified evidence, joined.
+    verified: VerifiedEvidenceSet,
+    /// The joined evidence's source meet.
+    meet: ClaimSource,
+    /// The marker's birth (Rule A); `None` when it names no input.
+    birth: Option<RowBirth>,
+}
+
 #[expect(
     clippy::too_many_arguments,
     reason = "the conflict, its members and decisions join the writer's fence and clock"
@@ -23,6 +41,33 @@ pub(super) fn park_open_conflict(
     fence: &super::resources::ConsolidationFence,
     now: u64,
 ) -> Result<EntityId> {
+    let parts = open_marker_parts(actor, attempt, conflict, members, decisions, now)?;
+    let id = parts.id;
+    vault.with_write_txn_grouped(|txn| {
+        crate::ports::recorded_at_in_txn(&vault.store, txn)?;
+        fence.validate_in_txn(vault, txn)?;
+        write_open_marker_in_txn(vault, txn, actor, parts, now)
+    })?;
+    Ok(id)
+}
+
+/// Builds the marker that leaves `conflict` open for `attempt`: its id, its
+/// claim with the members' joined evidence and retained alternatives, its
+/// provenance with the decisions that left it open, and its birth. It reads
+/// and writes no row.
+///
+/// # Errors
+///
+/// A conflict with no member evidence, a marker id, scope or decision that
+/// does not encode, and a member whose facts do not decode.
+fn open_marker_parts(
+    actor: WriteActor,
+    attempt: crate::attempt_queue::AttemptId,
+    conflict: &ConflictSet,
+    members: &[&VerifiedCandidate],
+    decisions: &[super::KeptDecision],
+    now: u64,
+) -> Result<OpenMarkerParts> {
     let id = conflict_open_marker_id(conflict, attempt)?;
     let mut verified: Option<VerifiedEvidenceSet> = None;
     for member in members {
@@ -149,52 +194,80 @@ pub(super) fn park_open_conflict(
             now,
         )
     };
-    vault.with_write_txn_grouped(|txn| {
-        crate::ports::recorded_at_in_txn(&vault.store, txn)?;
-        fence.validate_in_txn(vault, txn)?;
-        // An open question over imported words waits in their import's review,
-        // beside the claims drawn from them.
-        let mut provenance = provenance.clone();
-        if meet == ClaimSource::Imported
-            && let Some(review) = crate::ingest::history::imported_evidence_in_txn(
-                vault,
-                txn,
-                &verified.refs(),
-                &verified.cited_messages(),
-            )?
-            .review
-        {
-            provenance.push((
-                Value::from(crate::gate::DREAMER_PROVENANCE_IMPORT_REVIEW_KEY),
-                Value::from(review),
-            ));
-        }
-        let mut envelope = WriteEnvelope::with_lineage(
-            actor,
-            meet,
-            WriteProvenance::new(Value::Map(provenance))?,
-            ClaimApprovalStatus::Proposed,
-            SourceLineage::of(ClaimSource::Generated).with(meet),
-        );
-        vault.sign_retained_machine_claim_in_txn(&*txn, &id, &candidate, &mut envelope)?;
-        vault
-            .batch_in()
-            .claim_candidate(
-                &id,
-                candidate,
-                &envelope,
-                TimeRange {
-                    start: now,
-                    end: now,
-                },
-                now,
-            )
-            .apply_recording_gate_decisions(txn)?;
-        // The marker's id is the attempt's: a retry keeps its first birth.
-        if let Some(birth) = &birth {
-            crate::provenance::birth::stamp_birth_if_absent_in_txn(&vault.store, txn, &id, birth)?;
-        }
-        verified.record_message_dependencies_in_txn(vault, txn, &id)
-    })?;
-    Ok(id)
+    Ok(OpenMarkerParts {
+        id,
+        candidate,
+        provenance,
+        verified,
+        meet,
+        birth,
+    })
+}
+
+/// Lands `parts` in `txn` as `actor`, at `now`: the marker as a proposal
+/// through the shared write gate, signed as a retained machine claim, with
+/// its birth and its dependencies on the MESSAGE words it cites. The caller
+/// owns the write: its clock, and any fence it holds.
+///
+/// # Errors
+///
+/// The gate's refusal, a provenance that does not encode, and storage
+/// errors.
+fn write_open_marker_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    actor: WriteActor,
+    parts: OpenMarkerParts,
+    now: u64,
+) -> Result<()> {
+    let OpenMarkerParts {
+        id,
+        candidate,
+        mut provenance,
+        verified,
+        meet,
+        birth,
+    } = parts;
+    // An open question over imported words waits in their import's review,
+    // beside the claims drawn from them.
+    if meet == ClaimSource::Imported
+        && let Some(review) = crate::ingest::history::imported_evidence_in_txn(
+            vault,
+            txn,
+            &verified.refs(),
+            &verified.cited_messages(),
+        )?
+        .review
+    {
+        provenance.push((
+            Value::from(crate::gate::DREAMER_PROVENANCE_IMPORT_REVIEW_KEY),
+            Value::from(review),
+        ));
+    }
+    let mut envelope = WriteEnvelope::with_lineage(
+        actor,
+        meet,
+        WriteProvenance::new(Value::Map(provenance))?,
+        ClaimApprovalStatus::Proposed,
+        SourceLineage::of(ClaimSource::Generated).with(meet),
+    );
+    vault.sign_retained_machine_claim_in_txn(&*txn, &id, &candidate, &mut envelope)?;
+    vault
+        .batch_in()
+        .claim_candidate(
+            &id,
+            candidate,
+            &envelope,
+            TimeRange {
+                start: now,
+                end: now,
+            },
+            now,
+        )
+        .apply_recording_gate_decisions(txn)?;
+    // The marker's id is the attempt's: a retry keeps its first birth.
+    if let Some(birth) = &birth {
+        crate::provenance::birth::stamp_birth_if_absent_in_txn(&vault.store, txn, &id, birth)?;
+    }
+    verified.record_message_dependencies_in_txn(vault, txn, &id)
 }

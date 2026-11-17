@@ -30,6 +30,8 @@ tokio = { version = "1", features = ["sync", "time", "macros", "net"] }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
+# The daemon position's adapters start their helper processes through it (clippy.toml).
+oneiron-spawn = { version = "0.1.0", path = "../oneiron-spawn" }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["rt", "macros", "time", "sync"] }
