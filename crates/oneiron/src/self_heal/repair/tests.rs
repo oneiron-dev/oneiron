@@ -154,6 +154,7 @@ fn healer_proposes_not_applies() -> Result<()> {
     let policy_before = policy.clone();
     let files_before = file_snapshot(dir.path());
     let bundle = run_healer_proposals(
+        &vault,
         &policy,
         &registered(&healer),
         "engine.run",

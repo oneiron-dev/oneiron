@@ -35,6 +35,8 @@ pub(crate) mod evidence;
 pub mod excluded_conversations;
 mod executor;
 mod extracted_people;
+pub(crate) mod extraction_pack;
+pub(crate) mod extraction_step;
 mod failure_rules;
 mod follower_attempt;
 #[cfg(test)]
@@ -70,6 +72,8 @@ mod resident_for_human;
 mod resident_health;
 pub(crate) mod resources;
 mod retained_conflict;
+#[cfg(oneiron_test_support)]
+pub(crate) use retained_conflict::retained_field_for_test;
 mod retained_keep;
 mod revert;
 pub(crate) mod reviewed;
@@ -80,7 +84,7 @@ mod running_buckets;
 mod scope_summary_attempt;
 pub mod selection;
 pub(crate) mod setting_keys;
-mod settle;
+pub(crate) mod settle;
 mod sieve_attempt;
 mod sieve_decisions;
 mod sieve_ports;
@@ -95,15 +99,13 @@ mod wake_plan;
 pub(crate) mod watermark;
 mod weave_lens;
 
-// FIX [LIBTEST-QUARANTINE-DREAMER-CONSOLIDATION-TESTS]: the lib test target's type check fails here (160 errors: E0063 x82, E0308 x28, E0061 x27, E0027 x12, E0277 x4, E0599 x3, E0609 x3, E0716 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;
 
 pub(crate) use attempt_reads::{declare_attempt_reads, record_attempt_reads};
 pub use branch::{BranchTurn, ConsolidationBranchPlan, ConversationPart};
-pub(crate) use conflict::topic_key_canonical_bytes;
 pub use conflict::*;
+pub(crate) use conflict::{candidate_probe_body, topic_key_canonical_bytes};
 pub use executor::*;
 pub(crate) use extracted_people::{
     delete_lineage_origin_in_txn, has_name_span, normalize_name_span, origin_in_txn,
@@ -135,6 +137,10 @@ pub use resident_dream::{
 };
 pub(crate) use resident_dream::{resident_dream_input, resident_dream_progress_in_txn};
 pub use resident_for_human::run_free_time_for_human;
+#[cfg(oneiron_test_support)]
+pub(crate) use resources::extraction_routing_door;
+#[cfg(oneiron_test_support)]
+pub(crate) use resources::open_conflict_door;
 pub use resources::{NightlyLinkGrantRequest, ScopedConsolidationWrite, mint_nightly_link_grant};
 pub use retained_conflict::RetainedAlternative;
 pub(crate) use retained_keep::SettlementApplied;
@@ -158,9 +164,8 @@ pub(crate) use scope_summary_attempt::{
 pub(crate) use settle::keep_approval::{KeepApproval, KeepAs};
 pub use settle::{
     CONFLICT_SETTLE_DIAL, ConflictRevertReceipt, ConflictReviewScope, ConflictSettleDecisions,
-    ConflictSettleReceipt, ConflictSettlement, OpenConflict, ParkedConflictPass,
-    RevertedSettlement, SettledAnswer, SettledConflict, settle_parked_conflicts,
-    settle_parked_conflicts_while,
+    ConflictSettleReceipt, ConflictSettlement, OpenConflict, RevertedSettlement, SettledAnswer,
+    SettledConflict,
 };
 pub(crate) use settle::{
     apply_settlement_in_txn, marker_ids, open_conflict_in_txn, open_conflicts_in_txn,
@@ -171,6 +176,9 @@ pub use sieve_ports::{
     RoleNeighbourhoodExtractionPort, RoleSieveNoveltyPort, SieveNoveltyPort, SieveRungCall,
     SieveRungOutcome, SieveRungRead, SliceStep,
 };
+#[cfg(oneiron_test_support)]
+pub use step_charge::SpentObservation;
+pub use step_charge::StepChargeTally;
 pub use support::*;
 pub use task_realize::{TASK_REALIZE_UNLENT_PARK_REASON, TaskRealizeModel, run_task_realize};
 pub(crate) use task_realize::{seal_task_realize_confession_in_txn, task_realize_confession};
@@ -195,6 +203,7 @@ pub(crate) use turn_text::{
     TurnText, cited_evidence_bytes, dreamer_may_read_messages_in, dreamer_may_read_turns_in,
     live_turn_text_in, projected_turn_text_in,
 };
+pub(crate) use value_projection::rmpv_to_json;
 pub(crate) use wake_plan::{AttemptPreparation, RESIDENCY_RETRY_SECS};
 pub use wake_plan::{PreparedConsolidationAttempt, PreparedWake};
 pub use watermark::*;
@@ -262,6 +271,15 @@ pub(crate) fn side_door_recheck_for_test(
     let read = turn_text::dreamer_read(vault)?;
     let txn = turn_text::snapshot(vault)?;
     record.check_live_in(&read, &txn, turn)
+}
+
+/// The park cause a recipe step takes on `error` ([`recipe_failure`]), for
+/// tests/message_rel_relationship_row.rs. Not API.
+#[cfg(oneiron_test_support)]
+pub(crate) fn recipe_park_cause_for_test(
+    error: &crate::Error,
+) -> crate::dreamer_runner::DreamerParkCause {
+    recipe_failure::RecipeFailure::of_error(error).park_cause()
 }
 
 /// Encodes the candidates retained on a conflict marker.

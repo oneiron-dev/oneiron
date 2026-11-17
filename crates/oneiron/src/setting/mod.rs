@@ -29,6 +29,7 @@ mod ask;
 mod catalogue;
 mod change;
 mod learned;
+mod page_max;
 mod read;
 mod set;
 pub(crate) mod tables;
@@ -54,6 +55,7 @@ pub(crate) use self::change::{
     settings_head_in_txn,
 };
 pub use self::learned::{LEARNED_SCOPES, LearnedRange, SettingFitView};
+pub use self::page_max::PageMax;
 #[cfg(all(oneiron_test_support, feature = "test-support"))]
 pub(crate) use self::read::put_stored_bytes;
 pub use self::read::{SettingCatalogueEntry, SettingRowView, SettingView};
@@ -119,6 +121,13 @@ pub type OnChange = fn(&Vault, &mut heed::RwTxn<'_>, &SettingChange) -> Result<(
 /// reads the key (a reader woken inside the write would see the last commit's value).
 pub type OnCommitted = fn(&Vault);
 
+/// The turn a key's change takes before its write opens, held until the write and its
+/// `after_commit` are done: for a key whose hook must not land while another holder of that turn
+/// runs several writes. [`Vault::set_setting`] takes it; a change made in a caller's own write
+/// (`Vault::set_setting_in_txn`) does not, since waiting for a turn inside a write could wait on
+/// a holder that waits on the writer. Such a key is set through `set_setting` alone.
+pub type WriteTurn = fn(&Vault) -> Result<Box<dyn std::any::Any>>;
+
 /// One catalogue row: everything the engine knows about a key. Data, not code.
 #[derive(Clone, Copy)]
 pub struct SettingSpec {
@@ -146,6 +155,8 @@ pub struct SettingSpec {
     /// Run after the commit of each write that applied a change to the key (not on an equal
     /// value, not on a change that waits on a check-in).
     pub after_commit: Option<OnCommitted>,
+    /// Taken before the write of a change to the key opens ([`WriteTurn`]).
+    pub write_turn: Option<WriteTurn>,
 }
 
 impl SettingSpec {
@@ -166,6 +177,7 @@ impl SettingSpec {
         loosening_note: None,
         on_change: None,
         after_commit: None,
+        write_turn: None,
     };
 
     /// Whether a row may sit at `kind`.

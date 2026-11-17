@@ -17,9 +17,11 @@ fn passport(vault: &Vault, seed: u8, event_ref: EntityId, approval: ClaimApprova
         uid: UID.to_owned(),
         last_sequence: 0,
         content_hash: [seed; 32],
+        source: None,
         direction: CalendarPassportDirection::Inbound,
         last_seen_at: NOW,
         presence: CalendarPassportPresence::Live,
+        cancelled_since: None,
     };
     let body = ClaimBody::new(
         PREDICATE_CALENDAR_PASSPORT,
