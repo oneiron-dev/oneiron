@@ -1,13 +1,15 @@
 //! The mail and calendar pack's Setting keys (owner ruling PACK-SETTINGS-ALL = B): how many
-//! people one drafted reply may name, and the span of time a Microsoft 365 calendar source's
-//! view tracks. Each default is the shipped value. The owner changes a value; an agent's change
-//! waits on the owner's approval.
+//! people one drafted reply may name, the span of time a Microsoft 365 calendar source's view
+//! tracks, and whether a room's off-record stretch may search mail (UNBUILT-01-ROOM-READERS,
+//! owner 16 Nov 00:44). Each default is the shipped value. The owner changes a value; an agent's
+//! change waits on the owner's approval.
 //!
 //! Direction: the reply ceiling bounds how many people outside the vault one agent-drafted
 //! reply reaches, so a lower ceiling is tighter, and a row that does not decode reads as a reply
 //! to one person. The calendar view brings the owner's own calendar into the owner's vault and
 //! has no safe side, so it has no order, and a row that does not decode reads as the shipped
-//! span.
+//! span. Mail search in a room shows the owner's hits to everyone in it, so off is tighter, and
+//! a row that does not decode reads as off.
 
 use serde::{Deserialize, Serialize};
 
@@ -17,7 +19,7 @@ use super::microsoft365_calendar::{
 };
 use super::reply_recipients::MAX_REPLY_RECIPIENTS;
 use crate::error::{Error, Result};
-use crate::setting::{Kind, SettingValue, lower_is_tighter};
+use crate::setting::{Kind, ScopeKind, SettingValue, lower_is_tighter};
 
 /// The most recipients one drafted reply names, To and Cc together: at least 1, the person
 /// answered.
@@ -93,6 +95,11 @@ fn view_after() -> CalendarViewAfterSecs {
     CalendarViewAfterSecs(VIEW_AFTER_SECS)
 }
 
+/// Off: a room's stretch searches no mail.
+fn searched_nowhere_shared() -> bool {
+    false
+}
+
 crate::setting::setting_keys! {
     /// The most recipients one drafted reply names, To and Cc together (default 50). A reply
     /// that names more is refused, never cut. Lower is tighter: fewer people outside the vault
@@ -117,6 +124,20 @@ crate::setting::setting_keys! {
     pub(crate) MICROSOFT365_CALENDAR_VIEW_AFTER: CalendarViewAfterSecs =
         "mail_calendar.microsoft365_calendar.view_after_secs" {
         kind: Kind::new(view_after).strictest(view_after),
+    };
+    /// Allow mail search in this room (results visible to everyone here). Off by default: a
+    /// search inside a room's off-record stretch is refused before the provider is asked, and
+    /// nothing is fetched or kept. On for a room, a search in its stretch keeps its hits in the
+    /// room's overlay, as a search alone does: every member of the room reads them until the
+    /// stretch closes, and none reaches base (UNBUILT-01-ROOM-READERS, owner 16 Nov 00:44). A
+    /// room's row sits at its conversation's thread scope; a vault row opens every room, and a
+    /// room's own row wins over it. On is the looser value, so only the owner turns it on; an
+    /// agent's change waits on the owner's answer.
+    pub(crate) MAIL_SEARCH_IN_ROOM: bool = "mail.search.in_room" {
+        kind: Kind::new(searched_nowhere_shared)
+            .strictest(searched_nowhere_shared)
+            .tighter(lower_is_tighter::<bool>),
+        scopes: &[ScopeKind::Thread],
     };
 }
 

@@ -488,6 +488,25 @@ pub struct ImapMailWire<'v> {
     /// The digest of the whole message each id names (its BLAKE3, each line
     /// ended by CRLF), as this wire's session read it; emptied with `seen`.
     whole_digests: RefCell<BTreeMap<String, [u8; 32]>>,
+    /// The UID map rows this wire wrote, kept in memory over the vault's,
+    /// for a wire that writes no UID map row in base
+    /// ([`Self::keeping_uid_map_in_memory`]); `None` for a wire that keeps
+    /// the UID map in base, as a sync does.
+    uid_map_in_memory: Option<RefCell<UidMapInMemory>>,
+}
+
+/// A key of [`UIDS`]: the source, its folder's UID map key and the UID.
+type UidKey = (EntityId, [u8; 32], u64);
+
+/// A key of [`ID_PLACES`]: the source, the BLAKE3 of the id and the place.
+type IdPlaceKey = (EntityId, [u8; 32], ([u8; 32], u64));
+
+/// The UID map rows a wire keeps in memory over the vault's: each row it
+/// put, or `None` for one it deleted. They go with the wire.
+#[derive(Default)]
+struct UidMapInMemory {
+    uids: BTreeMap<UidKey, Option<HeldUid>>,
+    places: BTreeMap<IdPlaceKey, Option<IdPlace>>,
 }
 
 impl<'v> ImapMailWire<'v> {
@@ -502,7 +521,20 @@ impl<'v> ImapMailWire<'v> {
             named_by_all_mail: RefCell::new(BTreeSet::new()),
             first_places: RefCell::new(BTreeMap::new()),
             whole_digests: RefCell::new(BTreeMap::new()),
+            uid_map_in_memory: None,
         }
+    }
+
+    /// Builds a wire that reads the vault's UID map but keeps each row it
+    /// learns in memory, never in base: the wire of a search inside an
+    /// off-record session, whose found mail leaves no row in base that
+    /// names it once the session closes (ARCH-0063 #searched-mail). A
+    /// later sync reads the UIDs it learned again.
+    #[must_use]
+    pub(crate) fn keeping_uid_map_in_memory(vault: &'v Vault) -> Self {
+        let mut wire = Self::new(vault);
+        wire.uid_map_in_memory = Some(RefCell::new(UidMapInMemory::default()));
+        wire
     }
 
     /// Forgets what this wire's session read.
@@ -1419,7 +1451,7 @@ impl ImapMailWire<'_> {
             let mut by_id = self.named_by_all_mail.borrow_mut();
             for (uid, server_named) in learned {
                 let mapped = if naming == Naming::ServerId {
-                    UIDS.get(&self.vault.store, &txn, &(open.source, folder_key, uid))?
+                    self.held_uid(&txn, &(open.source, folder_key, uid))?
                         .filter(|row| row.uid_validity == status.uid_validity)
                         .map(|row| row.provider_id)
                 } else {
@@ -1986,9 +2018,73 @@ impl ImapMailWire<'_> {
         let mut prefix = source.as_bytes().to_vec();
         prefix.extend_from_slice(&folder_key);
         let txn = self.vault.store.env.read_txn()?;
-        UIDS.iter_from(&self.vault.store, &txn, &prefix)?
+        let mut rows = UIDS
+            .iter_from(&self.vault.store, &txn, &prefix)?
             .map(|row| row.map(|((_, _, uid), held)| (uid, held)))
-            .collect()
+            .collect::<Result<BTreeMap<_, _>>>()?;
+        if let Some(memory) = &self.uid_map_in_memory {
+            for ((row_source, row_folder, uid), row) in &memory.borrow().uids {
+                if (*row_source, *row_folder) != (source, folder_key) {
+                    continue;
+                }
+                match row {
+                    Some(held) => rows.insert(*uid, held.clone()),
+                    None => rows.remove(uid),
+                };
+            }
+        }
+        Ok(rows.into_iter().collect())
+    }
+
+    /// The UID map's row of `key` in `txn`: the one this wire keeps in
+    /// memory over the vault's, else the vault's.
+    fn held_uid(&self, txn: &heed::RoTxn<'_>, key: &UidKey) -> Result<Option<HeldUid>> {
+        if let Some(memory) = &self.uid_map_in_memory
+            && let Some(row) = memory.borrow().uids.get(key)
+        {
+            return Ok(row.clone());
+        }
+        UIDS.get(&self.vault.store, txn, key)
+    }
+
+    /// [`Self::remember_uids`] and [`Self::forget_uids`] for a wire that
+    /// keeps the UID map in memory: the same rows, put and deleted over the
+    /// vault's, and none written in base.
+    fn change_uids_in_memory(
+        &self,
+        memory: &RefCell<UidMapInMemory>,
+        source: EntityId,
+        folder_key: [u8; 32],
+        changes: Vec<(u64, Option<HeldUid>)>,
+    ) -> Result<()> {
+        let txn = self.vault.store.env.read_txn()?;
+        for (uid, row) in changes {
+            let key = (source, folder_key, uid);
+            let old = self.held_uid(&txn, &key)?;
+            let mut rows = memory.borrow_mut();
+            if let Some(old) = old
+                && row
+                    .as_ref()
+                    .is_none_or(|row| old.provider_id != row.provider_id)
+                && named_by_header(&old.provider_id)
+            {
+                let place = id_place_key(source, &old.provider_id, folder_key, uid);
+                rows.places.insert(place, None);
+            }
+            if let Some(row) = &row
+                && named_by_header(&row.provider_id)
+            {
+                let place = id_place_key(source, &row.provider_id, folder_key, uid);
+                rows.places.insert(
+                    place,
+                    Some(IdPlace {
+                        uid_validity: row.uid_validity,
+                    }),
+                );
+            }
+            rows.uids.insert(key, row);
+        }
+        Ok(())
     }
 
     /// Records which message each of the `learned` UIDs of a folder holds,
@@ -2004,6 +2100,19 @@ impl ImapMailWire<'_> {
     ) -> Result<()> {
         if learned.is_empty() {
             return Ok(());
+        }
+        if let Some(memory) = &self.uid_map_in_memory {
+            let rows = learned
+                .into_iter()
+                .map(|(uid, provider_id)| {
+                    let row = HeldUid {
+                        uid_validity,
+                        provider_id,
+                    };
+                    (uid, Some(row))
+                })
+                .collect();
+            return self.change_uids_in_memory(memory, source, folder_key, rows);
         }
         self.vault.with_write_txn_grouped(|txn| {
             let store = &self.vault.store;
@@ -2036,6 +2145,10 @@ impl ImapMailWire<'_> {
         if uids.is_empty() {
             return Ok(());
         }
+        if let Some(memory) = &self.uid_map_in_memory {
+            let rows = uids.iter().map(|&uid| (uid, None)).collect();
+            return self.change_uids_in_memory(memory, source, folder_key, rows);
+        }
         self.vault.with_write_txn_grouped(|txn| {
             let store = &self.vault.store;
             for &uid in uids {
@@ -2064,13 +2177,30 @@ impl ImapMailWire<'_> {
     ) -> Result<Vec<Location>> {
         let keys: Vec<[u8; 32]> = open.folders.iter().map(uid_map_folder_key).collect();
         let txn = self.vault.store.env.read_txn()?;
+        // The places of one id are few: all are read, then those this wire
+        // keeps in memory go over them.
+        let mut rows = ID_PLACES
+            .iter_from(
+                &self.vault.store,
+                &txn,
+                &id_places_prefix(open.source, provider_id),
+            )?
+            .map(|row| row.map(|((_, _, at), place)| (at, place)))
+            .collect::<Result<BTreeMap<_, _>>>()?;
+        if let Some(memory) = &self.uid_map_in_memory {
+            let id_hash = *blake3::hash(provider_id.as_bytes()).as_bytes();
+            for ((row_source, row_hash, at), place) in &memory.borrow().places {
+                if (*row_source, *row_hash) != (open.source, id_hash) {
+                    continue;
+                }
+                match place {
+                    Some(place) => rows.insert(*at, *place),
+                    None => rows.remove(at),
+                };
+            }
+        }
         let mut places = Vec::new();
-        for row in ID_PLACES.iter_from(
-            &self.vault.store,
-            &txn,
-            &id_places_prefix(open.source, provider_id),
-        )? {
-            let ((_, _, (folder_key, uid)), place) = row?;
+        for ((folder_key, uid), place) in rows {
             let Some(folder) = keys.iter().position(|key| *key == folder_key) else {
                 continue;
             };
@@ -2082,8 +2212,8 @@ impl ImapMailWire<'_> {
             if at == except {
                 continue;
             }
-            let mapped = UIDS
-                .get(&self.vault.store, &txn, &(open.source, folder_key, uid))?
+            let mapped = self
+                .held_uid(&txn, &(open.source, folder_key, uid))?
                 .is_some_and(|held| {
                     held.uid_validity == place.uid_validity && held.provider_id == provider_id
                 });
@@ -2119,7 +2249,7 @@ impl ImapMailWire<'_> {
     /// The UID map's row of one UID of one folder of `source`.
     fn uid_row(&self, source: EntityId, folder_key: [u8; 32], uid: u64) -> Result<Option<HeldUid>> {
         let txn = self.vault.store.env.read_txn()?;
-        UIDS.get(&self.vault.store, &txn, &(source, folder_key, uid))
+        self.held_uid(&txn, &(source, folder_key, uid))
     }
 }
 
@@ -3175,4 +3305,56 @@ fn uid_next_of(session: &mut ImapSession, status: FolderStatus) -> Result<u64> {
     let last = session.uid_search("ALL")?.last().copied().unwrap_or(0);
     last.checked_add(1)
         .ok_or_else(|| refused("imap_response_malformed"))
+}
+
+#[cfg(oneiron_test_support)]
+impl Vault {
+    /// A door for `tests/mail_search_off_record.rs` (review round 2 of
+    /// #8356, P1-1), built only under `--cfg oneiron_test_support`: one
+    /// IMAP wire, kept in memory as a search inside a session builds it
+    /// when `in_memory`, else as a sync builds it, learns that UID 42 of a
+    /// folder of `source` holds a message a header block names. It answers
+    /// whether the wire reads that row back, how many UID map rows and id
+    /// places base then holds for `source`, and whether the wire reads the
+    /// row as gone once it forgets that UID.
+    ///
+    /// # Errors
+    ///
+    /// The vault's.
+    #[doc(hidden)]
+    pub fn imap_uid_map_learned_for_test(
+        &self,
+        source: EntityId,
+        in_memory: bool,
+    ) -> Result<(bool, usize, usize, bool)> {
+        let wire = if in_memory {
+            ImapMailWire::keeping_uid_map_in_memory(self)
+        } else {
+            ImapMailWire::new(self)
+        };
+        let folder_key = *blake3::hash(b"INBOX").as_bytes();
+        let provider_id = format!("{HEADER_ID_PREFIX}.door-test");
+        wire.remember_uids(source, folder_key, 1, vec![(42, provider_id.clone())])?;
+        let read_back = wire
+            .uid_row(source, folder_key, 42)?
+            .is_some_and(|row| row.provider_id == provider_id)
+            && wire
+                .mapped_uids(source, folder_key)?
+                .iter()
+                .any(|(uid, row)| *uid == 42 && row.provider_id == provider_id);
+        let (uids, places) = {
+            let txn = self.store.env.read_txn()?;
+            (
+                UIDS.iter_from(&self.store, &txn, source.as_bytes())?
+                    .count(),
+                ID_PLACES
+                    .iter_from(&self.store, &txn, source.as_bytes())?
+                    .count(),
+            )
+        };
+        wire.forget_uids(source, folder_key, &[42])?;
+        let forgotten = wire.uid_row(source, folder_key, 42)?.is_none()
+            && wire.mapped_uids(source, folder_key)?.is_empty();
+        Ok((read_back, uids, places, forgotten))
+    }
 }
