@@ -86,7 +86,7 @@ pub(crate) fn retained_side_row_key(row: &ArchiveRetainedSideRow) -> [u8; 32] {
         row.source_key.as_slice(),
         value_hash.as_bytes().as_slice(),
     ] {
-        digest.len_u64_le(part.len()).raw(part);
+        digest.raw(part);
     }
     digest.finish()
 }
