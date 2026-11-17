@@ -30,7 +30,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/model/generator.rs` | src | s | 1 enum · 2 fn | Step | — |
 | `src/model/mod.rs` | src | m | 11 struct · 3 enum · 27 fn · 1 type · 1 const · 2 mod | Actor, Aud, Claim, ClaimKey, Ent, Entity, Observed, Outcome +6 | A reference model of the vault and seeded step sequences checked against the engine (Fable's verdict 52… |
 | `src/model/tests.rs` | test | m | — | — | — |
-| `src/pending_door.rs` | src | s | 2 struct · 7 fn · 1 const | PendingDoors, WaitingTest | The nightly pending-door filter (Engine ruling 03:32, 10 Nov; Fable's verdict, section 1, "Door waits")… |
+| `src/pending_door.rs` | src | m | 2 struct · 9 fn · 1 const | PendingDoors, WaitingTest | The nightly pending-door filter (Engine ruling 03:32, 10 Nov; Fable's verdict, section 1, "Door waits")… |
 | `src/provider/backend.rs` | src | s | 1 struct · 5 fn | ScriptedBackend | [`ScriptedBackend`]: the script as an in-process [`LlmBackend`], for door tests that hand the engine a… |
 | `src/provider/digest.rs` | src | s | 1 struct · 6 fn · 2 const | PromptDigest | The prompt digest a scripted reply is keyed by |
 | `src/provider/http.rs` | src | s | 7 crate-vis | — | A minimal HTTP/1.1 server on loopback for the scripted provider: one request per connection, answered with… |

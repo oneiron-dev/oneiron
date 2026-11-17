@@ -188645,7 +188645,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "PendingDoors",
@@ -188655,7 +188655,7 @@
      "purpose": "The nightly pending-door filter (Engine ruling 03:32, 10 Nov; Fable's verdict, section 1, \"Door waits\")…",
      "surface": {
       "const": 1,
-      "fn": 7,
+      "fn": 9,
       "struct": 2
      }
     },
@@ -188950,7 +188950,7 @@
     "pending_door": {
      "files": 1,
      "impl_vault": false,
-     "largest_src_bucket": "s",
+     "largest_src_bucket": "m",
      "layout": "file",
      "purpose": "The nightly pending-door filter (Engine ruling 03:32, 10 Nov; Fable's verdict, section 1, \"Door waits\")…"
     },
