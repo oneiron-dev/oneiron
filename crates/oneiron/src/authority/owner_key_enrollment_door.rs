@@ -28,7 +28,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use ed25519_dalek::Signer;
 
-use crate::error::{Error, RecordError, Result};
+use crate::error::{Error, OwnerKeyMoveStep, RecordError, Result};
 use crate::{EntityId, TimeRange, Vault};
 
 use super::*;
@@ -1284,7 +1284,10 @@ impl Vault {
     }
 
     /// [`Self::enrolled_owner_keys`] in the caller's transaction.
-    fn enrolled_owner_keys_in_txn(&self, txn: &heed::RoTxn<'_>) -> Result<Vec<EnrolledOwnerKey>> {
+    pub(super) fn enrolled_owner_keys_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+    ) -> Result<Vec<EnrolledOwnerKey>> {
         let managed = CheckpointPosture::from(self.privacy_posture()) == CheckpointPosture::Managed;
         let mut keys = BTreeMap::new();
         self.visit_authority_entries_in_txn(txn, |fold, hash, entry| {
@@ -1339,7 +1342,7 @@ impl Vault {
     /// smallest valid enrollment entry, stored or carried by an adopted
     /// checkpoint image, as [`Self::enrolled_owner_keys`] counts a device
     /// key; that listing keeps device keys only (REVIEW-8437 P1).
-    fn live_owner_keys_enrolled_for_in_txn(
+    pub(super) fn live_owner_keys_enrolled_for_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         person: EntityId,
@@ -1431,7 +1434,11 @@ impl Vault {
                 None
             } else {
                 let proof = self.owner_proof_signer(&fold).ok_or(Error::Record(
-                    RecordError::OwnerKeyMoveRefused { member: person },
+                    RecordError::OwnerKeyMoveRefused {
+                        member: person,
+                        step: OwnerKeyMoveStep::Unavailable,
+                        act: None,
+                    },
                 ))?;
                 let proof_key = proof.root();
                 keys.sort_by_key(|key| *key == proof_key);

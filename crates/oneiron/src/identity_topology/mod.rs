@@ -129,6 +129,7 @@ pub(crate) use attribution::{
     attribution_carrier_key, author_attribution_redacted_in_txn,
     reconcile_author_attribution_in_txn, redacted_keys_in_txn, redaction_carrier_key,
 };
+pub(crate) use distinct_claim::DistinctClaimPlace;
 pub use distinct_claim::distinct_pair_key;
 pub use ledger_fold::{
     IdentityTopologyAction, IdentityTopologyEvent, IdentityTopologyFold, fold_identity_topology_log,
