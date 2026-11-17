@@ -12,6 +12,7 @@ use super::types::{
     BookingVerbRequest, MAX_ATTEMPT_FAILURE_REASON_BYTES, MAX_CHECKOUT_HOLD_TTL_SECS,
     validate_request,
 };
+use super::waitlist::waitlist_oracle_exclusion;
 use super::{CHECKOUT_LEASE, CheckoutLeaseRow};
 use crate::attempt_queue::{
     AttemptId, AttemptQueue, AttemptRecord, AttemptState, ClaimAttempt, ClaimOutcome,
@@ -495,6 +496,10 @@ fn oracle_request(
         BookingVerbRequest::Cancel(spec) => BookingOracleRequest {
             page_ref: token_page_ref(vault, &spec.token)?,
             exclude_session_key: None,
+        },
+        BookingVerbRequest::Waitlist(spec) => BookingOracleRequest {
+            page_ref: Some(spec.page_ref),
+            exclude_session_key: waitlist_oracle_exclusion(&spec.action),
         },
     })
 }
