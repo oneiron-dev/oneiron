@@ -138,12 +138,8 @@ pub struct TitledEventRow {
     pub title: Option<String>,
 }
 
-/// A `Busy`-rung row: an opaque interval carrying no event material at all.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct BusyBlockRow {
-    pub start_utc: u64,
-    pub end_utc: u64,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::booking::disclosure_rung::BusyBlockRow;
 
 /// What crosses a vault or public boundary. Never source event bytes.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -193,7 +189,7 @@ pub fn project_at_rung(
             events.iter().map(TitledEventRow::redacted_from).collect(),
         )),
         DisclosureRung::Busy => Ok(RungProjection::Busy(
-            events.iter().map(BusyBlockRow::opaque_from).collect(),
+            events.iter().map(opaque_busy_block).collect(),
         )),
         DisclosureRung::Slots => {
             let mask = slot_mask.ok_or_else(|| {
@@ -220,17 +216,16 @@ impl TitledEventRow {
     }
 }
 
-impl BusyBlockRow {
-    /// Builds a fresh opaque interval, dropping the event's identity entirely.
-    fn opaque_from(row: &EventRow) -> Self {
-        Self {
-            start_utc: row.start_utc,
-            end_utc: row.end_utc,
-        }
+/// Builds a fresh opaque interval, dropping the event's identity entirely.
+fn opaque_busy_block(row: &EventRow) -> BusyBlockRow {
+    BusyBlockRow {
+        start_utc: row.start_utc,
+        end_utc: row.end_utc,
     }
 }
 
-/// Rejects a mask whose window or slots are not half-open `[start, end)`.
+/// Rejects a mask whose window or slots are not half-open `[start, end)`, or
+/// whose full days are not well-formed dates in strictly ascending order.
 ///
 /// The `Slots` rung is the one that reaches public surfaces, so a degenerate or
 /// out-of-window mask must not leave this chokepoint as "availability".
@@ -252,7 +247,45 @@ pub fn validate_slot_mask(mask: &SlotMask) -> Result<(), BookingError> {
             )));
         }
     }
+    if let Some(day) = mask
+        .full_days
+        .iter()
+        .find(|day| !is_calendar_date(&day.date))
+    {
+        return Err(BookingError::Surface(format!(
+            "slot mask full day {:?} is not a YYYY-MM-DD date",
+            day.date
+        )));
+    }
+    if mask
+        .full_days
+        .windows(2)
+        .any(|pair| pair[0].date >= pair[1].date)
+    {
+        return Err(BookingError::Surface(
+            "slot mask full days are not in strictly ascending order".to_owned(),
+        ));
+    }
     Ok(())
+}
+
+/// Whether `text` is a `YYYY-MM-DD` date with a month in 1..=12 and a day in
+/// 1..=31. For two such dates, text order is date order.
+fn is_calendar_date(text: &str) -> bool {
+    let number = |part: &str, width: usize| {
+        (part.len() == width && part.bytes().all(|byte| byte.is_ascii_digit()))
+            .then(|| part.parse::<u16>().ok())
+            .flatten()
+    };
+    let mut parts = text.split('-');
+    match (parts.next(), parts.next(), parts.next(), parts.next()) {
+        (Some(year), Some(month), Some(day), None) => {
+            number(year, 4).is_some()
+                && number(month, 2).is_some_and(|month| (1..=12).contains(&month))
+                && number(day, 2).is_some_and(|day| (1..=31).contains(&day))
+        }
+        _ => false,
+    }
 }
 
 /// `EntityId` carries no serde derives, so projection DTOs cross the wire as
