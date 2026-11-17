@@ -158,11 +158,11 @@ fn shown_state_in_txn(
     let mut holds = Vec::new();
     for record in records {
         let target = LegalHoldTarget::Record(*record);
-        holds.extend(hold_store::holds_on_in_txn(&vault.store, txn, &target)?);
+        holds.extend(standing_customer_holds_on_in_txn(vault, txn, &target)?);
     }
     if claim_free_partition {
         let target = LegalHoldTarget::GatePartition(None);
-        holds.extend(hold_store::holds_on_in_txn(&vault.store, txn, &target)?);
+        holds.extend(standing_customer_holds_on_in_txn(vault, txn, &target)?);
     }
     let records: Vec<EntityId> = records.iter().copied().collect();
     Ok(LiftAndEraseShownState::from_holds(
@@ -170,6 +170,34 @@ fn shown_state_in_txn(
         claim_free_partition,
         &holds,
     ))
+}
+
+/// The standing customer holds that name `target`, read from the hold rows
+/// and matched as the target index matched them. No hold indexes its targets
+/// any more (LEGAL-HOLD-USE = B, ARCH-0038 #legal-hold-clone-ruling), so the
+/// index misses every hold placed since, and this confirm would show and lift
+/// none of them (review P1 on #8421).
+fn standing_customer_holds_on_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    target: &LegalHoldTarget,
+) -> Result<Vec<LegalHold>> {
+    let names_target = |named: &LegalHoldTarget| match target {
+        LegalHoldTarget::Record(id) | LegalHoldTarget::GatePartition(Some(id)) => {
+            hold_store::names_id(named, id)
+        }
+        LegalHoldTarget::GatePartition(None) => {
+            matches!(named, LegalHoldTarget::GatePartition(None))
+        }
+    };
+    Ok(hold_store::holds_in_txn(&vault.store, txn)?
+        .into_iter()
+        .filter(|hold| {
+            hold.kind == LegalHoldKind::Customer
+                && hold.stands()
+                && hold.targets.iter().any(names_target)
+        })
+        .collect())
 }
 
 /// What the confirm's writer settled.
@@ -361,7 +389,7 @@ impl Vault {
         let mut lifting: BTreeMap<EntityId, (LegalHold, Vec<LegalHoldTarget>)> = BTreeMap::new();
         for record in records {
             let target = LegalHoldTarget::Record(*record);
-            for hold in hold_store::holds_on_in_txn(&self.store, txn, &target)? {
+            for hold in standing_customer_holds_on_in_txn(self, txn, &target)? {
                 hold_store::link_erase_in_txn(&self.store, txn, record, &hold)?;
                 let leaving: Vec<LegalHoldTarget> = hold
                     .targets
@@ -378,7 +406,7 @@ impl Vault {
         // Release the claim-free partition's customer holds (FIX 9782).
         if claim_free_partition {
             let target = LegalHoldTarget::GatePartition(None);
-            for hold in hold_store::holds_on_in_txn(&self.store, txn, &target)? {
+            for hold in standing_customer_holds_on_in_txn(self, txn, &target)? {
                 if hold.kind == LegalHoldKind::Customer {
                     let (_, left) = lifting
                         .entry(hold.hold_id)

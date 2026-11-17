@@ -6,8 +6,7 @@ use super::events::EVENTS;
 use super::notice::retaining_holds_in_txn;
 use super::use_limit::USE_LIMITS;
 use super::{
-    ERASE_LINKS, EraseLink, HeldKey, ROWS, TARGETS, check_opaque, distinct, held_keys,
-    partition_hold_id,
+    ERASE_LINKS, EraseLink, HeldKey, ROWS, TARGETS, check_opaque, distinct, partition_hold_id,
 };
 use crate::batch::export::archive_side_install::{
     ArchivedSideRowOutcome, decode_archived_row, install_archived_row,
@@ -98,7 +97,8 @@ fn valid_hold(key: &EntityId, hold: &LegalHold) -> bool {
     true
 }
 
-/// Lands primary protection, target accounting, use limits, erase links and ordered events.
+/// Lands hold rows, use limits, erase links and ordered events. No hold indexes
+/// its targets (LEGAL-HOLD-USE = B), so an archived target index row lands nowhere.
 pub(crate) fn land_archived_legal_hold_rows_in_txn(
     vault: &crate::Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -126,7 +126,6 @@ pub(crate) fn land_archived_legal_hold_rows_in_txn(
                 .flatten()
         })
         .collect();
-    let mut written_targets = BTreeSet::new();
 
     for (index, row) in decoded.iter().enumerate() {
         let Ok(DecodedRow::Hold(key, hold)) = row else {
@@ -146,17 +145,7 @@ pub(crate) fn land_archived_legal_hold_rows_in_txn(
                 Err(error) => return Err(error),
             }
         }
-        let outcome = install_archived_row(&ROWS, vault, txn, permit, key, &rows[index])?;
-        if matches!(outcome, Installed | Unchanged) {
-            for held in held_keys(hold) {
-                let target = (held, *key);
-                if !TARGETS.contains(vault, txn, &target)? {
-                    TARGETS.put(vault, txn, &target, &())?;
-                    written_targets.insert(target);
-                }
-            }
-        }
-        outcomes[index] = outcome;
+        outcomes[index] = install_archived_row(&ROWS, vault, txn, permit, key, &rows[index])?;
     }
 
     for (index, row) in decoded.iter().enumerate() {
@@ -176,13 +165,11 @@ pub(crate) fn land_archived_legal_hold_rows_in_txn(
                 Installed | Unchanged => {}
             }
         }
+        // No hold indexes its targets (LEGAL-HOLD-USE = B), so an archived
+        // index row names no target of its hold and lands nowhere.
         outcomes[index] = match ROWS.get(vault, txn, &key.1)? {
             None => HeldBack(MissingCompanion),
-            Some(hold) if !held_keys(&hold).contains(&key.0) => HeldBack(InconsistentCompanion),
-            Some(_) if written_targets.contains(key) => Installed,
-            Some(_) if TARGETS.contains(vault, txn, key)? => Unchanged,
-            // Without a primary landing, an envelope cannot repair a missing index.
-            Some(_) => HeldBack(MissingCompanion),
+            Some(_) => HeldBack(InconsistentCompanion),
         };
     }
 

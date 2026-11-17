@@ -1239,7 +1239,7 @@ suite.test(test, "PRIVACY-04", "Shared blobs survive one record erasure should w
   }
 });
 
-suite.test(test, "PRIVACY-05", "Legal hold narrows delete should work", async () => {
+suite.test(test, "PRIVACY-05", "Legal hold never blocks the owner's erase", async () => {
   const catalog = await loadFixtures();
   const data = await catalog.readJson<PrivacyFixtures>("privacy-scenarios");
   const spec = data.legalHold;
@@ -1256,85 +1256,17 @@ suite.test(test, "PRIVACY-05", "Legal hold narrows delete should work", async ()
     expect(hold.kind).toBe(spec.expected.kind);
     expect(hold.targets).toEqual([{ record: record.id_hex }]);
     expect(hold.lifted_at ?? null).toBeNull();
+    // A hold never blocks the owner's erase (LEGAL-HOLD-USE = B, ARCH-0038
+    // #legal-hold-clone-ruling): preview and confirm both succeed.
     const preview = await engine.client.call("vault.records.erase_preview", { record: record.id_hex });
-    const eraseInput = {
+    const confirmed = await engine.client.call("vault.records.erase_confirm", {
       record: record.id_hex, preview_digest: preview.preview_digest, also_same_bytes: false,
-    } satisfies FacadeInput<"vault.records.erase_confirm">;
-    const refusal = await engine.client.raw<{ error: { code: string } }>(
-      "POST", "/v1/core/facade/vault.records.erase_confirm", eraseInput,
-    );
-    expect(refusal.status).toBeGreaterThanOrEqual(400);
-    expect(refusal.status).toBeLessThan(500);
-    expect(refusal.body.error.code.length).toBeGreaterThan(0);
-    expect((await engine.client.call("vault.get", { entity_ref: record.id_hex })).value).not.toBeNull();
-    const kept = await engine.client.call("vault.artifacts.read", { artifact_ref: record.id_hex, version: 1 });
-    expect(kept?.content_base64).toBe(Buffer.from(bytes).toString("base64"));
-
-    // The refusal's public hold-log receipt names the applicable hold and
-    // target. It must not quote the held content. Do not match error prose.
-    const events = await engine.client.call("vault.legal_holds.log", {});
-    const refused = events.filter(event => event.event === spec.expected.refusalEvent);
-    expect(refused.some(event => event.hold_id === hold.hold_id
-      && event.reason === spec.expected.refusalReason
-      && event.targets.some(target => "record" in target && target.record === record.id_hex))).toBe(true);
-    expect(JSON.stringify(events).includes(new TextDecoder().decode(bytes))).toBe(false);
-    expect(JSON.stringify(events).includes(spec.name)).toBe(false);
-
-    const narrow = await engine.pairActor({
-      principalRef: engine.pairedActor.principalRef, actorClass: "human", scope: ["core:read"],
     });
-    const standing = await engine.client.call("vault.legal_holds.list", {});
-    const shown = standing.find(row => row.hold_id === hold.hold_id);
-    if (!shown) throw new Error("Placed hold is not standing");
-    const liftInput = {
-      records: [record.id_hex],
-      shown_state: {
-        title: "Lift the hold and erase?",
-        prompt: "This lifts your hold and erases these records. It does not end any legal duty to keep them. This choice is recorded.",
-        records: [record.id_hex],
-        holds: [{
-          hold_id: shown.hold_id, targets: shown.targets, placed_by: shown.placed_by ?? null,
-          placed_at: shown.placed_at, matter_ref: shown.matter_ref ?? null,
-        }],
-      },
-    } satisfies FacadeInput<"vault.legal_holds.lift_and_erase">;
-    const denied = await narrow.client.raw("POST", "/v1/core/facade/vault.legal_holds.lift_and_erase", liftInput);
-    expect(denied.status).toBe(spec.expected.unprivilegedLiftStatus);
-    const stillHeld = await engine.client.call("vault.legal_holds.list", {});
-    expect(stillHeld.find(row => row.hold_id === hold.hold_id)?.lifted_at ?? null).toBeNull();
-    expect((await engine.client.call("vault.get", { entity_ref: record.id_hex })).value).not.toBeNull();
-
-    // The later LEGAL-HOLD=B ruling requires one owner confirm that lifts
-    // AND retries the erase, not an unrestricted stand-alone revoke call.
-    const erased = await engine.client.call("vault.legal_holds.lift_and_erase", liftInput);
-    expect(erased.holds).toContain(hold.hold_id);
-    expect(erased.records).toHaveLength(1);
-    expect(erased.records[0]?.record).toBe(record.id_hex);
-    // Confirmation is not completion (G5 FIX21902 closure): immediate may be
-    // erased (completed at once, fixture ownerEraseState via
-    // readJson("privacy-scenarios")) or completion_pending (confirmed, sweep
-    // or custody still retiring). Typed in verbs/legal_hold.rs:63-82;
-    // pending reasons exhaustive in deletion/legal_hold/types.rs:295-306.
-    // Accept confirmed, fail fast on failed, then observe final completion
-    // through erase_sweep. 10s poll + instant asserts below unchanged.
-    const status = erased.records[0]!.status;
-    if (status.state === "failed") throw new Error(`Owner confirm failed: ${status.message}`);
-    expect(status.state === spec.expected.ownerEraseState || status.state === "completion_pending").toBe(true);
-    if (status.state === "completion_pending" && status.reason != null) {
-      expect(["historical_sweep", "custody_retirement", "veto_window"]).toContain(status.reason);
-    }
-    const receiptRef = status.receipt_ref;
+    if (!("first" in confirmed)) throw new Error("Erase confirm answered no first receipt");
+    const receiptRef = confirmed.first.receipt_ref;
     if (!receiptRef) throw new Error("Confirmed erase has no redaction receipt");
     expect((await engine.client.call("vault.get", { entity_ref: record.id_hex })).value).toBeNull();
     await expectBlobGone(engine.client, record.id_hex, 1);
-    const after = await engine.client.call("vault.legal_holds.log", {});
-    expect(after.some(event => event.hold_id === hold.hold_id
-      && event.event === spec.expected.confirmEvent
-      && event.actor_ref === engine.pairedActor.principalRef
-      && event.actor_kind === "owner")).toBe(true);
-    const lifted = (await engine.client.call("vault.legal_holds.list", {}))
-      .find(row => row.hold_id === hold.hold_id);
-    expect(lifted?.lifted_at).toBeGreaterThanOrEqual(hold.placed_at);
     // G-ERASE-DRIVER (FIX21914): force the existing historical sweep before
     // polling completion; status polling alone never triggers it.
     await finishHistoricalSweep(engine);
@@ -1349,6 +1281,14 @@ suite.test(test, "PRIVACY-05", "Legal hold narrows delete should work", async ()
     expect(sweep.custody?.pending ?? []).toEqual([]);
     await readAudit(engine.client, receiptRef, record.id_hex,
       [spec.name, new TextDecoder().decode(bytes)]);
+    // The hold still stands unlifted, and no refusal was logged. The log
+    // must not quote the held bytes or the record name.
+    const standing = await engine.client.call("vault.legal_holds.list", {});
+    expect(standing.find(row => row.hold_id === hold.hold_id)?.lifted_at ?? null).toBeNull();
+    const events = await engine.client.call("vault.legal_holds.log", {});
+    expect(events.some(event => event.event === spec.expected.refusalEvent)).toBe(false);
+    expect(JSON.stringify(events).includes(new TextDecoder().decode(bytes))).toBe(false);
+    expect(JSON.stringify(events).includes(spec.name)).toBe(false);
   } catch (error) {
     primaryFailed = true;
     primary = error;
