@@ -241,6 +241,8 @@ use uuid::Uuid;
 mod retention_tests;
 
 mod attempt_retention;
+#[cfg(oneiron_test_support)]
+pub(crate) use attempt_retention::task_attempt_key_pin_for_test;
 pub(crate) mod setting_keys;
 pub(crate) mod tables;
 pub(crate) use attempt_retention::{
