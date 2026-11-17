@@ -672,14 +672,64 @@ impl Vault {
         Ok(keys.into_values().collect())
     }
 
+    /// Every live owner key whose enrolment names `person`: their device
+    /// keys and their passkeys (row WEB-PASSKEY-OWNER-KEY), whose enrolment
+    /// names its owner as a device key's does. Each key counts by its
+    /// smallest valid enrollment entry, stored or carried by an adopted
+    /// checkpoint image, as [`Self::enrolled_owner_keys`] counts a device
+    /// key; that listing keeps device keys only (REVIEW-8437 P1).
+    fn live_owner_keys_enrolled_for_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        person: EntityId,
+    ) -> Result<Vec<AuthorityKey>> {
+        let view = self.authority_view_readonly_in_txn(txn)?;
+        let fold: &AuthorityFold = &view;
+        let mut enrolled: BTreeMap<AuthorityKey, (AuthorityEntryHash, EntityId)> = BTreeMap::new();
+        let mut keep = |hash: AuthorityEntryHash, entry: &AuthorityLogEntry| {
+            let AuthorityOp::OwnerKeyEnroll(enroll) = &entry.op else {
+                return;
+            };
+            if !fold.valid_entries.contains(&hash)
+                || enrolled
+                    .get(&enroll.device.key)
+                    .is_some_and(|(kept, _)| *kept <= hash)
+            {
+                return;
+            }
+            enrolled.insert(enroll.device.key.clone(), (hash, enroll.act.owner));
+        };
+        let mut stored = BTreeSet::new();
+        for (_, body) in super::readonly_fold::authority_log_rows_in_txn(&self.store, txn)? {
+            let entry = decode_authority_log_entry_body(&body)?;
+            let hash = authority_entry_hash(&entry)?;
+            stored.insert(hash);
+            keep(hash, &entry);
+        }
+        if let Some(evidence) = super::adopted_evidence::adopted_evidence_in_txn(&self.store, txn)?
+        {
+            for (hash, entry) in evidence.carried_past(&stored) {
+                keep(*hash, entry);
+            }
+        }
+        Ok(enrolled
+            .into_iter()
+            .filter(|(key, (_, owner))| {
+                *owner == person && fold.roster.get(key).is_some_and(|device| !device.revoked)
+            })
+            .map(|(key, _)| key)
+            .collect())
+    }
+
     /// Ends the owner authority `person` holds on this vault's log, in the
     /// transaction of the membership move that ends their standing
     /// (OWNER-ENROL): under `issuer`, a `RevokeDevice` for each live owner
-    /// key whose enrolment names them, which ends any binding on that key,
-    /// then a `RevokeActor` for each other live `human` binding that names
-    /// them, the host root's binding of its embedded owner among them. The
-    /// root key itself stays: only its binding ends. Each entry must count,
-    /// or the move commits nothing. A person with neither writes no entry.
+    /// key whose enrolment names them, a passkey among them, which ends any
+    /// binding on that key, then a `RevokeActor` for each other live `human`
+    /// binding that names them, the host root's binding of its embedded
+    /// owner among them. The root key itself stays: only its binding ends.
+    /// Each entry must count, or the move commits nothing. A person with
+    /// neither writes no entry.
     ///
     /// A revoke of an owner key counts only with an owner key's proof (row
     /// HOSTED-ROOT-REVOKES-OWNER-KEY; the lead, 15 Nov 20:41: "never only the
@@ -708,10 +758,8 @@ impl Vault {
     ) -> Result<()> {
         let root = issuer.public_key();
         let mut keys: Vec<AuthorityKey> = self
-            .enrolled_owner_keys_in_txn(txn)?
+            .live_owner_keys_enrolled_for_in_txn(txn, person)?
             .into_iter()
-            .filter(|key| key.live && key.owner == person)
-            .map(|key| AuthorityKey::Ed25519(key.public_key))
             .filter(|key| *key != root)
             .collect();
         if !keys.is_empty() {
@@ -842,10 +890,9 @@ impl Vault {
         txn: &heed::RoTxn<'_>,
         person: EntityId,
     ) -> Result<()> {
-        let holds_key = self
-            .enrolled_owner_keys_in_txn(txn)?
-            .iter()
-            .any(|key| key.live && key.owner == person);
+        let holds_key = !self
+            .live_owner_keys_enrolled_for_in_txn(txn, person)?
+            .is_empty();
         let fold = self.authority_view_readonly_in_txn(txn)?;
         let holds_binding = fold.actor_bindings.values().any(|binding| {
             binding.status == ActorBindingStatus::Active
