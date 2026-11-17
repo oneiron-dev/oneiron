@@ -49,8 +49,6 @@ mod handoff_arrival_order;
 mod handoff_settlement;
 mod history_transfer;
 mod host_node;
-// FIX [LIBTEST-QUARANTINE-AUTHORITY-TESTS-HOST-RE-ROOT]: the lib test target's type check fails here (2 errors: E0063 x1, E0061 x1); port it, then drop this gate
-#[cfg(any())]
 mod host_re_root;
 mod machine_fold;
 mod machine_identity;
@@ -88,7 +86,7 @@ mod world_key_doors;
 // FIX [LIBTEST-QUARANTINE-AUTHORITY-TESTS-WORLD-KEY-FRONTIER]: the lib test target's type check fails here (6 errors: E0061 x6); port it, then drop this gate
 #[cfg(any())]
 mod world_key_frontier;
-// FIX [LIBTEST-QUARANTINE-AUTHORITY-TESTS-WORLD-KEY-STORE-GATE]: the lib test target's type check fails here (3 errors: E0061 x3); port it, then drop this gate
+// FIX [LIBTEST-QUARANTINE-AUTHORITY-TESTS-WORLD-KEY-STORE-GATE]: ported to main's API (3 errors: E0061 x3), but it imports fixtures from world_key_doors and world_reissue, which [LIBTEST-QUARANTINE-AUTHORITY-TESTS-WORLD-KEY-DOORS] and [LIBTEST-QUARANTINE-AUTHORITY-TESTS-WORLD-REISSUE] gate; drop this gate with those ports
 #[cfg(any())]
 mod world_key_store_gate;
 // FIX [LIBTEST-QUARANTINE-AUTHORITY-TESTS-WORLD-KIT-GATE]: the lib test target's type check fails here (18 errors: E0061 x16, E0308 x1, E0063 x1); port it, then drop this gate

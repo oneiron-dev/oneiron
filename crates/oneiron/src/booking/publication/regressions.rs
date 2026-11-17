@@ -33,7 +33,14 @@ mod tests {
         assert!(
             vault
                 .batch()
-                .put_replicated(&id(8), crate::registry::ENTITY_TYPE_CLAIM, time, 1, &bytes)
+                .put_replicated(
+                    &id(8),
+                    crate::registry::ENTITY_TYPE_CLAIM,
+                    time,
+                    1,
+                    None,
+                    &bytes
+                )
                 .commit()
                 .is_err()
         );
@@ -419,6 +426,7 @@ fn publication_put_rejects_corrupt_existing_claim_but_allows_erased_shell() -> R
                     crate::registry::ENTITY_TYPE_CLAIM,
                     TimeRange { start: 1, end: 1 },
                     1,
+                    None,
                     &bytes,
                 )
                 .commit()
@@ -454,6 +462,7 @@ fn publication_put_rejects_malformed_incoming_claim_on_erased_shell() -> Result<
                 crate::registry::ENTITY_TYPE_CLAIM,
                 TimeRange { start: 1, end: 1 },
                 1,
+                None,
                 &malformed,
             )
             .commit()
@@ -478,7 +487,14 @@ fn assert_publication_slot_rejects_raw_overwrites(
         for replicated in [false, true] {
             let batch = vault.batch();
             let batch = if replicated {
-                batch.put_replicated(&claim, crate::registry::ENTITY_TYPE_CLAIM, time, 1, &bytes)
+                batch.put_replicated(
+                    &claim,
+                    crate::registry::ENTITY_TYPE_CLAIM,
+                    time,
+                    1,
+                    None,
+                    &bytes,
+                )
             } else {
                 batch.put(&claim, crate::registry::ENTITY_TYPE_CLAIM, time, 1, &bytes)
             };
@@ -494,6 +510,7 @@ fn assert_publication_slot_rejects_raw_overwrites(
                 crate::registry::ENTITY_TYPE_ASSET,
                 time,
                 1,
+                None,
                 b"replace",
             )
         } else {
@@ -583,6 +600,7 @@ fn publication_slots_stay_owner_only_after_head_change_soft_delete_and_reopen() 
                 crate::registry::ENTITY_TYPE_CLAIM,
                 TimeRange { start: 1, end: 1 },
                 1,
+                None,
                 &bytes,
             )
             .commit()

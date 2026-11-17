@@ -4,6 +4,7 @@
 
 use std::process::{Command, Stdio};
 
+use super::exchange_idle::Progress;
 use super::tests::{
     CapturingSink, commit_file, git, hooks_dir, seeded_repo, served_repo, temp_vault,
 };
@@ -361,16 +362,19 @@ fn a_window_past_the_blob_bound_publishes_a_refusal_naming_its_key() {
         fs::write(hooks.request_path(), update).expect("request");
         fs::write(hooks.blobs_path(), blobs).expect("blob stream");
         fs::write(hooks.history_path(), history).expect("history stream");
+        let clock = Progress::new();
         let report = serve_door_window(
             &vault,
             &repo,
             &hooks,
             &AtomicBool::new(false),
             Instant::now() + DOOR_WINDOW_TIMEOUT,
+            &clock,
             DoorWindowContext {
                 seam: DoorSeam::Landed,
                 admission: None,
                 scan: ScanBounds::new(blob_bytes, 1).expect("bounds"),
+                spill_floor: None,
             },
         )
         .expect("window answered");
@@ -436,7 +440,7 @@ fn a_window_past_the_blob_bound_publishes_a_refusal_naming_its_key() {
         report
             .lfs_pointers
             .iter()
-            .map(|pointer| pointer.path.as_str())
+            .map(|pointer| std::str::from_utf8(&pointer.path).expect("utf-8 path"))
             .collect::<Vec<_>>(),
         ["asset.bin"]
     );

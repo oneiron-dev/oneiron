@@ -206,8 +206,6 @@ pub(crate) use self::stale::federation_stale_key;
 #[cfg(test)]
 use self::stale::register_foreign_world_for_pact;
 
-// FIX [LIBTEST-QUARANTINE-FEDERATION-MEMBERSHIP-GATE-TESTS]: the lib test target's type check fails here (1 errors: E0061 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod membership_gate_tests;
 mod system_agent_grant;
@@ -236,8 +234,6 @@ pub use engine_controls::{
     ENGINE_CONTROLS_OWNER_ONLY_KNOBS, EngineControlActor, EngineControlChange, EngineControlClass,
 };
 pub(crate) use substrate_reads::{SubstrateRead, admit_substrate_read, admit_substrate_read_by};
-// FIX [LIBTEST-QUARANTINE-FEDERATION-SHARED-CREATION-TESTS]: the lib test target's type check fails here (4 errors: E0061 x4); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod shared_creation_tests;
 // FIX [LIBTEST-QUARANTINE-FEDERATION-STEWARD-TESTS]: the lib test target's type check fails here (2 errors: E0061 x2); port it, then drop this gate

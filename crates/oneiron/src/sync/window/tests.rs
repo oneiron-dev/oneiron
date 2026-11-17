@@ -35,6 +35,7 @@ fn delegated_identity_fixture(
         name: name.to_owned(),
         class: CustodyClass::CustodyDeviceBound,
         device_only: true,
+        model_reveal_allowed: false,
         value_bytes: b"locally-held-oauth-token".to_vec(),
         status: SecretCustodyStatus::Active,
         registered_at: learned_at,
@@ -111,7 +112,11 @@ fn typed_addressing_edge_survives_reverse_and_forward_replay_but_forged_peer_edg
     let mut input = crate::conversation_dag::fixtures::input(conversation, None, true, actor);
     input.address = crate::conversation_dag::AddressMode::Direct;
     input.recipients = vec![recipient];
-    let record = source.append_dag_record(&input)?.id;
+    let writer = source.memory(actor.entity_ref(), actor.actor_class());
+    let record = source
+        .append_dag_record(&writer, &input)
+        .expect("append")
+        .id;
     let key = WindowKey::from_timestamp(input.learned_at);
     let doc = create_window_doc("addressing-source", &key);
     reverse_rematerialize(&source, &doc, &key)?;
@@ -162,7 +167,11 @@ fn typed_addressing_recovery_restores_only_body_proved_edges() -> Result<()> {
     let mut input = crate::conversation_dag::fixtures::input(conv, None, true, actor);
     input.address = crate::conversation_dag::AddressMode::Direct;
     input.recipients = vec![person];
-    let record = source.append_dag_record(&input)?.id;
+    let writer = source.memory(actor.entity_ref(), actor.actor_class());
+    let record = source
+        .append_dag_record(&writer, &input)
+        .expect("append")
+        .id;
     let key = WindowKey::from_timestamp(input.learned_at);
     let doc = create_window_doc("source", &key);
     // Keep the artifact at the conversation boundary: a test policy fixture
@@ -253,7 +262,11 @@ fn soft_deleted_addressed_turn_keeps_its_edge_across_canonical_recovery() -> Res
     let mut input = crate::conversation_dag::fixtures::input(conv, None, true, actor);
     input.address = crate::conversation_dag::AddressMode::Direct;
     input.recipients = vec![recipient];
-    let record = source.append_dag_record(&input)?.id;
+    let writer = source.memory(actor.entity_ref(), actor.actor_class());
+    let record = source
+        .append_dag_record(&writer, &input)
+        .expect("append")
+        .id;
     let tombstone = crate::deletion::TombstoneValueV2 {
         reason: crate::deletion::TombstoneReason::UserDelete,
         deleted_at: 100,
@@ -355,7 +368,11 @@ fn soft_addressing_recovers_across_monthly_recipient_window() -> Result<()> {
     input.learned_at = feb;
     input.address = crate::conversation_dag::AddressMode::Direct;
     input.recipients = vec![recipient];
-    let record = source.append_dag_record(&input)?.id;
+    let writer = source.memory(actor.entity_ref(), actor.actor_class());
+    let record = source
+        .append_dag_record(&writer, &input)
+        .expect("append")
+        .id;
     let jan_key = WindowKey::from_timestamp(jan);
     let jan_doc = create_window_doc("source", &jan_key);
     reverse_rematerialize(&source, &jan_doc, &jan_key)?;
@@ -409,6 +426,7 @@ fn soft_addressing_recovers_across_monthly_recipient_window() -> Result<()> {
                     end: header.occurred_end,
                 },
                 header.learned_at,
+                None,
                 &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
             )
             .commit()?;
@@ -448,6 +466,7 @@ fn soft_addressing_recovers_across_monthly_recipient_window() -> Result<()> {
                     end: header.occurred_end,
                 },
                 header.learned_at,
+                None,
                 &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
             )
             .commit()?;
@@ -498,7 +517,11 @@ fn deleted_recipient_recovery_keeps_conversation_readable_without_resurrecting_h
         let mut input = crate::conversation_dag::fixtures::input(conv, None, true, actor);
         input.address = crate::conversation_dag::AddressMode::Direct;
         input.recipients = vec![recipient];
-        let record = source.append_dag_record(&input)?.id;
+        let writer = source.memory(actor.entity_ref(), actor.actor_class());
+        let record = source
+            .append_dag_record(&writer, &input)
+            .expect("append")
+            .id;
         let tombstone = crate::deletion::TombstoneValueV2 {
             reason,
             deleted_at: 100,
@@ -1254,6 +1277,8 @@ fn finalized_receipt_not_mirrored_to_crdt() {
                 hard_purge_complete_at: learned_at,
                 sweep_queued_at: Some(learned_at - 8),
             },
+            Vec::new(),
+            Vec::new(),
             receipt_id,
             &identity,
         )
@@ -1277,6 +1302,7 @@ fn finalized_receipt_not_mirrored_to_crdt() {
             ENTITY_TYPE_REDACTION_AUDIT,
             occurred,
             learned_at,
+            None,
             &finalized_body,
         )
         .commit()
@@ -1296,6 +1322,7 @@ fn finalized_receipt_not_mirrored_to_crdt() {
             ENTITY_TYPE_REDACTION_AUDIT,
             occurred,
             learned_at,
+            None,
             &pending_body,
         )
         .commit()
@@ -1309,6 +1336,7 @@ fn finalized_receipt_not_mirrored_to_crdt() {
             ENTITY_TYPE_REDACTION_AUDIT,
             occurred,
             learned_at,
+            None,
             b"invalid-receipt-body",
         )
         .commit()
@@ -1317,7 +1345,14 @@ fn finalized_receipt_not_mirrored_to_crdt() {
     let ordinary_id = EntityId::now();
     vault
         .batch()
-        .put_replicated(&ordinary_id, 1, occurred, learned_at, b"ordinary-body")
+        .put_replicated(
+            &ordinary_id,
+            1,
+            occurred,
+            learned_at,
+            None,
+            b"ordinary-body",
+        )
         .commit()
         .unwrap();
 
@@ -1393,6 +1428,8 @@ fn finalized_receipt_not_mirrored_by_pending_mirror_replay() {
                 hard_purge_complete_at: learned_at,
                 sweep_queued_at: Some(learned_at - 8),
             },
+            Vec::new(),
+            Vec::new(),
             receipt_id,
             &identity,
         )
@@ -1416,6 +1453,7 @@ fn finalized_receipt_not_mirrored_by_pending_mirror_replay() {
             ENTITY_TYPE_REDACTION_AUDIT,
             occurred,
             learned_at,
+            None,
             &finalized_body,
         )
         .commit()
@@ -1435,6 +1473,7 @@ fn finalized_receipt_not_mirrored_by_pending_mirror_replay() {
             ENTITY_TYPE_REDACTION_AUDIT,
             occurred,
             learned_at,
+            None,
             &pending_body,
         )
         .commit()
@@ -1448,6 +1487,7 @@ fn finalized_receipt_not_mirrored_by_pending_mirror_replay() {
             ENTITY_TYPE_REDACTION_AUDIT,
             occurred,
             learned_at,
+            None,
             b"invalid-receipt-body",
         )
         .commit()
@@ -1456,7 +1496,14 @@ fn finalized_receipt_not_mirrored_by_pending_mirror_replay() {
     let ordinary_id = EntityId::now();
     vault
         .batch()
-        .put_replicated(&ordinary_id, 1, occurred, learned_at, b"ordinary-body")
+        .put_replicated(
+            &ordinary_id,
+            1,
+            occurred,
+            learned_at,
+            None,
+            b"ordinary-body",
+        )
         .commit()
         .unwrap();
 
@@ -1543,8 +1590,14 @@ fn forward_remat_quarantines_receipt_when_lease_revoked_between_check_and_write(
         hard_purge_complete_at: learned_at,
         sweep_queued_at: Some(102),
     };
-    let body =
-        crate::deletion::encode_redaction_audit_receipt(input, &receipt_id, &identity).unwrap();
+    let body = crate::deletion::encode_redaction_audit_receipt(
+        input,
+        Vec::new(),
+        Vec::new(),
+        &receipt_id,
+        &identity,
+    )
+    .unwrap();
     let mut blob = crate::deletion::receipt_envelope_header(learned_at).to_vec();
     blob.extend_from_slice(&body);
 
@@ -1622,9 +1675,14 @@ fn forward_remat_quarantines_divergent_receipt_landing_mid_flight() {
         hard_purge_complete_at: learned_at,
         sweep_queued_at: Some(102),
     };
-    let remote_body =
-        crate::deletion::encode_redaction_audit_receipt(remote_input, &receipt_id, &identity)
-            .unwrap();
+    let remote_body = crate::deletion::encode_redaction_audit_receipt(
+        remote_input,
+        Vec::new(),
+        Vec::new(),
+        &receipt_id,
+        &identity,
+    )
+    .unwrap();
     let mut remote_blob = crate::deletion::receipt_envelope_header(learned_at).to_vec();
     remote_blob.extend_from_slice(&remote_body);
 
@@ -1639,9 +1697,14 @@ fn forward_remat_quarantines_divergent_receipt_landing_mid_flight() {
         hard_purge_complete_at: learned_at,
         sweep_queued_at: Some(102),
     };
-    let local_body =
-        crate::deletion::encode_redaction_audit_receipt(local_input, &receipt_id, &identity)
-            .unwrap();
+    let local_body = crate::deletion::encode_redaction_audit_receipt(
+        local_input,
+        Vec::new(),
+        Vec::new(),
+        &receipt_id,
+        &identity,
+    )
+    .unwrap();
     let mut local_blob = crate::deletion::receipt_envelope_header(learned_at).to_vec();
     local_blob.extend_from_slice(&local_body);
     assert_ne!(local_blob, remote_blob);
@@ -2067,6 +2130,7 @@ fn forward_remat_quarantines_replicated_secret_custody_carrier() -> Result<()> {
         name: "peer-authored".to_owned(),
         class: CustodyClass::CustodyDeviceBound,
         device_only: false,
+        model_reveal_allowed: false,
         value_bytes: b"peer-plaintext-value".to_vec(),
         status: SecretCustodyStatus::Active,
         registered_at: learned_at,
@@ -3193,6 +3257,7 @@ fn seed_secret_custody(
         name: name.to_owned(),
         class: crate::secret_custody::CustodyClass::CustodyDeviceBound,
         device_only: false,
+        model_reveal_allowed: false,
         value_bytes: value.to_vec(),
         status: crate::secret_custody::SecretCustodyStatus::Active,
         registered_at: learned_at,
@@ -3686,6 +3751,7 @@ fn replicated_lww_overwrite_removes_loser_bm25f_before_idle() -> Result<()> {
                 ENTITY_TYPE_TURN,
                 TimeRange { start: 2, end: 2 },
                 2,
+                None,
                 b"winner",
             )
             .apply(txn)?;
@@ -4551,6 +4617,7 @@ fn device_only_holds_a_task_replicated_after_the_upgrade_sweep_but_ships_one_it_
                 end: header.learned_at,
             },
             header.learned_at,
+            None,
             &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
         )
         .commit()?;
@@ -4693,6 +4760,8 @@ fn forward_remat_quarantines_bad_machine_proof_and_commits_signed_sibling() -> R
     Ok(())
 }
 
+// FIX [LIBTEST-QUARANTINE-SYNC-WINDOW-TESTS-ITEMS]: calls crate::workspace_roster::create_project_signed_for_test, which [LIBTEST-QUARANTINE-WORKSPACE-ROSTER-PROJECT-TESTS-SUPPORT-ITEMS] gates; drop this gate with that port
+#[cfg(any())]
 #[test]
 fn signed_owner_project_depth_replays_to_existing_and_new_replicas() -> Result<()> {
     let (_a_dir, a) = test_vault();
@@ -4757,6 +4826,7 @@ fn signed_owner_project_depth_replays_to_existing_and_new_replicas() -> Result<(
                         crate::registry::ENTITY_TYPE_POLICY_MANIFEST,
                         TimeRange { start: 1, end: 1 },
                         1,
+                        None,
                         birth_bytes,
                     )
                     .apply(txn)
@@ -4938,6 +5008,8 @@ fn project_depth_edit_waits_for_owner_binding_through_retry_drain() -> Result<()
     Ok(())
 }
 
+// FIX [LIBTEST-QUARANTINE-SYNC-WINDOW-TESTS-ITEMS]: calls crate::workspace_roster::create_project_signed_for_test, which [LIBTEST-QUARANTINE-WORKSPACE-ROSTER-PROJECT-TESTS-SUPPORT-ITEMS] gates; drop this gate with that port
+#[cfg(any())]
 #[test]
 fn concurrent_signed_project_depth_facts_follow_loro_winner_in_either_exchange_order() -> Result<()>
 {
@@ -5307,6 +5379,8 @@ fn pre_regrant_depth_edit_stays_refused_through_both_replay_doors() -> Result<()
     Ok(())
 }
 
+// FIX [LIBTEST-QUARANTINE-SYNC-WINDOW-TESTS-ITEMS]: calls crate::workspace_roster::create_project_signed_for_test, which [LIBTEST-QUARANTINE-WORKSPACE-ROSTER-PROJECT-TESTS-SUPPORT-ITEMS] gates; drop this gate with that port
+#[cfg(any())]
 #[test]
 fn signed_project_edit_before_predecessor_survives_forward_retry_drain() -> Result<()> {
     let (_source_dir, source) = test_vault();

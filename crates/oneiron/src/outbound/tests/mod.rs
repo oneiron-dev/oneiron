@@ -10,8 +10,6 @@ mod facet_selection;
 mod gate_window;
 mod linkedin_connect;
 mod linkedin_send;
-// FIX [LIBTEST-QUARANTINE-OUTBOUND-TESTS-PIPELINE-CONTRACT]: the lib test target's type check fails here (3 errors: E0639 x2, E0063 x1); port it, then drop this gate
-#[cfg(any())]
 mod pipeline_contract;
 mod quiet_window;
 mod retry_audit;

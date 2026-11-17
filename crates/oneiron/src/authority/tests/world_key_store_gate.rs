@@ -34,6 +34,7 @@ pub(super) fn put_replicated(vault: &Vault, entry: &AuthorityLogEntry) -> crate:
             ENTITY_TYPE_AUTHORITY_LOG,
             AT,
             3,
+            None,
             &encode_authority_log_entry_body(entry)?,
         )
         .commit()
@@ -96,7 +97,7 @@ fn the_first_recovery_root_activates() {
     enrol_own(&host);
     let prepared = host.vault.prepare_owner_root(&host.owner).unwrap();
     host.vault
-        .activate_owner_root(&host.owner, HERE, prepared, &BTreeSet::new())
+        .activate_owner_root(&host.owner, prepared, &BTreeSet::new())
         .unwrap();
     assert_eq!(host.vault.authority_fold().unwrap().root_anchors().len(), 1);
 }
@@ -141,7 +142,7 @@ fn a_fresh_install_restores_the_kit_and_anchors_itself() {
     sync(&issuer.vault, &install.vault);
     install
         .vault
-        .restore_world_keys(&install.owner, HERE, &root.seed, None)
+        .restore_world_keys(&install.owner, &root.seed, None)
         .unwrap();
     let fold = install.vault.authority_fold().unwrap();
     assert!(fold.trusted_machine(install.machine()).is_some());
