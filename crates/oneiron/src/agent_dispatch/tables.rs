@@ -25,6 +25,11 @@ crate::side_table::side_tables! {
     AGENT_DISPATCH_PLAN_HOLD: VaultMeta b"agent.dispatch.hold.v1\0" LegacyJson
         [restore: content] [family: unclassified] [tier: canonical]
         => crate::agent_dispatch::erase_plan_hold_actor_in_txn;
+    /// The one-off overdraft the owner approved for a run held at its spend cap (ARCH-0026
+    /// depletion ladder; Engine ruling RUNBUDGET-OVERDRAFT): its cap, the ask whose answer
+    /// approved it and when. The run's next hold deletes it. Key: id16(root attempt).
+    AGENT_DISPATCH_RUN_OVERDRAFT: VaultMeta b"agent.dispatch.run_overdraft.v1\0" Named Engine
+        [restore: content] [family: unclassified] [tier: canonical];
     /// FIX 3694: the owner's applied prompt continuation of one failed agent attempt: the card,
     /// ask and diagnostic it answered, the approving owner and when, the approval's fingerprint
     /// and id, and the successor attempt it enqueued. Key: id16(failed attempt).
