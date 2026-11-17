@@ -456,11 +456,20 @@ impl Vault {
         slips: Option<&HostSlipIssuer>,
         receipt: &str,
     ) -> Result<(Vec<EntityId>, Vec<EntityId>)> {
+        // [MEMBER-REMOVAL-KEEPS-ACTOR-GRANTS]: a removed member's roster
+        // actor keeps no Grant naming it; a role change that keeps the member
+        // drops nothing new.
+        let actors = if leaves {
+            crate::workspace_roster::member_actor_refs_in_txn(self, txn, &member)?
+        } else {
+            Vec::new()
+        };
         let dropped: Vec<(EntityId, bool)> = self
             .member_grants_in_txn(txn, vault_id)?
             .into_iter()
             .filter(|(_, grant)| {
-                (leaves && grant.member_ref == member) || grant.delegated_by == Some(member)
+                (leaves && (grant.member_ref == member || actors.contains(&grant.member_ref)))
+                    || grant.delegated_by == Some(member)
             })
             .map(|(id, grant)| (id, grant.is_git_push() || grant.owner_agent))
             .collect();
