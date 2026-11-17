@@ -14,6 +14,7 @@ use std::collections::BTreeMap;
 
 use super::ConsultPayloadRef;
 use super::ask_guard::AskedParty;
+use super::ask_intent;
 use super::ask_record::{self, AskGroup};
 use super::ask_types::{
     TaskAskAnswer, TaskAskDefault, TaskAskOption, TaskAskOptionId, TaskAskQuestion, TaskAskSource,
@@ -35,15 +36,15 @@ const INTENT_PREFIX: &str = "code_consent/";
 /// The message type of the witnessed question.
 const QUESTION_TYPE: &str = "code_consent_question";
 
-fn intent_key(wait_id: EntityId) -> String {
-    format!("{INTENT_PREFIX}{}", wait_id.to_hex())
+pub(crate) fn intent_key(wait_id: EntityId) -> String {
+    ask_intent::join(INTENT_PREFIX, &[wait_id.to_hex().as_str()])
 }
 
 /// The wait a code consent intent names, read whole and in canonical form;
 /// `None` for any other key.
-fn intent_wait(intent_key: &str) -> Option<EntityId> {
-    let wait_id = EntityId::from_hex(intent_key.strip_prefix(INTENT_PREFIX)?).ok()?;
-    (intent_key == self::intent_key(wait_id)).then_some(wait_id)
+pub(crate) fn intent_wait(intent_key: &str) -> Option<EntityId> {
+    let [wait] = ask_intent::split::<1>(intent_key, INTENT_PREFIX)?;
+    ask_intent::id(wait)
 }
 
 /// Whether `intent_key` is a code consent ask's. The prefix admits nothing
