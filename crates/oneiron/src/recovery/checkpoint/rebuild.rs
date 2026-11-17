@@ -179,6 +179,13 @@ pub(super) fn rebuild(
                         body,
                     )?;
                 }
+                // The extra-room index is derived from the room body's
+                // `project_group` at every put, so a restore rebuilds it
+                // from the body it kept: an image that does not carry the
+                // row leaves the index empty until then (FIX 23301).
+                crate::registry::ENTITY_TYPE_CONVERSATION => {
+                    crate::workspace_roster::index_extra_room(&vault.store, txn, *id, body)?;
+                }
                 _ => {}
             }
             if has_embedding_source(raw)? {
@@ -282,6 +289,8 @@ pub(super) fn rebuild_auxiliary(vault: &Vault, checkpoint_time: u64) -> Result<(
     crate::edit_distance::reservoir::rebuild_reservoir_index(vault)?;
     // Restored ACCESS_GRANT rows bypassed the body stage's companion index writer.
     vault.backfill_companion_grant_index(true)?;
+    // Restored CLAIM rows bypassed the body stage's hint index writer.
+    vault.backfill_lexical_query_hint_index(true)?;
     vault.rebuild_ramp_stats_from_receipts()?;
     crate::human_task::HumanTaskFollowupDriver::new(vault).rebuild_cursors(checkpoint_time)?;
     Ok(())
