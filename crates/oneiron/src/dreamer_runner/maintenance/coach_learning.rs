@@ -41,6 +41,20 @@ pub fn coach_improver_skill_id() -> Result<EntityId> {
     )
 }
 
+/// The improver workflow the Coach loads on an optimization attempt: the
+/// in-force head from the shipped revision, or from the admitted restored
+/// default once the shipped revision's succession holds no loadable
+/// revision (`agent_dispatch::bootstrap_skill_root_in_txn`); else the
+/// shipped id, so the load refuses as before.
+///
+/// # Errors
+///
+/// A store error, or an id derivation failure.
+pub fn coach_improver_skill_in_force(vault: &Vault) -> Result<EntityId> {
+    let txn = vault.store.env.read_txn()?;
+    crate::agent_dispatch::bootstrap_skill_in_force_in_txn(vault, &txn, COACH_IMPROVER_SKILL)
+}
+
 /// The Coach's reliability cell for one kind of its work.
 ///
 /// # Errors
@@ -139,7 +153,15 @@ fn improver_cell(vault: &Vault, proposal: &EntityId) -> Result<Option<LearningCe
     else {
         return Ok(None);
     };
-    let Some(revision) = improver_revision(vault, &entry.version)? else {
+    // The entity whose body loaded, as the load pinned it (FIX 10110): a
+    // copy restored later at the same version never takes the outcome of
+    // the copy that drafted the proposal. An unpinned load falls back to
+    // the revision of that name and version.
+    let revision = match entry.revision {
+        Some((pinned, _)) => vault.get_skill_record(&pinned)?.map(|_| pinned),
+        None => improver_revision(vault, &entry.version)?,
+    };
+    let Some(revision) = revision else {
         return Ok(None);
     };
     let cell = LearningCell::new(LearningPredicate::Reliability, revision)
