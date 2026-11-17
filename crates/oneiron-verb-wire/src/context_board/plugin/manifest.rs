@@ -2,6 +2,7 @@
 //! `oneiron` re-exports each item at its old path.
 
 use crate::context_board::frame::BudgetPolicyRef;
+use oneiron_store::side_table::key::SideKey;
 use serde::Deserialize;
 use serde::Serialize;
 
@@ -33,11 +34,22 @@ pub struct SectionManifest {
     pub provenance: SectionManifestProvenance,
 }
 
+/// A plugin section's id. As a part of a side-table key (`context_board`'s plugin block rows),
+/// it spells its text.
 #[derive(
-    Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, schemars::JsonSchema,
+    Clone,
+    Debug,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Serialize,
+    Deserialize,
+    schemars::JsonSchema,
+    SideKey,
 )]
 #[serde(transparent)]
-pub struct SectionId(pub String);
+pub struct SectionId(#[side_key(rest)] pub String);
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
