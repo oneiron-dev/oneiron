@@ -142,3 +142,33 @@ fn a_first_party_organ_opens_no_proc_entry_and_no_vault_file_of_the_engine() {
         "the organ's fence refuses each of the engine's files and /proc entries: {theirs:?}",
     );
 }
+
+#[test]
+fn a_first_party_organ_writes_the_dirs_its_spec_grants_and_no_other() {
+    if !fenced_here() {
+        return;
+    }
+    let (_dir, vault) = vault();
+    let granted = tempfile::tempdir().expect("granted dir");
+    let other = tempfile::tempdir().expect("other dir");
+    let mut spec = opener();
+    spec.write_dirs = vec![granted.path().to_owned()];
+    let host = host(spec);
+    let made = granted.path().join("made");
+    let planted = other.path().join("planted");
+    let paths = [
+        (made.to_string_lossy().into_owned(), true),
+        (planted.to_string_lossy().into_owned(), true),
+        (other.path().to_string_lossy().into_owned(), false),
+    ];
+    assert_eq!(
+        opens(&host, &vault, &paths),
+        [0, i64::from(libc::EACCES), i64::from(libc::EACCES)],
+        "the organ makes a file in the dir its spec grants, and none elsewhere: {paths:?}",
+    );
+    assert!(made.is_file(), "the granted dir holds the organ's file");
+    assert!(
+        !planted.exists(),
+        "the other dir holds nothing of the organ's"
+    );
+}

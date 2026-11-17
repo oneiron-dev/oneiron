@@ -27,6 +27,16 @@
 //! unfenced; a host with no fence refuses third-party organs
 //! (`Unavailable::ThirdPartyUnconfined`, [`filesystem_confined`]).
 //!
+//! On a Linux host with that fence a first-party organ starts inside it
+//! too (FIX [FIRST-PARTY-ORGAN-PROC-REACH]), with no scratch dir: it reads
+//! what a third-party organ reads and writes only the null device and its
+//! spec's write dirs. Unfenced it ran as the engine's uid and could open
+//! the engine's `/proc/<pid>/environ` and descriptors, its OOM score, and
+//! the vault's files. As for a third-party organ, a fence that does not
+//! apply fails its start. On a host with no Landlock, and on macOS, a
+//! first-party organ starts unfenced, as reviewed code on the protections
+//! that are built (ARCH-0075).
+//!
 //! A first-party organ's data and file-size limits start at its memory
 //! grant and grow with what its own buffers are granted (`memory.grow`):
 //! their soft limits move, under no hard one (FIX 6194). On Linux the host
@@ -80,8 +90,8 @@ struct Plan {
     status: Option<i32>,
     /// The `cgroup.procs` of the organ's cell, which the child joins first.
     join: Option<std::ffi::CString>,
-    /// A third-party organ's Landlock ruleset, which the child restricts
-    /// itself to before exec (FIX 7885).
+    /// The organ's Landlock ruleset, where it has one (`landlock::fence`),
+    /// which the child restricts itself to before exec.
     #[cfg(target_os = "linux")]
     landlock: Option<std::os::fd::OwnedFd>,
     /// Every organ's syscall filter, which the child installs after
@@ -142,10 +152,7 @@ fn confine(
     #[cfg(target_os = "linux")]
     let status = Some(io::pipe()?);
     #[cfg(target_os = "linux")]
-    let landlock = scratch
-        .as_ref()
-        .map(|scratch| landlock::ruleset(spec, scratch.path()))
-        .transpose()?;
+    let landlock = landlock::fence(spec, scratch.as_ref().map(Scratch::path))?;
     #[cfg(target_os = "linux")]
     let syscalls = syscall_filter::SyscallFilter::deny_list()?;
     let plan = Plan {
@@ -274,8 +281,8 @@ impl Plan {
         if unsafe { libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) } != 0 {
             return Err(io::Error::last_os_error());
         }
-        // A third-party organ's filesystem fence: an error fails the start,
-        // so the organ never runs unfenced (FIX 7885).
+        // The organ's filesystem fence: an error fails the start, so an
+        // organ whose fence was built never runs unfenced.
         if let Some(ruleset) = &self.landlock {
             oneiron_container::landlock_restrict(std::os::fd::AsFd::as_fd(ruleset))?;
         }
