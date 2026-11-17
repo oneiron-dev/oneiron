@@ -111,7 +111,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/browser_library/evidence.rs` | src | s | 2 struct · 1 enum · 3 fn · 5 const | FiledScope, SolvedRunScope, SolvedSource | Moved from `crates/oneiron/src/browser_library/evidence.rs` (lib split R1: record types below the lib) |
 | `src/calendar/connectors/literal.rs` | src | s | 1 enum · 3 fn · 2 const | LiteralKind | Moved from `crates/oneiron/src/calendar/connectors/literal.rs` (lib split R2: record types below the lib) |
 | `src/calendar/connectors/mod.rs` | src | s | 4 mod · 10 re-export | — | — |
-| `src/calendar/connectors/outbound.rs` | src | s | 2 enum · 2 fn | CalendarWriteAction, CalendarWriteOutboxState | Moved from `crates/oneiron/src/calendar/connectors/outbound.rs` (lib split R2: record types below the lib) |
+| `src/calendar/connectors/outbound.rs` | src | s | 2 enum · 1 fn | CalendarWriteAction, CalendarWriteOutboxState | Moved from `crates/oneiron/src/calendar/connectors/outbound.rs` (lib split R2: record types below the lib) |
 | `src/calendar/connectors/remote.rs` | src | s | 1 struct · 2 re-export | RemoteWriteRequest | Moved from `crates/oneiron/src/calendar/connectors/remote.rs` (lib split R2: record types below the lib) |
 | `src/calendar/connectors/seat.rs` | src | s | 1 struct · 4 re-export | CalendarConnectorSyncPayload | Moved from `crates/oneiron/src/calendar/connectors/seat.rs` (lib split R2: record types below the lib) |
 | `src/calendar/ingest/admission/continuation.rs` | src | s | 1 struct | IcsPropertyContinuationPayload | Moved from `crates/oneiron/src/calendar/ingest/admission/continuation.rs` (lib split R2: record types below… |
@@ -159,9 +159,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/code_run/contribution/execution.rs` | src | s | 2 struct · 3 enum | ExecutedBody, ExecutedStepStatus, ForkEvidenceMode, ForkJudge, ForkScore | Moved from `crates/oneiron/src/code_run/contribution/execution.rs` (lib split R2: record types below the lib) |
 | `src/code_run/contribution/owner.rs` | src | s | 1 struct · 1 enum | OwnerJudgment, OwnerPairRoute | Moved from `crates/oneiron/src/code_run/contribution/owner.rs` (lib split R2: record types below the lib) |
 | `src/code_run/contribution/source_admission.rs` | src | s | 1 struct · 3 enum · 1 fn | ContributionSourceConsumer, ContributionSourcePurpose, ContributionSourceReadRequest, PairReader | Moved from `crates/oneiron/src/code_run/contribution/source_admission.rs` (lib split R2: record types below… |
-| `src/code_run/mod.rs` | src | s | 16 mod · 133 re-export | — | — |
+| `src/code_run/mod.rs` | src | s | 16 mod · 134 re-export | — | — |
 | `src/code_run/model_call.rs` | src | s | 2 struct · 6 enum · 1 fn · 1 const | ModelCallDigests, ModelCallInputPart, ModelCallKind, ModelCallPartRef, NativeReadDigests, NativeReadFailure, NativeReadOutcome, NativeReadRunSource | Moved from `crates/oneiron/src/code_run/model_call.rs` (lib split R2: record types below the lib) |
-| `src/code_run/reader.rs` | src | s | 9 struct · 4 enum · 8 fn · 1 const · 1 mod | ReaderActor, ReaderJobState, ReaderReportReceipt, ReaderRoute, ReaderSpawnReceipt, RunDeadline, SummarizeEffort, SummarizeReply +5 | Moved from `crates/oneiron/src/code_run/reader.rs` (lib split R2: record types below the lib) |
+| `src/code_run/reader.rs` | src | m | 9 struct · 5 enum · 6 fn · 1 const · 1 mod | ReaderActor, ReaderJobState, ReaderJobStatus, ReaderReportReceipt, ReaderRoute, ReaderSpawnReceipt, RunDeadline, SummarizeEffort +6 | Moved from `crates/oneiron/src/code_run/reader.rs` (lib split R2: record types below the lib) |
 | `src/code_run/reader/coverage.rs` | src | s | 2 fn | — | Moved from `crates/oneiron/src/code_run/reader/coverage.rs` (lib split R2: record types below the lib) |
 | `src/code_run/replay.rs` | src | s | 1 const · 3 re-export | — | Moved from `crates/oneiron/src/code_run/replay.rs` (lib split R2: record types below the lib) |
 | `src/code_run/replay_context/mod.rs` | src | s | 1 mod | — | — |

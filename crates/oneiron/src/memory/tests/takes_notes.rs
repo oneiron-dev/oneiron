@@ -1988,7 +1988,7 @@ fn empty_or_revoked_diary_link_does_not_use_a_neighbor_slot() {
 #[test]
 fn note_history_purge_refuses_a_writer_who_is_not_the_owner() {
     let (_dir, vault) = open_vault();
-    let owner = put_person(&vault, 0x81);
+    let owner = put_owner(&vault);
     let writer = put_person(&vault, 0x82);
     let note = EntityId::from_hex(
         &facade_for(&vault, writer)

@@ -217,6 +217,17 @@ struct PendingRootRequest {
     carrier_role: Option<&'static str>,
     /// Whether this install trusts that key as one of the owner's machines.
     carrier_is_yours: bool,
+    /// For a pin: the question a surface asks before the owner confirms it
+    /// with `POST /roots/pin` or declines it with
+    /// `POST /roots/requests/cancel`, composed by the engine from the root's
+    /// code and its reading of the carrier
+    /// ([`oneiron::authority::pin_request_prompt`]): three lines separated
+    /// by a line feed. None for every other change.
+    prompt: Option<String>,
+    /// For a pin: the code of the root it names, 26 symbols, as the owner's
+    /// kit shows it (`recovery-kit issue` prints it as `root_code`). None
+    /// for every other change.
+    root_code: Option<String>,
 }
 
 /// `POST /v1/owner/roots/requests`: records the owner's root change for the
@@ -296,6 +307,8 @@ async fn pending(
             .pending_root_request_listing(&owner)?
             .into_iter()
             .map(|listed| PendingRootRequest {
+                prompt: listed.prompt(),
+                root_code: listed.root_code(),
                 change: listed.change.into(),
                 receipt: listed.receipt.into(),
                 carrier: listed.carrier.machine.to_hex(),
@@ -353,6 +366,9 @@ struct RootsView {
     machine: Option<String>,
     /// The root this install pins, 64 hex.
     pinned: Option<String>,
+    /// The code of the root this install pins, 26 symbols: what a question
+    /// about the owner's kit shows on another machine.
+    pinned_code: Option<String>,
     /// One page of foreign roots, by id.
     foreign: Vec<ForeignRootWire>,
     /// The `after` of the next page; none on the last.
@@ -396,6 +412,10 @@ async fn roots(
         Ok(RootsView {
             machine: vault.local_machine()?.map(|machine| machine.id.to_hex()),
             pinned: view.pinned.map(|root| revision_hex(&root.0)),
+            pinned_code: view
+                .pinned
+                .as_ref()
+                .map(oneiron::authority::recovery_root_code),
             foreign: view
                 .foreign
                 .iter()
