@@ -44,8 +44,8 @@ pub(super) fn lands_restriction_only(op: &AuthorityOp) -> bool {
 /// an owner's own signing key), a revocation, a rotation or a re-root, the
 /// ops whose `apply_op` arms write `FoldState::roster`. No arrival floor
 /// refuses one (FIX [ARRIVAL-FLOOR-SIBLING-DIVERGENCE]), and one vouches for
-/// every row of its own signer below it in its ancestry that a floor refuses
-/// (`floor_refuses`, `sequence_ancestry`), so arrival order alone does not
+/// every row of its own signer below it in its ancestry of an op
+/// `floor_refuses` names (`sequence_ancestry`), so arrival order alone does not
 /// change the roster, as a revocation's rule asks (ARCH-0040 ONE-REVOKE-D3).
 /// A restriction it names keeps its floor and lands restriction only there.
 /// Its signer's own order still binds it, on every install alike: a row at
@@ -65,11 +65,58 @@ pub(super) fn changes_roster(op: &AuthorityOp) -> bool {
     )
 }
 
-/// Whether this install's sequence floor refuses a row of `op` that reaches
-/// it past the floor: every op but a roster change, which no floor refuses,
-/// and a restriction, which lands restriction only.
+/// Whether a row of `op` below its floor is a fork the fold records
+/// (`forks_its_sequence`): every op but a roster change, which no floor
+/// touches, a restriction, which lands restriction only, and a row that only
+/// takes away (`only_takes_away`). Such a row counts in full and the fold
+/// records its `SequenceFork` (Engine RULING SEQ-FLOOR-SHAPE-S = B, 16 Nov
+/// 02:37), a world key record included (RULING SEQ-FLOOR-S-WORLD-KEY-FLOOR =
+/// A, 03:39): no row is refused for its floor. A roster row vouches for its
+/// signer's rows of such ops below it (`sequence_ancestry`).
 pub(super) fn floor_refuses(op: &AuthorityOp) -> bool {
-    !changes_roster(op) && !lands_restriction_only(op)
+    !changes_roster(op) && !lands_restriction_only(op) && !only_takes_away(op)
+}
+
+/// A row that only takes away: a slip or grant revocation, a consume, an
+/// actor revocation, a cancel or an import mark of owner work, a custody
+/// revocation, an agent Grant's revocation, a membership change that removes
+/// a member or an owner, or a federation's disconnect or dissolve. Counting
+/// one removes authority, standing or effect and adds none, so no floor
+/// refuses it (Engine RULING SEQ-FLOOR-SHAPE = A, 15 Nov 16:37; FIX
+/// [SEQUENCE-FLOOR-DELIVERY-ORDER]): a fork never keeps a revocation from an
+/// install. Its signer's own order still binds it (`fold_entry_state`,
+/// `state.seqs`), and it still sets its signer's floors (`rows_floor`).
+pub(super) fn only_takes_away(op: &AuthorityOp) -> bool {
+    match op {
+        AuthorityOp::SlipRevoke { .. }
+        | AuthorityOp::SlipGrantRevoke { .. }
+        | AuthorityOp::SlipConsume { .. }
+        | AuthorityOp::RemovalArchiveConsume { .. }
+        | AuthorityOp::RevokeActor { .. }
+        | AuthorityOp::OwnerWorkCancel(_)
+        | AuthorityOp::ExportSupplementImported(_) => true,
+        AuthorityOp::MembershipExecution(execution) => matches!(
+            execution.cause,
+            MembershipExecutionCause::RemoveMember
+                | MembershipExecutionCause::Leave
+                | MembershipExecutionCause::RemoveOwner
+        ),
+        AuthorityOp::OwnerWorkRequest(request) => matches!(
+            request.work,
+            OwnerWorkBody::Custody {
+                change: CustodyChange::Revoke,
+                ..
+            }
+        ),
+        AuthorityOp::AgentGrantAct(record) => {
+            matches!(record.change, AgentGrantChange::Revoke { .. })
+        }
+        AuthorityOp::FederationLifecycle(action) => matches!(
+            action.kind,
+            FederationLifecycleKind::Disconnect | FederationLifecycleKind::Dissolve
+        ),
+        _ => false,
+    }
 }
 
 /// A device-key op the host-rooted redesign retired (identity canon,

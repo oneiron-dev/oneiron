@@ -231,18 +231,17 @@ pub(in crate::api) fn owner_authorship(
     if !auth.is_owner_grade() {
         return Ok(None);
     }
-    let refused = || ApiError::forbidden_scope("owner");
     let Some(owner) = server
         .vault()
         .authenticate_recorded_owner(actor, principal, oneiron::store::GateDecisionId::now())
-        .map_err(|_| refused())?
+        .map_err(authorship_refusal)?
     else {
         return Ok(None);
     };
     if !server
         .vault()
         .is_live_vault_owner(&owner)
-        .map_err(|_| refused())?
+        .map_err(authorship_refusal)?
     {
         return Ok(None);
     }
@@ -250,12 +249,28 @@ pub(in crate::api) fn owner_authorship(
         .vault()
         .bind_owner_credential(owner, slip.clone())
         .map(Some)
-        .map_err(|_| refused())
+        .map_err(authorship_refusal)
+}
+
+/// A direct-request proof builder's failure as the facade answers it: a Gate
+/// refusal — a revoked credential, a dead PERSON — stays the owner's 403,
+/// and any other engine failure, a store fault above all, is this server's
+/// 500, never a refusal as unauthenticated.
+fn authorship_refusal(error: oneiron::Error) -> ApiError {
+    if error.kind() == oneiron::ErrorKind::ConsentOwnerNotAuthenticated {
+        return ApiError::forbidden_scope("owner");
+    }
+    ApiError::internal_server_error("owner authorship did not finish on this server")
 }
 
 /// The one verb whose direct request binds the requesting person's own
 /// proof rather than only the owner's (OF-417).
 pub(super) const PERSON_PROOF_VERB: &str = "vault.workspace.work_companion.set";
+
+/// The verb whose direct request binds, when the caller is not the owner on
+/// his own full slip, the answering person's own person-tier proof (UC-05):
+/// an ask that asks a person admits their word only under it.
+pub(super) const ANSWER_VERB: &str = "tasks.answer";
 
 /// The delete whose direct owner request also binds the host's own slip
 /// issuer: deleting a Connect guest's PERSON withdraws its grants and
@@ -267,7 +282,9 @@ pub(super) const GUEST_REVOKING_DELETE_VERB: &str = "vault.delete";
 /// the person's own proof ([`shared_act_doors::person`]): the owner's, or a
 /// live person's on their own verified human credential, whose
 /// workspace-settings power the engine then checks; any other caller binds
-/// none and the engine refuses it. Every other verb binds the owner's own
+/// none and the engine refuses it. `tasks.answer` binds the owner's own
+/// authorship, or else the answering person's person-tier proof
+/// ([`answer_person_proof`]). Every other verb binds the owner's own
 /// authorship ([`owner_authorship`]), or none.
 pub(in crate::api) fn direct_authorship(
     auth: &CoreAuth,
@@ -275,7 +292,39 @@ pub(in crate::api) fn direct_authorship(
     verb: &str,
 ) -> Result<Option<oneiron::consent::AuthenticatedOwner>, ApiError> {
     if verb == PERSON_PROOF_VERB {
-        return Ok(shared_act_doors::person(server, auth, verb).ok());
+        return match shared_act_doors::person(server, auth, verb) {
+            Ok(proof) => Ok(Some(proof)),
+            // A store fault the person's proof met is this server's 500,
+            // never a missing proof the engine would refuse as
+            // unauthenticated; any other refusal binds none, as before.
+            Err(refusal) if refusal.code == oneiron::memory::MEMORY_CODE_INTERNAL => {
+                Err(ApiError::internal_server_error(refusal.message))
+            }
+            Err(_) => Ok(None),
+        };
     }
-    owner_authorship(auth, server)
+    let owner = owner_authorship(auth, server)?;
+    if owner.is_none() && verb == ANSWER_VERB {
+        return Ok(answer_person_proof(auth, server, verb));
+    }
+    Ok(owner)
+}
+
+/// A live person's own proof for their word on an ask (UC-05), from their
+/// own verified human credential ([`shared_act_doors::person`]), bound as
+/// the person tier: it stays person-tier even when the person owns the
+/// vault, so an owner's narrowed or delegated slip never answers at the
+/// owner tier this way (FIX 4707). `None` for any other caller, who answers
+/// with no proof, as before.
+fn answer_person_proof(
+    auth: &CoreAuth,
+    server: &SyncServer,
+    verb: &str,
+) -> Option<oneiron::consent::AuthenticatedOwner> {
+    let slip = auth.verified_slip()?;
+    let person = shared_act_doors::person(server, auth, verb).ok()?;
+    server
+        .vault()
+        .bind_person_credential(person, slip.clone())
+        .ok()
 }
