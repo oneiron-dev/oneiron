@@ -79,19 +79,12 @@ async fn execute(
     // A request that books only a published page (an anonymous visitor, a
     // credential caller, a stale owner sign-in: FIX 5327) never reaches the
     // owner's own page resolver below.
-    let (public_authority, listed) = if transport.requires_publication {
-        let (page_ref, publication, rows) = public::resolve_public_booking_page_listing(
-            server,
-            page_token,
-            &transport.destination,
-        )?;
-        let authority = oneiron::booking::publication::PublicBookingAuthority {
-            page_ref,
-            publication,
-        };
-        (Some(authority), Some(rows))
+    let (public_authority, listed, personal_link) = if transport.requires_publication {
+        let (authority, rows, personal_link) =
+            public::public_attempt_authority(server, page_token, &transport.destination)?;
+        (Some(authority), Some(rows), personal_link)
     } else {
-        (None, None)
+        (None, None, None)
     };
     let page_ref = match &public_authority {
         Some(authority) => authority.page_ref,
@@ -102,6 +95,11 @@ async fn execute(
     }
     let anonymous = transport.credential.is_none();
     validate_operation_shape(&request, anonymous)?;
+    // A personal link books its recipient alone, on every transport that
+    // presents it (BK-PERSONAL-LINKS).
+    if let Some(link) = &personal_link {
+        public::check_personal_link_recipient(link, &request)?;
+    }
     if anonymous {
         validate::validate_anonymous_intake_count(&request)?;
     } else {
@@ -185,17 +183,11 @@ async fn execute(
         return Ok((response, listed));
     }
 
-    // The caller whose own live calendar grants an availability answer shows
-    // beside its slots (ARCH-0062 #grant-view): an authenticated caller other
-    // than the owner. An anonymous visitor and a stale owner sign-in with no
-    // live member or guest grant have no principal, and get the public view.
-    let viewer = transport
-        .principal
-        .filter(|_| !transport.owner_grade)
-        .map(|principal| principal.entity_ref());
+    let viewer = granted_viewer(&transport);
 
     if let Some((response, sources)) = cache {
-        public_availability::recheck(server, public_authority.as_ref())?;
+        public_availability::recheck(server, public_authority.as_ref())
+            .map_err(|error| public::dead_link_or(server, page_token, error))?;
         let mut listed = listed.zip(sources).map(|(mut rows, sources)| {
             rows.extend(sources);
             rows
@@ -216,7 +208,43 @@ async fn execute(
         return Ok((response, listed));
     }
 
-    // ── 3, 4, 5. parse, dispatch, project ───────────────────────────────
+    // A personal link that ended while the attempt ran stopped it at a
+    // writer's recheck; its caller gets a dead link's 404 (BK-PERSONAL-LINKS).
+    dispatch(
+        server,
+        request,
+        transport,
+        page_ref,
+        now,
+        public_authority,
+        listed,
+    )
+    .await
+    .map_err(|error| public::dead_link_or(server, page_token, error))
+}
+
+/// The caller whose own live calendar grants an availability answer shows
+/// beside its slots (ARCH-0062 #grant-view): an authenticated caller other
+/// than the owner. An anonymous visitor and a stale owner sign-in with no
+/// live member or guest grant have no principal, and get the public view.
+fn granted_viewer(transport: &BookingAdmissionContext) -> Option<EntityId> {
+    transport
+        .principal
+        .filter(|_| !transport.owner_grade)
+        .map(|principal| principal.entity_ref())
+}
+
+// ── 3, 4, 5. parse, dispatch, project ───────────────────────────────────
+async fn dispatch(
+    server: &Arc<SyncServer>,
+    request: BookingOperationRequest,
+    transport: BookingAdmissionContext,
+    page_ref: EntityId,
+    now: u64,
+    public_authority: Option<oneiron::booking::publication::PublicBookingAuthority>,
+    listed: Option<Vec<EntityId>>,
+) -> Result<(BookingOperationResponse, Option<Vec<EntityId>>), ApiError> {
+    let viewer = granted_viewer(&transport);
     match request {
         BookingOperationRequest::Availability(mut input) => {
             // Free text is parsed first; only its object reaches the oracle.

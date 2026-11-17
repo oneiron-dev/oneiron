@@ -4,10 +4,11 @@ use axum::extract::RawQuery;
 use axum::extract::rejection::PathRejection;
 use axum::http::header::{CACHE_CONTROL, CONTENT_DISPOSITION, LOCATION, X_CONTENT_TYPE_OPTIONS};
 use axum::http::{HeaderValue, StatusCode};
+use oneiron::booking::publication::PublicBookingAuthority;
 use oneiron::booking::{
     BookingPageLens, BookingPageModel, BookingPagePresentation, BookingPagePublication,
-    BookingVerb, PUBLIC_BOOKING_ROUTE_PREFIX, PublicBookingAction, PublicBookingPageToken,
-    slot_mask,
+    BookingVerb, PUBLIC_BOOKING_ROUTE_PREFIX, PersonalBookingLink, PublicBookingAction,
+    PublicBookingPageToken, slot_mask,
 };
 use oneiron::settings::ReadDestination;
 
@@ -18,7 +19,8 @@ use crate::auth::{ClientAddress, Locality};
 // Public booking boundary (ONE-1815)
 // -------------------------------------------------------------------------
 
-/// Exactly two public resources. This router has no generic resource fallback.
+/// The public resources of one page or personal link. This router has no
+/// generic resource fallback.
 pub(crate) fn public_booking_router() -> Router<Arc<SyncServer>> {
     let routes = Router::new()
         .route(
@@ -38,6 +40,10 @@ pub(crate) fn public_booking_router() -> Router<Arc<SyncServer>> {
         .route(
             "/{page_token}/verbs/{verb}",
             post(invoke_public_booking_verb).fallback(public_booking_not_found_response),
+        )
+        .route(
+            "/{page_token}/not-you",
+            post(void_public_booking_link).fallback(public_booking_not_found_response),
         )
         // This denial fallback is scoped to the public prefix. It cannot
         // replace the authenticated router's fallback or reach a vault route.
@@ -63,9 +69,8 @@ pub(crate) fn resolve_public_booking_page(
     page_token: &str,
     destination: &ReadDestination,
 ) -> Result<(EntityId, BookingPagePublication), ApiError> {
-    let (page_ref, publication, _) =
-        resolve_public_booking_page_listing(server, page_token, destination)?;
-    Ok((page_ref, publication))
+    resolve_public_booking_capability(server, page_token, destination)
+        .map(|(page_ref, publication, _)| (page_ref, publication))
 }
 
 /// [`resolve_public_booking_page`], beside the rows the publication was read
@@ -79,9 +84,47 @@ pub(crate) fn resolve_public_booking_page_listing(
     page_token: &str,
     destination: &ReadDestination,
 ) -> Result<(EntityId, BookingPagePublication, Vec<EntityId>), ApiError> {
-    let page_ref = oneiron::booking::resolve_public_booking_token(&server.vault, page_token)
-        .map_err(|_| public_booking_not_found())?
-        .ok_or_else(public_booking_not_found)?;
+    resolve_public_booking_capability_listing(server, page_token, destination)
+        .map(|(page_ref, publication, rows, _)| (page_ref, publication, rows))
+}
+
+/// [`resolve_public_booking_page`], beside the personal link the token is,
+/// when it is one (BK-PERSONAL-LINKS).
+pub(crate) fn resolve_public_booking_capability(
+    server: &SyncServer,
+    page_token: &str,
+    destination: &ReadDestination,
+) -> Result<
+    (
+        EntityId,
+        BookingPagePublication,
+        Option<PersonalBookingLink>,
+    ),
+    ApiError,
+> {
+    resolve_public_booking_capability_listing(server, page_token, destination)
+        .map(|(page_ref, publication, _, link)| (page_ref, publication, link))
+}
+
+/// [`resolve_public_booking_page_listing`], beside the personal link the
+/// token is, when it is one. The link is a side-table row, so it lists none.
+/// A personal link opens the page's own rows, so the same judge runs on both
+/// token kinds: a page kept from `destination` is no page there, through a
+/// link too (census L5-29).
+pub(crate) fn resolve_public_booking_capability_listing(
+    server: &SyncServer,
+    page_token: &str,
+    destination: &ReadDestination,
+) -> Result<
+    (
+        EntityId,
+        BookingPagePublication,
+        Vec<EntityId>,
+        Option<PersonalBookingLink>,
+    ),
+    ApiError,
+> {
+    let (page_ref, link) = resolve_public_booking_subject(server, page_token)?;
     let (publication, rows) =
         oneiron::booking::load_public_booking_page_listing(&server.vault, page_ref, now_secs()?)
             .map_err(|_| public_booking_not_found())?
@@ -94,7 +137,87 @@ pub(crate) fn resolve_public_booking_page_listing(
     {
         return Err(public_booking_not_found());
     }
-    Ok((page_ref, publication, rows))
+    Ok((page_ref, publication, rows, link))
+}
+
+/// The page a public token opens: a page token through the publication
+/// index, a personal link token through its own row while the link is live
+/// (BK-PERSONAL-LINKS). Either way the caller then needs the page's live
+/// publication, and every miss (unknown, ended, forged, another shape) is
+/// the same 404 with no echo.
+fn resolve_public_booking_subject(
+    server: &SyncServer,
+    page_token: &str,
+) -> Result<(EntityId, Option<PersonalBookingLink>), ApiError> {
+    if oneiron::booking::is_personal_link_token(page_token) {
+        let link = oneiron::booking::resolve_personal_booking_link(&server.vault, page_token)
+            .map_err(|_| public_booking_not_found())?
+            .ok_or_else(public_booking_not_found)?;
+        return Ok((link.page_ref, Some(link)));
+    }
+    let page_ref = oneiron::booking::resolve_public_booking_token(&server.vault, page_token)
+        .map_err(|_| public_booking_not_found())?
+        .ok_or_else(public_booking_not_found)?;
+    Ok((page_ref, None))
+}
+
+/// A personal link's lock (BK-PERSONAL-LINKS, ruling a): a confirm through
+/// the link books its recipient and nobody else. Any other email gets the
+/// same 404 as a dead link, so the refusal names neither the link nor whom
+/// it is for. The rest of the offer is the page's, the same for everyone.
+pub(super) fn check_personal_link_recipient(
+    link: &PersonalBookingLink,
+    request: &BookingOperationRequest,
+) -> Result<(), ApiError> {
+    if let BookingOperationRequest::Book(BookingBookInput::Confirm(input)) = request
+        && oneiron::booking::normalize_booker_email(&input.booker_email) != link.recipient.email
+    {
+        return Err(public_booking_not_found());
+    }
+    Ok(())
+}
+
+/// The snapshot a public attempt carries to its writers: the page, its live
+/// publication and, through a personal link, that link, which every writer
+/// then rechecks beside the publication (BK-PERSONAL-LINKS). Beside it, the
+/// rows the publication was read from, and the link itself.
+pub(super) fn public_attempt_authority(
+    server: &SyncServer,
+    page_token: &str,
+    destination: &ReadDestination,
+) -> Result<
+    (
+        PublicBookingAuthority,
+        Vec<EntityId>,
+        Option<PersonalBookingLink>,
+    ),
+    ApiError,
+> {
+    let (page_ref, publication, rows, link) =
+        resolve_public_booking_capability_listing(server, page_token, destination)?;
+    let authority = PublicBookingAuthority {
+        page_ref,
+        publication,
+        personal_link_ref: link.as_ref().map(|link| link.link_ref.clone()),
+    };
+    Ok((authority, rows, link))
+}
+
+/// An attempt through a personal link that ended while it ran (revoked, or
+/// "not you?") is answered as a dead link is, with the one 404, whatever the
+/// writer that stopped it refused with (BK-PERSONAL-LINKS). Every other
+/// error passes through unchanged.
+pub(super) fn dead_link_or(server: &SyncServer, page_token: &str, error: ApiError) -> ApiError {
+    let link_ended = oneiron::booking::is_personal_link_token(page_token)
+        && matches!(
+            oneiron::booking::resolve_personal_booking_link(&server.vault, page_token),
+            Ok(None)
+        );
+    if link_ended {
+        public_booking_not_found()
+    } else {
+        error
+    }
 }
 
 /// Where a public booking answer goes (DEC-0005): the visitor's connection
@@ -113,7 +236,8 @@ pub(crate) async fn render_public_booking_page(
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let Path(page_token) = path.map_err(|_| public_booking_not_found())?;
     let destination = public_destination(locality);
-    let (_, publication) = resolve_public_booking_page(&server, &page_token, &destination)?;
+    let (_, publication, link) =
+        resolve_public_booking_capability(&server, &page_token, &destination)?;
     let transport = public_http_transport_context(client, destination)?;
     let session = format!(
         "public-render-{}",
@@ -209,13 +333,20 @@ pub(crate) async fn render_public_booking_page(
         tracing::error!(?defect, "public booking model invariant failed");
         ApiError::internal_server_error("public booking model assembly failed")
     })?;
-    public_booking_page_json(model, PublicBookingPageToken(page_token), hint.as_ref()).map(Json)
+    public_booking_page_json(
+        model,
+        PublicBookingPageToken(page_token),
+        hint.as_ref(),
+        link.as_ref(),
+    )
+    .map(Json)
 }
 
 fn public_booking_page_json(
     model: BookingPageModel,
     token: PublicBookingPageToken,
     hint: Option<&oneiron::booking::BookingSlotLinkHint>,
+    link: Option<&PersonalBookingLink>,
 ) -> Result<serde_json::Value, ApiError> {
     let oneiron::booking::RungProjection::Slots(mask) = &model.slots else {
         unreachable!("validated public slot projection")
@@ -226,12 +357,22 @@ fn public_booking_page_json(
         .map_err(|_| ApiError::internal_server_error("public booking lens assembly failed"))?;
     // The form's hidden honeypot input answers under this intake key on
     // confirm (FIX 7861); the page names it so the form can render it.
-    Ok(serde_json::json!({
+    let mut page = serde_json::json!({
         "model": model,
         "card": card,
         "suggested_slot": selected,
         "form_honeypot_field_key": super::constants::PUBLIC_FORM_HONEYPOT_FIELD_KEY,
-    }))
+    });
+    // A personal link's page names who it is for and the email its confirm
+    // is locked to (ARCH-0062:157); the host renders the "not you?" line,
+    // which posts to `not-you`. Everything else is the page's own offer.
+    if let Some(link) = link {
+        page["recipient"] = serde_json::json!({
+            "name": link.recipient.name,
+            "email": link.recipient.email,
+        });
+    }
+    Ok(page)
 }
 
 async fn public_booking_availability(
@@ -267,17 +408,43 @@ async fn public_booking_constraint_turn(
 ) -> Result<Json<super::front::ConstraintTurnResponse>, ApiError> {
     let Path(token) = path.map_err(|_| public_booking_not_found())?;
     let destination = public_destination(locality);
-    let (page_ref, publication) = resolve_public_booking_page(&server, &token, &destination)?;
+    let (page_ref, publication, link) =
+        resolve_public_booking_capability(&server, &token, &destination)?;
     let input = json_payload(payload)?;
     let transport = public_http_transport_context(client, destination)?;
-    let authority = oneiron::booking::publication::PublicBookingAuthority {
+    let authority = PublicBookingAuthority {
         page_ref,
         publication,
+        personal_link_ref: link.map(|link| link.link_ref),
     };
     let transport = BookingAdmissionContext::from(&transport);
     super::front::run_public_constraint_turn(&server, authority, input, &transport)
         .await
         .map(Json)
+        .map_err(|error| dead_link_or(&server, &token, error))
+}
+
+/// The recipient's "not you?" on a personal link (ARCH-0062:157): ends the
+/// link and tells whoever minted it, in one write. Only a live personal link
+/// on a live publication answers, judged for the caller's destination as
+/// every public read is; a page token and every dead link get the one 404,
+/// and so does the link itself from then on.
+async fn void_public_booking_link(
+    State(server): State<Arc<SyncServer>>,
+    locality: Locality,
+    path: Result<Path<String>, PathRejection>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let Path(token) = path.map_err(|_| public_booking_not_found())?;
+    if !oneiron::booking::is_personal_link_token(&token) {
+        return Err(public_booking_not_found());
+    }
+    resolve_public_booking_page(&server, &token, &public_destination(locality))?;
+    let voided = oneiron::booking::void_personal_booking_link(&server.vault, &token, now_secs()?)
+        .map_err(booking_error)?;
+    if !voided {
+        return Err(public_booking_not_found());
+    }
+    Ok(Json(serde_json::json!({ "voided": true })))
 }
 
 /// A parser-backed allowlist, not a second verb registry.
@@ -434,6 +601,9 @@ mod grant_view_tests;
 #[cfg(test)]
 #[path = "public_lifecycle_tests.rs"]
 mod lifecycle_tests;
+#[cfg(test)]
+#[path = "public_personal_link_tests.rs"]
+mod personal_link_tests;
 #[cfg(test)]
 #[path = "public_tests.rs"]
 mod tests;

@@ -11,6 +11,9 @@ crate::side_table::side_tables! {
     /// Booking lifecycle transition receipt. Key: hash32.
     BOOKING_LIFECYCLE_RECEIPT: VaultMeta b"booking.lifecycle.receipt.v1:" VersionedNamed
         [restore: content] [family: unclassified] [tier: canonical];
+    /// Per-recipient booking link (BK-PERSONAL-LINKS). Key: hash32 (the token digest).
+    BOOKING_PERSONAL_LINK: VaultMeta b"booking.personal_link.v1:" VersionedNamed
+        [restore: content] [family: unclassified] [tier: canonical];
     /// Public booking page protected claim marker. Key: id16.
     BOOKING_PUBLIC_PAGE_PROTECTED_CLAIM: VaultMeta b"booking.public_page.protected_claim/" Raw
         [restore: refuse "public booking pages"] [family: unclassified] [tier: canonical];
