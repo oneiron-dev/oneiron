@@ -4,12 +4,13 @@
 //! The witness that mints a room turn stages one wake per such agent in its
 //! own write: an attempt row of [`ROOM_WAKE_ATTEMPT_KIND`] that names the
 //! room, the turn and the agent by ref and holds no word of the turn, keyed
-//! once per (turn, agent). Nothing in that write runs a model or dispatches
-//! an agent. The speaker never wakes itself; a pen takes part as its PERSON
-//! and is no agent to wake; an agent with no live standing there now, or off
-//! a private thread's audience, is staged no wake (owner ruling 2026-09-23:
-//! an agent speaks only when it is addressed or holds a task there, and it
-//! never joins on its own).
+//! once per (turn, agent). Nothing in that write runs a model, and it
+//! dispatches an agent only in a goal-intake interview (below). The speaker
+//! never wakes itself; a pen takes part as its PERSON and is no agent to
+//! wake; an agent with no live standing there now, or off a private
+//! thread's audience, is staged no wake (owner ruling 2026-09-23: an agent
+//! speaks only when it is addressed or holds a task there, and it never
+//! joins on its own).
 //!
 //! After the commit, whoever runs the agent takes its wake: a settled
 //! resident's inbox pass dispatches it under the resident's wake mode, and
@@ -18,6 +19,12 @@
 //! ([`Vault::room_wake_turn`]): the agent still stands there, the turn still
 //! stands, and nobody holds its claim yet. Each then settles the row
 //! ([`Vault::settle_room_wakes`]), so no pass takes it twice.
+//!
+//! A project leader is no resident. When a turn of a project's goal-intake
+//! interview thread wakes the holder of its interview TASK, the staging
+//! write itself dispatches the leader's next intake run
+//! (`Vault::continue_project_goal_interview_in_txn`, RULING
+//! GOAL-INTAKE-DRAFT-RUN = A).
 //!
 //! A wake is the frame, never the claim: the woken agent reads the room
 //! with its own reads, so one admitted from now on reads no earlier history
@@ -140,6 +147,10 @@ pub(super) fn stage_room_wakes_in_txn(
                 now,
             },
         )?;
+        // A project leader is no resident, so no consumer runs it on a
+        // wake. In its goal-intake interview the engine continues its own
+        // interview on its own TASK (RULING GOAL-INTAKE-DRAFT-RUN = A).
+        vault.continue_project_goal_interview_in_txn(txn, branch, turn_id, agent, now)?;
     }
     Ok(())
 }

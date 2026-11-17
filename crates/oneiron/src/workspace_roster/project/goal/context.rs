@@ -3,6 +3,7 @@
 //! loop's preference proposals and the full goal proposals open on the goal
 //! in force, each with its diff. The draft and the proposals are a starting
 //! point the human confirms or changes; nothing here writes or fills the goal.
+//! It also names the interview's thread and the run that asks in it.
 use super::invalid;
 use super::proposals::{
     ProjectGoalProposalStatus, ProjectGoalProposalView, project_goal_base_in_txn,
@@ -30,12 +31,24 @@ pub struct ProjectGoalInterviewContext {
     /// its diff (floors named): arguments for the human, never merged. Only
     /// for a reader of the goal; empty for any other member.
     pub goal_proposals: Vec<ProjectGoalProposalView>,
+    /// The open interview's thread root in the home room, the turn the
+    /// leader's question answers: `None` once the confirmed goal committed,
+    /// and for an interview the host opened no thread for.
+    #[serde(default)]
+    pub interview_thread: Option<EntityId>,
+    /// The last intake run that loaded the goal-intake skill: the attempt a
+    /// host completes the interview with, in the id form the completion's
+    /// `attempt_ref` takes. `None` before one loaded it. An attempt id grants
+    /// no read.
+    #[serde(default)]
+    pub attempt_ref: Option<EntityId>,
 }
 
 impl Vault {
     /// The goal in force, its generation, the card's draft, the preference
     /// proposals under that goal claim and, when `reads_goal`, the full
-    /// proposals open on that goal, all read in one snapshot.
+    /// proposals open on that goal, with the interview's thread and run, all
+    /// read in one snapshot.
     pub fn project_goal_interview_context(
         &self,
         project: EntityId,
@@ -69,6 +82,7 @@ impl Vault {
         } else {
             Vec::new()
         };
+        let interview = super::intake_run::interview_in_txn(&self.store, txn, project)?;
         Ok(ProjectGoalInterviewContext {
             goal_claim: base.map(|base| base.goal_claim),
             generation,
@@ -79,6 +93,14 @@ impl Vault {
             }),
             revision_proposals: project_goal_revision_proposals_in_txn(self, txn, project)?,
             goal_proposals,
+            interview_thread: interview
+                .as_ref()
+                .filter(|row| row.task.is_some())
+                .map(|row| row.thread),
+            attempt_ref: interview
+                .and_then(|row| row.attempt)
+                .map(|attempt| EntityId::from_bytes(*attempt.as_bytes()))
+                .transpose()?,
         })
     }
 }
