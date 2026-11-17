@@ -1,7 +1,5 @@
 //! ONE-1388 adapter tests. Existing scope and ranking suites stay separate.
 
-// FIX [LIBTEST-QUARANTINE-PIPELINE-AUTHORITY-CORPUS-TESTS]: the lib test target's type check fails here (1 errors: E0061 x1); port it, then drop this gate
-#[cfg(any())]
 #[path = "authority_corpus_tests.rs"]
 mod authority_corpus_tests;
 
@@ -89,6 +87,7 @@ mod tests {
                 ENTITY_TYPE_CLAIM,
                 crate::temporal::TimeRange { start: 1, end: 1 },
                 1,
+                None,
                 &crate::claim::encode_claim_body(body)?,
             )
             .text(&id, &[("body", "authorityneedle")])
@@ -740,6 +739,7 @@ fn authority_bounded_candidates_inherit_resolved_stale_and_keep_filters() -> Res
                 corpus_scope: &crate::corpus::CorpusScope::All,
                 device_local: None,
                 deadline: None,
+                disclosure: None,
             };
             let mut metadata = EntityMetadataCache::default();
             // Bounded scans must use local decisions and resolved authority,

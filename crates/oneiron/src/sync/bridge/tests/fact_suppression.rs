@@ -157,6 +157,7 @@ fn an_explicit_tier_replay_of_a_fact_deleted_here_marks_its_task() {
             entity_type: ENTITY_TYPE_TASK,
             occurred: at(),
             learned_at: LEARNED_AT,
+            row_version: 0,
             body: &body,
         },
         crate::sync::client::ImportTier::OwnDevice,
@@ -187,8 +188,10 @@ fn a_restore_keeps_the_refusal_of_a_task_deleted_since() {
 
     suppress_a_cancellation(&vault, EntityId::now(), task, owner);
     vault.batch().delete(&task).commit().unwrap();
+    let key = vault.checkpoint_key().unwrap();
     let (restored, _report) = Vault::restore_checkpoint_keeping_authority(
         &image,
+        &key,
         &backups.path().join("restored"),
         vault.config.clone(),
         &vault,
