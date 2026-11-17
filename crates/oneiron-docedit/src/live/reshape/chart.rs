@@ -48,6 +48,8 @@ use std::collections::BTreeSet;
 /// back as the live data, and every cache equals its cells, or it refuses.
 /// The parts it changed and the series identities in the order the part
 /// now holds them; `done` gets what it did PowerPoint's way.
+///
+/// [`plot_plan`]: crate::live::reshape::layout::plot_plan
 pub(in crate::live) fn chart(
     package: &mut Package,
     chart: &str,

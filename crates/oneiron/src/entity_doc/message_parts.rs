@@ -16,6 +16,7 @@ use crate::error::{Error, Result};
 use crate::ports::EntityStoreMaintenance;
 use crate::write_envelope::WriteActor;
 use crate::{EntityId, Vault};
+use oneiron_contracts::msgpack::{self, Entries};
 
 /// Appends a continuation's fresh ordered parts to its MESSAGE's stored
 /// prefix, in the caller's write transaction.
@@ -159,14 +160,8 @@ fn append_atomic_parts_in_txn(
 
 /// A MessagePack map body as name/value pairs, whole (no trailing bytes).
 fn decode_map(body: &[u8], what: &'static str) -> Result<Vec<(rmpv::Value, rmpv::Value)>> {
-    let mut cursor = std::io::Cursor::new(body);
-    let value = rmpv::decode::read_value(&mut cursor).map_err(|_| Error::CorruptedIndex(what))?;
-    if cursor.position() != body.len() as u64 {
-        return Err(Error::CorruptedIndex(what));
-    }
-    let mut encoded = Vec::new();
-    rmpv::encode::write_value(&mut encoded, &value).map_err(|_| Error::CorruptedIndex(what))?;
-    if encoded != body {
+    let value = msgpack::decode(body).map_err(|_| Error::CorruptedIndex(what))?;
+    if msgpack::encode(&value) != body {
         return Err(Error::CorruptedIndex(what));
     }
     match value {
@@ -181,16 +176,9 @@ fn field<'v>(
     fields: &'v [(rmpv::Value, rmpv::Value)],
     name: &str,
 ) -> Result<Option<&'v rmpv::Value>> {
-    let mut found = None;
-    for (key, value) in fields {
-        if key.as_str() == Some(name) {
-            if found.is_some() {
-                return Err(Error::CorruptedIndex("duplicated message body key"));
-            }
-            found = Some(value);
-        }
-    }
-    Ok(found)
+    Entries::new(fields)
+        .get(name)
+        .map_err(|_| Error::CorruptedIndex("duplicated message body key"))
 }
 
 /// Proves the current resolved body is the authorized envelope's own prefix
@@ -293,8 +281,5 @@ fn pointer_with_parts(
         fields.push((key.clone(), value.clone()));
     }
     fields.push((rmpv::Value::from("entity_doc_ref"), reference.clone()));
-    let mut rewritten = Vec::new();
-    rmpv::encode::write_value(&mut rewritten, &rmpv::Value::Map(fields))
-        .map_err(|_| invalid("message document pointer"))?;
-    Ok(rewritten)
+    Ok(msgpack::encode(&rmpv::Value::Map(fields)))
 }

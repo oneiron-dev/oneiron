@@ -49,7 +49,7 @@ impl Memory<'_> {
                     wtxn,
                     EnqueueDreamerConsolidationAttempt {
                         scope,
-                        input: json_to_rmpv(&input.input),
+                        input: json_to_msgpack_value(&input.input),
                         parent_attempt: None,
                         dedupe_key: input.dedupe_key.clone(),
                         run_id: input.run_id.clone(),

@@ -10,6 +10,7 @@ mod ask_forward;
 mod ask_guard;
 mod ask_guest;
 pub(crate) mod ask_intent;
+mod ask_label_guard;
 mod ask_limits;
 mod ask_option_link;
 mod ask_policy;
@@ -406,8 +407,6 @@ pub(crate) use symbol_lease::{
 pub(crate) use scheduling::terminal_success_from_body;
 pub(crate) use scheduling::{acquire_task_symbols, task_dispatch_ready, terminal_success_in_store};
 
-// FIX [LIBTEST-QUARANTINE-TASK-VERB-SYMBOL-LEASE-TESTS]: the lib test target's type check fails here (1 errors: E0639 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod symbol_lease_tests;
 
@@ -464,12 +463,8 @@ pub(crate) use rate_limit::task_create_owner_in;
 
 pub mod verb_hook_boundary;
 
-// FIX [LIBTEST-QUARANTINE-TASK-VERB-ASK-OUTCOME-TESTS]: the lib test target's type check fails here (2 errors: E0061 x1, E0063 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod ask_outcome_tests;
-// FIX [LIBTEST-QUARANTINE-TASK-VERB-ASK-TESTS]: the lib test target's type check fails here (23 errors: E0277 x9, E0063 x6, E0061 x5, E0507 x3); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod ask_tests;
 pub(crate) mod tables;
@@ -494,7 +489,7 @@ pub(crate) use ask_record::{
     ask_notice_at_in, attendee_entry_id, guard_ask_fact_put, read_attendee_entry_in,
 };
 pub(crate) use ask_settlement::{
-    AskStanding, ask_settlement_in, ask_standing_in, settle_ask_if_due,
+    AskStanding, ask_settlement_id, ask_settlement_in, ask_standing_in, settle_ask_if_due,
 };
 pub(crate) use fact_link_wake::{scoped_to_sources, wake_linked_facts_in_txn};
 pub(crate) use lifecycle_facade::deliver_task_result_in_txn;

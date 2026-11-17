@@ -30,6 +30,10 @@ const OPEN_TIMEOUT: Duration = Duration::from_secs(30);
 const PREVIOUS_NOT_FOUND: &str = "previous_response_not_found";
 const SOCKET_LIMIT: &str = "websocket_connection_limit_reached";
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "one parameter per part of a send: the websocket's TLS settings, the call, its URL, its bodies, the release state, the key, the daemon's stream and the deadline"
+)]
 pub(crate) async fn responses_to<W: AsyncRead + AsyncWrite + Unpin>(
     ws_tls: &Arc<rustls::ClientConfig>,
     call: &CallHeader,

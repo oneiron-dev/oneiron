@@ -388,6 +388,7 @@ pub fn run_ics_feed_poll_with_screener(
         now,
         jitter_seed,
         None,
+        None,
     )
 }
 
@@ -399,7 +400,7 @@ pub fn run_ics_feed_poll_with_screener(
 /// admitted claim Proposed and the chain running.
 #[expect(
     clippy::too_many_arguments,
-    reason = "one poll run, its screen, and the installed feed's owner"
+    reason = "one poll run, its screen, the installed feed's owner, and the turn its door keeps"
 )]
 pub(super) fn run_feed_poll(
     vault: &Vault,
@@ -410,6 +411,7 @@ pub(super) fn run_feed_poll(
     now: u64,
     jitter_seed: u64,
     installed_owner: Option<&AuthenticatedOwner>,
+    held_turn: Option<&mut Option<super::AdmissionTurn>>,
 ) -> Result<IcsPollRunState, CalendarError> {
     config.validate()?;
     let cursor_digest = ics_feed_cursor_digest(config);
@@ -420,9 +422,19 @@ pub(super) fn run_feed_poll(
     // FIX 4797: the diff, its writes and the cursor run in the vault's one
     // calendar admission turn; the fetch above does not hold it. The cursor
     // is read again under the turn: another poll may have moved it since.
-    let _turn = super::admission_turn(vault)?;
+    let turn = super::admission_turn(vault)?;
+    // A caller that writes after this poll (the installed feed's completion row) keeps the turn
+    // until that write is done (`held_turn`).
+    let _turn = match held_turn {
+        Some(slot) => {
+            *slot = Some(turn);
+            None
+        }
+        None => Some(turn),
+    };
     // An installed feed is read again under the turn: its owner may have uninstalled it while
-    // the fetch was out, and then this poll writes nothing.
+    // the fetch was out, and then this poll writes nothing. An uninstall's write takes the turn
+    // too (feed_door::ics_feed_write_turn), so none lands from here to this poll's last write.
     if installed_owner.is_some() {
         let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
         if !super::feed_door::installed_in_txn(vault, &txn, config)? {
