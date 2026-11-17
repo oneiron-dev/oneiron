@@ -303,7 +303,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/key_custody/outbox.rs` | src | s | 1 mod | — | Store-layer modules of core `store::key_custody::outbox`; core re-exports each one at its old path |
 | `src/key_custody/outbox/files.rs` | src | s | 1 struct · 1 fn · 9 const | TargetWire | One member's slot in the Hypnos outbox (FIX 5899): the batch directory Hypnos ships, written in the order… |
 | `src/key_custody/protocol.rs` | src | m | 4 struct · 7 enum · 1 trait · 16 fn · 2 const · 1 mod · 5 re-export | AckOperation, AnchorAdvance, AnchorStore, DeletionEvidence, EvidenceKind, HostedKind, PendingCode, TargetId +4 | The KS-4 custody protocol (FIX 5685), public so the holders of a vault's custody outside this crate keep one… |
-| `src/key_custody/protocol/drain.rs` | src | s | 1 struct · 3 fn · 4 const | DrainToken | The custody member drain's contract (FIX 5843, ruled 10-20): how the owner takes a member out of the… |
+| `src/key_custody/protocol/drain.rs` | src | s | 1 struct · 3 fn · 2 const | DrainToken | The custody member drain's contract (FIX 5843, ruled 10-20): how the owner takes a member out of the… |
 | `src/key_custody/recovery.rs` | src | s | 1 mod | — | Store-layer modules of core `store::key_custody::recovery`; core re-exports each one at its old path |
 | `src/key_custody/recovery/unopened.rs` | src | s | 2 fn | — | What a restore says of the custody head's compartments it left unopened (FIX 9178): which key opens each, by… |
 | `src/key_material.rs` | src | s | 1 struct · 1 enum · 4 fn | WorldKeyDestroyCause, WorldKeyDestruction | Guarded key derivation, OS entropy, and the world-key refusal constructor |

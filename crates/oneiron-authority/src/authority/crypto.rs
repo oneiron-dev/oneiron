@@ -186,7 +186,10 @@ pub struct AuthoritySignature {
     pub suite: AuthoritySignatureSuite,
     /// Authority public key that verifies the signature.
     pub public_key: AuthorityKey,
-    /// Raw signature bytes: 64 bytes for Ed25519 and fixed-width P-256 ECDSA.
+    /// Signature bytes: 64 raw bytes for Ed25519; for P-256 ECDSA, 64 raw
+    /// bytes r || s over the transcript, or, on an authority log entry alone
+    /// ([`verify_entry_signatures`]), a passkey's assertion over it in its
+    /// envelope ([`decode_webauthn_assertion`]).
     pub signature: Vec<u8>,
 }
 
@@ -195,15 +198,19 @@ impl AuthoritySignature {
         if self.suite != self.public_key.suite() {
             return Err(invalid_authority());
         }
-        match self.suite {
-            AuthoritySignatureSuite::Ed25519 if self.signature.len() == 64 => {}
-            AuthoritySignatureSuite::P256 if self.signature.len() == 64 => {}
-            _ => return Err(invalid_authority()),
-        }
+        let raw: &[u8] = match self.suite {
+            AuthoritySignatureSuite::Ed25519 if self.signature.len() == 64 => &self.signature,
+            AuthoritySignatureSuite::P256 if self.signature.len() == 64 => &self.signature,
+            AuthoritySignatureSuite::P256 => {
+                decode_webauthn_assertion(&self.signature)
+                    .ok_or_else(invalid_authority)?
+                    .signature
+            }
+            AuthoritySignatureSuite::Ed25519 => return Err(invalid_authority()),
+        };
         self.public_key.validate()?;
         if self.suite == AuthoritySignatureSuite::P256 {
-            let signature =
-                P256Signature::from_slice(&self.signature).map_err(|_| invalid_authority())?;
+            let signature = P256Signature::from_slice(raw).map_err(|_| invalid_authority())?;
             if signature.normalize_s().is_some() {
                 return Err(invalid_authority());
             }
@@ -217,8 +224,11 @@ pub fn canonical_p256_key_bytes(bytes: &[u8]) -> Result<Vec<u8>> {
     Ok(key.to_encoded_point(true).as_bytes().to_vec())
 }
 
-/// Verifies an authority signature envelope against a transcript. A success
-/// on exactly these bytes is remembered and answers again (FIX 21959).
+/// Verifies an authority signature envelope against a transcript: 64 raw
+/// bytes alone. A passkey's assertion is no signature here, because only an
+/// authority log entry's fold pins where a passkey signs
+/// ([`verify_entry_signatures`]; Sol xhigh stack review F4). A success on
+/// exactly these bytes is remembered and answers again (FIX 21959).
 #[must_use]
 pub fn verify_authority_signature(signature: &AuthoritySignature, transcript: &[u8]) -> bool {
     let suite: u8 = match signature.suite {
@@ -242,7 +252,7 @@ pub fn verify_authority_signature(signature: &AuthoritySignature, transcript: &[
 }
 
 fn verify_authority_signature_uncached(signature: &AuthoritySignature, transcript: &[u8]) -> bool {
-    if signature.validate().is_err() {
+    if signature.validate().is_err() || signature.signature.len() != 64 {
         return false;
     }
     match (&signature.public_key, signature.suite) {
@@ -279,9 +289,27 @@ pub fn verify_entry_signatures(entry: &AuthorityLogEntry) -> Result<()> {
 }
 
 fn verify_entry_signatures_with_transcript(entry: &AuthorityLogEntry, transcript: &[u8]) -> bool {
-    verify_authority_signature(&entry.signer, transcript)
+    verify_entry_signature(&entry.signer, transcript)
         && entry
             .cosigns
             .iter()
-            .all(|cosign| verify_authority_signature(cosign, transcript))
+            .all(|cosign| verify_entry_signature(cosign, transcript))
+}
+
+/// One signature of an authority log entry: as
+/// [`verify_authority_signature`], and a P-256 key's passkey assertion over
+/// the transcript in its envelope (row WEB-PASSKEY-OWNER-KEY), whose
+/// context the fold then pins per key.
+fn verify_entry_signature(signature: &AuthoritySignature, transcript: &[u8]) -> bool {
+    match (&signature.public_key, signature.suite) {
+        (AuthorityKey::P256(public_key), AuthoritySignatureSuite::P256)
+            if signature.signature.len() != 64 =>
+        {
+            signature.validate().is_ok()
+                && P256VerifyingKey::from_sec1_bytes(public_key).is_ok_and(|key| {
+                    webauthn_assertion_verifies(&key, &signature.signature, transcript)
+                })
+        }
+        _ => verify_authority_signature(signature, transcript),
+    }
 }
