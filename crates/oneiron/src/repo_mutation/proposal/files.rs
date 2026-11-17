@@ -80,6 +80,19 @@ impl RepoProposal {
                 .all(|file| file.source_operation.is_some() && file.metadata_edit.is_some())
     }
 
+    /// Whether the conflict doors can build this proposal's side commit: a
+    /// one-file change, a native file bundle, or a source-bound received
+    /// bundle (FIX 9976). Both doors gate on this.
+    #[must_use]
+    pub(crate) fn conflict_side_buildable(&self) -> bool {
+        match self.operation {
+            RepoProposalOperation::CommitFile
+            | RepoProposalOperation::ResolveConflictFile { .. }
+            | RepoProposalOperation::CommitFiles => true,
+            RepoProposalOperation::ReceivedFiles { .. } => self.is_source_bound_received(),
+        }
+    }
+
     /// The oplog subject it lands under: an ordinary file's path, a
     /// received bundle's candidate id, or a native bundle's message.
     #[must_use]

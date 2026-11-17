@@ -9,6 +9,7 @@
 //! [`request_wake`] to ENQUEUE and [`DreamerWakeDriver::run_wake_pass`] to
 //! RUN the pass — two separate host calls. Idle = nothing runs.
 mod arc_backstop;
+pub(crate) mod archive_restore;
 mod deadline;
 mod driver;
 pub(crate) mod follower;
@@ -27,6 +28,7 @@ mod recipe_wake;
 pub(crate) mod recipes;
 mod refusal_dial;
 mod scheduling;
+pub(crate) mod setting_keys;
 mod settlement;
 pub(crate) mod sieve;
 pub(crate) mod statement_material;
@@ -89,7 +91,9 @@ pub(crate) use self::types::{executor_panic_error, is_executor_panic_error};
 /// cascade), the soft erase beside its other derived-state hooks, and the
 /// shared staleness writer (a tombstone, a stale mark). An
 /// erased TURN leaves the sieve and the projection; a TURN whose MESSAGE is
-/// erased leaves them too and is owed a new read of the words it keeps.
+/// erased leaves them too and is owed a new read of the words it keeps, and
+/// a consolidation round that may have read its old words reads it again
+/// ([`crate::dreamer_consolidation::redirty::redirty_read_turn_in_txn`]).
 /// An erased fact about a person takes that person's PEOPLE `about` lines.
 pub(crate) fn erase_in_txn(
     write: &crate::secret_custody::CustodyWrite<'_>,
@@ -105,6 +109,7 @@ pub(crate) fn erase_in_txn(
         projector::erase_turn_in_txn(store, txn, turn, turn == id)?;
         if turn != id {
             sieve::owe_read_in_txn(store, txn, turn)?;
+            crate::dreamer_consolidation::redirty::redirty_read_turn_in_txn(store, txn, turn)?;
         }
     }
     // The follower's frames and keyframes of these words go too (FIX 7510).
@@ -142,15 +147,18 @@ pub(crate) fn demote_in_txn(
 /// The publication hook: a TURN, or a MESSAGE inside one, whose text a
 /// write changed or may have changed (a document write, its restore, an
 /// idle revision, a re-put of the row, a regeneration that clears its stale
-/// mark) has its turn's words changed, committed with the text. Unlike the
-/// tag and vector marks it needs no model configured.
+/// mark) has its turn's words changed, committed with the text. A turn a
+/// consolidation round may already have read is new work for every scope
+/// again (ARCH-0026 #sieve-open: an edit after consolidation;
+/// [`crate::dreamer_consolidation::redirty::admit_changed_words_in_txn`]).
+/// Unlike the tag and vector marks it needs no model configured.
 pub(crate) fn mark_on_publication_in_txn(
     store: &crate::store::Store,
     txn: &mut heed::RwTxn<'_>,
     entity: &crate::EntityId,
 ) -> crate::Result<()> {
     for turn in text_turns_in_txn(store, txn, entity)? {
-        words_changed_in_txn(store, txn, &turn)?;
+        crate::dreamer_consolidation::redirty::admit_changed_words_in_txn(store, txn, &turn)?;
     }
     Ok(())
 }

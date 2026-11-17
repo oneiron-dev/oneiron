@@ -18,8 +18,10 @@ use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::receipt::ERASED_CALL_IDENTITY;
 use crate::store::checkpoint_payload::rows::{NOT_SPELLED_BACK, OwnerRef, bad_part};
-use crate::sync::carrier_parts::is_part_key;
-use crate::sync::checkpoint_payload::{Holder, Placement, SyncUnclassified, ValueSplit};
+use crate::sync::carrier_parts::join_parts_from;
+use crate::sync::checkpoint_payload::{
+    Holder, PartLookup, Placement, SyncUnclassified, ValueSplit,
+};
 use crate::workspace_roster::RoomTurn;
 
 /// A turn row naming its actor or an agent it addressed by anything but an
@@ -46,11 +48,8 @@ fn named(hex: &str) -> Option<EntityId> {
 /// Where the turn row under `key` goes.
 pub(in crate::sync) fn entry(key: &str, value: &[u8]) -> Placement {
     let undecodable = || Placement::unclassified(None, SyncUnclassified::Undecodable);
-    // FIX 11790: a part goes with the manifest that lists it, and a manifest
-    // under the turn its key names.
-    if is_part_key(key) {
-        return Placement::Part;
-    }
+    // FIX 11790: a manifest goes under the turn its key names (a part, with
+    // the manifest that lists it: the map's row places it).
     if let Some(parts) = crate::sync::room_parts::manifest(value) {
         return named(key).map_or_else(undecodable, |id| Placement::Manifest {
             holders: vec![Holder::new(OwnerRef::entity(&id), Vec::new())],
@@ -73,17 +72,31 @@ pub(in crate::sync) fn entry_joined(key: &str, joined: &[u8]) -> Placement {
     }
 }
 
+/// Whether the turn manifest `value` under `key` is the turn its key names,
+/// its parts joined through `part` (UC-10 PR 1): `Some(true)` when the
+/// joined row is a turn of that id, `Some(false)` when it is another turn.
+/// `None` for a value that is no manifest, for one whose parts do not all
+/// join, and for joined bytes that read as no turn row: they prove no
+/// other row.
+pub(in crate::sync) fn bound(key: &str, value: &[u8], part: PartLookup<'_>) -> Option<bool> {
+    let parts = crate::sync::room_parts::manifest(value)?;
+    let joined = join_parts_from(&parts, part)?;
+    decode_held(&joined).ok().map(|turn| turn.turn_id == key)
+}
+
 /// Where `turn`, stored under `key` as `value`, goes: with its TURN, held
 /// while its room, its messages and each turn it quotes are, its actors
-/// split out.
+/// split out. A turn filed under another turn's key is a key mismatch,
+/// placed under no one.
 fn placed(key: &str, turn: RoomTurn, value: &[u8]) -> Placement {
     let undecodable = || Placement::unclassified(None, SyncUnclassified::Undecodable);
+    // The turn's own key first, as its parted binding (`bound`) reads it.
+    if turn.turn_id != key {
+        return Placement::unclassified(None, SyncUnclassified::KeyMismatch);
+    }
     let (Some(id), Some(room)) = (named(&turn.turn_id), named(&turn.room_id)) else {
         return undecodable();
     };
-    if turn.turn_id != key {
-        return undecodable();
-    }
     let owner = OwnerRef::entity(&id);
     let mut dependencies = vec![OwnerRef::entity(&room)];
     for message in &turn.message_ids {

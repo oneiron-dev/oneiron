@@ -6,7 +6,6 @@ pub use oneiron_verb_wire::llm::manifest::doors::ModelRoleInvoke;
 pub use oneiron_verb_wire::llm::manifest::doors::ModelRoleRead;
 pub use oneiron_verb_wire::llm::manifest::doors::ModelRoleReceipt;
 pub use oneiron_verb_wire::llm::manifest::doors::ModelRouteRead;
-pub use oneiron_verb_wire::llm::manifest::doors::ModelRouteReplace;
 pub use oneiron_verb_wire::llm::manifest::doors::ModelRouteView;
 pub use oneiron_verb_wire::llm::manifest::doors::OneironerBind;
 use serde::Deserialize;

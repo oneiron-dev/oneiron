@@ -15,7 +15,8 @@ pub struct CheckpointReadRequest {
     #[serde(default)]
     pub from_step: u64,
     /// Steps in this page; [`CHECKPOINT_READ_DEFAULT_LIMIT`] when absent,
-    /// at most [`CHECKPOINT_READ_MAX_LIMIT`]. Must be positive.
+    /// at most `engine_executor.checkpoint_read.max_limit` in force
+    /// ([`CHECKPOINT_READ_MAX_LIMIT`] by default). Must be positive.
     #[serde(default)]
     pub limit: Option<u32>,
 }
