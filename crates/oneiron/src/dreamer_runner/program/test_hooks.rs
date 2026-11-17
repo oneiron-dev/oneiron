@@ -12,7 +12,7 @@ use super::types::{
     LandedTurnRef, OwedWakeHold, ProgramRecipePin, ProgramTrigger, TurnProgramArming,
     TurnProgramAttemptStamp,
 };
-use super::{ADMISSION, ARM, ATTEMPT, DISARMED, WAKE};
+use super::{ADMISSION, ARM, ATTEMPT, DECIDED, DISARMED, WAKE};
 use crate::authority::{InvocationSlipBinding, VerifiedSlip};
 use crate::dreamer_runner::{
     DreamerRunnerStore, EnqueueDreamerAttempt, EnqueueDreamerAttemptOutcome,
@@ -370,6 +370,17 @@ pub(crate) fn plant_held_program_attempt(
     ))
 }
 
+/// Whether a carried decision for the wake TURN `turn` owes `registration`
+/// is kept here.
+pub(crate) fn decision_kept_here(
+    vault: &Vault,
+    turn: EntityId,
+    registration: EntityId,
+) -> Result<bool> {
+    let txn = vault.store.env.read_txn()?;
+    DECIDED.contains(vault, &txn, &(turn, registration))
+}
+
 /// Encodes the mirror's externally tagged `ArmingRow::Armed` envelope directly,
 /// without its outbound filter. The replica module's row enum is private.
 pub(crate) fn arming_row_bytes(
@@ -383,4 +394,31 @@ pub(crate) fn arming_row_bytes(
         .ok_or(Error::EntityNotFound)?;
     serde_json::to_vec(&std::collections::BTreeMap::from([("armed", arming)]))
         .map_err(|_| Error::InvalidConfig("the arming row does not encode".into()))
+}
+
+/// The `Admitted` row a linked machine would carry for the owed wake of
+/// `registration`: its turn, its map key, and its bytes as the decision
+/// mirror encodes them.
+#[cfg(feature = "sync")]
+pub(crate) fn admitted_row_bytes(
+    vault: &Vault,
+    actor: EntityId,
+    registration: EntityId,
+) -> Result<(EntityId, String, Vec<u8>)> {
+    let txn = vault.store.env.read_txn()?;
+    let key = super::index::actor_wakes_in_txn(vault, &txn, &actor)?
+        .into_iter()
+        .find(|(_, owed)| *owed == registration)
+        .ok_or(Error::EntityNotFound)?;
+    let wake = WAKE.get(vault, &txn, &key)?.ok_or(Error::EntityNotFound)?;
+    let (map_key, bytes) = super::replica::admitted_row_for_test(&wake)?;
+    Ok((key.0, map_key, bytes))
+}
+
+/// How many `Admitted` rows TURN `turn` owes the window from this machine's
+/// decisions.
+#[cfg(feature = "sync")]
+pub(crate) fn decided_rows_for_turn(vault: &Vault, turn: EntityId) -> Result<usize> {
+    let txn = vault.store.env.read_txn()?;
+    Ok(super::replica::turn_decided_rows_in_txn(vault, &txn, &turn)?.len())
 }
