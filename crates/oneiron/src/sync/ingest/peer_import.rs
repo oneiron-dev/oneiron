@@ -25,8 +25,8 @@ use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::error::{Error, Result};
 use crate::registry::{
-    ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_ASSET, ENTITY_TYPE_ASSET_TEXT, ENTITY_TYPE_EMBEDDING_SETUP,
-    ENTITY_TYPE_MESSAGE,
+    ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_ASSET, ENTITY_TYPE_ASSET_TEXT, ENTITY_TYPE_CONVERSATION,
+    ENTITY_TYPE_EMBEDDING_SETUP, ENTITY_TYPE_MESSAGE,
 };
 use crate::side_table::{self, Raw, SideTable};
 use crate::store::{AssetBodyFacts, asset_file_in_txn};
@@ -42,13 +42,16 @@ pub(in crate::sync) const PEER_ORIGIN_MAP: &str = "peer_origins";
 /// The kinds whose door judges a peer's row apart from this vault's own. A
 /// MESSAGE row takes the own-device lane only when no peer's import brought
 /// it, on whichever own machine it lands (FIX 11709). ASSET and ASSET_TEXT
-/// position imports likewise exclude peer-origin owner and source bytes.
-const PEER_JUDGED_KINDS: [u8; 5] = [
+/// position imports likewise exclude peer-origin owner and source bytes. A
+/// CONVERSATION row a peer's import brought lands with its pin records as it
+/// came: only the owner's own machines merge them (ROOM-PINS-LWW-MERGE).
+const PEER_JUDGED_KINDS: [u8; 6] = [
     ENTITY_TYPE_AGENT_DEF,
     ENTITY_TYPE_EMBEDDING_SETUP,
     ENTITY_TYPE_MESSAGE,
     ENTITY_TYPE_ASSET,
     ENTITY_TYPE_ASSET_TEXT,
+    ENTITY_TYPE_CONVERSATION,
 ];
 
 /// The latest peer carrier's wire digest and, for ASSET, logical digest.

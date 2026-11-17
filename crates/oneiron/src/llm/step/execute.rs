@@ -21,7 +21,9 @@ use super::types::{
     DurableStepResult, ReplyCheck, StepEffectBinding, StepOutcome, StepProgression,
 };
 use crate::agent_dispatch::SpendCapRefusal;
+use crate::attempt_queue::AttemptId;
 use crate::dreamer_wake::{BudgetLegibilityEnvelope, StepCalls, current_legibility};
+use crate::entity_id::bytes_to_hex_lower;
 use crate::error::Error;
 use crate::store::model_step_submission::StepBudgetRefusal;
 
@@ -311,15 +313,18 @@ pub(super) async fn durable_step(
             ctx.attempt_id,
             step_hash,
             ctx.now_ms,
-            super::schema::generate(
-                backend,
-                &request,
-                &admission.lease,
-                guard,
-                calls,
-                &capture,
-                check,
-                retries,
+            tracing::Instrument::instrument(
+                super::schema::generate(
+                    backend,
+                    &request,
+                    &admission.lease,
+                    guard,
+                    calls,
+                    &capture,
+                    check,
+                    retries,
+                ),
+                model_step_span(ctx.attempt_id, &step_hash),
             ),
         )
         .await;
@@ -562,6 +567,20 @@ pub(super) async fn durable_step(
         legibility: step_legibility(ctx, guard),
         failure_policy,
     })
+}
+
+/// The span a step's model call runs in, its corrections and retries too
+/// (FIX DREAMER-CALL-ATTEMPT-ID): the attempt as its stage line prints it and
+/// 16 hex of the step hash, ids only. Debug under `oneiron::model::send`, the
+/// target of the server's `model request sent` line at each physical send,
+/// so one log directive shows which attempt and step sent each body.
+fn model_step_span(attempt: AttemptId, step_hash: &[u8; 32]) -> tracing::Span {
+    tracing::debug_span!(
+        target: "oneiron::model::send",
+        "model_step",
+        attempt = %bytes_to_hex_lower(attempt.as_bytes()),
+        step = %bytes_to_hex_lower(&step_hash[..8]),
+    )
 }
 
 /// Verify a persisted step and resolve resident eligibility in the SAME
