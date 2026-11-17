@@ -451,6 +451,51 @@ pub(crate) fn settle_agent_child_waits_in_txn(
     Ok(())
 }
 
+/// Arms the row of [`CHILD_WAIT_UNTIL_JOB`] of each unsettled wait with an
+/// `until`, from the wait rows a checkpoint restore landed. The wait rows are
+/// `[restore: content]` and the schedule's rows `[restore: live]`, so a
+/// restore over a live vault can land a wait the image holds unsettled beside
+/// a schedule that no longer arms it, its live twin having settled: without
+/// this, its `until` would never cut it off while a child is still pending
+/// (blind review round 1 of #9303, P1). A wait already armed at its `until`
+/// keeps its row; a row about a wait the image holds settled, or not at all,
+/// runs once and goes. A wait row that does not decode is passed over, and
+/// its reads refuse it as before.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn rearm_restored_wait_deadlines_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+) -> Result<()> {
+    let mut deadlines = Vec::new();
+    for row in WAITS.iter_raw_from(&vault.store, wtxn, &[])? {
+        let (_, bytes) = row?;
+        let Ok(set) = WAITS.decode_value(&bytes) else {
+            tracing::warn!("checkpoint restore passed over an agent wait row that does not decode");
+            continue;
+        };
+        if set.settled.is_none()
+            && let Some(until) = set.until
+        {
+            deadlines.push((set.id, until));
+        }
+    }
+    for (wait, until) in deadlines {
+        crate::schedule::arm_in_txn(
+            &vault.store,
+            wtxn,
+            &CHILD_WAIT_UNTIL_JOB,
+            Some(wait),
+            Trigger::At {
+                at: until_secs(until),
+            },
+        )?;
+    }
+    Ok(())
+}
+
 /// Reduces the wait `armed` is about at the recording clock, in one write: a
 /// wait whose `until` has come settles (`cutoff`, unless a policy is met in
 /// the same reduction) and is delivered as the reply of every run parked on
