@@ -3,7 +3,7 @@
 //! each feed's last completed poll.
 use serde::{Deserialize, Serialize};
 
-use super::poll::enqueue_ics_feed_poll_in_txn;
+use super::poll::{enqueue_ics_feed_poll_in_txn, uninstall_feed_polls_in_txn};
 use super::{
     IcsFeedCursorSnapshot, IcsFeedFetcher, IcsFeedPollConfig, IcsPollRunState,
     IcsPropertyContinuationPayload, consent, enqueue_ics_feed_poll, ics_feed_cursor_snapshot,
@@ -105,11 +105,12 @@ pub(crate) fn registration_in_txn(
 /// The `calendar.ics_feed` hook, in the write that changes a feed's row. It keeps the rules the
 /// configure door had: a system names exactly one complete feed (two feeds sharing a system
 /// would otherwise cancel each other's absent UIDs), so a value row sits at its own system,
-/// once; an installed feed is immutable (a change or a clear is refused; a new configuration
-/// takes a new system), and a system an earlier feed polled under is never installed again.
+/// once; an installed feed is immutable (a change is refused; a new configuration takes a new
+/// system), and a system an earlier feed polled under is never installed again.
 /// Installing a feed starts its poll chain, due at once, in the same write; a chain already
 /// pending for the feed is adopted, never forked. A feed whose import waits on its owner, or
-/// was declined (CAL-02), starts no chain: the owner's approval starts it.
+/// was declined (CAL-02), starts no chain: the owner's approval starts it. Clearing an installed
+/// feed uninstalls it in the same write ([`uninstall_in_txn`]).
 ///
 /// # Errors
 ///
@@ -135,12 +136,15 @@ pub(crate) fn ics_feed_changed_in_txn(
             .and_then(Kind::<Option<IcsFeedPollConfig>>::decode)
             .flatten()
     };
-    if decode(change.prior.as_ref()).is_some() {
-        return Err(crate::Error::InvalidConfig(
-            "an installed ICS feed is immutable; use a new system".into(),
-        ));
-    }
     let config = decode(change.value.as_ref());
+    if let Some(installed) = decode(change.prior.as_ref()) {
+        if config.is_some() {
+            return Err(crate::Error::InvalidConfig(
+                "an installed ICS feed is immutable; use a new system".into(),
+            ));
+        }
+        return uninstall_in_txn(vault, txn, &installed, change.at);
+    }
     let Some(config) = config else {
         return Ok(());
     };
@@ -158,6 +162,38 @@ pub(crate) fn ics_feed_changed_in_txn(
         enqueue_ics_feed_poll_in_txn(vault, txn, &config, change.at)?;
     }
     Ok(())
+}
+
+/// Uninstalls the feed `installed` in the write that clears its `calendar.ics_feed` row
+/// (ICS-FEED-UNINSTALL-SHAPE = B, Engine 16 Nov 18:27): its standing consent ends
+/// (CAL-02-FEED-CONSENT = A), its cursor goes and its pending polls are cancelled. Its poll row
+/// stays, so a system it polled under stays retired. The claims it imported stay as they are,
+/// held ones included, for the owner to settle.
+fn uninstall_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    installed: &IcsFeedPollConfig,
+    now: u64,
+) -> crate::Result<()> {
+    consent::end_in_txn(vault, txn, installed)?;
+    uninstall_feed_polls_in_txn(vault, txn, installed, now)
+}
+
+/// Whether `config` is the feed installed at its system, read in `txn`. A poll and its consent
+/// settlement read it again, since the owner may uninstall the feed while its fetch is out.
+pub(super) fn installed_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    config: &IcsFeedPollConfig,
+) -> crate::Result<bool> {
+    Ok(registration_in_txn(vault, txn, &config.system)?.is_some_and(|row| row.config == *config))
+}
+
+/// Wakes the attempt observers and the job notices once a write that changed a feed's row has
+/// committed: an install queued its poll chain, an uninstall cancelled it.
+pub(crate) fn ics_feed_committed(vault: &Vault) {
+    vault.store.notify_attempt_observers();
+    vault.store.notify_notification_updates();
 }
 
 pub fn get(

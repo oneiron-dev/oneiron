@@ -168,3 +168,10 @@ fn rewrite_version_claim_in_txn(
         &raw,
     )
 }
+
+/// The erased producer for the checkpoint-pins door: the deterministic id an
+/// erased producer keeps in the typed envelope.
+#[cfg(oneiron_test_support)]
+pub(crate) fn pins_erased_producer() -> Result<EntityId> {
+    erased_producer()
+}
