@@ -59,6 +59,7 @@ use std::sync::PoisonError;
 use serde::{Deserialize, Serialize};
 
 use super::run_writer_proof::AgentRunWriterProof;
+use super::spend_record::SpendScopeId;
 use super::{AGENT_DISPATCH_ATTEMPT_TYPE, AgentDispatchInput, AgentDispatcher};
 use crate::Vault;
 use crate::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord, AttemptState};
@@ -268,6 +269,12 @@ pub(super) struct AgentRunTaskBody {
     /// body. Empty for a run that started none, so its TASK reads as before.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub(super) effects: Vec<super::run_effects::AgentRunEffectMark>,
+    /// The run's spend across the machines that ran it (FIX 4889): the
+    /// custody machine and one share per machine, numbers only, never a
+    /// body. `None` for a run whose launch is unmetered, and for a TASK
+    /// minted before it, so such a TASK reads as before.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) spend: Option<AgentRunSpendCarry>,
     /// The proof of the machine that wrote the run's frozen fields
     /// ([`AgentRunTaskBody::frozen_digest`]; `super::run_writer_proof`):
     /// another machine re-creates the run from its frozen payload only while
@@ -306,6 +313,90 @@ impl FrozenContextBound {
             layers: projection.layers,
             memory_sections: projection.memory_sections,
             chat_sections: projection.chat_sections,
+        }
+    }
+}
+
+/// The spend an agent run's launch reserved, as the machines that ran it
+/// committed it (FIX 4889): numbers only, never a body. The take reserves
+/// the remainder of the launch from it, and the custody machine folds the
+/// other machines' shares into its one counter (PR 2).
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+pub(super) struct AgentRunSpendCarry {
+    /// The machine whose spend tree funded the launch: the one counter the
+    /// run's spend lands on (canon ARCH-0026: single-writer, home-node-owned;
+    /// a move carries no budget).
+    pub(super) custody_node: u64,
+    /// How much of the other machines' shares the custody machine has folded
+    /// into its scope of the run so far (PR 2 writes it; 0 until then). The
+    /// custody machine's own share counts those units again.
+    #[serde(default)]
+    pub(super) custody_folded_units: u64,
+    /// One share per scope a machine ran the run under.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(super) shares: Vec<AgentRunSpendShare>,
+}
+
+/// What one machine committed of an agent run's launch under one scope (FIX
+/// 4889): the scope's `spent_units` plus its `held_units`, what its open
+/// children hold, as that machine last wrote the run TASK. A child's spend
+/// reaches the scope only when the child settles, and a child carries its
+/// own carve when it moves, so the whole hold counts (REVIEW-7879). A
+/// machine that runs the run under a second scope (a successor try's, once
+/// the first settled) keeps a share for each, so what it spent under the
+/// first stays counted (REVIEW-7879).
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub(super) struct AgentRunSpendShare {
+    /// The machine's client id, as `AgentRunExecutorLease.node_id` holds it.
+    pub(super) node: u64,
+    /// The scope the run spends under on that machine.
+    pub(super) scope: SpendScopeId,
+    /// That scope's `spent_units` plus its `held_units`.
+    pub(super) committed_units: u64,
+}
+
+impl AgentRunSpendCarry {
+    /// What the machines that ran the run committed of its launch (FIX
+    /// 4889): the saturating sum of every share, less what the custody
+    /// machine folded, which its own share counts again. A take that opens a
+    /// new scope may reserve what the launch reserved less this.
+    pub(super) fn committed_units(&self) -> u64 {
+        self.shares
+            .iter()
+            .fold(0_u64, |total, share| {
+                total.saturating_add(share.committed_units)
+            })
+            .saturating_sub(self.custody_folded_units)
+    }
+
+    /// What the machines that ran the run committed of its launch outside
+    /// the scope `scope` on `node` (FIX 4889): [`Self::committed_units`] less
+    /// that scope's own share. A take that keeps that scope lets it commit
+    /// what the launch reserved less this.
+    pub(super) fn committed_except(&self, node: u64, scope: &SpendScopeId) -> u64 {
+        let own = self
+            .shares
+            .iter()
+            .find(|share| share.node == node && share.scope == *scope)
+            .map_or(0, |share| share.committed_units);
+        self.committed_units().saturating_sub(own)
+    }
+
+    /// Sets the share of `scope` on `node` to `committed_units`, adding it
+    /// when absent (FIX 4889).
+    pub(super) fn stamp(&mut self, node: u64, scope: &SpendScopeId, committed_units: u64) {
+        if let Some(share) = self
+            .shares
+            .iter_mut()
+            .find(|share| share.node == node && share.scope == *scope)
+        {
+            share.committed_units = committed_units;
+        } else {
+            self.shares.push(AgentRunSpendShare {
+                node,
+                scope: scope.clone(),
+                committed_units,
+            });
         }
     }
 }
@@ -594,6 +685,23 @@ fn commit_minted_agent_run_task(
     Ok(())
 }
 
+/// The spend carry a run TASK mints with on `node_id` (FIX 4889):
+/// custody for a metered launch, `None` for an unmetered one. The machine
+/// that dispatches funds the launch from its own tree, so it holds custody;
+/// a promoted child that outlived its root (REVIEW-6638) was funded on the
+/// machine that promotes it.
+fn spend_carry_at_mint(input: &AgentDispatchInput, node_id: u64) -> Option<AgentRunSpendCarry> {
+    let statement = input.launch.as_ref()?;
+    if statement.cap_units.is_none() {
+        return None;
+    }
+    Some(AgentRunSpendCarry {
+        custody_node: node_id,
+        custody_folded_units: 0,
+        shares: Vec::new(),
+    })
+}
+
 /// The write that mints the run TASK of the try `record` under its own id,
 /// from `input`, the dispatch input its payload freezes: `false` when that
 /// run TASK already stands or the run is not one to mint for. A root's
@@ -685,6 +793,7 @@ fn put_agent_run_task_in_txn(
         parent_context,
         created_at: record.created_at,
         effects: Vec::new(),
+        spend: spend_carry_at_mint(input, node_id),
         writer_proof: None,
     };
     // This machine wrote every frozen field from its own queue row and
@@ -1219,6 +1328,7 @@ pub(crate) fn put_peer_agent_run_task_in_txn(
         parent_context: None,
         created_at: now,
         effects: Vec::new(),
+        spend: None,
         writer_proof: None,
     };
     if let Some((machine, key, signed_payload)) = writer {
@@ -1283,7 +1393,14 @@ pub(crate) fn proven_agent_run_task_writer_in(
 
 /// Read-modify-write of one run TASK body in the caller's write; a no-op
 /// update writes nothing, so a renewal not yet due leaves the row
-/// byte-identical.
+/// byte-identical. Every write the run's executor makes stamps its own
+/// share in the same write (FIX 4889): its claim, a renewal (at most once
+/// a half hold, `agent_run_lease_renewal`), the reaper's own renewal, an
+/// effect mark, its settlement, and `release_agent_run_leases` as the
+/// process closes. So a machine that closes leaves an exact share; one
+/// that vanishes leaves the share of its last write, up to half a hold
+/// behind (canon ARCH-0026:440: a deferred cost leak, not a correctness
+/// failure).
 ///
 /// An update that changes the frozen fields
 /// ([`AgentRunTaskBody::frozen_digest`]) is signed again by this machine
@@ -1305,6 +1422,7 @@ pub(super) fn update_agent_run_task_body_in_txn(
     let mut body = decode_agent_run_task_body(raw.entity_type, &raw.body)?;
     let frozen = body.frozen_digest();
     update(&mut body)?;
+    stamp_own_spend_share_in_txn(vault, &*wtxn, &mut body)?;
     let refrozen = body.frozen_digest();
     if refrozen != frozen {
         body.writer_proof = if super::run_writer_proof::counts_in(
@@ -1337,6 +1455,46 @@ pub(super) fn update_agent_run_task_body_in_txn(
             &encoded,
         )
         .apply(wtxn)
+}
+
+/// Stamps this machine's own spend share on the run TASK `body` in the
+/// caller's snapshot (FIX 4889): the `spent_units` plus `held_units` of the
+/// scope the run's live try spends under here, as that scope's share. Only
+/// the run's executor stamps, and only a metered run carries a share; a
+/// carry that is absent, a machine that is not this run's executor, a live
+/// try that does not parse, and a try that spends unmetered here each leave
+/// the body as it is.
+fn stamp_own_spend_share_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    body: &mut AgentRunTaskBody,
+) -> Result<()> {
+    let Some(carry) = body.spend.as_mut() else {
+        return Ok(());
+    };
+    let Some(node) = crate::identity::read_client_id_in_txn(vault, txn)? else {
+        return Ok(());
+    };
+    if node != body.executor.node_id {
+        return Ok(());
+    }
+    let Some(live) = attempt_id_from_hex(&body.live_attempt_ref) else {
+        return Ok(());
+    };
+    let Some(scope) = AgentDispatcher::new(vault).attempt_spend_scope_in_txn(txn, live)? else {
+        return Ok(());
+    };
+    carry.stamp(
+        node,
+        &scope.scope,
+        scope.spent_units.saturating_add(scope.held_units),
+    );
+    Ok(())
+}
+
+/// An attempt id from the 32-hex form a run TASK stores it in.
+pub(super) fn attempt_id_from_hex(hex: &str) -> Option<AttemptId> {
+    AttemptId::from_bytes(&crate::task_verb::decode_hex::<16>(hex)?).ok()
 }
 
 /// What the run TASK `fence` names says of it, read in `txn`. A spawned
