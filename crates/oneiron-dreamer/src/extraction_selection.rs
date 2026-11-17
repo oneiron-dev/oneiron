@@ -425,6 +425,19 @@ pub fn observe_and_select(
     policy_pin: &str,
 ) -> Result<ExtractionSelectionPlan, Error> {
     check_policy_pin(&config.policy_pin, policy_pin)?;
+    let (groups, observations) = observe_groups(client, attempt, now_ms, operands, policy_pin)?;
+    select(&groups, &observations, now_ms, config)
+}
+
+/// Reads bound operands and their evidence unions under one clock and policy pin.
+/// Every returned index names an original request position, including scope and pair facts.
+pub(crate) fn observe_groups(
+    client: &OneironClient,
+    attempt: &str,
+    now_ms: u64,
+    operands: &[Value],
+    policy_pin: &str,
+) -> Result<(CandidateGroups, Observations), Error> {
     let request_indexes: Vec<usize> = operands
         .iter()
         .enumerate()
@@ -466,7 +479,8 @@ pub fn observe_and_select(
             ));
         }
     }
-    select(&groups, &observations, now_ms, config)
+    check_policy_pin(policy_pin, &observations.policy_pin)?;
+    Ok((groups, observations))
 }
 
 /// Recognizes only the reply mirror's explicit declared-person subject form.
@@ -479,26 +493,51 @@ fn declared_subject(operand: &Value) -> bool {
     })
 }
 
-/// Restores original request indexes after a compact bound or union read.
+/// Restores every original request index after a compact bound or union read.
 fn remap_indexes(observations: &mut Observations, request_indexes: &[usize]) -> Result<(), Error> {
     if observations.candidates.len() != request_indexes.len() {
         return Err(Error::InvalidObservations(
             "the read omitted a candidate".to_owned(),
         ));
     }
+    if request_indexes.windows(2).any(|pair| pair[0] >= pair[1]) {
+        return Err(Error::InvalidObservations(
+            "compact request indexes are not strictly increasing".to_owned(),
+        ));
+    }
+    let original_index = |index: usize| {
+        request_indexes.get(index).copied().ok_or_else(|| {
+            Error::InvalidObservations("the read names an unknown candidate".to_owned())
+        })
+    };
     let mut seen = vec![false; request_indexes.len()];
     for candidate in &mut observations.candidates {
         let index = candidate.index;
-        let original = request_indexes.get(index).ok_or_else(|| {
-            Error::InvalidObservations("the read names an unknown candidate".to_owned())
-        })?;
+        let original = original_index(index)?;
         if seen[index] {
             return Err(Error::InvalidObservations(
                 "the read repeated a candidate".to_owned(),
             ));
         }
         seen[index] = true;
-        candidate.index = *original;
+        candidate.index = original;
+    }
+    for prior in &mut observations.priors {
+        for index in &mut prior.scope_equal_candidates {
+            *index = original_index(*index)?;
+        }
+    }
+    for replay in &mut observations.replay {
+        replay.index = original_index(replay.index)?;
+    }
+    for score in &mut observations.scores {
+        score.i = original_index(score.i)?;
+        score.j = original_index(score.j)?;
+        if score.i >= score.j {
+            return Err(Error::InvalidObservations(
+                "a similarity pair is not strictly ordered".to_owned(),
+            ));
+        }
     }
     Ok(())
 }

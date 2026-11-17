@@ -16,6 +16,7 @@
 pub mod conflict_settle;
 pub mod extraction_observations;
 pub mod extraction_reply;
+pub mod extraction_routing;
 pub mod extraction_selection;
 pub mod strength_archive;
 mod strength_scoring;
