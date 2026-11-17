@@ -201,8 +201,8 @@ pub struct BrowserSession {
     /// The history seq the last granted press began after (FIX 10511): a
     /// solved capture ends its span there, before that press.
     pre_press: Option<u64>,
-    /// The grants' policy as last read, the person's approved batches and
-    /// the sends batch presses paid (FIX 4613, 4615).
+    /// The grants' policy as last read and the sends batch presses paid
+    /// (FIX 4613, 4615).
     presses: PressBook,
     /// The receipt of the input the running verb sent whose page did not
     /// read after (FIX 8010), for its batch's stop to carry.

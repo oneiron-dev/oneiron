@@ -108,7 +108,6 @@ use oneiron::code_run::{
     AgentVerbAnswer, AgentVerbDoor, AgentVerbRefusal, AgentVerbRefusalWords, RunCall,
     SelfAgentVerbCall, SelfEffect,
 };
-use oneiron::consent::{BoundClass, BoundEnvelope, StandingConsentGrant};
 use oneiron::llm::decision::{AnswerContract, DecisionRung, HumanAskReason, RoutineOutcome};
 use oneiron::memory::{HostWriteOrigin, Memory};
 use oneiron::retrieval_depth::RetrievalDeadline;
@@ -117,11 +116,11 @@ use oneiron::secret_custody::RunSecretSeat;
 use oneiron::task_verb::sdk::{AgentVerb, AiVerdict, AiVerdictRequest, RunVerb};
 use oneiron_browser::{
     Admitted, BrowserDriver, BrowserEngine, BrowserError, BrowserGuest, BrowserRequestHandler,
-    BrowserSession, DesktopGuest, DesktopSession, EFFECT_CLASSES, FiledWorkflow, FreshGuest,
-    GuestLimits, HandleRetention, LibraryCard, PressMode, RetiredCard, RoutineAnswer, RoutineAsk,
-    RoutineDecider, RoutineReply, RunOutcome, SecretCustody, SendPolicy, SiteSkillLoader,
-    StrictDenial, StrictDenied, SupersedeRefusal, TextCheck, TextCheckReply, WorkflowLibrary,
-    WorkflowProgram, WorkflowProof,
+    BrowserSession, DesktopGuest, DesktopSession, FiledWorkflow, FreshGuest, GuestLimits,
+    HandleRetention, LibraryCard, RetiredCard, RoutineAnswer, RoutineAsk, RoutineDecider,
+    RoutineReply, RunOutcome, SecretCustody, SendPolicy, SiteSkillLoader, StrictDenial,
+    StrictDenied, SupersedeRefusal, TextCheck, TextCheckReply, WorkflowLibrary, WorkflowProgram,
+    WorkflowProof,
 };
 use oneiron_container::{EgressRelay, SessionManifest, SessionTransport};
 use serde_json::Value;

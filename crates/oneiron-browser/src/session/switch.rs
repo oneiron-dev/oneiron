@@ -719,6 +719,7 @@ impl BrowserSession {
             rebound: None,
             effect_class: None,
             press: PressMode::None.as_str().to_owned(),
+            press_source: None,
             screenshot,
             capture_id,
             screenshot_evidence: None,

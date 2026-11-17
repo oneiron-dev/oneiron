@@ -13,6 +13,16 @@
 //! Gate's own composer over the send's facts, pinned as an
 //! `ApprovalTarget::Browser`, the same builder for the digest the owner is
 //! shown and the one the send spends.
+//!
+//! The press each class runs under ([`Vault::browser_send_policy`], PLAN
+//! L4-03; ARCH-0046 #send-grant and #check-in-roles-20261110) starts from
+//! the vault's send grant, as the Gate's check-in of an agent's send reads
+//! it: an agent's `send` and `publish` run with no press where the vault's
+//! `outbound_send` rows, or with none the agent's role's default, release
+//! its sends. The standing grants then cover their classes as above: one
+//! with no budget runs its class with no press, and a budgeted one is a
+//! reviewed batch of that many sends (Engine ruling L4-03-BROWSER-BATCH =
+//! A), which never adds a press to a class the send grant released.
 
 use crate::Vault;
 use crate::edge::EdgeActorClass;
@@ -29,6 +39,7 @@ use super::bound::{
 use super::doors::ConsentEvaluation;
 use super::effect::{ConsentDecision, EffectDigest};
 use super::grant::StandingConsentGrant;
+use oneiron_browser::{EFFECT_CLASSES, PressMode, SEND_CLASSES, SendPolicy};
 
 /// The channel a browser send's Gate input names.
 const BROWSER_CHANNEL: &str = "browser";
@@ -38,6 +49,9 @@ const PROJECT_SELECTOR: &str = "project:";
 
 /// The selector a grant names one audience member by, before the member.
 const AUDIENCE_SELECTOR: &str = "audience:";
+
+/// The prefix of the press source a standing grant gives (PLAN L4-03 D4).
+const GRANT_SOURCE_PREFIX: &str = "grant:";
 
 /// Who sends from a run's browser, and where: the axes a standing browser
 /// grant is scoped on.
@@ -267,6 +281,91 @@ fn browser_pinned_gate_input(facts: &BrowserConsentFacts) -> ExternalEffectGateI
 }
 
 impl Vault {
+    /// The press each browser effect class runs under for the sends in
+    /// `scope` (module doc), with what set it: the vault's send grant for an
+    /// agent caller's `send` and `publish`, then the standing action grants
+    /// of each class whose scope covers `scope` (FIX 10422). With no scope
+    /// (a run's policy before its first call names its caller), no send
+    /// grant applies and every standing grant of a class counts. A payment
+    /// stays a person's press, and a class nothing covers takes a press per
+    /// send.
+    ///
+    /// # Errors
+    /// Storage errors, resolving the policy manifest or reading the agent's
+    /// membership or the grants.
+    pub fn browser_send_policy(&self, scope: Option<&BrowserSendScope>) -> Result<SendPolicy> {
+        let txn = self.store.env.read_txn()?;
+        let mut policy = SendPolicy::default();
+        let released = self.browser_send_release_in_txn(&txn, scope)?;
+        if let Some(source) = &released {
+            for class in SEND_CLASSES {
+                policy.modes.insert((*class).to_owned(), PressMode::None);
+                policy.sources.insert((*class).to_owned(), source.clone());
+            }
+        }
+        for grant in &self.active_standing_consent_grants_in_txn(&txn)? {
+            let StandingConsentGrant::Action(_) = grant else {
+                continue;
+            };
+            let bound = grant.bound();
+            let BoundClass::Action(class) = bound.class() else {
+                continue;
+            };
+            let class = class.as_str();
+            if !EFFECT_CLASSES.contains(&class) || SendPolicy::person_only(class) {
+                continue;
+            }
+            if scope.is_some_and(|scope| !scope.covered_by(grant, class)) {
+                continue;
+            }
+            let budget = match bound.envelope() {
+                BoundEnvelope::Action(envelope) => envelope.budget(),
+                BoundEnvelope::Disclosure(_) => None,
+            };
+            let source = format!("{GRANT_SOURCE_PREFIX}{}", bound.digest().to_hex());
+            match budget {
+                // The send grant already runs the class with no press.
+                Some(_) if released.is_some() && SEND_CLASSES.contains(&class) => {}
+                Some(count) => {
+                    policy.modes.insert(class.to_owned(), PressMode::PerBatch);
+                    policy
+                        .batch
+                        .insert(class.to_owned(), u32::try_from(count).unwrap_or(u32::MAX));
+                    policy.sources.insert(class.to_owned(), source);
+                }
+                None => {
+                    policy.modes.insert(class.to_owned(), PressMode::None);
+                    policy.sources.insert(class.to_owned(), source);
+                }
+            }
+        }
+        Ok(policy)
+    }
+
+    /// The covering ref of the vault's send grant where it releases an
+    /// agent's browser sends in `scope` with no press: the check-in the Gate
+    /// gives an agent's own send (`check_in:row:<ref>` or
+    /// `check_in:role:<role>`). `None` where it keeps a press, and for a
+    /// caller that is no agent: a person's own send is go, and the Gate
+    /// checks in only an agent's (ARCH-0082 #role-defaults).
+    fn browser_send_release_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        scope: Option<&BrowserSendScope>,
+    ) -> Result<Option<String>> {
+        let Some(scope) = scope.filter(|scope| scope.actor_class == EdgeActorClass::Agent) else {
+            return Ok(None);
+        };
+        let resolution = crate::gate::resolve_policy_manifest(&self.store, txn)?;
+        let check_in = crate::check_in::agent_send_check_in_in_txn(
+            &self.store,
+            txn,
+            resolution.check_in_policy(),
+            scope.actor,
+        )?;
+        Ok(check_in.release_grant_ref())
+    }
+
     /// The consent verdict on one browser send (FIX 10422), read from the
     /// active standing grants of its class: `Auto` when one covers it whole
     /// ([`BrowserSendScope::covered_by`]) with no budget, a send that runs

@@ -149,6 +149,12 @@ pub struct EffectReceipt {
     pub effect_class: Option<String>,
     /// The press the effect ran under: `per_send`, `per_batch` or `none`.
     pub press: String,
+    /// What set `press` where no person pressed (PLAN L4-03 D4): the
+    /// vault's send grant, `check_in:row:<ref>` or `check_in:role:<role>`,
+    /// or a standing grant, `grant:<digest>`. None for a person's press per
+    /// send and for an effect no class marks.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub press_source: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub screenshot: Option<String>,
     /// The capture id of `screenshot`. Each receipt's screenshot is a
