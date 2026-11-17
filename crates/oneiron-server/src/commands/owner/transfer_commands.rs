@@ -151,6 +151,8 @@ struct ImportedArchive {
     /// under that restore's permit only.
     owner_restore_receipt: Option<String>,
     embedding_setup: ImportedEmbeddingSetup,
+    /// The retained side rows this import kept, and the manifest's table omissions.
+    retained_side_rows: oneiron::batch::export::RetainedSideImportSummary,
 }
 
 /// What the archive's embedding setup did (OF-370): descriptors only, so a
@@ -260,6 +262,7 @@ fn import_archive(args: crate::cli::ImportArchiveArgs) -> anyhow::Result<()> {
             withheld_spaces: setup.withheld.spaces,
             withheld_slots: setup.withheld.slots,
         },
+        retained_side_rows: receipt.retained_side_rows,
     })
 }
 
@@ -282,6 +285,7 @@ pub fn import(command: ImportCommand) -> anyhow::Result<()> {
         ImportCommand::HookTranscript(args) => {
             return super::history_import::import_history(HistorySource::HookTranscript, *args);
         }
+        ImportCommand::Slack(args) => return super::history_import::slack::import_slack(*args),
         ImportCommand::Notes(args) => return super::history_import::notes::import_notes(*args),
         ImportCommand::Archive(args) => return import_archive(*args),
         ImportCommand::Folder(command) => {

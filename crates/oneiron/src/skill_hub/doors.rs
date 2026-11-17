@@ -436,10 +436,11 @@ impl Vault {
     }
 
     /// Under an automatic policy, applies same-or-narrower updates and
-    /// proposes capability widening. A changed Active body applies once the
-    /// update's own admission passes (the scan gate over its static and
-    /// advisory receipts, and the owner's hash rule); one that does not pass
-    /// is proposed and the live bytes stay.
+    /// proposes capability widening. A changed Active body applies unless
+    /// the owner's hash rule blocks it; a blocked one is proposed and the
+    /// live bytes stay. A scanner flag on the update's bytes holds
+    /// nothing: the scanner is a signal, and its verdict rows stay on the
+    /// update (ARCH-0053 #promise-gate-23).
     pub fn sync_skill_from_hub(
         &self,
         entity: &EntityId,
@@ -640,9 +641,10 @@ impl Vault {
     /// Lands a same-or-narrower hub update on `entity` in `txn`: the record
     /// with its local axes kept, the capability surface, provenance, the
     /// static and advisory scan receipts and the package. Answers whether
-    /// the update's own admission passed: the scan gate admits the bytes and
-    /// the owner's hash rule does not block them. A gate that asks for an
-    /// owner tap leaves an Active record's approval Proposed.
+    /// the update's own admission passed: the owner's hash rule does not
+    /// block the bytes. A scanner flag on the bytes holds nothing — the
+    /// scanner is a signal, and its verdict rows stay on the update with
+    /// the approval as it was (ARCH-0053 #promise-gate-23).
     #[expect(
         clippy::too_many_arguments,
         reason = "the sync's checked record, package identity, scans and write timing"
@@ -660,7 +662,7 @@ impl Vault {
         learned_at: u64,
         authorization: Option<&crate::consent::ApproveOnceAuthorization>,
     ) -> Result<bool> {
-        let mut updated = local_sync_record(package, current, content_hash);
+        let updated = local_sync_record(package, current, content_hash);
         if let Some(authorization) = authorization {
             self.apply_hub_update_record_with_consent_in_txn(
                 txn,
@@ -707,25 +709,19 @@ impl Vault {
                 learned_at,
             )?;
         }
-        let gate_passed = !matches!(
-            crate::skill_scan::scan_gate_for_activation_in_txn(&self.store, txn, content_hash)?,
-            crate::skill_scan::ActivationPosture::ProposedRequired { .. }
-        );
-        if !gate_passed && updated.lifecycle_status == SkillLifecycle::Active {
-            // The old bytes' approval cannot authorize a newly unvetted update.
-            updated.approval_status = ClaimApprovalStatus::Proposed;
-            self.apply_hub_sync_skill_record(txn, entity, &updated, occurred, learned_at)?;
-        }
         let mut saved = package.clone();
         saved.record = self.read_skill_record_in_txn(txn, entity)?;
         self.persist_hub_package_in_txn(txn, entity, &saved)?;
         crate::team::pattern::bind_hub_pattern_in_txn(self, txn, entity, &saved.files, learned_at)?;
-        Ok(gate_passed
-            && !super::import_receipt::marketplace_hash_blocked_in_txn(
-                &self.store,
-                txn,
-                content_hash,
-            )?)
+        // GATE-23 (ARCH-0053 #promise-gate-23): a scanner flag on the
+        // update's bytes holds nothing — the scanner is a signal, and the
+        // verdict rows ingested above stay on the update with the record's
+        // approval as it was. Only the owner's hash rule decides admission.
+        Ok(!super::import_receipt::marketplace_hash_blocked_in_txn(
+            &self.store,
+            txn,
+            content_hash,
+        )?)
     }
 
     /// Refuses cross-hub dependencies before any package can materialize.

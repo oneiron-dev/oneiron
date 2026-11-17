@@ -74,12 +74,13 @@ pub use member::{
 };
 pub(crate) use policy::{INQUIRY_ROW_KEY, InquiryPolicyRead};
 pub use policy::{INQUIRY_ROW_VERSION, InquiryKeepSetting, InquiryKeepSource, InquiryPolicy};
-#[cfg_attr(not(oneiron_test_support), allow(unused_imports))]
-pub(crate) use receipt::write_inquiry_receipt_in_txn;
 pub(crate) use receipt::{erase_inquiry_receipt_actor_in_txn, inquiry_receipts};
+#[cfg_attr(not(oneiron_test_support), allow(unused_imports))]
+pub(crate) use receipt::{write_inquiry_receipt_in_txn, write_inquiry_terms_receipt_in_txn};
 pub use record::{
     Inquiry, InquiryAnswer, InquiryAsker, InquiryKeep, InquiryOutcome, InquiryStatement,
-    InquiryTask, StatementSource,
+    InquiryTask, MAX_INQUIRY_PURPOSE_BYTES, MAX_INQUIRY_QUESTION_BYTES, MAX_INQUIRY_ROLE_BYTES,
+    MAX_INQUIRY_WIRE_BYTES, StatementSource,
 };
 pub use route::{InquiryRoute, InquiryRouteRequest};
 pub(crate) use route::{end_inquiry_route_in_txn, erase_inquiry_route_actor_in_txn};
