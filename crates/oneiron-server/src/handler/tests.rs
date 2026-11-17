@@ -2591,6 +2591,63 @@ async fn real_codec_withholds_a_parked_frame_when_the_peer_resumes_after_revocat
     );
 }
 
+/// A selector answer's send judges what the answer was made under again once
+/// it waits on the peer (SELECTOR-RELEASE-POINT = B): an answer whose grant is
+/// deleted while its frame sits parked is withheld when the peer resumes, as a
+/// revoked credential's frame is.
+#[tokio::test]
+async fn real_codec_withholds_a_parked_selector_answer_whose_grant_is_deleted() {
+    let dir = tempfile::tempdir().unwrap();
+    let vault = Arc::new(oneiron::Vault::open(dir.path(), oneiron::VaultConfig::device()).unwrap());
+    let grant_id = oneiron::EntityId::now();
+    let grant = oneiron::federation::FederationGrant::new(
+        oneiron::FederationGrantScope::vault(7),
+        oneiron::EntityId::now(),
+        oneiron::federation::FederationGrantRole::Member,
+        oneiron::federation::FederationGrantPreset::Member,
+    );
+    oneiron::sync::put_selector_test_federation_grant(&vault, &grant_id, &grant, 1).unwrap();
+    let mut answers = crate::selector_release::SelectorAnswers::default();
+    let basis = crate::selector_release::SelectorReleaseBasis::take(&vault, grant_id);
+    let queued = answers.queue(basis, vec![vec![7u8; UNDER_THRESHOLD_PAYLOAD]]);
+    let frame = crate::selector_release::queued_answer_frame(&queued[0]).unwrap();
+    let released = answers
+        .release(&vault, &frame)
+        .expect("the answer stands as its send starts");
+
+    let socket = CapturingSocket::default();
+    let registry = Arc::new(MutableRevocations::default());
+    let mut guarded = real_codec_guarded(&socket, &registry, REAL_CODEC_WRITE_BUFFER).await;
+    guarded.answer = Some(released);
+
+    socket.block_writes();
+    let mut send = Box::pin(guarded.send_binary(frame.frame.to_vec()));
+    assert!(
+        futures_util::poll!(send.as_mut()).is_pending(),
+        "the blocked socket must park the send, or this row is not testing the wait"
+    );
+    assert_wire_is_empty(&socket);
+
+    // The host deletes the grant while the answer waits on the peer, and only
+    // then does the peer start reading again.
+    vault.delete_entity(&grant_id).unwrap();
+    socket.unblock_writes();
+
+    let keep_going = tokio::time::timeout(FLUSH_RECONSULT_INTERVAL * 20, send)
+        .await
+        .expect("the send must judge the answer on its own tick, not wait on the peer");
+
+    assert!(
+        !keep_going,
+        "an answer whose grant is gone must not be sent"
+    );
+    assert_wire_is_empty(&socket);
+    assert!(
+        guarded.socket.is_none(),
+        "the refusal must drop the whole real transport"
+    );
+}
+
 /// The package id a package's named dependency EDGE resolves to.
 ///
 /// `resolve.nodes[].deps[].name` is the extern-crate name the dependent's code
