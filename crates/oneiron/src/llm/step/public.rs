@@ -669,12 +669,13 @@ fn step_result(
             trap_ref: trap.trap_claim_id.to_hex(),
         },
         // Its offer rests for its health past this submission's wait (FIX
-        // 11226): the step parks, unsent and unfailed, until the offer is
-        // back, keeping the sends it made.
-        Err(DurableStepError::Llm(LlmError::Retryable(RetryableLlmError::HealthRest {
-            resets_at,
-            ..
-        }))) => ModelStepResult::Parked {
+        // 11226), or no rung serves at this hour (UNBUILT-14): the step parks,
+        // unsent and unfailed, until the offer is back, keeping the sends it
+        // made.
+        Err(DurableStepError::Llm(LlmError::Retryable(
+            RetryableLlmError::HealthRest { resets_at, .. }
+            | RetryableLlmError::OutsideHours { resets_at, .. },
+        ))) => ModelStepResult::Parked {
             until: resets_at.first().copied(),
             sends: row.sends,
         },
