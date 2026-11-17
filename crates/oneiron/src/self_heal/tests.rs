@@ -52,6 +52,7 @@ fn event_for(scope_ref: &str, observation: &DiagnosticObservation) -> Diagnostic
     DiagnosticEvent {
         detector_id: "test.stub_detector".to_owned(),
         event_class: DiagnosticEventClass::TestFailure,
+        signal: None,
         actor_class: "system".to_owned(),
         actor_ref: Some(observation.source_ref),
         source: DiagnosticSourceKind::Receipt,
@@ -280,6 +281,7 @@ fn maintenance_door_validates_the_body() {
                     entity_type: ENTITY_TYPE_DIAGNOSTIC,
                     occurred: at(1_000),
                     learned_at: 1_001,
+                    row_version: None,
                     data: b"not-messagepack".to_vec(),
                     allow_maintenance: true,
                     allow_reserved_predicate: false,

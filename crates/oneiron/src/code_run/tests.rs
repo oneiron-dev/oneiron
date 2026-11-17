@@ -16,8 +16,6 @@ use crate::{
 #[cfg(any())]
 #[path = "tests_room_saver.rs"]
 mod room_saver;
-// FIX [LIBTEST-QUARANTINE-CODE-RUN-TESTS-ROOM-SAVING]: the lib test target's type check fails here (4 errors: E0063 x2, E0061 x1, E0308 x1); port it, then drop this gate
-#[cfg(any())]
 #[path = "tests_room_saving.rs"]
 mod room_saving;
 
