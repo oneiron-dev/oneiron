@@ -25,9 +25,11 @@ mod ask_world_hold;
 mod attendee_answer;
 mod board_task;
 mod comm_widen;
+mod compose;
 mod contribution_pair;
 pub(crate) use board_task::board_task_for_id;
 pub use comm_widen::CommWidenRevokeReceipt;
+pub use compose::{OneLinerBrief, TaskBriefDraftRequest, TaskBriefModel, TaskBriefModelBinding};
 mod brief;
 mod brief_history;
 pub(crate) use brief_history::settled_brief_in;
@@ -212,6 +214,8 @@ pub use browser_workflow::{
     task_run_done_means, task_workflow_binding, task_workflow_binding_in_txn,
 };
 pub use decision_port::TaskDecisions;
+#[cfg(oneiron_test_support)]
+pub(crate) use highway_post::parked_post_brief;
 pub(crate) use highway_post::settle_task_proposal_in_txn;
 pub use highway_types::{
     AttemptHandle, AttemptView, HostBinding, TaskAccept, TaskCall, TaskCallReceipt, TaskHandle,

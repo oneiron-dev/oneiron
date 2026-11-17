@@ -83,6 +83,22 @@ impl Memory<'_> {
         }
     }
 
+    /// [`Self::tasks_highway`]'s Post arm for a brief this engine composed
+    /// and stamped (L8-07, [`Memory::compose_task_brief`]): the one entry a
+    /// stamped brief takes, under the bound decision path. The public arm
+    /// refuses a stamped brief as a caller's.
+    pub(super) fn tasks_highway_composed(
+        &self,
+        via: TaskVia,
+        post: TaskPost,
+    ) -> MemoryResult<TaskCallReceipt> {
+        if !self.has_task_work_turn() {
+            return self.task_work_memory().tasks_highway_composed(via, post);
+        }
+        verify_actor_binding(self.vault(), self.actor(), self.actor_class())?;
+        self.post_as(&via, post, self.task_decisions(), None)
+    }
+
     /// Wire post: a TASK with a typed brief and an explicit assignee.
     pub fn tasks_post(&self, post: TaskPost) -> MemoryResult<TaskCallReceipt> {
         self.tasks_highway(TaskVia::Wire, TaskCall::Post(post))

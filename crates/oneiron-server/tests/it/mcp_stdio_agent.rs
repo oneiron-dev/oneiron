@@ -1196,6 +1196,8 @@ fn seed_failed_task_and_open_turn(
             assignee: None,
             intent_key: None,
             brief: None,
+            one_liner: None,
+            lens_refs: Vec::new(),
             ttl: None,
             parent_ref: None,
             due_at: None,
