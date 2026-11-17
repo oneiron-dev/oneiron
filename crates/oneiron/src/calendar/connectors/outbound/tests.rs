@@ -559,6 +559,7 @@ fn a_push_under_a_pending_passport_uid_never_moves_the_uid_index() {
             direction: CalendarPassportDirection::TwoWay,
             last_seen_at: NOW,
             presence: CalendarPassportPresence::Live,
+            cancelled_since: None,
         }),
         1.0,
         crate::ClaimApprovalStatus::Proposed,
