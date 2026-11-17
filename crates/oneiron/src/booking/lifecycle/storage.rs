@@ -1,6 +1,7 @@
 //! The single-writer lease and the vault_meta/receipt key-value primitives,
 //! the versioned row codec, the claim-value codec, and the error constructors.
 
+use oneiron_contracts::msgpack;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
@@ -10,7 +11,6 @@ use crate::booking::BookingError;
 use crate::side_table::{self, SideTable, VersionedNamed};
 use crate::temporal::TimeRange;
 use crate::{EntityId, Vault};
-use oneiron_contracts::msgpack;
 
 /// One session's active soft hold. Key: hash32 (session-key digest).
 pub(in crate::booking) const HOLD: SideTable<
