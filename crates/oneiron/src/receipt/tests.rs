@@ -1556,22 +1556,18 @@ fn disclosure_stamp_rides_emit_receipts_and_reads_optionally() {
     assert_eq!(read_back.disclosure_stamp, None);
 }
 
-// FIX [LIBTEST-QUARANTINE-RECEIPT-TESTS-ITEMS]: the lib test target's type check fails here (1 errors: E0061); port it, then drop this gate
-#[cfg(any())]
-/// MS-01 (ARCH-0055) SPEC-CONTRADICTION: the earlier perimeter regression
-/// claimed out-of-window rows must not charge the cap. That contract was the
-/// bug: it capped candidates, not WORK, and allowed an unbounded ledger walk.
-/// The ruled security property caps every visited row. Because UUID mint
-/// order is not `at` order, the bounded scan can starve the older-minted
-/// in-window receipt below; an `at`-ordered index or cursor pagination is a
-/// separate deferred design item.
+/// MS-01 (ARCH-0055), FIX 3582 (rule 5): the identity-topology receipt scan
+/// reads the whole type-76 family newest-first, out-of-window rows included,
+/// with no row cap. A flood of newer-minted, backdated events therefore
+/// cannot starve the older-minted in-window receipt (UUID mint order is not
+/// `at` order); a cap here once hid it.
 #[test]
-fn identity_topology_receipt_scan_caps_visited_rows() -> Result<()> {
+fn identity_topology_receipt_scan_finds_an_older_receipt_past_a_flood() -> Result<()> {
     use crate::identity_topology::{
         IdentityOpEvidence, IdentityOpWrite, IdentityTopologyOp, MergeOp, SurvivorshipPlan,
     };
 
-    const SCAN_CAP: usize = 8;
+    const FLOOD_EVENTS: usize = 9;
     let dir = tempfile::tempdir()?;
     let vault = Vault::open(dir.path(), embedding_test_config())?;
     for seed in [0x61_u8, 0x62, 0x63, 0x64] {
@@ -1592,23 +1588,21 @@ fn identity_topology_receipt_scan_caps_visited_rows() -> Result<()> {
         })
     };
 
-    // The in-window receipt has the OLDEST mint id (scanned LAST).
-    vault.apply_identity_topology_op(
-        &merge(vec![entity(0x62)], entity(0x61)),
-        &IdentityOpWrite::auto(ClaimSource::Inferred),
-        1_000,
-    )?;
-
-    // Newer-minted, BACKDATED, parked events — more than the scan cap.
+    // Parked events project a receipt without a seal (H161 binds only
+    // applied decisions), so the test needs no seal fixture.
     let proposed = IdentityOpWrite {
         source: ClaimSource::Inferred,
         approval: ClaimApprovalStatus::Proposed,
         confidence: 1.0,
         actor: None,
     };
+    // The in-window receipt has the OLDEST mint id (scanned LAST).
+    vault.apply_identity_topology_op(&merge(vec![entity(0x62)], entity(0x61)), &proposed, 1_000)?;
+
+    // Newer-minted, BACKDATED (out-of-window) parked events.
     let flood = merge(vec![entity(0x64)], entity(0x63));
     vault.with_write_txn(|wtxn| {
-        for _ in 0..=SCAN_CAP {
+        for _ in 0..FLOOD_EVENTS {
             vault.apply_identity_topology_op_in_txn(wtxn, &flood, &proposed, 10)?;
         }
         Ok(())
@@ -1621,11 +1615,11 @@ fn identity_topology_receipt_scan_caps_visited_rows() -> Result<()> {
         &ReceiptQuery::new(10)
             .with_kind(ReceiptKind::IdentityLifecycle)
             .with_time_bounds(Some(500), Some(2_000)),
-        SCAN_CAP,
     )?;
-    assert!(
-        receipts.is_empty(),
-        "the visited-row work cap must stop before an older-minted receipt hidden by the flood"
+    assert_eq!(
+        receipts.len(),
+        1,
+        "the older-minted in-window receipt must survive a newer out-of-window flood"
     );
     Ok(())
 }

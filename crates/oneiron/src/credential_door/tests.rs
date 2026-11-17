@@ -269,12 +269,6 @@ fn is_scan_failure(err: &CredentialDoorError) -> bool {
     matches!(err, CredentialDoorError::ScanFailure { .. })
 }
 
-// FIX [LIBTEST-QUARANTINE-CREDENTIAL-DOOR-TESTS-ITEMS]: retired behaviour, not a port (1 errors: E0599): CredentialDoorError::BinaryContentRejected is gone since every pushed byte is scanned (G7-BINARY = A, FIX 6871); rewrite to the scanned-binary disposition or delete, then drop this gate
-#[cfg(any())]
-fn is_binary_rejected(err: &CredentialDoorError) -> bool {
-    matches!(err, CredentialDoorError::BinaryContentRejected { .. })
-}
-
 fn secret_text() -> &'static str {
     std::str::from_utf8(SECRET_VALUE).expect("benign fixture is text")
 }
@@ -701,10 +695,20 @@ fn a_pushed_blob_debug_never_prints_added_bytes() {
     assert!(!printed.contains("ghp_"));
 }
 
-// FIX [LIBTEST-QUARANTINE-CREDENTIAL-DOOR-TESTS-ITEMS]: retired behaviour, not a port (1 errors: E0599): CredentialDoorError::BinaryContentRejected is gone since every pushed byte is scanned (G7-BINARY = A, FIX 6871); rewrite to the scanned-binary disposition or delete, then drop this gate
-#[cfg(any())]
+/// The value-free hits of a scan verdict, whichever disposition the one
+/// G7-BINARY policy point names (refuse today, admit-marked after FIX 7608).
+fn verdict_hits(verdict: &DoorScanVerdict) -> &[ReceiveScanHit] {
+    match verdict {
+        DoorScanVerdict::Clean => &[],
+        DoorScanVerdict::Rejected { hits, .. } | DoorScanVerdict::AdmitMarked { hits } => hits,
+    }
+}
+
+/// G7-BINARY = A (FIX 6871): binary bytes are scanned, never refused for
+/// being binary. NUL-bearing, magic-prefixed, high-entropy and stray
+/// continuation bytes with no credential in them all scan clean.
 #[test]
-fn binary_lines_reject_typed_whatever_their_entropy_or_magic() {
+fn binary_lines_scan_clean_whatever_their_entropy_or_magic() {
     let (_tmp, _vault, door) = door_fixture();
     let png = b"\x89PNG\r\n\x1a\n\x00\x00\x00\x0dIHDR".to_vec();
     let samples: Vec<(&str, Vec<u8>)> = vec![
@@ -720,27 +724,29 @@ fn binary_lines_reject_typed_whatever_their_entropy_or_magic() {
 
     for (name, bytes) in samples {
         let blobs = [blob("assets/blob.bin", &[&bytes])];
-        let err = scan(&door, &blobs).expect_err("no pass path exists");
-        assert!(is_binary_rejected(&err), "sample {name}");
-        match err {
-            CredentialDoorError::BinaryContentRejected { path } => {
-                assert_eq!(path, "assets/blob.bin", "sample {name}");
-            }
-            other => panic!("sample {name} rejected wrongly: {other:?}"),
-        }
+        let verdict = scan(&door, &blobs);
+        assert!(
+            matches!(verdict, Ok(DoorScanVerdict::Clean)),
+            "sample {name}: {verdict:?}"
+        );
     }
 }
 
-// FIX [LIBTEST-QUARANTINE-CREDENTIAL-DOOR-TESTS-ITEMS]: retired behaviour, not a port (0 errors: none; calls is_binary_rejected): CredentialDoorError::BinaryContentRejected is gone since every pushed byte is scanned (G7-BINARY = A, FIX 6871); rewrite to the scanned-binary disposition or delete, then drop this gate
-#[cfg(any())]
+/// G7-BINARY = A (FIX 6871): a NUL byte does not hide the rest of the blob
+/// from the scan. A credential next to binary bytes is found, read as
+/// binary, and named by its path.
 #[test]
-fn binary_content_dominates_a_detector_hit_in_the_same_blob() {
+fn a_detector_hit_in_a_binary_blob_is_found() {
     let (_tmp, _vault, door) = door_fixture();
     let lines: [&[u8]; 2] = [DETECTED_LINE, b"trailing\0binary"];
     let blobs = [blob("src/config.rs", &lines)];
 
-    let err = scan(&door, &blobs).expect_err("never partially scanned");
-    assert!(is_binary_rejected(&err));
+    let verdict = scan(&door, &blobs).expect("the scan produced a verdict");
+    let hits = verdict_hits(&verdict);
+    assert_eq!(hits.len(), 1, "{verdict:?}");
+    assert_eq!(hits[0].path, "src/config.rs");
+    assert_eq!(hits[0].content_kind, ReceiveBlobKind::Binary);
+    assert!(!format!("{verdict:?}").contains("ghp_"));
 }
 
 #[test]

@@ -1229,8 +1229,6 @@ fn dropping_a_sole_active_bundled_skill_refuses_update() -> Result<()> {
     );
     Ok(())
 }
-// FIX [LIBTEST-QUARANTINE-SKILL-HUB-PACK-CATALOG-ADMISSION-TESTS-ITEMS]: calls super::tests::agent_files, which [LIBTEST-QUARANTINE-SKILL-HUB-PACK-CATALOG-TESTS] gates; drop this gate with that port
-#[cfg(any())]
 #[test]
 fn agent_pack_and_section_share_fit_path_with_typed_permission_card() -> Result<()> {
     struct Bindings;
