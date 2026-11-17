@@ -351,7 +351,7 @@ async function fed02Accept(actor: PairedActor, vaultId: string, role: "owner" | 
 
 /* FEDERATION-02 — covers part of its promise (the runner sets its status).
  * Promise: two live Owners jointly configure a veto policy, an Owner objection survives restart, another Owner cannot clear it, and an Admin cannot object.
- * Doors: conversations.create, witness, get, people.create, self.actor, shape.plan/apply/read, members.invitations/accept/projection, shared.policy.get/propose/answer/change/changes, shared.propose_delete/object/withdraw_objection/execute/started/deletion/receipt, shared.owner_change_wait.get, receipts.get, restart.
+ * Doors: conversations.create, witness, get, people.create, self.actor, shape.plan/apply/read, members.invitations/accept/projection, shared.policy.get/propose/answer/change/changes, owner_confirm.preview, shared.propose_delete/object/withdraw_objection/execute/started/deletion/receipt, shared.owner_change_wait.get, receipts.get, restart.
  * Unproved: transfer/remove/erase veto journeys and the four-act 604800 default (transfer/remove ship at wait 0 with no veto; needs an engine ruling or fix, no new door).
  * Unproved: a public elapsed-maturity observation for the held act (matured only lists persisted notices; needs an Owner-grant act-status read such as vault.shared.act.get).
  * Unproved: former/dead third-Owner release (members.remove refuses Owners; needs a public person-liveness revocation verb behind Owner membership).
@@ -503,7 +503,11 @@ suite.test(test, "FEDERATION-02", "Two live Owners jointly configure a veto poli
     if (!deleteAfter) throw new Error("policy lost its delete_vault row after the change applied");
     expect(deleteAfter).toEqual(shortPolicy);
     expect(after.policy_hash).not.toBe(hash);
-    const act = await owner.call("vault.shared.propose_delete", { vault_id: vaultId });
+    // The vault delete is one-way: it takes the owner's shared confirm (L8-49).
+    const deletePreview = await owner.call("vault.owner_confirm.preview", {
+      verb: "vault.shared.propose_delete", input: { vault_id: vaultId },
+    });
+    const act = await owner.call("vault.shared.propose_delete", { vault_id: vaultId, confirm: deletePreview.confirm });
     expect(act.act).toBe("delete_vault");
     expect(act.vault_id).toBe(vaultId);
     expect(act.starter).toBe(ownerRef);

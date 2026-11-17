@@ -178,8 +178,6 @@ impl Vault {
     }
 }
 
-// FIX [LIBTEST-QUARANTINE-SCAN-CHECK-TABLE-TESTS]: the lib test target's type check fails here (8 errors: E0560 x2, E0063 x2, E0639 x2, E0061 x1, E0599 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod table_tests;
 pub(crate) mod tables;

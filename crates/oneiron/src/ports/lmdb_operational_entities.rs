@@ -195,7 +195,11 @@ impl EntityStoreMaintenance for Store {
         row.body = crate::connector_key::encode_connector_key_body(record)?;
         let payload = row.encode();
         crate::vault::entity_revision::capture_entity_revision(self, txn, id, &payload)?;
-        self.entities.put(txn, id.as_bytes(), &payload)
+        self.entities.put(txn, id.as_bytes(), &payload)?;
+        // FIX RAW-REWRITE-SHORT-ID-STALE: a live read issues the key's short
+        // ref with the hash of the body this put wrote (a revoke or a
+        // suspension changes it), so the index moves to that hash here.
+        crate::vault::entity_revision::refresh_live_short_id_in_txn(self, txn, id)
     }
     fn port_habit_streak_materialize(
         &self,
@@ -215,6 +219,10 @@ impl EntityStoreMaintenance for Store {
             let payload = row.encode();
             crate::vault::entity_revision::capture_entity_revision(self, txn, id, &payload)?;
             self.entities.put(txn, id.as_bytes(), &payload)?;
+            // FIX RAW-REWRITE-SHORT-ID-STALE: this runs at the batch tail,
+            // after the batch indexed the habit's body; the streak fields
+            // change the hash a live read issues the short ref with.
+            crate::vault::entity_revision::refresh_live_short_id_in_txn(self, txn, id)?;
         }
         Ok(())
     }

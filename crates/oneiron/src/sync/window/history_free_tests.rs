@@ -412,6 +412,7 @@ fn device_bound_secret(vault: &Vault, at: u64) -> (EntityId, Vec<u8>) {
             name: "fixture-name".to_owned(),
             class: CustodyClass::CustodyDeviceBound,
             device_only: false,
+            model_reveal_allowed: true,
             value_bytes: b"placeholder value".to_vec(),
             status: SecretCustodyStatus::Active,
             registered_at: at,

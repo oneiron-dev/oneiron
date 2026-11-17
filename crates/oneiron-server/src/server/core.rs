@@ -151,6 +151,9 @@ pub struct SyncServer {
     /// Authenticated booking calls per actor this minute (FIX 128-131),
     /// measured against their `[limits]` rows; never a window.
     pub(crate) booking_calls: super::booking_calls::AuthenticatedBookingCalls,
+    /// The Stripe API origin booking deposits call (BK-DEPOSITS): Stripe's
+    /// own in service; the tests point it at a loopback fake.
+    pub(crate) booking_deposit_stripe_base: String,
     /// The lines authenticated booking requests wait in, one per window
     /// (ARCH-0062 #booking-turn-divergence); never persisted.
     pub(crate) booking_turn_lines: super::booking_turn_lines::BookingTurnLines,
@@ -385,8 +388,8 @@ const _: fn(&SyncServer) = |server| {
         context_reads, renderer_scratch, query_checks, managed_issuer, host_root_issuer,
         recovery_box_hold,
         policy_doors, account_keys, usage_ledger, retrieval_buffer, host_account, wire_telemetry,
-        mesh_pressure, retained, presence, booking_calls, removal_deliveries, shared_envs,
-        booking_turn_lines,
+        mesh_pressure, retained, presence, booking_calls, booking_deposit_stripe_base,
+        removal_deliveries, shared_envs, booking_turn_lines,
         leaf_keys, lens_frames, note_editors, artifact_previews, live_voice, asr_sessions,
         process_readiness,
         meeting_imports, model_streams, export_transfers, pairing_backoff, mcp_registry,

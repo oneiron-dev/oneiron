@@ -26,6 +26,7 @@ use oneiron::{
     LlmStreamResult, ModelId, ModelLocality, ModelTierRef, ResponseFormat, RetryableLlmError,
     TierPrecedence, Vault, VaultConfig,
 };
+use oneiron_keystore::MemoryKeystore;
 use oneiron_server::ai_host::AiHost;
 use oneiron_server::config::SyncServerConfig;
 use oneiron_server::config::models::ModelsConfig;
@@ -88,8 +89,13 @@ async fn served(
 }
 
 /// A server over `vault` with its AI host attached under `models`, as
-/// [`served`] builds one.
+/// [`served`] builds one. The install's keystore goes in first, once per
+/// vault, so the server holds the host root it starts with, as `serve`'s
+/// does, and a restart over the same vault holds the same root.
 async fn server_over(vault: &Arc<Vault>, models: &ModelsConfig) -> (Arc<SyncServer>, AiHost) {
+    if vault.device_keystore_assurance().is_none() {
+        vault.install_device_keystore(Arc::new(MemoryKeystore::new()));
+    }
     let server = SyncServer::new(
         Arc::clone(vault),
         SyncServerConfig {
@@ -157,9 +163,10 @@ fn read_receipt(vault: &Vault, step_key: &str) -> Request<Body> {
     )
 }
 
-/// The facade `verb` with `body`, signed by the host root's owner.
+/// The facade `verb` with `body`, signed by the host root's owner: the
+/// issuer the server holds, from the install's keystore.
 fn owner_post(vault: &Vault, verb: &str, body: Vec<u8>) -> Request<Body> {
-    let issuer = oneiron::authority::HostSlipIssuer::from_secret(SECRET.as_bytes()).unwrap();
+    let issuer = vault.load_host_slip_issuer().unwrap();
     let slip = vault.ensure_host_root_slip(&issuer).unwrap();
     let timestamp = vault.now_recorded_at();
     let nonce = oneiron::EntityId::now().to_hex();

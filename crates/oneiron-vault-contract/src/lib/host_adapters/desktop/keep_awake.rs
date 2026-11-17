@@ -1,5 +1,5 @@
 use std::{
-    process::{Child, Command, Stdio},
+    process::{Child, Stdio},
     sync::{
         Arc, Mutex, OnceLock,
         atomic::{AtomicBool, Ordering},
@@ -35,7 +35,7 @@ struct AwakeState {
 impl AwakeState {
     /// One assertion: the child that holds the machine awake while it runs.
     fn assertion(&self) -> Option<Child> {
-        Command::new(self.program)
+        oneiron_spawn::command(self.program)
             .args(&self.args)
             .env_clear()
             .stdin(Stdio::null())

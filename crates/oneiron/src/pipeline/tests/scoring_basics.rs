@@ -11,7 +11,7 @@ fn checkpoint_preserves_exact_nonbootstrap_blend_weights() -> Result<()> {
     let copies = crate::test_support::restore_tempdir();
     let expected = RetrievalBlendWeightTableEntry {
         version: 1,
-        weights: RetrievalBlendWeights::new(0.125, 0.25, 0.5, 0.125),
+        weights: RetrievalBlendWeights::new(0.125, 0.25, 0.5, 0.125, 0.0),
         tuned_at: 200,
         provenance: BTreeMap::from([
             ("source".to_owned(), "checkpoint fixture".to_owned()),
@@ -33,9 +33,11 @@ fn checkpoint_preserves_exact_nonbootstrap_blend_weights() -> Result<()> {
     assert_eq!(vault.retrieval_blend_weight_table()?, expected);
     let image = dir.path().join("checkpoint");
     vault.snapshot_checkpoint(&image, 300)?;
+    let checkpoint_key = vault.checkpoint_key()?;
     drop(vault);
     let (restored, _) = Vault::restore_checkpoint(
         &image,
+        &checkpoint_key,
         &copies.path().join("restored"),
         embedding_test_config(),
         crate::recovery::checkpoint::RestoreReason::Restore,

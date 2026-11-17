@@ -31,6 +31,7 @@ pub mod ai_host;
 mod api;
 mod auth;
 mod big_rung;
+mod booking_deposit;
 mod broadcast;
 mod builtin_host;
 mod byte_line;
