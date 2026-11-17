@@ -567,6 +567,23 @@ pub(super) fn cap_by_no_vouch_fold(
     .cap(fold);
 }
 
+/// [`NoVouch::cap`] of `fold` by its fold with no vouch, where that fold
+/// folds as `fold` does, with no candidate handoff, no hold and no deadline:
+/// the cap the whole install fold applies past an adopted image whose tail
+/// floors covered rows beside a machine removal
+/// (`adopted_fold::covered_floors`, FIX
+/// [SEQ-FLOOR-S-ADOPTED-FORK-NEEDS-HISTORY]).
+pub(super) fn cap_by_identical_no_vouch_fold(fold: &mut AuthorityFold) {
+    NoVouch {
+        fold: fold.clone(),
+        handoffs: BTreeSet::new(),
+        after: BTreeSet::new(),
+        held: BTreeSet::new(),
+        deadline: None,
+    }
+    .cap(fold);
+}
+
 /// The rows a handoff in `handoffs` precedes.
 fn after_handoffs(
     by_hash: &BTreeMap<AuthorityEntryHash, &AuthorityLogEntry>,

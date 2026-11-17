@@ -59,6 +59,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/memory/error/engine.rs` | src | m | — | — | — |
 | `src/memory/error/gate_denial.rs` | src | s | 1 struct | MemoryGateDenial | The Gate rejection a `MemoryError` carries when its engine cause was a Gate write rejection |
 | `src/msgpack.rs` | src | s | 1 struct · 1 enum · 18 fn | Entries, MsgpackError | The one reader for untyped MessagePack rows (PLAN-UC-08) |
+| `src/msgpack/reserved_marker.rs` | src | s | 1 crate-vis | — | The marker walk behind [`super::decode`]'s refusal of the reserved marker `0xc1` |
 | `src/posterior.rs` | src | s | 1 trait · 2 fn | Posterior | Shared Beta posterior bandit seam; outcome admission stays with each estimator |
 | `src/record_layout.rs` | src | s | 1 struct · 1 fn · 7 const | EntityMetadataHeader | Byte layout of the entity metadata header that starts every stored entity row: the type byte, the occurred… |
 | `src/recorded_seconds.rs` | src | s | 1 struct · 3 fn | RecordedSeconds | `RecordedSeconds`: a time on the vault's recording clock, in whole seconds since the UNIX epoch |
@@ -87,6 +88,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/extraction_layout_wire.rs` | test | s | — | — | The bound extraction step's layout refusal carries its native slices as the typed `extraction_layout` field… |
 | `tests/fingerprint_id_prefix.rs` | test | s | — | — | PLAN-UC-04 stage 0: the id rules against the fingerprint door |
 | `tests/msgpack_reader.rs` | test | m | — | — | The one reader for untyped MessagePack rows (`oneiron_contracts::msgpack`, PLAN-UC-08 PR 0): one value and… |
+| `tests/msgpack_reserved_marker.rs` | test | s | — | — | FIX [MSGPACK-RESERVED-MARKER-READS-AS-NIL]: the one untyped reader (`oneiron_contracts::msgpack::decode`)… |
 | `tests/parse_hex_cursor.rs` | test | s | — | — | The hex cursor reader (UC-13 PR 2, HEX-CASE-POLICY = A): hex digits of either case, nothing else |
 | `tests/recorded_seconds.rs` | test | s | — | — | UC-03 PR 0r (M-4 = a): `RecordedSeconds` is the bare `u64` on the wire, so a stored seconds field that… |
 | `tests/register_derive.rs` | test | s | 1 crate-vis | — | `#[derive(Register)]` writes, for every row, the name serde writes for the same enum: under each of serde's… |

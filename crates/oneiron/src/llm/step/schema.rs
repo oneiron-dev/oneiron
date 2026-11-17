@@ -231,11 +231,15 @@ pub(super) async fn generate(
                 Ok(response) => response,
                 // The first call failed: nothing was answered, nothing spent.
                 Err(source) if attempt == 1 => return Err(DurableStepError::Llm(source)),
-                // Its offer rests past the step's wait, and its point is
-                // kept: the step parks unfailed, as its first call does.
-                Err(source @ LlmError::Retryable(RetryableLlmError::HealthRest { .. }))
-                    if retries.keeps_corrections() =>
-                {
+                // Its offer rests past the step's wait, or no rung serves
+                // at this hour, and its point is kept: the step parks
+                // unfailed, as its first call does.
+                Err(
+                    source @ LlmError::Retryable(
+                        RetryableLlmError::HealthRest { .. }
+                        | RetryableLlmError::OutsideHours { .. },
+                    ),
+                ) if retries.keeps_corrections() => {
                     return Err(DurableStepError::Llm(source));
                 }
                 Err(source) => {

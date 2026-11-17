@@ -1,4 +1,4 @@
-//! Purposes of bookings.
+//! Purposes of booking (`crates/oneiron/src/booking`).
 //!
 //! An emergency reschedule hashes seven things, each the BLAKE3 of a value's JSON
 //! (`oneiron_records::booking::emergency_reschedule::content_hash`): the owner's request,
@@ -39,4 +39,11 @@ legacy_purposes! {
     /// compared on every read.
     EMERGENCY_PICK_CONTENT_HASH =
         (Blake3, NotHashed, "oneiron.booking.emergency_pick_content_hash.v1");
+
+    /// The key a booking lifecycle receipt is kept under (`booking::lifecycle::storage`):
+    /// plain BLAKE3, the tag's bytes (ending in a NUL), then for a confirm `confirm\0` and the
+    /// hold token's digest; for a revision the scope's tag (`reschedule\0` with the target
+    /// slot's start and end as u64 big-endian, or `cancel\0`) and the BOOKING's id. A retry
+    /// under the same key replays the stored receipt.
+    LIFECYCLE_RECEIPT_KEY = (Blake3, HashedFirst, "oneiron.booking.receipt.v1\0");
 }

@@ -206,12 +206,15 @@ fn the_owners_new_generation_settles_the_ask_and_the_next_ask_names_the_next_gen
         .expect("this install's device wrap");
     let uncovered = fx
         .vault
-        .data_key_generation_preview(&DataKeyGenerationWays {
-            password: None,
-            passkeys: Vec::new(),
-            escrows: Vec::new(),
-            confirmed_removals: BTreeSet::new(),
-        })
+        .data_key_generation_preview(
+            &DataKeyGenerationWays {
+                password: None,
+                passkeys: Vec::new(),
+                escrows: Vec::new(),
+                confirmed_removals: BTreeSet::new(),
+            }
+            .kept(),
+        )
         .expect("preview");
     let confirmed: BTreeSet<String> = uncovered.iter().map(|info| info.id.clone()).collect();
     let owner_proof = owner(&fx.vault).expect("owner proof");
