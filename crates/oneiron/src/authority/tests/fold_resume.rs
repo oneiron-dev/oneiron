@@ -85,7 +85,6 @@ impl Misses {
             .map(|hash| (hash, 1))
             .collect();
         let observations = AuthorityLocalObservations {
-            sequence_floors: under.floors.clone(),
             vouched: under.vouched.clone(),
             unvouched: under.unvouched,
             policy: under.policy,
