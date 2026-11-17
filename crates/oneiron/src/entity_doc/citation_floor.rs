@@ -32,6 +32,25 @@ pub(super) struct CitationFloor {
 pub(super) const ENTITY_DOC_CITATION_FLOOR: SideTable<HexPair, CitationFloor, Named> =
     SideTable::new(&side_table::ENTITY_DOC_CITATION_FLOOR);
 
+/// Puts a citation floor for the checkpoint-pins door: `citer`'s floor
+/// over `entity`'s document.
+#[cfg(oneiron_test_support)]
+pub(crate) fn put_pins_citation_floor_in_txn(
+    store: &impl crate::store::ManifestDbs,
+    txn: &mut RwTxn<'_>,
+    entity: &EntityId,
+    citer: &EntityId,
+    frontiers: Vec<Vec<u8>>,
+    birth: bool,
+) -> Result<()> {
+    ENTITY_DOC_CITATION_FLOOR.put(
+        store,
+        txn,
+        &HexPair(HexId(*entity), HexId(*citer)),
+        &CitationFloor { frontiers, birth },
+    )
+}
+
 /// Hex incarnation id leading every qualified frontier.
 const INCARNATION_LEN: usize = 32;
 

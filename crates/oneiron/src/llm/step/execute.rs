@@ -8,7 +8,8 @@ use super::budget_wait::wake_budget_trap_in_txn;
 use super::retry::TransportRetries;
 use super::source::StepSource;
 use super::step_claim::{
-    decode_step_claim_value, load_step_response_in_txn, log_terminal_step, step_index_lookup_in_txn,
+    decode_step_claim_value, load_step_response_in_txn, log_terminal_step,
+    step_index_lookup_in_txn, verdict_only_reply,
 };
 use super::step_state::{
     StepStateDisposition, StepStateOwners, step_state_delete, step_state_write_owned,
@@ -480,6 +481,16 @@ async fn durable_step(
     // a no-op once the guard is disarmed.
     let lease_settle = LeaseSettleOnDrop::new(guard, &admission.lease, &response.usage);
 
+    // An attempt held out of the replay capture keeps its verdict alone
+    // (FIX CLAIM-RECHECK-REPLY-PARTS): the step row, the claim and the
+    // returned answer all carry that one copy, so a fresh answer and a memo
+    // replay read the same bytes.
+    let response = if crate::self_heal::blocked_reports::steps_uncaptured(ctx.vault, ctx.attempt_id)
+    {
+        verdict_only_reply(response)
+    } else {
+        response
+    };
     let payload = serde_json::to_vec(&response).inspect_err(|_| {
         if let Some(usage) = unsaved_usage.as_deref_mut() {
             *usage = Some(response.usage.clone());
@@ -803,6 +814,7 @@ pub(super) fn budget_trap(
             reason,
             TrapBindingScope::Attempt,
         )?;
+        let asked_wait = wait.clone();
         store.park_attempt_with_wait_in_txn(
             wtxn,
             crate::dreamer_runner::ParkDreamerAttempt {
@@ -820,6 +832,18 @@ pub(super) fn budget_trap(
         } else {
             None
         };
+        // A park only an owner act ends (a spend scope's cap, a resident's
+        // pinned share) asks the owner in its own write (RUNBUDGET-SCOPE = B).
+        if resumed.is_none()
+            && let Some(wait) = &asked_wait
+        {
+            crate::agent_dispatch::queue_budget_trap_ask_in_txn(
+                ctx.vault,
+                wtxn,
+                ctx.attempt_id,
+                wait,
+            )?;
+        }
         Ok(Ok((trap, resumed)))
     })?;
     let (trap, resumed) = parked.map_err(DurableStepError::BudgetRefused)?;

@@ -3,6 +3,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::consent::AuthenticatedOwner;
+use crate::dreamer_runner::maintenance::retrieval_skill_review::RetrievalSlowLoopView;
 use crate::memory::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
 use crate::store::{
     RetrievalBlendTuningConfig, RetrievalBlendWeightTableEntry, RetrievalBlendWeights,
@@ -355,6 +356,11 @@ pub struct RetrievalPolicyView {
     pub posterior_observations: usize,
     pub routing_manifest_digest: Option<String>,
     pub routing: Vec<RetrievalRoutingPin>,
+    /// The slow loop's last nightly status and its receipts (census
+    /// L1-18): each proposal the Coach offered or refused. Nothing in it
+    /// was applied.
+    #[serde(default)]
+    pub slow_loop: RetrievalSlowLoopView,
 }
 
 /// The outcome of one declared policy update: the trained candidate, whether
@@ -409,6 +415,7 @@ fn policy_view(memory: &Memory<'_>) -> MemoryResult<RetrievalPolicyView> {
         posterior_observations: posterior.observation_count(),
         routing_manifest_digest,
         routing,
+        slow_loop: vault.retrieval_slow_loop()?,
     })
 }
 
@@ -478,7 +485,8 @@ pub fn retrieval_policy_admit_as_owner(
     })
 }
 
-/// One declared update: train on the gated outcomes, admit only a
+/// One declared update: label the natural outcomes the user's later words
+/// earned (census L9-06), train on the gated outcomes, admit only a
 /// not-worse candidate (anything else stays an offer), and rebuild the
 /// learned action posterior from the same gated labels.
 pub fn retrieval_policy_update_as_owner(
@@ -487,6 +495,7 @@ pub fn retrieval_policy_update_as_owner(
     input: RetrievalPolicyTrainRequest,
 ) -> MemoryResult<RetrievalPolicyUpdateReceipt> {
     admitted(memory, owner)?;
+    memory.vault().produce_natural_retrieval_outcomes()?;
     let config = input.config();
     let candidate = memory.vault().train_retrieval_policy_candidate(config)?;
     let (disposition, reason) = if candidate.held_out.verdict == RetrievalPolicyVerdict::NotWorse {

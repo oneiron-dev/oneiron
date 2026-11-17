@@ -23,7 +23,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/host/producer.rs` | src | s | 6 crate-vis | — | The pre-dispatch producer and its one admitted call |
 | `src/host/shutdown.rs` | src | m | 1 struct · 8 fn · 11 crate-vis | MeshCancel | The mesh's stop, as the organ work it admitted sees it (FIX 4755, 4756) |
 | `src/host/sized.rs` | src | s | 3 struct · 5 fn · 8 crate-vis | CallMeasure, CallSize, LentRegion | A call its caller sizes from what it lends (Rule 5): a booking and a process grant that grow with the input… |
-| `src/image.rs` | src | m | 4 struct · 3 enum · 4 fn · 14 const | ImageEdit, ImageEditRefusal, ImageEdited, ImageOp, ImagePreview, ImagePreviewed, ResizeFilter | The image organ's host adapter (ARCH-0078 `#image-built`, L4-15): an edit of an image artifact, crops and… |
+| `src/image.rs` | src | m | 4 struct · 4 enum · 6 fn · 13 const | ImageEdit, ImageEditRefusal, ImageEdited, ImageFormat, ImageOp, ImagePreview, ImagePreviewed, ResizeFilter | The image organ's host adapter (ARCH-0078 `#image-built`, L4-15): an edit of an image artifact, crops and… |
 | `src/isolation.rs` | src | s | 1 struct · 2 enum | DescendantFence, NamespaceFact, OrganIsolation | What the kernel isolated an organ process with, as its start found it (`sandbox`): plain facts, read on the… |
 | `src/landing.rs` | src | m | 5 fn · 1 crate-vis | — | An organ's results onto the artifact family's one landing (ARCH-0078 "A proposal landing"): each export file… |
 | `src/lib.rs` | src | s | 3 mod · 19 re-export | — | The organ host: the engine side of the open organ protocol (ARCH-0075 section 9, `docengine:organ-host`) |
@@ -67,5 +67,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/host_e2e.rs` | test | m | — | — | The host against a real organ process (the probe), over real vault blobs |
 | `tests/host_fds.rs` | test | s | — | — | A stopped organ gives its descriptors back: hosts whose organ was unloaded, revoked or crashed hold no more… |
 | `tests/host_recycle.rs` | test | m | — | — | The organ code `internal` names a bug, and the host recycles the live process after three in a row… |
+| `tests/image_edit_max_ops.rs` | test | s | — | — | Restriction wave 13: the image edit op count is an owner key |
+| `tests/mesh_ask_carried.rs` | test | m | — | — | An organ's mesh ask and its answer past the transport's 1 MiB message (FIX 8023): a big ask is offered from… |
 | `tests/organ_fence.rs` | test | s | — | — | OF-060 F4: the engine never depends on an organ, and an organ never depends on the engine (ARCH-0075 section… |
 | `tests/organ_syscall_filter.rs` | test | s | — | — | The organ's syscall filter (census L4-09, ARCH-0075 "Syscalls"): an organ that calls ptrace dies by the… |
