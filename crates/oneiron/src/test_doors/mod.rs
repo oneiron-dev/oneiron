@@ -92,6 +92,7 @@ pub mod file_custody_marks;
 pub mod fingerprint_keep_executor_cohort_credit;
 pub mod fingerprint_keep_git_wire;
 pub mod fingerprint_keep_hook_digests;
+pub mod fingerprint_keep_imap_plan_encoder_digests;
 pub mod fingerprint_keep_saved_query;
 pub mod fingerprint_keep_typed_feeds;
 pub mod free_time_cycle_writer;
