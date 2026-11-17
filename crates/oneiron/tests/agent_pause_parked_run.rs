@@ -9,7 +9,10 @@
 //!   write, and the park is cleared;
 //! - a reply that lands while the run is paused is kept, and the resumed run
 //!   goes on from it before its next model request;
-//! - a run resumed before the reply re-enters its wait and parks again.
+//! - a run resumed before the reply re-enters its wait and parks again;
+//! - a pause posted after the run stopped on its wait, before its host
+//!   parks it, is taken by the park, a reply already delivered kept;
+//! - a step that stopped on its wait and then failed takes the pause too.
 
 use std::future::Future;
 use std::pin::pin;
@@ -294,9 +297,11 @@ impl LlmBackend for CountingBackend {
 }
 
 /// A runtime whose steps park on an outbound effect's durable wait while
-/// `parks` holds, and otherwise run and leave the run going on.
+/// `parks` holds, and otherwise run and leave the run going on. With
+/// `throws`, the guest throws after the call that waits.
 struct WaitRuntime {
     parks: bool,
+    throws: bool,
 }
 
 impl JsCodeModeRuntime for WaitRuntime {
@@ -309,6 +314,9 @@ impl JsCodeModeRuntime for WaitRuntime {
             host.dispatch_self(SelfCall::OutboundFixture(SelfFixtureEffectCall::new(
                 "send the report",
             )))?;
+            if self.throws {
+                return Err(oneiron::Error::InvalidConfig("the guest threw".into()));
+            }
             return Ok(JsCodeModeStepOutcome::pending(
                 "parked on an outbound effect",
             ));
@@ -326,10 +334,24 @@ fn run_child(
     parks: bool,
     soft_steps: u32,
 ) -> TestResult<EngineExecutorOutcome> {
+    let runtime = WaitRuntime {
+        parks,
+        throws: false,
+    };
+    run_child_on(f, leased, backend, runtime, soft_steps)
+}
+
+/// [`run_child`] on `runtime`.
+fn run_child_on(
+    f: &Fixture,
+    leased: &AttemptRecord,
+    backend: &CountingBackend,
+    mut runtime: WaitRuntime,
+    soft_steps: u32,
+) -> TestResult<EngineExecutorOutcome> {
     let actor = WriteActor::new(f.worker, EdgeActorClass::Agent);
     let gated = HostSelfDispatcher::for_leased_agent_attempt(&f.vault, actor, leased)?;
     let lease = BudgetLease::for_test("agent-pause-parked-run");
-    let mut runtime = WaitRuntime { parks };
     let config = EngineExecutorConfig {
         run_id: EntityId::from_bytes(*leased.id.as_bytes())?,
         task: "count carefully".to_owned(),
@@ -613,5 +635,120 @@ fn runs_pause_pauses_a_parked_run_and_its_resume_parks_again() -> TestResult {
     assert_eq!(woken.state, AttemptState::Queued, "the reply wakes the run");
     assert_eq!(woken.lease_owner, None);
     assert!(!parked(&f, child)?, "its park is cleared");
+    Ok(())
+}
+
+/// The run returned on its wait.
+fn assert_waiting(outcome: &EngineExecutorOutcome) {
+    let shown = status(outcome);
+    assert!(shown.starts_with("Waiting("), "{shown}");
+}
+
+/// The child's row stands paused under a pause its run took, with its
+/// lease released, no park, and its one signal settled.
+fn assert_paused_unparked(f: &Fixture, child: AttemptId) -> TestResult {
+    let paused_row = row(f, child)?;
+    assert_eq!(paused_row.state, AttemptState::Paused);
+    assert_eq!(paused_row.lease_owner, None, "its lease is released");
+    assert!(!parked(f, child)?, "a paused run is not parked");
+    let signals = branch_signals(f, child)?;
+    assert_eq!(signals.len(), 1, "{signals:?}");
+    assert_eq!(signals[0].state, RunSignalState::Settled, "taken");
+    Ok(())
+}
+
+/// vault.runs.pause posted after the child's step stopped on its wait,
+/// and before its host parks it, finds no park and stays pending: the
+/// host's park takes it in its own write, so the run stands paused, never
+/// parked. Resumed, the run re-enters its wait with no model request.
+#[test]
+fn a_pause_posted_before_the_host_parks_the_run_is_taken_by_the_park() -> TestResult {
+    let f = fixture()?;
+    let child = spawn_child(&f, "pause-before-park")?;
+    let leased = claim(&f.vault, child)?;
+    let backend = CountingBackend::new();
+    let outcome = run_child(&f, &leased, &backend, true, 3)?;
+    assert_waiting(&outcome);
+
+    let paused = as_owner(&f, RUNS_PAUSE, json!({"branch": hex(child)}))?;
+    assert_eq!(paused["effect"], json!("pausing_at_next_step"), "{paused}");
+    park_as_pump(&f, &leased, &outcome)?;
+    assert_paused_unparked(&f, child)?;
+
+    let resumed = as_owner(&f, RUNS_RESUME, json!({"branch": hex(child)}))?;
+    assert_eq!(resumed["effect"], json!("resumed"), "{resumed}");
+    let released = claim(&f.vault, child)?;
+    let again = CountingBackend::new();
+    let outcome = run_child(&f, &released, &again, true, 3)?;
+    assert_waiting(&outcome);
+    assert_eq!(again.requests(), 0, "no step runs before the reply");
+    assert_eq!(steps(&outcome), vec![0], "no step runs twice");
+    Ok(())
+}
+
+/// A reply delivered before the host parks a run whose pause is pending
+/// wakes nothing: the park takes the pause, and the reply is kept, as one
+/// that lands while the run is paused. The resumed run goes on from it at
+/// step 1.
+#[test]
+fn a_reply_delivered_before_the_park_of_a_paused_run_is_kept() -> TestResult {
+    let f = fixture()?;
+    let child = spawn_child(&f, "reply-before-park")?;
+    let leased = claim(&f.vault, child)?;
+    let backend = CountingBackend::new();
+    let outcome = run_child(&f, &leased, &backend, true, 3)?;
+    assert_waiting(&outcome);
+
+    let paused = as_owner(&f, PAUSE_TREE, json!({"agent_def_ref": f.agent}))?;
+    let pausing = &paused["pausing_at_next_step"];
+    assert_eq!(pausing, &json!([hex(child)]), "{paused}");
+    let wait = outcome.parked_wait().ok_or("the run waits")?.key;
+    let now_ms = f.vault.now_recorded_at().saturating_mul(1_000);
+    let reply = json!({"sent": true});
+    let delivered = WaitDeliveries::canonical(&f.vault).deliver(wait.wait_id, &reply, now_ms)?;
+    assert_eq!(delivered, 1, "the reply reaches the wait");
+    park_as_pump(&f, &leased, &outcome)?;
+    assert_paused_unparked(&f, child)?;
+
+    let pause_ref = paused["pause_ref"].clone();
+    as_owner(&f, RESUME_TREE, json!({"pause_ref": pause_ref}))?;
+    let released = claim(&f.vault, child)?;
+    let again = CountingBackend::new();
+    let outcome = run_child(&f, &released, &again, false, 1)?;
+    assert_eq!(status(&outcome), "Yielded { next_step_seq: 2 }");
+    assert_eq!(again.requests(), 1, "step 1 alone asks the model");
+    assert_eq!(steps(&outcome), vec![0, 1], "no step runs twice");
+    Ok(())
+}
+
+/// A pause pending when a step stops on its wait and its guest then
+/// throws is taken at that wait too: the failed step's checkpoint commits
+/// with the wait, and the run returns paused instead of parked.
+#[test]
+fn a_pause_pending_when_a_failed_step_stops_on_its_wait_pauses_it_there() -> TestResult {
+    let f = fixture()?;
+    let child = spawn_child(&f, "failed-step-pending")?;
+    let leased = claim(&f.vault, child)?;
+    let paused = as_owner(&f, PAUSE_TREE, json!({"agent_def_ref": f.agent}))?;
+    let pausing = &paused["pausing_at_next_step"];
+    assert_eq!(pausing, &json!([hex(child)]), "{paused}");
+
+    let backend = CountingBackend::new();
+    let runtime = WaitRuntime {
+        parks: true,
+        throws: true,
+    };
+    let outcome = run_child_on(&f, &leased, &backend, runtime, 3)?;
+    assert_eq!(status(&outcome), "Paused { next_step_seq: 1 }");
+    assert_eq!(backend.requests(), 1, "no model request after the wait");
+    assert_paused_unparked(&f, child)?;
+
+    let pause_ref = paused["pause_ref"].clone();
+    as_owner(&f, RESUME_TREE, json!({"pause_ref": pause_ref}))?;
+    let released = claim(&f.vault, child)?;
+    let again = CountingBackend::new();
+    let outcome = run_child(&f, &released, &again, true, 3)?;
+    assert_waiting(&outcome);
+    assert_eq!(again.requests(), 0, "no step runs before the reply");
     Ok(())
 }
