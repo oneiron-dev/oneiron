@@ -259,6 +259,7 @@ pub fn consolidate_tagged_turn(
                 conversation_ref: EntityId::now().to_hex(),
                 turn_ref: Some(turn.to_hex()),
                 thread_audience: None,
+                project: None,
                 messages: vec![WitnessMessage {
                     id: Some(EntityId::now().to_hex()),
                     author: WitnessAuthor::User,
@@ -355,6 +356,7 @@ pub(super) fn witness_user_turn(
             conversation_ref: conversation.to_hex(),
             turn_ref: Some(turn.to_hex()),
             thread_audience: None,
+            project: None,
             messages: vec![WitnessMessage {
                 id: Some(message.to_hex()),
                 author: WitnessAuthor::User,
@@ -498,4 +500,30 @@ fn consolidate_witnessed_turns(
         call_relationships,
         landed: std::mem::take(&mut sink.outcome.landed),
     })
+}
+
+/// The park cause a consolidation recipe step takes when it meets `error`
+/// (OF-193a), for tests/message_rel_relationship_row.rs.
+#[must_use]
+pub fn recipe_park_cause(error: &Error) -> crate::dreamer_runner::DreamerParkCause {
+    crate::dreamer_consolidation::recipe_park_cause_for_test(error)
+}
+
+/// The refusal a write meets when `relationship` names no live RELATIONSHIP
+/// row, as the claim write raises it: `found` is the type of the live row
+/// the id names here, `None` when it names none.
+#[must_use]
+pub fn invalid_relationship_error(relationship: EntityId, found: Option<u8>) -> Error {
+    crate::error::RegistryError::InvalidRelationship {
+        relationship,
+        found,
+    }
+    .into()
+}
+
+/// The cause the wake driver parks an executor `error` under, and whether
+/// that park ends the pass, for tests/message_rel_relationship_row.rs.
+#[must_use]
+pub fn executor_error_park(error: &Error) -> (crate::dreamer_runner::DreamerParkCause, bool) {
+    crate::dreamer_wake::executor_error_park_for_test(error)
 }

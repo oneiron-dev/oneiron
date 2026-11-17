@@ -518,6 +518,18 @@ impl CanaryVault {
         ));
 
         let space = derived_id(SPACE_DOMAIN)?;
+        vault
+            .put_entity(
+                &space,
+                oneiron::registry::ENTITY_TYPE_RELATIONSHIP,
+                oneiron::TimeRange {
+                    start: clock.now(),
+                    end: clock.now(),
+                },
+                clock.now(),
+                b"relationship",
+            )
+            .map_err(|error| format!("the relationship row: {error}"))?;
         let conversation = vault
             .new_entity_id()
             .map_err(|error| format!("a conversation id: {error}"))?

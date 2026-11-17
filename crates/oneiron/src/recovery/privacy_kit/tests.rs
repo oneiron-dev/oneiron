@@ -64,10 +64,9 @@ fn a_kit_with_no_person_and_no_security_key_issues_and_restores_on_a_hosted_vaul
     let (_, passphrase) = test_passphrase();
     let homes = [PieceHome::ThisMachine, PAPER, PieceHome::Passphrase];
     let request = issue(homes, vault_id, Some(&passphrase));
-    assert_eq!(
-        issue_vault_key_kit(&hosted, &request, &seed).unwrap_err(),
-        KitError::PrivacyModeRequired
-    );
+    // A hosted vault's data key gets a kit too (owner, 10-19): the old
+    // PrivacyModeRequired refusal is retired.
+    issue_vault_key_kit(&hosted, &request, &seed).expect("a hosted vault key kit issues");
     let kit = issue_recovery_root_kit(&request, &seed).unwrap();
     assert_eq!(kit.manifest().coverage, KitCoverage::SurvivesMachineLoss);
     let pieces = kit.into_pieces();

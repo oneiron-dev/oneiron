@@ -54,6 +54,7 @@ pub use self::contracts::{
     ComplianceOwnerStamp, CompliancePendingProposal, ComplianceReceipt, ComplianceResult,
     ComplianceResultRequest, ComplianceRowVerification, ComplianceVerifyRequest,
 };
+pub use self::doors::{COMPLIANCE_INSTALL_VERB, COMPLIANCE_REJECT_VERB};
 pub use self::evaluate::{
     ComplianceBlockReason, ComplianceVerdict, DispatchComplianceFacts, HydratedJpPublicationFacts,
     HydratedListProvenance, evaluate_dispatch_compliance,
@@ -77,8 +78,6 @@ pub(crate) use self::hydrate::{
 };
 pub(crate) use self::pack_store::campaign_complaint_pause_threshold_ppm_in_txn;
 
-// FIX [LIBTEST-QUARANTINE-CAMPAIGN-COMPLIANCE-TESTS]: the lib test target's type check fails here (2 errors: E0063 x2); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;
 

@@ -1,6 +1,6 @@
 //! Scoped-call admission and actor resolution.
 
-use super::board_setup::mcp_scope_admits_row;
+use super::board_setup::{bare_child_served_rows, mcp_scope_admits_row};
 use super::{
     McpCallContext, McpGatewayError, McpToolCallParams, mcp_actor_result, mcp_api_error,
     mcp_engine_error, mcp_scoped_read, mcp_tool_validation_error,
@@ -429,7 +429,9 @@ fn mcp_task_in_world(
 /// cannot read, or one that cannot prove where it sits, adds to no count
 /// (ARCH-0067 §5, DEC-0005). Each row it admits is listed in `served`. The
 /// bare rows of `bare_children`, a narrowed board's children it already
-/// judged by their TASK or their dispatch scope (FIX 1052), pass as they are.
+/// judged by their TASK or their dispatch scope (FIX 1052), pass by where
+/// each child works for this caller's destination, with the rows that place
+/// it served beside its attempt.
 pub(super) fn mcp_scoped_tasks_section(
     server: &Arc<SyncServer>,
     actor: &McpResolvedActor,
@@ -477,13 +479,28 @@ pub(super) fn mcp_scoped_task_rows(
     }
     let mut bare_jobs = Vec::with_capacity(rows.bare_jobs.len());
     let mut children_served = Vec::new();
+    let destination = actor.destination();
     for job in rows.bare_jobs {
         // A narrowed board's child row names its attempt, which no entity
-        // read proves: its board already judged it by its evidence.
+        // read proves: its board already judged it by its evidence. Where
+        // the child works judges whether it may leave for this caller, and
+        // the rows that place it are served beside its attempt, so the
+        // release and a retained page judge the row by them, never by its
+        // attempt alone.
         if bare_children.contains(&job.id) {
-            children_served.extend(oneiron::EntityId::from_hex(&job.id).ok());
-            bare_jobs.push(job);
+            if let Some(placed) = bare_child_served_rows(&server.vault, &destination, &job.id) {
+                children_served.extend(placed);
+                bare_jobs.push(job);
+            }
         } else if admits(&job.id)? {
+            // A bare job an AGENT dispatch backs is derived from where that
+            // dispatch works too: serve those rows beside its attempt, as
+            // a carrier serves a child line's.
+            if let Ok(Some(release)) =
+                oneiron::context_board::child_release_rows(&server.vault, &job.id)
+            {
+                children_served.extend(release);
+            }
             bare_jobs.push(job);
         }
     }

@@ -472,12 +472,23 @@ impl crate::Vault {
             false,
             true,
         )?;
+        // The mint is an admin act: every live Owner, Admin and Deputy hears
+        // of it (UNBUILT06-SHAPE Q3 = A).
+        let recorded = crate::ports::recorded_at_in_txn(&self.store, txn)?;
+        self.record_admin_act_in_txn(
+            txn,
+            vault_id,
+            holder_actor,
+            super::SharedVaultChange::DelegateGranted {
+                grant: id.to_hex(),
+                member: member_ref.to_hex(),
+            },
+            recorded,
+        )?;
         Ok(id)
     }
 }
 
-// FIX [LIBTEST-QUARANTINE-FEDERATION-GRANT-POLICY-TESTS]: the lib test target's type check fails here (1 errors: E0061 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 #[path = "grant_policy/tests.rs"]
 mod tests;

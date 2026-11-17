@@ -60,10 +60,11 @@ mod claim_stale;
 pub mod clustering;
 pub mod commitment_doors;
 mod conflict_settle;
-pub(crate) use conflict_settle::conflict_review_held_in;
+pub(crate) use conflict_settle::{conflict_review_held_in, dreamer_conflict_review_held_in};
 pub mod consolidation;
 pub mod consolidation_frontier;
 pub mod coping_doors;
+mod coping_lookup;
 mod core_write_doors;
 pub mod device_succession;
 mod diagnostics;
@@ -120,6 +121,7 @@ pub mod identity_doors;
 mod inspection;
 mod key_value;
 mod lifted_view;
+pub(crate) use lifted_view::lifted_keys_of_bodies_in_txn;
 mod locality;
 mod machine_write;
 pub mod merge_queue_doors;
@@ -139,6 +141,7 @@ mod read_lane;
 mod read_selection;
 mod reads;
 mod recall;
+pub(crate) mod recall_replay;
 pub use recall::RecallRequest;
 pub mod repo_doors;
 pub(crate) mod repo_secret_reads;
@@ -278,11 +281,12 @@ pub use key_value::{
 };
 pub use locality::ProducerRows;
 pub use oneiron_contracts::memory::{
-    MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_BUDGET_SPENT, MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INTERNAL,
+    ExtractionCorrectionPair, ExtractionLayout, ExtractionStepSlice, MEMORY_CODE_BAD_REQUEST,
+    MEMORY_CODE_BUDGET_SPENT, MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INTERNAL,
     MEMORY_CODE_INVALID_STATE, MEMORY_CODE_LEASE_REQUIRED, MEMORY_CODE_MODEL_UNAVAILABLE,
     MEMORY_CODE_NOT_FOUND, MEMORY_CODE_OFF_RECORD_SESSION_DOOR, MEMORY_CODE_OWNER_BINDING_REQUIRED,
     MEMORY_CODE_PACED_HOLD, MEMORY_CODE_PENDING_ASK, MEMORY_CODE_VAULT_LOCKED_SINGLE_WRITER,
-    MEMORY_CODE_WRONG_ROOT, MemoryError, MemoryGateDenial, MemoryPolicyDenial,
+    MEMORY_CODE_WRONG_ROOT, MemoryError, MemoryGateDenial, MemoryPending, MemoryPolicyDenial,
     MemoryPolicyExceptionProposal, MemoryResult, MemoryWrongRoot,
 };
 pub(crate) use people_verbs::grant_requested_scope;

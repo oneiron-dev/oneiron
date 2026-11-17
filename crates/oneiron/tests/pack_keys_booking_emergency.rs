@@ -74,7 +74,6 @@ const AFFECTED_END: u64 = BOOKED_START + 3_599;
 /// The replacement search starts here: the affected window's end + 1.
 const SEARCH_START: u64 = AFFECTED_END + 1;
 
-const OWNER_SEED: u8 = 0x51;
 const PAGE_SEED: u8 = 0x52;
 const BOOKER_SEED: u8 = 0x53;
 const IDENTITY_SEED: u8 = 0x79;
@@ -95,6 +94,18 @@ const fn at(ts: u64) -> TimeRange {
 
 fn test_id(seed: u8) -> EntityId {
     EntityId::from_bytes([seed; 16]).expect("fixture id")
+}
+
+/// The vault's embedded owner, the one owner of this personal vault: the
+/// emergency instruction is an owner verb, and the live owner census holds it
+/// to that owner even under a human binding. Every embedded vault carries
+/// this same derived id.
+fn owner_id() -> EntityId {
+    EntityId::derive(
+        oneiron_contracts::entity_id::derived_domains::EMBEDDED_OWNER_ACTOR,
+        &[],
+    )
+    .expect("the embedded owner's derived id")
 }
 
 fn booked_slot() -> TimeRange {
@@ -130,6 +141,7 @@ fn base_config(
         booking_window_secs,
         daily_cap: None,
         weekly_cap: None,
+        deposit: None,
         routing: RoutingMode::Either,
         hosts: vec![HostAvailabilityConfig {
             host_ref: owner,
@@ -196,6 +208,7 @@ impl SlotOracle for Offered {
                 host_refs: vec![self.host.to_hex()],
                 host_zones: vec!["UTC".to_owned()],
             }],
+            full_days: Vec::new(),
         })
     }
 }
@@ -219,12 +232,12 @@ impl Fixture {
             oneiron_keystore::MemoryKeystore::default(),
         ));
         let issuer = oneiron::test_support::provision_engine_machines(&vault);
-        let owner = test_id(OWNER_SEED);
+        let owner = vault
+            .ensure_embedded_owner_actor()
+            .expect("the vault's owner");
+        assert_eq!(owner, owner_id(), "the embedded owner's derived id");
         let page = test_id(PAGE_SEED);
         let booker = test_id(BOOKER_SEED);
-        vault
-            .put_entity(&owner, ENTITY_TYPE_PERSON, at(1), 1, b"owen")
-            .expect("put owner");
         vault
             .put_entity(&page, ENTITY_TYPE_ASSET, at(1), 1, b"booking page")
             .expect("put booking page");
@@ -329,6 +342,7 @@ impl Fixture {
                 constraint: None,
                 lease: HoldLeaseSpec::Ordinary,
                 idempotency_key: None,
+                cap_override: None,
             }),
             slot,
             NOW,
@@ -506,7 +520,7 @@ fn block_first_nine_mornings() -> Vec<BusySpec> {
 
 #[test]
 fn emergency_plan_offers_three_times_by_default_and_the_owners_count_when_set() {
-    let owner = test_id(OWNER_SEED);
+    let owner = owner_id();
     let fixture = Fixture::open(base_config(owner, all_open_hours(), FOURTEEN_DAYS));
     let booked = fixture.book(booked_slot(), b"emergency-max-first");
     let window = affected_window();
@@ -548,7 +562,7 @@ fn emergency_plan_offers_three_times_by_default_and_the_owners_count_when_set() 
 
 #[test]
 fn emergency_plan_needs_two_times_by_default_and_the_owners_floor_when_set() {
-    let owner = test_id(OWNER_SEED);
+    let owner = owner_id();
     let fixture = Fixture::open(base_config(owner, two_slot_hours(), FOURTEEN_DAYS));
     let booked = fixture.book(booked_slot(), b"emergency-min-first");
     let window = affected_window();
@@ -602,7 +616,7 @@ fn emergency_plan_needs_two_times_by_default_and_the_owners_floor_when_set() {
 
 #[test]
 fn emergency_plan_searches_seven_days_by_default_and_the_owners_span_when_set() {
-    let owner = test_id(OWNER_SEED);
+    let owner = owner_id();
     let fixture = Fixture::open(base_config(
         owner,
         daily_ten_to_eleven_hours(),
@@ -757,7 +771,7 @@ mod execution {
 
     #[test]
     fn a_plan_under_the_owners_count_of_four_executes_with_four_pick_actions() {
-        let owner = test_id(OWNER_SEED);
+        let owner = owner_id();
         let fixture = Fixture::open(base_config(owner, all_open_hours(), FOURTEEN_DAYS));
         fixture.book(booked_slot(), b"emergency-execute-four");
         fixture.install_delivery();
@@ -783,7 +797,7 @@ mod execution {
 
     #[test]
     fn a_plan_under_the_owners_floor_and_count_of_one_executes_with_one_pick_action() {
-        let owner = test_id(OWNER_SEED);
+        let owner = owner_id();
         let fixture = Fixture::open(base_config(owner, all_open_hours(), FOURTEEN_DAYS));
         fixture.book(booked_slot(), b"emergency-execute-one");
         fixture.install_delivery();
@@ -813,7 +827,7 @@ mod execution {
 
     #[test]
     fn a_floor_the_owner_raises_after_planning_refuses_the_commit() {
-        let owner = test_id(OWNER_SEED);
+        let owner = owner_id();
         let fixture = Fixture::open(base_config(owner, all_open_hours(), FOURTEEN_DAYS));
         fixture.book(booked_slot(), b"emergency-execute-raised");
         fixture.install_delivery();

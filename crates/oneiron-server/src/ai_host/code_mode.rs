@@ -661,8 +661,15 @@ impl CodeModeBackend {
             let record_request = self.caller.as_ref().map(|_| call.request.clone());
             let run = self
                 .models
-                .funded_run(CODE_MODE_RUN, self.guard.clone(), self.payer.clone())
-                .sourced(sources);
+                .funded_run(CODE_MODE_RUN, self.guard.clone(), self.payer.clone());
+            // A step of a run whose caller keeps no model-call record names
+            // none of the rows its prompt read, nor their worlds (census L5-25).
+            let run = if no_record_at_arrival {
+                run.off_record()
+            } else {
+                run
+            };
+            let run = run.sourced(sources);
             let live = self
                 .lease
                 .clone()

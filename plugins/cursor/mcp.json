@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "oneiron": {
+      "command": "/bin/sh",
+      "args": [
+        "-c",
+        "exec oneiron mcp --surface tool-first --credential-file \"$HOME/.config/oneiron/cursor.cred\""
+      ]
+    }
+  }
+}
