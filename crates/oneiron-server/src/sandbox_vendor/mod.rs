@@ -7,12 +7,16 @@
 //! answers none, and the run is refused as the vendor unavailable: ours never
 //! runs in its place (L8-43-SWITCH = A).
 //!
-//! Daytona is the one vendor served so far (L8-43-VENDORS = A: Daytona, then
-//! E2B, Modal, boat, InstaBox). A vendor's batch backend runs on Linux only,
-//! as `VendorBatchBackend` does.
+//! Daytona and E2B are the vendors served so far (L8-43-VENDORS = A:
+//! Daytona, then E2B, Modal, boat, InstaBox). A vendor's batch backend runs
+//! on Linux only, as `VendorBatchBackend` does.
 
 #[cfg(target_os = "linux")]
 mod daytona;
+#[cfg(target_os = "linux")]
+mod e2b;
+#[cfg(target_os = "linux")]
+mod vendor_http;
 
 use std::path::PathBuf;
 use std::sync::{Arc, Weak};
@@ -24,6 +28,8 @@ use oneiron_agent_runtime::code_sandbox::CompiledSandboxBackends;
 
 #[cfg(target_os = "linux")]
 pub(crate) use daytona::DaytonaEndpoints;
+#[cfg(target_os = "linux")]
+pub(crate) use e2b::E2bEndpoints;
 
 /// The backends of one vault on this server: ours as compiled, and the
 /// vendors this server serves. It holds its vault weakly, since the vault
@@ -33,6 +39,8 @@ pub(crate) struct ServedSandboxBackends {
     vault: Weak<Vault>,
     #[cfg(target_os = "linux")]
     daytona: DaytonaEndpoints,
+    #[cfg(target_os = "linux")]
+    e2b: E2bEndpoints,
     /// Where each vendor run keeps its private scratch.
     #[cfg(target_os = "linux")]
     scratch_root: PathBuf,
@@ -46,6 +54,8 @@ impl ServedSandboxBackends {
             vault: Arc::downgrade(vault),
             #[cfg(target_os = "linux")]
             daytona: DaytonaEndpoints::default(),
+            #[cfg(target_os = "linux")]
+            e2b: E2bEndpoints::default(),
             #[cfg(target_os = "linux")]
             scratch_root: std::env::temp_dir().join("oneiron-vendor-sandbox"),
         }
@@ -61,6 +71,17 @@ impl ServedSandboxBackends {
     ) -> Self {
         Self {
             daytona,
+            scratch_root,
+            ..Self::new(vault)
+        }
+    }
+
+    /// The backends of `vault`, reaching E2B at `e2b` and keeping each
+    /// run's scratch under `scratch_root`.
+    #[cfg(all(target_os = "linux", oneiron_test_support))]
+    pub(crate) fn with_e2b(vault: &Arc<Vault>, e2b: E2bEndpoints, scratch_root: PathBuf) -> Self {
+        Self {
+            e2b,
             scratch_root,
             ..Self::new(vault)
         }
@@ -84,10 +105,12 @@ impl ServedSandboxBackends {
                 key_name,
                 self.daytona.clone(),
             )),
-            SandboxVendor::E2b
-            | SandboxVendor::Modal
-            | SandboxVendor::Boat
-            | SandboxVendor::Instabox => return None,
+            SandboxVendor::E2b => Arc::new(e2b::E2bClient::new(
+                Arc::downgrade(vault),
+                key_name,
+                self.e2b.clone(),
+            )),
+            SandboxVendor::Modal | SandboxVendor::Boat | SandboxVendor::Instabox => return None,
         };
         Some(Box::new(VendorBatchBackend::new(
             client,
