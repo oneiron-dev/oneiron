@@ -8,7 +8,7 @@ use crate::claim::{ClaimBody, ClaimLifecycleStatus, ClaimSubject};
 use crate::counterparty_contact::normalize_channel_class;
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::gate::ExternalEffectGateInput;
+use crate::gate::{ApprovalTarget, ExternalEffectGateInput};
 use crate::store::Store;
 
 use super::codec::{
@@ -179,7 +179,8 @@ pub(super) fn hydrate_dispatch_compliance_facts(
     let observation = jurisdiction_observation_in_txn(store, txn, &counterparty)?;
     let channel = normalize_channel_class(&effect.channel);
     let evidence = dispatch_evidence_in_txn(store, txn, &counterparty, effect, &channel)?;
-    let elements = message_elements_in_txn(store, txn, effect.channel_identity_ref)?;
+    let sending_identity = message_elements_identity(effect);
+    let elements = message_elements_in_txn(store, txn, sending_identity)?;
     Ok(DispatchComplianceFacts {
         counterparty,
         jurisdiction: observation.as_ref().map(|(token, _)| token.clone()),
@@ -189,9 +190,9 @@ pub(super) fn hydrate_dispatch_compliance_facts(
         list_provenance: evidence.list_provenance,
         jp_publication: evidence.jp_publication,
         consent: evidence.consent,
-        // A send with no bound sending identity has no identity to disclose,
+        // A send with no sending identity has no identity to disclose,
         // whatever a configuration row claims.
-        sender_identity_present: elements.sender_identity && effect.channel_identity_ref.is_some(),
+        sender_identity_present: elements.sender_identity && sending_identity.is_some(),
         physical_address_present: elements.physical_address,
         optout_mechanism_present: elements.optout_mechanism,
         commercial_marking_present: elements.commercial_marking,
@@ -421,9 +422,30 @@ struct MessageElements {
     commercial_marking: bool,
 }
 
+/// The sending identity whose template carries the message elements: the
+/// channel identity the effect is bound to, else, for a campaign send, the
+/// step's sticky sender (`provenance.actor_entity_ref` = the step's
+/// `sender_ref`). ARCH-0059: "The compliance elements of a campaign message
+/// come from the sending identity, the opt-out among them."
+///
+/// A campaign leg binds no channel identity (FIX 11641: the may-send check
+/// would refuse every campaign email), so only the message elements read the
+/// campaign sender; the may-send, cold-recipient and consent-sender reads
+/// stay on `channel_identity_ref`.
+fn message_elements_identity(effect: &ExternalEffectGateInput) -> Option<EntityId> {
+    match (
+        effect.channel_identity_ref,
+        &effect.provenance.approval_target,
+    ) {
+        (Some(identity), _) => Some(identity),
+        (None, Some(ApprovalTarget::Campaign(_))) => effect.provenance.actor_entity_ref,
+        (None, _) => None,
+    }
+}
+
 /// Message elements are a property of the SENDING identity's template, so they
-/// are read from the channel identity the effect is bound to. No identity, or
-/// no configuration row, means no element is established.
+/// are read from the identity [`message_elements_identity`] names. No
+/// identity, or no configuration row, means no element is established.
 fn message_elements_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
