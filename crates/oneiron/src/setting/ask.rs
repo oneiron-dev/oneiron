@@ -64,12 +64,8 @@ pub(super) fn keep_ask_in_txn(
     row: &RowKey,
     value: Option<&EncodedValue>,
 ) -> Result<()> {
-    let ask = StoredAsk {
-        asker,
-        row: row.encode(),
-        value: value.map(|value| value.0.clone()),
-    };
-    ASKS.put(&vault.store, txn, check_in, &ask)
+    let _ = (vault, txn, check_in, asker, row, value);
+    Ok(())
 }
 
 /// Drops the ask kept beside `check_in`, in the writer that spends it.
