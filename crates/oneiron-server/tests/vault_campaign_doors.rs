@@ -3558,6 +3558,70 @@ fn an_unprojected_stop_holds_a_campaign_send_by_its_party_key() {
 /// decide a send are the UK sender-id, opt-out and commercial-marking rows,
 /// which read the sending identity's message elements.
 fn uk_corporate_member(vault: &Vault, member: EntityId) {
+    uk_jurisdiction(vault, member);
+    member_compliance_evidence(
+        vault,
+        member,
+        vec![(
+            rmpv::Value::from("legal_form"),
+            rmpv::Value::from("corporate"),
+        )],
+    );
+}
+
+/// Records `member` as a UK individual subscriber whose one consent record
+/// opts in on email from `consent_sender` only: an owner-attested UK
+/// `comm.jurisdiction` observation, an ACTIVE `crm.compliance.consent` claim
+/// naming `consent_sender` as its `sender_ref`, and `individual` legal-form
+/// evidence citing that record. Reg 22 binds an individual subscriber, so the
+/// UK consent row holds a send only on that record's opt-in (no soft opt-in
+/// fact is recorded); the other UK rows read the sender's message elements.
+fn uk_individual_member_consenting_to(vault: &Vault, member: EntityId, consent_sender: EntityId) {
+    uk_jurisdiction(vault, member);
+    let record = EntityId::now();
+    let consent = ClaimBody::new(
+        oneiron::campaign::compliance::PREDICATE_CRM_COMPLIANCE_CONSENT,
+        ClaimSubject::Entity(member),
+        rmpv::Value::Map(vec![
+            (rmpv::Value::from("opt_in"), rmpv::Value::from(true)),
+            (
+                rmpv::Value::from("channels"),
+                rmpv::Value::Array(vec![rmpv::Value::from("email")]),
+            ),
+            (
+                rmpv::Value::from("sender_ref"),
+                rmpv::Value::from(consent_sender.to_hex()),
+            ),
+        ]),
+        1.0,
+        ClaimApprovalStatus::Approved,
+        ClaimLifecycleStatus::Active,
+    )
+    .expect("the consent record");
+    vault
+        .put_claim(&record, &consent, TimeRange { start: 1, end: 1 }, 1)
+        .expect("store the consent record");
+    member_compliance_evidence(
+        vault,
+        member,
+        vec![
+            (
+                rmpv::Value::from("legal_form"),
+                rmpv::Value::from("individual"),
+            ),
+            (
+                rmpv::Value::from("consent"),
+                rmpv::Value::Map(vec![(
+                    rmpv::Value::from("ref"),
+                    rmpv::Value::from(record.to_hex()),
+                )]),
+            ),
+        ],
+    );
+}
+
+/// An owner-attested UK `comm.jurisdiction` observation on `member`.
+fn uk_jurisdiction(vault: &Vault, member: EntityId) {
     let mut jurisdiction = ClaimBody::new(
         "comm.jurisdiction",
         ClaimSubject::Entity(member),
@@ -3579,18 +3643,24 @@ fn uk_corporate_member(vault: &Vault, member: EntityId) {
             1,
         )
         .expect("store the jurisdiction");
+}
+
+/// `member`'s sole ACTIVE `crm.compliance.evidence` claim, carrying `entries`
+/// (the compliance gate reads only a sole live evidence head).
+fn member_compliance_evidence(
+    vault: &Vault,
+    member: EntityId,
+    entries: Vec<(rmpv::Value, rmpv::Value)>,
+) {
     let evidence = ClaimBody::new(
         oneiron::campaign::compliance::PREDICATE_CRM_COMPLIANCE_EVIDENCE,
         ClaimSubject::Entity(member),
-        rmpv::Value::Map(vec![(
-            rmpv::Value::from("legal_form"),
-            rmpv::Value::from("corporate"),
-        )]),
+        rmpv::Value::Map(entries),
         1.0,
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,
     )
-    .expect("the legal-form evidence");
+    .expect("the compliance evidence");
     vault
         .put_claim(
             &EntityId::now(),
@@ -3598,7 +3668,7 @@ fn uk_corporate_member(vault: &Vault, member: EntityId) {
             TimeRange { start: 1, end: 1 },
             1,
         )
-        .expect("store the legal-form evidence");
+        .expect("store the compliance evidence");
 }
 
 /// The sending identity's compliance footer: a
@@ -3736,6 +3806,96 @@ fn a_campaign_sender_without_an_opt_out_element_still_holds_at_compliance() {
                 "counterparty_compliance_missing_message_element"
             ),
             "the hold names the missing message element: {state}"
+        );
+    });
+}
+
+/// A recipient's consent record that names the campaign's own sender counts
+/// for that campaign's sends (ruling CAMPAIGN-CONSENT-SENDER-MATCH = A, FIX
+/// [CAMPAIGN-CONSENT-RECORD-SENDER-UNREAD-FOR-CAMPAIGN-SEND]). The consent
+/// sender match reads the same sending identity as the message elements: the
+/// step's sticky sender, since the leg binds no channel identity (FIX 11641).
+/// Before the fix the match read only the bound channel identity, so this UK
+/// individual subscriber's opt-in never counted and the send held as
+/// `gate.pending.campaign_compliance` for a missing lawful basis. With the
+/// record and a sender whose footer carries every element, no compliance row
+/// holds it: the send waits only on the gate's own approval.
+///
+/// Canon `generated/llms-full.txt:346891` "sender_ref (per channel) | OF-347
+/// channel-identity ref | Sticky sender" and `:347036` "The compliance
+/// elements of a campaign message come from the sending identity".
+#[test]
+fn a_consent_record_naming_the_campaign_sender_counts_for_its_send() {
+    run_on_engine_stack("campaign-consent-own-sender", || async {
+        let fixture = setup().await;
+        let sender = active_sender_identity(&fixture.vault, fixture.owner, "owen@example.com");
+        sender_message_elements(&fixture.vault, sender, true);
+        let member = campaign_member(&fixture.vault, sender, "mei@example.com");
+        uk_individual_member_consenting_to(&fixture.vault, member, sender);
+        let leg = party_key_leg(&fixture, sender, member, "consented campaign").await;
+        enroll_leg_member(&fixture, &leg, member, sender).await;
+
+        let state = held_gate_state(&fixture, &leg).await;
+        assert!(
+            !gate_fact(
+                &state,
+                "gate_reason_codes",
+                "gate.pending.campaign_compliance"
+            ),
+            "the member's opt-in names the campaign's sender, so compliance holds nothing: {state}"
+        );
+        let compliance_reasons: Vec<&str> = state["gate_receipt_reasons"]
+            .as_array()
+            .unwrap_or_else(|| panic!("the held ask lists gate_receipt_reasons: {state}"))
+            .iter()
+            .filter_map(Value::as_str)
+            .filter(|reason| reason.starts_with("counterparty_compliance_"))
+            .collect();
+        assert!(
+            compliance_reasons.is_empty(),
+            "no compliance row names a reason: {state}"
+        );
+    });
+}
+
+/// The other half of the same ruling: a consent record that names a
+/// different sender is no consent to this campaign's sender. The same UK
+/// individual subscriber, with an opt-in that names another sending identity,
+/// still holds the campaign send at the compliance rows for a missing lawful
+/// basis (a record is cited, so the evidence is not missing), with the
+/// campaign sender's footer complete.
+///
+/// Canon `generated/llms-full.txt:346891` "sender_ref (per channel) | OF-347
+/// channel-identity ref | Sticky sender".
+#[test]
+fn a_consent_record_naming_another_sender_still_holds_the_campaign_send() {
+    run_on_engine_stack("campaign-consent-other-sender", || async {
+        let fixture = setup().await;
+        let sender = active_sender_identity(&fixture.vault, fixture.owner, "owen@example.com");
+        sender_message_elements(&fixture.vault, sender, true);
+        let other_sender =
+            active_sender_identity(&fixture.vault, fixture.owner, "ines@example.com");
+        let member = campaign_member(&fixture.vault, sender, "ren@example.com");
+        uk_individual_member_consenting_to(&fixture.vault, member, other_sender);
+        let leg = party_key_leg(&fixture, sender, member, "other sender campaign").await;
+        enroll_leg_member(&fixture, &leg, member, sender).await;
+
+        let state = held_gate_state(&fixture, &leg).await;
+        assert!(
+            gate_fact(
+                &state,
+                "gate_reason_codes",
+                "gate.pending.campaign_compliance"
+            ),
+            "an opt-in naming another sender holds the send at compliance: {state}"
+        );
+        assert!(
+            gate_fact(
+                &state,
+                "gate_receipt_reasons",
+                "counterparty_compliance_missing_lawful_basis"
+            ),
+            "the hold names the missing lawful basis: {state}"
         );
     });
 }
