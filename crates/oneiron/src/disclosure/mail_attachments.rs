@@ -117,9 +117,10 @@ fn recipient_context_in(
 }
 
 /// Whether `context` is shown each of `rows`, a quoted source as its file:
-/// the clamp admits it, and P7 discloses its stored revision with every
-/// record its words came from. A row that does not resolve is shown to no
-/// one.
+/// the clamp admits it with every record its words came from (a summary's
+/// word sources, as `admits_in` follows them), and P7 discloses its stored
+/// revision with every record its words came from. A row that does not
+/// resolve is shown to no one.
 fn discloses_rows_in(
     vault: &Vault,
     txn: &RoTxn<'_>,
@@ -130,7 +131,7 @@ fn discloses_rows_in(
         let Some(row) = vault.store.port_entity_record(txn, id)? else {
             return Ok(false);
         };
-        if !context.admits(&vault.store, txn, id, row.entity_type, None)?
+        if !context.admits_in(vault, txn, id, row.entity_type, None)?
             || !discloses_raw(vault, txn, context.scope(), *id, &row.encode())?
         {
             return Ok(false);

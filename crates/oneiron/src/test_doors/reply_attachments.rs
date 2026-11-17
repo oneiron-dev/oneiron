@@ -1,6 +1,6 @@
 //! Doors for `tests/reply_attachments.rs` (fix list row 17645): seed a Google
-//! mailbox (with its sending identity) or a Microsoft 365 mailbox with one
-//! received message and an artifact with two versions, then draft a reply
+//! mailbox (with its sending identity), a Microsoft 365 or an IMAP mailbox
+//! with one received message and an artifact with two versions, then draft a reply
 //! that names one exact version and read back what the draft froze. Thin
 //! wrappers over production APIs only. The draft reads the answered
 //! message's addresses as its thread stored them, since a test cannot reach
@@ -393,6 +393,40 @@ pub fn seed_microsoft_thread(vault: &Vault, now_sec: u64) -> Result<SeededThread
         vault,
         owner,
         MailProvider::Microsoft365,
+        None,
+        EntityId::now(),
+        now_sec,
+    )
+}
+
+/// Seeds an IMAP mailbox the embedded owner connects (its credential stored
+/// for the owner, read over IMAP and sent by SMTP submission), one message
+/// from [`SENDER`] imported into it, and [`SENDER`] as the owner's contact,
+/// cleared to see everything below Tier A. The vault installs no mail host,
+/// so no runner for the submission server's size check.
+///
+/// # Errors
+///
+/// The vault's, or a seeded step the vault refuses.
+#[doc(hidden)]
+pub fn seed_imap_thread(vault: &Vault, now_sec: u64) -> Result<SeededThread> {
+    let owner = vault
+        .ensure_embedded_owner_actor()
+        .map_err(|error| memory_invalid("embedded owner", error))?;
+    crate::mail_pack::install_mail_calendar_pack_embedded(
+        &vault.memory(owner, EdgeActorClass::Human),
+    )
+    .map_err(|error| memory_invalid("mail pack install", error))?;
+    register_mail_credential(
+        vault,
+        crate::mail_pack::IMAP_CONNECTOR_EFFECTOR,
+        Vec::new(),
+        now_sec,
+    )?;
+    connect_and_import(
+        vault,
+        owner,
+        MailProvider::Imap,
         None,
         EntityId::now(),
         now_sec,
