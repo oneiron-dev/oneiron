@@ -84,7 +84,7 @@ mod attribution_labels;
 mod fork_promote;
 mod judge_label_rechecks;
 mod research_oracle;
-pub(super) mod seal_checks;
+pub(crate) mod seal_checks;
 mod topology_audit;
 mod type_tree_upkeep;
 mod weave_digest_settings;

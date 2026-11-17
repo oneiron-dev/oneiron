@@ -69,6 +69,7 @@ pub mod dreamer_promotion_seconds;
 pub mod dreamer_stage_line;
 pub mod enum_name_rows;
 pub mod esign_commitments;
+pub mod extra_room_index;
 pub mod fanout_admission;
 pub mod feed_prune;
 pub mod feeds;
@@ -126,6 +127,8 @@ pub mod mail_landing;
 pub mod mail_pack_setting_keys;
 #[cfg(feature = "sync")]
 pub mod maintenance_facet_receipts;
+#[cfg(feature = "sync")]
+pub mod media_vector_replica;
 pub mod meeting_follow_up;
 pub mod membership;
 pub mod memory_frontier;
@@ -148,6 +151,7 @@ pub mod pack_encode_work;
 pub mod pad_offer_invalidation;
 pub mod pairing_pending_rows;
 pub mod park_typed_wait;
+pub mod parked_own_retract;
 pub mod payment_credential;
 #[cfg(feature = "sync")]
 pub mod peer_author_redaction;
