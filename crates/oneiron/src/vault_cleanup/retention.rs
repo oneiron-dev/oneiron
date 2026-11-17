@@ -1,39 +1,25 @@
 //! Owner-adjustable completed-TASK retention. Never erases task bytes.
 
+use super::setting_keys::TASK_RETENTION_DAYS;
 use crate::error::Result;
-use crate::side_table::{self, Raw, SideTable};
 use crate::{EntityId, Vault};
 
-const RETENTION: SideTable<(), u64, Raw> =
-    SideTable::new(&side_table::VAULT_CLEANUP_TASK_RETENTION_DAYS);
-const DEFAULT_DAYS: u64 = 90;
-
 impl Vault {
-    /// Sets completed-task retention; `None` or zero disables this arm.
-    /// Like the cleanup posture setter, this is a trusted owner configuration door.
-    pub fn set_task_retention_days(&self, days: Option<u32>) -> Result<()> {
-        self.with_write_txn_grouped(|txn| set_task_retention_days_in_txn(self, txn, days))
-    }
-
-    /// Current retention period. Zero means disabled; an unset vault uses 90 days.
+    /// Current retention period: the catalogue key `cleanup.task_retention_days`,
+    /// which the owner sets through `vault.settings.set`. Zero means disabled;
+    /// an unset vault uses 90 days.
     pub fn task_retention_days(&self) -> Result<u64> {
         let txn = self.store.env.read_txn()?;
         retention_days_in_txn(self, &txn)
     }
 }
 
-pub(super) fn set_task_retention_days_in_txn(
-    vault: &Vault,
-    txn: &mut heed::RwTxn<'_>,
-    days: Option<u32>,
-) -> Result<()> {
-    RETENTION.put(&vault.store, txn, &(), &u64::from(days.unwrap_or(0)))
-}
-
 pub(super) fn retention_days_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<u64> {
-    Ok(RETENTION
-        .get(&vault.store, txn, &())?
-        .unwrap_or(DEFAULT_DAYS))
+    Ok(u64::from(
+        TASK_RETENTION_DAYS
+            .read_in_txn(vault, txn, &[], None)?
+            .value,
+    ))
 }
 
 pub(super) fn task_is_past_retention(

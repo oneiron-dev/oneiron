@@ -16,6 +16,7 @@
 use oneiron::attempt_queue::AttemptId;
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::memory::{Memory, MemoryError};
+use oneiron::setting::{SetSetting, SettingCaller};
 use oneiron::vault_cleanup::{
     self, ArchivedEntity, CleanupDecideRequest, CleanupDecideView, CleanupDigest, CleanupKind,
     CleanupPosture, CleanupProposal, CleanupRevertEntry, CleanupRevertReason, CleanupReviewRequest,
@@ -341,12 +342,39 @@ pub(crate) fn configure(
         let posture = CleanupPosture::parse(posture).ok_or_else(|| {
             OwnerError::Invalid("posture must be `propose_first` or `auto_with_digest`".to_owned())
         })?;
-        vault.set_cleanup_posture_as(owner, posture)?;
+        set_cleanup_key(
+            vault,
+            owner,
+            "cleanup.posture",
+            serde_json::json!(posture.as_str()),
+        )?;
     }
     if let Some(days) = settings.task_retention_days {
-        vault.set_task_retention_days_as(owner, Some(days))?;
+        set_cleanup_key(
+            vault,
+            owner,
+            "cleanup.task_retention_days",
+            serde_json::json!(days),
+        )?;
     }
     review(vault)
+}
+
+/// The owner's change of one cleanup key (`cleanup.posture`,
+/// `cleanup.task_retention_days`) through the Setting door, as
+/// `vault.settings.set` makes it: an owner's change lands at once.
+fn set_cleanup_key(
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    key: &str,
+    value: serde_json::Value,
+) -> Result<(), oneiron::Error> {
+    vault
+        .set_setting(
+            SettingCaller::Owner(owner),
+            SetSetting::vault_value(key, value),
+        )
+        .map(|_| ())
 }
 
 /// Brings back one entry of the review's `archived` list, named by its

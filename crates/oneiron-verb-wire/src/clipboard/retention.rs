@@ -2,6 +2,7 @@
 //! `oneiron` re-exports each item at its old path.
 
 use oneiron_contracts::entity_id::EntityId;
+use oneiron_setting_contract::SettingValue;
 use serde::Deserialize;
 use serde::Serialize;
 
@@ -22,6 +23,9 @@ impl Default for ClipboardRetention {
         }
     }
 }
+
+/// The engine's catalogue key `clipboard.retention` holds the arms.
+impl SettingValue for ClipboardRetention {}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ClipboardCleanupReport {

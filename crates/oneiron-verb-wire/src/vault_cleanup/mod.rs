@@ -26,7 +26,6 @@ pub use oneiron_store::vault_cleanup::cleanup_types::FIELD_CLEANUP_SKIPPED_COUNT
 pub use oneiron_store::vault_cleanup::cleanup_types::FIELD_CLEANUP_SKIPPED_IDS;
 pub use oneiron_store::vault_cleanup::cleanup_types::FIELD_CLEANUP_TOMBSTONE_REASON;
 pub use oneiron_store::vault_cleanup::cleanup_types::VAULT_CLEANUP_ACTOR;
-pub use oneiron_store::vault_cleanup::cleanup_types::VAULT_CLEANUP_POSTURE_KEY;
 pub use oneiron_store::vault_cleanup::cleanup_types::VAULT_CLEANUP_RECEIPT_PREFIX;
 pub use oneiron_store::vault_cleanup::review_types::CleanupAcceptEffect;
 pub use oneiron_store::vault_cleanup::review_types::CleanupDecideRequest;

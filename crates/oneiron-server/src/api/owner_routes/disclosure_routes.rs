@@ -3,8 +3,10 @@
 //! contact clearance (`vault.disclosure.offer`); here the owner reads the
 //! frozen offer with the exact canonical delta it was shown, and answers it
 //! once, standing or deny. The owner also narrows or revokes a standing
-//! clearance, pre-clears a named trusted set, turns the disclosure-mode knob,
-//! and answers the unknown-attendee "who is this?" ask. At a person's or
+//! clearance, pre-clears a named trusted set, and answers the
+//! unknown-attendee "who is this?" ask. The disclosure-mode knob is the
+//! setting key `disclosure.offer_mode`, read and set through
+//! `vault.settings.*`. At a person's or
 //! speaker's first entry into a chat or room (ILDF2 P5), the owner reads the
 //! entry and answers it once: a standing clearance with the history the
 //! entry sees, or no. Each act is the
@@ -18,10 +20,10 @@ use std::sync::Arc;
 use axum::extract::rejection::QueryRejection;
 use axum::extract::{Query, State};
 use axum::response::Json;
-use axum::routing::{get, post, put};
+use axum::routing::{get, post};
 use oneiron::consent::{
     CONTACT_CLEARANCE_REVOKE_COMMAND, ContactClearanceAct, ContactDisclosureOutcome,
-    DisclosureConfirmationReceipt, DisclosureOfferMode, contact_clearance_ref,
+    DisclosureConfirmationReceipt, contact_clearance_ref,
 };
 use oneiron::conversation::{ContainerAttendee, HistoryChoice};
 use oneiron::disclosure::AttendeeIdentityChoice;
@@ -90,26 +92,6 @@ pub(super) fn owner_table() -> OwnerTable {
                 shape: None,
             },
             post(preclear),
-        ),
-        (
-            OwnerRoute {
-                method: "get",
-                path: "/disclosure/mode",
-                summary: "The disclosure-mode knob, auto when never set.",
-                row: None,
-                shape: None,
-            },
-            get(mode),
-        ),
-        (
-            OwnerRoute {
-                method: "put",
-                path: "/disclosure/mode",
-                summary: "Turns the knob.",
-                row: None,
-                shape: None,
-            },
-            put(set_mode),
         ),
         (
             OwnerRoute {
@@ -238,13 +220,6 @@ struct PreclearSet {
     /// The distinct contacts, at least one, as 32 hex each.
     contacts: Vec<String>,
     scope: Scope,
-}
-
-#[derive(Debug, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-struct ModeSetting {
-    /// `always_ask`, `auto` or `always_yes`.
-    mode: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -498,41 +473,6 @@ async fn preclear(
     })
     .await?;
     Ok(Json(receipts))
-}
-
-/// `GET /v1/owner/disclosure/mode`: the disclosure-mode knob, `auto` when
-/// never set.
-async fn mode(auth: CoreAuth, State(server): State<Arc<SyncServer>>) -> OwnerReply<ModeSetting> {
-    owner(&auth, &server)?;
-    let mode = blocking(move || -> OwnerResult<ModeSetting> {
-        Ok(ModeSetting {
-            mode: server.vault().disclosure_offer_mode()?.as_str().to_owned(),
-        })
-    })
-    .await?;
-    Ok(Json(mode))
-}
-
-/// `PUT /v1/owner/disclosure/mode`: turns the knob. No mode moves the
-/// confirm surface: a new clearance still lands only on the owner's own act.
-async fn set_mode(
-    auth: CoreAuth,
-    State(server): State<Arc<SyncServer>>,
-    payload: OwnerJsonBody<ModeSetting>,
-) -> OwnerReply<ModeSetting> {
-    let owner = owner(&auth, &server)?;
-    let request = payload.read(&server).await?;
-    let mode = blocking(move || -> OwnerResult<ModeSetting> {
-        let mode = DisclosureOfferMode::parse(&request.mode).ok_or_else(|| {
-            OwnerError::Invalid("mode is always_ask, auto or always_yes".to_owned())
-        })?;
-        server.vault().set_disclosure_offer_mode(&owner, mode)?;
-        Ok(ModeSetting {
-            mode: mode.as_str().to_owned(),
-        })
-    })
-    .await?;
-    Ok(Json(mode))
 }
 
 /// `POST /v1/owner/disclosure/attendee`: the owner's answer to one

@@ -5,6 +5,7 @@ use super::person_provenance;
 use super::rollout;
 use super::run_snapshot::{self, CleanupRunSnapshot, CleanupSnapshotEntry};
 use super::scan;
+use super::setting_keys::POSTURE;
 use super::{
     CleanupCandidate, CleanupDecision, CleanupDigest, CleanupKind, CleanupPosture, CleanupProposal,
     CleanupRunReport, fresh_row_id, live_slots, put_digest_in_txn, put_proposal_in_txn,
@@ -19,14 +20,9 @@ use crate::ports::{EdgeDirection, EdgeStoreRead, EntityStoreRead};
 use crate::registry::{
     ENTITY_TYPE_NOTE, ENTITY_TYPE_PERSON, ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TASK,
 };
-use crate::side_table::{self, Raw, SideTable};
 use crate::store::attempt_id::AttemptId;
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 use oneiron_contracts::claim::ClaimSource;
-
-/// Owner-set cleanup posture: auto-with-digest (absent) vs propose-first.
-/// Key: `()`.
-const POSTURE: SideTable<(), Vec<u8>, Raw> = SideTable::new(&side_table::VAULT_CLEANUP_POSTURE);
 
 // ---------------------------------------------------------------------------
 // The tripwire
@@ -238,14 +234,15 @@ pub fn scan_cleanup_candidates(vault: &Vault) -> Result<Vec<CleanupCandidate>> {
 // Posture flag
 // ---------------------------------------------------------------------------
 
-/// The vault's current cleanup posture.
+/// The vault's current cleanup posture: the catalogue key `cleanup.posture`,
+/// which the owner sets through `vault.settings.set`.
 ///
-/// An absent flag reads as [`CleanupPosture::AutoWithDigest`]: a vault cleans
-/// up automatically from birth, with a snapshot per run and the owner's
-/// revert (owner 2026-10-18; DEC-0006: no grant step, no holdout). A stored
-/// flag reads as stored. An unreadable flag reads as
-/// [`CleanupPosture::ProposeFirst`], the safe reading of a damaged row: the
-/// owner may have stored propose-first there.
+/// An absent row reads as [`CleanupPosture::AutoWithDigest`], the key's
+/// default: a vault cleans up automatically from birth, with a snapshot per
+/// run and the owner's revert (owner 2026-10-18; DEC-0006: no grant step, no
+/// holdout). A stored row reads as stored. A row that does not decode reads as
+/// [`CleanupPosture::ProposeFirst`], the key's strictest value and the safe
+/// reading of a damaged row: the owner may have stored propose-first there.
 ///
 /// # Errors
 ///
@@ -259,38 +256,7 @@ pub(super) fn cleanup_posture_in_txn(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
 ) -> Result<CleanupPosture> {
-    let Some(raw) = POSTURE.get(&vault.store, rtxn, &())? else {
-        return Ok(CleanupPosture::AutoWithDigest);
-    };
-    Ok(std::str::from_utf8(&raw)
-        .ok()
-        .and_then(CleanupPosture::parse)
-        .unwrap_or(CleanupPosture::ProposeFirst))
-}
-
-/// Sets the cleanup posture. OWNER ACTION ONLY — the cron never writes it.
-/// Either posture is the owner's choice; the ARCH-0066 teeth ride each
-/// automatic run's digest as a badge and gate neither.
-///
-/// # Errors
-///
-/// Storage errors.
-pub fn set_cleanup_posture(vault: &Vault, posture: CleanupPosture) -> Result<()> {
-    vault.with_write_txn_grouped(|wtxn| set_cleanup_posture_in_txn(vault, wtxn, posture))
-}
-
-pub(super) fn set_cleanup_posture_in_txn(
-    vault: &Vault,
-    wtxn: &mut heed::RwTxn<'_>,
-    posture: CleanupPosture,
-) -> Result<()> {
-    POSTURE.put(
-        &vault.store,
-        wtxn,
-        &(),
-        &posture.as_str().as_bytes().to_vec(),
-    )?;
-    Ok(())
+    Ok(POSTURE.read_in_txn(vault, rtxn, &[], None)?.value)
 }
 
 // ---------------------------------------------------------------------------

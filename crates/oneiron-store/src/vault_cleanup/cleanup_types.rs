@@ -1,6 +1,7 @@
 //! Pinned cleanup vocabulary: wire strings, enums, and proposal/digest/report structs.
 
 use oneiron_contracts::register::Register;
+use oneiron_setting_contract::SettingValue;
 use serde::{Deserialize, Serialize};
 
 use crate::attempt_id::AttemptId;
@@ -9,16 +10,6 @@ use oneiron_contracts::entity_id::EntityId;
 // ---------------------------------------------------------------------------
 // Pinned vocabulary
 // ---------------------------------------------------------------------------
-
-/// `vault_meta` key holding the cleanup posture flag.
-///
-/// Absent means [`CleanupPosture::AutoWithDigest`]: a vault cleans up
-/// automatically from birth, takes a snapshot first, tells the owner
-/// afterwards, and the owner can revert any run (owner 2026-10-18,
-/// ARCH-0073 #arm-ruled; DEC-0006: no grant step, no holdout). The owner may
-/// store [`CleanupPosture::ProposeFirst`] instead. A value that does not
-/// parse reads as `ProposeFirst`, the safe reading of a damaged row.
-pub const VAULT_CLEANUP_POSTURE_KEY: &[u8] = b"vault_cleanup.posture.v1";
 
 /// Receipt-id prefix that discriminates this projector's rows inside the
 /// shared `Gate` family.
@@ -167,9 +158,8 @@ pub struct CleanupCandidate {
 
 /// Whether the cron proposes archives or performs them.
 ///
-/// Engine config (`vault_meta`), set only by owner action. Default
-/// [`Self::AutoWithDigest`], the reading of a vault with no stored posture
-/// (see [`VAULT_CLEANUP_POSTURE_KEY`]).
+/// The catalogue key `cleanup.posture`, set only by owner action. Default
+/// [`Self::AutoWithDigest`], the reading of a vault with no stored posture.
 #[derive(
     Debug,
     Clone,
@@ -199,6 +189,10 @@ impl CleanupPosture {
         <Self as Register>::named(value)
     }
 }
+
+/// The engine's catalogue key `cleanup.posture` holds the posture; the automatic one is refused
+/// while its rollout blockers are open, in the write that would change it.
+impl SettingValue for CleanupPosture {}
 
 /// What a cleanup decision did, as recorded on its digest.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
