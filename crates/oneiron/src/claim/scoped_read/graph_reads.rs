@@ -86,6 +86,7 @@ impl ScopedRead<'_> {
                 break;
             }
         }
+        self.charge_served(kept.iter().map(|(id, _, _)| *id));
         Ok(Some(kept))
     }
 
@@ -185,6 +186,7 @@ impl ScopedRead<'_> {
         timeline.records = kept;
         let mut receipt = self.receipt_for(None, &policy, &filter, 0);
         receipt.restrict_with(&self.receipt_for(None, &fresh_policy, &fresh_filter, 0));
+        self.charge_served(timeline.records.iter().map(|record| record.id));
         Ok(ScopedReadResult {
             value: timeline,
             receipt,
@@ -246,6 +248,12 @@ impl ScopedRead<'_> {
                 raw[ENTITY_METADATA_HEADER_LEN..].to_vec(),
             )));
         }
+        self.charge_served(
+            records
+                .iter()
+                .zip(&value)
+                .filter_map(|(record, part)| part.as_ref().map(|_| record.id)),
+        );
         Ok(ScopedReadResult {
             value,
             receipt: self.receipt_for(requested, &policy, &filter, suppressed),
@@ -392,6 +400,7 @@ impl ScopedRead<'_> {
         let before = parts
             .pop()
             .ok_or(Error::CorruptedIndex("supersession before parts"))?;
+        self.charge_served([*old, *new]);
         Ok(ScopedReadResult {
             value: Some((before, after)),
             receipt: receipt(0),
@@ -540,7 +549,16 @@ impl ScopedRead<'_> {
                 )?,
             };
             let position = world.map_or_else(Scope::top, super::actor_key::record_world_scope);
-            return Ok(position.is_narrowing_of(&self.actor_key.world_ceiling()));
+            // One agent Grant alone must hold it too (FIX
+            // AGENT-GRANT-ENVELOPE-ONLY-PATHS).
+            return Ok(position.is_narrowing_of(&self.actor_key.world_ceiling())
+                && self.one_grant_alternative_holds_shell_in(
+                    txn,
+                    &super::access_gate::HeldAuthority::for_request(None),
+                    id,
+                    raw,
+                    &position,
+                )?);
         }
         let kept = match self.session_view {
             Some(view) => scope_for_blob(view, txn, *id, raw)?,
@@ -552,11 +570,16 @@ impl ScopedRead<'_> {
             verbs: ScopeAxis::Some(["read".to_owned()].into()),
             ..default_stamp(header.entity_type, *id)
         });
-        Ok(crate::gate::scoped_read_record_allowed(
-            policy,
-            &self.actor_key,
-            &position,
-        ))
+        Ok(
+            crate::gate::scoped_read_record_allowed(policy, &self.actor_key, &position)
+                && self.one_grant_alternative_admits_record_in(
+                    txn,
+                    &super::access_gate::HeldAuthority::for_request(None),
+                    policy,
+                    &position,
+                    Some((id, Some(raw))),
+                )?,
+        )
     }
 
     fn timeline_record_allowed_in(

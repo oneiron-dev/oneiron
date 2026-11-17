@@ -301,7 +301,7 @@ impl Vault {
             .map(canonical_id)
             .transpose()?;
         // Recheck in the actual mint transaction: policy may have narrowed
-        // after link issuance while the one-hour link was still outstanding.
+        // after link issuance while the link was still outstanding.
         let ceiling = crate::gate::resolve_credential_lifetimes(&self.store, &txn)?;
         let slip_lifetime_secs = pending.slip_lifetime_secs.min(ceiling.initial_owner_secs);
         // A live owner's own device gets their residence grant, named in the
@@ -440,7 +440,7 @@ impl Vault {
         request: &MachineEnrolmentRequest,
         possession: Option<(&[u8; 64], &[u8])>,
     ) -> Result<(MachineAnswerLanding, bool)> {
-        let role = MachineRole::Owned(answer.ownership);
+        let role = answer.role();
         let fold = self.authority_view_readonly_in_txn(txn)?;
         // A credential-only re-pairing writes no revision, so it needs no
         // carrier, and no arm below enrols the machine again.
