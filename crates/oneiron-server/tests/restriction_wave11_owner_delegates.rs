@@ -518,6 +518,152 @@ fn force_cancel_agent_row_on_stands() {
     });
 }
 
+/// Force cancel by a delegate whose Grant does not read the TASK (review P1
+/// of #9107): the row is on and the Grant lists the verb, but at sensitivity
+/// `private` it reads no TASK (a TASK is `sensitive`). The door answers the
+/// NOT_FOUND a missing TASK gets, and no branch stops.
+#[test]
+fn force_cancel_of_a_task_the_delegate_does_not_read_is_not_found() {
+    run_on_engine_stack("w11-cancel-unread", || async {
+        let fixture = setup();
+        let agent = pair_agent(&fixture, "cancel-unread", [0xA3; 32]).await;
+        let agent_hex = agent.principal.to_hex();
+        let task_ref = plant_task_with_live_attempt_for_test(&fixture.vault).expect("plant a TASK");
+        let (status, body) = post(
+            &fixture,
+            "/v1/core/facade/vault.agents.grants.mint",
+            &fixture.owner_token,
+            owner_binding(&fixture),
+            json!({
+                "agent": agent_hex,
+                "authority_scope": {
+                    "worlds": {"kind": "all"},
+                    "facets": {"kind": "all"},
+                    "bands": {"kind": "all"},
+                    "audience": {"kind": "all"},
+                    "verbs": {"kind": "some", "values": ["read", CANCEL_FORCE_VERB]},
+                    "sensitivity": {"kind": "at_most", "value": "private"},
+                },
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "mint the narrowed grant: {body}");
+        assert_eq!(body["grant"]["confers"].as_bool(), Some(true), "{body}");
+        set_row(
+            &fixture.vault,
+            FORCE_CANCEL_KEY,
+            None,
+            SettingScope::Agent(agent.principal),
+            json!(true),
+        );
+
+        let (status, body) = agent_post(
+            &fixture,
+            &agent,
+            &format!("/v1/core/facade/{CANCEL_FORCE_VERB}"),
+            json!({"task_ref": task_ref.to_hex()}),
+        )
+        .await;
+        assert_eq!(
+            status,
+            StatusCode::NOT_FOUND,
+            "a TASK it does not read: {body}"
+        );
+        assert!(
+            body["branches"].is_null(),
+            "the refusal names no branch: {body}"
+        );
+        let (status, body) = post(
+            &fixture,
+            "/v1/core/facade/vault.runs.branches.get",
+            &fixture.owner_token,
+            owner_binding(&fixture),
+            json!({"task_ref": task_ref.to_hex()}),
+        )
+        .await;
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "the owner reads the branches: {body}"
+        );
+        let branches = body["branches"].as_array().expect("the TASK's branches");
+        assert!(
+            !branches.is_empty(),
+            "the planted TASK has a branch: {body}"
+        );
+        for branch in branches {
+            assert!(
+                branch["cancel_state"]["cancellation"].is_null(),
+                "no branch stopped: {body}"
+            );
+        }
+    });
+}
+
+/// Force cancel by a delegate that does not run the TASK's branch (review
+/// P1 of #9107): the branch stops, and the receipt keeps its structured
+/// state (the grounds and the actor) but withholds its words, as the branch
+/// reader does. The stored cancellation keeps the reason.
+#[test]
+fn force_cancel_receipt_withholds_the_words_of_a_branch_the_delegate_does_not_run() {
+    const REASON: &str = "the delegate stops this run";
+    run_on_engine_stack("w11-cancel-withheld", || async {
+        let fixture = setup();
+        let agent = pair_agent(&fixture, "cancel-withheld", [0xA4; 32]).await;
+        let agent_hex = agent.principal.to_hex();
+        let task_ref = plant_task_with_live_attempt_for_test(&fixture.vault).expect("plant a TASK");
+        let _grant = mint_grant(&fixture, &agent_hex, &[CANCEL_FORCE_VERB]).await;
+        set_row(
+            &fixture.vault,
+            FORCE_CANCEL_KEY,
+            None,
+            SettingScope::Agent(agent.principal),
+            json!(true),
+        );
+
+        let (status, body) = agent_post(
+            &fixture,
+            &agent,
+            &format!("/v1/core/facade/{CANCEL_FORCE_VERB}"),
+            json!({"task_ref": task_ref.to_hex(), "reason": REASON}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "delegate force: {body}");
+        assert_eq!(body["forced"].as_u64(), Some(1), "{body}");
+        let branch = &body["branches"][0];
+        let cancellation = &branch["cancel_state"]["cancellation"];
+        assert_eq!(
+            cancellation["grounds"].as_str(),
+            Some("owner_delegate"),
+            "{body}"
+        );
+        assert_eq!(
+            cancellation["actor"].as_str(),
+            Some(agent_hex.as_str()),
+            "{body}"
+        );
+        assert!(
+            cancellation["reason"].is_null(),
+            "the receipt withholds the words: {body}"
+        );
+
+        let attempt = AttemptId::from_bytes(
+            EntityId::from_hex(branch["branch"].as_str().expect("branch hex"))
+                .expect("branch id")
+                .as_bytes(),
+        )
+        .expect("attempt id");
+        let stored = AttemptQueue::new(&fixture.vault)
+            .get(attempt)
+            .expect("read the attempt")
+            .expect("the stopped attempt")
+            .cancel_state
+            .cancellation
+            .expect("the stored cancellation");
+        assert_eq!(stored.reason.as_deref(), Some(REASON), "the row keeps them");
+    });
+}
+
 /// Force cancel with the key off: today's 403, same code and message, with
 /// the suggestion naming the key.
 #[test]
