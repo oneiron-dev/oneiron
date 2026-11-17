@@ -186,7 +186,7 @@ fn quickjs_self_memory_is_the_verb_table() {
     let result = run(&mut runtime, script, &mut host).unwrap();
     assert!(result.done, "{}", result.observation);
     let value: Value = serde_json::from_str(&result.observation).unwrap();
-    let engine_imports: &[(&str, &str)] = include!("../../../wit/generated/imports.rs");
+    let engine_imports: &[(&str, &str)] = include!("../../../../oneiron/wit/generated/imports.rs");
     assert!(
         !engine_imports
             .iter()
