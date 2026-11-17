@@ -4,16 +4,23 @@
 //! Grant's answer for this actor and this NOTE (DEC-0006 #10, ARCH-0032
 //! #forks-proposals); a Member works "exactly as its scopes allow" (ARCH-0043
 //! #shared-vault-authority; RULING MEMBER-SYNC-WRITES = A), whatever its
-//! class (RULING MEMBER-GRANT-AGENT-LANDS = A). A Viewer's edit is still
-//! refused, and a personal vault, which has no roster, still answers by the
-//! owner binding and automatic grants alone.
+//! class (RULING MEMBER-GRANT-AGENT-LANDS = A). The same grant decides the
+//! Member's own fork, and no other writer's: another Member's fork still
+//! waits for the owner. A Viewer's edit is still refused, and a personal
+//! vault, which has no roster, still answers by the owner binding and
+//! automatic grants alone.
+//!
+//! Each founding member is invited and holds its grant once it accepts
+//! (OF-531), so the roster accepts before anyone writes.
 //!
 //! `cargo test --locked -p oneiron --all-features --test shared_note_member_edit_lands`.
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::federation::{FederationGrantRole as Role, InitialSharedMember};
-use oneiron::note::{NoteEdit, NoteEditOutcome, NoteProgramEdit, NoteProgramEditOutcome};
+use oneiron::note::{
+    NoteEdit, NoteEditOutcome, NoteProgramEdit, NoteProgramEditOutcome, NoteVerdict,
+};
 use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::store::GateDecisionId;
 use oneiron::temporal::TimeRange;
@@ -42,8 +49,22 @@ fn proof(vault: &Vault, person: EntityId) -> AuthenticatedOwner {
         .expect("a person proof")
 }
 
+/// `member` accepts its founding invitation at `role`, so it holds the grant.
+fn accept(vault: &Vault, member: EntityId, role: Role) {
+    let member_proof = proof(vault, member);
+    let invitation = vault
+        .shared_invitations(&member_proof, SHARED)
+        .expect("the member's invitations")
+        .into_iter()
+        .find(|open| open.role == role)
+        .expect("the founding invitation");
+    vault
+        .accept_shared_invitation(&member_proof, SHARED, &invitation.id)
+        .expect("the member accepts");
+}
+
 /// The roster of one shared vault: its embedded owner as Owner, two
-/// Members and a Viewer.
+/// Members and a Viewer, each having accepted its founding invitation.
 struct Roster {
     a: EntityId,
     b: EntityId,
@@ -75,6 +96,9 @@ fn shared(vault: &Vault) -> Roster {
             1,
         )
         .expect("a shared vault with two Members and a Viewer");
+    accept(vault, roster.a, Role::Member);
+    accept(vault, roster.b, Role::Member);
+    accept(vault, roster.viewer, Role::Viewer);
     roster
 }
 
@@ -150,6 +174,43 @@ fn a_members_scalar_edit_of_another_members_note_inside_its_grant_applies() {
         "the edit applies: {outcome:?}"
     );
     assert_eq!(text(&vault, note), format!("Member B: {BASE}"));
+}
+
+#[test]
+fn a_members_grant_decides_its_own_fork_and_no_other_writers() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let vault = Vault::open(dir.path(), VaultConfig::default()).expect("vault");
+    let roster = shared(&vault);
+    let note = note_by(&vault, roster.a);
+    let a = WriteActor::new(roster.a, EdgeActorClass::Human);
+    let fork = vault
+        .fork_note(
+            note,
+            &NoteProgramEdit::Rewrite {
+                text: "A rewritten log.".to_owned(),
+            },
+            a,
+        )
+        .expect("the Member forks its own NOTE");
+    let bundle = vault
+        .open_note_proposal(&[fork], "Rewrite the log", a)
+        .expect("the Member opens its proposal");
+    assert_eq!(bundle.waiting.len(), 1, "a rewrite waits for its switch");
+    let other = vault.review_note_proposal(
+        bundle.id,
+        NoteVerdict::Reject,
+        WriteActor::new(roster.b, EdgeActorClass::Human),
+    );
+    assert!(
+        other.is_err(),
+        "another Member's grant decides no other writer's fork: {other:?}"
+    );
+    assert_eq!(text(&vault, note), BASE, "the rewrite still waits");
+    let own = vault
+        .review_note_proposal(bundle.id, NoteVerdict::Switch, a)
+        .expect("the Member's grant decides its own fork");
+    assert!(own.waiting.is_empty(), "the fork is decided: {own:?}");
+    assert_eq!(text(&vault, note), "A rewritten log.");
 }
 
 #[test]
