@@ -221,6 +221,50 @@ fn a_miscounted_resolution_page_refuses_with_its_layout() -> ExtractionVerdictTe
     Ok(())
 }
 
+/// The same pack with the right page count and a page index past the last page is refused with
+/// the rebuilt resolution pages, as a wrong count is: bad request with `[[0], [1]]` in the typed
+/// field. The index is judged against the rebuilt pages, so the refusal names them.
+#[test]
+fn an_out_of_range_resolution_page_refuses_with_its_layout() -> ExtractionVerdictTestResult<()> {
+    let dir = tempfile::tempdir()?;
+    let vault = Arc::new(open_extraction_verdict_vault(&dir)?);
+    let actor = dreamer(&vault)?;
+    stand_steward_grant(&vault, actor, &STEWARD_VERBS)?;
+    let subject = EntityId::now();
+    seed_named_person(&vault, &subject, "owen", vault.now_recorded_at())?;
+    let witnessed = witness_extraction_turns(&vault, &["owen likes tea", "owen likes coffee"])?;
+    let (id, admitted) = enqueue_admitted_extraction_attempt(&vault, &witnessed.turns, QUEUE_NOW)?;
+    let binding = bind_extraction(&vault, &admitted)?;
+    let page = read_bound_extraction_page(&binding, &extraction_attempt_hex(id))?;
+    let turns = page_turns_with_versions(&page);
+    assert_eq!(turns.len(), 2);
+    let pack = json!({
+        "read": "resolution",
+        "part": {"kind": "page", "page": 2, "pages": 2},
+        "candidates": [
+            extraction_candidate(&subject.to_hex(), "profile.hobby", big_candidate_value("tea"), &turns[0].0, turns[0].1.clone()),
+            extraction_candidate(&subject.to_hex(), "profile.hobby", big_candidate_value("coffee"), &turns[1].0, turns[1].1.clone()),
+        ],
+        "listed": [],
+        "priors": [],
+        "questions": [
+            {"key": ["resolution", "page", "2"], "options": native_resolution_options()},
+            {"key": ["identity", "0", "page", "2"], "options": ["none", "candidate:0"]},
+        ],
+        "earlier": [],
+    });
+    let request = extraction_verdict_request("resolution", native_resolution_options(), pack);
+    let Err(refused) = invoke_bound_verdict(&binding, request) else {
+        panic!("a page index past the last page refuses");
+    };
+    assert_eq!(refused.code, MEMORY_CODE_BAD_REQUEST);
+    assert_eq!(
+        refusal_layout_json(&refused)?,
+        json!({"kind": "resolution_pages", "pages": [[0], [1]]}),
+    );
+    Ok(())
+}
+
 /// A Correction Whole over one candidate with two 50,000-character listed claims is refused with
 /// the rebuilt correction pages, while the matching page passes to its loan: bad request with the
 /// native pairs in the typed field, then model unavailable with no lender.

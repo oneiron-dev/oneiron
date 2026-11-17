@@ -51,6 +51,7 @@ mod anchor_marks;
 mod ask_forward_holder;
 mod backup_signer_delegation;
 mod carried_act;
+mod carrier_reading;
 mod causal_write;
 mod checkpoint;
 mod checkpoint_adopt;
@@ -212,9 +213,10 @@ pub use oneiron_authority::authority::{
     MachineDeviceClass, MachineEncryptionKey, MachineOwnership, MachineProfile, MachineRole,
     ModelOrder, OWNER_HANDOVER_REF_MAX, OwnerAct, OwnerActKind, OwnerHandover, OwnerHandoverCause,
     OwnerRootRecord, OwnerWorkBody, OwnerWorkKind, OwnerWorkOutcome, OwnerWorkRefusal,
-    OwnerWorkRequest, OwnerWorkResult, PrivacyDirection, RESIDENCE_REASON_MAX,
-    RESIDENCE_WINDOW_KEY_MAX, ROLE_ADMIN, ROLE_AGENT, ROLE_CLOUD, ROLE_OWNER, ROLE_RECOVERY,
-    ReadLocation, RecoveryRootId, ResidenceAct, ResidenceDirective, ResidenceResult,
+    OwnerWorkRequest, OwnerWorkResult, PredictedResidenceSet, PrivacyDirection,
+    RESIDENCE_PREDICTED_DOCUMENTS_DEFAULT, RESIDENCE_PREDICTED_WINDOWS_DEFAULT,
+    RESIDENCE_REASON_MAX, RESIDENCE_WINDOW_KEY_MAX, ROLE_ADMIN, ROLE_AGENT, ROLE_CLOUD, ROLE_OWNER,
+    ROLE_RECOVERY, ReadLocation, RecoveryRootId, ResidenceAct, ResidenceDirective, ResidenceResult,
     ResidenceResultStatus, RootChange, SEAT_CLAIM_LEASE_OWNER_MAX_BYTES, SEAT_MODEL_CHANNEL,
     SUPPORT_GRANT_DEFAULT_TTL_SECS, SUPPORT_GRANT_MAX_TTL_SECS, SealedCopies, SeatClaimSlipBinding,
     SlipClaims, SlipMintAction, SupportDelegation, SupportRepair, TrustedContactSlipBinding,
@@ -270,10 +272,14 @@ pub use admission::{
     AuthorityWorkWaitExpired, authority_work_policy, set_authority_work_policy,
     set_authority_work_wait_ms,
 };
+pub use agent_grant_act::{
+    AGENT_GRANT_ACT_NO_CARRIER, AGENT_GRANT_ACT_NOT_COUNTED, AGENT_GRANT_ACT_TOO_MANY_HEADS,
+};
 pub use backup_signer_delegation::{
     BACKUP_SIGNER_DELEGATION_DOMAIN, BackupModeRootPolicy, BackupModeRoots, BackupSignerDelegation,
     BackupSignerStatement,
 };
+pub use carrier_reading::CarrierReading;
 pub use causal_write::CausalWriteDisposition;
 pub use checkpoint::{
     AUTHORITY_CHECKPOINT_MAX_AGE_SECS, AUTHORITY_CHECKPOINT_NEW_BYTES,
@@ -359,6 +365,7 @@ pub use machine_identity::{
     LocalMachine, MACHINE_PROOF_HEADER, MachineEnrolmentRequest, PeerMachine, RequestCode,
     machine_connection_transcript, machine_proof_header_value,
 };
+pub(crate) use machine_profile::YoursProof;
 pub use machine_profile::{
     FoldedMachine, MachineAdmitter, MachineRevision, PinnedRoot, SignerClass, TrustedMachine,
 };
