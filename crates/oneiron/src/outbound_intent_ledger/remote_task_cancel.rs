@@ -12,9 +12,12 @@
 //! `remote_task_unpollable`. The mark makes the row due on the host's next
 //! pass, which claims it (Sending, in the writer that commits before the
 //! POST) and records how the POST went: Sent when the connector took it,
-//! Uncertain when that is unknown. A refused or unsent stop stays Sending. A
-//! claimed stop is never claimed or sent again, so a crash after its POST
-//! sends nothing more.
+//! Uncertain when that is unknown, Refused when the connector refused it. A
+//! stop that never reached the connector (no byte left, a connector that
+//! asked for it later, or a session it ended that could not be renewed) is
+//! Requested again, so a later pass sends it, still the first the connector
+//! takes. Otherwise a claimed stop is never claimed or sent again, so a crash
+//! after its POST sends nothing more.
 //!
 //! The send stays Deferred: only the end state a later poll reads
 //! (`cancelled`, or `completed` when the work finished first) settles it,
@@ -36,14 +39,17 @@ use crate::consent::AuthenticatedOwner;
 pub enum RemoteTaskCancelPhase {
     /// Asked for: the host's next pass sends `tasks/cancel`.
     Requested,
-    /// The host claimed the stop and may have sent it; it is never sent
-    /// again.
+    /// The host claimed the stop and may have sent it; it is sent again only
+    /// when it never reached the connector (Requested again).
     Sending,
     /// The connector took the stop.
     Sent,
     /// Whether the connector took the stop is unknown; it is never sent
     /// again.
     Uncertain,
+    /// The connector refused the stop, so it took nothing; it is never sent
+    /// again.
+    Refused,
 }
 
 impl RemoteTaskCancelPhase {
@@ -55,6 +61,7 @@ impl RemoteTaskCancelPhase {
             Self::Sending => "sending",
             Self::Sent => "sent",
             Self::Uncertain => "uncertain",
+            Self::Refused => "refused",
         }
     }
 }
@@ -210,8 +217,8 @@ impl Vault {
     }
 
     /// Records that whether the connector took row `intent`'s claimed stop
-    /// is unknown, or that it was not sent after its claim: Uncertain, never
-    /// sent again. Only a Sending stop moves.
+    /// is unknown, or that it was not sent after its claim because an issuer
+    /// hold stood: Uncertain, never sent again. Only a Sending stop moves.
     ///
     /// # Errors
     /// Storage and row-codec faults.
@@ -223,6 +230,44 @@ impl Vault {
                 intent,
                 RemoteTaskCancelPhase::Sending,
                 RemoteTaskCancelPhase::Uncertain,
+            )
+            .map(|_| ())
+        })
+    }
+    /// Records that the connector refused row `intent`'s claimed stop:
+    /// Refused, never sent again. Only a Sending stop moves.
+    ///
+    /// # Errors
+    /// Storage and row-codec faults.
+    pub fn record_remote_task_cancel_refused(&self, intent: &[u8; 32]) -> IntentLedgerResult<()> {
+        self.try_with_write_txn_grouped(|txn| {
+            move_cancel_in_txn(
+                self,
+                txn,
+                intent,
+                RemoteTaskCancelPhase::Sending,
+                RemoteTaskCancelPhase::Refused,
+            )
+            .map(|_| ())
+        })
+    }
+
+    /// Records that row `intent`'s claimed stop never reached the connector
+    /// (no byte left, a connector that asked for it later, or a session it
+    /// ended that could not be renewed): Requested again, so a later pass
+    /// sends it, still the first stop the connector takes. Only a Sending
+    /// stop moves.
+    ///
+    /// # Errors
+    /// Storage and row-codec faults.
+    pub fn release_remote_task_cancel(&self, intent: &[u8; 32]) -> IntentLedgerResult<()> {
+        self.try_with_write_txn_grouped(|txn| {
+            move_cancel_in_txn(
+                self,
+                txn,
+                intent,
+                RemoteTaskCancelPhase::Sending,
+                RemoteTaskCancelPhase::Requested,
             )
             .map(|_| ())
         })

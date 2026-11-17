@@ -37,7 +37,7 @@ pub(super) fn owner_table() -> OwnerTable {
         OwnerRoute {
             method: "post",
             path: "/connectors/remote-tasks/{intent}/cancel",
-            summary: "The owner asks a background MCP task to stop (L8-29): the poller's next pass sends its connector one `tasks/cancel`, which undoes nothing already done, and the call stays deferred until a poll reads the task's end. `intent` is the call's 64-hex intent id. Answers where the stop stands (`requested`, `sending`, `sent` or `uncertain`); a second ask sends nothing more.",
+            summary: "The owner asks a background MCP task to stop (L8-29): the poller's next pass sends its connector one `tasks/cancel`, which undoes nothing already done, and the call stays deferred until a poll reads the task's end. `intent` is the call's 64-hex intent id. Answers where the stop stands (`requested`, `sending`, `sent`, `uncertain` or `refused`); a second ask sends nothing more. A stop that never reached the connector (unreachable, 408 or 429, or a session that could not be renewed) is `requested` again, and a later pass sends it.",
             row: None,
             shape: Some(RestShape::no_body(cancel_asked_schema).refusing(&[
                 ("404", "No call has this intent."),
@@ -54,9 +54,11 @@ pub(super) fn owner_table() -> OwnerTable {
 /// Where the owner's stop of a remote task stands after the ask.
 #[derive(Serialize, schemars::JsonSchema)]
 struct CancelAsked {
-    /// `requested`: the poller sends `tasks/cancel` on its next pass;
-    /// `sending`, `sent` or `uncertain`: an earlier ask's stop, claimed,
-    /// taken by the connector, or of unknown outcome. Never sent again.
+    /// `requested`: the poller sends `tasks/cancel` on its next pass, also
+    /// after a stop that never reached the connector; `sending`, `sent`,
+    /// `uncertain` or `refused`: an earlier ask's stop, claimed, taken by the
+    /// connector, of unknown outcome, or refused by the connector. Never sent
+    /// again.
     phase: &'static str,
 }
 
