@@ -212,7 +212,7 @@ impl Memory<'_> {
                 body,
                 text_fields: None,
                 edges: None,
-                occurred_at: input.occurred_at,
+                occurred_at: Some(input.occurred_at),
                 learned_at: input.learned_at,
             },
             |txn| {

@@ -136,7 +136,7 @@ pub(super) fn witness_turn_to_engine(turn: &NapiWitnessTurn) -> BoundaryResult<W
         thread_audience,
         project: None,
         messages,
-        occurred_at: ts_to_engine(turn.occurred_at, "occurred_at")?,
+        occurred_at: Some(ts_to_engine(turn.occurred_at, "occurred_at")?),
         assertions: turn
             .assertions
             .as_ref()
@@ -358,7 +358,7 @@ pub(super) fn structural_put_to_engine(
                 })
                 .collect()
         }),
-        occurred_at: ts_to_engine(input.occurred_at, "occurred_at")?,
+        occurred_at: Some(ts_to_engine(input.occurred_at, "occurred_at")?),
         learned_at: ts_opt_to_engine(input.learned_at, "learned_at")?,
     })
 }

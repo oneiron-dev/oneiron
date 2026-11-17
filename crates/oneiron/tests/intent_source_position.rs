@@ -58,7 +58,7 @@ fn witness_owner_words(vault: &Vault, owner: EntityId, words: &str) -> (EntityId
                 order: 0,
                 quote: None,
             }],
-            occurred_at: 10,
+            occurred_at: Some(10),
             assertions: WitnessAssertions::default(),
         })
         .expect("the owner's turn");

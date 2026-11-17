@@ -43,7 +43,7 @@ fn witness(
                     order: 0,
                     quote: None,
                 }],
-                occurred_at,
+                occurred_at: Some(occurred_at),
                 assertions: Default::default(),
             },
             None,

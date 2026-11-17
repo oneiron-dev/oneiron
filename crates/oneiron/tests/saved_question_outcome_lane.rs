@@ -132,7 +132,7 @@ fn owner_vault() -> OwnerVault {
             body: json!({"name": "Saved lane fixture unit"}),
             text_fields: None,
             edges: None,
-            occurred_at: now,
+            occurred_at: Some(now),
             learned_at: None,
         })
         .expect("precondition: the owner writes the unit");

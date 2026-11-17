@@ -96,7 +96,7 @@ fn two_turn_archive() -> Conversation {
                 turn_ref: None,
                 thread_audience: None,
                 messages: vec![message(author, content)],
-                occurred_at: at,
+                occurred_at: Some(at),
                 assertions: WitnessAssertions::default(),
                 project: None,
             })

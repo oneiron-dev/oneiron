@@ -271,7 +271,7 @@ pub fn consolidate_tagged_turn(
                     order: 0,
                     quote: None,
                 }],
-                occurred_at: 10,
+                occurred_at: Some(10),
                 assertions: WitnessAssertions::default(),
             },
             tags,
@@ -368,7 +368,7 @@ pub(super) fn witness_user_turn(
                 order: 0,
                 quote: None,
             }],
-            occurred_at,
+            occurred_at: Some(occurred_at),
             assertions: WitnessAssertions::default(),
         })
         .map_err(|error| Error::InvalidConfig(format!("witness: {error:?}")))?;

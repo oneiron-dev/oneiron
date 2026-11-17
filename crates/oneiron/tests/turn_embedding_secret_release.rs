@@ -96,7 +96,7 @@ fn a_message_the_write_door_refuses_never_reaches_the_embedder_in_its_turns_text
             turn_ref: Some(turn.to_hex()),
             thread_audience: None,
             project: None,
-            occurred_at: at,
+            occurred_at: Some(at),
             messages: vec![message(CLEAN, 0), message(PHRASE, 1)],
             assertions: Default::default(),
         })?;

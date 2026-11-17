@@ -760,7 +760,7 @@ pub(super) fn witness_vad_message_fixture(
                 parts: None,
                 quote: None,
             }],
-            occurred_at,
+            occurred_at: Some(occurred_at),
             assertions: Default::default(),
             thread_audience: None,
             project: None,

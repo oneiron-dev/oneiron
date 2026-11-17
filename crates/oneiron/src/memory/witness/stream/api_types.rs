@@ -14,9 +14,14 @@ pub struct MessageBirth {
     pub message_type: String,
     #[serde(default)]
     pub metadata: Option<serde_json::Value>,
+    /// Omitted: visible, the engine's default for a message.
+    #[serde(default = "crate::memory::witness::types::visible_by_default")]
     pub is_visible: bool,
     pub order: u32,
-    pub occurred_at: u64,
+    /// Omitted: the vault's recording clock, read once when the MESSAGE is
+    /// written (UC-02-OCCURRED-AT-CLOCK = A).
+    #[serde(default)]
+    pub occurred_at: Option<u64>,
     #[serde(default)]
     pub assertions: WitnessAssertions,
     #[serde(default)]

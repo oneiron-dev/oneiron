@@ -291,7 +291,7 @@ fn speak_trunk(fixture: &Fixture) -> TestResult<(EntityId, EntityId)> {
             order: 0,
             quote: None,
         }],
-        occurred_at: fixture.vault.now_recorded_at(),
+        occurred_at: Some(fixture.vault.now_recorded_at()),
         assertions: Default::default(),
     })?;
     Ok((turn, message))
@@ -564,7 +564,7 @@ fn ordinary_room_retry_of_an_unclaimed_rowed_reply_is_queued() -> TestResult {
                 order: 0,
                 quote: None,
             }],
-            occurred_at: fixture.vault.now_recorded_at(),
+            occurred_at: Some(fixture.vault.now_recorded_at()),
             assertions: Default::default(),
         },
         None,

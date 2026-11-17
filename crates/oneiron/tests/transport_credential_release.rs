@@ -915,7 +915,7 @@ fn witness_message_with_signature(
                 order: 0,
                 quote: None,
             }],
-            occurred_at: LEARNED_AT,
+            occurred_at: Some(LEARNED_AT),
             assertions: oneiron::memory::WitnessAssertions::default(),
         })
         .expect("the public witness door accepts the canonical signed text part");
@@ -1163,7 +1163,7 @@ fn witness_prompt_message(
                 order: 0,
                 quote: None,
             }],
-            occurred_at: LEARNED_AT,
+            occurred_at: Some(LEARNED_AT),
             assertions: oneiron::memory::WitnessAssertions::default(),
         })
         .expect("the public witness door accepts a plain text prompt");

@@ -172,7 +172,7 @@ fn turn_of(turn: EntityId, messages: Vec<WitnessMessage>) -> WitnessTurn {
         turn_ref: Some(turn.to_hex()),
         thread_audience: None,
         messages,
-        occurred_at: 10,
+        occurred_at: Some(10),
         assertions: WitnessAssertions::default(),
         project: None,
     }

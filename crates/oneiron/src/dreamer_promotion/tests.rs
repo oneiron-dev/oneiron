@@ -619,7 +619,7 @@ fn imported_evidence_lands_proposed_in_its_import_review_whatever_the_policy_gra
                 order: 0,
                 quote: None,
             }],
-            occurred_at: 9_000,
+            occurred_at: Some(9_000),
             thread_audience: None,
             project: None,
             assertions: Default::default(),
@@ -950,6 +950,7 @@ fn tainted_head_clean_candidate_folds_taint() -> Result<()> {
             crate::registry::ENTITY_TYPE_CLAIM,
             crate::TimeRange { start: 1, end: 1 },
             1,
+            None,
             &bytes,
         )
         .commit()?;
@@ -979,6 +980,7 @@ fn tainted_head_clean_candidate_folds_taint() -> Result<()> {
                 crate::registry::ENTITY_TYPE_CLAIM,
                 crate::TimeRange { start: 2, end: 2 },
                 2,
+                None,
                 &crate::claim::encode_claim_body(&forged)?
             )
             .commit()
@@ -1139,6 +1141,7 @@ fn replay_path_still_skips_source_trust_gate() -> Result<()> {
             crate::registry::ENTITY_TYPE_CLAIM,
             occurred(9_000),
             9_000,
+            None,
             body_bytes,
         )
         .commit()?;

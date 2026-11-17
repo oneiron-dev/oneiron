@@ -97,7 +97,7 @@ impl Fixture {
             id: Some(artifact.to_hex()),
             name: "versioned.bin".to_owned(),
             media_type: "application/octet-stream".to_owned(),
-            occurred_at: now,
+            occurred_at: Some(now),
             learned_at: None,
         })?;
         let first =

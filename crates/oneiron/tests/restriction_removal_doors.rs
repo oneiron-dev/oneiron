@@ -564,7 +564,7 @@ fn an_agents_imported_campaign_member_is_refused() {
                     "sender_ref": EntityId::now().to_hex(),
                 }],
             }),
-            occurred_at: LEARNED_AT,
+            occurred_at: Some(LEARNED_AT),
             learned_at: None,
         });
 

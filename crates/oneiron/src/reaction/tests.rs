@@ -5,8 +5,6 @@ use crate::memory::{WitnessAuthor, WitnessMessage, WitnessTurn};
 use crate::registry::ENTITY_TYPE_PERSON;
 use crate::{EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig, WriteActor};
 
-// FIX [LIBTEST-QUARANTINE-REACTION-TESTS-CLAIMS]: the lib test target's type check fails here (2 errors: E0061 x2); port it, then drop this gate
-#[cfg(any())]
 mod claims;
 mod lifecycle;
 mod mirror;
@@ -62,7 +60,7 @@ pub(super) fn witness(vault: &Vault, room: EntityId, author: EntityId, text: &st
             turn_ref: None,
             thread_audience: None,
             project: None,
-            occurred_at: 10,
+            occurred_at: Some(10),
             messages: vec![WitnessMessage {
                 id: Some(message.to_hex()),
                 author: WitnessAuthor::User,

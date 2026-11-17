@@ -306,7 +306,7 @@ fn witness_turn(
         conversation_ref: ROOM_HEX.to_owned(),
         turn_ref: Some(turn_hex.to_owned()),
         thread_audience: None,
-        occurred_at,
+        occurred_at: Some(occurred_at),
         messages: vec![WitnessMessage {
             id: None,
             author: WitnessAuthor::User,

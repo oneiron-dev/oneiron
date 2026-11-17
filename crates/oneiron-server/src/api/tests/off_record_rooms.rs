@@ -1378,7 +1378,7 @@ async fn a_rostered_viewer_learns_nothing_from_another_rooms_message_ids() {
                     quote: None,
                 })
                 .collect(),
-            occurred_at: 50,
+            occurred_at: Some(50),
             assertions: Default::default(),
             thread_audience: None,
             project: None,
@@ -1423,7 +1423,7 @@ async fn a_rostered_viewer_learns_nothing_from_another_rooms_message_ids() {
                         parts: None,
                         quote: None,
                     }],
-                    occurred_at: 90,
+                    occurred_at: Some(90),
                     assertions: Default::default(),
                     thread_audience: None,
                     project: None,

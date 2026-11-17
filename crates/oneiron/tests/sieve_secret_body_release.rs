@@ -66,7 +66,7 @@ fn a_message_the_write_door_refuses_gives_the_sieve_no_span() -> TestResult {
             turn_ref: Some(turn.to_hex()),
             thread_audience: None,
             project: None,
-            occurred_at: at,
+            occurred_at: Some(at),
             messages: vec![
                 message(clean, CLEAN, 0, None),
                 message(words_refused, WORDS_REFUSED, 1, None),

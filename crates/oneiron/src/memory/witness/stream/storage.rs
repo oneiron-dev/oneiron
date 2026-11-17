@@ -161,7 +161,7 @@ impl Seed {
             thread_audience: self.thread_audience.clone(),
             project: None,
             messages: vec![self.message_with_parts(content, parts)],
-            occurred_at: self.occurred_at,
+            occurred_at: Some(self.occurred_at),
             assertions: self.assertions.clone(),
         }
     }

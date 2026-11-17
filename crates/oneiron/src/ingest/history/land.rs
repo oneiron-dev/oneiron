@@ -740,7 +740,7 @@ impl Import<'_> {
             thread_audience: None,
             project: None,
             messages,
-            occurred_at: occurred[0],
+            occurred_at: Some(occurred[0]),
             assertions: Default::default(),
         };
         let stamp = ImportedTurnStamp {
@@ -830,7 +830,5 @@ impl Import<'_> {
     }
 }
 
-// FIX [LIBTEST-QUARANTINE-INGEST-HISTORY-LAND-TESTS]: the lib test target's type check fails here (3 errors: E0063 x2, E0061 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;

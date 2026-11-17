@@ -427,7 +427,7 @@ fn refs_links_page_max_reads_a_turn_page_past_32() {
             turn_ref: None,
             thread_audience: None,
             messages,
-            occurred_at: fx.vault.now_recorded_at(),
+            occurred_at: Some(fx.vault.now_recorded_at()),
             assertions: WitnessAssertions::default(),
             project: None,
         })
@@ -580,7 +580,7 @@ fn lenses_default_thread_entry_cut_follows_excerpt_bytes() {
             order: 0,
             quote: None,
         }],
-        occurred_at: fx.vault.now_recorded_at(),
+        occurred_at: Some(fx.vault.now_recorded_at()),
         assertions: WitnessAssertions::default(),
         project: None,
     })

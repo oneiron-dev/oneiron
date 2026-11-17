@@ -6,6 +6,7 @@
 
 pub mod access_request_seed;
 pub mod advisory_rate_window;
+pub mod agent_authoring;
 pub mod agent_definition_scans;
 pub mod agent_health;
 pub mod agent_run_handover;
@@ -53,6 +54,7 @@ pub mod comm_late_stop;
 pub mod comm_party_lookup_reads;
 pub mod comm_thread_member_claim_reads;
 pub mod comm_widen_standing;
+pub mod compaction;
 pub mod compaction_request;
 pub mod companion_grant_index;
 pub mod connector_key_suspend;

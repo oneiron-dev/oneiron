@@ -86,7 +86,7 @@ fn witness(vault: &Vault, owner_id: EntityId, text: &str) -> TestResult {
             conversation_ref: EntityId::now().to_hex(),
             turn_ref: Some(EntityId::now().to_hex()),
             thread_audience: None,
-            occurred_at: vault.now_recorded_at(),
+            occurred_at: Some(vault.now_recorded_at()),
             messages: vec![WitnessMessage {
                 id: None,
                 author: WitnessAuthor::User,

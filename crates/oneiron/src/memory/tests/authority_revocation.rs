@@ -34,7 +34,7 @@ fn owner_verbs_require_active_owner_binding_when_rooted() {
             body: serde_json::json!({"name": "minted"}),
             text_fields: None,
             edges: None,
-            occurred_at: 700,
+            occurred_at: Some(700),
             learned_at: None,
         })
         .expect("bound owner mints PERSON");
@@ -65,7 +65,7 @@ fn owner_verbs_require_active_owner_binding_when_rooted() {
                 body: serde_json::json!({"name": "forged"}),
                 text_fields: None,
                 edges: None,
-                occurred_at: 701,
+                occurred_at: Some(701),
                 learned_at: None,
             })
             .expect_err("unbound PERSON mint"),
@@ -104,7 +104,7 @@ fn owner_verbs(facade: &Memory<'_>, claim: &str, subject: EntityId) -> [MemoryRe
                 body: serde_json::json!({"name": "minted"}),
                 text_fields: None,
                 edges: None,
-                occurred_at: 700,
+                occurred_at: Some(700),
                 learned_at: None,
             })
             .map(drop),
@@ -354,10 +354,8 @@ fn second_owner_hard_deletes_actor_before_target_delete_txn1() {
     use crate::authority::{AuthorityKey, AuthorityLogEntry, AuthorityOp, AuthoritySignature};
 
     let clock = crate::ports::ManualClock::new(1_000);
-    let config = VaultConfig {
-        store_clock: clock.bundle(),
-        ..VaultConfig::default()
-    };
+    let mut config = VaultConfig::default();
+    config.store_clock = clock.bundle();
     #[cfg(feature = "sync")]
     let mut harness = PublishBoundaryHarness::open_with_config("owner-actor-race", false, config);
     #[cfg(feature = "sync")]
@@ -641,7 +639,9 @@ fn a_narrower_owner_credential_loses_its_grant_exemption_with_the_binding() {
             conversation_ref: EntityId::from_bytes([0x6F; 16]).unwrap().to_hex(),
             turn_ref: None,
             messages,
-            occurred_at: 1500,
+            occurred_at: Some(1500),
+            thread_audience: None,
+            assertions: Default::default(),
         })
         .expect("witness the owner's words");
 
@@ -756,7 +756,9 @@ fn narrower_embedded_owner_reads_past(reason: crate::deletion::DeleteReason) {
             conversation_ref: EntityId::from_bytes([0x6A; 16]).unwrap().to_hex(),
             turn_ref: None,
             messages,
-            occurred_at: 1500,
+            occurred_at: Some(1500),
+            thread_audience: None,
+            assertions: Default::default(),
         })
         .expect("witness another person's words");
 
@@ -1423,17 +1425,10 @@ fn revocation_after_a_nonpublishing_delete_refuses_and_tears_nothing() {
 #[test]
 fn revocation_after_a_nonpublishing_headerless_delete_refuses_and_tears_nothing() {
     let dir = tempfile::tempdir().expect("tempdir");
-    let vault = std::sync::Arc::new(
-        crate::Vault::open(
-            dir.path(),
-            VaultConfig {
-                embedding_model: Some("test/model@v1".to_owned()),
-                dimensions: 4,
-                ..VaultConfig::default()
-            },
-        )
-        .expect("open vault"),
-    );
+    let mut config = VaultConfig::default();
+    config.embedding_model = Some("test/model@v1".to_owned());
+    config.dimensions = 4;
+    let vault = std::sync::Arc::new(crate::Vault::open(dir.path(), config).expect("open vault"));
     let owner = put_person(&vault, 0x43);
     let revoke = root_binding_with_pending_revocation(&vault, 0x44, owner);
 
@@ -1555,7 +1550,7 @@ fn conflicting_vault_roots_fail_owner_verbs_closed() {
                 body: serde_json::json!({"name": "forged"}),
                 text_fields: None,
                 edges: None,
-                occurred_at: 703,
+                occurred_at: Some(703),
                 learned_at: None,
             })
             .expect_err("conflicted-root PERSON mint"),
@@ -1719,7 +1714,7 @@ fn sidecarless_rotation_denies_owner_verbs_through_the_facade() {
                 body: serde_json::json!({"name": "forged"}),
                 text_fields: None,
                 edges: None,
-                occurred_at: 704,
+                occurred_at: Some(704),
                 learned_at: None,
             })
             .expect_err("retired key must not mint a PERSON"),

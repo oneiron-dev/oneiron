@@ -117,7 +117,7 @@ fn owner_turn(vault: &Vault, owner: EntityId, metadata: serde_json::Value) {
             turn_ref: None,
             thread_audience: None,
             project: None,
-            occurred_at: 1,
+            occurred_at: Some(1),
             messages: vec![WitnessMessage {
                 id: Some(EntityId::now().to_hex()),
                 author: WitnessAuthor::User,

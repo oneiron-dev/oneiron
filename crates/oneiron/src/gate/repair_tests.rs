@@ -41,6 +41,7 @@ fn diagnostic() -> DiagnosticEvent {
     DiagnosticEvent {
         detector_id: "test.retrieval_detector".to_owned(),
         event_class: DiagnosticEventClass::RetrievalMiss,
+        signal: None,
         actor_class: "human".to_owned(),
         actor_ref: Some(test_id(0x64)),
         source: DiagnosticSourceKind::RetrievalTelemetry,
@@ -73,11 +74,13 @@ fn registration(
 }
 
 fn review(
+    vault: &crate::Vault,
     policy: &PolicyManifestResolution,
     registration: &RegisteredHealer<'_>,
     diagnostics: &[DiagnosticEvent],
 ) -> Result<RepairBundle> {
     run_healer_proposals(
+        vault,
         policy,
         registration,
         "run.repair",
@@ -138,8 +141,18 @@ fn severity_label_not_trusted() -> Result<()> {
     let normal = diagnostic();
     let mut critical = normal.clone();
     critical.criticality = DiagnosticCriticality::Critical;
-    let first = review(&normal_policy, &registered, std::slice::from_ref(&normal))?;
-    let second = review(&normal_policy, &registered, std::slice::from_ref(&critical))?;
+    let first = review(
+        &vault,
+        &normal_policy,
+        &registered,
+        std::slice::from_ref(&normal),
+    )?;
+    let second = review(
+        &vault,
+        &normal_policy,
+        &registered,
+        std::slice::from_ref(&critical),
+    )?;
     for bundle in [&first, &second] {
         assert_eq!(
             bundle.proposals()[0].route(),
@@ -153,7 +166,7 @@ fn severity_label_not_trusted() -> Result<()> {
 
     let current = load_policy(&vault, &repair_manifest(actor, true, "critical"))?;
     for event in [normal, critical] {
-        let bundle = review(&current, &registered, &[event])?;
+        let bundle = review(&vault, &current, &registered, &[event])?;
         assert_eq!(
             bundle.proposals()[0].route(),
             RepairConsentRoute::HumanReview
@@ -204,7 +217,7 @@ fn repair_proposal_disclosure_cannot_spoof_invocation() -> Result<()> {
         );
     }
 
-    let bundle = review(&policy, &registered, &[diagnostic()])?;
+    let bundle = review(&vault, &policy, &registered, &[diagnostic()])?;
     let member = &bundle.proposals()[0];
     assert_eq!(
         member.proposal(),
@@ -237,7 +250,7 @@ fn no_auto_apply() -> Result<()> {
         None,
     );
     let before_metrics = gate_metric_emission_count_for_test();
-    let bundle = review(&policy, &registered, &[diagnostic()])?;
+    let bundle = review(&vault, &policy, &registered, &[diagnostic()])?;
     assert_eq!(
         bundle.proposals()[0].route(),
         RepairConsentRoute::AutoEligible
@@ -285,7 +298,7 @@ fn repair_generated_permit_is_bound_to_stamped_actor() -> Result<()> {
             WriteActor::new(stamped_actor, EdgeActorClass::System),
             None,
         );
-        let bundle = review(&policy, &registered, &[diagnostic()])?;
+        let bundle = review(&vault, &policy, &registered, &[diagnostic()])?;
         assert_eq!(bundle.proposals()[0].route(), expected);
     }
     Ok(())

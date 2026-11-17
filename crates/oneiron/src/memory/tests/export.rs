@@ -189,7 +189,7 @@ fn export_streamed_message_uses_committed_document_not_pointer_or_partial() {
         turn_ref: Some(EntityId::now().to_hex()),
         thread_audience: None,
         project: None,
-        occurred_at: 10,
+        occurred_at: Some(10),
         messages: vec![WitnessMessage {
             id: Some(message.to_hex()),
             author: WitnessAuthor::User,
@@ -280,7 +280,7 @@ fn preview_migrated_edited_message_reads_committed_document() {
             turn_ref: None,
             thread_audience: None,
             project: None,
-            occurred_at: 10,
+            occurred_at: Some(10),
             messages: vec![WitnessMessage {
                 id: Some(message.to_hex()),
                 author: WitnessAuthor::User,

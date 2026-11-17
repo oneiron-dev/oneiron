@@ -54,7 +54,7 @@ fn witness(memory: &Memory<'_>, content: &str) {
                 order: 0,
                 quote: None,
             }],
-            occurred_at: 900,
+            occurred_at: Some(900),
             assertions: WitnessAssertions::default(),
         })
         .expect("witness one turn");

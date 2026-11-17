@@ -387,7 +387,7 @@ fn witness_text(owner: &OneironClient) {
                 parts: None,
                 quote: None,
             }],
-            occurred_at: unix_seconds_now(),
+            occurred_at: Some(unix_seconds_now()),
             thread_audience: None,
             assertions: Default::default(),
             project: None,

@@ -5,15 +5,10 @@
 /// turn as the worker would ([`fill_turn`]).
 fn open_embedding_vault() -> (tempfile::TempDir, crate::Vault) {
     let dir = tempfile::tempdir().expect("tempdir");
-    let vault = crate::Vault::open(
-        dir.path(),
-        crate::config::VaultConfig {
-            embedding_model: Some("test/model@v1".to_owned()),
-            dimensions: 4,
-            ..crate::config::VaultConfig::default()
-        },
-    )
-    .expect("open vault");
+    let mut config = crate::config::VaultConfig::device();
+    config.embedding_model = Some("test/model@v1".to_owned());
+    config.dimensions = 4;
+    let vault = crate::Vault::open(dir.path(), config).expect("open vault");
     (dir, vault)
 }
 
@@ -32,7 +27,7 @@ fn witness_turn(
                 .zip(said)
                 .map(|(order, text)| witness_message(order, WitnessAuthor::User, text))
                 .collect(),
-            occurred_at,
+            occurred_at: Some(occurred_at),
             thread_audience: None,
             project: None,
             assertions: Default::default(),
@@ -330,7 +325,7 @@ fn a_turn_the_reader_may_not_retrieve_leaves_room_for_one_it_may() {
                 in_space(0, "harbor harbor"),
                 witness_message(1, WitnessAuthor::User, "harbor locker code is 4471"),
             ],
-            occurred_at,
+            occurred_at: Some(occurred_at),
             thread_audience: None,
             project: None,
             assertions: Default::default(),
@@ -341,7 +336,7 @@ fn a_turn_the_reader_may_not_retrieve_leaves_room_for_one_it_may() {
             conversation_ref: EntityId::from_bytes([0xF2; 16]).unwrap().to_hex(),
             turn_ref: None,
             messages: vec![in_space(0, ALLOWED)],
-            occurred_at,
+            occurred_at: Some(occurred_at),
             thread_audience: None,
             project: None,
             assertions: Default::default(),

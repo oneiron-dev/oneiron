@@ -367,7 +367,12 @@ impl SessionWitnessBinding {
             tokens: Arc::downgrade(&token),
             agent,
             sitting,
-            birth: turn.clone(),
+            // An omitted time is the vault's recording clock, read once as
+            // the stream opens (UC-02 B1b), as a base stream's seed keeps it.
+            birth: WitnessTurn {
+                occurred_at: Some(turn.occurred_at.unwrap_or_else(|| vault.now_recorded_at())),
+                ..turn.clone()
+            },
             text: birth.content.clone(),
             sequence: 0,
             last_op_at_ms: at.saturating_add(waited_ms),

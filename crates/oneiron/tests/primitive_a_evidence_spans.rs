@@ -50,7 +50,7 @@ fn witnessed_turn(memory: &Memory<'_>) -> Result<EntityId, Box<dyn std::error::E
         thread_audience: None,
         project: None,
         messages: vec![said("hello there", 0), said("second line", 1)],
-        occurred_at: 900,
+        occurred_at: Some(900),
         assertions: WitnessAssertions::default(),
     })?;
     Ok(receipt.turn_id)
@@ -280,7 +280,7 @@ mod masked {
                 thread_audience: None,
                 project: None,
                 messages: vec![said("hello there", 0), said(&second, 1)],
-                occurred_at: 900,
+                occurred_at: Some(900),
                 assertions: WitnessAssertions::default(),
             })?
             .turn_id;

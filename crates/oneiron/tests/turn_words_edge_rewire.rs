@@ -153,7 +153,7 @@ impl Fixture {
                 turn_ref: Some(turn.to_hex()),
                 thread_audience: None,
                 messages,
-                occurred_at: self.vault.now_recorded_at(),
+                occurred_at: Some(self.vault.now_recorded_at()),
                 assertions: WitnessAssertions::default(),
                 project: None,
             })

@@ -9,6 +9,7 @@ use crate::registry::{
     ENTITY_TYPE_FACET, ENTITY_TYPE_FEDERATION_GRANT, ENTITY_TYPE_PERSON, ENTITY_TYPE_TASK,
 };
 use crate::{TimeRange, VaultConfig};
+use std::collections::BTreeSet;
 
 #[test]
 fn opaque_edit_keeps_birth_scope_and_changed_facet_refuses_restamp() {
@@ -72,7 +73,7 @@ fn habit(vault: &Vault, member: EntityId) -> EntityId {
             body: serde_json::json!({"role": 4, "content": "habit"}),
             text_fields: None,
             edges: None,
-            occurred_at: 10,
+            occurred_at: Some(10),
             learned_at: None,
         })
         .unwrap();
@@ -157,6 +158,7 @@ fn generic_child_in_scope_cannot_rewrite_an_out_of_scope_habit_parent() {
             ENTITY_TYPE_FEDERATION_GRANT,
             TimeRange { start: 1, end: 1 },
             1,
+            None,
             &encode_federation_grant_body(&grant).unwrap(),
         )
         .commit()
@@ -180,7 +182,7 @@ fn generic_child_in_scope_cannot_rewrite_an_out_of_scope_habit_parent() {
                     target_ref: parent.to_hex(),
                     weight: None,
                 }]),
-                occurred_at: 11,
+                occurred_at: Some(11),
                 learned_at: None,
             })
             .is_err()
@@ -232,6 +234,7 @@ fn replay_changed_task(vault: &Vault, id: EntityId, marker: &str) {
             ENTITY_TYPE_TASK,
             TimeRange { start: 10, end: 10 },
             10,
+            None,
             &replay_body,
         )
         .commit()

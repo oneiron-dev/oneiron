@@ -448,7 +448,7 @@ fn imported_claims_cannot_create_or_disguise_overwrites_of_keyed_revisions() {
                 subject_ref: owner.to_hex(),
                 predicate: predicate.into(),
                 value: json!({"malformed": true}),
-                occurred_at: 100,
+                occurred_at: Some(100),
                 learned_at: None,
             })
             .unwrap_err();

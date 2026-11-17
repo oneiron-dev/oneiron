@@ -354,7 +354,7 @@ fn witness_user_turn(fixture: &PreferenceFixture, words: &str) -> EntityId {
                 order: 0,
                 quote: None,
             }],
-            occurred_at: fixture.vault.now_recorded_at(),
+            occurred_at: Some(fixture.vault.now_recorded_at()),
             assertions: WitnessAssertions::default(),
             project: None,
         })

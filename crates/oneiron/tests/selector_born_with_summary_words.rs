@@ -125,7 +125,7 @@ fn witness_source(
                 order: 0,
                 quote: None,
             }],
-            occurred_at: now,
+            occurred_at: Some(now),
             assertions: WitnessAssertions::default(),
             project: None,
         })
@@ -358,7 +358,7 @@ fn prompt_message(
                 order: 0,
                 quote: None,
             }],
-            occurred_at: now,
+            occurred_at: Some(now),
             assertions: WitnessAssertions::default(),
             project: None,
         })

@@ -95,7 +95,7 @@ fn person(fixture: &OwnerVault, name: &str) -> EntityId {
             body: json!({ "name": name }),
             text_fields: None,
             edges: None,
-            occurred_at: fixture.now,
+            occurred_at: Some(fixture.now),
             learned_at: None,
         })
         .expect("precondition: the owner writes the unit");

@@ -214,7 +214,7 @@ impl Fixture {
                             order: 0,
                             quote: None,
                         }],
-                        occurred_at: LEARNED_AT + turn,
+                        occurred_at: Some(LEARNED_AT + turn),
                         assertions: Default::default(),
                     })
                     .expect("witness a window turn");

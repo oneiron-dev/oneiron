@@ -254,7 +254,7 @@ impl Vault {
             thread_audience: None,
             project: None,
             messages: vec![message],
-            occurred_at,
+            occurred_at: Some(occurred_at),
             assertions: Default::default(),
         };
         let stamp = ImportedTurnStamp {

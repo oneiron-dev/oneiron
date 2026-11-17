@@ -114,7 +114,7 @@ fn save_as(
         conversation_ref: ROOM.to_owned(),
         turn_ref: Some(turn.to_hex()),
         thread_audience: None,
-        occurred_at: now_seconds()?,
+        occurred_at: Some(now_seconds()?),
         messages: vec![WitnessMessage {
             id: None,
             author: WitnessAuthor::User,

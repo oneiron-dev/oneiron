@@ -151,7 +151,7 @@ impl Fixture {
             body: json!({"name": "Wave Seven Minted"}),
             text_fields: None,
             edges: None,
-            occurred_at: now,
+            occurred_at: Some(now),
             learned_at: None,
         })
     }
@@ -231,7 +231,7 @@ fn c27_machine_still_refused_when_key_on() {
             body: json!({}),
             text_fields: None,
             edges: None,
-            occurred_at: now,
+            occurred_at: Some(now),
             learned_at: None,
         })
         .expect_err("no MACHINE through the facade");

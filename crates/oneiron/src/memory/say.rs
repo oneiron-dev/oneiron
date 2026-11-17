@@ -186,7 +186,7 @@ impl Memory<'_> {
                         order: 0,
                         quote: None,
                     }],
-                    occurred_at: crate::unix_seconds_now(),
+                    occurred_at: Some(crate::unix_seconds_now()),
                     assertions: marks.assertions,
                     project: None,
                 })?;

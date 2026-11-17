@@ -12,7 +12,9 @@ fn witness_query_window_pair(facade: &Memory<'_>, now: u64) -> [(String, String)
                     WitnessAuthor::User,
                     "I prefer a window seat when I fly.",
                 )],
-                occurred_at: now - days_ago * 86_400,
+                occurred_at: Some(now - days_ago * 86_400),
+                thread_audience: None,
+                assertions: Default::default(),
             })
             .expect("witness");
         refs.push((
@@ -120,7 +122,9 @@ fn recall_default_effort_ranks_the_newer_identical_message_first() {
                 conversation_ref: EntityId::from_bytes([seed; 16]).unwrap().to_hex(),
                 turn_ref: None,
                 messages: vec![witness_message(0, WitnessAuthor::User, text)],
-                occurred_at: now - days_ago * 86_400,
+                occurred_at: Some(now - days_ago * 86_400),
+                thread_audience: None,
+                assertions: Default::default(),
             })
             .expect("witness");
         // Recall returns each message as its turn (ARCH-0004).
@@ -165,7 +169,9 @@ fn recall_light_effort_ranks_the_newer_identical_message_first() {
                 conversation_ref: EntityId::from_bytes([seed; 16]).unwrap().to_hex(),
                 turn_ref: None,
                 messages: vec![witness_message(0, WitnessAuthor::User, text)],
-                occurred_at: now - days_ago * 86_400,
+                occurred_at: Some(now - days_ago * 86_400),
+                thread_audience: None,
+                assertions: Default::default(),
             })
             .expect("witness");
         // Recall returns each message as its turn (ARCH-0004).

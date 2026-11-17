@@ -117,7 +117,7 @@ impl Served {
                 }),
                 text_fields: None,
                 edges: None,
-                occurred_at: 1,
+                occurred_at: Some(1),
                 learned_at: None,
             })
             .unwrap_or_else(|error| panic!("FIXTURE: the owner writes an EVENT: {error:?}"));

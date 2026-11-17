@@ -113,7 +113,7 @@ fn spoken_archive() -> Spoken {
                 turn_ref: None,
                 thread_audience: None,
                 messages: vec![message(author, content, 0)],
-                occurred_at,
+                occurred_at: Some(occurred_at),
                 assertions: WitnessAssertions::default(),
                 project: None,
             })

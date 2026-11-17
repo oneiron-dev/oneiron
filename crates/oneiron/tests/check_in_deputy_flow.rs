@@ -257,7 +257,7 @@ impl Flow {
                     order: 0,
                     quote: None,
                 }],
-                occurred_at: self.vault.now_recorded_at(),
+                occurred_at: Some(self.vault.now_recorded_at()),
                 assertions: Default::default(),
                 project: None,
             })
@@ -393,7 +393,7 @@ fn a_deputys_acts_go_wait_or_hold_and_the_approved_ones_land_once() {
             id: None,
             name: "deputy flow record".to_owned(),
             media_type: "text/plain".to_owned(),
-            occurred_at: 1,
+            occurred_at: Some(1),
             learned_at: None,
         })
         .expect("the owner writes an artifact");

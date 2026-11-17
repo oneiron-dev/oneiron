@@ -121,7 +121,7 @@ impl Fixture {
                     order: 0,
                     quote: None,
                 }],
-                occurred_at,
+                occurred_at: Some(occurred_at),
                 assertions: WitnessAssertions::default(),
                 project: None,
             })

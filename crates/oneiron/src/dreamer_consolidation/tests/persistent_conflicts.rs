@@ -97,16 +97,29 @@ fn prior_head_disagreement_opens_one_persistent_marker_and_close_audit() -> Resu
             .count(),
         1
     );
-    let closed =
-        close_persistent_conflict(&vault, &run, id, Value::from("owner chose no"), vec![turn])?;
+    let closed = close_persistent_conflict(
+        &vault,
+        &run,
+        id,
+        Value::from("owner chose no"),
+        vec![turn],
+        None,
+    )?;
     assert_eq!(closed.landed.len(), 1, "{:?}", closed.rejected);
     assert_eq!(
         vault.get_claim(&closed.landed[0])?.unwrap().predicate,
         crate::claim::PREDICATE_CONFLICT_RESOLVED
     );
     assert_eq!(
-        close_persistent_conflict(&vault, &run, id, Value::from("owner chose no"), vec![turn])?
-            .landed,
+        close_persistent_conflict(
+            &vault,
+            &run,
+            id,
+            Value::from("owner chose no"),
+            vec![turn],
+            None,
+        )?
+        .landed,
         closed.landed
     );
     Ok(())
@@ -157,6 +170,7 @@ fn conflict_close_stays_in_the_marker_project() -> Result<()> {
             marker.claim_id,
             Value::from("tea"),
             vec![evidence],
+            None,
         )
     };
     assert!(matches!(
@@ -214,14 +228,18 @@ fn extraction_keeps_same_answers_for_different_topics_distinct_on_replay() -> Re
             sink: &mut sink,
             inference: test_inference_host(),
             scope: None,
+            decisions: ConsolidationDecisions::shipped()?,
         };
         let mut ctx = WakeAttemptContext {
             vault: &vault,
             deadline: &deadline,
+            cancel: None,
+            device_cancel: None,
             budget_id: "wake",
             now_ms: 21_000,
             prepared_wake: None,
             prepared_attempt: None,
+            spend_meter: None,
         };
         assert!(matches!(
             block_on_ready(executor.execute(&admitted, &mut ctx))?,

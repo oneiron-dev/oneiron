@@ -164,7 +164,7 @@ fn a_distinct_fact_from_a_project_message_stands_in_that_project() {
                 order: 0,
                 quote: None,
             }],
-            occurred_at: 10,
+            occurred_at: Some(10),
             assertions: WitnessAssertions::default(),
         })
         .expect("the owner's turn");

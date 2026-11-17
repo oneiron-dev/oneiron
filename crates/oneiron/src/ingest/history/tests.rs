@@ -174,16 +174,20 @@ fn plain_turn(conversation_ref: String, turn_ref: Option<String>) -> WitnessTurn
     WitnessTurn {
         conversation_ref,
         turn_ref,
+        thread_audience: None,
         messages: vec![WitnessMessage {
             id: None,
             author: WitnessAuthor::User,
             message_type: "dialogue".to_owned(),
             content: "a live word".to_owned(),
+            parts: None,
             metadata: None,
             is_visible: true,
             order: 40,
+            quote: None,
         }],
-        occurred_at: IMPORTED_AT + 100,
+        occurred_at: Some(IMPORTED_AT + 100),
+        assertions: Default::default(),
     }
 }
 
@@ -436,16 +440,20 @@ fn an_import_never_lands_in_a_plain_conversation_at_its_derived_id() {
         .witness(&WitnessTurn {
             conversation_ref: conversation_id.to_hex(),
             turn_ref: None,
+            thread_audience: None,
             messages: vec![WitnessMessage {
                 id: None,
                 author: WitnessAuthor::User,
                 message_type: "dialogue".to_owned(),
                 content: "a plain turn".to_owned(),
+                parts: None,
                 metadata: None,
                 is_visible: true,
                 order: 0,
+                quote: None,
             }],
-            occurred_at: WITNESSED_AT,
+            occurred_at: Some(WITNESSED_AT),
+            assertions: Default::default(),
         })
         .expect("plain witness");
 
@@ -666,7 +674,7 @@ fn a_spawned_codex_rollout_keeps_the_owners_copied_words_as_the_owners() {
         .messages
         .iter()
         .filter(|message| message.role == HistoryRole::User)
-        .map(|message| (message.text.as_str(), message.said_by))
+        .map(|message| (message.text.as_str(), message.said_by.as_deref()))
         .collect();
     assert_eq!(
         users,
@@ -701,7 +709,7 @@ fn a_spawned_codex_rollout_keeps_the_owners_copied_words_as_the_owners() {
         .messages
         .iter()
         .filter(|message| message.role == HistoryRole::User)
-        .map(|message| (message.text.as_str(), message.said_by))
+        .map(|message| (message.text.as_str(), message.said_by.as_deref()))
         .collect();
     assert_eq!(
         users,
@@ -737,7 +745,7 @@ fn a_spawned_codex_rollout_keeps_the_owners_copied_words_as_the_owners() {
         .messages
         .iter()
         .filter(|message| message.role == HistoryRole::User)
-        .map(|message| (message.text.as_str(), message.said_by))
+        .map(|message| (message.text.as_str(), message.said_by.as_deref()))
         .collect();
     assert_eq!(
         users,
@@ -812,12 +820,12 @@ fn a_spawned_codex_rollout_keeps_the_owners_copied_words_as_the_owners() {
 }
 
 /// Each user message's words and who said them when it was not the owner.
-fn said_by(conversations: &[HistoryConversation]) -> Vec<(&str, Option<&'static str>)> {
+fn said_by(conversations: &[HistoryConversation]) -> Vec<(&str, Option<&str>)> {
     conversations[0]
         .messages
         .iter()
         .filter(|message| message.role == HistoryRole::User)
-        .map(|message| (message.text.as_str(), message.said_by))
+        .map(|message| (message.text.as_str(), message.said_by.as_deref()))
         .collect()
 }
 
@@ -863,7 +871,7 @@ fn owner_words_an_ambiguous_codex_copy_landed_first_land_again_from_their_own_ro
         0,
     );
     let owners = ledger::content_hash(&words);
-    words.said_by = Some(super::UNKNOWN_SPEAKER);
+    words.said_by = Some(super::UNKNOWN_SPEAKER.to_owned());
     let unknown = ledger::content_hash(&words);
 
     // The ambiguous copy first: the root's words land, speaker unknown.

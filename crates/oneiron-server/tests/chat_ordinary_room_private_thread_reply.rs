@@ -180,7 +180,7 @@ fn speak(place: &Room, metadata: serde_json::Value) -> (EntityId, MemoryResult<(
                 order: 0,
                 quote: None,
             }],
-            occurred_at: place.vault.now_recorded_at(),
+            occurred_at: Some(place.vault.now_recorded_at()),
             assertions: Default::default(),
             project: None,
         })

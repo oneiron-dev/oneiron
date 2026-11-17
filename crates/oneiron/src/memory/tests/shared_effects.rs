@@ -83,7 +83,7 @@ fn artifact(id: EntityId, name: &str) -> BlobArtifactInput {
         id: Some(id.to_hex()),
         name: name.into(),
         media_type: "text/plain".into(),
-        occurred_at: 10,
+        occurred_at: Some(10),
         learned_at: None,
     }
 }
@@ -159,8 +159,6 @@ fn blob_creation_replacement_and_scoped_old_new_positions_fail_closed() {
     assert!(private.get_raw(&personal_id).unwrap().is_some());
 }
 
-// FIX [LIBTEST-QUARANTINE-MEMORY-TESTS-SHARED-EFFECTS-ITEMS]: the lib test target's type check fails here (1 errors: E0593 x1); port it, then drop this gate
-#[cfg(any())]
 #[test]
 fn nested_raw_batch_cannot_escape_the_actor_content_transaction() {
     let (_dir, vault, member, _, refs) = shared();
@@ -180,7 +178,7 @@ fn nested_raw_batch_cannot_escape_the_actor_content_transaction() {
     assert!(
         memory
             .with_actor_content_write_txn(|content| {
-                content.update_note(note_id, |txn| {
+                content.update_note(note_id, |txn, _lane| {
                     // A nested call to the ordinary batch method cannot hide its
                     // BLOB effect behind the NOTE's already-authorized position.
                     vault
@@ -214,7 +212,7 @@ fn imported_claims_use_current_shared_role_and_both_claim_positions() {
         subject_ref: member.to_hex(),
         predicate: "profile.summary".into(),
         value: serde_json::json!({"value": value}),
-        occurred_at: 1000,
+        occurred_at: Some(1000),
         learned_at: None,
     };
     let viewer_facade = facade_for(&vault, viewer);

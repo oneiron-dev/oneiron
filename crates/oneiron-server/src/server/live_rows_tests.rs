@@ -41,7 +41,7 @@ fn turn() -> WitnessTurn {
     WitnessTurn {
         conversation_ref: EntityId::now().to_hex(),
         turn_ref: Some(EntityId::now().to_hex()),
-        occurred_at: 1,
+        occurred_at: Some(1),
         messages: vec![WitnessMessage {
             id: Some(EntityId::now().to_hex()),
             author: WitnessAuthor::User,

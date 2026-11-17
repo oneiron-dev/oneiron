@@ -217,7 +217,7 @@ fn relationship_room(room: &Room, space: oneiron::EntityId) -> oneiron::EntityId
                 parts: None,
                 quote: None,
             }],
-            occurred_at: 4,
+            occurred_at: Some(4),
             assertions: Default::default(),
             thread_audience: None,
         })
@@ -433,7 +433,7 @@ async fn a_direct_conversations_turn_reads_by_its_lane() {
                 parts: None,
                 quote: None,
             }],
-            occurred_at: 4,
+            occurred_at: Some(4),
             assertions: Default::default(),
             thread_audience: None,
         })

@@ -228,7 +228,7 @@ fn turn(content: &str, occurred_at: u64) -> Value {
             parts: None,
             quote: None,
         }],
-        occurred_at,
+        occurred_at: Some(occurred_at),
         assertions: Default::default(),
         project: None,
     })
