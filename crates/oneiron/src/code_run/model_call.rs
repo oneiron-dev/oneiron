@@ -27,6 +27,12 @@ pub use oneiron_records::code_run::model_call::{
 const MODEL_CALLS: SideTable<(EntityId, u64, u64), ModelCallRecord, Named> =
     SideTable::new(&side_table::CODE_RUN_MODEL_CALL);
 
+/// TURN-MODEL-LINK: each saved reply MESSAGE's answering calls, keyed by the
+/// MESSAGE, then the call's own key, so one prefix read lists them in key
+/// order. Ids only; the call row keeps every fact about the call.
+const MODEL_CALL_REPLIES: SideTable<(EntityId, (EntityId, u64, u64)), (), Named> =
+    SideTable::new(&side_table::CODE_RUN_MODEL_CALL_REPLY);
+
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ModelCallReasoningPart {
@@ -541,6 +547,8 @@ pub(crate) fn erase_message_model_calls_in_txn(
         crate::secret_custody::revoke_side_row_custody_in_txn(vault, wtxn, &origin, act)?;
         MODEL_CALLS.put_erased(&vault.store, wtxn, &key, erased)?;
     }
+    // TURN-MODEL-LINK: the erased MESSAGE names no answering call any more.
+    MODEL_CALL_REPLIES.delete_from(&vault.store, wtxn, message.as_bytes())?;
     Ok(())
 }
 
@@ -573,6 +581,24 @@ pub fn record_model_call_in_txn(
     MODEL_CALLS.put(vault, &mut savepoint, &key, &stored)?;
     savepoint.commit()?;
     Ok(())
+}
+
+/// [`record_model_call_in_txn`] for a call whose answer streams into the
+/// MESSAGE `reply` (TURN-MODEL-LINK), linked in the same transaction: a link
+/// names only a call row that exists. A call whose actor is gone keeps no
+/// record, so it keeps no link either.
+pub fn record_reply_model_call_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    record: &ModelCallRecord,
+    reply: EntityId,
+) -> Result<()> {
+    record_model_call_in_txn(vault, txn, record)?;
+    let key = record.key();
+    if !MODEL_CALLS.contains(&vault.store, txn, &key)? {
+        return Ok(());
+    }
+    MODEL_CALL_REPLIES.put(&vault.store, txn, &(reply, key), &())
 }
 
 pub fn model_call_in_txn(
