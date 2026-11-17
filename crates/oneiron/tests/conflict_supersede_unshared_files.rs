@@ -16,6 +16,11 @@
 //! - The second test is the shared-path case on its own: with no unshared
 //!   file in either batch, D's green resolution supersedes A and B at the
 //!   first hand-off step, as it always has.
+//! - The third test (review round 1 of #8558): G lands its own label.rs
+//!   green before A and B are queued on G's green. G's write is no landing
+//!   of A's later label.rs change, so D's math.rs resolution still leaves
+//!   A and B queued: only a green batch accepted after a source carries
+//!   that source's unshared file.
 //!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test conflict_supersede_unshared_files`.
@@ -499,6 +504,61 @@ fn a_shared_path_resolution_supersedes_as_before_when_no_file_is_unshared() -> T
     assert_eq!(
         done.resolution_batch.as_deref(),
         Some(entry_d.batch.as_str())
+    );
+    Ok(())
+}
+
+/// G's own label.rs, landed green before A and B are queued.
+const G_LABEL: &str = "pub fn label() -> &'static str {\n    \"landed first\"\n}\n";
+
+#[test]
+fn a_green_batch_before_the_handoff_does_not_carry_an_unshared_file() -> TestResult {
+    let repo = RepoFixture::enrolled()?;
+    let vault = &repo.vault;
+
+    // G writes label.rs and lands green first: A and B queue on G's green.
+    let (_, g) = repo_run(&repo, "unshared-agent-g", 0x67, "unshared G")?;
+    assert_ne!(G_LABEL, LABEL_RS);
+    assert_ne!(G_LABEL, A_LABEL);
+    let entry_g = submit_and_enqueue(vault, &g, "label.rs", G_LABEL, "label reads landed first")?;
+    drive_to_green(vault, &entry_g.batch)?;
+
+    let (a, entry_a, entry_b, link) = handed_off_pair(&repo, true)?;
+
+    // D resolves only the conflicted math.rs and lands green.
+    let (_, d) = repo_run(&repo, "unshared-agent-d", 0x64, "unshared D")?;
+    let entry_d = resolve_and_enqueue(
+        vault,
+        &d,
+        &link,
+        driver_branch(vault)?,
+        "math.rs",
+        D_MATH,
+        "add_one adds five",
+    )?;
+    drive_to_green(vault, &entry_d.batch)?;
+
+    // G's earlier label.rs is a green write of that path, but it came
+    // before A: A's label.rs change has landed nowhere, so the hand-off
+    // names D's batch and supersedes neither source.
+    let handed = drive_handoff(vault, &entry_a.batch)?
+        .ok_or("the driver's next work on A is its hand-off")?;
+    assert_eq!(handed, QueueDriveOutcome::Changed);
+    assert_eq!(batch_state(vault, &entry_a.batch)?, BatchState::Queued);
+    assert_eq!(batch_state(vault, &entry_b.batch)?, BatchState::Queued);
+    let waiting = read_link(vault, &entry_a.batch)?;
+    assert_eq!(
+        waiting.resolution_batch.as_deref(),
+        Some(entry_d.batch.as_str())
+    );
+    assert!(
+        !waiting.superseded,
+        "G's earlier label.rs carries none of A's: {waiting:?}"
+    );
+    let seen_a = own_entry(vault, &a)?;
+    assert_eq!(
+        (seen_a.state, seen_a.drive),
+        (BatchState::Queued, QueueDriveStatus::HeldOverlap)
     );
     Ok(())
 }
