@@ -11,11 +11,11 @@ use crate::registry::ENTITY_TYPE_TASK_LIST;
 use crate::store::Store;
 use heed::RwTxn;
 
-mod seed_agent_definition;
-mod seed_code_repo;
-mod seed_project;
-mod seed_room_thread;
-mod seed_runtime_records;
+mod seed_agent_definition_tests;
+mod seed_code_repo_tests;
+mod seed_project_tests;
+mod seed_room_thread_tests;
+mod seed_runtime_records_tests;
 
 /// The row each scan is lowered to; every fixture reads one row past it.
 const ROW: u64 = 2;
@@ -152,7 +152,7 @@ const REMAT_MARKERS: crate::side_table::SideTable<String, (), crate::side_table:
 /// (`it_sync`'s `child_of_arbitration_walks_the_whole_map_past_its_threshold_row`)
 /// and a Dreamer selection retry (`dreamer_consolidation::tests::late_budget::
 /// manifest_retry_source_budget_truncates_and_holder_cannot_widen`).
-/// The scans main added later are seeded per family in the `seed_*` child
+/// The scans main added later are seeded per family in the `seed_*_tests` child
 /// modules; a `NO-FIXTURE` comment there says why a scan has none yet.
 fn seed(vault: &Vault, scan: EngineScan) -> Option<(usize, Read<'_>)> {
     let src = id(0x51, 0);
@@ -200,7 +200,7 @@ fn seed(vault: &Vault, scan: EngineScan) -> Option<(usize, Read<'_>)> {
         | EngineScan::CodeMemoryPullSymbols
         | EngineScan::RepoDiffFiles
         | EngineScan::DeclaredSymbols
-        | EngineScan::DeclaredSymbolBytes => seed_code_repo::seed(vault, scan),
+        | EngineScan::DeclaredSymbolBytes => seed_code_repo_tests::seed(vault, scan),
         EngineScan::RoomThreadChildRows
         | EngineScan::MessageOriginRows
         | EngineScan::ThreadTaskCensus
@@ -228,7 +228,7 @@ fn seed(vault: &Vault, scan: EngineScan) -> Option<(usize, Read<'_>)> {
         | EngineScan::GuestGrantDisclosedRefs
         | EngineScan::AttendeeIdentityCandidates
         | EngineScan::AttendeeIdentityKeyBytes
-        | EngineScan::TaskPostIntentKeyBytes => seed_room_thread::seed(vault, scan),
+        | EngineScan::TaskPostIntentKeyBytes => seed_room_thread_tests::seed(vault, scan),
         EngineScan::ProjectTaskRows
         | EngineScan::ProjectDepthDefaultRows
         | EngineScan::ProjectDepthPolicyRows
@@ -251,7 +251,7 @@ fn seed(vault: &Vault, scan: EngineScan) -> Option<(usize, Read<'_>)> {
         | EngineScan::ProjectProposalTextBytes
         | EngineScan::ResidentGoalAxes
         | EngineScan::ProjectAnchorDepth
-        | EngineScan::ProjectFoldDepth => seed_project::seed(vault, scan),
+        | EngineScan::ProjectFoldDepth => seed_project_tests::seed(vault, scan),
         EngineScan::AgentDefinitionListEntries
         | EngineScan::AgentBirthSkillRows
         | EngineScan::AgentBirthClaimOfRows
@@ -264,7 +264,7 @@ fn seed(vault: &Vault, scan: EngineScan) -> Option<(usize, Read<'_>)> {
         | EngineScan::AgentBirthSourceBytes
         | EngineScan::NoteDocumentBytes
         | EngineScan::NoteDocumentPinRows
-        | EngineScan::NoteDocumentAuthorshipRows => seed_agent_definition::seed(vault, scan),
+        | EngineScan::NoteDocumentAuthorshipRows => seed_agent_definition_tests::seed(vault, scan),
         EngineScan::PredicateClaimRows
         | EngineScan::VaultEdgeRows
         | EngineScan::PrefilterReceiptRows
@@ -288,7 +288,7 @@ fn seed(vault: &Vault, scan: EngineScan) -> Option<(usize, Read<'_>)> {
         | EngineScan::ReceiptSourceRows
         | EngineScan::SyncPrefixRows
         | EngineScan::DependentWalkRows
-        | EngineScan::ResearchContinuationRoots => seed_runtime_records::seed(vault, scan),
+        | EngineScan::ResearchContinuationRoots => seed_runtime_records_tests::seed(vault, scan),
         EngineScan::MentionRows => {
             let seed = id(0x60, 0);
             // `Mentions` is semantic: the strict read refuses a structural value.
