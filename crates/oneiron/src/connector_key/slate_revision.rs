@@ -323,7 +323,7 @@ impl Vault {
                     .map(drop)?;
             }
             ConnectorRevisionDeferral::ManualPinned => {
-                answer_graduation_offer_as_owner(self, owner, &scope, OfferAnswer::ManualPinned)
+                answer_graduation_offer_as_owner(self, owner, &scope, OfferAnswer::NotNow)
                     .map(drop)?;
             }
             ConnectorRevisionDeferral::Unpin => unpin_scope_as_owner(self, owner, &scope)?,
