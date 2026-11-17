@@ -52,8 +52,8 @@ use oneiron::agent_def::{
 use oneiron::agent_dispatch::{
     AgentDispatchStatus, AgentDispatcher, AgentRun, AgentRunFence, AgentRunLeaseReap, HealerSlot,
     LeaderStarterSkills, PlannerSeat, PlannerSkills, ProjectConversationSkills, ResidentAgentSpec,
-    ResidentMessageClassifier, SpendScopeId, agent_dispatch_actor, agent_dispatch_run_actor,
-    resident_attempt_reviews_diary, resident_attempt_wakes_for_room,
+    ResidentMessageClassifier, ResidentRunBinding, SpendScopeId, agent_dispatch_actor,
+    agent_dispatch_run_actor, resident_attempt_reviews_diary, resident_attempt_wakes_for_room,
 };
 use oneiron::attempt_queue::{
     AttemptId, AttemptQueue, AttemptRecord, AttemptResultRef, AttemptState, ReadSetProducer,
@@ -451,10 +451,28 @@ impl SyncServer {
                 return pass;
             }
         };
+        // Every agent a resident pass wakes, and of those the ones with a
+        // binding of their own, whose TASK runs are resident runs too. A
+        // project leader with no binding of its own wakes from its projects'
+        // home rooms alone; its TASK runs stay this host's agent runs
+        // (UNBUILT3-22).
+        let leaders = match vault.project_leader_resident_agents() {
+            Ok(leaders) => leaders,
+            Err(error) => {
+                pass.faults
+                    .insert("project leaders".to_owned(), error.to_string());
+                std::collections::BTreeSet::new()
+            }
+        };
         let mut residents = Vec::new();
+        let mut own_residents = Vec::new();
         for agent in agents {
             match vault.settled_resident_agent(agent) {
-                Ok(Some(_)) => residents.push(agent),
+                Ok(Some(_)) => {
+                    residents.push(agent);
+                    own_residents.push(agent);
+                }
+                Ok(None) if leaders.contains(&agent) => residents.push(agent),
                 Ok(None) => {}
                 Err(error) => {
                     pass.faults
@@ -500,7 +518,7 @@ impl SyncServer {
                 }
             }
         }
-        match dispatcher.ready_agent_runs(&residents, now) {
+        match dispatcher.ready_agent_runs(&own_residents, now) {
             Ok(ready) => pass.ready.extend(
                 ready
                     .into_iter()
@@ -660,7 +678,7 @@ fn claim(
                 let claimed = Claimed {
                     task: resident_task(&status, &resident, briefing.clone()),
                     agent,
-                    qa_thread_ref: resident.home_message_ref,
+                    qa_thread_ref: resident.home_message_ref(),
                     wake: Some(resident_wake(&status, agent)),
                     status,
                     objectives: Vec::new(),
@@ -708,8 +726,8 @@ const SKILL_SEPARATOR: &str = "\n\n";
 
 /// What a resident's room wake says woke it (FIX 15647); its briefing
 /// names the room and the turn by ref.
-const ROOM_WAKE_CAUSE: &str =
-    "A turn in a room woke you: it addresses you, or its thread's open TASK is yours.";
+const ROOM_WAKE_CAUSE: &str = "A turn in a room woke you: it addresses you, its thread's open TASK is yours, or the room \
+     is the home room of a project you lead.";
 
 /// A resident run's task: its frozen definition's instructions, then what
 /// woke it, then the briefing its wake carries: an inbox wake's message as
@@ -718,28 +736,39 @@ const ROOM_WAKE_CAUSE: &str =
 /// the same text to the run's record.
 fn resident_task(
     status: &AgentDispatchStatus,
-    resident: &ResidentAgentSpec,
+    binding: &ResidentRunBinding,
     briefing: Option<String>,
 ) -> String {
-    let cause = match &status.attempt.task_ref {
-        Some(task) => task_cause(task),
-        None if resident_attempt_wakes_for_room(&status.attempt, resident.agent_def_ref) => {
-            ROOM_WAKE_CAUSE.to_owned()
-        }
-        // AGM-4: a held wake carries every message its hold joined.
-        None if !status.input.carried_wake_keys.is_empty() => format!(
+    let cause = match (&status.attempt.task_ref, binding) {
+        (Some(task), _) => task_cause(task),
+        (None, ResidentRunBinding::Agent(resident)) => wake_cause(status, resident),
+        // A project leader binding runs its home room's wakes alone.
+        (None, ResidentRunBinding::ProjectLeader(_)) => ROOM_WAKE_CAUSE.to_owned(),
+    };
+    task_text(status, std::iter::once(cause).chain(briefing))
+}
+
+/// What woke resident `resident`'s run that realizes no TASK: a room turn,
+/// or what reached its inbox.
+fn wake_cause(status: &AgentDispatchStatus, resident: &ResidentAgentSpec) -> String {
+    if resident_attempt_wakes_for_room(&status.attempt, resident.agent_def_ref) {
+        return ROOM_WAKE_CAUSE.to_owned();
+    }
+    // AGM-4: a held wake carries every message its hold joined.
+    if status.input.carried_wake_keys.is_empty() {
+        format!(
+            "A message reached your inbox (identity {}). Your home conversation is {}.",
+            resident.inbox_identity_ref.to_hex(),
+            resident.home_conversation_ref.to_hex()
+        )
+    } else {
+        format!(
             "{} messages reached your inbox (identity {}). Your home conversation is {}.",
             status.input.carried_wake_keys.len() + 1,
             resident.inbox_identity_ref.to_hex(),
             resident.home_conversation_ref.to_hex()
-        ),
-        None => format!(
-            "A message reached your inbox (identity {}). Your home conversation is {}.",
-            resident.inbox_identity_ref.to_hex(),
-            resident.home_conversation_ref.to_hex()
-        ),
-    };
-    task_text(status, std::iter::once(cause).chain(briefing))
+        )
+    }
 }
 
 /// What started a resident's run, from its attempt's engine-minted refs and

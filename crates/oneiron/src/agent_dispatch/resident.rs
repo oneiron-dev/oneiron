@@ -25,11 +25,13 @@ use self::validation::validate;
 
 mod message_class;
 mod message_wake;
+mod project_leader;
 mod result;
 mod room_wake;
 mod validation;
 
 pub use self::message_class::{MESSAGE_CLASS_ASK_QUEUE, ResidentMessageClassifier};
+pub use self::project_leader::{ProjectLeaderResident, ResidentRunBinding};
 pub(super) use self::room_wake::resident_attempt_room_wake_turn;
 pub use self::room_wake::resident_attempt_wakes_for_room;
 
@@ -276,12 +278,25 @@ impl AgentDispatcher<'_> {
         limit: usize,
         now: u64,
     ) -> Result<ResidentInboxDispatch> {
-        let binding = {
+        let (binding, leads) = {
             let txn = self.vault.store.env.read_txn()?;
-            self.vault.resident_binding_for_effect_in_txn(&txn, agent)?
+            (
+                self.vault.resident_binding_for_effect_in_txn(&txn, agent)?,
+                !self
+                    .vault
+                    .project_leader_residents_for_effect_in_txn(&txn, agent)?
+                    .is_empty(),
+            )
         };
         let Some((_, spec)) = binding else {
-            return Ok(ResidentInboxDispatch::default());
+            // UNBUILT3-22: a project's leader with no binding of its own
+            // wakes from its projects' home rooms alone.
+            let mut pass = ResidentInboxDispatch::default();
+            if leads {
+                let view = self.resident_run_view(agent)?;
+                self.dispatch_resident_room_wakes(agent, None, &view.woken, limit, now, &mut pass)?;
+            }
+            return Ok(pass);
         };
         validate(self.vault, &spec)?;
         // AGM-2: a message that landed on a wake which then paused or parked
@@ -349,8 +364,9 @@ impl AgentDispatcher<'_> {
                 }
             }
         }
-        // FIX 15647: its staged room wakes; Manual settles them unwoken.
-        self.dispatch_resident_room_wakes(&spec, woken, limit, now, &mut pass)?;
+        // FIX 15647: its staged room wakes; Manual settles them unwoken. A
+        // project's home room it leads wakes it under that project's binding.
+        self.dispatch_resident_room_wakes(agent, Some(&spec), woken, limit, now, &mut pass)?;
         if spec.wake == ResidentWakeMode::Manual {
             return Ok(pass);
         }
@@ -456,10 +472,8 @@ impl AgentDispatcher<'_> {
         residents: &[EntityId],
         now: u64,
     ) -> Result<Vec<(AttemptId, EntityId)>> {
-        let rows = {
-            let txn = self.vault.store.env.read_txn()?;
-            AttemptQueue::new(self.vault).ready_rows_in_txn(&txn)?
-        };
+        let txn = self.vault.store.env.read_txn()?;
+        let rows = AttemptQueue::new(self.vault).ready_rows_in_txn(&txn)?;
         let mut ready = Vec::new();
         for row in rows {
             if row.kind != crate::dreamer_runner::DREAMER_RUNNER_ATTEMPT_KIND
@@ -473,10 +487,18 @@ impl AgentDispatcher<'_> {
             }
             // A row this view cannot decode is no resident run; its own
             // worker reports it.
-            let Ok(Some((agent, _))) = resident_run_input(&row) else {
+            let Ok(Some((agent, input))) = resident_run_input(&row) else {
                 continue;
             };
-            if residents.contains(&agent) {
+            // A project leader's TASK run is no resident run: it has only
+            // its projects' room wakes (UNBUILT3-22).
+            if residents.contains(&agent)
+                && matches!(
+                    self.vault
+                        .resident_run_binding_in_txn(&txn, &row, agent, &input),
+                    Ok(Some(_))
+                )
+            {
                 ready.push((row.id, agent));
             }
         }
@@ -486,13 +508,15 @@ impl AgentDispatcher<'_> {
     /// Claims one resident run by id, the way a workflow host claims its
     /// leaf: never by kind, as the generic `dreamer` queue holds other jobs.
     /// `None` when the row is no longer a ready run of a settled resident,
-    /// or another worker holds it.
+    /// or another worker holds it. The binding is the one the run executes
+    /// under: a project's room wake runs under that project's leader
+    /// binding (UNBUILT3-22).
     pub fn claim_resident_run(
         &self,
         id: AttemptId,
         lease_owner: &str,
         now: u64,
-    ) -> Result<Option<(AgentDispatchStatus, ResidentAgentSpec)>> {
+    ) -> Result<Option<(AgentDispatchStatus, ResidentRunBinding)>> {
         let queue = AttemptQueue::new(self.vault);
         let mut txn = self.vault.store.env.write_txn()?;
         let Some(row) = queue.get_in_write_txn(&txn, id)? else {
@@ -501,7 +525,9 @@ impl AgentDispatcher<'_> {
         let Some((agent, input)) = resident_run_input(&row)? else {
             return Ok(None);
         };
-        let Some((_, resident)) = self.vault.resident_binding_for_effect_in_txn(&txn, agent)?
+        let Some(resident) = self
+            .vault
+            .resident_run_binding_in_txn(&txn, &row, agent, &input)?
         else {
             return Ok(None);
         };

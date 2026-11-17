@@ -318,7 +318,8 @@ impl AgentDispatcher<'_> {
     }
 
     /// Where a run's failure asks: its tree's resident home when a settled
-    /// resident's run spawned it, else its TASK, else its tree's root.
+    /// resident's run spawned it (a project leader's room wake: that
+    /// project's), else its TASK, else its tree's root.
     fn run_thread_in(
         &self,
         queue: &AttemptQueue<'_>,
@@ -333,11 +334,12 @@ impl AgentDispatcher<'_> {
             };
             root = parent?;
         }
-        if let Ok(Some((agent, _))) = resident_run_input(&root)
-            && let Some((_, resident)) =
-                self.vault.resident_binding_for_effect_in_txn(txn, agent)?
+        if let Ok(Some((agent, input))) = resident_run_input(&root)
+            && let Some(resident) = self
+                .vault
+                .resident_run_binding_in_txn(txn, &root, agent, &input)?
         {
-            return Ok(resident.home_message_ref);
+            return Ok(resident.home_message_ref());
         }
         if let Some(task) = row
             .task_ref

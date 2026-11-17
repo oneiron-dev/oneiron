@@ -1,6 +1,9 @@
 //! Owner-confirmed project birth: one card, one atomic Grant and project branch.
 use super::owner_signer::{OwnerProjectSigner, owner_signed_at};
 use super::{ProjectRecord, ROOT, encode, invalid, project_type, record};
+use crate::agent_dispatch::{
+    ProjectLeaderResident, RESIDENT_WAKE_HOLD_DEFAULT_SECS, ResidentWakeMode,
+};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::consent::AuthenticatedOwner;
 use crate::consent::{ActionClass, ActionEnvelope, ActorBound, GrantBound};
@@ -130,8 +133,9 @@ impl Vault {
     }
 
     /// Consumes a host-held card and its authenticated owner tap. The project,
-    /// room, first witnessed trunk header, forks, bounded Grant, Gate receipt
-    /// and tap mapping are one write transaction. A failed witness commits none.
+    /// room, first witnessed trunk header, forks, bounded Grant, Gate receipt,
+    /// tap mapping and the leader's resident binding (UNBUILT3-22) are one
+    /// write transaction. A failed witness commits none.
     /// The owner-project signer signs the new project's state for the owner.
     pub fn mint_project_from_card(
         &self,
@@ -209,24 +213,33 @@ impl Vault {
         let mut minted = None;
         let result = self
             .memory(actor, EdgeActorClass::Human)
-            .witness_with_room_birth(&header, |txn| {
-                let receipt = self
-                    .mint_project_in_txn(
-                        txn,
-                        &intent,
-                        owner,
-                        signer,
-                        id,
-                        source_turn,
-                        &tap_key,
-                        &digest,
-                        tap.occurred_at,
-                    )
-                    .map_err(crate::memory::MemoryError::from)?;
-                after(txn, &receipt).map_err(crate::memory::MemoryError::from)?;
-                minted = Some(receipt);
-                Ok(())
-            });
+            .witness_linked_with_room_birth(
+                &header,
+                |txn| {
+                    let receipt = self
+                        .mint_project_in_txn(
+                            txn,
+                            &intent,
+                            owner,
+                            signer,
+                            id,
+                            source_turn,
+                            &tap_key,
+                            &digest,
+                            tap.occurred_at,
+                        )
+                        .map_err(crate::memory::MemoryError::from)?;
+                    after(txn, &receipt).map_err(crate::memory::MemoryError::from)?;
+                    minted = Some(receipt);
+                    Ok(())
+                },
+                // Once the header landed, in the same write: a refused
+                // binding commits no project.
+                |txn, _| {
+                    self.bind_minted_leader_in_txn(txn, owner, id, room, header_message)
+                        .map_err(crate::memory::MemoryError::from)
+                },
+            );
         match result {
             Ok(_) => minted.ok_or_else(invalid),
             Err(err) => {
@@ -242,6 +255,39 @@ impl Vault {
                 Err(Error::InvalidConfig(err.to_string()))
             }
         }
+    }
+
+    /// Binds the newborn project's leader as the resident of its home room,
+    /// under the minting owner's tap (UNBUILT3-22; RULED
+    /// LEADER-RESIDENT-EXISTING-PROJECTS = A): a person's turn there wakes it
+    /// after the default hold, and its questions thread under the trunk
+    /// header `header_message`.
+    fn bind_minted_leader_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        owner: &AuthenticatedOwner,
+        project: EntityId,
+        room: EntityId,
+        header_message: EntityId,
+    ) -> Result<()> {
+        let (_, effective) = self
+            .effective_project_in_txn(txn, project)?
+            .ok_or_else(invalid)?;
+        let leader = EntityId::from_hex(&effective.leader).map_err(|_| invalid())?;
+        self.bind_project_leader_resident_in_txn(
+            txn,
+            owner,
+            &ProjectLeaderResident {
+                project_ref: project,
+                agent_def_ref: leader,
+                home_conversation_ref: room,
+                home_message_ref: header_message,
+                wake: ResidentWakeMode::HumanMessages,
+                wake_hold_secs: RESIDENT_WAKE_HOLD_DEFAULT_SECS,
+            },
+            self.now_recorded_at(),
+        )?;
+        Ok(())
     }
 
     #[expect(

@@ -249,9 +249,10 @@ use rmpv::Value;
 
 pub use agent_run::AgentRun;
 pub use resident::{
-    MESSAGE_CLASS_ASK_QUEUE, RESIDENT_DIGEST_DELAY_DEFAULT_SECS, RESIDENT_WAKE_HOLD_DEFAULT_SECS,
-    ResidentAgentSpec, ResidentGoalRecord, ResidentInboxDispatch, ResidentMessageClassifier,
-    ResidentWakeMode, resident_attempt_reviews_diary, resident_attempt_wakes_for_room,
+    MESSAGE_CLASS_ASK_QUEUE, ProjectLeaderResident, RESIDENT_DIGEST_DELAY_DEFAULT_SECS,
+    RESIDENT_WAKE_HOLD_DEFAULT_SECS, ResidentAgentSpec, ResidentGoalRecord, ResidentInboxDispatch,
+    ResidentMessageClassifier, ResidentRunBinding, ResidentWakeMode,
+    resident_attempt_reviews_diary, resident_attempt_wakes_for_room,
 };
 
 // FIX [LIBTEST-QUARANTINE-AGENT-DISPATCH-RESIDENT-TESTS]: the lib test target's type check fails here (6 errors: E0063 x6); port it, then drop this gate

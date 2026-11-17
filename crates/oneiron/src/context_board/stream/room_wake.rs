@@ -57,15 +57,17 @@ pub struct RoomWakeRead {
 }
 
 impl PendingRoomWake {
-    /// Every staged room wake of an agent that is no settled resident, read
-    /// live ([`Vault::room_wake_turn`]). A wake whose agent's binding or turn
-    /// does not read is logged and left staged for the next pass.
+    /// Every staged room wake no resident binding takes, read live
+    /// ([`Vault::room_wake_turn`]): a settled resident's, and a project
+    /// leader's in its project's home room, are its inbox pass's. A wake
+    /// whose agent's binding or turn does not read is logged and left staged
+    /// for the next pass.
     pub fn read_all(vault: &Vault) -> Result<RoomWakeRead> {
         let mut read = RoomWakeRead::default();
         for staged in vault.staged_room_wakes()? {
-            match vault.settled_resident_agent(staged.wake.agent) {
-                Ok(None) => {}
-                Ok(Some(_)) => continue,
+            match vault.resident_takes_room_wake(&staged.wake) {
+                Ok(false) => {}
+                Ok(true) => continue,
                 Err(error) => {
                     tracing::warn!(
                         agent = %staged.wake.agent.to_hex(),
