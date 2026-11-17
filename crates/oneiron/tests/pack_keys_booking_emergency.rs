@@ -208,6 +208,7 @@ impl SlotOracle for Offered {
                 host_refs: vec![self.host.to_hex()],
                 host_zones: vec!["UTC".to_owned()],
             }],
+            full_days: Vec::new(),
         })
     }
 }
