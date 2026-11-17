@@ -26,7 +26,7 @@
 #![cfg(oneiron_test_support)]
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-#[path = "check_in/owner_apply_fixture.rs"]
+#[path = "../../check_in/owner_apply_fixture.rs"]
 mod owner_apply_fixture;
 
 use std::sync::Arc;
