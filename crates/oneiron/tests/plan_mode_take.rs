@@ -4,9 +4,9 @@
 //! A clerk agent posts a TASK for the planner agent's definition whose brief
 //! pins the planner's plan at the revision the owner approved. The clerk's
 //! ceiling is not Auto, so the post parks and the planner is asked whether to
-//! take it; the take's scripted Local rung answers yes. The planner is bound
-//! under the host key, so L02's rule proves it as the taker on this rooted
-//! vault. In
+//! take it; the take's scripted Local rung answers yes. Where a test binds
+//! the planner under the host key, L02's rule holds the taker to that binding
+//! on this rooted vault. In
 //! `a_take_after_the_owner_rejects_the_plan_lands_no_run` the owner rejects
 //! the plan while the rung is asked, before the take's writer runs. That
 //! writer judges the plan again, so no TASK lands and the proposal stays in
@@ -16,6 +16,16 @@
 //! approved. In `a_take_for_an_agent_made_required_lands_no_unplanned_run`
 //! the post pins no plan and the owner sets the planner's plan mode to
 //! `required` while the rung is asked; the take's writer lands no run.
+//!
+//! `an_unbound_agents_take_lands_the_run_of_an_approved_plan` takes the same
+//! post with the planner unbound, as pairing leaves every own agent
+//! (ARCH-0028: the agent decides whether to take a guest's task; FIX
+//! AGENT-TAKE-NEEDS-BOUND-AGENT). L02's rule proves it as one of the vault's
+//! own agents whose definition stands, so the take lands its TASK. On a tree
+//! whose take asks a binding of the taker, the take is refused and that test
+//! fails. `an_unbound_agent_switched_off_while_asked_takes_nothing` holds that
+//! the owner's switch-off, landed while the rung is asked, leaves the take
+//! refused and the proposal in the owner's tray.
 //!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test plan_mode_take`.
 #![cfg(oneiron_test_support)]
@@ -50,7 +60,7 @@ use oneiron::task_verb::{
 use oneiron::test_doors::authority_view_grant::bind_agent;
 use oneiron::test_doors::derive_verbs::define_agent;
 use oneiron::verbs::{AgentGrantMintRequest, mint_agent_grant_as};
-use oneiron::{EdgeActorClass, EntityId, Vault, VaultConfig};
+use oneiron::{EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig};
 use serde_json::{Value, json};
 
 /// The reason a refused take leaves on its proposal.
@@ -366,6 +376,93 @@ fn an_agents_take_lands_the_run_of_an_approved_plan() {
         "the take of an approved plan's run lands its TASK: {receipt:?}"
     );
     assert!(landed_task(&receipt).is_some(), "{receipt:?}");
+}
+
+#[test]
+fn an_unbound_agents_take_lands_the_run_of_an_approved_plan() {
+    let fixture = fixture();
+    let plan = approved_plan(&fixture);
+    let rung = TakeRung {
+        interject: None,
+        asked: AtomicUsize::new(0),
+    };
+    let receipt = post_with_take(
+        &fixture,
+        &rung,
+        plan_run(&fixture, plan.plan_ref, &plan.revision),
+    );
+    assert_eq!(
+        rung.asked.load(Ordering::SeqCst),
+        1,
+        "the planner is asked once"
+    );
+    assert_eq!(
+        lifecycle_field(&receipt, "take"),
+        Some("yes"),
+        "{receipt:?}"
+    );
+    assert!(
+        matches!(receipt.outcome, TaskOutcome::Created { .. }),
+        "an own agent no binding names takes the work addressed to it: {receipt:?}"
+    );
+    assert!(landed_task(&receipt).is_some(), "{receipt:?}");
+}
+
+#[test]
+fn an_unbound_agent_switched_off_while_asked_takes_nothing() {
+    let fixture = fixture();
+    let plan = approved_plan(&fixture);
+    let (vault, owner, planner) = (&fixture.vault, fixture.owner, fixture.planner);
+    let rung = TakeRung {
+        interject: Some(Box::new(move || {
+            let mut definition = vault
+                .get_agent_definition(&planner)
+                .expect("the planner's definition reads")
+                .expect("the planner's definition");
+            definition.enabled = false;
+            definition.version = "2".to_owned();
+            let now = vault.now_recorded_at();
+            vault
+                .update_agent_definition_as(
+                    &owner_proof(vault, owner),
+                    &planner,
+                    &definition,
+                    TimeRange {
+                        start: now,
+                        end: now,
+                    },
+                    now,
+                )
+                .expect("the owner switches the planner off while it is asked");
+        })),
+        asked: AtomicUsize::new(0),
+    };
+    let receipt = post_with_take(
+        &fixture,
+        &rung,
+        plan_run(&fixture, plan.plan_ref, &plan.revision),
+    );
+    assert_eq!(
+        rung.asked.load(Ordering::SeqCst),
+        1,
+        "the planner is asked once"
+    );
+    assert_eq!(
+        lifecycle_field(&receipt, "take"),
+        Some("yes"),
+        "{receipt:?}"
+    );
+    assert!(
+        landed_task(&receipt).is_none(),
+        "a switched-off agent takes nothing: {receipt:?}"
+    );
+    match &receipt.outcome {
+        TaskOutcome::Proposed { reason_codes, .. } => assert!(
+            reason_codes.iter().any(|code| code == TAKE_REFUSED),
+            "the take is refused and the proposal stays in the owner's tray: {receipt:?}"
+        ),
+        other => panic!("expected the parked proposal, got {other:?}"),
+    }
 }
 
 #[test]

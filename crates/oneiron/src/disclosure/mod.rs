@@ -14,6 +14,7 @@
 mod attendee_ask;
 mod clearance_use;
 mod disclosable_set;
+mod home;
 mod import_audience;
 mod model_channel;
 mod retained_copies;
@@ -31,6 +32,8 @@ pub use self::attendee_ask::{
 };
 pub(crate) use self::disclosable_set::discloses_raw;
 pub use self::disclosable_set::{DisclosableSet, disclosable_set};
+pub use self::home::{ConversationHome, HomeClearanceRequest, HomeClearanceSet, HomeClearanceView};
+pub(crate) use self::import_audience::decode_import_audience_value;
 pub use self::import_audience::import_audience_rule_ref;
 pub use self::model_channel::{DisclosureBand, DisclosureDataClass};
 pub(crate) use self::model_channel::{
@@ -56,6 +59,7 @@ pub use self::tier_classification::{
 };
 pub use self::vault_context::{DisclosureAssembly, DisclosureContext, presence_discretion_notice};
 
+pub(crate) use self::home::scope_home_band;
 pub(crate) use self::tier_classification::{disclosure_tier, validate_disclosure_claim_structure};
 pub(crate) use self::vault_agent::is_vault_agent_in;
 use self::vault_context::disclosure_tier_a_marked_in;
