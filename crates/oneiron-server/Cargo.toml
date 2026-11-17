@@ -288,6 +288,12 @@ name = "vault_runners_doors"
 path = "tests/vault_runners_doors.rs"
 required-features = ["oneiron/test-support"]
 
+# The parked-step restart resume holds its host root in a `MemoryKeystore` (STEP-PARK-BOOT-RESUME).
+[[test]]
+name = "model_step_health_rest"
+path = "tests/model_step_health_rest.rs"
+required-features = ["oneiron/test-support"]
+
 # Test-only constructors and fault-injection seams stay out of the shipped graph.
 # The policy doors (owner rows, owner configure, outbound/relay decide, preflight) root on a `MemoryKeystore`.
 [[test]]
