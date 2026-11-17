@@ -13,7 +13,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 |---|---|---|---|---|---|
 | `src/admit.rs` | src | s | 1 trait | Admission | The admission hook the shared drawing program charges before it allocates |
 | `src/appearance.rs` | src | s | 1 fn | — | Shared annotation-appearance flattening |
-| `src/burn.rs` | src | m | 5 fn | — | Shared field burn-in: operations, resources, rasters, and one field |
+| `src/burn.rs` | src | m | 1 struct · 5 fn | BurnTarget | Shared field burn-in: operations, resources, rasters, and one field |
 | `src/error.rs` | src | s | 1 enum · 2 fn | BurnError | The shared drawing program's failures, read by each side as its own |
 | `src/lib.rs` | src | s | 1 struct · 5 mod · 5 re-export | NoAdmission | One shared e-sign field renderer for the pre-seal burn-in |
 | `src/present.rs` | src | m | 4 struct · 2 enum · 1 trait · 5 fn | FieldGeometry, FieldMark, ImageCache, LeafValue, PageGeometry, PdfFieldRect, RasterView | Shared page geometry, field marks, and Win1252 text encoding |

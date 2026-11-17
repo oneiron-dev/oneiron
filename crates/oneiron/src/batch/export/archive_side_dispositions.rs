@@ -13,7 +13,7 @@ pub(crate) enum ArchiveSideDisposition {
     Omitted(ImportOmissionReason),
 }
 
-/// The 118 decided side tables in TSV order, 95 retained and 23 omitted.
+/// The decided side tables in TSV order, each retained or omitted.
 pub(crate) const SIDE_TABLE_DISPOSITIONS: &[(&str, ArchiveSideDisposition)] = &[
     ("ACCESS_GRANT_OWNER_ACT", ArchiveSideDisposition::Retained),
     ("AGENT_DEF_POWER_GRANT", ArchiveSideDisposition::Retained),
