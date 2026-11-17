@@ -9,7 +9,8 @@
 //! Other systems join through the adapter protocol (`--system <name>=<url>`);
 //! the tests serve a stub adapter in their own process. The judged column
 //! (`--reader`, `--judge`) calls OpenAI-compatible endpoints; the tests serve
-//! a stub model there too.
+//! a stub model there too. The dreamed arm (`--dreamed`) runs the Dreamer in
+//! the in-process server against a stub model that scripts its calls.
 //!
 //! `cargo test --locked -p oneiron-bench --test lives_bench_cli`.
 #![allow(
@@ -954,4 +955,320 @@ fn a_reader_without_a_key_file_is_refused() {
         String::from_utf8_lossy(&output.stderr).contains("--judge"),
         "a reader alone is refused by naming --judge"
     );
+}
+
+/// Every call the Dreamer's stub model took, by the shape it answered.
+type DreamCalls = Arc<Mutex<Vec<&'static str>>>;
+
+/// A stub model for the Dreamer on loopback, in this test's own runtime.
+struct DreamerStub {
+    /// Ends where `/chat/completions` follows.
+    base_url: String,
+    calls: DreamCalls,
+    _runtime: tokio::runtime::Runtime,
+}
+
+/// The first `[T<n> speaker] text` line of an extraction transcript whose
+/// text has the word `name`: its turn label and its text as the call showed
+/// it.
+fn named_turn<'t>(transcript: &'t str, name: &str) -> Option<(&'t str, &'t str)> {
+    transcript.lines().find_map(|line| {
+        let (head, text) = line.strip_prefix('[')?.split_once("] ")?;
+        let label = head.split(' ').next()?;
+        let digits = label.strip_prefix('T')?;
+        (!digits.is_empty()
+            && digits.bytes().all(|b| b.is_ascii_digit())
+            && text
+                .split(|c: char| !c.is_alphanumeric())
+                .any(|word| word == name))
+        .then_some((label, text))
+    })
+}
+
+/// The `P<n>` label of an `entity P<n> "<name>"` line the transcript lists.
+fn listed_entity<'t>(transcript: &'t str, name: &str) -> Option<&'t str> {
+    let quoted = serde_json::to_string(name).ok()?;
+    transcript.lines().find_map(|line| {
+        let (label, shown) = line.strip_prefix("entity ")?.split_once(' ')?;
+        (label.starts_with('P') && shown == quoted).then_some(label)
+    })
+}
+
+/// The first `[T<n>]` label of a summary's records.
+fn first_record_label(records: &str) -> Option<&str> {
+    records.lines().find_map(|line| {
+        let label = line.strip_prefix('[')?.split_once(']')?.0;
+        let digits = label.strip_prefix('T')?;
+        (!digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit())).then_some(label)
+    })
+}
+
+/// A typed pack's answer: each question by its id, a score at the middle of
+/// its range, a yes/no question `no`, and a choice its first shown label
+/// (`none`, where a pack offers it, comes first).
+fn pack_answer(questions: &[Value]) -> Value {
+    let mut answer = serde_json::Map::new();
+    for question in questions {
+        let Some(id) = question["id"].as_str() else {
+            continue;
+        };
+        let reply = if question.get("range").is_some() {
+            let range = &question["range"];
+            let low = range[0]
+                .as_f64()
+                .or_else(|| range["min"].as_f64())
+                .unwrap_or(0.0);
+            let high = range[1]
+                .as_f64()
+                .or_else(|| range["max"].as_f64())
+                .unwrap_or(100.0);
+            json!({"score": ((low + high) / 2.0).round(), "probability": 0.5})
+        } else {
+            let labels = question["labels"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str)
+                .collect::<Vec<_>>();
+            if labels == ["yes", "no"] {
+                json!({"yes": 0.0, "no": 1.0})
+            } else {
+                labels
+                    .iter()
+                    .enumerate()
+                    .map(|(at, label)| {
+                        ((*label).to_owned(), json!(if at == 0 { 1.0 } else { 0.0 }))
+                    })
+                    .collect::<serde_json::Map<_, _>>()
+                    .into()
+            }
+        };
+        answer.insert(id.to_owned(), reply);
+    }
+    answer.into()
+}
+
+/// The person the fixture's L90002 d1s1t07 names ("Remind me to call my
+/// brother Owen on Sunday."): the one turn of the fixture that names a person.
+const PERSON: &str = "Owen";
+
+/// What the Dreamer's stub model answers, by the call's shape (the Dreamer
+/// call map, `lanes/kimi/OPUS-LIVESBENCH/muse-dream-map/map.md`): the bench's
+/// preflight gets `OK`; an extraction shown the fixture's turn that names
+/// `PERSON` lands one claim about that person, quoting the turn whole: it
+/// declares the person, whom the engine mints only because the turn names
+/// them, or takes the person's label once the transcript lists them; any
+/// other extraction gets no candidate; the sieve's follower
+/// batch reads every span not novel; a typed pack takes each question's first
+/// shown label; a conflict's merged value and a summary get the shape their
+/// call asks for. Anything else gets an empty extraction.
+fn dreamer_reply(body: &Value) -> (&'static str, Value) {
+    let messages = body["messages"].as_array().cloned().unwrap_or_default();
+    let system = messages
+        .first()
+        .and_then(|m| m["content"].as_str())
+        .unwrap_or("");
+    let last = messages
+        .last()
+        .map_or(Value::Null, |m| m["content"].clone());
+    if messages.len() == 1 && system == "Reply OK" {
+        return ("preflight", json!("OK"));
+    }
+    if system.starts_with("Extract durable memory claims") {
+        let transcript = last.as_str().unwrap_or("");
+        let Some((label, text)) = named_turn(transcript, PERSON) else {
+            return ("extraction", json!({"candidates": []}));
+        };
+        let listed = listed_entity(transcript, PERSON);
+        let mut reply = json!({
+            "candidates": [{
+                "subject": listed.unwrap_or("new:P1"),
+                "predicate": "profile.note",
+                "value": text,
+                "confidence": 0.9,
+                "evidence_refs": [{"source": label, "quote": text}],
+            }],
+        });
+        if listed.is_none() {
+            reply["persons"] =
+                json!([{"id": "new:P1", "name": PERSON, "evidence_turn_refs": [label]}]);
+        }
+        return ("extraction", reply);
+    }
+    if let Some(parts) = last.as_array() {
+        let asked = parts
+            .last()
+            .and_then(|part| part["text"].as_str())
+            .and_then(|text| serde_json::from_str::<Value>(text).ok())
+            .unwrap_or(Value::Null);
+        let readings = asked["spans"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(|span| {
+                json!({
+                    "span": span["span"],
+                    "kind": span["kind"].as_str().unwrap_or("name"),
+                    "novel": false,
+                    "confidence": 50,
+                    "entity": null,
+                })
+            })
+            .collect::<Vec<_>>();
+        return ("follower", json!({"readings": readings}));
+    }
+    if system.starts_with("Conflicting values were extracted") {
+        return ("merge", json!({"value": "merged"}));
+    }
+    let asked = last
+        .as_str()
+        .and_then(|text| serde_json::from_str::<Value>(text).ok())
+        .unwrap_or(Value::Null);
+    if let Some(records) = asked["records"].as_str() {
+        let sitting = body["response_format"].to_string().contains("\"lines\"");
+        return match (sitting, first_record_label(records)) {
+            (true, Some(label)) => (
+                "summary",
+                json!({"lines": [{"text": "They talked about their week.", "turn_refs": [label]}], "keep": ""}),
+            ),
+            _ => (
+                "summary",
+                json!({"text": "They talked about their week.", "keep": ""}),
+            ),
+        };
+    }
+    if let Some(questions) = asked["questions"].as_array() {
+        return ("pack", pack_answer(questions));
+    }
+    ("other", json!({"candidates": []}))
+}
+
+async fn dreamer_call(State(calls): State<DreamCalls>, Json(body): Json<Value>) -> Json<Value> {
+    let (shape, reply) = dreamer_reply(&body);
+    calls.lock().unwrap().push(shape);
+    let content = match reply {
+        Value::String(text) => text,
+        other => other.to_string(),
+    };
+    Json(json!({
+        "id": "stub",
+        "object": "chat.completion",
+        "model": body["model"],
+        "choices": [{"index": 0, "message": {"role": "assistant", "content": content}, "finish_reason": "stop"}],
+        "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
+    }))
+}
+
+fn dreamer_stub() -> DreamerStub {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()
+        .unwrap();
+    let calls = DreamCalls::default();
+    let listener = runtime
+        .block_on(tokio::net::TcpListener::bind("127.0.0.1:0"))
+        .unwrap();
+    let base_url = format!("http://{}/v1", listener.local_addr().unwrap());
+    let app = axum::Router::new()
+        .route("/v1/chat/completions", axum::routing::post(dreamer_call))
+        .with_state(Arc::clone(&calls));
+    runtime.spawn(async move { axum::serve(listener, app).await });
+    DreamerStub {
+        base_url,
+        calls,
+        _runtime: runtime,
+    }
+}
+
+/// Each light row's life and question.
+fn asked(system: &Value) -> BTreeSet<String> {
+    rows(system, "light")
+        .iter()
+        .map(|r| {
+            format!(
+                "{}/{}",
+                r["life"].as_str().unwrap(),
+                r["qid"].as_str().unwrap()
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn the_dreamed_arm_consolidates_before_it_asks() {
+    let stub = dreamer_stub();
+    let dir = tempfile::tempdir().unwrap();
+    let dreamed = format!("{},stub-dreamer", stub.base_url);
+    // A bound shorter than the Dreamer's 30 s quiet could never be met.
+    let (output, report) = lives(
+        dir.path(),
+        &[&fixture()],
+        &["--dreamed", &dreamed, "--dream-max-seconds", "0"],
+    );
+    assert!(!output.status.success());
+    assert!(report.is_none(), "refused before any store is opened");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("--dream-max-seconds is at least 30"),
+        "stderr names the bound: {stderr}"
+    );
+    let (output, report) = lives(
+        dir.path(),
+        &[&fixture()],
+        &[
+            "--grades",
+            "light",
+            "--limit",
+            "5",
+            "--dreamed",
+            &dreamed,
+            "--dream-max-seconds",
+            "600",
+        ],
+    );
+    succeeded(&output);
+    let report = report.expect("a report");
+    let systems = report["systems"].as_array().expect("systems");
+    assert_eq!(systems.len(), 2, "{systems:?}");
+    let (plain, dreamed) = (&systems[0], &systems[1]);
+    assert_eq!(plain["name"], "oneiron");
+    assert_eq!(dreamed["name"], "oneiron-dreamed");
+    assert_eq!(dreamed["status"], "measured", "{dreamed}");
+    // Both arms take the same lives and answer the same questions.
+    assert_eq!(dreamed["documents"], plain["documents"]);
+    assert_eq!(asked(plain).len(), 10);
+    assert_eq!(asked(dreamed), asked(plain));
+    assert!(plain.get("dream").is_none_or(Value::is_null), "{plain}");
+    let dream = &dreamed["dream"];
+    assert_eq!(dream["model"]["model"], "stub-dreamer", "{dream}");
+    assert_eq!(dream["model"]["reply_model"], "stub-dreamer", "{dream}");
+    // One sitting per life, each seen open before its turns and ended after
+    // them (an arm whose sitting does not open is not measured).
+    let sittings = dream["sittings"].as_array().expect("sittings");
+    assert_eq!(sittings.len(), 2, "{dream}");
+    for (sitting, life) in sittings.iter().zip(["L90001", "L90002"]) {
+        assert_eq!(sitting["life"], life, "{sitting}");
+        assert!(
+            sitting["turns"].as_u64().is_some_and(|n| n > 0),
+            "{sitting}"
+        );
+    }
+    // The round ran before the questions, and the Dreamer was still when
+    // they were asked: it extracted with the model, and the claim it landed
+    // about the person L90002's turn names is counted.
+    assert_eq!(dream["still"]["reached"], true, "{dream}");
+    assert!(
+        dream["landed"].as_u64().is_some_and(|n| n >= 1),
+        "the Dreamer landed a claim: {dream}"
+    );
+    let calls = stub.calls.lock().unwrap().clone();
+    assert_eq!(calls.first(), Some(&"preflight"), "{calls:?}");
+    assert_eq!(
+        calls.iter().filter(|shape| **shape == "preflight").count(),
+        1,
+        "one preflight, and the plain arm calls no model: {calls:?}"
+    );
+    assert!(calls.contains(&"extraction"), "{calls:?}");
+    assert_eq!(report["plan"]["dreamed"]["model"], "stub-dreamer");
 }
