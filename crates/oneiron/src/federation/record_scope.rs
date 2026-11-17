@@ -542,6 +542,8 @@ fn stamp_bound_on(
 /// worlds do (`note_world`, FIX 22223). A BLOB_ARTIFACT uses its kind- and
 /// birth-facet-bound singleton stamp, retaining base reality when no such
 /// single world is proved.
+/// An identity topology event sits in the one world its birth stamp names,
+/// else base reality (`identity_event`, FIX DISTINCT-EVENT-WORLD-RESIDENCE).
 /// Every other record, and any other SUMMARY, is base reality (`Some(None)`).
 /// `None` where the row cannot prove its world (an erased CLAIM, a TASK or epoch
 /// SUMMARY whose stamp is gone or was never settled, a NOTE in no single world),
@@ -578,6 +580,11 @@ pub(crate) fn record_world_in(
     // (FIX 9433, FIX 22223).
     if note_world::takes_live_worlds(kind) {
         return Ok(note_world::live_worlds_in(store, txn, id, kind).world());
+    }
+    // FIX DISTINCT-EVENT-WORLD-RESIDENCE: an AssertDistinct event, and its
+    // sidecars, sit in the world their CLAIM was born in.
+    if kind == crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT {
+        return identity_event::identity_event_world(store, txn, id, kind);
     }
     let summary = kind == crate::registry::ENTITY_TYPE_SUMMARY;
     let blob = kind == crate::registry::ENTITY_TYPE_BLOB_ARTIFACT;
