@@ -2,7 +2,7 @@
 
 use super::document::{NoteDocument, invalid};
 use super::document_store::{
-    load, persist_authoritative, require_note_writer, validate_pin_source,
+    load, persist_authoritative, require_note_writer_with_landing, validate_pin_source,
 };
 use super::pin_index::NOTE_PIN_SOURCE;
 use super::side_keys::HexPair;
@@ -407,7 +407,7 @@ impl Memory<'_> {
     }
 
     /// Applies `operation` to `note` when the writer may write it through
-    /// `landing` ([`require_note_writer`]): every door passes
+    /// `landing` ([`require_note_writer_with_landing`]): every door passes
     /// [`super::NoteEditLanding::Grant`] but the program edit, which passes
     /// the landing it already decided with.
     pub(super) fn apply_note_operation_in_lane(
@@ -486,7 +486,7 @@ impl Memory<'_> {
         super::lifecycle::refuse_sealed_note_in_txn(&self.vault().store, txn, note)?;
         self.vault()
             .authorize_shared_note_write_in_txn(txn, note, &self.write_actor())?;
-        require_note_writer(self, txn, note, landing)?;
+        require_note_writer_with_landing(self, txn, note, landing)?;
         let doc = load(self.vault(), txn, note)?;
         let hash = operation.hash()?;
         let receipt_key = HexPair(HexId(note), HexId(operation.request_id));

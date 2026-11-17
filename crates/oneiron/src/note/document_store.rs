@@ -528,7 +528,7 @@ impl Memory<'_> {
                         &[],
                     ));
                 }
-                require_note_writer(self, txn, note, super::NoteEditLanding::Grant)?;
+                require_note_writer(self, txn, note)?;
                 crate::memory::verify_deletion_authority_in_txn(
                     self.vault(),
                     txn,
@@ -687,12 +687,23 @@ pub(super) fn validate_pin_source(
 /// `Vault::edit_note`, which opens a fork for review.
 pub(crate) const NOTE_EDIT_NEEDS_GRANT: &str = "note.edit.needs_grant";
 
+/// Whether `memory`'s actor may write NOTE `id` now by the Grant's answer
+/// alone: [`require_note_writer_with_landing`] for a door that holds no
+/// landing proof of its own.
+pub(super) fn require_note_writer(
+    memory: &Memory<'_>,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+) -> MemoryResult<()> {
+    require_note_writer_with_landing(memory, txn, id, super::NoteEditLanding::Grant)
+}
+
 /// Whether `memory`'s actor may write NOTE `id` now, through `landing`: the
 /// Grant's answer for this actor and this NOTE, or the door's own landing
 /// proof ([`super::proposals::edit_lands`]). The NOTE's authorship never
 /// decides it (DEC-0006 #10, ARCH-0032 #forks-proposals): an author with no
 /// Grant is refused here as any other writer is.
-pub(super) fn require_note_writer(
+pub(super) fn require_note_writer_with_landing(
     memory: &Memory<'_>,
     txn: &heed::RoTxn<'_>,
     id: EntityId,
@@ -710,11 +721,12 @@ pub(super) fn require_note_writer(
         && !super::proposals::landing_proves(memory.vault(), txn, id, actor, landing)?
     {
         if memory.actor_class() != EdgeActorClass::Human {
-            return Err(MemoryError::bad_request_with(
+            let mut refused = MemoryError::bad_request_with(
                 "NOTE edit has no Grant that lands it",
                 &["Propose it through the program NOTE edit, which opens a fork for review."],
-            )
-            .with_reason_code(NOTE_EDIT_NEEDS_GRANT));
+            );
+            refused.reason_codes = vec![NOTE_EDIT_NEEDS_GRANT.to_owned()];
+            return Err(refused);
         }
         crate::memory::verify_owner_actor_binding_in_txn(memory.vault(), txn, memory.actor())?;
     }
