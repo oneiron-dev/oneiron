@@ -68,12 +68,15 @@ impl PeerServe {
 
 /// FIX 4748 engine call (CALLS "FIX 4748 serves as peer"): whether this
 /// machine serves the vault's other machines as a peer rather than as their
-/// home. It does when it dials a home of its own (`[device_sync]` or its
-/// enrolment) and is not the elected MACRO home. A home designation that
-/// does not read counts as not the home: the narrower service.
-pub(super) fn serves_as_peer(server: &SyncServer) -> bool {
-    server.ai.device()
-        && !oneiron::sync::residence::local_is_elected_home(server.vault()).unwrap_or(false)
+/// home. A served host does when it is a device of another home, through its
+/// AI host (`[device_sync]` or its enrolment), and is not the elected MACRO
+/// home. A home designation that does not read counts as not the home: the
+/// narrower service. The macOS app's device-mode server always does: it runs
+/// no home's work, even on a node a declaration or the owner elected (L7-47).
+pub(crate) fn serves_as_peer(server: &SyncServer) -> bool {
+    server.runs_device_link()
+        || (server.ai.device()
+            && !oneiron::sync::residence::local_is_elected_home(server.vault()).unwrap_or(false))
 }
 
 /// Admits a sync upgrade this machine may serve as a peer. `Ok(None)` when it
