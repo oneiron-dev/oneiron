@@ -553,6 +553,11 @@ struct ListedHeldAnswer {
     /// phone: " (or computer) and `machine_code`
     /// ([`oneiron::authority::machine_code_line`]).
     machine_code_text: String,
+    /// What a surface shows, quiet, under `machine_code_text`: that the code
+    /// should match the one the device shows, and to dismiss this answer
+    /// when the two differ
+    /// ([`oneiron::authority::machine_code_check_line`]).
+    machine_code_check_text: String,
 }
 
 /// The list as the wire spells it.
@@ -580,6 +585,10 @@ fn held_answers_of(listing: &HeldAnswerListing) -> HeldAnswers {
                 ),
                 machine_code_text: oneiron::authority::machine_code_line(
                     &listed.answer.profile.machine_key,
+                    listed.answer.profile.device_class,
+                    oneiron::authority::PromptDeviceName::NotHeld,
+                ),
+                machine_code_check_text: oneiron::authority::machine_code_check_line(
                     listed.answer.profile.device_class,
                     oneiron::authority::PromptDeviceName::NotHeld,
                 ),

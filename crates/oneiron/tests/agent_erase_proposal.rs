@@ -21,6 +21,11 @@
 //! `vault.records.erase_propose`, so the agent has no door to ask through
 //! (the check-in preflight answers its erase `propose` and nothing takes it).
 //!
+//! The personal vault's ask offers its owner one tap, the record's erase
+//! preview, while the record is live, and none once it is erased (FIX
+//! AGENT-ERASE-PROPOSAL-INBOX-TAP). On main after #8340 that case fails at
+//! its first assertion: the ask offers no tap.
+//!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test agent_erase_proposal`.
 #![cfg(oneiron_test_support)]
@@ -41,11 +46,16 @@ use oneiron::task_verb::sdk::invoke;
 use oneiron::test_doors::coach::{define_agent, write_root_goal};
 use oneiron::test_doors::derive::grant_core_read_of_kinds;
 use oneiron::test_doors::steward::{open_owner_carrier_vault, owner};
-use oneiron::verbs::{AgentGrantMintRequest, mint_agent_grant_as};
+use oneiron::verbs::{
+    AgentGrantMintRequest, RecordEraseConfirmRequest, RecordEraseRequest, confirm_record_erase,
+    mint_agent_grant_as, preview_record_erase,
+};
 use oneiron::{EdgeActorClass, EntityId, TimeRange, Vault};
 use serde_json::{Value, json};
 
 const PROPOSE: &str = "vault.records.erase_propose";
+/// The tap a personal vault's erase ask offers its owner.
+const PREVIEW: &str = "vault.records.erase_preview";
 /// The inbox producer of a personal vault's agent erase ask.
 const PERSONAL_PRODUCER: &str = "vault.erase_proposal";
 const SHARED: u64 = 42;
@@ -388,5 +398,52 @@ fn an_agent_does_not_ask_again_what_the_owner_declined() {
         fx.owner_asks(NOTIFICATION_PRODUCER_ERASE_ASK).len(),
         1,
         "and the Owner is not asked again"
+    );
+}
+
+#[test]
+fn the_owners_ask_offers_the_erase_preview_until_the_record_is_erased() {
+    let fx = Fixture::new(false);
+    let agent = fx.project_reader();
+    fx.propose(agent, fx.project)
+        .expect("the agent asks to erase a record it reads");
+    let owner = fx.vault.memory(fx.owner, EdgeActorClass::Human);
+    let taps = || -> Vec<Value> {
+        owner
+            .inbox_list(None, 100)
+            .expect("the owner's inbox")
+            .rows
+            .into_iter()
+            .filter(|row| {
+                row.kind == NotificationKind::Ask && row.source.producer == PERSONAL_PRODUCER
+            })
+            .map(|row| serde_json::to_value(&row.actions).expect("the row's taps"))
+            .collect()
+    };
+    let offered = taps();
+    assert_eq!(
+        offered,
+        vec![json!([{ "verb": PREVIEW, "args": { "record": fx.project.to_hex() } }])],
+        "the owner's ask offers the record's erase preview"
+    );
+    let input: RecordEraseRequest = serde_json::from_value(offered[0][0]["args"].clone())
+        .expect("the tap's args are the preview verb's own input");
+    let shown = preview_record_erase(&owner, input).expect("the owner previews the erase");
+    assert_eq!(
+        shown.record,
+        fx.project.to_hex(),
+        "of the record the agent named"
+    );
+    let confirm: RecordEraseConfirmRequest = serde_json::from_value(json!({
+        "record": fx.project.to_hex(),
+        "preview_digest": shown.preview_digest,
+    }))
+    .expect("the confirm input");
+    confirm_record_erase(&owner, &fx.owner_proof, confirm)
+        .expect("the owner erases the record on their own proof");
+    assert_eq!(
+        taps(),
+        vec![json!([])],
+        "the ask stays, and an erased record offers no tap"
     );
 }
