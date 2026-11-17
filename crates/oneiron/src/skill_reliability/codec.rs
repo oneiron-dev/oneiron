@@ -44,8 +44,8 @@ pub(super) fn map_u64(value: &Value, key: &str) -> Result<Option<u64>> {
 /// The float under `key`, `None` when it is absent or not one. A key stored twice is refused.
 pub(super) fn map_f32(value: &Value, key: &str) -> Result<Option<f32>> {
     Ok(match map_entry(value, key)? {
-        Value::F32(v) => Some(*v),
-        Value::F64(v) => Some(*v as f32),
+        Some(Value::F32(v)) => Some(*v),
+        Some(Value::F64(v)) => Some(*v as f32),
         _ => None,
     })
 }
