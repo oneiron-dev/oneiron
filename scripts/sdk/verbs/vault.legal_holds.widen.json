@@ -1,6 +1,6 @@
 {
   "name": "vault.legal_holds.widen",
-  "description": "Adds targets to one of the owner's standing customer legal holds.",
+  "description": "Adds records, inquiries or gate partitions to one of the owner's standing customer legal holds.",
   "input": "crate::task_verb::sdk::LegalHoldWidenRequest",
   "output": "crate::deletion::LegalHold",
   "call": "crate::task_verb::sdk::widen_legal_hold_as(memory.vault(), &memory.embedded_owner(\"vault.legal_holds.widen\")?, input)?",

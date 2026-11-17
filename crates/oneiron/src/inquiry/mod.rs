@@ -63,6 +63,7 @@ pub use edge::{
 };
 
 pub(crate) use holder::InquiryAnswerHolder;
+pub(crate) use landing::inquiry_copy_claim_id;
 pub(crate) use log::erase_inquiry_log_actor_in_txn;
 pub use log::{InquiryDecider, InquiryLogEntry};
 #[cfg_attr(not(oneiron_test_support), allow(unused_imports))]
@@ -74,7 +75,9 @@ pub use member::{
 };
 pub(crate) use policy::{INQUIRY_ROW_KEY, InquiryPolicyRead};
 pub use policy::{INQUIRY_ROW_VERSION, InquiryKeepSetting, InquiryKeepSource, InquiryPolicy};
-pub(crate) use receipt::{erase_inquiry_receipt_actor_in_txn, inquiry_receipts};
+pub(crate) use receipt::{
+    erase_inquiry_receipt_actor_in_txn, inquiry_receipt_rows_in_txn, inquiry_receipts,
+};
 #[cfg_attr(not(oneiron_test_support), allow(unused_imports))]
 pub(crate) use receipt::{write_inquiry_receipt_in_txn, write_inquiry_terms_receipt_in_txn};
 pub use record::{

@@ -33,6 +33,8 @@ pub enum CaptureSource {
     LiveSession(LiveSessionTarget),
     /// One stored on-record MESSAGE entity, by its 16-byte id.
     Message([u8; 16]),
+    /// One inquiry this vault sent, by its id (ARCH-0038 #company-hold).
+    Inquiry([u8; 16]),
 }
 
 /// Exact native source family chosen by the already admitted HOST order.
@@ -52,6 +54,10 @@ pub enum CaptureScope {
     /// `Messages` does. Only an owner hold names it; a host request never
     /// does, and one that decodes it is refused at the host channel.
     Records(Vec<[u8; 16]>),
+    /// Exact inquiries this vault sent, strictly increasing ids. Only an
+    /// owner hold names it; a host request never does, and one that decodes
+    /// it is refused at the host channel (ARCH-0038 #company-hold).
+    Inquiries(Vec<[u8; 16]>),
     /// New on-record messages, the order's explicit prospective permission:
     /// each new base MESSAGE row the selector covers is sealed to this order
     /// when it lands, while the order stands and before its `ends_at`. No
@@ -138,6 +144,7 @@ impl CaptureScope {
             Self::LiveSession(_)
             | Self::Messages(_)
             | Self::Records(_)
+            | Self::Inquiries(_)
             | Self::ProspectiveMessages(_)
             | Self::ArtifactMessages(_) => false,
         }
@@ -175,6 +182,13 @@ impl CaptureScope {
                     return Err(invalid("legal capture record order"));
                 }
                 out.write_all(&[7])?;
+                write_ids(out, ids)
+            }
+            Self::Inquiries(ids) => {
+                if !ids.windows(2).all(|pair| pair[0] < pair[1]) {
+                    return Err(invalid("legal capture inquiry order"));
+                }
+                out.write_all(&[8])?;
                 write_ids(out, ids)
             }
             Self::ProspectiveMessages(MessageSelector::Vault) => out.write_all(&[5, 1]),
@@ -235,6 +249,10 @@ impl CaptureScope {
             7 => Ok(Self::Records(read_ids(
                 input,
                 "legal capture record order",
+            )?)),
+            8 => Ok(Self::Inquiries(read_ids(
+                input,
+                "legal capture inquiry order",
             )?)),
             6 => {
                 let artifact = ArtifactIdentity {
@@ -556,6 +574,12 @@ pub enum CaptureExtent {
     /// its own hold store; a host capture never carries it. `messages`
     /// counts the copied records.
     Records,
+    /// The named inquiries' receipt rows and the kept copy CLAIMs' delivery
+    /// ledger rows, in inquiry id order, each inquiry's receipts first, then
+    /// each kept copy CLAIM's ledger rows. The CLAIMs themselves are in the
+    /// hold's Records capture. `messages` is 0 and `components` counts the
+    /// rows (ARCH-0038 #company-hold).
+    Inquiries,
     /// One batch of a prospective order, in ordinal order: each new MESSAGE
     /// row sealed when it landed (component 8), and each outgoing edge row
     /// its birth batch wrote, sealed at that batch's end under the row's

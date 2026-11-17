@@ -5,6 +5,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use heed::RoTxn;
 
 use crate::Vault;
+use crate::authority::AuthorityVaultId;
 use crate::entity_id::{EntityId, ForeignWorldId};
 use crate::error::{Error, Result};
 use crate::side_table::{self, Raw, SideTable};
@@ -124,6 +125,47 @@ pub(crate) fn encode_delivered_record(record: &DeliveredRecord) -> Vec<u8> {
         bytes.extend_from_slice(world.as_bytes());
     }
     bytes
+}
+
+/// One stored delivery ledger row, as stored.
+pub(crate) struct DeliveredRow {
+    /// The full stored key, with the table prefix.
+    pub(crate) key: Vec<u8>,
+    /// The stored value, as the ledger wrote it.
+    pub(crate) value: Vec<u8>,
+    /// The delivered record, from the key's last field.
+    pub(crate) record: EntityId,
+    /// The vault the record came from, from the decoded origin.
+    pub(crate) source_vault: AuthorityVaultId,
+}
+
+/// Every delivery ledger row, in key order (federation.md #inquiry-copy).
+/// Each row is the stored key and value, with the record and source vault.
+/// No new format.
+pub(crate) fn delivered_rows_in_txn(
+    store: &impl ManifestDbs,
+    txn: &RoTxn<'_>,
+) -> Result<Vec<DeliveredRow>> {
+    let mut rows = Vec::new();
+    for row in DELIVERED.iter_raw_from(store, txn, b"")? {
+        let (suffix, value) = row?;
+        let mut key = DELIVERED.decl().prefix.to_vec();
+        key.extend_from_slice(&suffix);
+        let text = std::str::from_utf8(&suffix).map_err(|_| corrupt())?;
+        let (_, id) = text.rsplit_once(':').ok_or_else(corrupt)?;
+        let record = EntityId::from_hex(id).map_err(|_| corrupt())?;
+        if record.to_hex() != id {
+            return Err(corrupt());
+        }
+        let decoded = decode_delivered_record(&value)?;
+        rows.push(DeliveredRow {
+            key,
+            value,
+            record,
+            source_vault: decoded.origin.source_vault,
+        });
+    }
+    Ok(rows)
 }
 
 pub(crate) fn decode_delivered_record(bytes: &[u8]) -> Result<DeliveredRecord> {
