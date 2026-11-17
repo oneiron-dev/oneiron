@@ -378,6 +378,7 @@ fn classify(op: &AuthorityOp) -> (AuthorityAuditEventKind, &'static str, OpField
         AuthorityOp::OwnerRoot(_) => (Other, "owner_root", OpFields::default()),
         AuthorityOp::WorldPrivacy(_) => (Other, "world_privacy", OpFields::default()),
         AuthorityOp::WorldKeyWraps(_) => (Other, "world_key_wraps", OpFields::default()),
+        AuthorityOp::DataKeyGeneration(_) => (Other, "data_key_generation", OpFields::default()),
         AuthorityOp::OwnerHandover(action) => (
             Other,
             "owner_handover",

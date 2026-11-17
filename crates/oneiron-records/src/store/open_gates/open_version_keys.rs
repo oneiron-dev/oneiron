@@ -3,6 +3,14 @@
 
 pub const MAX_DBS: u32 = 32;
 
+/// v36 (OPUS-DATAKEY-GEN PR 3, row VAULT-DATA-KEY-ROTATION): the authority
+/// log gains the `data_key_generation` op, sealed envelopes gain purpose 32
+/// (`DataKeyGeneration`), and the authority fold keeps each data-key
+/// generation's counted delivery records. The authority fold schema moves
+/// 43 -> 44 with it, and a stored checkpoint image written before it no
+/// longer decodes; an older build refuses the new op. No old-meaning reader
+/// or migration is provided (the lead's M-1 stored-change rule, path "loud").
+///
 /// v35 (FIX SEQUENCE-FLOOR-DELIVERY-ORDER, CHECKPOINT-RAW-FLOOR-CLEARED-ROW):
 /// stored authority-log rows keep their bytes and can change meaning. A
 /// row's sequence floor comes from its signer's rows in its scope, not from
@@ -194,7 +202,7 @@ pub const MAX_DBS: u32 = 32;
 /// `RECEIPT_FAMILY_INDEX_VERSION` requires bumping this version too.
 /// v27 hashes full run/group identifiers in their v2 secondary-index keys.
 /// v26 is reserved for the separately landing attempt-record v4 format.
-pub const STORAGE_ABI_VERSION: u16 = 35;
+pub const STORAGE_ABI_VERSION: u16 = 36;
 
 pub const STORAGE_SCHEMA_VERSION: u16 = 1;
 

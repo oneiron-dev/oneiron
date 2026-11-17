@@ -104,6 +104,7 @@ pub(super) fn run_page(
     });
     let components = &mut plan.components;
     let mut entity_error = None;
+    let mut authority_written = false;
     let mut visit = |key: &str, value: Option<&[u8]>| {
         if entity_error.is_some() {
             return;
@@ -166,12 +167,19 @@ pub(super) fn run_page(
             if step.written().is_some() && value.is_some_and(moves_custody_floor) {
                 vault.apply_pending_rebinds_after_commit();
             }
+            authority_written |= step.written().is_some() && value.is_some_and(is_authority_row);
             ledger_step(ledger, step);
         }
     };
     for key in &plan.order[rows] {
         let value = map_get_bytes(&ctx.entities_map, key);
         visit(key, value.as_deref());
+    }
+    // A data-key generation an authority row of this page carried is
+    // received now, after its commit, as the history and page imports
+    // receive it; rows committed before a later row's error count too.
+    if authority_written {
+        vault.adopt_data_key_generations_after_ingest();
     }
     if let Some(err) = entity_error {
         return Err(err);

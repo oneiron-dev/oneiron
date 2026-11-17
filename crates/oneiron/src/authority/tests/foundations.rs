@@ -378,6 +378,8 @@ fn zero_role_devices_do_not_count_as_quorum_participants() {
         owner_work: Default::default(),
         world_keys: BTreeMap::new(),
         refused_world_keys: BTreeSet::new(),
+        data_key_generations: BTreeMap::new(),
+        refused_data_key_generations: BTreeSet::new(),
         key_admitters: BTreeMap::new(),
         hosted: false,
         actor_rows: BTreeSet::new(),

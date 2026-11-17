@@ -97,6 +97,13 @@ impl VaultStorageId {
     pub fn as_bytes(&self) -> &[u8; 32] {
         &self.0
     }
+
+    /// The storage id a test fixture adopts: an enrolled device opens under
+    /// its home's id. Test support only.
+    #[cfg(oneiron_test_support)]
+    pub(crate) fn for_test(id: [u8; 32]) -> Self {
+        Self(id)
+    }
 }
 
 /// What one open does beyond its configuration.

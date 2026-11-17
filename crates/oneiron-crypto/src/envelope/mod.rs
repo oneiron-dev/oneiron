@@ -173,6 +173,10 @@ pub enum Purpose {
     /// A legal-clone content chunk or encrypted descriptor/summary, sealed only
     /// to the host's independently destroyable per-order hybrid key.
     LegalClone = 31,
+    /// One vault data key, wrapped to one machine. The owner binds the vault,
+    /// the generation and the key's commitment in `key_id` and checks them on
+    /// open.
+    DataKeyGeneration = 32,
 }
 
 impl Purpose {
@@ -209,6 +213,7 @@ impl Purpose {
             29 => Self::WorldSideRow,
             30 => Self::SealedWorldUpdate,
             31 => Self::LegalClone,
+            32 => Self::DataKeyGeneration,
             other => return Err(Error::UnknownPurpose(other)),
         })
     }

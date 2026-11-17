@@ -63,6 +63,7 @@ pub mod credit_decay_fit;
 pub mod curator_finding;
 pub mod dag_append;
 pub mod data_key_custody_head;
+pub mod data_key_generation_devices;
 pub mod data_key_preset_switch;
 pub mod data_key_sealed_vault;
 pub mod data_key_stale_unlock;

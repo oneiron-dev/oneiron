@@ -101,8 +101,8 @@ pub(super) fn apply_op(
         // `fold_entry_state`'s machine-profile, anchor, world-privacy,
         // grant-travel, owner-choice, home-candidacy, full-copy-mark,
         // agent-grant-act, policy-setting, export-act, owner-work (a custody
-        // permit piece among them), membership-execution and world-key arms
-        // return before reaching here.
+        // permit piece among them), membership-execution, world-key and
+        // data-key-generation arms return before reaching here.
         AuthorityOp::MachineProfile(_)
         | AuthorityOp::OwnerRoot(_)
         | AuthorityOp::WorldPrivacy(_)
@@ -124,6 +124,7 @@ pub(super) fn apply_op(
         | AuthorityOp::ExportSupplementImported(_)
         | AuthorityOp::CustodyPermitPiece(_)
         | AuthorityOp::WorldKeyWraps(_)
+        | AuthorityOp::DataKeyGeneration(_)
         | AuthorityOp::FrontierJoin(_)
         | AuthorityOp::MembershipExecution(_) => {}
         // The signed record of a shared-act change; the change itself is the

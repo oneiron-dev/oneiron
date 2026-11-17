@@ -74,6 +74,12 @@ fn wanted(entry: &AuthorityLogEntry) -> Vec<Grant> {
                 entry.signer_key().clone(),
             )]
         }
+        AuthorityOp::DataKeyGeneration(record) => {
+            vec![Grant::InstallKey(
+                record.machine,
+                entry.signer_key().clone(),
+            )]
+        }
         AuthorityOp::ResidenceResult(result) => {
             vec![Grant::InstallKey(
                 result.machine,

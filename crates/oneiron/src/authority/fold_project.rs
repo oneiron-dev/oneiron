@@ -156,6 +156,9 @@ pub(super) fn project_once(
         };
         super::world_key_fold::folded_world_keys(state, by_hash, &stands)
     });
+    let data_key_generations = merged.as_ref().map_or_else(BTreeMap::new, |state| {
+        super::data_key_generation_fold::folded_data_key_generations(state, by_hash)
+    });
     let actor_bindings = merged.as_ref().map_or_else(BTreeMap::new, |state| {
         folded_actor_bindings(state, context.consent_arm)
     });
@@ -304,6 +307,10 @@ pub(super) fn project_once(
         refused_world_keys: merged
             .as_ref()
             .map_or_else(BTreeSet::new, |state| state.refused_world_keys.clone()),
+        data_key_generations,
+        refused_data_key_generations: merged.as_ref().map_or_else(BTreeSet::new, |state| {
+            state.refused_data_key_generations.clone()
+        }),
         verified_device_revocations: merged.as_ref().map_or_else(BTreeSet::new, |state| {
             revoke_facts.device_revocations(state.vault_id)
         }),
