@@ -15,7 +15,7 @@ use super::policy::{ess_cert_id_v2, parse_attribute};
 
 mod issuer_link;
 
-use issuer_link::issuer_link_indices;
+use issuer_link::{issuer_link_indices, validated_issuer_link_indices};
 
 /// Maximum issuer steps the issuer-link fallback follows from the leaf.
 /// 10 is pkix-path-builder's default maximum path depth
@@ -470,7 +470,9 @@ fn selected_indices(
         // topological path stays the last resort, as in pkix-chain's
         // `build_with_aia`, so a candidate that cannot key-bind keeps
         // the Fail/NotRun shape its validation produces downstream.
-        let candidate = issuer_link_indices(decoded, first, memory)?;
+        // Try key-bound alternatives at this same policy time before
+        // returning a candidate that fails full path validation.
+        let candidate = validated_issuer_link_indices(decoded, first, anchors, &policy, memory)?;
         if candidate.key_bound {
             return Ok(candidate.indices);
         }
@@ -645,6 +647,41 @@ mod tests {
             &pkix_chain::NoAiaFetcher,
         )
         .unwrap();
+
+        // The same rollover bag has two prints of OldWithNew. The
+        // expired one comes first and its key still verifies the
+        // intermediate, but only the later print validates at AT_UNIX.
+        let mut expired_params = old_params.clone();
+        expired_params.not_before = rcgen::date_time_ymd(2025, 1, 1);
+        expired_params.not_after = rcgen::date_time_ymd(2026, 1, 1);
+        expired_params.serial_number = Some(rcgen::SerialNumber::from(1001u64));
+        let expired_old_with_new = issued_by(&expired_params, &old_key, &new_params, &new_key);
+        let mut valid_params = old_params;
+        valid_params.not_before = rcgen::date_time_ymd(2025, 1, 1);
+        valid_params.not_after = rcgen::date_time_ymd(2030, 1, 1);
+        valid_params.serial_number = Some(rcgen::SerialNumber::from(1002u64));
+        let valid_old_with_new = issued_by(&valid_params, &old_key, &new_params, &new_key);
+        let bag = vec![
+            chain[0].clone(),
+            chain[1].clone(),
+            expired_old_with_new,
+            valid_old_with_new.clone(),
+            chain[3].clone(),
+        ];
+        reset_signature_checks();
+        let selected = selected_chain_copy(&bag, 0, &anchors, AT_UNIX, &memory).unwrap();
+        assert_eq!(
+            *selected,
+            vec![
+                bag[0].clone(),
+                bag[1].clone(),
+                valid_old_with_new,
+                bag[4].clone()
+            ]
+        );
+        assert!(signature_checks() <= MAX_FALLBACK_SIGNATURE_CHECKS);
+        // This gate succeeds only when signer_path_status is Pass.
+        crate::native::verify::validate_chain(&selected, &anchors, AT_UNIX, &memory).unwrap();
     }
 
     #[test]
