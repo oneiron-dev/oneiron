@@ -22,12 +22,9 @@ use oneiron::write_envelope::{
     WRITE_ENVELOPE_EVIDENCE_ACTOR_CLASS_KEY, WRITE_ENVELOPE_EVIDENCE_ACTOR_KEY,
 };
 use oneiron::{ClaimApprovalStatus, EntityId, Vault, VaultConfig};
+use oneiron_contracts::entity_id::derived_domains::SURFACE_PROVIDER_INBOUND_ACTOR;
 use rmpv::Value;
 
-/// The provider-inbound MACHINE's derivation domain, the engine's
-/// `derived_domains::SURFACE_PROVIDER_INBOUND_ACTOR`, spelled out as
-/// `tests/claim_facet_birth.rs` spells it.
-const SURFACE_PROVIDER_INBOUND_ACTOR: &[u8] = b"oneiron:surface-provider-inbound-actor:v1";
 /// The claim evidence key of a MACHINE write signature (the engine's
 /// `authority::machine_write::MACHINE_SIGNATURE_KEY`).
 const MACHINE_SIGNATURE_KEY: &str = "machine_signature";
