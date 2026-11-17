@@ -167,6 +167,8 @@ mod sequence_ancestry;
 pub(crate) mod sequence_floor_door;
 mod sequence_observation;
 pub(crate) mod setting_keys;
+#[cfg(oneiron_test_support)]
+pub(crate) mod signed_branch_door;
 mod slip;
 mod slip_pairing;
 mod slip_renewal;
@@ -304,8 +306,8 @@ pub use backup_signer_delegation::{
     BackupSignerStatement,
 };
 pub use carrier_prompt::{
-    PromptDeviceName, held_answer_prompt, machine_code_line, machine_key_code, pin_request_prompt,
-    recovery_root_code,
+    PromptDeviceName, held_answer_prompt, machine_code_check_line, machine_code_line,
+    machine_key_code, pin_request_prompt, recovery_root_code,
 };
 pub use carrier_reading::CarrierReading;
 pub use causal_write::CausalWriteDisposition;
@@ -568,6 +570,8 @@ pub(crate) use principal_standing::{
     principal_standing_or_lapse_in_txn,
 };
 pub(crate) use readonly_fold::AuthorityView;
+#[cfg(oneiron_test_support)]
+pub(crate) use readonly_fold::adopted_door;
 pub(crate) use readonly_fold::authority_view_readonly_for_store_in_txn;
 #[cfg(feature = "sync")]
 pub(crate) use readonly_fold::folded_vault_id_of_records;

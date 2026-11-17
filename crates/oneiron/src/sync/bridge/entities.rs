@@ -263,14 +263,25 @@ fn publish_entity_effects(
     // The savepoint has no postcommit owner: an authority row this batch
     // landed, an owner's origin cut among them, reaches the live mirror
     // here, so a repo manifest waiting in any loaded window for a proven
-    // writer is judged again against the new fold (FIX 15740).
+    // writer is judged again against the new fold (FIX 15740). So does a
+    // room body that landed merged with the pin records held here
+    // (ROOM-PINS-LWW-MERGE): the pass takes the pending-mirror marker the
+    // merge left and writes the stored body over the carrier.
     vault.note_committed_rows(
         applied_ops
             .iter()
-            .filter(|(_, blob)| is_authority_row(blob))
+            .filter(|(id, blob)| is_authority_row(blob) || landed_merged_room(vault, id, blob))
             .map(|(id, _)| *id)
             .collect(),
     );
+}
+
+/// Whether the carried room body `blob` landed at `id` as something else:
+/// its pin records merged with the ones held here (ROOM-PINS-LWW-MERGE).
+fn landed_merged_room(vault: &Vault, id: &EntityId, blob: &[u8]) -> bool {
+    EntityMetadataHeader::parse(blob)
+        .is_some_and(|header| header.entity_type == crate::registry::ENTITY_TYPE_CONVERSATION)
+        && !committed_entity_state_matches(vault, id, blob)
 }
 
 /// An isolated candidate's entity effects, retained until its root commits.
