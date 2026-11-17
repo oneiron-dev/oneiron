@@ -228,5 +228,6 @@ fn validate(input: &EncoderInput, output: &EncoderOutput) -> Result<(), &'static
         }
     }
     crate::tagging::check_span_order(output).map_err(|_| "invalid_ner_span")?;
-    crate::tagging::check_links(input, output).map_err(|_| "invalid_coreference_link")
+    crate::tagging::check_links(input, output).map_err(|_| "invalid_coreference_link")?;
+    crate::tagging::check_relations(output).map_err(|_| "invalid_relation")
 }

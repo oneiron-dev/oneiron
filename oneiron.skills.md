@@ -1618,13 +1618,13 @@ Fully specified entries:
     "error_code": "UNAUTHORIZED",
     "human_message": "request is not authorized",
     "recovery_suggestions": [
-      "Send Authorization: Bearer credentials and retry."
+      "Send Authorization: Bearer credentials and a fresh x-oneiron-binding holder proof, then retry."
     ],
     "wire_fields": {
       "code": "UNAUTHORIZED",
       "message": "request is not authorized",
       "details": { "code": "UNAUTHORIZED" },
-      "suggestions": ["Send Authorization: Bearer credentials and retry."]
+      "suggestions": ["Send Authorization: Bearer credentials and a fresh x-oneiron-binding holder proof, then retry."]
     }
   },
   {
@@ -1684,6 +1684,7 @@ Codes the server's HTTP error type defines:
 - `OWNER_BINDING_REQUIRED`
 - `COURTESY_DELETE_UNAUTHENTICATED`
 - `CONTROL_SCOPE_DENIED`
+- `PROCESS_NOT_READY` (503): this vault process's event loop is hung (`draining`) or recovering from a hang (`recovering`); it takes no new work, and work it admitted runs to its end. Retry after the `Retry-After` wait (`details.retryAfterSecs`).
 - `4001`
 - `4002`
 - `4003`
@@ -1692,7 +1693,7 @@ Codes the server's HTTP error type defines:
 
 ### Recovery Rules
 
-- Auth failures: send the logged `v2.slip.*` in `Authorization: Bearer` with a fresh `x-oneiron-binding` holder proof made for this request, then retry once. Never resend an earlier proof; the server's `UNAUTHORIZED` suggestion names only the bearer.
+- Auth failures: send the logged `v2.slip.*` in `Authorization: Bearer` with a fresh `x-oneiron-binding` holder proof made for this request, then retry once. Never resend an earlier proof.
 - Bad path ids: validate 32 lowercase hex characters before retrying entity or edge reads.
 - Bad vector query: send comma-separated `f32` values with no empty segments.
 - Invalid view: use `summary`, `standard`, or `full`.

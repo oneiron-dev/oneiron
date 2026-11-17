@@ -270,6 +270,10 @@ impl CancelFixture {
             ConnectorHostConfig {
                 transport: ConnectorTransport::McpHttp,
                 endpoint: endpoint.clone(),
+                command: Vec::new(),
+                env: BTreeMap::new(),
+                cwd: None,
+                upstream: None,
             },
         );
         let server = Arc::new(

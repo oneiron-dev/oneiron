@@ -35,7 +35,8 @@ pub struct MergeQueueBatchView {
     pub batch_ref: String,
     /// The contract baseline the batch is checked against.
     pub baseline_ref: String,
-    /// The queue head Git commit the batch was formed on.
+    /// The queue head Git commit the batch stages on: the one it was formed
+    /// on, or, once it stages, the head the batch it follows landed.
     pub expected_head: String,
     /// The queue green Git commit the batch was formed on.
     pub base_green: String,
@@ -61,6 +62,16 @@ pub struct MergeQueueBatchView {
     /// Each proposal's `repo.proposal_admission` receipt, in batch order,
     /// as its queue admission bound them; empty without one.
     pub proposal_admission_receipts: Vec<EntityId>,
+    /// The batch of the same enqueue this one stages on once that one has
+    /// landed: an enqueue of more than 63 proposals forms consecutive
+    /// batches ([MERGE-QUEUE-ENQUEUE-SPLITS-LARGE-BATCH]). Absent for an
+    /// enqueue's first batch.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub follows: Option<String>,
+    /// The batch of the same enqueue that stages on this one once it has
+    /// landed; absent for an enqueue's last batch.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub followed_by: Option<String>,
 }
 
 /// The queue pointers: raw Git commits, not tested-tree records.

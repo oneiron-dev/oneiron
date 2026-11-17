@@ -91,6 +91,42 @@ pub fn declare_candidacy_for(
         macro_ready: false,
         cloud: false,
     };
+    append_candidacy(vault, machine, key, declaration)
+}
+
+/// Appends `machine`'s home candidacy saying `node_id`, `always_on` and
+/// `primary`, and that it can run MACRO now (never cloud), signed by its
+/// install `key`: a candidate the MACRO election ranks. The row lands as
+/// the machine's newest, or nothing is committed.
+///
+/// # Errors
+///
+/// As [`declare_candidacy_for`].
+pub fn declare_macro_candidacy_for(
+    vault: &Vault,
+    machine: EntityId,
+    key: &SigningKey,
+    node_id: u64,
+    always_on: bool,
+    primary: bool,
+) -> Result<()> {
+    let declaration = HomeCandidacy {
+        machine,
+        node_id,
+        always_on,
+        primary,
+        macro_ready: true,
+        cloud: false,
+    };
+    append_candidacy(vault, machine, key, declaration)
+}
+
+fn append_candidacy(
+    vault: &Vault,
+    machine: EntityId,
+    key: &SigningKey,
+    declaration: HomeCandidacy,
+) -> Result<()> {
     let mut txn = vault.store.env.write_txn()?;
     let fold = vault.authority_view_readonly_in_txn(&txn)?;
     let act = append_install_signed_in_txn(

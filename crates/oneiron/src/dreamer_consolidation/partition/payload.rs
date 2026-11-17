@@ -6,6 +6,7 @@
 
 use std::collections::BTreeSet;
 
+use oneiron_contracts::fingerprint::LegacyDigest;
 use rmpv::Value;
 
 use super::super::branch::{BranchTurn, ConsolidationBranchPlan, ConversationPart};
@@ -52,12 +53,15 @@ impl PartitionAudience {
         }
     }
 
-    pub(crate) fn hash_into(self, hasher: &mut blake3::Hasher) {
-        hasher.update(&[match self {
-            Self::Thread(_) => 1,
-            Self::Person(_) => 2,
-        }]);
-        hasher.update(self.entity().as_bytes());
+    /// Feeds a branch identity: `1` for a thread or `2` for a person, then the
+    /// entity's 16 bytes (K, PLAN-UC-04 3.4c).
+    pub(crate) fn hash_into(self, hasher: &mut LegacyDigest) {
+        hasher
+            .raw(&[match self {
+                Self::Thread(_) => 1,
+                Self::Person(_) => 2,
+            }])
+            .raw(self.entity().as_bytes());
     }
 
     fn encode(self) -> Value {
