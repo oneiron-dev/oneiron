@@ -79,9 +79,11 @@ pub enum DepositProviderFailure {
     /// Worth another try: the network, a timeout, the provider's 5xx or 429.
     Transient(String),
     /// The provider took the move and has not finished it (a refund it
-    /// holds pending). The deposit still owes the move; it is asked again
-    /// later and never fails for good on this answer, since the provider
-    /// ends the move one way or the other.
+    /// holds pending), or the server could not ask the provider yet (its key
+    /// is withheld, missing or not a test key). The deposit still owes the
+    /// move; it is asked again later and never fails for good on this
+    /// answer, since the provider ends the move one way or the other, and
+    /// the owner can fix the key.
     Pending(String),
     /// The provider refused the move itself; another try answers the same.
     Permanent(String),

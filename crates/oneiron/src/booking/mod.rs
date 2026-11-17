@@ -62,7 +62,7 @@ pub use conversion::{
 };
 pub use deposit::{
     DEFAULT_DEPOSIT_FULL_REFUND_NOTICE_SECS, DepositRefundRule, DepositTerms,
-    MAX_DEPOSIT_AMOUNT_MINOR,
+    MAX_DEPOSIT_AMOUNT_MINOR, configured_deposit_terms, deposit_checkout_idempotency_key,
 };
 pub use disclosure_rung::{
     BusyBlockRow, CalendarDisclosureDefault, DisclosureRung, EventDetailsRow, EventRow,

@@ -162,6 +162,10 @@ impl Fixture {
         let mut input = publication_input(page, published, from, until);
         input.value["event_config_hashes"]["intro"] =
             json!(oneiron::booking::booking_config_hash(&self.config).expect("hash"));
+        // The card states the deposit its configuration asks (BK-DEPOSITS).
+        if let Some(terms) = &self.config.deposit {
+            input.value["event_types"][0]["deposit"] = json!(terms);
+        }
         let receipt = self
             .server
             .vault
@@ -356,6 +360,7 @@ pub(super) fn hold(
         constraint: None,
         session_ref: session.to_owned(),
         checkout_lease_token: lease,
+        deposit_terms: None,
         idempotency_key: format!("hold-{session}"),
         cap_override_reason: None,
     }))
