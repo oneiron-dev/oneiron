@@ -68,6 +68,12 @@ pub struct EsignDispatchRequest {
     /// key, and a retry of a held call passes it here.
     #[serde(default)]
     pub idempotency_key: Option<String>,
+    /// The check-in an earlier send's `CHECK_IN_PENDING` named, 32 hex: once
+    /// it is approved, the send that names it spends it and dispatches
+    /// (ROLES-CHECKIN 2k6a). Only `vault.esign.send_for_signature` reads it;
+    /// a reminder that names one is refused.
+    #[serde(default)]
+    pub check_in_ref: Option<String>,
 }
 
 /// One extension of a pending signing document's window through the
