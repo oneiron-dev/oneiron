@@ -239,6 +239,9 @@ pub enum DrafterActor {
     Erase,
     /// An actor since erased.
     Erased,
+    /// The owner's archive restore, moving a binding to stock as a local
+    /// consistency repair under the restored policy.
+    ArchiveRestore,
 }
 
 impl DrafterActor {

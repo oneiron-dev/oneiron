@@ -44,7 +44,9 @@ async fn mcp_legacy_catalog_is_unknown_tool_on_both_endpoints() {
             )
             .await;
             // 0bf27d24b8f (#1564): a name under a stray root whose leaf is one
-            // served verb is refused with its correction, before any effect.
+            // served verb is refused with its correction, before any caller
+            // resolves (FIX 298), so with no scope to state; any other
+            // retired name stays unknown under the resolved credential.
             if *name == "oneiron.ask" {
                 assert_mcp_structured_error(&body, "wrong_root");
                 assert_eq!(
@@ -52,10 +54,14 @@ async fn mcp_legacy_catalog_is_unknown_tool_on_both_endpoints() {
                     json!("`oneiron.ask` is not an SDK verb; the verb is `ask`"),
                     "{name} on {path}: {body}"
                 );
+                assert!(
+                    body["error"]["data"].get("effective_scope").is_none(),
+                    "{name} on {path}: a pre-resolution refusal states no scope: {body:?}"
+                );
             } else {
                 assert_mcp_structured_error(&body, "unknown_tool");
+                assert_scoped_refusal(&body, &scope, &format!("{name} on {path}"));
             }
-            assert_scoped_refusal(&body, &scope, &format!("{name} on {path}"));
         }
     }
 

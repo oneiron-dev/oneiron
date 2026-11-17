@@ -34,6 +34,10 @@
 //! the Grant instead, pending until it counts (FIX 12335).
 
 use super::{AuthorityOp, HostSlipIssuer};
+use crate::batch::export::archive_side_install::{
+    ArchivedSideRowOutcome, decode_archived_row, install_archived_row,
+};
+use crate::batch::export::{ArchiveRetainedSideRow, OwnerArchiveRestorePermit};
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::side_table::{self, HexId, Raw, SideTable};
@@ -141,6 +145,24 @@ pub(crate) fn grant_known_withdrawn_in_txn(
             NewCheckErrorMode::KeepExistingPath => false,
         },
     }
+}
+
+/// Lands archived withdrawn-grant markers, which name no live grant.
+pub(crate) fn land_archived_withdrawn_grant_rows_in_txn(
+    vault: &crate::Vault,
+    txn: &mut heed::RwTxn<'_>,
+    permit: &OwnerArchiveRestorePermit,
+    rows: &[ArchiveRetainedSideRow],
+) -> Result<Vec<ArchivedSideRowOutcome>> {
+    let mut outcomes = Vec::with_capacity(rows.len());
+    for row in rows {
+        let outcome = match decode_archived_row(&WITHDRAWN_GRANT, row) {
+            Err(reason) => ArchivedSideRowOutcome::HeldBack(reason),
+            Ok((key, ())) => install_archived_row(&WITHDRAWN_GRANT, vault, txn, permit, &key, row)?,
+        };
+        outcomes.push(outcome);
+    }
+    Ok(outcomes)
 }
 
 impl crate::Vault {
