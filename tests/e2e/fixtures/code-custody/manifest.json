@@ -219,7 +219,7 @@
         "revision": "code-custody-fixtures-v1"
       },
       "licence": "CC0-1.0",
-      "sha256": "f6f48aef37d405bd8b9c11cdd48499767c673abf71783791bff4d279bace6e40",
+      "sha256": "d11db75ca5bb2c2362b2edd41834243f378b8f963f29664762bc3d5c5d87b7a2",
       "expectedFacts": {
         "test_ids": [
           "CODE-CUSTODY-01",
