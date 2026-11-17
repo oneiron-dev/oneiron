@@ -149,7 +149,8 @@ pub(crate) use self::facade::{
     AsrSessions, DoorClaim, ExportTransfers, FacadeApiError, FacadeCall, INVOCATION_CONFLICT,
     INVOCATION_IN_FLIGHT, INVOCATION_RESPONSE_ERASED, ModelStreams, admission_observer,
     ai_speech_for_run, call_verb as facade_call_verb, claim_door_invocation, connector_answer_as,
-    connector_call_listing_as, connector_call_listing_on, invocation_body, self_use_as,
+    connector_call_listing_as, connector_call_listing_on, invocation_body,
+    released_reply as facade_released_reply, self_use_as,
 };
 // FIX 11190, FIX 11201: the binding door's decision on a call over a damaged
 // authority clock floor.
@@ -266,6 +267,10 @@ pub(crate) use self::mcp_gateway::draft_checked_span;
 // The integration tests' door to the carrier release check (census L2-38).
 #[cfg(oneiron_test_support)]
 pub(crate) use self::mcp_gateway::carrier_releases_for_test;
+// The integration tests' door to the keyframe bare-child judgment
+// (BOARD-KEYFRAME-CHILD-RELEASE).
+#[cfg(oneiron_test_support)]
+pub(crate) use self::mcp_gateway::bare_child_served_rows_for_test;
 #[cfg(oneiron_test_support)]
 pub(crate) use self::mcp_gateway::run_board_pins_for_test;
 // The integration tests' door to the gateway's facade refusal vocabulary (UC-11).
@@ -299,6 +304,10 @@ pub(crate) use self::mcp_gateway::{
     ride_run_carrier, run_brief_people_budget, run_brief_pins, run_session_reads,
     swap_oauth_access_token,
 };
+// The integration tests' door to a refusal as the MCP gateway answers it
+// (P38 pending block): the facade-error mapping and the error reply.
+#[cfg(oneiron_test_support)]
+pub(crate) use self::mcp_gateway::{mcp_error_response, mcp_facade_error};
 pub(crate) use self::memory::*;
 pub(crate) use self::memory_reason::*;
 pub(crate) use self::openapi::*;

@@ -52,14 +52,16 @@ fn meso_rounds_of(vault: &Vault, turn: EntityId) -> Result<usize> {
         if payload.attempt_type != DreamerConsolidationScope::Meso.as_str() {
             continue;
         }
-        let (_, turns, _) = decode_partition_payload(&payload.input)?;
+        let branch = decode_partition_payload(&payload.input)?;
+        let turns = branch.turn_ids();
         rounds += usize::from(turns.contains(&turn));
     }
     Ok(rounds)
 }
 
-fn open_session(vault: &Vault, now: u64) -> Result<EntityId> {
-    match vault.mint_session(now)? {
+fn open_session(vault: &Vault, actor: EntityId, now: u64) -> Result<EntityId> {
+    let key = vault.local_session_key(actor)?;
+    match vault.mint_session(key, now)? {
         crate::SessionMintOutcome::Minted(session) => Ok(session),
         other => panic!("{other:?}"),
     }
@@ -67,12 +69,12 @@ fn open_session(vault: &Vault, now: u64) -> Result<EntityId> {
 
 /// Ends `session` at `now` through the production session-end wake (plan,
 /// then the fenced enqueue and Meso settlement), then opens the next one.
-fn close_session(vault: &Vault, session: EntityId, now: u64) -> Result<EntityId> {
-    let wake = vault.plan_session_end_wake()?;
+fn close_session(vault: &Vault, actor: EntityId, session: EntityId, now: u64) -> Result<EntityId> {
+    let wake = vault.plan_session_end_wake(&session)?;
     let explicit = crate::SessionClosePredicate::Explicit;
     let ended = vault.end_session_with_wake(&session, explicit, now, &wake)?;
     assert!(ended.is_some(), "the open session ends");
-    open_session(vault, now)
+    open_session(vault, actor, now)
 }
 
 /// What a branch of `attempt` reads of `turn`.
@@ -101,15 +103,17 @@ fn transcript(
 fn a_continuation_behind_a_later_consumed_turn_is_selected_again() -> Result<()> {
     let (_dir, vault) = open_vault();
     let (turn, conversation, _, input) = stream_turn(&vault, 0x91, "call me", "finalize")?;
-    let writer = EntityId::from_bytes([0x91; 16])?;
+    let writer = vault.ensure_embedded_owner_actor().expect("owner");
     let later = EntityId::now();
     vault
         .memory(writer, EdgeActorClass::Human)
         .witness(&WitnessTurn {
             conversation_ref: conversation.to_hex(),
             turn_ref: Some(later.to_hex()),
+            thread_audience: None,
             messages: vec![message(0, WitnessAuthor::User, "the weather is fine", true)],
             occurred_at: 20,
+            assertions: Default::default(),
         })
         .expect("a later turn");
     assert_eq!(dirty(&vault)?, vec![turn, later], "both turns are dirty");
@@ -138,7 +142,7 @@ fn a_continuation_in_an_adopted_dag_conversation_is_selected_again() -> Result<(
     let row = vault.get_raw(&turn)?;
     end_stream(
         &vault,
-        EntityId::from_bytes([0x93; 16])?,
+        vault.ensure_embedded_owner_actor().expect("owner"),
         &input,
         " Owen",
         "finalize",
@@ -162,27 +166,22 @@ fn a_continuation_in_an_adopted_dag_conversation_is_selected_again() -> Result<(
 fn a_same_second_continuation_is_planned_by_its_close_and_strands_no_new_turn() -> Result<()> {
     let (_dir, vault, _clock) = open_clocked_vault();
     let now = 50;
-    let mut session = open_session(&vault, now)?;
-    let writer = EntityId::from_bytes([0x95; 16])?;
-    vault.put_entity(
-        &writer,
-        ENTITY_TYPE_PERSON,
-        occurred(1),
-        1,
-        b"stream writer",
-    )?;
+    let writer = vault.ensure_embedded_owner_actor().expect("owner");
+    let mut session = open_session(&vault, writer, now)?;
     crate::test_util::bind_test_owner(&vault, writer);
     let conversation = EntityId::from_bytes([0x96; 16])?;
     let turn = EntityId::now();
     let input = WitnessTurn {
         conversation_ref: conversation.to_hex(),
         turn_ref: Some(turn.to_hex()),
+        thread_audience: None,
         messages: vec![message(0, WitnessAuthor::User, "", true)],
         occurred_at: now,
+        assertions: Default::default(),
     };
     end_stream(&vault, writer, &input, "call me", "finalize");
     for (round, words) in [(1, " Owen"), (2, " please"), (3, "")] {
-        session = close_session(&vault, session, now)?;
+        session = close_session(&vault, writer, session, now)?;
         assert_eq!(
             meso_rounds_of(&vault, turn)?,
             round,
@@ -199,8 +198,10 @@ fn a_same_second_continuation_is_planned_by_its_close_and_strands_no_new_turn() 
         .witness(&WitnessTurn {
             conversation_ref: conversation.to_hex(),
             turn_ref: Some(later.to_hex()),
+            thread_audience: None,
             messages: vec![message(0, WitnessAuthor::User, "the weather is fine", true)],
             occurred_at: now,
+            assertions: Default::default(),
         })
         .expect("a new turn in the same second");
     assert_eq!(
@@ -218,7 +219,7 @@ fn a_same_second_continuation_is_planned_by_its_close_and_strands_no_new_turn() 
 fn a_re_put_after_a_consumed_continuation_is_selected_again() -> Result<()> {
     let (_dir, vault, _clock) = open_clocked_vault();
     let (turn, _, _, input) = stream_turn(&vault, 0x97, "call me", "finalize")?;
-    let writer = EntityId::from_bytes([0x97; 16])?;
+    let writer = vault.ensure_embedded_owner_actor().expect("owner");
     consume(&vault)?;
     end_stream(&vault, writer, &input, " Owen", "finalize");
     assert_eq!(dirty(&vault)?, vec![turn], "the continued turn comes back");
@@ -242,7 +243,7 @@ fn a_re_put_after_a_consumed_continuation_is_selected_again() -> Result<()> {
 fn a_consumed_continuation_comes_back_on_a_full_rescan_and_settles_by_second() -> Result<()> {
     let (_dir, vault, _clock) = open_clocked_vault();
     let (turn, _, _, input) = stream_turn(&vault, 0x99, "call me", "finalize")?;
-    let writer = EntityId::from_bytes([0x99; 16])?;
+    let writer = vault.ensure_embedded_owner_actor().expect("owner");
     consume(&vault)?;
     end_stream(&vault, writer, &input, " Owen", "finalize");
     consume(&vault)?;
@@ -269,7 +270,7 @@ fn a_consumed_continuation_comes_back_on_a_full_rescan_and_settles_by_second() -
 fn a_public_settlement_leaves_a_later_re_put_dirty() -> Result<()> {
     let (_dir, vault, clock) = open_clocked_vault();
     let (turn, _, _, input) = stream_turn(&vault, 0x9B, "call me", "finalize")?;
-    let writer = EntityId::from_bytes([0x9B; 16])?;
+    let writer = vault.ensure_embedded_owner_actor().expect("owner");
     consume(&vault)?;
     end_stream(&vault, writer, &input, " Owen", "finalize");
     let queued = round(&vault)?;
@@ -302,7 +303,7 @@ fn a_public_settlement_leaves_a_later_re_put_dirty() -> Result<()> {
 fn a_public_settlement_leaves_a_same_second_replacement_pending() -> Result<()> {
     let (_dir, vault, _clock) = open_clocked_vault();
     let (turn, _, _, input) = stream_turn(&vault, 0x9D, "call me", "finalize")?;
-    let writer = EntityId::from_bytes([0x9D; 16])?;
+    let writer = vault.ensure_embedded_owner_actor().expect("owner");
     consume(&vault)?;
     end_stream(&vault, writer, &input, " Owen", "finalize");
     let queued = round(&vault)?;

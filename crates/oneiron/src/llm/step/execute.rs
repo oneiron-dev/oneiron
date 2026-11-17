@@ -206,7 +206,7 @@ pub(super) async fn call_as_step_with_fallbacks_and_retries(
     durable_step(ctx, backend, guard, request, fallbacks, None, retries, None).await
 }
 
-async fn durable_step(
+pub(super) async fn durable_step(
     ctx: &DurableStepContext<'_>,
     backend: &dyn LlmBackend,
     guard: &BudgetGuard,
@@ -817,6 +817,7 @@ pub(super) fn budget_trap(
             reason,
             TrapBindingScope::Attempt,
         )?;
+        let asked_wait = wait.clone();
         store.park_attempt_with_wait_in_txn(
             wtxn,
             crate::dreamer_runner::ParkDreamerAttempt {
@@ -834,6 +835,18 @@ pub(super) fn budget_trap(
         } else {
             None
         };
+        // A park only an owner act ends (a spend scope's cap, a resident's
+        // pinned share) asks the owner in its own write (RUNBUDGET-SCOPE = B).
+        if resumed.is_none()
+            && let Some(wait) = &asked_wait
+        {
+            crate::agent_dispatch::queue_budget_trap_ask_in_txn(
+                ctx.vault,
+                wtxn,
+                ctx.attempt_id,
+                wait,
+            )?;
+        }
         Ok(Ok((trap, resumed)))
     })?;
     let (trap, resumed) = parked.map_err(DurableStepError::BudgetRefused)?;

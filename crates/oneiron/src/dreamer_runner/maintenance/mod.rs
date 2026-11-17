@@ -53,6 +53,7 @@ pub mod judge_label_rechecks;
 mod layout_suggestions;
 pub(crate) mod optimize;
 pub use optimize::{CoachLiveSlice, CoachSkillOptimizer};
+pub mod conflict_settle;
 mod person_threshold;
 mod proposals;
 pub mod strength;
@@ -61,10 +62,12 @@ pub use applied::{
     MaintenanceRevert, MaintenanceTarget,
 };
 pub use calibration_asks::COACH_CALIBRATION_ASKS_FACET;
+pub use conflict_settle::CONFLICT_SETTLE_FACET;
 pub use idle_return_tables::COACH_IDLE_RETURN_TABLES_FACET;
 pub use strength::CONSOLIDATION_STRENGTH_FACET;
 pub mod representation;
 mod retrieval_policy;
+pub mod retrieval_skill_review;
 mod room_upkeep;
 pub mod seal_checks;
 pub(crate) mod setting_keys;
@@ -273,6 +276,7 @@ pub(crate) fn execute(
         // RULING S69C-DESIGN item 8): the wake driver hands it to the host's
         // executor, so here it can only wait for one.
         CONSOLIDATION_STRENGTH_FACET => return Ok(strength::unlent()),
+        CONFLICT_SETTLE_FACET => return Ok(conflict_settle::unlent()),
         CURATOR_FACET => {
             curator::run(ctx.vault, attempt, ctx.now_ms / 1000)?;
         }
@@ -295,7 +299,7 @@ pub(crate) fn execute(
             action_mode::run(ctx.vault, attempt, ctx.now_ms / 1000)?;
         }
         super::COACH_RETRIEVAL_TUNE_FACET => {
-            retrieval_policy::run(ctx.vault)?;
+            retrieval_policy::run(ctx.vault, attempt, ctx.now_ms / 1000)?;
         }
         honesty::HONESTY_AUDIT_FACET => {
             let _ = honesty::run(ctx.vault, ctx.now_ms / 1000)?;

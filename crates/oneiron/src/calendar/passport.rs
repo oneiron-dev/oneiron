@@ -100,6 +100,52 @@ pub(crate) fn admitted_passport_for_in_txn(
     Ok(found)
 }
 
+/// The importer's own pending passports on `event` for `system`: live heads
+/// the import filed from this system's feed that still wait for the owner's
+/// review.
+///
+/// The one exception to the admitted-only rule of
+/// [`admitted_passports_for_event_in_txn`] (the lead's ruling 10 Nov 10:3x,
+/// FIX CALDAV-PENDING-IMPORT-WRITEBACK-DUPLICATE): the importer's own pending
+/// passport may vouch for its own UID when the EVENT is written back to the
+/// same calendar, so the write replaces the pulled object rather than adding a
+/// second one. Only an imported, Proposed, inbound-bearing passport that its
+/// source still reports counts. A rejected, superseded or retracted proposal,
+/// an outbound-only passport and another system's passport never do.
+///
+/// # Errors
+///
+/// [`CalendarError::IcsIngest`] on store or stored-claim decode failures.
+pub(crate) fn importer_pending_passports_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    event: &EntityId,
+    system: &str,
+) -> Result<Vec<(EntityId, CalendarPassportValue)>, CalendarError> {
+    let mut values = Vec::new();
+    for id in vault.claims_for_subject_in_txn(txn, event)? {
+        let Some(body) = vault.get_claim_in_txn(txn, &id)? else {
+            continue;
+        };
+        if body.predicate != PREDICATE_CALENDAR_PASSPORT
+            || body.subject != ClaimSubject::Entity(*event)
+            || body.lifecycle != ClaimLifecycleStatus::Active
+            || body.approval != crate::claim::ClaimApprovalStatus::Proposed
+            || body.source != Some(crate::claim::ClaimSource::Imported)
+        {
+            continue;
+        }
+        let value = decode_passport_value(&body.value)?;
+        if value.system == system
+            && value.direction.is_inbound_bearing()
+            && value.presence == CalendarPassportPresence::Live
+        {
+            values.push((id, value));
+        }
+    }
+    Ok(values)
+}
+
 /// The per-`(system × UID)` diff verdict for one feed row.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PassportDecision {
@@ -758,8 +804,6 @@ fn series_exception_with(
     Ok(false)
 }
 
-// FIX [LIBTEST-QUARANTINE-CALENDAR-PASSPORT-TESTS]: the lib test target's type check fails here (1 errors: E0063 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -782,6 +826,7 @@ mod tests {
             uid: uid.to_owned(),
             last_sequence: 3,
             content_hash: [7; 32],
+            source: None,
             direction: CalendarPassportDirection::Outbound,
             last_seen_at: 100,
             presence: CalendarPassportPresence::Live,

@@ -14,9 +14,10 @@ use oneiron::skill_optimize::{
     EVAL_AUTHORING_EXECUTE_VERB, EvalAuthoringAdmission, EvalAuthoringExecuteAnswer,
     EvalAuthoringExecuteRequest, EvalAuthoringExecution, EvalAuthoringInventory,
     EvalAuthoringOutcome, EvalAuthoringPlan, admit_eval_authoring_execution,
-    eval_authoring_inventory_sourced, eval_authoring_skill_id, union_source_rows,
+    eval_authoring_execution, eval_authoring_inventory_sourced, eval_authoring_skill_id,
+    union_source_rows,
 };
-use oneiron::{EntityId, Error, LlmMessageRole};
+use oneiron::{EntityId, Error, LlmMessageRole, Vault};
 
 use super::coach_heal::{LEASE_OWNER, settle};
 use super::coach_host::{
@@ -161,7 +162,13 @@ pub(crate) fn execute(
         }
         Err(error) => {
             let kind = error.kind();
-            settle(vault, &store, &admitted, Err(error), COACH_HOST_BUDGET_ID)?;
+            // A record that still stands open keeps its lease unsettled:
+            // the lease lapses and the next admission recovers the record,
+            // instead of failing the lease over a record nothing revisits
+            // (FIX EVAL-AUTHORING-EXECUTE-UNRECORDED-END).
+            if !record_open(vault, &admitted) {
+                settle(vault, &store, &admitted, Err(error), COACH_HOST_BUDGET_ID)?;
+            }
             Err(MemoryError::new(
                 MEMORY_CODE_INTERNAL,
                 format!("{EVAL_AUTHORING_EXECUTE_VERB} failed on this host: {kind:?}"),
@@ -233,6 +240,25 @@ fn settled_by(outcome: EvalAuthoringOutcome) -> oneiron::Result<()> {
         ));
     }
     Ok(())
+}
+
+/// Whether `admitted`'s requested record still stands open (`Running` or
+/// `Applying`): its end writes failed with the pass, so its lease must
+/// lapse unsettled and the next admission recover it, never settle over
+/// it. `false` when the record does not read: settling then is today's
+/// behaviour.
+pub(super) fn record_open(vault: &Vault, admitted: &DreamerAdmittedAttempt) -> bool {
+    let Ok(id) = EntityId::from_bytes(*admitted.status.attempt.id.as_bytes()) else {
+        return false;
+    };
+    matches!(
+        eval_authoring_execution(vault, &id),
+        Ok(Some(execution))
+            if matches!(
+                execution.outcome,
+                EvalAuthoringOutcome::Running | EvalAuthoringOutcome::Applying
+            )
+    )
 }
 
 /// One pass up to its plan: the inventory, the Coach's seat, the skill it
