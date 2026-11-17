@@ -6,6 +6,7 @@
 //! question run's head binds the typed question it answers (FIX 3864).
 mod actor_erase;
 mod authorize;
+mod caller;
 mod connector;
 mod custody;
 mod detector_corpus;
@@ -30,11 +31,15 @@ pub(crate) use actor_erase::{
     erase_role_actor_in_txn, erase_run_id_in_txn, erase_swap_actor_in_txn,
 };
 pub(crate) use authorize::training_run_job_input;
+pub use caller::TrainingRunCaller;
+pub(crate) use caller::admit_caller_in_txn;
 pub use connector::{PollFuture, TrainOutput, TrainRequest, TrainingConnector, TrainingFuture};
 pub use custody::stream::{CheckpointFileStream, CheckpointStream};
 pub use detector_corpus::DetectorCorpusRef;
 pub use embedder_runtime::TrainingEmbedderSource;
-pub use promotion::{RoleSwapOutcome, SwapExpectation, TrainingEvalInput, ViewedSwap};
+pub use promotion::{
+    RoleSwapOutcome, SwapExpectation, TRAINING_EVALUATION_CLAIM_SECS, TrainingEvalInput, ViewedSwap,
+};
 pub(crate) use promotion::{
     bind_staged_role_swap_in_txn, role_swap_receipt_in, training_run_in, training_runs_in,
     undo_training_role_swap_in_txn,
