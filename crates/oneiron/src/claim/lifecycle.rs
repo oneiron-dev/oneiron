@@ -883,8 +883,9 @@ impl Vault {
         // FIX 22383: a commitment instance retracted while its promise is open
         // is withdrawn. Its due phases go in this transaction, so it never
         // wakes and never enters a lapse sweep; its status stays as it was.
+        // Its series is projected past it (FIX 23511).
         if body.predicate == crate::commitment::PREDICATE_COMMITMENT_RECORD {
-            self.clear_withdrawn_commitment_due_in_txn(wtxn, id)?;
+            self.close_withdrawn_commitment_in_txn(wtxn, id, now)?;
         }
         Ok(consent_receipt
             .or(write_receipt.map(crate::gate::RecordedClaimGateDecision::into_record)))

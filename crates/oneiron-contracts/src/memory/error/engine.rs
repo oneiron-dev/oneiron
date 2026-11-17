@@ -11,6 +11,9 @@ impl From<Error> for MemoryError {
         if let Error::CheckInPending(check_in) = &err {
             return Self {
                 reason_codes: vec![format!("{CHECK_IN_PENDING_REASON_PREFIX}{check_in}")],
+                pending: Some(Box::new(MemoryPending::CheckIn {
+                    check_in: check_in.clone(),
+                })),
                 ..Self::new(
                     MEMORY_CODE_CHECK_IN_PENDING,
                     err.to_string(),
@@ -22,26 +25,36 @@ impl From<Error> for MemoryError {
         }
         // A membership move this install cannot prove the owner's (row
         // HOSTED-ROOT-REVOKES-OWNER-KEY): the owner-key refusal, with the
-        // next step and the member as reason codes beside its own.
-        if let Error::Record(crate::error::RecordError::OwnerKeyMoveRefused { member }) = &err {
+        // next step, the member and, for a shared act, the pending act as
+        // reason codes beside its own (row HOSTED-OWNER-MOVE-TWO-PHASE).
+        if let Error::Record(crate::error::RecordError::OwnerKeyMoveRefused { member, step, act }) =
+            &err
+        {
+            let mut reason_codes = vec![
+                crate::error::OWNER_KEY_REQUIRED.to_owned(),
+                format!(
+                    "{}{}",
+                    crate::error::OWNER_KEY_NEXT_STEP_REASON_PREFIX,
+                    step.code()
+                ),
+                format!(
+                    "{}{}",
+                    crate::error::OWNER_KEY_MEMBER_REASON_PREFIX,
+                    member.to_hex()
+                ),
+            ];
+            if let Some(act) = act {
+                reason_codes.push(format!(
+                    "{}{act}",
+                    crate::error::OWNER_KEY_ACT_REASON_PREFIX
+                ));
+            }
             return Self {
-                reason_codes: vec![
-                    crate::error::OWNER_KEY_REQUIRED.to_owned(),
-                    format!(
-                        "{}{}",
-                        crate::error::OWNER_KEY_NEXT_STEP_REASON_PREFIX,
-                        crate::error::OWNER_KEY_MOVE_NEXT_STEP
-                    ),
-                    format!(
-                        "{}{}",
-                        crate::error::OWNER_KEY_MEMBER_REASON_PREFIX,
-                        member.to_hex()
-                    ),
-                ],
+                reason_codes,
                 ..Self::new(
                     MEMORY_CODE_INVALID_STATE,
                     err.to_string(),
-                    &[crate::error::OWNER_KEY_MOVE_SUGGESTION],
+                    &[step.suggestion()],
                 )
             };
         }
