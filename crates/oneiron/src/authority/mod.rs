@@ -96,6 +96,7 @@ pub(crate) mod frontier_walk_door;
 mod full_copy_mark;
 mod grant_act;
 mod grant_lines;
+mod grant_row_withdrawal;
 mod grant_travel;
 mod grant_travel_door;
 mod guest_revoke;
@@ -184,7 +185,6 @@ pub mod task_ask_handle;
 mod valid_entries;
 mod vault_api;
 mod weave_admin;
-mod withdrawn_grant;
 mod work_rebind;
 mod world_key_fold;
 mod world_key_support;
@@ -339,6 +339,9 @@ pub use forwarded_caller::{
     VerifiedForwardedCaller, forwarded_request_transcript,
 };
 pub(crate) use full_copy_mark::append_install_signed_in_txn;
+pub(crate) use grant_row_withdrawal::{
+    ISOLATION_NEW_CHECK_ERROR_MODE, NewCheckErrorMode, withdraw_grant_row_in_txn,
+};
 pub use handoff_equivocation::{
     AuthorityHandoffAlarm, AuthorityHandoffAlarmAck, AuthorityHandoffEquivocation,
 };
@@ -478,11 +481,6 @@ pub use valid_entries::{EntryHashSet, ValidEntries};
 pub use vault_api::AuthorityEntryStatus;
 pub use weave_admin::{
     AdminStepUp, AuthenticatedWeaveAdmin, WEAVE_ADMIN_MFA_REQUIRED, WEAVE_ADMIN_NOT_CURRENT,
-};
-pub(crate) use withdrawn_grant::{
-    ISOLATION_NEW_CHECK_ERROR_MODE, NewCheckErrorMode, grant_known_withdrawn_in_txn,
-    land_archived_withdrawn_grant_rows_in_txn, mark_if_withdrawn_grant_in_txn,
-    withdraw_grant_row_in_txn,
 };
 pub use work_rebind::{
     InstrumentRebind, REBIND_GRANT, REBIND_HOLDER, REBIND_ORIGIN, REBIND_STILL_STANDS,

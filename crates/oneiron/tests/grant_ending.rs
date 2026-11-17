@@ -21,7 +21,7 @@
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
-use oneiron::authority::{ActSurface, AuthorityVaultId, HostSlipIssuer, MachineRole};
+use oneiron::authority::{ActSurface, AuthorityVaultId, HostSlipIssuer, MachineRole, OwnerActKind};
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::deletion::DeleteEntityOptions;
 use oneiron::federation::{
@@ -35,8 +35,9 @@ use oneiron::registry::{ENTITY_TYPE_FEDERATION_GRANT, ENTITY_TYPE_ORG, ENTITY_TY
 use oneiron::store::GateDecisionId;
 use oneiron::test_doors::grant_act::put_keyed_member_grant;
 use oneiron::test_doors::grant_ending::{
-    batch_delete_row, give_member_grant_act_alone, load_install_carrier, standing_grant_in_family,
-    withdraw_lapsed_agent_grant,
+    batch_delete_row, carried_act_grant_standing, give_member_grant_act_alone,
+    load_install_carrier, purge_as_left_shared_env, put_own_device_shaped_row,
+    standing_agent_grant_ids, standing_grant_in_family, withdraw_lapsed_agent_grant,
 };
 use oneiron::test_doors::grant_standing::{grant_line, grant_row, standing_grant_act};
 use oneiron::test_support::{bind_host_owner, provision_act_carrier, provision_engine_machines};
@@ -153,7 +154,7 @@ fn member_row(vault: &Vault, member: EntityId) -> Option<(EntityId, FederationGr
         })
 }
 
-/// A vault whose owner minted his agent a read Grant, keeping the keystore.
+/// A vault whose owner minted his agent a Grant, keeping the keystore.
 struct MintedAgent {
     dir: tempfile::TempDir,
     vault: Vault,
@@ -163,8 +164,17 @@ struct MintedAgent {
 
 /// The owner mints his agent a read Grant.
 fn minted_agent_grant() -> MintedAgent {
+    minted_agent_grant_naming("read")
+}
+
+/// The verb an agent Grant names for the agent's free-time policy act.
+const FREE_TIME_POLICY_SET_VERB: &str = "free_time_policy_set";
+
+/// The owner mints his agent a Grant naming `read` and the verb `verb`: a Grant confers only
+/// when its verbs hold `read`, and names an act only when it confers.
+fn minted_agent_grant_naming(verb: &str) -> MintedAgent {
     let mut scope = Scope::top();
-    scope.verbs = ScopeAxis::Some(BTreeSet::from(["read".to_owned()]));
+    scope.verbs = ScopeAxis::Some(BTreeSet::from(["read".to_owned(), verb.to_owned()]));
     let dir = tempfile::tempdir().expect("temporary vault directory");
     let vault = Vault::open(dir.path(), VaultConfig::device()).expect("fresh vault");
     let owner_actor = vault.ensure_embedded_owner_actor().expect("embedded owner");
@@ -717,5 +727,162 @@ fn an_inquiry_edge_terms_change_gives_the_new_terms() {
             .expect("standing read")
             .is_some(),
         "the edge stands on the new terms' giving",
+    );
+}
+
+/// The standing of `grant` for its agent's free-time policy act now, as a carried act's judge
+/// reads it.
+fn free_time_act_standing(vault: &Vault, grant: EntityId, agent: EntityId) -> &'static str {
+    carried_act_grant_standing(
+        vault,
+        grant,
+        agent,
+        OwnerActKind::FreeTimePolicy,
+        vault.now_recorded_at(),
+    )
+    .expect("carried act standing read")
+}
+
+/// A minted Grant naming the free-time policy act, its agent, and the vault opened again with
+/// no install key loaded, so a Grant end its writer files stays owed.
+fn minted_free_time_grant_with_no_key() -> (MintedAgent, EntityId) {
+    let minted = minted_agent_grant_naming(FREE_TIME_POLICY_SET_VERB);
+    let agent = agent_of(&minted.vault, minted.grant);
+    assert_eq!(
+        free_time_act_standing(&minted.vault, minted.grant, agent),
+        "names",
+        "setup: the owner's counted mint names the agent's free-time policy act",
+    );
+    let MintedAgent {
+        dir,
+        grant,
+        keystore,
+        vault,
+    } = minted;
+    drop(vault);
+    let vault = Vault::open(dir.path(), VaultConfig::device()).expect("the vault again");
+    (
+        MintedAgent {
+            dir,
+            vault,
+            grant,
+            keystore,
+        },
+        agent,
+    )
+}
+
+/// Catches a judge of an agent's carried act that reads a lapsed Grant's counted mint as
+/// still naming the act while this install owes its end (no install key loaded): the debt
+/// refuses the act until the end counts, and the counted end after it (pass 28 R3e, in place
+/// of the permanent withdrawal marker). A pin: the marker refused it before R3e.
+#[test]
+fn a_lapsed_agent_grant_whose_end_is_owed_names_no_carried_act() {
+    let (minted, agent) = minted_free_time_grant_with_no_key();
+    let MintedAgent {
+        dir: _dir,
+        vault,
+        grant,
+        keystore,
+    } = minted;
+    assert!(
+        withdraw_lapsed_agent_grant(&vault, grant, agent)
+            .expect("a lapse with no loaded key is never refused"),
+        "the lapse withdrew the live agent Grant",
+    );
+    assert_eq!(
+        grant_line(&vault, grant)
+            .expect("grant line")
+            .map(|(_, ended)| ended),
+        Some(false),
+        "setup: the end is still owed, so the line still reads as given",
+    );
+    assert!(
+        standing_agent_grant_ids(&vault)
+            .expect("agent grants")
+            .is_empty(),
+        "setup: the withdrawn row is listed nowhere",
+    );
+    let standing = free_time_act_standing(&vault, grant, agent);
+    assert_eq!(
+        standing, "refused",
+        "grant={grant:?}; expected the owed end to refuse the agent's carried act; seen {standing}",
+    );
+    vault.install_device_keystore(keystore);
+    load_install_carrier(&vault);
+    assert_eq!(
+        grant_line(&vault, grant)
+            .expect("grant line")
+            .map(|(_, ended)| ended),
+        Some(true),
+        "the owed end ended the line once the key loaded",
+    );
+    let standing = free_time_act_standing(&vault, grant, agent);
+    assert_eq!(
+        standing, "refused",
+        "grant={grant:?}; expected the counted end to refuse the agent's carried act; seen {standing}",
+    );
+}
+
+/// Catches a batch delete that owes no end for a Grant row whose body took the own-device
+/// shape in place before its tear (a newer replicated overwrite at the minted id): the
+/// counted mint's line still names the agent's act, so the tear owes its end whatever the
+/// body says, and the end counts once the key loads (review #8982 P1-1).
+#[test]
+fn a_grant_torn_after_its_row_took_the_own_device_shape_names_no_carried_act() {
+    let (minted, agent) = minted_free_time_grant_with_no_key();
+    let MintedAgent {
+        dir: _dir,
+        vault,
+        grant,
+        keystore,
+    } = minted;
+    put_own_device_shaped_row(&vault, grant, agent).expect("the overwrite lands in place");
+    batch_delete_row(&vault, grant).expect("the batch delete tears the row");
+    let standing = free_time_act_standing(&vault, grant, agent);
+    assert_eq!(
+        standing, "refused",
+        "grant={grant:?}; expected the tear of a reshaped row to owe the end of its counted \
+         line and refuse the agent's carried act; seen {standing}",
+    );
+    vault.install_device_keystore(keystore);
+    load_install_carrier(&vault);
+    assert_eq!(
+        grant_line(&vault, grant)
+            .expect("grant line")
+            .map(|(_, ended)| ended),
+        Some(true),
+        "the owed end ended the counted line once the key loaded",
+    );
+}
+
+/// Catches a left shared vault's purge that sweeps the Grant ends this install owes: a Grant
+/// withdrawn here while no key was loaded keeps refusing its agent's carried act after the
+/// purge, as the kept withdrawal marker did (review #8982 P1-2).
+#[test]
+fn a_left_shared_env_purge_keeps_the_grant_ends_this_install_owes() {
+    let (minted, agent) = minted_free_time_grant_with_no_key();
+    let MintedAgent {
+        dir: _dir,
+        vault,
+        grant,
+        keystore: _keystore,
+    } = minted;
+    assert!(
+        withdraw_lapsed_agent_grant(&vault, grant, agent)
+            .expect("a lapse with no loaded key is never refused"),
+        "the lapse withdrew the live agent Grant",
+    );
+    assert_eq!(
+        free_time_act_standing(&vault, grant, agent),
+        "refused",
+        "setup: the owed end refuses the agent's carried act",
+    );
+    purge_as_left_shared_env(&vault).expect("the leave purge completes");
+    let standing = free_time_act_standing(&vault, grant, agent);
+    assert_eq!(
+        standing, "refused",
+        "grant={grant:?}; expected the owed end to survive the leave purge and refuse the \
+         agent's carried act; seen {standing}",
     );
 }

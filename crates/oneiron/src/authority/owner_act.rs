@@ -296,15 +296,15 @@ pub(crate) enum GrantStanding {
     /// ancestry (its writer stood on it), so a judge of a carried act refuses this; a carried
     /// row outside the log (a free-time handoff) still trusts its carrier.
     Absent,
-    /// The Grant's line ended, or a withdrawal of it is held here while its end is owed; the
+    /// The Grant's line ended, or this install still owes its end; the
     /// line holds another family, or no one mint counts here in full; or the mint names no
     /// such act.
     Refused,
 }
 
 /// How the Grant `grant` stands in `fold` for `agent`'s act `act` at `at`: what the fold's
-/// line for it says ([`AuthorityFold::standing_owner_agent_mint`]) and a withdrawal this
-/// install holds while the Grant's end is owed (FIX-LIST 5107), never the row. A row a
+/// line for it says ([`AuthorityFold::standing_owner_agent_mint`]) and an end of it this
+/// install still owes ([`crate::federation::grant_end_owed_in_txn`]), never the row. A row a
 /// replica holds or lacks, a forged row, one widened or narrowed in place and one put back
 /// after its revoke change nothing here.
 pub(crate) fn grant_standing_in_txn(
@@ -316,7 +316,7 @@ pub(crate) fn grant_standing_in_txn(
     act: OwnerActKind,
     at: u64,
 ) -> GrantStanding {
-    if super::withdrawn_grant::grant_known_withdrawn_in_txn(store, txn, grant) {
+    if crate::federation::grant_end_owed_in_txn(store, txn, grant) {
         return GrantStanding::Refused;
     }
     if fold.grant_line(grant).is_none() {
@@ -349,7 +349,7 @@ fn mint_names_act(
 
 /// The agent Grant row `grant` as the owner's counted mint gives it at `at` under `fold`
 /// (pass 28 R3b2): live, its mint's row term for term, unexpired, no counted act ended it,
-/// and no withdrawal of it held here while its end is owed. `None` for every other row: one
+/// and this install owes no end of it. `None` for every other row: one
 /// no counted mint gives, one widened in place, one put back after its revoke.
 fn standing_agent_grant_in_txn(
     vault: &crate::Vault,
@@ -358,7 +358,7 @@ fn standing_agent_grant_in_txn(
     grant: EntityId,
     at: u64,
 ) -> crate::error::Result<Option<crate::federation::StandingGrant>> {
-    if super::withdrawn_grant::grant_known_withdrawn_in_txn(&vault.store, txn, grant) {
+    if crate::federation::grant_end_owed_in_txn(&vault.store, txn, grant) {
         return Ok(None);
     }
     crate::federation::standing_grant_in_fold(

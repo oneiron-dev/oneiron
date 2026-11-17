@@ -73,9 +73,12 @@ static LEAVE_KEPT_FAMILIES: &[&SideTableDecl] = &[
     &side_table::AUTHORITY_SLIP_PROOF_CLOCK,
     &side_table::AUTHORITY_SLIP_PROOF_NOT_BEFORE,
     &side_table::AUTHORITY_SLIP_REPLAY_NONCE,
-    // A Grant withdrawn here stays withdrawn over any later row at its id
-    // (FIX-LIST 5107, 10772).
-    &side_table::AUTHORITY_WITHDRAWN_GRANT,
+    // The Grant ends this install still owes, and the unsigned membership
+    // records that withdrew Grants: each holds its Grant back until its end
+    // counts in the kept log, as the withdrawal marker they replace did
+    // (pass 28 R3e; review #8982 P1-2).
+    &side_table::FEDERATION_OWED_GRANT_END,
+    &side_table::SHARED_ACT_MEMBERSHIP_PENDING,
     &side_table::AUTHORITY_CHECKPOINT_V2_HEAD,
     &side_table::AUTHORITY_CHECKPOINT_V2_IMAGE,
     &side_table::AUTHORITY_CHECKPOINT_PROGRESS,

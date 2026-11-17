@@ -1,7 +1,8 @@
 //! A membership change no host issuer could sign (FIX 12335, Engine 13:13
 //! call A). A role change, removal or leave, and a matured Owner act, apply
-//! their effects at once, as before: each Grant they drop is marked
-//! withdrawn here and its tombstone staged for sync in their own writer.
+//! their effects at once, as before: each Grant they drop has its tombstone
+//! staged for sync in their own writer, and its end is owed here until the
+//! record below counts ([`membership_withdrawal_owed_in_txn`]).
 //! With a live host issuer that writer also signs each signed-mint Grant's
 //! withdrawal and the Owner handover. With none, the same writer keeps one
 //! value-free intent under the receipt's id: the vault, the cause, the
@@ -59,6 +60,23 @@ struct PendingMembershipExecution {
     withdrawn_grants: Vec<EntityId>,
     /// An Owner act's handover, unsigned.
     handover: Option<MembershipHandover>,
+}
+
+/// Whether a membership change whose signed record this install still owes withdrew `grant`:
+/// that record ends the Grant's line once it counts ([`crate::federation::grant_end_owed_in_txn`]).
+/// A scan of the owed intents: an install holds any only while it cannot carry them.
+///
+/// # Errors
+/// A store read or decode failure.
+pub(crate) fn membership_withdrawal_owed_in_txn(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    grant: EntityId,
+) -> Result<bool> {
+    Ok(PENDING_MEMBERSHIP_EXECUTION
+        .scan(store, txn)?
+        .iter()
+        .any(|(_, pending)| pending.withdrawn_grants.contains(&grant)))
 }
 
 /// What a membership change's writer could not sign, beside the vault,

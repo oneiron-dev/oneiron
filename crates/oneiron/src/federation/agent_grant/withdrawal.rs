@@ -6,15 +6,16 @@
 //!
 //! A Grant is withdrawn on the record when the owner's counted revoke act
 //! names it, or when a counted signed owner mint of its kind made it and a
-//! counted membership withdrawal names it or this vault marks it withdrawn.
-//! The mark is the record of a withdrawal no counted entry names: an OAuth
-//! sign-in that ended with no live host to sign, a membership change whose
-//! signed record is still pending, or a peer's delete applied here. It is
-//! the Grant's withdrawal marker (FIX-LIST 5107), or, on a replica that never
-//! held the row (its peer's delete arrived before its put), the row's
-//! permanent hard-delete marker that delete left: every withdrawal erases the
-//! row, so beside a signed owner mint either marker records one. Nothing is
-//! signed as the owner.
+//! counted end names it (a membership withdrawal, or a lapse's or a delete's
+//! end by rule, pass 28 R2) or this vault marks it withdrawn. The mark is the
+//! record of a withdrawal no counted entry names yet: an end this install
+//! still owes (an OAuth sign-in that ended with no install key loaded, a
+//! membership change whose signed record is still pending, or a peer's delete
+//! applied here; [`crate::federation::grant_end_owed_in_txn`]), or, on a
+//! replica that never held the row (its peer's delete arrived before its
+//! put), the row's permanent hard-delete marker that delete left: every
+//! withdrawal erases the row, so beside a signed owner mint either records
+//! one. Nothing is signed as the owner.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -83,9 +84,10 @@ fn signed_mint_kind(change: &AgentGrantChange) -> Option<FederationGrantKind> {
 }
 
 impl Vault {
-    /// Whether this vault marks `grant` withdrawn: its withdrawal marker
-    /// (FIX-LIST 5107), or, on a replica that never held the row, the
-    /// permanent hard-delete marker its peer's erasure left (FIX 22193).
+    /// Whether this vault marks `grant` withdrawn: an end of it this install
+    /// still owes (pass 28 R3e, in place of the withdrawal marker of FIX-LIST
+    /// 5107), or, on a replica that never held the row, the permanent
+    /// hard-delete marker its peer's erasure left (FIX 22193).
     ///
     /// # Errors
     /// A store failure reading the hard-delete marker.
@@ -95,7 +97,7 @@ impl Vault {
         grant: EntityId,
     ) -> Result<bool> {
         Ok(
-            crate::authority::grant_known_withdrawn_in_txn(&self.store, txn, grant)
+            crate::federation::grant_end_owed_in_txn(&self.store, txn, grant)
                 || self.local_hard_delete_marker_exists_in_txn(txn, &grant)?,
         )
     }

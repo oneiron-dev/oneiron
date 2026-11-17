@@ -423,9 +423,10 @@ impl Vault {
 
     /// Takes back `grant`, the owner agent grant of a sign-in that ended before its client held
     /// a token, in the caller's writer `txn`, the one that drops the request or code or revokes
-    /// the token family: its row goes as the owner's revoke deletes it, marked withdrawn here, and
-    /// the host's signed withdrawal lands beside it when `issuer` is this vault's live host. With
-    /// no such issuer the marker alone keeps the withdrawal on the record (FIX 22188). `false`,
+    /// the token family: its row goes as the owner's revoke deletes it, its line ends by rule
+    /// (counted, or owed until the install key loads), and the host's signed withdrawal lands
+    /// beside it when `issuer` is this vault's live host. With no such issuer the end by rule
+    /// alone keeps the withdrawal on the record (FIX 22188). `false`,
     /// with nothing written, for a grant no longer live: the owner revoked it already.
     ///
     /// # Errors

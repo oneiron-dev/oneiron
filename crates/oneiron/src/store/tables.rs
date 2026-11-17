@@ -67,10 +67,6 @@ crate::side_table::side_tables! {
     /// signed timestamp. Key: u64hex16 ":" hex64.
     AUTHORITY_SLIP_REPLAY_NONCE: SyncState b"authority:slip-replay:v2:" Raw
         [restore: live] [family: unclassified] [tier: canonical];
-    /// Permanent presence-only marker (empty value) that a FEDERATION_GRANT was positively
-    /// withdrawn here (FIX-LIST 5107): read before a carried act's Grant standing. Key: hex32.
-    AUTHORITY_WITHDRAWN_GRANT: SyncState b"authority:withdrawn-grant:v1:" Raw
-        [restore: live] [family: unclassified] [tier: canonical];
     /// Device-only in-progress marker between a received BulkTransfer chunk and its BulkTransferDone.
     /// Key: yyyy-mm.
     SYNC_BULK_TRANSFER_MARKER: SyncState b"bulk:w:" Raw

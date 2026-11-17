@@ -71,8 +71,6 @@ pub(crate) enum ArchivedSideGroup {
     Ports,
     /// Passive housekeeping wake notes.
     HousekeepingWake,
-    /// Protective grant withdrawal markers.
-    WithdrawnGrant,
     /// Project history budgets.
     ProjectHistory,
     /// Message-stream defaults for new sessions.
@@ -141,7 +139,6 @@ pub(crate) fn archived_side_group(source_table: &str) -> Option<ArchivedSideGrou
         name if name == side_table::DREAMER_PROJECTOR_POLICY.name => Some(Group::DreamerWake),
         name if name == side_table::PORTS_DEPENDENT_WALK_POLICY.name => Some(Group::Ports),
         name if name == side_table::HOUSEKEEPING_WAKE.name => Some(Group::HousekeepingWake),
-        name if name == side_table::AUTHORITY_WITHDRAWN_GRANT.name => Some(Group::WithdrawnGrant),
         name if name == side_table::PROJECT_HISTORY_POLICY.name => Some(Group::ProjectHistory),
         name if name == side_table::MESSAGE_STREAM_POLICY.name
             || name == side_table::EXPORT_RECEIPT.name =>
@@ -224,9 +221,6 @@ pub(crate) fn land_archived_side_group_in_txn(
             crate::store::housekeeping_wake::land_archived_housekeeping_wake_rows_in_txn(
                 vault, txn, permit, rows,
             )
-        }
-        ArchivedSideGroup::WithdrawnGrant => {
-            crate::authority::land_archived_withdrawn_grant_rows_in_txn(vault, txn, permit, rows)
         }
         ArchivedSideGroup::ProjectHistory => {
             crate::Vault::land_archived_project_history_rows_in_txn(vault, txn, permit, rows)

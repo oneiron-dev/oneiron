@@ -610,9 +610,9 @@ impl Vault {
         Ok(true)
     }
 
-    /// Deletes the agent grant row `grant_ref` in the caller's writer. The
-    /// withdrawal stays known here and reaches its peers, in this writer
-    /// (FIX-LIST 5107, 10772).
+    /// Deletes the agent grant row `grant_ref` in the caller's writer, its
+    /// erasure staged for its peers in this writer (FIX-LIST 10772). The
+    /// caller ends its line.
     pub(super) fn delete_agent_grant_row_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
@@ -939,10 +939,9 @@ impl AgentGrantRow {
 
 /// Every live owner's agent Grant row, in id order, each with the owner's
 /// counted mint that gives it (`None` for a row no counted mint gives, one
-/// put back after its revoke, one whose terms are not its mint's, and one the
-/// local withdrawal marker names: an end still owed while this install could
-/// not carry it), beside the ids of the live FEDERATION_GRANT rows that did
-/// not decode.
+/// put back after its revoke, one whose terms are not its mint's, and one
+/// whose end this install still owes, [`super::grant_end_owed_in_txn`]),
+/// beside the ids of the live FEDERATION_GRANT rows that did not decode.
 fn agent_grant_rows_in_txn(
     store: &crate::store::Store,
     txn: &heed::RoTxn<'_>,
@@ -1016,7 +1015,7 @@ fn agent_grant_row_decoded(
     let Some(delegated_by) = grant.delegated_by else {
         return Ok(None);
     };
-    let act = if crate::authority::grant_known_withdrawn_in_txn(store, txn, id) {
+    let act = if super::grant_end_owed_in_txn(store, txn, id) {
         None
     } else {
         super::owner_agent_mint_in_fold(fold, id, &grant, terms_key, residence)

@@ -229,8 +229,8 @@ impl Vault {
                     acknowledged_topology: BTreeSet::new(),
                 },
             )?;
-            // The withdrawal stays known here and reaches its peers, in this
-            // writer (FIX-LIST 5107, 10772).
+            // The withdrawal reaches its peers, in this writer (FIX-LIST
+            // 10772); the owner's revoke above ends its line.
             crate::authority::withdraw_grant_row_in_txn(&self.store, txn, grant_ref)?;
             self.apply_grant_row_op_in_txn(txn, BatchOp::Delete { id: grant_ref })?;
             Ok(GitPushRevokeOutcome {
