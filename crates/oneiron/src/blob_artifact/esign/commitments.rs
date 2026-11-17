@@ -41,42 +41,48 @@ pub fn esign_document_commitment_id(document: &EntityId, index: u32) -> Result<E
     )
 }
 
-/// Refuses an event that would leave a document's inert commitments behind
-/// before anything is written: a redraft of a draft that names commitments,
-/// or one that names them over an earlier draft. Its terms were minted with
-/// the first draft, at ids its indices own.
+/// Refuses a redraft that would leave a document's inert commitments behind
+/// before anything is written: one whose commitments differ from the first
+/// draft's. Those terms were minted with the first draft, at ids their
+/// indices own, so a redraft may move a field or retitle the document but
+/// never adds, drops or changes a term.
 pub(super) fn admit(prior: &[EsignEventRow], event: &EsignEvent) -> Result<()> {
     let EsignEvent::Drafted { document: redraft } = event else {
         return Ok(());
     };
-    let named_before = prior.iter().any(|row| {
-        matches!(&row.event, EsignEvent::Drafted { document } if !document.commitments.is_empty())
+    let first = prior.iter().find_map(|row| match &row.event {
+        EsignEvent::Drafted { document } => Some(document),
+        _ => None,
     });
-    if !prior.is_empty() && (named_before || !redraft.commitments.is_empty()) {
-        return Err(invalid("a draft that names commitments is not redrafted"));
+    if first.is_some_and(|first| first.commitments != redraft.commitments) {
+        return Err(invalid("a redraft keeps its first draft's commitments"));
     }
     Ok(())
 }
 
-/// What `event`, just appended to `document`'s chain as the claim
+/// What `row`, just appended to `document`'s chain as the claim
 /// `event_claim`, does to the commitments the draft names, in the event's own
-/// transaction. A first draft mints each term inert; `esign.completed` opens
-/// each inert one; a decline, void or expiry releases it. A commitment no
-/// longer inert (retracted, or settled already) is left as it stands.
+/// transaction. The first draft mints each term inert, and a redraft, which
+/// keeps those terms ([`admit`]), mints none; `esign.completed` opens each
+/// inert one; a decline, void or expiry releases it. A commitment no longer
+/// inert (retracted, or settled already) is left as it stands.
 pub(super) fn apply_in(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     document: EntityId,
     draft: &EsignDocument,
-    event: &EsignEvent,
+    row: &EsignEventRow,
     event_claim: EntityId,
     now: u64,
 ) -> Result<()> {
     if draft.commitments.is_empty() {
         return Ok(());
     }
+    let event = &row.event;
     let next = match event {
-        EsignEvent::Drafted { .. } => return mint_in(vault, txn, document, draft, now),
+        EsignEvent::Drafted { .. } if row.sequence == 0 => {
+            return mint_in(vault, txn, document, draft, now);
+        }
         EsignEvent::Sealed {
             rejected: false, ..
         } => CommitmentStatus::Open,

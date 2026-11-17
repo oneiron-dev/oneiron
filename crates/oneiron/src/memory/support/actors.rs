@@ -68,6 +68,15 @@ pub(crate) fn verify_actor_binding_in_txn(
 /// embedded owner whom another Owner made an Admin holds no owner verb
 /// (UNROOTED-OWNER-CENSUS = A).
 ///
+/// A rooted vault asks the same census after the binding, the pair
+/// `memory::authorship::is_root_owner` reads (CLAIM-RETRACT-ADMIN-SCOPE =
+/// A). A human binding names who acts under the root, not who owns the
+/// vault: a shared vault's Admin or Delegate can hold one, and so can a
+/// co-owner whose binding outlived its Owner standing. Neither retracts
+/// another author's claim or deletes as the owner; an Admin deletes in scope
+/// through the role delete authority (`federation::delete_authority`), which
+/// `safe_delete` asks when this check refuses.
+///
 /// A missing `vault_id` is NOT one state. The fold also returns `None` when the
 /// log carries several independently rooted vaults, and that collapse clears
 /// `actor_bindings` wholesale. Multi-root is refused as INVALID_STATE (the
@@ -156,7 +165,20 @@ pub(crate) fn verify_owner_actor_binding_in_txn(
         ));
     }
     if crate::authority::actor_binding_is_active(&fold, &actor, "human") {
-        return Ok(());
+        if crate::policy_model::is_live_vault_owner_in_txn(vault, txn, &actor)? {
+            return Ok(());
+        }
+        return Err(MemoryError::new(
+            MEMORY_CODE_OWNER_BINDING_REQUIRED,
+            format!(
+                "actor {} holds a human binding but is not a live Owner of this vault",
+                actor.to_hex()
+            ),
+            &[
+                "The vault's live owner census decides who owns it: the embedded owner of a personal vault, the live Owner-role members of a shared one.",
+                "An Admin deletes in scope through the role delete door; an Admin, Deputy or Delegate holds no owner verb.",
+            ],
+        ));
     }
     // Its OWN code, not the generic FORBIDDEN: `safe_delete` can be refused by
     // the Gate on the same verb and that denial is FORBIDDEN too, so the code
@@ -188,8 +210,11 @@ pub(crate) fn verify_owner_actor_binding_in_txn(
 /// WORLD-ACCESS-GRANT-DELETE = A, 15 Nov: "deleting a restriction IS a
 /// widening"; the Engine's RULING RESTRICTION-FIX-SCOPE = A, FIX
 /// [RESTRICTION-CLAIM-OVERWRITE-AND-SELF-RETRACT] F2). So an agent's or an
-/// Admin's own authorship no longer closes the hold it wrote. The engine's
-/// own System writers (a derivation, a projector) close as before.
+/// Admin's own authorship no longer closes the hold it wrote, and a System
+/// actor's owner-delegated Grant closes none either (FIX
+/// [RESTRICTION-CLOSE-BY-SYSTEM-GRANT]). The engine's own writers (a
+/// derivation, a projector, the Dreamer's curator) close through the vault's
+/// lifecycle doors and never reach this check.
 ///
 /// # Errors
 ///
@@ -328,23 +353,21 @@ impl Memory<'_> {
 /// Whether the embedded owner still takes the owner shortcuts that skip the
 /// owner-binding check (the read-lane owner key and its write standing, the
 /// room-role Owner arm, the disclosure VaultOwner party, the source-audience
-/// owner PERSON it stands for) in `txn` (UNROOTED-EMBEDDED-OWNER-SHORTCUTS). A personal vault's embedded owner and
-/// a rooted vault's always do, as before. On an unrooted vault that holds a
-/// shared-vault creation it does only while the live owner census names it,
-/// the rule [`verify_owner_actor_binding_in_txn`] reads there, so an embedded
-/// owner whom another Owner made an Admin takes none of them.
+/// owner PERSON it stands for) in `txn` (UNROOTED-EMBEDDED-OWNER-SHORTCUTS).
+/// A personal vault's embedded owner always does, as before (the room-role
+/// arm and the source-audience PERSON ask this on an unrooted vault only).
+/// On a vault that holds a shared-vault creation, rooted or not, it does only
+/// while the live owner census names it, the census
+/// [`verify_owner_actor_binding_in_txn`] reads there, so an embedded owner
+/// who handed ownership on, or whom another Owner made an Admin, takes none
+/// of them (ROOTED-EMBEDDED-OWNER-SHORTCUTS). The census, not the binding: a
+/// live Owner's own-device read lane stays the owner's while the host key is
+/// bound to someone else.
 pub(crate) fn embedded_owner_shortcut_holds_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
 ) -> crate::Result<bool> {
     if vault.shared_vault_creation_in_txn(txn)?.is_none() {
-        return Ok(true);
-    }
-    if vault
-        .authority_view_readonly_in_txn(txn)?
-        .vault_id
-        .is_some()
-    {
         return Ok(true);
     }
     crate::policy_model::is_live_vault_owner_in_txn(

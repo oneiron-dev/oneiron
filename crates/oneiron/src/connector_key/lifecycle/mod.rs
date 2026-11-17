@@ -22,6 +22,7 @@ pub use self::manifest_ops::{
     ConnectorManifestQualifier, OwnerAttestedManifestQualifier, ProbeManifestQualifier,
 };
 pub use self::proxy::PROXY_CONNECTOR;
+pub(crate) use self::proxy::PROXY_EXCHANGE_PREDICATE;
 pub use self::qualification::ConnectorQualificationError;
 pub use self::tool_grant::{
     ConnectorConsentRowView, ConnectorConsentTarget, ConnectorConsentView, ConnectorToolConsent,
