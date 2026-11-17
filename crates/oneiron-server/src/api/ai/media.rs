@@ -34,7 +34,7 @@ use serde_json::Value as JsonValue;
 
 use super::refusal;
 use crate::auth::{CoreAuth, CoreScope};
-use crate::models::RungVoices;
+use crate::models::{MediaCancelMode, RungVoices};
 use crate::server::{MediaRefusal, SyncServer, admit_media};
 
 #[derive(Deserialize)]
@@ -753,7 +753,10 @@ pub(super) async fn cancel_video_job(
                 "video jobs are the owner's",
             );
         };
-        media.cancel_asked_by(agent, &job).await
+        media
+            .cancel_asked_by(agent, &job, MediaCancelMode::DeleteEnded)
+            .await
+            .map(|_| ())
     };
     match cancelled {
         Ok(()) => StatusCode::NO_CONTENT.into_response(),

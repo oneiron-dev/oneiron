@@ -1,7 +1,7 @@
 {
   "name": "ai.video.cancel",
-  "description": "Stops a video job at its provider. The owner cancels any job; an agent whose owner agent Grant names ai.video cancels only the jobs it asked for.",
-  "input": "AiVideoJobRequest",
+  "description": "Stops a video job at its provider and deletes it; a job that ended is deleted with its clip unless if_running keeps it. The owner cancels any job; an agent whose owner agent Grant names ai.video cancels only the jobs it asked for.",
+  "input": "AiVideoCancelRequest",
   "output": "crate::task_verb::sdk::AiVideoCancelled",
   "call": "crate::task_verb::sdk::host_only(memory, \"ai.video.cancel\", &input)?",
   "host_door": true,

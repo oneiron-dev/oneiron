@@ -13,8 +13,8 @@ use oneiron::memory::{
     MEMORY_CODE_MODEL_UNAVAILABLE, MemoryError, MemoryResult,
 };
 use oneiron::task_verb::sdk::{
-    AiAnswer, AiCallRequest, AiOptions, AiOptionsRequest, AiVideoCancelled, AiVideoJob,
-    AiVideoJobRequest, AiVideoTicket, AiVoice,
+    AiAnswer, AiCallRequest, AiOptions, AiOptionsRequest, AiVideoCancelRequest, AiVideoCancelled,
+    AiVideoJob, AiVideoJobRequest, AiVideoTicket, AiVoice,
 };
 use oneiron::{EntityId, ModelId};
 
@@ -27,7 +27,7 @@ use crate::api::ai::{
     granted_operations, line_options, prepare_media_call, video_granted_agent,
 };
 use crate::auth::CoreAuth;
-use crate::models::RungVoices;
+use crate::models::{MediaCancelMode, MediaCancelOutcome, RungVoices};
 use crate::server::{MediaRefusal, SyncServer};
 
 tokio::task_local! {
@@ -627,12 +627,15 @@ pub(crate) async fn ai_video_poll_as_owner(
     Ok(state.into())
 }
 
-/// `ai.video.cancel`: stops a video job at its provider, reaching a job as
-/// [`ai_video_poll`] does. Beside it, no row, as [`ai_video`] lists none.
+/// `ai.video.cancel`: stops a video job at its provider and deletes it,
+/// reaching a job as [`ai_video_poll`] does. A job that has ended is deleted
+/// with its clip, unless `if_running` keeps it: then the call is refused by
+/// name and the job keeps its end and clip. Beside it, no row, as
+/// [`ai_video`] lists none.
 pub(crate) async fn ai_video_cancel(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
-    input: AiVideoJobRequest,
+    input: AiVideoCancelRequest,
 ) -> Listed<AiVideoCancelled> {
     record_free(ai_video_cancel_answer(server, auth, input).await)
 }
@@ -640,7 +643,7 @@ pub(crate) async fn ai_video_cancel(
 pub(super) async fn ai_video_cancel_answer(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
-    input: AiVideoJobRequest,
+    input: AiVideoCancelRequest,
 ) -> MemoryResult<AiVideoCancelled> {
     if !auth.is_owner_grade()
         && let Some(line) = calling_line()
@@ -648,14 +651,14 @@ pub(super) async fn ai_video_cancel_answer(
         return ai_video_cancel_for_run(server, &line, input).await;
     }
     if let Some(agent) = video_granted_agent(server, auth) {
-        server
+        let outcome = server
             .ai
             .model_runtime()
             .media()
-            .cancel_asked_by(agent, &input.job)
+            .cancel_asked_by(agent, &input.job, cancel_mode(&input))
             .await
             .map_err(|error| failure(AiOperation::Video, &error))?;
-        return Ok(AiVideoCancelled { job: input.job });
+        return video_cancelled(input, outcome);
     }
     owner_grade(auth, VIDEO_JOB_OWNERS)?;
     ai_video_cancel_as_owner(server, input).await
@@ -666,32 +669,58 @@ pub(super) async fn ai_video_cancel_answer(
 pub(crate) async fn ai_video_cancel_for_run(
     server: &SyncServer,
     run: &RunAdmission,
-    input: AiVideoJobRequest,
+    input: AiVideoCancelRequest,
 ) -> MemoryResult<AiVideoCancelled> {
-    server
+    let outcome = server
         .ai
         .model_runtime()
         .media()
-        .cancel_on_line(run, &input.job)
+        .cancel_on_line(run, &input.job, cancel_mode(&input))
         .await
         .map_err(|error| failure(AiOperation::Video, &error))?;
-    Ok(AiVideoCancelled { job: input.job })
+    video_cancelled(input, outcome)
 }
 
 /// [`ai_video_cancel`] past its credential check, for an owner's own
 /// program ([`ai_media_as_owner`]).
 pub(crate) async fn ai_video_cancel_as_owner(
     server: &SyncServer,
-    input: AiVideoJobRequest,
+    input: AiVideoCancelRequest,
 ) -> MemoryResult<AiVideoCancelled> {
-    server
+    let outcome = server
         .ai
         .model_runtime()
         .media()
-        .cancel(&input.job)
+        .cancel_with_mode(&input.job, cancel_mode(&input))
         .await
         .map_err(|error| failure(AiOperation::Video, &error))?;
-    Ok(AiVideoCancelled { job: input.job })
+    video_cancelled(input, outcome)
+}
+
+/// What `ai.video.cancel` does with a job that has already ended.
+fn cancel_mode(input: &AiVideoCancelRequest) -> MediaCancelMode {
+    if input.if_running {
+        MediaCancelMode::KeepEnded
+    } else {
+        MediaCancelMode::DeleteEnded
+    }
+}
+
+/// `ai.video.cancel`'s answer once its cancel ran: the job it deleted, or,
+/// for a job that had ended and that `if_running` kept, a refusal that names
+/// it, so the caller never reads a kept job as stopped.
+fn video_cancelled(
+    input: AiVideoCancelRequest,
+    outcome: MediaCancelOutcome,
+) -> MemoryResult<AiVideoCancelled> {
+    match outcome {
+        MediaCancelOutcome::Deleted => Ok(AiVideoCancelled { job: input.job }),
+        MediaCancelOutcome::KeptEnded => Err(MemoryError::new(
+            MEMORY_CODE_INVALID_STATE,
+            "ai.video.cancel: the job already ended; if_running kept it with its clip",
+            &["Poll the job with ai.video.poll; cancel it without if_running to delete it."],
+        )),
+    }
 }
 
 /// A call of `operation`, prepared and admitted as `/v1/ai/<operation>`

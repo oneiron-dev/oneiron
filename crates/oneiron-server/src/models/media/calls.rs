@@ -8,9 +8,10 @@ use oneiron::llm::media::MediaReplayKey;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use super::{
-    Arc, FatalLlmError, Held, JobLine, JobRow, JobStore, LlmResult, MediaAnswer,
-    MediaDispatchRelease, MediaJobState, MediaRequest, MediaResponse, MediaRuntime, MediaTicket,
-    PayerPerson, RetryHint, RunAdmission, RungVoices, Vault, submit_stamps,
+    Arc, FatalLlmError, Held, JobLine, JobRow, JobStore, LlmResult, MediaAnswer, MediaCancelMode,
+    MediaCancelOutcome, MediaDispatchRelease, MediaJobState, MediaRequest, MediaResponse,
+    MediaRuntime, MediaTicket, PayerPerson, RetryHint, RunAdmission, RungVoices, Vault,
+    submit_stamps,
 };
 
 /// A runtime that keeps its jobs hands each running job's permit off as it
@@ -380,7 +381,20 @@ impl MediaRuntime {
     /// keeps the job, to poll or stop again (FIX 9513). A job that ended is
     /// only dropped. A drop the vault refuses is an error, never a success.
     pub async fn cancel(&self, id: &str) -> LlmResult<()> {
-        self.cancel_kept_job(id).await
+        self.cancel_with_mode(id, MediaCancelMode::DeleteEnded)
+            .await
+            .map(|_| ())
+    }
+
+    /// [`Self::cancel`], with what it does to a job that has ended named by
+    /// `mode`: dropped under [`MediaCancelMode::DeleteEnded`], kept with its
+    /// clip under [`MediaCancelMode::KeepEnded`].
+    pub async fn cancel_with_mode(
+        &self,
+        id: &str,
+        mode: MediaCancelMode,
+    ) -> LlmResult<MediaCancelOutcome> {
+        self.cancel_kept_job(id, mode).await
     }
 }
 

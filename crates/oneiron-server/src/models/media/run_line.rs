@@ -37,8 +37,8 @@ use oneiron::{BudgetGuard, EntityId, Vault};
 use serde::{Deserialize, Serialize};
 
 use super::{
-    FatalLlmError, HeldJob, JobRow, JobStore, KeptJob, LlmResult, MediaRuntime, MediaTicket,
-    funded_run,
+    FatalLlmError, HeldJob, JobRow, JobStore, KeptJob, LlmResult, MediaCancelMode,
+    MediaCancelOutcome, MediaRuntime, MediaTicket, funded_run,
 };
 
 /// The run line a program's job was submitted on: its run's name on the
@@ -263,14 +263,22 @@ impl MediaRuntime {
     }
 
     /// [`Self::cancel`] for a run that is not the owner's, as
-    /// [`Self::poll_on_line`] reaches a job.
-    pub(crate) async fn cancel_on_line(&self, run: &RunAdmission, id: &str) -> LlmResult<()> {
+    /// [`Self::poll_on_line`] reaches a job. A job the cancel kept stays on
+    /// the run's line, for its polls.
+    pub(crate) async fn cancel_on_line(
+        &self,
+        run: &RunAdmission,
+        id: &str,
+        mode: MediaCancelMode,
+    ) -> LlmResult<MediaCancelOutcome> {
         if !self.on_line(id, run.run()) {
             return Err(FatalLlmError::InvalidRequest.into());
         }
-        self.cancel(id).await?;
-        self.lock_submitted().remove(id);
-        Ok(())
+        let outcome = self.cancel_with_mode(id, mode).await?;
+        if outcome == MediaCancelOutcome::Deleted {
+            self.lock_submitted().remove(id);
+        }
+        Ok(outcome)
     }
 
     fn lock_submitted(&self) -> std::sync::MutexGuard<'_, BTreeMap<String, JobLine>> {
