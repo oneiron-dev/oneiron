@@ -4,11 +4,12 @@
 //! The verdict is this install's own, from the predicate its pending-text lease loop embeds by
 //! (Engine RULING WORLD-VECTORS-MECHANISM = B, 16 Nov 11:03). `world_space`: the world's order
 //! names its own text space ([`WorldTextSpaces`]), which takes every row the world carries.
-//! `vault_space`: the text embedder this install's host runs is the vault's pinned model, and a
-//! row of the world may go to it, on this device or toward an endpoint the world is not withheld
-//! from, and, where the owner's egress rung holds that embedder, a world whose model order admits
-//! the rung ([`super::PendingEmbeddingReconciler`]'s lease loop). `none`: neither, so no vector of
-//! the world's text is made here. No stored row says which machines run the vault's model, so
+//! `vault_space`: a text embedder a live reconciler of this install runs is the vault's pinned
+//! model, and a row of the world may go to it, on this device or toward an endpoint the world is
+//! not withheld from, and, where the owner's egress rung holds that embedder, a world whose model
+//! order admits the rung ([`super::PendingEmbeddingReconciler`]'s lease loop). Every live
+//! reconciler leases, so one that takes the world's rows is enough. `none`: none of them, so no
+//! vector of the world's text is made here. No stored row says which machines run the vault's model, so
 //! the verdict is never one for another machine, and the answer names the install that gave it.
 //!
 //! Who reads it (lead RULING WORLD-VECTORS-INTENT = B, 16 Nov 11:04): the owner under its proof,
@@ -117,8 +118,8 @@ impl HostTextEmbedder {
 }
 
 /// The host text embedders registered on a vault, one per live reconciler, by registration
-/// token. A read answers for the one the newest live reconciler runs. In memory only; a
-/// reopened vault has none until its host builds a reconciler again.
+/// token. A read judges each world against every one of them. In memory only; a reopened vault
+/// has none until its host builds a reconciler again.
 #[derive(Debug, Default)]
 pub(crate) struct HostTextEmbedderSlot {
     live: Mutex<BTreeMap<u64, HostTextEmbedder>>,
@@ -127,17 +128,33 @@ pub(crate) struct HostTextEmbedderSlot {
 }
 
 impl HostTextEmbedderSlot {
-    fn current(&self) -> Option<HostTextEmbedder> {
+    fn live_embedders(&self) -> Vec<HostTextEmbedder> {
         self.live
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .last_key_value()
-            .map(|(_, embedder)| embedder.clone())
+            .values()
+            .cloned()
+            .collect()
+    }
+}
+
+/// A live host embedder with the worlds its lease loop judges by: those kept from its endpoint,
+/// and, for an embedder the owner's egress rung holds, those whose model order admits the rung.
+struct JudgedHostEmbedder {
+    embedder: HostTextEmbedder,
+    withheld: BTreeSet<EntityId>,
+    rung_admitted: Option<BTreeSet<EntityId>>,
+}
+
+impl JudgedHostEmbedder {
+    fn embeds_world(&self, vault: &Vault, world: EntityId) -> bool {
+        self.embedder
+            .embeds_world(vault, &self.withheld, self.rung_admitted.as_ref(), world)
     }
 }
 
 /// Holds a reconciler's embedder on its vault while the reconciler lives; dropping it withdraws
-/// that embedder alone, so the newest reconciler still live answers again.
+/// that embedder alone, so the reconcilers still live answer without it.
 #[cfg(feature = "sync")]
 pub(crate) struct HostTextEmbedderRegistration {
     vault: std::sync::Weak<Vault>,
@@ -256,7 +273,7 @@ pub fn read_world_vectors_embedded(
 }
 
 fn read_world_vectors(vault: &Vault, input: &WorldVectorsRequest) -> Result<WorldVectorsAnswer> {
-    let host = vault.host_text_embedder.current();
+    let hosts = vault.host_text_embedder.live_embedders();
     let txn = vault.store.env.read_txn()?;
     let machine =
         crate::store::install_identity::read_machine_id_in_txn(vault, &txn)?.map(|id| id.to_hex());
@@ -268,39 +285,42 @@ fn read_world_vectors(vault: &Vault, input: &WorldVectorsRequest) -> Result<Worl
     }
     let worlds = asked_worlds_in(vault, &txn, input)?;
     let spaces = WorldTextSpaces::read_in(vault, &txn)?;
-    // A held primary sends a row only when the meet of its worlds' orders admits the rung
-    // (embed/routing.rs `rung_route`); a world alone admits it when its own order does.
-    let rung_admitted = match host
-        .as_ref()
-        .and_then(|host| host.primary_rung_offer.as_deref())
-    {
-        Some(offer) => {
-            let fold = vault.authority_view_readonly_in_txn(&txn)?;
-            Some(
+    let fold = if hosts.iter().any(|host| host.primary_rung_offer.is_some()) {
+        Some(vault.authority_view_readonly_in_txn(&txn)?)
+    } else {
+        None
+    };
+    let mut judged = Vec::with_capacity(hosts.len());
+    for embedder in hosts {
+        // A held primary sends a row only when the meet of its worlds' orders admits the rung
+        // (embed/routing.rs `rung_route`); a world alone admits it when its own order does.
+        let rung_admitted = match (embedder.primary_rung_offer.as_deref(), fold.as_ref()) {
+            (Some(offer), Some(fold)) => Some(
                 worlds
                     .iter()
                     .copied()
                     .filter(|world| fold.world_model_routes([*world]).admits(offer))
                     .collect::<BTreeSet<_>>(),
-            )
-        }
-        None => None,
-    };
-    let withheld = match &host {
-        Some(host) if !host.on_device => {
-            crate::settings::device_local_worlds_for(vault, &txn, &host.endpoint)?
-        }
-        _ => BTreeSet::new(),
-    };
+            ),
+            _ => None,
+        };
+        let withheld = if embedder.on_device {
+            BTreeSet::new()
+        } else {
+            crate::settings::device_local_worlds_for(vault, &txn, &embedder.endpoint)?
+        };
+        judged.push(JudgedHostEmbedder {
+            embedder,
+            withheld,
+            rung_admitted,
+        });
+    }
     let worlds = worlds
         .into_iter()
         .map(|world| {
             let (vectors, space) = match spaces.of_world(&world) {
                 Some(space) => (WorldVectorsVerdict::WorldSpace, Some(space.id.clone())),
-                None if host.as_ref().is_some_and(|host| {
-                    host.embeds_world(vault, &withheld, rung_admitted.as_ref(), world)
-                }) =>
-                {
+                None if judged.iter().any(|host| host.embeds_world(vault, world)) => {
                     (WorldVectorsVerdict::VaultSpace, None)
                 }
                 None => (WorldVectorsVerdict::None, None),
