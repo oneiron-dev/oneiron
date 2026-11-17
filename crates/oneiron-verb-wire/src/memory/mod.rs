@@ -22,6 +22,7 @@ pub use crate::memory::asset_resolve::types::ServedAssetForm;
 pub use crate::memory::claim_admission::AllRelationships;
 pub use crate::memory::claim_admission::ClaimRelationships;
 pub use crate::memory::claim_admission::ClaimScope;
+pub use crate::memory::claim_admission::ClaimScopeInput;
 pub use crate::memory::claim_admission::ScopedClaimInput;
 pub use crate::memory::claim_admission::ScopedCommitRequest;
 pub use crate::memory::claim_stale::ClaimDemoteActionInput;
