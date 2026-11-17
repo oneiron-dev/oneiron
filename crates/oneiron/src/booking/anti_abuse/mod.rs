@@ -78,6 +78,9 @@ pub use self::rules::{
     BookingRuleOwnerStampBinding, BookingRuleScope, RuleAmendmentOutcome, booking_rule_row_id,
     booking_rule_variant_tag, default_booking_anti_abuse_rows, validate_rule_row,
 };
+pub(crate) use self::rules::{
+    email_prompt_at_failed_checks_default, email_quarantine_at_failed_checks_default,
+};
 pub use self::storage::BOOKING_ANTI_ABUSE_META_PREFIX;
 
 // -------------------------------------------------------------------------
