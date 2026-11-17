@@ -145,7 +145,11 @@ impl Memory<'_> {
     /// again, the alternative is born Proposed and the responder approves it
     /// as its own act (an Owner, co-Owners included, or a delegate under its
     /// Grant; never the Dreamer), and the settlement commits with it. The
-    /// receipt then names that approval. A retry whose write is discarded
+    /// receipt then names that approval. A retained curator finding whose
+    /// rung would retract, weaken or mark stale a claim restricting
+    /// someone's access is a person's to approve: a responder that is no
+    /// person has its retry refused (RULING
+    /// RESTRICTION-CLOSE-BY-CURATOR-APPROVAL). A retry whose write is discarded
     /// answers with the first refusal, the retained alternative intact; one
     /// that committed answers with what it committed, even when the writer's
     /// post-commit work then fails. A VAD consolidation that fails after the

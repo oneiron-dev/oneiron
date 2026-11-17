@@ -499,7 +499,10 @@ pub(crate) fn open_conflict_in_txn(
 /// agent's widening always asks the person affected (canon
 /// #widen-world-floor). An agent holder's or the Dreamer's settlement that
 /// would is refused, and the conflict stays for a person holder or the
-/// owner (RULING RESTRICTION-CLOSE-BY-CONFLICT-SETTLE). `close_as`
+/// owner (RULING RESTRICTION-CLOSE-BY-CONFLICT-SETTLE). So is a Keep by no
+/// person that approves a retained curator finding whose rung would retract,
+/// weaken or mark stale a restricting claim, a member or not (RULING
+/// RESTRICTION-CLOSE-BY-CURATOR-APPROVAL). `close_as`
 /// attributes a delegate's close; the owner's close is the owner's. The
 /// answering claim then records the settlement on the marker's own axes.
 /// `keep_as` says how a kept retained alternative lands (FIX 5753). `now` is
@@ -529,6 +532,23 @@ pub(crate) fn apply_settlement_in_txn(
             .iter()
             .find(|alternative| alternative.id == selected)
         {
+            // A Keep that approves its landing applies a curator finding's
+            // rung as the finding lands (FIX 5423), on a target that need not
+            // be a member. Asked before the landing: once the rung applied,
+            // its target no longer reads as restricting anyone.
+            if !person
+                && matches!(keep_as, KeepAs::Approved(_))
+                && crate::dreamer_runner::maintenance::curator_proposal_lifts_restriction_in(
+                    vault,
+                    txn,
+                    &alternative.predicate,
+                    &alternative.value,
+                )?
+            {
+                return Err(invalid_consolidation(
+                    "only a person keeps a curator finding that lifts a claim restricting someone's access",
+                ));
+            }
             match super::retained_keep::keep_in_txn(
                 vault,
                 txn,
