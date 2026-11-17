@@ -1339,14 +1339,20 @@ impl Memory<'_> {
                     OutboundDispatchActor::agent(actor),
                     crate::unix_seconds_now(),
                 );
+                let (revision, plan_ref) = (row.revision, row.plan_ref.clone());
+                let admits = move |txn: &heed::RoTxn<'_>| {
+                    drafter_send_admits_in(vault, txn, &id, revision, &plan_ref)
+                };
                 match gmail_wire {
                     Some(wire) => {
-                        let mut sink = GmailSendSink::new(vault, &adapter, identity, wire);
+                        let mut sink = GmailSendSink::new(vault, &adapter, identity, wire)
+                            .admitting_only_while(admits);
                         adapter.dispatch_send_recorded(vault, request, &mut sink)
                     }
                     None => {
                         let wire = HttpGmailSendWire::new()?;
-                        let mut sink = GmailSendSink::new(vault, &adapter, identity, wire);
+                        let mut sink = GmailSendSink::new(vault, &adapter, identity, wire)
+                            .admitting_only_while(admits);
                         adapter.dispatch_send_recorded(vault, request, &mut sink)
                     }
                 }
