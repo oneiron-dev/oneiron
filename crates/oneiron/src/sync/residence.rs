@@ -756,3 +756,6 @@ pub(crate) mod promotion_hook {
         }
     }
 }
+
+#[cfg(oneiron_test_support)]
+pub(crate) use self::search::search_page_revision_for_test;
