@@ -1,55 +1,65 @@
 #![cfg(oneiron_test_support)]
-//! The owner's restore installs customer legal holds live.
+//! Owner archive restores install legal hold rows and their ordered history,
+//! never in-place protection (LEGAL-HOLD-USE = B). A restored standing hold
+//! does not refuse a delete; its next widen writes a new sealed capture to
+//! the destination's own external hold store. A lifted hold restores as
+//! history and starts no erase. A hosted GDPR erase fully erases a held
+//! record, and its archive carries no target, use-limit, erase-link or
+//! pending-erase rows.
 //!
-//! Public doors only; neutral fixtures; vaults in tempdirs. Each destination
-//! opens at least one wall-clock second after its source (sleep 1100 ms), as
-//! in `archive_import_retained_side_rows.rs`.
+//! Public doors only; neutral fixtures; vaults and separate hold stores in
+//! tempdirs, with device keystores installed. Each destination opens at least
+//! one wall-clock second after its source (sleep 1100 ms), as in
+//! `archive_import_retained_side_rows.rs`. Restoring a hold's metadata does
+//! not restore the source's external sealed capture files.
 //!
-//! The five customer tables are `LEGAL_HOLD_ROW`, `LEGAL_HOLD_TARGET`,
-//! `LEGAL_HOLD_USE_LIMIT`, `LEGAL_HOLD_ERASE_LINK` and `LEGAL_HOLD_EVENT`;
-//! `LEGAL_HOLD_PENDING_ERASE` stays retained-only. All five install here.
-//!
-//! * `the_owner_restore_installs_a_standing_hold_that_refuses_deleting_its_record`:
-//!   the owner import installs one ROW row, one TARGET row and one EVENT row
-//!   live and reports one installed row for each, and the restored hold
-//!   refuses its record's delete; a repeat owner import reports one unchanged
-//!   live row for each; the actorless import of the same archive lists no
-//!   hold and its delete succeeds.
-//! * `the_next_hold_act_after_a_restore_follows_the_restored_log`: a restored
-//!   hold's next widen adds its second record, the log keeps its restored
-//!   prefix then its scope change, and the new record's delete is refused.
-//! * `a_lifted_hold_restores_as_history_and_starts_no_erase`: a hold the
-//!   owner lifted in a shared vault's veto window restores lifted with its
-//!   erase link and three events, its waiting erase stays retained byte for
-//!   byte, and the record stays live; no erase starts.
-//! * `a_use_limit_restores_only_beside_its_standing_hold`: a hosted privacy
-//!   erase mints its use limit beside its standing hold, the destination
-//!   preseeds the same record its export withholds, and the owner import
-//!   restores the limit with its marker beside the hold.
-//!
-//! New report counts are read through `serde_json::to_value` of the SIDE-1
-//! summary, using only public items present at 13fb2c3d88f6. An absent field
-//! fails its assertion as a missing outcome, never as a setup panic.
-//! `cargo test --locked -p oneiron --all-features --test
-//! archive_import_owner_installs_legal_holds`.
+//! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test archive_import_owner_installs_legal_holds`
 
 #[path = "archive_import_retained_side_rows.rs"]
 mod retained_side_rows;
 
 use std::io::Cursor;
+use std::sync::Arc;
 
-use oneiron::deletion::{
-    ErasePendingReason, LEGAL_HOLD_REFUSAL, LegalHoldEventKind, LegalHoldReason, LegalHoldTarget,
-    LiftAndEraseStatus,
-};
-use oneiron::federation::{FederationGrantRole, InitialSharedMember};
+use oneiron::deletion::{LegalHoldEventKind, LegalHoldReason, LegalHoldTarget};
 use oneiron::memory::{EraseOptions, EraseReason};
 use oneiron::registry::ENTITY_TYPE_PERSON;
-use oneiron::store::GateDecisionId;
 use oneiron::{EdgeActorClass, EntityId, HostingPrivacyPosture, TimeRange, Vault, VaultConfig};
-use retained_side_rows::{
-    export_whole, open_later_vault, open_source_vault, owner_proof, retained_rows, rows_for,
-};
+use retained_side_rows::{export_whole, owner_proof, retained_rows, rows_for};
+
+/// A vault with its own hold store outside the vault directory and its own
+/// device keystore. Keep both tempdirs alive for the vault's lifetime.
+fn open_hold_vault(
+    config: VaultConfig,
+    owned: bool,
+) -> (tempfile::TempDir, tempfile::TempDir, Vault) {
+    let dir = tempfile::tempdir().expect("temp dir for the vault");
+    let store_dir = tempfile::tempdir().expect("temp dir for the external hold store");
+    let config = config.with_legal_hold_store(store_dir.path().to_path_buf());
+    let vault = if owned {
+        Vault::open_owned(dir.path(), config)
+    } else {
+        Vault::open(dir.path(), config)
+    }
+    .expect("open the vault with its external hold store");
+    vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::new()));
+    vault
+        .prepare_install_signing()
+        .expect("prepare the vault's install signing key");
+    (dir, store_dir, vault)
+}
+
+/// A source opened as the owner's own, with an external hold store.
+fn open_source_vault() -> (tempfile::TempDir, tempfile::TempDir, Vault) {
+    open_hold_vault(VaultConfig::device(), true)
+}
+
+/// A fresh destination whose engine-seed seconds differ from the source's:
+/// any 1100 ms interval crosses a second boundary.
+fn open_later_vault() -> (tempfile::TempDir, tempfile::TempDir, Vault) {
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+    open_hold_vault(VaultConfig::device(), false)
+}
 
 /// A fixed entity id from one repeated byte. The banned bytes (00, 11, 42,
 /// 47, A1..A6, D7, E1, FF) belong to other fixtures.
@@ -69,17 +79,15 @@ fn table_count(summary: &serde_json::Value, table: &str, field: &str) -> Option<
         .as_u64()
 }
 
-/// The three live tables a standing hold installs.
-const STANDING_TABLES: [&str; 3] = ["LEGAL_HOLD_ROW", "LEGAL_HOLD_TARGET", "LEGAL_HOLD_EVENT"];
+/// The two live tables a standing hold installs; no target index is written.
+const STANDING_TABLES: [&str; 2] = ["LEGAL_HOLD_ROW", "LEGAL_HOLD_EVENT"];
 
-/// The shared vault id the lifted test shares.
-const SHARED_VAULT_ID: u64 = 42;
-
-/// The owner restore installs the standing hold live and its delete stays
-/// refused; the actorless import lists no hold and its delete succeeds.
+/// The owner restore installs the standing hold and its log live, but its
+/// record still deletes; a repeat import leaves the hold rows unchanged.
+/// The actorless import retains the rows without installing a hold.
 #[test]
-fn the_owner_restore_installs_a_standing_hold_that_refuses_deleting_its_record() {
-    let (_source_dir, source) = open_source_vault();
+fn the_owner_restore_installs_a_standing_hold_and_its_record_still_deletes() {
+    let (_source_dir, _source_store_dir, source) = open_source_vault();
     let source_owner = owner_proof(&source);
     let record = fixed_id(0x29);
     source
@@ -142,8 +150,12 @@ fn the_owner_restore_installs_a_standing_hold_that_refuses_deleting_its_record()
         "the source placement names its reason"
     );
     let archive = export_whole(&source);
+    assert!(
+        rows_for(&retained_rows(&archive), "LEGAL_HOLD_TARGET").is_empty(),
+        "the source archive carries no in-place target index"
+    );
 
-    let (_dest_dir, dest) = open_later_vault();
+    let (_dest_dir, _dest_store_dir, dest) = open_later_vault();
     let dest_owner = owner_proof(&dest);
     let receipt = dest
         .import_whole_vault_archive_from_as_owner(Cursor::new(&archive), &dest_owner)
@@ -169,18 +181,21 @@ fn the_owner_restore_installs_a_standing_hold_that_refuses_deleting_its_record()
             "the owner import reports one installed {table} row; an absent field means it installed nothing: {summary}"
         );
     }
-    let refused = dest
-        .delete_entity(&record)
-        .expect_err("the restored hold refuses its record");
     assert!(
-        format!("{refused:?}").contains(LEGAL_HOLD_REFUSAL),
-        "the restored refusal names the hold: {refused:?}"
+        dest.delete_entity(&record)
+            .expect("the restored hold never refuses its record's delete"),
+        "the restored held record deletes"
     );
-    assert!(
-        dest.get(&record)
-            .expect("read the held restored record")
-            .is_some(),
-        "the refused restored delete keeps the record"
+    assert_eq!(
+        dest.get(&record).expect("read the deleted restored record"),
+        Some(Vec::new()),
+        "the restored hold keeps no payload, only the ordinary tombstone shell"
+    );
+    assert_eq!(
+        dest.legal_holds(&dest_owner)
+            .expect("list the holds after deletion"),
+        source_holds,
+        "deleting the record does not lift its standing hold"
     );
 
     let repeat = dest
@@ -201,12 +216,7 @@ fn the_owner_restore_installs_a_standing_hold_that_refuses_deleting_its_record()
         );
     }
 
-    let (_bare_dir, bare) = open_later_vault();
-    // A delete signs its receipt with this install's device key. A held
-    // delete is refused before that step; this unheld one reaches it.
-    bare.install_device_keystore(std::sync::Arc::new(
-        oneiron_keystore::MemoryKeystore::default(),
-    ));
+    let (_bare_dir, _bare_store_dir, bare) = open_later_vault();
     let bare_receipt = bare
         .import_whole_vault_archive_from(Cursor::new(&archive))
         .expect("the actorless import succeeds");
@@ -234,11 +244,10 @@ fn the_owner_restore_installs_a_standing_hold_that_refuses_deleting_its_record()
             "the actorless import installs no {table} row: {bare_summary}"
         );
     }
-    assert_eq!(
+    assert!(
         bare.delete_entity(&record)
             .expect("the actorless delete succeeds"),
-        true,
-        "without the hold the record deletes"
+        "the actorless restored record deletes too"
     );
     assert_eq!(
         bare.get(&record).expect("read the deleted record"),
@@ -248,10 +257,10 @@ fn the_owner_restore_installs_a_standing_hold_that_refuses_deleting_its_record()
 }
 
 /// The next widen after a restore keeps the restored log prefix, appends its
-/// scope change, and refuses its new record's delete.
+/// scope change and new capture fingerprint, and permits its new record's delete.
 #[test]
 fn the_next_hold_act_after_a_restore_follows_the_restored_log() {
-    let (_source_dir, source) = open_source_vault();
+    let (_source_dir, _source_store_dir, source) = open_source_vault();
     let source_owner = owner_proof(&source);
     let first = fixed_id(0x2E);
     let second = fixed_id(0x31);
@@ -290,7 +299,7 @@ fn the_next_hold_act_after_a_restore_follows_the_restored_log() {
     );
     let archive = export_whole(&source);
 
-    let (_dest_dir, dest) = open_later_vault();
+    let (_dest_dir, _dest_store_dir, dest) = open_later_vault();
     let dest_owner = owner_proof(&dest);
     dest.import_whole_vault_archive_from_as_owner(Cursor::new(&archive), &dest_owner)
         .expect("the owner import succeeds");
@@ -342,58 +351,42 @@ fn the_next_hold_act_after_a_restore_follows_the_restored_log() {
         vec![LegalHoldTarget::Record(second)],
         "the widen logs its added record"
     );
-    let refused = dest
-        .delete_entity(&second)
-        .expect_err("the widened hold refuses its new record");
+    assert_eq!(
+        widened.clone_captures.len(),
+        hold.clone_captures.len() + 1,
+        "the destination widen appends its own sealed capture"
+    );
+    let capture = widened
+        .clone_captures
+        .last()
+        .expect("the widened hold names its new capture");
     assert!(
-        format!("{refused:?}").contains(LEGAL_HOLD_REFUSAL),
-        "the new record refusal names the hold: {refused:?}"
+        !hold.clone_captures.contains(capture),
+        "the widen names a new capture, not the source's archived capture"
+    );
+    assert_eq!(
+        last.clone_fingerprint,
+        Some(capture.fingerprint),
+        "the scope change logs the destination capture's fingerprint"
+    );
+    assert!(
+        dest.delete_entity(&second)
+            .expect("the widened hold never refuses its new record's delete"),
+        "the newly held record deletes"
+    );
+    assert_eq!(
+        dest.get(&second).expect("read the deleted second record"),
+        Some(Vec::new()),
+        "the widened hold keeps no payload in the vault"
     );
 }
 
-/// A hold lifted in the shared veto window restores lifted with its link and
-/// history, keeps its waiting erase retained, and starts no erase.
+/// A plain owner lift restores as history with placement, lift and copy
+/// destruction in order. Neither the lift nor its restore erases the record.
 #[test]
-fn a_lifted_hold_restores_as_history_and_starts_no_erase() {
-    let (_source_dir, source) = open_source_vault();
+fn a_lifted_hold_restores_as_history() {
+    let (_source_dir, _source_store_dir, source) = open_source_vault();
     let source_owner = owner_proof(&source);
-    let second_id = fixed_id(0x33);
-    source
-        .put_entity(
-            &second_id,
-            ENTITY_TYPE_PERSON,
-            TimeRange { start: 1, end: 1 },
-            1,
-            b"second owner",
-        )
-        .expect("the source stores the second owner");
-    let second_proof = source
-        .authenticate_owner(second_id, &second_id.to_hex(), true, GateDecisionId::now())
-        .expect("the second owner proves");
-    source
-        .initialize_shared_vault(
-            &source_owner,
-            SHARED_VAULT_ID,
-            None,
-            &[InitialSharedMember {
-                member_ref: second_id,
-                role: Some(FederationGrantRole::Owner),
-            }],
-            1,
-        )
-        .expect("the owner shares the vault");
-    let invitations = source
-        .shared_invitations(&second_proof, SHARED_VAULT_ID)
-        .expect("the second owner lists its invitation");
-    assert_eq!(
-        invitations.len(),
-        1,
-        "the second owner has one invitation: {invitations:?}"
-    );
-    source
-        .accept_shared_invitation(&second_proof, SHARED_VAULT_ID, &invitations[0].id)
-        .expect("the second owner joins");
-
     let record = fixed_id(0x36);
     source
         .put_entity(
@@ -411,100 +404,62 @@ fn a_lifted_hold_restores_as_history_and_starts_no_erase() {
             Some("matter-003".to_owned()),
         )
         .expect("the owner places the source hold");
-    let shown = source
-        .lift_and_erase_shown_state(&source_owner, &[record], false)
-        .expect("the confirm shows its state");
-    let outcome = source
-        .confirm_lift_legal_hold_and_erase(&source_owner, &[record], false, &shown)
-        .expect("the owner confirms lift and erase");
-    assert!(
-        outcome.changed.is_none(),
-        "the confirm matches what was shown: {outcome:?}"
-    );
-    assert_eq!(
-        outcome.holds,
-        vec![hold.hold_id],
-        "the confirm lifts its hold: {outcome:?}"
-    );
-    assert_eq!(
-        outcome.records.len(),
-        1,
-        "the confirm names its record: {outcome:?}"
-    );
-    assert_eq!(
-        outcome.records[0].0, record,
-        "the confirm names the lifted record"
-    );
-    assert!(
-        matches!(
-            outcome.records[0].1,
-            LiftAndEraseStatus::CompletionPending {
-                reason: Some(ErasePendingReason::VetoWindow),
-                ..
-            }
-        ),
-        "the shared erase waits out its veto window: {:?}",
-        outcome.records[0].1
-    );
-
-    let source_holds = source
-        .legal_holds(&source_owner)
-        .expect("list the source holds");
-    assert_eq!(
-        source_holds.len(),
-        1,
-        "the source keeps its lifted hold: {source_holds:?}"
-    );
-    let lifted = &source_holds[0];
-    assert!(!lifted.stands(), "the confirm lifts the hold: {lifted:?}");
+    let lifted = source
+        .lift_legal_hold(&source_owner, hold.hold_id)
+        .expect("the owner lifts the hold without erasing");
+    assert!(!lifted.stands(), "the owner's lift releases the hold");
     assert!(
         lifted.lifted_at.is_some(),
-        "the lifted hold names its release: {lifted:?}"
+        "the lifted hold names its release"
     );
     assert_eq!(
         lifted.targets,
         vec![LegalHoldTarget::Record(record)],
-        "a fully lifted hold keeps its last scope: {lifted:?}"
+        "a lifted hold keeps its last scope"
     );
-    assert!(
-        source
-            .get(&record)
-            .expect("read the lifted source record")
-            .is_some(),
-        "the veto keeps the source record live"
+    let source_holds = source
+        .legal_holds(&source_owner)
+        .expect("list the source holds");
+    assert_eq!(
+        source_holds,
+        vec![lifted],
+        "the source lists its lifted hold as history"
+    );
+    assert_eq!(
+        source.get(&record).expect("read the lifted source record"),
+        Some(b"lifted record".to_vec()),
+        "lifting the hold leaves the source record live and unchanged"
     );
     let source_log = source
         .legal_hold_log(&source_owner)
         .expect("read the source log");
     assert_eq!(
-        source_log.len(),
-        3,
-        "the source log holds placement, confirm and lift: {source_log:?}"
+        source_log
+            .iter()
+            .map(|event| event.event)
+            .collect::<Vec<_>>(),
+        vec![
+            LegalHoldEventKind::Placed,
+            LegalHoldEventKind::Lifted,
+            LegalHoldEventKind::CloneDestroyed,
+        ],
+        "the source logs placement, lift and sealed-copy destruction in order"
     );
     assert_eq!(
-        source_log[0].event,
-        LegalHoldEventKind::Placed,
-        "the lifted log starts with its placement"
-    );
-    assert_eq!(
-        source_log[1].event,
-        LegalHoldEventKind::LiftAndEraseConfirmed,
-        "the lifted log names its confirm"
-    );
-    assert_eq!(
-        source_log[2].event,
-        LegalHoldEventKind::Lifted,
-        "the lifted log ends with its lift"
+        source_log
+            .iter()
+            .map(|event| event.reason)
+            .collect::<Vec<_>>(),
+        vec![
+            LegalHoldReason::OwnerPlaced,
+            LegalHoldReason::OwnerLifted,
+            LegalHoldReason::OwnerLifted,
+        ],
+        "the lift and copy destruction name the owner's release"
     );
     let archive = export_whole(&source);
-    let source_pending = rows_for(&retained_rows(&archive), "LEGAL_HOLD_PENDING_ERASE");
-    assert_eq!(
-        source_pending.len(),
-        1,
-        "the source archive carries its waiting erase: {source_pending:?}"
-    );
 
-    let (_dest_dir, dest) = open_later_vault();
+    let (_dest_dir, _dest_store_dir, dest) = open_later_vault();
     let dest_owner = owner_proof(&dest);
     let receipt = dest
         .import_whole_vault_archive_from_as_owner(Cursor::new(&archive), &dest_owner)
@@ -519,71 +474,35 @@ fn a_lifted_hold_restores_as_history_and_starts_no_erase() {
         dest.legal_hold_log(&dest_owner)
             .expect("read the restored log"),
         source_log,
-        "the owner import restores the hold history"
+        "the owner import restores the complete ordered hold history"
     );
-    assert!(
-        dest.get(&record)
-            .expect("read the restored record")
-            .is_some(),
-        "the restore starts no erase"
+    assert_eq!(
+        dest.get(&record).expect("read the restored record"),
+        Some(b"lifted record".to_vec()),
+        "the restore starts no erase and preserves the record's payload"
     );
     let summary =
         serde_json::to_value(&receipt.retained_side_rows).expect("the summary serializes");
     assert_eq!(
         table_count(&summary, "LEGAL_HOLD_ROW", "installed_rows"),
         Some(1),
-        "the owner import reports one installed LEGAL_HOLD_ROW row; an absent field means it installed nothing: {summary}"
-    );
-    assert_eq!(
-        table_count(&summary, "LEGAL_HOLD_ERASE_LINK", "installed_rows"),
-        Some(1),
-        "the owner import reports one installed LEGAL_HOLD_ERASE_LINK row; an absent field means it installed nothing: {summary}"
+        "the owner import reports one installed hold row: {summary}"
     );
     assert_eq!(
         table_count(&summary, "LEGAL_HOLD_EVENT", "installed_rows"),
         Some(3),
-        "the owner import reports three installed LEGAL_HOLD_EVENT rows; an absent field means it installed nothing: {summary}"
-    );
-    assert!(
-        matches!(
-            table_count(&summary, "LEGAL_HOLD_TARGET", "installed_rows"),
-            None | Some(0)
-        ),
-        "a lifted hold installs no target: {summary}"
-    );
-    assert!(
-        matches!(
-            table_count(&summary, "LEGAL_HOLD_PENDING_ERASE", "installed_rows"),
-            None | Some(0)
-        ),
-        "the waiting erase stays retained: {summary}"
-    );
-    assert_eq!(
-        table_count(&summary, "LEGAL_HOLD_PENDING_ERASE", "inserted_rows"),
-        Some(1),
-        "the owner import retains one waiting erase envelope: {summary}"
-    );
-    assert_eq!(
-        rows_for(
-            &retained_rows(&export_whole(&dest)),
-            "LEGAL_HOLD_PENDING_ERASE"
-        ),
-        source_pending,
-        "the destination retains the waiting erase byte for byte"
+        "the owner import reports all three installed history rows: {summary}"
     );
 }
 
-/// A hosted use limit restores beside its standing hold onto its preseeded
-/// record, with its marker equal. The destination preseed is public setup:
-/// the whole export withholds the use-limited payload, and the landing
-/// needs destination liveness, so the same id and body are stored first.
+/// A hosted GDPR erase fully erases a held record without lifting its hold.
+/// The archive carries the hold and its placement, not any in-place keep,
+/// use-limit, erase-link or pending-erase row.
 #[test]
-fn a_use_limit_restores_only_beside_its_standing_hold() {
-    let source_dir = tempfile::tempdir().expect("temp dir for the hosted source vault");
-    let mut source_config = VaultConfig::default();
+fn a_hosted_privacy_erase_erases_a_held_record_without_in_place_hold_rows() {
+    let mut source_config = VaultConfig::device();
     source_config.privacy.posture = HostingPrivacyPosture::Hosted;
-    let source =
-        Vault::open_owned(source_dir.path(), source_config).expect("open the hosted source vault");
+    let (_source_dir, _source_store_dir, source) = open_hold_vault(source_config, true);
     let source_owner = owner_proof(&source);
     let record = fixed_id(0x3B);
     source
@@ -592,14 +511,9 @@ fn a_use_limit_restores_only_beside_its_standing_hold() {
             ENTITY_TYPE_PERSON,
             TimeRange { start: 10, end: 10 },
             10,
-            b"limited record",
+            b"held privacy record",
         )
-        .expect("the source stores the limited record");
-    assert_eq!(
-        source.get(&record).expect("read the source record"),
-        Some(b"limited record".to_vec()),
-        "the source holds the record"
-    );
+        .expect("the source stores the held privacy record");
     let hold = source
         .place_legal_hold(
             &source_owner,
@@ -614,7 +528,7 @@ fn a_use_limit_restores_only_beside_its_standing_hold() {
     let source_memory = source.memory(source_actor, EdgeActorClass::Human);
     let preview = source_memory
         .preview_entity_delete(&record)
-        .expect("preview the limited record");
+        .expect("preview the held privacy record");
     let outcome = source_memory
         .confirm_entity_erase(
             &preview,
@@ -624,141 +538,68 @@ fn a_use_limit_restores_only_beside_its_standing_hold() {
                 veto_starter: None,
             },
         )
-        .expect("the hosted privacy erase runs");
+        .expect("the hosted privacy erase runs fully despite the hold");
     assert_eq!(
         outcome.first.reason.as_str(),
-        "privacy_erase_kept",
-        "the held privacy erase is kept: {outcome:?}"
+        "gdpr_delete",
+        "the receipt names the privacy erase, never a kept refusal: {outcome:?}"
     );
     assert!(
-        outcome.first.receipt_ref.is_none(),
-        "a kept erase writes no receipt: {outcome:?}"
+        outcome.first.receipt_ref.is_some(),
+        "the privacy erase writes its receipt: {outcome:?}"
+    );
+    assert!(
+        outcome.first_act.is_none(),
+        "the privacy erase starts no waiting erase act: {outcome:?}"
     );
     assert!(
         outcome.same_bytes.is_empty(),
         "without the flag no other record is named: {outcome:?}"
     );
-    let source_limit = source
-        .legal_hold_use_limit(&record)
-        .expect("read the source use limit")
-        .expect("the hosted privacy erase mints its marker");
-    assert_eq!(source_limit.record, record, "the marker names its record");
     assert_eq!(
-        source_limit.reason,
-        LegalHoldReason::PrivacyEraseKept,
-        "the marker names its reason"
+        source.get(&record).expect("read the erased record"),
+        None,
+        "the held privacy record is fully erased, not kept or left as a shell"
     );
-    let source_holds = source
-        .legal_holds(&source_owner)
-        .expect("list the source holds");
     assert_eq!(
-        source_holds.len(),
-        1,
-        "the source keeps its standing hold: {source_holds:?}"
-    );
-    assert!(
-        source_holds[0].stands(),
-        "the kept hold stands: {:?}",
-        source_holds[0]
+        source
+            .legal_holds(&source_owner)
+            .expect("list the holds after erase"),
+        vec![hold],
+        "the privacy erase does not lift or change the hold"
     );
     let source_log = source
         .legal_hold_log(&source_owner)
-        .expect("read the source log");
+        .expect("read the source log after erase");
     assert_eq!(
-        source_log.len(),
-        2,
-        "the source log holds placement and kept refusal: {source_log:?}"
-    );
-    assert_eq!(
-        source_log[0].event,
-        LegalHoldEventKind::Placed,
-        "the limited log starts with its placement"
-    );
-    assert_eq!(
-        source_log[1].event,
-        LegalHoldEventKind::DeleteRefused,
-        "the kept erase logs its refusal"
-    );
-    assert_eq!(
-        source_log[1].reason,
-        LegalHoldReason::PrivacyEraseKept,
-        "the kept refusal names its reason"
+        source_log
+            .iter()
+            .map(|event| event.event)
+            .collect::<Vec<_>>(),
+        vec![LegalHoldEventKind::Placed],
+        "the privacy erase appends no hold refusal or erase event"
     );
     let archive = export_whole(&source);
+    let rows = retained_rows(&archive);
     assert_eq!(
-        rows_for(&retained_rows(&archive), "LEGAL_HOLD_USE_LIMIT").len(),
+        rows_for(&rows, "LEGAL_HOLD_ROW").len(),
         1,
-        "the source archive carries its limit row"
-    );
-
-    // The whole export withholds the use-limited payload, so the destination
-    // stores the same id and body first through the public entity door. The
-    // landing still checks destination liveness and its standing hold, so the
-    // preseed is required setup, not a bypass of its validation.
-    let (_dest_dir, dest) = open_later_vault();
-    dest.put_entity(
-        &record,
-        ENTITY_TYPE_PERSON,
-        TimeRange { start: 10, end: 10 },
-        10,
-        b"limited record",
-    )
-    .expect("the destination preseeds the same record");
-    let dest_owner = owner_proof(&dest);
-    let receipt = dest
-        .import_whole_vault_archive_from_as_owner(Cursor::new(&archive), &dest_owner)
-        .expect("the owner import succeeds");
-    assert_eq!(
-        dest.legal_holds(&dest_owner)
-            .expect("list the restored holds"),
-        source_holds,
-        "the owner import installs the standing hold beside its limit"
+        "the archive still carries the standing hold row"
     );
     assert_eq!(
-        dest.legal_hold_log(&dest_owner)
-            .expect("read the restored log"),
-        source_log,
-        "the owner import installs the hold log beside its limit"
+        rows_for(&rows, "LEGAL_HOLD_EVENT").len(),
+        1,
+        "the archive still carries its placement event"
     );
-    assert_eq!(
-        dest.legal_hold_use_limit(&record)
-            .expect("read the restored use limit"),
-        Some(source_limit.clone()),
-        "the owner import restores the use limit with its marker; baseline reads None"
-    );
-    assert!(
-        dest.get(&record)
-            .expect("read the use-limited record")
-            .is_none(),
-        "the restored use limit hides the record from normal reads"
-    );
-    let summary =
-        serde_json::to_value(&receipt.retained_side_rows).expect("the summary serializes");
-    assert_eq!(
-        table_count(&summary, "LEGAL_HOLD_ROW", "installed_rows"),
-        Some(1),
-        "the owner import reports one installed LEGAL_HOLD_ROW row; an absent field means it installed nothing: {summary}"
-    );
-    assert_eq!(
-        table_count(&summary, "LEGAL_HOLD_TARGET", "installed_rows"),
-        Some(1),
-        "the owner import reports one installed LEGAL_HOLD_TARGET row; an absent field means it installed nothing: {summary}"
-    );
-    assert_eq!(
-        table_count(&summary, "LEGAL_HOLD_EVENT", "installed_rows"),
-        Some(2),
-        "the owner import reports two installed LEGAL_HOLD_EVENT rows; an absent field means it installed nothing: {summary}"
-    );
-    assert_eq!(
-        table_count(&summary, "LEGAL_HOLD_USE_LIMIT", "installed_rows"),
-        Some(1),
-        "the owner import reports one installed LEGAL_HOLD_USE_LIMIT row; an absent field means it installed nothing: {summary}"
-    );
-    let refused = dest
-        .delete_entity(&record)
-        .expect_err("the restored hold refuses its limited record");
-    assert!(
-        format!("{refused:?}").contains(LEGAL_HOLD_REFUSAL),
-        "the limited refusal names the hold: {refused:?}"
-    );
+    for table in [
+        "LEGAL_HOLD_USE_LIMIT",
+        "LEGAL_HOLD_ERASE_LINK",
+        "LEGAL_HOLD_PENDING_ERASE",
+        "LEGAL_HOLD_TARGET",
+    ] {
+        assert!(
+            rows_for(&rows, table).is_empty(),
+            "the privacy erase archive carries no {table} row"
+        );
+    }
 }
