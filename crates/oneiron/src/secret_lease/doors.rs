@@ -17,6 +17,7 @@ use super::types::{
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result, SecretError};
 use crate::secret_record::{CustodyTier, SecretBinding, SecretCustodyFloor};
+use oneiron_contracts::lifecycle::Lifecycle;
 use zeroize::Zeroizing;
 
 use crate::vault::Vault;
@@ -462,8 +463,8 @@ impl Vault {
                 lease_id: *lease_id,
             }));
         };
-        if lease.status != SecretLeaseStatus::Revoked {
-            lease.status = SecretLeaseStatus::Revoked;
+        if !lease.status.is_terminal() {
+            lease.status.transition_to(SecretLeaseStatus::Revoked)?;
             write_secret_lease_in_txn(&self.store, &mut wtxn, &lease)?;
             teardown_local_registration_in_txn(&self.store, &mut wtxn, lease_id, at)?;
         }
@@ -480,13 +481,15 @@ impl Vault {
         let mut wtxn = self.store.env.write_txn()?;
         let mut due = Vec::new();
         for (_, lease) in SECRET_LEASE.scan(&self.store, &wtxn)? {
-            if lease.status == SecretLeaseStatus::Active && now >= lease.expires_at {
+            if lease.status == SecretLeaseStatus::Active
+                && oneiron_store::expiry::is_expired(now, lease.expires_at)
+            {
                 due.push(lease);
             }
         }
         let mut expired = 0usize;
         for mut lease in due {
-            lease.status = SecretLeaseStatus::Expired;
+            lease.status.transition_to(SecretLeaseStatus::Expired)?;
             write_secret_lease_in_txn(&self.store, &mut wtxn, &lease)?;
             teardown_local_registration_in_txn(&self.store, &mut wtxn, &lease.lease_id, now)?;
             expired += 1;

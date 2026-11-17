@@ -1,6 +1,7 @@
 //! Seam: the session handle — `SessionVault` enter/bind/witness/stage/search/close/promote — and the typed `SeamError` refusals.
 
 use crate::batch::BatchOp;
+use crate::code_run::replay_rows;
 use crate::config::VaultConfig;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -11,15 +12,14 @@ use crate::vault::Vault;
 
 use super::binding::{map_session_error, scoped_read_actor_key, scoped_read_visible_claim_count};
 
-/// ONE-1729 census tables, bound independently of `code_run`'s own private
-/// tables (two typed tables may bind one declaration): the acceptance pin
-/// is that the code-run key FORMATS did not change under the session
-/// route, so this reads the declared prefixes directly through the shared
-/// door rather than importing `code_run`'s own constants. Neither table's
-/// value type is read here (a row count only decodes keys), so both bind
-/// `()` rather than `code_run`'s real row types.
-const CODE_RUN_REPLAY_KEYS: SideTable<EntityId, (), Raw> =
-    SideTable::new(&side_table::CODE_RUN_REPLAY);
+/// ONE-1729 census table, bound independently of `code_run`'s own private
+/// table (two typed tables may bind one declaration): the acceptance pin
+/// is that the code-run key FORMAT did not change under the session
+/// route, so this reads the declared prefix directly through the shared
+/// door rather than importing `code_run`'s own constant. The value type is
+/// not read here (a row count only decodes keys), so it binds `()`
+/// rather than `code_run`'s real row type. The replay census goes through
+/// `code_run::replay_rows`, the table's one door.
 const CODE_RUN_RAW_OUTPUT_KEYS: SideTable<String, (), Raw> =
     SideTable::new(&side_table::CODE_RUN_RAW_OUTPUT);
 
@@ -275,6 +275,7 @@ impl<'vault> SessionVault<'vault> {
                     conversation_ref: String::new(),
                     turn_ref: None,
                     thread_audience: None,
+                    project: None,
                     messages: vec![crate::memory::WitnessMessage {
                         id: Some(message_id.to_hex()),
                         author: crate::memory::WitnessAuthor::User,
@@ -474,31 +475,25 @@ impl<'vault> SessionVault<'vault> {
     /// store would prove a row survives close without proving the sealed
     /// crossing is what put it there.
     pub(in crate::branch_store_oracle) fn append_floor_egress_decision(&self) -> Result<()> {
-        let record = crate::store::GateDecisionRecord {
-            version: 0,
-            decision_id: crate::store::GateDecisionId::now(),
-            created_at: 10,
-            outcome: "allow".to_owned(),
-            reason_codes: vec!["gate.policy_model.allow".to_owned()],
-            receipt_reasons: Vec::new(),
-            system_notices: Vec::new(),
-            actor_class: "agent".to_owned(),
-            actor_ref: Some("agent-alpha".to_owned()),
-            content_kind: "outbound_content".to_owned(),
-            policy_manifest_version: "test-policy".to_owned(),
-            // No grant_ref and no claim_id, so this crossing writes
-            // EXACTLY two `vault_meta` rows: the decision and its
-            // append-time retention-context sidecar (ONE-1642; claim-free,
-            // so vault scoped). The census delta below names those rows
-            // rather than an unexplained bump.
-            claim_id: None,
-            grant_ref: None,
-            diff_handle: vec![0xA5],
-            read_frontier_hash: [0xB6; 32],
-            context: crate::store::GateDecisionContext::default(),
-            redacted_at: None,
-        };
+        // No grant_ref and no claim (`about`), so this crossing writes
+        // EXACTLY two `vault_meta` rows: the decision and its
+        // append-time retention-context sidecar (ONE-1642; claim-free,
+        // so vault scoped). The census delta below names those rows
+        // rather than an unexplained bump.
+        let mut receipt = crate::store::GateReceipt::new(
+            crate::store::gate_reason::GateReceiptOutcome::Allow,
+            "outbound_content",
+            "gate.policy_model.allow",
+            crate::store::ReceiptActor::Verbatim {
+                class: "agent".to_owned(),
+                actor_ref: Some("agent-alpha".to_owned()),
+            },
+            vec![0xA5],
+            crate::store::PolicyBasis::versioned([0xB6; 32], "test-policy"),
+        );
+        receipt.decided_at = Some(oneiron_contracts::RecordedSeconds::from_secs(10));
         self.vault.with_write_txn(|wtxn| {
+            let record = self.vault.store.mint_gate_receipt_in_txn(wtxn, receipt)?;
             crate::off_record::FloorWrites::new(&self.vault.store)
                 .append_egress_gate_decision(wtxn, &record)
         })
@@ -574,12 +569,13 @@ impl<'vault> SessionVault<'vault> {
     /// ONE-1729: exact artifact census through the SESSION view —
     /// (speak turns, code-run replay records, raw-output rows).
     ///
-    /// The two `vault_meta` tables are bound directly against the shared
-    /// declarations (`CODE_RUN_REPLAY_KEYS`/`CODE_RUN_RAW_OUTPUT_KEYS`)
-    /// rather than through `code_run`'s own private tables: the acceptance
-    /// pin is that the code-run key FORMATS did not change under the
-    /// session route, and a census that reused the producer's own
-    /// constants would agree with a rename.
+    /// The raw-output `vault_meta` table is bound directly against the shared
+    /// declaration (`CODE_RUN_RAW_OUTPUT_KEYS`) rather than through
+    /// `code_run`'s own private table: the acceptance pin is that the
+    /// code-run key FORMAT did not change under the session route, and a
+    /// census that reused the producer's own constant would agree with a
+    /// rename. The replay census goes through `code_run::replay_rows`, the
+    /// table's one door.
     pub(in crate::branch_store_oracle) fn session_artifact_census(
         &self,
     ) -> Result<(usize, usize, usize)> {
@@ -593,7 +589,7 @@ impl<'vault> SessionVault<'vault> {
             row?;
             turns += 1;
         }
-        let replay_records = CODE_RUN_REPLAY_KEYS.scan_keys(&view, &rtxn, &[])?.len();
+        let replay_records = replay_rows::run_ids(&view, &rtxn)?.len();
         let raw_outputs = CODE_RUN_RAW_OUTPUT_KEYS.scan_keys(&view, &rtxn, &[])?.len();
         drop(rtxn);
         drop(view);

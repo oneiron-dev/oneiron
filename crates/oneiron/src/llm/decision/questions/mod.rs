@@ -37,6 +37,8 @@ pub use answer_scope::{
     read_question_in_lane, schedule_backfill_in_lane,
 };
 pub use answers::question_answers;
+#[cfg(oneiron_test_support)]
+pub(crate) use arrival::watch_key_pin_for_test;
 pub(crate) use arrival::{project_arrivals_for_changes_in_txn, project_arrivals_in_txn};
 pub(crate) use artifact_refresh::artifact_unit_receipts;
 pub use artifact_refresh::{
@@ -46,6 +48,8 @@ pub use artifact_refresh::{
     ArtifactRefreshBatch, ArtifactRefreshFailure, refresh_artifact_question_now,
     refresh_due_artifact_questions, refresh_due_artifact_questions_while,
 };
+#[cfg(oneiron_test_support)]
+pub(crate) use ask_history::ask_history_key_pin_for_test;
 pub(crate) use ask_history::erase_ask_history_actor_in_txn;
 pub(crate) use ask_history::{
     StandingReask, record_failed_standing_reask, record_standing_reask_in_txn,
@@ -59,6 +63,7 @@ pub use graph_ask::{
     run_graph_ask_by_type, run_graph_ask_receipted, select_graph_units_by_type,
 };
 pub(crate) use graph_ask::{trial_unit_context, trial_unit_context_in_txn};
+pub(crate) use health_ask::land_owner_health_outcome_in_txn;
 pub use health_ask::{
     HEALTH_CROSSING_PREDICATE, HEALTH_OUTCOME_PREDICATE, HealthAnswer, HealthBound,
 };

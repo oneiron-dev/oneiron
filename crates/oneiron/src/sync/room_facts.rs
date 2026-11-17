@@ -108,7 +108,7 @@ fn decode(bytes: &[u8]) -> Result<RoomSideRow> {
 
 /// The key `row`, encoded as `bytes`, rides under: a cell's room and handle,
 /// or a written-once row's carrier and its own digest.
-fn carrier_key(row: &RoomSideRow, bytes: &[u8]) -> String {
+pub(crate) fn carrier_key(row: &RoomSideRow, bytes: &[u8]) -> String {
     let digest = || {
         let mut hasher = blake3::Hasher::new();
         hasher.update(b"oneiron.room_facts.v1");
@@ -908,4 +908,23 @@ impl Vault {
         }
         carried
     }
+}
+
+/// Whether `room`'s host-pin cell is marked changed while no live window
+/// carried the room: the cell a room-cell refresh with no handle marks (the
+/// door of `tests/room_pins_noop_marks.rs`).
+#[cfg(oneiron_test_support)]
+pub(crate) fn room_host_pin_cell_marked(vault: &Vault, room: EntityId) -> Result<bool> {
+    let rtxn = vault.store.env.read_txn()?;
+    DIRTY.contains(&vault.store, &rtxn, &cell_key(room, None))
+}
+
+/// Clears `room`'s host-pin cell mark, as an import that carries the cell
+/// does (the door of `tests/room_pins_noop_marks.rs`).
+#[cfg(oneiron_test_support)]
+pub(crate) fn clear_room_host_pin_cell_mark(vault: &Vault, room: EntityId) -> Result<()> {
+    vault.with_write_txn_grouped(|wtxn| {
+        DIRTY.delete(&vault.store, wtxn, &cell_key(room, None))?;
+        Ok(())
+    })
 }

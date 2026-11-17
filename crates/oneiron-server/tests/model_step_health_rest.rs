@@ -4,7 +4,8 @@
 //! holds the offer for every other call. A rest longer than one submission
 //! waits parks the step, which resumes on its own once the offer is back.
 //! A pass that stops mid-way keeps the sends it made, each counted once it
-//! goes out.
+//! goes out. A schema correction that meets a rest past that wait parks and
+//! resumes the same way (STEP-CORRECTION-HEALTH-PARK).
 #![allow(clippy::unwrap_used)]
 
 #[path = "support/fake_llm.rs"]
@@ -82,8 +83,15 @@ async fn served(
     models: &ModelsConfig,
 ) -> (Arc<Vault>, axum::Router, AiHost) {
     let vault = Arc::new(Vault::open(dir, VaultConfig::device()).unwrap());
+    let (server, host) = server_over(&vault, models).await;
+    (vault, build_app(server), host)
+}
+
+/// A server over `vault` with its AI host attached under `models`, as
+/// [`served`] builds one.
+async fn server_over(vault: &Arc<Vault>, models: &ModelsConfig) -> (Arc<SyncServer>, AiHost) {
     let server = SyncServer::new(
-        Arc::clone(&vault),
+        Arc::clone(vault),
         SyncServerConfig {
             auth_secret: Some(SECRET.into()),
             ..Default::default()
@@ -91,7 +99,7 @@ async fn served(
     )
     .unwrap();
     let (server, host) = AiHost::attach(server, Some(models)).await;
-    (vault, build_app(Arc::new(server)), host)
+    (Arc::new(server), host)
 }
 
 /// `ai.steps.submit` as the host root's owner, for `step_key` with
@@ -296,6 +304,131 @@ fn a_parked_steps_resumes_keep_its_declared_attempts() {
         assert_eq!(done["result"]["status"], "failed", "{done:#}");
         assert_eq!(done["result"]["failure"]["class"], "retryable", "{done:#}");
         assert_eq!(fake.seen().len(), 3, "{done:#}");
+        host.shutdown().await;
+    });
+}
+
+/// A step parked before a restart resumes on its own on the next server
+/// (STEP-PARK-BOOT-RESUME): the step parks, the server stops before the
+/// offer is back, and a new server over the same vault, at its start, resumes
+/// it under the host root it holds, with no submission; the second send
+/// answers. On main nothing resumes the step after a restart: it stays
+/// parked until its key is submitted again.
+#[cfg(oneiron_test_support)]
+#[test]
+fn a_parked_step_resumes_after_a_restart_with_no_submission() {
+    on_engine_stack(|| async {
+        let fake = FakeLlm::start(
+            vec![Reply::Status(503), Reply::text("resumed after the restart")],
+            None,
+        )
+        .await;
+        let dir = tempfile::tempdir().unwrap();
+        let vault = Arc::new(Vault::open(dir.path(), VaultConfig::device()).unwrap());
+        let config = models(
+            &fake.base_url,
+            "health_rest_secs = 2\nstep_rest_wait_secs = 0",
+        );
+        let (first, host) = server_over(&vault, &config).await;
+        let first_server = Arc::downgrade(&first);
+        let app = build_app(first);
+        let body = receipt(&app, submit(&vault, "health-parks-restart", 3)).await;
+        assert_eq!(body["result"]["status"], "parked", "{body:#}");
+        assert_eq!(fake.seen().len(), 1, "{body:#}");
+        // The first server stops before the offer is back, and the resume
+        // task it started ends with it.
+        drop(app);
+        host.shutdown().await;
+        assert!(first_server.upgrade().is_none(), "the first server stopped");
+        let (second, host) = server_over(&vault, &config).await;
+        oneiron_server::test_doors::parked_step_resume::resume_parked_model_steps(&second);
+        let app = build_app(second);
+        let done = settled(&app, &vault, "health-parks-restart", 20).await;
+        assert_eq!(done["result"]["status"], "finished", "{done:#}");
+        assert!(
+            done.to_string().contains("resumed after the restart"),
+            "{done:#}"
+        );
+        assert_eq!(fake.seen().len(), 2, "{done:#}");
+        host.shutdown().await;
+    });
+}
+
+/// [`models`] on a provider with no native JSON mode: a JSON step's schema
+/// rides as a system message, and an answer the schema refuses is corrected
+/// by another call.
+fn shim_models(base_url: &str, extra: &str) -> ModelsConfig {
+    ModelsConfig::from_toml(
+        &format!(
+            r#"{extra}
+[providers.local]
+kind = "local-openai-compat"
+base_url = "{base_url}"
+revision = "rev-a"
+timeout_secs = 5
+capabilities = ["streaming"]
+[roles.generative_reasoner]
+rungs = [{{ model = "local:reasoner" }}]
+[dreamer]
+enabled = false
+"#
+        ),
+        None,
+    )
+    .unwrap()
+}
+
+/// The first call answers what its schema refuses; the correction's send
+/// gets a 503, and its retry meets the offer's rest past the step's rest
+/// wait. The step parks with the first call's send, and once the rest ends
+/// it resumes on its own and continues the correction, which answers: the
+/// first call is not asked again. On main the correction's rest fails the
+/// step.
+#[test]
+fn a_correction_parks_past_its_rest_wait_and_resumes_on_its_own() {
+    on_engine_stack(|| async {
+        let fake = FakeLlm::start(
+            vec![
+                Reply::text("not json"),
+                Reply::Status(503),
+                Reply::text(r#"{"answer":"resumed"}"#),
+            ],
+            Some(Reply::text("unreached")),
+        )
+        .await;
+        let dir = tempfile::tempdir().unwrap();
+        let extra = "health_rest_secs = 2\nstep_rest_wait_secs = 0";
+        let (vault, app, host) = served(dir.path(), &shim_models(&fake.base_url, extra)).await;
+        let mut input = step("correction-parks", 2);
+        input.request.envelope.response_format = ResponseFormat::Json {
+            schema: json!({
+                "type": "object",
+                "properties": {"answer": {"type": "string"}},
+                "required": ["answer"],
+            }),
+        };
+        let body = receipt(
+            &app,
+            owner_post(
+                &vault,
+                "ai.steps.submit",
+                serde_json::to_vec(&input).unwrap(),
+            ),
+        )
+        .await;
+        assert_eq!(body["result"]["status"], "parked", "{body:#}");
+        assert_eq!(fake.seen().len(), 2, "{body:#}");
+        let done = settled(&app, &vault, "correction-parks", 20).await;
+        assert_eq!(done["result"]["status"], "finished", "{done:#}");
+        assert_eq!(done["result"]["json"]["answer"], "resumed", "{done:#}");
+        assert_eq!(fake.seen().len(), 3, "{done:#}");
+        // The resume continues the correction, not the first call: its send
+        // carries the refused answer and the schema message correcting it.
+        let resumed = fake.seen()[2].body.to_string();
+        assert!(
+            resumed.contains("not json") && resumed.contains("schema_validation_errors"),
+            "{resumed}"
+        );
         host.shutdown().await;
     });
 }

@@ -1,4 +1,5 @@
-//! Commitment series doors: put, supersede, reconcile and instance close.
+//! Commitment series doors: put, supersede, reconcile, instance close and
+//! instance withdrawal.
 //! Entry: `Vault::reconcile_commitment_schedule`. The indexing, minting and close
 //! implementation they call stays in `projection`.
 
@@ -54,6 +55,9 @@ impl Vault {
         if self.get_raw_in(wtxn, id)?.is_some() {
             return Err(ScheduleError::Invalid("commitment claim id already exists"));
         }
+        // The owner's text cap judges the caller's record. A minted instance copies its series'
+        // stored text, so the projector never asks.
+        crate::commitment::setting_keys::check_commitment_text_in_txn(self, wtxn, &record.content)?;
         let mut candidate = commitment_claim_candidate(record)?
             .with_validity(Some(occurred.start), Some(occurred.end));
         if let Some(evidence) = evidence {
@@ -96,6 +100,12 @@ impl Vault {
         let candidate = commitment_claim_candidate(new_record)?
             .with_validity(Some(valid_time.start), Some(valid_time.end));
         self.try_with_write_txn_grouped(|wtxn| {
+            // The owner's text cap judges the caller's replacement text.
+            crate::commitment::setting_keys::check_commitment_text_in_txn(
+                self,
+                wtxn,
+                &new_record.content,
+            )?;
             self.batch_in()
                 .claim_candidate(new_id, candidate, envelope, valid_time, learned_at)
                 .apply(wtxn)?;
@@ -204,5 +214,39 @@ impl Vault {
             .learned_at
             .map_or(closed_at, |learned| learned.max(closed_at));
         self.commitment_successors_in_txn(wtxn, &closed, envelope, closed_at)
+    }
+
+    /// Reacts to an instance withdrawn by a generic retraction (FIX 22383):
+    /// its claim closed while its promise was open, so its occurrence is over
+    /// without a completion, as a released one is (FIX 23511).
+    ///
+    /// The series goes on past it. The evaluator ([`next_due`]) is asked
+    /// again at `withdrawn_at`, with the withdrawn occurrence counted closed,
+    /// and its answer is written as the series' `Project` row; the projector
+    /// mints it on its next pass, under its own envelope. An interval or a
+    /// rule gets the occurrence after the withdrawn one, and a quota week
+    /// rolls once every slot in it is closed (a week that still owes a slot
+    /// is named again, and the projector finds its slots already minted).
+    /// Nothing is minted in the caller's transaction, and the withdrawn
+    /// occurrence is never minted again: its membership row stays. A `Once`
+    /// series, a series that is no longer live, and a claim that is not a
+    /// scheduled instance write nothing.
+    pub(crate) fn on_instance_withdrawn_in_txn(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        instance_ref: &EntityId,
+        withdrawn_at: u64,
+    ) -> ScheduleResult<()> {
+        let Some(series_ref) = self.instance_series_ref_in_txn(&*wtxn, instance_ref)? else {
+            return Ok(());
+        };
+        let Some(series) = self.live_series_in_txn(&*wtxn, &series_ref)? else {
+            return Ok(());
+        };
+        if matches!(series.payload.schedule, Schedule::Once { .. }) {
+            return Ok(());
+        }
+        self.index_commitment_series_in_txn(wtxn, &series_ref, &series.payload, withdrawn_at)?;
+        Ok(())
     }
 }

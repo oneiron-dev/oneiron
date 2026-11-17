@@ -93,6 +93,7 @@ fn speak(
         conversation_ref: room.to_hex(),
         turn_ref: Some(turn.to_hex()),
         thread_audience: None,
+        project: None,
         messages: vec![WitnessMessage {
             id: Some(message.to_hex()),
             author: if class == EdgeActorClass::Human {

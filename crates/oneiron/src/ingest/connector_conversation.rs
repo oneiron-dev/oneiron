@@ -252,6 +252,7 @@ impl Vault {
             conversation_ref: conversation_hex.clone(),
             turn_ref: Some(turn_id.to_hex()),
             thread_audience: None,
+            project: None,
             messages: vec![message],
             occurred_at,
             assertions: Default::default(),
@@ -263,6 +264,7 @@ impl Vault {
             message_occurred: vec![occurred_at],
             source_audience: None,
             attribution: SourceAttribution::Unbound,
+            facet: None,
         };
         let receipt =
             self.memory(agent, EdgeActorClass::Agent)

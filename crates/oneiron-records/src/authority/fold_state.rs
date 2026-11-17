@@ -12,8 +12,8 @@ pub enum AuthorityFoldIssue {
     InvalidEntry(AuthorityEntryHash),
     /// Entry references a missing or invalid parent.
     InvalidAncestry(AuthorityEntryHash),
-    /// Entry is signed by a key a handoff retired, outside that handoff's
-    /// own ancestry.
+    /// Entry is signed by a key a handoff or a revocation retired, outside
+    /// that row's own ancestry.
     RetiredSigner(AuthorityEntryHash),
     /// A handoff that conflicts with another (a fork, a cycle) or yields to
     /// one whose fence stands: it installs no successor.
@@ -63,6 +63,11 @@ pub enum AuthorityFoldIssue {
         /// The floor, in bytes.
         floor_bytes: u64,
     },
+    /// A counted entry below its sequence floor, the highest sequence among
+    /// its signer's entries in its scope that do not descend from it: its
+    /// signer forked its sequence. The entry counts in full; this is the
+    /// fork's record, not a verdict on it (Engine RULING SEQ-FLOOR-SHAPE-S).
+    SequenceFork(AuthorityEntryHash),
 }
 
 /// Why the fold refused an actor-binding op.
