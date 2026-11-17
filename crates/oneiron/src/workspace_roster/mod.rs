@@ -125,13 +125,17 @@ pub use self::records::{
 pub(crate) use self::house_link::house_org_at_in_txn;
 pub(crate) use self::scrub::{
     erase_companion_principal_actor_in_txn, erase_member_actor_in_txn,
-    erase_member_intent_actor_in_txn,
+    erase_member_intent_actor_in_txn, member_actor_refs_in_txn,
 };
 pub use self::sharing::{
     CompanionSharingStored, CompanionSharingTarget, CompanionSharingView, RoomSharingClamp,
     RoomSharingView,
 };
 pub use self::work_companion::WorkCompanionPolicy;
+#[cfg(oneiron_test_support)]
+pub(crate) use self::{
+    codec::member_intent_key_pin_for_test, records::roster_member_key_pin_for_test,
+};
 
 // FIX [LIBTEST-QUARANTINE-WORKSPACE-ROSTER-TESTS]: the lib test target's type check fails here (24 errors: E0609 x13, E0308 x5, E0063 x3, E0599 x2, E0560 x1); port it, then drop this gate
 #[cfg(any())]
@@ -293,6 +297,8 @@ pub(crate) use rooms::backfill_room_turns_on_open;
 pub(crate) use rooms::erase_room_side_rows;
 #[cfg(feature = "sync")]
 pub(crate) use rooms::erased_side_row_here;
+#[cfg(oneiron_test_support)]
+pub(crate) use rooms::fact_key_pin_for_test;
 pub(crate) use rooms::room_group_project_in;
 pub(crate) use rooms::room_project_in;
 pub(crate) use rooms::room_thread_turns_in_txn;
@@ -310,7 +316,10 @@ pub(crate) use rooms::{
 pub(crate) use rooms::{
     erase_host_pin_actor_in_txn, erase_offer_actor_in_txn, erase_turn_actor_in_txn,
 };
-pub(crate) use rooms::{own_room_windows_in_txn, project_room_audience_in, room_join_audience_in};
+pub(crate) use rooms::{
+    own_room_windows_in_txn, project_room_audience_in, room_join_audience_in,
+    room_sole_owner_reader_in,
+};
 pub(crate) use rooms::{record_native_room_turn_in_txn, record_room_message_in_txn};
 
 pub(crate) use rooms::{Admitted, admit_participation_in_txn, join_subject_for_actor_in_txn};

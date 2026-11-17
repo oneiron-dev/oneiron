@@ -11,7 +11,13 @@ use serde::{Deserialize, Serialize};
 
 use super::cycle::{FreeTimeCycle, FreeTimeCycleState, close_cycle_in_txn};
 use super::items::FreeTimeItemBinding;
-use super::{CYCLE, FreeTimeKind, RECEIPT};
+use super::{CYCLE, FreeTimeKind, ITEM, RECEIPT};
+use crate::batch::export::ArchiveRetainedSideRow;
+use crate::batch::export::OwnerArchiveRestorePermit;
+use crate::batch::export::RetainedSideHeldBackReason;
+use crate::batch::export::archive_side_install::{
+    ArchivedSideRowOutcome, decode_archived_row, install_archived_row,
+};
 use crate::store::model_step_submission::StepBudgetRefusal;
 use crate::{EntityId, Result, Vault};
 
@@ -252,4 +258,78 @@ impl Vault {
         }
         Ok(None)
     }
+}
+
+impl Vault {
+    /// Lands one archived `DREAMER_FREE_TIME_RECEIPT` envelope: key/body agreement and the
+    /// C7 twin check, then an absent-key exact-bytes install that never reopens a cycle.
+    ///
+    /// # Errors
+    /// Storage faults; validation stays in the returned outcome.
+    pub(crate) fn land_archived_dreamer_free_time_receipt_row_in_txn(
+        vault: &Vault,
+        txn: &mut heed::RwTxn<'_>,
+        permit: &OwnerArchiveRestorePermit,
+        row: &ArchiveRetainedSideRow,
+    ) -> Result<ArchivedSideRowOutcome> {
+        let (key, receipt) = match decode_archived_row(&RECEIPT, row) {
+            Ok(decoded) => decoded,
+            Err(reason) => return Ok(ArchivedSideRowOutcome::HeldBack(reason)),
+        };
+        if key.0 != receipt.agent || key.1 != receipt.cycle || key.2 != receipt.item {
+            return Ok(ArchivedSideRowOutcome::HeldBack(
+                RetainedSideHeldBackReason::InvalidValue,
+            ));
+        }
+        if let Some(reason) = free_time_receipt_twins_hold_in_txn(vault, txn, &key, &receipt)? {
+            return Ok(ArchivedSideRowOutcome::HeldBack(reason));
+        }
+        install_archived_row(&RECEIPT, vault, txn, permit, &key, row)
+    }
+}
+
+/// Holds back a free-time receipt whose existing cycle or item twin disagrees with it (C7):
+/// absent twins are history, never a gate.
+fn free_time_receipt_twins_hold_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    key: &(EntityId, EntityId, EntityId),
+    receipt: &FreeTimeItemReceipt,
+) -> Result<Option<RetainedSideHeldBackReason>> {
+    let (agent, cycle, item) = key;
+    for row in CYCLE.iter_from(&vault.store, txn, agent.as_bytes())? {
+        let ((twin_agent, _), twin) = row?;
+        if twin_agent != *agent || twin.cycle != *cycle {
+            continue;
+        }
+        if twin.agent != *agent {
+            return Ok(Some(RetainedSideHeldBackReason::InconsistentCompanion));
+        }
+        let known = twin
+            .items
+            .iter()
+            .any(|known| known.item == *item && known.kind == receipt.kind);
+        if !known {
+            return Ok(Some(RetainedSideHeldBackReason::InconsistentCompanion));
+        }
+        break;
+    }
+    for row in ITEM.iter_from(&vault.store, txn, &[])? {
+        let (attempt, twin) = row?;
+        let named_attempt = receipt
+            .attempt
+            .as_ref()
+            .is_some_and(|named| attempt.as_bytes() == named);
+        if twin.item != *item && !named_attempt {
+            continue;
+        }
+        if twin.agent != *agent
+            || twin.cycle != *cycle
+            || twin.item != *item
+            || twin.kind != receipt.kind
+        {
+            return Ok(Some(RetainedSideHeldBackReason::InconsistentCompanion));
+        }
+    }
+    Ok(None)
 }

@@ -157,6 +157,9 @@ pub(crate) async fn start_desktop_workers(
     } else {
         lifecycle_admit
     };
+    // The owner's model steps parked before this start resume on this
+    // server's ladder, under the host root it holds (STEP-PARK-BOOT-RESUME).
+    crate::api::resume_parked_model_steps(&sync_server);
     let lifecycle = sync_server.spawn_lifecycle_scheduler(lifecycle_admit);
     // An answered code consent wait's effect runs on this server, whatever
     // hooks or models it serves, before the connector settler starts
