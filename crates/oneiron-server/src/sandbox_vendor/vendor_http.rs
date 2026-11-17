@@ -3,7 +3,9 @@
 //! wiped when the client drops; an HTTP client that follows no redirect and
 //! no proxy, so a secret goes only to the base it was sent to; the step's
 //! deadline and cancellation on every call; and error texts that never show
-//! a secret.
+//! a secret. For a vendor with no egress setting of its own (boat, InstaBox)
+//! it also holds the confinement every command of a run starts under, and
+//! the directory of the client's own files on the vendor's machine.
 //!
 //! Each call runs on a thread of its own, and the step's thread only waits
 //! for its answer ([`Answer`]), so the step's cancellation ends that wait
@@ -12,6 +14,7 @@
 //! step's deadline.
 
 use std::io::{self, Read, Write};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, SyncSender};
 use std::sync::{Mutex, Weak};
 use std::time::{Duration, Instant};
@@ -84,8 +87,23 @@ impl VendorHttp {
         }
     }
 
+    /// The command line of `argv` for the vendor's shell: every argument is
+    /// a plain word, so nothing in it is shell syntax.
+    pub(super) fn command_line(self, argv: &[&str]) -> oneiron::Result<String> {
+        let plain = |arg: &&str| {
+            !arg.is_empty()
+                && arg
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || b"_./-".contains(&byte))
+        };
+        if argv.is_empty() || !argv.iter().all(plain) {
+            return Err(self.failed("a vendor command argument is not a plain word"));
+        }
+        Ok(argv.join(" "))
+    }
+
     /// The vendor's name for its copy of a digest-pinned guest image (a
-    /// Daytona snapshot, an E2B template), built once from the image:
+    /// Daytona or boat snapshot, an E2B template), built once from the image:
     /// `oneiron-guest-<first 12 hex of its digest>`.
     pub(super) fn guest_image_name(self, guest_image: &str) -> oneiron::Result<String> {
         let digest = guest_image
@@ -483,5 +501,88 @@ impl<R: Read> Read for CancellableReader<R> {
             return Err(io::Error::other("the step was cancelled"));
         }
         self.inner.read(buf)
+    }
+}
+
+/// The user and group every command of a run on a vendor machine with no
+/// egress setting (boat, InstaBox) runs as: an id no account of the machine
+/// has (Debian allocates none from 65536 to 99999, and subordinate ids start
+/// at 100000). The guest then reaches none of the machine user's processes,
+/// home, login profile, user manager or session bus, and none of its files.
+const GUEST_ID: &str = "70000";
+
+/// What every command of such a run starts under: as root, a network
+/// namespace of its own, which holds only a loopback device; then
+/// [`GUEST_ID`] with no supplementary group and no way to gain a privilege.
+/// The machine user's passwordless sudo, any setuid program and the docker
+/// socket are then out of its reach, so it can neither leave the namespace
+/// nor change it: a vendor run has no egress (module doc of
+/// `VendorBatchBackend`). The confinement is made before the command
+/// starts, so on a machine where it cannot be made nothing runs. A Unix
+/// socket a system daemon serves at a path stays reachable: FIX
+/// [BOAT-GUEST-DAEMON-SOCKETS].
+const CONFINEMENT: [&str; 13] = [
+    "sudo",
+    "-n",
+    "unshare",
+    "--net",
+    "--",
+    "setpriv",
+    "--reuid",
+    GUEST_ID,
+    "--regid",
+    GUEST_ID,
+    "--clear-groups",
+    "--no-new-privs",
+    "--",
+];
+
+/// `argv`, run in the [`CONFINEMENT`].
+pub(super) fn confined<'a>(argv: &[&'a str]) -> Vec<&'a str> {
+    let mut confined: Vec<&'a str> = CONFINEMENT.to_vec();
+    confined.extend_from_slice(argv);
+    confined
+}
+
+/// Reads the file `path` onto standard output as the guest, in the
+/// [`CONFINEMENT`]: what the guest leaves at `path`, even a link to a file
+/// of the machine's user or of root, yields nothing the guest could not read
+/// itself.
+pub(super) fn read_as_guest(path: &str) -> Vec<&str> {
+    confined(&["cat", "--", path])
+}
+
+/// Writes its standard input to the file `path` as the guest, in the
+/// [`CONFINEMENT`], and copies it to its standard output, which the client
+/// discards. The client opens that input, a file of its own
+/// ([`ClientFiles`]), so neither root nor the machine's user opens a path
+/// the guest can reach, and what the guest leaves at `path`, even a link,
+/// takes nothing the guest could not write itself.
+pub(super) fn write_as_guest(path: &str) -> Vec<&str> {
+    confined(&["tee", "--", path])
+}
+
+/// The directory of the client's own files on a vendor machine with no
+/// egress setting: each upload as staged, each download as copied out, and
+/// each command's exit status where the vendor keeps none. The machine's
+/// user makes it ([`MAKE_CLIENT_DIR`]) once the machine runs and before any
+/// command of the run, so no guest ever places a file or a link in it, and
+/// its mode keeps the guest out of it.
+const CLIENT_DIR: &str = "/tmp/oneiron-client";
+
+/// Makes [`CLIENT_DIR`], private to the machine's user; a machine that
+/// already has it is not a fresh one.
+pub(super) const MAKE_CLIENT_DIR: [&str; 4] = ["mkdir", "-m", "0700", CLIENT_DIR];
+
+/// Names the client's files in [`CLIENT_DIR`], each one once.
+#[derive(Default)]
+pub(super) struct ClientFiles(AtomicU64);
+
+impl ClientFiles {
+    /// A file of the client's, named `kind`, that no other file of this
+    /// client has.
+    pub(super) fn next(&self, kind: &str) -> String {
+        let number = self.0.fetch_add(1, Ordering::Relaxed);
+        format!("{CLIENT_DIR}/{kind}-{number}")
     }
 }

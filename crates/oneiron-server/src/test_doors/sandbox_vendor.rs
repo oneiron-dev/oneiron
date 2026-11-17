@@ -1,6 +1,6 @@
 //! Doors for `tests/sandbox_vendor_daytona.rs`,
-//! `tests/sandbox_vendor_e2b.rs` and `tests/sandbox_vendor_modal.rs`
-//! (L8-43): the vendor sandboxes this server serves, with the vendor's API
+//! `tests/sandbox_vendor_e2b.rs`, `tests/sandbox_vendor_modal.rs` and
+//! `tests/sandbox_vendor_boat.rs` (L8-43): the vendor sandboxes this server serves, with the vendor's API
 //! at the test's own address.
 
 use std::path::PathBuf;
@@ -10,7 +10,7 @@ use oneiron::Vault;
 use oneiron::code_sandbox::microvm::SandboxBackends;
 
 use crate::sandbox_vendor::{
-    DaytonaEndpoints, E2bEndpoints, ModalEndpoints, ServedSandboxBackends,
+    BoatEndpoints, DaytonaEndpoints, E2bEndpoints, ModalEndpoints, ServedSandboxBackends,
 };
 
 /// The served backends of `vault`, reaching Daytona's control API at `api`
@@ -62,6 +62,23 @@ pub fn served_modal_backends(
     Arc::new(ServedSandboxBackends::with_modal(
         vault,
         ModalEndpoints {
+            api: api.to_owned(),
+        },
+        scratch_root,
+    ))
+}
+
+/// The served backends of `vault`, reaching boat's API at `api` (each
+/// signed file URL at the address that API names), with each run's scratch
+/// under `scratch_root`.
+pub fn served_boat_backends(
+    vault: &Arc<Vault>,
+    api: &str,
+    scratch_root: PathBuf,
+) -> Arc<dyn SandboxBackends> {
+    Arc::new(ServedSandboxBackends::with_boat(
+        vault,
+        BoatEndpoints {
             api: api.to_owned(),
         },
         scratch_root,
