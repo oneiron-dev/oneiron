@@ -30,6 +30,12 @@ pub(crate) use storage::{
     code_document_identity_in_txn, code_document_texts_in_txn, erase_head_actor_in_txn,
     erase_ingress_actor_in_txn, verify_frontier_in_txn,
 };
+#[cfg(oneiron_test_support)]
+pub(crate) use storage::{
+    PinsCodeDocumentReceipt, put_pins_code_document_frontier_in_txn,
+    put_pins_code_document_head_in_txn, put_pins_code_document_ingress_in_txn,
+    put_pins_code_document_path_in_txn,
+};
 pub(crate) use types::CodeOpProvenanceValidation;
 pub use types::{
     CodeDocumentFrontier, CodeEditReceipt, CodeFileEdit, CodeOpAttribution, CodeOpProvenance,

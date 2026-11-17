@@ -15,6 +15,11 @@ mod snapshot;
 mod store;
 pub(crate) use self::store::checkpoint;
 pub(crate) use self::store::{archive_codebase_asset_id, archive_codebase_tables};
+#[cfg(oneiron_test_support)]
+pub(crate) use self::store::{
+    put_pins_fork_index_row_in_txn, put_pins_project_index_row_in_txn,
+    put_pins_repo_index_row_in_txn, put_pins_scope_index_row_in_txn,
+};
 
 // The ASSET a snapshot file's bytes are stored as, for a door that lists it.
 pub(crate) use self::store::codebase_asset_entity_id as snapshot_asset_entity_id;
@@ -71,3 +76,6 @@ use crate::error::Result;
 use crate::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_CODE_ARTIFACT};
 #[cfg(test)]
 use rmpv::Value;
+
+#[cfg(oneiron_test_support)]
+pub(crate) use self::store::{hash_index_key_pin_for_test, text_index_key_pin_for_test};
