@@ -309,7 +309,13 @@ impl HouseProbe {
             },
             build_evidence,
         };
-        judge(observed, &expected.expected, launch.as_ref())
+        // A launch on its own socket serves as a reranker (`--reranking`,
+        // L9-15), which renders no chat template.
+        if on_socket.is_some() {
+            judge_reranker(observed, &expected.expected, launch.as_ref())
+        } else {
+            judge(observed, &expected.expected, launch.as_ref())
+        }
     }
 }
 
@@ -527,6 +533,24 @@ fn judge(
     judge_pins(observed, config, launch, &required)
 }
 
+/// A socket reranker's judgement (L9-15): [`judge_pins`] with model and
+/// runtime required. A reranker GGUF need carry no chat template, so the
+/// template is required only where the config or the launch pins one; an
+/// answer that contradicts a pinned template still fails.
+fn judge_reranker(
+    observed: WorkerDescriptor,
+    config: &CacheIdentity,
+    launch: Option<&LaunchRecord>,
+) -> WorkerReadiness {
+    let template_pinned =
+        config.template.is_some() || launch.is_some_and(|launch| launch.pins.template.is_some());
+    if template_pinned {
+        return judge(observed, config, launch);
+    }
+    let required: [Field; 2] = [model, runtime];
+    judge_pins(observed, config, launch, &required)
+}
+
 /// Whether `observed` serves as pinned: a contradiction of any pin, from the
 /// config or this launch's verified bytes, is `Failed`; with no
 /// contradiction, `Ready` needs every `required` field pinned and observed
@@ -585,5 +609,91 @@ pub(super) fn judge_pins(
         WorkerReadiness::Unverified {
             observed: Some(observed),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn digest(nibble: char) -> CacheDigest {
+        CacheDigest::new(nibble.to_string().repeat(64)).expect("digest")
+    }
+
+    /// A llama.cpp answer naming model `a`, runtime `b` and `template`, with
+    /// an epoch and verified artifacts.
+    fn answered(template: Option<CacheDigest>) -> WorkerDescriptor {
+        WorkerDescriptor {
+            kind: WorkerKind::LlamaCpp,
+            identity: CacheIdentity {
+                model: Some(digest('a')),
+                runtime: Some(digest('b')),
+                template,
+                backend_epoch: Some(CacheEpoch::new("e".repeat(32)).expect("epoch")),
+                ..CacheIdentity::default()
+            },
+            build_evidence: WorkerBuildEvidence::VerifiedArtifacts,
+        }
+    }
+
+    fn pinned(template: Option<CacheDigest>) -> CacheIdentity {
+        CacheIdentity {
+            model: Some(digest('a')),
+            runtime: Some(digest('b')),
+            template,
+            ..CacheIdentity::default()
+        }
+    }
+
+    #[test]
+    fn a_socket_reranker_without_a_chat_template_qualifies_on_its_model_and_runtime() {
+        let config = pinned(None);
+        assert!(matches!(
+            judge_reranker(answered(None), &config, None),
+            WorkerReadiness::Ready { .. }
+        ));
+        // A chat worker's judgement keeps the template required.
+        assert!(matches!(
+            judge(answered(None), &config, None),
+            WorkerReadiness::Unverified { .. }
+        ));
+    }
+
+    #[test]
+    fn a_pinned_template_still_binds_a_socket_reranker() {
+        let config = pinned(Some(digest('c')));
+        assert!(matches!(
+            judge_reranker(answered(None), &config, None),
+            WorkerReadiness::Unverified { .. }
+        ));
+        assert!(matches!(
+            judge_reranker(answered(Some(digest('d'))), &config, None),
+            WorkerReadiness::Failed {
+                failure: WorkerFailure::TemplateMismatch,
+                ..
+            }
+        ));
+        assert!(matches!(
+            judge_reranker(answered(Some(digest('c'))), &config, None),
+            WorkerReadiness::Ready { .. }
+        ));
+    }
+
+    #[test]
+    fn a_socket_reranker_answering_another_model_fails() {
+        let other = WorkerDescriptor {
+            identity: CacheIdentity {
+                model: Some(digest('f')),
+                ..answered(None).identity
+            },
+            ..answered(None)
+        };
+        assert!(matches!(
+            judge_reranker(other, &pinned(None), None),
+            WorkerReadiness::Failed {
+                failure: WorkerFailure::ModelMismatch,
+                ..
+            }
+        ));
     }
 }
