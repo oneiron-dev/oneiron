@@ -64,8 +64,6 @@ pub const VERB_PREVIEW: &str = "image.preview";
 /// The typed body the organ reads and writes, and its schema.
 pub const IMAGE_BODY_KIND: &str = "image";
 pub const IMAGE_BODY_SCHEMA: u32 = 1;
-/// The most ops one edit takes.
-pub const MAX_IMAGE_OPS: usize = 256;
 /// The bounds of a preview's longest side, in pixels.
 pub const MIN_PREVIEW_SIDE: u32 = 16;
 pub const MAX_PREVIEW_SIDE: u32 = 2048;
@@ -160,7 +158,8 @@ pub struct ImageEdit {
     pub artifact: EntityId,
     /// The version edited; the head when `None`.
     pub version: Option<u64>,
-    /// 1 to [`MAX_IMAGE_OPS`] ops, applied in order.
+    /// 1 to the vault's `organ_host.image.max_ops` ops (default 256), applied
+    /// in order.
     pub ops: Vec<ImageOp>,
     /// The proposal's ref.
     pub run_ref: String,
@@ -201,8 +200,8 @@ pub enum ImageEditRefusal {
     NotAnImage { media_type: String },
     #[error("an edit names at least one op")]
     NoOps,
-    #[error("an edit names at most 256 ops, not {count}")]
-    TooManyOps { count: usize },
+    #[error("an edit names at most {max} ops, not {count}")]
+    TooManyOps { count: usize, max: usize },
     #[error("a preview's longest side is 16 to 2048 pixels, not {max_side}")]
     PreviewSide { max_side: u32 },
     /// No node can run the call now: a preview's answer, which holds
@@ -268,8 +267,10 @@ const fn organ_code(code: ErrorCode) -> &'static str {
 
 impl ImageEdit {
     /// The edit as one `image.render` call over `source`: each op in order,
-    /// then the PNG export.
-    fn render_call(&self, source: OrganInput) -> OrganCall {
+    /// then the PNG export. `max_ops` is the vault owner's count
+    /// (`organ_host.image.max_ops`), which the organ applies in place of
+    /// its own default.
+    fn render_call(&self, source: OrganInput, max_ops: usize) -> OrganCall {
         let ops = self.ops.iter().copied().map(ImageOp::render_arg).collect();
         OrganCall {
             organ: IMAGE_ORGAN.to_owned(),
@@ -278,6 +279,7 @@ impl ImageEdit {
             args: Value::Map(vec![
                 ("ops".into(), Value::Array(ops)),
                 ("format".into(), "png".into()),
+                ("max_ops".into(), max_ops.into()),
             ]),
             body: None,
             inputs: vec![SightedInput {
@@ -356,15 +358,19 @@ pub fn edit_image(
     if edit.ops.is_empty() {
         return Err(ImageEditRefusal::NoOps);
     }
-    if edit.ops.len() > MAX_IMAGE_OPS {
+    // The vault owner's count (`organ_host.image.max_ops`), read before the
+    // source or the organ.
+    let max = oneiron::blob_artifact::image_edit_max_ops(vault)?;
+    if edit.ops.len() > max {
         return Err(ImageEditRefusal::TooManyOps {
             count: edit.ops.len(),
+            max,
         });
     }
     let (source, input) = image_source(vault, edit.artifact, edit.version)?;
     let job = JobCall {
         run_ref: edit.run_ref.clone(),
-        call: edit.render_call(input),
+        call: edit.render_call(input, max),
         lent: Vec::new(),
         trigger: edit.trigger.clone(),
         submitter: edit.submitter,
@@ -409,8 +415,8 @@ pub struct ImagePreview {
     pub artifact: EntityId,
     /// The version shown; the head when `None`.
     pub version: Option<u64>,
-    /// Up to [`MAX_IMAGE_OPS`] ops, applied in order; none shows the
-    /// version as it is.
+    /// Up to the vault's `organ_host.image.max_ops` ops (default 256),
+    /// applied in order; none shows the version as it is.
     pub ops: Vec<ImageOp>,
     /// The longest side the preview may have, [`MIN_PREVIEW_SIDE`] to
     /// [`MAX_PREVIEW_SIDE`]. A larger canvas is scaled down, its aspect kept.
@@ -447,7 +453,10 @@ struct PreviewReport {
 }
 
 impl ImagePreview {
-    fn preview_call(&self, source: OrganInput) -> OrganCall {
+    /// The preview as one `image.preview` call over `source`. `max_ops` is
+    /// the vault owner's count (`organ_host.image.max_ops`), which the organ
+    /// applies in place of its own default, as for an edit.
+    fn preview_call(&self, source: OrganInput, max_ops: usize) -> OrganCall {
         let ops = self.ops.iter().copied().map(ImageOp::render_arg).collect();
         OrganCall {
             organ: IMAGE_ORGAN.to_owned(),
@@ -456,6 +465,7 @@ impl ImagePreview {
             args: Value::Map(vec![
                 ("ops".into(), Value::Array(ops)),
                 ("max_side".into(), self.max_side.into()),
+                ("max_ops".into(), max_ops.into()),
             ]),
             body: None,
             inputs: vec![SightedInput {
@@ -485,9 +495,12 @@ pub fn preview_image(
     preview: &ImagePreview,
     asks: &AskHandlers<'_>,
 ) -> Result<ImagePreviewed, ImageEditRefusal> {
-    if preview.ops.len() > MAX_IMAGE_OPS {
+    // The vault owner's count (`organ_host.image.max_ops`), as for an edit.
+    let max = oneiron::blob_artifact::image_edit_max_ops(vault)?;
+    if preview.ops.len() > max {
         return Err(ImageEditRefusal::TooManyOps {
             count: preview.ops.len(),
+            max,
         });
     }
     if !(MIN_PREVIEW_SIDE..=MAX_PREVIEW_SIDE).contains(&preview.max_side) {
@@ -497,7 +510,8 @@ pub fn preview_image(
     }
     let (_, input) = image_source(vault, preview.artifact, preview.version)?;
     let version = input.version;
-    let outcome = match router.call_with(vault, preview.preview_call(input), Vec::new(), asks)? {
+    let call = preview.preview_call(input, max);
+    let outcome = match router.call_with(vault, call, Vec::new(), asks)? {
         Routed::Done { outcome, .. } => outcome,
         Routed::Waiting(wait) => {
             return Err(ImageEditRefusal::NoNode {

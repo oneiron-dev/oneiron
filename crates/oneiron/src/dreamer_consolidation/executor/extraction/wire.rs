@@ -10,7 +10,9 @@
 //! candidates may also name a subject by its 32-hex id and cite a source by
 //! its id with a byte range or a claim id (FIX 7577). Its sources bind
 //! through the call's map as a label does, and its subject id is the
-//! resident's own; a model's reply never reads these shapes.
+//! resident's own; a model's reply never reads these shapes. A covered
+//! slice's relation reply (L2-03) is authored by the engine too, from the
+//! saved tags, and cites in the same range shape.
 
 use super::ParsedCandidate;
 use super::quote_binding::{QuoteBinding, bind_quote};
@@ -168,7 +170,7 @@ pub(in crate::dreamer_consolidation) fn check_extraction_reply(
         ));
     }
     let reply = extraction_reply(response).map_err(|error| error.to_string())?;
-    let authored = authored_fallback(response);
+    let authored = authored_fallback(response) || is_relation_reply(response);
     for (index, candidate) in reply.candidates.iter().enumerate() {
         if let Some(field) = contract_fault(candidate, authored) {
             return Err(format!(
@@ -185,6 +187,16 @@ pub(super) fn authored_fallback(response: &LlmResponse) -> bool {
     matches!(
         &response.finish_reason,
         FinishReason::Other { name } if name.starts_with("fallback:")
+    )
+}
+
+/// Whether `response` is a covered slice's relation reply (`authored:`,
+/// L2-03): the engine authored it from the saved tags, so it cites in the
+/// shapes a fallback's reply reads. It is no provider failure's reply.
+pub(super) fn is_relation_reply(response: &LlmResponse) -> bool {
+    matches!(
+        &response.finish_reason,
+        FinishReason::Other { name } if name.starts_with("authored:")
     )
 }
 
