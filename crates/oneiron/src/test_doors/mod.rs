@@ -96,8 +96,8 @@ pub mod fingerprint_keep_dreamer;
 pub mod fingerprint_keep_executor_cohort_credit;
 pub mod fingerprint_keep_git_wire;
 pub mod fingerprint_keep_hook_digests;
-pub mod fingerprint_keep_origin;
 pub mod fingerprint_keep_imap_plan_encoder_digests;
+pub mod fingerprint_keep_origin;
 pub mod fingerprint_keep_saved_query;
 pub mod fingerprint_keep_typed_feeds;
 pub mod free_time_cycle_writer;
@@ -178,9 +178,9 @@ pub mod parked_own_retract;
 pub mod payment_credential;
 #[cfg(feature = "sync")]
 pub mod peer_author_redaction;
-pub mod pending_write_tray;
 #[cfg(feature = "sync")]
 pub mod pending_work_reports;
+pub mod pending_write_tray;
 #[cfg(feature = "sync")]
 pub mod predicted_residence;
 pub mod provenance_body_checkpoint;
