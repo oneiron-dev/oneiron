@@ -1077,3 +1077,75 @@ fn a_tombstone_in_another_calendar_before_the_start_does_not_date_the_host_tombs
         "the host's cancel is seen when its own calendar reports it, after the start"
     );
 }
+
+/// Review round 2 of #8230: a newer SEQUENCE of a cancellation whose first
+/// sighting stopped before its refund is still the cancellation first seen
+/// then. The feed sends it again, re-versioned, after the booking's start:
+/// the refund is dated by the first sighting the passport carries, and a
+/// later read of that same version keeps it.
+#[cfg(oneiron_test_support)]
+#[test]
+fn a_host_cancel_resent_as_a_newer_version_after_the_start_keeps_its_first_sighting() {
+    let fixture = Fixture::open();
+    let booked = captured_booking(&fixture, "pi_resent", 9);
+    poll_host_feed(
+        &fixture,
+        &booked,
+        slot_at(9).start,
+        0,
+        false,
+        "v1",
+        NOW + 60,
+    )
+    .expect("the first host feed poll");
+    // The cancellation's passport commits at 08:02, and the poll stops
+    // before its refund does.
+    oneiron::test_doors::host_cancel_refund::stop_before_next_host_cancel_refund();
+    assert!(
+        poll_host_feed(
+            &fixture,
+            &booked,
+            slot_at(9).start,
+            1,
+            true,
+            "v2",
+            NOW + 120
+        )
+        .is_err(),
+        "the door stops the poll"
+    );
+    // After the start the host's feed carries the cancellation as SEQUENCE 2.
+    poll_host_feed(
+        &fixture,
+        &booked,
+        slot_at(9).start,
+        2,
+        true,
+        "v3",
+        slot_at(9).start + 60,
+    )
+    .expect("the newer version's poll");
+    assert_eq!(
+        fixture.state_of("pi_resent"),
+        DepositState::RefundDue {
+            amount_minor: 4_000
+        },
+        "a cancellation first seen before the start keeps its full refund across versions"
+    );
+    poll_host_feed(
+        &fixture,
+        &booked,
+        slot_at(9).start,
+        2,
+        true,
+        "v4",
+        slot_at(9).start + 120,
+    )
+    .expect("a later read of the same version");
+    assert_eq!(
+        fixture.state_of("pi_resent"),
+        DepositState::RefundDue {
+            amount_minor: 4_000
+        }
+    );
+}
