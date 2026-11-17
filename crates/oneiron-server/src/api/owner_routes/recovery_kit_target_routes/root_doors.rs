@@ -28,10 +28,10 @@ use axum::extract::State;
 use axum::http::{Extensions, HeaderMap};
 use axum::response::Json;
 use axum::routing::post;
-use oneiron::EntityId;
 use oneiron::authority::{ActAuthority, RecoveryRootId};
 use oneiron::recovery::{KitIssue, PassphraseCost, PieceHome};
 use oneiron::world_keys::{KitConfirmation, RootWorkDone};
+use oneiron::{EntityId, Vault};
 use serde::Deserialize;
 use zeroize::Zeroizing;
 
@@ -164,7 +164,7 @@ struct IssueDoor {
 
 #[derive(Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
-struct ConfirmDoor {
+pub(crate) struct ConfirmDoor {
     target: String,
     pieces: Vec<String>,
     #[serde(default)]
@@ -305,29 +305,36 @@ async fn confirm(
     let surface = act_surface_admitted(&server, &auth, &headers, &extensions);
     let body = payload.read(&server).await?;
     kit_target(&server, &body.target)?;
-    let answer = blocking(move || -> OwnerResult<RootWorkAnswer> {
-        let vault = server.vault();
-        let carry = body
-            .carry
-            .iter()
-            .map(|machine| entity_id("carry", machine))
-            .collect::<OwnerResult<BTreeSet<EntityId>>>()?;
-        let kit = Kit::parse(body.pieces, body.passphrase)?;
-        let pieces = kit.pieces();
-        let authority = ActAuthority::Owner(owner, surface);
-        let confirmed =
-            vault.confirm_world_kit_as(&authority, &pieces, kit.passphrase.as_ref(), &carry)?;
-        let mirror_pending = confirmed.mirror_pending;
-        Ok(RootWorkAnswer::of(
-            vault,
-            RootWorkDone::KitConfirmed {
-                kit: Box::new(confirmed),
-                mirror_pending,
-            },
-        ))
-    })
-    .await?;
+    let authority = ActAuthority::Owner(owner, surface);
+    let answer = blocking(move || confirm_answer(server.vault(), &authority, body)).await?;
     Ok(Json(answer))
+}
+
+/// The confirm door's blocking body: `body`'s pieces confirm the pending kit
+/// as `authority`, and its root goes live here. The route reads the payload
+/// and checks the target first; the test doors call this directly.
+pub(crate) fn confirm_answer(
+    vault: &Vault,
+    authority: &ActAuthority,
+    body: ConfirmDoor,
+) -> OwnerResult<RootWorkAnswer> {
+    let carry = body
+        .carry
+        .iter()
+        .map(|machine| entity_id("carry", machine))
+        .collect::<OwnerResult<BTreeSet<EntityId>>>()?;
+    let kit = Kit::parse(body.pieces, body.passphrase)?;
+    let pieces = kit.pieces();
+    let confirmed =
+        vault.confirm_world_kit_as(authority, &pieces, kit.passphrase.as_ref(), &carry)?;
+    let mirror_pending = confirmed.mirror_pending;
+    Ok(RootWorkAnswer::of(
+        vault,
+        RootWorkDone::KitConfirmed {
+            kit: Box::new(confirmed),
+            mirror_pending,
+        },
+    ))
 }
 
 /// The OpenAPI schema of `POST /v1/owner/roots/anchor`'s body (FIX 11611):

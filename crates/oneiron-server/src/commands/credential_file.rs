@@ -52,7 +52,15 @@ pub(crate) fn create(path: &Path) -> anyhow::Result<File> {
 /// on disk before the change that makes it the only way in. On failure the
 /// file is removed and nothing is said to be kept.
 pub(crate) fn write_new(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
-    let mut file = create(path)?;
+    let file = create(path)?;
+    write_created(path, file, bytes)
+}
+
+/// Writes `bytes` and a newline to `file`, the open new file `path` that
+/// [`create`] made, synced with its directory entry, as [`write_new`] does,
+/// for a caller that creates the file before the act whose result it holds.
+/// On failure the file is removed and nothing is said to be kept.
+pub(crate) fn write_created(path: &Path, mut file: File, bytes: &[u8]) -> anyhow::Result<()> {
     let written = file
         .write_all(bytes)
         .and_then(|()| file.write_all(b"\n"))
