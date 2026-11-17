@@ -76,7 +76,12 @@ use serde::Serialize;
 /// for and each such key a second vouch confirmed (row WEB-PASSKEY-OWNER-KEY).
 /// 45: a counted root appointment folds its line as its own ancestry's fold did, and a
 /// rootless roster names itself (OWNER-ANCHOR-ROOT-RECOVERY).
-pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 45;
+/// 46: on a hosted fold a `human` bind or rebind, and a bind or rebind of any class of a key whose
+/// binding, live or revoked, is `human` or of a live key a `human` binding could name (an owner
+/// or admin key, the custodial root's too), counts only with the proof of an owner key no cloud
+/// key holds and no passkey limit holds (rows OLD-PARENTS-OWNER-BINDING-REVOKE,
+/// OLD-PARENTS-OWNER-BINDING-CONFLICT).
+pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 46;
 
 /// The domain every encoded image starts with.
 pub const AUTHORITY_CHECKPOINT_V2_DOMAIN: &[u8] = b"oneiron/authority/checkpoint/v2";

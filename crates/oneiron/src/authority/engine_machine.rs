@@ -53,7 +53,7 @@ impl Vault {
     }
 
     /// Every engine MACHINE writer, its row created on first use.
-    pub(super) fn engine_machine_actors(&self) -> Result<[EntityId; 11]> {
+    pub(super) fn engine_machine_actors(&self) -> Result<[EntityId; 12]> {
         let seed = ENGINE_MACHINE_SEED_TIME;
         Ok([
             self.ensure_commitment_projection_machine(seed)?,
@@ -67,6 +67,7 @@ impl Vault {
             self.ensure_scope_summary_landing_machine(seed)?,
             self.ensure_plugin_section_fit_install_machine(seed)?,
             self.ensure_commitment_lapse_machine(seed)?,
+            self.ensure_provider_inbound_machine(seed)?,
         ])
     }
 
@@ -209,6 +210,12 @@ impl Vault {
     fn ensure_commitment_lapse_machine(&self, now: u64) -> Result<EntityId> {
         self.with_write_txn_grouped(|txn| {
             crate::housekeeping::ensure_commitment_lapse_writer_machine(self, txn, now)
+        })
+    }
+
+    fn ensure_provider_inbound_machine(&self, now: u64) -> Result<EntityId> {
+        self.with_write_txn_grouped(|txn| {
+            crate::surface_event::ensure_provider_inbound_machine(self, txn, now)
         })
     }
 }
