@@ -11,8 +11,8 @@
 //!
 //! More often is tighter ([`more_often_is_tighter`]): a holder's cadence stays inside the owner's
 //! row, and where the owner set none, inside the default once the default caps a holder (stage
-//! 0.3), so a holder can run a sweep more often but never slow it past its duty without the
-//! owner.
+//! 0.3), so a holder can run a sweep more often but never slow it past its duty, or put its first
+//! run off, without the owner.
 
 use crate::federation::EngineControlClass;
 use crate::schedule::{Trigger, more_often_is_tighter};

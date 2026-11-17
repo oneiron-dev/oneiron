@@ -191,16 +191,36 @@ impl std::fmt::Debug for JobSpec {
 }
 
 /// The tighter direction of a cadence key ([`crate::setting::Kind::tighter`]): `a` is at least
-/// as tight as `b` when it runs at least as often. Only two intervals compare; any other pair is
-/// as tight only when equal, so a holder's wall-clock or one-time cadence stays inside the
+/// as tight as `b` when it runs at least as often and starts no later. Only two intervals
+/// compare: `a`'s is no longer than `b`'s, and `a`'s first time is no later than `b`'s
+/// ([`starts_no_later`]), so a holder cannot put a sweep off by a far first time. Any other pair
+/// is as tight only when equal, so a holder's wall-clock or one-time cadence stays inside the
 /// owner's row.
 #[must_use]
 pub(crate) fn more_often_is_tighter(a: &Trigger, b: &Trigger) -> bool {
     match (a, b) {
-        (Trigger::Every { secs: a_secs, .. }, Trigger::Every { secs: b_secs, .. }) => {
-            a_secs <= b_secs
-        }
+        (
+            Trigger::Every {
+                secs: a_secs,
+                first_at: a_first,
+            },
+            Trigger::Every {
+                secs: b_secs,
+                first_at: b_first,
+            },
+        ) => a_secs <= b_secs && starts_no_later(*a_first, *b_first),
         _ => a == b,
+    }
+}
+
+/// Whether an interval's first time `a` comes no later than `b`. An absent first time is the
+/// arming's now, the earliest; a set one never counts as no later than an absent one, since the
+/// order compares values without a clock.
+fn starts_no_later(a: Option<u64>, b: Option<u64>) -> bool {
+    match (a, b) {
+        (None, _) => true,
+        (Some(_), None) => false,
+        (Some(a), Some(b)) => a <= b,
     }
 }
 
