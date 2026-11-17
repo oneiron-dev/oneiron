@@ -105,6 +105,15 @@ impl Vault {
         RUNS.get(&self.store, &self.store.env.read_txn()?, id)
     }
 
+    /// One run as `txn` holds it.
+    pub(crate) fn training_run_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+    ) -> Result<Option<TrainingRun>> {
+        RUNS.get(&self.store, txn, id)
+    }
+
     pub fn training_runs(&self) -> Result<Vec<TrainingRun>> {
         let txn = self.store.env.read_txn()?;
         RUNS.iter_from(&self.store, &txn, &[])?
