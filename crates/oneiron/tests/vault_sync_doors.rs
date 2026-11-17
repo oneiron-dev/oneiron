@@ -1,13 +1,15 @@
 //! The `vault.sync.*` doors keep the sync promises (ruling L4-23 = A: each
 //! test proves a promise at its public door). Every verb call enters through
 //! `oneiron_testkit::door::invoke`, the generated verb dispatch every
-//! transport shares. Four of the seven rows are the owner's and run here on a
+//! transport shares. Three of the six rows are the owner's and run here on a
 //! vault opened with the process writer lease, as an embedded host's are:
-//! `quarantine.held_edits`, `repo_manifests.conflict.review`,
-//! `repo_manifests.conflict.discard` and `retained_work.wait.set`. The other
-//! three (`documents.copy_edit.review`, `documents.copy_edit.settle`,
-//! `outbox`) act on a server's own state and answer the host-only refusal on
-//! an embedded vault.
+//! `quarantine.held_edits`, `repo_manifests.conflict.review` and
+//! `repo_manifests.conflict.discard`. The other three
+//! (`documents.copy_edit.review`, `documents.copy_edit.settle`, `outbox`) act
+//! on a server's own state and answer the host-only refusal on an embedded
+//! vault. A retained-work queue's wait, once the `retained_work.wait.set`
+//! row, is that queue's row of the `sync.retained_work.wait_secs` key (DESIGN
+//! 15-setting-primitive, stage 4), set through `vault.settings.set`.
 //!
 //! - P1 `oneiron/sync/oneiron-arch-0023b-crdt-sync-implementation-v1`
 //!   #artifact-body-quarantine-built: "a malformed artifact body is
@@ -22,7 +24,9 @@
 //! - P2 the same page, #facet-stamp-federation-built: "`maintain` retires a
 //!   held stamp after 30 days", and the row's own words ("The owner sets one
 //!   retained-work queue's wait in seconds, or resets it to its existing
-//!   default, and receives the effective wait").
+//!   default, and receives the effective wait"), now through the key's row:
+//!   `vault.settings.set` sets or clears it, and the wait in force is read
+//!   back.
 //! - Refusals: an agent is refused every owner row and a host row refuses it
 //!   as it refuses the owner; malformed bodies are refused.
 //!
@@ -96,8 +100,31 @@ fn refused(result: Result<Value, MemoryError>, what: &str) -> MemoryError {
     }
 }
 
-fn wait_set(owner: &Memory<'_>, body: Value) -> Result<Value, MemoryError> {
-    door::invoke(owner, "vault.sync.retained_work.wait.set", body)
+/// The key whose rows are the retained-work queues' waits, one row per queue.
+const RETAINED_WORK_WAIT: &str = "sync.retained_work.wait_secs";
+
+/// `owner` sets the facet stamp queue's row of [`RETAINED_WORK_WAIT`] through
+/// `vault.settings.set`: `secs` sets the wait, and `None` clears the row, so
+/// the queue's default holds.
+fn wait_set(owner: &Memory<'_>, secs: Option<u64>) -> Result<Value, MemoryError> {
+    let mut body = json!({
+        "key": RETAINED_WORK_WAIT,
+        "item": RetainedWorkQueue::FacetStamp.code(),
+        "scope": {"kind": "vault"},
+    });
+    if let Some(secs) = secs {
+        body["value"] = json!(secs);
+    }
+    door::invoke(owner, "vault.settings.set", body)
+}
+
+#[track_caller]
+fn assert_applied(answer: &Value, what: &str) {
+    assert_eq!(
+        answer.pointer("/status").and_then(Value::as_str),
+        Some("applied"),
+        "{what} applies: {answer}"
+    );
 }
 
 /// P1. A peer's window carries a malformed CODE_ARTIFACT row, a malformed
@@ -194,9 +221,9 @@ fn the_owner_sets_a_retained_work_wait_and_a_reset_restores_the_default() {
     };
     assert_eq!(facet(), THIRTY_DAYS, "a held facet stamp waits 30 days");
 
-    let set = wait_set(&owner, json!({"queue": "facet_stamp", "secs": 3600})).expect("set");
-    assert_eq!(set, json!(3600), "the wait in force is answered");
-    assert_eq!(facet(), 3600, "and read back");
+    let set = wait_set(&owner, Some(3600)).expect("set");
+    assert_applied(&set, "the owner's wait");
+    assert_eq!(facet(), 3600, "the wait in force is read back");
     assert_eq!(
         vault
             .retained_work_wait_secs(RetainedWorkQueue::FederationBurst)
@@ -205,29 +232,12 @@ fn the_owner_sets_a_retained_work_wait_and_a_reset_restores_the_default() {
         "one queue's wait moves no other queue"
     );
 
-    let zero = refused(
-        wait_set(&owner, json!({"queue": "facet_stamp", "secs": 0})),
-        "a zero wait",
-    );
-    assert_eq!(zero.code, "BAD_REQUEST", "{zero:?}");
+    refused(wait_set(&owner, Some(0)), "a zero wait");
     assert_eq!(facet(), 3600, "a refused wait changes nothing");
 
-    let reset = wait_set(&owner, json!({"queue": "facet_stamp"})).expect("reset");
-    assert_eq!(
-        reset,
-        json!(THIRTY_DAYS),
-        "an absent secs restores the default"
-    );
-    assert_eq!(facet(), THIRTY_DAYS);
-
-    wait_set(&owner, json!({"queue": "facet_stamp", "secs": 60})).expect("set again");
-    let reset = wait_set(&owner, json!({"queue": "facet_stamp", "secs": null})).expect("reset");
-    assert_eq!(
-        reset,
-        json!(THIRTY_DAYS),
-        "a null secs restores the default"
-    );
-    assert_eq!(facet(), THIRTY_DAYS);
+    let reset = wait_set(&owner, None).expect("reset");
+    assert_applied(&reset, "the owner's clear");
+    assert_eq!(facet(), THIRTY_DAYS, "a cleared row restores the default");
 }
 
 /// Refusals by caller. An agent is refused each owner row with a well-formed
@@ -253,22 +263,10 @@ fn an_agent_is_refused_every_owner_sync_row() {
             "vault.sync.repo_manifests.conflict.discard",
             json!({"binding": "e30="}),
         ),
-        (
-            "vault.sync.retained_work.wait.set",
-            json!({"queue": "facet_stamp", "secs": 60}),
-        ),
     ] {
         let error = refused(door::invoke(&agent, verb, body), verb);
         assert_eq!(error.code, "FORBIDDEN", "an agent on {verb}: {error:?}");
     }
-    assert_eq!(
-        vault
-            .retained_work_wait_secs(RetainedWorkQueue::FacetStamp)
-            .expect("read the facet stamp wait"),
-        THIRTY_DAYS,
-        "the agent's wait was not set"
-    );
-
     let revision = "ab".repeat(32);
     for (verb, body) in [
         (
@@ -361,26 +359,6 @@ fn a_malformed_sync_body_is_refused() {
         ),
         (
             "an unknown field",
-            "vault.sync.retained_work.wait.set",
-            json!({"queue": "facet_stamp", "zzz": 1}),
-        ),
-        (
-            "an unknown queue",
-            "vault.sync.retained_work.wait.set",
-            json!({"queue": "no_such_queue"}),
-        ),
-        (
-            "secs as text",
-            "vault.sync.retained_work.wait.set",
-            json!({"queue": "facet_stamp", "secs": "an hour"}),
-        ),
-        (
-            "negative secs",
-            "vault.sync.retained_work.wait.set",
-            json!({"queue": "facet_stamp", "secs": -1}),
-        ),
-        (
-            "an unknown field",
             "vault.sync.documents.copy_edit.review",
             json!({"source": SOME_ID, "zzz": 1}),
         ),
@@ -414,11 +392,4 @@ fn a_malformed_sync_body_is_refused() {
         let error = refused(door::invoke(&owner, verb, body), case);
         assert_eq!(error.code, "BAD_REQUEST", "{case} on {verb}: {error:?}");
     }
-    assert_eq!(
-        vault
-            .retained_work_wait_secs(RetainedWorkQueue::FacetStamp)
-            .expect("read the facet stamp wait"),
-        THIRTY_DAYS,
-        "no refused wait was set"
-    );
 }
