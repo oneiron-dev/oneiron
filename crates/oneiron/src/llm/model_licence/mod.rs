@@ -9,10 +9,14 @@
 //! owner's true is refused when it is set, and the reader reads false whatever a row says (a row
 //! a restore brings never passes the set's hook).
 //!
-//! Direction: admitting more licences is looser. A row that does not decode reads as false.
+//! Direction: admitting more licences is looser. A row that does not decode reads as false. The
+//! row itself is in [`setting_keys`].
 
+pub(crate) mod setting_keys;
+
+use self::setting_keys::MODELS_INSTALL_ALLOW_NONCOMMERCIAL_LICENCES;
 use crate::error::{Error, Result};
-use crate::setting::{Kind, SettingChange, SettingSync, lower_is_tighter};
+use crate::setting::{Kind, SettingChange};
 use crate::{HostingPrivacyPosture, Vault};
 
 /// What a node that is not self-hosted answers the owner's true with.
@@ -42,22 +46,6 @@ fn refuse_off_self_host(
         ));
     }
     Ok(())
-}
-
-crate::setting::setting_keys! {
-    /// Whether this self-hosted node installs a model whose licence is non-commercial or not in
-    /// the server's licence table (default false: the download is refused before any byte).
-    /// True is looser: such a download starts, and its install record keeps the class it was
-    /// admitted under. A conditional licence still needs its named decision. A choice about
-    /// this machine; a node that is not self-hosted refuses true (the server's model install).
-    pub(crate) MODELS_INSTALL_ALLOW_NONCOMMERCIAL_LICENCES: bool =
-        "models.install.allow_noncommercial_licences" {
-        kind: Kind::new(refused)
-            .strictest(refused)
-            .tighter(lower_is_tighter::<bool>),
-        sync: SettingSync::Install,
-        on_change: Some(refuse_off_self_host),
-    };
 }
 
 /// Whether `vault`'s owner admits non-commercial and unknown model licences on this node, read

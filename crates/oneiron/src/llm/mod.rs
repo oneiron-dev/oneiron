@@ -21,7 +21,7 @@ mod inference_admission;
 mod tagger_admission;
 pub use inference_admission::admitted_as;
 pub use tagger_admission::{TaggerCall, TaggerCallContext, TaggerEgressPredicate};
-pub(crate) mod licence_setting_keys;
+pub(crate) mod model_licence;
 mod role_defaults;
 mod solo;
 pub use inference_admission::{
@@ -172,7 +172,7 @@ pub use self::autocheck::{
     AutoCheckCandidateOwned, AutoCheckDecisions, AutoCheckNotes, AutoCheckOutcome,
     AutoCheckSignals, AutoCheckWorldHold, BoundedAutoChecker,
 };
-pub use self::licence_setting_keys::{
+pub use self::model_licence::{
     NONCOMMERCIAL_LICENCES_HOSTED_REFUSAL, noncommercial_model_licences_admitted,
 };
 pub use self::role_defaults::RoleModelDefaults;
