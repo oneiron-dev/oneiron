@@ -393,9 +393,9 @@ impl GitWire<'_> {
         // or the copy store, for a linked worktree made before it carried
         // one. A store in the handle that no longer opens is uncertain,
         // never a reason to discard work.
-        let repo = match self.local_checkout_store(lease, binding) {
-            Ok(Some(local)) => local,
-            Ok(None) => binding.copy_store.clone(),
+        let (repo, self_contained) = match self.local_checkout_store(lease, binding) {
+            Ok(Some(local)) => (local, true),
+            Ok(None) => (binding.copy_store.clone(), false),
             Err(_) => return Ok(uncertain_inspection()),
         };
         if !self.worktree_registered(&repo, &tree)? {
@@ -407,6 +407,17 @@ impl GitWire<'_> {
         };
         let head = LeaseGitOid::parse(observed.as_str())?;
         let status = self.run_read(&worktree, &FrozenGitArgv::status_porcelain())?;
+        let local_work = if self_contained {
+            let Ok(pushed) = GitOid::parse_hex(&receipt.pushed_head) else {
+                return Ok(uncertain_inspection());
+            };
+            match self.checkout_store_has_local_work(&repo, Some(&pushed)) {
+                Ok(local_work) => local_work,
+                Err(_) => return Ok(uncertain_inspection()),
+            }
+        } else {
+            false
+        };
         let receipt_match = if observed.as_str() == receipt.pushed_head {
             TeardownReceiptMatch::Match
         } else {
@@ -414,7 +425,7 @@ impl GitWire<'_> {
         };
         Ok(CheckoutTeardownInspection {
             observed_head: Some(head),
-            dirty: !status.stdout.is_empty(),
+            dirty: !status.stdout.is_empty() || local_work,
             receipt_match,
             occupant: None,
         })
@@ -441,6 +452,24 @@ impl GitWire<'_> {
             return Ok(());
         }
         if handle.join(PROJECTION_STORE_REPO).exists() {
+            let local =
+                self.local_checkout_store(lease, binding)?
+                    .ok_or(CheckoutError::Invalid(
+                        "masked copy checkout store disappeared",
+                    ))?;
+            let head = if tree.exists() {
+                let worktree = self.open_repo(local.repo_ref().clone(), &tree)?;
+                Some(self.resolve_commit(&worktree, "HEAD")?)
+            } else {
+                None
+            };
+            // A Settling retry may skip inspection when its tree is gone.
+            // No ref is then proved safe to remove, and a stash never is.
+            if self.checkout_store_has_local_work(&local, head.as_ref())? {
+                return Err(CheckoutError::RepoOps(
+                    "masked copy checkout store holds retained local work".to_owned(),
+                ));
+            }
             fs::remove_dir_all(&handle).map_err(crate::error::Error::from)?;
             if handle.exists() {
                 return Err(CheckoutError::RepoOps(
@@ -460,6 +489,40 @@ impl GitWire<'_> {
             ));
         }
         Ok(())
+    }
+
+    /// Whether collection would lose ref-held work not covered by `pushed`.
+    /// A stash always stays, even if its tip was pushed. Without a head to
+    /// compare against, no ref is proved safe to remove.
+    fn checkout_store_has_local_work(
+        &self,
+        repo: &GitWireRepo,
+        pushed: Option<&GitOid>,
+    ) -> CheckoutResult<bool> {
+        let refs = self.run_read(repo, &FrozenGitArgv::checkout_store_refs())?;
+        let refs = std::str::from_utf8(&refs.stdout)
+            .map_err(|_| CheckoutError::RepoOps("checkout store refs are not UTF-8".to_owned()))?;
+        let mut tips = Vec::new();
+        for line in refs.lines() {
+            let (oid, name) = line.split_once(' ').ok_or(CheckoutError::Invalid(
+                "checkout store ref listing is malformed",
+            ))?;
+            if name == "refs/stash" {
+                return Ok(true);
+            }
+            tips.push(GitOid::parse_hex(oid)?);
+        }
+        if tips.is_empty() {
+            return Ok(false);
+        }
+        let Some(pushed) = pushed else {
+            return Ok(true);
+        };
+        let outside = self.run_read(
+            repo,
+            &FrozenGitArgv::commits_outside(&tips, std::slice::from_ref(pushed)),
+        )?;
+        Ok(!outside.stdout.is_empty())
     }
 
     /// The copy worktree's door remote, at the canonical store's served
