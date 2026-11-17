@@ -35,8 +35,7 @@ use oneiron::calendar::claims::{
     PREDICATE_CALENDAR_STATUS, PREDICATE_CALENDAR_TIME_KIND,
 };
 use oneiron::calendar::connectors::door::{
-    self, CalendarConnectorConfigureRequest, CalendarConnectorKillRequest,
-    CalendarConnectorOperation, CalendarConnectorRequest,
+    self, CalendarConnectorKillRequest, CalendarConnectorOperation, CalendarConnectorRequest,
 };
 use oneiron::calendar::connectors::{
     CALDAV_SYNC_ATTEMPT_KIND, CalendarConnectorError, CalendarConnectorSeatConfig,
@@ -58,6 +57,7 @@ use oneiron::consent::AuthenticatedOwner;
 use oneiron::ingest::ICS_FEED_SOURCE_ID;
 use oneiron::memory::{ClaimProposalReviewRequest, ClaimSettleDecision, ClaimSettleRequest};
 use oneiron::registry::ENTITY_TYPE_EVENT;
+use oneiron::setting::{SetSetting, SetSettingOutcome, SettingCaller};
 use oneiron::store::GateDecisionId;
 use oneiron::{
     AttemptQueue, ClaimLifecycleStatus, ClaimSource, EdgeActorClass, EntityId, TimeRange, Vault,
@@ -750,22 +750,34 @@ fn installed_row(
     .expect("the seat is installed")
 }
 
+/// The owner installs `seat` as the `calendar.connector_seat` setting, one
+/// item per seat ref, the way #8937 replaced the configure door. The same
+/// setup again applies and writes nothing, as the door's reinstall did.
+fn install_seat(vault: &Vault, owner: &AuthenticatedOwner, seat: &CalendarConnectorSeatState) {
+    let setup = serde_json::json!({ "config": seat.config, "endpoint": SEAT_ENDPOINT });
+    let outcome = vault
+        .set_setting(
+            SettingCaller::Owner(owner),
+            SetSetting {
+                item: Some(seat.config.seat_ref.clone()),
+                ..SetSetting::vault_value("calendar.connector_seat", setup)
+            },
+        )
+        .expect("the owner installs the seat");
+    assert!(
+        matches!(outcome, SetSettingOutcome::Applied { .. }),
+        "the owner's install applies: {outcome:?}"
+    );
+}
+
 /// The calendar operation on `seat` (FIX 12531/12496, 11b8ba72a77): its owner
-/// installs the seat through the configure door, as the host does, and the
-/// operation binds that owner to the exact installed row. A killed `seat` is
-/// killed through the owner's kill door, with its reason.
+/// installs the seat as the host's owner does, and the operation binds that
+/// owner to the exact installed row. A killed `seat` is killed through the
+/// owner's kill door, with its reason.
 fn operation(vault: &Vault, seat: &CalendarConnectorSeatState) -> CalendarConnectorOperation {
     let (id, owner) = seat_owner(vault);
     let memory = vault.memory(id, EdgeActorClass::Human);
-    door::configure(
-        &memory,
-        &owner,
-        &CalendarConnectorConfigureRequest {
-            config: seat.config.clone(),
-            endpoint: SEAT_ENDPOINT.to_owned(),
-        },
-    )
-    .expect("the owner installs the seat");
+    install_seat(vault, &owner, seat);
     let mut row = installed_row(vault, seat);
     if let Some(kill) = &seat.kill_switch
         && !row.seat.kill_switch_engaged()
