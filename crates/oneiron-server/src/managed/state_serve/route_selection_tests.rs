@@ -92,6 +92,12 @@ const UNATTESTED: &[(&str, &str, Unattested)] = &[
     ("GET", "/esign/verify", PublicProof),
     ("POST", "/esign/verify/pdf", PublicProof),
     ("POST", "/esign/verify/report", PublicProof),
+    // A signing link's exchange doors: the exchange reads the link's
+    // capability (the link stays reusable) and answers a single-use
+    // exchange, which the session door consumes to open the link's signing
+    // session.
+    ("POST", "/sign/exchange", PublicProof),
+    ("POST", "/sign/session", PublicProof),
     // A bulk campaign email's one-click unsubscribe link (RFC 8058):
     // keyless, its mac checked in the vault on each call.
     (

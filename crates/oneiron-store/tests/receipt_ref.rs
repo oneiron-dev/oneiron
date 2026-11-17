@@ -3,12 +3,16 @@
 //! wire value changes; its parser takes only a known reference kind and lowercase hex of
 //! that kind's width.
 //!
+//! PLAN-UC-04 2.5: the mint sites of `served_form`, `reference_refusal`, `task_lifecycle` and
+//! `hook` now make their text through `ReceiptRef`. Each oracle below is that site's body on
+//! main before 2.5 (ed80b5d804a), so this test is their K-proof: the text keeps its bytes.
+//!
 //! Run: `cargo test --locked -p oneiron-store --all-features --test receipt_ref`.
 
 use oneiron_contracts::entity_id::{EntityId, bytes_to_hex_lower};
 use oneiron_store::gate_decision::types::GateDecisionId;
 use oneiron_store::receipt_ref::{ReceiptRef, ReceiptRefError};
-use oneiron_store::receipt_row::ReceiptKind;
+use oneiron_store::receipt_row::{ReceiptKind, hex_lower};
 
 /// Bytes that differ at every position, so a swapped or reversed id shows.
 fn counting<const N: usize>(step: u8) -> [u8; N] {
@@ -19,7 +23,7 @@ fn entity() -> EntityId {
     EntityId::from_bytes(counting::<16>(17)).expect("an unreserved id")
 }
 
-/// Every reference kind, with the text its mint site writes on main.
+/// Every reference kind, with the text its mint site wrote on main before 2.5 (ed80b5d804a).
 fn references() -> Vec<(ReceiptRef, String)> {
     let gate = GateDecisionId::from_bytes(counting::<16>(29));
     let id = entity();
@@ -27,25 +31,27 @@ fn references() -> Vec<(ReceiptRef, String)> {
     vec![
         // crates/oneiron-server/src/api/owner_routes/diary_routes.rs:217 and 91 more.
         (ReceiptRef::gate(gate), format!("gate:{}", gate.to_hex())),
-        // crates/oneiron/src/receipt/served_form.rs:228.
+        // crates/oneiron/src/receipt/served_form.rs:228 and its inline copy at
+        // crates/oneiron/src/claim/scoped_read/served_forms.rs:46.
         (
             ReceiptRef::served_form(id),
             format!("served_form:{}", id.to_hex()),
         ),
-        // crates/oneiron-store/src/reference_refusal.rs:116, called itself.
+        // crates/oneiron-store/src/reference_refusal.rs:116.
         (
             ReceiptRef::reference_refusal(id),
-            oneiron_store::reference_refusal::receipt_id(&id),
+            format!("reference_refusal:{}", id.to_hex()),
         ),
-        // crates/oneiron/src/task_verb/lifecycle_receipt.rs:77.
+        // crates/oneiron/src/task_verb/lifecycle_receipt.rs:77 (`RECEIPT_ID_PREFIX`, line 49).
         (
             ReceiptRef::task_lifecycle(id),
             format!("task_lifecycle:{}", id.to_hex()),
         ),
-        // crates/oneiron/src/runtime_hooks/store.rs:534 (`hex_lower`, lowercase).
+        // crates/oneiron/src/runtime_hooks/store.rs:500 (`crate::receipt::hex_lower`, which is
+        // `oneiron_store::receipt_row::hex_lower`).
         (
             ReceiptRef::hook(run_key),
-            format!("hook:{}", bytes_to_hex_lower(&run_key)),
+            format!("hook:{}", hex_lower(&run_key)),
         ),
     ]
 }
@@ -55,6 +61,28 @@ fn the_text_is_what_each_mint_site_writes() {
     for (reference, text) in references() {
         assert_eq!(reference.to_string(), text);
     }
+}
+
+/// The store's own mint fn, which 2.5 points at `ReceiptRef`, still writes its base text, for
+/// the zero id, the all-`ff` id and two ids whose bytes differ at every position.
+#[test]
+fn the_store_mint_writes_its_base_text() {
+    let ids = [
+        [0x00; 16],
+        [0xff; 16],
+        counting::<16>(17),
+        counting::<16>(251),
+    ]
+    .map(EntityId::from_bytes_unchecked);
+    for id in ids {
+        assert_eq!(
+            oneiron_store::reference_refusal::receipt_id(&id),
+            format!("reference_refusal:{}", id.to_hex()),
+        );
+    }
+    // The hook text's hex is the store's `hex_lower`, the same digits as the contracts' encoder.
+    let run_key: [u8; 32] = counting::<32>(13);
+    assert_eq!(hex_lower(&run_key), bytes_to_hex_lower(&run_key));
 }
 
 #[test]
