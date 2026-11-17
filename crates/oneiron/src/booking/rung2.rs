@@ -24,6 +24,8 @@
 //! so the thread finds it with no other row. The email itself carries no
 //! machine block, and the visitor's own words are in neither.
 
+use std::collections::BTreeSet;
+
 use serde::{Deserialize, Serialize};
 
 use crate::blob_artifact::{BlobArtifactBody, BlobVersionProvenance};
@@ -415,6 +417,12 @@ impl Vault {
         };
         let kept: Rung2FirstSend = serde_json::from_slice(&bytes)
             .map_err(|_| Error::InvalidClaimBody("a kept rung-2 first send does not decode"))?;
+        // An erased agent's send never goes, and no read names the agent: its
+        // erase tears the send, and before that tear, or on bytes a restore
+        // brings back, the marker alone hides it.
+        if self.carrier_actor_erased_in_txn(rtxn, &kept.agent_ref)? {
+            return Ok(None);
+        }
         let own_run = matches!(
             &first.provenance,
             BlobVersionProvenance::AgentRun { run_ref } if *run_ref == kept.send_ref
@@ -426,6 +434,44 @@ impl Vault {
         }
         Ok(Some(kept))
     }
+}
+
+/// Tears every rung-2 first send one of `authors` kept, whole, as an erased
+/// author's connector reply bodies are torn: an erase of the page's agent,
+/// and a restore's rerun over the sends its image brings back, leave no kept
+/// send that names the agent. A hold keeps the send and stages nothing.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn erase_rung2_first_sends_by_authors_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    authors: &BTreeSet<EntityId>,
+) -> Result<()> {
+    if authors.is_empty() {
+        return Ok(());
+    }
+    for artifact in crate::blob_artifact::agent_run_artifacts_with_prefix_in_txn(
+        &vault.store,
+        txn,
+        BOOKING_RUNG2_SEND_REF_PREFIX,
+    )? {
+        let kept_send = vault
+            .get_blob_artifact_in_txn(txn, &artifact)?
+            .is_some_and(|body| body.media_type == RUNG2_FIRST_SEND_MEDIA_TYPE);
+        if kept_send
+            && crate::blob_artifact::artifact_author_in_txn(vault, txn, &artifact)?
+                .is_some_and(|author| authors.contains(&author))
+        {
+            crate::outbound::erase_connector_reply_body_artifact_in_txn(
+                &crate::secret_custody::CustodyWrite::of(vault),
+                txn,
+                &artifact,
+            )?;
+        }
+    }
+    Ok(())
 }
 
 /// The BLOB artifact a rung-2 first send going out under `message_id` is

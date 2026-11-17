@@ -50,8 +50,8 @@ use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::store::GateDecisionId;
 use oneiron::test_doors::booking_rung2_thread::hold_cold_mail_for_owner_press;
 use oneiron::{
-    CanonicalMessageId, EntityId, StickyMaskDecision, ThreadMask, ThreadPassportInput, TimeRange,
-    Vault, VaultConfig, canonical_message_id,
+    CanonicalMessageId, DeleteReason, EntityId, StickyMaskDecision, ThreadMask,
+    ThreadPassportInput, TimeRange, Vault, VaultConfig, canonical_message_id,
 };
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
@@ -475,6 +475,36 @@ fn the_thread_keeps_the_first_sends_mask() -> TestResult {
     assert_eq!(
         fx.vault.sticky_thread_mask(&thread, Some(pinned))?,
         StickyMaskDecision::Keep(pinned)
+    );
+    Ok(())
+}
+
+/// A hard erase of the page's agent takes the send it kept: the press and a
+/// retried keep find no send that names the erased agent, so none goes out
+/// (review #8130 round 1).
+#[test]
+fn a_hard_erase_of_the_agent_takes_its_kept_first_send() -> TestResult {
+    let fx = Fixture::open()?;
+    fx.keep(SESSION, WORDS)?;
+    fx.vault
+        .delete_entity_with_reason(&fx.agent, DeleteReason::UserHardDelete)
+        .map_err(at("hard erase the page's agent"))?;
+    assert_eq!(
+        fx.vault
+            .booking_rung2_first_send(&fx.adapter, fx.sender.page_ref, SESSION)?,
+        None,
+        "no kept send names the erased agent"
+    );
+    assert_eq!(
+        fx.vault.keep_booking_rung2_first_send(
+            &fx.adapter,
+            &fx.sender,
+            continuation(SESSION),
+            message(WORDS)?,
+            AT + 120,
+        )?,
+        None,
+        "an erased agent keeps no new send"
     );
     Ok(())
 }
