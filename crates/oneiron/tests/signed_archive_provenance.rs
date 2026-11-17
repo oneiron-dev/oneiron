@@ -8,7 +8,13 @@
 //! or a storage manifest alone proves nothing.
 //!
 //! A `Yours` the signer's own install key carried for itself is a carrier's
-//! word, not the owner's (Sol r1 P1 on 021b5375), so it proves nothing.
+//! word, not the owner's (Sol r1 P1 on 021b5375), so it proves nothing: the
+//! fold holds it when no owner key proved it (row CARRIER-OWNER-PROOF), and
+//! one that stands with no proof reads as unsigned. A carried `Yours` an
+//! owner key proved with its cosign proves the owner's own device on a
+//! self-host vault, and nothing on a hosted one, where the host's custodial
+//! root can enrol such a key alone (row
+//! EXPORT-PROOF-OWNER-SIGNED-CARRIED-YOURS; FIX [HOSTED-ROOT-ENROLS-PROOF-KEY]).
 //!
 //! Two review findings on the first head (Astra r1, 021ad4e5) are pinned too:
 //! the export mints no machine id or seed (an install whose keystore slot is
@@ -37,11 +43,12 @@ use std::path::Path;
 use std::sync::Arc;
 
 use ed25519_dalek::Signer;
-use oneiron::authority::{ActSurface, HostSlipIssuer, MachineOwnership, MachineRole};
+use oneiron::authority::{ActAuthority, ActSurface, HostSlipIssuer, MachineOwnership, MachineRole};
 use oneiron::batch::export::{
     VAULT_ARCHIVE_MANIFEST_PATH, VaultImportClassification, VaultImportMismatch,
     VaultImportReceipt, WholeVaultDocumentManifest, archive_provenance_transcript,
 };
+use oneiron::consent::AuthenticatedOwner;
 use oneiron::deletion::parse_hex;
 use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::store::GateDecisionId;
@@ -49,7 +56,8 @@ use oneiron::test_doors::archive_provenance::{
     classify_archive_in_snapshot_before, classify_archive_under_pinned_anchor,
     classify_archive_with_trusted_entry,
 };
-use oneiron::{EntityId, TimeRange, Vault, VaultConfig};
+use oneiron::test_doors::label_writers::embedded_owner;
+use oneiron::{EntityId, HostingPrivacyPosture, TimeRange, Vault, VaultConfig};
 use oneiron_keystore::MemoryKeystore;
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
@@ -328,29 +336,118 @@ fn an_unanswered_installs_signed_export_proves_nothing() -> TestResult {
     Ok(())
 }
 
-/// Sol r1 P1 (HOSTED-CARRIER-FIRST-PIN = D, "a carrier's word is not him
-/// saying so"): this install, profiled in `role`, carries the owner's
-/// `Yours` answer for itself with its own install key, and then signs its
-/// export. The fold trusts that `Yours`, but it rests on the carrier's act
-/// alone, which any linked machine can carry for itself, so the archive
-/// proves no more than an unsigned one. On 021b5375 it read
-/// `ByteFaithfulOwnerRestore`.
-fn assert_self_carried_yours_proves_nothing(role: MachineRole, host_secret: &[u8]) -> TestResult {
-    let directory = tempfile::tempdir()?;
-    let vault = profiled_vault(directory.path(), host_secret, role)?;
-    let owner = vault.ensure_embedded_owner_actor()?;
-    let proof = vault.authenticate_owner(owner, &owner.to_hex(), true, GateDecisionId::now())?;
-    let machine = vault
+/// This install's MACHINE row.
+fn this_install(vault: &Vault) -> Result<EntityId, Box<dyn std::error::Error>> {
+    Ok(vault
         .local_machine()?
         .expect("FIXTURE: this install has a machine once it is profiled")
-        .id;
-    vault.set_machine_role(&proof, ActSurface::ThisInstall, machine, YOURS, None)?;
+        .id)
+}
+
+/// Whether the fold trusts this install as the owner's own machine.
+fn install_is_mine(vault: &Vault) -> Result<bool, Box<dyn std::error::Error>> {
+    Ok(vault
+        .local_machine()?
+        .expect("FIXTURE: this install keeps its machine")
+        .mine)
+}
+
+/// The owner of `vault`, a personal vault [`profiled_vault`] rooted, as his
+/// session proves him.
+fn authenticated_owner(vault: &Vault) -> Result<AuthenticatedOwner, Box<dyn std::error::Error>> {
+    let owner = vault.ensure_embedded_owner_actor()?;
+    Ok(vault.authenticate_owner(owner, &owner.to_hex(), true, GateDecisionId::now())?)
+}
+
+/// Sol r1 P1 (HOSTED-CARRIER-FIRST-PIN = D, "a carrier's word is not him
+/// saying so"): this install, profiled in `role`, carries the owner's
+/// `Yours` answer for itself with its own install key and no owner key's
+/// proof, and then signs its export. Any linked machine can carry that for
+/// itself, so it proves nothing. On 021b5375 it read
+/// `ByteFaithfulOwnerRestore`; until row CARRIER-OWNER-PROOF it stood and
+/// read as unsigned. Since that row's item 1 (a carried answer that makes a
+/// machine the owner's stands only when an owner key proved it) the fold
+/// holds it: the install is not the owner's, and its archive reads as its
+/// `role`'s does, `expected`.
+fn assert_self_carried_yours_proves_nothing(
+    role: MachineRole,
+    host_secret: &[u8],
+    expected: (VaultImportClassification, VaultImportMismatch),
+) -> TestResult {
+    let directory = tempfile::tempdir()?;
+    let vault = profiled_vault(directory.path(), host_secret, role)?;
+    let owner = authenticated_owner(&vault)?;
+    let machine = this_install(&vault)?;
+    let landing = vault.set_machine_role(&owner, ActSurface::ThisInstall, machine, YOURS, None)?;
     assert!(
-        vault
-            .local_machine()?
-            .expect("FIXTURE: this install keeps its machine")
-            .mine,
-        "FIXTURE: the fold trusts the `Yours` this install carried for itself ({role:?})"
+        landing.held().is_some(),
+        "FIXTURE: with no owner key's proof the fold holds the `Yours` this install carried \
+         for itself ({role:?})"
+    );
+    assert!(
+        !install_is_mine(&vault)?,
+        "FIXTURE: a held answer makes nothing mine ({role:?})"
+    );
+
+    let receipt = classify(&vault, own_archive(&vault)?)?;
+
+    assert_verdict(&receipt, expected.0, &[expected.1]);
+    Ok(())
+}
+
+/// [`assert_self_carried_yours_proves_nothing`] from the role every fresh
+/// serving install starts in: an unanswered install's key proves nothing.
+#[test]
+fn an_unanswered_install_that_carries_its_own_yours_proves_nothing() -> TestResult {
+    assert_self_carried_yours_proves_nothing(
+        MachineRole::Unanswered,
+        b"signed archive provenance self-carried unanswered",
+        (
+            VaultImportClassification::ReviewRequired,
+            VaultImportMismatch::UnauthenticatedProvenance,
+        ),
+    )
+}
+
+/// [`assert_self_carried_yours_proves_nothing`] from a hosted node: the
+/// host's own machine answers `Yours` for itself, and stays the hosted node
+/// whose archive is not the owner's.
+#[test]
+fn a_hosted_node_that_carries_its_own_yours_proves_nothing() -> TestResult {
+    assert_self_carried_yours_proves_nothing(
+        MachineRole::HostedNode,
+        b"signed archive provenance self-carried hosted",
+        (
+            VaultImportClassification::ForeignAuthorityChain,
+            VaultImportMismatch::SignerNotOwnerDevice,
+        ),
+    )
+}
+
+/// Sol r1 P1 on an answer that stands: the owner's own device, `Yours` by
+/// the revision the host root signed, carries `Yours` for itself again with
+/// no owner key's proof. A machine already the owner's that keeps its own
+/// key needs none (row CARRIER-OWNER-PROOF), so the answer stands and heads
+/// its chain. It rests on the carrier's act alone, so the archive proves no
+/// more than an unsigned one.
+#[test]
+fn a_carried_yours_that_stands_without_an_owner_proof_proves_nothing() -> TestResult {
+    let directory = tempfile::tempdir()?;
+    let vault = profiled_vault(
+        directory.path(),
+        b"signed archive provenance carried without proof",
+        YOURS,
+    )?;
+    let owner = authenticated_owner(&vault)?;
+    let machine = this_install(&vault)?;
+    let landing = vault.set_machine_role(&owner, ActSurface::ThisInstall, machine, YOURS, None)?;
+    assert!(
+        landing.held().is_none(),
+        "FIXTURE: the owner's machine keeping its own key needs no proof"
+    );
+    assert!(
+        install_is_mine(&vault)?,
+        "FIXTURE: the carried `Yours` stands"
     );
 
     let receipt = classify(&vault, own_archive(&vault)?)?;
@@ -363,24 +460,83 @@ fn assert_self_carried_yours_proves_nothing(role: MachineRole, host_secret: &[u8
     Ok(())
 }
 
-/// [`assert_self_carried_yours_proves_nothing`] from the role every fresh
-/// serving install starts in.
+/// Row EXPORT-PROOF-OWNER-SIGNED-CARRIED-YOURS (the lead's
+/// CARRIER-SELF-ANSWER: a carried `Owned(Yours)` stands only with an
+/// owner-device-key signature): on a self-host vault the owner enrols this
+/// install's owner signing key, and this install then carries his `Yours`
+/// for itself with that key's proof cosign. The owner's own key proved the
+/// answer, so the archive is his own device's. On main cc184ff09aea it read
+/// `ReviewRequired`, as every carried `Yours` did.
 #[test]
-fn an_unanswered_install_that_carries_its_own_yours_proves_nothing() -> TestResult {
-    assert_self_carried_yours_proves_nothing(
-        MachineRole::Unanswered,
-        b"signed archive provenance self-carried unanswered",
-    )
+fn a_carried_yours_an_owner_key_proved_signs_an_owner_restore() -> TestResult {
+    let host_secret = b"signed archive provenance carried with proof";
+    let directory = tempfile::tempdir()?;
+    let vault = profiled_vault(directory.path(), host_secret, MachineRole::Unanswered)?;
+    let owner = authenticated_owner(&vault)?;
+    vault.enrol_device_owner_signing_key(
+        &ActAuthority::Owner(owner.clone(), ActSurface::ThisInstall),
+        &HostSlipIssuer::from_secret(host_secret)?,
+    )?;
+    let machine = this_install(&vault)?;
+    let landing = vault.set_machine_role(&owner, ActSurface::ThisInstall, machine, YOURS, None)?;
+    assert!(
+        landing.held().is_none(),
+        "FIXTURE: the owner key this handle holds proves the answer"
+    );
+    assert!(
+        install_is_mine(&vault)?,
+        "FIXTURE: the proven `Yours` stands"
+    );
+
+    let receipt = classify(&vault, own_archive(&vault)?)?;
+
+    assert_verdict(
+        &receipt,
+        VaultImportClassification::ByteFaithfulOwnerRestore,
+        &[],
+    );
+    Ok(())
 }
 
-/// [`assert_self_carried_yours_proves_nothing`] from a hosted node: the
-/// host's own machine answers `Yours` for itself.
+/// Row EXPORT-PROOF-OWNER-SIGNED-CARRIED-YOURS on a hosted vault: the same
+/// proven `Yours` proves no archive there. The managed host's custodial root
+/// signs an owner key in as its predecessor, and that key proves for the
+/// owner, so the host can make such a proof alone (FIX
+/// [HOSTED-ROOT-ENROLS-PROOF-KEY]). The archive reads as unsigned, as every
+/// roster revision of a hosted vault does, until that row closes.
 #[test]
-fn a_hosted_node_that_carries_its_own_yours_proves_nothing() -> TestResult {
-    assert_self_carried_yours_proves_nothing(
-        MachineRole::HostedNode,
-        b"signed archive provenance self-carried hosted",
-    )
+fn a_carried_yours_an_owner_key_proved_on_a_hosted_vault_proves_nothing() -> TestResult {
+    let directory = tempfile::tempdir()?;
+    let mut config = VaultConfig::device();
+    config.privacy.posture = HostingPrivacyPosture::Hosted;
+    let vault = Vault::open(directory.path(), config)?;
+    vault.install_device_keystore(Arc::new(MemoryKeystore::default()));
+    let issuer = oneiron::test_support::provision_engine_machines(&vault);
+    vault.ensure_serving_install_profile(&issuer, MachineRole::Unanswered)?;
+    let (_, owner) = embedded_owner(&vault)?;
+    vault.enrol_device_owner_signing_key(
+        &ActAuthority::Owner(owner.clone(), ActSurface::ThisInstall),
+        &issuer,
+    )?;
+    let machine = this_install(&vault)?;
+    let landing = vault.set_machine_role(&owner, ActSurface::ThisInstall, machine, YOURS, None)?;
+    assert!(
+        landing.held().is_none(),
+        "FIXTURE: the enrolled owner key proves the answer on a hosted vault too"
+    );
+    assert!(
+        install_is_mine(&vault)?,
+        "FIXTURE: the proven `Yours` stands"
+    );
+
+    let receipt = classify(&vault, own_archive(&vault)?)?;
+
+    assert_verdict(
+        &receipt,
+        VaultImportClassification::ReviewRequired,
+        &[VaultImportMismatch::UnauthenticatedProvenance],
+    );
+    Ok(())
 }
 
 /// Sol r2 P1 (on 2b3c042b): the fold's word on who signed a `Yours` is not

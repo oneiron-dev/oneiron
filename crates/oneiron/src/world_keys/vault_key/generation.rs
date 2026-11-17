@@ -85,7 +85,20 @@ pub struct DataKeyGenerationOutcome {
     pub removed: Vec<VaultKeyWrapInfo>,
     /// The wraps the act sealed of the new key.
     pub rewrapped: Vec<VaultKeyWrapInfo>,
+    /// The page-seal mirror rewrite pends: the act stands, and the next
+    /// sealed open repairs the mirror. Always false from the in-txn door,
+    /// whose caller finishes the transition.
+    pub mirror_pending: bool,
+    /// This vault's pages are sealed and keep the key of their incarnation:
+    /// the screen tells the owner [`DATA_KEY_GENERATION_PAGE_SEAL_NOTICE`]
+    /// (DATAKEY-GEN-PAGE-SEAL = A, until the re-key).
+    pub pages_keep_earlier_key: bool,
 }
+
+/// What the owner is told after a new data-key generation on a page-sealed
+/// vault, until a re-key moves its pages to the new key.
+pub const DATA_KEY_GENERATION_PAGE_SEAL_NOTICE: &str =
+    "this device's stored copy keeps its old key until it is re-keyed";
 
 /// Everything the act needs from outside a txn (keystore, Argon2): minted before the write.
 /// From its minting to the act's finish, inference-snapshot admission stays
@@ -307,9 +320,9 @@ impl Vault {
     /// install's device wrap is written (so the new key always keeps a wrap
     /// here), the confirmed wraps are removed, the link is stored, and the
     /// state moves to the next generation. An agent is refused
-    /// (DATAKEY-GEN-WHO = C); a host-managed or supervisor-delivered key, a
-    /// page-sealed vault, and a presented way the vault does not carry are
-    /// refused too. A presented escrow must name the recipient it was sealed
+    /// (DATAKEY-GEN-WHO = C); a host-managed or supervisor-delivered key and
+    /// a presented way the vault does not carry are refused too. A presented
+    /// escrow must name the recipient it was sealed
     /// to, so the act never moves an escrow (the world kit's included) to
     /// another key; a presented password or passkey must be one whose wrap
     /// opened in [`Self::prepare_data_key_generation`]. No custody head is
@@ -340,11 +353,6 @@ impl Vault {
                 "a host-managed or supervisor-delivered data key gets a new generation from its supervisor",
             ));
         }
-        if self.vault_pages_sealed() {
-            return Err(refused(
-                "a page-sealed vault gets new data-key generations in a later change",
-            ));
-        }
         let held = self
             .held_vault_key()
             .ok_or_else(|| refused("unlock the vault key first"))?;
@@ -358,6 +366,11 @@ impl Vault {
             return Err(refused("this handle holds another vault key"));
         }
         let next_commitment = draft.next_key().commitment(&vault_id);
+        let committed = if transition.sealed() {
+            Some(self.staged_wraps_in_txn(txn, None)?)
+        } else {
+            None
+        };
         // Every row is decided before one is written, so an unconfirmed way
         // refuses with nothing written.
         struct Rewrap {
@@ -471,7 +484,7 @@ impl Vault {
             },
         )?;
         self.settle_data_key_generation_proposals_in_txn(txn, state.generation)?;
-        transition.stage(|| self.staged_wraps_in_txn(txn, None))?;
+        transition.stage_generation(committed, || self.staged_wraps_in_txn(txn, None))?;
         // No inference snapshot admitted under the old key commits after
         // this write: the draft's pause ended every earlier admission and
         // grants none until the new key is held.
@@ -485,6 +498,8 @@ impl Vault {
             commitment: next_commitment,
             removed,
             rewrapped,
+            mirror_pending: false,
+            pages_keep_earlier_key: self.vault_pages_sealed(),
         })
     }
 
@@ -509,6 +524,7 @@ impl Vault {
         }
         // Admission opens again only now, so the next one reads the new key.
         drop(snapshot_pause);
+        // The body seal stays under the key admitted at open until the next open (off-record overlays live only in a session).
         super::recovery_preset::finish_or_pending(transition)
     }
 
@@ -578,9 +594,8 @@ impl Vault {
                 )?;
                 Ok((outcome, draft, transition))
             },
-            |(outcome, draft, transition)| {
-                // A plain vault's transition never pends; a sealed vault refuses above.
-                let _mirror_pending = self.finish_data_key_generation(draft, transition);
+            |(mut outcome, draft, transition)| {
+                outcome.mirror_pending = self.finish_data_key_generation(draft, transition);
                 drop(custody_policy);
                 Ok(outcome)
             },

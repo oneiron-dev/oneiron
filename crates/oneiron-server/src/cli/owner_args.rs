@@ -483,7 +483,8 @@ pub struct VaultKeyAddDeviceArgs {
     #[arg(long, value_enum, default_value_t = UnlockMethod::Device)]
     pub unlock: UnlockMethod,
 
-    /// With `--unlock passkey`: the passkey's credential name.
+    /// With `--unlock passkey`, or `--unlock kit` with
+    /// `--kit-passkey-prf-file`: the passkey's credential name.
     #[arg(long, value_name = "NAME")]
     pub credential: Option<String>,
 
@@ -508,6 +509,16 @@ pub struct VaultKeyAddDeviceArgs {
     /// from the vault's page-seal mirror.
     #[arg(long, value_name = "HEX")]
     pub vault_id: Option<String>,
+
+    /// With `--unlock kit` and `--credential`: an owner-only file holding
+    /// the synced passkey's PRF output (32 raw bytes, 64 hex digits or
+    /// base64url) at the PRF input `vault-key prf-input` prints for that
+    /// name. The data-key kit's piece the vault keeps sealed under that
+    /// passkey (its `kit_point` wrap) joins the pieces given, so one
+    /// `--piece` and the passkey unlock, or the passkey and the kit
+    /// passphrase with no `--piece` (census L10-18).
+    #[arg(long, value_name = "FILE", requires = "credential")]
+    pub kit_passkey_prf_file: Option<PathBuf>,
 
     #[command(flatten)]
     pub secret: SecretSourceArgs,
