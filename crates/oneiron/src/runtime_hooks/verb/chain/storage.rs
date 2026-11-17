@@ -7,6 +7,8 @@
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
 
+use oneiron_contracts::fingerprint::ContentHash;
+
 use crate::Result;
 use crate::receipt::{ReceiptKind, ReceiptRecord, hex_lower};
 use crate::runtime_hooks::runner::{MAX_PINNED_INPUT, bounded};
@@ -297,7 +299,7 @@ impl Chain<'_> {
             had_landing: run.had_landing,
             args_withheld: run.args_withheld,
             history_erased: false,
-            input_hash: blake3::hash(run.input.as_bytes()).to_hex().to_string(),
+            input_hash: ContentHash::of(run.input.as_bytes()).to_hex(),
             dependencies: run.dependencies.clone(),
             named_rows: store::rows_named_by_call(&run.input, run.landing_original.as_deref()),
             unattributed: run.unattributed,
