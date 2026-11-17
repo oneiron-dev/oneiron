@@ -15,8 +15,8 @@ pub const LIFT_AND_ERASE_PROMPT: &str = "This lifts your hold and erases these r
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum LegalHoldKind {
-    /// The vault owner's hold. The owner lifts it only through the one
-    /// "Lift the hold and erase?" confirm.
+    /// The vault owner's hold. The owner lifts it through
+    /// `vault.legal_holds.lift`, which destroys its sealed copy.
     Customer,
     /// Oneiron's hold on an authority order, only where Oneiron hosts the
     /// bytes (Cloud and relay). Only Oneiron lifts it; an owner erase keeps
@@ -149,7 +149,7 @@ impl LegalHold {
     }
 }
 
-/// The eight hold events (C3).
+/// The hold events (C3).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum LegalHoldEventKind {
@@ -167,6 +167,11 @@ pub enum LegalHoldEventKind {
     EraseWithdrawn,
     EraseCompleted,
     Lifted,
+    /// The lift removed the hold's sealed copy: its wrapped key, then its
+    /// files.
+    CloneDestroyed,
+    /// The owner re-sealed the copy to a named recipient.
+    CloneProduced,
 }
 
 /// The reason code of one hold event. Never free text.
@@ -208,6 +213,10 @@ pub enum LegalHoldReason {
     HostReleased,
     /// An order's silence ended; the owner is now told of it.
     SecrecyEnded,
+    /// The owner lifted their customer hold.
+    OwnerLifted,
+    /// The owner produced the sealed copy to a named recipient.
+    OwnerProduced,
 }
 
 /// One row of a hold log: ids, times and codes only (C3).
@@ -232,6 +241,10 @@ pub struct LegalHoldEvent {
     /// wrote none.
     #[serde(default)]
     pub clone_fingerprint: Option<[u8; 32]>,
+    /// The blake3 of the recipient public key's bytes, on `CloneProduced`;
+    /// `None` on every other event.
+    #[serde(default)]
+    pub recipient_fingerprint: Option<[u8; 32]>,
 }
 
 /// What an erase that ran still waits on (C4).
