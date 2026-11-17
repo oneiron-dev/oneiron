@@ -45,8 +45,8 @@ use serde::de::DeserializeOwned;
 use zeroize::{Zeroize, Zeroizing};
 
 use super::super::{
-    REASON_DETECTED, SecretScanMode, off_record_fresh_key_refusal, scan_write_tree,
-    secret_scan_error, secret_scan_mode_in_txn,
+    FieldRule, REASON_DETECTED, SecretScanMode, off_record_fresh_key_refusal,
+    scan_write_tree_with_rule, secret_scan_error, secret_scan_mode_in_txn,
 };
 use super::admit::Lifted;
 use super::seal_whole;
@@ -77,16 +77,17 @@ pub(crate) enum SidePart {
 
 impl SidePart {
     /// The door's scan of this part, a container's members included (FIX
-    /// 2312), with this record's owner-kept values screened first. A tree's
-    /// encoded copy and its screened copy are wiped once read (FIX 1101).
-    pub(super) fn scan(&self, kept: &KeptValues, record: &EntityId) -> Result<()> {
+    /// 2312), with this record's owner-kept values screened first, its own
+    /// members read by the field rule `rule`. A tree's encoded copy and its
+    /// screened copy are wiped once read (FIX 1101).
+    pub(super) fn scan(&self, kept: &KeptValues, record: &EntityId, rule: FieldRule) -> Result<()> {
         let scanned: Cow<'_, [u8]> = match self {
             Self::Body(bytes) => Cow::Borrowed(bytes.as_slice()),
             Self::Text(text) => Cow::Borrowed(text.as_bytes()),
             Self::Value(value) => Cow::Owned(encoded(value)?),
         };
         let mut screened = kept.screened(record, &scanned);
-        let scan = scan_write_tree(screened.as_deref().unwrap_or(scanned.as_ref()));
+        let scan = scan_write_tree_with_rule(screened.as_deref().unwrap_or(scanned.as_ref()), rule);
         if let Some(copy) = screened.as_mut() {
             copy.zeroize();
         }
@@ -183,7 +184,7 @@ fn mask_referenced(
             let under = beneath(refs, key);
             changed |= masker.mask_value(key)?;
             // A value under a credential name is read whole, path or none.
-            if under.is_empty() || credential_member(key, member) {
+            if under.is_empty() || credential_member(key, member, masker.field_rule) {
                 if nested {
                     changed |= mask_nested(masker, member)?;
                 }
@@ -425,13 +426,15 @@ impl<'a> Scope<'a> {
 
 /// How one admission runs: the fields the row keeps structural references
 /// in (FIX 6634), whether it keeps where each handle went in each text it
-/// masks (FIX 6144), and the known values its caller already read in this
-/// writer, so they are not read again (FIX 2722).
+/// masks (FIX 6144), the known values its caller already read in this
+/// writer, so they are not read again (FIX 2722), and which values under a
+/// credential name its field rule reads whole, in the plan and the scans.
 #[derive(Default)]
 struct Pass {
     refs: &'static [RefPath],
     tracked: bool,
     known: Option<Arc<KnownValues>>,
+    field_rule: FieldRule,
 }
 
 /// The wall's one admission for a record's own parts, which every part's
@@ -529,7 +532,7 @@ fn admitted(
     };
     let mut refusal = None;
     for (part, (record, _)) in parts.iter().zip(origins) {
-        if let Err(error) = part.scan(&kept, record) {
+        if let Err(error) = part.scan(&kept, record, pass.field_rule) {
             refusal = Some(error);
             break;
         }
@@ -549,6 +552,7 @@ fn admitted(
     let mut plan = Masker {
         handles: seed.0.clone(),
         mints: true,
+        field_rule: pass.field_rule,
         known: known.clone(),
         kept: kept.clone(),
         ..Masker::default()
@@ -568,7 +572,8 @@ fn admitted(
     // a tracked pass seals nothing, since its writer moves its bounds by the
     // spans the pass replaced (FIX 6144).
     let sealing = !pass.tracked && (scope.door.is_some() || known.is_some());
-    let seals = seal_whole::plan_part_seals(&kept, &mut planned, origins, sealing)?;
+    let seals =
+        seal_whole::plan_part_seals(&kept, &mut planned, origins, sealing, pass.field_rule)?;
     // Nothing placed, not even a value the seed holds, and nothing sealed:
     // the hit is the door's.
     if !placed && seals.is_empty() {
@@ -605,6 +610,7 @@ fn admitted(
     let mut minted = Masker {
         handles: seed.0.clone(),
         minted: true,
+        field_rule: pass.field_rule,
         known: known.clone(),
         kept,
         traced: pass.tracked.then(TextReplacements::default),
@@ -694,9 +700,24 @@ pub(crate) fn admit_typed<T: Serialize + DeserializeOwned>(
     at: (&str, &[u8]),
     value: &mut T,
 ) -> Result<bool> {
+    admit_typed_with_rule(dbs, wtxn, at, value, FieldRule::AnyShape)
+}
+
+/// [`admit_typed`], its plan and its scans read by the field rule `rule`.
+pub(crate) fn admit_typed_with_rule<T: Serialize + DeserializeOwned>(
+    dbs: &impl SideTableDbs,
+    wtxn: &mut RwTxn<'_>,
+    at: (&str, &[u8]),
+    value: &mut T,
+    rule: FieldRule,
+) -> Result<bool> {
     let mut parts = [SidePart::Value(named_tree(&*value)?)];
     let reads_back = |parts: &[SidePart]| matches!(parts, [SidePart::Value(tree)] if from_named_tree::<T>(tree).is_some());
-    if !admit_side_parts(dbs, wtxn, at, &mut parts, reads_back)? {
+    let pass = Pass {
+        field_rule: rule,
+        ..Pass::default()
+    };
+    if admit_read_parts(dbs, wtxn, at, &mut parts, reads_back, pass)?.is_none() {
         return Ok(false);
     }
     *value = match &parts {

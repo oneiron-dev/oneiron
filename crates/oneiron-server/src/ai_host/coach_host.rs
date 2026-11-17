@@ -47,15 +47,15 @@ use oneiron::actor_claims::{
 };
 use oneiron::autoreason_campaign::research::research_work_pending;
 use oneiron::dreamer_runner::maintenance::coach::{
-    COACH_ATTRIBUTION_AUDITS_FACET, COACH_ATTRIBUTION_LABELS_FACET, COACH_BROWSER_PROGRAMS_FACET,
-    COACH_DRAFTER_RETRAIN_FACET, COACH_EVAL_AUTHORING_FACET, COACH_EVAL_MEASUREMENT_FACET,
-    COACH_FORK_PROMOTE_FACET, COACH_JUDGE_LABEL_RECHECKS_FACET, COACH_JUDGE_SWAP_FACET,
-    COACH_OFFER_CHECK_FACET, COACH_PERSON_THRESHOLD_FACET, COACH_RESEARCH_RUN_FACET,
-    COACH_RESEARCH_SELECT_FACET, COACH_SEAL_CHECKS_FACET, COACH_SITE_SKILLS_FACET,
-    COACH_SKILL_DISCOVERY_FACET, COACH_SKILL_DISTILL_FACET, COACH_THINK_THRESHOLD_FACET,
-    COACH_TRADEOFF_ROUTE_FACET, COACH_TRAINING_OFFER_FACET, COACH_TRAINING_RUN_FACET,
-    COACH_TYPE_TREE_UPKEEP_FACET, COACH_WEAVE_DIGEST_SETTINGS_FACET, PersonThresholdPolicy,
-    ThinkThresholdPolicy,
+    COACH_ARCHIVE_AXES_FACET, COACH_ATTRIBUTION_AUDITS_FACET, COACH_ATTRIBUTION_LABELS_FACET,
+    COACH_BROWSER_PROGRAMS_FACET, COACH_DRAFTER_RETRAIN_FACET, COACH_EVAL_AUTHORING_FACET,
+    COACH_EVAL_MEASUREMENT_FACET, COACH_FORK_PROMOTE_FACET, COACH_JUDGE_LABEL_RECHECKS_FACET,
+    COACH_JUDGE_SWAP_FACET, COACH_OFFER_CHECK_FACET, COACH_PERSON_THRESHOLD_FACET,
+    COACH_RESEARCH_RUN_FACET, COACH_RESEARCH_SELECT_FACET, COACH_SEAL_CHECKS_FACET,
+    COACH_SITE_SKILLS_FACET, COACH_SKILL_DISCOVERY_FACET, COACH_SKILL_DISTILL_FACET,
+    COACH_THINK_THRESHOLD_FACET, COACH_TRADEOFF_ROUTE_FACET, COACH_TRAINING_OFFER_FACET,
+    COACH_TRAINING_RUN_FACET, COACH_TYPE_TREE_UPKEEP_FACET, COACH_WEAVE_DIGEST_SETTINGS_FACET,
+    PersonThresholdPolicy, ThinkThresholdPolicy,
 };
 use oneiron::dreamer_runner::{
     AbortDreamerBudgetReservation, AdmitDreamerAttempt, DreamerAdmissionOutcome,
@@ -79,6 +79,7 @@ use super::coach_health::coach_role;
 use super::code_fix::{HostModels, coach_model_call_principal, message};
 use crate::server::SyncServer;
 
+mod archive_axes;
 mod attribution_audits;
 mod attribution_labels;
 mod fork_promote;
@@ -89,7 +90,8 @@ mod topology_audit;
 mod type_tree_upkeep;
 mod weave_digest_settings;
 
-/// The jobs are nightly, so a minute's wait costs nothing.
+/// The jobs are nightly, so a minute's wait costs nothing. A per-request job
+/// wakes the worker at once instead ([`oneiron::Vault::coach_host_wake`]).
 const TICK: Duration = Duration::from_secs(60);
 /// The queue's own admission counter; each lease reserves one unit and gives
 /// it back.
@@ -139,11 +141,17 @@ pub(crate) fn spawn(
         alive: Arc::new(Mutex::new(true)),
     };
     let weak = Arc::downgrade(server);
+    // The wake holds no vault: the worker keeps none open between rounds.
+    let wake = server.vault().coach_host_wake();
     tokio::spawn(async move {
         let mut tick = tokio::time::interval(TICK);
         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         loop {
-            tick.tick().await;
+            tokio::select! {
+                biased;
+                _ = tick.tick() => {}
+                () = wake.notified() => {}
+            }
             let Some(server) = weak.upgrade() else {
                 break;
             };
@@ -281,6 +289,24 @@ fn round(server: &SyncServer, renewal: &DigestRenewal) -> oneiron::Result<()> {
             },
             failed => failed,
         };
+        // A requested eval-authoring pass whose record still stands open
+        // keeps its lease unsettled: the error returns, the lease lapses,
+        // and the next admission recovers the record, instead of failing
+        // the lease over a record nothing revisits (FIX
+        // EVAL-AUTHORING-EXECUTE-UNRECORDED-END).
+        let ran = match ran {
+            Err(error)
+                if admitted.status.payload.attempt_type == COACH_EVAL_AUTHORING_FACET
+                    && super::eval_authoring::record_open(vault, &admitted) =>
+            {
+                tracing::warn!(
+                    kind = ?error.kind(),
+                    "a requested eval-authoring pass left its record open; its lease lapses unsettled"
+                );
+                return Err(error);
+            }
+            ran => ran,
+        };
         let served = ran.is_ok();
         settle(vault, &store, &admitted, ran, BUDGET_ID)?;
         // A long round that keeps serving stays ready: each job it completes
@@ -306,6 +332,20 @@ pub(crate) fn round_once(server: &SyncServer) -> oneiron::Result<()> {
         alive: Arc::new(Mutex::new(false)),
     };
     round(server, &renewal)
+}
+
+/// One admitted coach-host job through the wake executor, as a wake pass
+/// with the Coach lent runs it. The cfg-only door
+/// `crate::test_doors::coach_wake` calls it.
+#[cfg(oneiron_test_support)]
+pub(crate) async fn wake_execute_for_test(
+    server: &Arc<SyncServer>,
+    admitted: &DreamerAdmittedAttempt,
+    now: u64,
+) -> oneiron::Result<oneiron::DreamerAttemptExecution> {
+    wake::WakeExecutor::for_test(server)
+        .execute(admitted, now)
+        .await
 }
 
 pub(super) fn run_one(
@@ -336,6 +376,7 @@ pub(super) fn run_one(
         }
         COACH_OFFER_CHECK_FACET => super::training_offer::check(server, admitted, now),
         COACH_EVAL_MEASUREMENT_FACET => super::eval_measurement::run(server, admitted, now),
+        COACH_ARCHIVE_AXES_FACET => archive_axes::run(server, admitted),
         COACH_TRAINING_RUN_FACET => super::training_pack::run(server, admitted, now),
         // FIX 12569: a version a trainer returned is evaluated first (FIX
         // 14975), its held-out side read before the night's corpus sweep, and

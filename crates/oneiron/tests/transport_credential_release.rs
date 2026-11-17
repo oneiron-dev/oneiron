@@ -900,6 +900,7 @@ fn witness_message_with_signature(
             conversation_ref: conversation.to_hex(),
             turn_ref: None,
             thread_audience: None,
+            project: None,
             messages: vec![oneiron::WitnessMessage {
                 id: None,
                 author: oneiron::WitnessAuthor::User,
@@ -1150,6 +1151,7 @@ fn witness_prompt_message(
             conversation_ref: conversation.to_hex(),
             turn_ref: None,
             thread_audience: None,
+            project: None,
             messages: vec![oneiron::WitnessMessage {
                 id: None,
                 author: oneiron::WitnessAuthor::User,

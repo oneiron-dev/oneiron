@@ -36,7 +36,7 @@ pub(super) fn note_known_file_keys_in_txn(
                 custody,
                 handle,
                 reason: key.reason,
-                place: "file".to_owned(),
+                place: super::FILE_PLACE.to_owned(),
             });
         }
     }
