@@ -23,6 +23,20 @@ impl From<Error> for MemoryError {
                 )
             };
         }
+        if let Error::Claim(ClaimError::ActorLacksClaimAuthority { reason }) = &err
+            && *reason == TWO_ADMIN_HOLD_REFUSAL
+        {
+            return Self {
+                reason_codes: vec![TWO_ADMIN_HOLD_REASON_CODE.to_owned()],
+                ..Self::new(
+                    MEMORY_CODE_FORBIDDEN,
+                    err.to_string(),
+                    &[
+                        "Ask another live Owner, Admin or Deputy of the shared vault to make this act, or an Owner to make it: an Owner's own act is never held.",
+                    ],
+                )
+            };
+        }
         // A membership move this install cannot prove the owner's (row
         // HOSTED-ROOT-REVOKES-OWNER-KEY): the owner-key refusal, with the
         // next step, the member and, for a shared act, the pending act as

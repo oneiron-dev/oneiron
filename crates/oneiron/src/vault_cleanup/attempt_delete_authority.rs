@@ -62,6 +62,7 @@ pub(super) fn require_delete_in_txn(
         return Err(forbidden("attempt_delete_no_standing"));
     };
     let scope = FederationGrantScope::vault(shared.vault_id);
+    let mut held = None;
     for id in vault
         .store
         .port_entity_ids_by_type(txn, ENTITY_TYPE_FEDERATION_GRANT, None)?
@@ -83,6 +84,17 @@ pub(super) fn require_delete_in_txn(
             && role.is_admin()
             && admits_operation(&grant.authority_scope)
         {
+            // The org two-admin rule: an Admin's or a Deputy's delete waits
+            // for a second admin while an Owner keeps `org.two_admin` on. No
+            // held verb fronts this door, so it refuses with the hold's reason
+            // and an Owner makes it; a live Owner grant later in the scan
+            // still admits.
+            if role != FederationGrantRole::Owner
+                && let Err(refusal) = vault.two_admin_hold_in_txn(txn, shared.vault_id, actor)
+            {
+                held = Some(refusal);
+                continue;
+            }
             return Ok(DeleteAuthority {
                 actor,
                 role: "admin",
@@ -91,7 +103,10 @@ pub(super) fn require_delete_in_txn(
             });
         }
     }
-    Err(forbidden("attempt_delete_no_standing"))
+    Err(held.map_or_else(
+        || forbidden("attempt_delete_no_standing"),
+        MemoryError::from,
+    ))
 }
 
 /// An agent deletes only while the owner's key is off, on its own unbounded

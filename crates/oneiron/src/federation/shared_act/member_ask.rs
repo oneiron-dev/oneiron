@@ -419,7 +419,9 @@ impl Vault {
     }
 
     /// A live Admin or Owner declines open ask `ask_id`. Declining changes no
-    /// membership.
+    /// membership. While an Owner keeps the org two-admin rule on, an Admin's
+    /// decline of another's ask refuses with the hold's reason: an Owner makes
+    /// it (Engine ANSWER UNBUILT06-PR2-UNHELD-ROLE-DOORS = A).
     pub fn decline_shared_member_ask(
         &self,
         applier: &AuthenticatedOwner,
@@ -436,6 +438,12 @@ impl Vault {
         let holders = self.live_act_holders(&txn, ask.vault_id, now)?;
         if ask.status != MemberAskStatus::Open || !appliers(&holders).contains(&actor) {
             return Err(invalid());
+        }
+        if !holders
+            .iter()
+            .any(|holder| holder.member == actor && holder.role == Role::Owner)
+        {
+            self.two_admin_hold_in_txn(&txn, ask.vault_id, actor)?;
         }
         ask.status = MemberAskStatus::Declined { by: actor.to_hex() };
         ask.closed_at = Some(now);

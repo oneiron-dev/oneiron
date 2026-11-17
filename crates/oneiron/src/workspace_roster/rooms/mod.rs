@@ -67,7 +67,7 @@ pub use audience_doors::{
     MEMORY_CODE_AGENT_THREAD_WALK_IN_FORBIDDEN, ThreadAudienceAddRequest, ThreadAudienceReceipt,
     ThreadAudienceRemoveRequest,
 };
-pub(crate) use audience_doors::{VaultStanding, vault_standing_in};
+pub(crate) use audience_doors::{VaultStanding, admin_standing_held_in, vault_standing_in};
 #[cfg(feature = "sync")]
 pub(crate) use audience_edit_guard::audience_edit_unlink_refusal;
 pub(crate) use audience_edit_guard::{

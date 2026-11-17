@@ -477,6 +477,43 @@ pub fn write_steward_holder_row(
     })
 }
 
+/// The shipped policy with one more grant-policy row: a holder row for
+/// `holder` at `role` over shared vault `vault_id` that holds only the verbs
+/// `verbs`, every other axis whole: the owner's standing word that narrows
+/// what one holder gets at that role (the org two-admin rule's tests, Astra
+/// delta on #8482 D3).
+///
+/// # Errors
+///
+/// The vault's.
+pub fn write_holder_row(
+    vault: &Vault,
+    role: crate::federation::FederationGrantRole,
+    vault_id: u64,
+    holder: EntityId,
+    verbs: &[&str],
+) -> Result<()> {
+    use crate::federation::Scope;
+    use crate::federation::grant_policy::{GrantPolicyRow, ROWS_KEY, encode_row};
+    let mut scope = Scope::top();
+    scope.verbs = verbs.iter().map(|verb| (*verb).to_owned()).collect();
+    let row = encode_row(&GrantPolicyRow::HolderOverride {
+        role,
+        vault_id,
+        holder,
+        scope,
+    })?;
+    rewrite_shipped_policy(vault, |entries| {
+        let rmpv::Value::Array(rows) = policy_entry(entries, ROWS_KEY)? else {
+            return Err(Error::InvalidConfig(
+                "the grant-policy rows are not a list".into(),
+            ));
+        };
+        rows.push(row);
+        Ok(())
+    })
+}
+
 /// The shipped policy with an empty grant-policy row list: no precedence
 /// row and no role default, so no Steward scope resolves, as an owner who
 /// emptied the list leaves it.

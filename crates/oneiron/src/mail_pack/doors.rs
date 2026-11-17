@@ -160,6 +160,30 @@ impl Memory<'_> {
         )
     }
 
+    /// [`Self::mail_caller_manages_in`] for a change the caller makes: while
+    /// an Owner keeps the org two-admin rule on, an Admin's (not the Owner's)
+    /// change of a group source, its readers or another person's source
+    /// refuses with the hold's reason; an Owner makes it (Engine ANSWER
+    /// UNBUILT06-PR2-UNHELD-ROLE-DOORS = A). Views keep
+    /// [`Self::mail_caller_manages_in`].
+    fn mail_caller_manages_change_in(&self, txn: &heed::RoTxn<'_>) -> MemoryResult<bool> {
+        let vault = self.vault();
+        let actor = self.actor();
+        let standing = crate::workspace_roster::vault_standing_in(vault, txn, actor)?;
+        if standing == Some(crate::workspace_roster::VaultStanding::Owner)
+            || source_audience::embedded_owner_person_in(vault, txn, actor)?.is_some()
+        {
+            return Ok(true);
+        }
+        if standing.is_none() {
+            return Ok(false);
+        }
+        if crate::workspace_roster::admin_standing_held_in(vault, txn, actor)? {
+            return Err(crate::federation::two_admin_hold_refusal().into());
+        }
+        Ok(true)
+    }
+
     /// Whether the bound actor may change `row`: a personal mailbox's or a
     /// calendar's own person, a group address's Owner or Admin.
     fn mail_caller_owns_in(
@@ -168,7 +192,7 @@ impl Memory<'_> {
         row: &MailSourceRow,
     ) -> MemoryResult<bool> {
         match row.kind {
-            MailSourceKind::GroupAddress => self.mail_caller_manages_in(txn),
+            MailSourceKind::GroupAddress => self.mail_caller_manages_change_in(txn),
             MailSourceKind::PersonalMailbox | MailSourceKind::Calendar => {
                 let vault = self.vault();
                 let Some(owners) = source_audience::source_readers_in(vault, txn, &row.audience)?
@@ -325,7 +349,7 @@ impl Memory<'_> {
                             "a group address reads to the members it names, not to one person",
                         ));
                     }
-                    if !self.mail_caller_manages_in(txn)? {
+                    if !self.mail_caller_manages_change_in(txn)? {
                         return Err(MemoryError::bad_request(
                             "a group address is connected by the vault's Owner or an Admin",
                         ));
@@ -341,7 +365,7 @@ impl Memory<'_> {
                     let person = match &input.for_person {
                         None => self.mail_caller_person_in(txn)?,
                         Some(person) => {
-                            if !self.mail_caller_manages_in(txn)? {
+                            if !self.mail_caller_manages_change_in(txn)? {
                                 return Err(MemoryError::bad_request(
                                     "an Owner or an Admin connects a source for another person",
                                 ));
@@ -562,7 +586,9 @@ impl Memory<'_> {
             let mut row = SOURCES
                 .get(&vault.store, txn, &id)?
                 .ok_or_else(unknown_source)?;
-            if row.kind != MailSourceKind::GroupAddress || !self.mail_caller_manages_in(txn)? {
+            if row.kind != MailSourceKind::GroupAddress
+                || !self.mail_caller_manages_change_in(txn)?
+            {
                 return Err(unknown_source());
             }
             let members = member_persons_in(vault, txn, &input.members)?;

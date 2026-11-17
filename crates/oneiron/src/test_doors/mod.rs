@@ -139,6 +139,7 @@ pub mod grant_roles;
 pub mod graph_ask_centre;
 #[cfg(feature = "sync")]
 pub mod guest_turn_counterparty;
+pub mod held_admin_act;
 pub mod held_answer_confirm;
 pub mod held_program;
 pub mod history_import_rows;

@@ -39,7 +39,9 @@ pub(super) fn require_workspace_authority_in_txn(
             ),
         )
         .map_err(|error| match error {
-            crate::Error::Claim(crate::error::ClaimError::ActorLacksClaimAuthority { .. }) => {
+            crate::Error::Claim(crate::error::ClaimError::ActorLacksClaimAuthority { reason })
+                if reason != crate::memory::TWO_ADMIN_HOLD_REFUSAL =>
+            {
                 invalid("workspace onboarding requires a named admin power over the target vault")
             }
             other => other,
@@ -55,6 +57,14 @@ pub(super) fn with_workspace_authority<T>(
 ) -> Result<T> {
     vault.with_write_txn_grouped(|txn| {
         require_workspace_authority_in_txn(vault, txn, vault_id, writer)?;
+        // The approved re-run of a held onboarding (the org two-admin rule)
+        // lands at its first write, the journal's start.
+        vault.land_approved_admin_act_in_txn(
+            txn,
+            vault_id,
+            writer.entity_ref(),
+            vault.store.clock.now_recorded_at(),
+        )?;
         write(txn)
     })
 }

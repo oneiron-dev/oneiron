@@ -122,6 +122,15 @@ crate::side_table::side_tables! {
     SHARED_ACT_MEMBER_ASK: VaultMeta b"shared-act:member-ask:v1:" Named
         [restore: refuse "shared vault membership"] [family: unclassified] [tier: canonical]
         => crate::Vault::erase_member_ask_actor_in_txn;
+    /// One Admin's or Deputy's power act the org two-admin rule holds (UNBUILT-06; Engine RULING
+    /// UNBUILT06-SHAPE Q2 = A): the verb, its input as written and that input's digest, the first
+    /// admin, when it was held and when it lapses, and where it stands. It runs only on a second,
+    /// distinct live admin's approve, under that admin's own proof. Key: id16 (held act id). A
+    /// hard erase of a person deletes each held act that names them: as its first admin, its
+    /// approver, or in its input.
+    SHARED_ACT_HELD_ADMIN: VaultMeta b"shared-act:held-admin:v1:" Named
+        [restore: refuse "shared vault membership"] [family: unclassified] [tier: canonical]
+        => crate::Vault::erase_held_admin_act_actor_in_txn;
     /// A membership change this install executed with no host issuer to sign it, whose
     /// carrier-signed record it still owes (FIX 12335): the vault, the cause, the person who
     /// executed it, the member it moved, the act, the second it was executed at, the signed-mint

@@ -154,6 +154,11 @@ pub(crate) enum DeleteRefusal {
     /// An Admin role holds no live grant whose resource axes hold this
     /// record, and the caller does not own it.
     OutOfAdminScope,
+    /// Only an Admin's or a Deputy's in-scope power admits this delete of a
+    /// record the caller does not own, and an Owner keeps the org two-admin
+    /// rule on: no held verb fronts a delete, so an Owner makes it (Astra on
+    /// #8482, H1; Engine RULING UNBUILT06-PR2-MEMORY-VERBS = A).
+    TwoAdminHold,
     /// The agent holds no one live Grant that names `delete`, holds this
     /// record and was given by a live Owner or an Admin still holding it.
     NoDeleteGrant,
@@ -175,6 +180,7 @@ impl DeleteRefusal {
             Self::NoStanding => "no_standing",
             Self::NotOwnerOfItem => "not_owner_of_item",
             Self::OutOfAdminScope => "out_of_admin_scope",
+            Self::TwoAdminHold => crate::memory::TWO_ADMIN_HOLD_REASON_CODE,
             Self::NoDeleteGrant => "no_delete_grant",
             Self::AuthorityRow => "authority_row",
             Self::CredentialBounds => "credential_bounds",
@@ -199,6 +205,10 @@ impl DeleteRefusal {
                  own it"
                     .to_owned()
             }
+            Self::TwoAdminHold => "this shared vault's two-admin rule is on: an Admin's or a \
+                                   Deputy's delete of a record it does not own must be made by \
+                                   an Owner"
+                .to_owned(),
             Self::NoDeleteGrant => "the agent holds no live Grant that names delete and holds \
                                     this record"
                 .to_owned(),
@@ -539,7 +549,11 @@ impl TargetRecord {
 /// Member's own item, each under one live membership grant over this shared
 /// vault. A personal vault has no membership roles. The refusal names the
 /// role the person holds: none, an Admin role out of scope, or a role that
-/// deletes only its own items.
+/// deletes only its own items. While an Owner keeps the org two-admin rule
+/// on, an Admin's or a Deputy's in-scope arm admits nothing (an Owner
+/// returned before this, so no Owner reaches it): the person's own item
+/// still goes, and any other record refuses with
+/// [`DeleteRefusal::TwoAdminHold`].
 fn person_arms(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -554,6 +568,7 @@ fn person_arms(
     let mut own_grant = None;
     let mut holds_role = false;
     let mut holds_admin = false;
+    let mut held = false;
     for (id, grant) in live_grants_in(vault, txn)? {
         if grant.member_ref != person || grant.scope != scope {
             continue;
@@ -596,10 +611,16 @@ fn person_arms(
                 .as_ref()
                 .is_some_and(|position| role_axes_admit(&grant.authority_scope, position))
         {
-            return Ok(Ok(DeleteAuthority {
-                role: ArchiveDeleteRole::Admin,
-                grant: Some(id),
-            }));
+            if role != FederationGrantRole::Owner
+                && vault.two_admin_holds_in_txn(txn, shared.vault_id, person)?
+            {
+                held = true;
+            } else {
+                return Ok(Ok(DeleteAuthority {
+                    role: ArchiveDeleteRole::Admin,
+                    grant: Some(id),
+                }));
+            }
         }
         if own_grant.is_none() {
             let owned = match owns {
@@ -616,6 +637,7 @@ fn person_arms(
             role: ArchiveDeleteRole::Member,
             grant: Some(grant),
         }),
+        None if held => Err(DeleteRefusal::TwoAdminHold),
         None if !holds_role => Err(DeleteRefusal::NoStanding),
         None if holds_admin => Err(DeleteRefusal::OutOfAdminScope),
         None => Err(DeleteRefusal::NotOwnerOfItem),

@@ -1,0 +1,16 @@
+{
+  "name": "vault.members.held",
+  "description": "The admin acts a shared vault's two-admin rule holds, for a live Owner, Admin or Deputy there.",
+  "input": "crate::task_verb::sdk::SharedVaultRequest",
+  "output": "Vec<crate::federation::HeldAdminAct>",
+  "call": "crate::task_verb::sdk::read_held_admin_acts(memory.vault(), &memory.embedded_owner(\"vault.members.held\")?, input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Read",
+  "act_class": "read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "host_door_proof": "shared_person"
+}

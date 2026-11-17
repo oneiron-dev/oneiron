@@ -188,7 +188,9 @@ fn require_role_assigner_in_txn(
     vault
         .authorize_shared_vault_write_in_txn(txn, vault_id, &writer, &assignment_write(role))
         .map_err(|error| match error {
-            Error::Claim(ClaimError::ActorLacksClaimAuthority { .. }) => {
+            Error::Claim(ClaimError::ActorLacksClaimAuthority { reason })
+                if reason != crate::memory::TWO_ADMIN_HOLD_REFUSAL =>
+            {
                 Error::Claim(ClaimError::ActorLacksClaimAuthority {
                     reason: ROLE_ASSIGNER_REFUSAL,
                 })
