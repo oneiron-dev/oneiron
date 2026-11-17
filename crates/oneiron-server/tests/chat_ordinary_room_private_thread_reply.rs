@@ -182,6 +182,7 @@ fn speak(place: &Room, metadata: serde_json::Value) -> (EntityId, MemoryResult<(
             }],
             occurred_at: place.vault.now_recorded_at(),
             assertions: Default::default(),
+            project: None,
         })
         .map(|_| ());
     (turn, spoken)

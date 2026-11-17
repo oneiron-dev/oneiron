@@ -5,11 +5,17 @@
 //! checker whether each pick the edit stamped pending still fits it. A fit
 //! keeps the label and its pick time. A conflict or an unknown answer takes it
 //! out of the anchor and asks its person to re-grade it. A check no model made
-//! stays pending for a later night.
+//! stays pending for a later night. The checker decides each pick through the
+//! decision ladder ([`JudgeLabelFitCheck`], ARCH-0076 #decide-required), on
+//! the Coach's own model.
 use super::coach::COACH_JUDGE_LABEL_RECHECKS_FACET;
 use crate::dreamer_runner::DreamerAdmittedAttempt;
 use crate::skill_optimize::{JudgeLabelChecker, JudgeLabelRecheckReport};
 use crate::{Result, Vault};
+
+mod decide;
+
+pub use decide::{JudgeLabelFitCheck, JudgeLabelFitDecision, JudgeLabelFitDecisions};
 
 impl Vault {
     /// The judge labels' re-check as the Coach, under a leased
