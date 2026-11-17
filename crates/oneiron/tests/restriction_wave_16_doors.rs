@@ -100,6 +100,7 @@ mod feed_prune {
                         expected_revision: None,
                         why: None,
                         check_in_ref: None,
+                        weight_runs: None,
                     },
                 )
                 .expect("the owner sets the key");
@@ -348,6 +349,7 @@ mod space_move {
                     expected_revision: None,
                     why: None,
                     check_in_ref: None,
+                    weight_runs: None,
                 },
             )?;
             assert!(
