@@ -228,16 +228,60 @@ impl Fixture {
         }
     }
 
+    fn materialize(&self) -> PathBuf {
+        door::materialize_masked_copy_checkout(
+            &self.vault,
+            &self.lease,
+            &self.copy_root,
+            &self.original,
+            &self.copy,
+        )
+        .expect("materialize the masked checkout")
+    }
+
+    fn commit_and_push(&self, tree: &Path) -> PushedHeadReceipt {
+        let head = commit_file(tree, "app.txt", "work D\n", "D");
+        git(
+            tree,
+            &[
+                "push",
+                &self.copy_root.to_string_lossy(),
+                "HEAD:refs/heads/main",
+            ],
+        );
+        PushedHeadReceipt {
+            pushed_head: head,
+            ..self.receipt()
+        }
+    }
+
     fn inspect(&self) -> oneiron::checkout::CheckoutTeardownInspection {
+        self.inspect_with_receipt(&self.receipt())
+    }
+
+    fn inspect_with_receipt(
+        &self,
+        receipt: &PushedHeadReceipt,
+    ) -> oneiron::checkout::CheckoutTeardownInspection {
         door::inspect_masked_copy_checkout(
             &self.vault,
             &self.lease,
             &self.copy_root,
             &self.original,
             &self.copy,
-            &self.receipt(),
+            receipt,
         )
         .expect("inspect the masked checkout")
+    }
+
+    fn collect(&self) -> oneiron::checkout::CheckoutResult<()> {
+        door::collect_masked_copy_checkout(
+            &self.vault,
+            &self.lease,
+            &self.copy_root,
+            &self.original,
+            &self.copy,
+        )
     }
 }
 
@@ -466,4 +510,128 @@ fn a_linked_checkout_made_before_the_store_moved_still_inspects_and_collects() {
         &fixture.copy,
     )
     .expect("collect the linked checkout again");
+}
+
+#[test]
+fn a_masked_checkout_holding_a_stash_is_retained_at_teardown() {
+    let fixture = fixture(43);
+    let tree = fixture.materialize();
+    let handle = tree.parent().expect("checkout handle");
+    let receipt = fixture.commit_and_push(&tree);
+    assert!(!fixture.inspect_with_receipt(&receipt).dirty);
+
+    std::fs::write(tree.join("app.txt"), "stashed work\n").expect("edit tracked file");
+    git(&tree, &["stash", "push", "-m", "saved work"]);
+    let stash_oid = git(&tree, &["rev-parse", "--verify", "refs/stash"]);
+    assert_eq!(git(&tree, &["status", "--porcelain"]), "");
+
+    let inspection = fixture.inspect_with_receipt(&receipt);
+    assert_eq!(
+        inspection.observed_head.map(|head| head.to_string()),
+        Some(receipt.pushed_head.clone())
+    );
+    assert_eq!(inspection.receipt_match, TeardownReceiptMatch::Match);
+    assert!(
+        inspection.dirty,
+        "status-clean stashed work must be retained"
+    );
+    assert!(
+        fixture.collect().is_err(),
+        "direct collection must also retain"
+    );
+    assert!(handle.exists());
+    assert_eq!(
+        git(&tree, &["rev-parse", "--verify", "refs/stash"]),
+        stash_oid
+    );
+    assert_eq!(git(&tree, &["show", "refs/stash:app.txt"]), "stashed work");
+
+    git(&tree, &["stash", "drop"]);
+    let clean = fixture.inspect_with_receipt(&receipt);
+    assert!(
+        !clean.dirty,
+        "no stash and no unpushed refs is safe to collect"
+    );
+    assert_eq!(clean.receipt_match, TeardownReceiptMatch::Match);
+    fixture.collect().expect("collect the clean checkout");
+    assert!(!handle.exists());
+    assert!(fixture.copy_root.exists());
+}
+
+#[test]
+fn a_masked_checkout_holding_divergent_refs_is_retained_at_teardown() {
+    let fixture = fixture(44);
+    let tree = fixture.materialize();
+    let handle = tree.parent().expect("checkout handle");
+    let receipt = fixture.commit_and_push(&tree);
+    let unpushed = commit_file(&tree, "app.txt", "unpushed work\n", "unpushed");
+    git(&tree, &["reset", "--hard", &receipt.pushed_head]);
+
+    for name in [
+        "refs/heads/unpushed",
+        "refs/tags/unpushed",
+        "refs/notes/unpushed",
+    ] {
+        git(&tree, &["update-ref", name, &unpushed]);
+        let inspection = fixture.inspect_with_receipt(&receipt);
+        assert_eq!(inspection.receipt_match, TeardownReceiptMatch::Match);
+        assert!(inspection.dirty, "{name} holds unpushed work");
+        assert!(
+            fixture.collect().is_err(),
+            "{name} blocks direct collection"
+        );
+        assert!(handle.exists());
+        assert_eq!(git(&tree, &["rev-parse", "--verify", name]), unpushed);
+        git(&tree, &["update-ref", "-d", name]);
+        assert!(!fixture.inspect_with_receipt(&receipt).dirty);
+    }
+
+    git(&tree, &["branch", "at-receipt", &receipt.pushed_head]);
+    git(
+        &tree,
+        &["tag", "-a", "-m", "ancestor", "at-ancestor", &fixture.copy],
+    );
+    let covered = fixture.inspect_with_receipt(&receipt);
+    assert!(
+        !covered.dirty,
+        "refs at the receipt or its ancestors are safe"
+    );
+    assert_eq!(covered.receipt_match, TeardownReceiptMatch::Match);
+    fixture
+        .collect()
+        .expect("collect with refs covered by receipt");
+    assert!(!handle.exists());
+}
+
+#[test]
+fn a_missing_tree_holding_a_stash_blocks_collection() {
+    let fixture = fixture(45);
+    let tree = fixture.materialize();
+    let handle = tree.parent().expect("checkout handle");
+    std::fs::write(tree.join("app.txt"), "stashed work\n").expect("edit tracked file");
+    git(&tree, &["stash", "push"]);
+    let stash_oid = git(&tree, &["rev-parse", "--verify", "refs/stash"]);
+    let store = git_common_dir(&tree);
+
+    // A Settling retry skips inspection when the working tree is gone.
+    std::fs::remove_dir_all(&tree).expect("remove only the working tree");
+    let inspection = fixture.inspect();
+    assert!(inspection.observed_head.is_none());
+    assert_eq!(inspection.receipt_match, TeardownReceiptMatch::Uncertain);
+    assert!(
+        fixture.collect().is_err(),
+        "the store still holds stashed work"
+    );
+    assert!(handle.exists());
+    assert_eq!(
+        git(&store, &["rev-parse", "--verify", "refs/stash"]),
+        stash_oid
+    );
+    assert_eq!(git(&store, &["show", "refs/stash:app.txt"]), "stashed work");
+
+    git(&store, &["update-ref", "-d", "refs/stash"]);
+    fixture
+        .collect()
+        .expect("resume collection with no tree or refs");
+    assert!(!handle.exists());
 }
