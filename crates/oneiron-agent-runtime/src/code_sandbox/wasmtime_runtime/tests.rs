@@ -465,6 +465,7 @@ fn native_quickjs_memory_rows_make_the_calls_their_imports_made() -> Result<()> 
                             id: self.1,
                             score: 0.5,
                         }],
+                        hooks: Vec::new(),
                     })
                 }
                 SelfCall::MemoryPutClaim(call) => {
