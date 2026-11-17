@@ -58,6 +58,13 @@ impl StagedArchive {
     pub(super) const fn body(&self) -> &BodyRef {
         &self.body
     }
+
+    /// BLAKE3 of the archive's bytes, lowercase hex.
+    pub(super) fn digest(&self) -> String {
+        blake3::Hash::from_bytes(self.body.blake3)
+            .to_hex()
+            .to_string()
+    }
 }
 
 /// The owner the archive files of the row `row` are held under: derived
@@ -78,13 +85,11 @@ pub(crate) fn removal_archive_owner(row: ArchiveRow) -> Result<EntityId> {
 
 /// A writer that hashes every byte it passes on, so a copy is checked as it
 /// is written rather than read again.
-#[cfg(unix)]
 struct HashingWriter<W> {
     inner: W,
     hasher: blake3::Hasher,
 }
 
-#[cfg(unix)]
 impl<W: std::io::Write> std::io::Write for HashingWriter<W> {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
         let written = self.inner.write(buf)?;
@@ -104,6 +109,33 @@ fn measure(source: &mut (impl Read + Seek)) -> Result<([u8; 32], u64)> {
     let len = std::io::copy(source, &mut hasher)?;
     source.seek(SeekFrom::Start(0))?;
     Ok((*hasher.finalize().as_bytes(), len))
+}
+
+/// Everything `source` holds, from its start, copied into `spool` and hashed
+/// as it is written, so the digest is of the copy's own bytes whatever
+/// `source` holds later: `spool` rewound to its start, and the BLAKE3 of
+/// what it holds, lowercase hex. `source` is left rewound.
+///
+/// # Errors
+///
+/// `source`'s and `spool`'s I/O errors.
+pub(super) fn spool_hashed(
+    source: &mut (impl Read + Seek),
+    spool: std::fs::File,
+) -> Result<(std::fs::File, String)> {
+    source.seek(SeekFrom::Start(0))?;
+    let mut writer = HashingWriter {
+        inner: std::io::BufWriter::new(spool),
+        hasher: blake3::Hasher::new(),
+    };
+    std::io::copy(source, &mut writer)?;
+    let HashingWriter { inner, hasher } = writer;
+    let mut spool = inner
+        .into_inner()
+        .map_err(std::io::IntoInnerError::into_error)?;
+    spool.seek(SeekFrom::Start(0))?;
+    source.seek(SeekFrom::Start(0))?;
+    Ok((spool, hasher.finalize().to_hex().to_string()))
 }
 
 #[cfg(unix)]
