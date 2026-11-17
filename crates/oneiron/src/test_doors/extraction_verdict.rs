@@ -9,9 +9,10 @@
 mod lender;
 
 pub use lender::{
-    ExtractionVerdictFixture, ExtractionVerdictNativePack, NativePackAnswer, NativePackSpent,
-    attach_extraction_verdict_lender, fixture_charge_binding_count, fixture_charge_units,
-    fixture_spent_observations, run_extraction_verdict_native_pack,
+    ExtractionVerdictFixture, ExtractionVerdictNativePack, ExtractionVerdictPassResources,
+    NativePackAnswer, NativePackSpent, attach_extraction_verdict_lender,
+    fixture_charge_binding_count, fixture_charge_units, fixture_spent_observations,
+    run_extraction_verdict_native_pack,
 };
 
 use crate::edge::EdgeActorClass;

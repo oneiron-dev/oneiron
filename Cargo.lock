@@ -8443,6 +8443,7 @@ dependencies = [
  "oneiron-dreamer",
  "oneiron-llm",
  "oneiron-remote",
+ "oneiron-testkit",
  "rmpv",
  "serde_json",
  "tempfile",
