@@ -9,7 +9,7 @@ use crate::Vault;
 use crate::dreamer_wake::WakeIdleState;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::side_table::{self, Named, SideTable};
+use crate::side_table::{self, Named, SideKey, SideTable};
 
 use super::types::{
     LandedTurnRef, OccurrenceKind, ProgramTrigger, TurnProgramArming, TurnProgramWake,
@@ -119,6 +119,73 @@ pub(super) fn unindex_trigger_in_txn(
             .delete(vault, txn, &([kind.tag()], key.0, key.1))
             .map(drop),
     }
+}
+
+/// Drops every trigger index row of `actor`'s armings, in the writer that erases them. The
+/// erase calls it when one of the actor's arming rows does not decode, whose trigger the
+/// precise [`unindex_trigger_in_txn`] cannot read: an idle or feed row goes under its kind's
+/// tag, and each due row of its timers goes too, so none lingers until its due time. A
+/// timer's due time leads its key, so its rows are found by scanning the due index; rows of
+/// other actors are left alone, as rows already dropped are.
+pub(super) fn unindex_actor_triggers_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    actor: EntityId,
+) -> Result<()> {
+    for kind in [OccurrenceKind::Idle, OccurrenceKind::Feed] {
+        let mut prefix = vec![kind.tag()];
+        prefix.extend_from_slice(actor.as_bytes());
+        TRIGGER.delete_from(vault, txn, &prefix)?;
+    }
+    // A timer's due time leads its key, so its rows are found by scanning the due index. A
+    // row whose key does not decode is skipped: the erase takes by key only what it can name.
+    let mut stale: Vec<(u64, EntityId, EntityId)> = Vec::new();
+    for row in TIMER_DUE.iter_raw_from(vault, &*txn, &[])? {
+        let (key, _) = row?;
+        if let Some(key) = <(u64, EntityId, EntityId) as SideKey>::decode_key(&key) {
+            if key.1 == actor {
+                stale.push(key);
+            }
+        }
+    }
+    for key in &stale {
+        TIMER_DUE.delete(vault, txn, key)?;
+    }
+    Ok(())
+}
+
+/// Each due row one of `actor`'s timers keeps: its due time and registration. Only the
+/// integration tests' erase doors read it.
+#[cfg(oneiron_test_support)]
+pub(super) fn timer_due_rows_for_actor(
+    vault: &Vault,
+    actor: EntityId,
+) -> Result<Vec<(u64, EntityId)>> {
+    let txn = vault.store.env.read_txn()?;
+    let mut rows = Vec::new();
+    for key in TIMER_DUE.scan_keys(vault, &txn, &[])? {
+        if key.1 == actor {
+            rows.push((key.0, key.2));
+        }
+    }
+    Ok(rows)
+}
+
+/// Each idle or feed row one of `actor`'s programs keeps: its kind tag and registration.
+/// Only the integration tests' erase doors read it.
+#[cfg(oneiron_test_support)]
+pub(super) fn trigger_rows_for_actor(
+    vault: &Vault,
+    actor: EntityId,
+) -> Result<Vec<(u8, EntityId)>> {
+    let txn = vault.store.env.read_txn()?;
+    let mut rows = Vec::new();
+    for key in TRIGGER.scan_keys(vault, &txn, &[])? {
+        if key.1 == actor {
+            rows.push((key.0[0], key.2));
+        }
+    }
+    Ok(rows)
 }
 
 /// Records the wake one occurrence owes `arming`, sealed with the authority the arming sealed, in
