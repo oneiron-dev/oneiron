@@ -7,7 +7,7 @@
 use oneiron::EntityId;
 use oneiron::llm::media::MediaJobState;
 
-use super::{FatalLlmError, KeptJob, LlmResult, MediaCancelMode, MediaCancelOutcome, MediaRuntime};
+use super::{FatalLlmError, KeptJob, LlmResult, MediaRuntime};
 
 impl MediaRuntime {
     /// Whether job `id`'s kept row was stamped at its submit with `actor` as
@@ -34,15 +34,10 @@ impl MediaRuntime {
 
     /// [`Self::cancel`] for an agent the owner's `ai.video` Grant admits, as
     /// [`Self::poll_asked_by`] reaches a job.
-    pub(crate) async fn cancel_asked_by(
-        &self,
-        actor: EntityId,
-        id: &str,
-        mode: MediaCancelMode,
-    ) -> LlmResult<MediaCancelOutcome> {
+    pub(crate) async fn cancel_asked_by(&self, actor: EntityId, id: &str) -> LlmResult<()> {
         if !self.asked_by(id, actor) {
             return Err(FatalLlmError::InvalidRequest.into());
         }
-        self.cancel_with_mode(id, mode).await
+        self.cancel(id).await
     }
 }

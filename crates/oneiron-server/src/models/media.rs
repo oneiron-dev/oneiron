@@ -81,7 +81,6 @@ mod video_length;
 mod voice_reference;
 
 pub(crate) use agent::AgentMediaCall;
-pub use job_lifecycle::{MediaCancelMode, MediaCancelOutcome};
 #[cfg(oneiron_test_support)]
 pub(crate) use run_line::JobSpendLedger;
 

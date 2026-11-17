@@ -12,17 +12,18 @@
 //!   Any other wake answers as before.
 //! - An `ai.video` call so declared answers a task over its job's ticket,
 //!   read through `ai.video.poll` as the poller (against a plain-HTTP fake
-//!   provider). `tasks/cancel` reaches the provider through
-//!   `ai.video.cancel`, which stops and drops the job, so the task ends
-//!   `cancelled` at once and stays so.
+//!   provider). Its task has no stop door (ruling
+//!   MCPTASKS-VIDEO-CANCEL-DESTRUCTIVE-STOP = A): `tasks/cancel` is
+//!   acknowledged and reaches no provider, because the provider's only stop
+//!   (`DELETE`) would delete a clip that finished after the task's last
+//!   read. The job renders to its end, and the task ends `completed` with
+//!   the finished job as its result.
 //! - A task that ended refuses a cancel (the spec: a task in a terminal
 //!   status is never cancelled), so a cancel never undoes finished work, and
 //!   its end stays.
 //! - A video job that finished ends its task `completed` with the finished
-//!   job as its result, and no task cancel deletes its clip: the task's
-//!   cancel asks `ai.video.cancel` with `if_running`, which refuses a job
-//!   that ended, by name, and keeps it (so a job that finishes after the
-//!   task's last read keeps its clip too).
+//!   job as its result, and a cancel of that task is refused and deletes
+//!   nothing.
 //! - A task-mode start dedupes on its record's own key only when the call
 //!   carries one, as a plain `tools/call` does: a Timer `host.wake` sent
 //!   twice with no invocation key starts two night steps and answers two
@@ -561,7 +562,7 @@ fn a_task_that_ended_refuses_a_cancel_and_keeps_its_end() -> TestResult {
 }
 
 #[test]
-fn a_video_job_returns_a_task_and_its_cancel_reaches_the_provider() -> TestResult {
+fn a_video_task_cancel_is_acknowledged_and_never_stops_the_job() -> TestResult {
     on_engine_stack(|| async {
         let provider = FakeVideoProvider::start().await?;
         let fixture = Fixture::with_video_provider(&provider.base_url).await?;
@@ -587,32 +588,31 @@ fn a_video_job_returns_a_task_and_its_cancel_reaches_the_provider() -> TestResul
 
         let cancelled = fixture.tasks("cancel", &id).await?;
         assert_eq!(cancelled["result"]["resultType"], "complete", "{cancelled}");
-        let stop = ("DELETE".to_owned(), format!("/v1/videos/{PROVIDER_JOB}"));
-        assert!(
-            provider.seen().contains(&stop),
-            "the cancel reached the provider: {:?}",
-            provider.seen()
-        );
-
-        let got = fixture.tasks("get", &id).await?;
+        let still = fixture.tasks("get", &id).await?;
         assert_eq!(
-            got["result"]["status"], "cancelled",
-            "the job stopped and was dropped, so the task ended cancelled: {got}"
+            still["result"]["status"], "working",
+            "the cancel stopped nothing, so the task still works: {still}"
         );
-        assert!(
-            got["result"].get("result").is_none(),
-            "a cancelled task carries no result: {got}"
-        );
-
         let again = fixture.tasks("cancel", &id).await?;
         assert_eq!(
-            again["error"]["code"], -32602,
-            "a cancelled task refuses another cancel: {again}"
+            again["result"]["resultType"], "complete",
+            "a working task acknowledges another cancel: {again}"
         );
+
+        // The job finishes at its provider after the task's last read: the
+        // task ends with it, and the job keeps its clip.
+        provider.finish();
+        let done = fixture.tasks("get", &id).await?;
+        assert_eq!(done["result"]["status"], "completed", "{done}");
         assert_eq!(
-            provider.seen().iter().filter(|seen| **seen == stop).count(),
-            1,
-            "the second cancel reached no provider"
+            output(&done["result"]["result"])["state"],
+            "done",
+            "the task's result is the finished job: {done}"
+        );
+        assert!(
+            !provider.seen().iter().any(|(method, _)| method == "DELETE"),
+            "no cancel reached the provider: {:?}",
+            provider.seen()
         );
         Ok(())
     })
@@ -629,7 +629,7 @@ fn a_finished_video_job_ends_completed_and_no_task_cancel_deletes_its_clip() -> 
             "params": { "seconds": 4, "size": "1280x720" },
         });
 
-        let started = fixture.call("ai.video", render.clone(), true).await?;
+        let started = fixture.call("ai.video", render, true).await?;
         let id = task_id(&started)?;
         let done = fixture.tasks("get", &id).await?;
         assert_eq!(done["result"]["status"], "completed", "{done}");
@@ -650,36 +650,6 @@ fn a_finished_video_job_ends_completed_and_no_task_cancel_deletes_its_clip() -> 
             "the refused cancel kept the job and its clip: {kept}"
         );
 
-        // The flag the task's cancel sets, on the verb itself: a job that
-        // ended refuses a stop-only cancel, by name, and keeps its clip.
-        let ticket = fixture.call("ai.video", render, false).await?;
-        let job = output(&ticket["result"])["job"]
-            .as_str()
-            .ok_or_else(|| format!("a ticket names its job: {ticket}"))?
-            .to_owned();
-        let polled = fixture
-            .call("ai.video.poll", json!({ "job": job }), false)
-            .await?;
-        assert_eq!(output(&polled["result"])["state"], "done", "{polled}");
-        let stop_only = fixture
-            .call(
-                "ai.video.cancel",
-                json!({ "job": job, "if_running": true }),
-                false,
-            )
-            .await?;
-        assert!(
-            stop_only.to_string().contains("already ended"),
-            "a job that ended refuses a stop-only cancel by name: {stop_only}"
-        );
-        let still = fixture
-            .call("ai.video.poll", json!({ "job": job }), false)
-            .await?;
-        assert_eq!(
-            output(&still["result"])["state"],
-            "done",
-            "the refused cancel kept the job and its clip: {still}"
-        );
         assert!(
             !provider.seen().iter().any(|(method, _)| method == "DELETE"),
             "no cancel reached the provider: {:?}",
