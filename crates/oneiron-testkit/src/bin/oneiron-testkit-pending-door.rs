@@ -54,13 +54,16 @@ fn main() -> ExitCode {
             "unlocated": unlocated,
         })
     );
-    for line in &moved {
-        eprintln!("moved: {line}");
-    }
-    for line in &unlocated {
-        eprintln!("file gone from the tree, in no filter: {line}");
-    }
-    for line in &report {
+    let stderr_lines = moved
+        .iter()
+        .map(|line| format!("moved: {line}"))
+        .chain(
+            unlocated
+                .iter()
+                .map(|line| format!("file gone from the tree, in no filter: {line}")),
+        )
+        .chain(report.iter().cloned());
+    for line in stderr_lines {
         eprintln!("{line}");
     }
     if report.is_empty() {
