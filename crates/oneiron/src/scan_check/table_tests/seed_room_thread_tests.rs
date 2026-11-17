@@ -81,7 +81,129 @@ pub(super) fn seed(vault: &Vault, scan: EngineScan) -> Option<(usize, Read<'_>)>
                 Box::new(move || Ok(vault.message_hangs(message, room)?.projects.len())),
             ))
         }
-        EngineScan::ThreadTaskCensus => None, // NO-FIXTURE: needs a lowered conversion policy plus admitted thread/task/roster binding (>40 lines).
+        EngineScan::ThreadTaskCensus => {
+            // The census uses conversion policy, not set_scan_threshold. Narrow both
+            // to ROW. An idempotent third binding counts 2+1, then 3+0, at one scope.
+            let owner = vault.ensure_embedded_owner_actor().expect("owner");
+            let root = vault.root_project().expect("root");
+            let project = id(0xca, 1);
+            let record =
+                crate::workspace_roster::ProjectRecord::new(project, Some(root), root, owner)
+                    .expect("project record");
+            vault.put_project(project, &record, 1).expect("project");
+            let room = EntityId::from_hex(&record.home_room).expect("room");
+            let grant = rmpv::Value::Map(vec![
+                ("actor_ref".into(), owner.to_hex().into()),
+                ("effector".into(), "core:read".into()),
+                (
+                    "scope".into(),
+                    crate::federation::scope_codec::encode_scope_value(
+                        &crate::federation::scope_codec::read_preset(),
+                    )
+                    .expect("scope"),
+                ),
+                ("receipt_required".into(), false.into()),
+            ]);
+            let manifest = crate::gate::default_policy_manifest_with_scoped_grants(vec![grant])
+                .expect("manifest");
+            crate::test_util::put_policy_manifest_bytes(
+                vault,
+                crate::gate::default_policy_manifest_id().expect("manifest id"),
+                &manifest,
+            )
+            .expect("grant");
+            let mut entries = vis_default_manifest_entries();
+            let (_, conversion) = entries
+                .iter_mut()
+                .find(|(key, _)| key.as_str() == Some("project_conversion"))
+                .expect("conversion row");
+            let rmpv::Value::Map(fields) = conversion else {
+                panic!("conversion map")
+            };
+            fields
+                .iter_mut()
+                .find(|(key, _)| key.as_str() == Some("max_tasks"))
+                .expect("max_tasks")
+                .1 = ROW.into();
+            let mut data = Vec::new();
+            rmpv::encode::write_value(&mut data, &rmpv::Value::Map(entries)).expect("encode");
+            crate::test_util::put_policy_manifest_bytes(vault, id(0xca, 2), &data)
+                .expect("conversion policy");
+            let (trunk, thread) = (id(0xca, 10), id(0xca, 11));
+            let speak = |turn: EntityId, message: EntityId, parent: Option<EntityId>| {
+                crate::memory::WitnessTurn {
+                    conversation_ref: room.to_hex(),
+                    turn_ref: Some(turn.to_hex()),
+                    thread_audience: None,
+                    project: None,
+                    messages: vec![crate::memory::WitnessMessage {
+                        id: Some(message.to_hex()),
+                        author: crate::memory::WitnessAuthor::User,
+                        message_type: "text".into(),
+                        content: "thread census".into(),
+                        parts: None,
+                        is_visible: true,
+                        order: 0,
+                        quote: None,
+                        metadata: Some(parent.map_or(
+                            serde_json::json!({}),
+                            |anchor| serde_json::json!({"room_thread_of": anchor.to_hex()}),
+                        )),
+                    }],
+                    occurred_at: 2,
+                    assertions: Default::default(),
+                }
+            };
+            let user = vault.memory(owner, crate::edge::EdgeActorClass::Human);
+            user.rooms_speak(&speak(trunk, id(0xca, 12), None))
+                .expect("trunk");
+            user.rooms_speak(&speak(thread, id(0xca, 13), Some(trunk)))
+                .expect("thread");
+            let post_one = |index: usize| {
+                let post: crate::task_verb::TaskPost = serde_json::from_value(serde_json::json!({
+            "intent_key": format!("thread-census-{index}"), "assignee": "dreamer",
+            "brief": {
+                "schema": 1,
+                "type_ref": {"node_id": id(0xca, 30 + index).to_hex(), "tree_version": 1},
+                "objective": "Tidy the tide log",
+                "intent": {"need": "Tidy the tide log", "care": "light"},
+                "success": {
+                    "question": "Is the tide log tidy?",
+                    "criteria": {"yes_if_all": [{"text": "The duplicate dawn readings are merged."}]}
+                },
+                "escalation": {
+                    "to": {"people": [owner.to_hex()]}, "triggers": [], "default": "proceed",
+                    "reversibility": "reversible_read"
+                }
+            }
+        })).expect("post");
+                let receipt = user.tasks_post(post).expect("TASK post");
+                match receipt.handle {
+                    crate::task_verb::TaskHandle::Task { task_ref } => task_ref,
+                    _ => panic!("an embedded-owner Dreamer post creates a TASK"),
+                }
+            };
+            let tasks = [post_one(0), post_one(1), post_one(2)];
+            vault
+                .bind_room_thread_task(owner, room, thread, tasks[0])
+                .expect("first");
+            vault
+                .bind_room_thread_task(owner, room, thread, tasks[1])
+                .expect("second");
+            let third = tasks[2];
+            Some((
+                PAST,
+                Box::new(move || {
+                    vault.bind_room_thread_task(owner, room, thread, third)?;
+                    let txn = vault.store.env.read_txn()?;
+                    Ok(rv_turns()
+                        .get(&vault.store, &txn, &thread)?
+                        .expect("thread")
+                        .task_ids
+                        .len())
+                }),
+            ))
+        }
         EngineScan::ReplyStripRequestedRows => {
             // Project room plus a trunk TURN ChildOf it with no replies; the read
             // asks PAST strips past ROW and serves none.
@@ -221,8 +343,209 @@ pub(super) fn seed(vault: &Vault, scan: EngineScan) -> Option<(usize, Read<'_>)>
                 }),
             ))
         }
-        EngineScan::RoomRetryLineageRows => None, // NO-FIXTURE: needs a full Retry proof (private CLAIMS/RESPONSE plus regenerates edges); >40 lines.
-        EngineScan::RoomMentions => None, // NO-FIXTURE: needs a full witness with private participation and handle checks; >40 lines.
+        EngineScan::RoomRetryLineageRows => {
+            // Three live MESSAGEs regenerate back to the response slot. The existing
+            // crate-visible prover walks all three and returns the source's one message.
+            let owner = id(0xcb, 0);
+            vault
+                .put_entity(
+                    &owner,
+                    crate::registry::ENTITY_TYPE_PERSON,
+                    crate::temporal::TimeRange { start: 1, end: 1 },
+                    1,
+                    b"owner",
+                )
+                .expect("owner");
+            let root = vault.root_project().expect("root");
+            let project = id(0xcb, 1);
+            let record =
+                crate::workspace_roster::ProjectRecord::new(project, Some(root), root, owner)
+                    .expect("project record");
+            vault.put_project(project, &record, 1).expect("project");
+            let room = EntityId::from_hex(&record.home_room).expect("room");
+            let (parent, slot, mid, source) =
+                (id(0xcb, 10), id(0xcb, 11), id(0xcb, 12), id(0xcb, 13));
+            let (m0, m1, m2) = (id(0xcb, 20), id(0xcb, 21), id(0xcb, 22));
+            for turn in [parent, slot, mid, source] {
+                vault
+                    .put_entity(
+                        &turn,
+                        crate::registry::ENTITY_TYPE_TURN,
+                        crate::temporal::TimeRange { start: 1, end: 1 },
+                        1,
+                        b"turn",
+                    )
+                    .expect("turn");
+            }
+            for message in [m0, m1, m2] {
+                vault
+                    .put_entity(
+                        &message,
+                        crate::registry::ENTITY_TYPE_MESSAGE,
+                        crate::temporal::TimeRange { start: 1, end: 1 },
+                        1,
+                        b"message",
+                    )
+                    .expect("message");
+            }
+            vault
+                .with_write_txn(|txn| {
+                    rv_turns().put(
+                        &vault.store,
+                        txn,
+                        &parent,
+                        &rv_room_turn(parent, room, None, None, 1),
+                    )?;
+                    for (turn, at, message) in [(slot, 2, m0), (mid, 3, m1), (source, 4, m2)] {
+                        let mut row = rv_room_turn(turn, room, Some(parent), None, at);
+                        // rv_room_turn defaults actor to turn id; this proof checks it.
+                        row.actor = owner.to_hex();
+                        row.message_ids = vec![message.to_hex()];
+                        rv_turns().put(&vault.store, txn, &turn, &row)?;
+                    }
+                    rr_claims().put(
+                        &vault.store,
+                        txn,
+                        &parent,
+                        &crate::workspace_roster::RoomClaimReceipt {
+                            room_id: room.to_hex(),
+                            turn_id: parent.to_hex(),
+                            actor: owner.to_hex(),
+                            receipt_ref: "rooms.claim:retry-scan".to_owned(),
+                            at: 2,
+                        },
+                    )?;
+                    rr_response().put(&vault.store, txn, &parent, &slot)?;
+                    for (message, turn) in [(m0, slot), (m1, mid), (m2, source)] {
+                        for (kind, target) in [
+                            (EdgeKind::AuthoredBy, owner),
+                            (EdgeKind::BelongsTo, room),
+                            (EdgeKind::PartOf, turn),
+                        ] {
+                            let key = Store::encode_edge_key(&message, kind, &target);
+                            vault.store.edges_out.put(txn, &key, &edge_value())?;
+                        }
+                    }
+                    for (newer, older) in [(m2, m1), (m1, m0)] {
+                        let key = Store::encode_edge_key(&newer, EdgeKind::Regenerates, &older);
+                        vault.store.edges_out.put(txn, &key, &edge_value())?;
+                    }
+                    Ok(())
+                })
+                .expect("lineage");
+            let action = crate::conversation::TurnActionAttempt {
+                action: crate::conversation::TurnAction::Retry,
+                conversation: room,
+                user_turn: parent,
+                assistant_turn: source,
+                message: m2,
+                actor: owner,
+                actor_class: crate::edge::EdgeActorClass::Human as u8,
+                authority: crate::conversation::TurnActionAuthority::Native,
+                off_device: false,
+                rebound_from: Vec::new(),
+            };
+            Some((
+                1,
+                Box::new(move || {
+                    let txn = vault.store.env.read_txn()?;
+                    let permit = crate::workspace_roster::RoomRegenerationPermit::prove_in(
+                        vault, &txn, &action, owner,
+                    )?;
+                    Ok(permit.source.message_ids.len())
+                }),
+            ))
+        }
+        EngineScan::RoomMentions => {
+            // Three valid handles, three distinct seated people. The witness validates
+            // all handles past ROW and keeps all three addresses on the room turn.
+            let owner = id(0xcc, 0);
+            let people: Vec<_> = (1..=PAST).map(|index| id(0xcc, index)).collect();
+            for person in std::iter::once(&owner).chain(people.iter()) {
+                vault
+                    .put_entity(
+                        person,
+                        crate::registry::ENTITY_TYPE_PERSON,
+                        crate::temporal::TimeRange { start: 1, end: 1 },
+                        1,
+                        b"room participant",
+                    )
+                    .expect("person");
+            }
+            let root = vault.root_project().expect("root");
+            let project = id(0xcc, 4);
+            let mut record =
+                crate::workspace_roster::ProjectRecord::new(project, Some(root), root, owner)
+                    .expect("project record");
+            record.roster.extend(people.iter().map(EntityId::to_hex));
+            vault.put_project(project, &record, 1).expect("project");
+            let room = EntityId::from_hex(&record.home_room).expect("room");
+            let handles: Vec<_> = (0..PAST).map(|i| format!("@mention-{i}")).collect();
+            for (person, handle) in people.iter().zip(&handles) {
+                vault
+                    .bind_room_handle(room, handle, *person)
+                    .expect("handle");
+            }
+            let grant = rmpv::Value::Map(vec![
+                ("actor_ref".into(), owner.to_hex().into()),
+                ("effector".into(), "core:read".into()),
+                (
+                    "scope".into(),
+                    crate::federation::scope_codec::encode_scope_value(
+                        &crate::federation::scope_codec::read_preset(),
+                    )
+                    .expect("scope"),
+                ),
+                ("receipt_required".into(), false.into()),
+            ]);
+            let manifest = crate::gate::default_policy_manifest_with_scoped_grants(vec![grant])
+                .expect("manifest");
+            crate::test_util::put_policy_manifest_bytes(
+                vault,
+                crate::gate::default_policy_manifest_id().expect("manifest id"),
+                &manifest,
+            )
+            .expect("grant");
+            let turn_id = id(0xcc, 5);
+            let turn = crate::memory::WitnessTurn {
+                conversation_ref: room.to_hex(),
+                turn_ref: Some(turn_id.to_hex()),
+                thread_audience: None,
+                project: None,
+                messages: vec![crate::memory::WitnessMessage {
+                    id: Some(id(0xcc, 6).to_hex()),
+                    author: crate::memory::WitnessAuthor::User,
+                    message_type: "text".to_owned(),
+                    content: "all three handles remain addressed".to_owned(),
+                    parts: None,
+                    metadata: Some(serde_json::json!({"room_mentions": handles})),
+                    is_visible: true,
+                    order: 0,
+                    quote: None,
+                }],
+                occurred_at: 2,
+                assertions: Default::default(),
+            };
+            Some((
+                PAST,
+                Box::new(move || {
+                    vault
+                        .memory(owner, crate::edge::EdgeActorClass::Human)
+                        .rooms_speak(&turn)
+                        .map_err(|error| crate::Error::InvalidConfig(format!("{error:?}")))?;
+                    let txn = vault.store.env.read_txn()?;
+                    let stored = rv_turns().get(&vault.store, &txn, &turn_id)?.expect("turn");
+                    assert_eq!(
+                        stored.addressed_agents,
+                        people
+                            .iter()
+                            .map(EntityId::to_hex)
+                            .collect::<std::collections::BTreeSet<_>>(),
+                    );
+                    Ok(stored.addressed_agents.len())
+                }),
+            ))
+        }
         EngineScan::RoomRosterMembers => {
             // A replicated body keeps all PAST members even when their PERSON
             // rows arrive later; use the same validator the replication write uses.
@@ -707,6 +1030,18 @@ fn rv_children() -> crate::side_table::SideTable<
     crate::side_table::Raw,
 > {
     crate::side_table::SideTable::new(&crate::side_table::ROOMS_THREAD_CHILDREN)
+}
+
+fn rr_claims() -> crate::side_table::SideTable<
+    EntityId,
+    crate::workspace_roster::RoomClaimReceipt,
+    crate::side_table::LegacyJson,
+> {
+    crate::side_table::SideTable::new(&crate::side_table::ROOMS_CLAIM)
+}
+
+fn rr_response() -> crate::side_table::SideTable<EntityId, EntityId, crate::side_table::Raw> {
+    crate::side_table::SideTable::new(&crate::side_table::ROOMS_RESPONSE)
 }
 
 /// One room-turn row; the actor is the turn itself, which these reads never check.
