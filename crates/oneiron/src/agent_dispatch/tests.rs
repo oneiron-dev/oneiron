@@ -2111,6 +2111,7 @@ fn schema_v1_rows_decode_absent_spawn_fields() -> Result<()> {
         caller_origin: CallerOrigin::Unknown,
         funding: None,
         carried_wake_keys: Vec::new(),
+        spawn_parent: None,
     };
     assert_eq!(
         decode_agent_dispatch_input(&encode_agent_dispatch_input(&rich)?)?,

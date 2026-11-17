@@ -12,6 +12,7 @@ fn grantless_actor_cannot_recall_private_messages_or_render_their_text() {
             conversation_ref: EntityId::from_bytes([0xb4; 16]).unwrap().to_hex(),
             turn_ref: None,
             thread_audience: None,
+            project: None,
             messages: vec![witness_message(
                 0,
                 WitnessAuthor::User,

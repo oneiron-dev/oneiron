@@ -503,6 +503,7 @@ fn mail_and_private_note_each_get_one_receipted_prediction() -> crate::Result<()
             conversation_ref: EntityId::now().to_hex(),
             turn_ref: None,
             thread_audience: None,
+            project: None,
             messages: vec![crate::WitnessMessage {
                 id: None,
                 author: crate::WitnessAuthor::User,
@@ -790,6 +791,7 @@ fn a_relationship_message_reaches_the_answerer_only_on_the_askers_grant() -> cra
             conversation_ref: EntityId::now().to_hex(),
             turn_ref: None,
             thread_audience: None,
+            project: None,
             messages: vec![crate::WitnessMessage {
                 id: Some(message.to_hex()),
                 author: crate::WitnessAuthor::User,

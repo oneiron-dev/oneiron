@@ -23,6 +23,7 @@ fn speak(
             conversation_ref: room.to_hex(),
             turn_ref: Some(id.to_hex()),
             thread_audience: None,
+            project: None,
             occurred_at: at,
             assertions: Default::default(),
             messages: vec![WitnessMessage {

@@ -611,6 +611,7 @@ fn a_kit_issue_that_never_activates_publishes_nothing() {
     let awaiting = AwaitedRoot {
         root: root.id,
         arrived: false,
+        request: None,
     };
     assert_eq!(view.awaiting, Some(awaiting));
     assert_eq!(

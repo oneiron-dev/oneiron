@@ -121,6 +121,7 @@ fn erasing_a_message_drops_its_turn_vector_before_any_worker_runs() {
                 ],
                 occurred_at: 500,
                 thread_audience: None,
+                project: None,
                 assertions: Default::default(),
             })
             .expect("witness turn");
@@ -244,6 +245,7 @@ fn a_vectorless_handle_still_erases_the_turn_vector_of_an_erased_message() {
                     ],
                     occurred_at: 500,
                     thread_audience: None,
+                    project: None,
                     assertions: Default::default(),
                 })
                 .expect("witness turn");

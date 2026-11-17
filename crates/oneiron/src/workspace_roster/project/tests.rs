@@ -832,6 +832,7 @@ fn leaders_open_direct_chat_under_own_scopes_and_root_rule_narrows() -> Result<(
             conversation_ref: chat.to_hex(),
             turn_ref: None,
             thread_audience: None,
+            project: None,
             occurred_at: at,
             messages: vec![WitnessMessage {
                 id: Some(message.to_hex()),
@@ -865,6 +866,7 @@ fn leaders_open_direct_chat_under_own_scopes_and_root_rule_narrows() -> Result<(
         conversation_ref: chat.to_hex(),
         turn_ref: Some(alice_turn.to_hex()),
         thread_audience: None,
+        project: None,
         occurred_at: 5,
         messages: vec![WitnessMessage {
             id: Some(message.to_hex()),
@@ -912,6 +914,7 @@ fn leaders_open_direct_chat_under_own_scopes_and_root_rule_narrows() -> Result<(
         conversation_ref: chat.to_hex(),
         turn_ref: Some(EntityId::now().to_hex()),
         thread_audience: None,
+        project: None,
         occurred_at: 5,
         messages: vec![WitnessMessage {
             id: Some(streamed_message.to_hex()),
@@ -1073,6 +1076,7 @@ fn leaders_open_direct_chat_under_own_scopes_and_root_rule_narrows() -> Result<(
         conversation_ref: chat.to_hex(),
         turn_ref: None,
         thread_audience: None,
+        project: None,
         occurred_at: 4,
         messages: vec![WitnessMessage {
             id: Some(message.to_hex()),

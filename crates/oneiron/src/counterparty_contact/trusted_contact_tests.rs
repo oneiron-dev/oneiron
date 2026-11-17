@@ -581,6 +581,7 @@ fn the_notice_carries_the_fact_of_concern_and_nothing_from_the_turn() -> Result<
                 conversation_ref: String::new(),
                 turn_ref: None,
                 thread_audience: None,
+                project: None,
                 messages: vec![crate::memory::WitnessMessage {
                     id: None,
                     author: crate::memory::WitnessAuthor::User,

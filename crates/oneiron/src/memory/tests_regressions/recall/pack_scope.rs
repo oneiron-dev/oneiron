@@ -15,6 +15,7 @@ fn recall_returns_versioned_pack_with_provenance() {
             )],
             occurred_at: 1500,
             thread_audience: None,
+            project: None,
             assertions: Default::default(),
         })
         .expect("witness");
@@ -431,6 +432,7 @@ fn recall_and_query_verbs_respect_limits() {
                 )],
                 occurred_at: 1700,
                 thread_audience: None,
+                project: None,
                 assertions: Default::default(),
             })
             .expect("witness");

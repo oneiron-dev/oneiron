@@ -2320,6 +2320,7 @@ fn ordinary_thought_and_public_witness_cannot_forge_blocked_receipts() -> Result
         conversation_ref: EntityId::now().to_hex(),
         turn_ref: None,
         thread_audience: None,
+        project: None,
         messages: vec![crate::memory::WitnessMessage {
             id: Some(forged.to_hex()),
             author: crate::memory::WitnessAuthor::Companion,

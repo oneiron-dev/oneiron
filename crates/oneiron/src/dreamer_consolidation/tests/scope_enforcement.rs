@@ -255,7 +255,16 @@ fn narrowed_route_refuses_teacher_before_transcript_reaches_backend() -> Result<
     )?;
     vault.set_model_manifest_with_teacher_approval(&manifest, &approval)?;
     // Other served roles may narrow, but the teacher has no approved local checkpoint.
-    vault.set_model_route(ModelSlot::Llm, ModelLocality::OnDevice)?;
+    vault.set_setting(
+        crate::setting::SettingCaller::Owner(&crate::test_util::embedded_owner_proof(&vault)),
+        crate::setting::SetSetting {
+            item: Some("llm".to_owned()),
+            ..crate::setting::SetSetting::vault_value(
+                "models.resident_route",
+                serde_json::to_value(ModelLocality::OnDevice).unwrap(),
+            )
+        },
+    )?;
 
     let backend = ScriptedBackend::new(Vec::new());
     let guard = crate::BudgetGuard::with_reserve_units(

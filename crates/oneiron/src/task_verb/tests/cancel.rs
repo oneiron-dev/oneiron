@@ -219,7 +219,7 @@ fn owner_soft_cancel_of_own_task_is_auto_without_grant() {
         .task_ref
         .expect("task ref");
     let manual = facade
-        .cancel_with_mode(TaskCancelTarget::Task(manual_ref), TaskCancelMode::Manual)
+        .cancel_with_mode(TaskCancelTarget::Task(manual_ref), CheckInMode::AlwaysAsk)
         .expect("owner manual cancel");
     assert_eq!(manual.approval, ClaimApprovalStatus::Proposed);
     assert!(!manual.effected);

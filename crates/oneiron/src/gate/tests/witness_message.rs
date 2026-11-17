@@ -520,6 +520,7 @@ fn the_replicated_closure_leaves_the_local_message_road_intact() -> Result<()> {
             conversation_ref: conversation.to_hex(),
             turn_ref: None,
             thread_audience: None,
+            project: None,
             messages: vec![crate::memory::WitnessMessage {
                 id: Some(message.to_hex()),
                 author: crate::memory::WitnessAuthor::User,
