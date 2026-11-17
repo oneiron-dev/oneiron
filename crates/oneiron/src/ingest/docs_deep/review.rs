@@ -207,7 +207,7 @@ impl Vault {
                 self,
                 txn,
                 &claim.predicate,
-                &crate::ingest::json_to_msgpack_value(&claim.value),
+                &crate::serialize::json_to_msgpack_value(&claim.value),
             )?;
         }
         let proposed = claims
