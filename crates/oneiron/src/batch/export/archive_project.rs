@@ -238,12 +238,17 @@ pub(crate) fn project_stored_archive<R: Read + Seek, W: Write + Seek>(
     manifest
         .bundle_omissions
         .retain(|omission| stays(omission.entity_id.as_str()));
-    manifest
-        .side_rows_withheld
-        .retain(|withheld| withheld.owner.as_deref().is_none_or(stays));
+    manifest.side_rows_withheld.retain(|withheld| {
+        withheld.family != super::ArchiveSideFamily::RetainedSideRow
+            && withheld.owner.as_deref().is_none_or(stays)
+    });
     manifest
         .diary_holds
         .retain(|hold| stays(hold.agent.as_str()));
+    // SIDE-1: a records projection carries no retained rows, names no withheld one and
+    // declares no table omissions: all three are whole-vault-only. `project_side_rows` drops
+    // every retained-family row through its vault-wide travel; the manifest list is cleared here.
+    manifest.side_table_omissions.clear();
     let side_stays = project_side_rows(
         &sides,
         kept,
