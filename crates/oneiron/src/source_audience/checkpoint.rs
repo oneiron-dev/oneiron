@@ -30,7 +30,7 @@ use super::{HELD, RECORDS};
 use crate::EntityId;
 use crate::side_table::SideKey;
 use crate::store::checkpoint_payload::rows::descriptor::{
-    Adapter, Capture, Check, ExactTable, Join,
+    Adapter, Capture, Check, ExactTable, Join, Restore,
 };
 use crate::store::checkpoint_payload::rows::{OwnerRef, RowLocator};
 
@@ -52,6 +52,7 @@ pub(crate) static ADAPTER: Adapter = Adapter {
     check: Check::ByTable,
     row_owner: Some(row_of),
     join: Join::NoSplit,
+    restore: Restore::Parts,
 };
 
 /// The row a part's key names: its owner.

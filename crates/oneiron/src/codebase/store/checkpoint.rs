@@ -35,7 +35,7 @@ use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_CODE_ARTIFACT, ENTITY_TYPE_CODE_SYMBOL};
 use crate::store::checkpoint_payload::rows::descriptor::{
-    Adapter, Capture, CapturedByAdapter, Check, Join,
+    Adapter, Capture, CapturedByAdapter, Check, Join, Restore,
 };
 use crate::store::checkpoint_payload::rows::{
     self, Captured, OtherClient, OwnerRef, RowLocator, Unresolved,
@@ -56,6 +56,7 @@ pub(crate) static ADAPTER: Adapter = Adapter {
     check: Check::ByTable,
     row_owner: None,
     join: Join::NoSplit,
+    restore: Restore::Parts,
 };
 
 /// Where a scope row goes, by the entity its id names: a snapshot's tree,

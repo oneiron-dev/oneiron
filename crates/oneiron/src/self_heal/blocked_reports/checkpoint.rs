@@ -4,7 +4,7 @@ use super::blocked_capture_witness_owner;
 use crate::Result;
 use crate::side_table::{self, Raw, SideTable};
 use crate::store::checkpoint_payload::rows::descriptor::{
-    Adapter, Capture, Check, Join, PlacedTable,
+    Adapter, Capture, Check, Join, PlacedTable, Restore,
 };
 use crate::store::checkpoint_payload::rows::{
     self, Captured, OwnerRef, RowLocator, TypedRow, Unresolved,
@@ -24,6 +24,7 @@ pub(crate) static ADAPTER: Adapter = Adapter {
     check: Check::Own(check_witness),
     row_owner: Some(witness_owner),
     join: Join::NoSplit,
+    restore: Restore::Parts,
 };
 
 /// Files one witness under the owner its key names; a key that names none,

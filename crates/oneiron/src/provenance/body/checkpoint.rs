@@ -18,7 +18,7 @@ use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::store::Store;
 use crate::store::checkpoint_payload::rows::descriptor::{
-    Adapter, Capture, CapturedByAdapter, Check, Join,
+    Adapter, Capture, CapturedByAdapter, Check, Join, Restore,
 };
 use crate::store::checkpoint_payload::rows::{
     self, Captured, OpenedOwnerRows, OwnerRef, RowLocator, RowPart, Unresolved,
@@ -32,6 +32,7 @@ pub(crate) static ADAPTER: Adapter = Adapter {
     check: Check::ByTable,
     row_owner: None,
     join: Join::NoSplit,
+    restore: Restore::Parts,
 };
 
 /// Files a row under `owner`'s `occurrence`, holding while `owner` does.

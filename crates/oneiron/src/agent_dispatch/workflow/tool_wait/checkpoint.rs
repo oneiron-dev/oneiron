@@ -10,7 +10,7 @@ use super::{CheckpointRow, TABLE, body_owner, key};
 use crate::side_table::SideKey;
 use crate::store::ManifestDbs;
 use crate::store::checkpoint_payload::rows::descriptor::{
-    Adapter, Capture, Check, Join, PlacedTable,
+    Adapter, Capture, Check, Join, PlacedTable, Restore,
 };
 use crate::store::checkpoint_payload::rows::{Captured, OwnerRef, TypedRow, Unresolved};
 use crate::{EntityId, Result};
@@ -26,6 +26,7 @@ pub(crate) static ADAPTER: Adapter = Adapter {
     check: Check::ByTable,
     row_owner: None,
     join: Join::NoSplit,
+    restore: Restore::Parts,
 };
 
 /// Files one row: unclassified when its key is not its attempt's, structure
