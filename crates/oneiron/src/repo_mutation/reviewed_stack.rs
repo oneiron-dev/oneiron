@@ -668,6 +668,10 @@ impl Vault {
         if snapshot.head.as_deref() != Some(stack.expected_head.as_str()) {
             return Err(invalid("reviewed stack snapshot HEAD differs"));
         }
+        // A later batch of a split enqueue stages on the head the batch it
+        // follows landed; its members were reviewed on the base the enqueue's
+        // first batch staged on ([MERGE-QUEUE-ENQUEUE-SPLITS-LARGE-BATCH]).
+        let enqueue_base = crate::merge_queue::enqueue_base(self, repo, tested.batch())?;
         let mut conflicts = BTreeSet::new();
         let mut ids = BTreeSet::new();
         let mut rows = Vec::new();
@@ -692,6 +696,7 @@ impl Vault {
                 &row,
                 candidate,
                 stack.pre_snapshot,
+                enqueue_base.as_ref(),
                 repo.repo_ref(),
                 &snapshot,
             )?;
