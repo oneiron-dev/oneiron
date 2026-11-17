@@ -13,6 +13,8 @@
 //!   once when that hour has passed;
 //! - the owner sets a cadence: its job is armed again in that write and goes on from now, and a
 //!   cadence that can never fire is refused;
+//! - a holder's cadence is tighter only when it runs at least as often and starts no later: an
+//!   interval first due after the default's now or the owner's first time is not tighter;
 //! - the owner's `housekeeping_all` runs every engine sweep now, and each keeps its cadence's
 //!   grid: it is next due at the first occurrence after now that its arming set;
 //! - a deadline a door notes makes its sweep due then, a stopped vault wakes for it, and the run
@@ -30,7 +32,7 @@ use oneiron::housekeeping::{
 };
 use oneiron::memory::Memory;
 use oneiron::schedule::Trigger;
-use oneiron::setting::SettingScope;
+use oneiron::setting::{SettingScope, spec_named};
 use oneiron::store::GateDecisionId;
 use oneiron::task_verb::sdk::invoke;
 use oneiron::test_doors::schedule::{
@@ -315,6 +317,62 @@ fn the_owner_sets_a_cadence_and_its_sweep_goes_on_from_now_at_that_cadence() {
     let cadence = fx.cadence(sweep);
     assert_eq!(&cadence["secs"], &json!(2 * HOUR), "{cadence}");
     assert_eq!(fx.due(sweep), Some(T0 + MINUTE + 2 * HOUR), "nothing moved");
+}
+
+/// Blind review round 1 of #9300 and #9305 (P1 on `schedule/mod.rs`): the order compared the
+/// intervals alone, so a `maintenance_cadence` holder's five-minute cadence first due in 2100
+/// counted as tighter than the default and put the sweep off until then. Red before the fix: the
+/// far first time read as tighter.
+#[test]
+fn a_holders_interval_is_tighter_only_when_it_runs_as_often_and_starts_no_later() {
+    let name = key(HousekeepingSweep::SymbolLeaseExpiry);
+    let kind = spec_named(&name).expect("the catalogue key").kind;
+    let value = |trigger: Value| kind.from_json(trigger).expect("a cadence value");
+    let default = kind.default_value().expect("the default");
+    let far = 4_102_444_800_u64;
+    assert_eq!(
+        kind.is_tighter(&value(json!({ "kind": "every", "secs": MINUTE })), &default),
+        Some(true),
+        "more often, from now: tighter than the default"
+    );
+    assert_eq!(
+        kind.is_tighter(
+            &value(json!({ "kind": "every", "secs": 5 * MINUTE, "first_at": far })),
+            &default
+        ),
+        Some(false),
+        "as often, first due in 2100: not tighter than the default, which starts now"
+    );
+    assert_eq!(
+        kind.is_tighter(
+            &value(json!({ "kind": "every", "secs": MINUTE, "first_at": T0 + 30 * DAY })),
+            &default
+        ),
+        Some(false),
+        "more often, first due a month on: not tighter"
+    );
+    let owner = value(json!({ "kind": "every", "secs": HOUR, "first_at": T0 + DAY }));
+    assert_eq!(
+        kind.is_tighter(
+            &value(json!({ "kind": "every", "secs": HOUR, "first_at": T0 + HOUR })),
+            &owner
+        ),
+        Some(true),
+        "the owner's interval from an earlier first time: tighter"
+    );
+    assert_eq!(
+        kind.is_tighter(
+            &value(json!({ "kind": "every", "secs": HOUR, "first_at": T0 + 2 * DAY })),
+            &owner
+        ),
+        Some(false),
+        "the owner's interval from a later first time: not tighter"
+    );
+    assert_eq!(
+        kind.is_tighter(&value(json!({ "kind": "every", "secs": HOUR })), &owner),
+        Some(true),
+        "the owner's interval from now, before the owner's first time: tighter"
+    );
 }
 
 #[test]
