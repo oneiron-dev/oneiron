@@ -82,7 +82,9 @@ pub use pad_custody::PadRestoreNote;
 pub use pad_objects::PadObjectNote;
 pub use pad_reopen::{PadReopenFault, PadReopenReport, PadReopenStage};
 #[cfg(oneiron_test_support)]
-pub(crate) use payload::side_table_registry_gaps;
+pub(crate) use payload::{
+    getter_bytes_for_owner, getter_capture, getter_restore_in_txn, side_table_registry_gaps,
+};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 #[cfg(unix)]

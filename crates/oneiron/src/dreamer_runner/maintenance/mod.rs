@@ -65,6 +65,7 @@ pub use idle_return_tables::COACH_IDLE_RETURN_TABLES_FACET;
 pub use strength::CONSOLIDATION_STRENGTH_FACET;
 pub mod representation;
 mod retrieval_policy;
+pub mod retrieval_skill_review;
 mod room_upkeep;
 pub mod seal_checks;
 pub(crate) mod setting_keys;
@@ -88,6 +89,7 @@ use crate::{Error, Result, Vault};
 pub(crate) use curator::PROPOSAL_PREDICATE as CURATOR_PROPOSAL_PREDICATE;
 pub use curator::approved::apply_after_consent as apply_curator_after_consent;
 pub(crate) use curator::curator_slot_in_txn;
+pub(crate) use curator::finding_lifts_restriction_in as curator_finding_lifts_restriction_in;
 pub use curator::{CuratorQuestions, CuratorRubric, CuratorTrigger};
 pub use evaluation::{
     DREAMER_TUNING_CONFIG_MEDIA_TYPE, DreamerTuningConfig, HarnessEvaluation,
@@ -250,6 +252,17 @@ impl DreamerRunnerStore<'_> {
         self.admit_next_kind(MAINTENANCE_QUEUE_KIND, input)
     }
 }
+/// One curator pass over the admitted `attempt` at `now` (Unix seconds),
+/// answering the findings it landed, held or applied: the cfg test door's
+/// way in (`test_doors::curator_finding::run_curator_once`).
+#[cfg(oneiron_test_support)]
+pub(crate) fn run_curator(
+    vault: &Vault,
+    attempt: &DreamerAdmittedAttempt,
+    now: u64,
+) -> Result<Vec<crate::EntityId>> {
+    curator::run(vault, attempt, now)
+}
 pub(crate) fn execute(
     attempt: &DreamerAdmittedAttempt,
     ctx: &WakeAttemptContext<'_>,
@@ -283,7 +296,7 @@ pub(crate) fn execute(
             action_mode::run(ctx.vault, attempt, ctx.now_ms / 1000)?;
         }
         super::COACH_RETRIEVAL_TUNE_FACET => {
-            retrieval_policy::run(ctx.vault)?;
+            retrieval_policy::run(ctx.vault, attempt, ctx.now_ms / 1000)?;
         }
         honesty::HONESTY_AUDIT_FACET => {
             let _ = honesty::run(ctx.vault, ctx.now_ms / 1000)?;
