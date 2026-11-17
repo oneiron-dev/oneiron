@@ -695,4 +695,8 @@ fn workspace_path(path: &SandboxVirtualPath) -> Result<WorkspacePath> {
 }
 
 #[cfg(test)]
+// The path is spelled out: `code_sandbox::microvm` loads this file through a
+// `#[path]` too, and there a bare `mod tests;` resolves to
+// `firecracker/tests.rs`, the backend's tests, not this protocol's.
+#[path = "protocol/tests.rs"]
 mod tests;

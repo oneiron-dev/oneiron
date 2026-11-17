@@ -125,7 +125,7 @@ pub use admission_types::{
     PackInstallDisposition, PackInstallReceipt, PackInstallStatus, PackObservedTool,
     PackPermissions, PackQualification, PackQualifier, PackRuntimeRecipe,
 };
-#[cfg(all(test, feature = "microvm-firecracker", target_os = "linux"))]
+#[cfg(oneiron_test_support)]
 pub(crate) use script_plan::script_output_bytes;
 pub use script_runtime::{PackScriptGrant, PackScriptOutcome, PackScriptRun};
 // FIX [LIBTEST-QUARANTINE-SKILL-HUB-PACK-CATALOG-ADMISSION-TESTS]: the lib test target's type check fails here (4 errors: E0063 x2, E0061 x2); port it, then drop this gate

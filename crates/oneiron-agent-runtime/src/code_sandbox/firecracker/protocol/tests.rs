@@ -144,7 +144,14 @@ fn socket_protocol_denies_off_list_before_resolution_and_returns_proposals_not_w
     else {
         panic!("two lowered edit proposals")
     };
-    let bytes = crate::skill_hub::pack_catalog::script_output_bytes(&result.1[0])?;
+    // The pack plan's script output contract, crate-private to oneiron, reads
+    // the adapter output; its door builds only under the test cfg. Without it
+    // the edit's own text is read.
+    #[cfg(oneiron_test_support)]
+    let bytes =
+        oneiron::test_doors::code_sandbox_conformance::pack_script_output_bytes(&result.1[0])?;
+    #[cfg(not(oneiron_test_support))]
+    let bytes = adapter_output.edit.replacement.as_bytes().to_vec();
     assert_eq!(
         serde_json::from_slice::<Value>(&bytes).expect("typed output JSON"),
         json!({"inbound":[],"verbs":[],"events":[]})

@@ -165,8 +165,9 @@ pub(crate) fn canonical_speech_conversation_id_for_run(
 }
 
 /// The legacy standalone MESSAGE identity. Runtime executor paths also fold in
-/// their durable run id through [`executor_speech_message_id_for_run`].
-#[cfg(test)]
+/// their durable run id through [`executor_speech_message_id_for_run`]. The test
+/// cfg builds it too, for the door `test_doors::code_sandbox_conformance`.
+#[cfg(any(test, oneiron_test_support))]
 pub(crate) fn executor_speech_message_id(run_ref: &str, order: u32) -> Result<EntityId> {
     executor_speech_message_id_for_run(run_ref, None, order)
 }
