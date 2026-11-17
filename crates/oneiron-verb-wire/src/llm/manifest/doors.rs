@@ -30,13 +30,6 @@ pub struct ModelRouteRead {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct ModelRouteReplace {
-    pub slot: ModelSlot,
-    pub route: ModelLocality,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ModelRouteView {
     pub slot: ModelSlot,
     pub pin: Option<ModelLocality>,
