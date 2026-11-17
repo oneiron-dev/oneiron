@@ -15,7 +15,7 @@
 //! window: every operation of the installed window is the snapshot's or one a fresh author wrote,
 //! never one under the old window's author, whose counters the snapshot never saw.
 
-#![cfg(feature = "sync")]
+#![cfg(all(feature = "sync", feature = "test-support"))]
 
 #[path = "it_sync/sync_harness/mod.rs"]
 mod sync_harness;
