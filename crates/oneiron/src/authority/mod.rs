@@ -137,6 +137,7 @@ mod owner_act;
 mod owner_choice;
 mod owner_key_enrollment;
 mod owner_key_enrollment_door;
+mod owner_key_move_confirm;
 mod owner_project_slip;
 mod owner_proof;
 mod owner_roots;
@@ -405,6 +406,11 @@ pub(crate) use owner_act::{
 pub use owner_choice::OwnerChoiceHead;
 pub use owner_key_enrollment_door::{
     EnrolledOwnerKey, OwnerKeyEnrollment, OwnerKeyEnrollmentReceipt,
+};
+pub use owner_key_move_confirm::{
+    OWNER_KEY_MOVE_MEMBER_NOT_CONFIRMED, OWNER_KEY_MOVE_NO_HELD_KEY, OWNER_KEY_MOVE_NOT_PLANNED,
+    OWNER_KEY_MOVE_NOT_SYNCED, OWNER_KEY_MOVE_PLAN_STALE, OWNER_KEY_MOVE_SIGNER_NOT_EXECUTORS,
+    OwnerKeyMovePlan, OwnerKeyMoveSigner, sign_owner_key_move,
 };
 pub(crate) use owner_roots::anchor_signed_entry;
 pub use owner_roots::{AwaitedRoot, OwnerRootView};

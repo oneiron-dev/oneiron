@@ -37,10 +37,11 @@ use oneiron::federation::{
 use oneiron::memory::{MEMORY_CODE_FORBIDDEN, MemoryError, MemoryResult};
 use oneiron::store::GateDecisionId;
 use oneiron::task_verb::sdk::{
-    self, ActAnswer, EmptyRequest, HandoffAlarmRequest, SharedActExecuted, SharedActRequest,
-    SharedAddOwnerRequest, SharedDeleteProposeRequest, SharedMemberAddRequest,
+    self, ActAnswer, EmptyRequest, HandoffAlarmRequest, SharedActExecuteRequest, SharedActExecuted,
+    SharedActRequest, SharedAddOwnerRequest, SharedDeleteProposeRequest, SharedMemberAddRequest,
     SharedMemberRemoveRequest, SharedMemberRoleRequest, SharedOwnerChangeWaitSetRequest,
-    SharedReceiptRequest, SharedRemoveOwnerRequest, SharedTransferRequest, SharedVaultRequest,
+    SharedOwnerKeyMovePlan, SharedReceiptRequest, SharedRemoveOwnerRequest, SharedTransferRequest,
+    SharedVaultRequest,
 };
 
 use super::clock_ingress;
@@ -303,11 +304,13 @@ pub(crate) async fn vault_shared_owner_change_wait_get(
 /// removal, whose receipt no list covers. A refusal before the act runs
 /// lists no row. The act runs from whatever surface the Owner's proof came
 /// from; a caller off this device whose answer would carry a row that stays
-/// here hears only that it ran (FIX 3414).
+/// here hears only that it ran (FIX 3414). The owner-key revokes a device of
+/// the Owner signed for the act's move land with it (row
+/// HOSTED-OWNER-MOVE-TWO-PHASE).
 pub(crate) async fn vault_shared_execute(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
-    input: SharedActRequest,
+    input: SharedActExecuteRequest,
 ) -> MaybeListed<ActAnswer<SharedActExecuted>> {
     const VERB: &str = "vault.shared.execute";
     let executor = match person(server, auth, VERB) {
@@ -329,6 +332,30 @@ pub(crate) async fn vault_shared_execute(
     // A removed holder's held delivery session is woken (FIX 3396).
     server.removal_deliveries.wake_after(&answer.0);
     crate::device_local::act_answer_maybe(server.vault(), &auth.destination(), answer)
+}
+
+/// `vault.shared.owner_key_move_plan`: a live Owner who may run a matured
+/// act that ends a member's owner keys gets the plan a device of theirs
+/// signs (row HOSTED-OWNER-MOVE-TWO-PHASE), with the host's slip issuer for
+/// a frontier join the plan needs. Names no listed row.
+pub(crate) async fn vault_shared_owner_key_move_plan(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: SharedActRequest,
+) -> MaybeListed<SharedOwnerKeyMovePlan> {
+    const VERB: &str = "vault.shared.owner_key_move_plan";
+    as_person_naming(
+        server,
+        VERB,
+        person(server, auth, VERB),
+        move |server, executor| {
+            with_slips(server, VERB, |slips| {
+                sdk::plan_shared_owner_key_move(server.vault(), &executor, Some(slips), input)
+            })
+        },
+        |_| Some(Vec::new()),
+    )
+    .await
 }
 
 /// `vault.shared.receipt`: a receipt its reader was told about.
