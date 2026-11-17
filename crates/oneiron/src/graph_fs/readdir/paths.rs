@@ -21,6 +21,12 @@ pub(super) fn lane_walks_world(
     if !lane_reads_some_row(lane, policy) || !lane.world_readable_in(rtxn, world)? {
         return Ok(false);
     }
+    // A key its holder's agent Grants bind walks a world only where one of
+    // them alone reads it, judged in this snapshot, so a held lane stops
+    // listing a revoked Grant's world (FIX AGENT-GRANT-ENVELOPE-ONLY-PATHS).
+    if !lane.one_grant_alternative_walks_world_in(rtxn, world)? {
+        return Ok(false);
+    }
     if key.vault_owner_ref().is_some() {
         return Ok(true);
     }
