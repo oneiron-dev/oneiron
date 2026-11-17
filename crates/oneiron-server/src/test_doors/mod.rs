@@ -27,6 +27,7 @@ pub mod live_fork_rung;
 pub mod live_lease;
 pub mod live_run_payer;
 pub mod live_run_step;
+pub mod lost_training_waiter;
 pub mod mcp_carrier_release;
 pub mod mcp_code_mode_verbs;
 pub mod mcp_page_mint;

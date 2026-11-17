@@ -23,7 +23,7 @@ use crate::test_util::{entity as test_id, put_policy_manifest_bytes};
 use crate::write_envelope::{ClaimCandidate, WriteEnvelope, WriteProvenance};
 
 /// The live root-project depth row a root dispatch is clamped to.
-fn root_project_depth(vault: &Vault) -> Result<u8> {
+fn root_project_depth(vault: &Vault) -> Result<u64> {
     Ok(vault
         .project(vault.root_project()?)?
         .ok_or(Error::EntityNotFound)?
@@ -1408,6 +1408,7 @@ fn a_rolled_back_dispatch_for_task_queues_nothing() -> Result<()> {
                 run_id: None,
                 now: 10,
             },
+            AgentSpawnContext::default(),
         )?;
         Err(Error::InvariantViolation("deliberate rollback"))
     });
@@ -1478,7 +1479,7 @@ fn dispatched_row_ceiling(vault: &Vault, status: &AgentDispatchStatus) -> AgentC
         .ceiling
 }
 
-fn persisted_depth(vault: &Vault, attempt: AttemptId) -> Option<u8> {
+fn persisted_depth(vault: &Vault, attempt: AttemptId) -> Option<u64> {
     let record = AttemptQueue::new(vault)
         .get(attempt)
         .expect("read attempt")
@@ -2095,6 +2096,21 @@ fn schema_v1_rows_decode_absent_spawn_fields() -> Result<()> {
         project_ref: None,
         spawn_intent: None,
         scope: None,
+        type_ref: crate::task_type::TaskTypeRef::seeded_root(),
+        type_parents: None,
+        budget: None,
+        launch: None,
+        room: None,
+        join: None,
+        team: None,
+        plan: None,
+        objectives: None,
+        comm: CommReach::Parent,
+        direct_spawn: None,
+        requester: None,
+        caller_origin: CallerOrigin::Unknown,
+        funding: None,
+        carried_wake_keys: Vec::new(),
     };
     assert_eq!(
         decode_agent_dispatch_input(&encode_agent_dispatch_input(&rich)?)?,
@@ -2417,7 +2433,7 @@ fn child_dispatch_inherits_scope_and_refuses_widening_before_enqueue() -> Result
     let scope = Scope {
         world: Some(test_id(0xA9)),
         facet: Some(test_id(0xAA)),
-        relationship: Some(test_id(0xAB)),
+        relationship: Some(std::collections::BTreeSet::from([test_id(0xAB)])),
         project: Some(test_id(0xAC)),
         readable: std::collections::BTreeSet::from([ScopeResource::Bucket {
             key: "bounded-input".into(),
@@ -2523,7 +2539,12 @@ fn depth_edits_do_not_change_identical_dedupe_intent() -> Result<()> {
         ..request.clone()
     };
     let child = vault.with_write_txn(|txn| {
-        dispatcher.dispatch_for_task_in_txn(txn, task, child_request.clone())
+        dispatcher.dispatch_for_task_in_txn(
+            txn,
+            task,
+            child_request.clone(),
+            AgentSpawnContext::default(),
+        )
     })?;
     let AgentDispatchOutcome::Dispatched(child) = child else {
         panic!("child")
@@ -2550,8 +2571,9 @@ fn depth_edits_do_not_change_identical_dedupe_intent() -> Result<()> {
             ErrorKind::InvalidAgentDispatchInput
         );
     }
-    let AgentDispatchOutcome::Existing(reused_child) = vault
-        .with_write_txn(|txn| dispatcher.dispatch_for_task_in_txn(txn, task, child_request))?
+    let AgentDispatchOutcome::Existing(reused_child) = vault.with_write_txn(|txn| {
+        dispatcher.dispatch_for_task_in_txn(txn, task, child_request, AgentSpawnContext::default())
+    })?
     else {
         panic!("parented task dispatch retry")
     };

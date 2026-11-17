@@ -78,16 +78,20 @@ fn quote_fixture() -> Result<SpanFixture> {
         .witness(&WitnessTurn {
             conversation_ref: test_entity_id(55).to_hex(),
             turn_ref: None,
+            thread_audience: None,
             messages: vec![WitnessMessage {
                 id: None,
                 author: WitnessAuthor::User,
                 message_type: "dialogue".into(),
                 content: "A🦊日本B".into(),
+                parts: None,
                 metadata: None,
                 is_visible: true,
                 order: 0,
+                quote: None,
             }],
             occurred_at: 500,
+            assertions: Default::default(),
         })
         .expect("witness canonical MESSAGE");
     let message = vault

@@ -41,10 +41,8 @@ impl CalendarRemoteTransport for PullOne {
 #[test]
 fn normal_connector_upsert_rewrites_event_without_erasing_confirmation_context() {
     let clock = crate::ports::ManualClock::new(NOW);
-    let config = crate::VaultConfig {
-        store_clock: clock.bundle(),
-        ..crate::VaultConfig::default()
-    };
+    let mut config = crate::VaultConfig::device();
+    config.store_clock = clock.bundle();
     let (_dir, vault, receipt, plan) =
         executable_with_invite_config(EmergencyActionPolicy::Cancel, true, config);
     crate::calendar::test_support::provision_test_calendar_importer(&vault);
@@ -75,15 +73,31 @@ fn normal_connector_upsert_rewrites_event_without_erasing_confirmation_context()
         content_hash: [0; 32],
         ics,
     });
-    let seat = CalendarConnectorSeatState::new(CalendarConnectorSeatConfig {
-        seat_ref: "booking-sync".to_owned(),
-        secret_ref: "booking-calendar".to_owned(),
-        system: "provider-calendar".to_owned(),
-        calendar_ref: "calendar".to_owned(),
-        cadence_jitter_min_seconds: 30,
-        cadence_jitter_max_seconds: 60,
-    });
-    run_calendar_connector_sync(&vault, &seat, &transport, NOW + 1, 7).unwrap();
+    let owner = crate::test_util::embedded_owner_proof(&vault);
+    let memory = vault.memory(owner.actor(), crate::EdgeActorClass::Human);
+    let registration = crate::calendar::connectors::door::configure(
+        &memory,
+        &owner,
+        &crate::calendar::connectors::door::CalendarConnectorConfigureRequest {
+            config: CalendarConnectorSeatConfig {
+                seat_ref: "booking-sync".to_owned(),
+                secret_ref: "booking-calendar".to_owned(),
+                system: "provider-calendar".to_owned(),
+                calendar_ref: "calendar".to_owned(),
+                cadence_jitter_min_seconds: 30,
+                cadence_jitter_max_seconds: 60,
+            },
+            endpoint: "https://provider-calendar.test/".to_owned(),
+        },
+    )
+    .unwrap();
+    let operation = crate::calendar::connectors::door::CalendarConnectorOperation::new(
+        &vault,
+        owner,
+        registration,
+    )
+    .unwrap();
+    run_calendar_connector_sync(&vault, &operation, &transport, NOW + 1, 7).unwrap();
     let raw = vault.get_raw(&receipt.calendar.event_ref).unwrap().unwrap();
     assert!(
         !raw.windows(b"booking_context".len())

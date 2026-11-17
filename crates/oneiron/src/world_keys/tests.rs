@@ -77,15 +77,16 @@ fn a_world_key_opens_only_for_its_machine_and_for_the_kit() {
     let to_a = WrapRecipient::Machine(entity(0xa1));
     let to_b = WrapRecipient::Machine(entity(0xb1));
     let to_root = WrapRecipient::RecoveryRoot(root.id);
+    let pad = oneiron_store::world_pad_codec::WorldKeyPad::mint().unwrap();
 
-    let for_a = seal_world_key(&bound, to_a, a.public_key(), &key).unwrap();
-    let for_root = seal_world_key(&bound, to_root, &root.recovery_key, &key).unwrap();
+    let for_a = seal_world_key(&bound, to_a, a.public_key(), &key, &pad).unwrap();
+    let for_root = seal_world_key(&bound, to_root, &root.recovery_key, &key, &pad).unwrap();
 
-    let opened = open_world_key(&bound, to_a, &a, &for_a).unwrap();
+    let opened = open_world_key(&bound, to_a, &a, &for_a, &pad).unwrap();
     assert_eq!(opened.expose(), key.expose());
-    assert!(open_world_key(&bound, to_a, &b, &for_a).is_err());
-    assert!(open_world_key(&bound, to_b, &b, &for_a).is_err());
-    assert!(open_world_key(&bound, to_root, &a, &for_root).is_err());
+    assert!(open_world_key(&bound, to_a, &b, &for_a, &pad).is_err());
+    assert!(open_world_key(&bound, to_b, &b, &for_a, &pad).is_err());
+    assert!(open_world_key(&bound, to_root, &a, &for_root, &pad).is_err());
 
     // The kit, restored on a new machine from two of its pieces.
     let pieces = kit(KitSecretKind::RecoveryRoot, &seed.kit_bytes(), None);
@@ -103,6 +104,7 @@ fn a_world_key_opens_only_for_its_machine_and_for_the_kit() {
         to_root,
         &restored.recovery_secret().unwrap(),
         &for_root,
+        &pad,
     )
     .unwrap();
     assert_eq!(opened.expose(), key.expose());
@@ -135,14 +137,15 @@ fn the_vault_key_alone_opens_no_world_key() {
     let bound = binding(&key);
     let to_machine = WrapRecipient::Machine(entity(0xa1));
     let to_root = WrapRecipient::RecoveryRoot(root.id);
+    let pad = oneiron_store::world_pad_codec::WorldKeyPad::mint().unwrap();
     let wraps = [
         (
             to_machine,
-            seal_world_key(&bound, to_machine, machine.public_key(), &key).unwrap(),
+            seal_world_key(&bound, to_machine, machine.public_key(), &key, &pad).unwrap(),
         ),
         (
             to_root,
-            seal_world_key(&bound, to_root, &root.recovery_key, &key).unwrap(),
+            seal_world_key(&bound, to_root, &root.recovery_key, &key, &pad).unwrap(),
         ),
     ];
     let candidates = [
@@ -155,9 +158,9 @@ fn the_vault_key_alone_opens_no_world_key() {
     ];
     for (to, wrap) in &wraps {
         for secret in &candidates {
-            assert!(open_world_key(&bound, *to, secret, wrap).is_err());
+            assert!(open_world_key(&bound, *to, secret, wrap, &pad).is_err());
         }
-        let kek = Kek::from_bytes(vault_key);
+        let kek = Kek::from_bytes_ref(&vault_key);
         let policy_free = wrap.open(
             oneiron_crypto::OpenKey::SymmetricKek(&kek),
             &oneiron_crypto::OpenPolicy {
@@ -188,8 +191,9 @@ fn a_mismatched_world_generation_or_suite_is_refused() {
     let key = WorldKey::mint(entity(0x77), FIRST_GENERATION).unwrap();
     let bound = binding(&key);
     let to = WrapRecipient::Machine(entity(0xa1));
-    let wrap = seal_world_key(&bound, to, machine.public_key(), &key).unwrap();
-    assert!(open_world_key(&bound, to, &machine, &wrap).is_ok());
+    let pad = oneiron_store::world_pad_codec::WorldKeyPad::mint().unwrap();
+    let wrap = seal_world_key(&bound, to, machine.public_key(), &key, &pad).unwrap();
+    assert!(open_world_key(&bound, to, &machine, &wrap, &pad).is_ok());
 
     let mut other_world = bound;
     other_world.key.world = entity(0x78);
@@ -211,14 +215,14 @@ fn a_mismatched_world_generation_or_suite_is_refused() {
         other_policy,
         other_vault,
     ] {
-        assert!(open_world_key(&wrong, to, &machine, &wrap).is_err());
+        assert!(open_world_key(&wrong, to, &machine, &wrap, &pad).is_err());
     }
 
     // This wrap's own payload under a suite the reader does not accept, and under
     // another purpose: only the header field differs (Sol code-R1 S1-F9).
     let key_id = bound.key.envelope_key_id();
     let recipient = to.envelope_recipient();
-    let payload = super::wrap::world_key_payload(&bound, &key);
+    let payload = super::wrap::world_key_payload(&bound, &key, &pad);
     let reseal = |suite, purpose, kem_suite| {
         seal(
             &SealParams {
@@ -243,7 +247,7 @@ fn a_mismatched_world_generation_or_suite_is_refused() {
         SuiteId::KEM_X25519_MLKEM1024_V1,
     )
     .unwrap();
-    assert!(open_world_key(&bound, to, &machine, &resealed).is_ok());
+    assert!(open_world_key(&bound, to, &machine, &resealed, &pad).is_ok());
     let wrong: Vec<Envelope> = [
         (
             SuiteId::AES256GCM_V1,
@@ -266,11 +270,11 @@ fn a_mismatched_world_generation_or_suite_is_refused() {
     .collect();
     assert!(wrong.len() >= 2);
     for envelope in &wrong {
-        assert!(open_world_key(&bound, to, &machine, envelope).is_err());
+        assert!(open_world_key(&bound, to, &machine, envelope, &pad).is_err());
     }
 
     // A binding that names another key cannot seal this one.
-    assert!(seal_world_key(&other_world, to, machine.public_key(), &key).is_err());
+    assert!(seal_world_key(&other_world, to, machine.public_key(), &key, &pad).is_err());
     // Base reality never gets a key: none is minted, and no wrap naming it is sealed
     // or opened, even one sealed by hand around a base-world payload (Wonder W1-F4).
     assert!(WorldKey::mint(oneiron_contracts::claim::base_world_id(), 1).is_err());
@@ -282,7 +286,7 @@ fn a_mismatched_world_generation_or_suite_is_refused() {
         bytes: zeroize::Zeroizing::new(*key.expose()),
     };
     let base = binding(&base_key);
-    assert!(seal_world_key(&base, to, machine.public_key(), &base_key).is_err());
+    assert!(seal_world_key(&base, to, machine.public_key(), &base_key, &pad).is_err());
     let base_key_id = base.key.envelope_key_id();
     let by_hand = seal(
         &SealParams {
@@ -297,11 +301,11 @@ fn a_mismatched_world_generation_or_suite_is_refused() {
             recipient: machine.public_key(),
             kem_suite: SuiteId::KEM_X25519_MLKEM1024_V1,
         },
-        &super::wrap::world_key_payload(&base, &base_key),
+        &super::wrap::world_key_payload(&base, &base_key, &pad),
         &mut getrandom::SysRng,
     )
     .unwrap();
-    assert!(open_world_key(&base, to, &machine, &by_hand).is_err());
+    assert!(open_world_key(&base, to, &machine, &by_hand, &pad).is_err());
 }
 
 /// Done means (contract F2): one key id names one key. A wrap sealed by a machine that
@@ -316,10 +320,11 @@ fn a_wrap_with_substituted_key_bytes_is_refused() {
     let mut other = WorldKey::mint(entity(0x77), FIRST_GENERATION).unwrap();
     other.id = *key.id();
     let substituted = binding(&other);
-    let forged = seal_world_key(&substituted, to, machine.public_key(), &other).unwrap();
-    assert!(open_world_key(&substituted, to, &machine, &forged).is_ok());
-    assert!(open_world_key(&bound, to, &machine, &forged).is_err());
-    assert!(seal_world_key(&bound, to, machine.public_key(), &other).is_err());
+    let pad = oneiron_store::world_pad_codec::WorldKeyPad::mint().unwrap();
+    let forged = seal_world_key(&substituted, to, machine.public_key(), &other, &pad).unwrap();
+    assert!(open_world_key(&substituted, to, &machine, &forged, &pad).is_ok());
+    assert!(open_world_key(&bound, to, &machine, &forged, &pad).is_err());
+    assert!(seal_world_key(&bound, to, machine.public_key(), &other, &pad).is_err());
 }
 
 /// Sol R1-F1 (repro): the pairing fingerprint must bind the anchor. A host that copies

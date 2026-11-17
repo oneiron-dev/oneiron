@@ -792,6 +792,7 @@ fn connector_send_cancel_cancels_queued_realization() {
             trigger_ref: "s1".to_owned(),
             job_ref: None,
             occurred_at: Some(120),
+            mention: None,
         })
         .expect("schedule send");
     let tasks = vault.connector_send_tasks().expect("connector tasks");
@@ -1170,9 +1171,11 @@ fn a_restore_never_drops_a_cancellation_made_since() {
     let backups = crate::test_support::restore_tempdir();
     let image = backups.path().join("backup");
     vault.snapshot_checkpoint(&image, 100).expect("backup");
+    let key = vault.checkpoint_key().expect("derive the checkpoint key");
     let restore = |destination: &std::path::Path| {
         Vault::restore_checkpoint_keeping_authority(
             &image,
+            &key,
             destination,
             vault.config.clone(),
             &vault,
@@ -1236,9 +1239,11 @@ fn a_restore_never_reverses_a_task_reassignment_made_since() {
         )
         .expect("reassign");
 
+    let key = vault.checkpoint_key().expect("derive the checkpoint key");
     let destination = backups.path().join("restored");
     let error = Vault::restore_checkpoint_keeping_authority(
         &image,
+        &key,
         &destination,
         vault.config.clone(),
         &vault,
@@ -1283,9 +1288,11 @@ fn a_restore_never_rebinds_a_task_whose_body_was_replaced_since() {
         )
         .expect("replace the task body");
 
+    let key = vault.checkpoint_key().expect("derive the checkpoint key");
     let destination = backups.path().join("restored");
     let error = Vault::restore_checkpoint_keeping_authority(
         &image,
+        &key,
         &destination,
         vault.config.clone(),
         &vault,
