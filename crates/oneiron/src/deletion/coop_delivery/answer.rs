@@ -66,6 +66,12 @@ impl Vault {
         let delete = (answer.kind == CooperativeDeletionDispositionKind::Delete)
             .then(|| first_occurrences(&answer.delete));
         let operation_id = self.store.clock.entity_id()?;
+        // A legal hold answer's hold id, fresh before the writer: the hold's
+        // sealed files are written inside it and outlive a rollback, so a
+        // failed answer removes them by this id.
+        let courtesy_hold_id = (answer.kind == CooperativeDeletionDispositionKind::LegalHold)
+            .then(|| self.store.clock.entity_id())
+            .transpose()?;
         let written = self.with_write_txn_grouped(|txn| {
             let actor = owner.revalidate_in_txn(self, txn)?;
             let mut filed = INCOMING
@@ -99,9 +105,9 @@ impl Vault {
             filed
                 .local_redactions
                 .extend(local_redactions.iter().cloned());
-            if answer.kind == CooperativeDeletionDispositionKind::LegalHold {
+            if let Some(hold_id) = courtesy_hold_id {
                 let (hold, left_out) =
-                    hold_for_ask(self, txn, owner, pact_id, nonce, &filed, &answer.hold)?;
+                    hold_for_ask(self, txn, owner, &key, &filed, &answer.hold, hold_id)?;
                 hold_ids.extend(hold.map(|hold| hold.hold_id));
                 excluded = left_out.iter().map(EntityId::to_hex).collect();
             }
@@ -160,6 +166,9 @@ impl Vault {
             Err(error) => {
                 // A hold's refusal reaches its log once the writer has ended.
                 self.flush_legal_hold_refusals_after_failure();
+                if let Some(hold_id) = courtesy_hold_id {
+                    self.remove_uncommitted_hold_copy(&hold_id);
+                }
                 return Err(error);
             }
         };
@@ -502,17 +511,19 @@ fn courtesy_matter_ref(pact_id: &[u8; 32], nonce: &[u8; 16]) -> String {
 /// covers are held (FIX 2927); the rest are left out and returned, for the
 /// answer to record. A standing customer hold of this ask that already names
 /// every one held is kept and nothing new is placed, so a retried answer
-/// holds once. Other holds on the same records stand beside it. Returns the
+/// holds once. Other holds on the same records stand beside it. A new hold
+/// takes `hold_id`, which the caller minted before its writer. Returns the
 /// hold, none when nothing is left to hold, and what was left out.
 fn hold_for_ask(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     owner: &AuthenticatedOwner,
-    pact_id: &[u8; 32],
-    nonce: &[u8; 16],
+    key: &([u8; 32], [u8; 16]),
     filed: &IncomingCooperativeDeletion,
     records: &[EntityId],
+    hold_id: EntityId,
 ) -> Result<(Option<LegalHold>, Vec<EntityId>)> {
+    let (pact_id, nonce) = key;
     for id in records {
         if !crate::ports::EntityStoreRead::port_entity_present(&vault.store, txn, id)? {
             return Err(invalid("a held record must exist in this vault"));
@@ -554,7 +565,7 @@ fn hold_for_ask(
         });
     let hold = match held {
         Some(hold) => hold,
-        None => vault.place_legal_hold_in_txn(txn, owner, targets, Some(matter_ref))?,
+        None => vault.place_legal_hold_in_txn(txn, owner, targets, Some(matter_ref), hold_id)?,
     };
     Ok((Some(hold), excluded))
 }
