@@ -7,7 +7,7 @@
 //! answers none, and the run is refused as the vendor unavailable: ours never
 //! runs in its place (L8-43-SWITCH = A).
 //!
-//! Daytona, E2B, Modal and boat are the vendors served so far (L8-43-VENDORS = A:
+//! Daytona, E2B, Modal, boat and InstaBox are served (L8-43-VENDORS = A:
 //! Daytona, then E2B, Modal, boat, InstaBox). A vendor's batch backend runs
 //! on Linux only, as `VendorBatchBackend` does.
 
@@ -19,6 +19,8 @@ mod daytona;
 mod e2b;
 #[cfg(target_os = "linux")]
 mod grpc;
+#[cfg(target_os = "linux")]
+mod instabox;
 #[cfg(target_os = "linux")]
 mod modal;
 #[cfg(target_os = "linux")]
@@ -41,6 +43,8 @@ pub(crate) use daytona::DaytonaEndpoints;
 #[cfg(target_os = "linux")]
 pub(crate) use e2b::E2bEndpoints;
 #[cfg(target_os = "linux")]
+pub(crate) use instabox::InstaboxEndpoints;
+#[cfg(target_os = "linux")]
 pub(crate) use modal::ModalEndpoints;
 
 /// The backends of one vault on this server: ours as compiled, and the
@@ -57,6 +61,8 @@ pub(crate) struct ServedSandboxBackends {
     modal: ModalEndpoints,
     #[cfg(target_os = "linux")]
     boat: BoatEndpoints,
+    #[cfg(target_os = "linux")]
+    instabox: InstaboxEndpoints,
     /// Where each vendor run keeps its private scratch.
     #[cfg(target_os = "linux")]
     scratch_root: PathBuf,
@@ -76,6 +82,8 @@ impl ServedSandboxBackends {
             modal: ModalEndpoints::default(),
             #[cfg(target_os = "linux")]
             boat: BoatEndpoints::default(),
+            #[cfg(target_os = "linux")]
+            instabox: InstaboxEndpoints::default(),
             #[cfg(target_os = "linux")]
             scratch_root: std::env::temp_dir().join("oneiron-vendor-sandbox"),
         }
@@ -137,8 +145,29 @@ impl ServedSandboxBackends {
         }
     }
 
-    /// `vendor`'s batch backend on the owner's key named `key_name`.
+    /// The backends of `vault`, reaching InstaBox's API at `instabox` and
+    /// keeping each run's scratch under `scratch_root`.
+    #[cfg(all(target_os = "linux", oneiron_test_support))]
+    pub(crate) fn with_instabox(
+        vault: &Arc<Vault>,
+        instabox: InstaboxEndpoints,
+        scratch_root: PathBuf,
+    ) -> Self {
+        Self {
+            instabox,
+            scratch_root,
+            ..Self::new(vault)
+        }
+    }
+
+    /// `vendor`'s batch backend on the owner's key named `key_name`. Every
+    /// vendor has one here; the answer is optional because off Linux none
+    /// has.
     #[cfg(target_os = "linux")]
+    #[expect(
+        clippy::unnecessary_wraps,
+        reason = "the same call answers none off Linux"
+    )]
     fn vendor_backend(
         &self,
         vault: &Arc<Vault>,
@@ -170,7 +199,11 @@ impl ServedSandboxBackends {
                 key_name,
                 self.boat.clone(),
             )),
-            SandboxVendor::Instabox => return None,
+            SandboxVendor::Instabox => Arc::new(instabox::InstaboxClient::new(
+                Arc::downgrade(vault),
+                key_name,
+                self.instabox.clone(),
+            )),
         };
         Some(Box::new(VendorBatchBackend::new(
             client,

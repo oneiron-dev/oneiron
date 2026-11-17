@@ -87,9 +87,9 @@ impl VendorHttp {
         }
     }
 
-    /// The command line of `argv` for the vendor's shell: every argument is
-    /// a plain word, so nothing in it is shell syntax.
-    pub(super) fn command_line(self, argv: &[&str]) -> oneiron::Result<String> {
+    /// Refuses `argv` unless each argument is a plain word, so nothing in it
+    /// is shell syntax.
+    pub(super) fn plain_words(self, argv: &[&str]) -> oneiron::Result<()> {
         let plain = |arg: &&str| {
             !arg.is_empty()
                 && arg
@@ -99,11 +99,19 @@ impl VendorHttp {
         if argv.is_empty() || !argv.iter().all(plain) {
             return Err(self.failed("a vendor command argument is not a plain word"));
         }
+        Ok(())
+    }
+
+    /// The command line of `argv` for the vendor's shell: every argument is
+    /// a plain word, so nothing in it is shell syntax.
+    pub(super) fn command_line(self, argv: &[&str]) -> oneiron::Result<String> {
+        self.plain_words(argv)?;
         Ok(argv.join(" "))
     }
 
     /// The vendor's name for its copy of a digest-pinned guest image (a
-    /// Daytona or boat snapshot, an E2B template), built once from the image:
+    /// Daytona, boat or InstaBox snapshot, an E2B template), built once from
+    /// the image:
     /// `oneiron-guest-<first 12 hex of its digest>`.
     pub(super) fn guest_image_name(self, guest_image: &str) -> oneiron::Result<String> {
         let digest = guest_image
@@ -147,10 +155,20 @@ impl VendorHttp {
         secrets: &[&str],
         bound: VendorCallBound<'_>,
     ) -> oneiron::Result<Answer> {
+        self.send_unchecked(request, secrets, bound)?.checked()
+    }
+
+    /// Sends `request` inside the step's bound, and answers what came back,
+    /// whatever its status. Its errors show none of `secrets`.
+    pub(super) fn send_unchecked(
+        self,
+        request: RequestBuilder,
+        secrets: &[&str],
+        bound: VendorCallBound<'_>,
+    ) -> oneiron::Result<Answer> {
         bound.cancel.check()?;
         let request = request.timeout(self.remaining(bound.deadline)?);
-        self.exchange(request, secrets, bound.deadline, Some(bound.cancel.clone()))?
-            .checked()
+        self.exchange(request, secrets, bound.deadline, Some(bound.cancel.clone()))
     }
 
     /// Sends a delete inside its own [`DELETE_TIMEOUT`], which neither the
@@ -264,9 +282,13 @@ pub(super) struct Answer {
 }
 
 impl Answer {
+    pub(super) fn status(&self) -> StatusCode {
+        self.status
+    }
+
     /// The answer, when it is a success; else an error quoting the start of
     /// its body, without any secret.
-    fn checked(mut self) -> oneiron::Result<Self> {
+    pub(super) fn checked(mut self) -> oneiron::Result<Self> {
         if self.status.is_success() {
             return Ok(self);
         }
