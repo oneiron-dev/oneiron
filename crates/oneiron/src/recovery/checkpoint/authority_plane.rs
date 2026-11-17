@@ -471,6 +471,7 @@ fn current_rows(
     copy: &crate::store::CopyGenerations,
 ) -> Result<LiveRows> {
     let txn = current.store.env.read_txn()?;
+    let mut fact_count = crate::task_authority::FactCountRule::default();
     let mut live = LiveRows {
         rows: BTreeMap::new(),
         authority: BTreeMap::new(),
@@ -524,6 +525,14 @@ fn current_rows(
                     };
                     if let Some(authority) = project(projection, value)
                         && (projection == Projection::OutboundGrant || !deleted()?)
+                        && counted_in_live_fold(
+                            current,
+                            &txn,
+                            &mut fact_count,
+                            key,
+                            value,
+                            &authority,
+                        )?
                     {
                         live.authority
                             .insert(key.to_vec(), (what, projection, authority));
@@ -554,6 +563,31 @@ fn current_rows(
         }
     }
     Ok(live)
+}
+
+/// Whether a live projection is authority the live vault holds. A task fact
+/// is only when the live fold counts it: this install's door wrote it with
+/// that body, or its carrier's signature proves it
+/// (`task_authority::FactCountRule`). A row that proves nothing, such as
+/// another install's unsigned or forged replica, changes no task, so a
+/// restore that drops it rolls nothing back (FIX
+/// TASK-FACT-RESTORE-BELIEVES-ROWS). Every other projection is.
+fn counted_in_live_fold(
+    current: &Vault,
+    txn: &heed::RoTxn<'_>,
+    fact_count: &mut crate::task_authority::FactCountRule,
+    key: &[u8],
+    raw: &[u8],
+    authority: &Compared,
+) -> Result<bool> {
+    let Compared::TaskFact(fact) = authority else {
+        return Ok(true);
+    };
+    let fact_ref = EntityId::from_bytes(key.try_into().map_err(|_| super::codec_error())?)?;
+    let body = raw
+        .get(ENTITY_METADATA_HEADER_LEN..)
+        .ok_or_else(super::codec_error)?;
+    fact_count.counts(current, txn, &fact_ref, body, fact.task_ref)
 }
 
 /// The subject and claim of an `edges_in` key of a `claim_of` edge
@@ -825,7 +859,8 @@ fn scan_postures(
 /// authority family; a contact that is revoked, opted out or first met in
 /// public (which holds a send for the owner), whose absence would let a send
 /// through; and an owner, cancellation or human assignment
-/// fact added since the image to a task the image holds. An acknowledgement
+/// fact added since the image to a task the image holds, which the live fold
+/// counts (`current_rows` keeps no other: `counted_in_live_fold`). An acknowledgement
 /// only takes a failed task off the board.
 fn presence_is_authority(
     projection: Projection,

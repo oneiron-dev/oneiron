@@ -1112,6 +1112,55 @@ fn proved_fact(
     .then_some(carried.fact)
 }
 
+/// Which fact rows count, as [`Vault::task_authority_facts_in`] counts them: a row this
+/// install's door wrote with exactly that body (the written-here index), or one its
+/// carrier's signature proves ([`proved_fact`]). The proof reads the fold once, at the first
+/// row that needs it, so a reader that judges many rows builds it at most once. The fold's
+/// actor rules still bound a counted fact; this rule says only whether a row is a fact.
+#[derive(Default)]
+pub(crate) struct FactCountRule {
+    proof: Option<fact_proof::FactProof>,
+}
+
+impl FactCountRule {
+    /// The fact the row `fact_ref` with `body` states about `task_ref`, when its carrier's
+    /// signature proves it; `None` for a row that proves nothing.
+    fn proved(
+        &mut self,
+        vault: &Vault,
+        rtxn: &heed::RoTxn<'_>,
+        fact_ref: &EntityId,
+        body: &[u8],
+        task_ref: EntityId,
+    ) -> Result<Option<TaskAuthorityFact>> {
+        if self.proof.is_none() {
+            self.proof = Some(fact_proof::FactProof::in_txn(&vault.store, rtxn)?);
+        }
+        Ok(self
+            .proof
+            .as_ref()
+            .and_then(|proof| proved_fact(proof, fact_ref, body, task_ref)))
+    }
+
+    /// Whether the fact row `fact_ref` with `body`, about `task_ref`, counts in `vault`'s
+    /// fold: this install's door wrote exactly `body`, or its carrier's signature proves it.
+    pub(crate) fn counts(
+        &mut self,
+        vault: &Vault,
+        rtxn: &heed::RoTxn<'_>,
+        fact_ref: &EntityId,
+        body: &[u8],
+        task_ref: EntityId,
+    ) -> Result<bool> {
+        Ok(
+            fact_proof::written_here_in(&vault.store, rtxn, fact_ref, body)?
+                || self
+                    .proved(vault, rtxn, fact_ref, body, task_ref)?
+                    .is_some(),
+        )
+    }
+}
+
 impl Vault {
     /// Adopts the facts this install's doors wrote unsigned, before the vault's root or with
     /// no signer loaded. Each gets a twin: the same fact on a new row, which this install's
@@ -1288,7 +1337,7 @@ impl Vault {
             return Err(fact_suppressed());
         }
         let mut proved = Vec::new();
-        let mut proof = None;
+        let mut count = FactCountRule::default();
         // Rule 5: every inbound edge is read and every fact absorbed, however
         // many; past its threshold row the fold asks, and never refuses.
         let mut scanned = ScanCount::start(
@@ -1334,11 +1383,7 @@ impl Vault {
                 }
                 fact
             } else {
-                let proof = match &mut proof {
-                    Some(proof) => proof,
-                    None => proof.insert(fact_proof::FactProof::in_txn(&self.store, rtxn)?),
-                };
-                match proved_fact(proof, &fact_ref, body, task_ref) {
+                match count.proved(self, rtxn, &fact_ref, body, task_ref)? {
                     Some(fact) => fact,
                     None => continue,
                 }
