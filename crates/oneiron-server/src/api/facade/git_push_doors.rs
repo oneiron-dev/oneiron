@@ -67,6 +67,7 @@ pub(crate) async fn vault_repo_anchor_bind(
     auth: &CoreAuth,
     input: RepoAnchorBindInput,
 ) -> Listed<RepoAnchorBindOutput> {
+    let credential = auth.verified_slip().cloned();
     as_owner_or_delegate_naming(
         server,
         auth,
@@ -74,7 +75,7 @@ pub(crate) async fn vault_repo_anchor_bind(
         move |server, who| match who {
             OwnerOrDelegate::Owner(owner) => sdk::bind_repo_anchor_as(server.vault(), owner, input),
             OwnerOrDelegate::Delegate(agent) => {
-                sdk::bind_repo_anchor_as_delegate(server.vault(), agent, input)
+                sdk::bind_repo_anchor_as_delegate(server.vault(), agent, credential.as_ref(), input)
             }
         },
         |bound| vec![bound.anchor.repo, bound.anchor.project],

@@ -20,7 +20,7 @@ use std::path::Path;
 
 use super::revision_shape;
 use crate::Vault;
-use crate::authority::ActSurface;
+use crate::authority::{ActSurface, VerifiedSlip};
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
 use crate::federation::git_push::{GIT_PUSH_REVOKE_COMMAND, GitPushGrantStanding};
@@ -132,9 +132,9 @@ pub fn bind_repo_anchor_as(
 /// `vault.repo.anchor.bind` with a `local_folder` as the owner's delegate:
 /// the agent's binding, its live Grant for `vault.repo.anchor.bind` and the
 /// setting `codebase.registration.agent_may_register` are checked in the
-/// registration writer, and the agent must read the PROJECT, then the local
-/// repository registers as the owner's does. The served-repo arm never
-/// admits a delegate.
+/// registration writer, and the agent's own verified `credential` must read
+/// the PROJECT, then the local repository registers as the owner's does. The
+/// served-repo arm never admits a delegate.
 ///
 /// # Errors
 /// `FORBIDDEN` when the setting reads false at the agent, no live Grant
@@ -144,6 +144,7 @@ pub fn bind_repo_anchor_as(
 pub fn bind_repo_anchor_as_delegate(
     vault: &Vault,
     agent: EntityId,
+    credential: Option<&VerifiedSlip>,
     input: RepoAnchorBindInput,
 ) -> MemoryResult<RepoAnchorBindOutput> {
     let editable = input.editable.as_deref();
@@ -153,6 +154,7 @@ pub fn bind_repo_anchor_as_delegate(
         }
         (None, Some(folder), anchor) => vault.register_local_repository_as_delegate(
             agent,
+            credential,
             Path::new(folder),
             input.project,
             anchor,

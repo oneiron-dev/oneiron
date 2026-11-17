@@ -281,6 +281,7 @@ pub(crate) async fn vault_tasks_cancel_force(
     auth: &CoreAuth,
     input: CancelForceRequest,
 ) -> MaybeListed<CancelForceReceipt> {
+    let credential = auth.verified_slip().cloned();
     let (answer, rows) = as_owner_or_delegate_naming(
         server,
         auth,
@@ -293,6 +294,7 @@ pub(crate) async fn vault_tasks_cancel_force(
                 oneiron::task_verb::run_doors::cancel_force_as_delegate(
                     server.vault(),
                     agent,
+                    credential.as_ref(),
                     input,
                 )
             }

@@ -14,12 +14,11 @@ use std::path::Path;
 use super::RegisteredRepository;
 use crate::TimeRange;
 use crate::Vault;
-use crate::authority::owner_delegate_in_txn;
-use crate::claim::ScopedReadActorKey;
+use crate::authority::{VerifiedSlip, delegate_reads_in_txn, owner_delegate_in_txn};
 use crate::code_artifact::{CodeArtifactBody, encode_code_artifact_body};
 use crate::codebase::{CODEBASE_COMMIT_HASH_HEX_LEN, RepoRef};
 use crate::consent::AuthenticatedOwner;
-use crate::edge::{EdgeActorClass, EdgeKind};
+use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::memory::{MemoryError, MemoryResult};
@@ -86,18 +85,21 @@ impl Vault {
     /// the owner's delegate: the agent's binding, its live Grant for
     /// `vault.repo.anchor.bind` and the setting
     /// `codebase.registration.agent_may_register` are checked in the writer,
-    /// and the agent must read the PROJECT, then the registration writes as
-    /// the owner's does. `anchor` and `editable` behave as the owner's.
+    /// and the agent's own verified `credential` must read the PROJECT (a
+    /// call with none reads nothing), then the registration writes as the
+    /// owner's does.
+    /// `anchor` and `editable` behave as the owner's.
     ///
     /// # Errors
     /// `FORBIDDEN` when the setting reads false at the agent or no live Grant
     /// lists the verb; `InvalidConfig` for a folder in no Git repository, a
-    /// project that is no live PROJECT the agent reads, an anchor that is no
-    /// registered local repository of it, or an editable path that is not
-    /// normalized; a store failure.
+    /// project that is no live PROJECT the credential reads, an anchor that
+    /// is no registered local repository of it, or an editable path that is
+    /// not normalized; a store failure.
     pub(crate) fn register_local_repository_as_delegate(
         &self,
         agent: EntityId,
+        credential: Option<&VerifiedSlip>,
         folder: &Path,
         project: EntityId,
         anchor: Option<EntityId>,
@@ -106,9 +108,7 @@ impl Vault {
         let parts = local_registration_parts(folder, editable).map_err(MemoryError::from)?;
         let (bound, written) = self.try_with_write_txn_grouped(|txn| {
             owner_delegate_in_txn(self, txn, agent, REPO_ANCHOR_BIND_VERB)?;
-            if !delegate_reads_project_in_txn(self, txn, agent, project)
-                .map_err(MemoryError::from)?
-            {
+            if !delegate_reads_in_txn(self, txn, credential, &project).map_err(MemoryError::from)? {
                 return Err(MemoryError::from(Error::InvalidConfig(
                     NOT_A_PROJECT.into(),
                 )));
@@ -296,24 +296,4 @@ fn local_registration_parts(
         source,
         named,
     })
-}
-
-/// Whether `agent` reads the PROJECT `project` in `txn`: the delegate's lane
-/// under the relationship gate, so the vault's own rows read and a scoped
-/// row passes only on the agent's own live grants. A lane that does not
-/// build reads nothing.
-fn delegate_reads_project_in_txn(
-    vault: &Vault,
-    txn: &heed::RoTxn<'_>,
-    agent: EntityId,
-    project: EntityId,
-) -> Result<bool> {
-    let Some(key) = ScopedReadActorKey::with_actor_class(
-        agent.to_hex(),
-        EdgeActorClass::Agent.gate_actor_class(),
-    )
-    .map(|key| key.require_relationship_grants(Some(agent))) else {
-        return Ok(false);
-    };
-    vault.scoped_read(key).is_entity_readable_in(txn, &project)
 }

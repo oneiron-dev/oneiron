@@ -45,7 +45,9 @@ use crate::attempt_queue::{
     AttemptCancelState, AttemptId, AttemptQueue, AttemptRecord, AttemptResultRef, AttemptState,
     ForceAttemptCancel, ForceCancelAuthority, ForceCancelOutcome, validate_signal_cancel,
 };
-use crate::authority::{OwnerOrDelegate, owner_delegate_in_txn};
+use crate::authority::{
+    OwnerOrDelegate, VerifiedSlip, delegate_reads_in_txn, owner_delegate_in_txn,
+};
 use crate::code_run::JS_SAFE_INTEGER;
 use crate::consent::AuthenticatedOwner;
 use crate::context_board::cancel_task_in_txn;
@@ -350,7 +352,7 @@ pub fn cancel_force_as(
     owner: &AuthenticatedOwner,
     input: CancelForceRequest,
 ) -> MemoryResult<CancelForceReceipt> {
-    cancel_force_as_inner(vault, OwnerOrDelegate::Owner(owner), input)
+    cancel_force_as_inner(vault, OwnerOrDelegate::Owner(owner), None, input)
 }
 
 /// Stops, as the owner's delegate and unrefusably, every live branch of
@@ -360,33 +362,38 @@ pub fn cancel_force_as(
 /// later try replaces and not yet terminal is force-cancelled on the
 /// delegate's grounds, naming the agent, and the TASK records its
 /// cancellation once one really stopped. Each stopped branch's running step
-/// stops after commit.
+/// stops after commit. The agent's own verified `credential` must read the
+/// TASK (a call with none reads nothing), and the receipt withholds the text
+/// of each branch the agent does not run.
 ///
 /// # Errors
 ///
 /// `FORBIDDEN` when the setting reads false at the agent or no live Grant
-/// lists the verb; `NOT_FOUND` for a ref that names nothing, or a TASK no
-/// attempt realizes; `BAD_REQUEST` for a ref that is not a TASK; a reason
-/// the cancel receipt refuses; storage errors.
+/// lists the verb; `NOT_FOUND` for a TASK the credential does not read, as
+/// for a ref that names nothing or a TASK no attempt realizes; `BAD_REQUEST`
+/// for a ref that is not a TASK; a reason the cancel receipt refuses;
+/// storage errors.
 pub fn cancel_force_as_delegate(
     vault: &Vault,
     agent: EntityId,
+    credential: Option<&VerifiedSlip>,
     input: CancelForceRequest,
 ) -> MemoryResult<CancelForceReceipt> {
-    cancel_force_as_inner(vault, OwnerOrDelegate::Delegate(agent), input)
+    cancel_force_as_inner(vault, OwnerOrDelegate::Delegate(agent), credential, input)
 }
 
-/// [`cancel_force_as`] and [`cancel_force_as_delegate`]: the admission
-/// differs, the force is one.
+/// [`cancel_force_as`] and [`cancel_force_as_delegate`]: the admission and
+/// the receipt's text differ, the force is one.
 fn cancel_force_as_inner(
     vault: &Vault,
     who: OwnerOrDelegate<'_>,
+    credential: Option<&VerifiedSlip>,
     input: CancelForceRequest,
 ) -> MemoryResult<CancelForceReceipt> {
     let CancelForceRequest { task_ref, reason } = input;
     let queue = AttemptQueue::new(vault);
     let now = vault.store.clock.now_recorded_at();
-    let (records, stopped) = vault.try_with_write_txn_grouped(|wtxn| {
+    let (branches, stopped) = vault.try_with_write_txn_grouped(|wtxn| {
         let (actor, authority) = match who {
             OwnerOrDelegate::Owner(owner) => {
                 let actor = owner.revalidate_in_txn(vault, wtxn)?;
@@ -395,6 +402,9 @@ fn cancel_force_as_inner(
             }
             OwnerOrDelegate::Delegate(agent) => {
                 let delegate = owner_delegate_in_txn(vault, wtxn, agent, CANCEL_FORCE_VERB)?;
+                if !delegate_reads_in_txn(vault, wtxn, credential, &task_ref)? {
+                    return Err(no_such_task(&task_ref.to_hex()));
+                }
                 let authority =
                     ForceCancelAuthority::owner_delegate(delegate.agent.to_hex().as_str())?;
                 (delegate.agent, authority)
@@ -434,7 +444,15 @@ fn cancel_force_as_inner(
         if !stopped.is_empty() {
             cancel_task_in_txn(vault, wtxn, task_ref, actor, now)?;
         }
-        Ok::<_, MemoryError>((records, stopped))
+        let caller = WriteActor::new(actor, crate::EdgeActorClass::Agent);
+        let mut views = Vec::with_capacity(records.len());
+        for record in records {
+            let own = !matches!(who, OwnerOrDelegate::Delegate(_))
+                || crate::snapshot_read::is_attempt_actor_in_txn(vault, wtxn, caller, record.id)?;
+            let view = branch_view(record);
+            views.push(if own { view } else { withheld(view) });
+        }
+        Ok::<_, MemoryError>((views, stopped))
     })?;
     if !stopped.is_empty() {
         vault.store.notify_attempt_observers();
@@ -447,7 +465,7 @@ fn cancel_force_as_inner(
         task_ref,
         effected: !stopped.is_empty(),
         forced: u32::try_from(stopped.len()).unwrap_or(u32::MAX),
-        branches: records.into_iter().map(branch_view).collect(),
+        branches,
     })
 }
 
@@ -702,10 +720,13 @@ fn task_in(vault: &Vault, txn: &heed::RoTxn<'_>, task_ref: EntityId) -> MemoryRe
             format!("{hex} is not a TASK"),
             &[TASK_FIX],
         )),
-        None => Err(MemoryError::not_found(format!(
-            "no TASK {hex} is in this vault"
-        ))),
+        None => Err(no_such_task(&hex)),
     }
+}
+
+/// The refusal of a ref that names no TASK this caller reaches.
+fn no_such_task(hex: &str) -> MemoryError {
+    MemoryError::not_found(format!("no TASK {hex} is in this vault"))
 }
 
 /// The TASK's attempt rows, refused when there are none: a TASK nothing has

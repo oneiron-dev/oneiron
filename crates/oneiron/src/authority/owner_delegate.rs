@@ -10,6 +10,7 @@ use crate::EdgeActorClass;
 use crate::EntityId;
 use crate::Vault;
 use crate::attempt_queue::setting_keys::ATTEMPT_QUEUE_AGENT_MAY_FORCE_CANCEL;
+use crate::authority::VerifiedSlip;
 use crate::campaign::compliance::setting_keys::CAMPAIGN_COMPLIANCE_AGENT_MAY_DECIDE;
 use crate::campaign::compliance::{COMPLIANCE_INSTALL_VERB, COMPLIANCE_REJECT_VERB};
 use crate::codebase::setting_keys::CODEBASE_REGISTRATION_AGENT_MAY_REGISTER;
@@ -19,7 +20,7 @@ use crate::dispatch_byoa::{
     RUNNER_SEAT_QUOTAS_VERB, RUNNER_SEAT_TOP_UP_VERB, RUNNER_WORK_RESUME_VERB,
 };
 use crate::dreamer_runner::PROGRAM_HOLD_RELEASE_VERB;
-use crate::error::Error;
+use crate::error::{Error, Result};
 use crate::memory::{MEMORY_CODE_FORBIDDEN, MemoryError, MemoryResult};
 use crate::setting::{Setting, SettingScope};
 use crate::task_verb::run_doors::CANCEL_FORCE_VERB;
@@ -123,6 +124,30 @@ pub(crate) fn owner_delegate_in_txn(
     match grant {
         Some(grant) => Ok(OwnerDelegate { agent, grant }),
         None => Err(delegate_refusal(verb, key)),
+    }
+}
+
+/// Whether the owner's delegate, on its own verified `credential`, reads
+/// the row `id` its act names, judged in `txn` under the key the
+/// credential's own reads take ([`Vault::credential_read_key`], the facade's
+/// readable check), so a delegate acts only on rows it reads. No credential,
+/// or one that grants no read, reads none.
+///
+/// # Errors
+///
+/// The refusal building the key gives, and storage errors.
+pub(crate) fn delegate_reads_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    credential: Option<&VerifiedSlip>,
+    id: &EntityId,
+) -> Result<bool> {
+    let Some(credential) = credential else {
+        return Ok(false);
+    };
+    match vault.credential_read_key_in(txn, credential)? {
+        Some(key) => vault.scoped_read(key).is_entity_readable_in(txn, id),
+        None => Ok(false),
     }
 }
 

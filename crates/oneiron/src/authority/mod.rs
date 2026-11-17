@@ -400,7 +400,9 @@ pub(crate) use owner_act::{
     owner_act_signer_admits,
 };
 pub use owner_choice::OwnerChoiceHead;
-pub(crate) use owner_delegate::{OwnerDelegate, is_owner_delegate_verb, owner_delegate_in_txn};
+pub(crate) use owner_delegate::{
+    OwnerDelegate, delegate_reads_in_txn, is_owner_delegate_verb, owner_delegate_in_txn,
+};
 pub use owner_delegate::{OwnerOrDelegate, owner_delegate_admits};
 pub use owner_key_enrollment_door::{
     EnrolledOwnerKey, OwnerKeyEnrollment, OwnerKeyEnrollmentReceipt,
