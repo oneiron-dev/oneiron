@@ -43,8 +43,16 @@ pub struct CodeCheckAttemptView {
     pub verdict_ref: Option<String>,
     /// The bound saved verdict's own result; `None` without one.
     pub passes: Option<bool>,
-    /// The earlier receipt digest a reused receipt copied its result from.
-    pub reused_from: Option<String>,
+    /// The receipt a reused receipt copied its result from.
+    pub reused_from: Option<CodeCheckReuseSource>,
+}
+
+/// The attempt and generation whose run a reused receipt stands on; the
+/// source's inputs digest is the reusing receipt's own.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CodeCheckReuseSource {
+    pub attempt_id: String,
+    pub generation: u32,
 }
 
 /// Every retained receipt of one inputs reference, in saved order.

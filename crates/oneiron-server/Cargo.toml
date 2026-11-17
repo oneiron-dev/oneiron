@@ -288,6 +288,13 @@ name = "vault_runners_doors"
 path = "tests/vault_runners_doors.rs"
 required-features = ["oneiron/test-support"]
 
+# The owner's resume door on a node whose runner seats name an official seat (FIX
+# RUNNER-RESUME-DROPS-NODE-REGISTRY) roots its owner on a `MemoryKeystore` too.
+[[test]]
+name = "runner_resume_node_registry"
+path = "tests/runner_resume_node_registry.rs"
+required-features = ["oneiron/test-support"]
+
 # Test-only constructors and fault-injection seams stay out of the shipped graph.
 # The policy doors (owner rows, owner configure, outbound/relay decide, preflight) root on a `MemoryKeystore`.
 [[test]]
@@ -339,6 +346,13 @@ name = "vault_weave_doors"
 path = "tests/vault_weave_doors.rs"
 required-features = ["oneiron/test-support"]
 
+# The retrieval ledger door promise tests serve the owner's root from a `MemoryKeystore`
+# too; the Steward read grant stands through `oneiron::test_doors` (`--cfg oneiron_test_support`).
+[[test]]
+name = "vault_retrieval_ledger_doors"
+path = "tests/vault_retrieval_ledger_doors.rs"
+required-features = ["oneiron/test-support"]
+
 [[test]]
 name = "managed_mode"
 path = "tests/managed_mode.rs"
@@ -370,6 +384,20 @@ name = "vault_hooks_doors"
 path = "tests/vault_hooks_doors.rs"
 required-features = ["oneiron/test-support"]
 
+# The calendar passport doors serve the owner's root from a `MemoryKeystore` too
+# (`oneiron-keystore/test-keystore`, forwarded by `oneiron/test-support`).
+[[test]]
+name = "calendar_ics_passport_doors"
+path = "tests/calendar_ics_passport_doors.rs"
+required-features = ["oneiron/test-support"]
+
+# Publishes its apps with `publish_artifact_pointer_with_tier` (`oneiron/test-hooks`) on a
+# `MemoryKeystore` vault (`oneiron-keystore/test-keystore`, forwarded by `oneiron/test-support`).
+[[test]]
+name = "artifact_vault_hosts"
+path = "tests/artifact_vault_hosts.rs"
+required-features = ["oneiron/test-support", "oneiron/test-hooks"]
+
 # Publishes its bundle with `publish_artifact_pointer_with_tier` (`oneiron/test-hooks`) on a
 # `MemoryKeystore` vault (`oneiron-keystore/test-keystore`, forwarded by `oneiron/test-support`).
 [[test]]
@@ -388,6 +416,12 @@ required-features = ["oneiron/test-support", "oneiron/test-hooks", "oneiron-brok
 name = "consent_revoke_grantee_renounce"
 path = "tests/consent_revoke_grantee_renounce.rs"
 required-features = ["oneiron/test-support", "oneiron/test-hooks", "oneiron-broker/test-support"]
+
+# The code-mode host-verb refusals root their servers on a `MemoryKeystore` (`oneiron/test-support`).
+[[test]]
+name = "code_mode_host_verb_refusals"
+path = "tests/code_mode_host_verb_refusals.rs"
+required-features = ["oneiron/test-support"]
 
 [[test]]
 name = "facade_live_run_status"
@@ -440,11 +474,24 @@ name = "vault_drafters_doors"
 path = "tests/vault_drafters_doors.rs"
 required-features = ["oneiron/test-support"]
 
+# The retrieval configuration door promise tests serve the owner's root from a `MemoryKeystore`.
+[[test]]
+name = "vault_retrieval_config_doors"
+path = "tests/vault_retrieval_config_doors.rs"
+required-features = ["oneiron/test-support"]
+
 # Census L8-46's pin: a video job's poll and cancel reach the provider only for
 # the admitted job, through the broker and the same TLS fake provider.
 [[test]]
 name = "broker_followup_job_binding"
 path = "tests/broker_followup_job_binding.rs"
+required-features = ["oneiron/test-support", "oneiron-broker/test-support"]
+
+# #7827's System One broker leg registers its seat key in a test vault and
+# answers from the paid-leg TLS fake provider.
+[[test]]
+name = "system_one_broker_budget"
+path = "tests/system_one_broker_budget.rs"
 required-features = ["oneiron/test-support", "oneiron-broker/test-support"]
 
 # The self-browser door refusals root their server on a `MemoryKeystore` too.
@@ -507,6 +554,13 @@ required-features = ["oneiron/test-support"]
 name = "off_record_room_context_pack"
 path = "tests/off_record_room_context_pack.rs"
 required-features = ["oneiron/test-support", "oneiron/test-hooks", "oneiron-broker/test-support"]
+
+# FIX OFF-RECORD-RUN-POLICY-REFUSAL-500's session run roots its owner on a
+# `MemoryKeystore` too.
+[[test]]
+name = "off_record_run_refusal_status"
+path = "tests/off_record_run_refusal_status.rs"
+required-features = ["oneiron/test-support"]
 
 # The off-record session door promise tests serve the owner's root from a `MemoryKeystore` too.
 [[test]]

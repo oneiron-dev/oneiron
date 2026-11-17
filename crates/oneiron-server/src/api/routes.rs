@@ -310,6 +310,12 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         .merge(crate::auth::seat_credential_helper_routes())
         // FIX 15702: a seat CLI's model calls, on its run's door reference.
         .merge(crate::auth::seat_model_door_routes())
+        // L8-27 B2: a stdio connector child's upstream calls, on its door reference.
+        .merge(
+            crate::connector_call_host::stdio::upstream::upstream_door_routes(Arc::clone(
+                server.connector_stdio.upstream_doors(),
+            )),
+        )
         .merge(self::report::routes())
         // OF-495: an agent role holder's skill tradeoff asks and picks.
         .merge(self::facade::role_picks::routes())

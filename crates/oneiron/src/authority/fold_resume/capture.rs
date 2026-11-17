@@ -121,9 +121,8 @@ impl FoldCapture {
 pub(in crate::authority) struct OnceParts<'a> {
     pub(in crate::authority) by_hash: &'a BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
     pub(in crate::authority) states: &'a BTreeMap<AuthorityEntryHash, FoldState>,
-    pub(in crate::authority) entry_ancestors:
-        &'a BTreeMap<AuthorityEntryHash, BTreeSet<AuthorityEntryHash>>,
-    /// The floors the fold was handed, before causal ancestry cleared any.
+    pub(in crate::authority) entry_ancestors: &'a AncestorIndex,
+    /// The rows' floors (`rows_floor`), before causal ancestry cleared any.
     pub(in crate::authority) original_floors: Option<&'a BTreeMap<AuthorityEntryHash, u64>>,
     pub(in crate::authority) merged: FoldState,
     pub(in crate::authority) valid_entries: ValidEntries,
@@ -296,7 +295,7 @@ impl Once {
                 missing_parents,
                 marks,
             }),
-            pairs: entry_ancestors.values().map(|past| past.len() as u64).sum(),
+            pairs: entry_ancestors.pairs(),
             counted_pairs: counted_ancestor_pairs,
             issuers,
             uncounted: uncounted.into_iter().collect(),

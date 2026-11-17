@@ -13,6 +13,7 @@ mod audience_notices;
 mod audience_overlay;
 mod backfill;
 mod carrier_erase;
+mod closed;
 mod fact_subject;
 mod history;
 mod hosting;
@@ -94,6 +95,8 @@ pub(crate) use backfill::backfill_room_turns_on_open;
 pub(crate) use backfill::doors as backfill_doors;
 #[cfg(feature = "sync")]
 pub(crate) use carrier_erase::erased_side_row_here;
+pub use closed::RoomClosedSet;
+pub(crate) use closed::room_is_closed_in;
 pub use fact_subject::{ACTOR_ERASE_PARTICIPATION_KEY, ParticipationKeyErase};
 pub(super) use history::PAGE_LIMIT;
 pub(super) use history::delete_room_metadata;
@@ -386,6 +389,30 @@ pub(crate) fn room_join_audience_in(
     let receipt =
         participation::require_join_covering_in_txn(vault, txn, room, None, &subject, None);
     Ok(participation::joined(receipt)?.is_some())
+}
+
+/// The live vault owner who alone reads the ordinary room `room`, or `None`:
+/// no project room, one current member, that member a live vault owner, and
+/// no Ready join filed for anyone else in the room or its threads. An
+/// unplaced voice speaker's entry (OF-365) is keyed by its speaker, not by
+/// room, and is not seen here.
+pub(crate) fn room_sole_owner_reader_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    room: EntityId,
+) -> Result<Option<EntityId>> {
+    if project_room_audience_in(vault, txn, room, &[])?.is_some() {
+        return Ok(None);
+    }
+    let [owner] = vault.members_in_txn(txn, room)?[..] else {
+        return Ok(None);
+    };
+    if !crate::policy_model::is_live_vault_owner_in_txn(vault, txn, &owner)?
+        || super::join_receipt::room_ready_join_for_other_in(&vault.store, txn, room, owner)?
+    {
+        return Ok(None);
+    }
+    Ok(Some(owner))
 }
 
 /// The validated project room `room` is, or `None` for an ordinary
