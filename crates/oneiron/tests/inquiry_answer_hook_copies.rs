@@ -51,6 +51,19 @@
 //!   saved withheld, and the retry restores nothing into it even while the
 //!   task holds the answer. Red on the base and at 0edcc19d95 (both saved
 //!   the answer whole: only `keep` = `task` was withheld).
+//! - `a_post_hook_that_redacts_statement_text_hides_it_from_the_caller`
+//!   (review round 2 of #9318): a post hook redacts `/statements/*/text`, a
+//!   path into the words it never reads. The caller's view keeps each
+//!   statement without its text, and the rest of it back. Passes on the
+//!   base (the hook reads the answer whole, so the path lands on the text);
+//!   red at b2e399045e, whose kept form's empty list held no statement for
+//!   the path to land on, so the view took the statements back whole.
+//! - `a_drained_ask_retry_keeps_a_statement_text_a_post_hook_redacted`: the
+//!   same review. The drain's rerun reaches the save as that hook left the
+//!   caller's view, and the retry restores no text into it even while the
+//!   task holds the answer. Passes on the base, which saves the view as it
+//!   came; red at b2e399045e, which saved the empty list and restored every
+//!   statement whole.
 //!
 //! The doors build only under the test cfg:
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test inquiry_answer_hook_copies`.
@@ -106,6 +119,8 @@ const CONTINUE: &str = r#"{"kind":"continue"}"#;
 const ASK: &str = r#"{"kind":"ask","question":"Send this inquiry?"}"#;
 /// A post hook's outcome that redacts the answer's `keep`.
 const REDACT_KEEP: &str = r#"{"kind":"redact","paths":["/keep"]}"#;
+/// A post hook's outcome that redacts every statement's text.
+const REDACT_STATEMENT_TEXT: &str = r#"{"kind":"redact","paths":["/statements/*/text"]}"#;
 
 /// The hook sandbox the test installs: it keeps each input it is handed and
 /// answers `outcome`.
@@ -577,4 +592,72 @@ fn a_drained_ask_saves_no_statement_of_an_answer_with_no_keep() {
     assert_eq!(retried["statements"], json!([]), "{retried}");
     assert_eq!(retried["statements_withheld"], json!(true), "{retried}");
     assert_eq!(retried["inquiry_id"], json!(inquiry), "{retried}");
+}
+
+#[test]
+fn a_post_hook_that_redacts_statement_text_hides_it_from_the_caller() {
+    let fixture = Fixture::new(REDACT_STATEMENT_TEXT);
+    fixture.bind_hook("post", "redact");
+    let reply = answer(EntityId::now(), "task");
+
+    let view = fixture.post_chain(&reply);
+    let inputs = fixture.runtime.inputs();
+    assert_eq!(inputs.len(), 1, "the post hook ran once");
+    assert!(
+        !inputs[0].contains(MEMBER_WORD),
+        "the post hook's input holds no statement of the member: {}",
+        inputs[0]
+    );
+    assert!(
+        !view.to_string().contains(MEMBER_WORD),
+        "the caller's view keeps the text the hook redacted hidden: {view}"
+    );
+    assert_eq!(
+        view["statements"],
+        json!([{"source": "member_word"}]),
+        "the rest of each statement goes back: {view}"
+    );
+    assert_eq!(view.get("statements_withheld"), None, "{view}");
+    assert_eq!(view["keep"], json!("task"), "{view}");
+}
+
+#[test]
+fn a_drained_ask_retry_keeps_a_statement_text_a_post_hook_redacted() {
+    let fixture = Fixture::new(ASK);
+    let binding = fixture.bind_hook("pre", "ask");
+    let inquiry = EntityId::now();
+    let task = fixture.open_task();
+    let statement = InquiryStatement::new(MEMBER_WORD, StatementSource::MemberWord)
+        .expect("the member's statement");
+    assert!(
+        door::hold_answer(
+            &fixture.vault,
+            fixture.owner,
+            task,
+            inquiry,
+            &[statement],
+            VALID_UNTIL,
+        )
+        .expect("hold the answer"),
+        "the open task holds the answer"
+    );
+    // The caller's view a post hook that redacts `/statements/*/text` leaves
+    // at the drain's rerun: each statement in its place, with no text.
+    let mut redacted = answer(inquiry, "task");
+    redacted["statements"] = json!([{"source": "member_word"}]);
+    fixture
+        .vault
+        .install_verb_ask_credential_check(Arc::new(AnsweringCheck {
+            reply: redacted.clone(),
+        }));
+
+    let retried = fixture.drained_retry(binding, task);
+    assert!(
+        !retried.to_string().contains(MEMBER_WORD),
+        "the retry reads no statement text the hook redacted, while the task holds it: {retried}"
+    );
+    assert_eq!(
+        retried, redacted,
+        "the retry reads the answer as the hook left it"
+    );
 }
