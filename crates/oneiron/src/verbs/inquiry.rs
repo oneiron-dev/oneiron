@@ -368,15 +368,16 @@ pub(crate) fn is_inquire_row(verb: &str) -> bool {
 }
 
 /// What a record outside the task keeps of a `vault.inquire` answer
-/// (INQUIRE-SHAPE Q6 = A): an answer kept `task` with its statements
+/// (INQUIRE-SHAPE Q6 = A): an answer not kept `copy` with its statements
 /// replaced by an empty list and `statements_withheld`, so no run record,
-/// verb hook or saved retry holds the member's words past the task. A
-/// `copy` answer, a company record (federation.md #inquiry-keep), and an
-/// answer with no statements stay as they are.
+/// verb hook or saved retry holds the member's words past the task. That is
+/// an answer kept `task`, and one whose `keep` a post hook redacted (review
+/// of #9318). A `copy` answer, a company record (federation.md
+/// #inquiry-keep), and an answer with no statements stay as they are.
 pub(crate) fn kept_inquiry_answer(output: &serde_json::Value) -> serde_json::Value {
     let mut kept = output.clone();
     if let Some(fields) = kept.as_object_mut()
-        && fields.get("keep").and_then(serde_json::Value::as_str) == Some("task")
+        && fields.get("keep").and_then(serde_json::Value::as_str) != Some("copy")
         && fields
             .get("statements")
             .and_then(serde_json::Value::as_array)
@@ -403,12 +404,12 @@ pub(crate) fn kept_inquiry_answer(output: &serde_json::Value) -> serde_json::Val
 /// has ended, its `valid_until` has come or the process restarted, the
 /// answer stays withheld, and the agent asks again.
 ///
-/// Only an answer that still holds both stand-ins the kept form left (the
-/// empty list and `statements_withheld`) takes them back: an answer a post
-/// hook changed, such as one whose `statements` it redacted, stays as the
-/// hook left it, as the caller's view does at the post chain. A holder that
-/// cannot read its tasks' state leaves the answer withheld, so a retry
-/// never fails on it.
+/// Only an answer that still says it is kept `task` and holds both
+/// stand-ins the kept form left (the empty list and `statements_withheld`)
+/// takes them back: an answer a post hook changed, such as one whose
+/// `statements` or `keep` it redacted, stays as the hook left it, as the
+/// caller's view does at the post chain. A holder that cannot read its
+/// tasks' state leaves the answer withheld, so a retry never fails on it.
 pub(crate) fn restore_held_statements(
     vault: &Vault,
     actor: EntityId,
@@ -418,7 +419,8 @@ pub(crate) fn restore_held_statements(
     let Some(fields) = answer.as_object_mut() else {
         return;
     };
-    if fields.get("statements_withheld") != Some(&serde_json::Value::Bool(true))
+    if fields.get("keep").and_then(serde_json::Value::as_str) != Some("task")
+        || fields.get("statements_withheld") != Some(&serde_json::Value::Bool(true))
         || fields.get("statements") != Some(&serde_json::Value::Array(Vec::new()))
     {
         return;

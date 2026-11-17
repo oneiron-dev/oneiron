@@ -568,16 +568,19 @@ const REVEALED_FIELDS: [&str; 2] = ["value", "value_base64"];
 const WITHHELD_FIELDS: [&str; 2] = ["statements", "statements_withheld"];
 
 /// The caller's view of a task-kept `vault.inquire` `reply` once its hooks
-/// read its `kept` form: while the view still holds both stand-ins the kept
-/// form left (the empty list and `statements_withheld`), the statements go
-/// back and the mark goes. A view whose hook changed either stays as the
-/// hook left it.
+/// read its `kept` form: while the view still holds its `keep` and both
+/// stand-ins the kept form left (the empty list and `statements_withheld`),
+/// the statements go back and the mark goes. A view whose hook changed any
+/// of them stays as the hook left it, withheld: the statements go back only
+/// into an answer that still says it is kept `task`, so a hook that redacted
+/// `keep` never hands the statements to a writer that keeps every answer
+/// not kept `task` whole (review of #9318).
 fn inquiry_hook_view(mut view: Value, kept: &Value, reply: &Value) -> Value {
     if let (Some(fields), Some(kept), Some(reply)) =
         (view.as_object_mut(), kept.as_object(), reply.as_object())
-        && WITHHELD_FIELDS
-            .iter()
-            .all(|key| fields.get(*key).is_some() && fields.get(*key) == kept.get(*key))
+        && std::iter::once("keep")
+            .chain(WITHHELD_FIELDS)
+            .all(|key| fields.get(key).is_some() && fields.get(key) == kept.get(key))
     {
         for key in WITHHELD_FIELDS {
             match reply.get(key) {
