@@ -681,7 +681,7 @@ impl Vault {
     /// smallest valid enrollment entry, stored or carried by an adopted
     /// checkpoint image, as [`Self::enrolled_owner_keys`] counts a device
     /// key; that listing keeps device keys only (REVIEW-8437 P1).
-    fn live_owner_keys_enrolled_for_in_txn(
+    pub(super) fn live_owner_keys_enrolled_for_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         person: EntityId,

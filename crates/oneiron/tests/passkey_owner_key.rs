@@ -571,3 +571,30 @@ fn a_hosted_removal_revokes_the_members_passkey_on_the_executors_confirm() {
         "the confirming key stays live"
     );
 }
+
+/// The move plan's wire names a passkey by its compressed P-256 key, 66
+/// hex digits, beside a device key's 64 (`vault.shared.owner_key_move_plan`).
+#[test]
+fn the_move_plan_verb_names_the_members_passkey_in_hex() {
+    use oneiron::task_verb::sdk::{self, SharedActRequest};
+    let shared = SharedVault::open_hosted();
+    shared.enrol_device_key(shared.owner, 0x71);
+    shared.enrol_passkey_of(shared.co_owner);
+    let owner_proof = person_proof(&shared.vault, shared.owner);
+    let act_id = shared
+        .vault
+        .propose_remove_owner(&owner_proof, SHARED, shared.co_owner, None, None, false)
+        .expect("the owner starts remove_owner")
+        .id;
+    let plan = sdk::plan_shared_owner_key_move(
+        &shared.vault,
+        &owner_proof,
+        Some(&shared.issuer),
+        SharedActRequest { act_id },
+    )
+    .expect("the plan verb answers the plan");
+    let passkey_hex =
+        oneiron_hex::encode(passkey().verifying_key().to_encoded_point(true).as_bytes());
+    assert_eq!(passkey_hex.len(), 66, "guard: a compressed P-256 key");
+    assert_eq!(plan.revoked, vec![passkey_hex], "{plan:?}");
+}
