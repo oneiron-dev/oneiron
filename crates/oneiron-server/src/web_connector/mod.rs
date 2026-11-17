@@ -17,16 +17,16 @@ mod providers;
 
 use std::time::Instant;
 
-use oneiron::EntityId;
 use oneiron::llm::run_admission::RunAdmission;
 use oneiron::memory::{Memory, MemoryResult};
 use oneiron::outbound_consent::{ConnectorCallOutcome, ConnectorCallRequest, UntrustedToolResult};
 use oneiron::task_verb::sdk::ConnectorCallReply;
 use oneiron::web_connector::{
-    FETCH_CONTENT_MAX_CHARS, FetchRoute, WEB_CONNECTOR_NAME, WebCallOutcome, WebConnectorUsage,
-    WebCostBasis, WebFetchInput, WebFetchOutput, WebKeySource, WebProvider, WebProviderKey,
-    WebSearchInput, WebSearchOutput, WebTool, cut_chars, micro_usd_to_usd,
+    FETCH_CONTENT_MAX_CHARS, FetchRoute, MAX_RESULTS_CAP, WEB_CONNECTOR_NAME, WebCallOutcome,
+    WebConnectorUsage, WebCostBasis, WebFetchInput, WebFetchOutput, WebKeySource, WebProvider,
+    WebProviderKey, WebSearchInput, WebSearchOutput, WebTool, cut_chars, micro_usd_to_usd,
 };
+use oneiron::{EntityId, Vault};
 use oneiron_base::unix_millis_now;
 use serde_json::{Value, json};
 
@@ -52,17 +52,23 @@ pub(crate) fn call_listing(
         let connector = connector.clone();
         return forward_to_hub(server, memory, setting.provider, &connector, tool, input);
     }
+    let provider = setting.provider;
+    let key_source = keys::key_source(&setting);
     let call = match tool {
-        WebTool::Search => WebSearchInput::from_arguments(&input.arguments).map(WebCall::Search),
+        WebTool::Search => match WebSearchInput::from_arguments(&input.arguments) {
+            Some(search) => {
+                let count = search_count(server.vault(), key_source, provider, &search)?;
+                Some(WebCall::Search(search, count))
+            }
+            None => None,
+        },
         WebTool::Fetch => WebFetchInput::from_arguments(&input.arguments).map(WebCall::Fetch),
     };
     let Some(call) = call else {
         return Ok((refused("connector_arguments_invalid"), None));
     };
-    let provider = setting.provider;
     let profile = provider.profile();
     let direct = matches!(call, WebCall::Fetch(_)) && profile.fetch == FetchRoute::Direct;
-    let key_source = keys::key_source(&setting);
     let key = if direct {
         None
     } else {
@@ -86,10 +92,12 @@ pub(crate) fn call_listing(
     let answer = match (&call, &key) {
         (WebCall::Fetch(input), None) => read_direct(server, input),
         (call, Some(key)) => providers::client().and_then(|client| match call {
-            WebCall::Search(input) => providers::search(provider, &client, key.expose(), input),
+            WebCall::Search(input, count) => {
+                providers::search(provider, &client, key.expose(), input, *count)
+            }
             WebCall::Fetch(input) => providers::fetch(provider, &client, key.expose(), input),
         }),
-        (WebCall::Search(_), None) => Err(ProviderError::message("no provider key")),
+        (WebCall::Search(..), None) => Err(ProviderError::message("no provider key")),
     };
     drop(key);
     let latency_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
@@ -146,10 +154,36 @@ pub(crate) fn call_listing(
     Ok((reply, None))
 }
 
-/// One call's parsed arguments.
+/// One call's parsed arguments; a search with the result count it sends its
+/// provider ([`search_count`]).
 enum WebCall {
-    Search(WebSearchInput),
+    Search(WebSearchInput, u32),
     Fetch(WebFetchInput),
+}
+
+/// The result count one search sends its provider (restriction wave 19, C73
+/// = B): the ask, or 5 when it names none, at least 1, within the cap and the
+/// provider's documented ceiling ([`providers::search_ceiling`]). The cap is
+/// the owner's `connectors.web.search_max_results` only when the owner's own
+/// provider key pays ([`WebKeySource::User`]); a call on the deploy's backend
+/// key, our cash, keeps [`MAX_RESULTS_CAP`]. A hub connector's call never comes here: it is
+/// forwarded before the arguments are read.
+///
+/// # Errors
+///
+/// Storage errors reading the owner's key.
+pub(crate) fn search_count(
+    vault: &Vault,
+    key_source: WebKeySource,
+    provider: WebProvider,
+    input: &WebSearchInput,
+) -> oneiron::Result<u32> {
+    let cap = if key_source == WebKeySource::User {
+        vault.web_search_max_results()?
+    } else {
+        MAX_RESULTS_CAP
+    };
+    Ok(input.result_count(cap.min(providers::search_ceiling(provider))))
 }
 
 /// The switch names a hub connector: the same tool and arguments go to that

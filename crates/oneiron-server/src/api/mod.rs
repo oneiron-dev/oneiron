@@ -157,6 +157,9 @@ pub(crate) use self::facade::{
 pub(crate) use self::facade::clock_ingress;
 // FIX 12323: a facade route's caller, as its receipt layer resolved it.
 pub(crate) use self::facade::resolved_facade_caller;
+// Fix list row 17645: each served vault's mail pack runs its blocking mail
+// work on this server's runner, under the host's `[mail]` settings.
+pub(crate) use self::facade::install_mail_host;
 mod feedback_inbox;
 pub(crate) use self::feedback_inbox::FloodCap;
 // ONE-1908 [ORIGIN-01]: the git smart-HTTP serving surface. Protocol only —
@@ -173,6 +176,8 @@ mod linear_push;
 mod llm;
 #[cfg(feature = "mesh")]
 pub(crate) use llm::MeshLlm;
+#[cfg(oneiron_test_support)]
+pub(crate) use llm::raw_stream_opened_unpolled;
 pub(crate) use llm::record_raw_response;
 mod mcp_gateway;
 mod memory;
@@ -276,6 +281,9 @@ pub(crate) use self::mcp_gateway::run_board_pins_for_test;
 // The integration tests' door to the gateway's facade refusal vocabulary (UC-11).
 #[cfg(oneiron_test_support)]
 pub(crate) use self::mcp_gateway::mcp_refusal_for_test;
+// The integration tests' door to a run call's admitted lane (FIX-LIST 25102).
+#[cfg(oneiron_test_support)]
+pub(crate) use self::mcp_gateway::admit_run_call_for_test;
 // The signing session door's read of what a signing router holds (L3-22).
 #[cfg(oneiron_test_support)]
 pub(crate) use self::esign::{SigningRegistry, public_routes_with_registry};

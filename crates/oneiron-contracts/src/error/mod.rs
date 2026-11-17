@@ -78,6 +78,8 @@ pub enum ErrorKind {
     InvalidConfig,
     InvalidTemporalExpression,
     EntityNotFound,
+    /// A memory fork names a revision whose bytes this machine no longer holds.
+    HistoryNotHeld,
     AccessGrantAlreadyExists,
     OutboundGrantAlreadyExists,
     ConnectorKeyAlreadyExists,
@@ -488,6 +490,12 @@ pub enum Error {
     /// Requested entity does not exist.
     #[error("entity not found")]
     EntityNotFound,
+    /// A graph-FS memory fork names a revision of a row whose bytes this
+    /// machine no longer holds (L3-39, ruling L3-39-UNRETAINED = B). Only a
+    /// reader whose live read admits the row gets it, so it reveals nothing
+    /// that reader could not read already.
+    #[error("history not held: this machine holds no bytes of that row at this frontier")]
+    HistoryNotHeld,
     /// A concurrent write invalidated an operation that relied on a stable snapshot.
     #[error("concurrent write detected: {0}")]
     ConcurrentWrite(&'static str),
@@ -727,6 +735,7 @@ impl Error {
             Self::InvalidConfig(_) => ErrorKind::InvalidConfig,
             Self::InvalidTemporalExpression(_) => ErrorKind::InvalidTemporalExpression,
             Self::EntityNotFound => ErrorKind::EntityNotFound,
+            Self::HistoryNotHeld => ErrorKind::HistoryNotHeld,
             Self::ConcurrentWrite(_) => ErrorKind::ConcurrentWrite,
             Self::ArithmeticOverflow(_) => ErrorKind::ArithmeticOverflow,
             Self::InvariantViolation(_) => ErrorKind::InvariantViolation,

@@ -55,6 +55,15 @@ fn server_with_config(
             )
             .unwrap();
     }
+    vault
+        .put_entity(
+            &EntityId::from_hex(SPACE).unwrap(),
+            oneiron::registry::ENTITY_TYPE_RELATIONSHIP,
+            oneiron::temporal::TimeRange { start: AT, end: AT },
+            AT,
+            b"fixture relationship",
+        )
+        .unwrap();
     let actor = EntityId::from_hex(ACTOR).unwrap();
     vault
         .install_read_permit_for_test(WriteActor::new(actor, EdgeActorClass::Human))
