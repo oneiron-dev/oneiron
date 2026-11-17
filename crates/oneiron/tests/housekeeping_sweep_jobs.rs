@@ -18,7 +18,8 @@
 //! - the owner's `housekeeping_all` runs every engine sweep now, and each keeps its cadence's
 //!   grid: it is next due at the first occurrence after now that its arming set;
 //! - a deadline a door notes makes its sweep due then, a stopped vault wakes for it, and the run
-//!   that covers it goes on a cadence after it.
+//!   that covers it goes on a cadence after it; one noted while the sweep's run goes on, after
+//!   the run read its own, makes the sweep due then once that run ends.
 //!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test housekeeping_sweep_jobs`.
 #![cfg(oneiron_test_support)]
@@ -37,8 +38,8 @@ use oneiron::store::GateDecisionId;
 use oneiron::task_verb::sdk::invoke;
 use oneiron::test_doors::schedule::{
     arm_as_engine, arm_cadence_jobs, cadence_jobs, cadence_jobs_not_engine_armed, due_at,
-    note_sweep_deadline, plant_start_marker, pull_for_queued_erase_obligation,
-    request_cadence_runs, seen,
+    note_deadline_during_next_run, note_sweep_deadline, plant_start_marker,
+    pull_for_queued_erase_obligation, request_cadence_runs, seen,
 };
 use oneiron::test_doors::setting::plant_undecodable_row;
 use oneiron::{EdgeActorClass, EntityId, Vault, VaultConfig};
@@ -419,6 +420,54 @@ fn a_noted_deadline_makes_its_sweep_due_then_and_a_stopped_vault_wakes_for_it() 
     let deadline = T0 + 10 * MINUTE;
     note_sweep_deadline(&fx.vault, sweep, deadline).expect("a door notes a deadline");
     assert_eq!(fx.due(sweep), Some(deadline), "due when the deadline comes");
+    let wake = fx.vault.housekeeping_wake_at().expect("the wake time");
+    assert!(
+        wake.is_some_and(|at| at <= deadline),
+        "a stopped vault wakes by the deadline: {wake:?}"
+    );
+
+    fx.at(deadline);
+    let report = fx.pass();
+    assert!(
+        matches!(
+            outcome(&report, sweep),
+            SweepOutcome::Ran { complete: true, .. }
+        ),
+        "{report:#?}"
+    );
+    assert_eq!(
+        fx.due(sweep),
+        Some(deadline + HOUR),
+        "the run covered the deadline and goes on a cadence after it"
+    );
+}
+
+#[test]
+fn a_deadline_noted_while_its_sweep_runs_makes_the_sweep_due_then_once_the_run_ends() {
+    let fx = Fixture::rooted();
+    let sweep = HousekeepingSweep::SecretLeaseExpiry;
+    fx.pass();
+    assert_eq!(fx.due(sweep), Some(T0 + HOUR));
+
+    // A lease that a write makes while the sweep's next run goes on, after the run read the
+    // deadlines it covers, expires five minutes later (review round 2 of #9300, P1).
+    let deadline = T0 + HOUR + 5 * MINUTE;
+    note_deadline_during_next_run(&fx.vault, sweep, deadline);
+    fx.at(T0 + HOUR);
+    let report = fx.pass();
+    assert!(
+        matches!(
+            outcome(&report, sweep),
+            SweepOutcome::Ran { complete: true, .. }
+        ),
+        "{report:#?}"
+    );
+    assert_eq!(
+        fx.due(sweep),
+        Some(deadline),
+        "the run's end keeps the pull the note made while it ran: due at the deadline, not a \
+         cadence after the run"
+    );
     let wake = fx.vault.housekeeping_wake_at().expect("the wake time");
     assert!(
         wake.is_some_and(|at| at <= deadline),

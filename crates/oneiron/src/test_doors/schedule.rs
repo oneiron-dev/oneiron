@@ -87,6 +87,10 @@ static SEEN: Mutex<BTreeMap<(PathBuf, &'static str), Vec<SeenRun>>> = Mutex::new
 /// The `due_by` the cadence job answers, by vault.
 static CADENCE_DUE_BY: Mutex<BTreeMap<PathBuf, u64>> = Mutex::new(BTreeMap::new());
 
+/// A deadline the next run of a sweep notes while it runs, by vault and sweep.
+static PLANTED_DEADLINES: Mutex<BTreeMap<(PathBuf, &'static str), u64>> =
+    Mutex::new(BTreeMap::new());
+
 /// Records a run; answers how many runs of its job this vault has made, this one included.
 fn record(vault: &Vault, armed: &Armed) -> usize {
     let mut seen = SEEN
@@ -304,6 +308,33 @@ pub static TEST_ONCE: JobSpec = JobSpec {
     once_per_pass: true,
     run: run_bounded,
 };
+
+/// The next run of `sweep` in `vault` notes a deadline at `at` while it runs, after it listed
+/// the deadlines it covers, as a door that writes during the run does (stage 5a-2, review round 2
+/// of #9300).
+pub fn note_deadline_during_next_run(vault: &Vault, sweep: HousekeepingSweep, at: u64) {
+    PLANTED_DEADLINES
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .insert((vault_of(vault), sweep.code()), at);
+}
+
+/// The hook a sweep's run calls once it listed the deadlines it covers: it notes the deadline
+/// [`note_deadline_during_next_run`] planted for this run, if any.
+///
+/// # Errors
+///
+/// As the note.
+pub(crate) fn note_planted_deadline(vault: &Vault, sweep: HousekeepingSweep) -> Result<()> {
+    let planted = PLANTED_DEADLINES
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .remove(&(vault_of(vault), sweep.code()));
+    match planted {
+        Some(at) => note_sweep_deadline(vault, sweep, at),
+        None => Ok(()),
+    }
+}
 
 /// Whether `spec` is one of these test job kinds (code `test.*`): the doors below take only
 /// them, so the engine's own jobs never join a test's runs.
