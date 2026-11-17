@@ -13,6 +13,8 @@ pub mod catch_all_status;
 pub mod coach_round;
 pub mod connector_sends;
 #[cfg(unix)]
+pub mod continue_command;
+#[cfg(unix)]
 pub mod hosted_import;
 pub mod lens_frames;
 pub mod lfs_install_line;
