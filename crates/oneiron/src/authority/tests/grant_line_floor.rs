@@ -2,7 +2,7 @@
 //! stored a later row of the end's signer first keeps the end as restriction only, so every
 //! arrival order reads the Grant ended, as a world narrowing does (Astra #1430).
 use super::machine_identity::{Host, host};
-use super::support::{authority_key_from_ed, sign_ed, unsigned_entry};
+use super::support::{RosterHead, authority_key_from_ed, sign_ed, unsigned_entry};
 use super::world_privacy::other_machine;
 use super::*;
 use crate::{Vault, VaultConfig};
