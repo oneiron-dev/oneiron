@@ -230,6 +230,24 @@ impl<const N: usize> FixedSideKey for [u8; N] {
     const WIDTH: usize = N;
 }
 
+/// One byte, such as a kind tag.
+impl SideKey for u8 {
+    fn encode_into(&self, out: &mut Vec<u8>) {
+        out.push(*self);
+    }
+
+    fn decode_key(bytes: &[u8]) -> Option<Self> {
+        let &[byte] = bytes else {
+            return None;
+        };
+        Some(byte)
+    }
+}
+
+impl FixedSideKey for u8 {
+    const WIDTH: usize = 1;
+}
+
 /// Big-endian, so keys order by number.
 impl SideKey for u64 {
     fn encode_into(&self, out: &mut Vec<u8>) {
@@ -264,6 +282,35 @@ impl SideKey for String {
 
     fn decode_key(bytes: &[u8]) -> Option<Self> {
         String::from_utf8(bytes.to_vec()).ok()
+    }
+}
+
+/// UTF-8 text that holds no NUL byte, spelling a `String` part (`#[side_key(rest, with =
+/// NulFreeText)]`). A key that ends this part with a NUL separator therefore splits at its first
+/// NUL, and a key whose text holds a NUL is refused.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct NulFreeText(pub String);
+
+impl SideKey for NulFreeText {
+    fn encode_into(&self, out: &mut Vec<u8>) {
+        Self::encode_field(&self.0, out);
+    }
+
+    fn decode_key(bytes: &[u8]) -> Option<Self> {
+        if bytes.contains(&0) {
+            return None;
+        }
+        String::decode_key(bytes).map(Self)
+    }
+}
+
+impl FieldSpelling<String> for NulFreeText {
+    fn encode_field(field: &String, out: &mut Vec<u8>) {
+        out.extend_from_slice(field.as_bytes());
+    }
+
+    fn into_field(self) -> String {
+        self.0
     }
 }
 
