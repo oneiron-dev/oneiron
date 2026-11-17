@@ -12,6 +12,7 @@ use super::{CampaignError, CampaignResult};
 
 mod axes;
 pub(crate) mod axes_job;
+pub(crate) mod judge;
 mod producers;
 pub(crate) mod records;
 pub use axes::{
@@ -23,7 +24,13 @@ pub use axes_job::{
     CampaignArchiveAxesQueued, CampaignArchiveProposalRequest, CampaignArchiveProposalState,
     CampaignArchiveProposeAxes,
 };
+pub use judge::{
+    ArchiveJudgeAsk, ArchiveJudgeHost, ArchiveJudgeQuestion, CampaignArchiveJudge,
+    CampaignArchiveJudged,
+};
 pub(crate) use producers::erase_producer_actor_in_txn;
+#[cfg(oneiron_test_support)]
+pub(crate) use producers::producer_record_count;
 pub use producers::{
     ArchiveAxesMethod, ArchiveAxesMint, ArchivePlacementBasis, mint_archive_axes,
     mint_archive_placement, mint_archive_score,
