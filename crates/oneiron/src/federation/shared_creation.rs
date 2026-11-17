@@ -56,6 +56,22 @@ pub struct SharedVaultCreation {
 fn invalid(message: &str) -> Error {
     Error::InvalidConfig(message.to_owned())
 }
+/// Refuses an id no shared vault may take, its creator's pick: zero, and the
+/// own-device residence's. A vault shared under the residence's id would give
+/// its Owner a member row with exactly an own-device Grant's terms, and every
+/// reader that tells the two apart by scope would read one as the other (FIX
+/// [SHARED-VAULT-ID-7-OWN-DEVICE-ALIAS]).
+pub(crate) fn require_shared_vault_id(vault_id: u64) -> Result<()> {
+    if vault_id == 0 {
+        return Err(invalid("shared vault id cannot be zero"));
+    }
+    if FederationGrantScope::vault(vault_id) == super::own_device_residence_scope() {
+        return Err(Error::InvalidConfig(format!(
+            "shared vault id {vault_id} is the own-device residence's; pick another id"
+        )));
+    }
+    Ok(())
+}
 pub(crate) fn role_preset(role: Role) -> Result<GrantPreset> {
     Ok(match role {
         Role::Owner => GrantPreset::Owner,
@@ -210,6 +226,8 @@ fn move_owner_mints_to_shared_scope_in_txn(
 
 impl Vault {
     /// Run once while creating shared membership. Reopening never reapplies defaults.
+    /// The vault's id is neither zero nor the own-device residence's
+    /// (`require_shared_vault_id`).
     /// No preset means exactly the explicitly supplied roles, without implicit
     /// grants, except that the vault never commits with no Owner (FIX 8739).
     ///
@@ -237,9 +255,7 @@ impl Vault {
         members: &[InitialSharedMember],
         now: u64,
     ) -> Result<SharedVaultCreation> {
-        if vault_id == 0 {
-            return Err(invalid("shared vault id cannot be zero"));
-        }
+        require_shared_vault_id(vault_id)?;
         self.load_membership_carrier();
         let mut txn = self.store.env.write_txn()?;
         // Only the vault's owner shares it: a native host's proof shows a

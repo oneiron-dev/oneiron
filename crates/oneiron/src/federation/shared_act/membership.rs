@@ -1249,11 +1249,11 @@ impl Vault {
     /// The claimant's Owner grant is a giving this install's key signs in
     /// the same writer (pass 28 R2), so an install with no live install key
     /// refuses the recovery. The claimant gives the role to themselves and
-    /// holds no grant before it: no roster rule admits that giving, the
-    /// host's handover does. Its `affected_grants` names the claimant's new
-    /// grant id, `to` names the claimant, and the R3 reader admits a
-    /// self-giving of the Owner role at a grant id only beside a counted
-    /// `proof_of_control` handover naming both. Each Grant of `from`'s no
+    /// holds no grant before it: this writer rests that giving on the host's
+    /// handover, whose `affected_grants` names the claimant's new grant id
+    /// and whose `to` names the claimant. No reader checks the giver (RULING
+    /// R3A-MEMBER-GIVER-RULE = A); a guard on a self-giving of Owner is FIX
+    /// [SHARED-MEMBER-SELF-GIVING-OWNER]. Each Grant of `from`'s no
     /// host signed a withdrawal of ends by a carrier-signed record of cause
     /// `host_handover`.
     pub fn recover_shared_owner_authorized(
