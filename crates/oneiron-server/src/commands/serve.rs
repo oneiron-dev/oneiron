@@ -158,6 +158,14 @@ pub(super) async fn serve_anchored(
     let sync_server = sync_server
         .with_artifact_listener(artifact_addr.port())
         .with_api_listener(listener.local_addr()?);
+    // A vault served by name answers on `*.localhost` too. The operator reads
+    // its hosts here; `/api/health` names no vault (FIX LOCALHOST-HOST-DISCOVERY).
+    if let Some(host) = sync_server.config.local_artifact_vault_host() {
+        let port = artifact_addr.port();
+        let vault = format!("http://{host}:{port}/<artifact>/");
+        let apps = format!("http://<app>--{host}:{port}/");
+        tracing::info!(%vault, %apps, "artifacts answer on *.localhost");
+    }
     tracing::info!(%addr, artifacts = %artifact_addr, "listening");
     // Each step the gate holds a client's first call for is timed, and the
     // times go on the finished line (FIX 25667).

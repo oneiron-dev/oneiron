@@ -118,6 +118,21 @@ pub(super) fn validate_event_fields(
     let Some(selected) = EventFields::of(event) else {
         return Ok(());
     };
+    validate_fields(vault, txn, state, &selected, inspected)
+}
+
+/// Lays out each of `state`'s fields that `selected` names on its item's
+/// original page, with the value saved for it if any, refusing one on an
+/// item or page the draft's PDFs lack, or one that cannot be presented
+/// there. An item's pages come from `inspected` when it holds the bytes
+/// this snapshot pins (FIX 9609).
+pub(super) fn validate_fields(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    state: &EsignState,
+    selected: &EventFields,
+    inspected: &InspectedPages,
+) -> Result<()> {
     let mut pages = BTreeMap::new();
     for field in state
         .document

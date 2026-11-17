@@ -199,13 +199,14 @@ their inputs.
 
 **Changed from upstream:**
 
-- `lmdb/libraries/liblmdb/mdb.c` (12,347 lines; upstream 12,327):
+- `lmdb/libraries/liblmdb/mdb.c` (12,347 lines with these hunks alone, 12,345
+  with the ITS#10551 hunks below; upstream 12,327):
   - `:6488-6506` adds `mdb_enckey_clear`, inside `#if MDB_RPAGE_CACHE`. It
     wipes the saved `me_enckey.mv_size` bytes through a volatile pointer, then
     frees them and sets the pointer to NULL and the length to zero.
   - `:6526`: `mdb_env_close` calls it in place of upstream's `free`
     (upstream `:6506`).
-  - `:11637`: `mdb_env_set_encrypt` calls it in place of upstream's `free`
+  - `:11635`: `mdb_env_set_encrypt` calls it in place of upstream's `free`
     (upstream `:11617`), once the new copy is allocated and filled. The
     `EINVAL` (bad argument, active env) and `ENOMEM` returns come first and
     keep the old key.
@@ -230,15 +231,16 @@ their inputs.
   (`:20-22`) names it.
 
 Line numbers elsewhere in this file cite the upstream `mdb.c` (SHA-256
-above). Add 20 to an upstream line after 6487 to find it in the vendored copy.
+above). Add 20 to an upstream line after 6487 to find it in the vendored copy;
+after upstream line 10678, see the ITS#10551 section for the offset.
 
 **Re-vendoring:** re-extract the crates.io archive with the checksum above.
 Re-copy the files listed, then re-apply the `mdb.c` and `Cargo.toml` hunks.
 
 ## PAGE-FULL trace: three read-only accessors
 
-FIX row TRAP-REGISTER-WAIT-PAGE-FULL: writes on several engine paths fail now
-and then with `MDB_PAGE_FULL`, and the cause is not established. The engine's
+FIX row TRAP-REGISTER-WAIT-PAGE-FULL: writes on several engine paths failed now
+and then with `MDB_PAGE_FULL` (the cause is in the next section). The engine's
 canonical accessors (`oneiron-store` `overlay_db/accessors.rs`) trace such a
 failure; the trace needs three facts heed 0.20.5 does not expose. Each is a
 read, opens no transaction, and runs only after a write has already failed:
@@ -254,6 +256,43 @@ read, opens no transaction, and runs only after a write has already failed:
 
 Each addition is marked `ONEIRON FORK (PAGE-FULL trace)`. Re-vendoring
 re-applies them with the files listed above.
+
+## PAGE-FULL cause: upstream ITS#10551 in `mdb.c`
+
+FIX row TRAP-REGISTER-WAIT-PAGE-FULL. mdb.master3 pads a leaf node's key and
+its data to even lengths separately (upstream ITS#8988, already in this copy):
+`LEAFSIZE` and `mdb_node_add` count `NODESIZE + EVEN(key) + EVEN(data)`.
+`mdb_page_split` still chose its split point with the older count,
+`NODESIZE + key + sizeof(indx_t) + data`, and padded only the running total.
+So it counted 2 bytes short for every node whose key and data are both
+odd-sized. With such nodes on the page, it could pick a split whose half was a
+few bytes over the page; `mdb_node_add` then answered `MDB_PAGE_FULL`, the
+transaction failed, and nothing was written. `vault_meta` keys are 33 bytes
+long, so many engine writes could reach it.
+
+Upstream fixed it on mdb.master3 in commit
+`567292b5d4896d558c7f4fffbf711b86432cc15a` (27 Jul 2026, "ITS#10551 lmdb: fix
+mdb_page_split nodesize calculation"). This copy carries its three hunks
+verbatim:
+
+- `mdb_branch_size` (`:9189`) returns `EVEN(sz + sizeof(indx_t))`.
+- `mdb_page_split` no longer pads the new node's size again after
+  `mdb_leaf_size` / `mdb_branch_size` (`:10695-10698`); both return even sizes.
+- Its split-point loop (`:10750`, `:10755`) adds
+  `NODESIZE + EVEN(NODEKSZ(node)) + sizeof(indx_t)` and `EVEN(NODEDSZ(node))`
+  per node, with no running `EVEN`.
+
+The page format does not change, only where a later split cuts a page; pages
+an older build wrote read as before. `mdb.c` is now 12,345 lines, SHA-256
+`ec8b7dbffb54a5775db1e67507f32cd3cad3152cbc09c5bb47bb81f2dac8df9c`. To find an
+upstream line in this copy, add 20 up to upstream line 10678, 19 from 10680 to
+10737, and 18 from 10739 on (upstream 10679 and 10738 are the two removed
+lines). `crates/oneiron-store/tests/lmdb_page_split.rs` is the regression
+test: four puts of 33-byte keys, the last of which answered `MDB_PAGE_FULL`
+before this change.
+
+**Re-vendoring:** re-apply these three hunks with the FIX 1910 hunks, or take
+an upstream mdb.master3 that contains commit `567292b5d489`.
 
 ## Re-packaging for the Python sdist (ONE-1441)
 
