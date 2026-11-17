@@ -22,6 +22,7 @@
 
 use heed::{RoTxn, RwTxn};
 use loro::{ExportMode, LoroDoc, UpdateOptions, VersionVector};
+use oneiron_contracts::fingerprint::ContentHash;
 
 use super::{
     BODY, SyncSecretProjection, TextBound, TextCopy, bring_current, carried, land_copy_in_txn,
@@ -501,7 +502,7 @@ fn blob_copy_in_txn(vault: &Vault, txn: &RoTxn<'_>, source: EntityId) -> Option<
     let raw = vault.store.port_entity_raw(txn, &source).ok().flatten()?;
     let body = raw.get(ENTITY_METADATA_HEADER_LEN..)?.to_vec();
     let hash = carried(&marks, marked, &body);
-    if blake3::hash(&body).as_bytes() != &hash {
+    if ContentHash::of(&body).as_bytes() != &hash {
         return None;
     }
     let bound = TextBound {
