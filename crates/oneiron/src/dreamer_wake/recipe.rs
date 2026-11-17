@@ -238,10 +238,8 @@ fn read_evidence(
     actor: WriteActor,
     id: EntityId,
 ) -> Result<Evidence> {
-    let key = ScopedReadActorKey::for_engine_actor(actor).ok_or_else(invalid)?;
-    let raw = vault
-        .scoped_read(key)
-        .entity_raw_live_in(txn, &id)?
+    let _key = ScopedReadActorKey::for_engine_actor(actor).ok_or_else(invalid)?;
+    let raw = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, &id)?
         .ok_or_else(invalid)?;
     let header = EntityMetadataHeader::parse(&raw).ok_or_else(invalid)?;
     if !matches!(
