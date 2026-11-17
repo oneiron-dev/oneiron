@@ -10,6 +10,7 @@ use super::super::types::{
 use super::{LEDGER, force_sync, get_ledger_record, open_payload_in_txn};
 use crate::Vault;
 use crate::error::Error;
+use oneiron_contracts::lifecycle::Lifecycle;
 
 /// What one transition did in the caller's writer.
 pub(super) enum Transitioned {
@@ -54,13 +55,13 @@ pub(super) fn transition_record_in_txn(
         }
         return Ok(Transitioned::Replayed(record));
     }
-    if !record.state.may_transition_to(next) {
+    if !record.state.may_transition_to(&next) {
         return Err(IntentLedgerError::InvalidTransition {
             from: record.state,
             to: next,
         });
     }
-    record.state = next;
+    record.state.transition_to(next)?;
     record.recorded_outcome = Some(outcome);
     record.updated_ms = now_ms.max(record.created_ms);
     LEDGER.put(&vault.store, wtxn, &id, &record)?;

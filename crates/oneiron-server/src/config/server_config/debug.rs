@@ -61,6 +61,7 @@ impl fmt::Debug for SyncServerConfig {
                 &self.release_payment_credentials_unfenced,
             )
             .field("hosted_private_origins", &self.hosted_private_origins)
+            .field("hosted_private_networks", &self.hosted_private_networks)
             .finish()
     }
 }

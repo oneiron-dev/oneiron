@@ -25,6 +25,29 @@ crate::side_table::side_tables! {
     AGENT_DISPATCH_PLAN_HOLD: VaultMeta b"agent.dispatch.hold.v1\0" LegacyJson
         [restore: content] [family: unclassified] [tier: canonical]
         => crate::agent_dispatch::erase_plan_hold_actor_in_txn;
+    /// The one-off overdraft the owner approved for a run held at its spend cap (ARCH-0026
+    /// depletion ladder; Engine ruling RUNBUDGET-OVERDRAFT): its cap, the ask whose answer
+    /// approved it and when. The run's next hold deletes it. Key: id16(root attempt).
+    AGENT_DISPATCH_RUN_OVERDRAFT: VaultMeta b"agent.dispatch.run_overdraft.v1\0" Named Engine
+        [restore: content] [family: unclassified] [tier: canonical];
+    /// The free local chat model the host named for a run held at its spend cap, and the owner's
+    /// choice to continue the run on it (ARCH-0026 depletion ladder; Engine ruling RUNBUDGET-KNOB
+    /// = A): by his answer to the run-budget ask, or by his standing answer, the
+    /// on_budget_exhausted knob. The run's next hold deletes it. Key: id16(root attempt).
+    AGENT_DISPATCH_RUN_LOCAL_ROUTE: VaultMeta b"agent.dispatch.run_local_route.v1\0" Named Engine
+        [restore: content] [family: unclassified] [tier: canonical];
+    /// The dollars the owner added to a run held at its spend cap (owner ruling RUN-BUDGET-SPENT
+    /// = B, 15 Nov 2026: "add $X"): each amount, the units it bought at the vault's USD quote,
+    /// the ask whose answer added it and when. A lasting raise of the run's root scope: no hold
+    /// deletes it. Key: id16(root attempt).
+    AGENT_DISPATCH_RUN_FUNDS: VaultMeta b"agent.dispatch.run_funds.v1\0" Named Engine
+        [restore: content] [family: unclassified] [tier: canonical];
+    /// What a root launch's projection asked the owner about (owner ruling RUN-BUDGET-SPENT = B,
+    /// "you can also check it in advance"; Engine ruling RUNBUDGET-ADVANCE-FLOW = A): the hard
+    /// root scope the run spends under, the expected spend and the room left at launch. Read by
+    /// the early ask's add_funds answer and the AI status. Key: id16(root attempt).
+    AGENT_DISPATCH_RUN_BUDGET_FORECAST: VaultMeta b"agent.dispatch.run_budget_forecast.v1\0" Named Engine
+        [restore: content] [family: unclassified] [tier: canonical];
     /// FIX 3694: the owner's applied prompt continuation of one failed agent attempt: the card,
     /// ask and diagnostic it answered, the approving owner and when, the approval's fingerprint
     /// and id, and the successor attempt it enqueued. Key: id16(failed attempt).

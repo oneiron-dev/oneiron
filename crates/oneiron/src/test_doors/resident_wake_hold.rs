@@ -57,6 +57,19 @@ pub fn admit_person_message(
     )
 }
 
+/// For `tests/resident_busy_wakes.rs`: files a pending review of `reader`'s
+/// read of `agent`'s diary, stating `reason`, as a person's read of a diary
+/// its agent reviews files one; the resident's inbox pass wakes `agent` for
+/// it. Returns its request.
+pub fn file_diary_review(
+    vault: &Vault,
+    agent: EntityId,
+    reader: EntityId,
+    reason: &str,
+) -> Result<EntityId> {
+    vault.file_pending_diary_review(agent, reader, reason)
+}
+
 /// The model PERSON custom agent `agent` was born with, which names it as a
 /// message's sender.
 pub fn agent_person(agent: EntityId) -> Result<EntityId> {
