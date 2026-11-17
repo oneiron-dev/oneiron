@@ -17,7 +17,10 @@ pub(crate) fn fixture_with_config(
 ) -> Result<(tempfile::TempDir, Vault, WriteActor, Share)> {
     let dir = tempfile::tempdir()?;
     let vault = Vault::open(dir.path(), config)?;
-    let issuer = WriteActor::new(entity(0x51), EdgeActorClass::Human);
+    let issuer = WriteActor::new(
+        crate::vault::embedded_owner_actor_id()?,
+        EdgeActorClass::Human,
+    );
     let share = Share {
         recipient_ref: entity(0x52),
         brief_ref: "brief:opaque-report".to_owned(),

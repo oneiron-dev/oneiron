@@ -45,12 +45,15 @@ mod agent_tier;
 mod agent_world_undo;
 mod ai_grant;
 mod ancestor_index;
+#[cfg(oneiron_test_support)]
+pub(crate) mod ancestor_index_door;
 mod ancestry_evaluator;
 mod anchor_fold;
 mod anchor_marks;
 mod ask_forward_holder;
 mod backup_signer_delegation;
 mod carried_act;
+mod carrier_prompt;
 mod carrier_reading;
 mod causal_write;
 mod checkpoint;
@@ -135,8 +138,10 @@ mod op_apply;
 mod origin_cut;
 mod owner_act;
 mod owner_choice;
+mod owner_delegate;
 mod owner_key_enrollment;
 mod owner_key_enrollment_door;
+mod owner_key_move_confirm;
 mod owner_project_slip;
 mod owner_proof;
 mod owner_roots;
@@ -153,8 +158,11 @@ mod recovery;
 mod retired_signers;
 mod revocation_notice;
 mod revoke_proof;
+mod rows_floor;
 mod seat_child_slip;
 mod sequence_ancestry;
+#[cfg(oneiron_test_support)]
+pub(crate) mod sequence_floor_door;
 mod sequence_observation;
 pub(crate) mod setting_keys;
 mod slip;
@@ -250,6 +258,11 @@ pub use oneiron_authority::authority::RootRevisionBasis;
 pub use oneiron_authority::authority::{
     OWNER_KEY_POSSESSION_PROOF_LEN, owner_key_enrollment_challenge,
 };
+// A passkey's assertion as an owner root's signature: its envelope and the
+// challenge it names (row WEB-PASSKEY-OWNER-KEY).
+pub use oneiron_authority::authority::{
+    webauthn_assertion_envelope, webauthn_challenge, webauthn_es256_public_key,
+};
 mod federation_activation;
 pub use federation_activation::federation_grant_activation;
 mod federation_status;
@@ -278,6 +291,10 @@ pub use agent_grant_act::{
 pub use backup_signer_delegation::{
     BACKUP_SIGNER_DELEGATION_DOMAIN, BackupModeRootPolicy, BackupModeRoots, BackupSignerDelegation,
     BackupSignerStatement,
+};
+pub use carrier_prompt::{
+    PromptDeviceName, held_answer_prompt, machine_code_line, machine_key_code, pin_request_prompt,
+    recovery_root_code,
 };
 pub use carrier_reading::CarrierReading;
 pub use causal_write::CausalWriteDisposition;
@@ -403,8 +420,18 @@ pub(crate) use owner_act::{
     owner_act_signer_admits,
 };
 pub use owner_choice::OwnerChoiceHead;
+pub(crate) use owner_delegate::{
+    OwnerDelegate, delegate_reads_in_txn, is_owner_delegate_verb, owner_delegate_in_txn,
+};
+pub use owner_delegate::{OwnerOrDelegate, owner_delegate_admits};
 pub use owner_key_enrollment_door::{
-    EnrolledOwnerKey, OwnerKeyEnrollment, OwnerKeyEnrollmentReceipt,
+    EnrolledOwnerKey, EnrolledOwnerPasskey, OwnerKeyEnrollment, OwnerKeyEnrollmentReceipt,
+    OwnerPasskeyEnrollment, OwnerPasskeyEnrollmentReceipt, PreparedOwnerKeyEnrollment,
+};
+pub use owner_key_move_confirm::{
+    OWNER_KEY_MOVE_MEMBER_NOT_CONFIRMED, OWNER_KEY_MOVE_NO_HELD_KEY, OWNER_KEY_MOVE_NOT_PLANNED,
+    OWNER_KEY_MOVE_NOT_SYNCED, OWNER_KEY_MOVE_PLAN_STALE, OWNER_KEY_MOVE_SIGNER_NOT_EXECUTORS,
+    OwnerKeyMovePlan, OwnerKeyMoveSigner, sign_owner_key_move,
 };
 pub(crate) use owner_roots::anchor_signed_entry;
 pub use owner_roots::{AwaitedRoot, OwnerRootView};
@@ -457,7 +484,8 @@ pub use weave_admin::{
 };
 pub(crate) use withdrawn_grant::{
     ISOLATION_NEW_CHECK_ERROR_MODE, NewCheckErrorMode, grant_known_withdrawn_in_txn,
-    mark_if_withdrawn_grant_in_txn, withdraw_grant_row_in_txn,
+    land_archived_withdrawn_grant_rows_in_txn, mark_if_withdrawn_grant_in_txn,
+    withdraw_grant_row_in_txn,
 };
 pub use work_rebind::{
     InstrumentRebind, REBIND_GRANT, REBIND_HOLDER, REBIND_ORIGIN, REBIND_STILL_STANDS,

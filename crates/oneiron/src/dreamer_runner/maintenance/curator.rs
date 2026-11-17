@@ -6,7 +6,11 @@
 //! on a critical target waits for the owner in the run tray (ARCH-0026: a
 //! critical replacement waits), and applies once approved: his approval of
 //! the finding is its one consent, and the rung applies as the Dreamer with
-//! its inverse and receipt (`approved`, FIX 3223).
+//! its inverse and receipt (`approved`, FIX 3223). A rung that would retract,
+//! weaken or mark stale a claim that restricts someone's access waits the
+//! same way whatever its predicate's criticality: lifting a restriction is a
+//! widening, and the Dreamer's widening asks (RULING
+//! RESTRICTION-CLOSE-BY-CONFLICT-SETTLE, confirmed by the owner 15 Nov).
 use super::super::{
     DreamerAdmittedAttempt, DreamerAttemptPayload, DreamerRunnerStore, EnqueueDreamerAttemptOutcome,
 };
@@ -310,7 +314,9 @@ pub(super) fn run(
         };
         let proposed_action = action["kind"].clone();
         let critical = policy.criticality_for_predicate(&body.predicate)
-            == crate::gate::PolicyCriticality::Critical;
+            == crate::gate::PolicyCriticality::Critical
+            || (rung_closes(&action)
+                && crate::federation::claim_removal_widens_in(vault, &txn, &body)?);
         candidates.push((id,critical,serde_json::json!({"target":id.to_hex(),"source_hash":blake3::hash(&bytes[ENTITY_METADATA_HEADER_LEN..]).to_hex().to_string(),"action":action,"rubric":rubric,"grade":{
             "authorship":"verified_dreamer_generated",
             "freshness":{"learned_at":header.learned_at,"minimum_age_secs":rubric.minimum_age_secs},
@@ -369,6 +375,16 @@ pub(super) fn run(
         let landed = proposals::land(vault, CURATOR_FACET, attempt.status.attempt.id, |landing| {
             vault.with_write_txn_grouped(|txn| {
                 landing.land_in_txn(vault, txn, &finding, now, |txn| {
+                    // Judged again in the rung's own write: a contact
+                    // mapping restricts by other contact heads, which can
+                    // move after the grading read while its body stays
+                    // (Astra delta review on #8238, F1). The next pass
+                    // grades it again and asks a person.
+                    if rung_lifts_restriction_in(vault, &*txn, &value)? {
+                        return Err(Error::ConcurrentWrite(
+                            "curator target restricts someone's access since it was graded",
+                        ));
+                    }
                     apply_in_txn(vault, txn, &value, now)
                 })
             })
@@ -446,6 +462,70 @@ fn claim_of_weight_in_txn(
         }
     }
     Ok(weight)
+}
+
+/// Whether approving the curator finding `finding` would retract, weaken or
+/// mark stale a claim that restricts someone's access
+/// ([`crate::federation::claim_removal_widens_in`]): its rung is
+/// `confidence`, `stale` or `retract` ([`apply_in_txn`]) and its target is
+/// a restricting claim in `txn`. A decay (`claim_of_weight`) closes nothing.
+/// A body that is no curator finding, or a finding that does not decode,
+/// lifts nothing: its rung never applies. Read by `vault.claims.settle`, so
+/// an agent's approval of such a finding asks a person (RULING
+/// RESTRICTION-CLOSE-BY-CURATOR-APPROVAL).
+pub(crate) fn finding_lifts_restriction_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    finding: &crate::claim::ClaimBody,
+) -> Result<bool> {
+    if finding.predicate != PROPOSAL_PREDICATE {
+        return Ok(false);
+    }
+    let Some(value) = finding
+        .value
+        .as_str()
+        .and_then(|text| serde_json::from_str::<serde_json::Value>(text).ok())
+    else {
+        return Ok(false);
+    };
+    rung_lifts_restriction_in(vault, txn, &value)
+}
+
+/// Whether the rung a finding's `value` names (its `action` and `target`,
+/// the shape [`apply_in_txn`] reads) would retract, weaken or mark stale a
+/// claim that restricts someone's access in `txn`. A value with no closing
+/// rung or no stored target lifts nothing. The curator's own pass and the
+/// source re-check hold such a rung for a person's approval instead of
+/// applying it.
+pub(super) fn rung_lifts_restriction_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    value: &serde_json::Value,
+) -> Result<bool> {
+    if !rung_closes(&value["action"]) {
+        return Ok(false);
+    }
+    let Some(target) = value["target"]
+        .as_str()
+        .and_then(|hex| EntityId::from_hex(hex).ok())
+    else {
+        return Ok(false);
+    };
+    let Some(body) = vault.get_claim_in_txn(txn, &target)? else {
+        return Ok(false);
+    };
+    crate::federation::claim_removal_widens_in(vault, txn, &body)
+}
+
+/// Whether the rung `action` closes its target ([`apply_in_txn`]): a
+/// `confidence` rung supersedes it with a weaker successor, `stale` marks it
+/// stale and `retract` retracts it. A decay (`claim_of_weight`) closes
+/// nothing.
+fn rung_closes(action: &serde_json::Value) -> bool {
+    matches!(
+        action["kind"].as_str(),
+        Some("confidence" | "stale" | "retract")
+    )
 }
 
 /// Applies one finding's rung as the Dreamer, in the finding's own write.

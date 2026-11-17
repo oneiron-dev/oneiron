@@ -594,4 +594,147 @@ pub(crate) mod tests {
         body.extend_from_slice(b"\nendstream");
         body
     }
+
+    /// Append one CAdES signature revision with NO signature timestamp,
+    /// its CMS bag carrying `bag` beside the signer certificate: the
+    /// third-party shape a later DSS + DocTimeStamp archiving revives.
+    fn append_sig_revision_with_bag(
+        bytes: &[u8],
+        signer: &TestCa,
+        op: &str,
+        bag: &[Vec<u8>],
+    ) -> Vec<u8> {
+        let limits = operation_limits();
+        let state = pdf::reparse_revision(bytes, &limits).unwrap();
+        let kind = pdf::RevisionKind::Signature {
+            field_name: pdf::field_name_for(op, &limits).unwrap(),
+            date_str: pdf::pdf_date(AT_UNIX * 1000, &limits).unwrap(),
+        };
+        let mut draft = pdf::append_revision(bytes, &state, &kind, 64 * 1024).unwrap();
+        let br = draft.byte_range.unwrap();
+        let digest = pdf::hash_byte_range(&draft.bytes, br).unwrap();
+        let (issuer, serial) = cms::issuer_and_serial(&signer.cert_der).unwrap();
+        let attrs = vec![
+            cms::attr_content_type_data(),
+            cms::attr_message_digest(&digest),
+            cms::attr_signing_cert_v2(&signer.cert_der, &issuer, &serial),
+        ];
+        let (wire, signing) = cms::assemble_signed_attrs(attrs);
+        let sig = sign_p256(&signer.key, &signing);
+        let unsigned: Vec<Vec<u8>> = Vec::new();
+        let material = cms::SignerMaterial {
+            algorithm: SignatureAlgorithm::EcdsaP256Sha256,
+            signer_cert_der: &signer.cert_der,
+            issuer_name_der: &issuer,
+            serial_der: &serial,
+            chain_ders: bag,
+        };
+        let cms_der = cms::build_signed_data(&material, &wire, &sig, &unsigned);
+        pdf::patch_contents(&mut draft, &cms_der, &limits).unwrap();
+        draft.bytes
+    }
+
+    /// A certificate for `inter`'s subject and key, issued by `root`
+    /// with a caller-chosen validity window and serial: one printing of
+    /// a reissued intermediate.
+    fn reissued_intermediate(
+        root: &TestCa,
+        inter: &TestCa,
+        not_before: (i32, u8, u8),
+        not_after: (i32, u8, u8),
+        serial: u64,
+    ) -> Vec<u8> {
+        let mut params = rcgen::CertificateParams::new(Vec::<String>::new()).unwrap();
+        params.distinguished_name = rcgen::DistinguishedName::new();
+        params.distinguished_name.push(
+            rcgen::DnType::CommonName,
+            "reissue-intermediate".to_string(),
+        );
+        params.key_usages = vec![
+            rcgen::KeyUsagePurpose::DigitalSignature,
+            rcgen::KeyUsagePurpose::KeyCertSign,
+            rcgen::KeyUsagePurpose::CrlSign,
+        ];
+        params.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
+        params.not_before = rcgen::date_time_ymd(not_before.0, not_before.1, not_before.2);
+        params.not_after = rcgen::date_time_ymd(not_after.0, not_after.1, not_after.2);
+        params.serial_number = Some(rcgen::SerialNumber::from(serial));
+        let issuer = rcgen::Issuer::from_params(&root.rcgen_params, &root.rcgen_key);
+        params
+            .signed_by(&inter.rcgen_key, &issuer)
+            .unwrap()
+            .der()
+            .to_vec()
+    }
+
+    #[test]
+    fn signer_path_is_selected_at_covering_doc_timestamp_time() {
+        // A signature with no signature timestamp, archived with a DSS
+        // and a covering DocTimeStamp at AT_UNIX. Its CMS bag carries
+        // two certificates for its intermediate's subject and key, both
+        // issued by the anchored root: the genuine one, valid around
+        // AT_UNIX and carried in the DSS, and a reissue valid only
+        // after AT_UNIX. Verification runs in 2028, when the genuine
+        // certificate is expired and the reissue is valid. The signer
+        // is judged at the DocTimeStamp time, so its path must still be
+        // selected there - [leaf, genuine] - and the DSS material,
+        // which speaks about that path, must still resolve. Selecting
+        // at the verify clock instead picks the reissue, which is not
+        // yet valid at the DocTimeStamp time and is in no DSS.
+        let kus = vec![
+            rcgen::KeyUsagePurpose::DigitalSignature,
+            rcgen::KeyUsagePurpose::KeyCertSign,
+            rcgen::KeyUsagePurpose::CrlSign,
+        ];
+        let root = ca_with_kus("reissue-root", kus.clone());
+        let inter = ca_with_kus("reissue-intermediate", kus);
+        let leaf = child_ca(&inter, "reissue-signer");
+        let tsa = tsa_ca();
+        let genuine = reissued_intermediate(&root, &inter, (2025, 1, 1), (2027, 1, 1), 1001);
+        let reissue = reissued_intermediate(&root, &inter, (2027, 6, 1), (2030, 1, 1), 1002);
+        let input = std::fs::read(format!(
+            "{}/tests/fixtures/pdf-input/classic_1page.pdf",
+            env!("CARGO_MANIFEST_DIR")
+        ))
+        .unwrap();
+        let signed =
+            append_sig_revision_with_bag(&input, &leaf, "reissue-a", &[genuine.clone(), reissue]);
+        let inter_crl = build_crl(&inter, AT_UNIX - 60, Some(AT_UNIX + 3600), None, vec![]);
+        let root_crl = build_crl(&root, AT_UNIX - 60, Some(AT_UNIX + 3600), None, vec![]);
+        let with_dss = append_dss_revision(
+            &signed,
+            vec![leaf.cert_der, genuine, tsa.cert_der.clone()],
+            vec![inter_crl, root_crl],
+        );
+        let archived = append_doc_ts_revision(&with_dss, &tsa, AT_UNIX);
+        // 2028-01-01T00:00:00Z: the genuine intermediate has expired,
+        // the reissue is valid, the leaf is judged at AT_UNIX.
+        let engine = verify_engine(vec![root.cert_der, tsa.cert_der], 1_830_297_600);
+        let report = engine.verify_sealed_pdf(&archived).unwrap();
+        assert!(
+            report.signatures[0].checks.iter().any(|c| {
+                c.kind == VerifyCheckKind::CertificatePath && c.status == VerifyCheckStatus::Pass
+            }),
+            "signer path passes at the DocTimeStamp time: {report:?}"
+        );
+        assert!(
+            report
+                .checks()
+                .any(|c| c.kind == VerifyCheckKind::ValidationMaterial
+                    && c.status == VerifyCheckStatus::Pass),
+            "validation material resolves for the selected path: {report:?}"
+        );
+        assert!(
+            !report
+                .checks()
+                .any(|c| c.kind == VerifyCheckKind::ValidationMaterial
+                    && c.status != VerifyCheckStatus::Pass),
+            "no validation-material check is left unresolved: {report:?}"
+        );
+        assert_eq!(
+            report.signatures[0].profile,
+            Some(PadesProfile::BaselineLta),
+            "{report:?}"
+        );
+    }
 }

@@ -196,6 +196,7 @@ fn a_leaked_host_secret_moves_to_a_new_one_and_the_vault_keeps_its_id() {
             }],
             occurred_at: unix_seconds_now(),
             thread_audience: None,
+            project: None,
             assertions: Default::default(),
         })
         .unwrap();
