@@ -141,7 +141,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/code_memory_values/mod.rs` | src | m | 15 struct · 5 enum · 21 fn · 8 const · 1 mod · 1 re-export | AlwaysOnCodeMemoryContract, AnchorTransfer, AnchorTransferKind, AnchorTransferReceipt, AnchorTransferRecord, AttachCodeMemory, BlocksWriteContext, CodeMemoryAnchor +12 | Symbol-anchored memory values, deterministic union rules and row codecs |
 | `src/code_memory_values/pull_result.rs` | src | s | 1 struct | CodeMemoryPullResult | Provenance-labelled code-memory pull values |
 | `src/code_promotion_gap.rs` | src | s | 1 enum · 1 fn | QueuePromotionGap | Reasons a tested revision lacks reviewed promotion |
-| `src/code_repo_registration.rs` | src | s | 1 struct · 1 enum · 9 fn · 1 const | CodeRepoRegistration, CodeRepoSource | The retained configuration of a registered repository (FIX 4299, CODE-CUSTODY-01), nested in its… |
+| `src/code_repo_registration.rs` | src | s | 1 struct · 1 enum · 11 fn · 1 const | CodeRepoRegistration, CodeRepoSource | The retained configuration of a registered repository (FIX 4299, CODE-CUSTODY-01), nested in its… |
 | `src/code_revision_identity.rs` | src | s | 3 fn | — | Deterministic aggregation-session, tested-revision and provenance identifiers |
 | `src/code_revision_record/commit_metadata.rs` | src | s | 3 fn | — | Message and file modes are canonical revision data, not export input; authorship is erasable attribution… |
 | `src/code_revision_record/file_frontiers.rs` | src | s | 2 fn | — | Pure tested-file frontier map validation and codecs |
@@ -669,6 +669,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/write_envelope/world_access_predicates.rs` | src | s | 1 fn · 2 const | — | World-access authority claim predicates |
 | `src/writer_hold.rs` | src | s | 1 struct · 2 fn | WriterHold | Writer closure timing and the Dreamer writer-hold trace |
 | `src/writer_lease.rs` | src | m | 1 struct · 16 fn · 2 const · 1 static | VaultWriterLease | Process-owner writer lease, shared by the server and embedded SDK |
+| `tests/code_repo_registration_registrant.rs` | test | s | — | — | WAVE11-REPO-REGISTRANT-UNRECORDED: a registered repository's retained configuration names the agent that… |
 | `tests/expiry_rule.rs` | test | s | — | — | UC-12 PR 3: the one expiry instant, `oneiron_store::expiry` |
 | `tests/fingerprint_keep_skill_tree.rs` | test | s | 1 struct · 1 fn · 2 const · 1 crate-vis | SkillContentHash | K-proof (oracle) for PLAN-UC-04 stage 6.3a: the canonical skill tree hash keeps its bytes |
 | `tests/fingerprint_keep_vault_import_receipt.rs` | test | s | 2 fn · 2 const | — | K-proof (oracle) for PLAN-UC-04 stage 6.3c: the foreign vault import receipt id keeps its bytes |
