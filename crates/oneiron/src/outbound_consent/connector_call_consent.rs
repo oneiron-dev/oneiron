@@ -289,6 +289,7 @@ impl Vault {
                         // The original pass's run binding is unknown to the
                         // sweep (FIX 4747 slice 7).
                         agent_run: None,
+                        run_ref: None,
                     },
                 )
             });

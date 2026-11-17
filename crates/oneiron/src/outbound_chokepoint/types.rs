@@ -152,6 +152,11 @@ pub(crate) struct PreparedEffect {
     /// admission is refused under the writer while the sibling's call may
     /// have gone.
     pub(crate) exclusive_route: Option<AttemptId>,
+    /// The code run that asks this effect, from its caller's write origin,
+    /// never from the request (ARCH-0040 #revert-run): each gate receipt its
+    /// admission records joins that run's change journal in the receipt's
+    /// own write. `None` for an effect no code run asks.
+    pub(crate) run_ref: Option<String>,
 }
 
 /// A second actor one external mutation speaks for (OF-427): the verified
