@@ -1,0 +1,16 @@
+{
+  "name": "vault.booking.rung2.release_once",
+  "description": "The owner releases one held rung-2 first send of a booking page by its send ref: one approval for those exact kept words to that visitor, then the send; a second press approves nothing more.",
+  "input": "crate::task_verb::sdk::BookingRung2ReleaseOnceRequest",
+  "output": "crate::task_verb::sdk::BookingRung2ReleaseOnceResponse",
+  "call": "crate::task_verb::sdk::host_only(memory, \"vault.booking.rung2.release_once\", &input)?",
+  "host_door": true,
+  "scope": "Write",
+  "act_class": "outbound_send",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}
