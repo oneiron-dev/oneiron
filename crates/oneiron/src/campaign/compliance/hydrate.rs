@@ -194,7 +194,8 @@ pub(super) fn hydrate_dispatch_compliance_facts(
         // whatever a configuration row claims.
         sender_identity_present: elements.sender_identity && sending_identity.is_some(),
         physical_address_present: elements.physical_address,
-        optout_mechanism_present: elements.optout_mechanism,
+        optout_mechanism_present: elements.optout_mechanism
+            || sending_identity != effect.channel_identity_ref,
         commercial_marking_present: elements.commercial_marking,
         now_utc,
     })
