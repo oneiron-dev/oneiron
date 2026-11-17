@@ -640,6 +640,12 @@ name = "vault_off_record_doors"
 path = "tests/vault_off_record_doors.rs"
 required-features = ["oneiron/test-support"]
 
+# L5-11's issuer watch roots its owner on a `MemoryKeystore` too.
+[[test]]
+name = "connector_issuer_prm_refusal"
+path = "tests/connector_issuer_prm_refusal.rs"
+required-features = ["oneiron/test-support"]
+
 # The rerank pair template price cases root their owner on a `MemoryKeystore` too.
 [[test]]
 name = "rerank_pair_template_price"
