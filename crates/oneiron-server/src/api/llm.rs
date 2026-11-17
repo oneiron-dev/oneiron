@@ -132,6 +132,11 @@ fn failure_body(error: LlmError) -> (StatusCode, serde_json::Value) {
         LlmError::Retryable(RetryableLlmError::WorldRouteNotAdmitted) => {
             (StatusCode::SERVICE_UNAVAILABLE, "world_route_not_admitted")
         }
+        // No rung serves at this hour (UNBUILT-14); the body's error says
+        // when the first one opens.
+        LlmError::Retryable(RetryableLlmError::OutsideHours { .. }) => {
+            (StatusCode::SERVICE_UNAVAILABLE, "outside_hours")
+        }
         LlmError::Retryable(_) => (StatusCode::BAD_GATEWAY, "stream_cut"),
     };
     let mut body = serde_json::json!({"error":{"code":code,"llm":error}});

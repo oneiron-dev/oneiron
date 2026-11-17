@@ -25,6 +25,7 @@
 //! Stage 0.1 lands the primitive unused: no engine key is in the catalogue yet, and no value in
 //! force moves.
 
+pub(crate) mod archive_restore;
 mod ask;
 mod catalogue;
 mod change;
@@ -113,8 +114,10 @@ pub type LooseningNote =
 /// The one hook a key may run in the write that changes it: re-arm a schedule, clear parks that
 /// wait on the key, or refuse the change on state the value's own check cannot see. It runs only
 /// on an applied change, after its rows are put; its `Err` fails the whole write, so neither row
-/// lands and the caller sees that error. A row that arrives by sync or a restore never passes
-/// through it, so a refusal here needs its reader to hold the same line.
+/// lands and the caller sees that error. A row that arrives by sync or a checkpoint restore never
+/// passes through it, so a refusal here needs its reader to hold the same line. The owner's
+/// archive restore passes an absent row through it as a change with no prior, in a savepoint: a
+/// refusal there leaves the row out and its archived copy retained (`archive_restore`).
 pub type OnChange = fn(&Vault, &mut heed::RwTxn<'_>, &SettingChange) -> Result<()>;
 
 /// The one hook a key may run once the write that changed it has committed: wake a host that
