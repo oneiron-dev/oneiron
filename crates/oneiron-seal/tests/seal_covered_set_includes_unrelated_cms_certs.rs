@@ -7,7 +7,8 @@ use std::sync::Arc;
 
 use oneiron_seal::{
     FetchPolicy, NativeSealEngine, PadesProfile, PdfSealEngine, SealConfig, SealRequest,
-    TsaEndpoint, VerifyCheckKind, VerifyCheckStatus, VerifyReport, VerifyVerdict,
+    SignatureAlgorithm, TsaEndpoint, VerifyCheckKind, VerifyCheckStatus, VerifyReport,
+    VerifyVerdict,
 };
 
 #[path = "support/mod.rs"]
@@ -286,4 +287,147 @@ async fn unrelated_timestamp_bag_certificate_does_not_change_b_lta_result() {
     let stuffed = inject_bag_certificate(&sealed, b"/ETSI.RFC3161", &unrelated);
     let report = engine.verify_sealed_pdf(&stuffed).unwrap();
     assert_passes_at(&report, PadesProfile::BaselineLta);
+}
+
+fn rollover_params(cn: &str, is_ca: rcgen::IsCa) -> rcgen::CertificateParams {
+    let mut params = rcgen::CertificateParams::new(Vec::<String>::new()).unwrap();
+    params.distinguished_name = rcgen::DistinguishedName::new();
+    params
+        .distinguished_name
+        .push(rcgen::DnType::CommonName, cn.to_string());
+    params.key_usages = if matches!(is_ca, rcgen::IsCa::Ca(_)) {
+        vec![
+            rcgen::KeyUsagePurpose::DigitalSignature,
+            rcgen::KeyUsagePurpose::KeyCertSign,
+            rcgen::KeyUsagePurpose::CrlSign,
+        ]
+    } else {
+        vec![rcgen::KeyUsagePurpose::DigitalSignature]
+    };
+    params.is_ca = is_ca;
+    params
+}
+
+fn rollover_issued_by(
+    subject: &rcgen::CertificateParams,
+    subject_key: &rcgen::KeyPair,
+    issuer_params: &rcgen::CertificateParams,
+    issuer_key: &rcgen::KeyPair,
+) -> Vec<u8> {
+    let issuer = rcgen::Issuer::from_params(issuer_params, issuer_key);
+    subject
+        .signed_by(subject_key, &issuer)
+        .unwrap()
+        .der()
+        .to_vec()
+}
+
+#[tokio::test]
+async fn a_rollover_bag_with_an_expired_cross_certificate_selects_the_valid_one() {
+    // Root key rollover: only the new root is anchored. A B-B document is
+    // sealed with the valid-only chain, then the expired OldWithNew cross
+    // is stuffed into the signer CMS bag. Both crosses share subject and
+    // key; the valid one carries a harmless extra extension so it is
+    // structurally longer, hence DER set order holds expired-before-valid
+    // (outer length sorts before serial; ECDSA signature lengths vary).
+    // A buggy selection picks the expired cross and CertificatePath fails
+    // at TEST_TIME_MS; the fixed selection skips it and passes.
+    let new_params = rollover_params(
+        "rollover-root",
+        rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained),
+    );
+    let new_key = rcgen::KeyPair::generate().unwrap();
+    let new_root = new_params.self_signed(&new_key).unwrap().der().to_vec();
+    let old_key = rcgen::KeyPair::generate().unwrap();
+    let old_issuer_params = rollover_params(
+        "rollover-root",
+        rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained),
+    );
+    let inter_params = rollover_params(
+        "rollover-intermediate",
+        rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained),
+    );
+    let inter_key = rcgen::KeyPair::generate().unwrap();
+    let inter = rollover_issued_by(&inter_params, &inter_key, &old_issuer_params, &old_key);
+    let leaf_key = rcgen::KeyPair::generate().unwrap();
+    let leaf_params = rollover_params("rollover-leaf", rcgen::IsCa::ExplicitNoCa);
+    let leaf_der = rollover_issued_by(&leaf_params, &leaf_key, &inter_params, &inter_key);
+    let mut expired_params = rollover_params(
+        "rollover-root",
+        rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained),
+    );
+    expired_params.not_before = rcgen::date_time_ymd(2025, 1, 1);
+    expired_params.not_after = rcgen::date_time_ymd(2026, 1, 1);
+    expired_params.serial_number = Some(rcgen::SerialNumber::from(1001u64));
+    let expired_old = rollover_issued_by(&expired_params, &old_key, &new_params, &new_key);
+    let mut valid_params = rollover_params(
+        "rollover-root",
+        rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained),
+    );
+    valid_params.not_before = rcgen::date_time_ymd(2025, 1, 1);
+    valid_params.not_after = rcgen::date_time_ymd(2030, 1, 1);
+    valid_params.serial_number = Some(rcgen::SerialNumber::from(1002u64));
+    // Harmless noncritical extension: makes the valid cross structurally
+    // longer than the expired one, so outer-length DER sorting cannot be
+    // reversed by ECDSA signature length variation.
+    valid_params
+        .custom_extensions
+        .push(rcgen::CustomExtension::from_oid_content(
+            &[1, 2, 3, 4, 5],
+            vec![0x05, 0x00],
+        ));
+    let valid_old = rollover_issued_by(&valid_params, &old_key, &new_params, &new_key);
+    assert!(
+        expired_old < valid_old,
+        "expired cross sorts before the valid one"
+    );
+
+    use p256::pkcs8::DecodePrivateKey;
+    let leaf_sk = p256::ecdsa::SigningKey::from_pkcs8_der(&leaf_key.serialize_der()).unwrap();
+    let leaf_id = TestIdentity {
+        algorithm: SignatureAlgorithm::EcdsaP256Sha256,
+        cert_der: leaf_der,
+        key: support::TestKey::P256(leaf_sk),
+    };
+    let mut backend = FixtureBackend::new(leaf_id);
+    backend.identity.certificate_chain_der = vec![inter, valid_old, new_root.clone()];
+    let engine = NativeSealEngine::new(
+        config_for(vec![new_root], false),
+        Arc::new(backend),
+        Arc::new(FixtureFetcher::offline()),
+        Arc::new(FixedClock(TEST_TIME_MS)),
+    )
+    .unwrap();
+    let out = engine
+        .seal_pdf(
+            &fixture_pdf("classic_1page.pdf"),
+            &request(PadesProfile::BaselineB),
+        )
+        .await
+        .unwrap();
+    assert_eq!(out.achieved_profile, PadesProfile::BaselineB);
+    let sealed = out.bytes.to_vec();
+    let control = engine.verify_sealed_pdf(&sealed).unwrap();
+    assert_eq!(control.verdict(), VerifyVerdict::Passed, "{control:?}");
+    assert!(
+        control.signatures[0].checks.iter().any(|c| {
+            c.kind == VerifyCheckKind::CertificatePath && c.status == VerifyCheckStatus::Pass
+        }),
+        "valid-only baseline passes: {control:?}"
+    );
+
+    let stuffed = inject_bag_certificate(&sealed, b"/ETSI.CAdES.detached", &expired_old);
+    let report = engine.verify_sealed_pdf(&stuffed).unwrap();
+    assert_eq!(report.verdict(), VerifyVerdict::Passed, "{report:?}");
+    assert_eq!(
+        report.achieved_profile(),
+        Some(PadesProfile::BaselineB),
+        "{report:?}"
+    );
+    assert!(
+        report.signatures[0].checks.iter().any(|c| {
+            c.kind == VerifyCheckKind::CertificatePath && c.status == VerifyCheckStatus::Pass
+        }),
+        "valid cross selected over expired one: {report:?}"
+    );
 }
