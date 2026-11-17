@@ -742,7 +742,7 @@ impl Vault {
         bound: EntityId,
         importer: EntityId,
     ) -> Result<DelegatedBinding> {
-        let now = self.instant_in_txn(txn)?.secs();
+        let now = self.grant_judgement_secs_in_txn(txn)?;
         let mut lapsed = false;
         let grants = self.agent_grants_in_txn(txn)?;
         let classes = crate::federation::AgentVerbClasses::for_grants_in_txn(
