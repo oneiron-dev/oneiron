@@ -45,7 +45,8 @@ const SHARED: u64 = 47;
 struct Org {
     _dir: tempfile::TempDir,
     vault: Vault,
-    issuer: HostSlipIssuer,
+    /// `None` for an unrooted vault ([`Org::unrooted`]).
+    issuer: Option<HostSlipIssuer>,
     owner: EntityId,
     admin: EntityId,
     member: EntityId,
@@ -98,20 +99,46 @@ fn assert_held(err: &MemoryError) {
 }
 
 impl Org {
+    /// A rooted vault: the host key's human binding names the Owner, and
+    /// [`Org::as_person`] moves it to whoever acts.
     fn new() -> Self {
+        Self::build(true)
+    }
+
+    /// An unrooted vault, as check_in_thread_delete.rs builds it: everyone
+    /// acts through plain `vault.memory`. On a rooted vault the host key's
+    /// human binding makes its holder every room's Owner (`person_role_in`),
+    /// so an Admin acting through [`Org::as_person`] deletes and edits a
+    /// private thread as room Owner and never reaches the vault-Admin hold.
+    /// No production door binds a non-Owner at class human.
+    fn unrooted() -> Self {
+        Self::build(false)
+    }
+
+    fn build(rooted: bool) -> Self {
         let dir = tempfile::tempdir().expect("tempdir");
         let vault = Vault::open_owned(dir.path(), VaultConfig::device()).expect("vault");
         vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
         let owner = vault.ensure_embedded_owner_actor().expect("owner");
         let [admin, member, steward] = std::array::from_fn(|_| person(&vault));
+        let rooms = || {
+            [
+                project_home_room(&vault, owner, &[member]),
+                project_home_room(&vault, owner, &[admin, member]),
+            ]
+        };
         // A child project put before the host root slip takes the implicit
         // birth. Once the vault is rooted, a new child project needs an
         // owner-signed birth (`put_project` refuses "a new project requires
-        // an owner-signed birth"), so both projects are put first.
-        let member_room = project_home_room(&vault, owner, &[member]);
-        let seated_room = project_home_room(&vault, owner, &[admin, member]);
-        let issuer = provision_engine_machines(&vault);
-        bind_host_owner(&vault, &issuer, owner).expect("owner binding");
+        // an owner-signed birth"), so a rooted vault puts both projects
+        // first. An unrooted one puts them after the shared vault, as
+        // check_in_thread_delete.rs does.
+        let early_rooms = rooted.then(rooms);
+        let issuer = rooted.then(|| {
+            let issuer = provision_engine_machines(&vault);
+            bind_host_owner(&vault, &issuer, owner).expect("owner binding");
+            issuer
+        });
         let founding = |member_ref, role| InitialSharedMember {
             member_ref,
             role: Some(role),
@@ -146,6 +173,7 @@ impl Org {
                 .accept_shared_invitation(&invitee, SHARED, &invitation.id)
                 .expect("accept");
         }
+        let [member_room, seated_room] = early_rooms.unwrap_or_else(rooms);
         Self {
             _dir: dir,
             vault,
@@ -159,10 +187,16 @@ impl Org {
         }
     }
 
+    /// Runs `act` with the host key bound to `person` at class human. An
+    /// unrooted vault has no host binding: plain `vault.memory` already acts
+    /// as `person`, so `act` runs as it is.
     fn as_person<T>(&self, person: EntityId, act: impl FnOnce() -> T) -> T {
-        bind_host_actor(&self.vault, &self.issuer, person, "human").expect("actor binding");
+        let Some(issuer) = &self.issuer else {
+            return act();
+        };
+        bind_host_actor(&self.vault, issuer, person, "human").expect("actor binding");
         let answer = act();
-        bind_host_owner(&self.vault, &self.issuer, self.owner).expect("restore owner binding");
+        bind_host_owner(&self.vault, issuer, self.owner).expect("restore owner binding");
         answer
     }
 
@@ -308,7 +342,7 @@ fn register_mail_credential(vault: &Vault, name: &str, scope: &str) {
 
 #[test]
 fn an_admins_policy_delete_of_a_private_thread_refuses_while_the_rule_is_on() {
-    let org = Org::new();
+    let org = Org::unrooted();
     let room = org.member_room;
     let anchor = org.trunk_turn(room);
     let delete = |by, root: EntityId| {
@@ -351,7 +385,7 @@ fn an_admins_policy_delete_of_a_private_thread_refuses_while_the_rule_is_on() {
 
 #[test]
 fn an_admins_audience_edit_of_a_private_thread_refuses_while_the_rule_is_on() {
-    let org = Org::new();
+    let org = Org::unrooted();
     let room = org.member_room;
     let anchor = org.trunk_turn(room);
     let seated_room = org.seated_room;
