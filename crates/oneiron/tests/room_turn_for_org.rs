@@ -320,6 +320,7 @@ fn exchange(fixture: &HouseRoom, words: &str) -> TestResult<(EntityId, EntityId)
                 conversation_ref: fixture.room.to_hex(),
                 turn_ref: Some(reply_turn.to_hex()),
                 thread_audience: None,
+                project: None,
                 messages: vec![WitnessMessage {
                     id: Some(EntityId::now().to_hex()),
                     author: WitnessAuthor::Companion,

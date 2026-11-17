@@ -26,6 +26,17 @@ pub use codec::{
 };
 pub(crate) use lineage::{EpochScope, PriorEpoch};
 pub(super) use lineage::{prior_epoch_in_txn, validate_epoch_boundary, validate_window_span};
+
+/// [`prior_epoch_in_txn`], for `test_doors::epoch_lineage_pointer` only: the
+/// census over a fixture vault's rows. Never a production read.
+#[cfg(oneiron_test_support)]
+pub(crate) fn prior_epoch_in_txn_for_test_door(
+    store: &Store,
+    rtxn: &heed::RoTxn<'_>,
+    scope: &EpochScope,
+) -> Result<Option<PriorEpoch>> {
+    lineage::prior_epoch_in_txn(store, rtxn, scope)
+}
 pub(crate) use mint::EpochMint;
 pub(super) use mint::{
     mint_epoch_summary_admitted_writer, mint_epoch_summary_guarded, mint_epoch_summary_in_overlay,
