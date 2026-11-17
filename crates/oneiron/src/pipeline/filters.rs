@@ -755,7 +755,7 @@ pub(super) fn pipeline_candidate_matches_filters_and_gate(
     if let Some(clamp) = filters.disclosure
         && !crate::context_pack::retained_copies::clamp_prefilter_admits(
             clamp,
-            store.base(),
+            store,
             rtxn,
             id,
             meta.entity_type,
