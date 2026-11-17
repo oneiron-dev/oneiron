@@ -15,7 +15,7 @@
 //! or a holder of a Steward grant naming `read` that reaches the whole vault, checked at each
 //! read. The answer names no content: world ids, the verdict, a space id and the install.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Mutex;
 #[cfg(feature = "sync")]
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -116,27 +116,28 @@ impl HostTextEmbedder {
     }
 }
 
-/// The host text embedder registered on a vault: the one its newest live reconciler runs. In
-/// memory only; a reopened vault has none until its host builds a reconciler again.
+/// The host text embedders registered on a vault, one per live reconciler, by registration
+/// token. A read answers for the one the newest live reconciler runs. In memory only; a
+/// reopened vault has none until its host builds a reconciler again.
 #[derive(Debug, Default)]
 pub(crate) struct HostTextEmbedderSlot {
-    current: Mutex<Option<(u64, HostTextEmbedder)>>,
+    live: Mutex<BTreeMap<u64, HostTextEmbedder>>,
     #[cfg(feature = "sync")]
     next_token: AtomicU64,
 }
 
 impl HostTextEmbedderSlot {
     fn current(&self) -> Option<HostTextEmbedder> {
-        self.current
+        self.live
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .as_ref()
+            .last_key_value()
             .map(|(_, embedder)| embedder.clone())
     }
 }
 
 /// Holds a reconciler's embedder on its vault while the reconciler lives; dropping it withdraws
-/// the embedder unless a newer reconciler registered its own.
+/// that embedder alone, so the newest reconciler still live answers again.
 #[cfg(feature = "sync")]
 pub(crate) struct HostTextEmbedderRegistration {
     vault: std::sync::Weak<Vault>,
@@ -148,19 +149,19 @@ impl HostTextEmbedderRegistration {
     pub(crate) fn register(vault: &std::sync::Arc<Vault>, embedder: &dyn super::Embedder) -> Self {
         let slot = &vault.host_text_embedder;
         let token = slot.next_token.fetch_add(1, Ordering::Relaxed);
-        *slot
-            .current
+        slot.live
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some((
-            token,
-            HostTextEmbedder {
-                model_id: embedder.model_id().to_owned(),
-                dimensions: embedder.dimensions(),
-                on_device: embedder.locality() == super::EmbedderLocality::OnDevice,
-                endpoint: embedder.endpoint(),
-                primary_rung_offer: None,
-            },
-        ));
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(
+                token,
+                HostTextEmbedder {
+                    model_id: embedder.model_id().to_owned(),
+                    dimensions: embedder.dimensions(),
+                    on_device: embedder.locality() == super::EmbedderLocality::OnDevice,
+                    endpoint: embedder.endpoint(),
+                    primary_rung_offer: None,
+                },
+            );
         Self {
             vault: std::sync::Arc::downgrade(vault),
             token,
@@ -168,19 +169,17 @@ impl HostTextEmbedderRegistration {
     }
 
     /// Records that the owner's egress rung holds the registered embedder to the route `offer`
-    /// ([`super::PendingEmbeddingReconciler::with_primary_rung`]), unless a newer reconciler
-    /// registered its own embedder since.
+    /// ([`super::PendingEmbeddingReconciler::with_primary_rung`]).
     pub(crate) fn hold_to_primary_rung(&self, offer: String) {
         let Some(vault) = self.vault.upgrade() else {
             return;
         };
-        let mut current = vault
+        if let Some(embedder) = vault
             .host_text_embedder
-            .current
+            .live
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if let Some((token, embedder)) = current.as_mut()
-            && *token == self.token
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get_mut(&self.token)
         {
             embedder.primary_rung_offer = Some(offer);
         }
@@ -193,17 +192,12 @@ impl Drop for HostTextEmbedderRegistration {
         let Some(vault) = self.vault.upgrade() else {
             return;
         };
-        let mut current = vault
+        vault
             .host_text_embedder
-            .current
+            .live
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if current
-            .as_ref()
-            .is_some_and(|(token, _)| *token == self.token)
-        {
-            *current = None;
-        }
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .remove(&self.token);
     }
 }
 
