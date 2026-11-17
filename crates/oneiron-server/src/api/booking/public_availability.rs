@@ -180,13 +180,21 @@ pub(super) fn solve(
             slots: mask.slots,
             flex_used: mask.flex_used,
             host_bindings: Vec::new(),
+            full_days: mask.full_days,
         };
     }
     recheck(server, public_authority)?;
     let SolveResult {
-        slots, flex_used, ..
+        slots,
+        flex_used,
+        full_days,
+        ..
     } = solved;
-    let response = BookingOperationResponse::Availability { slots, flex_used };
+    let response = BookingOperationResponse::Availability {
+        slots,
+        flex_used,
+        full_days,
+    };
     remember_response(
         server,
         page_ref,

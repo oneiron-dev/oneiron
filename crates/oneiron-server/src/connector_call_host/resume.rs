@@ -61,9 +61,10 @@ const EVENT_STREAM: &str = "text/event-stream";
 const RESUME_TRIES_PER_START: u32 = 1;
 
 /// Whether an exchange admitted to `binding`'s endpoint may be taken up
-/// again on the connector `installed` there now: only at the same endpoint.
+/// again on the connector `installed` there now: only at the same HTTP
+/// endpoint. A stdio connector asks no question, so it has none to resume.
 fn resumes_at(installed: Option<&ConnectorHostConfig>, binding: &QuestionBinding) -> bool {
-    installed.is_some_and(|connector| connector.endpoint == binding.endpoint)
+    installed.and_then(ConnectorHostConfig::http_endpoint) == Some(binding.endpoint.as_str())
 }
 
 /// One round's resume state, as the host seals it. `S` is the text a
