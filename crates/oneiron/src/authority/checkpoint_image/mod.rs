@@ -619,20 +619,13 @@ impl Vault {
             .filter(|hash| !named.contains(*hash))
             .copied()
             .collect();
-        // A local floor is an anti-rollback receipt: an image never carries
-        // what one decided. It decides no roster row (`changes_roster`).
-        let observations = authority_local_observations_in_txn(store, txn, &entries)?;
-        if entries.iter().zip(&covered).any(|(entry, hash)| {
-            observations
-                .sequence_floors
-                .get(hash)
-                .is_some_and(|floor| entry.seq < *floor)
-                && !super::entry_transition::changes_roster(&entry.op)
-        }) {
-            return Err(refused(
-                "a local sequence floor decides a covered authority row",
-            ));
-        }
+        // Each covered row's floor comes from the covered rows themselves
+        // (`rows_floor`), so the image carries a verdict every install
+        // reaches; no install's arrival order decides one (FIX
+        // [CHECKPOINT-RAW-FLOOR-CLEARED-ROW]). A later row that would move a
+        // covered row's floor sends an adopter to the whole history
+        // (`adopted_fold`).
+        let observations = authority_local_observations_in_txn(store, txn)?;
         let peers = crate::federation::admitted_peer_consent_roots_in_txn(self, txn)?;
         let pin = super::pinned_root::read_pinned_root_in_txn(store, txn)?;
         let capture = super::fold_resume::FoldCapture::for_checkpoint(frontier.clone());
