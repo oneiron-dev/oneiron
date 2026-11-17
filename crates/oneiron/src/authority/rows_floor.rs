@@ -26,7 +26,7 @@ use super::*;
 /// holds, so the scan costs k plus those pairs, each one index lookup.
 pub(super) fn rows_sequence_floors(
     by_hash: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
-    ancestors: &BTreeMap<AuthorityEntryHash, BTreeSet<AuthorityEntryHash>>,
+    ancestors: &AncestorIndex,
 ) -> BTreeMap<AuthorityEntryHash, u64> {
     let mut scopes = BTreeMap::<_, Vec<(u64, AuthorityEntryHash)>>::new();
     for (hash, entry) in by_hash {

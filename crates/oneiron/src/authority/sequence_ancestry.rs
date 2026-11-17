@@ -1,7 +1,7 @@
 //! A row past its floor still counts where a later row of its signer that
 //! descends from it reached that floor (`rows_floor`).
 use super::*;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 /// `original`, the rows floors (`rows_floor::rows_sequence_floors`), less
 /// every row a later row of its signer vouches for: one that has it among
@@ -10,7 +10,7 @@ use std::collections::{BTreeMap, BTreeSet};
 /// its signer's highest sequence so counts whole, on every install alike.
 pub(super) fn causal_sequence_floors(
     by_hash: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
-    ancestors: &BTreeMap<AuthorityEntryHash, BTreeSet<AuthorityEntryHash>>,
+    ancestors: &AncestorIndex,
     original: &BTreeMap<AuthorityEntryHash, u64>,
     context: FoldContext<'_>,
 ) -> BTreeMap<AuthorityEntryHash, u64> {
@@ -49,7 +49,7 @@ pub(super) fn causal_sequence_floors(
             if rollback_tip && !roster_tip {
                 continue;
             }
-            let tip_ancestors = &ancestors[tip_hash];
+            let tip_ancestors = ancestors.get(tip_hash).expect("the index holds every row");
             let vouched = |hash: &&AuthorityEntryHash| {
                 by_hash.get(*hash).is_some_and(|entry| {
                     let refused_below_roster_row =
@@ -63,6 +63,7 @@ pub(super) fn causal_sequence_floors(
                         })
                 })
             };
+            // `covered` is only taken out of `trial`, so its order is free.
             let covered: Vec<_> = if signer_floored.len() <= tip_ancestors.len() {
                 signer_floored
                     .iter()
@@ -71,7 +72,11 @@ pub(super) fn causal_sequence_floors(
                     .copied()
                     .collect()
             } else {
-                tip_ancestors.iter().filter(vouched).copied().collect()
+                tip_ancestors
+                    .iter_unordered()
+                    .filter(vouched)
+                    .copied()
+                    .collect()
             };
             if covered.is_empty() {
                 continue;
@@ -113,20 +118,20 @@ pub(super) fn causal_sequence_floors(
 pub(super) fn entry_folds_on_available_ancestry(
     target_hash: AuthorityEntryHash,
     by_hash: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
-    ancestors: &BTreeMap<AuthorityEntryHash, BTreeSet<AuthorityEntryHash>>,
+    ancestors: &AncestorIndex,
     context: FoldContext<'_>,
 ) -> bool {
     let Some(target_ancestors) = ancestors.get(&target_hash) else {
         return false;
     };
     if target_ancestors
-        .iter()
+        .iter_unordered()
         .any(|ancestor| !by_hash.contains_key(ancestor))
     {
         return false;
     }
     let mut states = BTreeMap::<AuthorityEntryHash, FoldState>::new();
-    let mut pending = target_ancestors.clone();
+    let mut pending = target_ancestors.to_set();
     pending.insert(target_hash);
 
     for _ in 0..=pending.len() {

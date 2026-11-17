@@ -38,8 +38,7 @@ pub(super) struct FoldContext<'a> {
     pub(super) floor_vouched: Option<&'a BTreeSet<AuthorityEntryHash>>,
     /// Revisions and world edits held to restriction only (`install_fold::NoVouch`).
     pub(super) install_held: Option<&'a BTreeSet<AuthorityEntryHash>>,
-    pub(super) entry_ancestors:
-        Option<&'a BTreeMap<AuthorityEntryHash, BTreeSet<AuthorityEntryHash>>>,
+    pub(super) entry_ancestors: Option<&'a AncestorIndex>,
     /// Where a fold with no `entry_ancestors` walks a row's past: a resumed
     /// fold's or an adopted image's row summaries ([`causal`], FIX 5464). It
     /// shows only whether a hash is beneath a row's parents, never what any
@@ -378,7 +377,7 @@ pub(super) struct OnceFloors {
 /// its well-signed rows, their ancestor index and its context.
 pub(super) type OnceFloorsOf = fn(
     &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
-    &BTreeMap<AuthorityEntryHash, BTreeSet<AuthorityEntryHash>>,
+    &AncestorIndex,
     FoldContext<'_>,
 ) -> OnceFloors;
 
@@ -387,7 +386,7 @@ pub(super) type OnceFloorsOf = fn(
 /// vouches for what it can (`sequence_ancestry`).
 fn rows_once_floors(
     by_hash: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
-    ancestors: &BTreeMap<AuthorityEntryHash, BTreeSet<AuthorityEntryHash>>,
+    ancestors: &AncestorIndex,
     context: FoldContext<'_>,
 ) -> OnceFloors {
     let original = super::rows_floor::rows_sequence_floors(by_hash, ancestors);

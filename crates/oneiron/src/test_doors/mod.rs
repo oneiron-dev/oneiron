@@ -15,6 +15,7 @@ pub mod archive_producers;
 pub mod archive_provenance;
 pub mod ask_answer_proof;
 pub mod archive_side_catalogue;
+pub mod authority_ancestor_index;
 pub mod authority_sequence_floor;
 pub mod authority_stored_damage;
 pub mod authority_view_grant;
