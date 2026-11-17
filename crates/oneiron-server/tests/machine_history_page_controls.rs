@@ -26,8 +26,9 @@
 //! through a held privacy erase: the member's and the co-Owner's pages are
 //! refused as not found, and no reply holds the word.
 //!
-//! Needs `oneiron/test-hooks` (`put_selector_test_federation_grant`) and
-//! `oneiron/test-support` (`bind_host_owner`), plus its `[[test]]` stanza.
+//! Needs `oneiron/test-hooks` and `oneiron/test-support` (`bind_host_owner`),
+//! plus its `[[test]]` stanza, and the test doors (`--cfg
+//! oneiron_test_support`): the owner gives both Grants by counted acts.
 //! Test 5 also drives the public owner doors `place_legal_hold`,
 //! `preview_entity_delete` with `confirm_entity_erase`, and the
 //! `legal_hold_use_limit` read.
@@ -35,6 +36,7 @@
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron-server
 //! --features oneiron/test-support,oneiron/test-hooks
 //! --test machine_history_page_controls`.
+#![cfg(oneiron_test_support)]
 
 use std::collections::BTreeSet;
 use std::sync::Arc;
@@ -54,7 +56,6 @@ use oneiron::store::GateDecisionId;
 use oneiron::sync::transport::{self, TAG_RPC, TAG_WINDOW_SYNC, window_sub_tags};
 use oneiron::sync::{
     SyncSelector, SyncSelectorWorld, WindowKey, encode_selector_vv_request, encode_sync_selector,
-    put_selector_test_federation_grant,
 };
 use oneiron::test_support::bind_host_owner;
 use oneiron::write_envelope::MachineWriteSignature;
@@ -523,8 +524,21 @@ fn seed_grants(
     vault: &Vault,
     member: EntityId,
     co_owner: EntityId,
-    now: u64,
 ) -> (SyncSelector, SyncSelector) {
+    // A row gives nothing by itself: the owner gives both Grants by counted
+    // acts, which this install carries under the root (and the owner's
+    // binding) its caller wrote with the credentials' issuer.
+    vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
+    let issuer = HostSlipIssuer::from_secret(SECRET.as_bytes()).expect("host issuer");
+    vault
+        .provision_engine_machine_identities(&issuer)
+        .expect("the engine's MACHINE writers");
+    vault
+        .ensure_serving_install_profile(&issuer, oneiron::authority::MachineRole::Unanswered)
+        .expect("this install's live machine profile, to carry the grant acts");
+    let owner = vault
+        .ensure_embedded_owner_actor()
+        .expect("the embedded owner");
     let scope = own_device_residence_scope();
     let member_grant_id = EntityId::now();
     let mut member_grant = FederationGrant::new(
@@ -534,8 +548,13 @@ fn seed_grants(
         FederationGrantPreset::Member,
     );
     member_grant.authority_scope = read_authority();
-    put_selector_test_federation_grant(vault, &member_grant_id, &member_grant, now)
-        .expect("the member grant");
+    oneiron::test_doors::grant_act::give_member_grant_as_writer(
+        vault,
+        member_grant_id,
+        &member_grant,
+        owner,
+    )
+    .expect("the owner's counted giving of the member grant");
     let co_grant_id = EntityId::now();
     let mut co_grant = FederationGrant::new(
         scope,
@@ -544,8 +563,13 @@ fn seed_grants(
         FederationGrantPreset::Owner,
     );
     co_grant.authority_scope = read_authority();
-    put_selector_test_federation_grant(vault, &co_grant_id, &co_grant, now)
-        .expect("the co-owner grant");
+    oneiron::test_doors::grant_act::give_member_grant_as_writer(
+        vault,
+        co_grant_id,
+        &co_grant,
+        owner,
+    )
+    .expect("the owner's counted giving of the co-owner grant");
     (
         SyncSelector::new(
             member_grant_id,
@@ -648,7 +672,7 @@ async fn fixture_private() -> Seeded {
     )
     .err()
     .map(|error| error.to_string());
-    let (member_selector, co_owner_selector) = seed_grants(&vault, member, co_owner, now);
+    let (member_selector, co_owner_selector) = seed_grants(&vault, member, co_owner);
     let key = WindowKey::from_timestamp(now).as_str().to_owned();
     let fixture = serve(vault, dir).await;
     Seeded {
@@ -723,7 +747,7 @@ async fn fixture_relationship() -> Seeded {
         now,
     )
     .expect("FIXTURE: the successor that drops the label lands");
-    let (member_selector, co_owner_selector) = seed_grants(&vault, member, co_owner, now);
+    let (member_selector, co_owner_selector) = seed_grants(&vault, member, co_owner);
     let key = WindowKey::from_timestamp(now).as_str().to_owned();
     let fixture = serve(vault, dir).await;
     Seeded {
@@ -788,7 +812,7 @@ async fn fixture_public() -> Seeded {
         now,
     )
     .expect("FIXTURE: the public successor lands");
-    let (member_selector, co_owner_selector) = seed_grants(&vault, member, co_owner, now);
+    let (member_selector, co_owner_selector) = seed_grants(&vault, member, co_owner);
     let key = WindowKey::from_timestamp(now).as_str().to_owned();
     let fixture = serve(vault, dir).await;
     Seeded {
@@ -1144,7 +1168,7 @@ async fn fixture_use_limited() -> Seeded {
         now,
     )
     .expect("FIXTURE: the public successor lands");
-    let (member_selector, co_owner_selector) = seed_grants(&vault, member, co_owner, now);
+    let (member_selector, co_owner_selector) = seed_grants(&vault, member, co_owner);
     let key = WindowKey::from_timestamp(now).as_str().to_owned();
     let fixture = serve(vault, dir).await;
     Seeded {
