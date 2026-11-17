@@ -530,13 +530,31 @@ struct ListedHeldAnswer {
     revision: String,
     /// The machine whose install key carried the answer, as hex.
     carrier: Option<String>,
-    /// The role the carrier stands in; none when no revision names it.
+    /// The role this install's records give the key that signed the answer
+    /// on that machine; none when they tie the two to no profile, and the
+    /// machine id is then the answer's word alone.
     carrier_role: Option<&'static str>,
-    /// Whether this install trusts the carrier as one of the owner's
-    /// machines.
+    /// Whether this install trusts the key that signed the answer as one of
+    /// the owner's machines.
     carrier_is_yours: bool,
     /// Whether the owner dismissed this ask on this install.
     dismissed: bool,
+    /// The question a surface asks about this answer before the owner
+    /// confirms or dismisses it, composed by the engine: what the answer
+    /// asks for, then on the last line who carried it by this install's
+    /// reading of the key that signed it
+    /// ([`oneiron::authority::held_answer_prompt`]). Its lines are
+    /// separated by a line feed.
+    prompt: String,
+    /// `machine_key` as a code, 26 symbols, in the form of a recovery kit's
+    /// code ([`oneiron::authority::machine_key_code`]): what the owner
+    /// compares with the code that machine shows. `machine_key` in full
+    /// stays the detail.
+    machine_code: String,
+    /// What a surface shows under the question: "Code shown on that
+    /// phone: " (or computer) and `machine_code`
+    /// ([`oneiron::authority::machine_code_line`]).
+    machine_code_text: String,
 }
 
 /// The list as the wire spells it.
@@ -558,6 +576,15 @@ fn held_answers_of(listing: &HeldAnswerListing) -> HeldAnswers {
                 carrier_role: listed.carrier_role.map(role_name),
                 carrier_is_yours: listed.carrier_is_mine,
                 dismissed: listed.dismissed,
+                prompt: listed.prompt(),
+                machine_code: oneiron::authority::machine_key_code(
+                    &listed.answer.profile.machine_key,
+                ),
+                machine_code_text: oneiron::authority::machine_code_line(
+                    &listed.answer.profile.machine_key,
+                    listed.answer.profile.device_class,
+                    oneiron::authority::PromptDeviceName::NotHeld,
+                ),
             })
             .collect(),
         waiting_choices: listing.waiting_choices.iter().map(revision_hex).collect(),
