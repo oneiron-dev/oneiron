@@ -6,8 +6,8 @@ use super::{
     ArchiveFile, ArchiveRecordFile, EmbeddingSetupImport, EmbeddingSetupWithheld,
     ExportAgentBundle, ExportBundleOmission, ExportDiaryHold, ExportImportOmission,
     ExportImportRefusal, ExportManifest, ExportSerializerManifest, ExportSkillBundle,
-    ExportSourceBoundary, PortableEmbeddingSpace, PortableSlotBindings, VAULT_ARCHIVE_FORMAT,
-    VaultImportReceipt,
+    ExportSourceBoundary, ImportOmissionReason, PortableEmbeddingSpace, PortableSlotBindings,
+    VAULT_ARCHIVE_FORMAT, VaultImportReceipt,
 };
 use crate::error::{Error, Result};
 use crate::serialize::{ExportBody, ExportValue};
@@ -16,7 +16,7 @@ use crate::serialize::{ExportBody, ExportValue};
 pub use oneiron_records::batch::export::document_types::{
     ExportAdapterDescriptor, ExportDeterminism, ExportEdge, ExportEpochFloor, ExportReaderFold,
     ExportResultBody, ExportRun, ExportRunBinding, ExportRunOutput, ExportRunResults,
-    ExportSourceVault, WHOLE_VAULT_DOCUMENT_VERSION,
+    ExportSourceVault, WHOLE_VAULT_DOCUMENT_VERSION, WHOLE_VAULT_DOCUMENT_VERSIONS,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -55,16 +55,126 @@ pub struct WholeVaultDocumentManifest {
     pub embedding_setup_withheld: EmbeddingSetupWithheld,
     /// FIX 2768: side rows this archive holds out, and why.
     pub side_rows_withheld: Vec<super::ArchiveSideWithheld>,
+    /// SIDE-1: the omitted side tables this whole-vault archive declares, with their reasons
+    /// and row counts; empty in a v5 archive and outside a whole-vault export.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub side_table_omissions: Vec<ArchiveSideTableOmission>,
+    /// L2-23: the exporting install's signature over this manifest, set last
+    /// (`super::archive_provenance`). `None` on an archive no loaded machine
+    /// key signed, which proves no provenance. The field is additive, so the
+    /// version stays: an archive written before L2-23 has no such key and
+    /// reads as an unsigned one, and an unsigned archive is written as before
+    /// (STORED-CHANGE-RULE keep: a vault holds archives for its removals).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provenance: Option<super::ArchiveProvenance>,
+}
+
+/// One omitted side table: the whole-vault archive declares it with its reason and row count,
+/// and carries none of its rows.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ArchiveSideTableOmission {
+    /// The declared omitted table's name.
+    pub table: String,
+    /// Why the archive omits it.
+    pub reason: ImportOmissionReason,
+    /// The source table's row count when declared.
+    pub rows: u64,
+}
+
+/// One reason that source rows stayed inert rather than being installed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RetainedSideHeldBackReason {
+    /// The source key or value is not its table's canonical encoding.
+    InvalidEncoding,
+    /// The source value does not satisfy its owning writer's checks.
+    InvalidValue,
+    /// A required live record is absent or tombstoned.
+    MissingLiveEntity,
+    /// A referenced live record has the wrong entity kind.
+    WrongEntityKind,
+    /// A required local authority binding does not match.
+    LocalAuthorityMismatch,
+    /// A required companion row is absent.
+    MissingCompanion,
+    /// A required companion row is inconsistent.
+    InconsistentCompanion,
+    /// An operational reference has no portable local binding.
+    NonPortableReference,
+    /// The existing archive credential predicate withholds the source bytes.
+    Credential,
+}
+
+/// The number of source rows held back for one reason.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RetainedSideHeldBackCount {
+    /// The validation reason shared by these rows.
+    pub reason: RetainedSideHeldBackReason,
+    /// The number of rows held back.
+    pub rows: usize,
+}
+
+/// One retained source table's inert-copy and owner live-install counts.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct RetainedSideTableCount {
+    /// The declared retained source table's name.
+    pub source_table: String,
+    /// The retained copies newly stored.
+    pub inserted_rows: usize,
+    /// The retained copies already stored equal.
+    pub unchanged_rows: usize,
+    /// The source rows installed into absent live keys.
+    #[serde(default)]
+    pub installed_rows: usize,
+    /// The source rows already stored byte-identically in live tables.
+    #[serde(default)]
+    pub unchanged_live_rows: usize,
+    /// The source rows retained because different destination rows stayed live.
+    #[serde(default)]
+    pub kept_live_rows: usize,
+    /// The source rows retained after validation, sorted by reason.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub held_back: Vec<RetainedSideHeldBackCount>,
+}
+
+/// The inert-copy and owner live-install totals, per-table counts, and manifest omissions.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct RetainedSideImportSummary {
+    /// The retained copies newly stored.
+    pub inserted_rows: usize,
+    /// The retained copies already stored equal.
+    pub unchanged_rows: usize,
+    /// The source rows installed into absent live keys.
+    #[serde(default)]
+    pub installed_rows: usize,
+    /// The source rows already stored byte-identically in live tables.
+    #[serde(default)]
+    pub unchanged_live_rows: usize,
+    /// The source rows retained because different destination rows stayed live.
+    #[serde(default)]
+    pub kept_live_rows: usize,
+    /// The source rows retained after validation, sorted by reason.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub held_back: Vec<RetainedSideHeldBackCount>,
+    /// The per-table counts, sorted by source table name.
+    pub tables: Vec<RetainedSideTableCount>,
+    /// The manifest's table omissions.
+    pub omissions: Vec<ArchiveSideTableOmission>,
 }
 
 impl WholeVaultDocumentManifest {
     /// Validate the versioned manifest of a whole-vault archive. A keeping
     /// archive (`secrets_nulled` false) is valid only with secrets included
     /// in the archive format and with both storage nulling claims false;
-    /// every other archive keeps the historical nulling claims.
+    /// every other archive keeps the historical nulling claims. Accepts
+    /// [`WHOLE_VAULT_DOCUMENT_VERSIONS`]: v5 has no retained family and no
+    /// table omissions.
     pub fn validate(&self) -> Result<()> {
         if self.source_boundaries != [ExportSourceBoundary::BuiltinAdapterCodeNotStored]
-            || self.manifest_version != WHOLE_VAULT_DOCUMENT_VERSION
+            || !WHOLE_VAULT_DOCUMENT_VERSIONS.contains(&self.manifest_version)
             || self.format != VAULT_ARCHIVE_FORMAT
             || self.serializer != ExportSerializerManifest::current()
             || self.storage.redacted() != self.secrets_nulled
@@ -262,12 +372,31 @@ pub struct ExportDerivationEnvelope {
     pub receipts: Vec<super::ExportReceiptSource>,
 }
 
+/// Whose words a whole-vault archive's conversations hold (FIX 15412). The
+/// import door names it; nothing in the archive (its source vault, its
+/// entity ids) and not the importer decides it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ArchiveSpeakers {
+    /// This vault's own person and companion spoke them: every MESSAGE keeps
+    /// its author and every TURN its speaker.
+    Own,
+    /// They came from outside, and neither this vault's own person nor its
+    /// own companion spoke them: each `user` or `companion` MESSAGE, its
+    /// TURN and each conversational TURN with no MESSAGE speak as a
+    /// `counterparty`, the original author and speaker kept inert; a
+    /// `system` row stays one. No PERSON is minted and no author linked.
+    Foreign,
+}
+
 #[derive(Debug, Clone)]
 pub struct WholeVaultImportReceipt {
     pub authority: VaultImportReceipt,
     /// Durable `gate:<32 hex>` owner-act receipt naming this archive's full document-manifest
     /// digest. Present only for the owner-authenticated restore entry, not a reusable grant.
     pub owner_restore_receipt_ref: Option<String>,
+    /// Whose words the import took the archive's conversations to hold
+    /// (FIX 15412), beside the manifest verdict it ran with.
+    pub speakers: ArchiveSpeakers,
     pub inserted_entities: usize,
     pub unchanged_entities: usize,
     /// Engine seed rows an owner restore into a fresh vault replaced with the archive's owner-edited row.
@@ -318,6 +447,8 @@ pub struct WholeVaultImportReceipt {
     /// FIX 2768: side rows written, and those already here unchanged.
     pub restored_side_rows: usize,
     pub unchanged_side_rows: usize,
+    /// SIDE-1: the retained side rows this import kept inert, and the manifest's table omissions.
+    pub retained_side_rows: RetainedSideImportSummary,
 }
 
 impl WholeVaultDocument {

@@ -12,11 +12,8 @@
 //! nothing; a later credit spend on the seat is read as before. Each door
 //! rechecks the owner's proof in its own transaction.
 
-use std::sync::Arc;
-
 use serde::{Deserialize, Serialize};
 
-use crate::LlmBackend;
 use crate::Vault;
 use crate::attempt_queue::AttemptId;
 use crate::consent::AuthenticatedOwner;
@@ -25,7 +22,7 @@ use crate::error::Error;
 use crate::memory::{MemoryError, MemoryResult};
 
 use super::connector::ByoEndpointSpec;
-use super::dispatcher::{ByoEndpointBackendFactory, ByoaDispatcher};
+use super::dispatcher::{ByoEndpointBackendFactory, ByoEndpointBinding, ByoaDispatcher};
 use super::error::{ByoaError, ByoaResult};
 use super::exhaust::{ByoaEgressLease, ByoaEgressPort};
 use super::provider::ProviderAdapterRegistry;
@@ -163,7 +160,7 @@ fn skipped_views(skipped: &[SkippedRunnerSeat]) -> Vec<SkippedRunnerSeatView> {
 struct ResumeEndpoints;
 
 impl ByoEndpointBackendFactory for ResumeEndpoints {
-    fn resolve_backend(&self, _spec: &ByoEndpointSpec) -> ByoaResult<Arc<dyn LlmBackend>> {
+    fn resolve_backend(&self, _spec: &ByoEndpointSpec) -> ByoaResult<ByoEndpointBinding> {
         Err(ByoaError::Backend(
             "the resume door serves no endpoint connector".to_owned(),
         ))
@@ -239,13 +236,17 @@ impl Vault {
     }
 
     /// The owner's resume of a bound runner work a spend parked (FIX 11067),
-    /// over the plain CLI runners ([`ProviderAdapterRegistry::standard`]):
-    /// while the work still stands at `input.expected_attempt`, ended with
-    /// its spend, it goes to a successor of that attempt on the first seat
-    /// of `input.policy` this runtime may run, the spent seat included. A
-    /// work that moved on, is running, or ended without a spend is answered
-    /// as it stands, with no write. The owner's proof is rechecked in the
-    /// writer before the work is read.
+    /// over `registry`, the serving node's own runner seats (its official
+    /// seats under their adapters, login machine attached, then the plain
+    /// CLI runners), as the seat host routes the same work: while the work
+    /// still stands at `input.expected_attempt`, ended with its spend, it
+    /// goes to a successor of that attempt on the first seat of
+    /// `input.policy` this runtime may run, the spent seat included. A work
+    /// that moved on, is running, or ended without a spend is answered as
+    /// it stands, with no write. The owner's proof is rechecked in the
+    /// writer before the work is read. An embedded memory serves no node,
+    /// so its `vault.runners.seats.resume` row passes the plain CLI runners
+    /// ([`ProviderAdapterRegistry::standard`]).
     ///
     /// # Errors
     /// A binding or attempt id that is not an id; a proof that no longer
@@ -254,6 +255,7 @@ impl Vault {
     pub fn resume_runner_work_as_owner(
         &self,
         owner: &AuthenticatedOwner,
+        registry: &ProviderAdapterRegistry,
         input: &RunnerWorkResumeRequest,
     ) -> MemoryResult<RunnerWorkResumeView> {
         let binding =
@@ -272,9 +274,8 @@ impl Vault {
             now: crate::unix_seconds_now(),
         };
         let dispatcher = ByoaDispatcher::new(self, ResumeEndpoints, ResumeEgress);
-        let registry = ProviderAdapterRegistry::standard();
         let outcome = dispatcher
-            .resume_runner_work_as_owner(owner, &registry, &input.policy, request)
+            .resume_runner_work_as_owner(owner, registry, &input.policy, request)
             .map_err(refusal)?;
         Ok(RunnerWorkResumeView::of(&outcome))
     }

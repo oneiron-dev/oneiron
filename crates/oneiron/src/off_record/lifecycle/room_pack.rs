@@ -79,10 +79,12 @@ impl StretchRoom {
     }
 
     /// Whether the member sees a row the stretch staged that occurred at
-    /// `at` (D5, as `export_talk_for` reads the stretch's talk): on the
-    /// room's roster in this snapshot and inside one of their own membership
-    /// windows there, so a member who joined with no history sees nothing
-    /// from before the join. The owner sees every row.
+    /// `occurred` and that the vault learned at `learned` (D5, as
+    /// `export_talk_for` reads the stretch's talk): on the room's roster in
+    /// this snapshot and inside one of their own membership windows there at
+    /// both times, so a member who joined with no history sees nothing from
+    /// before the join, a row staged before it but dated inside their window
+    /// included. The owner sees every row.
     ///
     /// # Errors
     ///
@@ -91,7 +93,8 @@ impl StretchRoom {
         &self,
         vault: &crate::Vault,
         txn: &heed::RoTxn<'_>,
-        at: u64,
+        occurred: u64,
+        learned: u64,
     ) -> Result<bool> {
         let Some(member) = self.member else {
             return Ok(true);
@@ -102,7 +105,7 @@ impl StretchRoom {
         Ok(vault
             .windows_in_txn(txn, self.room, member)?
             .iter()
-            .any(|window| window.contains(at)))
+            .any(|window| window.contains(occurred) && window.contains(learned)))
     }
 }
 

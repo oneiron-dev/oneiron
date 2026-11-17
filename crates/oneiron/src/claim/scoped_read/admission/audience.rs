@@ -125,31 +125,28 @@ impl ScopedRead<'_> {
     }
 
     /// A member's read over a room stretch (ARCH-0052 #e5-read-union-open =
-    /// B, ROOM-PACK-MEMBER-BIND) reads a row the stretch staged under its
-    /// shell only as the stretch's copy reads its talk to them (D5): while
-    /// they are on the room's roster in this snapshot, and inside one of
-    /// their own windows there, so a member who joined with no history reads
-    /// nothing staged before the join. Any other row, a read over no room
-    /// stretch, and the owner's read add nothing here.
+    /// B, ROOM-PACK-MEMBER-BIND) reads a row the stretch staged only as the
+    /// stretch's copy reads its talk to them (D5): while they are on the
+    /// room's roster in this snapshot, and inside one of their own windows
+    /// there, so a member who joined with no history reads nothing staged
+    /// before the join. A row is the stretch's when its overlay stages it,
+    /// whatever it hangs under: a turn under the stretch's shell, and a
+    /// claim staged with only an edge to its subject alike (#8104 review
+    /// round 2). Any other row, a read over no room stretch, and the owner's
+    /// read add nothing here.
     fn stretch_sight_in(&self, txn: &heed::RoTxn<'_>, id: &EntityId, raw: &[u8]) -> Result<bool> {
         let Some(stretch) = self.stretch.filter(|stretch| stretch.member().is_some()) else {
             return Ok(true);
         };
+        let store = self.store_read();
         if *id == stretch.shell()
-            || !crate::conversation::hangs_under_in(
-                self.vault,
-                &self.store_read(),
-                txn,
-                *id,
-                raw,
-                stretch.shell(),
-            )?
+            || !crate::store::ManifestDbs::entities(&store).stages_row(id.as_bytes())
         {
             return Ok(true);
         }
         let header =
             EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
-        stretch.sees_in_txn(self.vault, txn, header.occurred_start)
+        stretch.sees_in_txn(self.vault, txn, header.occurred_start, header.learned_at)
     }
 
     /// The audience conjunct over the exact revision `raw` being served. A

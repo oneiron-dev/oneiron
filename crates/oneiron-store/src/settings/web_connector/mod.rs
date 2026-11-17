@@ -1,5 +1,6 @@
 //! Web provider selection and content-free usage vocabulary.
 use oneiron_base::error::{Error, Result};
+use oneiron_contracts::register::Register;
 use serde::{Deserialize, Serialize};
 
 pub mod provider;
@@ -9,8 +10,11 @@ pub use provider::{FetchRoute, ResultRetention, WebProvider, WebProviderProfile}
 pub const WEB_CONNECTOR_NAME: &str = "web";
 
 /// The connector's two tools.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema, Register,
+)]
 #[serde(rename_all = "snake_case")]
+#[register("web.tool")]
 pub enum WebTool {
     Search,
     Fetch,
@@ -20,19 +24,7 @@ impl WebTool {
     /// The tool a `connector.call` names, if it is one of the two.
     #[must_use]
     pub fn parse(tool: &str) -> Option<Self> {
-        match tool {
-            "search" => Some(Self::Search),
-            "fetch" => Some(Self::Fetch),
-            _ => None,
-        }
-    }
-
-    #[must_use]
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Search => "search",
-            Self::Fetch => "fetch",
-        }
+        <Self as Register>::named(tool)
     }
 }
 
