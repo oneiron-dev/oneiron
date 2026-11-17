@@ -5,7 +5,8 @@ use oneiron::EntityId;
 use oneiron::memory::MemoryResult;
 use oneiron::memory::affect::{AffectClaimConsolidateRequest, AffectClaimConsolidation};
 use oneiron::policy_manifest_doors::{
-    self, RetrievalWeightsConfigureRequest, RetrievalWeightsReceipt, RetrievalWeightsView,
+    self, AffectLookupConfigureRequest, AffectLookupReceipt, AffectLookupView,
+    RetrievalWeightsConfigureRequest, RetrievalWeightsReceipt, RetrievalWeightsView,
 };
 use oneiron::task_verb::sdk::EmptyRequest;
 
@@ -51,6 +52,49 @@ pub(crate) async fn vault_retrieval_weights_configure(
     let server = Arc::clone(server);
     let (answer, mut rows) = off_runtime_listing(VERB, move |_| {
         policy_manifest_doors::configure_retrieval_weights_as_owner(server.vault(), &owner, input)
+            .map_err(Into::into)
+    })
+    .await;
+    if let Ok(receipt) = &answer {
+        rows.extend(EntityId::from_hex(&receipt.configuration.manifest_ref).ok());
+    }
+    (answer, rows)
+}
+
+pub(crate) async fn vault_affect_lookup_get(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    _input: EmptyRequest,
+) -> Listed<AffectLookupView> {
+    const VERB: &str = "vault.affect.lookup.get";
+    let owner = match owner_proof(auth, server, VERB) {
+        Ok(owner) => owner,
+        Err(error) => return refused(error),
+    };
+    let server = Arc::clone(server);
+    let (answer, mut rows) = off_runtime_listing(VERB, move |_| {
+        policy_manifest_doors::affect_lookup_as_owner(server.vault(), &owner).map_err(Into::into)
+    })
+    .await;
+    if let Ok(view) = &answer {
+        rows.extend(EntityId::from_hex(&view.manifest_ref).ok());
+    }
+    (answer, rows)
+}
+
+pub(crate) async fn vault_affect_lookup_configure(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: AffectLookupConfigureRequest,
+) -> Listed<AffectLookupReceipt> {
+    const VERB: &str = "vault.affect.lookup.configure";
+    let owner = match owner_proof(auth, server, VERB) {
+        Ok(owner) => owner,
+        Err(error) => return refused(error),
+    };
+    let server = Arc::clone(server);
+    let (answer, mut rows) = off_runtime_listing(VERB, move |_| {
+        policy_manifest_doors::configure_affect_lookup_as_owner(server.vault(), &owner, input)
             .map_err(Into::into)
     })
     .await;
