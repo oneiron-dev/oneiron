@@ -12,7 +12,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde::{Deserialize, Serialize};
 
 use crate::agent_dispatch::AgentDispatcher;
-use crate::attempt_queue::AttemptId;
+use crate::attempt_queue::{AttemptId, AttemptQueue};
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
 use crate::memory::{
@@ -27,6 +27,10 @@ use super::{TaskAskHandle, TaskAskOptionId};
 /// through for the member TASKs of its asks; the read pages on until the
 /// agent's TASKs end.
 const RUN_ASK_PAGE: usize = 512;
+
+/// How many effective-parent links a lineage walk follows from an ask's
+/// attempt toward a run's root before it judges the attempt no member.
+const RUN_LINEAGE_WALK_LIMIT: usize = 256;
 
 /// One option a question offers.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -127,8 +131,8 @@ pub fn read_workflow_run_asks_as(
 impl Memory<'_> {
     /// The questions the saved-workflow run `root_attempt_ref` asked this
     /// actor and that stand open: each plain question (`is_form_question`)
-    /// an agent one of the run's steps names raised since the run began,
-    /// with a seat for this actor that the actor has not voided, no
+    /// an agent one of the run's steps names raised in one of the run's own
+    /// attempts, with a seat for this actor that the actor has not voided, no
     /// settlement, no stale standing and its deadline still ahead. An ask
     /// that names a TASK counts only when that TASK is the run's own. A run
     /// parked on a hook's ask says so in
@@ -137,10 +141,13 @@ impl Memory<'_> {
     /// owner index's one-time backfill on a vault that predates the index
     /// ([`crate::Vault::tasks_by_owner`]).
     ///
-    /// The run binds an ask by its asker and time: an ask its agent raised
-    /// before the run began is never the run's, and two runs of one agent
-    /// that overlap in time each see the other's asks (the ask records no
-    /// attempt it was raised in).
+    /// The run binds an ask by the attempt it was raised in
+    /// ([`AskGroup::raised_in`], the try its host bound and its admission
+    /// proved leased): that attempt's chain of effective parents must reach
+    /// the run's root. So two runs of one agent that overlap in time never
+    /// list each other's asks, and an ask raised outside any run, released
+    /// from a launch hold or stored before groups kept the attempt is no
+    /// run's question.
     ///
     /// # Errors
     ///
@@ -156,7 +163,6 @@ impl Memory<'_> {
             .as_deref()
             .map(EntityId::from_hex)
             .transpose()?;
-        let began = status.attempt.created_at;
         let askers = status
             .captured_steps
             .iter()
@@ -201,13 +207,17 @@ impl Memory<'_> {
                     };
                     // Correlation alone is no seat: the TASK must be this
                     // actor's own member TASK of an ask the run's agent
-                    // raised since the run began.
+                    // raised in one of the run's attempts.
                     let named = stored.requested.task_ref.or(stored.governed_task);
+                    let raised_in_run = match stored.raised_in {
+                        Some(attempt) => in_run_lineage_in(self.vault(), &txn, root, attempt)?,
+                        None => false,
+                    };
                     if stored.owner != asker.to_hex()
                         || !stored.members.iter().any(|member| {
                             member.task == task.to_hex() && member.actor == person.to_hex()
                         })
-                        || stored.created_at < began
+                        || !raised_in_run
                         || !is_form_question(&stored)
                         || named.is_some_and(|named| run_task != Some(named))
                         || stored.effective.until.is_some_and(|until| now >= until)
@@ -256,4 +266,32 @@ impl Memory<'_> {
             waits_on_approval,
         })
     }
+}
+
+/// Whether `attempt` is the run `root` or one of its attempts: its chain of
+/// effective parents (a placed row's placement parent, else the try it
+/// retries, else its dispatch's parent attempt; `run_tree::effective_parent`)
+/// reaches `root`. A missing row, a chain that ends, and one that cycles or
+/// runs past [`RUN_LINEAGE_WALK_LIMIT`] are no member.
+fn in_run_lineage_in(
+    vault: &crate::Vault,
+    txn: &heed::RoTxn<'_>,
+    root: AttemptId,
+    attempt: AttemptId,
+) -> crate::Result<bool> {
+    let queue = AttemptQueue::new(vault);
+    let mut at = attempt;
+    for _ in 0..RUN_LINEAGE_WALK_LIMIT {
+        if at == root {
+            return Ok(true);
+        }
+        let Some(record) = queue.get_in_txn(txn, at)? else {
+            return Ok(false);
+        };
+        let Some(parent) = crate::run_tree::effective_parent(&record) else {
+            return Ok(false);
+        };
+        at = parent;
+    }
+    Ok(false)
 }

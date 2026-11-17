@@ -90,6 +90,8 @@ struct AskMint<'a> {
     census: AskCensus,
     question_digest: [u8; 32],
     statement: crate::agent_dispatch::FanoutStatement,
+    /// The agent attempt the ask was raised in ([`AskGroup::raised_in`]).
+    raised_in: Option<crate::attempt_queue::AttemptId>,
     now: u64,
 }
 
@@ -361,6 +363,7 @@ impl Memory<'_> {
                 census,
                 question_digest,
                 statement,
+                raised_in: caller.parent_attempt,
                 now,
             },
         )?;
@@ -475,6 +478,9 @@ impl Memory<'_> {
                 census,
                 question_digest,
                 statement: held.statement.clone(),
+                // The hold keeps no attempt, and the release runs on the
+                // approver's surface: the released ask is no run's question.
+                raised_in: None,
                 now,
             },
         )?;
