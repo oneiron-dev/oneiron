@@ -3,6 +3,7 @@
 //! The pact/gesture data model plus the domain-separated pact transcript,
 //! scope digest, and gesture signing helpers.
 
+use oneiron_persistent_collections::{PersistentMap, PersistentSet};
 use rmpv::Value;
 
 use crate::entity_id::EntityId;
@@ -164,10 +165,12 @@ pub struct FederationPactState {
     /// (FIX 7933). A party's later narrowing supersedes its own earlier ones;
     /// concurrent ones all stand and meet. Another party's stays until a
     /// dual-signed re-pact clears them all. Empty once the pact ends.
-    pub narrowings: std::collections::BTreeMap<AuthorityEntryHash, FederationNarrowing>,
+    pub narrowings: PersistentMap<AuthorityEntryHash, FederationNarrowing>,
     /// Every narrowing a later one by its own party saw: it never stands
-    /// again, whichever branch still carries it.
-    pub superseded_narrowings: std::collections::BTreeSet<AuthorityEntryHash>,
+    /// again, whichever branch still carries it. It gains an entry with each
+    /// narrowing, and every fold state holds its pact, so both sets share
+    /// what a row did not change (row [ROSTER-KEY-LOG-FLOOD]).
+    pub superseded_narrowings: PersistentSet<AuthorityEntryHash>,
     /// Successor co-owned vault id, set by Promote.
     pub successor_vault_id: Option<AuthorityVaultId>,
     /// Epoch at which the pact went terminal.
