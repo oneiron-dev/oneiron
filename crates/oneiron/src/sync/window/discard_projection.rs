@@ -24,7 +24,10 @@
 //! a parted row whose parts join to a row its key does not name, a whole
 //! row filed under a key it does not name) defers the window, never counts
 //! as erased. Bytes that read as no row prove no other row: a parted one
-//! places by its key, and a whole one is kept under no one, as before.
+//! places by its key, and a whole one is kept under no one, as before. A
+//! room turn in parts goes as the same turn stored whole does: once the
+//! capture has met every part, its manifest is decided by its joined row's
+//! holders (FIX SYNC-DISCARD-PARTED-TURN-HOLDERS-NARROW).
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -33,13 +36,15 @@ use loro::checkpoint::{Atom, AtomId, Capture, Classify, Field, OwnerId, Payload,
 use loro::{LoroDoc, LoroValue, VersionVector};
 
 use super::super::bridge::parse_edge_key;
-use super::super::carrier_parts::part_key;
+use super::super::carrier_parts::{Parts, join_parts_from, part_key};
 use super::super::checkpoint_payload::{
     Holder, KindPlacement, PartedRows, Placement, SyncPayloadOwners, SyncUnclassified,
     WINDOW_ROOTS, root_entry,
 };
 use super::super::loro_support::{doc_from_snapshot, import_doc};
 use super::super::note::discard::{NoteAtom, is_note_carrier_map, project_atom, project_current};
+use super::super::room_turns::ROOM_TURNS_MAP;
+use super::super::room_turns::checkpoint::entry_joined;
 use super::super::schema::{ASSET_BODY_REFS_MAP, create_window_doc};
 use super::super::types::WindowKey;
 use super::super::window_rows::{
@@ -84,6 +89,9 @@ const PART: OwnerId = 1 << 32;
 /// A rewritten value's holder: this plus its place in
 /// [`DiscardClassifier::rewrites`].
 const REWRITE: OwnerId = 1 << 40;
+/// A room turn manifest's holder, decided once the capture has met every
+/// part: this plus its place in [`DiscardClassifier::turn_manifests`].
+const TURN_MANIFEST: OwnerId = 1 << 48;
 
 /// Every entity kind its own row's: the projection asks only who owns a
 /// value, never where a checkpoint would seal it.
@@ -114,6 +122,18 @@ struct DiscardClassifier<'a> {
     /// Every parted map value the capture met, to bind each manifest to
     /// its key (UC-10 PR 1).
     parted: PartedRows<Vec<u8>>,
+    /// Each room turn manifest the capture met, by its place.
+    turn_manifests: Vec<TurnManifest>,
+}
+
+/// A room turn's manifest the capture met: its key, the parts it lists, its
+/// own holder (the turn alone), and whether it goes, once decided
+/// ([`DiscardClassifier::decide_turn_manifests`]).
+struct TurnManifest {
+    key: String,
+    parts: Parts,
+    holders: Vec<Holder>,
+    going: bool,
 }
 
 impl<'a> DiscardClassifier<'a> {
@@ -128,6 +148,7 @@ impl<'a> DiscardClassifier<'a> {
             rewrites: Vec::new(),
             unknown: None,
             parted: PartedRows::default(),
+            turn_manifests: Vec::new(),
         }
     }
 
@@ -163,6 +184,52 @@ impl<'a> DiscardClassifier<'a> {
         }
     }
 
+    /// Decides each room turn manifest the capture met as the same turn
+    /// stored whole goes: by its joined row's holders, held while its room,
+    /// its messages and each turn it quotes are, its parts joined from every
+    /// version the window holds. A manifest whose parts do not all join, or
+    /// join to no turn row, goes by its own holder, the turn alone. Each
+    /// part it lists goes or stays with it.
+    fn decide_turn_manifests(&mut self) {
+        let mut manifests = std::mem::take(&mut self.turn_manifests);
+        for manifest in &mut manifests {
+            let joined =
+                join_parts_from(&manifest.parts, |key| self.parted.part(ROOM_TURNS_MAP, key))
+                    .map(|joined| entry_joined(&manifest.key, &joined));
+            manifest.going = match joined {
+                Some(Placement::Owned(holders) | Placement::Split { holders, .. }) => {
+                    self.gone(&holders)
+                }
+                _ => self.gone(&manifest.holders),
+            };
+            let named = manifest
+                .parts
+                .parts
+                .iter()
+                .map(|digest| (ROOM_TURNS_MAP.to_owned(), part_key(digest)));
+            if manifest.going {
+                self.parts_going.extend(named);
+            } else {
+                self.parts_staying.extend(named);
+            }
+        }
+        self.turn_manifests = manifests;
+    }
+
+    /// A room turn manifest's holder as [`Self::decide_turn_manifests`]
+    /// decided it; any other holder as it is.
+    fn settled(&self, holder: OwnerId) -> OwnerId {
+        if holder < TURN_MANIFEST {
+            return holder;
+        }
+        erase(
+            usize::try_from(holder - TURN_MANIFEST)
+                .ok()
+                .and_then(|place| self.turn_manifests.get(place))
+                .is_some_and(|manifest| manifest.going),
+        )
+    }
+
     /// A NOTE carrier's atom, as its codec projects it.
     fn note_atom(&mut self, map: &str, key: &str, value: &[u8]) -> OwnerId {
         match project_atom(map, key, value, self.discarded) {
@@ -185,6 +252,17 @@ impl<'a> DiscardClassifier<'a> {
         match placement {
             Placement::Owned(holders) | Placement::Split { holders, .. } => {
                 erase(self.gone(&holders))
+            }
+            // A room turn's manifest goes as its joined row does, which
+            // only every part the window holds shows.
+            Placement::Manifest { holders, parts, .. } if root == ROOM_TURNS_MAP => {
+                self.turn_manifests.push(TurnManifest {
+                    key: key.to_owned(),
+                    parts,
+                    holders,
+                    going: false,
+                });
+                TURN_MANIFEST + place_of(self.turn_manifests.len() - 1)
             }
             Placement::Manifest { holders, parts, .. } => {
                 let going = self.gone(&holders);
@@ -309,6 +387,7 @@ pub(crate) fn project_window_doc(
     if classifier.parted.mismatch().is_some() {
         return Ok(Projected::Deferred(UNBOUND_PARTED_ROW));
     }
+    classifier.decide_turn_manifests();
     let unheld = held
         .map(|held| unheld_atoms(&parts.skeleton, held))
         .unwrap_or_default();
@@ -400,7 +479,7 @@ impl DiscardClassifier<'_> {
         };
         for mut atom in atoms {
             let holder = match atom.holders.as_slice() {
-                [holder] => *holder,
+                [holder] => self.settled(*holder),
                 _ => KEEP,
             };
             let changes = holder == ERASE
