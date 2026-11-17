@@ -15,6 +15,7 @@ use crate::EntityId;
 use crate::batch::secret_scan::LiftedKeys;
 use crate::claim::{ClaimReadStatus, PointRead, ScopedReadResult};
 use crate::dreamer_consolidation::TurnText;
+use crate::dreamer_runner::DreamerAttemptBinding;
 use crate::memory::{Memory, MemoryError, MemoryResult};
 
 /// The most byte ranges one `vault.evidence.spans` request names while the
@@ -128,6 +129,31 @@ pub fn evidence_spans(
     memory: &Memory<'_>,
     input: &EvidenceSpansRequest,
 ) -> MemoryResult<ScopedReadResult<EvidenceSpans>> {
+    bound_evidence_spans(memory, input, None)
+}
+
+/// Reads the evidence spans after proving the binding in the spans' own
+/// read transaction, before any source row is read. The range cap is engine
+/// configuration: its Setting row is read first, for the shape check, as an
+/// unbound call reads it.
+///
+/// # Errors
+///
+/// As [`evidence_spans`], and the binding's refusals.
+pub(crate) fn evidence_spans_bound(
+    memory: &Memory<'_>,
+    input: &EvidenceSpansRequest,
+    binding: &DreamerAttemptBinding,
+) -> MemoryResult<ScopedReadResult<EvidenceSpans>> {
+    bound_evidence_spans(memory, input, Some(binding))
+}
+
+/// The shared spans body, proving a bound call in its own read transaction.
+fn bound_evidence_spans(
+    memory: &Memory<'_>,
+    input: &EvidenceSpansRequest,
+    binding: Option<&DreamerAttemptBinding>,
+) -> MemoryResult<ScopedReadResult<EvidenceSpans>> {
     let vault = memory.vault();
     let max_ranges = {
         let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
@@ -141,7 +167,14 @@ pub fn evidence_spans(
     };
     validate_evidence_spans(input, max_ranges)?;
     let read = memory.read_lane(ClaimReadStatus::Recorded)?;
-    read.read_projected(
+    let _pins = read.prepare_point_read::<MemoryError>()?;
+    let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
+    if let Some(binding) = binding {
+        memory.prove_read_authority_in_txn(&txn)?;
+        binding.check_in_txn(&txn)?;
+    }
+    read.read_projected_in_txn(
+        &txn,
         &[PointRead::id(input.source)],
         None,
         |txn, _rows| -> MemoryResult<EvidenceSpans> {

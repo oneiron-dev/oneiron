@@ -1,6 +1,7 @@
 //! The native Dreamer attempt binding (untangle 6.9c, RULING S69C-DESIGN
 //! item 5): the in-process credential a host's job client calls under while
-//! one admitted strength or conflict-settlement attempt holds its lease.
+//! one admitted strength, conflict-settlement or extraction attempt holds
+//! its lease.
 //!
 //! Only the engine mints one, from the admitted attempt: it keeps the
 //! attempt's lease (owner and generation), the authority stamp the engine
@@ -28,22 +29,24 @@ use crate::edge::EdgeActorClass;
 use crate::federation::{grant_scope, steward_reach_in};
 use crate::memory::{MEMORY_CODE_FORBIDDEN, MEMORY_CODE_LEASE_REQUIRED, MemoryError, MemoryResult};
 use crate::write_envelope::{SourceLineage, WriteActor};
-use crate::{Result, Vault};
+use crate::{EntityId, Result, Vault};
 
 use super::authority::{DreamerAuthorityStamp, dreamer_facet_for_job_type};
 use super::maintenance::{
     CONFLICT_SETTLE_FACET, CONSOLIDATION_STRENGTH_FACET, MAINTENANCE_QUEUE_KIND,
 };
-use super::{DreamerAdmittedAttempt, decode_dreamer_attempt_payload};
+use super::{DreamerAdmittedAttempt, DreamerConsolidationScope, decode_dreamer_attempt_payload};
 
-/// The operations one admitted maintenance job may call through its binding.
+/// The operations one admitted Dreamer job may call through its binding.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum BoundFacet {
     Strength,
     ConflictSettle,
+    /// The consolidation extraction job reads its inputs page and evidence spans.
+    Extraction,
 }
 
-/// One admitted maintenance attempt's live delegation, as the engine minted it.
+/// One admitted Dreamer attempt's live delegation, as the engine minted it.
 /// It names identities only; the grant, scope and lease are read live at
 /// each call.
 pub struct DreamerAttemptBinding {
@@ -74,8 +77,8 @@ impl fmt::Debug for DreamerAttemptBinding {
 
 impl Vault {
     /// Mints the binding a host's job client calls under for `admitted`, a
-    /// strength or conflict-settlement attempt this vault admitted and whose
-    /// lease still holds.
+    /// strength, conflict-settlement or extraction attempt this vault admitted
+    /// and whose lease still holds.
     ///
     /// # Errors
     ///
@@ -91,13 +94,14 @@ impl Vault {
         let lease = BorrowedAttemptLease::of(record).ok_or_else(lease_ended)?;
         let facet = bound_facet_for_attempt(record)?.ok_or_else(authority_moved)?;
         let job_type = match facet {
-            BoundFacet::Strength => CONSOLIDATION_STRENGTH_FACET,
-            BoundFacet::ConflictSettle => CONFLICT_SETTLE_FACET,
+            BoundFacet::Strength => CONSOLIDATION_STRENGTH_FACET.to_owned(),
+            BoundFacet::ConflictSettle => CONFLICT_SETTLE_FACET.to_owned(),
+            BoundFacet::Extraction => decode_dreamer_attempt_payload(&record.payload)?.attempt_type,
         };
         let txn = self.store.env.read_txn().map_err(crate::Error::from)?;
         let stamp = self
             .dreamer_attempt_authority_in_txn(&txn, record.id)?
-            .filter(|stamp| Some(stamp.facet.as_str()) == dreamer_facet_for_job_type(job_type))
+            .filter(|stamp| Some(stamp.facet.as_str()) == dreamer_facet_for_job_type(&job_type))
             .ok_or_else(authority_moved)?;
         let binding = DreamerAttemptBinding {
             vault: Arc::clone(self),
@@ -130,6 +134,12 @@ impl DreamerAttemptBinding {
     #[must_use]
     pub fn actor(&self) -> WriteActor {
         WriteActor::new(self.stamp.actor, EdgeActorClass::System)
+    }
+
+    /// The attempt this binding was minted for, as its entity id.
+    #[must_use]
+    pub(crate) fn attempt(&self) -> EntityId {
+        EntityId::from_bytes_unchecked(*self.lease.attempt().as_bytes())
     }
 
     /// Proves the binding in `txn`: the lease holds at its owner and
@@ -188,9 +198,10 @@ impl DreamerAttemptBinding {
     }
 
     /// Commits `input` as the Dreamer in this attempt and run, admitting
-    /// Archive items for strength and Settle items for conflict settlement.
-    /// One writer proves the binding before the batch stages. A refused
-    /// binding writes no batch, receipt, archive or settlement.
+    /// Archive items for strength, Settle items for conflict settlement and
+    /// no item for extraction. One writer proves the binding before the batch
+    /// stages. A refused binding writes no batch, receipt, archive or
+    /// settlement.
     fn commit(&self, input: DeriveCommitInput) -> MemoryResult<DeriveCommitView> {
         let batch = facet_batch(input, self.facet)?;
         let stamp = DerivationStamp {
@@ -209,26 +220,40 @@ impl DreamerAttemptBinding {
     }
 }
 
-/// The admitted facet of `record`, if it is a bound maintenance job.
+/// The admitted facet of `record`, if it is a bound Dreamer job.
 fn bound_facet_for_attempt(record: &AttemptRecord) -> Result<Option<BoundFacet>> {
-    if record.kind != MAINTENANCE_QUEUE_KIND {
+    let scopes = [
+        DreamerConsolidationScope::Micro,
+        DreamerConsolidationScope::Meso,
+        DreamerConsolidationScope::Macro,
+    ];
+    if record.kind != MAINTENANCE_QUEUE_KIND
+        && !scopes
+            .iter()
+            .any(|scope| record.kind == scope.attempt_kind())
+    {
         return Ok(None);
     }
-    Ok(
-        match decode_dreamer_attempt_payload(&record.payload)?
-            .attempt_type
-            .as_str()
-        {
+    let attempt_type = decode_dreamer_attempt_payload(&record.payload)?.attempt_type;
+    if record.kind == MAINTENANCE_QUEUE_KIND {
+        return Ok(match attempt_type.as_str() {
             CONSOLIDATION_STRENGTH_FACET => Some(BoundFacet::Strength),
             CONFLICT_SETTLE_FACET => Some(BoundFacet::ConflictSettle),
             _ => None,
-        },
-    )
+        });
+    }
+    Ok(scopes
+        .iter()
+        .any(|scope| record.kind == scope.attempt_kind() && attempt_type == scope.as_str())
+        .then_some(BoundFacet::Extraction))
 }
 
 /// The engine batch of `input`, admitted only when every item belongs to
-/// the bound facet.
+/// the bound facet. The extraction facet admits no item.
 fn facet_batch(input: DeriveCommitInput, facet: BoundFacet) -> MemoryResult<DerivationBatch> {
+    if facet == BoundFacet::Extraction {
+        return Err(facet_refused(facet));
+    }
     let batch = input.into_batch()?;
     if batch.items.iter().all(|item| {
         matches!(
@@ -268,6 +293,10 @@ fn facet_refused(facet: BoundFacet) -> MemoryError {
         BoundFacet::ConflictSettle => (
             "the Dreamer conflict settlement facet does not admit this operation",
             "A conflict settlement attempt pages conflicts, asks ai.verdict and commits Settle items only.",
+        ),
+        BoundFacet::Extraction => (
+            "the Dreamer extraction facet does not admit this operation",
+            "An extraction attempt reads its inputs page and evidence spans only.",
         ),
     };
     MemoryError::new(MEMORY_CODE_FORBIDDEN, message, &[hint])
