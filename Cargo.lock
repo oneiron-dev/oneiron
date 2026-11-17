@@ -8155,6 +8155,7 @@ dependencies = [
  "schemars 0.8.22",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "zeroize",
 ]
 
@@ -8724,6 +8725,7 @@ dependencies = [
  "rmpv",
  "rsa",
  "serde",
+ "sha1",
  "sha2 0.10.9",
  "tempfile",
  "thiserror 2.0.20",
