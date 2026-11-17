@@ -849,8 +849,8 @@ pub(crate) fn delete_text_media_vectors_in_txn(
 }
 
 /// Removes `id`'s text row from `space` alone, with its device mark and any refusal of it there;
-/// its image and audio rows stay. Whether it held a text row there.
-#[cfg(feature = "sync")]
+/// its image and audio rows stay. Whether it held a text row there. Ungated: the world edge
+/// reconcile (`world_space::reconcile_world_edge_rows_in_txn`) calls it in every build.
 pub(super) fn delete_text_media_vector_in_space_in_txn(
     store: &impl SideTableDbs,
     txn: &mut RwTxn<'_>,
