@@ -52,6 +52,8 @@ mod anchor_text;
 mod body_anchor;
 mod code_units;
 mod codec;
+#[cfg(oneiron_test_support)]
+pub(crate) use codec::annotation_map_get_for_test;
 mod comment_parts;
 mod conversation;
 mod deck_anchor;
