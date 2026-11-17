@@ -13,7 +13,7 @@
 //! installs the connector at endpoint B, so each `connector.call` the owner
 //! makes through the facade holds on a typed endpoint exceed before anything
 //! is sent, and keeps one scope signal. The cfg door
-//! `oneiron::test_doors::connector_scope_signals` lists the signal refs (it
+//! `oneiron::test_doors::slate_scope_signals` lists the signal refs (it
 //! reads only); every ruling, offer, deferral and acceptance goes through the
 //! facade doors as the owner's root.
 //!
@@ -40,7 +40,7 @@ use oneiron::connector_key::{
 };
 use oneiron::consent::tool_scope::DataClass;
 use oneiron::store::GateDecisionId;
-use oneiron::test_doors::connector_scope_signals::signal_refs;
+use oneiron::test_doors::slate_scope_signals::signal_refs;
 use oneiron::{EntityId, Vault, VaultConfig};
 use oneiron_keystore::MemoryKeystore;
 use oneiron_server::{
