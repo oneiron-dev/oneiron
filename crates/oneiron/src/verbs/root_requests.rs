@@ -151,12 +151,41 @@ pub fn cancel_root_request_as(
 }
 
 /// One root request naming this install with no result yet, as
-/// `vault.roots.requests.list` answers it: its change and its receipt.
+/// `vault.roots.requests.list` answers it: its change, its receipt, the
+/// machine it names as its carrier, and this install's own reading of the
+/// key that signed it ([`crate::authority::CarrierReading`]). A surface names
+/// who asked from `carrier_role` and `carrier_is_yours`, never from the
+/// request's own words (CARRIED-PIN-PROMPT-HOSTED-CARRIER = A). With no
+/// `carrier_role` the machine id is the request's word alone, and a surface
+/// names no machine by it.
+///
+/// An answer, so a reader built before a field was added still reads it: it
+/// refuses no field it does not know.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
 pub struct PendingRootRequestView {
     pub change: RootChangeView,
     pub receipt: OwnerWorkView,
+    /// The machine the request names as its carrier: the request's own word
+    /// until `carrier_role` is set.
+    pub carrier: EntityId,
+    /// The role this install's records give the key that signed the request
+    /// on that machine: `yours`, `work_school`, `rented`, `hosted_node`,
+    /// `execution_node`, `removed` or `unanswered`. `None` when its records
+    /// do not tie that machine to the key.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub carrier_role: Option<String>,
+    /// Whether this install trusts that key as one of the owner's machines.
+    pub carrier_is_yours: bool,
+    /// For a pin: the question a surface asks before the owner confirms it,
+    /// composed here from the root's code and this install's reading of the
+    /// carrier, never from the request's own words: three lines separated
+    /// by a line feed. `None` for every other change.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompt: Option<String>,
+    /// For a pin: the code of the root it names, 26 symbols, as the owner's
+    /// kit shows it. `None` for every other change.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub root_code: Option<String>,
 }
 
 /// `vault.roots.requests.create` (FIX 5598): records the owner's root change
@@ -196,8 +225,8 @@ pub fn create_root_request_as(
 
 /// `vault.roots.requests.list` (FIX 5598): the root requests naming this
 /// install with no result yet, ascending by entry, but those the owner
-/// cancelled or a newer request superseded, through
-/// [`Vault::pending_root_requests`]. Ids only.
+/// cancelled or a newer request superseded, each with the machine that
+/// carried it, through [`Vault::pending_root_request_listing`]. Ids only.
 ///
 /// # Errors
 ///
@@ -207,11 +236,16 @@ pub fn list_root_requests_as(
     owner: &AuthenticatedOwner,
 ) -> MemoryResult<Vec<PendingRootRequestView>> {
     Ok(vault
-        .pending_root_requests(owner)?
+        .pending_root_request_listing(owner)?
         .into_iter()
-        .map(|(_, change, receipt)| PendingRootRequestView {
-            change: change.into(),
-            receipt: receipt.into(),
+        .map(|listed| PendingRootRequestView {
+            prompt: listed.prompt(),
+            root_code: listed.root_code(),
+            change: listed.change.into(),
+            receipt: listed.receipt.into(),
+            carrier: listed.carrier.machine,
+            carrier_role: listed.carrier.role.map(|role| role.wire().to_owned()),
+            carrier_is_yours: listed.carrier.is_mine,
         })
         .collect())
 }

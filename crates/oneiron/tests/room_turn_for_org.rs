@@ -159,6 +159,7 @@ fn join_room(vault: &Vault, owner: EntityId, room: EntityId, house: EntityId) ->
             offer_id: card.offer_id.clone(),
             action: OfferAnswer::Join,
             intent_key: format!("{FIXTURE_PATH}:answer:{}", house.to_hex()),
+            check_in_ref: None,
         })?;
     let join = accepted.join.ok_or("the host's answer carries no join")?;
     if join.decision.state != JoinDecision::Ready {
@@ -320,6 +321,7 @@ fn exchange(fixture: &HouseRoom, words: &str) -> TestResult<(EntityId, EntityId)
                 conversation_ref: fixture.room.to_hex(),
                 turn_ref: Some(reply_turn.to_hex()),
                 thread_audience: None,
+                project: None,
                 messages: vec![WitnessMessage {
                     id: Some(EntityId::now().to_hex()),
                     author: WitnessAuthor::Companion,

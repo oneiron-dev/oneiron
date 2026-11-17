@@ -1,6 +1,6 @@
 //! Tool-first projections of the engine-owned typed read table.
 
-use super::{McpGatewayError, mcp_engine_error, mcp_scoped_read};
+use super::{McpGatewayError, mcp_api_error, mcp_engine_error, mcp_scoped_read};
 use crate::mcp::McpResolvedActor;
 use crate::server::SyncServer;
 use oneiron::claim::ScopedReadReceipt;
@@ -170,11 +170,31 @@ fn execute_read(
 ) -> Result<MemoryRead, McpGatewayError> {
     check_query_bound(server, actor, method, &body)?;
     let reader = mcp_scoped_read(&server.vault, actor)?;
+    // A context pack the call takes in a live stretch reads it beside base,
+    // bound by the accepted route's own rule (`context_pack_room`): the
+    // owner on their proof, a room's member on their own live slip, anyone
+    // else base alone (ARCH-0052 #e5-read-union-open,
+    // ROOM-PACK-IN-PROCESS-ADAPTER-READS-BASE). Every other method reads base.
+    let stretch = match actor.auth.as_ref() {
+        Some(auth) if matches!(method, VaultReadMethod::ContextPack) => {
+            crate::api::context_pack::context_pack_room(server, auth).map_err(mcp_api_error)?
+        }
+        _ => None,
+    };
+    let stretch_read = stretch
+        .as_ref()
+        .map(oneiron::off_record::RoomPackSession::read)
+        .transpose()
+        .map_err(|error| mcp_engine_error("context-pack stretch read failed", error))?;
     let producers = oneiron::memory::ProducerRows::default();
+    // A query and a batch hydrate decode bodies under the `/v1` doors' one
+    // body budget (H27); a single hydrate reads its body whole.
     let adapter = InProcessVaultReadAdapter::new(&server.vault, reader.actor_key().clone())
         .with_media_query_memory(&server.memory)
+        .with_room_pack(stretch_read.as_ref())
         .listing_producers(&producers)
-        .deferring_served_forms(forms);
+        .deferring_served_forms(forms)
+        .with_projection_body_bytes(server.config.limits.projection_body_bytes);
     let adapter = match media {
         Some(seeds) => adapter.with_media_seeds(seeds),
         None => adapter,
@@ -189,7 +209,13 @@ fn execute_read(
             let request: CoreQueryRequest = request(body)?;
             let full = request.view == Some(View::Full);
             let response = adapter.query(request).map_err(native_error)?;
-            for row in &response.items {
+            // A row whose body the budget left out was not decoded, so it is
+            // not observed, as the `/v1` query observes decoded bodies only.
+            for row in response
+                .items
+                .iter()
+                .filter(|row| row.body_omitted.is_none())
+            {
                 served.push(observation(row, full)?);
             }
             encode(response)?
@@ -441,6 +467,7 @@ fn observe_hydrate(
 ) -> Result<(), McpGatewayError> {
     if response.status == CoreHydrateStatus::Live
         && let Some(row) = &response.item
+        && row.body_omitted.is_none()
     {
         served.push(observation(row, full)?);
     }

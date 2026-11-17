@@ -36,6 +36,19 @@ impl HostSlipIssuer {
     /// as an owner-held key (E2). That is a fact in the log, so every replica's fold
     /// sees it.
     pub(super) fn root_device(&self, posture: crate::HostingPrivacyPosture) -> DeviceAuthority {
+        self.root_device_under(posture, ROLE_OWNER | ROLE_ADMIN)
+    }
+    /// [`Self::root_device`] for a root move whose signer holds
+    /// `signer_roles`: the new root keeps only the roles its signer may hand
+    /// on, plus `ROLE_CLOUD` for a Hosted root, the fold's own ReRoot rule.
+    /// A move signed by a host root keeps `ROLE_OWNER | ROLE_ADMIN`; one
+    /// signed by a recovery kit's enrolled owner key yields `ROLE_OWNER`
+    /// (L1-07; a recovery "never raises a ceiling", identity.md).
+    pub(super) fn root_device_under(
+        &self,
+        posture: crate::HostingPrivacyPosture,
+        signer_roles: u16,
+    ) -> DeviceAuthority {
         let (cloud, tier) = if posture == crate::HostingPrivacyPosture::Hosted {
             (ROLE_CLOUD, AuthorityTier::CloudCustodial)
         } else {
@@ -49,7 +62,7 @@ impl HostSlipIssuer {
                 evidence: Vec::new(),
             },
             tier,
-            roles: ROLE_OWNER | ROLE_ADMIN | cloud,
+            roles: ((ROLE_OWNER | ROLE_ADMIN) & signer_roles) | cloud,
         }
     }
     pub(super) fn sign_mesh(&self, transcript: &[u8]) -> [u8; 64] {
@@ -213,6 +226,35 @@ impl Vault {
                 self.slip_refs_stand_in_txn(txn, &mint.action.claims, now.secs())?
                     && self.member_slip_scope_is_current_in_txn(txn, &mint.action.claims)?,
             ),
+            None => Ok(false),
+        }
+    }
+
+    /// Whether the credential `id` minted still stands, whatever its own
+    /// lifetime: its mint unrevoked in this snapshot's fold, and its grant,
+    /// invitation and delegation still standing as they bound it (FIX 5952).
+    /// A saved lane that reads as its principal's own judges this at each
+    /// rebuild and each read (FIX OWN-DEVICE-GRANT-NOT-RECHECKED): a paired
+    /// device's renewal lets the old credential run out (FIX 3377), so its
+    /// expiry ends no saved work, while the grant's withdrawal does.
+    ///
+    /// # Errors
+    /// A store, fold or clock failure judging it.
+    pub(crate) fn capability_slip_id_stands_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &[u8; 32],
+    ) -> Result<bool> {
+        let fold = self.authority_view_readonly_in_txn(txn)?;
+        if !fold.slip_is_live(id) {
+            return Ok(false);
+        }
+        match fold.slips.mints.get(id) {
+            Some(mint) => {
+                let now = self.instant_in_txn(txn)?.secs();
+                Ok(self.slip_refs_stand_in_txn(txn, &mint.action.claims, now)?
+                    && self.member_slip_scope_is_current_in_txn(txn, &mint.action.claims)?)
+            }
             None => Ok(false),
         }
     }
