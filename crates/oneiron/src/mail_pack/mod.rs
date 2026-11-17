@@ -132,7 +132,9 @@ pub use reply::{
     MailReplyApproveRequest, MailReplyDraftPage, MailReplyDraftRef, MailReplyDraftRequest,
     MailReplyDraftState, MailReplyDraftView, MailReplyDraftsRequest, MailReplySendRequest,
 };
-pub(crate) use reply::{approved_source_reply_in_txn, erase_reply_drafter_in_txn};
+pub(crate) use reply::{
+    approved_source_reply_in_txn, erase_reply_drafter_in_txn, owner_mailbox_identity_in_txn,
+};
 pub(crate) use reply_ask::MAIL_REPLY_ASK_PRODUCER;
 #[cfg(oneiron_test_support)]
 pub(crate) use reply_ask::reply_ask_open;

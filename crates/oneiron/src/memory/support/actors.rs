@@ -376,3 +376,27 @@ pub(crate) fn embedded_owner_shortcut_holds_in_txn(
         &crate::vault::embedded_owner_actor_id()?,
     )
 }
+
+/// [`embedded_owner_shortcut_holds_in_txn`] for a reader that holds a `Store`
+/// and the posture its vault opened with, and no `Vault` (the Gate's
+/// source-audience read): the same creation row, authority view and live
+/// owner census, read through the store.
+pub(crate) fn embedded_owner_shortcut_holds_for_store_in_txn(
+    store: &crate::store::Store,
+    posture: crate::HostingPrivacyPosture,
+    txn: &heed::RoTxn<'_>,
+) -> crate::Result<bool> {
+    if crate::federation::shared_vault_creation_for_store_in_txn(store, txn)?.is_none() {
+        return Ok(true);
+    }
+    if crate::authority::authority_view_readonly_for_store_in_txn(store, posture, txn)?
+        .vault_id
+        .is_some()
+    {
+        return Ok(true);
+    }
+    Ok(
+        crate::policy_model::owners_for_store_in_txn(store, posture, txn)?
+            .contains(&crate::vault::embedded_owner_actor_id()?),
+    )
+}
