@@ -461,31 +461,31 @@ impl VerifiedEvidenceSet {
                 })
                 .collect(),
         );
-        let mut independent: BTreeMap<(EntityId, [u8; 32]), VerifiedCitation> = BTreeMap::new();
+        // One row per distinct locator: ranges with equal words share one
+        // (source, hash) signal but keep their own locators with their own
+        // MESSAGE slices. Only an exactly repeated locator collapses.
+        let mut independent: BTreeMap<(EntityId, [u8; 32]), Vec<VerifiedCitation>> =
+            BTreeMap::new();
         for row in rows {
-            match independent.entry((row.locator.source_id(), row.hash)) {
-                std::collections::btree_map::Entry::Vacant(entry) => {
-                    entry.insert(row);
-                }
-                std::collections::btree_map::Entry::Occupied(mut entry) => {
-                    let kept = entry.get_mut();
-                    if row.locator < kept.locator {
-                        kept.locator = row.locator;
-                        kept.messages = row.messages;
-                        kept.projection = row.projection;
-                    }
-                }
+            let cited = independent
+                .entry((row.locator.source_id(), row.hash))
+                .or_default();
+            if !cited.iter().any(|kept| kept.locator == row.locator) {
+                cited.push(row);
             }
         }
         let rows = collapsed
             .independent
             .into_iter()
-            .map(|entry| {
-                let mut row = independent
+            .flat_map(|entry| {
+                let mut cited = independent
                     .remove(&(entry.source_id, entry.content_hash))
                     .expect("collapsed evidence came from these citations");
-                row.trust = entry.trust_class;
-                row
+                cited.sort_by_key(|row| row.locator);
+                cited.into_iter().map(move |mut row| {
+                    row.trust = entry.trust_class;
+                    row
+                })
             })
             .collect();
         Self {
@@ -518,12 +518,22 @@ impl VerifiedEvidenceSet {
             source_meet(meet, row.trust)
         })
     }
+    /// Corroboration counts once per `(source, hash)` signal, as
+    /// `collapse_verified_evidence` counts it: distinct locators with equal
+    /// words are one signal.
     pub(crate) fn count(&self) -> usize {
-        self.rows.len()
-    }
-    pub(crate) fn signal_sources(&self) -> Vec<(EntityId, [u8; 32], bool)> {
         self.rows
             .iter()
+            .map(|row| (row.locator.source_id(), row.hash))
+            .collect::<BTreeSet<_>>()
+            .len()
+    }
+    /// One entry per `(source, hash)` signal, however many locators name it.
+    pub(crate) fn signal_sources(&self) -> Vec<(EntityId, [u8; 32], bool)> {
+        let mut seen = BTreeSet::new();
+        self.rows
+            .iter()
+            .filter(|row| seen.insert((row.locator.source_id(), row.hash)))
             .map(|row| {
                 (
                     row.locator.source_id(),

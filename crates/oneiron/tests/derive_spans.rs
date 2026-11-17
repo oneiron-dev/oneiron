@@ -149,7 +149,7 @@ fn t1_an_evidence_item_with_one_range_lands_its_stored_locator() {
                         }],
                     },
                 }],
-                "sources": [version(fixture, turn)],
+                "sources": [version(&fixture, turn)],
             }),
         )
         .expect("the batch commits");
@@ -208,7 +208,7 @@ fn t2_a_claim_item_with_spans_stores_locators_for_every_cited_row() {
                         }],
                     },
                 }],
-                "sources": [version(fixture, ranged), version(fixture, whole)],
+                "sources": [version(&fixture, ranged), version(&fixture, whole)],
             }),
         )
         .expect("the batch commits");
@@ -259,7 +259,7 @@ fn t3_items_without_spans_store_what_they_store_today() {
                         "evidence": [{ "stored": turn }],
                     },
                 }],
-                "sources": [version(fixture, turn)],
+                "sources": [version(&fixture, turn)],
             }),
         )
         .expect("the claim commits");
@@ -285,7 +285,7 @@ fn t3_items_without_spans_store_what_they_store_today() {
                         "sources": [{ "stored": turn }],
                     },
                 }],
-                "sources": [version(fixture, turn)],
+                "sources": [version(&fixture, turn)],
             }),
         )
         .expect("the evidence commits");
@@ -330,7 +330,7 @@ fn t4_a_range_the_actor_is_not_served_refuses_only_its_item() {
                         },
                     },
                 ],
-                "sources": [version(fixture, turn)],
+                "sources": [version(&fixture, turn)],
             }),
         )
         .expect("the batch commits");
@@ -374,7 +374,7 @@ fn t4_a_range_the_actor_is_not_served_refuses_only_its_item() {
                         },
                     },
                 ],
-                "sources": [version(fixture, split)],
+                "sources": [version(&fixture, split)],
             }),
         )
         .expect("the batch commits");
@@ -412,7 +412,7 @@ fn t5_a_spans_entry_over_a_cited_claim_is_refused() {
                         }],
                     },
                 }],
-                "sources": [version(fixture, turn), version(fixture, cited)],
+                "sources": [version(&fixture, turn), version(&fixture, cited)],
             }),
         )
         .expect("the batch commits");
@@ -445,7 +445,7 @@ fn t6_a_malformed_spans_entry_aborts_the_whole_batch() {
                 }],
             },
         }],
-        "sources": [version(fixture, turn)],
+        "sources": [version(&fixture, turn)],
     });
     let answer = fixture
         .run
@@ -622,7 +622,7 @@ fn t8_a_masked_reader_cites_in_the_coordinates_it_was_served() {
                         }],
                     },
                 }],
-                "sources": [version(fixture, turn)],
+                "sources": [version(&fixture, turn)],
             }),
         )
         .expect("the batch commits");
@@ -690,7 +690,7 @@ fn t9_a_claim_landed_with_spans_is_taken_back() {
                         }],
                     },
                 }],
-                "sources": [version(fixture, turn)],
+                "sources": [version(&fixture, turn)],
             }),
         )
         .expect("the batch commits");
@@ -711,4 +711,90 @@ fn t9_a_claim_landed_with_spans_is_taken_back() {
         claim_lifecycle(&fixture.vault, claim).expect("read"),
         Some("active".to_owned())
     );
+}
+
+#[test]
+fn t10_two_ranges_with_equal_words_keep_both_locators_and_one_signal() {
+    use oneiron::memory::{WitnessAssertions, WitnessAuthor, WitnessMessage, WitnessTurn};
+    let fixture = fixture();
+    let speaker = put(&fixture.vault, ENTITY_TYPE_PERSON, b"speaker");
+    let first_message = EntityId::now();
+    let second_message = EntityId::now();
+    let turn = EntityId::now();
+    let message = |id: EntityId, order: u32| WitnessMessage {
+        id: Some(id.to_hex()),
+        author: WitnessAuthor::User,
+        message_type: "dialogue".to_owned(),
+        content: "yes".to_owned(),
+        parts: None,
+        metadata: None,
+        is_visible: true,
+        order,
+        quote: None,
+    };
+    fixture
+        .vault
+        .memory(speaker, EdgeActorClass::Human)
+        .witness(&WitnessTurn {
+            conversation_ref: EntityId::now().to_hex(),
+            turn_ref: Some(turn.to_hex()),
+            thread_audience: None,
+            project: None,
+            messages: vec![message(first_message, 0), message(second_message, 1)],
+            occurred_at: 10,
+            assertions: WitnessAssertions::default(),
+        })
+        .expect("a TURN of two MESSAGEs with equal words");
+    assert_eq!(served(&fixture, turn, &[]).spans[0].text, "yes\nyes");
+
+    let answer = fixture
+        .run
+        .commit(
+            &fixture.vault,
+            json!({
+                "items": [{
+                    "kind": "claim",
+                    "spec": {
+                        "local": "drink",
+                        "predicate": "profile.drink",
+                        "subject": { "stored": fixture.owen },
+                        "value": "an oat milk flat white",
+                        "confidence": 0.9,
+                        "evidence": [{ "stored": turn }],
+                        "spans": [{
+                            "source": turn,
+                            "ranges": [{ "start": 0, "end": 3 }, { "start": 4, "end": 7 }],
+                        }],
+                    },
+                }],
+                "sources": [version(&fixture, turn)],
+            }),
+        )
+        .expect("the batch commits");
+    assert_eq!(answer["items"][0]["landed"], true, "{answer}");
+    let claim = id_of(&answer["items"][0]["rows"][0]);
+    let stored = claim_locators(&fixture.vault, claim).expect("read");
+    assert_eq!(stored.len(), 2, "{stored:?}");
+    let first = stored
+        .iter()
+        .find(|loc| loc.byte_range == Some((0, 3)))
+        .expect("the first range's locator");
+    let second = stored
+        .iter()
+        .find(|loc| loc.byte_range == Some((4, 7)))
+        .expect("the second range's locator");
+    // Equal words hash equal: the two locators are one corroboration signal.
+    assert_eq!(first.content_hash, stored_quote_hash(b"yes"));
+    assert_eq!(second.content_hash, first.content_hash);
+    assert_eq!(second.source, first.source);
+    // Each locator keeps the MESSAGE its own range covers.
+    let cited = |locator: &oneiron::test_doors::derive_spans::StoredLocator| {
+        locator
+            .messages
+            .iter()
+            .map(|slice| slice.message)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(cited(first), vec![first_message], "{stored:?}");
+    assert_eq!(cited(second), vec![second_message], "{stored:?}");
 }
