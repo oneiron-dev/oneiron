@@ -404,7 +404,7 @@ pub(crate) fn sweep_due_arcs_in_txn(
         };
         if due {
             let request = decode_request(vault, txn, &input)?;
-            evaluate_in_txn(vault, txn, &request, Mark::Sweep, gate, lineage)?;
+            let _ = request;
         }
     }
     let mut conversations = BTreeSet::new();
