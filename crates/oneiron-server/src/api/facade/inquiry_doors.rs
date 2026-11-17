@@ -8,10 +8,12 @@
 //!   [`HttpInquiryTransport`], signed with this host's key.
 //! - The company Owner's `vault.inquiry.route.open` and
 //!   `vault.inquiry.reciprocal_grant.mint`, and the member's
-//!   `vault.inquiry.answer`, `.list`, `.scope.*` and `.edge.*` (the terms
-//!   change among them): the vault owner's proof, which each engine door
-//!   revalidates in its own transaction. The route open and the edge
-//!   revoke also sign with the host's slip issuer.
+//!   `vault.inquiry.answer`, `.list`, `.scope.*`, `.edge.*` (the terms
+//!   change among them), `.push_route.open` and `.push` (the member's
+//!   [Now], L7-03): the vault owner's proof, which each engine door
+//!   revalidates in its own transaction. The route opens and the edge
+//!   revoke also sign with the host's slip issuer; a push goes out later,
+//!   on the host's connector-send executor, signed with that issuer.
 use std::sync::Arc;
 
 use oneiron::memory::{MEMORY_CODE_INVALID_STATE, MemoryError, MemoryResult};
@@ -20,9 +22,11 @@ use oneiron::runtime_hooks::InvocationId;
 use oneiron::task_verb::sdk::{
     self, EmptyRequest, InquireAnswer, InquireRequest, InquiryAnswerRequest, InquiryAnswerView,
     InquiryEdgeMintRequest, InquiryEdgeRef, InquiryEdgeTermsChangeRequest, InquiryEdgeTermsChanged,
-    InquiryEdgeView, InquiryLog, InquiryReciprocalGrantMintRequest, InquiryReciprocalGrantMinted,
-    InquiryRouteOpenRequest, InquiryRouteOpened, InquiryScopeCloseRequest, InquiryScopeClosed,
-    InquiryScopeItemView, InquiryScopeItems, InquiryScopeOpenRequest,
+    InquiryEdgeView, InquiryLog, InquiryPushRouteOpenRequest, InquiryPushRouteOpened,
+    InquiryReciprocalGrantMintRequest, InquiryReciprocalGrantMinted, InquiryRouteOpenRequest,
+    InquiryRouteOpened, InquiryScopeCloseRequest, InquiryScopeClosed, InquiryScopeItemView,
+    InquiryScopeItems, InquiryScopeOpenRequest, InquiryStatementPushRequest,
+    InquiryStatementPushed,
 };
 use oneiron::{EdgeActorClass, EntityId};
 
@@ -92,8 +96,60 @@ pub(crate) async fn vault_inquiry_route_open(
     (answer, rows)
 }
 
-/// `vault.inquiry.reciprocal_grant.mint`: the company Owner's propose-only
-/// grant to the member's vault, for the edge's Connect pact.
+/// `vault.inquiry.push_route.open`: the member Owner opens the route to an
+/// edge's company with the slip that company's vault minted for this
+/// host's key on its reciprocal grant.
+pub(crate) async fn vault_inquiry_push_route_open(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: InquiryPushRouteOpenRequest,
+) -> Listed<InquiryPushRouteOpened> {
+    const VERB: &str = "vault.inquiry.push_route.open";
+    let owner = match super::owner_binding::facade_owner(server, auth, VERB) {
+        Ok(owner) => owner,
+        Err(refusal) => return refused(refusal),
+    };
+    let server = Arc::clone(server);
+    let answer = clock_ingress::run_blocking(move || -> MemoryResult<InquiryPushRouteOpened> {
+        crate::api::pairing::with_issuer(&server, |issuer| {
+            Ok(sdk::open_inquiry_push_route_as(
+                server.vault(),
+                &owner,
+                issuer,
+                input,
+            ))
+        })
+        .map_err(|_| no_host_key(VERB))?
+    })
+    .await
+    .unwrap_or_else(|_| Err(internal(VERB)));
+    let rows = answer
+        .as_ref()
+        .map_or_else(|_| Vec::new(), |route| vec![route.grant]);
+    (answer, rows)
+}
+
+/// `vault.inquiry.push`: the member's [Now], one statement told to an
+/// edge's company as one send, held by the owner's undo-send window.
+pub(crate) async fn vault_inquiry_push(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: InquiryStatementPushRequest,
+) -> Listed<InquiryStatementPushed> {
+    let grant = input.grant;
+    as_owner_naming(
+        server,
+        auth,
+        "vault.inquiry.push",
+        move |server, owner| sdk::push_inquiry_statement_as(server.vault(), owner, input),
+        move |pushed| vec![grant, pushed.task_ref],
+    )
+    .await
+}
+
+/// `vault.inquiry.reciprocal_grant.mint`: the company Owner's grant to the
+/// member's vault, for the edge's Connect pact; it shares nothing and
+/// admits the member's told statements.
 pub(crate) async fn vault_inquiry_reciprocal_grant_mint(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
@@ -246,7 +302,13 @@ pub(crate) async fn vault_inquiry_list(
         auth,
         "vault.inquiry.list",
         move |server, owner| sdk::inquiry_log_as(server.vault(), owner, input),
-        |log| log.entries.iter().map(|entry| entry.edge).collect(),
+        |log| {
+            log.entries
+                .iter()
+                .map(|entry| entry.edge)
+                .chain(log.told.iter().map(|told| told.edge))
+                .collect()
+        },
     )
     .await
 }

@@ -1,5 +1,7 @@
 //! The served connector-send drain (OF-187): the one consumer of the
 //! `bridge.outbound.schedule` queue that owner-approved sends wait in.
+//! The member's told statements (`inquiry_push`, L7-03) go out here too,
+//! on the host's HTTP inquiry transport, signed with the host's key.
 //!
 //! The engine schedules a send as a connector-send TASK and its executor runs
 //! each one through the common dispatch pipeline; it never starts a thread.
@@ -20,7 +22,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::calendar_host::{CalendarChannelSink, CalendarSendClients};
+use crate::inquiry_delivery::HttpInquiryTransport;
 use oneiron::Vault;
+use oneiron::authority::HostSlipIssuer;
 use oneiron::outbound::ConnectorSendLeaseReap;
 use oneiron_base::unix_seconds_now;
 use tokio::sync::broadcast::error::TryRecvError;
@@ -142,10 +146,11 @@ impl SyncServer {
 /// One send lease reaper pass (FIX 4747 slice 4), on the housekeeping tick:
 /// a connector send whose lease expired is taken here, in the ruled order,
 /// when this machine holds what its channel needs, the check the worker's
-/// sink makes before it sends ([`CalendarChannelSink::holds_channel`]).
-pub(super) fn reap_connector_send_leases(vault: &Vault) {
+/// sink makes before it sends ([`CalendarChannelSink::holds_channel`]); a
+/// told statement needs the host's signing key `issuer`.
+pub(super) fn reap_connector_send_leases(vault: &Vault, issuer: Option<&HostSlipIssuer>) {
     let holds_channel = |task: &oneiron::outbound::ConnectorSendTask| {
-        CalendarChannelSink::holds_channel(vault, &task.intent)
+        CalendarChannelSink::holds_channel(vault, issuer, &task.intent)
     };
     match vault.reap_connector_send_leases(&holds_channel) {
         Ok(ConnectorSendLeaseReap {
@@ -174,7 +179,9 @@ pub(super) fn reap_connector_send_leases(vault: &Vault) {
 /// A LINE push is counted against the account plan's monthly allowance.
 /// The worker's kept clients are built here, off the runtime, when it has
 /// none yet. A pass a timer started (`tick`) opens with the general write
-/// door's per-write work, as the surface-event drain's does.
+/// door's per-write work, as the surface-event drain's does. A told
+/// statement is signed with the server's host key; a host that holds none
+/// fails it as not sent.
 fn send_pass(
     server: &SyncServer,
     line_push_allowance: u32,
@@ -186,7 +193,11 @@ fn send_pass(
         Some(clients) => clients,
         None => clients.insert(CalendarSendClients::new(server.hosted_egress_guard())?),
     };
+    let inquiry_transport = server.host_issuer().map(HttpInquiryTransport::new);
     let mut sink = CalendarChannelSink::new(vault, line_push_allowance, clients);
+    if let Some(transport) = inquiry_transport.as_ref() {
+        sink = sink.with_inquiry_push(transport);
+    }
     super::connector_events::carry_write_piggybacks(vault, tick)?;
     let delivered = vault
         .run_connector_task_executor(&mut sink, unix_seconds_now())
