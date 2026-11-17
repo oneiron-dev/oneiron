@@ -1,14 +1,13 @@
 //! Durable signer sequence maxima and content-addressed first-observation receipts.
 //!
-//! A maximum alone is not a fold input: comparing the entire stored history to
-//! today's maximum would reject genesis and every accepted predecessor on the
-//! next recomputation. Each immutable hash therefore retains the maximum that
-//! existed BEFORE its first observation. Re-putting those bytes cannot refresh
-//! that receipt. All records still enter the log; only the local fold decides
-//! whether a newly observed old sequence can authorize.
+//! Each immutable hash retains the maximum that existed BEFORE its first
+//! observation, and re-putting those bytes cannot refresh that receipt: the
+//! put reads it to count each row's ingest exactly once. No fold reads a
+//! maximum or a receipt (Engine RULING SEQ-FLOOR-SHAPE = A, 15 Nov 16:37):
+//! a row's sequence floor comes from the rows themselves (`rows_floor`), so
+//! the order rows arrived in decides no verdict.
 
-use std::collections::btree_map::Entry;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 
 use crate::error::{Error, Result};
 use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
@@ -47,7 +46,6 @@ impl RawValue for SequenceReceipt {
 }
 
 pub(super) struct AuthorityLocalObservations {
-    pub(super) sequence_floors: BTreeMap<AuthorityEntryHash, u64>,
     /// Rows a handoff vouches for: no floor refuses them.
     pub(super) vouched: BTreeSet<AuthorityEntryHash>,
     /// Neither a handoff nor a removal vouches for anything: the fold that
@@ -68,7 +66,6 @@ impl AuthorityLocalObservations {
             vouched.extend(line);
         }
         Self {
-            sequence_floors: self.sequence_floors.clone(),
             vouched,
             unvouched: self.unvouched,
             policy: self.policy,
@@ -79,7 +76,6 @@ impl AuthorityLocalObservations {
     /// later.
     pub(super) fn without_vouch(&self) -> Self {
         Self {
-            sequence_floors: self.sequence_floors.clone(),
             vouched: BTreeSet::new(),
             unvouched: true,
             policy: self.policy,
@@ -105,14 +101,10 @@ pub(super) fn authority_observation_peer_id(signer: &AuthorityKey) -> String {
 }
 
 /// A signer's sequences order within one scope: the main log, or one world's
-/// side branch. Entries of different worlds never name each other, so one
-/// world's later entry is no rollback floor for another's. A world's settings
-/// edits are main-log rows (mesh contract §6), so they share their carrier's
-/// main-log floor; inside a world the floor is one stream over its key
-/// records, the defence against backdating one (Astra #1422c F2, F3). Each
-/// key record a machine signs in a world names its previous one there, and
-/// each settings edit names the main-log heads, so a later row that arrives
-/// first vouches for the earlier (Astra #1422b F1).
+/// side branch, the same scopes the rows floors keep (`rows_floor`). Entries
+/// of different worlds never name each other. A world's settings edits are
+/// main-log rows (mesh contract §6); inside a world the scope is one stream
+/// over its key records (Astra #1422c F2, F3).
 fn sequence_key(entry: &AuthorityLogEntry) -> String {
     sequence_key_of(
         entry.signer_key(),
@@ -157,79 +149,16 @@ pub(crate) fn record_authority_sequence_observation_in_txn(
     Ok(true)
 }
 
+/// This install's local fold inputs: its observation policy, with no vouch
+/// yet. No sequence floor is read here: each row's floor comes from the
+/// rows themselves (`rows_floor`), never from the order they arrived in.
 pub(super) fn authority_local_observations_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
-    entries: &[AuthorityLogEntry],
 ) -> Result<AuthorityLocalObservations> {
-    let rows = entries
-        .iter()
-        .map(|entry| {
-            Ok(super::fold_resume::RowMeta::of(
-                Some(authority_entry_hash(entry)?),
-                entry,
-            ))
-        })
-        .collect::<Result<Vec<_>>>()?;
-    authority_local_observations_of_rows_in_txn(store, txn, &rows)
-}
-
-/// [`authority_local_observations_in_txn`] over the rows' metadata: each
-/// row's hash, signer, world and sequence are all its receipts key on.
-pub(super) fn authority_local_observations_of_rows_in_txn(
-    store: &Store,
-    txn: &heed::RoTxn<'_>,
-    rows: &[super::fold_resume::RowMeta<'_>],
-) -> Result<AuthorityLocalObservations> {
-    Ok(authority_local_observations_receipted_in_txn(store, txn, rows)?.0)
-}
-
-/// [`authority_local_observations_of_rows_in_txn`], and the rows whose
-/// floor a present receipt sets (FIX 1854). A receipt is write-once, so a
-/// later read of such a row answers the same floor; the floor of a row with
-/// none is the live mark, which still moves.
-pub(super) fn authority_local_observations_receipted_in_txn(
-    store: &Store,
-    txn: &heed::RoTxn<'_>,
-    rows: &[super::fold_resume::RowMeta<'_>],
-) -> Result<(AuthorityLocalObservations, BTreeSet<AuthorityEntryHash>)> {
-    let mut sequence_floors = BTreeMap::new();
-    let mut receipted = BTreeSet::new();
-    // One read per signer and world: the snapshot holds each mark still.
-    let mut marks: BTreeMap<_, Option<u64>> = BTreeMap::new();
-    for row in rows {
-        let hash = row
-            .hash
-            .ok_or(Error::CorruptedIndex("authority entry hash"))?;
-        let current = match marks.entry((row.signer, row.world)) {
-            Entry::Occupied(mark) => *mark.get(),
-            Entry::Vacant(mark) => {
-                *mark.insert(SEQ_HWM.get(store, txn, &sequence_key_of(row.signer, row.world))?)
-            }
-        };
-        let receipt = SEQ_OBSERVATION.get(store, txn, &receipt_key(&hash))?;
-        let floor = match receipt {
-            Some(SequenceReceipt(observed)) => {
-                if current.is_none_or(|current| current < row.seq)
-                    || observed.is_some_and(|floor| current.is_none_or(|now| floor > now))
-                {
-                    return Err(Error::CorruptedIndex("authority sequence high-water mark"));
-                }
-                receipted.insert(hash);
-                observed
-            }
-            // A missing receipt is never an exemption from an existing mark.
-            None => current,
-        };
-        if let Some(floor) = floor {
-            sequence_floors.insert(hash, floor);
-        }
-    }
-    let observations = AuthorityLocalObservations {
-        sequence_floors,
+    Ok(AuthorityLocalObservations {
         vouched: BTreeSet::new(),
         unvouched: false,
         policy: authority_observation_policy_in_txn(store, txn)?,
-    };
-    Ok((observations, receipted))
+    })
 }
