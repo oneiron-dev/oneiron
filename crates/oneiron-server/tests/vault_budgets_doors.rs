@@ -6,7 +6,8 @@
 //! `POST /v1/core/facade/<verb>` for `vault.budgets.lease.open`, `.lease`,
 //! `.lease.top_up`, `.hold`, `.hold.resume`, `.settlements`, `.rsi`,
 //! `.rsi.configure`, `.rsi.hold`, `.rsi.hold.resume`, `.rsi.top_up`,
-//! `.resident_shares`, `.resident_shares.set`, `self.budget`,
+//! `.resident_shares`, `vault.settings.set` (the `budget.resident_share`
+//! key), `self.budget`,
 //! `self.budget.land` and `self.billing.account.file`, plus
 //! `vault.runs.job` and `vault.runs.branches.get` for the attempt reads.
 //! Callers: the vault's embedded owner on the host root credential; the
@@ -29,7 +30,8 @@
 //!   settlements door reads one row per settled call;
 //! - the RSI line configures, holds and resumes with no provider, and a
 //!   top-up never resumes held work by itself;
-//! - a resident share sets and reads back, and strangers are refused;
+//! - a resident share (the resident's row of the `budget.resident_share`
+//!   key) sets and reads back, and strangers are refused;
 //! - `self.budget` serves only the run's dispatch actor, and a billing
 //!   account files only the caller's own.
 //!
@@ -82,7 +84,10 @@ const RSI_HOLD: &str = "vault.budgets.rsi.hold";
 const RSI_HOLD_RESUME: &str = "vault.budgets.rsi.hold.resume";
 const RSI_TOP_UP: &str = "vault.budgets.rsi.top_up";
 const RESIDENT_SHARES: &str = "vault.budgets.resident_shares";
-const RESIDENT_SHARES_SET: &str = "vault.budgets.resident_shares.set";
+const SETTING_SET: &str = "vault.settings.set";
+/// The key whose agent rows are the residents' shares (DESIGN
+/// 15-setting-primitive, stage 4).
+const RESIDENT_SHARE: &str = "budget.resident_share";
 const SELF_BUDGET: &str = "self.budget";
 const SELF_BUDGET_LAND: &str = "self.budget.land";
 const BILLING_FILE: &str = "self.billing.account.file";
@@ -149,6 +154,15 @@ enum Caller {
     /// A second stranger person on their own agent-class credential: an
     /// agent that is no run's actor.
     StrangerAgent,
+}
+
+/// A `vault.settings.set` body for `resident`'s row of [`RESIDENT_SHARE`].
+fn share_set(resident: &str, share: Value) -> Value {
+    json!({
+        "key": RESIDENT_SHARE,
+        "scope": {"kind": "agent", "id": resident},
+        "value": share,
+    })
 }
 
 fn hex(bytes: &[u8]) -> String {
@@ -885,9 +899,10 @@ fn rsi_line_configures_holds_resumes_without_provider() {
 }
 
 /// A resident share sets and reads back, and strangers are refused: the
-/// owner sets a pinned and a default share, the agent and a stranger are
-/// refused at the set with the owner refusal, and the shares still show
-/// the owner's rows. (Only the owner sets a resident's share.)
+/// owner sets a pinned and a default share, each the resident's row of
+/// [`RESIDENT_SHARE`]; the stranger person is refused at the set, the run
+/// agent's change does not apply, and the shares still show the owner's
+/// rows. (Only the owner sets a resident's share.)
 #[test]
 fn resident_share_set_reads_and_strangers_refused() {
     run_on_engine_stack("budgets-resident-shares", || async {
@@ -899,58 +914,49 @@ fn resident_share_set_reads_and_strangers_refused() {
         let set = served
             .ok(
                 Caller::Owner,
-                RESIDENT_SHARES_SET,
-                json!({
-                    "resident": stranger_hex.clone(),
-                    "units": 500,
-                    "pinned": true,
-                }),
+                SETTING_SET,
+                share_set(&stranger_hex, json!({"units": 500, "pinned": true})),
             )
             .await;
-        let rows = set["residents"].as_array().expect("residents");
-        assert_eq!(rows.len(), 1, "{set}");
-        assert_eq!(rows[0]["resident"], stranger_hex, "{set}");
-        assert_eq!(rows[0]["units"], 500, "{set}");
-        assert_eq!(rows[0]["pinned"], true, "{set}");
-        assert_eq!(rows[0]["used_units"], 0, "{set}");
+        assert_eq!(set["status"], "applied", "{set}");
+        let shares = served.ok(Caller::Owner, RESIDENT_SHARES, json!({})).await;
+        let rows = shares["residents"].as_array().expect("residents");
+        assert_eq!(rows.len(), 1, "{shares}");
+        assert_eq!(rows[0]["resident"], stranger_hex, "{shares}");
+        assert_eq!(rows[0]["units"], 500, "{shares}");
+        assert_eq!(rows[0]["pinned"], true, "{shares}");
+        assert_eq!(rows[0]["used_units"], 0, "{shares}");
 
         let other = EntityId::now().to_hex();
         let soft = served
             .ok(
                 Caller::Owner,
-                RESIDENT_SHARES_SET,
-                json!({"resident": other.clone(), "pinned": false}),
+                SETTING_SET,
+                share_set(&other, json!({"pinned": false})),
             )
             .await;
-        let rows = soft["residents"].as_array().expect("residents");
-        assert_eq!(rows.len(), 2, "{soft}");
+        assert_eq!(soft["status"], "applied", "{soft}");
+        let shares = served.ok(Caller::Owner, RESIDENT_SHARES, json!({})).await;
+        let rows = shares["residents"].as_array().expect("residents");
+        assert_eq!(rows.len(), 2, "{shares}");
         let row = rows
             .iter()
             .find(|row| row["resident"] == other)
             .expect("the soft row");
-        assert!(row["units"].is_null(), "{soft}");
-        assert_eq!(row["pinned"], false, "{soft}");
+        assert!(row["units"].is_null(), "{shares}");
+        assert_eq!(row["pinned"], false, "{shares}");
 
-        for caller in [Caller::RunAgent, Caller::Stranger] {
-            let (status, body) = served
-                .post(
-                    caller,
-                    RESIDENT_SHARES_SET,
-                    json!({
-                        "resident": stranger_hex.clone(),
-                        "units": 1,
-                        "pinned": false,
-                    }),
-                )
-                .await;
-            assert_eq!(status, StatusCode::FORBIDDEN, "{caller:?}: {body}");
-            assert_eq!(error_code(&body), Some("FORBIDDEN"), "{body}");
-            assert_eq!(
-                body["error"]["message"],
-                format!("{RESIDENT_SHARES_SET} is the vault owner's"),
-                "{body}"
-            );
-        }
+        let change = share_set(&stranger_hex, json!({"units": 1, "pinned": false}));
+        let (status, body) = served
+            .post(Caller::Stranger, SETTING_SET, change.clone())
+            .await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "the stranger: {body}");
+        assert_eq!(error_code(&body), Some("FORBIDDEN"), "{body}");
+        let (status, body) = served.post(Caller::RunAgent, SETTING_SET, change).await;
+        assert!(
+            !status.is_success() || body["status"] != "applied",
+            "the run agent's change of a share does not apply: {status} {body}"
+        );
 
         let reread = served.ok(Caller::Owner, RESIDENT_SHARES, json!({})).await;
         let rows = reread["residents"].as_array().expect("residents");

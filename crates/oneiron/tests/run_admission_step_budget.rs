@@ -31,15 +31,13 @@ use oneiron::dreamer_runner::{
 };
 use oneiron::edge::EdgeActorClass;
 use oneiron::llm;
-use oneiron::llm::run_admission::resident_doors::{
-    SetResidentShareRequest, set_resident_share_as_owner,
-};
 use oneiron::llm::run_admission::{
     Allocation, AllocationRef, AllocationRefusal, BudgetLine, HostAccount, KeyCustody, LeaseUnit,
     MemoryReceipts, OfferBinding, OfferRoute, Payer, RunAdmission, RunCall, RunDeclaration,
     RunDenied, UnitRate,
 };
 use oneiron::memory::DreamerParkCauseView;
+use oneiron::setting::{SetSetting, SetSettingOutcome, SettingCaller, SettingScope};
 use oneiron::store::model_step_submission::StepBudgetRefusal;
 use oneiron::test_doors::park_typed_wait as doors;
 use oneiron::test_doors::wake_d1_park_release as release_doors;
@@ -405,22 +403,28 @@ fn assert_still_parked(vault: &Vault, row: &AttemptRecord, what: &str) -> TestRe
     Ok(())
 }
 
-/// The owner pins `resident`'s share at `units` through the owner's door.
+/// The owner pins `resident`'s share at `units`: the resident's row of the
+/// `budget.resident_share` key.
 fn pin_share(
     vault: &Vault,
     owner: &oneiron::consent::AuthenticatedOwner,
     resident: EntityId,
     units: u64,
 ) -> TestResult {
-    set_resident_share_as_owner(
-        vault,
-        owner,
-        &SetResidentShareRequest {
-            resident: resident.to_hex(),
-            units: Some(units),
-            pinned: true,
+    let outcome = vault.set_setting(
+        SettingCaller::Owner(owner),
+        SetSetting {
+            scope: SettingScope::Agent(resident),
+            ..SetSetting::vault_value(
+                "budget.resident_share",
+                serde_json::json!({ "units": units, "pinned": true }),
+            )
         },
     )?;
+    assert!(
+        matches!(outcome, SetSettingOutcome::Applied { .. }),
+        "the owner's share write applies: {outcome:?}"
+    );
     Ok(())
 }
 
