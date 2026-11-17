@@ -124,7 +124,9 @@ fn admit_machine(rooted: &Rooted, seed: u8) -> (EntityId, SigningKey, AuthorityE
             MachineRole::Owned(MachineOwnership::Yours),
             None,
         )
-        .expect("the owner admits the machine");
+        .expect("the owner admits the machine")
+        .into_standing()
+        .expect("the owner's admission stands");
     let admission = folded
         .chains()
         .map(|(_, head)| head)
