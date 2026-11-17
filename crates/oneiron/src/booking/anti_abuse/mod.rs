@@ -55,8 +55,9 @@ pub use self::evaluation::{
     BookingAbuseVerdict, BookingRequestFacts, EmailValidationEvidence, book_rate_knobs,
     booking_email_hash, booking_ip_hash, booking_session_hash, effective_minimum_notice_secs,
     evaluate_booking_amend_request, evaluate_booking_book_request, evaluate_booking_hold_request,
-    evaluate_booking_request, evaluate_booking_slot_list_request, hold_rate_knobs,
-    quarantine_claim_id, server_submission_fingerprint, slot_list_rate_knobs,
+    evaluate_booking_request, evaluate_booking_slot_list_request, evaluate_rung2_send_request,
+    hold_rate_knobs, quarantine_claim_id, rung2_send_rate_knobs, server_submission_fingerprint,
+    slot_list_rate_knobs,
 };
 pub use self::manifest::BOOKING_ANTI_ABUSE_RULES_KEY;
 pub(crate) use self::manifest::decode_manifest_rule_field;
@@ -71,7 +72,8 @@ pub use self::quarantine_restore::{
 };
 pub use self::rate::{
     BookingRateDecision, observe_book_request, observe_hold_request, observe_quarantine_request,
-    observe_slot_list_request, read_slot_list_cache, write_slot_list_cache,
+    observe_rung2_page_send, observe_rung2_send_request, observe_slot_list_request,
+    read_slot_list_cache, write_slot_list_cache,
 };
 pub use self::rules::{
     AmendmentDirection, BookingAntiAbuseOwnerConfig, BookingAntiAbuseRule, BookingAntiAbuseRuleRow,

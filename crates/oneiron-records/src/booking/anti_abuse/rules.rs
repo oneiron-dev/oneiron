@@ -68,6 +68,15 @@ pub enum BookingAntiAbuseRule {
         enabled: bool,
         expires_after_secs: NonZeroU64,
     },
+    /// Rung 2: a visitor's press that asks the page's agent to continue by
+    /// email. A per-minute cap per IP plus a page-wide day budget, so no
+    /// stream of visitors spends the agent's sending reputation. One address
+    /// per session and the cold-send hold are law, not thresholds, so no row
+    /// carries them.
+    Rung2SendRate {
+        per_minute_per_ip: NonZeroU32,
+        per_day_per_page: NonZeroU32,
+    },
 }
 
 /// Owner-chosen seed thresholds. Every value arrives as a constructor
@@ -85,6 +94,11 @@ pub struct BookingAntiAbuseOwnerConfig {
     pub max_active_holds_per_session: u8,
     pub hold_per_minute_per_ip: NonZeroU32,
     pub tentative_confirm_ttl_secs: NonZeroU64,
+    /// The rung-2 send thresholds come as a pair: with both set the seed
+    /// stack carries a [`BookingAntiAbuseRule::Rung2SendRate`] row; with
+    /// neither it carries none, and the rung-2 guard has no bucket to spend.
+    pub rung2_send_per_minute_per_ip: Option<NonZeroU32>,
+    pub rung2_send_per_day_per_page: Option<NonZeroU32>,
 }
 
 /// A logged owner stamp: `stamp_ref` names the logged owner action, and the

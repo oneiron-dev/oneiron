@@ -123,6 +123,8 @@ fn owner_config() -> BookingAntiAbuseOwnerConfig {
         max_active_holds_per_session: 1,
         hold_per_minute_per_ip: nz32(30),
         tentative_confirm_ttl_secs: nz64(900),
+        rung2_send_per_minute_per_ip: None,
+        rung2_send_per_day_per_page: None,
     }
 }
 
@@ -293,6 +295,9 @@ fn owner_config_rows_cover_exact_ship_skip_reserve_stack() {
             BookingAntiAbuseRule::TentativeConfirmLinkReserve { enabled, .. } => {
                 link_reserve = true;
                 assert!(!enabled, "confirm-link reserve starts off");
+            }
+            BookingAntiAbuseRule::Rung2SendRate { .. } => {
+                panic!("the fixture chose no rung-2 send threshold")
             }
         }
         validate_rule_row(row).expect("seed row must validate");
