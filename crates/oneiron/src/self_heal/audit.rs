@@ -7,6 +7,7 @@
 mod contract;
 pub mod doors;
 mod scope;
+pub(crate) mod setting_keys;
 
 use std::collections::BTreeSet;
 
