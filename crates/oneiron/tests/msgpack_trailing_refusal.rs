@@ -1,7 +1,6 @@
 //! Each decoder below reads exactly one MessagePack value: a row with one byte after it, which no
-//! writer ever wrote (K-proof
-//! /Users/olety/Desktop/temp/vibe-build-20261017/lanes/kimi/OPUS-UC08-MSGPACK/legs/kproof-pr1/KPROOF.md),
-//! is refused. Red on the base, where each decoder read the value and ignored the rest.
+//! writer ever wrote (K-proof in the PR description), is refused. Red on the base, where each
+//! decoder read the value and ignored the rest.
 #![cfg(oneiron_test_support)]
 
 use oneiron::test_doors::msgpack_trailing as door;
