@@ -222,14 +222,18 @@ impl TrainingConnector for RoleTrainer {
 /// bundle whose names are plain file names, so no file lands outside the
 /// job's base directory.
 fn base_files(files: &[CheckpointFilePin]) -> oneiron::Result<&[CheckpointFilePin]> {
-    let flat = |name: &str| {
-        let mut parts = Path::new(name).components();
-        matches!(parts.next(), Some(Component::Normal(_))) && parts.next().is_none()
-    };
-    if files.is_empty() || !files.iter().all(|file| flat(&file.name)) {
+    if files.is_empty() || !files.iter().all(|file| flat_name(&file.name)) {
         return Err(invalid(
             "a role run starts from a flat checkpoint: plain file names, staged side by side",
         ));
     }
     Ok(files)
+}
+
+/// Whether a checkpoint file's name is one plain file name, so staging it
+/// under its name lands inside its directory. The role scorer stages the
+/// exported checkpoint the same way.
+pub(super) fn flat_name(name: &str) -> bool {
+    let mut parts = Path::new(name).components();
+    matches!(parts.next(), Some(Component::Normal(_))) && parts.next().is_none()
 }

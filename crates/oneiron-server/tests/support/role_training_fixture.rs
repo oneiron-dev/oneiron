@@ -1,8 +1,10 @@
 //! Shared fixture for the role-training run door tests (ROLE-TRAINING-RUN):
 //! a rooted vault served over the real facade router, with a question
 //! trainer connector and a role trainer named in its models file, an owner
-//! credential and paired agent credentials. The role trainer runs the tiny
-//! pinned worker `role_trainer_worker.py` on this host's `python3`. `seed_role_run` lays out one role run's inputs: a training
+//! credential and paired agent credentials. The role trainers run the tiny
+//! pinned worker `role_trainer_worker.py` on this host's `python3`; the
+//! scored one also names the tiny pinned scorer `role_trainer_scorer.py`.
+//! `seed_role_run` lays out one role run's inputs: a training
 //! pair in a development family, a held-out pair in a sealed family with its
 //! labelled case, a cohort cut for the seat, the reservoir export's standing
 //! disclosure grant and the owner's starting checkpoint in custody.
@@ -57,14 +59,20 @@ pub(crate) const AUTHORIZE_PATH: &str = "/v1/owner/coach/training-runs/authorize
 /// The question trainer connector the fixture's models file names: no role
 /// run is ever trained on it.
 pub(crate) const CONNECTOR: &str = "fixture-trainer";
-/// The role trainer the fixture's models file names.
+/// The role trainer the fixture's models file names, with no scorer: its
+/// returned runs hold with `training.no_evaluator`.
 pub(crate) const ROLE_TRAINER: &str = "fixture-role-trainer";
+/// The role trainer that also names the tiny pinned scorer, on the same
+/// worker, recipe and jobs root.
+pub(crate) const SCORED_ROLE_TRAINER: &str = "fixture-role-trainer-scored";
 /// The one recipe the role trainer lists, and the seeded plan's.
 pub(crate) const ROLE_RECIPE: &str = "fixture.role-adapter/1";
 /// The execute verb.
 pub(crate) const EXECUTE_VERB: &str = "vault.coach.training_runs.execute";
 /// The tiny pinned role worker, written into each fixture's directory.
 const ROLE_WORKER: &str = include_str!("role_trainer_worker.py");
+/// The tiny pinned role scorer, written into each fixture's directory.
+const ROLE_SCORER: &str = include_str!("role_trainer_scorer.py");
 
 /// One paired agent credential: its registered principal, its holder
 /// signing key, its redeemed slip and the token it presents.
@@ -131,12 +139,18 @@ fn models_text(base_url: &str, dir: &std::path::Path) -> String {
          worker = \"{role_worker}\"\njobs_root = \"{role_jobs}\"\n\
          revision = \"fixture-role-worker-r1\"\nunit_cost = 1\n\
          cost_unit = \"fixture-units\"\nservice_unit = \"gpu_wall_second\"\n\
-         recipes = [\"{ROLE_RECIPE}\"]\n",
+         recipes = [\"{ROLE_RECIPE}\"]\n\
+         [training.role_trainers.{SCORED_ROLE_TRAINER}]\npython = \"{python3}\"\n\
+         worker = \"{role_worker}\"\njobs_root = \"{role_jobs}\"\n\
+         revision = \"fixture-role-worker-r1\"\nunit_cost = 1\n\
+         cost_unit = \"fixture-units\"\nservice_unit = \"gpu_wall_second\"\n\
+         recipes = [\"{ROLE_RECIPE}\"]\nscorer = \"{role_scorer}\"\n",
         python = path("trainer-python"),
         worker = path("trainer-worker.py"),
         jobs = path("training-jobs"),
         python3 = python3().display(),
         role_worker = path("role_trainer_worker.py"),
+        role_scorer = path("role_trainer_scorer.py"),
         role_jobs = role_jobs_root(dir).display(),
     )
 }
@@ -335,6 +349,8 @@ impl Fixture {
         std::fs::create_dir_all(&trainer_dir).expect("trainer directory");
         std::fs::write(trainer_dir.join("role_trainer_worker.py"), ROLE_WORKER)
             .expect("write the role worker");
+        std::fs::write(trainer_dir.join("role_trainer_scorer.py"), ROLE_SCORER)
+            .expect("write the role scorer");
         let models = ModelsConfig::from_toml(&models_text(&model.base_url, dir.path()), None)
             .expect("models config");
         let (server, host) = AiHost::attach(server, Some(&models)).await;
