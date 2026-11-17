@@ -1,34 +1,19 @@
-//! A parked conflict's settlement in pages (Rule 5, FIX 7636, FIX 7637).
-//! Every keepable member and retained alternative is offered, and every
-//! value rides whole: nothing is dropped or cut for room. A conflict whose
-//! whole ask fits the ladder's state bound with at most
-//! [`MAX_KEEP_OPTIONS`] keep options is asked once, as before. Any other is
-//! split into pages in its own order, each one ask of its own, and the
-//! pages' answers aggregate to one outcome:
+//! The engine's single bound settlement ask and shared page splitting.
 //!
-//! - a page that escalates, abstains or answers outside its options leaves
-//!   the conflict parked, as one escalating ask does;
-//! - every page holding both is hold both, every page dismissing is dismiss;
-//! - otherwise one final ask chooses among hold both, dismiss, escalate and
-//!   a Keep of each member a page kept, those members whole and each page's
-//!   answer beside them, and its answer is the outcome. Past
-//!   [`MAX_KEEP_OPTIONS`] kept members that round pages again, by count.
-//!
-//! The split itself is shared: a Dreamer decision pack whose state does not
-//! fit one call pages its rows the same way (`executor`). A page wider than
-//! the bound (one row wider than a page) is measured at
-//! `limits.maintenance_text_bytes` and goes whole.
+//! `oneiron_dreamer::conflict_settle` owns the rule loop over whole asks,
+//! pages and rounds. The engine builds each ask and runs it for bound
+//! `ai.verdict`, with model rungs reading call-local labels. The shared
+//! splitter also serves extraction, identity and merge decisions. Every
+//! row rides whole; a singleton wider than the state bound is measured at
+//! `limits.maintenance_text_bytes`, never cut.
 
-use super::decision_projection::{AskPart, SettleAsk, SettleRow, settle_rows, state_bytes};
-use super::{
-    ConflictSettleDecisions, ConflictSettlement, DISMISS, HOLD_BOTH, KEEP_PREFIX, MAX_KEEP_OPTIONS,
-    OpenConflict,
-};
+use super::decision_projection::SettleAsk;
+use super::{ConflictSettleDecisions, DISMISS, HOLD_BOTH, KEEP_PREFIX};
 use crate::dreamer_consolidation::call_labels::{CallLabelMap, LabelKind, LabelledRungs};
 use crate::error::Result;
 use crate::limit_ask::EngineLimit;
 use crate::llm::decision::TypedDecision;
-use crate::model_decision::{DecisionAnswer, MAX_DECISION_STATE_BYTES, Reversibility};
+use crate::model_decision::{MAX_DECISION_STATE_BYTES, Reversibility};
 use crate::{EntityId, Vault};
 
 /// `value`'s serialized length.
@@ -83,14 +68,6 @@ pub(crate) enum PageAnswer {
 }
 
 impl PageAnswer {
-    fn of(settlement: ConflictSettlement) -> Self {
-        match settlement {
-            ConflictSettlement::Keep(id) | ConflictSettlement::ApproveAndKeep(id) => Self::Keep(id),
-            ConflictSettlement::HoldBoth => Self::HoldBoth,
-            ConflictSettlement::Dismiss => Self::Dismiss,
-        }
-    }
-
     /// The answer as a call shows it: a Keep by the member's label there, or
     /// `keep` when the call does not show that member.
     pub(super) fn shown(self, labels: &CallLabelMap) -> String {
@@ -102,88 +79,6 @@ impl PageAnswer {
             Self::HoldBoth => HOLD_BOTH.to_owned(),
             Self::Dismiss => DISMISS.to_owned(),
         }
-    }
-}
-
-/// How many of `rows` a Keep may name.
-fn keeps(rows: &[&SettleRow]) -> usize {
-    rows.iter().filter(|row| row.keep).count()
-}
-
-/// Whether a page holding `page` takes `row` beside it: past
-/// [`MAX_KEEP_OPTIONS`] keep options a keepable row opens the next page.
-fn admits(page: &[&SettleRow], row: &SettleRow) -> bool {
-    !row.keep || keeps(page) < MAX_KEEP_OPTIONS
-}
-
-/// Rules on `conflict` through `decisions`, in pages when one ask does not
-/// hold it (the module's rule): `None` when it stays parked.
-pub(super) fn rule(
-    decisions: &ConflictSettleDecisions<'_>,
-    vault: &Vault,
-    conflict: &OpenConflict,
-) -> Result<Option<ConflictSettlement>> {
-    let rows = settle_rows(vault, conflict)?;
-    let mut evidence = vec![conflict.marker];
-    evidence.extend(conflict.members.iter().copied());
-    let mut asked: Vec<&SettleRow> = rows.iter().collect();
-    let mut before: Vec<PageAnswer> = Vec::new();
-    let mut round = 0;
-    loop {
-        let whole = AskPart {
-            at: None,
-            before: &[],
-        };
-        let pages = if round > 0 {
-            split_pages(0, &asked, |_, _| 0, admits)
-        } else if keeps(&asked) <= MAX_KEEP_OPTIONS
-            && state_bytes(conflict, &asked, &whole) <= MAX_DECISION_STATE_BYTES
-        {
-            vec![std::mem::take(&mut asked)]
-        } else {
-            let paged = AskPart {
-                at: Some((0, 0, 2)),
-                before: &[],
-            };
-            let frame = state_bytes(conflict, &[], &paged);
-            split_pages(
-                frame,
-                &asked,
-                |_, row| row.bytes().saturating_add(1),
-                admits,
-            )
-        };
-        let paged = pages.len() > 1 || round > 0;
-        let mut answers = Vec::with_capacity(pages.len());
-        for (page, page_rows) in pages.iter().enumerate() {
-            let part = AskPart {
-                at: paged.then_some((round, page, pages.len())),
-                before: &before,
-            };
-            let ask = SettleAsk::over(conflict, &decisions.wording, page_rows, &part)?;
-            let Some(settlement) = run(decisions, vault, &ask, &evidence)? else {
-                return Ok(None);
-            };
-            if pages.len() == 1 {
-                return Ok(Some(settlement));
-            }
-            answers.push(PageAnswer::of(settlement));
-        }
-        if answers.iter().all(|answer| *answer == PageAnswer::HoldBoth) {
-            return Ok(Some(ConflictSettlement::HoldBoth));
-        }
-        if answers.iter().all(|answer| *answer == PageAnswer::Dismiss) {
-            return Ok(Some(ConflictSettlement::Dismiss));
-        }
-        asked = answers
-            .iter()
-            .filter_map(|answer| match answer {
-                PageAnswer::Keep(id) => rows.iter().find(|row| row.id == *id),
-                PageAnswer::HoldBoth | PageAnswer::Dismiss => None,
-            })
-            .collect();
-        before = answers;
-        round += 1;
     }
 }
 
@@ -211,20 +106,4 @@ pub(crate) fn run_ask(
         Reversibility::OutboundEffect,
         decisions.deadline,
     )
-}
-
-/// Maps [`run_ask`]'s canonical Choice answer to a settlement. Keeping one
-/// closes the others, so a cut abstains rather than taking a held answer.
-/// Other answer kinds leave the conflict parked.
-fn run(
-    decisions: &ConflictSettleDecisions<'_>,
-    vault: &Vault,
-    ask: &SettleAsk,
-    evidence: &[EntityId],
-) -> Result<Option<ConflictSettlement>> {
-    let decision = run_ask(decisions, vault, ask, evidence)?;
-    let DecisionAnswer::Choice(answer) = &decision.answer else {
-        return Ok(None);
-    };
-    Ok(ask.settlement(answer))
 }
