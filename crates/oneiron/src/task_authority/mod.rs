@@ -1122,36 +1122,92 @@ impl Vault {
     /// leaves no twin, and a second call finds nothing left to adopt. Returns how many twins
     /// it wrote.
     pub fn adopt_unsigned_task_facts(&self) -> Result<usize> {
-        self.with_write_txn(|wtxn| {
-            if !fact_proof::signs_in_txn(self, wtxn)? {
-                return Ok(0);
+        self.with_write_txn(|wtxn| self.adopt_task_facts_in_txn(wtxn))
+    }
+
+    /// [`Self::adopt_unsigned_task_facts`] in the caller's transaction. It twins every fact
+    /// the written-here index holds that this install's carrier did not sign and that does
+    /// not prove itself here: an unsigned one, and one an owner's restore landed under
+    /// another machine's signature ([`Self::restore_archived_task_fact_in_txn`]). A twin
+    /// carries this install's signature, so a second call twins nothing.
+    pub(crate) fn adopt_task_facts_in_txn(&self, wtxn: &mut heed::RwTxn<'_>) -> Result<usize> {
+        if !fact_proof::signs_in_txn(self, wtxn)? {
+            return Ok(0);
+        }
+        let proof = fact_proof::FactProof::in_txn(&self.store, wtxn)?;
+        let mut adopted = 0;
+        for (fact_ref, _) in fact_proof::facts_written_here_in(&self.store, wtxn)? {
+            let Some(raw) = self.get_raw_in(wtxn, &fact_ref)? else {
+                continue;
+            };
+            if EntityMetadataHeader::parse(&raw)
+                .is_none_or(|header| header.entity_type != ENTITY_TYPE_TASK)
+            {
+                continue;
             }
-            let mut adopted = 0;
-            for (fact_ref, _) in fact_proof::facts_written_here_in(&self.store, wtxn)? {
-                let Some(raw) = self.get_raw_in(wtxn, &fact_ref)? else {
-                    continue;
-                };
-                if EntityMetadataHeader::parse(&raw)
-                    .is_none_or(|header| header.entity_type != ENTITY_TYPE_TASK)
-                {
-                    continue;
-                }
-                let body = &raw[ENTITY_METADATA_HEADER_LEN..];
-                if !fact_proof::written_here_in(&self.store, wtxn, &fact_ref, body)? {
-                    continue;
-                }
-                let carried = decode_carried_task_authority_fact_body(body)?;
-                if carried.carrier.is_some() {
-                    continue;
-                }
-                // The same fact on a new row: it counts exactly when the
-                // unsigned row did, so it asks no door's rule again.
-                write_task_authority_fact_in_txn(self, wtxn, carried.fact)?;
-                fact_proof::forget_written_fact_in_txn(&self.store, wtxn, &fact_ref)?;
-                adopted += 1;
+            let body = &raw[ENTITY_METADATA_HEADER_LEN..];
+            if !fact_proof::written_here_in(&self.store, wtxn, &fact_ref, body)? {
+                continue;
             }
-            Ok(adopted)
-        })
+            let carried = decode_carried_task_authority_fact_body(body)?;
+            if let Some(carrier) = &carried.carrier
+                && (fact_proof::carried_by_this_install_in_txn(self, wtxn, carrier)?
+                    || proof.proves(
+                        &fact_ref,
+                        &encode_task_authority_fact_body(&carried.fact),
+                        carrier,
+                    ))
+            {
+                continue;
+            }
+            // The same fact on a new row: it counts exactly when the
+            // indexed row did, so it asks no door's rule again.
+            write_task_authority_fact_in_txn(self, wtxn, carried.fact)?;
+            fact_proof::forget_written_fact_in_txn(&self.store, wtxn, &fact_ref)?;
+            adopted += 1;
+        }
+        Ok(adopted)
+    }
+
+    /// The owner's restore of one archived TASK authority fact (FIX
+    /// OWNER-RESTORE-REFUSES-TASK-AUTHORITY-FACTS; TASK-FACT-ARCHIVE-CROSSING = A: archives
+    /// keep the facts). The fact lands at its archived id with its archived body, byte for
+    /// byte, born at `birth_facet`, its archived birth; its `ScopedTo` link to its TASK comes
+    /// back with the archive's other links. The body must read as a fact under the current
+    /// schema, an Owner fact must derive its task's id from its maker, and the row's times
+    /// must be the fact's own, as its door writes them; any other refuses the import.
+    ///
+    /// The owner's restore counts the fact as a local write (ASK
+    /// OWNER-RESTORE-TASK-FACT-COUNT, option A): it enters this install's written-here
+    /// index, and the import's [`Self::adopt_task_facts_in_txn`] then twins it under this
+    /// install's signature, so it counts on every device of the vault. The fold still
+    /// judges it as any fact: maker derive, actor rule and owner fork.
+    pub(crate) fn restore_archived_task_fact_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        fact_ref: &EntityId,
+        body: &[u8],
+        occurred: TimeRange,
+        learned_at: u64,
+        birth_facet: Option<EntityId>,
+    ) -> Result<()> {
+        let carried = decode_carried_task_authority_fact_body(body)?;
+        if !carried.fact.commits_to_its_task() {
+            return Err(Error::InvariantViolation(
+                "task authority fact's maker does not derive its task id",
+            ));
+        }
+        let at = carried.fact.occurred_at;
+        if occurred.start != at || occurred.end != at || learned_at != at {
+            return Err(Error::Record(RecordError::InvalidTaskBody(
+                "archived task authority fact times",
+            )));
+        }
+        self.batch_in()
+            .mask(birth_facet)
+            .put_task_fact(fact_ref, body, at)
+            .apply(wtxn)?;
+        fact_proof::record_written_fact_in_txn(&self.store, wtxn, fact_ref, body)
     }
 
     /// The authority one TASK's replicated facts prove.

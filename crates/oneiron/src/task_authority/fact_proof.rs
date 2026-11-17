@@ -86,6 +86,16 @@ pub(super) fn signs_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<bool>
         && signer_in_txn(vault, txn)?.is_some())
 }
 
+/// Whether `carrier` names this install's machine, the id `txn` holds: a fact this install's
+/// door signed, which a twin of its own would not prove any further.
+pub(super) fn carried_by_this_install_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    carrier: &CarrierSignature,
+) -> Result<bool> {
+    Ok(crate::identity::read_machine_id_in_txn(vault, txn)? == Some(carrier.machine))
+}
+
 /// The signer the host loaded for the machine id `txn` holds. A signer loaded for an id
 /// since dropped would sign as a machine this install no longer is, so it is none.
 fn signer_in_txn(
