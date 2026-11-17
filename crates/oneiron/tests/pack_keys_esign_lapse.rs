@@ -206,6 +206,7 @@ fn fixture_first_asked(first: FirstAsked) -> TestResult<Fixture> {
         &SigningAction::Complete {
             consent: true,
             next: None,
+            check_in_ref: None,
         },
         SigningCaller::Agent,
         None,

@@ -203,6 +203,7 @@ impl Sent {
             &SigningAction::Complete {
                 consent: true,
                 next: None,
+                check_in_ref: None,
             },
         )
     }

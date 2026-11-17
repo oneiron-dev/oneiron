@@ -157,6 +157,27 @@ pub struct EsignSigningEvidence {
     pub disclosure_version: Option<String>,
     pub consent: bool,
     pub intent: EsignSigningIntent,
+    /// The check-in decision a credentialed person's sign act as the vault's
+    /// principal went on (ROLES-CHECKIN 2k6b): the Owner's own proof, or a
+    /// member's spent check-in. None for a signature in the signer's own
+    /// name, a bearer's or an agent's, and on every row written before.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub check_in: Option<EsignCheckInDecision>,
+}
+
+/// A sign act's check-in decision, field for field as the engine's
+/// `check_in::CheckInDecision` records it: the act class, the role it was
+/// judged under, the mode, why it went and the check-in it spent.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EsignCheckInDecision {
+    pub act_class: String,
+    pub role: String,
+    pub mode: Option<String>,
+    pub basis: String,
+    pub check_in: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub requester: Option<String>,
 }
 /// The predicate of the claim that opens a signing document's ledger.
 pub const DRAFT_PREDICATE: &str = "esign.draft";

@@ -206,6 +206,7 @@ fn signing_evidence() -> EsignSigningEvidence {
         disclosure_version: None,
         consent: true,
         intent: EsignSigningIntent::Direct,
+        check_in: None,
     }
 }
 
