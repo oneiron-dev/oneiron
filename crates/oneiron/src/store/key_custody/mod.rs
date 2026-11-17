@@ -65,6 +65,8 @@ pub(crate) use self::files::{EntryState, LocalCustody, custody_present};
 pub(crate) use self::folder::FolderTarget;
 pub(crate) use self::fork::{CustodyPlan, ForkedCustodyDir, Requirement};
 pub(crate) use self::head::{CUSTODY_HEAD_WRAP_CONTEXT, CustodyRecipients};
+#[cfg(oneiron_test_support)]
+pub(crate) use self::targets::drain_ack_digest_for_test;
 // FIX 6706 (L04 half): one world's pads sealed for its admitted machines and
 // roots; L03's pad hydration exports, opens and installs them.
 #[allow(
