@@ -729,6 +729,7 @@ fn every_memory_read_verb_returns_a_receipt() {
             )],
             occurred_at: 100,
             thread_audience: None,
+            project: None,
             assertions: Default::default(),
         })
         .expect("witness");
@@ -916,6 +917,7 @@ fn a_deleted_shell_is_absent_from_every_memory_read() {
             messages: vec![witness_message(0, WitnessAuthor::User, "Shelly waves")],
             occurred_at: 100,
             thread_audience: None,
+            project: None,
             assertions: Default::default(),
         })
         .expect("witness");
@@ -1115,6 +1117,7 @@ fn witness_and_session_witness_run_one_program() {
             messages: vec![message],
             occurred_at: AT,
             thread_audience: None,
+            project: None,
             assertions: Default::default(),
         }
     };
