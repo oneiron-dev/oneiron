@@ -19,6 +19,7 @@ use std::collections::BTreeSet;
 use std::path::PathBuf;
 
 use heed::{RoTxn, RwTxn};
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
 use zeroize::Zeroizing;
 
 use crate::entity_id::EntityId;
@@ -29,9 +30,6 @@ use crate::store::key_custody::{
     erasable_refs_of_in_txn, put_erasable_ref_in_txn, retirement_in_txn,
     stage_erasable_retirement_in_txn,
 };
-
-/// The context an artifact's 16-byte id derives its key incarnation under.
-const DRAFTER_INCARNATION_CONTEXT: &str = "oneiron/drafter-artifact/erasable-incarnation/v1";
 
 /// The directory under the vault root that sealed drafter artifacts live in.
 const DRAFTER_ARTIFACT_DIR: &str = "drafter-artifacts";
@@ -79,9 +77,19 @@ impl Store {
     }
 }
 
-/// The incarnation of the key that seals artifact `artifact`.
+/// The incarnation of the key that seals artifact `artifact`
+/// (`purposes::store::DRAFTER_INCARNATION`).
 fn incarnation(artifact: &[u8; 16]) -> [u8; 32] {
-    blake3::derive_key(DRAFTER_INCARNATION_CONTEXT, artifact)
+    LegacyDigest::new(purposes::store::DRAFTER_INCARNATION)
+        .raw(artifact)
+        .finish()
+}
+
+/// [`incarnation`] for the K door
+/// (`test_doors::fingerprint_keep_store_digests`). Not API.
+#[cfg(oneiron_test_support)]
+pub(crate) fn incarnation_for_test(artifact: &[u8; 16]) -> [u8; 32] {
+    incarnation(artifact)
 }
 
 fn unknown_key() -> Error {

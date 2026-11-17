@@ -18,10 +18,10 @@ use crate::skill::learning_judge::HONESTY_AXIS;
 use crate::skill_optimize::{
     AxisScores, GoalAxisBandit, GoalAxisPlan, GoalAxisReport, OnlineAxisOutcome, measure_goal_axes,
 };
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
 use serde::{Deserialize, Serialize};
 
 const LIVE_PREFIX: &[u8] = b"skill_optimize/live_axes/v2\0";
-const PLAN_DOMAIN: &[u8] = b"skill_optimize:live_axis_plan:v1\0";
 const LABEL: &str = "skill live goal-axis row";
 /// The mandatory cost axis the scorer reports in minutes on every case.
 const HUMAN_MINUTES: &str = "human_minutes";
@@ -126,22 +126,26 @@ pub(super) fn goal_axis_plan(definition: &GoalDefinition, pulls_per_axis: u32) -
 }
 
 /// Which axes a plan measures where; the pull cap is a budget, not part of
-/// what a report is about.
+/// what a report is about. A live row stores it and a report binds only
+/// while it is equal, so it keeps its bytes (K, PLAN-UC-04 stage 6.3).
 fn plan_digest(plan: &GoalAxisPlan) -> String {
-    let mut hash = Sha256::new();
-    hash.update(PLAN_DOMAIN);
+    let mut hash = LegacyDigest::new(purposes::skill_optimize::LIVE_AXIS_PLAN);
     for (side, axes) in [
         (&b"offline"[..], &plan.offline),
         (&b"online"[..], &plan.online),
     ] {
-        hash.update(side);
-        hash.update(b"\0");
+        hash.raw(side).raw(b"\0");
         for axis in axes {
-            hash.update(axis.as_bytes());
-            hash.update(b"\0");
+            hash.raw(axis.as_bytes()).raw(b"\0");
         }
     }
-    bytes_to_hex_lower(&hash.finalize())
+    bytes_to_hex_lower(&hash.finish())
+}
+
+/// The digest of `plan`, as a live goal-axis row stores it.
+#[cfg(oneiron_test_support)]
+pub(crate) fn live_axis_plan_digest_for_test(plan: &GoalAxisPlan) -> String {
+    plan_digest(plan)
 }
 
 /// The measurement plan of a skill's effective goal.

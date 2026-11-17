@@ -47,6 +47,8 @@ pub mod refusal_wire;
 pub mod replay_admission;
 pub mod residence_connection;
 pub mod resident_pump;
+#[cfg(target_os = "linux")]
+pub mod sandbox_vendor;
 pub mod seal_judge;
 pub mod signing_session;
 pub mod siwc_seat;
