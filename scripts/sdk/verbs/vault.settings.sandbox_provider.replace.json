@@ -1,6 +1,6 @@
 {
   "name": "vault.settings.sandbox_provider.replace",
-  "description": "Replaces the owner's sandbox provider switch under the owner proof: ours, or a named vendor. A vendor this host cannot serve refuses each run, typed, and ours never runs in its place.",
+  "description": "Replaces the owner's sandbox provider switch under the owner proof: ours, or a named vendor and the custody secret holding the owner's key for it. A vendor this host cannot serve refuses each run, typed; ours never runs in its place.",
   "input": "crate::settings::sandbox_provider::SandboxProviderSetting",
   "output": "crate::settings::sandbox_provider::SandboxProviderAnswer",
   "call": "crate::settings::sandbox_provider::replace_sandbox_provider_setting_embedded(memory, input)?",
