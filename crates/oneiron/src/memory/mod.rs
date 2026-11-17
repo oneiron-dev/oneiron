@@ -27,6 +27,7 @@ pub mod affect;
 mod answer_boundary;
 mod archive_delete_wire;
 mod archive_purge;
+pub(crate) mod archive_restore;
 mod artifact_hosting_doors;
 mod asset_doors;
 mod asset_resolve;
@@ -63,6 +64,7 @@ pub(crate) use conflict_settle::conflict_review_held_in;
 pub mod consolidation;
 pub mod consolidation_frontier;
 pub mod coping_doors;
+mod coping_lookup;
 mod core_write_doors;
 pub mod device_succession;
 mod diagnostics;
@@ -72,6 +74,7 @@ mod edge_provenance;
 mod people_verbs;
 mod plugin_sections;
 pub mod run_review;
+mod say;
 mod settled_vad;
 mod skill_authoring;
 pub mod wellness_doors;
@@ -137,6 +140,7 @@ mod read_lane;
 mod read_selection;
 mod reads;
 mod recall;
+pub(crate) mod recall_replay;
 pub use recall::RecallRequest;
 pub mod repo_doors;
 pub(crate) mod repo_secret_reads;
@@ -158,7 +162,7 @@ pub(crate) use shape_doors::AFTER_NEEDS_HANDLE;
 pub use shape_doors::DescribeRequest;
 mod signal_extraction;
 mod skill_bodies;
-mod structural;
+pub(crate) mod structural;
 mod subscriptions;
 mod support;
 pub(crate) use support::TranscriptRetainedCaller;
@@ -202,7 +206,8 @@ pub use can::{CanAnswer, CanEffectAnswer, CanEffectVerdict, CanVerbAnswer, CanVe
 pub use chat::{ChatAbstentionReason, ChatDepth, ChatOptions, ChatResponse, ChatScope};
 pub use chat_composer::{ChatComposeRequest, ChatComposer, ComposedChatAnswer};
 pub use claim_admission::{
-    AllRelationships, ClaimRelationships, ClaimScope, ScopedClaimInput, ScopedCommitRequest,
+    AllRelationships, ClaimRelationships, ClaimScope, ClaimScopeInput, ScopedClaimInput,
+    ScopedCommitRequest,
 };
 pub(crate) use claim_conflict::claim_conflict_ruling_gate_refs_in_txn;
 pub use claim_conflict::{
@@ -245,8 +250,7 @@ pub use dreamer_wake_read::{
     DreamerWakeLiveCallView, DreamerWakeLiveView, DreamerWakeResumeView, DreamerWakeView,
 };
 pub use edge_provenance::{
-    EdgeProvenanceActorClass, EdgeProvenanceLifecycle, EdgeProvenanceRequest,
-    EdgeProvenanceSupersession, EdgeProvenanceView,
+    EdgeProvenanceLifecycle, EdgeProvenanceRequest, EdgeProvenanceSupersession, EdgeProvenanceView,
 };
 pub use entity_erase::{
     EntityEraseOutcome, EraseOptions, EraseReason, SameBytesHold, SameBytesOutcome,
@@ -258,7 +262,7 @@ pub use export::{
 pub use export_audit::{ExportAuditScope, ExportReceipt};
 pub(crate) use export_audit::{
     ExportCopy, owner_copy_in_txn, record_export, record_raw_export, record_raw_json_export,
-    turn_thread_root,
+    turn_thread_root, whole_vault_exported_since_in_txn,
 };
 pub use export_kept::KeptExportLapse;
 pub use export_transfer_read::{
@@ -267,6 +271,7 @@ pub use export_transfer_read::{
 };
 pub use expression_preference::{
     ExpressionPreferenceInput, ExpressionPreferenceReceipt, ExpressionPreferenceView,
+    ExpressionPreferencesRequest,
 };
 pub(crate) use key_value::address_parses as key_value_address_parses;
 pub use key_value::{
@@ -279,7 +284,7 @@ pub use oneiron_contracts::memory::{
     MEMORY_CODE_INVALID_STATE, MEMORY_CODE_LEASE_REQUIRED, MEMORY_CODE_MODEL_UNAVAILABLE,
     MEMORY_CODE_NOT_FOUND, MEMORY_CODE_OFF_RECORD_SESSION_DOOR, MEMORY_CODE_OWNER_BINDING_REQUIRED,
     MEMORY_CODE_PACED_HOLD, MEMORY_CODE_PENDING_ASK, MEMORY_CODE_VAULT_LOCKED_SINGLE_WRITER,
-    MEMORY_CODE_WRONG_ROOT, MemoryError, MemoryGateDenial, MemoryPolicyDenial,
+    MEMORY_CODE_WRONG_ROOT, MemoryError, MemoryGateDenial, MemoryPending, MemoryPolicyDenial,
     MemoryPolicyExceptionProposal, MemoryResult, MemoryWrongRoot,
 };
 pub(crate) use people_verbs::grant_requested_scope;
@@ -294,7 +299,12 @@ pub use plugin_sections::{
     PluginSectionPackRow, PluginSectionPendingRow, PluginSectionProposeRequest,
     PluginSectionRevokeRequest, PluginSectionRevoked, PluginSectionSuggestRequest,
     PluginSectionSuggestion, PluginSectionSuggestionState, PluginSectionTargetInput,
-    PluginSectionsView, PluginSuggestionsSetRequest, PluginSuggestionsView,
+    PluginSectionsView,
+};
+pub(crate) use say::MessageMarks;
+pub use say::{
+    SAY_NEEDS_A_DESTINATION, SAY_TASK_UNASSIGNED, SAY_UNKNOWN_DESTINATION, SayAnswer, SayKind,
+    SayReceipt, SayRequest,
 };
 pub use signal_extraction::{
     ProspectiveQueryHint, SignalExtractionClaim, SignalExtractionMessage, SignalExtractionRequest,
@@ -354,7 +364,8 @@ pub use scoped_export::{
     ScopedExportRecord, ScopedExportRequest,
 };
 pub use search_hybrid::{
-    HybridPprQuery, HybridRankReplay, HybridSearchHit, HybridSearchRequest, HybridTemporalQuery,
+    HybridPhoneticVectorQuery, HybridPprQuery, HybridRankReplay, HybridSearchHit,
+    HybridSearchRequest, HybridTemporalQuery,
 };
 pub use search_temporal::{
     TemporalSearchHit, TemporalSearchRange, TemporalSearchRequest, TemporalSearchResult,
@@ -425,8 +436,9 @@ pub(crate) use witness::{
 pub(crate) use booking_publication::verify_public_booking_owner_in_txn;
 pub(crate) use credential_key::{actor_is_vault_owner_in_txn, owner_exemption_holds_in_txn};
 pub(crate) use support::{
-    facade_provenance, hard_deleted_refusal, verify_actor_binding, verify_actor_binding_in_txn,
-    verify_deletion_authority_in_txn, verify_owner_actor_binding_in_txn,
+    embedded_owner_shortcut_holds_in_txn, facade_provenance, hard_deleted_refusal,
+    verify_actor_binding, verify_actor_binding_in_txn, verify_deletion_authority_in_txn,
+    verify_owner_actor_binding_in_txn,
 };
 pub(crate) use witness::{
     ArchivedMessage, ArchivedMessageAdmission, ArchivedMessageLink, admitted_foreign,

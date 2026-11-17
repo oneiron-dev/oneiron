@@ -22,11 +22,13 @@ const UNPROCESSED_SCAN_PAGE: usize = 256;
 /// Admitted candidates one call collects before the walk stops (FIX 9449):
 /// paging ends once this many candidates have passed every filter, then the
 /// collected set sorts and truncates to this length, so priority is exact
-/// only within the collected set.
-const UNPROCESSED_LIMIT: usize = 128;
+/// only within the collected set. The owner moves it with
+/// `context_board.unprocessed.max_items`.
+pub(super) const UNPROCESSED_LIMIT: usize = 128;
 
-/// Every unprocessed item `read` admits, highest priority first, up to
-/// [`UNPROCESSED_LIMIT`] collected candidates.
+/// Every unprocessed item `read` admits, highest priority first, up to the
+/// owner's `context_board.unprocessed.max_items` collected candidates
+/// ([`UNPROCESSED_LIMIT`] by default).
 ///
 /// A candidate is the subject CLAIM of an Active `affect.claim_vad` state,
 /// the VAD consolidated over the turns that mention it, when `read` admits
@@ -36,12 +38,15 @@ const UNPROCESSED_LIMIT: usize = 128;
 /// processed, when an admitted Active `boundary.*` claim names it, or when
 /// its WORLD reads as fiction. Processed, boundary and fiction evidence the
 /// caller's read cannot admit counts as absent, so the candidate still
-/// shows. The walk stops once [`UNPROCESSED_LIMIT`] candidates have passed
+/// shows. The walk stops once that many candidates have passed
 /// every filter, so priority is exact only within the collected set. Order
 /// (CALL P3-a): arousal descending, then mention count (the state's
 /// distinct evidence turns) descending, then older first, then id; no
 /// weighted score.
 pub fn unprocessed_items(read: &ScopedRead<'_>, now: u64) -> Result<Vec<UnprocessedItem>> {
+    let max_items =
+        super::setting_keys::read_count(read.vault(), &super::setting_keys::UNPROCESSED_MAX_ITEMS)
+            as usize;
     let store = &read.vault().store;
     let mut seen: BTreeSet<EntityId> = BTreeSet::new();
     let mut collected: Vec<(f32, u64, u64, EntityId, ClaimBody)> = Vec::new();
@@ -143,7 +148,7 @@ pub fn unprocessed_items(read: &ScopedRead<'_>, now: u64) -> Result<Vec<Unproces
                 });
             }
             collected.extend(candidates);
-            if collected.len() >= UNPROCESSED_LIMIT {
+            if collected.len() >= max_items {
                 break;
             }
         }
@@ -159,7 +164,7 @@ pub fn unprocessed_items(read: &ScopedRead<'_>, now: u64) -> Result<Vec<Unproces
             .then_with(|| left.2.cmp(&right.2))
             .then_with(|| left.3.cmp(&right.3))
     });
-    collected.truncate(UNPROCESSED_LIMIT);
+    collected.truncate(max_items);
     Ok(collected
         .into_iter()
         .map(|(_, _, learned_at, id, claim)| UnprocessedItem {

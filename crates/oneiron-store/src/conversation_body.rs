@@ -61,6 +61,11 @@ pub struct ConversationBody {
     /// Absent from the bytes while it is the default.
     #[serde(skip_serializing_if = "RoomPinPolicy::is_members")]
     pub pin_policy: RoomPinPolicy,
+    /// Whether every add to the room asks the room's owner, whoever adds
+    /// (ARCH-0082 #closed-room); only the room's closed-setting door writes
+    /// it. Absent from the bytes while false.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub closed: bool,
     #[serde(flatten)]
     pub extra: BTreeMap<String, rmpv::Value>,
 }
