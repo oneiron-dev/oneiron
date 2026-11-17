@@ -2,22 +2,23 @@
 //! proof shapes, the solved-page check on the proposing session, and the
 //! no-model replay on a fresh guest that files the program.
 
-use super::live_run::{self, SecretArg};
-use super::{
-    AdmissionRefusal, Admitted, ReplayGuest, SupersedeOutcome, SupersedeRefusal, WorkflowSeed,
-    secret_slots, validate_replay_args,
-};
+use super::live_run::SecretArg;
+use super::{AdmissionRefusal, ReplayGuest, SupersedeOutcome, WorkflowSeed};
 #[cfg(feature = "driver")]
-use super::{by_locator, missed};
+use super::{
+    Admitted, SupersedeRefusal, by_locator, live_run, missed, secret_slots, validate_replay_args,
+};
 #[cfg(feature = "driver")]
 use crate::{
-    BatchInput, BrowserDriver, CheckReceipt, NoWriter, RoutineDecider, SubgoalStatus, SwitchStage,
+    BatchInput, BrowserDriver, BrowserError, CheckReceipt, NoWriter, RoutineDecider, SubgoalStatus,
+    SwitchStage,
 };
-use crate::{BatchOutput, BatchStep, BrowserError, EffectReceipt, ExpectInput, SnapshotBounds};
+use crate::{BatchOutput, BatchStep, EffectReceipt, ExpectInput, SnapshotBounds};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
+#[cfg(feature = "driver")]
 use super::program::{WorkflowLibrary, WorkflowProgram};
 
 /// Offers a solved run's program to the library. `args` are the values the
