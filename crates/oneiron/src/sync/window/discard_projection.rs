@@ -20,8 +20,11 @@
 //! still holds. The version vector the projection kept is filed as the
 //! window's floor (`SYNC_BASE_WINDOW_DISCARD`), and a send to a home below
 //! it waits. A shared value stays whole; what the projection cannot place
-//! (a NOTE carrier that does not decode, a root outside the window's maps)
-//! defers the window, never counts as erased.
+//! (a NOTE carrier that does not decode, a root outside the window's maps,
+//! a parted row whose parts join to a row its key does not name, a whole
+//! row filed under a key it does not name) defers the window, never counts
+//! as erased. Bytes that read as no row prove no other row: a parted one
+//! places by its key, and a whole one is kept under no one, as before.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -32,7 +35,8 @@ use loro::{LoroDoc, LoroValue, VersionVector};
 use super::super::bridge::parse_edge_key;
 use super::super::carrier_parts::part_key;
 use super::super::checkpoint_payload::{
-    Holder, KindPlacement, Placement, SyncPayloadOwners, WINDOW_ROOTS, root_entry,
+    Holder, KindPlacement, PartedRows, Placement, SyncPayloadOwners, SyncUnclassified,
+    WINDOW_ROOTS, root_entry,
 };
 use super::super::loro_support::{doc_from_snapshot, import_doc};
 use super::super::note::discard::{NoteAtom, is_note_carrier_map, project_atom, project_current};
@@ -57,11 +61,25 @@ use crate::store::checkpoint_payload::rows::OwnerRef;
 const BASE_WINDOW_DISCARD: SideTable<String, Vec<u8>, Raw> =
     SideTable::new(&side_table::SYNC_BASE_WINDOW_DISCARD);
 
+/// A parted row filed under another row's key: its manifest and parts are
+/// placed by the key's holder, so only the joined row shows whose they are
+/// (UC-10 PR 1).
+const UNBOUND_PARTED_ROW: &str = "a parted row whose parts join to a row its key does not name";
+
+/// A whole row whose own key differs from the key that files it: the key
+/// and the row name two rows, and the projection cannot tell which one the
+/// value goes with (FIX SYNC-DISCARD-KEEPS-UNBOUND-WHOLE-ROW).
+const UNBOUND_WHOLE_ROW: &str = "a whole row filed under a key it does not name";
+
+/// A part: its root map and its digest key. A manifest lists parts of its
+/// own map only, as the checkpoint capture's part holders read it.
+type MapPart = (String, String);
+
 /// The holder of a value that stays.
 const KEEP: OwnerId = 0;
 /// The holder of a value a discarded row owns.
 const ERASE: OwnerId = 1;
-/// A part's holder: this plus its key's place in [`DiscardClassifier::parts`].
+/// A part's holder: this plus its place in [`DiscardClassifier::parts`].
 const PART: OwnerId = 1 << 32;
 /// A rewritten value's holder: this plus its place in
 /// [`DiscardClassifier::rewrites`].
@@ -81,17 +99,21 @@ impl SyncPayloadOwners for EveryKindOwned {
 struct DiscardClassifier<'a> {
     discarded: &'a BTreeSet<EntityId>,
     owners: BTreeSet<OwnerRef>,
-    /// Each part key the capture met, by its place.
-    parts: Vec<String>,
-    part_places: BTreeMap<String, usize>,
-    /// Part keys a manifest that goes names, and ones a manifest that stays
-    /// names, across the window's whole history.
-    parts_going: BTreeSet<String>,
-    parts_staying: BTreeSet<String>,
+    /// Each part the capture met, by its place.
+    parts: Vec<MapPart>,
+    part_places: BTreeMap<MapPart, usize>,
+    /// Parts a manifest that goes names, and ones a manifest that stays
+    /// names, across the window's whole history: a manifest of one map
+    /// keeps no part of another (UC-10 PR 1).
+    parts_going: BTreeSet<MapPart>,
+    parts_staying: BTreeSet<MapPart>,
     rewrites: Vec<Vec<u8>>,
     /// Why the window cannot be projected, once a value names an owner the
     /// projection cannot read.
     unknown: Option<&'static str>,
+    /// Every parted map value the capture met, to bind each manifest to
+    /// its key (UC-10 PR 1).
+    parted: PartedRows<Vec<u8>>,
 }
 
 impl<'a> DiscardClassifier<'a> {
@@ -105,6 +127,7 @@ impl<'a> DiscardClassifier<'a> {
             parts_staying: BTreeSet::new(),
             rewrites: Vec::new(),
             unknown: None,
+            parted: PartedRows::default(),
         }
     }
 
@@ -136,7 +159,7 @@ impl<'a> DiscardClassifier<'a> {
                 self.discarded.contains(&source) || self.discarded.contains(&target)
             })),
             map if is_note_carrier_map(map) => self.note_atom(map, key, value),
-            _ => self.placed(root_entry(root, key, value, &EveryKindOwned), key),
+            _ => self.placed(root_entry(root, key, value, &EveryKindOwned), root, key),
         }
     }
 
@@ -156,15 +179,19 @@ impl<'a> DiscardClassifier<'a> {
         }
     }
 
-    /// Any other family's value, as its codec places it.
-    fn placed(&mut self, placement: Placement, key: &str) -> OwnerId {
+    /// Any other family's value under `key` of the root map `root`, as its
+    /// codec places it.
+    fn placed(&mut self, placement: Placement, root: &str, key: &str) -> OwnerId {
         match placement {
             Placement::Owned(holders) | Placement::Split { holders, .. } => {
                 erase(self.gone(&holders))
             }
             Placement::Manifest { holders, parts, .. } => {
                 let going = self.gone(&holders);
-                let named = parts.parts.iter().map(part_key);
+                let named = parts
+                    .parts
+                    .iter()
+                    .map(|digest| (root.to_owned(), part_key(digest)));
                 if going {
                     self.parts_going.extend(named);
                 } else {
@@ -173,12 +200,12 @@ impl<'a> DiscardClassifier<'a> {
                 erase(going)
             }
             Placement::Part => {
-                let place = match self.part_places.get(key) {
+                let part = (root.to_owned(), key.to_owned());
+                let place = match self.part_places.get(&part) {
                     Some(place) => *place,
                     None => {
-                        self.parts.push(key.to_owned());
-                        self.part_places
-                            .insert(key.to_owned(), self.parts.len() - 1);
+                        self.parts.push(part.clone());
+                        self.part_places.insert(part, self.parts.len() - 1);
                         self.parts.len() - 1
                     }
                 };
@@ -186,6 +213,13 @@ impl<'a> DiscardClassifier<'a> {
             }
             Placement::Structure { dependencies } => {
                 erase(dependencies.iter().any(|on| self.owners.contains(on)))
+            }
+            Placement::Unclassified {
+                reason: SyncUnclassified::KeyMismatch,
+                ..
+            } => {
+                self.unknown = Some(UNBOUND_WHOLE_ROW);
+                KEEP
             }
             Placement::Unclassified { owner, .. } => {
                 erase(owner.is_some_and(|owner| self.owners.contains(&owner)))
@@ -222,6 +256,7 @@ impl Classify for DiscardClassifier<'_> {
         let LoroValue::Binary(bytes) = value else {
             return Some(vec![KEEP]);
         };
+        self.parted.note(root, key, || bytes.to_vec());
         Some(vec![self.decide(root, key, bytes.as_slice())])
     }
 }
@@ -270,6 +305,9 @@ pub(crate) fn project_window_doc(
     };
     if let Some(why) = classifier.unknown {
         return Ok(Projected::Deferred(why));
+    }
+    if classifier.parted.mismatch().is_some() {
+        return Ok(Projected::Deferred(UNBOUND_PARTED_ROW));
     }
     let unheld = held
         .map(|held| unheld_atoms(&parts.skeleton, held))
@@ -394,7 +432,9 @@ impl DiscardClassifier<'_> {
         usize::try_from(place)
             .ok()
             .and_then(|place| self.parts.get(place))
-            .is_some_and(|key| self.parts_going.contains(key) && !self.parts_staying.contains(key))
+            .is_some_and(|part| {
+                self.parts_going.contains(part) && !self.parts_staying.contains(part)
+            })
     }
 }
 

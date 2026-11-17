@@ -63,6 +63,7 @@ pub(crate) const MANAGED_PERSON_DOORS: [&str; 44] = [
     "vault.shared.propose_add_owner",
     "vault.shared.owner_change_wait.set",
     "vault.shared.execute",
+    "vault.shared.owner_key_move_plan",
     "vault.members.accept",
     "vault.members.decline",
     "vault.shared.object",

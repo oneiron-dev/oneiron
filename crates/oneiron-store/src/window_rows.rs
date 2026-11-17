@@ -11,38 +11,14 @@
 
 use crate::side_table::codec::CodecError;
 use crate::side_table::codec::RawValue;
-use crate::side_table::key::{HexId, HexU32, HexU64, SideKey};
+pub use crate::side_table::key::WindowEntityHexKey;
+use crate::side_table::key::{HexU32, HexU64, SideKey};
 use oneiron_base::error::Error;
 
 /// [`ROOT_UPDATE`]'s key: an 8-hex-digit sequence number, exactly the
 /// pre-typed `u:root:{seq:08x}` spelling.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, SideKey)]
 pub struct HexSeqKey(#[side_key(with = HexU32)] pub u32);
-
-/// Key after the `pt:` prefix: a window label, `:`, then the entity's 32
-/// lower-case hex characters — split from the END (fixed-width hex tail) so
-/// a window label containing `:` still decodes correctly, mirroring
-/// `deletion::tombstone::PendingTombstoneKey`.
-#[derive(Debug, Clone, PartialEq, Eq, SideKey)]
-#[side_key(sep = b':')]
-pub struct WindowEntityHexKey {
-    #[side_key(rest)]
-    pub window: String,
-    #[side_key(with = HexId)]
-    pub id: oneiron_contracts::entity_id::EntityId,
-}
-
-/// A `{window} ":" {entity_hex32}` key shape: the bytes after a window+entity
-/// marker table's own prefix (the `pm:` family here; other declared window+
-/// entity marker families spell the identical layout).
-#[derive(Debug, Clone, PartialEq, Eq, SideKey)]
-#[side_key(sep = b':')]
-pub struct WindowEntityKey {
-    #[side_key(rest)]
-    pub window: String,
-    #[side_key(with = HexId)]
-    pub entity: oneiron_contracts::entity_id::EntityId,
-}
 
 /// [`WINDOW_UPDATE`]'s key: a window key (never itself containing `:` — the
 /// `YYYY-MM` format is fixed 7 bytes) then `:` then the update's 16-hex-digit

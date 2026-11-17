@@ -26,7 +26,7 @@ use oneiron::access_grant::{
 };
 use oneiron::conversation_dag::{AddressMode, AppendRecord};
 use oneiron::federation::{Scope, ScopeAxis};
-use oneiron::lens::{LENS_LIST_MAX_PAGE, LensListRequest};
+use oneiron::lens::LensListRequest;
 use oneiron::memory::{
     MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_NOT_FOUND, Memory, WitnessAuthor, WitnessMessage,
     WitnessTurn,
@@ -55,6 +55,9 @@ type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
 /// The label this file's offer intent keys carry.
 const FIXTURE_PATH: &str = "crates/oneiron/tests/rooms_lens_skills_list_limits.rs";
+/// The most proposals one `vault.lenses.list` page returns in a fresh vault: the owner's
+/// `lenses.list.page_max` at its default.
+const LENS_LIST_PAGE_MAX: u32 = 200;
 
 /// An agent made through the agent-definition door, as the owner.
 fn create_agent(vault: &Vault, owner: EntityId, name: &str) -> TestResult<EntityId> {
@@ -176,6 +179,7 @@ fn speak_trunk(vault: &Vault, speaker: EntityId, room: EntityId) -> TestResult<E
             }],
             occurred_at: vault.now_recorded_at(),
             assertions: Default::default(),
+            project: None,
         })?;
     Ok(turn)
 }
@@ -509,7 +513,7 @@ fn lens_list_serves_zero_as_one() -> TestResult {
     let vault = Vault::open_owned(directory.path(), VaultConfig::default())?;
     let owner = vault.ensure_embedded_owner_actor()?;
     let memory = vault.memory(owner, EdgeActorClass::Human);
-    let limits: [Option<u32>; 4] = [None, Some(0), Some(1), Some(LENS_LIST_MAX_PAGE as u32 + 1)];
+    let limits: [Option<u32>; 4] = [None, Some(0), Some(1), Some(LENS_LIST_PAGE_MAX + 1)];
     for limit in limits {
         let page = memory.lenses_list(LensListRequest {
             limit,

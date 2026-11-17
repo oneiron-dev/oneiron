@@ -73,3 +73,6 @@ use crate::error::Result;
 use crate::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_CODE_ARTIFACT};
 #[cfg(test)]
 use rmpv::Value;
+
+#[cfg(oneiron_test_support)]
+pub(crate) use self::store::{hash_index_key_pin_for_test, text_index_key_pin_for_test};

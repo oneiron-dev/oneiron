@@ -92,20 +92,31 @@ pub(super) async fn attest(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
     payload: OwnerJsonBody<AttestRequest>,
-) -> OwnerReply<KeyView> {
+) -> OwnerReply<Attested> {
     let owner = owner(&auth, &server)?;
     let request = payload.read(&server).await?;
     let reply = blocking(move || attest_connector(&server, &owner, &request)).await?;
     Ok(Json(reply))
 }
 
+/// The attest answer: the key as attested, and what a stdio connector runs
+/// and where it sends a credential, which the owner attests for it.
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+pub(super) struct Attested {
+    #[serde(flatten)]
+    key: KeyView,
+    /// None for an HTTP connector.
+    stdio: Option<StdioInstalled>,
+}
+
 fn attest_connector(
     server: &SyncServer,
     owner: &AuthenticatedOwner,
     request: &AttestRequest,
-) -> OwnerResult<KeyView> {
+) -> OwnerResult<Attested> {
     let vault = server.vault();
-    let (name, endpoint) = installed(server, &request.connector)?;
+    let name = normalize_name(&request.connector);
+    let installed = installed_config(server, &name).ok_or_else(not_installed)?;
     let catalog = catalog(vault, &name)?;
     let revision =
         catalog.record.protocol_revision.clone().ok_or_else(|| {
@@ -117,12 +128,15 @@ fn attest_connector(
             "the connector is already admitted".to_owned(),
         ));
     }
-    let resolved =
-        host::with_credential(vault, catalog.record.secret_ref.as_deref(), &name, |auth| {
-            let client = host::client().map_err(engine)?;
-            listed_as_stamped(vault, &catalog, &client, &endpoint, &revision, auth)
-        })
-        .map_err(engine)??;
+    // A stdio connector is attested from its child's listing (row L8-27).
+    let discovery = discover_installed(
+        server,
+        &name,
+        installed,
+        catalog.record.secret_ref.as_deref(),
+        Some(&revision),
+    )?;
+    let resolved = listed_as_stamped(vault, &catalog, &discovery)?;
     let now = unix_seconds_now();
     let record = if staged {
         vault.attest_staged_connector_slate(owner, &catalog.key, resolved, &revision, now)
@@ -139,26 +153,30 @@ fn attest_connector(
         vault.attest_connector_key(owner, &catalog.key, &revision, now)
     }
     .map_err(engine)?;
+    let stdio = StdioInstalled::of(installed);
     // The attested listing may change no manifest: nothing is left to approve.
     if record.pending_manifest.is_none() && record.retained_manifest.is_some() {
-        return Ok(KeyView::new(catalog.key, record)?);
+        return Ok(Attested {
+            key: KeyView::new(catalog.key, record)?,
+            stdio,
+        });
     }
     let approved = approve(vault, owner, catalog.key)?;
-    Ok(KeyView::new(catalog.key, approved)?)
+    Ok(Attested {
+        key: KeyView::new(catalog.key, approved)?,
+        stdio,
+    })
 }
 
-/// The connector's tools, listed again at `revision` and resolved, when
-/// they are still the ones the owner stamped on the slate this run admits:
-/// the one staged beside an admitted key's routing slate, if any.
+/// The connector's tools, as `discovery` listed them again at the pinned
+/// revision, resolved, when they are still the ones the owner stamped on
+/// the slate this run admits: the one staged beside an admitted key's
+/// routing slate, if any.
 fn listed_as_stamped(
     vault: &Vault,
     catalog: &Catalog,
-    client: &reqwest::blocking::Client,
-    endpoint: &str,
-    revision: &str,
-    auth: Option<&HeaderValue>,
+    discovery: &host::Discovery,
 ) -> OwnerResult<ResolvedConnectorManifest> {
-    let discovery = host::discover(client, endpoint, auth, Some(revision)).map_err(engine)?;
     let slate = match staged_slate_of(vault, &catalog.record)? {
         Some((_, staged)) => staged,
         None => slate_of(vault, &catalog.record)?.1,
@@ -200,7 +218,8 @@ fn probe(
     kit: &QualificationKit,
 ) -> OwnerResult<()> {
     let client = host::client().map_err(engine)?;
-    let resolved = listed_as_stamped(vault, catalog, &client, endpoint, revision, auth)?;
+    let discovery = host::discover(&client, endpoint, auth, Some(revision)).map_err(engine)?;
+    let resolved = listed_as_stamped(vault, catalog, &discovery)?;
     let connector = host::HttpQualificationConnector::new(
         &client,
         endpoint,

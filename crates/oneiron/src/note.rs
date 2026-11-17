@@ -44,6 +44,7 @@ pub use proposal_doors::{
 mod carrier_erase;
 mod proposals;
 mod run_review;
+pub(crate) mod setting_keys;
 pub(crate) use run_review::{
     RunNoteUndo, revert_run_note_in_txn, run_note_review_in_txn, settle_run_note_in_txn,
 };
@@ -193,10 +194,11 @@ pub(crate) fn note_explicit_only_in_txn(
 /// A refused private row must not disclose its existence through a receipt.
 /// All NOTE kinds are omitted from denial counts: without admission, a reader
 /// cannot safely distinguish a public NOTE from an owner-only one. Diary-pair
-/// grants and malformed grant bodies are likewise opaque to ordinary readers.
+/// grants and malformed grant bodies are likewise opaque to ordinary readers,
+/// and so is sealed secret custody, which no retrieval returns (ARCH-0069:8).
 pub(crate) fn countable_read_suppression(entity_type: u8, body: &[u8]) -> bool {
     match entity_type {
-        crate::registry::ENTITY_TYPE_NOTE => false,
+        crate::registry::ENTITY_TYPE_NOTE | crate::registry::ENTITY_TYPE_SECRET_CUSTODY => false,
         crate::registry::ENTITY_TYPE_ACCESS_GRANT => {
             crate::access_grant::decode_access_grant_body(body).is_ok_and(|grant| {
                 !matches!(
@@ -476,3 +478,8 @@ mod shared_membership_tests;
 #[cfg(test)]
 mod adapter_tests;
 pub(crate) mod tables;
+
+#[cfg(oneiron_test_support)]
+pub(crate) use side_keys::{
+    hex_hex_hash_pin_for_test, hex_pair_pin_for_test, hex_triple_pin_for_test,
+};
