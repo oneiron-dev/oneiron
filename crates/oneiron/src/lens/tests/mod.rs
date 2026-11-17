@@ -9,8 +9,6 @@ mod instrument;
 mod mediation;
 mod result_set;
 mod selection_handles;
-// FIX [LIBTEST-QUARANTINE-LENS-TESTS-SELFUI-ACTIONS]: the lib test target's type check fails here (2 errors: E0061 x1, E0308 x1); port it, then drop this gate
-#[cfg(any())]
 mod selfui_actions;
 mod support;
 mod surface_dispatch;

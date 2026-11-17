@@ -7,6 +7,7 @@ fn witness_envelope() -> WitnessMessageEnvelope<'static> {
         author: WITNESS_AUTHOR_COMPANION,
         message_type: "dialogue",
         content: "the answer",
+        parts: None,
         metadata: Some(Value::Map(vec![(
             Value::from("client"),
             Value::from("cli"),
@@ -375,7 +376,7 @@ fn forward_rematerialize_refuses_every_replicated_witness_message() -> Result<()
         map_insert_bytes(
             &entities,
             &id.to_hex(),
-            &entity_record(entity_type, at, 1, body),
+            &entity_record(entity_type, at, 1, 0, body),
         )
         .expect("insert replicated row");
     };
@@ -467,8 +468,22 @@ fn a_refused_replicated_witness_message_rolls_its_batch_back() -> Result<()> {
 
     let err = vault
         .batch()
-        .put_replicated(&turn, crate::registry::ENTITY_TYPE_TURN, at, 1, b"turn")
-        .put_replicated(&forged, crate::registry::ENTITY_TYPE_MESSAGE, at, 1, &body)
+        .put_replicated(
+            &turn,
+            crate::registry::ENTITY_TYPE_TURN,
+            at,
+            1,
+            None,
+            b"turn",
+        )
+        .put_replicated(
+            &forged,
+            crate::registry::ENTITY_TYPE_MESSAGE,
+            at,
+            1,
+            None,
+            &body,
+        )
         .commit()
         .expect_err("a replicated MESSAGE has no local actor binding and is refused");
     assert_eq!(err.kind(), ErrorKind::InvalidWitnessMessageBody);
@@ -504,16 +519,20 @@ fn the_replicated_closure_leaves_the_local_message_road_intact() -> Result<()> {
         .witness(&crate::memory::WitnessTurn {
             conversation_ref: conversation.to_hex(),
             turn_ref: None,
+            thread_audience: None,
             messages: vec![crate::memory::WitnessMessage {
                 id: Some(message.to_hex()),
                 author: crate::memory::WitnessAuthor::User,
                 message_type: "dialogue".to_owned(),
                 content: "a locally witnessed row".to_owned(),
+                parts: None,
                 metadata: None,
                 is_visible: true,
                 order: 0,
+                quote: None,
             }],
             occurred_at: 2,
+            assertions: Default::default(),
         })
         .expect("the local witness door still writes MESSAGE rows");
     assert!(vault.get_raw(&message)?.is_some());

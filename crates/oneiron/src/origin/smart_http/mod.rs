@@ -169,8 +169,6 @@ mod epoch_tests;
 mod exchange_tests;
 #[cfg(test)]
 mod history_scan_tests;
-// FIX [LIBTEST-QUARANTINE-ORIGIN-SMART-HTTP-INTENT-RECOVERY-TESTS]: the lib test target's type check fails here (6 errors: E0308 x3, E0061 x2, E0063 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod intent_recovery_tests;
 #[cfg(test)]
@@ -179,8 +177,6 @@ mod landing_tests;
 mod maintain_tests;
 #[cfg(test)]
 mod push_cert_tests;
-// FIX [LIBTEST-QUARANTINE-ORIGIN-SMART-HTTP-RECREATE-TESTS]: the lib test target's type check fails here (5 errors: E0308 x4, E0061 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod recreate_tests;
 #[cfg(test)]

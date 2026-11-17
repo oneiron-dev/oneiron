@@ -332,6 +332,4 @@ fn audit_fixture_ids_leak_no_verdict_signal() -> Result<()> {
 // FIX [LIBTEST-QUARANTINE-SKILL-ATTRIBUTION-TESTS-RESIDENT]: the lib test target's type check fails here (2 errors: E0308 x2); port it, then drop this gate
 #[cfg(any())]
 mod resident;
-// FIX [LIBTEST-QUARANTINE-SKILL-ATTRIBUTION-TESTS-SWEEP]: the lib test target's type check fails here (2 errors: E0308 x2); port it, then drop this gate
-#[cfg(any())]
 mod sweep;

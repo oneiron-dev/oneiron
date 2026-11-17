@@ -58,8 +58,6 @@ mod board_ack;
 mod cancel;
 mod consult_fanout;
 mod consult_ladder;
-// FIX [LIBTEST-QUARANTINE-TASK-VERB-TESTS-CONSULT-LIFECYCLE]: the lib test target's type check fails here (7 errors: E0599 x4, E0063 x2, E0639 x1); port it, then drop this gate
-#[cfg(any())]
 mod consult_lifecycle;
 mod consult_party;
 mod consult_party_generation;
@@ -73,8 +71,6 @@ pub(crate) mod support;
 #[cfg(any())]
 mod addressable_consults;
 
-// FIX [LIBTEST-QUARANTINE-TASK-VERB-TESTS-AUTHORITY-ASKS]: the lib test target's type check fails here (4 errors: E0063 x2, E0061 x2); port it, then drop this gate
-#[cfg(any())]
 mod authority_asks;
 // FIX [LIBTEST-QUARANTINE-TASK-VERB-TESTS-CODE-LEAD]: the lib test target's type check fails here (5 errors: E0063 x2, E0308 x2, E0027 x1); port it, then drop this gate
 #[cfg(any())]
