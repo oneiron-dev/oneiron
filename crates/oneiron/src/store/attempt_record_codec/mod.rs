@@ -93,8 +93,9 @@ pub(crate) fn encode_record(record: &AttemptRecord) -> Result<Vec<u8>> {
 /// [`encode_record`] once the side-row wall has read the row, in the writer's
 /// transaction (OF-067; ARCH-0069 #mask-on-write): each secret the payload or
 /// an authored member holds goes to custody, and `record` keeps the handles
-/// the stored row keeps. A hit the mask cannot place, or a masked row that no
-/// longer reads back as a row, refuses the write.
+/// the stored row keeps. A hit no span places is sealed whole at its smallest
+/// value (`seal_whole`). A hit no seal clears, or a masked or sealed row that
+/// no longer reads back as a row, refuses the write.
 pub(crate) fn encode_admitted_record(
     dbs: &impl SideTableDbs,
     wtxn: &mut heed::RwTxn<'_>,

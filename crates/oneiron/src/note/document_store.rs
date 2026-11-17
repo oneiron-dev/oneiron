@@ -206,7 +206,8 @@ const TITLE_PLACE: &str = "text:title";
 /// writes it, so no history holds what the handle stands in. With the
 /// owner's switch on, each secret the batch door's text rules place goes to
 /// custody and the title keeps its handle; `lifted` is the write's one plan.
-/// A hit no span places refuses as before.
+/// A hit no span places seals the title whole (`[secret sc12]`); one no seal
+/// clears refuses as before.
 pub(super) fn admit_title(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
