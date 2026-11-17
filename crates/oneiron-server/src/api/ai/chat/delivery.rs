@@ -2,6 +2,7 @@
 //! Entry: streamed.
 //! Started, Producer and credential helpers stay in the parent; moved functions keep chat-only scope.
 
+use super::model_call::ModelFailure;
 use super::{
     Answering, Body, ChatLine, ChatReply, DoorInvocationClaim, EntryWake, IntoResponse, Json,
     Lapse, LlmStreamEvent, NEWCOMER, Producer, REVOKED, Response, Started, StatusCode,
@@ -122,9 +123,14 @@ pub(in crate::api::ai::chat) fn streamed(
                             message: "the terminal message was not recorded".into(),
                         },
                     },
-                    Err(message) => ChatLine::Error {
-                        code: "turn_failed",
-                        message,
+                    // A model call that ended the reply with a code of its
+                    // own names it (census L9-23).
+                    Err(message) => match &outcome.model_failure {
+                        Some(failure) => failure.line(),
+                        None => ChatLine::Error {
+                            code: "turn_failed",
+                            message,
+                        },
                     },
                 })
             },
@@ -260,6 +266,13 @@ fn whole_reply(
     if let Err(message) = outcome.reproject(handle, credential.vault()) {
         return refusal(StatusCode::CONFLICT, "turn_refused", message);
     }
+    // A model call that ended the reply with a code of its own answers with
+    // it, whatever the cancel kept of the reply (census L9-23).
+    if outcome.result.is_err()
+        && let Some(failure) = &outcome.model_failure
+    {
+        return failure.refusal();
+    }
     if outcome.saved.is_none() && !outcome.unretained() {
         return match outcome.result {
             Ok(()) => refusal(
@@ -323,6 +336,8 @@ pub(in crate::api::ai::chat) async fn produce(producer: Producer) -> Result<(), 
         mut wakes,
         assertions,
         mut model_call,
+        clock,
+        model_failure,
     } = producer;
     let memory = answer_memory(&vault, agent, session_key);
     let cancel = |reason: StreamCancelReason| {
@@ -335,6 +350,15 @@ pub(in crate::api::ai::chat) async fn produce(producer: Producer) -> Result<(), 
     let fail = |reason: String| {
         cancel(StreamCancelReason::AgentAborted);
         Err(reason)
+    };
+    // The model call's own failure, which the turn answers with when it has
+    // a code of its own (census L9-23).
+    let model_failed = |error: &oneiron::LlmError| {
+        if let Some(failure) = ModelFailure::of(error)
+            && let Ok(mut slot) = model_failure.lock()
+        {
+            *slot = Some(failure);
+        }
     };
     let revoked = || {
         let lapse = credential.lapse();
@@ -354,6 +378,12 @@ pub(in crate::api::ai::chat) async fn produce(producer: Producer) -> Result<(), 
         let item = tokio::select! {
             item = stream.next() => item,
             () = turn.stopping() => return fail("the server is stopping".into()),
+            // The caller's deadline cut the reply (census L9-23): its call
+            // ends with the stream, and the turn answers `timeout`.
+            () = clock.run_out() => {
+                model_failed(&oneiron::RetryableLlmError::Timeout.into());
+                return fail("the caller's deadline ran out before the reply ended".into());
+            }
             woke = next_entry_wake(&mut wakes) => {
                 if let Some(container) = container
                     && !matches!(
@@ -380,7 +410,10 @@ pub(in crate::api::ai::chat) async fn produce(producer: Producer) -> Result<(), 
         };
         let event = match item {
             Ok(event) => event,
-            Err(error) => return fail(format!("model stream failed: {error:?}")),
+            Err(error) => {
+                model_failed(&error);
+                return fail(format!("model stream failed: {error:?}"));
+            }
         };
         // The publish arm, before any delta or the terminal goes out: an
         // attendee entered the conversation since the reply was marked,

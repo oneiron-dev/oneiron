@@ -201,6 +201,7 @@ fn fixture_config() -> EventTypeConfig {
         booking_window_secs: 7 * 24 * 3_600,
         daily_cap: None,
         weekly_cap: None,
+        deposit: None,
         routing: RoutingMode::Either,
         hosts: vec![HostAvailabilityConfig {
             host_ref: test_id(HOST_SEED),
@@ -283,6 +284,7 @@ fn booking_rows_hold_only_digests_of_the_hold_checkout_and_revision_tokens() {
                 server_issued_lease: lease.clone(),
             },
             idempotency_key: None,
+            cap_override: None,
         }))
         .expect("hold under the lease")
     {

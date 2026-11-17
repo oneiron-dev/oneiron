@@ -111,25 +111,36 @@ impl Memory<'_> {
         let Some(project) = project else {
             return Ok(None);
         };
-        let mut imports = Vec::new();
+        let mut manifests = Vec::new();
         for id in self.vault.claims_for_subject_in_txn(&txn, &served.repo)? {
             let Some(body) = self.vault.get_claim_in_txn(&txn, &id)? else {
                 continue;
             };
-            if body.predicate != "repo.import_manifest" || !self.workbench_readable(id)? {
+            if body.predicate == "repo.import_manifest" {
+                let anchor = CodeImportManifest::from_claim(&body)
+                    .ok()
+                    .map(|manifest| manifest.anchor);
+                manifests.push((id, anchor));
+            }
+        }
+        let receipts = crate::code_view::repo_view_receipts_in_txn(self.vault, &txn, served.repo)?;
+        // Each readability judgement reads in a snapshot of its own
+        // (`get_entity`), and the vendored heed holds one read snapshot per
+        // thread: a judgement inside this one answered MDB_BAD_RSLOT.
+        drop(txn);
+        let mut imports = Vec::new();
+        for (manifest, anchor) in manifests {
+            if !self.workbench_readable(manifest)? {
                 continue;
             }
-            if let Ok(manifest) = CodeImportManifest::from_claim(&body) {
-                imports.push(CodeRepoImportLink {
-                    manifest: id,
-                    anchor: manifest.anchor,
-                });
+            if let Some(anchor) = anchor {
+                imports.push(CodeRepoImportLink { manifest, anchor });
             }
         }
         imports.sort_by_key(|link| link.manifest);
         let mut run_works = Vec::new();
         let mut task_refs = BTreeSet::new();
-        for receipt in crate::code_view::repo_view_receipts_in_txn(self.vault, &txn, served.repo)? {
+        for receipt in receipts {
             let Some(stamp) = receipt.run else {
                 continue;
             };
@@ -157,7 +168,6 @@ impl Memory<'_> {
                     .collect(),
             });
         }
-        drop(txn);
         run_works.sort_by_key(|work| work.work);
         // A served anchor's queue is its bound source as it stands; a
         // missing one reads not ready, and its refs read by store (FIX 6869).

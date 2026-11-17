@@ -241,8 +241,6 @@ fn a_drain_past_the_refresh_rounds_waits_for_the_next_refresh() -> Result<()> {
     Ok(())
 }
 
-// FIX [LIBTEST-QUARANTINE-WORKSPACE-ROSTER-PROJECT-TESTS-HISTORY-CYCLES-CLOSURE-ITEMS]: the lib test target's type check fails here (1 errors: E0061 x1); port it, then drop this gate
-#[cfg(any())]
 /// Bug repro (Sol and Astra r17 F2): Q's saved record (Q2, under H) outlived
 /// the revocation of Q1's slip, and the owner once put H over Q (H1, then
 /// back to R). One batch holds Q3, which freezes Q once it counts and so ties
@@ -305,6 +303,7 @@ fn a_component_that_grows_in_a_batch_is_decided_once() -> Result<()> {
                 kind,
                 TimeRange { start: at, end: at },
                 at,
+                None,
                 &revision.canonical_bytes()?,
             );
         }

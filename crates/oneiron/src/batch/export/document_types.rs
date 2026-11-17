@@ -435,6 +435,12 @@ pub struct WholeVaultImportReceipt {
     /// Archived `regenerates` links whose restored MESSAGE pair does not
     /// prove what the stream proved: left out, not restored (FIX 6206).
     pub skipped_unproven_regenerates_edges: usize,
+    /// Merged sources and split originals whose archived `merged_into` /
+    /// `split_into` links stayed out: such a link follows the type-76
+    /// events, which stay archive data, so each of these rows is back here as
+    /// a separate Active row, and the owner may merge it again
+    /// (OWNEDGES-SHELL-RESTORE = A).
+    pub unrestored_identity_topology_shells: usize,
     /// Custody records the archive carried as handles only: secrets to
     /// re-enter through the owner's registration door.
     pub missing_secrets: Vec<crate::secret_record::SecretCustodyMetadata>,

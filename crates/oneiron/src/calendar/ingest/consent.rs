@@ -24,6 +24,7 @@
 //! Each record binds the feed's configuration digest, so a feed installed
 //! again under its system with another configuration starts with no consent.
 
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
 use serde::{Deserialize, Serialize};
 
 use super::IcsFeedPollConfig;
@@ -126,16 +127,20 @@ struct Settled {
 fn config_digest(config: &IcsFeedPollConfig) -> crate::Result<String> {
     let bytes = serde_json::to_vec(config)
         .map_err(|_| crate::Error::InvariantViolation("ICS feed config did not encode"))?;
-    Ok(blake3::hash(&bytes).to_hex().to_string())
+    let digest = LegacyDigest::new(purposes::calendar::ICS_FEED_CONFIG_DIGEST)
+        .raw(&bytes)
+        .finish();
+    Ok(oneiron_hex::encode(&digest))
 }
 
 /// The ref of one exact review: the feed's configuration and its claim set.
 fn review_ref(config_digest: &str, claim_ids: &[String]) -> crate::Result<String> {
     let bytes = serde_json::to_vec(&(config_digest, claim_ids))
         .map_err(|_| crate::Error::InvariantViolation("ICS feed review did not encode"))?;
-    let mut hasher = blake3::Hasher::new_derive_key("oneiron calendar.ics.review v1");
-    hasher.update(&bytes);
-    Ok(hasher.finalize().to_hex().to_string())
+    let digest = LegacyDigest::new(purposes::calendar::ICS_FEED_REVIEW_REF)
+        .raw(&bytes)
+        .finish();
+    Ok(oneiron_hex::encode(&digest))
 }
 
 /// The feed's consent record, when it belongs to `config`.
