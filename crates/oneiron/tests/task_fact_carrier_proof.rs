@@ -387,7 +387,7 @@ fn a_row_replaced_under_an_indexed_id_does_not_count() {
 }
 
 #[test]
-fn an_ask_record_linked_to_a_task_does_not_fail_its_read() {
+fn a_role6_record_that_is_no_fact_does_not_fail_its_read() {
     let host = host();
     let task = owner_task(&host.vault, host.owner, "the owner's task");
     let record = EntityId::now();
@@ -400,14 +400,14 @@ fn an_ask_record_linked_to_a_task_does_not_fail_its_read() {
                 Value::from("role"),
                 Value::from(TaskRole::AuthorityFact.role_byte()),
             ),
-            (Value::from("subkind"), Value::from("tasks.ask_group")),
+            (Value::from("subkind"), Value::from("tasks.unknown_record")),
             (Value::from("task_ref"), Value::from(task.to_hex())),
         ]),
     );
     let state = host
         .vault
         .task_authority_state(task)
-        .expect("an ask record is not a fact, so the read stands")
+        .expect("a role-6 record that is no fact is skipped, so the read stands")
         .expect("the owner's own Owner fact counts");
     assert_eq!(state.owner_ref, host.owner);
 }
