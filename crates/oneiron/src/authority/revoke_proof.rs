@@ -121,6 +121,13 @@ impl RevokeFacts {
             .map(|fact| fact.entry_hash)
             .collect()
     }
+
+    /// The rows these facts were proved on, for a test that compares two
+    /// images built over the same rows.
+    #[cfg(oneiron_test_support)]
+    pub(super) fn rows_for_test(&self) -> BTreeSet<AuthorityEntryHash> {
+        self.by_hash.keys().copied().collect()
+    }
 }
 
 #[doc(hidden)]
