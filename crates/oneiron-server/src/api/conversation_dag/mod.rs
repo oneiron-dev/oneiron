@@ -126,7 +126,8 @@ pub(crate) async fn append_core_record(
 }
 
 /// `ids` less those `auth`'s own read withholds: the DAG ledger is read raw,
-/// so a private thread's records (FIX 2951) leave here, as hex.
+/// so a private thread's records (FIX 2951) leave here, and so do the turns
+/// of a room that does not admit the caller (L9-52), as hex.
 fn readable_ids(
     server: &SyncServer,
     auth: &CoreAuth,
@@ -139,10 +140,43 @@ fn readable_ids(
             .is_entity_readable(&id)
             .map_err(|e| core_engine_error("record access failed", e))?
         {
-            kept.push(id.to_hex());
+            kept.push(id);
         }
     }
-    Ok(kept)
+    let kept = server
+        .vault
+        .room_structure_admitted_ids(&read, kept)
+        .map_err(|e| core_engine_error("record access failed", e))?;
+    Ok(kept.iter().map(EntityId::to_hex).collect())
+}
+
+/// Whether `auth`'s own read admits `conversation` as its DAG records are
+/// admitted (FIX 8153; L9-52). A door answers one it does not admit as a
+/// missing conversation, before any of its structure is read.
+fn conversation_admitted(
+    server: &SyncServer,
+    auth: &CoreAuth,
+    conversation: &EntityId,
+) -> Result<bool, EnvelopedApiError> {
+    let read = crate::api::scoped_read_for_core_auth(&server.vault, auth)?;
+    server
+        .vault
+        .dag_records_admitted(&read, conversation)
+        .map_err(|e| core_engine_error("DAG read failed", e).into())
+}
+
+/// Refuses a `conversation` [`conversation_admitted`] does not admit, as
+/// the records door answers a missing conversation.
+fn require_admitted_conversation(
+    server: &SyncServer,
+    auth: &CoreAuth,
+    conversation: &EntityId,
+) -> Result<(), EnvelopedApiError> {
+    if conversation_admitted(server, auth, conversation)? {
+        Ok(())
+    } else {
+        Err(core_engine_error("DAG read failed", oneiron::Error::EntityNotFound).into())
+    }
 }
 
 /// Refuses a `record` `auth`'s own read withholds as the missing record it
@@ -284,6 +318,7 @@ pub(crate) async fn resolve_core_scope(
     auth.require_unrestricted_record_scope()?;
     let conversation = parse_entity_id_param(&conversation_id, "conversation_id")?;
     let scope = json_payload(payload)?.parse(conversation)?;
+    require_admitted_conversation(&server, &auth, &conversation)?;
     let resolved = server
         .vault
         .resolve_dag_scope(&scope)
@@ -526,6 +561,10 @@ pub(crate) async fn get_thread(
     // (FIX 2951) it is off is no thread, and a branch it is off no record. A
     // record held back from it for its add still selects its thread (FIX
     // 5545), whose replies it reads on their own gates.
+    // A room that does not admit the caller has no threads here (L9-52).
+    if !conversation_admitted(&server, &auth, &conversation)? {
+        return Err(ApiError::not_found("conversation record", Some(&record.to_hex())).into());
+    }
     let read = crate::api::scoped_read_for_core_auth(&server.vault, &auth)?;
     if !server
         .vault
@@ -596,6 +635,7 @@ pub(crate) async fn get_canonical(
     auth.require(CoreScope::Read)?;
     auth.require_unrestricted_record_scope()?;
     let conversation = parse_entity_id_param(&conversation_id, "conversation_id")?;
+    require_admitted_conversation(&server, &auth, &conversation)?;
     let resolved = server
         .vault
         .resolve_dag_scope(&oneiron::conversation_dag::ScopeSelector {

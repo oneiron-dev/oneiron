@@ -66,6 +66,7 @@ pub use quote::{QuoteAnchor, RoomQuote};
 pub use quote_strips::{
     QuoteReplyGroup, QuoteReplyStrip, QuoteStripStatus, ReplyStripsPage, ReplyStripsRequest,
 };
+pub(crate) use record_admission::RoomVerdicts;
 pub(crate) use redacted::capture_withdrawn_record_in_txn;
 #[cfg(feature = "sync")]
 pub(crate) use redacted::pin_shell_record_in_txn;
@@ -82,8 +83,8 @@ pub use types::{
     ResolvedScope, ScopePath, ScopeSelector,
 };
 pub(crate) use writes::{
-    append_composed_in_txn, append_in_txn, append_regenerated_turn_at_in_txn,
-    put_thread_event_in_txn,
+    append_composed_at_in_txn, append_composed_in_txn, append_in_txn,
+    append_regenerated_turn_at_in_txn, put_thread_event_in_txn,
 };
 
 #[cfg(test)]

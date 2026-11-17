@@ -26,6 +26,7 @@ pub mod source_ranking;
 mod telemetry;
 mod types;
 mod validation;
+mod working_set;
 mod world_partition;
 
 #[cfg(test)]
@@ -50,6 +51,8 @@ pub use types::{
     PackStats, PackTokenStats, TokenAllocation,
 };
 pub(crate) use types::{PackCriticalAccounting, PackWorldShare};
+pub(crate) use working_set::dedupe_working_set;
+pub use working_set::{MAX_WORKING_SET_REFS, PackWorkingSetStats};
 pub use world_partition::{BASE_WORLD_SECTION, WORLD_SECTION_FIELD, WORLD_STALE_FIELD};
 
 pub(crate) use validation::disclosure_admits_target;
