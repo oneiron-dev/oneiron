@@ -275,6 +275,7 @@ impl<'vault> SessionVault<'vault> {
                     conversation_ref: String::new(),
                     turn_ref: None,
                     thread_audience: None,
+                    project: None,
                     messages: vec![crate::memory::WitnessMessage {
                         id: Some(message_id.to_hex()),
                         author: crate::memory::WitnessAuthor::User,
