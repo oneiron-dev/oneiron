@@ -3077,10 +3077,10 @@ fn an_unsubscribe_in_one_campaign_holds_another_campaigns_send() {
 /// The gate's compliance rows engage for a campaign send: the leg names the
 /// member's party key, so a member holding a `campaign.member` head is
 /// governed, and the seed pack's strict pole holds the send as
-/// `gate.pending.campaign_compliance`. The first reason today is a missing
-/// message element, because the campaign leg binds no sending identity (FIX
-/// [CAMPAIGN-LEG-NO-SENDER-IDENTITY-FOR-COMPLIANCE]); this test asserts only
-/// that the compliance row holds.
+/// `gate.pending.campaign_compliance`. Its sender carries no message-element
+/// configuration and the member no jurisdiction or consent record, so several
+/// rows fail; this test asserts only that the compliance row holds (the
+/// sender-identity tests below pin which rows read the sender).
 ///
 /// Canon `generated/llms-full.txt:347032` "The dispatch gate keeps its
 /// approval mode, suppression and compliance rows."
@@ -3164,6 +3164,195 @@ fn an_unprojected_stop_holds_a_campaign_send_by_its_party_key() {
         assert!(
             gate_fact(&state, "gate_receipt_reasons", "counterparty_opt_out_stop"),
             "the pending STOP holds the campaign send: {state}"
+        );
+    });
+}
+
+/// Records `member` as a UK corporate subscriber: an owner-attested UK
+/// `comm.jurisdiction` observation and `corporate` legal-form evidence. The UK
+/// consent row then holds on its corporate-subscriber branch with no consent
+/// record (reg 22 binds only an individual subscriber), so the rows left to
+/// decide a send are the UK sender-id, opt-out and commercial-marking rows,
+/// which read the sending identity's message elements.
+fn uk_corporate_member(vault: &Vault, member: EntityId) {
+    let mut jurisdiction = ClaimBody::new(
+        "comm.jurisdiction",
+        ClaimSubject::Entity(member),
+        rmpv::Value::Map(vec![
+            (rmpv::Value::from("jurisdiction"), rmpv::Value::from("UK")),
+            (rmpv::Value::from("observed_at"), rmpv::Value::from(10u64)),
+        ]),
+        1.0,
+        ClaimApprovalStatus::Approved,
+        ClaimLifecycleStatus::Active,
+    )
+    .expect("the jurisdiction observation");
+    jurisdiction.evidence = Some(rmpv::Value::from("owner attestation"));
+    vault
+        .put_claim(
+            &EntityId::now(),
+            &jurisdiction,
+            TimeRange { start: 1, end: 1 },
+            1,
+        )
+        .expect("store the jurisdiction");
+    let evidence = ClaimBody::new(
+        oneiron::campaign::compliance::PREDICATE_CRM_COMPLIANCE_EVIDENCE,
+        ClaimSubject::Entity(member),
+        rmpv::Value::Map(vec![(
+            rmpv::Value::from("legal_form"),
+            rmpv::Value::from("corporate"),
+        )]),
+        1.0,
+        ClaimApprovalStatus::Approved,
+        ClaimLifecycleStatus::Active,
+    )
+    .expect("the legal-form evidence");
+    vault
+        .put_claim(
+            &EntityId::now(),
+            &evidence,
+            TimeRange { start: 1, end: 1 },
+            1,
+        )
+        .expect("store the legal-form evidence");
+}
+
+/// The sending identity's compliance footer: a
+/// `crm.compliance.message_elements` claim on `identity` with the sender id,
+/// postal address and commercial marking present, and the opt-out as given.
+fn sender_message_elements(vault: &Vault, identity: EntityId, optout_mechanism: bool) {
+    let element = |name: &str, present: bool| (rmpv::Value::from(name), rmpv::Value::from(present));
+    let footer = ClaimBody::new(
+        oneiron::campaign::compliance::PREDICATE_CRM_COMPLIANCE_MESSAGE_ELEMENTS,
+        ClaimSubject::Entity(identity),
+        rmpv::Value::Map(vec![
+            element("sender_identity", true),
+            element("physical_address", true),
+            element("optout_mechanism", optout_mechanism),
+            element("commercial_marking", true),
+        ]),
+        1.0,
+        ClaimApprovalStatus::Approved,
+        ClaimLifecycleStatus::Active,
+    )
+    .expect("the message elements");
+    vault
+        .put_claim(&EntityId::now(), &footer, TimeRange { start: 1, end: 1 }, 1)
+        .expect("store the message elements");
+}
+
+/// Enrolls `member` in `leg`'s campaign through the served door, from
+/// `sender`, and requires a live Enrolled head.
+async fn enroll_leg_member(
+    fixture: &Fixture,
+    leg: &PartyKeyLeg,
+    member: EntityId,
+    sender: EntityId,
+) {
+    let basis_hex = evidence_note(&fixture.vault, fixture.owner).to_hex();
+    let (status, enrolled) = post_as_owner(
+        fixture,
+        "/v1/core/facade/vault.campaign.enroll",
+        enroll_body(
+            &leg.campaign_hex,
+            &member.to_hex(),
+            &basis_hex,
+            &sender.to_hex(),
+        ),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "owner enrolls the member: {enrolled}"
+    );
+    assert_eq!(
+        enrolled["state"].as_str(),
+        Some("enrolled"),
+        "the member holds a live Enrolled head: {enrolled}"
+    );
+}
+
+/// A campaign send reads its message elements from the step's sender
+/// identity (ruling CAMPAIGN-LEG-SENDER-IDENTITY = A, FIX
+/// [CAMPAIGN-LEG-NO-SENDER-IDENTITY-FOR-COMPLIANCE]). The leg binds no
+/// channel identity (FIX 11641), so before the fix every element read as
+/// absent and this send, to a member every other row allows, held as
+/// `gate.pending.campaign_compliance` with a missing message element. With a
+/// sender whose footer carries every element, no compliance row holds it: the
+/// send waits only on the gate's own approval.
+///
+/// Canon `generated/llms-full.txt:347036` "The compliance elements of a
+/// campaign message come from the sending identity, the opt-out among them."
+#[test]
+fn a_campaign_send_reads_the_message_elements_from_its_sender_identity() {
+    run_on_engine_stack("campaign-sender-elements-pass", || async {
+        let fixture = setup().await;
+        let sender = active_sender_identity(&fixture.vault, fixture.owner, "owen@example.com");
+        sender_message_elements(&fixture.vault, sender, true);
+        let member = campaign_member(&fixture.vault, sender, "hana@example.com");
+        uk_corporate_member(&fixture.vault, member);
+        let leg = party_key_leg(&fixture, sender, member, "footer campaign").await;
+        enroll_leg_member(&fixture, &leg, member, sender).await;
+
+        let state = held_gate_state(&fixture, &leg).await;
+        assert!(
+            !gate_fact(
+                &state,
+                "gate_reason_codes",
+                "gate.pending.campaign_compliance"
+            ),
+            "the sender's footer meets every UK row, so compliance holds nothing: {state}"
+        );
+        let compliance_reasons: Vec<&str> = state["gate_receipt_reasons"]
+            .as_array()
+            .unwrap_or_else(|| panic!("the held ask lists gate_receipt_reasons: {state}"))
+            .iter()
+            .filter_map(Value::as_str)
+            .filter(|reason| reason.starts_with("counterparty_compliance_"))
+            .collect();
+        assert!(
+            compliance_reasons.is_empty(),
+            "no compliance row names a reason: {state}"
+        );
+    });
+}
+
+/// The other half of the same ruling: a sender identity whose footer lacks
+/// the opt-out still holds the campaign send at the compliance rows, for a
+/// missing message element, with every other element present and the member
+/// otherwise allowed. The sender's configuration is read, not assumed.
+///
+/// Canon `generated/llms-full.txt:347036` "The compliance elements of a
+/// campaign message come from the sending identity, the opt-out among them."
+#[test]
+fn a_campaign_sender_without_an_opt_out_element_still_holds_at_compliance() {
+    run_on_engine_stack("campaign-sender-elements-no-optout", || async {
+        let fixture = setup().await;
+        let sender = active_sender_identity(&fixture.vault, fixture.owner, "owen@example.com");
+        sender_message_elements(&fixture.vault, sender, false);
+        let member = campaign_member(&fixture.vault, sender, "kai@example.com");
+        uk_corporate_member(&fixture.vault, member);
+        let leg = party_key_leg(&fixture, sender, member, "no opt-out campaign").await;
+        enroll_leg_member(&fixture, &leg, member, sender).await;
+
+        let state = held_gate_state(&fixture, &leg).await;
+        assert!(
+            gate_fact(
+                &state,
+                "gate_reason_codes",
+                "gate.pending.campaign_compliance"
+            ),
+            "a footer without the opt-out holds the send at compliance: {state}"
+        );
+        assert!(
+            gate_fact(
+                &state,
+                "gate_receipt_reasons",
+                "counterparty_compliance_missing_message_element"
+            ),
+            "the hold names the missing message element: {state}"
         );
     });
 }
