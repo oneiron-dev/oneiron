@@ -158,6 +158,7 @@ pub mod outbound_wait_setting_keys;
 pub mod own_device_message_replay;
 pub mod owner_device_answer;
 pub mod owner_key_release;
+pub mod owner_person_row_damage;
 pub mod pack_encode_work;
 pub mod pad_offer_invalidation;
 pub mod pairing_pending_rows;
