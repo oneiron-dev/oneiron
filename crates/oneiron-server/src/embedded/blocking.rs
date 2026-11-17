@@ -190,6 +190,17 @@ impl<A: AppHost + Clone + 'static> BlockingEngine<A> {
         self.with_running(|running| running.runtime.block_on(running.engine.wake()))
     }
 
+    /// [`EmbeddedEngine::set_fetch_conditions`].
+    pub fn set_fetch_conditions(
+        &self,
+        conditions: oneiron::sync::FetchConditions,
+    ) -> anyhow::Result<()> {
+        self.with_running(|running| {
+            running.engine.set_fetch_conditions(conditions);
+            Ok(())
+        })
+    }
+
     /// [`EmbeddedEngine::stop`].
     pub fn stop(&self) -> anyhow::Result<()> {
         self.with_running(|running| running.runtime.block_on(running.engine.stop()))
