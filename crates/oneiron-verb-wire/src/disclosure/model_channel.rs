@@ -25,13 +25,3 @@ impl DisclosureDataClass {
         }
     }
 }
-
-/// One registry dial. Omit class to address the whole connection.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct DisclosureCeilingRequest {
-    /// The credential-bound connection, e.g. agent:<principal hex>.
-    pub connection: String,
-    #[serde(default)]
-    pub class: Option<DisclosureDataClass>,
-}

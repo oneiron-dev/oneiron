@@ -2,10 +2,6 @@
 //! build script places it in `side_table`'s catalogue.
 
 crate::side_table::side_tables! {
-    /// Owner's model-channel band ceiling, optionally specialized by data class.
-    /// Key: connection "/" class (or "*").
-    DISCLOSURE_MODEL_CEILING: VaultMeta b"disclosure.model_ceiling.v1:" Named
-        [restore: live] [family: unclassified] [tier: canonical];
     /// Owner's home clearance: the highest stamp band a conversation homed in another vault may
     /// read here (DEC-0006 #home-clearance). Key: the home vault's id as 64 lower-case hex.
     DISCLOSURE_HOME_CLEARANCE: VaultMeta b"disclosure.home_clearance.v1:" Named

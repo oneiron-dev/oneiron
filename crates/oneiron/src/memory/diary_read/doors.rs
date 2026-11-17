@@ -3,12 +3,11 @@
 use std::collections::BTreeMap;
 
 use super::{
-    DIARY_READ_LOG, DIARY_READ_REQUEST, DIARY_READ_REVIEW, DIARY_READ_VERB, DiaryEntry,
-    DiaryEntryAdmission, DiaryReadGate, DiaryReadHold, DiaryReadOutcome, DiaryReadRecord,
-    DiaryReadRequest, DiaryReadReview, DiaryReader, DiaryReaderList, DiaryReviewAnswer,
-    DiaryReviewState, REVIEW_INBOX_IMPACT, SealedPadReader, agent_reviews_diary_reads_in_txn,
-    coach_reads_pads_in_txn, diary_entries_in_txn, live_note_in_txn, standing_request_in_txn,
-    work_vault_admin_in_txn,
+    DIARY_READ_LOG, DIARY_READ_REQUEST, DIARY_READ_VERB, DiaryEntry, DiaryEntryAdmission,
+    DiaryReadGate, DiaryReadHold, DiaryReadOutcome, DiaryReadRecord, DiaryReadRequest, DiaryReader,
+    DiaryReaderList, DiaryReviewAnswer, DiaryReviewState, REVIEW_INBOX_IMPACT, SealedPadReader,
+    agent_reviews_diary_reads_in_txn, coach_reads_pads_in_txn, diary_entries_in_txn,
+    live_note_in_txn, standing_request_in_txn, work_vault_admin_in_txn,
 };
 use crate::batch::secret_scan::LiftedKeys;
 use crate::claim::{ClaimReadStatus, PointRead, ScopedRead};
@@ -33,14 +32,6 @@ use crate::{
 const DIARY_PINNED_VERB: &str = "self.memory.diary.pinned";
 
 impl Vault {
-    /// Sets whether `agent` reviews each read of its diary first. The host
-    /// that provisions Eiri turns it on for her agent id; absent means off.
-    pub fn set_agent_diary_read_review(&self, agent: EntityId, on: bool) -> Result<()> {
-        self.with_write_txn_grouped(|txn| {
-            DIARY_READ_REVIEW.put(&self.store, txn, &agent, &DiaryReadReview(on))
-        })
-    }
-
     /// Whether `agent` reviews each read of its diary first.
     pub fn agent_diary_read_review(&self, agent: EntityId) -> Result<bool> {
         let txn = self.store.env.read_txn()?;
@@ -277,20 +268,6 @@ impl Memory<'_> {
             row.answered_at = Some(self.vault.store.clock.now_recorded_at());
             DIARY_READ_REQUEST.put(&self.vault.store, txn, &key, &row)?;
             Ok(row)
-        })
-    }
-
-    /// The owner sets whether `agent` reviews each read of its diary first.
-    pub fn set_diary_read_review(
-        &self,
-        owner: &AuthenticatedOwner,
-        agent: EntityId,
-        on: bool,
-    ) -> MemoryResult<()> {
-        self.with_verified_actor_write_txn(|txn| {
-            self.require_bound_owner_in_txn(txn, owner)?;
-            DIARY_READ_REVIEW.put(&self.vault.store, txn, &agent, &DiaryReadReview(on))?;
-            Ok(())
         })
     }
 

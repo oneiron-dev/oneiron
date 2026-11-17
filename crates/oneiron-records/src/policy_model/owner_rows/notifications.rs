@@ -2,12 +2,13 @@
 //! `oneiron` re-exports each item at its old path.
 
 use oneiron_base::error::Error;
+use oneiron_setting_contract::SettingValue;
 use oneiron_verb_wire::gate::owner_policy_mutation::PolicyRowScope;
 use serde::Deserialize;
 use serde::Serialize;
 
 /// Recipient-owned delivery override. Absence inherits the manifest rule.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum PolicyNotificationMode {
     Inherit,
@@ -15,6 +16,9 @@ pub enum PolicyNotificationMode {
     Digest,
     LogOnly,
 }
+
+/// A recipient's delivery mode is the setting `policy.notification.mode`.
+impl SettingValue for PolicyNotificationMode {}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

@@ -19,10 +19,6 @@ crate::side_table::side_tables! {
     /// (agent) + id16 (request).
     DIARY_READ_REQUEST: VaultMeta b"diary:read_request:v1:" Named
         [restore: live] [family: unclassified] [tier: canonical];
-    /// OF-490: an agent reviews each read of its diary before it is read (on for Eiri; absent
-    /// means off). Value: one byte, 1 on, 0 off. Key: id16 (agent).
-    DIARY_READ_REVIEW: VaultMeta b"diary:read_review:v1:" Raw
-        [restore: live] [family: unclassified] [tier: canonical];
     /// The export audit (FIX 6427): one row per Owner copy that left the vault, the whole vault
     /// or an off-record room's talk. It holds the export id, scope, exporter, time, format and
     /// actor, and the copy's length and digest where its door read the copy back; never the

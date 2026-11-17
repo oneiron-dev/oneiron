@@ -65,18 +65,3 @@ pub fn federation_burst_host_only<T, I>(
         &[super::host::SERVED_CLIENT_HINT],
     ))
 }
-
-#[doc(hidden)]
-pub use oneiron_verb_wire::verbs::federation_burst::RetainedWorkWaitSetRequest;
-
-/// `vault.sync.retained_work.wait.set`: the owner sets one retained-work
-/// queue's wait in seconds, or resets it to its existing default, and
-/// receives the effective wait. The engine writer owns the side-table row;
-/// this door only exposes that act through the typed owner surface.
-pub fn set_retained_work_wait_secs_as_owner(
-    vault: &Vault,
-    owner: &AuthenticatedOwner,
-    input: RetainedWorkWaitSetRequest,
-) -> MemoryResult<u64> {
-    Ok(vault.set_retained_work_wait_secs(owner, input.queue, input.secs)?)
-}
