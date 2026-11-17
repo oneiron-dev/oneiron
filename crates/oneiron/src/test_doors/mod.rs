@@ -24,6 +24,7 @@ pub mod board_child_done;
 pub mod board_task_wakes;
 pub mod booking_side_table_rows;
 pub mod builtin_pack_seed;
+pub mod call_receipt_damage;
 pub mod callable_skill;
 pub mod campaign_member_index;
 pub mod campaign_opt_out_line;
