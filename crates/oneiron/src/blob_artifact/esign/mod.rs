@@ -1,4 +1,5 @@
 //! Native signing requests on versioned blob artifacts; claims are the state machine.
+pub(crate) mod archive_restore;
 mod dispatch_key;
 mod field_admission;
 mod fold;
