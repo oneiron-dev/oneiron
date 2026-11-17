@@ -45,7 +45,9 @@ use oneiron::setting::{
     SetSetting, SetSettingOutcome, SettingCaller, SettingMode, SettingScope, SettingSource,
 };
 use oneiron::settings::backup::BackupPolicy;
-use oneiron::verbs::{SettingGetRequest, setting_get_embedded};
+use oneiron::verbs::{
+    SettingGetRequest, SettingListRequest, setting_get_embedded, setting_list_embedded,
+};
 use oneiron::{EdgeActorClass, EntityId, Vault};
 use retained_side_rows::{export_whole, open_later_vault, open_source_vault, owner_proof};
 
@@ -111,6 +113,35 @@ fn setting_at_vault(vault: &Vault, key: &str) -> (serde_json::Value, SettingSour
     )
     .expect("the settings verb reads the key");
     (view.value, view.source)
+}
+
+/// The time `vault`'s stored vault-scope value row of `key` was set at, as
+/// the settings list verb shows it.
+fn vault_row_set_at(vault: &Vault, key: &str) -> u64 {
+    let owner = vault
+        .ensure_embedded_owner_actor()
+        .expect("the vault names its embedded owner actor");
+    let memory = vault.memory(owner, EdgeActorClass::Human);
+    let catalogue = setting_list_embedded(
+        &memory,
+        SettingListRequest {
+            prefix: Some(key.to_owned()),
+            ..SettingListRequest::default()
+        },
+    )
+    .expect("the settings verb lists the key");
+    catalogue
+        .keys
+        .iter()
+        .find(|entry| entry.key == key)
+        .and_then(|entry| {
+            entry
+                .rows
+                .iter()
+                .find(|row| row.mode == SettingMode::Value && row.scope == SettingScope::Vault)
+        })
+        .map(|row| row.set_at)
+        .unwrap_or_else(|| panic!("{key} holds a stored vault value row"))
 }
 
 /// The sequence and revision of an applied change.
@@ -743,5 +774,47 @@ fn owner_restore_passes_an_absent_row_through_its_keys_change_hook() {
         after_floor_from,
         SettingSource::Default,
         "no floor row stands after the held-back import"
+    );
+}
+
+/// The owner restore runs an absent hooked row's change hook at the restore's
+/// own time: the row keeps its archived set time, and the effect the hook
+/// starts restarts from now (ARCHIVE-RESTORE-LIVE = B; review P1 of #9435: a
+/// feed hook scheduled its first poll at the archived time).
+#[test]
+fn owner_restore_runs_a_change_hook_at_the_restore_time() {
+    let (_source_dir, source) = open_source_vault();
+    let source_owner = owner_proof(&source);
+    let outcome = source
+        .set_setting(
+            SettingCaller::Owner(&source_owner),
+            SetSetting::vault_value("test.hooked", serde_json::json!(7)),
+        )
+        .expect("the owner sets the hooked key");
+    applied_in(&outcome);
+    let source_set_at = vault_row_set_at(&source, "test.hooked");
+    let archive = export_whole(&source);
+
+    // The destination reads through the settings verb, so it opens owned,
+    // after the same wall-clock sleep as the other destinations.
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+    let (_dest_dir, dest) = open_source_vault();
+    let dest_owner = owner_proof(&dest);
+    let hooked_before = oneiron::test_doors::setting_keys::hooked_changes();
+    dest.import_whole_vault_archive_from_as_owner(Cursor::new(&archive), &dest_owner)
+        .expect("the owner import succeeds");
+    assert!(
+        oneiron::test_doors::setting_keys::hooked_changes() > hooked_before,
+        "the owner restore runs the hooked key's change hook"
+    );
+    assert_eq!(
+        vault_row_set_at(&dest, "test.hooked"),
+        source_set_at,
+        "the restored row keeps its archived set time"
+    );
+    let hook_at = oneiron::test_doors::setting_keys::hooked_last_at();
+    assert!(
+        hook_at > source_set_at,
+        "the hook's change is stamped at the restore ({hook_at}), after the archived set time ({source_set_at})"
     );
 }
