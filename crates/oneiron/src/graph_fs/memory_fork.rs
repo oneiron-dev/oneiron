@@ -75,9 +75,11 @@ impl ScopedRead<'_> {
     /// The memory frontier `hash` names, checked against this store: one
     /// whose sequence is past the committed head, or whose instant is past
     /// the recording clock, was never handed out here and is not found, the
-    /// answer a wrong repository hash gets. Nothing is minted or kept: the
-    /// frontier selects content, and each read's admission decides what the
-    /// fork shows.
+    /// answer a wrong repository hash gets. Every sequence at or below the
+    /// head names a state a commit left, since all the moves of one write
+    /// transaction take its one sequence (the memory timeline). Nothing is
+    /// minted or kept: the frontier selects content, and each read's
+    /// admission decides what the fork shows.
     pub(super) fn handed_out_memory_frontier(&self, hash: &str) -> Result<MemoryFrontier> {
         let frontier = MemoryFrontier::from_hex(hash)?;
         let vault = self.vault();
@@ -195,6 +197,49 @@ impl GraphFsResolver<'_, '_> {
         })
     }
 
+    /// Whether `target`, a directory a listing is under, stands at this
+    /// mount: always on a live mount; at a memory fork, when the reader is
+    /// admitted to its row as it stood there.
+    pub(super) fn target_at_fork(&self, target: &EntityId) -> Result<bool> {
+        if self.memory_fork().is_none() {
+            return Ok(true);
+        }
+        Ok(self.file_row(*target)?.value.is_some())
+    }
+
+    /// Whether every row a coreutil's path names (each component that is an
+    /// entity id: an entity, a world, a claim) stands at this mount, as a
+    /// listing keeps a row: always on a live mount; at a memory fork, when
+    /// the reader is admitted to each row as it stood there. A row the
+    /// reader's live read admits whose bytes at the frontier this machine no
+    /// longer holds answers [`Error::HistoryNotHeld`], as a direct read of
+    /// its file does.
+    pub(super) fn path_rows_at_fork(&self, components: &[&str]) -> Result<bool> {
+        if self.memory_fork().is_none() {
+            return Ok(true);
+        }
+        self.scoped_read.persist_grant_clock()?;
+        let absent = {
+            let txn = self.scoped_read.vault().store.env.read_txn()?;
+            let mut absent = None;
+            for row in components
+                .iter()
+                .filter_map(|part| EntityId::from_hex(part).ok())
+            {
+                if !self.listed_at_fork_in(&txn, &row, |_| Ok(true))? {
+                    absent = Some(row);
+                    break;
+                }
+            }
+            absent
+        };
+        let Some(row) = absent else {
+            return Ok(true);
+        };
+        self.refuse_history_not_held(&row)?;
+        Ok(false)
+    }
+
     /// Whether a link recorded at `created_at` stands at this mount: always
     /// on a live mount; at a memory fork, when it was recorded before the
     /// frontier's instant. A link recorded in the frontier's own second
@@ -225,5 +270,19 @@ impl GraphFsResolver<'_, '_> {
             return Err(Error::HistoryNotHeld);
         }
         Ok(())
+    }
+}
+
+/// The row a file path reads, when the path names one: a claim leaf under any
+/// listing, or an entity's body.
+pub(super) fn row_of_file_path(components: &[&str]) -> Result<Option<EntityId>> {
+    match components {
+        ["claims", row]
+        | ["claims", "by-id", row]
+        | ["claims", "by-time", _, row]
+        | ["worlds", _, "claims", row]
+        | ["entities", _, "claims", row]
+        | ["entities", row, "body"] => EntityId::from_hex(row).map(Some),
+        _ => Ok(None),
     }
 }

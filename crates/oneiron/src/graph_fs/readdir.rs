@@ -20,7 +20,7 @@ use super::model::{
 };
 
 use super::coreutils::{claim_matches_world_in, read_grant_matches_actor};
-use super::memory_fork::{claim_names_subject, served_claim};
+use super::memory_fork::{claim_names_subject, row_of_file_path, served_claim};
 
 use super::paging::{
     DayPosition, EdgeCursor, PageBuilder, TemporalCursor, WorldPosition, format_day_shard,
@@ -782,29 +782,5 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
             builder.set_last_temporal_cursor(temporal);
         }
         Ok(builder.finish(next_cursor))
-    }
-
-    /// Whether `target`, a directory a listing is under, stands at this
-    /// mount: always on a live mount; at a memory fork, when the reader is
-    /// admitted to its row as it stood there.
-    pub(super) fn target_at_fork(&self, target: &EntityId) -> Result<bool> {
-        if self.memory_fork().is_none() {
-            return Ok(true);
-        }
-        Ok(self.file_row(*target)?.value.is_some())
-    }
-}
-
-/// The row a file path reads, when the path names one: a claim leaf under any
-/// listing, or an entity's body.
-fn row_of_file_path(components: &[&str]) -> Result<Option<EntityId>> {
-    match components {
-        ["claims", row]
-        | ["claims", "by-id", row]
-        | ["claims", "by-time", _, row]
-        | ["worlds", _, "claims", row]
-        | ["entities", _, "claims", row]
-        | ["entities", row, "body"] => parse_entity_id(row).map(Some),
-        _ => Ok(None),
     }
 }
