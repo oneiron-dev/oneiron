@@ -304,8 +304,8 @@ pub use backup_signer_delegation::{
     BackupSignerStatement,
 };
 pub use carrier_prompt::{
-    PromptDeviceName, held_answer_prompt, machine_code_line, machine_key_code, pin_request_prompt,
-    recovery_root_code,
+    PromptDeviceName, held_answer_prompt, machine_code_check_line, machine_code_line,
+    machine_key_code, pin_request_prompt, recovery_root_code,
 };
 pub use carrier_reading::CarrierReading;
 pub use causal_write::CausalWriteDisposition;

@@ -18,8 +18,8 @@
 use oneiron::EntityId;
 use oneiron::authority::{
     CarrierReading, MachineDeviceClass, MachineOwnership, MachineRole, PromptDeviceName,
-    RecoveryRootId, held_answer_prompt, machine_code_line, machine_key_code, pin_request_prompt,
-    recovery_root_code,
+    RecoveryRootId, held_answer_prompt, machine_code_check_line, machine_code_line,
+    machine_key_code, pin_request_prompt, recovery_root_code,
 };
 
 const ROOT: RecoveryRootId = RecoveryRootId([0xA5; 32]);
@@ -357,8 +357,9 @@ fn a_held_answer_for_a_node_asks_whether_the_device_may_run_work() {
 
 /// A machine key's code is derived as a recovery root's code is, so the
 /// owner compares like with like. The line under a held answer's question
-/// shows it, and sends the owner to the device itself when the device's name
-/// is only its own report.
+/// shows it, and says a device whose name is only its own report by its
+/// kind, as a device with no name: the line under the code sends the owner
+/// to the device itself, once.
 #[test]
 fn a_machine_key_code_is_derived_as_a_root_code_is() {
     assert_eq!(machine_key_code(&ROOT.0), ROOT_CODE);
@@ -380,11 +381,58 @@ fn a_machine_key_code_is_derived_as_a_root_code_is() {
             MachineDeviceClass::Computer,
             PromptDeviceName::ReportedByDevice("office-mini")
         ),
-        format!(
-            "Code shown on that computer: {ROOT_CODE}\nCheck it on the device itself, not by its \
-             name."
-        )
+        format!("Code shown on that computer: {ROOT_CODE}")
     );
+}
+
+/// The line under the code says what to do with it, in the UI session's
+/// three forms: by the name the owner set or confirmed, by the device's kind
+/// when no name is held, and with no name at all when the name is only the
+/// device's own report, so nobody looks for the device by a name anyone can
+/// pick. A name that spells a slot is printed as it is.
+#[test]
+fn the_line_under_the_code_says_to_dismiss_a_code_that_differs() {
+    assert_eq!(
+        machine_code_check_line(
+            MachineDeviceClass::Computer,
+            PromptDeviceName::OwnerSetOrConfirmed("office-mini")
+        ),
+        "It should match the code on office-mini. If they differ, dismiss this."
+    );
+    assert_eq!(
+        machine_code_check_line(MachineDeviceClass::Phone, NOT_HELD),
+        "It should match the code on that phone. If they differ, dismiss this."
+    );
+    assert_eq!(
+        machine_code_check_line(MachineDeviceClass::Computer, NOT_HELD),
+        "It should match the code on that computer. If they differ, dismiss this."
+    );
+    for reported in ["office-mini", "{name}", "{kind}"] {
+        assert_eq!(
+            machine_code_check_line(
+                MachineDeviceClass::Computer,
+                PromptDeviceName::ReportedByDevice(reported)
+            ),
+            "Check the code on the device itself, not by its name. If they differ, dismiss this."
+        );
+    }
+    assert_eq!(
+        machine_code_check_line(
+            MachineDeviceClass::Phone,
+            PromptDeviceName::OwnerSetOrConfirmed("{kind} {code}")
+        ),
+        "It should match the code on {kind} {code}. If they differ, dismiss this."
+    );
+    // A name with nothing left once it is printed names the device by its kind.
+    for blank in [
+        PromptDeviceName::OwnerSetOrConfirmed(" \n"),
+        PromptDeviceName::ReportedByDevice("“”"),
+    ] {
+        assert_eq!(
+            machine_code_check_line(MachineDeviceClass::Phone, blank),
+            "It should match the code on that phone. If they differ, dismiss this."
+        );
+    }
 }
 
 /// A name is printed on the line it stands in and cannot leave it: control
@@ -440,9 +488,6 @@ fn a_name_cannot_start_a_line_or_close_its_quotation() {
             MachineDeviceClass::Phone,
             PromptDeviceName::ReportedByDevice("{name}")
         ),
-        format!(
-            "Code shown on that phone: {ROOT_CODE}\nCheck it on the device itself, not by its \
-             name."
-        )
+        format!("Code shown on that phone: {ROOT_CODE}")
     );
 }
