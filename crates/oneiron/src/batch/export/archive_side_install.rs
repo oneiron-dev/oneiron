@@ -1,4 +1,5 @@
 //! Owner-permitted promotion of retained archive envelopes through their owning modules.
+//! Installed drafter and merge-queue policies queue refreshes that run only after commit.
 
 use super::archive_retained_side_rows::retained_side_row_withholds_credential;
 use super::{
@@ -20,6 +21,41 @@ pub(crate) enum ArchivedSideRowOutcome {
     HeldBack(RetainedSideHeldBackReason),
 }
 
+/// Refreshes required by newly installed policies after the import commits.
+#[derive(Default)]
+pub(crate) struct ArchivedSideRowRefresh {
+    /// Serving hosts must observe repaired drafter bindings.
+    drafter_serving: bool,
+    /// Queue attempts must observe the installed review policy.
+    attempt_observers: bool,
+}
+
+impl ArchivedSideRowRefresh {
+    /// Records refreshes only for groups with an installed source row.
+    fn record(&mut self, group: ArchivedSideGroup, outcomes: &[ArchivedSideRowOutcome]) {
+        if outcomes
+            .iter()
+            .any(|outcome| matches!(outcome, ArchivedSideRowOutcome::Installed))
+        {
+            match group {
+                ArchivedSideGroup::Drafter => self.drafter_serving = true,
+                ArchivedSideGroup::MergeQueue => self.attempt_observers = true,
+                _ => {}
+            }
+        }
+    }
+
+    /// Notifies policy observers after the writer and retrieval guard are released.
+    pub(crate) fn after_commit(self, vault: &crate::Vault) {
+        if self.drafter_serving {
+            vault.notify_drafter_serving();
+        }
+        if self.attempt_observers {
+            vault.store.notify_attempt_observers();
+        }
+    }
+}
+
 /// The fixed dependency order of the owning landing groups.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum ArchivedSideGroup {
@@ -39,6 +75,22 @@ pub(crate) enum ArchivedSideGroup {
     HousekeepingWake,
     /// Protective grant withdrawal markers.
     WithdrawnGrant,
+    /// Project history budgets.
+    ProjectHistory,
+    /// Message-stream defaults for new sessions.
+    Memory,
+    /// Dreamer action-mode policy.
+    DreamerRunner,
+    /// Served-origin LFS path rules.
+    OriginLfs,
+    /// Queue review policy.
+    MergeQueue,
+    /// Owner learning rows before holder rows.
+    LearningSetting,
+    /// Retrieval pins and local active weights.
+    RetrievalPins,
+    /// Drafter policy and serving binding repair.
+    Drafter,
 }
 
 /// Selects only the tables with a landing group; every other envelope stays retained-only.
@@ -67,6 +119,14 @@ pub(crate) fn archived_side_group(source_table: &str) -> Option<ArchivedSideGrou
         name if name == side_table::PORTS_DEPENDENT_WALK_POLICY.name => Some(Group::Ports),
         name if name == side_table::HOUSEKEEPING_WAKE.name => Some(Group::HousekeepingWake),
         name if name == side_table::AUTHORITY_WITHDRAWN_GRANT.name => Some(Group::WithdrawnGrant),
+        name if name == side_table::PROJECT_HISTORY_POLICY.name => Some(Group::ProjectHistory),
+        name if name == side_table::MESSAGE_STREAM_POLICY.name => Some(Group::Memory),
+        name if name == side_table::DREAMER_ACTION_MODE_POLICY.name => Some(Group::DreamerRunner),
+        name if name == side_table::ORIGIN_LFS_PATH_POLICY.name => Some(Group::OriginLfs),
+        name if name == side_table::MERGE_QUEUE_REVIEW_POLICY.name => Some(Group::MergeQueue),
+        name if name == side_table::LEARNING_SETTING.name => Some(Group::LearningSetting),
+        name if name == side_table::RETRIEVAL_POLICY_PINS.name => Some(Group::RetrievalPins),
+        name if name == side_table::DRAFTER_POLICY.name => Some(Group::Drafter),
         _ => None,
     }
 }
@@ -78,8 +138,9 @@ pub(crate) fn land_archived_side_group_in_txn(
     txn: &mut heed::RwTxn<'_>,
     permit: &OwnerArchiveRestorePermit,
     rows: &[ArchiveRetainedSideRow],
+    refresh: &mut ArchivedSideRowRefresh,
 ) -> Result<Vec<ArchivedSideRowOutcome>> {
-    match group {
+    let outcomes = match group {
         ArchivedSideGroup::Settings => {
             crate::settings::archive_restore::land_archived_settings_rows_in_txn(
                 vault, txn, permit, rows,
@@ -114,7 +175,39 @@ pub(crate) fn land_archived_side_group_in_txn(
         ArchivedSideGroup::WithdrawnGrant => {
             crate::authority::land_archived_withdrawn_grant_rows_in_txn(vault, txn, permit, rows)
         }
-    }
+        ArchivedSideGroup::ProjectHistory => {
+            crate::Vault::land_archived_project_history_rows_in_txn(vault, txn, permit, rows)
+        }
+        ArchivedSideGroup::Memory => {
+            crate::memory::archive_restore::land_archived_memory_rows_in_txn(
+                vault, txn, permit, rows,
+            )
+        }
+        ArchivedSideGroup::DreamerRunner => {
+            crate::dreamer_runner::archive_restore::land_archived_dreamer_runner_rows_in_txn(
+                vault, txn, permit, rows,
+            )
+        }
+        ArchivedSideGroup::OriginLfs => {
+            crate::Vault::land_archived_origin_lfs_rows_in_txn(vault, txn, permit, rows)
+        }
+        ArchivedSideGroup::MergeQueue => {
+            crate::Vault::land_archived_merge_queue_rows_in_txn(vault, txn, permit, rows)
+        }
+        ArchivedSideGroup::LearningSetting => {
+            crate::learning_setting::land_archived_learning_setting_rows_in_txn(
+                vault, txn, permit, rows,
+            )
+        }
+        ArchivedSideGroup::RetrievalPins => {
+            crate::store::Store::land_archived_retrieval_pins_rows_in_txn(vault, txn, permit, rows)
+        }
+        ArchivedSideGroup::Drafter => {
+            crate::Vault::land_archived_drafter_rows_in_txn(vault, txn, permit, rows)
+        }
+    }?;
+    refresh.record(group, &outcomes);
+    Ok(outcomes)
 }
 
 /// Decodes canonical source bytes with the owning table before the existing credential check.

@@ -273,6 +273,7 @@ pub(crate) fn install_or_retain_side_rows_in_txn<R: Read + Seek>(
     wtxn: &mut RwTxn<'_>,
     archive: &IndexedArchive<'_, R>,
     permit: Option<&super::OwnerArchiveRestorePermit>,
+    refresh: &mut super::archive_side_install::ArchivedSideRowRefresh,
 ) -> Result<RetainedSideImportSummary> {
     use super::archive_side_install::{
         ArchivedSideGroup, ArchivedSideRowOutcome, archived_side_group,
@@ -327,7 +328,8 @@ pub(crate) fn install_or_retain_side_rows_in_txn<R: Read + Seek>(
                 .into_iter()
                 .map(|(key, value, row)| ((key, value), row))
                 .unzip();
-            let outcomes = land_archived_side_group_in_txn(group, vault, wtxn, permit, &rows)?;
+            let outcomes =
+                land_archived_side_group_in_txn(group, vault, wtxn, permit, &rows, refresh)?;
             if outcomes.len() != rows.len() {
                 return Err(Error::InvariantViolation(
                     "an archive landing group must return one outcome per envelope",
