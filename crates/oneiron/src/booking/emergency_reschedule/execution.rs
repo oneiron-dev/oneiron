@@ -198,6 +198,7 @@ pub(super) fn dispatch_item_effect(
                 reason_codes: Vec::new(),
                 legal_hold: None,
                 room_join_hold: None,
+                pending: None,
             },
         )));
     }
