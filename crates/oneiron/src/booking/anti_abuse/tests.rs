@@ -287,6 +287,7 @@ fn owner_config_rows_cover_exact_ship_skip_reserve_stack() {
                 check_syntax,
                 check_mx,
                 check_disposable_domain,
+                ..
             } => {
                 email_prompt = true;
                 assert!(*check_syntax && *check_mx && *check_disposable_domain);
@@ -963,6 +964,8 @@ fn invalid_email_prompts_but_does_not_hard_block() {
             check_syntax: true,
             check_mx: true,
             check_disposable_domain: true,
+            prompt_at_failed_checks: email_prompt_at_failed_checks_default(),
+            quarantine_at_failed_checks: email_quarantine_at_failed_checks_default(),
         }),
         seed_rule(&BookingAntiAbuseRule::HoneypotAndSubmitFloor {
             min_submit_millis: nz64(1),
@@ -1036,6 +1039,8 @@ fn borderline_submission_builds_pending_review_inbox_group() {
             check_syntax: true,
             check_mx: true,
             check_disposable_domain: true,
+            prompt_at_failed_checks: email_prompt_at_failed_checks_default(),
+            quarantine_at_failed_checks: email_quarantine_at_failed_checks_default(),
         }),
         seed_rule(&BookingAntiAbuseRule::QuarantineBorderline),
     ];
@@ -1994,6 +1999,8 @@ fn a_restore_goes_ahead_past_a_submission_quarantined_since() {
             check_syntax: true,
             check_mx: true,
             check_disposable_domain: true,
+            prompt_at_failed_checks: email_prompt_at_failed_checks_default(),
+            quarantine_at_failed_checks: email_quarantine_at_failed_checks_default(),
         }),
         seed_rule(&BookingAntiAbuseRule::QuarantineBorderline),
     ];

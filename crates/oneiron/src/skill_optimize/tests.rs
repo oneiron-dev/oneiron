@@ -252,6 +252,7 @@ impl StubAuthor {
             answer: SkillEditDraft::Edit {
                 desc: DRAFTED_DESC.to_owned(),
                 rationale: "five attributed defects name the missing check".to_owned(),
+                files: Vec::new(),
             },
             seen: RefCell::new(Vec::new()),
         }
@@ -4754,6 +4755,7 @@ fn goal_axes_score_held_out_first_then_bounded_live_slice_with_human_cost() -> R
         skill,
         &incumbent,
         &candidate,
+        [incumbent.desc.as_str(), candidate.desc.as_str()],
         &goal_axis_plan(6),
         &judge,
         &bandit,
