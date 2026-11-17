@@ -14,7 +14,12 @@
 //! signer's flood hides a good one. "First" is the signer's sequence, then
 //! the hash: a machine's later row always has a greater sequence, so a merge
 //! never lets a descendant evict its ancestor's envelope, and the hash
-//! breaks ties between concurrent rows only.
+//! breaks ties between concurrent rows only. A record below its sequence
+//! floor counts as every row does (Engine RULING SEQ-FLOOR-S-WORLD-KEY-FLOOR
+//! = A), so a signer's own fork at or below a record it signed ranks first:
+//! four such forks with lower hashes push that record's envelopes out of a
+//! recipient's slots. Only the forking signer's own envelopes go; a
+//! recipient a standing machine also wrapped to keeps the key.
 //!
 //! A record counts here (CALLS WORLD_KEY_WRAP_AUTH) when, at its parents:
 //! - its publisher passes the one carrier rule's exact-key admission, pin-free
@@ -41,12 +46,12 @@
 //!
 //! A key is current only while a machine whose chain is not removed in this
 //! install's trust set signed one of its counted records. A removed
-//! machine's install key can still sign a record above the floor this
-//! install keeps of it, which lands as honest late arrival does; it never
-//! chooses the world's key, and no honest row that descends from it lends it
-//! that standing (Astra #1422c F2, the Engine's Q1). Such a key stays in the
-//! map, for reading and for the kit, and the next ensure on a machine of the
-//! owner's mints afresh.
+//! machine's install key can still sign a record, at any sequence, on
+//! parents that predate its removal, which lands as honest late arrival
+//! does; it never chooses the world's key, and no honest row that descends
+//! from it lends it that standing (Astra #1422c F2, the Engine's Q1). Such a
+//! key stays in the map, for reading and for the kit, and the next ensure on
+//! a machine of the owner's mints afresh.
 
 use std::collections::BTreeMap;
 use std::collections::btree_map::Entry;
