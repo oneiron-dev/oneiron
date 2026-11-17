@@ -369,6 +369,33 @@ fn is_live_owner(vault: &Vault, txn: &heed::RoTxn<'_>, actor: &str) -> Result<bo
     }
 }
 
+/// Refuses `by`, a hex actor id, a draft of `body` when `body` names a
+/// project that is not live, or, under [`PROJECT_MEMBERS_ONLY`], one `by` is
+/// no member of (a seat in its home room, its leader or a board holder) and
+/// `by` is no live vault owner.
+fn admit_project_drafter_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    body: &EsignDocument,
+    by: &str,
+) -> Result<()> {
+    let Some(project) = body.project else {
+        return Ok(());
+    };
+    let (_, effective) = vault
+        .effective_project_in_txn(txn, project)?
+        .ok_or_else(|| invalid("the document's project is not a live project"))?;
+    let member = effective.seats(by)
+        || effective.leader == by
+        || effective.board.iter().any(|holder| holder == by);
+    if PROJECT_MEMBERS_ONLY && !member && !is_live_owner(vault, txn, by)? {
+        return Err(invalid(
+            "only a member of a project or a vault owner sends a document for it",
+        ));
+    }
+    Ok(())
+}
+
 /// [`Vault::create_esign_document`]'s draft under `txn`, its document already
 /// validated: the overlay is new, a project's membership holds, each item's
 /// PDF is at its pinned version, and the draft lands, stamped to its
@@ -386,20 +413,7 @@ pub(super) fn create_document_in(
     if !events_in(vault, txn, document)?.is_empty() {
         return Err(invalid("document already exists"));
     }
-    if let Some(project) = body.project {
-        let (_, effective) = vault
-            .effective_project_in_txn(txn, project)?
-            .ok_or_else(|| invalid("the document's project is not a live project"))?;
-        let by = actor.actor.as_str();
-        let member = effective.seats(by)
-            || effective.leader == by
-            || effective.board.iter().any(|holder| holder == by);
-        if PROJECT_MEMBERS_ONLY && !member && !is_live_owner(vault, txn, by)? {
-            return Err(invalid(
-                "only a member of a project or a vault owner sends a document for it",
-            ));
-        }
-    }
+    admit_project_drafter_in(vault, txn, body, &actor.actor)?;
     for item in &body.items {
         let id = EntityId::from_hex(&item.artifact_ref)?;
         let head = super::super::read_blob_artifact_head_in_txn(&vault.store, txn, &id)?
@@ -432,6 +446,76 @@ pub(super) fn create_document_in(
             .stamp_blob_project(&vault.store, txn, document, project)?;
     }
     Ok(())
+}
+
+/// `vault.esign.fields.place` under `txn`: `document`'s draft as it folds
+/// now, `fields` in place of its own, lands again as one more
+/// `esign.drafted` event by `actor`, which a document for a project admits
+/// as its first draft admits its drafter. The rest of the draft (items,
+/// recipients, windows, commitments) is kept as it is. A document that has
+/// left Draft is refused before anything is written ("sent content is
+/// frozen", as the fold refuses a redraft), and so is a draft that names
+/// commitments ([`super::commitments::admit`]). Each placed field is laid
+/// out, with no value, on the page of its item's pinned PDF that it names,
+/// on the pages `inspected` holds for those bytes (FIX 9609): a field on a
+/// page the PDF lacks, or one that cannot be presented there, is refused
+/// before anything is written, so a sent document never freezes a field no
+/// signer can fill. The redraft lands through [`append_inspected`] on the
+/// same pages, so an admission that lays out every drafted field reads no
+/// PDF in this writer either.
+pub(super) fn place_fields_in(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    document: EntityId,
+    fields: &[EsignField],
+    actor: EsignAuditActor,
+    now: u64,
+    inspected: &InspectedPages,
+) -> Result<EsignState> {
+    use super::field_admission::{EventFields, validate_fields};
+    let Some(placed) = placed_draft(state_in(vault, txn, document)?, fields) else {
+        return Err(invalid("sent content is frozen"));
+    };
+    validate_document(&placed.document, now)?;
+    admit_project_drafter_in(vault, txn, &placed.document, &actor.actor)?;
+    validate_fields(vault, txn, &placed, &EventFields::Drafted, inspected)?;
+    append_inspected(
+        vault,
+        txn,
+        document,
+        EsignEvent::Drafted {
+            document: placed.document,
+        },
+        actor,
+        now,
+        inspected,
+    )
+}
+
+/// `state` with `fields` in place of its draft's own, or `None` once the
+/// document has left Draft.
+fn placed_draft(mut state: EsignState, fields: &[EsignField]) -> Option<EsignState> {
+    if state.status != DocumentStatus::Draft {
+        return None;
+    }
+    state.document.fields = fields.to_vec();
+    Some(state)
+}
+
+/// Inspects, before any writer, the pinned PDFs a placement of `fields` on
+/// `document`'s draft lays them on (FIX 9609), for [`place_fields_in`].
+/// A document that is unknown or no longer in Draft inspects nothing: the
+/// writer answers it.
+pub(super) fn inspect_placed_pages(
+    vault: &Vault,
+    document: EntityId,
+    fields: &[EsignField],
+) -> InspectedPages {
+    use super::field_admission::{EventFields, inspect_event_pages};
+    inspect_event_pages(vault, |txn| {
+        Ok(placed_draft(state_in(vault, txn, document)?, fields)
+            .map(|placed| (placed, EventFields::Drafted)))
+    })
 }
 
 impl Vault {
