@@ -76,10 +76,16 @@ impl RampScope {
     /// tuple can never leave a committed row behind for the all-scopes scan to
     /// choke on.
     ///
+    /// The actor may not be [`ERASED_CALL_IDENTITY`](crate::receipt::ERASED_CALL_IDENTITY)
+    /// (RAMP-SCOPE-ERASED-TOKEN-LIVE): an actor's erase writes that token
+    /// into the rows it keeps as acts, and the fold reads no row that carries
+    /// it, so a live scope keyed by it would count while it is written and be
+    /// gone at the next rebuild.
+    ///
     /// # Errors
     ///
     /// [`GateError::InvalidConsentBound`](crate::error::GateError::InvalidConsentBound) when a field is empty, oversized, or
-    /// carries surrounding whitespace.
+    /// carries surrounding whitespace, or the actor is the erased token.
     pub fn validate(&self) -> Result<()> {
         for (label, value) in [
             (SCOPE_OP_KIND_LABEL, &self.op_kind),
@@ -89,6 +95,11 @@ impl RampScope {
             if normalized_scope_field(label, value)? != value.as_str() {
                 return Err(Error::Gate(GateError::InvalidConsentBound(label)));
             }
+        }
+        if self.actor == crate::receipt::ERASED_CALL_IDENTITY {
+            return Err(Error::Gate(GateError::InvalidConsentBound(
+                SCOPE_ACTOR_LABEL,
+            )));
         }
         if self.op_kind == "send"
             && let Some(identity) = self.target_class.strip_prefix("recipient:cold_external:")

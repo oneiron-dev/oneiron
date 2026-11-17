@@ -2012,7 +2012,20 @@ fn remote_rung_routes_each_entity_and_falls_back_with_truthful_locality() {
         let reconciler = PendingEmbeddingReconciler::new(Arc::clone(&vault), primary)
             .with_remote_rung(rung)
             .unwrap();
-        let report = reconciler.reconcile_once().unwrap();
+        // One pass leases at most the reconciler's batch (32), and the vault's
+        // seeded rows no longer fit beside the test's three: the pass totals
+        // accumulate until a pass leases nothing.
+        let mut report = oneiron::embed::PendingEmbeddingReconcileReport::default();
+        loop {
+            let pass = reconciler.reconcile_once().unwrap();
+            report.routed_remote += pass.routed_remote;
+            report.egress_denied += pass.egress_denied;
+            report.egress_no_verdict += pass.egress_no_verdict;
+            report.filled += pass.filled;
+            if pass.leased == 0 {
+                break;
+            }
+        }
         assert_eq!(
             (
                 report.routed_remote,
@@ -2153,8 +2166,16 @@ fn a_remote_batch_its_line_refuses_is_never_sent_and_embeds_on_device() {
     let remote = MockEndpoint::start(MockBehaviour::Ok);
     let dir = tempfile::tempdir().unwrap();
     let vault = test_vault(dir.path());
-    let id = put_claim(&vault, 0x95, "a row its line cannot pay for");
     let config = endpoint_config(&local.base);
+    // One pass leases at most the reconciler's batch (32): drain the vault's
+    // seeded rows through a local-only reconciler first, so the refused batch
+    // below holds only the test's row.
+    let drain = PendingEmbeddingReconciler::new(
+        Arc::clone(&vault),
+        endpoint::HttpEmbedder::from_config(&config).unwrap(),
+    );
+    while drain.reconcile_once().unwrap().leased > 0 {}
+    let id = put_claim(&vault, 0x95, "a row its line cannot pay for");
     let section = remote_section(&remote.base, id);
     let receipts = Arc::new(MemoryReceipts::default());
     let rung = endpoint::HttpEmbedder::from_config(&section.endpoint_config(&config)).unwrap();

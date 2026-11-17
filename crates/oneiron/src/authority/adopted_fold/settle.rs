@@ -42,7 +42,7 @@ pub(super) struct SettledTail {
     /// The projection's final merge.
     pub(super) final_merged: Option<FoldState>,
     /// The restrictive facts the projection applied: the image's, with each
-    /// serial tail actor revocation's and machine removal's (FIX 11760).
+    /// serial tail actor or device revocation's and machine removal's (FIX 11760).
     pub(super) revoke_facts: crate::authority::revoke_proof::RevokeFacts,
     /// The roster marks before custody is judged: the image's, with each
     /// serial tail machine profile's (FIX 11760).
@@ -81,10 +81,14 @@ pub(super) fn serial_fold_past_op(op: &AuthorityOp) -> bool {
 
 /// Whether `op` is a device revocation, which the tail folds past the image
 /// only serially, every covered row in its causal past (FIX 11760,
-/// [`super::serial_fold_past`]). It moves only its key's roster bit, which
-/// every merge ORs in, and makes no restrictive fact, so its tail need not
-/// fold whole: a row above it that its key signs folds rejected there, and
-/// a row beside it folds on its own parents' states, as in the whole fold.
+/// [`super::serial_fold_past`]). It moves its key's roster bit, which every
+/// merge ORs in, and its restrictive fact (FIX
+/// [CONFIRM-COLLISION-SUBTREE-ROLLBACK]), which it takes on its own branch
+/// ([`crate::authority::revoke_proof::RevokeFacts::add_serial_device_revokes`]),
+/// so its tail need not fold whole: a row above it that its key signs folds
+/// rejected there, a row beside it folds on its own parents' states, as in
+/// the whole fold, and one with no state on a parent with none is left to
+/// the whole history ([`settle_tail`]).
 /// A covered approval on its key expires on this install's own first sight
 /// of it, its first-seen receipt: the one the adoption kept for a row this
 /// install never stored before
@@ -406,17 +410,17 @@ pub(super) fn settle_tail(
         closed_handoffs.insert(*hash);
     }
     let mut revoke_facts = if withdrawal {
-        image.safety.revoke_facts.with_serial_actor_revokes(
-            image
-                .rows
-                .iter()
-                .map(|(hash, row)| (hash, &row.signer, row.seq)),
-            &judged,
-            &states,
-        )
+        image
+            .safety
+            .revoke_facts
+            .with_serial_actor_revokes(&judged, &states)
     } else {
         image.safety.revoke_facts.clone()
     };
+    // A device revocation is a restrictive fact in the whole fold (FIX
+    // [CONFIRM-COLLISION-SUBTREE-ROLLBACK]): each one the tail folds takes
+    // its own, which the image this install builds next keeps.
+    revoke_facts.add_serial_device_revokes(&judged, &states);
     let mut marks = image.safety.marks.clone();
     if machine {
         revoke_facts.add_serial_machine_removals(&judged, &states);
