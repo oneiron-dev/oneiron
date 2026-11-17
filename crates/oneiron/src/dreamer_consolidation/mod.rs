@@ -107,7 +107,10 @@ pub use branch::{BranchTurn, ConsolidationBranchPlan, ConversationPart};
 pub use conflict::*;
 pub(crate) use conflict::{candidate_probe_body, topic_key_canonical_bytes};
 pub use executor::*;
-pub(crate) use extracted_people::{delete_lineage_origin_in_txn, pin_lineage_origin_in_txn};
+pub(crate) use extracted_people::{
+    delete_lineage_origin_in_txn, has_name_span, normalize_name_span, origin_in_txn,
+    pin_lineage_origin_in_txn, speaker_admissible_in_txn,
+};
 pub use gap::*;
 pub(crate) use neighbourhood::unpin_neighbourhood_in_txn;
 pub(crate) use partition::PartitionAudience;

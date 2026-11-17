@@ -86,6 +86,18 @@ Pull is callable explicitly. The engine also enqueues its normal next-poll
 attempt; the served CalDAV attempt consumer is a separate outstanding host
 wiring item, recorded on the fix list. No automatic-polling claim is made here.
 
+## ICS feeds
+
+A feed is the setting `calendar.ics_feed`, one item per system, whose value is
+`{secret_ref, system, cadence_min_seconds, cadence_max_seconds}`. The owner installs
+it with `vault.settings.set` (`{"key":"calendar.ics_feed","item":"work-ics","scope":{"kind":"vault"},"value":{...}}`);
+the item is the config's `system`. Installing a feed starts its poll chain. An
+installed feed is never changed, so a different configuration uses a new system.
+A null value uninstalls the feed in the same write: its standing import consent
+ends, its cursor is deleted and its pending polls are cancelled. The claims it
+imported stay for the owner to settle. A system a feed has polled under is never
+installed again.
+
 ## Transport bounds
 
 These new HTTP clients use a five-second connection deadline and a thirty-second
