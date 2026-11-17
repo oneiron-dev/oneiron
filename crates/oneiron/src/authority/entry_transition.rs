@@ -603,7 +603,12 @@ pub(super) fn fold_entry_state(
             | AuthorityOp::RebindActor { .. }
             | AuthorityOp::RevokeActor { .. }
     ) {
-        if !super::owner_proof::human_bind_proved(&state, &entry.op, &participants) {
+        if !super::owner_proof::human_bind_proved(
+            &state,
+            &entry.op,
+            &participants,
+            context.consent_arm,
+        ) {
             return EntryFold::Invalid(AuthorityFoldIssue::ActorBindingRejected {
                 entry: hash,
                 reason: ActorBindingRejection::OwnerProofRequired,

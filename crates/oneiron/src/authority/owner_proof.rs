@@ -238,9 +238,9 @@ pub(super) fn asking_owner_choices(state: &FoldState) -> BTreeSet<AuthorityEntry
         .collect()
 }
 
-/// Whether a `human` bind or rebind in `state` has the owner's proof where
-/// the fold asks for it: on a hosted fold, one of the row's `participants`
-/// (its signer and cosigners) is an owner key no cloud key holds
+/// Whether a bind or rebind in `state` has the owner's proof where the fold
+/// asks for it: on a hosted fold, one of the row's `participants` (its signer
+/// and cosigners) is an owner key no cloud key holds
 /// ([`owner_key_outside_cloud_custody`]). A managed host's root acts as
 /// nobody inside a customer's vault, and being the trust root never makes
 /// the operator a person there (owner ruling 2026-10-18, "A + support"; rows
@@ -251,25 +251,33 @@ pub(super) fn asking_owner_choices(state: &FoldState) -> BTreeSet<AuthorityEntry
 /// revoking that binding, on parents from before an owner key's enrolment
 /// too, or by a conflicting sibling bind. No writer binds a person on a
 /// hosted vault, so its owner is unbound and trusted on the carrier's word;
-/// the owner binds from a device of their own. A bind or rebind of a key
-/// whose binding, live or revoked, is `human` asks the same, whatever class
-/// it binds: else the root alone could turn the owner's binding into an
-/// agent's, or replace a revoked one and so undo the owner's removal (an
-/// owner no binding names reads as live). So does a bind or rebind of an
-/// owner key no cloud key holds, whatever class it binds and whatever its
-/// parents bind: else the root alone could bind the owner's key as another
-/// actor's at the owner's epoch on parents that bind no person, and the
-/// merge with the owner's own bind marks the key's binding conflicted, which
-/// [`super::owner_act::owner_live_at`] reads as the owner removed (blind
-/// review round 1 of #9137, P1). A self-host or relay fold,
-/// another class and every other op pass: a self-host root is the owner's
-/// own key, and those folds take no cloud key's consent. A revoke never asks
-/// (ONE-REVOKE-DURABILITY), so the root alone can still end a binding an
-/// owner key made (row HOSTED-OWNER-BIND-ROOT-REVOKE).
+/// the owner binds from a device of their own.
+///
+/// The gate asks for a `human` bind or rebind, and for a bind or rebind, of
+/// whatever class, of a key that could hold a person's binding: a key whose
+/// binding, live or revoked, is `human`, or a live roster key the fold's
+/// `consent_arm` takes, the arm a `human` bind of the key must pass
+/// (`apply_actor_binding`). On a hosted fold that is every owner or admin
+/// key, the custodial root's own key and an owner key no cloud key holds
+/// among them. Else the root alone could turn the owner's binding into an
+/// agent's, replace a revoked one and so undo the owner's removal (an owner
+/// no binding names reads as live), or bind such a key as another actor's at
+/// the owner's epoch on parents that bind no person, which the merge with
+/// the owner's own bind of that key marks conflicted, and
+/// [`super::owner_act::owner_live_at`] reads that as the owner removed
+/// (blind review of #9137, round 1 P1: the owner's key; round 2 P1: the
+/// root's key, bound as the owner's with an owner key's proof). A key no
+/// person's binding can name, such as a machine's `ROLE_AGENT` key, binds
+/// on the root's word. A self-host or relay fold and every other op pass: a
+/// self-host root is the owner's own key, and those folds take no cloud
+/// key's consent. A revoke never asks (ONE-REVOKE-DURABILITY), so the root
+/// alone can still end a binding an owner key made (row
+/// HOSTED-OWNER-BIND-ROOT-REVOKE).
 pub(super) fn human_bind_proved(
     state: &FoldState,
     op: &AuthorityOp,
     participants: &BTreeSet<AuthorityKey>,
+    consent_arm: fn(&FoldedDevice) -> bool,
 ) -> bool {
     let (AuthorityOp::BindActor {
         authority_key,
@@ -292,7 +300,7 @@ pub(super) fn human_bind_proved(
             .actor_bindings
             .get(authority_key)
             .is_some_and(|binding| binding.actor_class == ACTOR_CLASS_HUMAN)
-        || owner_key_outside_cloud_custody(state, authority_key);
+        || state.roster.get(authority_key).is_some_and(consent_arm);
     !touches_a_person
         || participants
             .iter()
