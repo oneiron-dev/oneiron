@@ -431,7 +431,7 @@ fn a_summary_over_two_named_notes_answers_one_digest_card() {
         )
         .expect("NOTE B lands");
     let runner = Arc::new(NotingRunner::default());
-    vault.set_reader_job_runner(Arc::clone(&runner));
+    vault.set_reader_job_runner(runner.clone());
     let run_id = fresh_id();
     let program = summarize_program(&note_a, &note_b);
 
@@ -569,7 +569,7 @@ fn a_captured_note_output_names_its_note_as_its_input_row() {
         )
         .expect("NOTE B lands");
     let runner = Arc::new(NotingRunner::default());
-    vault.set_reader_job_runner(Arc::clone(&runner));
+    vault.set_reader_job_runner(runner.clone());
     let run_id = fresh_id();
 
     let (outcome, _) = execute_run(
@@ -640,7 +640,7 @@ fn a_note_the_caller_cannot_read_refuses_the_set() {
         )
         .expect("the other actor's diary lands");
     let runner = Arc::new(NotingRunner::default());
-    vault.set_reader_job_runner(Arc::clone(&runner));
+    vault.set_reader_job_runner(runner.clone());
     let run_id = fresh_id();
 
     let (outcome, calls) = execute_run(
