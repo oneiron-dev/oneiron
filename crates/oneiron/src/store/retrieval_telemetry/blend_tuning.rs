@@ -141,6 +141,17 @@ impl Store {
         pins: &RetrievalPolicyPins,
     ) -> Result<RetrievalBlendWeightTableEntry> {
         let previous = self.retrieval_blend_weight_table_in_txn(wtxn)?;
+        let entry = self.project_retrieval_policy_pins(pins, previous)?;
+        self.write_retrieval_pinned_weights_in_txn(wtxn, &entry)?;
+        Ok(entry)
+    }
+
+    /// Projects pins onto the current weights with the public writer's provenance and checks.
+    fn project_retrieval_policy_pins(
+        &self,
+        pins: &RetrievalPolicyPins,
+        previous: RetrievalBlendWeightTableEntry,
+    ) -> Result<RetrievalBlendWeightTableEntry> {
         let mut provenance = previous.provenance.clone();
         provenance.insert("owner_pins".to_owned(), pins.pins.len().to_string());
         let entry = RetrievalBlendWeightTableEntry {
@@ -152,8 +163,16 @@ impl Store {
         };
         vet_retrieval_blend_weight_table_entry(&entry)
             .map_err(|_| Error::InvalidConfig("invalid retrieval blend weight table".to_owned()))?;
-        TABLE.put(self, wtxn, &(), &entry)?;
         Ok(entry)
+    }
+
+    /// Stores the vetted local projection without changing the source pin bytes.
+    fn write_retrieval_pinned_weights_in_txn(
+        &self,
+        txn: &mut RwTxn<'_>,
+        entry: &RetrievalBlendWeightTableEntry,
+    ) -> Result<()> {
+        TABLE.put(self, txn, &(), entry)
     }
 
     pub fn tune_retrieval_blend_weights(
@@ -171,6 +190,11 @@ impl Store {
         self.retrieval_blend_tuning_lock
             .lock()
             .map_err(|_| Error::InvariantViolation("retrieval blend tuning mutex poisoned"))
+    }
+
+    /// Acquires the retrieval tuning guard before an owner archive import opens its writer.
+    pub(crate) fn archive_retrieval_tuning_guard(&self) -> Result<std::sync::MutexGuard<'_, ()>> {
+        self.tuning_guard("archive retrieval tuning skipped inside active write transaction")
     }
 
     /// [`Self::tune_retrieval_blend_weights`] for the Coach's nightly pass: a
