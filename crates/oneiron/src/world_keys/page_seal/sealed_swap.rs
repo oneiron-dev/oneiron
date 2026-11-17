@@ -7,8 +7,8 @@ use std::path::Path;
 use std::sync::PoisonError;
 
 use super::{
-    MIRROR_VERSION, MIRRORING, Mirror, VaultPageSeal, custody_root, page_seal_custody_path,
-    read_mirror, write_mirror,
+    MIRROR_VERSION, MIRRORING, Mirror, VaultPageSeal, carried_in_seal_chain, custody_root,
+    page_seal_custody_path, read_mirror, write_mirror,
 };
 use crate::Vault;
 use crate::error::Result;
@@ -24,7 +24,7 @@ pub fn finish_restore_archive_mirror(archive: &Path, previous: &VaultPageSeal) -
     let mut mirror = read_mirror(&root)?;
     if mirror.vault_id != previous.vault_id()
         || !mirror.incarnations.contains(&previous.incarnation())
-        || *mirror.carried.commitment() != previous.data_key().commitment(&previous.vault_id())
+        || !carried_in_seal_chain(&mirror.carried, previous)
     {
         return Err(refused(
             "the archive's page-seal mirror is not the previous vault's",
@@ -117,6 +117,7 @@ impl SealedSwap {
             vault_id: self.vault_id,
             incarnations,
             carried: self.carried.clone(),
+            next_generation: None,
         }
     }
 

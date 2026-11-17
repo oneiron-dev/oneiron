@@ -13,72 +13,19 @@ use super::read::{ProjectReader, ProjectVerdict};
 use super::revision::{ProjectRevision, ProjectRevisionHash, RevisionOrigin};
 use super::validity::FoldCx;
 use super::*;
+use crate::batch::export::archive_side_install::{
+    ArchivedSideRowOutcome, decode_archived_row, install_archived_row,
+};
+use crate::batch::export::{
+    ArchiveRetainedSideRow, OwnerArchiveRestorePermit, RetainedSideHeldBackReason,
+};
 use crate::consent::AuthenticatedOwner;
 
-pub const DEFAULT_PROJECT_HISTORY_MAX_REVISIONS: u64 = 10_000;
-/// How many worlds one member of a parent cycle has before the solver raises
-/// its scan check (`joint`).
-pub const DEFAULT_PROJECT_CYCLE_WORLDS_MAX: u64 = 64;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ProjectHistoryPolicy {
-    pub max_revisions: u64,
-    /// Past this many distinct views of one cycle member (or this many per
-    /// undecided revision of assignments), the cycle's decision raises its
-    /// scan check and reads on: every world is still decided and served.
-    #[serde(default = "default_cycle_worlds_max")]
-    pub cycle_worlds_max: u64,
-}
-
-fn default_cycle_worlds_max() -> u64 {
-    DEFAULT_PROJECT_CYCLE_WORLDS_MAX
-}
-
-impl Default for ProjectHistoryPolicy {
-    fn default() -> Self {
-        Self {
-            max_revisions: DEFAULT_PROJECT_HISTORY_MAX_REVISIONS,
-            cycle_worlds_max: DEFAULT_PROJECT_CYCLE_WORLDS_MAX,
-        }
-    }
-}
-
-/// The owner's question about a parent cycle past its world bound (OF-520):
-/// node-local, kept by the batch-end refresh for a component whose decision
-/// came back as [`super::fold::reason::CYCLE_BOUND`]. The joint solver now
-/// decides every component in full and counts its worlds and work as
-/// EngineScan observations, so no decision carries that reason and the
-/// refresh raises none; a row is only ever removed (FIX 11050).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ProjectCycleQuestion {
-    /// The cycle's projects, in id order; each keys a copy of the row.
-    pub members: Vec<EntityId>,
-    pub raised_at: u64,
-}
-
-/// The owner's question about a project past its history budget (OF-520):
-/// raised once, when a batch end first freezes the project, while every
-/// authenticated revision past it is held; a seal or a raised policy that
-/// brings the project back within budget clears it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ProjectHistoryQuestion {
-    pub project: EntityId,
-    /// The revisions counted when the project crossed its budget.
-    pub counted_at_crossing: u64,
-    pub raised_at: u64,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ProjectHistoryOverBudget {
-    pub project: EntityId,
-    pub held: u64,
-    pub max_revisions: u64,
-    /// `None` when no record exists or it no longer re-checks.
-    pub frozen_head: Option<ProjectRevisionHash>,
-    /// Whether descendants of the frozen head narrowed it since the freeze.
-    pub narrowed: bool,
-}
+#[doc(hidden)]
+pub use oneiron_records::workspace_roster::project::history_policy::{
+    DEFAULT_PROJECT_CYCLE_WORLDS_MAX, DEFAULT_PROJECT_HISTORY_MAX_REVISIONS, ProjectCycleQuestion,
+    ProjectHistoryOverBudget, ProjectHistoryPolicy, ProjectHistoryQuestion,
+};
 
 /// Every node the served view relies on.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -434,4 +381,52 @@ pub(super) fn counted_set(cx: &FoldCx<'_, '_, '_>) -> Result<BTreeSet<ProjectRev
         }
     }
     Ok(counted)
+}
+
+/// Lands one archived `PROJECT_HISTORY_POLICY` envelope in `txn`: canonical decode and the
+/// credential predicate, then positive budgets install and anything else is held back. No
+/// project is refolded and no freeze is touched; the next read folds against a new budget on
+/// its own.
+///
+/// # Errors
+/// Storage faults; validation stays in the returned outcome.
+fn land_archived_project_history_policy_row_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    permit: &OwnerArchiveRestorePermit,
+    row: &ArchiveRetainedSideRow,
+) -> Result<ArchivedSideRowOutcome> {
+    let (key, value) = match decode_archived_row(&PROJECT_HISTORY_POLICY, row) {
+        Ok(decoded) => decoded,
+        Err(reason) => return Ok(ArchivedSideRowOutcome::HeldBack(reason)),
+    };
+    if value.max_revisions == 0 || value.cycle_worlds_max == 0 {
+        return Ok(ArchivedSideRowOutcome::HeldBack(
+            RetainedSideHeldBackReason::InvalidValue,
+        ));
+    }
+    install_archived_row(&PROJECT_HISTORY_POLICY, vault, txn, permit, &key, row)
+}
+
+impl Vault {
+    /// Lands the owner's archived `PROJECT_HISTORY_POLICY` envelopes in input order, one
+    /// outcome per row: an absent policy installs, an identical policy is unchanged, and a
+    /// different policy stays live. No project is refolded.
+    ///
+    /// # Errors
+    /// Storage faults; validation stays in the returned outcomes.
+    pub(crate) fn land_archived_project_history_rows_in_txn(
+        vault: &Vault,
+        txn: &mut heed::RwTxn<'_>,
+        permit: &OwnerArchiveRestorePermit,
+        rows: &[ArchiveRetainedSideRow],
+    ) -> Result<Vec<ArchivedSideRowOutcome>> {
+        let mut outcomes = Vec::with_capacity(rows.len());
+        for row in rows {
+            outcomes.push(land_archived_project_history_policy_row_in_txn(
+                vault, txn, permit, row,
+            )?);
+        }
+        Ok(outcomes)
+    }
 }

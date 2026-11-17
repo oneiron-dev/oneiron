@@ -1,0 +1,67 @@
+[package]
+name = "oneiron-llm"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Text model wire adapters for the Oneiron LLM backend seam, one module per wire protocol"
+repository.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[lib]
+# No doc-comment code fences in these modules (openai_compat, anthropic and
+# local audited 2026-08-19; gemini, oneiron_rpc and systemone have none);
+# skip the doctest compile pass entirely.
+doctest = false
+
+# ARCH-0036 #adapters (MED-1 = A): each wire protocol is a module of this one
+# family crate. Features switch optional dependencies only, and both are off
+# by default, so a default build carries no network client of its own.
+[features]
+default = []
+# The System One typed-decision seat's own HTTPS client (`systemone`).
+systemone = ["dep:reqwest"]
+# The own-server backend over oneiron-remote and its mesh leg to a model on
+# another of the owner's nodes (`oneiron_rpc`, OF-575 MESH).
+oneiron-rpc = [
+  "dep:oneiron-remote",
+  "dep:oneiron-mesh-transport",
+  "dep:blake3",
+  "dep:rmp-serde",
+  "dep:serde_bytes",
+  "dep:tokio",
+]
+
+[dependencies]
+oneiron = { version = "0.1.0", path = "../oneiron" }
+base64 = "0.22"
+futures-core = { workspace = true }
+futures-util = "0.3"
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"], optional = true }
+oneiron-remote = { path = "../oneiron-remote", optional = true }
+oneiron-mesh-transport = { path = "../oneiron-mesh-transport", optional = true }
+blake3 = { workspace = true, optional = true }
+rmp-serde = { workspace = true, optional = true }
+serde_bytes = { version = "0.11", optional = true }
+tokio = { version = "1", features = ["rt", "sync", "time"], optional = true }
+
+[dev-dependencies]
+oneiron = { version = "0.1.0", path = "../oneiron", features = ["test-hooks"] }
+tempfile = "3"
+tokio = { version = "1", features = ["rt", "macros"] }
+
+[[test]]
+name = "native_budget_wire"
+required-features = ["systemone"]
+
+[[test]]
+name = "remote_transport"
+required-features = ["oneiron-rpc"]
+
+[lints]
+workspace = true

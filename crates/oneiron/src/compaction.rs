@@ -59,6 +59,7 @@
 //! after every serialized assembly.
 
 use crate::ports::EntityStoreRead;
+mod carry;
 mod check_material;
 mod conversation;
 mod driver;
@@ -85,6 +86,7 @@ pub use folds::{
     FoldUnfoldInput, FoldUnfolded, FoldsInput, SelfFoldCall, fold_handle, parse_fold_handle,
 };
 
+pub(crate) use carry::{carried_rows_in, is_epoch_summary_in};
 pub use check_material::CompactionCheckMaterialRef;
 pub(crate) use check_material::{
     CheckMaterialFault, CompactionCheckMaterial, admit_check_material_in_txn,
@@ -145,7 +147,7 @@ pub(crate) use hooks::{
 pub use packet_source::{CompactionHostLog, CompactionSource, admit_compaction_source};
 pub(crate) use self_writer::{
     COMPACTION_STEP_RESPONSE_NAME, SelfLanding, admit_self_landing, admit_self_landing_on,
-    is_epoch_summary,
+    is_epoch_summary, refused_pass_execution,
 };
 pub use self_writer::{
     CompactionCall, CompactionEvidence, CompactionExecution, CompactionHomeRef, CompactionLanding,
