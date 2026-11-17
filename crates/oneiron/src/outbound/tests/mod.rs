@@ -1,7 +1,5 @@
 mod connector_qualification;
 mod connector_schedule;
-// FIX [LIBTEST-QUARANTINE-OUTBOUND-TESTS-DISPATCH-BUDGET]: the lib test target's type check fails here (2 errors: E0061 x2); port it, then drop this gate
-#[cfg(any())]
 mod dispatch_budget;
 #[path = "sender_selection/facet_selection.rs"]
 mod facet_selection;
@@ -13,8 +11,6 @@ mod quiet_window;
 mod retry_audit;
 mod sender_selection;
 mod space_posting;
-// FIX [LIBTEST-QUARANTINE-OUTBOUND-TESTS-STEP-FAILURE]: the lib test target's type check fails here (3 errors: E0063 x3); port it, then drop this gate
-#[cfg(any())]
 mod step_failure;
 
 use super::*;

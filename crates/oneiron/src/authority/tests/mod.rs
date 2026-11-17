@@ -42,8 +42,6 @@ mod support;
 mod weak_keys;
 
 mod anchor_independence;
-// FIX [LIBTEST-QUARANTINE-AUTHORITY-TESTS-CAUSAL-CLAIM]: the lib test target's type check fails here (3 errors: E0061 x3); port it, then drop this gate
-#[cfg(any())]
 mod causal_claim;
 mod handoff_arrival_order;
 mod handoff_settlement;
@@ -54,8 +52,6 @@ mod machine_fold;
 mod machine_identity;
 mod machine_write;
 mod owner_anchor;
-// FIX [LIBTEST-QUARANTINE-AUTHORITY-TESTS-PINNED-ROOT]: the lib test target's type check fails here (6 errors: E0061 x5, E0063 x1); port it, then drop this gate
-#[cfg(any())]
 mod pinned_root;
 mod recovery_ceremony;
 mod retired_ceiling;

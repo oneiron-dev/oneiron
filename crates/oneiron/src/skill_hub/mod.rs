@@ -191,8 +191,6 @@ pub mod osv;
 #[path = "tests/support.rs"]
 pub(crate) mod test_support;
 
-// FIX [LIBTEST-QUARANTINE-SKILL-HUB-SOURCE-BIRTH-TESTS]: the lib test target's type check fails here (8 errors: E0599 x5, E0308 x2, E0061 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod source_birth_tests;
 
@@ -205,8 +203,6 @@ pub(crate) use source_carrier::{decode_source_carrier, validate_hub_source_carri
 #[cfg(feature = "sync")]
 pub(crate) use source_carrier::{source_carrier_holder, source_carrier_matches_id};
 pub(crate) use source_custody::{retire_source_holder_in_txn, stage_source_custody_put};
-// FIX [LIBTEST-QUARANTINE-SKILL-HUB-SOURCE-REPLICATION-TESTS]: the lib test target's type check fails here (9 errors: E0061 x7, E0308 x1, E0599 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod source_replication_tests;
 

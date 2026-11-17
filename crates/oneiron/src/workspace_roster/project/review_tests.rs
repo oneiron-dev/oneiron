@@ -52,8 +52,12 @@ fn room_fixture() -> Result<(
             )),
             is_visible: true,
             order: 0,
+            parts: None,
+            quote: None,
         }],
         occurred_at: 2,
+        thread_audience: None,
+        assertions: Default::default(),
     };
     let user = vault.memory(host, EdgeActorClass::Human);
     user.rooms_speak(&speak(trunk, "trunk", None))
@@ -89,6 +93,7 @@ fn replicated_project_body_indexes_origin_and_blocks_later_local_conversion() ->
             kind,
             TimeRange { start: 3, end: 3 },
             3,
+            None,
             &encode(&missing)?,
         )
         .commit()
@@ -102,13 +107,37 @@ fn replicated_project_body_indexes_origin_and_blocks_later_local_conversion() ->
             kind,
             TimeRange { start: 3, end: 3 },
             3,
+            None,
             &encode(&record)?,
         )
         .commit()?;
     assert_eq!(vault.thread_project(room, thread)?, Some(id));
+    let owner_actor = vault.ensure_embedded_owner_actor().expect("embedded owner");
+    let owner = vault.authenticate_owner(
+        owner_actor,
+        "principal:owner",
+        true,
+        crate::store::GateDecisionId::now(),
+    )?;
+    let issuer = crate::authority::HostSlipIssuer::from_secret(b"project-review-test-host")
+        .expect("host issuer");
+    vault
+        .ensure_host_root_slip(&issuer)
+        .expect("host root slip");
+    let signer = vault.owner_project_signer(&issuer)?;
     assert!(
         vault
-            .convert_thread_to_project(room, thread, message, EntityId::now(), None, 4)
+            .convert_thread_to_project(
+                &owner,
+                &signer,
+                room,
+                thread,
+                message,
+                EntityId::now(),
+                None,
+                None,
+                4,
+            )
             .is_err()
     );
     Ok(())
@@ -118,7 +147,22 @@ fn replicated_project_body_indexes_origin_and_blocks_later_local_conversion() ->
 fn same_batch_source_roster_and_child_edit_commit_in_both_orders() -> Result<()> {
     let (_dir, vault, room, thread, message, _host, source_id) = room_fixture()?;
     let child_id = EntityId::now();
-    vault.convert_thread_to_project(room, thread, message, child_id, None, 3)?;
+    let owner_actor = vault.ensure_embedded_owner_actor().expect("embedded owner");
+    let owner = vault.authenticate_owner(
+        owner_actor,
+        "principal:owner",
+        true,
+        crate::store::GateDecisionId::now(),
+    )?;
+    let issuer = crate::authority::HostSlipIssuer::from_secret(b"project-review-test-host")
+        .expect("host issuer");
+    vault
+        .ensure_host_root_slip(&issuer)
+        .expect("host root slip");
+    let signer = vault.owner_project_signer(&issuer)?;
+    vault.convert_thread_to_project(
+        &owner, &signer, room, thread, message, child_id, None, None, 3,
+    )?;
     let kind = vault.project_type_byte()?;
     for (at, source_first) in [(4_u64, true), (5, false)] {
         let member = EntityId::now();

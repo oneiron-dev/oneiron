@@ -1,7 +1,6 @@
 //! Source custody tests: exact bytes, inert imports, generic/replay parity and rollback.
 use super::*;
-use crate::batch::export::{ExportPack, WholeVaultDocument};
-use crate::context_pack::PackFormat;
+use crate::batch::export::{ExportPack, ExportSourceContent};
 use crate::skill_hub::HubFile;
 use crate::{EntityId, TimeRange, Vault, VaultConfig, error::Result};
 
@@ -13,6 +12,91 @@ fn files() -> Vec<HubFile> {
     HubFile::new("PACK.md", b"---\nname: example.contacts\ndescription: Contact predicate pack\nversion: 1.0.0\nkind: capability\npredicates: [\"example.contacts.phone\"]\n---\nExact  source body.\n".to_vec()),
     HubFile::new("skills/contact/SKILL.md", b"---\nname: contact\ndescription: Contact format\nversion: 1.0.0\n---\nKeep spelling.\n".to_vec()),
 ]
+}
+
+/// Copies a whole-vault archive member by member, with `records/pack.jsonl`
+/// rewritten by `rewrite`, and - when `reseal` - that member's manifest
+/// digest updated so the archive still passes the integrity door and pack
+/// validation judges the rewritten rows instead.
+fn rewrite_pack_archive(
+    bytes: &[u8],
+    reseal: bool,
+    rewrite: impl FnOnce(Vec<ExportPack>) -> Vec<ExportPack>,
+) -> Result<Vec<u8>> {
+    use std::io::{Read as _, Write as _};
+    let invalid =
+        |what: &str| crate::Error::InvalidConfig(format!("rewritten fixture archive: {what}"));
+    let mut archive =
+        zip::ZipArchive::new(std::io::Cursor::new(bytes)).map_err(|_| invalid("unreadable"))?;
+    let mut members: Vec<(String, Vec<u8>)> = Vec::new();
+    let mut pack_pos = None;
+    let mut pack_rows = 0;
+    let mut manifest_pos = None;
+    for index in 0..archive.len() {
+        let mut member = archive.by_index(index).map_err(|_| invalid("unreadable"))?;
+        let name = member.name().to_owned();
+        if name.ends_with('/') {
+            continue;
+        }
+        let mut content = Vec::new();
+        member
+            .read_to_end(&mut content)
+            .map_err(|_| invalid("unreadable"))?;
+        if name == "records/pack.jsonl" {
+            let mut rows = Vec::new();
+            for line in content.split(|byte| *byte == b'\n') {
+                if line.is_empty() {
+                    continue;
+                }
+                rows.push(
+                    serde_json::from_slice::<ExportPack>(line).map_err(|_| invalid("pack rows"))?,
+                );
+            }
+            let rewritten = rewrite(rows);
+            pack_rows = rewritten.len() as u64;
+            let mut fresh = Vec::new();
+            for row in &rewritten {
+                fresh
+                    .extend_from_slice(&serde_json::to_vec(row).map_err(|_| invalid("pack rows"))?);
+                fresh.push(b'\n');
+            }
+            pack_pos = Some(members.len());
+            content = fresh;
+        }
+        if name == crate::batch::export::VAULT_ARCHIVE_MANIFEST_PATH {
+            manifest_pos = Some(members.len());
+        }
+        members.push((name, content));
+    }
+    let pack_pos = pack_pos.ok_or_else(|| invalid("no pack records"))?;
+    if reseal {
+        let manifest_pos = manifest_pos.ok_or_else(|| invalid("no manifest"))?;
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(&members[pack_pos].1);
+        let digest = crate::entity_id::bytes_to_hex_lower(hasher.finalize().as_bytes());
+        let mut manifest: crate::batch::export::WholeVaultDocumentManifest =
+            serde_json::from_slice(&members[manifest_pos].1).map_err(|_| invalid("manifest"))?;
+        let record = manifest
+            .records
+            .iter_mut()
+            .find(|row| row.path == "records/pack.jsonl")
+            .ok_or_else(|| invalid("no pack records"))?;
+        record.rows = pack_rows;
+        record.bytes = members[pack_pos].1.len() as u64;
+        record.blake3 = digest;
+        members[manifest_pos].1 = serde_json::to_vec(&manifest).map_err(|_| invalid("manifest"))?;
+    }
+    let mut out = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+    let options = zip::write::FileOptions::default();
+    for (name, content) in &members {
+        out.start_file(name.as_str(), options)
+            .map_err(|_| invalid("unwritable"))?;
+        out.write_all(content).map_err(|_| invalid("unwritable"))?;
+    }
+    Ok(out
+        .finish()
+        .map_err(|_| invalid("unwritable"))?
+        .into_inner())
 }
 #[test]
 fn source_survives_reopen_and_all_formats_roundtrip_without_installing() -> Result<()> {
@@ -28,45 +112,51 @@ fn source_survives_reopen_and_all_formats_roundtrip_without_installing() -> Resu
     let vault = Vault::open(dir.path(), VaultConfig::default())?;
     assert_eq!(vault.list_pack_sources()?, expected_sources);
     assert_eq!(vault.get_pack_source(&id)?, Some(source.clone()));
-    for format in [
-        PackFormat::Json,
-        PackFormat::Markdown,
-        PackFormat::Toon,
-        PackFormat::Yaml,
-        PackFormat::Plaintext,
-    ] {
-        let artifact = vault.export_whole_vault(format)?;
-        artifact.manifest().validate(format)?;
-        assert!(String::from_utf8_lossy(artifact.bytes()).contains("Exact  source body."));
-        if format == PackFormat::Json {
-            let document = vault.read_whole_vault_json(artifact.bytes())?;
-            let bundle = document
-                .packs
-                .iter()
-                .find_map(|p| match p {
-                    ExportPack::Source(p) if p.entity_id == id.to_hex() => Some(p),
-                    _ => None,
-                })
-                .expect("source bundle");
-            assert_eq!(
-                bundle.source_tree.content_hash,
-                Some(source.content_hash().to_hex())
-            );
-            assert_eq!(bundle.source_tree.import_files()?, source.files());
-            let (_target_dir, target) =
-                crate::test_util::open_test_vault_with(VaultConfig::default());
-            target.import_whole_vault_json(artifact.bytes())?;
-            assert_eq!(target.get_pack_source(&id)?, Some(source.clone()));
-            assert_eq!(
-                target
-                    .import_whole_vault_json(artifact.bytes())?
-                    .inserted_entities,
-                0
-            );
-            // The source declares a predicate, but remains inert source data.
-            assert!(target.get_skill_record(&id).is_err());
+    let artifact = vault.export_whole_vault(false)?;
+    artifact.manifest().validate()?;
+    // The archive is a ZIP of JSONL records: the exact source bytes travel
+    // inside its record members, not in the raw artifact bytes.
+    let mut carried = String::new();
+    {
+        use std::io::Read as _;
+        let mut archive = zip::ZipArchive::new(std::io::Cursor::new(artifact.bytes()))
+            .expect("exported archive reads");
+        for index in 0..archive.len() {
+            let mut member = archive.by_index(index).expect("archive member reads");
+            if !member.name().starts_with("records/") {
+                continue;
+            }
+            let mut raw = Vec::new();
+            member.read_to_end(&mut raw).expect("record member reads");
+            carried.push_str(&String::from_utf8_lossy(&raw));
         }
     }
+    assert!(carried.contains("Exact  source body."));
+    let document = vault.read_whole_vault_archive(artifact.bytes())?;
+    let bundle = document
+        .packs
+        .iter()
+        .find_map(|p| match p {
+            ExportPack::Source(p) if p.entity_id == id.to_hex() => Some(p),
+            _ => None,
+        })
+        .expect("source bundle");
+    assert_eq!(
+        bundle.source_tree.content_hash,
+        Some(source.content_hash().to_hex())
+    );
+    assert_eq!(bundle.source_tree.import_files()?, source.files());
+    let (_target_dir, target) = crate::test_util::open_test_vault_with(VaultConfig::default());
+    target.import_whole_vault_archive(artifact.bytes())?;
+    assert_eq!(target.get_pack_source(&id)?, Some(source.clone()));
+    assert_eq!(
+        target
+            .import_whole_vault_archive(artifact.bytes())?
+            .inserted_entities,
+        0
+    );
+    // The source declares a predicate, but remains inert source data.
+    assert!(target.get_skill_record(&id).is_err());
     Ok(())
 }
 #[test]
@@ -101,6 +191,7 @@ fn source_write_doors_refuse_identity_drift_and_roll_back() -> Result<()> {
                 crate::registry::ENTITY_TYPE_ASSET,
                 at(2),
                 2,
+                None,
                 b"replacement"
             )
             .commit()
@@ -130,29 +221,28 @@ fn archive_rejects_replaced_or_missing_source_facets() -> Result<()> {
     let (_dir, vault) = crate::test_util::open_test_vault_with(VaultConfig::default());
     let source = PackSource::from_files(files())?;
     vault.stage_pack_source(&source, at(1), 1)?;
-    let artifact = vault.export_whole_vault(PackFormat::Json)?;
-    let mut document: WholeVaultDocument = serde_json::from_slice(artifact.bytes()).unwrap();
-    let index = document
-        .packs
-        .iter()
-        .position(|p| matches!(p, ExportPack::Source(_)))
-        .unwrap();
-    let ExportPack::Source(bundle) = &mut document.packs[index] else {
-        unreachable!()
-    };
-    bundle.source_tree.files[0].content = Some("forged".into());
-    assert!(
-        vault
-            .read_whole_vault_json(&serde_json::to_vec(&document).unwrap())
-            .is_err()
-    );
-    let mut document: WholeVaultDocument = serde_json::from_slice(artifact.bytes()).unwrap();
-    document.packs.remove(index);
-    assert!(
-        vault
-            .read_whole_vault_json(&serde_json::to_vec(&document).unwrap())
-            .is_err()
-    );
+    let artifact = vault.export_whole_vault(false)?;
+    let forged = rewrite_pack_archive(artifact.bytes(), true, |mut rows| {
+        let index = rows
+            .iter()
+            .position(|p| matches!(p, ExportPack::Source(_)))
+            .expect("staged source pack");
+        let ExportPack::Source(bundle) = &mut rows[index] else {
+            unreachable!()
+        };
+        bundle.source_tree.files[0].content = ExportSourceContent::Text("forged".into());
+        rows
+    })?;
+    assert!(vault.read_whole_vault_archive(&forged).is_err());
+    let missing = rewrite_pack_archive(artifact.bytes(), false, |mut rows| {
+        let index = rows
+            .iter()
+            .position(|p| matches!(p, ExportPack::Source(_)))
+            .expect("staged source pack");
+        rows.remove(index);
+        rows
+    })?;
+    assert!(vault.read_whole_vault_archive(&missing).is_err());
     Ok(())
 }
 
@@ -327,8 +417,8 @@ fn agent_knowledge_rejects_typed_credentials_at_source_stage_and_archive_doors()
     let seeded_sources = vault.list_pack_sources()?.len();
     let id = vault.stage_pack_source(&source, at(1), 1)?;
     assert_eq!(vault.get_pack_source(&id)?, Some(source.clone()));
-    let artifact = vault.export_whole_vault(PackFormat::Json)?;
-    let document = vault.read_whole_vault_json(artifact.bytes())?;
+    let artifact = vault.export_whole_vault(false)?;
+    let document = vault.read_whole_vault_archive(artifact.bytes())?;
     let exported_sources: Vec<_> = document
         .packs
         .iter()
@@ -378,22 +468,20 @@ fn agent_knowledge_rejects_typed_credentials_at_source_stage_and_archive_doors()
     forged.files = files;
     assert!(vault.stage_pack_source(&forged, at(1), 1).is_err());
     assert!(vault.get_pack_source(&forged.entity_id()?)?.is_none());
-    let mut document: WholeVaultDocument = serde_json::from_slice(artifact.bytes()).unwrap();
-    let export = document
-        .packs
-        .iter_mut()
-        .find_map(|pack| match pack {
-            ExportPack::Source(source) => Some(source),
-            _ => None,
-        })
-        .unwrap();
-    export.source_tree = crate::serialize::export_source_tree(&forged.files)?;
-    assert!(export.source_tree.content_hash.is_some());
-    assert!(
-        vault
-            .read_whole_vault_json(&serde_json::to_vec(&document).unwrap())
-            .is_err()
-    );
+    let tree = crate::serialize::export_source_tree(&forged.files)?;
+    assert!(tree.content_hash.is_some());
+    let tampered = rewrite_pack_archive(artifact.bytes(), true, |mut rows| {
+        let export = rows
+            .iter_mut()
+            .find_map(|pack| match pack {
+                ExportPack::Source(source) => Some(source),
+                _ => None,
+            })
+            .expect("staged source pack");
+        export.source_tree = tree;
+        rows
+    })?;
+    assert!(vault.read_whole_vault_archive(&tampered).is_err());
     Ok(())
 }
 // The hub folder contract lists an optional `contact` (2026-09-22). This is

@@ -1285,8 +1285,6 @@ fn callable_role_contract_round_trips_and_noncallable_cannot_smuggle_call() -> R
     Ok(())
 }
 
-// FIX [LIBTEST-QUARANTINE-SKILL-TESTS-RESIDENT]: the lib test target's type check fails here (6 errors: E0061 x6); port it, then drop this gate
-#[cfg(any())]
 mod resident;
 
 /// SOL-9A-2-R2 F1: a quarantine is the owner's decision, and a restore over

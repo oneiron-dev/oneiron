@@ -568,8 +568,6 @@ fn channel_auth_modes_register_without_credential_material() -> Result<()> {
     Ok(())
 }
 
-// FIX [LIBTEST-QUARANTINE-CHANNEL-IDENTITY-TESTS-ACTORS]: the lib test target's type check fails here (2 errors: E0369 x1, E0061 x1); port it, then drop this gate
-#[cfg(any())]
 mod actors;
 
 #[test]

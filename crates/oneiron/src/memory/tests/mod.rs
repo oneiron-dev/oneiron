@@ -10,31 +10,19 @@ mod asset_resolve;
 mod authority_revocation;
 mod commit_claims;
 mod delete_tombstone;
-// FIX [LIBTEST-QUARANTINE-MEMORY-TESTS-DEVICE-LOCAL-RECEIPTS]: the lib test target's type check fails here (6 errors: E0061 x2, E0599 x2, E0063 x2); port it, then drop this gate
-#[cfg(any())]
 mod device_local_receipts;
 mod diary_admission_matrix;
 mod export;
 mod same_bytes_erase;
 mod seeded_upgrade;
 mod self_grant;
-// FIX [LIBTEST-QUARANTINE-MEMORY-TESTS-SESSION-RECALL]: the lib test target's type check fails here (5 errors: E0061 x2, E0063 x2, E0639 x1); port it, then drop this gate
-#[cfg(any())]
 mod session_recall;
-// FIX [LIBTEST-QUARANTINE-MEMORY-TESTS-SESSION-UNION-READS]: the lib test target's type check fails here (4 errors: E0063 x2, E0061 x1, E0639 x1); port it, then drop this gate
-#[cfg(any())]
 mod session_union_reads;
-// FIX [LIBTEST-QUARANTINE-MEMORY-TESTS-SESSION-WITNESS]: the lib test target's type check fails here (28 errors: E0063 x14, E0061 x13, E0639 x1); port it, then drop this gate
-#[cfg(any())]
 mod session_witness;
 mod shared_effects;
 mod support;
 mod takes_notes;
-// FIX [LIBTEST-QUARANTINE-MEMORY-TESTS-WITNESS-POLICY]: the lib test target's type check fails here (22 errors: E0063 x21, E0061 x1); port it, then drop this gate
-#[cfg(any())]
 mod witness_policy;
-// FIX [LIBTEST-QUARANTINE-MEMORY-TESTS-WITNESS-TURNS]: the lib test target's type check fails here (41 errors: E0063 x28, E0061 x7, E0599 x4, E0608 x1, E0639 x1); port it, then drop this gate
-#[cfg(any())]
 mod witness_turns;
 
 use super::reads::*;
