@@ -220,7 +220,7 @@ pub(super) enum WalkPart<'f, S> {
 pub(super) struct FrontierWalk<'f, S, F> {
     frontier: &'f WorldFrontier<S>,
     strong: F,
-    live: std::collections::btree_map::Iter<'f, AuthorityEntryHash, Arc<FrontierEdit<S>>>,
+    live: oneiron_persistent_collections::Iter<'f, AuthorityEntryHash, Arc<FrontierEdit<S>>>,
     visited: BTreeSet<AuthorityEntryHash>,
     pending: Vec<&'f FrontierEdit<S>>,
     replaced: std::collections::btree_set::Iter<'f, AuthorityEntryHash>,
