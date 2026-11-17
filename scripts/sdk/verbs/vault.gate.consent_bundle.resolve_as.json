@@ -1,0 +1,17 @@
+{
+  "name": "vault.gate.consent_bundle.resolve_as",
+  "description": "An agent approves or declines a reviewed Dreamer consent bundle as a unit under its own live Grant naming the verb and the owner's delegate key; never one its own lineage opened, and owner obligations stay open.",
+  "input": "crate::consent::bundle_projection::GateConsentBundleResolveRequest",
+  "output": "crate::consent::bundle_projection::GateConsentBundleResolution",
+  "call": "crate::consent::bundle_projection::resolve_gate_consent_bundle_as_agent(memory, input)?",
+  "scope": "Write",
+  "grant_class": "vault.gate.consent_bundle.resolve_as grant + owner delegate key + caller read lane",
+  "act_class": "reversible_work",
+  "admission": {
+    "lane_record_scope": true,
+    "require_granted_scope": true
+  },
+  "section": false,
+  "mcp_scope": "filtered",
+  "openapi": true
+}
