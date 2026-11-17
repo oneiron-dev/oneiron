@@ -129,7 +129,8 @@ pub(crate) fn resolve_public_booking_capability_listing(
         oneiron::booking::load_public_booking_page_listing(&server.vault, page_ref, now_secs()?)
             .map_err(|_| public_booking_not_found())?
             .ok_or_else(public_booking_not_found)?;
-    if destination.is_off_device()
+    if link.is_none()
+        && destination.is_off_device()
         && !server
             .vault
             .rows_may_leave_for(&rows, destination)
