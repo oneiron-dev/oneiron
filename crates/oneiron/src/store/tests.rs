@@ -239,6 +239,7 @@ fn gate_decision(
         grant_ref: grant_ref.map(str::to_owned),
         diff_handle: vec![0xAA],
         read_frontier_hash: [0xBB; 32],
+        context: Default::default(),
         redacted_at: None,
     }
 }
@@ -415,6 +416,8 @@ fn open_backfills_receipt_family_sidecars_without_a_storage_abi_change() -> Resu
         read_frontier_hash: decision.read_frontier_hash,
         reason_codes: vec!["gate.pending.receipt_family".to_owned()],
         dreamer_run_id: Some(run_id.to_owned()),
+        predicate: None,
+        expires_at: None,
     };
 
     let vault = Vault::open(dir.path(), config.clone())?;
@@ -667,7 +670,7 @@ fn provisional_context_pack_trace_is_hidden_until_finalized() -> Result<()> {
 
     vault
         .store
-        .record_context_pack_provisional_retrieval_run(&record)?;
+        .record_context_pack_provisional_retrieval_run(&record, None)?;
     assert!(
         vault.retrieval_trace_by_fork_hash(fork_hash)?.is_none(),
         "provisional context-pack traces must not be fork-hash visible"
@@ -970,13 +973,12 @@ fn search_falls_back_to_bootstrap_when_blend_weight_table_is_corrupt() -> Result
 fn record_confirmed_retrieval_end_outcome(
     vault: &Vault,
     run_id: RetrievalRunId,
-    activated_memory_id: [u8; 16],
+    _activated_memory_id: [u8; 16],
 ) -> Result<()> {
     vault.record_retrieval_end_outcome(RetrievalEndOutcome {
-        run_id,
+        retrieval_run_ids: vec![run_id],
         key: "beam.reward".to_owned(),
         turn_id: [7; 16],
-        activated_memory_id,
         gate_score: 1.0,
         confirmed_fact_hit: true,
         latency_scale_us: 1,
@@ -1038,25 +1040,27 @@ fn shaped_retrieval_end_outcome_gates_hit_and_charges_run_hops() -> Result<()> {
     ));
 
     let mut label = RetrievalEndOutcome {
-        run_id,
+        retrieval_run_ids: vec![run_id],
         key: "terminal".to_owned(),
         turn_id: [7; 16],
-        activated_memory_id: memory_id,
         gate_score: 0.5,
         confirmed_fact_hit: true,
         latency_scale_us: 40,
         cost_weight: 0.1,
         metadata: BTreeMap::new(),
     };
-    for (gate, turn, memory) in [
-        (0.0, [7; 16], memory_id),
-        (1.1, [7; 16], memory_id),
-        (0.5, [9; 16], memory_id),
-        (0.5, [7; 16], [9; 16]),
+    let mut unknown_run_bytes = run_id.as_bytes();
+    unknown_run_bytes[0] ^= 0xff;
+    let unknown_run_id = RetrievalRunId::from_bytes(unknown_run_bytes);
+    for (gate, turn, run_ids) in [
+        (0.0, [7; 16], vec![run_id]),
+        (1.1, [7; 16], vec![run_id]),
+        (0.5, [9; 16], vec![run_id]),
+        (0.5, [7; 16], vec![unknown_run_id]),
     ] {
         label.gate_score = gate;
         label.turn_id = turn;
-        label.activated_memory_id = memory;
+        label.retrieval_run_ids = run_ids;
         assert!(matches!(
             vault.record_retrieval_end_outcome(label.clone()),
             Err(Error::InvalidConfig(_))
@@ -1064,7 +1068,7 @@ fn shaped_retrieval_end_outcome_gates_hit_and_charges_run_hops() -> Result<()> {
     }
     label.gate_score = 0.5;
     label.turn_id = [7; 16];
-    label.activated_memory_id = memory_id;
+    label.retrieval_run_ids = vec![run_id];
     label.latency_scale_us = 0;
     assert!(matches!(
         vault.record_retrieval_end_outcome(label.clone()),
@@ -1074,7 +1078,7 @@ fn shaped_retrieval_end_outcome_gates_hit_and_charges_run_hops() -> Result<()> {
     assert_eq!(vault.retrieval_outcomes(run_id)?.len(), 1);
     label.gate_score = 0.5;
     label.turn_id = [7; 16];
-    label.activated_memory_id = memory_id;
+    label.retrieval_run_ids = vec![run_id];
     vault.record_retrieval_end_outcome(label.clone())?;
     let outcome = vault.retrieval_outcomes(run_id)?;
     let terminal = outcome
@@ -1182,9 +1186,9 @@ fn concurrent_retrieval_blend_tuning_applies_both_gradient_steps() -> Result<()>
 
     let before = vault.retrieval_blend_weight_table()?;
     let expected_once =
-        apply_retrieval_blend_weight_update(before.weights, [1.0, 0.0, 0.0, 0.0], 0.10, 1)?;
+        apply_retrieval_blend_weight_update(before.weights, [1.0, 0.0, 0.0, 0.0, 0.0], 0.10, 1)?;
     let expected_twice =
-        apply_retrieval_blend_weight_update(expected_once, [1.0, 0.0, 0.0, 0.0], 0.10, 1)?;
+        apply_retrieval_blend_weight_update(expected_once, [1.0, 0.0, 0.0, 0.0, 0.0], 0.10, 1)?;
 
     let vault = Arc::new(vault);
     let barrier = Arc::new(Barrier::new(3));
@@ -1269,7 +1273,7 @@ fn retrieval_blend_tuning_max_runs_counts_completed_runs_not_provisional_rows() 
     );
     vault
         .store
-        .record_context_pack_provisional_retrieval_run(&provisional)?;
+        .record_context_pack_provisional_retrieval_run(&provisional, None)?;
 
     let before = vault.retrieval_blend_weight_table()?;
     let updated = vault.tune_retrieval_blend_weights(RetrievalBlendTuningConfig {
@@ -1361,7 +1365,7 @@ fn retrieval_blend_tuning_counts_only_blend_contributing_rewards() -> Result<()>
 
     let before = vault.retrieval_blend_weight_table()?;
     let expected_weights =
-        apply_retrieval_blend_weight_update(before.weights, [1.0, 0.0, 0.0, 0.0], 0.10, 1)?;
+        apply_retrieval_blend_weight_update(before.weights, [1.0, 0.0, 0.0, 0.0, 0.0], 0.10, 1)?;
     let updated = vault.tune_retrieval_blend_weights(RetrievalBlendTuningConfig {
         max_runs: 2,
         learning_rate: 0.10,
@@ -2462,7 +2466,7 @@ fn claim_index_corruption_fails_loud_instead_of_answering() -> Result<()> {
 fn seed_short_id(vault: &Vault, id: &EntityId, body: &[u8]) -> Result<(String, u8)> {
     vault
         .batch()
-        .put_replicated(id, 1, TimeRange { start: 1, end: 1 }, 2, body)
+        .put_replicated(id, 1, TimeRange { start: 1, end: 1 }, 2, None, body)
         .commit()?;
     let rtxn = vault.store.env.read_txn()?;
     let value = vault
@@ -2752,7 +2756,14 @@ fn short_id_rekey_collision_rolls_back_rows_and_grammar_marker() -> Result<()> {
     let squatter = entity_id(0x46);
     vault
         .batch()
-        .put_replicated(&squatter, 1, TimeRange { start: 1, end: 1 }, 2, b"squatter")
+        .put_replicated(
+            &squatter,
+            1,
+            TimeRange { start: 1, end: 1 },
+            2,
+            None,
+            b"squatter",
+        )
         .commit()?;
     {
         let mut wtxn = vault.store.env.write_txn()?;
@@ -4054,6 +4065,8 @@ fn gate_retention_preserves_pending_source_but_prunes_sibling_receipt() -> Resul
         read_frontier_hash: source.read_frontier_hash,
         reason_codes: vec!["gate.pending.round_trip".to_owned()],
         dreamer_run_id: None,
+        predicate: None,
+        expires_at: None,
     };
     vault.with_write_txn(|txn| {
         vault.store.append_gate_decision_in_txn(txn, &source)?;

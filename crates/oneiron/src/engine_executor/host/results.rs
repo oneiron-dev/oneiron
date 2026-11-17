@@ -2,6 +2,9 @@
 //! Entry: `RecordingJsHost::read_result`.
 //! `RecordingJsHost` and `ResolvedResult` are defined by `engine_executor::host`.
 
+mod names;
+mod source_rows;
+
 use super::*;
 use crate::code_run::{READER_TASK_SETTLED, ResultOccurrence, unmarked_secret};
 use crate::engine_executor::parse_result_read_path;
@@ -15,145 +18,6 @@ fn stored_path_ordinal(path: &str) -> Option<usize> {
 }
 
 impl RecordingJsHost<'_, '_> {
-    /// The run's live result names, oldest first: this step's binds over
-    /// the record's.
-    pub(super) fn live_bindings(&self) -> Vec<&CodeRunResultBinding> {
-        let mut live: Vec<_> = self
-            .bindings
-            .iter()
-            .filter(|binding| !self.bound.iter().any(|held| held.name == binding.name))
-            .collect();
-        live.extend(&self.bound);
-        live
-    }
-
-    /// The next free automatic name: `r<n>`, counting from one past the
-    /// live names, past any name taken.
-    pub(super) fn next_auto_name(&self) -> String {
-        let live = self.live_bindings();
-        (live.len() + 1..)
-            .map(|n| format!("r{n}"))
-            .find(|name| !live.iter().any(|binding| binding.name == *name))
-            .unwrap_or_default()
-    }
-
-    /// Binds `name` to the result `handle` at its occurrence `path` for the
-    /// record; a rebind replaces the name's entry in place.
-    pub(super) fn bind(&mut self, name: String, handle: String, path: String) {
-        let binding = CodeRunResultBinding::new(name, handle, path);
-        match self.bound.iter_mut().find(|held| held.name == binding.name) {
-            Some(held) => *held = binding,
-            None => self.bound.push(binding),
-        }
-    }
-
-    /// The run's results a read may resolve: the recorded ones and this
-    /// step's own, as [`is_result_output_path`] admits them. A record-only
-    /// body a verb hook's view stands in for is none of them, so no name,
-    /// handle or occurrence ref reads the real result back (ARCH-0080
-    /// Redact).
-    fn readable_outputs(&self) -> impl Iterator<Item = &CodeRunRawOutput> {
-        self.results.iter().chain(
-            self.captured
-                .iter()
-                .filter(|output| is_result_output_path(&output.path)),
-        )
-    }
-
-    /// The run's result a reference names, and the live name bound to it.
-    /// Only this run's results resolve: a handle names nothing else.
-    pub(super) fn resolve_result(
-        &self,
-        reference: &JsResultRef,
-    ) -> Option<(CodeRunRawOutput, Option<String>)> {
-        crate::code_run::resolve_result(
-            self.run_id,
-            self.readable_outputs(),
-            &self.live_bindings(),
-            reference,
-        )
-    }
-
-    /// The refusal for a reference to no result of this run, with the live
-    /// names it could have meant.
-    pub(super) fn unknown_handle(&self) -> serde_json::Value {
-        crate::code_run::unknown_handle(&self.live_bindings())
-    }
-
-    /// The rows the run's results were served from: the conservative union
-    /// of every row its recorded and this step's verb answers were served
-    /// from, each stored skill its callables loaded and the rows of each
-    /// other run's result they read (FIX 5460), or none known when one kept
-    /// no set.
-    pub(in crate::engine_executor) fn result_rows(&self) -> Option<Vec<EntityId>> {
-        let (skills, read) = &self.callable_rows;
-        self.verb_rows()
-            .zip(read.as_deref())
-            .map(|(verbs, read)| [verbs.as_slice(), read, skills.as_slice()].concat())
-    }
-
-    /// The records whose words the run's recorded and this step's fold
-    /// answers copy, each once (FIX 18924): known dependencies of what the
-    /// run stores, apart from its input rows.
-    fn fold_sources(&self) -> Vec<EntityId> {
-        let step = crate::code_run::recorded_fold_words(&self.bridge_calls);
-        let mut sources: Vec<EntityId> = step
-            .into_iter()
-            .flat_map(|word| word.sources)
-            .chain(self.recorded_fold_sources.iter().copied())
-            .collect();
-        sources.sort_unstable();
-        sources.dedup();
-        sources
-    }
-
-    /// The rows the run's recorded and this step's verb answers were served
-    /// from, or none known when one answer kept no set.
-    pub(super) fn verb_rows(&self) -> Option<Vec<EntityId>> {
-        self.recorded_rows
-            .as_ref()
-            .zip(agent_verb_rows_of(&self.bridge_calls))
-            .map(|(recorded, step)| [recorded.as_slice(), step.as_slice()].concat())
-    }
-
-    /// The rows of an own occurrence's fixed bytes. Unknown provenance uses
-    /// the live union; act gates retain their verb-only row set.
-    fn occurrence_rows(&self, output: &CodeRunRawOutput, callable: bool) -> Option<Vec<EntityId>> {
-        if callable {
-            output.input_rows.clone().or_else(|| self.result_rows())
-        } else {
-            self.verb_rows()
-        }
-    }
-
-    /// Whether the run's results stay on this device for its door's caller
-    /// now (DEC-0005), by [`Self::result_rows`].
-    pub(super) fn withholds_results(&self) -> Result<bool> {
-        self.withholds_rows(self.result_rows())?
-            .map_err(|code| Error::InvalidConfig(format!("stored result read refused: {code}")))
-    }
-
-    /// Whether a result served from `rows` stays on this device for the
-    /// door's caller now. A scoped child's door that refuses the read on its
-    /// authority answers that refusal's code (`scoped_child_authority_lapsed`
-    /// or `scoped_child_parent_lease_lost`, FIX 7734), for the read to name;
-    /// any other refusal is an error, as before.
-    pub(super) fn withholds_rows(
-        &self,
-        rows: Option<Vec<EntityId>>,
-    ) -> Result<std::result::Result<bool, &'static str>> {
-        match self.gated_write.withholds_retained(rows.as_deref()) {
-            Ok(withheld) => Ok(Ok(withheld)),
-            Err(refusal) => match scoped_child_read_refusal(&refusal.code) {
-                Some(code) => Ok(Err(code)),
-                None => Err(Error::InvalidConfig(format!(
-                    "stored result read refused: {}",
-                    refusal.code
-                ))),
-            },
-        }
-    }
-
     /// `store(value, name?)`: the value the program just streamed, stored as
     /// a result of the run and bound to a name. Not gated: the value is the
     /// run's own, as a file it writes is. A halted bridge, or a run whose

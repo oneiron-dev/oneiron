@@ -18,6 +18,7 @@ fn claimed_with_manifest(
             user_login: false,
             connector: ByoaConnectorSpec::CliSandbox(cli_spec()),
             task_ref: None,
+            dev_refs: None,
             parent_attempt_id: None,
             run_id: Some("terminal-custody".to_owned()),
             dedupe_key: Some("terminal-custody".to_owned()),
@@ -130,11 +131,12 @@ fn terminal_capture_commits_disposition_receipts_and_dedupe_release_together() {
             1,
             "capture never hands off"
         );
-        let bytes = vault
-            .read_blob_artifact_version(&first.artifact_id, 1)
-            .expect("read exhaust")
-            .expect("exhaust");
-        assert_eq!(decode_byoa_exhaust(&bytes).expect("decode").1, disposition);
+        assert_eq!(
+            decode_byoa_exhaust(&vault, &first.artifact_id, 1)
+                .expect("decode")
+                .1,
+            disposition
+        );
         let pack = crate::receipt::attempt_pack_receipt(
             &vault,
             &crate::receipt::attempt_pack_receipt_id(&attempt.id),
@@ -248,6 +250,7 @@ fn terminal_capture_commits_disposition_receipts_and_dedupe_release_together() {
                 user_login: false,
                 connector: ByoaConnectorSpec::CliSandbox(cli_spec()),
                 task_ref: None,
+                dev_refs: None,
                 parent_attempt_id: None,
                 run_id: Some("terminal-custody".to_owned()),
                 dedupe_key: Some("terminal-custody".to_owned()),
@@ -326,15 +329,33 @@ fn generic_result_attachment_cannot_authorize_a_running_canonical_retry() {
             25,
         )
         .expect("caller-created canonical metadata");
-    let bytes = encode_exhaust_envelope(&ByoaExhaustEnvelope {
-        schema_version: BYOA_CONNECTOR_SCHEMA_VERSION,
-        attempt_id: *attempt.id.as_bytes(),
-        lease_owner: "worker".to_owned(),
-        attempt_count: attempt.attempt_count,
-        disposition: ByoaTerminalDisposition::Completed,
-        exhaust: sample_exhaust(),
-    })
-    .expect("caller-created envelope");
+    // The wire exhaust is built only inside the capture writer, so the
+    // caller-created envelope is a real capture's head bytes, re-addressed
+    // to this attempt; its streams are the same inline sample exhaust.
+    let scratch = dispatch_and_claim(
+        &vault,
+        &mut dispatcher,
+        ByoaConnectorSpec::CliSandbox(cli_spec()),
+        "worker",
+    );
+    let scratch_bytes = {
+        let receipt = dispatcher
+            .capture_terminal_exhaust(capture_request(
+                &scratch,
+                ByoaTerminalDisposition::Completed,
+            ))
+            .expect("scratch capture");
+        vault
+            .read_blob_artifact_version(&receipt.artifact_id, receipt.artifact_version)
+            .expect("read scratch envelope")
+            .expect("scratch envelope")
+    };
+    let mut envelope: ByoaExhaustEnvelope =
+        rmp_serde::from_slice(&scratch_bytes).expect("decode scratch envelope");
+    envelope.attempt_id = *attempt.id.as_bytes();
+    envelope.attempt_count = attempt.attempt_count;
+    envelope.disposition = ByoaTerminalDisposition::Completed;
+    let bytes = encode_exhaust_envelope(&envelope).expect("caller-created envelope");
     vault
         .append_blob_artifact_version(
             &artifact,
@@ -502,16 +523,18 @@ fn abort_after_terminal_capture_rolls_back_settlement_pack_and_artifact() {
         );
         let before = custody_snapshot(&vault);
         let aborted: ByoaResult<()> = vault.try_with_write_txn(|wtxn| {
-            let receipt = dispatcher
+            dispatcher
                 .capture_terminal_exhaust_in_txn(wtxn, capture_request(&attempt, disposition))?;
             let staged = AttemptQueue::new(&vault)
                 .get_in_write_txn(wtxn, attempt.id)?
                 .expect("staged attempt");
-            assert_eq!(staged, receipt.attempt);
             assert!(disposition_matches_state(disposition, staged.state));
             assert!(
-                read_blob_artifact_head_in_txn(&vault.store, wtxn, &receipt.artifact_id)?.is_some()
+                staged.result_ref.is_some(),
+                "the staged settlement carries its result reference"
             );
+            let artifact_id = byoa_exhaust_artifact_id(attempt.id)?;
+            assert!(read_blob_artifact_head_in_txn(&vault.store, wtxn, &artifact_id)?.is_some());
             Err(invalid("injected failure after terminal capture"))
         });
         assert!(aborted.is_err());
