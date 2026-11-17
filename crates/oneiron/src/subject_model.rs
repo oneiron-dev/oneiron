@@ -39,12 +39,14 @@
 use rmpv::Value;
 
 mod archive;
+mod person_agent;
 mod prepared;
 pub(crate) use prepared::{PreparedAgentSubjects, PreparedSubjectAgent};
 pub(crate) mod seeded;
 mod validation;
 pub use archive::SubjectRestoreReview;
 pub(crate) use archive::{imported_subject_body, is_subject_model_predicate};
+pub(crate) use person_agent::person_is_agent_in_txn;
 
 #[cfg(feature = "sync")]
 pub(crate) use validation::subject_model_dependency_pending;

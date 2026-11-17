@@ -27,13 +27,8 @@ pub(crate) use repo_projection::refresh_repo_revision_projection_in_txn;
 mod storage;
 mod timeline;
 pub(crate) use storage::checkpoint;
-#[cfg_attr(
-    not(oneiron_test_support),
-    allow(
-        unused_imports,
-        reason = "the graph-FS memory fork (L3-39 PR 2) reads the timeline; today only its test door does"
-    )
-)]
+#[cfg(oneiron_test_support)]
+pub(crate) use storage::forget_retained_revision;
 pub(crate) use timeline::{memory_frontier_in_txn, revision_at_frontier_in_txn};
 mod turn_text;
 #[cfg(test)]
