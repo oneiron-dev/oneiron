@@ -199,7 +199,6 @@ impl LedgerReportHead {
     }
 
     /// Every page's offset, including one empty page for a rowless report.
-    #[must_use]
     pub fn offsets(&self) -> std::iter::StepBy<std::ops::Range<u64>> {
         (0..self.row_count().max(1)).step_by(MAX_LEDGER_PAGE_ENTRIES)
     }
@@ -267,7 +266,7 @@ impl LedgerPage {
 fn page_counts(head: &LedgerReportHead, offset: u64) -> Option<(usize, usize)> {
     let total = head.total.checked_add(head.artifact_origins_total)?;
     let step = MAX_LEDGER_PAGE_ENTRIES as u64;
-    if offset % step != 0 || (offset >= total && !(total == 0 && offset == 0)) {
+    if !offset.is_multiple_of(step) || (offset >= total && !(total == 0 && offset == 0)) {
         return None;
     }
     let len = (total - offset).min(step);

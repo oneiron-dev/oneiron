@@ -415,7 +415,7 @@ fn prep_claim_row(event: &PrepEvent, fields: &HashMap<String, serde_json::Value>
         return PrepClaimRow::Fact;
     }
     let Some(record) = fields.get(PREP_CLAIM_VALUE_FIELD).and_then(|value| {
-        crate::commitment::decode_commitment_value(&crate::ingest::json_to_msgpack_value(value))
+        crate::commitment::decode_commitment_value(&crate::serialize::json_to_msgpack_value(value))
             .ok()
     }) else {
         return PrepClaimRow::Unreadable;
