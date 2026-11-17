@@ -151,8 +151,8 @@ pub(crate) fn put_pins_repo_index_row_in_txn(
     REPO_INDEX.put(
         store,
         txn,
-        &TextIndexKey {
-            value: value.to_owned(),
+        &TextIdKey {
+            text: value.to_owned(),
             id: *id,
         },
         &(),
@@ -171,8 +171,8 @@ pub(crate) fn put_pins_project_index_row_in_txn(
     PROJECT_INDEX.put(
         store,
         txn,
-        &TextIndexKey {
-            value: value.to_owned(),
+        &TextIdKey {
+            text: value.to_owned(),
             id: *id,
         },
         &(),
