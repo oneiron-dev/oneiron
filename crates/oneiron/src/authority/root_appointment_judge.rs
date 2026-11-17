@@ -14,10 +14,13 @@
 //! - V4: the anchor is not burned in the ancestry.
 //!
 //! An anchor is burned by one void appointment (V2, V3 or V4 failed on a
-//! complete ancestry), or by two valid ones beside each other, neither in the
-//! other's ancestry. Its appointments are judged in topological order, and
-//! after its first burn every later one is void with no proof fold, which
-//! bounds the proof folds an anchor costs.
+//! complete ancestry), by one whose successor is not fresh (V1), or by two
+//! valid ones beside each other, neither in the other's ancestry. The door
+//! never signs a void or not-fresh appointment (it judges each candidate
+//! first, and its successor key is new), so only a probe by a holder of the
+//! anchor key burns it alone. Its appointments are judged in topological
+//! order, and after its first burn every later one is void with no proof
+//! fold, which bounds the proof folds an anchor costs.
 //!
 //! Only the anchor of this install's pinned root is judged; every other
 //! appointment costs no proof fold.
@@ -275,7 +278,9 @@ fn judge_anchor(
             Some(ancestry) => {
                 let verdict = verdict_of(by_hash, hash, ancestry);
                 match verdict {
-                    AppointmentVerdict::Void(_) => burned = true,
+                    AppointmentVerdict::Void(_) | AppointmentVerdict::SuccessorNotFresh => {
+                        burned = true;
+                    }
                     AppointmentVerdict::Valid => {
                         burned = valid.iter().any(|earlier| !ancestry.contains(earlier));
                         valid.push(hash);
@@ -305,6 +310,36 @@ fn ancestry_of(
         stack.extend(by_hash.get(&hash)?.parent_hashes.iter().copied());
     }
     Some(ancestry)
+}
+
+/// The verdict of the appointment at `hash` over `rows`, which hold it and
+/// its ancestry: what the fold of any install that pins its root judges it,
+/// a burn elsewhere in that install's log aside ([`judge_anchor`]). Pending
+/// while `rows` lack an ancestor.
+pub(super) fn verdict_of_row(
+    rows: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+    hash: &AuthorityEntryHash,
+) -> AppointmentVerdict {
+    match rows.get(hash).and_then(|entry| ancestry_of(rows, entry)) {
+        Some(ancestry) => verdict_of(rows, *hash, &ancestry),
+        None => AppointmentVerdict::Pending,
+    }
+}
+
+/// The verdict of the appointment `entry`, which `rows` need not hold, over
+/// its ancestry in `rows`, as [`verdict_of_row`] gives it once `entry` is
+/// signed: no verdict reads the signature, which the fold checks before it
+/// judges. The appointment door judges each candidate this way before its
+/// anchor signs one, so the anchor signs no void appointment. Pending while
+/// `rows` lack an ancestor; the unsigned row's verdict is not remembered.
+pub(super) fn verdict_of_candidate(
+    rows: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+    entry: &AuthorityLogEntry,
+) -> AppointmentVerdict {
+    match ancestry_of(rows, entry) {
+        Some(ancestry) => judge_one(rows, entry, &ancestry),
+        None => AppointmentVerdict::Pending,
+    }
 }
 
 /// The verdicts already reached, by appointment hash. A verdict is a function
@@ -351,11 +386,16 @@ fn judge_one(
     else {
         return AppointmentVerdict::Pending;
     };
+    // V1 first: it reads the ancestry once, and a not-fresh row costs no walk
+    // of earlier appointments and no proof fold.
+    if !successor_is_fresh(by_hash, ancestry, appointment, anchor) {
+        return AppointmentVerdict::SuccessorNotFresh;
+    }
     let rows: BTreeMap<AuthorityEntryHash, AuthorityLogEntry> = ancestry
         .iter()
         .map(|hash| (*hash, by_hash[hash].clone()))
         .collect();
-    // V4 first: an anchor burned beneath the row costs no proof fold.
+    // V4 next: an anchor burned beneath the row costs no proof fold.
     let earlier: Vec<AuthorityEntryHash> = rows
         .iter()
         .filter(|(_, row)| {
@@ -373,9 +413,6 @@ fn judge_one(
         .any(|verdict| *verdict == AppointmentVerdict::Pending)
     {
         return AppointmentVerdict::Pending;
-    }
-    if !successor_is_fresh(&rows, appointment, anchor) {
-        return AppointmentVerdict::SuccessorNotFresh;
     }
     let scoped: Vec<AuthorityLogEntry> = rows.values().cloned().collect();
     let (proof, parts) = proof_fold(&scoped, appointment.root, anchor);
@@ -468,12 +505,16 @@ fn proof_parts(
     Some(parts)
 }
 
-/// Whether no row of the ancestry `rows` names the successor key: as its
-/// signer or a cosigner, as a device it enrols, rotates from or to, hands the
-/// root to or revokes, as an owner root's anchor, or as another appointment's
-/// successor. The appointing anchor is never its own successor (the codec).
+/// Whether no row of `ancestry` (complete in `by_hash`) names the successor
+/// key: no row's canonical signed body carries the key's bytes, so no op of
+/// any variant names it (a device it enrols, rotates, hands the root to or
+/// revokes, an actor binding or its revocation, an owner root's anchor,
+/// another appointment's successor), and neither does a signer or cosigner.
+/// A row the codec cannot encode fails freshness. The appointing anchor is
+/// never its own successor (the codec).
 fn successor_is_fresh(
-    rows: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+    by_hash: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+    ancestry: &BTreeSet<AuthorityEntryHash>,
     appointment: &RootAppointment,
     anchor: [u8; 32],
 ) -> bool {
@@ -481,31 +522,19 @@ fn successor_is_fresh(
     if *successor == AuthorityKey::Ed25519(anchor) {
         return false;
     }
-    !rows.values().any(|row| {
-        row.signer_key() == successor
-            || row
-                .cosigns
-                .iter()
-                .any(|cosign| cosign.public_key == *successor)
-            || match &row.op {
-                AuthorityOp::Genesis { device, .. }
-                | AuthorityOp::EnrollDevice { device }
-                | AuthorityOp::ReRoot { new_device: device }
-                | AuthorityOp::OwnerKeyEnroll(OwnerKeyEnroll { device, .. })
-                | AuthorityOp::RootAppointment(RootAppointment {
-                    successor: device, ..
-                }) => device.key == *successor,
-                AuthorityOp::RotateKey {
-                    old_key,
-                    new_device,
-                } => old_key == successor || new_device.key == *successor,
-                AuthorityOp::RevokeDevice { revoked_key } => revoked_key == successor,
-                AuthorityOp::OwnerRoot(record) => {
-                    *successor == AuthorityKey::Ed25519(record.anchor_key)
-                }
-                _ => false,
-            }
-    })
+    let key = match successor {
+        AuthorityKey::Ed25519(bytes) => bytes.as_slice(),
+        AuthorityKey::P256(bytes) => bytes.as_slice(),
+    };
+    if key.is_empty() {
+        return false;
+    }
+    !ancestry.iter().any(
+        |hash| match encode_authority_log_entry_body(&by_hash[hash]) {
+            Ok(body) => body.windows(key.len()).any(|window| window == key),
+            Err(_) => true,
+        },
+    )
 }
 
 /// ProofFold (PLAN v3 section 4a): the strict fold of exactly `rows`, under

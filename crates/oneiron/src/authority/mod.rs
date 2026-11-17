@@ -158,6 +158,7 @@ mod recovery;
 mod retired_signers;
 mod revocation_notice;
 mod revoke_proof;
+mod root_appointment_door;
 mod root_appointment_judge;
 mod rows_floor;
 mod seat_child_slip;
@@ -251,6 +252,8 @@ pub use oneiron_authority::authority::{
     ROOT_APPOINTMENT_SUCCESSOR_PROOF_KIND, ROOT_APPOINTMENT_SUCCESSOR_ROLES, RootAppointment,
     root_appointment_challenge,
 };
+pub use root_appointment_door::RootAppointmentReceipt;
+pub(crate) use root_appointment_door::refuse_unneeded_appointment;
 pub use root_appointment_judge::{AppointmentVerdict, AppointmentVoidReason};
 // The export secret work body and its sealed result (FIX 4624(b)).
 pub use export_secret_work::{

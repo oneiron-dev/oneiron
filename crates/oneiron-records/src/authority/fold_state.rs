@@ -119,7 +119,8 @@ pub enum AppointmentVerdict {
     /// Its ancestry is incomplete here, or its proof fold passed the fold's
     /// memory floor. It is judged again when that changes.
     Pending,
-    /// A row of its ancestry names the successor key (V1). It burns nothing.
+    /// A row of its ancestry names the successor key (V1). It burns its
+    /// anchor, as a void one does.
     SuccessorNotFresh,
     /// V2, V3 or V4 failed. It burns its anchor.
     Void(AppointmentVoidReason),
