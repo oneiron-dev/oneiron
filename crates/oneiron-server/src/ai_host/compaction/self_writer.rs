@@ -439,10 +439,10 @@ impl SelfCompactionBackend {
             retry,
             while_warm,
         ) {
-            Ok(None) => {
-                let _ = frozen.executed.set(SelfCompactionSource::RetainedTurns);
-                retained(self.serve_retained(frozen, request, retry))
-            }
+            Ok(None) => Err((
+                Unserved::from(SelfCompactionUnavailable::LiveRungUnbound.refusal()),
+                SelfCompactionSource::LiveFork,
+            )),
             Ok(Some(served)) => {
                 let _ = frozen.executed.set(SelfCompactionSource::LiveFork);
                 Ok((served, SelfCompactionSource::LiveFork))
