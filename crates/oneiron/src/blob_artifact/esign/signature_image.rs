@@ -9,6 +9,7 @@ use crate::host_memory::MemoryRefusal;
 use crate::limit_ask::EngineLimit;
 use crate::side_table::{self, Raw, SideTable};
 use crate::{EntityId, Result, TimeRange, Vault};
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
 use std::io::{BufRead, Cursor, Read, Seek, SeekFrom};
 
 mod memory;
@@ -37,6 +38,18 @@ pub(super) fn image_binding_key(
 /// The (document, recipient) leading bytes of every [`BINDINGS`] key that recipient owns.
 fn image_binding_prefix(document: EntityId, recipient: &str) -> Vec<u8> {
     [document.as_bytes().as_slice(), recipient.as_bytes()].concat()
+}
+
+/// The id of `recipient`'s signature image `canonical` on `document`
+/// ([`purposes::blob_artifact::ESIGN_SIGNATURE_IMAGE`]): the first 16 bytes
+/// of the digest name the image artifact and its binding row.
+fn signature_image_id(document: EntityId, recipient: &str, canonical: &[u8]) -> Result<EntityId> {
+    let digest = LegacyDigest::new(purposes::blob_artifact::ESIGN_SIGNATURE_IMAGE)
+        .raw(document.as_bytes())
+        .raw(recipient.as_bytes())
+        .raw(canonical)
+        .finish();
+    EntityId::from_bytes(digest[..16].try_into().map_err(|_| invalid("image id"))?)
 }
 impl Vault {
     /// One signature upload past this row: its bound, this vault's `[limits]`
@@ -209,16 +222,7 @@ impl Vault {
             {
                 return Err(invalid("invalid capability or turn"));
             }
-            let mut hash = blake3::Hasher::new();
-            hash.update(b"esign.signature_image.v1");
-            hash.update(id.as_bytes());
-            hash.update(cap.recipient.as_bytes());
-            hash.update(&canonical);
-            let image = EntityId::from_bytes(
-                hash.finalize().as_bytes()[..16]
-                    .try_into()
-                    .map_err(|_| invalid("image id"))?,
-            )?;
+            let image = signature_image_id(id, &cap.recipient, &canonical)?;
             let key = image_binding_key(id, &cap.recipient, &image.to_hex());
             if BINDINGS.contains(&self.store, txn, &key)? {
                 keep_limit_crossings(self, txn, &cap.document, &cap.recipient, &crossings, now)?;
@@ -673,5 +677,20 @@ fn read_whole(spool: &mut impl Read, buf: &mut [u8]) -> Result<bool> {
         Ok(()) => Ok(true),
         Err(error) if error.kind() == std::io::ErrorKind::UnexpectedEof => Ok(false),
         Err(error) => Err(error.into()),
+    }
+}
+
+impl Vault {
+    /// The id `recipient`'s signature image `canonical` on `document` takes.
+    ///
+    /// # Errors
+    /// The digest names a reserved id.
+    #[cfg(oneiron_test_support)]
+    pub(crate) fn esign_signature_image_id_for_test(
+        document: EntityId,
+        recipient: &str,
+        canonical: &[u8],
+    ) -> Result<EntityId> {
+        signature_image_id(document, recipient, canonical)
     }
 }

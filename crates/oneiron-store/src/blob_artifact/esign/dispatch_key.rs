@@ -17,8 +17,6 @@ use crate::verb_invocation::InvocationId;
 use oneiron_contracts::entity_id::EntityId;
 use oneiron_contracts::memory::{MemoryError, MemoryResult};
 
-/// The BLAKE3 domain of a no-key act's key derived from its invocation.
-pub const NO_KEY_CALL_DOMAIN: &[u8] = b"oneiron.esign.dispatch.no_key.call.v1";
 /// How many bytes of that digest the key keeps, as lower hex: a fresh
 /// nonce's length.
 pub const NO_KEY_CALL_KEY_BYTES: usize = 16;

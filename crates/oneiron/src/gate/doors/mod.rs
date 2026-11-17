@@ -29,6 +29,8 @@ pub(crate) use nonbatch_refusal::{
 #[cfg(feature = "sync")]
 pub(crate) use peripheral::check_federated_claim_admission;
 pub(super) use peripheral::edge_actor_class_str;
+#[cfg(oneiron_test_support)]
+pub(crate) use peripheral::standing_outbound_grant_binding_for_test;
 pub(crate) use peripheral::{
     ClaimGateWrite, GateWriteMode, check_edge_provenance_claim_policy, check_reserved_claim_policy,
     check_unattributed_claim_lineage, standing_outbound_grant_binding_parts,

@@ -361,3 +361,7 @@ use std::io::Cursor;
 
 pub(crate) mod tables;
 pub(crate) mod voice_ref_limits;
+#[cfg(oneiron_test_support)]
+pub(crate) use self::doors::standing_outbound_grant_binding_for_test;
+#[cfg(oneiron_test_support)]
+pub(crate) use self::witness_message::witness_message_binding_for_test;

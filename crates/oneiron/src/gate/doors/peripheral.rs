@@ -13,15 +13,13 @@ use crate::gate::constants::LOCAL_WRITE_ACTOR_ENTITY_REF;
 use crate::gate::decision::{GateDecision, GateReasonCode};
 use crate::gate::definition_ceiling::agent_definition_ceiling_for_actor;
 use crate::gate::input::{GateActor, GateContentKind, GateProvenanceHandles};
-use crate::gate::resolution::{
-    PolicyManifestResolution, check_claim_source_trust, hash_bytes, hash_opt_str, hash_str,
-};
+use crate::gate::resolution::{PolicyManifestResolution, check_claim_source_trust};
 use crate::genui::{GrantMintIntent, GrantMintIntentScope};
 use crate::llm::BoundedAutoChecker;
 use crate::store::Store;
 use crate::write_envelope::{WriteActor, WriteEnvelope};
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
 use rmpv::Value;
-use sha2::{Digest, Sha256};
 
 pub(crate) use crate::store::GateWriteMode;
 
@@ -233,7 +231,15 @@ pub(crate) fn standing_outbound_grant_binding_parts(
     intent: &GrantMintIntent,
     policy: &PolicyManifestResolution,
 ) -> Result<(Vec<u8>, [u8; 32])> {
-    let mut hasher = Sha256::new();
+    let binding = standing_outbound_grant_binding(intent)?;
+    Ok((binding.to_vec(), policy.read_frontier_hash()?))
+}
+
+/// The binding of a standing outbound grant `intent` mints
+/// ([`purposes::gate::STANDING_OUTBOUND_GRANT`]): its principal, origin and
+/// scope, each string after its u64-LE byte length.
+fn standing_outbound_grant_binding(intent: &GrantMintIntent) -> Result<[u8; 32]> {
+    let mut hasher = LegacyDigest::new(purposes::gate::STANDING_OUTBOUND_GRANT);
     hash_bytes(&mut hasher, b"oneiron.gate.standing_outbound_grant.v0");
     hash_str(&mut hasher, intent.principal_ref.trim());
     hash_str(&mut hasher, intent.origin_component_id.trim());
@@ -280,5 +286,38 @@ pub(crate) fn standing_outbound_grant_binding_parts(
             )));
         }
     }
-    Ok((hasher.finalize().to_vec(), policy.read_frontier_hash()?))
+    Ok(hasher.finish())
+}
+
+/// The binding of a standing outbound grant `intent` mints.
+///
+/// # Errors
+/// `intent`'s scope is not a standing outbound one.
+#[cfg(oneiron_test_support)]
+pub(crate) fn standing_outbound_grant_binding_for_test(
+    intent: &GrantMintIntent,
+) -> Result<[u8; 32]> {
+    standing_outbound_grant_binding(intent)
+}
+
+/// `bytes` after its u64-LE byte length, as the Gate frames a hashed field.
+fn hash_bytes(hasher: &mut LegacyDigest, bytes: &[u8]) {
+    hasher.len_u64_le(bytes.len()).raw(bytes);
+}
+
+fn hash_str(hasher: &mut LegacyDigest, value: &str) {
+    hash_bytes(hasher, value.as_bytes());
+}
+
+/// 1 and then `value`, or 0 when it is absent.
+fn hash_opt_str(hasher: &mut LegacyDigest, value: Option<&str>) {
+    match value {
+        Some(value) => {
+            hasher.raw(&[1]);
+            hash_str(hasher, value);
+        }
+        None => {
+            hasher.raw(&[0]);
+        }
+    }
 }
