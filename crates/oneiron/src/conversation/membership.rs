@@ -59,21 +59,26 @@ pub(super) fn rows_in(
     for (_, row) in MEMBERSHIP_ROWS.scan_from(store, txn, conversation.as_bytes())? {
         #[cfg(oneiron_test_support)]
         LEDGER_ROWS_FOLDED.set(LEDGER_ROWS_FOLDED.get() + 1);
-        if row.v != MEMBERSHIP_ROW_VERSION
-            || rows
-                .last()
-                .is_some_and(|last: &MembershipRow| last.at > row.at)
-        {
-            return Err(Error::CorruptedIndex("membership ledger order"));
-        }
         rows.push(row);
     }
+    check_row_order(&rows)?;
     if revision_in(store, txn, conversation)? != rows.len() as u64 {
         return Err(Error::CorruptedIndex(
             "membership revision does not match rows",
         ));
     }
     Ok(rows)
+}
+
+/// The row version and time order of a ledger, shared by the stored read and the owner's
+/// archive landing.
+pub(super) fn check_row_order(rows: &[MembershipRow]) -> Result<()> {
+    if rows.iter().any(|row| row.v != MEMBERSHIP_ROW_VERSION)
+        || rows.windows(2).any(|pair| pair[0].at > pair[1].at)
+    {
+        return Err(Error::CorruptedIndex("membership ledger order"));
+    }
+    Ok(())
 }
 pub(super) fn append_row(
     vault: &Vault,

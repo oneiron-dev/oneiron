@@ -63,6 +63,14 @@ pub(crate) const SIDE_TABLE_DISPOSITIONS: &[(&str, ArchiveSideDisposition)] = &[
     ),
     ("CONSENT_STANDING_GRANT", ArchiveSideDisposition::Retained),
     ("CONSENT_WIDEN_PROPOSAL", ArchiveSideDisposition::Retained),
+    (
+        "CONVERSATION_MEMBERSHIP_ROW",
+        ArchiveSideDisposition::Retained,
+    ),
+    (
+        "CONVERSATION_MEMBERSHIP_SEQ",
+        ArchiveSideDisposition::Retained,
+    ),
     ("CONVERSATION_ROLE_GRANT", ArchiveSideDisposition::Retained),
     ("DRAFTER_POLICY", ArchiveSideDisposition::Retained),
     (

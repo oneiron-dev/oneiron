@@ -568,6 +568,24 @@ impl Vault {
                     )?,
                 )?
             };
+            // The owner's restore puts a room after the PERSON records of its archived roster:
+            // the room guard requires each member to be a PERSON row here.
+            if permit.is_some()
+                && row.entity_type == ENTITY_TYPE_CONVERSATION
+                && let Ok(body) = crate::conversation::ConversationBody::from_bytes(
+                    &row.body.to_bytes_in_with(&archive.files, secrets)?,
+                )
+            {
+                for member in body.member_ids {
+                    if archive
+                        .entity_at(&member)?
+                        .is_some_and(|at| at.entity_type == crate::registry::ENTITY_TYPE_PERSON)
+                        && !waits_on.contains(&member)
+                    {
+                        waits_on.push(member);
+                    }
+                }
+            }
             // Blind-review P1b (REVIEW-4389): an EVENT/TURN born under a
             // non-default facet waits on its archived facet row, so the
             // facet's put lands first and the masked initial put below finds
@@ -633,6 +651,13 @@ impl Vault {
             inserted_entities += inserted;
             unchanged_entities += unchanged;
         }
+        let mut side_refresh = super::archive_side_install::ArchivedSideRowRefresh::default();
+        if let Some(permit) = permit.as_ref() {
+            side_refresh.prelanded_rooms =
+                crate::conversation::archive_restore::preland_room_ledgers_in_txn(
+                    self, &mut wtxn, permit, &archive, secrets,
+                )?;
+        }
         // Resolve reference dependencies without assuming UUID or export order.
         // A cycle or an unavailable subject fails without a partial commit.
         // Each round queues what waits on no pending id, then restores it.
@@ -697,6 +722,11 @@ impl Vault {
                 }
             }
         }
+        crate::conversation::archive_restore::remove_orphaned_prelanded_rooms_in_txn(
+            self,
+            &mut wtxn,
+            &mut side_refresh.prelanded_rooms,
+        )?;
         let mut agents = archive.spool.rows(ArchiveRecordKind::AgentPack);
         while let Some((_, bundle)) = agents.next_parsed::<AgentForkBinding>(&archive.spool)? {
             let id = parse_id(&bundle.entity_id)?;
@@ -802,7 +832,6 @@ impl Vault {
         let owed_secrets = owed_secrets_in_txn(self, &wtxn, &archive.manifest.fold_only_secrets)?;
         // Actor and actorless doors retain only; the owner door installs tables with a
         // landing group and retains the rest, after imported persons, results and secrets.
-        let mut side_refresh = super::archive_side_install::ArchivedSideRowRefresh::default();
         let retained_side_rows =
             super::archive_retained_side_rows::install_or_retain_side_rows_in_txn(
                 self,

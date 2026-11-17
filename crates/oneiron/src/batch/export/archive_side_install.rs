@@ -25,6 +25,8 @@ pub(crate) enum ArchivedSideRowOutcome {
 /// Refreshes required by newly installed side rows after the import commits.
 #[derive(Default)]
 pub(crate) struct ArchivedSideRowRefresh {
+    /// Rooms whose ledger this import wrote before the records.
+    pub(crate) prelanded_rooms: std::collections::BTreeSet<crate::EntityId>,
     /// Serving hosts must observe repaired drafter bindings.
     drafter_serving: bool,
     /// Queue attempts must observe the installed review policy.
@@ -140,7 +142,7 @@ pub(crate) enum ArchivedSideGroup {
     Consent,
     /// Voice identity and reference-render consent.
     Voice,
-    /// Room role grants backed by current membership and body roles.
+    /// Room membership ledgers, then role grants backed by membership and body roles.
     ConversationRole,
     /// Connector slates retained as nonportable references.
     ConnectorSlate,
@@ -245,7 +247,12 @@ pub(crate) fn archived_side_group(source_table: &str) -> Option<ArchivedSideGrou
         {
             Some(Group::Voice)
         }
-        name if name == side_table::CONVERSATION_ROLE_GRANT.name => Some(Group::ConversationRole),
+        name if name == side_table::CONVERSATION_ROLE_GRANT.name
+            || name == side_table::CONVERSATION_MEMBERSHIP_ROW.name
+            || name == side_table::CONVERSATION_MEMBERSHIP_SEQ.name =>
+        {
+            Some(Group::ConversationRole)
+        }
         name if name == side_table::CONNECTOR_GRANT_SLATE.name => Some(Group::ConnectorSlate),
         name if name == side_table::ORG_ADMIN_POLICY.name => Some(Group::OrgAdmin),
         name if name == side_table::SHARED_ACT_POLICY_CHANGE.name => Some(Group::SharedAct),
@@ -401,7 +408,7 @@ pub(crate) fn land_archived_side_group_in_txn(
         }
         ArchivedSideGroup::ConversationRole => {
             crate::conversation::archive_restore::land_archived_conversation_role_rows_in_txn(
-                vault, txn, permit, rows,
+                vault, txn, permit, rows, &refresh.prelanded_rooms,
             )
         }
         ArchivedSideGroup::ConnectorSlate => {
