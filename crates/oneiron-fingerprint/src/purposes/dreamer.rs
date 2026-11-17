@@ -24,6 +24,18 @@ legacy_purposes! {
     /// A free-time policy's digest (`policy_digest`): the policy as JSON, `null` for none.
     FREE_TIME_POLICY_DIGEST = (Blake3, NotHashed, "oneiron.dreamer.free_time_policy_digest.v1");
 
+    /// An agent-health trend DIAGNOSTIC's replay hash
+    /// (`dreamer_runner::maintenance::agent_health::trend_output`). BLAKE3: the tag first;
+    /// the margin (`actor` and the actor id, or `project` and the project id, 16 zero bytes
+    /// when none; the words and ids not framed); the task-type node; the model, or one
+    /// `0xff` byte when none; the metric token; then per side, prior then latest, its first
+    /// and last day, numerator, denominator, known and eligible counts (each 8 bytes, u64
+    /// little-endian), the attempt count and each attempt id, the ref count and each ref id,
+    /// and the scope count and each scope. Every string is framed by its length and every
+    /// count is written, each as a u64 little-endian. Stored as the DIAGNOSTIC body's
+    /// `replay.content_hash`, which the row id binds, and returned in diagnostic reads.
+    AGENT_HEALTH_TREND = (Blake3, HashedFirst, "oneiron.coach.agent_health.trend.v1");
+
     /// A multi-part consolidation branch's identity
     /// (`dreamer_consolidation::branch::ConsolidationBranchPlan::identity`). Plain BLAKE3,
     /// the tag first; the world and the facet, each `1` and the id's 16 bytes, or `0`; the
