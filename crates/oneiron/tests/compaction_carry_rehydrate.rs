@@ -203,6 +203,7 @@ impl Fixture {
                         conversation_ref: fixture_id(CONVERSATION_SEED).to_hex(),
                         turn_ref: Some(turn_id.to_hex()),
                         thread_audience: None,
+                        project: None,
                         messages: vec![WitnessMessage {
                             id: None,
                             author: WitnessAuthor::User,

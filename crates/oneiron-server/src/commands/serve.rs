@@ -241,6 +241,7 @@ pub(super) async fn serve_anchored(
             &crate::handler::mesh::MeshConfig::from_env()?,
             &app,
             config.limits.connections(),
+            crate::handler::mesh::MeshRouteSet::Full,
         )
         .await?;
         timings.mark("mesh");
