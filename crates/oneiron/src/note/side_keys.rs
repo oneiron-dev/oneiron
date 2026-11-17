@@ -2,12 +2,8 @@
 //! Each spells exactly the bytes the pre-typed hand-formatted keys already had.
 
 use crate::side_table::{HexId, SideKey};
+pub(super) use oneiron_store::entity_doc::side_keys::HexPair;
 use oneiron_store::side_table::key::HexLower;
-
-/// Two colon-joined 32-hex entity ids: `hex32(a) ":" hex32(b)`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, SideKey)]
-#[side_key(sep = b':')]
-pub(super) struct HexPair(pub(super) HexId, pub(super) HexId);
 
 /// One [`HexPair`] for `test_doors::side_key_pins`.
 #[cfg(oneiron_test_support)]
