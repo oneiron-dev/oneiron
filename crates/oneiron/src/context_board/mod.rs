@@ -51,8 +51,8 @@ pub use room::{
 pub use room_verbs::RoomSectionPage;
 pub(crate) use room_verbs::{
     off_room_reader_clearance_in, public_thread_live_speakers_in, room_ceiling_in,
-    room_clearance_in, room_facets_axis_in, room_reader_in, room_roster_in, thread_ceiling_in,
-    thread_reader_in,
+    room_clearance_in, room_facets_axis_in, room_reader_in, room_roster_in, room_stander_in,
+    thread_ceiling_in, thread_reader_in,
 };
 pub use worlds::{WorldPresence, WorldsSection, world_set_scope};
 mod frame;
@@ -89,6 +89,7 @@ mod plugin;
 pub(crate) use plugin::fit_map_entry_for_test;
 mod readers;
 mod scratchpad;
+pub(crate) mod setting_keys;
 mod stream;
 mod unprocessed;
 pub use unprocessed::unprocessed_items;
@@ -184,6 +185,7 @@ pub(crate) use plugin::{ensure_fit_install_writer_machine, fit_install_writer_id
 pub(crate) use plugin::{
     scrub_section_fit_receipt_actors_in_txn, stored_section_fit_actor_erasure_body,
 };
+pub use setting_keys::fold_attention_rows;
 pub use tasks::{
     CancelRejectionPathology, ConsultWidening, JobPresence, TaskBoardStatus, TaskIntentPresence,
     TaskRow, TasksSection, TasksSectionRows, expand_task, failed_lane, fold_up_status,

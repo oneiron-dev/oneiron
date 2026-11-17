@@ -508,6 +508,15 @@ pub struct ServeArgs {
     #[arg(long = "hosted-private-origin", requires = "managed_by_hypnos")]
     pub hosted_private_origins: Vec<oneiron::web_fetch::HostedPrivateOrigin>,
 
+    /// Managed mode: a private network the hosted node's web fetch and
+    /// calendar feed polls may reach, every address in it: `rfc1918`,
+    /// `cgnat` or `ula`; repeat it for each (HOSTED-EGRESS-OPERATOR-SETTING).
+    /// Without it, none: the hosted node refuses all three except at a
+    /// listed origin. A network never admits the infrastructure the guard
+    /// knows inside it, and a spelling outside the three stops the start.
+    #[arg(long = "hosted-private-network", requires = "managed_by_hypnos")]
+    pub hosted_private_networks: Vec<oneiron::web_fetch::HostedPrivateNetwork>,
+
     /// Host address to bind to.
     #[arg(long)]
     pub host: Option<String>,
