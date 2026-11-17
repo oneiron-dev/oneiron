@@ -11,12 +11,16 @@
 //! The provider is a recording fake of the settlement port. The deposit
 //! doors are new, so PR 1 cannot build this file: its red is the missing
 //! item. The assert-red half is `booking_deposit_confirm_gate.rs`.
+//!
+//! Run: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test booking_deposit_settlement`.
 
+mod booking_host_seat_support;
 #[path = "booking_deposit_support/fixture.rs"]
 mod fixture;
 
 use std::sync::Mutex;
 
+use booking_host_seat_support::{Seat, SeatChange};
 use fixture::{Fixture, MONDAY, NOW, event_type, slot_of};
 use oneiron::booking::lifecycle::{
     BookingDepositSettlementDrain, DEPOSIT_CHECKOUT_WINDOW_SECS, DepositCheckoutLease,
@@ -31,6 +35,7 @@ use oneiron::booking::{
     SessionKey,
 };
 use oneiron::calendar::CalendarError;
+use oneiron::calendar::connectors::{CalendarConnectorError, RemoteWriteReceipt};
 use oneiron::calendar::ingest::{
     IcsFeedFetcher, IcsFeedPollConfig, IcsFetchResponse, run_ics_feed_poll,
 };
@@ -671,8 +676,15 @@ fn a_lease_or_event_of_another_checkout_changes_nothing() {
     assert_eq!(state_of(&fixture, "pi_test_bound"), DepositState::Voided);
 }
 
-/// The host's own calendar, as its feed system names it.
-const HOST_FEED_SYSTEM: &str = "host-calendar";
+/// The host's own calendar, as its seat system names it: the calendar each
+/// booking below is written to before its first pull.
+const HOST_SEAT_SYSTEM: &str = "host-seat";
+
+/// A seat the booking was never written to, for the foreign-tombstone test.
+const SHARED_SEAT_SYSTEM: &str = "shared-seat";
+
+/// A feed the booking was never written to, for the foreign-cancel test.
+const VISITOR_FEED_SYSTEM: &str = "visitor-calendar";
 
 /// A fetcher that answers one scripted response.
 struct ScriptedFeed(Mutex<Option<IcsFetchResponse>>);
@@ -704,62 +716,61 @@ fn ics_utc(ts: u64) -> String {
     )
 }
 
-/// The host's feed with each booking at its slot, cancelled or not.
-fn poll_host_feed(
+/// One pull of a seat with each booking at its slot and at `sequence`,
+/// cancelled or not. Each booking was written to the seat before its first
+/// pull, so each resource rides the href its write returned.
+fn pull_seat(
+    seat: &Seat,
     fixture: &Fixture,
-    bookings: &[(&ConfirmReceipt, u64)],
+    bookings: &[(&RemoteWriteReceipt, u64)],
+    sequence: u32,
     cancelled: bool,
-    etag: &str,
     now: u64,
-) {
-    poll_host_feed_at(
-        fixture,
-        bookings,
-        u32::from(cancelled),
-        cancelled,
-        etag,
-        now,
-    )
-    .expect("host feed poll");
+) -> Result<(), CalendarConnectorError> {
+    let changes: Vec<SeatChange> = bookings
+        .iter()
+        .map(|(wrote, start)| {
+            SeatChange::upsert(wrote, *start, *start + 30 * 60, sequence, cancelled)
+        })
+        .collect();
+    seat.pull(&fixture.vault, &changes, now).map(|_| ())
 }
 
-/// One poll of the host's feed with each booking at its slot and at
+/// One poll of the visitor's feed with the booking at its slot and at
 /// `sequence`, cancelled or not.
-fn poll_host_feed_at(
+fn poll_visitor_feed(
     fixture: &Fixture,
-    bookings: &[(&ConfirmReceipt, u64)],
+    booked: &ConfirmReceipt,
+    start: u64,
     sequence: u32,
     cancelled: bool,
     etag: &str,
     now: u64,
-) -> Result<(), CalendarError> {
+) {
     let mut body =
         String::from("BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//oneiron//test//EN\r\n");
-    for (booked, start) in bookings {
-        body.push_str("BEGIN:VEVENT\r\n");
-        body.push_str(&format!("UID:{}\r\n", booked.calendar.uid));
-        body.push_str("DTSTAMP:20260302T070000Z\r\n");
-        body.push_str(&format!("DTSTART:{}\r\n", ics_utc(*start)));
-        body.push_str(&format!("DTEND:{}\r\n", ics_utc(*start + 30 * 60)));
-        body.push_str(&format!("SEQUENCE:{sequence}\r\n"));
-        body.push_str("SUMMARY:intro-call\r\n");
-        if cancelled {
-            body.push_str("STATUS:CANCELLED\r\n");
-        }
-        body.push_str("END:VEVENT\r\n");
+    body.push_str("BEGIN:VEVENT\r\n");
+    body.push_str(&format!("UID:{}\r\n", booked.calendar.uid));
+    body.push_str("DTSTAMP:20260302T070000Z\r\n");
+    body.push_str(&format!("DTSTART:{}\r\n", ics_utc(start)));
+    body.push_str(&format!("DTEND:{}\r\n", ics_utc(start + 30 * 60)));
+    body.push_str(&format!("SEQUENCE:{sequence}\r\n"));
+    body.push_str("SUMMARY:intro-call\r\n");
+    if cancelled {
+        body.push_str("STATUS:CANCELLED\r\n");
     }
-    body.push_str("END:VCALENDAR\r\n");
+    body.push_str("END:VEVENT\r\nEND:VCALENDAR\r\n");
     let fetcher = ScriptedFeed(Mutex::new(Some(IcsFetchResponse::Complete {
         etag: Some(etag.to_owned()),
         body: body.into_bytes(),
     })));
     let config = IcsFeedPollConfig {
-        secret_ref: format!("ics-feed:{HOST_FEED_SYSTEM}"),
-        system: HOST_FEED_SYSTEM.to_owned(),
+        secret_ref: format!("ics-feed:{VISITOR_FEED_SYSTEM}"),
+        system: VISITOR_FEED_SYSTEM.to_owned(),
         cadence_min_seconds: 300,
         cadence_max_seconds: 900,
     };
-    run_ics_feed_poll(&fixture.vault, &fetcher, &config, now, 7).map(|_| ())
+    run_ics_feed_poll(&fixture.vault, &fetcher, &config, now, 7).expect("visitor feed poll");
 }
 
 #[test]
@@ -776,6 +787,7 @@ fn a_host_cancel_refunds_the_whole_deposit() {
     let fixture = Fixture::open(Some(terms));
     fixture.enable_host_feed();
     let mut provider = RecordingProvider::default();
+    let seat = Seat::install(&fixture.vault, HOST_SEAT_SYSTEM);
 
     let hosted = paid_booking(&fixture, SessionKey::derive(b"host-cancel"), "pi_host", 9);
     let visited = paid_booking(
@@ -804,11 +816,14 @@ fn a_host_cancel_refunds_the_whole_deposit() {
         }
     );
 
+    // Both bookings are written to the host's seat before its first pull.
+    let hosted_wrote = seat.write(&fixture.vault, hosted.calendar.event_ref, NOW + 55);
+    let visited_wrote = seat.write(&fixture.vault, visited.calendar.event_ref, NOW + 55);
     let bookings = [
-        (&hosted, MONDAY + 9 * 3_600),
-        (&visited, MONDAY + 10 * 3_600),
+        (&hosted_wrote, MONDAY + 9 * 3_600),
+        (&visited_wrote, MONDAY + 10 * 3_600),
     ];
-    poll_host_feed(&fixture, &bookings, false, "v1", NOW + 60);
+    pull_seat(&seat, &fixture, &bookings, 0, false, NOW + 60).expect("seat pull");
     assert_eq!(
         state_of(&fixture, "pi_host"),
         DepositState::Captured {
@@ -817,7 +832,7 @@ fn a_host_cancel_refunds_the_whole_deposit() {
     );
 
     // The host cancels both in their own calendar.
-    poll_host_feed(&fixture, &bookings, true, "v2", NOW + 120);
+    pull_seat(&seat, &fixture, &bookings, 1, true, NOW + 120).expect("seat pull");
     assert_eq!(
         state_of(&fixture, "pi_host"),
         DepositState::RefundDue {
@@ -1054,14 +1069,15 @@ fn a_refund_the_provider_holds_pending_stays_owed_until_it_ends() {
 #[cfg(oneiron_test_support)]
 #[test]
 fn a_host_cancel_stopped_before_its_refund_is_repaired_by_the_next_poll() {
-    // The poll stops after the cancellation's passport commits and before
+    // The pull stops after the cancellation's passport commits and before
     // its refund does (on the old order, after its status did too). The next
-    // poll reads the same feed (the passport skips it) or the cancellation
+    // pull reads the same seat (the passport skips it) or the cancellation
     // sent again at a higher SEQUENCE.
-    for (case, replay_sequence) in [("same feed", 1), ("sent again", 2)] {
+    for (case, replay_sequence) in [("same seat", 1), ("sent again", 2)] {
         let fixture = Fixture::open(Some(two_hour_terms()));
         fixture.enable_host_feed();
         let mut provider = RecordingProvider::default();
+        let seat = Seat::install(&fixture.vault, HOST_SEAT_SYSTEM);
         let booked = paid_booking(
             &fixture,
             SessionKey::derive(case.as_bytes()),
@@ -1075,12 +1091,13 @@ fn a_host_cancel_stopped_before_its_refund_is_repaired_by_the_next_poll() {
             NOW + 50,
         )
         .expect("capture");
-        let bookings = [(&booked, MONDAY + 9 * 3_600)];
-        poll_host_feed(&fixture, &bookings, false, "v1", NOW + 60);
+        let wrote = seat.write(&fixture.vault, booked.calendar.event_ref, NOW + 55);
+        let bookings = [(&wrote, MONDAY + 9 * 3_600)];
+        pull_seat(&seat, &fixture, &bookings, 0, false, NOW + 60).expect("seat pull");
 
         oneiron::test_doors::host_cancel_refund::stop_before_next_host_cancel_refund();
-        let stopped = poll_host_feed_at(&fixture, &bookings, 1, true, "v2", NOW + 120);
-        assert!(stopped.is_err(), "{case}: the door stops the poll");
+        let stopped = pull_seat(&seat, &fixture, &bookings, 1, true, NOW + 120);
+        assert!(stopped.is_err(), "{case}: the door stops the pull");
         assert_eq!(
             state_of(&fixture, "pi_stopped"),
             DepositState::Captured {
@@ -1089,8 +1106,7 @@ fn a_host_cancel_stopped_before_its_refund_is_repaired_by_the_next_poll() {
             "{case}: stopped before the refund"
         );
 
-        poll_host_feed_at(&fixture, &bookings, replay_sequence, true, "v3", NOW + 180)
-            .expect("host feed poll");
+        pull_seat(&seat, &fixture, &bookings, replay_sequence, true, NOW + 180).expect("seat pull");
         assert_eq!(
             state_of(&fixture, "pi_stopped"),
             DepositState::RefundDue {
@@ -1109,6 +1125,7 @@ fn a_visitor_cancel_after_the_host_cancel_keeps_the_full_refund() {
     let fixture = std::sync::Arc::new(Fixture::open(Some(two_hour_terms())));
     fixture.enable_host_feed();
     let mut provider = RecordingProvider::default();
+    let seat = Seat::install(&fixture.vault, HOST_SEAT_SYSTEM);
     let booked = paid_booking(
         &fixture,
         SessionKey::derive(b"host-then-visitor"),
@@ -1122,8 +1139,9 @@ fn a_visitor_cancel_after_the_host_cancel_keeps_the_full_refund() {
         NOW + 50,
     )
     .expect("capture");
-    let bookings = [(&booked, MONDAY + 9 * 3_600)];
-    poll_host_feed(&fixture, &bookings, false, "v1", NOW + 60);
+    let wrote = seat.write(&fixture.vault, booked.calendar.event_ref, NOW + 55);
+    let bookings = [(&wrote, MONDAY + 9 * 3_600)];
+    pull_seat(&seat, &fixture, &bookings, 0, false, NOW + 60).expect("seat pull");
 
     // The visitor's cancel lands between the host cancel's two commits.
     let racing = std::sync::Arc::clone(&fixture);
@@ -1135,12 +1153,184 @@ fn a_visitor_cancel_after_the_host_cancel_keeps_the_full_refund() {
                 .expect("the visitor's cancel");
         },
     ));
-    poll_host_feed(&fixture, &bookings, true, "v2", NOW + 120);
+    pull_seat(&seat, &fixture, &bookings, 1, true, NOW + 120).expect("seat pull");
     assert_eq!(
         state_of(&fixture, "pi_host_then_visitor"),
         DepositState::RefundDue {
             amount_minor: 4_000
         },
         "the host's cancel came first: the whole deposit goes back"
+    );
+}
+
+#[test]
+fn a_cancel_from_a_feed_the_booking_was_not_written_to_keeps_the_deposit() {
+    // A visitor's own cancel this late would refund nothing.
+    let terms = DepositTerms {
+        amount_minor: 4_000,
+        currency: "usd".to_owned(),
+        refund: DepositRefundRule {
+            full_refund_notice_secs: 2 * 3_600,
+            late_cancel_refund_percent: 0,
+        },
+    };
+    let fixture = Fixture::open(Some(terms));
+    fixture.enable_host_feed();
+    let mut provider = RecordingProvider::default();
+    let seat = Seat::install(&fixture.vault, HOST_SEAT_SYSTEM);
+
+    let booked = paid_booking(
+        &fixture,
+        SessionKey::derive(b"foreign-cancel"),
+        "pi_foreign_cancel",
+        9,
+    );
+    settle_booking_deposit(
+        &fixture.vault,
+        &booked.calendar.event_ref,
+        &mut provider,
+        NOW + 50,
+    )
+    .expect("capture");
+    assert_eq!(
+        state_of(&fixture, "pi_foreign_cancel"),
+        DepositState::Captured {
+            amount_minor: 4_000
+        }
+    );
+    let wrote = seat.write(&fixture.vault, booked.calendar.event_ref, NOW + 55);
+
+    // A feed the booking was never written to carries its UID live, then
+    // cancelled: the calendar records the cancellation, the deposit stands.
+    let start = MONDAY + 9 * 3_600;
+    poll_visitor_feed(&fixture, &booked, start, 0, false, "v1", NOW + 60);
+    poll_visitor_feed(&fixture, &booked, start, 1, true, "v2", NOW + 120);
+    assert_eq!(
+        state_of(&fixture, "pi_foreign_cancel"),
+        DepositState::Captured {
+            amount_minor: 4_000
+        },
+        "a cancel from a feed the booking was not written to moves no money"
+    );
+
+    // The host seat's own cancel of the same booking still refunds it whole.
+    pull_seat(&seat, &fixture, &[(&wrote, start)], 1, true, NOW + 180).expect("seat pull");
+    assert_eq!(
+        state_of(&fixture, "pi_foreign_cancel"),
+        DepositState::RefundDue {
+            amount_minor: 4_000
+        },
+        "the written-to seat's cancel refunds the whole deposit"
+    );
+}
+
+#[test]
+fn a_cancelled_booking_the_owner_wrote_and_the_seat_echoed_keeps_the_deposit() {
+    let fixture = Fixture::open(Some(two_hour_terms()));
+    fixture.enable_host_feed();
+    let mut provider = RecordingProvider::default();
+    let seat = Seat::install(&fixture.vault, HOST_SEAT_SYSTEM);
+
+    let booked = paid_booking(
+        &fixture,
+        SessionKey::derive(b"written-echo"),
+        "pi_written_echo",
+        9,
+    );
+    settle_booking_deposit(
+        &fixture.vault,
+        &booked.calendar.event_ref,
+        &mut provider,
+        NOW + 50,
+    )
+    .expect("capture");
+
+    // A feed the booking was never written to cancels it: the EVENT reads
+    // cancelled, the deposit stands.
+    let start = MONDAY + 9 * 3_600;
+    poll_visitor_feed(&fixture, &booked, start, 0, false, "v1", NOW + 60);
+    poll_visitor_feed(&fixture, &booked, start, 1, true, "v2", NOW + 120);
+    assert_eq!(
+        state_of(&fixture, "pi_written_echo"),
+        DepositState::Captured {
+            amount_minor: 4_000
+        },
+        "a cancel from a feed the booking was not written to moves no money"
+    );
+
+    // The owner then writes the cancelled EVENT to their own calendar, and
+    // its next pull returns the written bytes unchanged: the owner's own
+    // write coming back, not a cancellation made in that calendar.
+    let wrote = seat.write(&fixture.vault, booked.calendar.event_ref, NOW + 150);
+    seat.pull_own_write(&fixture.vault, &wrote, NOW + 180)
+        .expect("seat pull");
+    assert_eq!(
+        state_of(&fixture, "pi_written_echo"),
+        DepositState::Captured {
+            amount_minor: 4_000
+        },
+        "the echo of the owner's own write moves no money"
+    );
+}
+
+#[test]
+fn a_tombstone_from_a_seat_the_booking_was_not_written_to_keeps_the_deposit() {
+    let fixture = Fixture::open(Some(two_hour_terms()));
+    fixture.enable_host_feed();
+    let mut provider = RecordingProvider::default();
+    let seat = Seat::install(&fixture.vault, HOST_SEAT_SYSTEM);
+    let shared = Seat::install(&fixture.vault, SHARED_SEAT_SYSTEM);
+
+    let booked = paid_booking(
+        &fixture,
+        SessionKey::derive(b"shared-tombstone"),
+        "pi_shared_tombstone",
+        9,
+    );
+    settle_booking_deposit(
+        &fixture.vault,
+        &booked.calendar.event_ref,
+        &mut provider,
+        NOW + 50,
+    )
+    .expect("capture");
+    assert_eq!(
+        state_of(&fixture, "pi_shared_tombstone"),
+        DepositState::Captured {
+            amount_minor: 4_000
+        }
+    );
+    seat.write(&fixture.vault, booked.calendar.event_ref, NOW + 55);
+
+    // A seat the booking was never written to pulls its UID live, then pulls
+    // a tombstone for it: the EVENT reads cancelled, the deposit stands.
+    let start = MONDAY + 9 * 3_600;
+    shared
+        .pull(
+            &fixture.vault,
+            &[SeatChange::foreign(
+                &shared,
+                &booked.calendar.uid,
+                start,
+                start + 30 * 60,
+                0,
+                false,
+            )],
+            NOW + 60,
+        )
+        .expect("seat pull");
+    shared
+        .pull(
+            &fixture.vault,
+            &[SeatChange::tombstone(&booked.calendar.uid)],
+            NOW + 120,
+        )
+        .expect("seat pull");
+    assert_eq!(
+        state_of(&fixture, "pi_shared_tombstone"),
+        DepositState::Captured {
+            amount_minor: 4_000
+        },
+        "a tombstone from a seat the booking was not written to moves no money"
     );
 }

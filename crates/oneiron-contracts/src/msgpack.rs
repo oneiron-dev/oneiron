@@ -1,7 +1,8 @@
 //! The one reader for untyped MessagePack rows (PLAN-UC-08).
 //!
 //! One policy for every row the engine stores or sends as an untyped [`Value`]:
-//! - [`decode`] reads exactly one value and refuses bytes after it;
+//! - [`decode`] reads exactly one value and refuses bytes after it and the reserved marker
+//!   `0xc1` anywhere in it;
 //! - [`Entries::get`] and every getter built on it refuse a key that appears twice;
 //! - [`Entries::exact_keys`] refuses a key that is not text, a key outside the declared
 //!   set, a repeated key and a missing required key;
@@ -18,12 +19,15 @@ use rmpv::Value;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
+mod reserved_marker;
+
 /// Why the reader refused a body. Variants that concern one map key name it.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum MsgpackError {
     /// The bytes do not hold one whole MessagePack value (or the typed row's shape):
-    /// empty, truncated, a bad marker, or a value the target type does not accept.
-    /// It carries the decoder's own message unchanged.
+    /// empty, truncated, a bad marker (the reserved `0xc1` included), or a value the
+    /// target type does not accept. It carries the decoder's own message unchanged, or
+    /// [`decode`]'s own for `0xc1`.
     #[error("{0}")]
     Malformed(String),
     /// Bytes follow the one value.
@@ -63,15 +67,22 @@ pub fn encode(value: &Value) -> Vec<u8> {
 }
 
 /// Reads exactly one value from `bytes`. Empty or truncated input is
-/// [`MsgpackError::Malformed`]; any byte after the value is [`MsgpackError::Trailing`].
+/// [`MsgpackError::Malformed`]; any byte after the value is [`MsgpackError::Trailing`];
+/// then the reserved marker `0xc1` where any value of it starts (rmpv reads it as nil) is
+/// [`MsgpackError::Malformed`]. A `0xc1` byte inside a string, binary or extension payload
+/// is data.
 pub fn decode(bytes: &[u8]) -> Result<Value, MsgpackError> {
     let mut rest = bytes;
     let value = rmpv::decode::read_value(&mut rest)
         .map_err(|error| MsgpackError::Malformed(error.to_string()))?;
-    if rest.is_empty() {
-        Ok(value)
-    } else {
-        Err(MsgpackError::Trailing)
+    if !rest.is_empty() {
+        return Err(MsgpackError::Trailing);
+    }
+    match reserved_marker::reserved_marker_offset(bytes) {
+        Some(at) => Err(MsgpackError::Malformed(format!(
+            "reserved MessagePack marker 0xc1 at byte {at}"
+        ))),
+        None => Ok(value),
     }
 }
 

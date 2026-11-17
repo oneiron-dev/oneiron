@@ -10,9 +10,10 @@ pub(crate) const PIN_UPDATES: SideTable<EntityId, [u8; 1], Raw> =
 
 /// A room body as a reader is served it: without its shared pins, which a
 /// reader gets only through the room's own admitted projection, target by
-/// target (ROOM-SCOPED-PINS; Engine ruling THREADTASK-PINS-SHAPE Q4 = A).
-/// `None` when the bytes carry no `pins` key, so an unpinned room is served
-/// byte for byte as stored.
+/// target (ROOM-SCOPED-PINS; Engine ruling THREADTASK-PINS-SHAPE Q4 = A),
+/// and without the records its unpins removed, which name pinners and
+/// targets as the pins do (ROOM-PINS-LWW-MERGE). `None` when the bytes carry
+/// neither key, so a room never pinned in is served byte for byte as stored.
 pub(crate) fn served_room_body(body: &[u8]) -> Result<Option<Vec<u8>>> {
     let mut cursor = body;
     let Ok(rmpv::Value::Map(mut entries)) = rmpv::decode::read_value(&mut cursor) else {
@@ -22,7 +23,7 @@ pub(crate) fn served_room_body(body: &[u8]) -> Result<Option<Vec<u8>>> {
         return Ok(None);
     }
     let before = entries.len();
-    entries.retain(|(key, _)| key.as_str() != Some("pins"));
+    entries.retain(|(key, _)| !matches!(key.as_str(), Some("pins" | "unpinned")));
     if entries.len() == before {
         return Ok(None);
     }
@@ -36,8 +37,8 @@ pub(crate) fn served_room_body(body: &[u8]) -> Result<Option<Vec<u8>>> {
 /// is not the owner's own copy: a room body without its shared pins, as
 /// [`served_room_body`] serves it, its `pin_policy` kept (Engine ruling
 /// EXPORTDOORS Q2 = A; FIX ROOM-PINS-WHOLE-BLOB-TRANSPORT). `None` for any
-/// other kind, and for a room body with no `pins` key, which leaves as
-/// stored.
+/// other kind, and for a room body with neither a `pins` nor an `unpinned`
+/// key, which leaves as stored.
 pub(crate) fn body_without_room_pins(entity_type: u8, body: &[u8]) -> Result<Option<Vec<u8>>> {
     if entity_type != crate::registry::ENTITY_TYPE_CONVERSATION {
         return Ok(None);

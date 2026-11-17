@@ -141,7 +141,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/code_memory_values/mod.rs` | src | m | 15 struct · 5 enum · 21 fn · 8 const · 1 mod · 1 re-export | AlwaysOnCodeMemoryContract, AnchorTransfer, AnchorTransferKind, AnchorTransferReceipt, AnchorTransferRecord, AttachCodeMemory, BlocksWriteContext, CodeMemoryAnchor +12 | Symbol-anchored memory values, deterministic union rules and row codecs |
 | `src/code_memory_values/pull_result.rs` | src | s | 1 struct | CodeMemoryPullResult | Provenance-labelled code-memory pull values |
 | `src/code_promotion_gap.rs` | src | s | 1 enum · 1 fn | QueuePromotionGap | Reasons a tested revision lacks reviewed promotion |
-| `src/code_repo_registration.rs` | src | s | 1 struct · 1 enum · 9 fn · 1 const | CodeRepoRegistration, CodeRepoSource | The retained configuration of a registered repository (FIX 4299, CODE-CUSTODY-01), nested in its… |
+| `src/code_repo_registration.rs` | src | s | 1 struct · 1 enum · 11 fn · 1 const | CodeRepoRegistration, CodeRepoSource | The retained configuration of a registered repository (FIX 4299, CODE-CUSTODY-01), nested in its… |
 | `src/code_revision_identity.rs` | src | s | 3 fn | — | Deterministic aggregation-session, tested-revision and provenance identifiers |
 | `src/code_revision_record/commit_metadata.rs` | src | s | 3 fn | — | Message and file modes are canonical revision data, not export input; authorship is erasable attribution… |
 | `src/code_revision_record/file_frontiers.rs` | src | s | 2 fn | — | Pure tested-file frontier map validation and codecs |
@@ -177,7 +177,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/contract_oracle/graph.rs` | src | s | 2 struct · 3 fn | AffectedTests, WorkspaceGraph | Workspace dependency closure from resolved `cargo metadata --format-version 1` JSON |
 | `src/contract_oracle/mod.rs` | src | s | 3 fn · 2 mod · 2 re-export | — | Persisted, deterministic Rust API, schema and command-output contracts |
 | `src/contract_oracle/types.rs` | src | s | 5 struct · 1 enum · 1 fn | CommandOutput, ContractBaseline, ContractDiff, ContractSnapshot, ContractSpec, ContractVerdict | Contract input, snapshot and persisted verdict types |
-| `src/conversation_body.rs` | src | s | 6 struct · 3 enum · 10 fn · 5 const | ConversationBody, ConversationKind, ProjectRoom, RoomOriginCard, RoomPin, RoomPinPolicy, RoomRole, ThreadBinding +1 | Conversation body vocabulary and strict body codecs |
+| `src/conversation_body.rs` | src | m | 6 struct · 3 enum · 12 fn · 7 const | ConversationBody, ConversationKind, ProjectRoom, RoomOriginCard, RoomPin, RoomPinPolicy, RoomRole, ThreadBinding +1 | Conversation body vocabulary and strict body codecs |
 | `src/conversation_record.rs` | src | s | 7 struct · 4 enum · 3 fn · 1 const | AddressMode, AppendFailure, AppendRecord, AppendedRecord, DagPage, DagPageRequest, DagReplyTarget, QuoteSpan +3 | Door inputs and snapshot results |
 | `src/conversation_residency.rs` | src | s | 2 fn · 1 const | — | The exact refusal of a turn whose witnessed message is not resident |
 | `src/conversation_span.rs` | src | s | 1 enum | ConversationSpanRead | Result vocabulary for a fingerprint-pinned conversation span read |
@@ -669,6 +669,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/write_envelope/world_access_predicates.rs` | src | s | 1 fn · 2 const | — | World-access authority claim predicates |
 | `src/writer_hold.rs` | src | s | 1 struct · 2 fn | WriterHold | Writer closure timing and the Dreamer writer-hold trace |
 | `src/writer_lease.rs` | src | m | 1 struct · 16 fn · 2 const · 1 static | VaultWriterLease | Process-owner writer lease, shared by the server and embedded SDK |
+| `tests/code_repo_registration_registrant.rs` | test | s | — | — | WAVE11-REPO-REGISTRANT-UNRECORDED: a registered repository's retained configuration names the agent that… |
 | `tests/expiry_rule.rs` | test | s | — | — | UC-12 PR 3: the one expiry instant, `oneiron_store::expiry` |
 | `tests/fingerprint_keep_skill_tree.rs` | test | s | 1 struct · 1 fn · 2 const · 1 crate-vis | SkillContentHash | K-proof (oracle) for PLAN-UC-04 stage 6.3a: the canonical skill tree hash keeps its bytes |
 | `tests/fingerprint_keep_vault_import_receipt.rs` | test | s | 2 fn · 2 const | — | K-proof (oracle) for PLAN-UC-04 stage 6.3c: the foreign vault import receipt id keeps its bytes |
@@ -686,5 +687,6 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/side_key_derive.rs` | test | m | — | — | UC-06 PR 0b: `#[derive(SideKey)]` spells and reads a key exactly as the hand-written impl it will replace |
 | `tests/side_key_hex_case.rs` | test | s | — | — | UC-06 PR 0a (HEX-CASE-POLICY = A, Engine RULING 14:31 Sun 15 Nov: "Stored and wire forms stay… |
 | `tests/side_key_pins.rs` | test | m | — | — | UC-06 PR 1 K-proof: the ten `oneiron-store` side-table keys that PR 1 derives spell the same bytes and read… |
+| `tests/source_ranking_tie_order.rs` | test | s | — | — | RERANK-GROUP-ORDER = A, at a weakest reranked score of zero (review round 2 of #8383): the rerank ladder… |
 | `tests/store_envelope_register_names.rs` | test | s | — | — | The names of 6 name lists in `oneiron-store`, one line per row, generated from… |
 | `tests/store_records_register_names.rs` | test | m | — | — | The names of 11 name lists in `oneiron-store`, one line per row, generated from… |
