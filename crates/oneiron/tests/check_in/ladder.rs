@@ -11,7 +11,7 @@ use oneiron::federation::{FederationGrantRole, InitialSharedMember};
 use oneiron::test_doors::check_in::{FixedVerdicts, advance_verified, open_verified};
 use oneiron::test_support::provision_act_carrier;
 
-use crate::fixture::{self, Fixture, T0, request};
+use super::fixture::{self, Fixture, T0, request};
 
 /// The shared vault's id.
 pub(crate) const SHARED: u64 = 42;

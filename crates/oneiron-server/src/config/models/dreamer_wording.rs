@@ -25,6 +25,12 @@
 //!   `sieve_novelty`, `sieve_kind`, `sieve_entity`, `sieve_confidence`,
 //!   `nightly_link`, `arc_open`). Each one named replaces that question's
 //!   wording; the rest stay shipped. Their options and answers stay fixed.
+//! * `meeting_follow_up_prompt` / `meeting_follow_up_prompt_file`: how the
+//!   drafting model is asked which follow-ups the owner promised in a meeting
+//!   transcript (CAL-08). The shipped default is the engine's
+//!   (`oneiron::calendar::follow_up::MEETING_FOLLOW_UP_INSTRUCTION`), and so
+//!   is the reply contract it states: a rewording must keep it, since the
+//!   engine files only a reply in it.
 //!
 //! Prompts belong to the host layer (ARCH-0026 #dreamer-seat-open, ARCH-0053
 //! OF-334): a file that does not read, names another key or leaves a text
@@ -33,6 +39,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+use anyhow::Context;
 use oneiron::{ConsolidationDecisions, ExtractionPrompt};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
@@ -63,6 +70,9 @@ const DEFAULT_COACH_PRODUCER_FIX: &str = include_str!("../../../prompts/coach-pr
 const DEFAULT_COACH_ENVIRONMENT_REPAIR: &str =
     include_str!("../../../prompts/coach-environment-repair.md");
 const DEFAULT_COACH_PROMPT_REPAIR: &str = include_str!("../../../prompts/coach-prompt-repair.md");
+/// The engine's own drafting instruction: the reply contract it states is the
+/// one the engine files.
+const DEFAULT_MEETING_FOLLOW_UP: &str = oneiron::calendar::follow_up::MEETING_FOLLOW_UP_INSTRUCTION;
 
 /// `[models.dreamer.wording]` as written in the config file.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize)]
@@ -98,6 +108,8 @@ pub(super) struct DreamerWordingFile {
     commitment_reminder_prompt_file: Option<PathBuf>,
     #[serde(default)]
     commitment_reminder_personas: BTreeMap<String, String>,
+    meeting_follow_up_prompt: Option<String>,
+    meeting_follow_up_prompt_file: Option<PathBuf>,
     coach_heal_route_prompt: Option<String>,
     coach_heal_route_prompt_file: Option<PathBuf>,
     coach_health_draft_prompt: Option<String>,
@@ -123,10 +135,12 @@ struct ConsolidationWording {
 }
 
 impl ConsolidationWording {
-    /// The wording in `text`, a JSON object.
-    fn from_json(field: &str, text: &str) -> anyhow::Result<Self> {
+    /// The wording in `text`, a JSON object, the text of the file at `path`.
+    /// A text that does not read names the file and the place, never the
+    /// parser's message.
+    fn from_json(field: &str, path: &Path, text: &str) -> anyhow::Result<Self> {
         let wording: Self =
-            serde_json::from_str(text).map_err(|error| anyhow::anyhow!("{field}: {error}"))?;
+            crate::config::diagnostics::parse_json(path, text).with_context(|| field.to_owned())?;
         for (key, question) in wording.questions() {
             if question.is_some_and(|text| text.trim().is_empty()) {
                 anyhow::bail!("{field}: `{key}` is blank");
@@ -266,6 +280,13 @@ impl DreamerWordingFile {
             base,
         )?
         .unwrap_or_else(default_reminder_instruction);
+        let meeting_follow_up_instruction = super::levels::prompt_text(
+            "models.dreamer.wording.meeting_follow_up_prompt",
+            self.meeting_follow_up_prompt,
+            self.meeting_follow_up_prompt_file,
+            base,
+        )?
+        .unwrap_or_else(|| DEFAULT_MEETING_FOLLOW_UP.to_owned());
         let coach_session_distill = super::levels::prompt_text(
             "models.dreamer.wording.coach_session_distill_prompt",
             self.coach_session_distill_prompt,
@@ -287,34 +308,28 @@ impl DreamerWordingFile {
             base,
         )?
         .unwrap_or_else(|| DEFAULT_COACH_HEALTH_DRAFT.to_owned());
-        let extraction_file = super::levels::prompt_text(
-            "models.dreamer.wording.extraction_prompt_file",
-            None,
-            self.extraction_prompt_file,
-            base,
-        )?;
+        let extraction_field = "models.dreamer.wording.extraction_prompt_file";
+        let extraction_file =
+            super::levels::prompt_file(extraction_field, self.extraction_prompt_file, base)?;
         let extraction_prompt = extraction_file
-            .as_deref()
-            .map(|text| {
-                ExtractionPrompt::from_json(text).map_err(|error| {
-                    anyhow::anyhow!("models.dreamer.wording.extraction_prompt_file: {error}")
-                })
+            .as_ref()
+            .map(|(path, text)| {
+                // The engine's own read keeps the parser's message, which can
+                // name a key or quote a value: the text is read here first,
+                // so a text that does not read names only the file and the
+                // place (FIX CONFIG-SIDE-FILE-PARSE-ERRORS-PRINT-PARSER-MESSAGE).
+                crate::config::diagnostics::parse_json::<ExtractionPrompt>(path, text)
+                    .context(extraction_field)?;
+                ExtractionPrompt::from_json(text)
+                    .map_err(|error| anyhow::anyhow!("{extraction_field}: {error}"))
             })
             .transpose()?;
-        let consolidation_file = super::levels::prompt_text(
-            "models.dreamer.wording.consolidation_wording_file",
-            None,
-            self.consolidation_wording_file,
-            base,
-        )?;
+        let consolidation_field = "models.dreamer.wording.consolidation_wording_file";
+        let consolidation_file =
+            super::levels::prompt_file(consolidation_field, self.consolidation_wording_file, base)?;
         let consolidation = consolidation_file
-            .as_deref()
-            .map(|text| {
-                ConsolidationWording::from_json(
-                    "models.dreamer.wording.consolidation_wording_file",
-                    text,
-                )
-            })
+            .as_ref()
+            .map(|(path, text)| ConsolidationWording::from_json(consolidation_field, path, text))
             .transpose()?
             .unwrap_or_default();
         Ok(DreamerWording {
@@ -333,12 +348,17 @@ impl DreamerWordingFile {
             coach_prompt_repair,
             reminder_instruction,
             reminder_personas: self.commitment_reminder_personas,
+            meeting_follow_up_instruction,
             coach_heal_route,
             coach_health_draft,
             extraction_prompt,
-            extraction_prompt_source: wording_source(extraction_file.as_deref()),
+            extraction_prompt_source: wording_source(
+                extraction_file.as_ref().map(|(_, text)| text.as_str()),
+            ),
             consolidation,
-            consolidation_wording_source: wording_source(consolidation_file.as_deref()),
+            consolidation_wording_source: wording_source(
+                consolidation_file.as_ref().map(|(_, text)| text.as_str()),
+            ),
         })
     }
 }
@@ -361,6 +381,7 @@ pub struct DreamerWording {
     coach_prompt_repair: String,
     reminder_instruction: String,
     reminder_personas: BTreeMap<String, String>,
+    meeting_follow_up_instruction: String,
     coach_heal_route: String,
     coach_health_draft: String,
     /// The host's extraction prompt; `None` asks in the engine's shipped one.
@@ -520,6 +541,13 @@ impl DreamerWording {
         self.reminder_personas.get(reference).map(String::as_str)
     }
 
+    /// The instruction a meeting transcript's drafting model is asked with,
+    /// in the engine's reply contract.
+    #[must_use]
+    pub fn meeting_follow_up_instruction(&self) -> &str {
+        &self.meeting_follow_up_instruction
+    }
+
     /// The Coach's existing heal-route question.
     #[must_use]
     pub fn coach_heal_route(&self) -> &str {
@@ -552,6 +580,7 @@ impl Default for DreamerWording {
             coach_prompt_repair: DEFAULT_COACH_PROMPT_REPAIR.to_owned(),
             reminder_instruction: default_reminder_instruction(),
             reminder_personas: BTreeMap::new(),
+            meeting_follow_up_instruction: DEFAULT_MEETING_FOLLOW_UP.to_owned(),
             coach_heal_route: DEFAULT_COACH_HEAL_ROUTE.to_owned(),
             coach_health_draft: DEFAULT_COACH_HEALTH_DRAFT.to_owned(),
             extraction_prompt: None,
