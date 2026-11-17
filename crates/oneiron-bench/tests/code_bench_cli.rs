@@ -5,6 +5,13 @@
 //! that arm not ready; nothing is faked." On a tree without the subcommand
 //! the binary answers "unknown BEAM invocation" and exits non-zero.
 //!
+//! `beam code-bench` grades what the writers left: the PR's sealed tests,
+//! copied from its merge commit over the tree, the diff size without them,
+//! and the transcript's turns, tokens, files opened, time and breaches of
+//! the arm's profile. A failed run is kept and counted. An attempt must grow
+//! from the root commit the pack made, the test commands leave no process
+//! behind, and a denied shell command counts however it is started.
+//!
 //! Each test builds a throwaway repository, so no test builds the engine.
 //! A loopback MCP stub stands in for a declared server: the pack probes
 //! every declared server with `tools/list` before a cell that needs it is
@@ -79,6 +86,11 @@ fn git_text(repo: &Path, args: &[&str]) -> String {
 /// `base` holds src/lib.txt, the codemap and an old tests/grade.sh;
 /// `merged` adds a line and the grade script that checks it.
 fn world() -> World {
+    world_with_grader("grep -q two src/lib.txt\n")
+}
+
+/// `world()` with `grader` as the merge commit's tests/grade.sh.
+fn world_with_grader(grader: &str) -> World {
     let dir = tempfile::tempdir().unwrap();
     let repo = dir.path().join("repo");
     for folder in ["src", "tests", "docs/codemap"] {
@@ -95,7 +107,7 @@ fn world() -> World {
     );
     let base = git_text(&repo, &["rev-parse", "HEAD"]);
     std::fs::write(repo.join("src/lib.txt"), "one\ntwo\n").unwrap();
-    std::fs::write(repo.join("tests/grade.sh"), "grep -q two src/lib.txt\n").unwrap();
+    std::fs::write(repo.join("tests/grade.sh"), grader).unwrap();
     git_text(&repo, &["add", "-A"]);
     git_text(
         &repo,
@@ -678,4 +690,408 @@ fn a_ready_arm_may_call_only_its_listed_tools() {
             .all(|tool| !tool.starts_with("mcp__")),
         "{settings:#}"
     );
+}
+
+const TRANSCRIPT: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/fixtures/code_bench/transcript.stream.jsonl"
+);
+/// The verb rows the symbol and graph arm calls.
+const SYMBOL_GRAPH_VERBS: [&str; 11] = [
+    "self.code.symbols.definitions",
+    "self.code.symbols.neighbors",
+    "graph_fs.cat",
+    "graph_fs.find",
+    "graph_fs.grep",
+    "graph_fs.head",
+    "graph_fs.ls",
+    "graph_fs.read_file",
+    "graph_fs.read_link",
+    "graph_fs.readdir",
+    "graph_fs.wc",
+];
+
+/// The tree the pack built for a ready cell.
+fn packed_tree(index: &Value, id: &str) -> PathBuf {
+    let cell = cell(index, id);
+    assert_eq!(cell["ready"], true, "{cell:#}");
+    let tree = PathBuf::from(cell["tree"].as_str().unwrap());
+    assert!(tree.join(".git").exists(), "{cell:#}");
+    tree
+}
+
+/// Packs the throwaway repository with a code snapshot whose engine commit
+/// holds the arm's verb rows, served by a stub that lists them.
+fn symbol_graph_index(world: &World, out: &str) -> Value {
+    for verb in SYMBOL_GRAPH_VERBS {
+        let row = world.repo.join(format!("scripts/sdk/verbs/{verb}.json"));
+        std::fs::create_dir_all(row.parent().unwrap()).unwrap();
+        std::fs::write(row, json!({"name": verb}).to_string()).unwrap();
+    }
+    git_text(&world.repo, &["add", "-A"]);
+    git_text(
+        &world.repo,
+        &["-c", "commit.gpgsign=false", "commit", "-q", "-m", "engine"],
+    );
+    let engine = git_text(&world.repo, &["rev-parse", "HEAD"]);
+    index(&pack(
+        world,
+        &manifest(world, Some(INTENT), 9),
+        out,
+        &json!({"code_snapshot": {
+            "url": mcp_stub(&SYMBOL_GRAPH_VERBS),
+            "token_env": TOKEN_ENV,
+            "engine_commit": engine,
+            "bases": [world.base],
+        }}),
+    ))
+}
+
+/// Runs `beam code-bench` on `attempts` against the plan `pack` wrote for
+/// `<tmp>/<out>`.
+fn grade(world: &World, out: &str, attempts: &Value) -> Output {
+    let path = world.dir.path().join(format!("attempts-{out}.json"));
+    let file = json!({
+        "plan": world.dir.path().join(format!("plan-{out}.json")),
+        "attempts": attempts,
+    });
+    std::fs::write(&path, file.to_string()).unwrap();
+    isolated(env!("CARGO_BIN_EXE_oneiron-bench"))
+        .args(["beam", "code-bench"])
+        .arg(&path)
+        .output()
+        .expect("the bench binary runs")
+}
+
+fn report(output: &Output) -> Value {
+    assert!(
+        output.status.success(),
+        "code-bench failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    serde_json::from_slice(&output.stdout).unwrap()
+}
+
+fn summary<'a>(report: &'a Value, check: &str, arm: &str) -> &'a Value {
+    report["arms"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|line| line["check"] == check && line["arm"] == arm)
+        .unwrap_or_else(|| panic!("no {check}/{arm} line in {report:#}"))
+}
+
+#[test]
+fn the_sealed_grader_passes_the_merged_change_and_fails_the_base() {
+    let world = world();
+    let index = index(&pack(
+        &world,
+        &manifest(&world, Some(INTENT), 9),
+        "out",
+        &json!({}),
+    ));
+    let solved = packed_tree(&index, "navigation/alpha/grep_only");
+    std::fs::write(solved.join("src/lib.txt"), "one\ntwo\n").unwrap();
+    let untouched = packed_tree(&index, "navigation/gamma/grep_only");
+
+    let report = report(&grade(
+        &world,
+        "out",
+        &json!([
+            {"cell": "navigation/alpha/grep_only", "tree": solved},
+            {"cell": "navigation/gamma/grep_only", "tree": untouched},
+        ]),
+    ));
+
+    let rows = report["rows"].as_array().unwrap();
+    assert_eq!(rows.len(), 2, "{report:#}");
+    assert_eq!(rows[0]["tests_pass"], true, "{report:#}");
+    assert_eq!(rows[0]["pass"], true);
+    assert_eq!(
+        rows[0]["diff"],
+        json!({"files": 1, "added": 1, "removed": 0}),
+        "the sealed test is never counted in the diff"
+    );
+    assert_eq!(
+        rows[1]["tests_pass"], false,
+        "the base fails the sealed test"
+    );
+    assert_eq!(rows[1]["pass"], false);
+    assert_eq!(
+        rows[1]["diff"],
+        json!({"files": 0, "added": 0, "removed": 0})
+    );
+    let line = summary(&report, "navigation", "grep_only");
+    assert_eq!(line["attempts"], 2, "a failed run is kept and counted");
+    assert_eq!(line["passes"], 1);
+    assert_eq!(line["failures"], 1);
+    assert_eq!(line["baseline"], true);
+}
+
+#[test]
+fn a_writers_own_copy_of_a_sealed_test_never_grades() {
+    let world = world();
+    let index = index(&pack(
+        &world,
+        &manifest(&world, Some(INTENT), 9),
+        "out",
+        &json!({}),
+    ));
+    let tree = packed_tree(&index, "memory/alpha/no_memory");
+    std::fs::create_dir_all(tree.join("tests")).unwrap();
+    std::fs::write(tree.join("tests/grade.sh"), "exit 0\n").unwrap();
+
+    let report = report(&grade(
+        &world,
+        "out",
+        &json!([{"cell": "memory/alpha/no_memory", "tree": tree}]),
+    ));
+
+    let row = &report["rows"][0];
+    assert_eq!(row["tests_pass"], false, "{report:#}");
+    assert_eq!(row["pass"], false);
+    assert_eq!(row["diff"]["files"], 0, "{report:#}");
+    assert_eq!(
+        std::fs::read_to_string(tree.join("tests/grade.sh")).unwrap(),
+        "grep -q two src/lib.txt\n",
+        "the merge commit's copy replaced the writer's"
+    );
+    assert_eq!(
+        summary(&report, "navigation", "no_memory")["attempts"],
+        1,
+        "the codemap cell is also the navigation check's third arm"
+    );
+}
+
+#[test]
+fn the_transcript_gives_turns_tokens_files_and_breaches() {
+    let world = world();
+    let index = symbol_graph_index(&world, "out");
+    let cell_id = "navigation/alpha/symbol_graph";
+    let dir = PathBuf::from(cell(&index, cell_id)["dir"].as_str().unwrap());
+    let settings: Value =
+        serde_json::from_slice(&std::fs::read(dir.join("settings.json")).unwrap()).unwrap();
+    assert!(
+        settings["permissions"]["deny"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("Grep"))
+    );
+    let tree = packed_tree(&index, cell_id);
+
+    let report = report(&grade(
+        &world,
+        "out",
+        &json!([{"cell": cell_id, "tree": tree, "transcript": TRANSCRIPT}]),
+    ));
+
+    let row = &report["rows"][0];
+    assert_eq!(
+        row["transcript"],
+        json!({
+            "turns": 3,
+            "input_tokens": 650,
+            "output_tokens": 60,
+            "files_opened": 2,
+            "elapsed_secs": 45.0,
+            "source_control_secs": 5.0,
+            "usable_tree_secs": 40.0,
+            "breaches": ["Grep"],
+            "unreadable_lines": 0,
+        }),
+        "{report:#}"
+    );
+    assert_eq!(row["profile_breach"], true);
+    assert_eq!(row["pass"], false, "a breach never grades as a pass");
+    assert_eq!(
+        summary(&report, "navigation", "symbol_graph")["breaches"],
+        1
+    );
+}
+
+#[test]
+fn a_second_repair_in_one_arm_group_is_refused() {
+    let world = world();
+    index(&pack(
+        &world,
+        &manifest(&world, Some(INTENT), 9),
+        "out",
+        &json!({}),
+    ));
+    let missing = world.dir.path().join("no-tree");
+
+    let output = grade(
+        &world,
+        "out",
+        &json!([
+            {"cell": "memory/alpha/no_memory", "tree": missing},
+            {"cell": "memory/alpha/no_memory", "tree": missing, "repair_of": "memory/alpha/no_memory"},
+            {"cell": "memory/gamma/no_memory", "tree": missing},
+            {"cell": "memory/gamma/no_memory", "tree": missing, "repair_of": "memory/gamma/no_memory"},
+        ]),
+    );
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("a second repair in arm group memory/no_memory"),
+        "{stderr}"
+    );
+}
+
+/// The grader checks the root commit the pack made, not a subject a writer
+/// can copy: a fresh repository of the merged tree under the world's
+/// subject is refused.
+#[test]
+fn a_tree_that_does_not_grow_from_the_packed_world_is_refused() {
+    let world = world();
+    index(&pack(
+        &world,
+        &manifest(&world, Some(INTENT), 9),
+        "out",
+        &json!({}),
+    ));
+    let forged = world.dir.path().join("forged");
+    std::fs::create_dir_all(forged.join("src")).unwrap();
+    git_text(&forged, &["init", "-q"]);
+    std::fs::write(forged.join("src/lib.txt"), "one\ntwo\n").unwrap();
+    git_text(&forged, &["add", "-A"]);
+    let subject = format!("code-bench world: alpha at {}", world.base);
+    git_text(
+        &forged,
+        &["-c", "commit.gpgsign=false", "commit", "-q", "-m", &subject],
+    );
+
+    let output = grade(
+        &world,
+        "out",
+        &json!([{"cell": "navigation/alpha/grep_only", "tree": forged}]),
+    );
+
+    assert!(!output.status.success(), "the forged world graded");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("does not grow from the world of task `alpha`"),
+        "{stderr}"
+    );
+}
+
+/// Whether the process `pid` still runs (a zombie has ended).
+#[cfg(target_os = "linux")]
+fn running(pid: &str) -> bool {
+    std::fs::read_to_string(format!("/proc/{pid}/stat")).is_ok_and(|stat| {
+        stat.rsplit_once(')')
+            .and_then(|(_, fields)| fields.split_whitespace().next())
+            .is_some_and(|state| state != "Z" && state != "X")
+    })
+}
+
+/// A sealed test that starts a background process leaves none behind: the
+/// grader kills the command's whole process group, as it does at the cap.
+#[cfg(target_os = "linux")]
+#[test]
+fn the_sealed_tests_leave_no_process_behind() {
+    let world = world_with_grader(
+        "sleep 300 >/dev/null 2>&1 &\necho $! > background.pid\ngrep -q two src/lib.txt\n",
+    );
+    let index = index(&pack(
+        &world,
+        &manifest(&world, Some(INTENT), 9),
+        "out",
+        &json!({}),
+    ));
+    let tree = packed_tree(&index, "memory/alpha/no_memory");
+    std::fs::write(tree.join("src/lib.txt"), "one\ntwo\n").unwrap();
+
+    let report = report(&grade(
+        &world,
+        "out",
+        &json!([{"cell": "memory/alpha/no_memory", "tree": tree}]),
+    ));
+
+    assert_eq!(report["rows"][0]["tests_pass"], true, "{report:#}");
+    let pid = std::fs::read_to_string(tree.join("background.pid")).unwrap();
+    let pid = pid.trim();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while running(pid) && std::time::Instant::now() < deadline {
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    let left = running(pid);
+    if left {
+        let _ = Command::new("kill").args(["-9", pid]).status();
+    }
+    assert!(
+        !left,
+        "the sealed test's background process {pid} still runs"
+    );
+}
+
+/// Denied commands count however they are started (a wrapper, a path, a
+/// nested shell, a command substitution, xargs or find -exec), quoted text
+/// is not a command, and a graph read's file is read from the serving
+/// engine's `arguments.spec.path`.
+#[test]
+fn the_transcript_reads_wrapped_commands_and_graph_payloads() {
+    let world = world();
+    let index = symbol_graph_index(&world, "out");
+    let cell_id = "navigation/alpha/symbol_graph";
+    let tree = packed_tree(&index, cell_id);
+    let calls = [
+        (
+            "mcp__oneiron-code__graph_fs.read_file",
+            json!({"schema_version": "1", "arguments": {"spec": {"path": "src/graph.txt"}}}),
+        ),
+        (
+            "mcp__oneiron-code__graph_fs_head",
+            json!({"path": "src/old.txt"}),
+        ),
+        ("Bash", json!({"command": "env rg needle src"})),
+        ("Bash", json!({"command": "/usr/bin/grep -r needle ."})),
+        ("Bash", json!({"command": "timeout 5 rg needle"})),
+        ("Bash", json!({"command": "bash -c 'git -C . grep needle'"})),
+        (
+            "Bash",
+            json!({"command": "git ls-files | xargs -n1 grep -l needle"}),
+        ),
+        ("Bash", json!({"command": "echo \"$(LC_ALL=C rg needle)\""})),
+        (
+            "Bash",
+            json!({"command": "find src -name '*.rs' -exec egrep -l needle {} +"}),
+        ),
+        (
+            "Bash",
+            json!({"command": "echo rg; git status; cargo check"}),
+        ),
+        (
+            "Bash",
+            json!({"command": "git commit -q -m 'drop (rg) and grep; use graph reads'"}),
+        ),
+    ];
+    let lines: Vec<String> = calls
+        .iter()
+        .enumerate()
+        .map(|(number, (name, input))| {
+            json!({
+                "type": "assistant",
+                "message": {
+                    "id": format!("msg_{number}"),
+                    "content": [{"type": "tool_use", "id": format!("tu_{number}"), "name": name, "input": input}],
+                    "usage": {"input_tokens": 1, "output_tokens": 1},
+                },
+            })
+            .to_string()
+        })
+        .collect();
+    let transcript = world.dir.path().join("wrapped.stream.jsonl");
+    std::fs::write(&transcript, lines.join("\n")).unwrap();
+
+    let report = report(&grade(
+        &world,
+        "out",
+        &json!([{"cell": cell_id, "tree": tree, "transcript": transcript}]),
+    ));
+
+    let metrics = &report["rows"][0]["transcript"];
+    assert_eq!(metrics["files_opened"], 2, "{report:#}");
+    assert_eq!(metrics["breaches"], json!(vec!["Bash"; 7]), "{report:#}");
 }

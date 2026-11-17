@@ -131,6 +131,10 @@ impl Arm {
         }
     }
 
+    pub(super) fn from_name(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|arm| arm.as_str() == name)
+    }
+
     /// The check whose table row names this arm. `no_memory` is also the
     /// navigation check's third arm, run once and shared.
     pub(super) const fn check(self) -> Check {
@@ -282,6 +286,21 @@ fn client_tool_name(tool: &str) -> String {
 }
 
 impl Check {
+    pub(super) fn from_name(name: &str) -> Option<Self> {
+        [Self::Memory, Self::Navigation, Self::Collaboration]
+            .into_iter()
+            .find(|check| check.as_str() == name)
+    }
+
+    /// The arm without Oneiron that the check pairs every other arm against.
+    pub(super) const fn baseline(self) -> Arm {
+        match self {
+            Self::Memory => Arm::NoMemory,
+            Self::Navigation => Arm::GrepOnly,
+            Self::Collaboration => Arm::GitWorktrees,
+        }
+    }
+
     pub(super) const fn as_str(self) -> &'static str {
         match self {
             Self::Memory => "memory",

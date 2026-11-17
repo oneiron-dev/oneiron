@@ -54,6 +54,8 @@ pub(super) const BEAM_HELP: &str = "usage: oneiron-bench beam <subcommand>\n\
                            fixture-protocol <fixture.json> known-span retrieval evaluation\n\
                            code-bench-pack <plan.json>   CODE-BENCH: write each ready cell's\n\
                                     world, prompt and tools; list what each other cell lacks\n\
+                           code-bench <attempts.json>   CODE-BENCH: sealed tests, diff size and\n\
+                                    transcript metrics per attempt, paired by task per arm\n\
                            edit-path-pack <dir>   materialize five edit-task sandboxes\n\
                            edit-path <attempts.json>   score tests and contracts per arm\n\
                            run <manifest>\n\

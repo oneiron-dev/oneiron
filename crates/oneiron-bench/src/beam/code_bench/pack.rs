@@ -157,17 +157,8 @@ struct CellWorld {
 }
 
 pub(in super::super) fn write_pack(plan_path: &Path) -> BeamResult<PackIndex> {
-    let plan: PackPlan = serde_json::from_slice(&std::fs::read(plan_path)?)?;
-    let folder = plan_path.parent().unwrap_or(Path::new("."));
-    let manifest = Manifest::parse(&std::fs::read_to_string(folder.join(&plan.manifest))?)?;
-    plan.validate_servers()?;
-    let repo = folder.join(&plan.repo_dir);
-    if !git_ok(&repo, &["rev-parse", "--git-dir"])? {
-        return Err(invalid(format!(
-            "run plan repo_dir {} is not a Git repository",
-            repo.display()
-        )));
-    }
+    let (plan, folder) = read_plan(plan_path)?;
+    let (manifest, repo) = plan.open(&folder)?;
     let out = folder.join(&plan.out);
     if folder_has_entries(&out)? {
         return Err(invalid(format!(
@@ -228,7 +219,45 @@ pub(in super::super) fn write_pack(plan_path: &Path) -> BeamResult<PackIndex> {
     Ok(index)
 }
 
+/// What the grader reads of a run plan: its manifest, the repository the
+/// tasks' commits are read from, and the folder the pack wrote the cells to.
+pub(super) struct PackedPlan {
+    pub(super) manifest: Manifest,
+    pub(super) repo: PathBuf,
+    pub(super) out: PathBuf,
+}
+
+pub(super) fn packed_plan(plan_path: &Path) -> BeamResult<PackedPlan> {
+    let (plan, folder) = read_plan(plan_path)?;
+    let (manifest, repo) = plan.open(&folder)?;
+    Ok(PackedPlan {
+        manifest,
+        repo,
+        out: folder.join(&plan.out),
+    })
+}
+
+fn read_plan(plan_path: &Path) -> BeamResult<(PackPlan, PathBuf)> {
+    let plan: PackPlan = serde_json::from_slice(&std::fs::read(plan_path)?)?;
+    let folder = plan_path.parent().unwrap_or(Path::new(".")).to_path_buf();
+    Ok((plan, folder))
+}
+
 impl PackPlan {
+    /// Reads the manifest, checks the MCP pieces and finds the repository.
+    fn open(&self, folder: &Path) -> BeamResult<(Manifest, PathBuf)> {
+        let manifest = Manifest::parse(&std::fs::read_to_string(folder.join(&self.manifest))?)?;
+        self.validate_servers()?;
+        let repo = folder.join(&self.repo_dir);
+        if !git_ok(&repo, &["rev-parse", "--git-dir"])? {
+            return Err(invalid(format!(
+                "run plan repo_dir {} is not a Git repository",
+                repo.display()
+            )));
+        }
+        Ok((manifest, repo))
+    }
+
     fn validate_servers(&self) -> BeamResult<()> {
         let servers = [
             (
@@ -836,7 +865,7 @@ fn git(dir: &Path) -> Command {
     command
 }
 
-fn git_ok(repo: &Path, args: &[&str]) -> BeamResult<bool> {
+pub(super) fn git_ok(repo: &Path, args: &[&str]) -> BeamResult<bool> {
     Ok(git(repo)
         .args(args)
         .stdout(Stdio::null())
