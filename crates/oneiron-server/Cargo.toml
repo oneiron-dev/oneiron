@@ -288,6 +288,13 @@ name = "vault_runners_doors"
 path = "tests/vault_runners_doors.rs"
 required-features = ["oneiron/test-support"]
 
+# The owner's resume door on a node whose runner seats name an official seat (FIX
+# RUNNER-RESUME-DROPS-NODE-REGISTRY) roots its owner on a `MemoryKeystore` too.
+[[test]]
+name = "runner_resume_node_registry"
+path = "tests/runner_resume_node_registry.rs"
+required-features = ["oneiron/test-support"]
+
 # Test-only constructors and fault-injection seams stay out of the shipped graph.
 # The policy doors (owner rows, owner configure, outbound/relay decide, preflight) root on a `MemoryKeystore`.
 [[test]]
@@ -377,6 +384,13 @@ name = "vault_hooks_doors"
 path = "tests/vault_hooks_doors.rs"
 required-features = ["oneiron/test-support"]
 
+# The calendar passport doors serve the owner's root from a `MemoryKeystore` too
+# (`oneiron-keystore/test-keystore`, forwarded by `oneiron/test-support`).
+[[test]]
+name = "calendar_ics_passport_doors"
+path = "tests/calendar_ics_passport_doors.rs"
+required-features = ["oneiron/test-support"]
+
 # Publishes its apps with `publish_artifact_pointer_with_tier` (`oneiron/test-hooks`) on a
 # `MemoryKeystore` vault (`oneiron-keystore/test-keystore`, forwarded by `oneiron/test-support`).
 [[test]]
@@ -460,6 +474,12 @@ name = "vault_drafters_doors"
 path = "tests/vault_drafters_doors.rs"
 required-features = ["oneiron/test-support"]
 
+# The retrieval configuration door promise tests serve the owner's root from a `MemoryKeystore`.
+[[test]]
+name = "vault_retrieval_config_doors"
+path = "tests/vault_retrieval_config_doors.rs"
+required-features = ["oneiron/test-support"]
+
 # Census L8-46's pin: a video job's poll and cancel reach the provider only for
 # the admitted job, through the broker and the same TLS fake provider.
 [[test]]
@@ -534,6 +554,12 @@ required-features = ["oneiron/test-support"]
 name = "off_record_room_context_pack"
 path = "tests/off_record_room_context_pack.rs"
 required-features = ["oneiron/test-support", "oneiron/test-hooks", "oneiron-broker/test-support"]
+# 0053-EMB's host-line and spent-line notice pins install the owner's `budget_policy` row
+# through `oneiron::conversation_dag::test_support` (`oneiron/test-hooks`).
+[[test]]
+name = "embedder_host_line_notice"
+path = "tests/embedder_host_line_notice.rs"
+required-features = ["oneiron/test-support", "oneiron/test-hooks"]
 
 # FIX OFF-RECORD-RUN-POLICY-REFUSAL-500's session run roots its owner on a
 # `MemoryKeystore` too.
