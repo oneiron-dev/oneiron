@@ -26,6 +26,7 @@ pub mod authority_view_grant;
 pub mod authority_world_undo;
 pub mod board_child_done;
 pub mod board_task_wakes;
+pub mod booking_anti_abuse_manifest;
 pub mod booking_side_table_rows;
 pub mod bootstrap_skills;
 pub mod builtin_pack_seed;
