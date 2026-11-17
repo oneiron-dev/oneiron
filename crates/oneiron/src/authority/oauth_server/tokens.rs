@@ -27,12 +27,9 @@ use super::{
     OAUTH_REFRESH_TOKEN_PREFIX, OAUTH_REFRESH_TTL_SECS, access_holder_key, mint_secret,
     oauth_requested_tier, secret_row_key,
 };
-use crate::authority::{AgentTier, CapabilitySlip, HostSlipIssuer, grant_known_withdrawn_in_txn};
+use crate::authority::{AgentTier, CapabilitySlip, HostSlipIssuer};
 use crate::error::Result;
-use crate::federation::decode_federation_grant_body;
-use crate::registry::ENTITY_TYPE_FEDERATION_GRANT;
 use crate::side_table::HexId;
-use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 use crate::{EntityId, Vault};
 
 /// A code redemption the token endpoint read (`grant_type=authorization_code`).
@@ -259,29 +256,22 @@ pub(super) fn revoke_family_in_txn(
 }
 
 impl Vault {
-    /// Whether the owner agent grant a sign-in stands on still stands at `now`: a live
-    /// FEDERATION_GRANT the owner minted his agent, naming `grant.agent`, that confers now, is
-    /// not known withdrawn, and whose pact membership, on a shared vault, still stands.
+    /// Whether the owner agent grant a sign-in stands on still stands at `now`: an owner's
+    /// agent Grant standing on his counted mint (pass 28 R3; a row put back after its
+    /// withdrawal or one no mint gives is none), naming `grant.agent`, that confers now, and
+    /// whose pact membership, on a shared vault, still stands.
     fn oauth_grant_stands_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         grant: &AuthorizedGrant,
         now: u64,
     ) -> Result<bool> {
-        let LiveEntityRow::Live {
-            entity_type: ENTITY_TYPE_FEDERATION_GRANT,
-            body,
-        } = live_entity_row_in_txn(&self.store, txn, &grant.grant_ref)?
-        else {
+        let Some(standing) = self.agent_grant_standing_in_txn(txn, grant.grant_ref)? else {
             return Ok(false);
         };
-        let Ok(row) = decode_federation_grant_body(&body) else {
-            return Ok(false);
-        };
-        Ok(row.owner_agent
-            && row.member_ref == grant.agent
+        let row = standing.grant;
+        Ok(row.member_ref == grant.agent
             && row.confers_at(now)
-            && !grant_known_withdrawn_in_txn(&self.store, txn, grant.grant_ref)
             && !crate::authority::principal_standing::grant_pact_standing_lapsed_in_txn(
                 self,
                 txn,
