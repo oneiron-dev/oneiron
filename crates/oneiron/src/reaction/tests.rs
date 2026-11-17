@@ -30,7 +30,11 @@ pub(super) struct Room {
 }
 
 pub(super) fn person(vault: &Vault, name: &str) -> EntityId {
-    let id = EntityId::now();
+    person_at(vault, EntityId::now(), name)
+}
+
+/// Puts the PERSON `id` with `name` as its display name.
+fn person_at(vault: &Vault, id: EntityId, name: &str) -> EntityId {
     let mut body = Vec::new();
     rmpv::encode::write_value(
         &mut body,
@@ -88,7 +92,13 @@ pub(super) fn room_with(external_id: Option<&str>) -> Room {
     if external_id.is_some() {
         crate::test_util::provision_engine_machines(&vault);
     }
-    let alice = person(&vault, "Alice");
+    // Alice is the vault's embedded owner, so her owner verbs pass the live
+    // owner census, and she keeps her name in the reaction lines.
+    let alice = person_at(
+        &vault,
+        crate::vault::embedded_owner_actor_id().unwrap(),
+        "Alice",
+    );
     let bob = person(&vault, "Bob");
     let dave = person(&vault, "Dave");
     let erin = person(&vault, "Erin");

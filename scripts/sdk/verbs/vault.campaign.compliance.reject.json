@@ -14,5 +14,5 @@
   "host_door": true,
   "host_door_caller": true,
   "host_door_lists": true,
-  "host_door_proof": "owner"
+  "host_door_proof": "owner_delegate"
 }

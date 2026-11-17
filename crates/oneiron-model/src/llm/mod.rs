@@ -125,6 +125,7 @@ pub use self::model_id::{ModelId, ModelIdError};
 // Public so `oneiron`'s step, edit-distance and saved-query records hash the same canonical
 // JSON bytes across the crate line.
 pub use self::protocol::canonical_json_bytes;
+pub use self::protocol::provider_finish_reason;
 pub use self::protocol::{
     ContentPart, FinishReason, ImageContent, IncompleteReason, LlmCallMetadata, LlmEndpointFlavor,
     LlmInputUsage, LlmMessage, LlmMessageRole, LlmOutputUsage, LlmRequest, LlmResponse,
