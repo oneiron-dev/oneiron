@@ -742,6 +742,72 @@ fn program_hold_release_stop_agent_row_on_stands() {
     });
 }
 
+/// Program-hold Stop by a delegate on another agent's held program
+/// ([W11-DELEGATE-PROGRAM-HOLD-READ]): the row is on and the Grant lists the
+/// verb, but a program's rows read only for its waking actor or the owner.
+/// The door answers the NOT_FOUND a try no program stamped gets, and the try
+/// is not stopped.
+#[test]
+fn program_hold_release_of_a_program_the_delegate_does_not_read_is_not_found() {
+    run_on_engine_stack("w11-release-unread", || async {
+        let fixture = setup();
+        let agent = pair_agent(&fixture, "release-unread", [0xB3; 32]).await;
+        let waker = pair_agent(&fixture, "release-waker", [0xB4; 32]).await;
+        let agent_hex = agent.principal.to_hex();
+        let (attempt_hex, reason, parked_at) = plant_held_turn_program_for_test(
+            &fixture.vault,
+            waker.principal,
+            EdgeActorClass::Agent,
+        )
+        .expect("plant a held program");
+        let _grant = mint_grant(&fixture, &agent_hex, &[PROGRAM_HOLD_RELEASE_VERB]).await;
+        set_row(
+            &fixture.vault,
+            FORCE_CANCEL_KEY,
+            None,
+            SettingScope::Agent(agent.principal),
+            json!(true),
+        );
+
+        let (status, body) = agent_post(
+            &fixture,
+            &agent,
+            &format!("/v1/core/facade/{PROGRAM_HOLD_RELEASE_VERB}"),
+            json!({
+                "attempt": attempt_hex,
+                "reason": reason,
+                "parked_at": parked_at,
+                "action": "stop",
+            }),
+        )
+        .await;
+        assert_eq!(
+            status,
+            StatusCode::NOT_FOUND,
+            "another agent's program: {body}"
+        );
+
+        let attempt = AttemptId::from_bytes(
+            EntityId::from_hex(&attempt_hex)
+                .expect("attempt id")
+                .as_bytes(),
+        )
+        .expect("attempt id");
+        let record = AttemptQueue::new(&fixture.vault)
+            .get(attempt)
+            .expect("read the attempt")
+            .expect("the held attempt");
+        assert!(
+            record.cancel_state.cancellation.is_none(),
+            "the try is not stopped: {record:?}"
+        );
+        assert!(
+            !record.state.is_terminal(),
+            "the try stays open: {record:?}"
+        );
+    });
+}
+
 /// Program-hold release with the key off: today's 403, same code and
 /// message, with the suggestion naming the key.
 #[test]
