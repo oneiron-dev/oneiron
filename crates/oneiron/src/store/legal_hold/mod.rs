@@ -19,6 +19,8 @@
 //! owner reads a host order's rows through the one permitted view
 //! (`LegalHold::owner_may_see`), never a copy.
 
+/// Owner-permitted customer hold archive landing.
+pub(crate) mod archive;
 pub(crate) mod events;
 mod notice;
 mod use_limit;
@@ -172,6 +174,37 @@ pub(crate) fn holds_in_txn(dbs: &impl SideTableDbs, txn: &RoTxn<'_>) -> Result<V
         .collect();
     holds.extend(HOST_ROWS.scan(dbs, txn)?.into_iter().map(|(_, hold)| hold));
     Ok(holds)
+}
+
+/// An opaque reference: ids only, never free text (C3).
+pub(crate) fn check_opaque(value: &str, what: &str) -> Result<()> {
+    let opaque = !value.is_empty()
+        && value.len() <= 128
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || b"._:-/".contains(&byte));
+    if opaque {
+        Ok(())
+    } else {
+        Err(Error::InvalidConfig(format!(
+            "{what} must be an opaque id: 1 to 128 of A-Z a-z 0-9 . _ : - /"
+        )))
+    }
+}
+
+/// Keeps distinct targets and rejects an empty hold scope.
+pub(crate) fn distinct(targets: Vec<LegalHoldTarget>) -> Result<Vec<LegalHoldTarget>> {
+    let mut seen = BTreeSet::new();
+    let targets: Vec<LegalHoldTarget> = targets
+        .into_iter()
+        .filter(|target| seen.insert(*target))
+        .collect();
+    if targets.is_empty() {
+        return Err(Error::InvalidConfig(
+            "a legal hold names records or inquiries".into(),
+        ));
+    }
+    Ok(targets)
 }
 
 /// Writes `hold`. No hold indexes its targets (LEGAL-HOLD-USE = B, ARCH-0038
