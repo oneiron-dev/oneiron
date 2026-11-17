@@ -344,19 +344,21 @@ pub(super) fn asker_reader_in_txn(
     // A relationship's rows answer the asker only on its own membership or
     // live grant, as on every other read lane, unless the asker is the
     // vault's live owner; the vault's own rows stay its to read.
-    Ok(party_read_key_in_txn(vault, txn, principal)?.exempt_while_owner(principal))
+    Ok(party_read_key_in_txn(&vault.store, txn, principal)?.exempt_while_owner(principal))
 }
 
 /// The read key of one party to a question: its id, with the actor class of
 /// its live entity row (a PERSON reads as human, an AGENT_DEF as agent, a
 /// MACHINE as system), so a read row that names that class admits it as it
-/// does on every other read lane. Any other row names no class.
+/// does on every other read lane. Any other row names no class. It reads
+/// only `store`, so a judgment that holds no vault (an outcome label's
+/// fact, a silence window) keys its principal the same way.
 pub(super) fn party_read_key_in_txn(
-    vault: &Vault,
+    store: &crate::store::Store,
     txn: &heed::RoTxn<'_>,
     party: EntityId,
 ) -> Result<ScopedReadActorKey> {
-    let class = match crate::vault::live_entity_row_in_txn(&vault.store, txn, &party)? {
+    let class = match crate::vault::live_entity_row_in_txn(store, txn, &party)? {
         crate::vault::LiveEntityRow::Live { entity_type, .. } => match entity_type {
             crate::registry::ENTITY_TYPE_PERSON => Some("human"),
             crate::registry::ENTITY_TYPE_AGENT_DEF => Some("agent"),

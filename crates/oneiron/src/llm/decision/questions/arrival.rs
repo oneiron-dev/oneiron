@@ -578,7 +578,10 @@ fn judge_fact(
             target,
         } => (source, Some(kind), Some(target)),
     };
-    let actor = ScopedReadActorKey::new(record.principal.to_hex()).expect("canonical principal");
+    // The principal reads with the actor class of its live row, as its ask
+    // was admitted, so a read row that names its class admits it here too
+    // (ARRIVAL-READER-KEY-CLASSLESS).
+    let actor = super::graph_ask::party_read_key_in_txn(store, txn, record.principal)?;
     // FIX 7461: each permission below is the principal's bare read first,
     // then its own live authority.
     let reader = Reader::new(store_home(store), record.principal, actor);
