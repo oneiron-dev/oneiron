@@ -65,7 +65,7 @@ impl Vault {
         txn: &heed::RoTxn<'_>,
         include_revoked: bool,
     ) -> Result<Vec<ConsentRegistryRow>> {
-        let now = self.instant_in_txn(txn)?.secs();
+        let now = self.grant_judgement_secs_in_txn(txn)?;
         let live = self.git_push_grants_in_txn(txn)?;
         let withdrawn = self.revoked_git_push_grants_in_txn(txn)?;
         let withdrawn_ids: BTreeSet<EntityId> = withdrawn.iter().map(|grant| grant.id).collect();

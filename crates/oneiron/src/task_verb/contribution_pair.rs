@@ -16,7 +16,7 @@
 //! settling commit ([`resolve_answer_in`]): a Human word under the live
 //! proof of that owner, at the question digest and revision the ask was
 //! admitted with. Word admission refuses any other word on the ask
-//! ([`guard_word`]). A card acknowledgement, a companion or executor word,
+//! ([`offered_in`], then `super::ask_guard`). A card acknowledgement, a companion or executor word,
 //! a deadline, a fallback and a stale ask score nothing and close the pair.
 //! The Coach's offer-ask reach covers the two acts, as it covers a training
 //! offer's: witnessing the pair's reserved parts, and asking the one owner
@@ -27,6 +27,7 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 
 use super::ask_effect::AskEffect;
+use super::ask_guard::AskedParty;
 use super::ask_record::{self, AskGroup};
 use super::ask_types::{
     TaskAskDecision, TaskAskDefault, TaskAskEvidenceReason, TaskAskOption, TaskAskOptionId,
@@ -39,7 +40,7 @@ use crate::code_run::{
     OwnerJudgment, OwnerPair, OwnerPairAnswer, OwnerPairChoice, OwnerPairRoute, OwnerPairTexts,
 };
 use crate::consent::AuthenticatedOwner;
-use crate::error::{Error, GateError, Result};
+use crate::error::Result;
 use crate::memory::{
     MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult, WitnessAuthor, WitnessMessage,
     WitnessTurn,
@@ -443,41 +444,34 @@ pub(super) fn route_pair_in(
     Ok(())
 }
 
-fn owner_not_authenticated(reason: &'static str) -> Error {
-    Error::Gate(GateError::ConsentOwnerNotAuthenticated(reason))
+/// Who a contribution pair ask asks: the owner its pair names; `None` for
+/// every other ask, and for a pair no longer kept ([`super::ask_guard`]).
+pub(super) fn asked_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    _id: EntityId,
+    group: &AskGroup,
+) -> Result<Option<AskedParty>> {
+    let Some(handle) = pair_handle(&group.requested.intent_key) else {
+        return Ok(None);
+    };
+    Ok(crate::code_run::owner_pair_in_txn(vault, txn, handle)?
+        .map(|(_, pair)| AskedParty::Owner(pair.owner)))
 }
 
-/// Refuses a word on a contribution pair ask unless it is the asked owner's
-/// own act: a Human word under the live proof of the owner the pair asks,
-/// given on the node that admitted the ask, naming one of its options while
-/// the pair waits on this ask. Any other ask passes untouched. Runs in
-/// shared word admission, before the word is recorded, beside
-/// `training_offer_ask::guard_word`.
-///
-/// # Errors
-///
-/// Storage errors, and every word it refuses.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "one admission check over the word, its writer and the owner proof"
-)]
-pub(super) fn guard_word(
+/// [`asked_in`], once `word` names one of the ask's options while the pair
+/// waits on this ask; any other word is refused. Shared word admission then
+/// asks the asked owner's own proof of it ([`super::ask_guard`]).
+pub(super) fn offered_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     id: EntityId,
     group: &AskGroup,
-    source: TaskAskSource,
-    actor: EntityId,
     word: &TaskAskWord,
-    owner: Option<&AuthenticatedOwner>,
-) -> Result<()> {
+) -> Result<Option<AskedParty>> {
     let Some(handle) = pair_handle(&group.requested.intent_key) else {
-        return Ok(());
+        return Ok(None);
     };
-    // The owner's own tap, never a word given for them or a soft confirm.
-    if word.companion_for.is_some() || word.inform_for.is_some() || word.confirmation.is_some() {
-        return Err(ask_record::invalid());
-    }
     let Some((_, pair)) = crate::code_run::owner_pair_in_txn(vault, txn, handle)?
         .filter(|(_, pair)| matches!(pair.route, OwnerPairRoute::Asked { ask, .. } if ask == id))
     else {
@@ -491,61 +485,7 @@ pub(super) fn guard_word(
     {
         return Err(ask_record::invalid());
     }
-    // Only the admission node settles the ask, so a word anywhere else
-    // could never settle under the proof that admitted it.
-    if !ask_record::owns_revision(vault, txn, id, group)? {
-        return Err(owner_not_authenticated(
-            "a contribution pair answer is given on the node that admitted the ask",
-        ));
-    }
-    let Some(owner) = owner else {
-        return Err(owner_not_authenticated(
-            "a contribution pair answer needs the owner's own authenticated word",
-        ));
-    };
-    let proven = owner.revalidate_in_txn(vault, txn)?;
-    if source != TaskAskSource::Human || proven != actor || proven != pair.owner {
-        return Err(owner_not_authenticated(
-            "a contribution pair answer is the asked owner's own word",
-        ));
-    }
-    Ok(())
-}
-
-/// Whether settlement may cut a contribution pair ask for `reason` with
-/// `decision` under `owner`. Its first word cuts it only under the live
-/// proof of the owner it asked; without that proof the ask stays open, and
-/// only its deadline or staleness closes it. Any other ask passes.
-pub(super) fn may_cut(
-    vault: &Vault,
-    txn: &heed::RoTxn<'_>,
-    group: &AskGroup,
-    reason: TaskAskSettlementReason,
-    decision: &TaskAskDecision,
-    owner: Option<&AuthenticatedOwner>,
-) -> Result<bool> {
-    if matches!(
-        reason,
-        TaskAskSettlementReason::Deadline | TaskAskSettlementReason::Stale
-    ) {
-        return Ok(true);
-    }
-    let Some(handle) = pair_handle(&group.requested.intent_key) else {
-        return Ok(true);
-    };
-    let Some((_, pair)) = crate::code_run::owner_pair_in_txn(vault, txn, handle)? else {
-        return Ok(true);
-    };
-    let TaskAskDecision::First(answer) = decision else {
-        return Ok(true);
-    };
-    match owner {
-        Some(owner) => {
-            let proven = owner.revalidate_in_txn(vault, txn)?;
-            Ok(proven == answer.actor_ref && proven == pair.owner)
-        }
-        None => Ok(false),
-    }
+    Ok(Some(AskedParty::Owner(pair.owner)))
 }
 
 /// Settles the pair a contribution pair ask carries from `result`, in the

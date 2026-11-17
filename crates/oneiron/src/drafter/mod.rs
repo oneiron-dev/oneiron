@@ -189,6 +189,24 @@ fn ancestry_names_world(
             .any(|step| step.dependencies.names_world_of(worlds))
 }
 
+/// Whether `binding` serves a version `policy` retires to stock: the policy
+/// is off, or the served version's ancestry trained on an excluded world. A
+/// stock serving never retires; a served version the table no longer holds
+/// retires only when the policy is off.
+fn binding_retired_by_policy(
+    versions: &BTreeMap<EntityId, DrafterVersion>,
+    binding: &DrafterBinding,
+    policy: &DrafterPolicy,
+) -> bool {
+    let DrafterServing::Version(serving) = binding.serving else {
+        return false;
+    };
+    let excluded = versions
+        .get(&serving)
+        .is_some_and(|version| ancestry_names_world(versions, version, &policy.excluded_worlds));
+    !policy.enabled || excluded
+}
+
 /// Records one event in `txn`, under a fresh time-ordered id.
 fn record_event_in_txn(
     store: &Store,

@@ -9,7 +9,9 @@ use crate::outbound_intent_ledger::{
 
 use super::connector_call::PENDING_CALLS;
 use super::connector_call_consent::frozen_scoped_candidate_in_txn;
-use super::connector_call_pending::CONNECTOR_CALL_PENDING_TTL_MS;
+use super::connector_call_pending::{
+    connector_call_deadline, connector_call_pending_ttl_secs_in_txn,
+};
 
 /// Recompose only the existing admission's frozen call. Nothing is prepared,
 /// admitted, sent, charged or changed here; all reads share the caller's writer.
@@ -26,6 +28,7 @@ pub(crate) fn code_wait_rebind_effects_in_txn(
     let pending = PENDING_CALLS
         .get(&vault.store, txn, &call.call_ref)?
         .ok_or_else(changed)?;
+    let ttl_secs = connector_call_pending_ttl_secs_in_txn(&vault.store, txn)?;
     if !row.approved_unsettled()
         || row.consumption.is_some()
         || pending.code_consent_wait != Some(row.binding.wait_id)
@@ -38,10 +41,7 @@ pub(crate) fn code_wait_rebind_effects_in_txn(
         || pending.credential != call.credential_record
         || pending.grant_id.as_deref() != Some(call.grant_ref.to_hex().as_str())
         || (pending.paced_until.is_none()
-            && crate::unix_millis_now()
-                >= pending
-                    .held_at_ms
-                    .saturating_add(CONNECTOR_CALL_PENDING_TTL_MS))
+            && crate::unix_millis_now() >= connector_call_deadline(pending.held_at_ms, ttl_secs))
     {
         return Err(changed());
     }

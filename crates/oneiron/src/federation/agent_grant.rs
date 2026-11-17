@@ -451,6 +451,28 @@ impl Vault {
             .any(|standing| standing.grant.member_ref == holder))
     }
 
+    /// Whether a live owner-agent Grant row that has not expired names
+    /// `holder` in `txn`: [`Self::agent_grant_names_in_txn`] less every row
+    /// whose `expires_at` the authority clock has reached
+    /// ([`AgentGrantStanding::stands_at`] at [`Self::instant_in_txn`], the
+    /// reading the consent registry and a credential's read bound take). FIX
+    /// [APP-BACKEND-LINK-EXPIRED-GRANT-COUNTS].
+    ///
+    /// # Errors
+    /// A store failure reading the Grant rows or the authority clock.
+    pub(crate) fn unexpired_agent_grant_names_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        holder: EntityId,
+    ) -> Result<bool> {
+        let now = self.instant_in_txn(txn)?.secs();
+        Ok(self
+            .agent_grants_reporting_in_txn(txn)?
+            .0
+            .iter()
+            .any(|standing| standing.grant.member_ref == holder && standing.stands_at(now)))
+    }
+
     /// The owner revokes the agent grant `grant_ref`: his signed act, then
     /// the row's delete, in one writer, so every grant reader stops counting
     /// it. A grant withdrawn on the record (this door's revoke act stands in
@@ -670,7 +692,7 @@ impl Vault {
         txn: &heed::RoTxn<'_>,
         include_revoked: bool,
     ) -> Result<Vec<crate::consent::ConsentRegistryRow>> {
-        let now = self.instant_in_txn(txn)?.secs();
+        let now = self.grant_judgement_secs_in_txn(txn)?;
         let mut rows = Vec::new();
         let mut shown = BTreeSet::new();
         let grants = agent_grants_reporting_for_store_in_txn(&self.store, txn, true)?.0;
