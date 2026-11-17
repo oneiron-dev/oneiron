@@ -45,6 +45,9 @@ fn print_device(gate: &PresenceGate) {
     );
     match gate.capability() {
         PresenceCapability::DevicePrompt => println!("capability: this device shows a prompt"),
+        PresenceCapability::DevicePin { set } => {
+            println!("capability: this device asks for its device PIN (one is set: {set})");
+        }
         PresenceCapability::NoPrompt(reason) => println!("capability: no prompt ({reason})"),
     }
     println!(

@@ -80,7 +80,7 @@ impl Vault {
         let txn = self.store.env.read_txn()?;
         let defaults = defaults::read_effective_defaults(&self.store, &txn)?;
         if let Some(manifest) = manifest::read_manifest(&self.store, &txn)? {
-            let routes = manifest::read_routes(&self.store, &txn)?;
+            let routes = manifest::read_routes(self, &txn, &manifest)?;
             let route =
                 manifest::effective_route(&manifest, &routes, manifest::ModelSlot::Oneironer)?;
             let selected = manifest.extraction_encoder(route)?;

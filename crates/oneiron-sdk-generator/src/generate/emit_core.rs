@@ -282,7 +282,7 @@ fn verb_act_classes(generator: &Generator) -> Result<String, GenerateError> {
         .into_iter()
         .map(|row| Ok((concat(item(row, "name")?)?, row)))
         .collect::<Result<_, GenerateError>>()?;
-    rows.sort_by(|(left, _), (right, _)| left.cmp(right));
+    rows.sort_by_key(|(left, _)| *left);
     let mut text = "/// Every verb row's `act_class` (ARCH-0082 #act-table), in verb-name order: `crate::check_in::verb_act_class`\n".to_owned();
     text += "/// looks a verb up here.\n";
     text += &format!(
@@ -496,9 +496,9 @@ const CATALOG_ROLES: &[(&str, CatalogRole)] = &[
     // A host door whose own check asks the owner's credential or a person's proof (`host_door_proof`): the dispatch
     // refuses an agent's call before the door runs, so `can({verb})` answers `person` for one.
     ("takes_person_proof", |_, row| {
-        Ok(row
-            .get("host_door_proof")
-            .is_some_and(|proof| proof.is_str("owner") || proof.is_str("shared_person")))
+        Ok(row.get("host_door_proof").is_some_and(|proof| {
+            proof.is_str("owner") || proof.is_str("shared_person") || proof.is_str("mailbox_person")
+        }))
     }),
     ("proposes", |_, row| Ok(flag(row, "proposes"))),
     ("is_task_work", |_, row| Ok(flag(row, "task_work"))),
