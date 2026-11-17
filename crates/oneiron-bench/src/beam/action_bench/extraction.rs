@@ -278,8 +278,8 @@ enum Step {
     EndSitting,
 }
 
-/// The history's replay, in time order: each turn before the freeze, each
-/// delete, and each sitting's end after its last turn. A sitting ends where
+/// The history's replay, in time order: each turn and each delete before the freeze,
+/// and each sitting's end after its last turn. A sitting ends where
 /// the next turn comes more than [`SITTING_GAP_SECS`] later. At one time a
 /// turn comes before a delete, and a delete before a sitting's end.
 fn replay_steps(history: &History) -> (Vec<(u64, Step)>, usize) {
@@ -303,7 +303,9 @@ fn replay_steps(history: &History) -> (Vec<(u64, Step)>, usize) {
             None => sittings += 1,
         }
         ranked.push((turn.at, 0, Step::Turn(index)));
-        if let Some(at) = turn.deleted_at {
+        // As the memory arms do, an event at or after the freeze is not replayed. `load`
+        // already refuses such a delete; this keeps a hand-built history to the same rule.
+        if let Some(at) = turn.deleted_at.filter(|&at| at < history.frozen_at) {
             ranked.push((at, 1, Step::DeleteTurn(index)));
         }
         last = Some(turn.at);
