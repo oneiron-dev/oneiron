@@ -3,6 +3,15 @@
 
 pub const MAX_DBS: u32 = 32;
 
+/// v36 (row WEB-PASSKEY-OWNER-KEY, owner passkeys): stored authority-log rows
+/// keep their bytes and meaning. The authority fold gains each enrolled
+/// passkey's assertion contexts, each key a passkey vouched for and each such
+/// key a second vouch confirmed, so the authority fold schema moves 43 -> 44
+/// with it: a stored checkpoint image written before it no longer decodes,
+/// and an older build refuses an image that carries them rather than dropping
+/// the passkey limits. No old-meaning reader or migration is provided (the
+/// lead's M-1 stored-change rule, path "loud").
+///
 /// v35 (FIX SEQUENCE-FLOOR-DELIVERY-ORDER, CHECKPOINT-RAW-FLOOR-CLEARED-ROW):
 /// stored authority-log rows keep their bytes and can change meaning. A
 /// row's sequence floor comes from its signer's rows in its scope, not from

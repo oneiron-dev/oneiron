@@ -470,7 +470,8 @@ fn a_world_listing_cursor_names_no_withheld_world() -> Result<()> {
 #[test]
 fn a_kept_lane_lists_no_world_after_its_credential_is_revoked() -> Result<()> {
     let (_tmp, vault) = open_test_vault_with(VaultConfig::default());
-    let (owner, other) = (test_id(0x3D), test_id(0x3E));
+    let owner = vault.ensure_embedded_owner_actor().expect("owner");
+    let other = test_id(0x3E);
     let worlds: Vec<EntityId> = (0..=GRAPH_FS_MAX_PAGE_ENTRIES)
         .map(|_| EntityId::now())
         .collect();

@@ -313,12 +313,25 @@ name = "self_desktop_doors"
 path = "tests/self_desktop_doors.rs"
 required-features = ["oneiron/test-support"]
 
+# The model door promises root on a `MemoryKeystore` (`oneiron/test-support`); the trial fixture is
+# the cfg door `oneiron::test_doors::model_binding_proposer`.
+[[test]]
+name = "vault_models_owner_doors"
+path = "tests/vault_models_owner_doors.rs"
+required-features = ["oneiron/test-support"]
+
 # Its signing fixture vault holds a `MemoryKeystore` (`oneiron-keystore/test-keystore`, forwarded
 # by `oneiron/test-support`): the e-sign dispatch signs with the install's keys.
 [[test]]
 name = "it_esign_public"
 path = "tests/it_esign_public.rs"
 required-features = ["oneiron/test-support", "oneiron/test-hooks"]
+
+# The retrieval policy and outcome door promise tests serve the owner's root from a `MemoryKeystore`.
+[[test]]
+name = "vault_retrieval_policy_doors"
+path = "tests/vault_retrieval_policy_doors.rs"
+required-features = ["oneiron/test-support"]
 
 # The sieve doors (queue, spans, policies, lease, evidence, settlements, budgets) root on a `MemoryKeystore`.
 [[test]]
@@ -404,6 +417,13 @@ required-features = ["oneiron/test-support", "oneiron/test-hooks"]
 name = "artifact_pinned_document_cache"
 path = "tests/artifact_pinned_document_cache.rs"
 required-features = ["oneiron/test-support", "oneiron/test-hooks"]
+
+# Stores the owner's Daytona key in custody on a `MemoryKeystore` vault (`oneiron-keystore/test-keystore`,
+# forwarded by `oneiron/test-support`).
+[[test]]
+name = "sandbox_vendor_daytona"
+path = "tests/sandbox_vendor_daytona.rs"
+required-features = ["oneiron/test-support"]
 
 # These three build their servers on a `MemoryKeystore` (`oneiron-keystore/test-keystore`,
 # forwarded by `oneiron/test-support`), so they take `it`'s rolling-tier features.
@@ -554,6 +574,12 @@ required-features = ["oneiron/test-support"]
 name = "off_record_room_context_pack"
 path = "tests/off_record_room_context_pack.rs"
 required-features = ["oneiron/test-support", "oneiron/test-hooks", "oneiron-broker/test-support"]
+# 0053-EMB's host-line and spent-line notice pins install the owner's `budget_policy` row
+# through `oneiron::conversation_dag::test_support` (`oneiron/test-hooks`).
+[[test]]
+name = "embedder_host_line_notice"
+path = "tests/embedder_host_line_notice.rs"
+required-features = ["oneiron/test-support", "oneiron/test-hooks"]
 
 # FIX OFF-RECORD-RUN-POLICY-REFUSAL-500's session run roots its owner on a
 # `MemoryKeystore` too.

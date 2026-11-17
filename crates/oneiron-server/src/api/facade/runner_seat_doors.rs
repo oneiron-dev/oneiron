@@ -6,13 +6,15 @@
 //! its own transaction.
 use std::sync::Arc;
 
+use oneiron::authority::OwnerOrDelegate;
 use oneiron::dispatch_byoa::{
+    RUNNER_SEAT_QUOTAS_VERB, RUNNER_SEAT_TOP_UP_VERB, RUNNER_WORK_RESUME_VERB,
     RunnerSeatCreditTopUpRequest, RunnerSeatQuotasRequest, RunnerSeatQuotasView,
     RunnerSeatTopUpReceipt, RunnerWorkResumeRequest, RunnerWorkResumeView,
 };
 
 use super::host_doors::support::Listed;
-use super::legal_hold_doors::as_owner_naming;
+use super::legal_hold_doors::as_owner_or_delegate_naming;
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
 
@@ -21,11 +23,18 @@ pub(crate) async fn vault_runners_seats_quotas(
     auth: &CoreAuth,
     input: RunnerSeatQuotasRequest,
 ) -> Listed<RunnerSeatQuotasView> {
-    as_owner_naming(
+    as_owner_or_delegate_naming(
         server,
         auth,
-        "vault.runners.seats.quotas",
-        move |server, owner| server.vault().runner_seat_quotas_as_owner(owner, &input),
+        RUNNER_SEAT_QUOTAS_VERB,
+        move |server, who| match who {
+            OwnerOrDelegate::Owner(owner) => {
+                server.vault().runner_seat_quotas_as_owner(owner, &input)
+            }
+            OwnerOrDelegate::Delegate(agent) => {
+                server.vault().runner_seat_quotas_as_delegate(agent, &input)
+            }
+        },
         |_| Vec::new(),
     )
     .await
@@ -36,11 +45,18 @@ pub(crate) async fn vault_runners_seats_top_up(
     auth: &CoreAuth,
     input: RunnerSeatCreditTopUpRequest,
 ) -> Listed<RunnerSeatTopUpReceipt> {
-    as_owner_naming(
+    as_owner_or_delegate_naming(
         server,
         auth,
-        "vault.runners.seats.top_up",
-        move |server, owner| server.vault().top_up_runner_seat_as_owner(owner, &input),
+        RUNNER_SEAT_TOP_UP_VERB,
+        move |server, who| match who {
+            OwnerOrDelegate::Owner(owner) => {
+                server.vault().top_up_runner_seat_as_owner(owner, &input)
+            }
+            OwnerOrDelegate::Delegate(agent) => {
+                server.vault().top_up_runner_seat_as_delegate(agent, &input)
+            }
+        },
         |_| Vec::new(),
     )
     .await
@@ -66,24 +82,30 @@ fn node_runner_seat_registry(
     })
 }
 
-/// `vault.runners.seats.resume`: the owner's resume of a parked bound runner
-/// work, on this node's own runner seats (FIX RUNNER-RESUME-DROPS-NODE-
-/// REGISTRY), so a work bound on an official seat resumes on that seat and
-/// its login machine, not on the plain runner of the same name.
+/// `vault.runners.seats.resume`: the owner's or a delegate's resume of a
+/// parked bound runner work, on this node's own runner seats (FIX RUNNER-
+/// RESUME-DROPS-NODE-REGISTRY), so a work bound on an official seat resumes
+/// on that seat and its login machine, not on the plain runner of the same
+/// name.
 pub(crate) async fn vault_runners_seats_resume(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: RunnerWorkResumeRequest,
 ) -> Listed<RunnerWorkResumeView> {
-    as_owner_naming(
+    as_owner_or_delegate_naming(
         server,
         auth,
-        "vault.runners.seats.resume",
-        move |server, owner| {
+        RUNNER_WORK_RESUME_VERB,
+        move |server, who| {
             let registry = node_runner_seat_registry(server)?;
-            server
-                .vault()
-                .resume_runner_work_as_owner(owner, &registry, &input)
+            match who {
+                OwnerOrDelegate::Owner(owner) => server
+                    .vault()
+                    .resume_runner_work_as_owner(owner, &registry, &input),
+                OwnerOrDelegate::Delegate(agent) => server
+                    .vault()
+                    .resume_runner_work_as_delegate(agent, &registry, &input),
+            }
         },
         |_| Vec::new(),
     )

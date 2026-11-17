@@ -105,7 +105,10 @@ pub use branch::{BranchTurn, ConsolidationBranchPlan, ConversationPart};
 pub(crate) use conflict::topic_key_canonical_bytes;
 pub use conflict::*;
 pub use executor::*;
-pub(crate) use extracted_people::{delete_lineage_origin_in_txn, pin_lineage_origin_in_txn};
+pub(crate) use extracted_people::{
+    delete_lineage_origin_in_txn, has_name_span, normalize_name_span, origin_in_txn,
+    pin_lineage_origin_in_txn, speaker_admissible_in_txn,
+};
 pub use gap::*;
 pub(crate) use neighbourhood::unpin_neighbourhood_in_txn;
 pub(crate) use partition::PartitionAudience;
@@ -269,3 +272,8 @@ pub(crate) fn retained_alternatives_entry_for_test(
 ) -> crate::Result<(rmpv::Value, rmpv::Value)> {
     retained_conflict::alternatives_entry(members, attempt)
 }
+
+#[cfg(oneiron_test_support)]
+pub(crate) use self::{
+    gap::branch_gap_key_pin_for_test, neighbourhood::listing_pin_key_pin_for_test,
+};

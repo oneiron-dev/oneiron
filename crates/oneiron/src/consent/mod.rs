@@ -51,6 +51,7 @@
 mod adapters;
 mod answer_wake;
 pub mod approval_proof;
+pub(crate) mod archive_restore;
 mod ask_holders;
 mod bound;
 mod browser;
@@ -210,3 +211,6 @@ pub mod bundle_projection;
 
 pub mod settlement_fact;
 pub(crate) mod tables;
+
+#[cfg(oneiron_test_support)]
+pub(crate) use self::owner_reason::rule_key_pin_for_test;
