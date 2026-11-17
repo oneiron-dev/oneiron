@@ -35,12 +35,10 @@ use oneiron::sync::residence::{
     ResidenceAdmission, SealedBundleEntry, SealedBundleObject, SealedBundleStage, WindowIndexEntry,
     ask_sealed_bundle_turn, authority_append_part_for, authority_append_progress_for,
     authority_checkpoint_part_for, authority_entry_part_for, authority_range_for,
-    authority_tail_for, authority_wanted, home_search_candidates, index_selection_revision,
-    own_device_grants_for, promotion_snapshot_with, replace_sealed_bundle_pads,
-    sealed_bundle_index, sealed_bundle_part, sealed_digest_from_hex, sealed_digest_hex,
-    sealed_generation_from_hex, sealed_generation_hex, selected_item_blob_with,
-    split_authority_page, stage_sealed_bundle_part, window_index_page,
-    window_index_projection_with,
+    authority_tail_for, authority_wanted, index_selection_revision, own_device_grants_for,
+    promotion_snapshot_with, replace_sealed_bundle_pads, sealed_bundle_index, sealed_bundle_part,
+    sealed_digest_from_hex, sealed_digest_hex, sealed_generation_from_hex, sealed_generation_hex,
+    selected_item_blob_with, split_authority_page, window_index_page, window_index_projection_with,
 };
 use oneiron::sync::residence_operation_budgets::ResidenceOperationBudgets;
 use oneiron::sync::schema::read_window_list;

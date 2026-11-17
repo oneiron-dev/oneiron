@@ -27,8 +27,9 @@
 //! slips name (`residence.authority.grants`, FIX 23747): the authority log
 //! carries a paired slip's mint but not the grant row its `grant_ref` names,
 //! which a slip door reads, and an opened machine holds no window that
-//! carries it. Each row lands through the entity ingest and each withdrawal
-//! replays as a tombstone ([`admit_own_device_grants`]).
+//! carries it. Each row lands through the entity ingest, from any home, and
+//! each withdrawal replays as a tombstone, only from a home that proved
+//! itself a machine of the vault ([`admit_own_device_grants`]).
 
 mod parts;
 
@@ -249,19 +250,16 @@ async fn catch_up_own_device_grants(
     if asked.is_empty() {
         return Ok(0);
     }
-    // The grant rows and withdrawals carry no signature of their own: only a
-    // home that proves itself a machine of this vault answers them. A socket
-    // dialled before this vault held the authority that names the home could
-    // not prove it, so the proof is asked for again on a fresh socket.
+    // A withdrawal replays only from a home that proves itself a machine of
+    // this vault. A socket dialled before this vault held the authority that
+    // names the home could not prove it, so the proof is asked for again on
+    // a fresh socket. A home that still proves nothing, such as one whose
+    // owner has not answered it yet, is asked all the same: its rows land
+    // and its withdrawals wait for a proven answer.
     if !home_stands(vault, rpc.home) {
         match ResidenceRpc::connect(vault, config, residence_budgets(vault)?).await? {
             Some(fresh) => *rpc = fresh,
             None => return Err(TransportError::home_offline()),
-        }
-        if !home_stands(vault, rpc.home) {
-            return Err(TransportError::InvalidPayload(
-                "the residence home proved no machine of this vault",
-            ));
         }
     }
     let ids: Vec<EntityId> = asked.keys().copied().collect();
