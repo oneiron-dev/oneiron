@@ -486,6 +486,13 @@ name = "note_session_bind_reply"
 path = "tests/note_session_bind_reply.rs"
 required-features = ["oneiron/test-support"]
 
+# L8-29's remote task stop serves its owner's root from a `MemoryKeystore`, and
+# writes its Deferred sends through `oneiron::test_doors`.
+[[test]]
+name = "remote_task_cancel"
+path = "tests/remote_task_cancel.rs"
+required-features = ["oneiron/test-support"]
+
 # L1-02's named-client OAuth acceptance roots its served vault on a `MemoryKeystore`.
 [[test]]
 name = "oauth_named_client_acceptance"

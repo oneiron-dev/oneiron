@@ -12,6 +12,7 @@ pub use oneiron_base::unsubscribe_headers as email_headers;
 mod payload;
 mod pinned_approval;
 mod read_back;
+mod remote_task_cancel;
 mod remote_task_input;
 mod remote_task_poll;
 mod resolution;
@@ -22,6 +23,7 @@ mod types;
 pub use self::codec::INTENT_LEDGER_VALUE_KEYS;
 pub use self::dispatch::{derive_intent_id, intent_ledger_records};
 pub use self::read_back::DeliveryReadBack;
+pub use self::remote_task_cancel::{RemoteTaskCancelAsk, RemoteTaskCancelPhase};
 pub use self::remote_task_input::{
     ParkedInput, RemoteTaskAnswer, RemoteTaskFormQuestion, RemoteTaskInputChoice,
     RemoteTaskInputPhase, RemoteTaskInputView,
@@ -79,10 +81,12 @@ pub(crate) use self::store::{
 // DOOR-141 PR3b: whether an attempt's sends are settled, for a held program's resume;
 // FIX 7188: their abandon in the owner's Stop of that try; FIX 4747: the abandon of
 // the ones that certainly never went when a connector send's executor stands down,
-// and their supersession when that send's lease comes back (slice 4).
+// and their supersession when that send's lease comes back (slice 4); L8-29: the
+// stop of the try's remote tasks in the owner's Stop.
 pub(crate) use self::store::pending::{
     abandon_attempt_pending_intents_in_txn, abandon_attempt_undelivered_intents_in_txn,
-    attempt_has_pending_intent_in_txn, supersede_stood_down_intents_in_txn,
+    attempt_has_pending_intent_in_txn, request_attempt_remote_task_cancels_in_txn,
+    supersede_stood_down_intents_in_txn,
 };
 #[cfg(test)]
 pub(crate) use self::store::{read_intent_record, replace_intent_record_for_test};
