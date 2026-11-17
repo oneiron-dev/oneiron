@@ -9,6 +9,8 @@
 //! - The agent child-wait's `d` rows go: a wait with an `until` arms one row of
 //!   `agent_dispatch.child_wait_until` at its `until` rounded up to a second; the pass then
 //!   answers the wait `cutoff`, and settling disarms the row; an early quorum disarms it too.
+//! - A checkpoint restore over a live vault whose wait has since cut off arms the restored wait's
+//!   row again: the wait rows are restore content and the schedule's rows live.
 //! - FIX SETTING-5B-WALL-CLOCK-WAIT-INDEXES: a wait reduces on the recording clock, which the
 //!   runner reads, and not the wall clock. The vault's clock here is decades past the wall
 //!   clock, so an `until` it has passed is still ahead on the wall clock.
@@ -33,6 +35,7 @@ use oneiron::housekeeping::HousekeepingBudget;
 use oneiron::test_doors::schedule::due_at;
 use oneiron::test_doors::seat_park_model_step::park_try_on_seat;
 use oneiron::{AttemptId, AttemptQueue, DreamerParkCause, EntityId, Vault, VaultConfig};
+use oneiron_keystore::MemoryKeystore;
 use oneiron_store::ports::manual_clock::ManualClock;
 
 /// The instant every test opens at, in vault-clock seconds: far past the wall clock, so the
@@ -56,16 +59,25 @@ struct Fixture {
     _dir: tempfile::TempDir,
 }
 
+/// A small vault's config on `clock`.
+fn config(clock: &Arc<ManualClock>) -> VaultConfig {
+    let mut config = VaultConfig::device();
+    config.map_size = 32 * 1024 * 1024;
+    config.dimensions = 4;
+    config.embedding_model = None;
+    config.store_clock = clock.bundle();
+    config
+}
+
 impl Fixture {
     fn open() -> Self {
+        Self::open_in(tempfile::tempdir().expect("tempdir"))
+    }
+
+    /// The vault opened in `dir`.
+    fn open_in(dir: tempfile::TempDir) -> Self {
         let clock = ManualClock::new(T0);
-        let mut config = VaultConfig::device();
-        config.map_size = 32 * 1024 * 1024;
-        config.dimensions = 4;
-        config.embedding_model = None;
-        config.store_clock = clock.bundle();
-        let dir = tempfile::tempdir().expect("tempdir");
-        let vault = Vault::open_owned(dir.path(), config).expect("open vault");
+        let vault = Vault::open_owned(dir.path(), config(&clock)).expect("open vault");
         Self {
             vault,
             clock,
@@ -432,4 +444,64 @@ fn a_wait_until_comes_due_on_the_recording_clock_the_runner_reads() {
     fx.pass();
     let cut = delivered(&fx.vault, &open.wait).expect("the pass at its until delivers the reply");
     assert_eq!(cut.reason.as_deref(), Some("cutoff"));
+}
+
+/// Blind review round 1 of #9303 (P1 on `agent_wait.rs`): the wait rows are restore content and
+/// the schedule's rows live, so a checkpoint restore over a live vault whose wait had cut off
+/// since landed the wait unsettled with no row to cut it off. Red before the fix: the copy holds
+/// no row about the wait.
+#[test]
+fn a_restore_over_a_vault_whose_wait_cut_off_arms_the_restored_wait_again() {
+    let fx = Fixture::open_in(oneiron::test_support::restore_tempdir());
+    fx.vault
+        .install_device_keystore(Arc::new(MemoryKeystore::new()));
+    fx.vault
+        .ensure_vault_key()
+        .expect("mint the vault data key");
+    let key = fx
+        .vault
+        .checkpoint_key()
+        .expect("derive the checkpoint key");
+    fx.pass();
+    let (host, first, second) = run_with_children(&fx);
+    let until = (T0 + 10) * 1_000 + 500;
+    let open = host
+        .wait_agents_from_host(wait_on(&[first, second], None, until, "restored"))
+        .expect("wait");
+    let wait = EntityId::from_hex(&open.wait).expect("wait id");
+    assert_eq!(fx.armed(WAIT_JOB, wait), Some(T0 + 11));
+    let directory = oneiron::test_support::restore_tempdir();
+    let image = directory.path().join("image");
+    fx.vault
+        .snapshot_checkpoint(&image, T0)
+        .expect("snapshot with the wait open");
+
+    fx.at(T0 + 11);
+    fx.pass();
+    let cut = delivered(&fx.vault, &open.wait).expect("the live wait cut off");
+    assert_eq!(cut.reason.as_deref(), Some("cutoff"));
+    assert_eq!(fx.armed(WAIT_JOB, wait), None, "settling disarmed its row");
+
+    fx.at(T0 + 12);
+    let (copy, _) = Vault::restore_checkpoint_keeping_authority(
+        &image,
+        &key,
+        &directory.path().join("restored"),
+        config(&fx.clock),
+        &fx.vault,
+        T0 + 12,
+    )
+    .expect("restore the checkpoint over the live vault");
+    assert_eq!(
+        due_at(&copy, WAIT_JOB, Some(wait)).expect("schedule"),
+        Some(T0 + 11),
+        "the restored wait is armed again at its until"
+    );
+    copy.housekeeping(HousekeepingBudget::unbounded())
+        .expect("housekeeping on the copy");
+    assert_eq!(
+        due_at(&copy, WAIT_JOB, Some(wait)).expect("schedule"),
+        None,
+        "the copy's pass ran the row, and the wait it cut off leaves none"
+    );
 }
