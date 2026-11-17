@@ -15,6 +15,10 @@
 //!   while the walk would take that rung: never outside its hours.
 //! - A ladder whose every rung keeps hours is refused, so a call outside
 //!   them always has a rung; `hours` on a role's single `model` is refused.
+//! - When the rungs without hours are gone at run time (a provider
+//!   unavailable when the runtime was built), a call outside the remaining
+//!   rungs' hours ends with the retryable refusal outside them, naming when
+//!   the first opens, never a bad request.
 //!
 //! Hours here are UTC and set around the current minute, an hour on each
 //! side, so no run sits near a boundary.
@@ -346,6 +350,86 @@ async fn a_live_fork_is_never_bound_to_a_rung_outside_its_hours() {
         );
     }
     assert!(servers.gpubox.seen().is_empty());
+    assert!(servers.daybox.seen().is_empty());
+}
+
+/// The runtime of `rungs` with a third provider, `keyed`, whose key is a
+/// custody secret: a runtime built with no key door holds that provider
+/// unavailable, so its rung is dropped when the runtime is built.
+fn runtime_without_keyed_provider(servers: &Servers, rungs: &str) -> ModelRuntime {
+    let text = format!(
+        "{}\n[providers.keyed]\nkind = \"openai-compat\"\nbase_url = \"https://h\"\n\
+         key_secret = \"provider-key\"\n",
+        servers.models(rungs)
+    );
+    let config = ModelsConfig::from_toml(&text, None)
+        .expect("a ladder with one rung without hours is a valid models config");
+    ModelRuntime::build(Some(&config), oneiron::HostingPrivacyPosture::SelfHostLocal)
+}
+
+fn unix_now() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("the clock is after 1970")
+        .as_secs()
+}
+
+/// The ladder's one rung without hours is gone at run time, here because
+/// its provider was unavailable when the runtime was built. A call outside
+/// the GPU box's hours ends at once with the retryable refusal outside
+/// them, naming when they open: never a bad request, and nothing goes out.
+#[tokio::test]
+async fn a_call_outside_every_remaining_rungs_hours_is_refused_until_they_open() {
+    let servers = Servers::start().await;
+    let before = unix_now();
+    let runtime = runtime_without_keyed_provider(
+        &servers,
+        &format!(
+            r#"{{ model = "gpubox:night-model", hours = {} }},
+{{ model = "keyed:day-model" }},"#,
+            hours_after_now()
+        ),
+    );
+    let seat = runtime
+        .seat(ModelRole::GenerativeReasoner)
+        .expect("the reasoner's seat: the GPU box's rung was built");
+    let run = runtime.undeclared_run("rung-hours", budget());
+    let called = tokio::time::timeout(
+        CALL_LIMIT,
+        seat.ladder.generate(&run, request(&seat.model), None),
+    )
+    .await
+    .expect("the call ends at once, with no wait for the hours to open");
+    let after = unix_now();
+    let Err(error) = called else {
+        panic!("no rung may answer outside the GPU box's hours");
+    };
+    let error = serde_json::to_value(&error).expect("a model error serializes");
+    let refused = &error["Retryable"]["OutsideHours"];
+    assert!(
+        refused.is_object(),
+        "the call is refused as outside the rungs' hours, not as {error}"
+    );
+    // The hours open at the start of the minute an hour after the one they
+    // were set in.
+    let opens = refused["resets_at"][0]
+        .as_u64()
+        .expect("the refusal names when the hours open");
+    assert!(
+        (before / 60 + 60) * 60 <= opens && opens <= (after / 60 + 60) * 60,
+        "the hours open an hour from now: {opens}, called {before}..{after}"
+    );
+    let retry_after = refused["retry_after"]
+        .as_u64()
+        .expect("the refusal says how long until they open");
+    assert!(
+        opens - after <= retry_after && retry_after <= opens - before,
+        "retry_after {retry_after} runs to the opening {opens}"
+    );
+    assert!(
+        servers.gpubox.seen().is_empty(),
+        "nothing went out to the GPU box outside its hours"
+    );
     assert!(servers.daybox.seen().is_empty());
 }
 
