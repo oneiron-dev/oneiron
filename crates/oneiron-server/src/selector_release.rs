@@ -16,14 +16,21 @@
 //!   (a client may reuse a request id) and tags each frame of the answer
 //!   with it. The tag is never a peer wire tag: the socket's release strips
 //!   it before every other door.
-//! - The release judges the basis once per answer, at its first frame, before
-//!   any part of it leaves. The later frames of an answer that stood go as it
-//!   was judged; an answer that did not stand sends none.
+//! - The release judges the basis at the answer's first frame, before any
+//!   part of it leaves; an answer that did not stand sends none.
+//! - Each frame of an answer that stood goes under its basis
+//!   ([`ReleasedAnswer`]): the socket's send judges it again just before the
+//!   frame's bytes leave, and after each wait on the peer (a full sink, owed
+//!   control frames, a parked flush), and closes the socket rather than send
+//!   once it no longer stands, as it does for a revoked credential. A peer
+//!   that stops reading cannot park an answer past its grant, and a later
+//!   frame never leaves on its first frame's judgement.
 //! - A federation UPDATE that does not stand is not sent, and its window's
 //!   ready request is owed again; a residence reply is replaced by
 //!   RESULT_CHANGED.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use base64::Engine;
 use oneiron::Vault;
@@ -65,7 +72,24 @@ pub(crate) struct SelectorAnswers {
 
 enum Judged {
     Waiting(Box<SelectorReleaseBasis>),
-    Stood,
+    /// The basis of an answer that stood at its first frame, which each of
+    /// its later frames is sent under.
+    Stood(Arc<[SelectorReleaseBasis]>),
+}
+
+/// What a frame of a queued selector answer that leaves was made under: its
+/// send judges that again before the frame's bytes leave and after each wait
+/// on the peer.
+pub(crate) struct ReleasedAnswer {
+    vault: Arc<Vault>,
+    bases: Arc<[SelectorReleaseBasis]>,
+}
+
+impl ReleasedAnswer {
+    /// Whether every basis the answer was made under stands now.
+    pub(crate) fn stands(&self) -> bool {
+        self.bases.iter().all(|basis| basis.stands(&self.vault))
+    }
 }
 
 /// One frame of a queued selector answer, as its release reads it.
@@ -101,19 +125,27 @@ impl SelectorAnswers {
             .collect()
     }
 
-    /// Whether `frame` leaves: its answer's basis, judged at the answer's
-    /// first frame, stood then. An answer that did not stand sends no
-    /// further frame, and an unknown token fails closed.
-    pub(crate) fn release(&mut self, vault: &Vault, frame: &QueuedAnswerFrame<'_>) -> bool {
-        let stands = match self.queued.remove(&frame.token) {
-            Some(Judged::Stood) => true,
-            Some(Judged::Waiting(basis)) => basis.stands(vault),
-            None => false,
+    /// What `frame` leaves under, when it leaves: its answer's basis,
+    /// judged at the answer's first frame, stood then. An answer that did
+    /// not stand sends no further frame, and an unknown token fails closed.
+    pub(crate) fn release(
+        &mut self,
+        vault: &Arc<Vault>,
+        frame: &QueuedAnswerFrame<'_>,
+    ) -> Option<ReleasedAnswer> {
+        let bases: Arc<[SelectorReleaseBasis]> = match self.queued.remove(&frame.token)? {
+            Judged::Stood(bases) => bases,
+            Judged::Waiting(basis) if basis.stands(vault) => Arc::from([*basis]),
+            Judged::Waiting(_) => return None,
         };
-        if stands && !frame.last {
-            self.queued.insert(frame.token, Judged::Stood);
+        if !frame.last {
+            self.queued
+                .insert(frame.token, Judged::Stood(Arc::clone(&bases)));
         }
-        stands
+        Some(ReleasedAnswer {
+            vault: Arc::clone(vault),
+            bases,
+        })
     }
 }
 
