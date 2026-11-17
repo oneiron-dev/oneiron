@@ -496,6 +496,13 @@ pub(crate) fn ask_settlement_in(
     read_result(vault, txn, id)
 }
 
+/// The id of the settlement row that closes the ask group `group`. The
+/// commit that settles a group writes this row, and names it, not the
+/// group, among the TASKs it wrote.
+pub(crate) fn ask_settlement_id(group: EntityId) -> Result<EntityId> {
+    settlement_id(group)
+}
+
 pub(super) fn evidence(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,

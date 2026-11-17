@@ -14,6 +14,8 @@
 //! terminal transition"; FIX INQUIRY-HOLDER-EVICT-ON-TERMINAL-WRITE): the
 //! write door, and the workflow-try settle that commits outside it, hand
 //! their committed TASKs to [`Vault::evict_inquiry_answers_after_commit`].
+//! An ask group settles by a settlement row of its own, which the commit
+//! names in place of the group; the holder matches that row to the group.
 //! Each housekeeping pass also calls [`Vault::evict_inquiry_answers`]
 //! (Engine ruling INQUIRE-HOLDER-EVICT), so an answer whose task another
 //! writer ended leaves memory within one lifecycle tick (60 s on a server)
@@ -124,11 +126,12 @@ impl Vault {
     /// INQUIRY-HOLDER-EVICT-ON-TERMINAL-WRITE; Engine rulings INQUIRE-SHAPE
     /// Q6 and INQUIRE-HOLDER-EVICT = A, the post-commit "task settled"
     /// notice with the holder as a listener): `tasks` is the commit's TASK
-    /// set, which names the TASK of each task fact it wrote, so a terminal
-    /// settle or a Cancelled fact drops that answer before any later read,
-    /// with no touch and no housekeeping pass. A commit that names no held
-    /// task reads nothing. A failed read leaves the answer to the next touch
-    /// or pass and never fails the write.
+    /// set, which names the TASK of each task fact it wrote and the
+    /// settlement row of each ask group it settled, so a terminal settle, an
+    /// ask's settlement or a Cancelled fact drops that answer before any
+    /// later read, with no touch and no housekeeping pass. A commit that
+    /// names no held task reads nothing. A failed read leaves the answer to
+    /// the next touch or pass and never fails the write.
     pub(crate) fn evict_inquiry_answers_after_commit<'a>(
         &self,
         tasks: impl IntoIterator<Item = &'a EntityId>,
@@ -137,7 +140,16 @@ impl Vault {
             return;
         }
         let held = self.inquiry_answers.tasks();
-        if !tasks.into_iter().any(|task| held.contains(task)) {
+        // A settled ask group is named by its settlement row (review round 2
+        // of #9185): that row ends the held group too.
+        let settlements: BTreeSet<EntityId> = held
+            .iter()
+            .filter_map(|task| crate::task_verb::ask_settlement_id(*task).ok())
+            .collect();
+        if !tasks
+            .into_iter()
+            .any(|task| held.contains(task) || settlements.contains(task))
+        {
             return;
         }
         if let Err(error) = self.evict_inquiry_answers() {
