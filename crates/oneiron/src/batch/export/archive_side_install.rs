@@ -27,8 +27,6 @@ pub(crate) enum ArchivedSideRowOutcome {
 pub(crate) struct ArchivedSideRowRefresh {
     /// Serving hosts must observe repaired drafter bindings.
     drafter_serving: bool,
-    /// Queue attempts must observe the installed review policy.
-    attempt_observers: bool,
     /// Digest timers must re-read installed schedules and settings.
     proactivity: bool,
     /// Consent settlers must recheck newly restored answers.
@@ -44,7 +42,6 @@ impl ArchivedSideRowRefresh {
         {
             match group {
                 ArchivedSideGroup::Drafter => self.drafter_serving = true,
-                ArchivedSideGroup::MergeQueue => self.attempt_observers = true,
                 ArchivedSideGroup::WeaveDigest => self.proactivity = true,
                 ArchivedSideGroup::Consent => self.consent_answer = true,
                 _ => {}
@@ -56,9 +53,6 @@ impl ArchivedSideRowRefresh {
     pub(crate) fn after_commit(self, vault: &crate::Vault) {
         if self.drafter_serving {
             vault.notify_drafter_serving();
-        }
-        if self.attempt_observers {
-            vault.store.notify_attempt_observers();
         }
         if self.proactivity {
             vault.store.notify_proactivity_changes();
@@ -98,8 +92,6 @@ pub(crate) enum ArchivedSideGroup {
     DreamerRunner,
     /// Served-origin LFS path rules.
     OriginLfs,
-    /// Queue review policy.
-    MergeQueue,
     /// Owner learning rows before holder rows.
     LearningSetting,
     /// Retrieval pins and local active weights.
@@ -196,7 +188,6 @@ pub(crate) fn archived_side_group(source_table: &str) -> Option<ArchivedSideGrou
         }
         name if name == side_table::DREAMER_FREE_TIME_RECEIPT.name => Some(Group::DreamerRunner),
         name if name == side_table::ORIGIN_LFS_PATH_POLICY.name => Some(Group::OriginLfs),
-        name if name == side_table::MERGE_QUEUE_REVIEW_POLICY.name => Some(Group::MergeQueue),
         name if name == side_table::LEARNING_SETTING.name => Some(Group::LearningSetting),
         name if name == side_table::RETRIEVAL_POLICY_PINS.name => Some(Group::RetrievalPins),
         name if name == side_table::DRAFTER_POLICY.name => Some(Group::Drafter),
@@ -323,9 +314,6 @@ pub(crate) fn land_archived_side_group_in_txn(
         }
         ArchivedSideGroup::OriginLfs => {
             crate::Vault::land_archived_origin_lfs_rows_in_txn(vault, txn, permit, rows)
-        }
-        ArchivedSideGroup::MergeQueue => {
-            crate::Vault::land_archived_merge_queue_rows_in_txn(vault, txn, permit, rows)
         }
         ArchivedSideGroup::LearningSetting => {
             crate::learning_setting::land_archived_learning_setting_rows_in_txn(

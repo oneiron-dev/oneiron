@@ -137,10 +137,6 @@ pub(crate) const SIDE_TABLE_DISPOSITIONS: &[(&str, ArchiveSideDisposition)] = &[
         "MAIL_PACK_COMPLIANCE_SETTING",
         ArchiveSideDisposition::Retained,
     ),
-    (
-        "MERGE_QUEUE_REVIEW_POLICY",
-        ArchiveSideDisposition::Retained,
-    ),
     ("MESSAGE_STREAM_POLICY", ArchiveSideDisposition::Retained),
     ("MESSAGE_STREAM_RECEIPT", ArchiveSideDisposition::Retained),
     ("MODEL_OWNER_FALLBACK", ArchiveSideDisposition::Retained),
