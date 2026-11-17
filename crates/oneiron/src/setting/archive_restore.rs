@@ -311,9 +311,11 @@ fn seed_weight_stands(spec: &SettingSpec, mode: SettingMode, weight_runs: Option
 }
 
 /// Installs an absent row of a key with a change hook: the row as stored, then the hook over a
-/// change with no prior, both inside a savepoint. `None` when the hook refused: the savepoint
-/// rolled back the row and whatever the hook wrote before it refused, and the caller may try the
-/// row again after other rows have landed.
+/// change with no prior, both inside a savepoint. The row keeps its archived set time; the hook's
+/// change is stamped with this restore's time, so an effect the hook starts restarts from now
+/// (ARCHIVE-RESTORE-LIVE = B). `None` when the hook refused: the savepoint rolled back the row
+/// and whatever the hook wrote before it refused, and the caller may try the row again after
+/// other rows have landed.
 fn install_through_hook_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -339,6 +341,7 @@ fn install_through_hook_in_txn(
         }
         Err(error) => return Err(error),
     }
+    let now = crate::ports::recorded_at_in_txn(&vault.store, &mut savepoint)?;
     let change = SettingChange {
         id: vault.store.clock.entity_id()?,
         sequence: checked.stored.change,
@@ -350,7 +353,7 @@ fn install_through_hook_in_txn(
         setter: checked.stored.setter,
         prior: None,
         value: Some(checked.stored.value.clone()),
-        at: checked.stored.set_at,
+        at: now,
         why: None,
         weight_runs: checked.stored.weight_runs,
     };
