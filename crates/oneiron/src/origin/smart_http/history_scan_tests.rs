@@ -375,6 +375,7 @@ fn a_window_past_the_blob_bound_publishes_a_refusal_naming_its_key() {
                 admission: None,
                 scan: ScanBounds::new(blob_bytes, 1).expect("bounds"),
                 spill_floor: None,
+                protected_ref: None,
             },
         )
         .expect("window answered");
