@@ -10,6 +10,8 @@
 
 use std::collections::BTreeMap;
 
+use oneiron_contracts::fingerprint::ContentHash;
+
 use super::super::git::validate_relative_repo_path;
 use super::{SnapshotCustody, StoredRepoSnapshot, StoredRepoSnapshotEntryKind, encode_snapshot};
 use crate::Vault;
@@ -103,7 +105,7 @@ impl Vault {
             entries,
         })?;
         Ok(RepoPinnedBase {
-            fork_hash: *blake3::hash(&encoded).as_bytes(),
+            fork_hash: *ContentHash::of(&encoded).as_bytes(),
             encoded,
             files,
         })
