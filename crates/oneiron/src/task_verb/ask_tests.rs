@@ -508,7 +508,9 @@ impl RuledAskFixture {
         let mut config = crate::test_util::embedding_test_config();
         config.store_clock = clock.bundle();
         let vault = Vault::open(dir.path(), config)?;
-        let owner = vault.ensure_embedded_owner_actor()?;
+        // A guest's admission gives its Ask Grant, whose act this install
+        // carries; a local human's ask gives none.
+        let (_, owner) = crate::test_support::provision_act_carrier(&vault);
         let mut people = Vec::new();
         for _ in 0..count {
             let person = EntityId::now();
