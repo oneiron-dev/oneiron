@@ -705,6 +705,7 @@ async fn mcp_room_history_reads_inside_the_rosters_scope() {
             occurred_at: 2,
             assertions: Default::default(),
             thread_audience: None,
+            project: None,
         })
         .expect("speak");
     let history = |id: &'static str, arguments: Value| {
@@ -801,6 +802,7 @@ async fn mcp_agent_rooms_return_typed_outputs_and_engine_exhaustion() {
                 occurred_at: at + 2,
                 assertions: Default::default(),
                 thread_audience: None,
+                project: None,
             })
             .expect("speak");
         turns.push(turn);
@@ -1006,6 +1008,7 @@ async fn mcp_agent_rooms_return_typed_outputs_and_engine_exhaustion() {
             occurred_at: 1_000,
             assertions: Default::default(),
             thread_audience: None,
+            project: None,
         })
         .expect("thread");
     for (verb, args) in [
@@ -1229,6 +1232,7 @@ async fn mcp_room_with_turns(
                 occurred_at: at + 2,
                 assertions: Default::default(),
                 thread_audience: None,
+                project: None,
             })
             .expect("speak");
         turns.push(turn);
