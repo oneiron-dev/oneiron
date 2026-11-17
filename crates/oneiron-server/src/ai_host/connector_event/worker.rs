@@ -431,6 +431,9 @@ fn enter_thread_breakpoint(
         budget_units: server.ai.chat.turn_budget_units,
         message,
         sources: None,
+        // The flight starts only once the reply's body is kept, so its runs
+        // keep their record (census L5-25).
+        keeps_no_record: false,
     };
     match server.ai.enter_chat_breakpoint(call, admitted, None) {
         Ok(()) | Err(ConversationCompactionUnavailable::Quiet) => {}
