@@ -18,8 +18,8 @@
 use oneiron::EntityId;
 use oneiron::authority::{
     CarrierReading, MachineDeviceClass, MachineOwnership, MachineRole, PromptDeviceName,
-    RecoveryRootId, held_answer_prompt, machine_code_line, machine_key_code, pin_request_prompt,
-    recovery_root_code,
+    RecoveryRootId, held_answer_prompt, machine_code_check_line, machine_code_line,
+    machine_key_code, pin_request_prompt, recovery_root_code,
 };
 
 const ROOT: RecoveryRootId = RecoveryRootId([0xA5; 32]);
@@ -385,6 +385,56 @@ fn a_machine_key_code_is_derived_as_a_root_code_is() {
              name."
         )
     );
+}
+
+/// The line under the code says what to do with it, in the UI session's
+/// three forms: by the name the owner set or confirmed, by the device's kind
+/// when no name is held, and with no name at all when the name is only the
+/// device's own report, so nobody looks for the device by a name anyone can
+/// pick. A name that spells a slot is printed as it is.
+#[test]
+fn the_line_under_the_code_says_to_dismiss_a_code_that_differs() {
+    assert_eq!(
+        machine_code_check_line(
+            MachineDeviceClass::Computer,
+            PromptDeviceName::OwnerSetOrConfirmed("office-mini")
+        ),
+        "It should match the code on office-mini. If they differ, dismiss this."
+    );
+    assert_eq!(
+        machine_code_check_line(MachineDeviceClass::Phone, NOT_HELD),
+        "It should match the code on that phone. If they differ, dismiss this."
+    );
+    assert_eq!(
+        machine_code_check_line(MachineDeviceClass::Computer, NOT_HELD),
+        "It should match the code on that computer. If they differ, dismiss this."
+    );
+    for reported in ["office-mini", "{name}", "{kind}"] {
+        assert_eq!(
+            machine_code_check_line(
+                MachineDeviceClass::Computer,
+                PromptDeviceName::ReportedByDevice(reported)
+            ),
+            "Check the code on the device itself, not by its name. If they differ, dismiss this."
+        );
+    }
+    assert_eq!(
+        machine_code_check_line(
+            MachineDeviceClass::Phone,
+            PromptDeviceName::OwnerSetOrConfirmed("{kind} {code}")
+        ),
+        "It should match the code on {kind} {code}. If they differ, dismiss this."
+    );
+    // A name with nothing left once it is printed names the device by its kind.
+    for blank in [
+        PromptDeviceName::OwnerSetOrConfirmed(" \n"),
+        PromptDeviceName::ReportedByDevice("“”"),
+    ] {
+        assert_eq!(
+            machine_code_check_line(MachineDeviceClass::Phone, blank),
+            "It should match the code on that phone. If they differ, dismiss this."
+        );
+    }
 }
 
 /// A name is printed on the line it stands in and cannot leave it: control
