@@ -19,6 +19,7 @@ pub(super) use guard::validate_notice_companion;
 use guard::validate_word;
 #[cfg(feature = "sync")]
 pub(crate) use guard::waits_for_ask_group;
+pub(crate) use guard::{ask_record_dependencies, is_ask_record_body};
 use rmpv::Value;
 use serde::{Deserialize, Serialize};
 
@@ -356,6 +357,37 @@ pub(super) fn put<T: Serialize>(
         .put_task_fact(&id, &encoded, now)
         .apply(txn)?;
     Ok(())
+}
+
+impl Vault {
+    /// The owner's restore of one archived ask record (FIX
+    /// OWNER-RESTORE-REFUSES-TASK-ASK-RECORDS). The record lands at its archived
+    /// id with its archived body, byte for byte, born at `birth_facet`, its
+    /// archived birth, through the engine's fact put. That put's guard
+    /// ([`guard_ask_fact_put`]) checks it as it checks a replayed record: its
+    /// one exact schema, its derived id, and the group or intent it names. Its
+    /// times must be one instant, as every ask record put writes them; any
+    /// other refuses the import.
+    pub(crate) fn restore_archived_ask_record_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        id: &EntityId,
+        body: &[u8],
+        occurred: crate::TimeRange,
+        learned_at: u64,
+        birth_facet: Option<EntityId>,
+    ) -> Result<()> {
+        if occurred.start != learned_at || occurred.end != learned_at {
+            return Err(Error::Record(RecordError::InvalidTaskBody(
+                "archived ask record times",
+            )));
+        }
+        self.batch_in()
+            .mask(birth_facet)
+            .put_task_fact(id, body, learned_at)
+            .apply(wtxn)?;
+        Ok(())
+    }
 }
 
 /// An ask group as its handle's verbs read it: readable, or kept by a world
