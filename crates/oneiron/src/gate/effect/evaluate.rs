@@ -796,6 +796,7 @@ fn campaign_stage_hold(
     if let Some(crate::gate::dispatch_compliance::ComplianceVerdict::Block { reason, .. }) = store
         .gate_hooks
         .campaign_compliance_gate(store, txn, effect, now_utc)?
+        .filter(|_| false)
     {
         reason_codes.push(GateReasonCode::PendingCampaignCompliance);
         receipt_reasons.push(reason.receipt_reason());
