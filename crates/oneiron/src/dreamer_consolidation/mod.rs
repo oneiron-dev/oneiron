@@ -107,7 +107,10 @@ pub use conflict::*;
 #[cfg(oneiron_test_support)]
 pub(crate) use executor::extraction::entity_id_from_hex;
 pub use executor::*;
-pub(crate) use extracted_people::{delete_lineage_origin_in_txn, pin_lineage_origin_in_txn};
+pub(crate) use extracted_people::{
+    delete_lineage_origin_in_txn, has_name_span, normalize_name_span, origin_in_txn,
+    pin_lineage_origin_in_txn, speaker_admissible_in_txn,
+};
 pub use gap::*;
 pub(crate) use neighbourhood::unpin_neighbourhood_in_txn;
 pub(crate) use partition::PartitionAudience;
@@ -163,7 +166,7 @@ pub use settle::{
 };
 pub(crate) use settle::{
     apply_settlement_in_txn, marker_ids, open_conflict_in_txn, open_conflicts_in_txn,
-    revert_settlement_in_txn, settled_answers_in_txn,
+    revert_settlement_in_txn, settled_answers_in_txn, settlement_revert_lifts_restriction_in,
 };
 pub use sieve_ports::{
     ExtractionPorts, NeighbourhoodExtraction, NeighbourhoodExtractionPort, PortFuture,
@@ -271,3 +274,8 @@ pub(crate) fn retained_alternatives_entry_for_test(
 ) -> crate::Result<(rmpv::Value, rmpv::Value)> {
     retained_conflict::alternatives_entry(members, attempt)
 }
+
+#[cfg(oneiron_test_support)]
+pub(crate) use self::{
+    gap::branch_gap_key_pin_for_test, neighbourhood::listing_pin_key_pin_for_test,
+};
