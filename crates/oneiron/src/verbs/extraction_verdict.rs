@@ -156,3 +156,23 @@ pub struct EarlierAnswer {
     /// The earlier answer, inside that question canonical options.
     pub answer: String,
 }
+
+/// Represents one answered extraction pack question with its pack key and native ladder answer.
+///
+/// A bound extraction verdict answers one entry per pack question in pack order. The key uses the pack question key part mapping, so native text and decimal numbers render verbatim and binary parts render as lowercase hexadecimal. The answer, probability, rung and receipt use the same native decision types as the top level verdict fields, and the question names the typed question this entry answers.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AiVerdictPackEntry {
+    /// Holds the native key parts this entry answers as text, decimal numbers or lowercase hexadecimal.
+    pub key: Vec<String>,
+    /// Holds the ladder answer on this question contract.
+    pub answer: crate::llm::decision::DecisionAnswer,
+    /// Holds the answer probability, which is none when the ladder abstained or read no coordinates.
+    pub p: Option<f64>,
+    /// Names the rung whose answer stands, which is none when the question abstained.
+    pub rung: Option<crate::llm::decision::DecisionRung>,
+    /// Names the typed question this entry answers as 32 lowercase hexadecimal digits.
+    pub question: crate::EntityId,
+    /// Holds the native decision receipt for this question.
+    pub receipt: crate::llm::decision::DecisionReceipt,
+}

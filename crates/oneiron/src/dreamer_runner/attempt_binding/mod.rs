@@ -15,9 +15,11 @@
 mod decisions;
 mod extraction_decisions;
 mod extraction_evidence;
+mod extraction_execution;
 mod invocation;
 
 pub use decisions::DreamerDecisionLender;
+pub use extraction_execution::ExtractionDecisionLoan;
 
 use std::fmt;
 use std::sync::Arc;

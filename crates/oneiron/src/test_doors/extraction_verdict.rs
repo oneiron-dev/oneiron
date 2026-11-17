@@ -1,11 +1,18 @@
-//! One stored claim for extraction verdict tests, with Dreamer versions of pinned rows.
+//! Stored extraction claim fixtures and native-versus-bound verdict parity doors.
 //!
 //! A correction pack needs a stored claim about its candidate subject inside the attempt
-//! listing. The listing claim lands through the production unbound consolidation pass, the
-//! subject is read back through the production claim read, and versions are read through
-//! the production scoped version read as the Dreamer reads them. Resolution fixtures name
-//! a bare subject through the existing named person door, so nothing here mints a subject,
-//! a binding, pages, or asks a verdict.
+//! listing. That fixture uses production consolidation and reads source versions as the
+//! Dreamer reads them. Resolution fixtures name a bare subject through the named person
+//! door. The lender child owns the parity resources and lends them to the engine callback.
+//! Its native door reads one pack through the native wrapper without running a pass.
+
+mod lender;
+
+pub use lender::{
+    ExtractionVerdictFixture, ExtractionVerdictNativePack, NativePackAnswer, NativePackSpent,
+    attach_extraction_verdict_lender, fixture_charge_binding_count, fixture_charge_units,
+    fixture_spent_observations, run_extraction_verdict_native_pack,
+};
 
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;

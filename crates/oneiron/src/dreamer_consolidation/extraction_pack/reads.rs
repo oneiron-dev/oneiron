@@ -14,7 +14,9 @@ use std::collections::BTreeMap;
 
 use super::super::branch::BranchAxes;
 use super::super::call_labels::{CallLabelMap, LabelKind};
-use super::super::conflict::{PriorHead, candidate_facts, route_bound_priors};
+use super::super::conflict::{
+    ConflictIdentity, PriorHead, candidate_facts, conflict_open_marker_id, route_bound_priors,
+};
 use super::super::executor::extraction::corrections::{
     NumberedCorrectionCandidate, NumberedListedClaim, correction_candidate_bytes,
     correction_choice_specs, correction_frame_bytes, correction_listed_bytes,
@@ -44,12 +46,14 @@ use crate::write_envelope::ClaimCandidate;
 pub(super) struct CheckedCandidate {
     /// The native deterministic id derived for its operand.
     pub(super) claim_id: EntityId,
-    /// The stamped subject correction states read.
+    /// The operand subject correction states read.
     pub(super) subject: EntityId,
-    /// The stamped predicate correction states read.
+    /// The operand predicate correction states read.
     pub(super) predicate: String,
     /// The proposed value as JSON text, as correction states show it.
     pub(super) value_text: String,
+    /// The branch project its sources share, as the native build stamps it.
+    pub(super) project: EntityId,
     /// The assembled proposal with its native id, as nomination routes it.
     pub(super) proposal: PromotionCandidate,
 }
@@ -91,8 +95,9 @@ impl CheckedPack {
 }
 
 /// One conflict as a resolution rebuild reads it: its rows for reads, its
-/// routed heads, whether its members span predicates, and the pack-ordered
-/// candidate ids alias mapping resolves.
+/// routed heads, whether its members span predicates, the pack-ordered
+/// candidate ids alias mapping resolves, and the retained set identity with
+/// its native evidence and ask correlation for the lent execution.
 pub(super) struct BuiltConflict {
     /// The conflict rows native reads page and render.
     pub(super) rows: ConflictRows,
@@ -102,6 +107,13 @@ pub(super) struct BuiltConflict {
     pub(super) across: bool,
     /// The derived candidate ids in pack order, for alias mapping.
     pub(super) candidate_ids: Vec<EntityId>,
+    /// The retained conflict identity, for the execution subject and project.
+    pub(super) identity: ConflictIdentity,
+    /// The native evidence in native order: the routed heads, then the member
+    /// source TURNs sorted and deduped.
+    pub(super) evidence: Vec<EntityId>,
+    /// The ask correlation of the rebuilt set in this attempt.
+    pub(super) correlation: EntityId,
 }
 
 impl BuiltConflict {
@@ -155,6 +167,42 @@ pub(super) fn correction_sets(
         }
     }
     Ok((entries, listed))
+}
+
+/// The native correction evidence over `checked`: every rebuilt listed claim
+/// in native order, then the asked candidates' source TURNs sorted and
+/// deduped, excluding any TURN already listed. This mirrors the native
+/// correction pack's one evidence set across all its pages.
+pub(super) fn correction_evidence(checked: &CheckedPack) -> Vec<EntityId> {
+    let mut evidence: Vec<EntityId> = checked.listed_ids();
+    let mut turns: Vec<EntityId> = checked
+        .pairs
+        .iter()
+        .filter_map(|(position, _)| checked.rows.get(*position))
+        .flat_map(|row| row.proposal.evidence_turn_refs.iter().copied())
+        .filter(|turn| !evidence.contains(turn))
+        .collect();
+    turns.sort_unstable();
+    turns.dedup();
+    evidence.extend(turns);
+    evidence
+}
+
+/// The native correction route project over `checked`: the one project every
+/// asked candidate shares, or none when they span projects or none is asked.
+/// This mirrors the native correction pack's unanimous project.
+pub(super) fn correction_project(checked: &CheckedPack) -> Option<EntityId> {
+    let mut asked = checked
+        .pairs
+        .iter()
+        .filter_map(|(position, _)| checked.rows.get(*position))
+        .map(|row| row.project);
+    let first = asked.next()?;
+    if asked.all(|project| project == first) {
+        Some(first)
+    } else {
+        None
+    }
 }
 
 /// Every pack candidate checked with the listing its pairs need: each subject
@@ -258,9 +306,10 @@ pub(super) fn check_pack_candidates(
         let facts = candidate_facts(&candidate)?;
         rows.push(CheckedCandidate {
             claim_id,
-            subject: facts.subject,
-            predicate: facts.predicate.clone(),
+            subject: *subject,
+            predicate: operand.predicate.clone(),
             value_text: operand.value.to_string(),
+            project: facts.project,
             proposal: PromotionCandidate {
                 claim_id,
                 candidate,
@@ -394,12 +443,14 @@ pub(super) fn correction_page_entries(
 /// and threshold, then [`route_bound_priors`] over the bound heads. The pack
 /// is one conflict exactly when routing leaves a single set covering every
 /// candidate, exactly-restated members aside. Returns its rows for reads,
-/// its heads, and whether members span predicates.
+/// its heads, whether members span predicates, and the retained set identity
+/// with its native evidence and ask correlation for the lent execution.
 pub(super) fn resolution_conflict(
     rows: &[CheckedCandidate],
     bound: &BoundBranchRead,
     read: &ScopedRead<'_>,
     txn: &heed::RoTxn<'_>,
+    attempt: AttemptId,
 ) -> Result<BuiltConflict> {
     let proposals: Vec<PromotionCandidate> = rows.iter().map(|row| row.proposal.clone()).collect();
     let mut embeddings: BTreeMap<EntityId, Vec<f32>> = BTreeMap::new();
@@ -467,11 +518,26 @@ pub(super) fn resolution_conflict(
         .map(|proposal| &proposal.candidate)
         .collect();
     let across = resolution_spans_predicates(&set.identity, &member_candidates);
+    let mut evidence: Vec<EntityId> = set.prior_heads.clone();
+    let mut turns: Vec<EntityId> = set
+        .candidate_indexes
+        .iter()
+        .filter_map(|index| rows.get(*index))
+        .flat_map(|row| row.proposal.evidence_turn_refs.iter().copied())
+        .filter(|turn| !evidence.contains(turn))
+        .collect();
+    turns.sort_unstable();
+    turns.dedup();
+    evidence.extend(turns);
+    let correlation = conflict_open_marker_id(set, attempt)?;
     Ok(BuiltConflict {
         rows: ConflictRows::from_rows(&set.identity, &members, &shown),
         priors: set.prior_heads.clone(),
         across,
         candidate_ids: rows.iter().map(|row| row.claim_id).collect(),
+        identity: set.identity.clone(),
+        evidence,
+        correlation,
     })
 }
 
