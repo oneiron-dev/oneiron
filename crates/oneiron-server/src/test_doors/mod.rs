@@ -9,6 +9,7 @@ pub mod big_rung;
 pub mod board_keyframe_child_release;
 pub mod booking_turn_line;
 pub mod build_server;
+pub mod calendar_egress;
 pub mod calendar_ics_egress;
 pub mod catch_all_status;
 pub mod coach_round;
