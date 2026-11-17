@@ -153,6 +153,7 @@ impl<'a> NativeReadCapture<'a> {
             read_world_epoch: None,
             read_worlds: None,
             read_world_unknown: vec![ReadWorldUnknown::Uncaptured],
+            context: None,
             tools_present: false,
             summary_requested: false,
             erased: false,

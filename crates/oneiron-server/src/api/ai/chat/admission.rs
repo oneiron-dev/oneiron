@@ -131,6 +131,12 @@ pub(in crate::api::ai::chat) async fn start_turn(
     // after its witness, when its request holds no caller line: a caller's
     // history is never ledger evidence.
     let first_turn = first_turn.filter(|_| request.history.len().min(settings.history_turns) == 0);
+    // HANDOFF-CONTEXT: the earlier lines the branch below puts in the
+    // request, kept on the call's record with its board's place.
+    let context_history = match &self_chat {
+        Some(chat) => super::context_form::retained_log(chat.log()),
+        None => super::context_form::caller_lines(request.history.len(), settings.history_turns),
+    };
     match &self_chat {
         Some(chat) => {
             chat.push_log(&mut messages);
@@ -612,6 +618,11 @@ pub(in crate::api::ai::chat) async fn start_turn(
             model_call_caller: actor,
             model_call_room: origin,
             model_call_no_record_at_arrival,
+            model_call_context: Some(super::context_form::turn(
+                context_history,
+                recalled,
+                omitted.is_some(),
+            )),
             keepalive,
             mark,
             // FIX 5033: its seed binds the user turn this request answers,

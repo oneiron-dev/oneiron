@@ -12,10 +12,18 @@
 //! and no answer tells an unreadable turn from a missing one. A readable turn
 //! with no linked call answers `unknown`: a reply captured before the link
 //! existed, one off the record, or a turn no model answered.
+//!
+//! Each call also names what its request was assembled from, where its
+//! capture kept it (FIX HANDOFF-CONTEXT): a first turn, the agent's retained
+//! log, the caller's own lines, or a turn action, and whether the board
+//! rode. A summary or turn the caller cannot read is left out of the refs.
 
 use serde::{Deserialize, Serialize};
 
 use crate::claim::{ClaimReadStatus, ScopedReadResult};
+use crate::code_run::model_call::{
+    ModelCallBoard, ModelCallContext, ModelCallHistory, ModelCallTurnAction,
+};
 use crate::entity_id::EntityId;
 use crate::memory::{MEMORY_CODE_NOT_FOUND, Memory, MemoryError, MemoryResult, resolve_entity_ref};
 use crate::registry::ENTITY_TYPE_TURN;
@@ -72,6 +80,103 @@ pub struct TurnModelCallView {
     pub model: String,
     /// The provider segment of `model`.
     pub provider: String,
+    /// What the call's request was assembled from; absent where its capture
+    /// kept none (unknown).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context: Option<TurnCallContextView>,
+}
+
+/// What one call's request was assembled from.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(tag = "form", rename_all = "snake_case")]
+pub enum TurnCallContextView {
+    /// A chat turn: its earlier lines and its board.
+    Turn {
+        history: TurnCallHistoryView,
+        board: TurnCallBoardView,
+    },
+    /// A turn action answering a saved turn again from the ledger.
+    TurnAction { action: TurnCallActionView },
+}
+
+/// The earlier lines a chat turn's request carried.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum TurnCallHistoryView {
+    /// No earlier line: the thread's first turn.
+    Cold,
+    /// The agent's retained log: the compaction summaries standing in it,
+    /// then the raw turns after them, as 32-hex, each one the caller reads.
+    RetainedLog {
+        summary_refs: Vec<String>,
+        raw_turn_refs: Vec<String>,
+    },
+    /// The caller's own lines: the latest `kept` rode, `dropped` earlier
+    /// ones were past the history bound.
+    CallerLines { kept: u64, dropped: u64 },
+}
+
+/// Whether a chat turn's board rode its call.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum TurnCallBoardView {
+    Rode,
+    Omitted,
+    Absent,
+}
+
+/// The turn action a call answered.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum TurnCallActionView {
+    Continue,
+    Retry,
+}
+
+/// `context` as the caller may see it: each summary and raw turn it reads.
+fn context_view(
+    memory: &Memory<'_>,
+    context: ModelCallContext,
+    readable: impl Fn(&EntityId) -> crate::error::Result<bool>,
+) -> MemoryResult<TurnCallContextView> {
+    let readable_refs = |ids: Vec<EntityId>| -> MemoryResult<Vec<String>> {
+        let mut refs = Vec::with_capacity(ids.len());
+        for id in ids {
+            if readable(&id)? {
+                memory.produced_from([id]);
+                refs.push(id.to_hex());
+            }
+        }
+        Ok(refs)
+    };
+    Ok(match context {
+        ModelCallContext::Turn { history, board } => TurnCallContextView::Turn {
+            history: match history {
+                ModelCallHistory::Cold => TurnCallHistoryView::Cold,
+                ModelCallHistory::RetainedLog {
+                    summaries,
+                    raw_turns,
+                } => TurnCallHistoryView::RetainedLog {
+                    summary_refs: readable_refs(summaries)?,
+                    raw_turn_refs: readable_refs(raw_turns)?,
+                },
+                ModelCallHistory::CallerLines { kept, dropped } => {
+                    TurnCallHistoryView::CallerLines { kept, dropped }
+                }
+            },
+            board: match board {
+                ModelCallBoard::Rode => TurnCallBoardView::Rode,
+                ModelCallBoard::Omitted => TurnCallBoardView::Omitted,
+                ModelCallBoard::Absent => TurnCallBoardView::Absent,
+            },
+        },
+        ModelCallContext::TurnAction { action } => TurnCallContextView::TurnAction {
+            action: match action {
+                ModelCallTurnAction::Continue => TurnCallActionView::Continue,
+                ModelCallTurnAction::Retry => TurnCallActionView::Retry,
+            },
+        },
+    })
 }
 
 /// `vault.conversations.turns.models`: each listed turn's answering models,
@@ -135,12 +240,18 @@ pub fn conversation_turn_models(
                 if !calls.is_empty() {
                     memory.produced_from([message]);
                 }
-                view.calls
-                    .extend(calls.into_iter().map(|call| TurnModelCallView {
+                for call in calls {
+                    let context = match call.context {
+                        Some(context) => Some(context_view(memory, context, &readable)?),
+                        None => None,
+                    };
+                    view.calls.push(TurnModelCallView {
                         message_ref: message.to_hex(),
                         provider: call.rung.model.provider().to_owned(),
                         model: call.rung.model.as_str().to_owned(),
-                    }));
+                        context,
+                    });
+                }
             }
             view.state = if view.calls.is_empty() {
                 TurnModelsState::Unknown
