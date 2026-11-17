@@ -11,6 +11,10 @@
 //!   A check-in for another note's history erases nothing and stays unspent.
 //! - With two Owners the purge waits on its `erase` act, and the act records
 //!   the decision.
+//! - With one Owner the purge erases at once, so it takes the owner's shared
+//!   confirm (L8-49): the call passes back the confirm
+//!   `vault.owner_confirm.preview` returned for it, and the preview names the
+//!   same `check_in_ref`. The two-Owner start takes none (PURGE-START).
 //!
 //! On the base (2k2a) this file does not build: the purge request has no
 //! `check_in_ref`, its outcome no `check_in`, and
@@ -29,7 +33,8 @@ use oneiron::federation::{FederationGrantRole as Role, InitialSharedMember};
 use oneiron::note::TakeTarget;
 use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::verbs::{
-    NoteHistoryPurgeOutcome, NoteHistoryPurgeRequest, purge_note_history_as_owner,
+    NoteHistoryPurgeOutcome, NoteHistoryPurgeRequest, OwnerConfirmPreviewRequest,
+    preview_owner_confirm, purge_note_history_as_owner,
 };
 use oneiron::{EdgeActorClass, EntityId, TimeRange};
 use owner_apply_fixture::{approved, owner_decision, proof, rooted, spent};
@@ -48,12 +53,27 @@ fn the_owner_applies_an_approved_history_purge_once() {
         EntityId::from_hex(&take.id_hex).expect("a note id")
     };
     let purge = |note: EntityId, check_in_ref: Option<EntityId>| {
+        let input = NoteHistoryPurgeRequest {
+            note_ref: note.to_hex(),
+            confirm: None,
+            check_in_ref: check_in_ref.map(|id| id.to_hex()),
+        };
+        let confirm = preview_owner_confirm(
+            &memory,
+            &owner_proof,
+            OwnerConfirmPreviewRequest {
+                verb: HISTORY_PURGE.to_owned(),
+                input: serde_json::to_value(&input).expect("the purge input encodes"),
+            },
+        )
+        .expect("the owner previews the purge")
+        .confirm;
         purge_note_history_as_owner(
             &vault,
             &owner_proof,
             NoteHistoryPurgeRequest {
-                note_ref: note.to_hex(),
-                check_in_ref: check_in_ref.map(|id| id.to_hex()),
+                confirm: Some(confirm),
+                ..input
             },
         )
     };
@@ -149,10 +169,11 @@ fn a_history_purge_held_by_the_veto_window_records_its_decision_on_its_act() {
         &owner_proof,
         NoteHistoryPurgeRequest {
             note_ref: note.to_hex(),
+            confirm: None,
             check_in_ref: None,
         },
     )
-    .expect("the owner starts the purge");
+    .expect("the owner starts the purge with no confirm");
     let (act_id, check_in) = match outcome {
         NoteHistoryPurgeOutcome::Waiting {
             act_id, check_in, ..
