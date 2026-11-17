@@ -240,6 +240,9 @@ impl ScopedRead<'_> {
             };
             // A file-plane ASSET reads as its body, never its manifest.
             let raw = self.vault.scoped_row_bytes_in_txn(&txn, &record.id, raw)?;
+            // A reaction claim names its reactor only to a reader who may
+            // read them (FIX REACTION-CLAIM-VALUE-REACTOR-ID).
+            let raw = self.redact_reaction_row_in(&txn, raw)?;
             let header =
                 EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
             value.push(Some((
@@ -387,6 +390,7 @@ impl ScopedRead<'_> {
                     ),
                 });
             }
+            let raw = self.redact_reaction_row_in(&txn, raw)?;
             parts.push((
                 header.entity_type,
                 header.learned_at,

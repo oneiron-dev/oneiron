@@ -209,6 +209,43 @@ pub(crate) fn decode_echo(body: &ClaimBody) -> Option<ReactionExternalId> {
         .flatten()
 }
 
+/// The person a `conversation.reaction` claim names as its reactor: the `by`
+/// of its value, read alone so a value the strict decode refuses still names
+/// it, or else its writer stamp. Any other claim names none.
+pub(crate) fn named_reactor(body: &ClaimBody) -> Option<EntityId> {
+    if body.predicate != PREDICATE_CONVERSATION_REACTION {
+        return None;
+    }
+    let by = match &body.value {
+        Value::Map(entries) => entries
+            .iter()
+            .find(|(key, _)| key.as_str() == Some(KEY_BY))
+            .and_then(|(_, value)| match value {
+                Value::Binary(bytes) => {
+                    EntityId::from_bytes(bytes.as_slice().try_into().ok()?).ok()
+                }
+                _ => None,
+            }),
+        _ => None,
+    };
+    by.or_else(|| crate::claim::claim_author(body))
+}
+
+/// A reaction claim as a reader who may not read its reactor gets it: no `by`
+/// in its value and no writer stamp in its evidence. The predicate, subject,
+/// glyph and time stay, so it still reads as the reaction it counts as
+/// (Engine ANSWER REACTION-CLAIM-VALUE-REACTOR-ID = A, 17 Nov 07:32).
+pub(crate) fn withhold_reactor(body: &mut ClaimBody) {
+    if let Value::Map(entries) = &mut body.value {
+        entries.retain(|(key, _)| key.as_str() != Some(KEY_BY));
+    }
+    if let Some(Value::Map(entries)) = &mut body.evidence {
+        entries.retain(|(key, _)| {
+            key.as_str() != Some(crate::write_envelope::WRITE_ENVELOPE_EVIDENCE_ACTOR_KEY)
+        });
+    }
+}
+
 use crate::entity_id::derived_domains::CONVERSATION_MIRROR_ACTOR;
 
 /// The engine's conversation-mirror write actor: one deterministic MACHINE.
