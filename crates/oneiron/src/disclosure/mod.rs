@@ -16,6 +16,7 @@ mod clearance_use;
 mod disclosable_set;
 mod home;
 mod import_audience;
+mod mail_attachments;
 mod model_channel;
 mod retained_copies;
 mod room_party;
@@ -34,6 +35,7 @@ pub use self::disclosable_set::{DisclosableSet, disclosable_set};
 pub use self::home::{ConversationHome, HomeClearanceRequest, HomeClearanceSet, HomeClearanceView};
 pub(crate) use self::import_audience::decode_import_audience_value;
 pub use self::import_audience::import_audience_rule_ref;
+pub(crate) use self::mail_attachments::{MailAttachmentRows, mail_attachment_denial_in};
 pub use self::model_channel::{
     DisclosureBand, DisclosureCeilingRequest, DisclosureCeilingSet, DisclosureCeilingView,
     DisclosureDataClass,

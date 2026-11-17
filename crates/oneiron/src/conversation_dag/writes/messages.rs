@@ -23,6 +23,7 @@ use crate::registry::{ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_MESSAGE, ENTITY_TYPE
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 use crate::{EntityId, Vault};
 use heed::{RoTxn, RwTxn};
+use oneiron_contracts::msgpack::{self, MsgpackError};
 use rmpv::Value;
 
 /// The seven axes a MESSAGE body holds, each once.
@@ -270,14 +271,12 @@ fn require_free_order(vault: &Vault, txn: &RoTxn<'_>, turn: EntityId, order: u32
 
 /// A MessagePack map body, whole.
 fn decode_map(body: &[u8]) -> Result<Vec<(Value, Value)>> {
-    let mut input = body;
-    let Ok(Value::Map(fields)) = rmpv::decode::read_value(&mut input) else {
-        return Err(invalid("record body must be a map"));
-    };
-    if !input.is_empty() {
-        return Err(invalid("trailing record body bytes"));
-    }
-    Ok(fields)
+    msgpack::decode_map(body).map_err(|error| {
+        invalid(match error {
+            MsgpackError::Trailing => "trailing record body bytes",
+            _ => "record body must be a map",
+        })
+    })
 }
 
 /// The envelope the append body `fields` names, each axis once and nothing

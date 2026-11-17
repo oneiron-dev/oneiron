@@ -228,7 +228,10 @@ pub(crate) fn agent_id_pin_for_put_in_txn(
 /// Moves the pin at `id` to `def`'s ceiling, wider or not, keeping the
 /// lineage the id answers to. The owner's door
 /// (`Vault::update_agent_definition_as`) calls it in the transaction that
-/// writes `def`, after rechecking the owner's proof, and nothing else does.
+/// writes `def`, after rechecking the owner's proof. The ceiling writer
+/// (`Vault::write_agent_ceiling_at_version_in_txn`) calls it too, for the
+/// owner's apply of an action-mode patch and for the night's apply of one
+/// under the owner's `dreamer.action_mode.auto_apply_patch` (C22).
 ///
 /// # Errors
 ///
