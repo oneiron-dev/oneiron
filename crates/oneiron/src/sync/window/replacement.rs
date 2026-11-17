@@ -212,6 +212,9 @@ pub(in crate::sync) fn prepare_bounded_replacement(
         super::validate_window_update_with_staged_worlds,
     )?;
 
+    // Seeded fault (red3): the candidate writes under the old window's author.
+    candidate.set_peer_id(old.peer_id()).map_err(|_| rejected())?;
+
     // The work happens on a detached copy of the old window: what this prepares there (queued
     // sends, scrubs, pending mirrors) feeds the carry-over and never leaves through the live
     // window's observers, whose document the replacement retires.
