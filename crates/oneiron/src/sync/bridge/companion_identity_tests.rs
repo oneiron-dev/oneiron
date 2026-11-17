@@ -781,12 +781,15 @@ fn a_restore_keeping_authority_redecides_edges_under_the_current_roster() {
     }
 }
 
-/// Standing follows the posture a vault opens with. Reopened as a hosted
-/// vault, whose root never vouches that a machine is the owner's, a paired
-/// laptop's merge leaves force with no authority write in between, and it
-/// comes back when the vault opens self-hosted again.
+/// Standing carries over a reopen under another posture (Engine ANSWER
+/// HOSTED-REFOLD-SELF-HOST-ROOT-CUSTODY = A): host custody comes from the
+/// log's cloud stamp, and a self-host root carries none, so reopened as a
+/// hosted vault its vouch that the laptop is the owner's still counts and
+/// the laptop's merge keeps force, and it does when the vault opens
+/// self-hosted again. Only a root move under the Hosted posture, to a
+/// stamped root, takes the root into the host's custody.
 #[test]
-fn a_reopen_under_another_posture_redecides_the_stored_edges() {
+fn a_reopen_under_the_hosted_posture_keeps_the_self_host_roots_vouch() {
     let host = host();
     let (_laptop_dir, laptop) = install();
     enroll(&host, &laptop, MachineRole::Owned(MachineOwnership::Yours));
@@ -813,8 +816,8 @@ fn a_reopen_under_another_posture_redecides_the_stored_edges() {
         },
     )
     .unwrap();
-    assert!(!shell_edge(&hosted, loser, survivor));
-    assert_eq!(folded_state(&hosted, loser), EntityLifecycleState::Active);
+    assert!(shell_edge(&hosted, loser, survivor));
+    assert_eq!(folded_state(&hosted, loser), EntityLifecycleState::Merged);
 
     drop(hosted);
     let local = Vault::open(dir.path(), VaultConfig::default()).unwrap();

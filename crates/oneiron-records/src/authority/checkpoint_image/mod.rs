@@ -76,7 +76,11 @@ use serde::Serialize;
 /// binding, live or revoked, is `human` or of a live key a `human` binding could name (an owner
 /// or admin key, the custodial root's too), counts only with the proof of an owner key no cloud
 /// key holds (rows OLD-PARENTS-OWNER-BINDING-REVOKE, OLD-PARENTS-OWNER-BINDING-CONFLICT).
-pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 44;
+/// 45: host custody comes from the cloud stamp alone (`ROLE_CLOUD` or `CloudCustodial` on the key
+/// or a key that admitted it); the host-root attestation marks no key, so a self-host root keeps
+/// proving for the owner when its log is folded as hosted (row
+/// HOSTED-REOPEN-REJUDGES-SELF-HOST-ROOT).
+pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 45;
 
 /// The domain every encoded image starts with.
 pub const AUTHORITY_CHECKPOINT_V2_DOMAIN: &[u8] = b"oneiron/authority/checkpoint/v2";
