@@ -149,6 +149,11 @@ impl PriorEpoch {
     pub(crate) const fn new(epoch: u64, turn_end: u64) -> Self {
         Self { epoch, turn_end }
     }
+
+    /// The lineage's highest epoch number, stored or kept by its floor.
+    pub(crate) const fn epoch(self) -> u64 {
+        self.epoch
+    }
 }
 
 /// The claimed range must cover every distinct turn, in message-log order.

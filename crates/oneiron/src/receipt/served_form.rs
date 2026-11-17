@@ -15,6 +15,8 @@
 
 use std::collections::BTreeMap;
 
+use oneiron_store::receipt_ref::ReceiptRef;
+
 use super::kernel::FIELD_ASSET_REF;
 use super::{ReceiptKind, ReceiptRecord};
 use crate::claim::ScopedReadActorKey;
@@ -225,7 +227,7 @@ impl ServedForm {
 
 /// The receipt id of the served-form record stored at `id`.
 fn receipt_id(id: &EntityId) -> String {
-    format!("served_form:{}", id.to_hex())
+    ReceiptRef::served_form(*id).to_string()
 }
 
 /// The receipt the record at `id` carries: `served`, served to `holder` at
