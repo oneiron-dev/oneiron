@@ -7,9 +7,9 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::git_wire::GitOid;
 use crate::side_table::{self, Raw, SideTable};
-use crate::store::code_snapshot::entity_id_from_hash_material;
 use crate::write_envelope::claim_body::{ClaimBody, ClaimSubject, encode_claim_body};
 use oneiron_contracts::claim::{ClaimApprovalStatus, ClaimLifecycleStatus};
+use oneiron_contracts::fingerprint::purposes;
 use rmpv::Value;
 
 /// Tamper-detection proof hash pinning one repo.change claim's exact byte content: at publication
@@ -40,14 +40,14 @@ pub struct OriginChange {
     pub ref_name: String,
 }
 pub fn origin_change_id(repo: EntityId, commit: &GitOid) -> Result<EntityId> {
-    entity_id_from_hash_material(
-        b"oneiron:origin-change:v1",
+    EntityId::derive_legacy_material(
+        purposes::origin::CHANGE,
         &[repo.as_bytes(), commit.as_str().as_bytes()],
     )
 }
 fn claim_id(repo: EntityId, commit: &GitOid) -> Result<EntityId> {
-    entity_id_from_hash_material(
-        b"oneiron:origin-change-claim:v1",
+    EntityId::derive_legacy_material(
+        purposes::origin::CHANGE_CLAIM,
         &[repo.as_bytes(), commit.as_str().as_bytes()],
     )
 }

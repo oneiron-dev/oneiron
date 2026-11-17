@@ -17,6 +17,7 @@
 
 use std::collections::BTreeSet;
 
+use oneiron_contracts::fingerprint::purposes;
 use serde::{Deserialize, Serialize};
 
 use super::record::{ConnectorKeyStatus, invalid_body};
@@ -36,8 +37,6 @@ use crate::{EntityId, Vault};
 /// One logical call's scope signal. Key: the signal id.
 const SCOPE_SIGNALS: SideTable<EntityId, ConnectorSlateScopeSignal, Named> =
     SideTable::new(&side_table::CONNECTOR_SLATE_SCOPE_SIGNAL);
-/// A signal's id: its call's principal, attempt and sequence.
-const SCOPE_SIGNAL_DOMAIN: &[u8] = b"oneiron:connector-scope-signal:v1";
 /// The authority generation a signal was observed under.
 const AUTHORITY_GENERATION_DOMAIN: &[u8] = b"oneiron:connector-scope-generation:v1";
 /// The ramp target a signal's rulings fold into.
@@ -209,7 +208,7 @@ pub(crate) fn connector_scope_evidence(
         _ => return None,
     };
     let signal_id = EntityId::derive(
-        SCOPE_SIGNAL_DOMAIN,
+        purposes::connector::SCOPE_SIGNAL,
         &[
             held.principal_ref.as_bytes(),
             held.attempt,

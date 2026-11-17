@@ -23,6 +23,7 @@ use std::cell::Cell;
 use std::collections::HashSet;
 use std::time::{Duration, Instant};
 
+use oneiron_contracts::fingerprint::Purpose;
 use rmpv::Value as Msgpack;
 
 use super::ledger::{self, LedgerRow, content_hash};
@@ -151,9 +152,9 @@ fn label(text: &str) -> String {
     text[..end].to_owned()
 }
 
-pub(super) fn derive(domain: &[u8], parts: &[&str]) -> Result<EntityId> {
+pub(super) fn derive(purpose: Purpose, parts: &[&str]) -> Result<EntityId> {
     let parts: Vec<&[u8]> = parts.iter().map(|part| part.as_bytes()).collect();
-    EntityId::derive(domain, &parts)
+    EntityId::derive(purpose, &parts)
 }
 
 /// A refusal the import counts and goes past: the write door or a gate said

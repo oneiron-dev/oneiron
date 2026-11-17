@@ -4,6 +4,7 @@
 //! erased on this vault after raw record/claim binding has succeeded (FIX 9619).
 
 use heed::{RoTxn, RwTxn};
+use oneiron_contracts::fingerprint::purposes;
 
 use super::made_by::made_by_text;
 use super::provenance::blob_version_claim_value;
@@ -14,12 +15,10 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::temporal::TimeRange;
 
-const ERASED_PRODUCER_DOMAIN: &[u8] = b"oneiron:erased-producer:v1";
-
 /// The valid, deterministic id an erased producer keeps in the typed envelope.
 /// An ordinary hex actor is not reused: views can never mistake it for a live one.
 pub(super) fn erased_producer() -> Result<EntityId> {
-    Ok(EntityId::derive(ERASED_PRODUCER_DOMAIN, &[])?)
+    Ok(EntityId::derive(purposes::blob::ERASED_PRODUCER, &[])?)
 }
 
 /// Projects one already-bound stored record to this vault's current erase state.

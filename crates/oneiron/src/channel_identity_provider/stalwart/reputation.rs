@@ -1,4 +1,5 @@
 //! Real-signal snapshots written through the existing CID-5 claim family.
+use oneiron_contracts::fingerprint::purposes;
 use rmpv::Value;
 use serde::{Deserialize, Serialize};
 
@@ -223,7 +224,7 @@ impl StalwartClient {
         let mut claim_refs = Vec::new();
         for mut body in bodies {
             let id = EntityId::derive(
-                b"oneiron.native_mail.reputation.v1",
+                purposes::channel_identity::NATIVE_MAIL_REPUTATION,
                 &[
                     identity_ref.as_bytes(),
                     report.observation_ref.as_bytes(),

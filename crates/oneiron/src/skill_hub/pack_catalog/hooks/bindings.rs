@@ -3,6 +3,8 @@
 //! Entry: `PackHookBinding`. Defines its own items; the binding scan stays in `hooks`, its writes in `install`.
 
 use super::*;
+use crate::EntityId;
+use oneiron_contracts::fingerprint::purposes;
 
 /// A hook's binding: the claim payload under the subscription predicate.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -46,12 +48,9 @@ impl PackHookBinding {
         enabled: bool,
     ) -> Result<(EntityId, Self)> {
         let material: [&[u8]; 3] = [pack.as_bytes(), hook.name.as_bytes(), &hook.body_hash];
-        let code =
-            crate::codebase::entity_id_from_hash_material(b"oneiron.pack-hook.v1", &material)?;
-        let id = crate::codebase::entity_id_from_hash_material(
-            b"oneiron.pack-hook-binding.v1",
-            &material,
-        )?;
+        let code = EntityId::derive_legacy_material(purposes::skill_hub::PACK_HOOK, &material)?;
+        let id =
+            EntityId::derive_legacy_material(purposes::skill_hub::PACK_HOOK_BINDING, &material)?;
         Ok((
             id,
             Self {

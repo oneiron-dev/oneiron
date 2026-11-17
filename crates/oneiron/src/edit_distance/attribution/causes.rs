@@ -16,6 +16,8 @@
 
 use std::ops::RangeInclusive;
 
+use oneiron_contracts::fingerprint::purposes;
+
 use super::evidence_judge::judgment_row;
 use super::stored::{
     AMENDMENT_ATTEMPT, AMENDMENT_CAUSE, CAUSE_ROW_LABEL, JUDGMENT, ROW_VERSION,
@@ -27,9 +29,6 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::skill_attribution::displacing_revision_in_txn;
 use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
-
-/// Domain of a cause's source id: one id per receipt and judge-revision slot.
-const SOURCE_DOMAIN: &[u8] = b"oneiron:amendment-cause:v1";
 
 /// One judged amendment or rejection, as the judge revision that settled
 /// its cause row labeled it.
@@ -284,5 +283,8 @@ pub(crate) fn receipt_key_for_test(receipt: &str) -> [u8; 32] {
 }
 
 fn source_id(receipt: &str, slot: &str) -> Result<EntityId> {
-    EntityId::derive(SOURCE_DOMAIN, &[receipt.as_bytes(), slot.as_bytes()])
+    EntityId::derive(
+        purposes::learning::AMENDMENT_CAUSE,
+        &[receipt.as_bytes(), slot.as_bytes()],
+    )
 }

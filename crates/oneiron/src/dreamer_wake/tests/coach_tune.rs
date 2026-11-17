@@ -1,6 +1,8 @@
 //! The Coach's nightly retrieval tune (owner ruling 2026-10-16): a Timer wake
 //! runs it on the Dreamer's runner under the Coach's stamp.
 use super::*;
+use crate::EntityId;
+use oneiron_contracts::fingerprint::purposes;
 
 #[test]
 fn timer_wake_runs_the_coach_retrieval_tune_under_the_coach_stamp() -> Result<()> {
@@ -31,7 +33,7 @@ fn timer_wake_runs_the_coach_retrieval_tune_under_the_coach_stamp() -> Result<()
     let [tune] = tunes[..] else {
         panic!("a Timer wake enqueues one Coach retrieval tune, found {tunes:?}");
     };
-    let coach = crate::codebase::entity_id_from_hash_material(b"oneiron.coach.authority.v1", &[])?;
+    let coach = EntityId::derive_legacy_material(purposes::agent_def::COACH_AUTHORITY, &[])?;
     assert_eq!(
         vault
             .dreamer_attempt_authority(tune)?

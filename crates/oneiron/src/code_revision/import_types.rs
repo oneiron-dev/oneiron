@@ -12,7 +12,6 @@
 use serde::{Deserialize, Serialize};
 
 use crate::claim::{ClaimBody, ClaimSubject};
-use crate::codebase::entity_id_from_hash_material;
 use crate::critic::LensCatalog;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{ArtifactError, Error, Result};
@@ -21,8 +20,6 @@ use crate::error::{ArtifactError, Error, Result};
 pub(crate) use crate::store::code_import_manifest::IMPORT_MANIFEST_PREDICATE;
 #[doc(hidden)]
 pub(crate) use oneiron_records::code_revision::import_types::IMPORT_APPROVAL_PREDICATE;
-
-const APPROVAL_DOMAIN: &[u8] = b"oneiron:code-import-approval:v1";
 
 fn invalid(reason: &'static str) -> Error {
     Error::Artifact(ArtifactError::InvalidCodeArtifactBody(reason))
@@ -72,8 +69,8 @@ pub(crate) fn approval_id(approval: &CodeImportApproval) -> Result<EntityId> {
         .review
         .map(|review| review.to_hex())
         .unwrap_or_default();
-    entity_id_from_hash_material(
-        APPROVAL_DOMAIN,
+    EntityId::derive_legacy_material(
+        purposes::code::IMPORT_APPROVAL,
         &[
             approval.manifest.as_bytes(),
             approval.baseline_fold.as_bytes(),
@@ -96,6 +93,7 @@ pub(crate) fn catalog_digest(catalog: &LensCatalog) -> Result<(String, String)> 
 }
 
 use crate::store::code_import_manifest::{claim_body, from_claim};
+use oneiron_contracts::fingerprint::purposes;
 
 impl CodeImportApproval {
     /// Its claim, about the manifest it approves.

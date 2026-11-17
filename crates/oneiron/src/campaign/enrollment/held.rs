@@ -1,5 +1,7 @@
 //! Campaign enrollment held loop: observe Gate holds, ask the owner once, press to redrive.
 
+use oneiron_contracts::fingerprint::purposes;
+
 use super::approval::{RETAINED, RetainedKey, RetainedRequest, decode_request};
 use super::outbound_leg::{CampaignApprovalSnapshot, campaign_approval_snapshot_in_txn};
 use super::runner::decode_enrollment_attempt_payload;
@@ -18,8 +20,6 @@ use crate::model_decision::{
 use crate::outbound_chokepoint::OutboundEffectResult;
 use crate::outbound_intent_ledger::IntentLedgerError;
 
-const HELD_CALL_REF_DOMAIN: &[u8] = b"oneiron.campaign.enrollment.held.call_ref.v1";
-const HELD_QUESTION_DOMAIN: &[u8] = b"oneiron.campaign.enrollment.held.question.v1";
 const APPROVED_DEDUPE_DOMAIN: &[u8] = b"oneiron.campaign.enrollment.approved.v1";
 
 #[derive(Debug, Clone)]
@@ -68,8 +68,11 @@ impl HeldEnrollmentCall {
 
 fn held_call_ref(key: &RetainedKey) -> std::result::Result<EntityId, IntentLedgerError> {
     let seq = key.1.to_be_bytes();
-    EntityId::derive(HELD_CALL_REF_DOMAIN, &[&key.0[..], &seq[..], &key.2[..]])
-        .map_err(|_| IntentLedgerError::InvalidRecord("campaign held call ref"))
+    EntityId::derive(
+        purposes::task::CAMPAIGN_HELD_CALL_REF,
+        &[&key.0[..], &seq[..], &key.2[..]],
+    )
+    .map_err(|_| IntentLedgerError::InvalidRecord("campaign held call ref"))
 }
 
 fn held_question_id(
@@ -77,7 +80,7 @@ fn held_question_id(
     approval_digest: &str,
 ) -> std::result::Result<EntityId, IntentLedgerError> {
     EntityId::derive(
-        HELD_QUESTION_DOMAIN,
+        purposes::task::CAMPAIGN_HELD_QUESTION,
         &[&call_ref.as_bytes()[..], approval_digest.as_bytes()],
     )
     .map_err(|_| IntentLedgerError::InvalidRecord("campaign held question"))

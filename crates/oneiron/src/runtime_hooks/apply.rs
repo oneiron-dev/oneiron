@@ -18,6 +18,7 @@ use super::lineage;
 use super::outcome::{EnqueuedDreamer, EnqueuedTask, HookOutcome, ProposedClaim};
 use super::runner::HookPassReport;
 use super::store::{HookIntent, HookIntentState, INTENTS, RunKey};
+use oneiron_contracts::fingerprint::purposes;
 
 /// Pending intents one startup-recovery scheduling batch reads. Another
 /// batch follows in the next pass until no Pending row remains (FIX 10070).
@@ -242,7 +243,7 @@ fn hook_envelope(
 
 /// The claim a Propose lands: one id per run, so a repeat writes the same row.
 pub(super) fn proposal_id(key: &RunKey) -> Result<EntityId> {
-    crate::codebase::entity_id_from_hash_material(b"oneiron.hook-proposal.v1", &[key.as_slice()])
+    EntityId::derive_legacy_material(purposes::runtime_hooks::PROPOSAL, &[key.as_slice()])
 }
 
 fn propose_claim(

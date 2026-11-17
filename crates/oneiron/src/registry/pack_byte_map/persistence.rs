@@ -8,11 +8,9 @@ use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_ASSET;
 use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
 use crate::store::Store;
-use crate::store::code_snapshot::entity_id_from_hash_material;
 use crate::temporal::TimeRange;
 use heed::{RoTxn, RwTxn};
-
-const CARRIER_DOMAIN: &[u8] = b"oneiron:pack-byte-map-carrier:v1";
+use oneiron_contracts::fingerprint::purposes;
 
 /// Local install-authority head pin: a singleton row. Local command state
 /// only — never import or sync this key as authority.
@@ -35,7 +33,7 @@ impl RawValue for HeadPin {
 }
 
 pub(super) fn carrier_id(hash: &[u8; 32]) -> Result<EntityId> {
-    entity_id_from_hash_material(CARRIER_DOMAIN, &[hash])
+    EntityId::derive_legacy_material(purposes::skill_hub::PACK_BYTE_MAP_CARRIER, &[hash])
 }
 
 pub(super) fn read(store: &Store, txn: &RoTxn<'_>) -> Result<Option<PackByteMapSnapshot>> {

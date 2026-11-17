@@ -1,7 +1,7 @@
 //! `EntityId` + world-id newtypes + id parsing/hex.
 
 use crate::registry::short_id_prefix;
-use oneiron_fingerprint::{LegacyDigest, LegacyHash, LegacyPurpose, TagMode};
+use oneiron_fingerprint::{Fingerprint, LegacyDigest, LegacyHash, LegacyPurpose, Purpose, TagMode};
 use rand_core::RngCore;
 
 /// Engine seam: `pub` only so `oneiron` can call it across the crate split.
@@ -76,21 +76,48 @@ impl EntityId {
         Self::from_bytes(number.to_be_bytes())
     }
 
-    /// Derives the deterministic id of `parts` under `domain`: the one rule for
+    /// Derives the deterministic id of `parts` under `purpose`: the one rule for
     /// every id an input fixes rather than a clock (minted ids are opaque ULIDs,
     /// see [`EntityId::now`]).
     ///
-    /// BLAKE3 in derive-key mode with `domain` as the context string, each part
-    /// prefixed by its u64 little-endian length, truncated to the first 16 bytes
-    /// and stamped with the RFC 9562 version-8 (custom) and variant bits. The
-    /// domains live in [`derived_domains`]. A non-UTF-8 or empty domain is
-    /// refused with [`Error::InvariantViolation`](crate::error::Error::InvariantViolation);
-    /// a result in the reserved sentinel range is refused with
+    /// The first 16 bytes of `Fingerprint::of_parts(purpose, parts)` (BLAKE3 in
+    /// derive-key mode with the purpose's context string, each part prefixed by
+    /// its u64 little-endian length), stamped with the RFC 9562 version-8
+    /// (custom) and variant bits. Every purpose comes from the registry
+    /// (`oneiron_fingerprint::purposes`; [`derived_domains`] is its `ids` file).
+    /// A result in the reserved sentinel range is refused with
     /// [`Error::InvalidKey`](crate::error::Error::InvalidKey), never perturbed.
     /// Engine seam: `pub` only so `oneiron` can call it across the crate split.
     #[doc(hidden)]
-    pub fn derive(domain: &[u8], parts: &[&[u8]]) -> crate::error::Result<Self> {
-        derive_with(domain, parts, is_reserved_entity_id_bytes)
+    pub fn derive(purpose: Purpose, parts: &[&[u8]]) -> crate::error::Result<Self> {
+        derive_with(purpose, parts, is_reserved_entity_id_bytes)
+    }
+
+    /// [`EntityId::derive`] under a context that is not in the registry: the same
+    /// bytes as `derive` under a purpose with that context. A non-UTF-8 or empty
+    /// context is refused with
+    /// [`Error::InvariantViolation`](crate::error::Error::InvariantViolation).
+    ///
+    /// Only for pull requests opened before the registry (PLAN-UC-04 2.1), so they
+    /// keep compiling until they name a purpose. A new call is a review finding,
+    /// and stage 7 deletes this function.
+    /// Engine seam: `pub` only so `oneiron` can call it across the crate split.
+    #[doc(hidden)]
+    pub fn derive_unregistered(domain: &[u8], parts: &[&[u8]]) -> crate::error::Result<Self> {
+        let context = std::str::from_utf8(domain)
+            .ok()
+            .filter(|context| !context.is_empty())
+            .ok_or(crate::error::Error::InvariantViolation(
+                "a derived-id domain must be non-empty UTF-8",
+            ))?;
+        let mut hasher = blake3::Hasher::new_derive_key(context);
+        for part in parts {
+            hasher.update(&(part.len() as u64).to_le_bytes());
+            hasher.update(part);
+        }
+        let mut bytes = [0; ENTITY_ID_LEN];
+        bytes.copy_from_slice(&hasher.finalize().as_bytes()[..ENTITY_ID_LEN]);
+        stamp_derived(bytes, is_reserved_entity_id_bytes)
     }
 
     /// The legacy material rule, for ids that vaults already hold (PLAN-UC-04's K
@@ -109,6 +136,22 @@ impl EntityId {
         purpose: LegacyPurpose,
         parts: &[&[u8]],
     ) -> crate::error::Result<Self> {
+        Self::derive_legacy_material_with_tag_suffix(purpose, &[], parts)
+    }
+
+    /// [`EntityId::derive_legacy_material`] for the one kind of site that extends its
+    /// tag at run time: the tag's bytes, then `tag_suffix` with no length before it,
+    /// then the salt and the parts as `derive_legacy_material` writes them. With an
+    /// empty suffix it is `derive_legacy_material`. The legacy rule hashed one byte
+    /// string as its domain, so a site that built that string from its inputs keeps
+    /// its ids this way until the launch reset (PLAN-UC-04 stage 9).
+    /// Engine seam: `pub` only so `oneiron` can call it across the crate split.
+    #[doc(hidden)]
+    pub fn derive_legacy_material_with_tag_suffix(
+        purpose: LegacyPurpose,
+        tag_suffix: &[u8],
+        parts: &[&[u8]],
+    ) -> crate::error::Result<Self> {
         if purpose.hash() != LegacyHash::Blake3 || purpose.tag_mode() != TagMode::HashedFirst {
             return Err(crate::error::Error::InvariantViolation(
                 "a legacy material id takes a BLAKE3 purpose whose tag is hashed first",
@@ -116,7 +159,7 @@ impl EntityId {
         }
         for salt in 0_u64..=u64::MAX {
             let mut digest = LegacyDigest::new(purpose);
-            digest.raw(&salt.to_le_bytes());
+            digest.raw(tag_suffix).raw(&salt.to_le_bytes());
             for part in parts {
                 digest.len_u64_le(part.len()).raw(part);
             }
@@ -311,28 +354,26 @@ pub fn parse_entity_id(bytes: &[u8], context: &'static str) -> crate::error::Res
 }
 
 /// [`EntityId::derive`]'s body, with the reserved-range predicate as a seam.
-///
-/// The version and variant stamp keeps a derived id out of every reserved pattern
-/// today; the check still runs so a widened reservation fails closed instead of
-/// handing out a sentinel.
 fn derive_with(
-    domain: &[u8],
+    purpose: Purpose,
     parts: &[&[u8]],
     reserved: impl Fn(&[u8; ENTITY_ID_LEN]) -> bool,
 ) -> crate::error::Result<EntityId> {
-    let context = std::str::from_utf8(domain)
-        .ok()
-        .filter(|context| !context.is_empty())
-        .ok_or(crate::error::Error::InvariantViolation(
-            "a derived-id domain must be non-empty UTF-8",
-        ))?;
-    let mut hasher = blake3::Hasher::new_derive_key(context);
-    for part in parts {
-        hasher.update(&(part.len() as u64).to_le_bytes());
-        hasher.update(part);
-    }
-    let mut bytes = [0; ENTITY_ID_LEN];
-    bytes.copy_from_slice(&hasher.finalize().as_bytes()[..ENTITY_ID_LEN]);
+    stamp_derived(
+        Fingerprint::of_parts(purpose, parts).prefix::<ENTITY_ID_LEN>(),
+        reserved,
+    )
+}
+
+/// Stamps a derived id's version and variant bits and refuses a reserved result.
+///
+/// The stamp keeps a derived id out of every reserved pattern today; the check
+/// still runs so a widened reservation fails closed instead of handing out a
+/// sentinel.
+fn stamp_derived(
+    mut bytes: [u8; ENTITY_ID_LEN],
+    reserved: impl Fn(&[u8; ENTITY_ID_LEN]) -> bool,
+) -> crate::error::Result<EntityId> {
     bytes[6] = (bytes[6] & 0x0F) | 0x80;
     bytes[8] = (bytes[8] & 0x3F) | 0x80;
     if reserved(&bytes) {
@@ -440,19 +481,26 @@ mod tests {
         derived_domains, parse_presentation_id, parse_short_ref_syntax,
     };
     use crate::error::Error;
+    use oneiron_fingerprint::purposes::testing::ALPHA;
 
     #[test]
     fn every_derived_id_carries_version_eight() {
-        let domains = derived_domains::ALL;
-        let distinct = domains.iter().collect::<std::collections::BTreeSet<_>>();
-        assert_eq!(distinct.len(), domains.len(), "every domain is its own");
-        for domain in domains {
+        let purposes = derived_domains::ALL;
+        let distinct = purposes
+            .iter()
+            .map(|purpose| purpose.context())
+            .collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(distinct.len(), purposes.len(), "every purpose is its own");
+        for &purpose in purposes {
             for parts in [&[][..], &[&b"part"[..]][..], &[&b"a"[..], &b"b"[..]][..]] {
-                let id = EntityId::derive(domain, parts).unwrap();
+                let id = EntityId::derive(purpose, parts).unwrap();
                 let bytes = id.as_bytes();
-                assert_eq!(bytes[6] >> 4, 8, "{}", String::from_utf8_lossy(domain));
-                assert_eq!(bytes[8] >> 6, 0b10, "{}", String::from_utf8_lossy(domain));
-                assert_eq!(EntityId::derive(domain, parts).unwrap(), id);
+                assert_eq!(bytes[6] >> 4, 8, "{}", purpose.context());
+                assert_eq!(bytes[8] >> 6, 0b10, "{}", purpose.context());
+                assert_eq!(EntityId::derive(purpose, parts).unwrap(), id);
+                let unregistered =
+                    EntityId::derive_unregistered(purpose.context().as_bytes(), parts).unwrap();
+                assert_eq!(unregistered, id, "{}", purpose.context());
             }
         }
         // Parts are length-prefixed, so moving a byte across a boundary moves the id.
@@ -465,12 +513,11 @@ mod tests {
 
     #[test]
     fn a_reserved_derived_id_is_refused_with_an_error() {
-        let domain = b"oneiron test reserved derived id";
-        assert!(derive_with(domain, &[b"part"], |_| false).is_ok());
-        let refused = derive_with(domain, &[b"part"], |_| true);
+        assert!(derive_with(ALPHA, &[b"part"], |_| false).is_ok());
+        let refused = derive_with(ALPHA, &[b"part"], |_| true);
         assert!(matches!(refused, Err(Error::InvalidKey)), "{refused:?}");
         for domain in [&b""[..], &[0xFF, 0xFE][..]] {
-            let refused = EntityId::derive(domain, &[b"part"]);
+            let refused = EntityId::derive_unregistered(domain, &[b"part"]);
             assert!(
                 matches!(refused, Err(Error::InvariantViolation(_))),
                 "{refused:?}"
@@ -619,6 +666,8 @@ mod tests {
 #[doc(hidden)]
 pub mod serde_hex;
 
+/// The id file of the purpose registry, under its old path (PLAN-UC-04 2.1: it moved
+/// from here to `oneiron_fingerprint::purposes::ids`).
 /// Engine seam: `pub` only so `oneiron` can call it across the crate split.
 #[doc(hidden)]
-pub mod derived_domains;
+pub use oneiron_fingerprint::purposes::ids as derived_domains;

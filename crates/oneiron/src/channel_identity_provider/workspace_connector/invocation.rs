@@ -4,6 +4,7 @@
 //! outcome record. The replay rule the row keeps is said once, in the
 //! workspace connector module's "Reads and writes".
 
+use oneiron_contracts::fingerprint::purposes;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
@@ -21,10 +22,6 @@ use crate::vault::Vault;
 /// The workspace writes' invocation rows, by invocation ref.
 const WORKSPACE_WRITE_INVOCATION: SideTable<EntityId, WorkspaceWriteInvocation, Named> =
     SideTable::new(&side_table::WORKSPACE_WRITE_INVOCATION);
-
-/// The derivation domain of a write's invocation ref, so one caller's one
-/// logical call always names the same row.
-const WORKSPACE_WRITE_INVOCATION_DOMAIN: &[u8] = b"oneiron.workspace_write_invocation.v1";
 
 /// The invocation's row binds another request; nothing was sent. The code
 /// a connector call's ledger refuses the same conflict with.
@@ -97,7 +94,7 @@ impl WorkspaceWriteClaim {
         module: &'static dyn WorkspaceApi,
     ) -> Result<Self> {
         let invocation_ref = EntityId::derive(
-            WORKSPACE_WRITE_INVOCATION_DOMAIN,
+            purposes::channel_identity::WORKSPACE_WRITE_INVOCATION,
             &[
                 actor.to_hex().as_bytes(),
                 invocation.attempt_id.as_bytes(),

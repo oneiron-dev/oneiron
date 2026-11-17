@@ -30,7 +30,6 @@ use crate::git_wire::{GitOid, GitWire, GitWireRepo, lock_repository};
 use crate::ports::EntityStoreRead;
 use crate::registry::ENTITY_TYPE_SESSION;
 use crate::store::code_revision_record::{CodeRevision, CodeRevisionFork};
-use crate::store::code_snapshot::entity_id_from_hash_material;
 use crate::store::repo_proposal_record::RepoProposedFile;
 use crate::{EntityId, TimeRange, Vault};
 use crate::{
@@ -50,6 +49,7 @@ pub(crate) mod projected_source;
 mod projected_tree;
 mod reads;
 use files::prepare_push_candidate_documents;
+use oneiron_contracts::fingerprint::purposes;
 use pending_index::index_received_row_in_txn;
 
 type Held<T> = std::result::Result<T, CodePushCandidateHold>;
@@ -96,8 +96,8 @@ pub(crate) fn push_candidate_id(
     provenance: EntityId,
     ref_name: &str,
 ) -> Result<EntityId> {
-    entity_id_from_hash_material(
-        b"oneiron:push-candidate:v1",
+    EntityId::derive_legacy_material(
+        purposes::origin::PUSH_CANDIDATE,
         &[store.as_bytes(), provenance.as_bytes(), ref_name.as_bytes()],
     )
 }
@@ -399,8 +399,8 @@ impl Vault {
             Ok(files) => files,
             Err(held) => return Ok(Some(Err(held))),
         };
-        let fork_session = entity_id_from_hash_material(
-            b"oneiron:push-candidate-session:v1",
+        let fork_session = EntityId::derive_legacy_material(
+            purposes::origin::PUSH_CANDIDATE_SESSION,
             &[id.as_bytes(), base.revision.revision_id.as_bytes()],
         )?;
         let message = format!(

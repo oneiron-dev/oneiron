@@ -27,6 +27,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use oneiron_contracts::fingerprint::purposes;
 use serde::{Deserialize, Serialize};
 
 use super::{
@@ -44,7 +45,6 @@ use crate::skill_attribution::{
 use crate::{EntityId, Result, Vault};
 
 #[doc(hidden)]
-use oneiron_verb_wire::dreamer_runner::maintenance::agent_health::environment::AMENDMENT_SOURCE_DOMAIN;
 
 /// One attribution label a card carries (OF-568 L10): a typed reference to
 /// the judge's retained label, never prose.
@@ -98,7 +98,7 @@ impl HealthCauseSource {
                 let label = share.class.as_str();
                 Ok(Self {
                     source: EntityId::derive(
-                        AMENDMENT_SOURCE_DOMAIN,
+                        purposes::dreamer::AGENT_HEALTH_AMENDMENT_CAUSE,
                         &[source.as_bytes(), label.as_bytes()],
                     )?,
                     receipt: receipt.to_owned(),

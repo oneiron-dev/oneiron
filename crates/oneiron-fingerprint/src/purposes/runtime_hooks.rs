@@ -1,5 +1,12 @@
 //! Purposes of runtime hooks (`crates/oneiron/src/runtime_hooks`).
 //!
+//! `PROPOSAL` and `BLOCK` are ids by the legacy material rule
+//! (`EntityId::derive_legacy_material`): plain BLAKE3, the tag's bytes first, then a u64
+//! little-endian salt, then each part as its u64 little-endian length and its bytes. The
+//! id is the first 16 bytes, with no version stamp; a reserved result takes the next salt.
+//! Every one of these ids is a key that vaults already hold, so its bytes are kept until
+//! the launch reset (PLAN-UC-04 stage 9).
+//!
 //! Each fact a hook binding takes has an input hash, and a hook run's key starts with it:
 //! the key keeps the run's memo, intent, receipt and index rows, so a run is taken once per
 //! binding and fact. A run's memo stores the input hash and the run's params digest too.
@@ -8,6 +15,13 @@
 purposes! {}
 
 legacy_purposes! {
+    /// The claim a hook's Propose lands, one per run (`runtime_hooks::apply::proposal_id`).
+    /// Parts: the run key.
+    PROPOSAL = (Blake3, HashedFirst, "oneiron.hook-proposal.v1");
+
+    /// A hook run's block (`runtime_hooks::runner::block_id`). Parts: the run key.
+    BLOCK = (Blake3, HashedFirst, "oneiron.hook-block.v1");
+
     /// A released tick's input hash (`runtime_hooks::source::schedule`): BLAKE3 derive-key
     /// with the tag as the context, then the TASK's 16 id bytes and its due time as a
     /// u64-BE, with no lengths. The release time is not hashed.

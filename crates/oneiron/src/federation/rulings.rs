@@ -4,14 +4,15 @@ use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, Result};
 use crate::{EntityId, Vault};
+use oneiron_contracts::fingerprint::purposes;
 #[doc(hidden)]
 pub use oneiron_records::federation::rulings::{AdminRuling, AdminRulingReceipt};
 use serde_json::Value;
 
 pub(crate) const RULING_PREDICATE: &str = "federation.admin_ruling";
 pub(super) fn ruling_anchor_id(vault_id: u64) -> Result<EntityId> {
-    crate::codebase::entity_id_from_hash_material(
-        b"oneiron.shared-ruling.anchor.v1",
+    EntityId::derive_legacy_material(
+        purposes::federation::SHARED_RULING_ANCHOR,
         &[&vault_id.to_be_bytes()],
     )
 }

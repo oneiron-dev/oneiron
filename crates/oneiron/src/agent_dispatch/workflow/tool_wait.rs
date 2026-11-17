@@ -3,6 +3,7 @@
 //! Queue pause/claim/completion are joined by the workflow host in that writer.
 
 use heed::{RoTxn, RwTxn};
+use oneiron_contracts::fingerprint::purposes;
 use serde::{Deserialize, Serialize};
 
 use crate::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord};
@@ -229,7 +230,7 @@ pub(crate) fn test_checkpoint_row_bound(
 
 fn body_owner(attempt: AttemptId) -> Result<EntityId> {
     EntityId::derive(
-        b"oneiron:workflow-tool-checkpoint:v1",
+        purposes::agent::WORKFLOW_TOOL_CHECKPOINT,
         &[attempt.as_bytes().as_slice()],
     )
 }

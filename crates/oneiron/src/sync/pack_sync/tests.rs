@@ -10,6 +10,7 @@ use crate::sync::schema::create_window_doc;
 use crate::sync::types::WindowKey;
 use crate::temporal::TimeRange;
 use loro::ExportMode;
+use oneiron_contracts::fingerprint::purposes;
 
 fn config() -> VaultConfig {
     let mut config = VaultConfig::device();
@@ -244,8 +245,8 @@ fn foreign_asset_map_snapshot_replicates_as_data_without_authorizing_install() -
     let body = serde_json::to_vec(&snapshot).unwrap();
     let carrier = {
         let hash = blake3::hash(&body);
-        crate::codebase::entity_id_from_hash_material(
-            b"oneiron:pack-byte-map-carrier:v1",
+        EntityId::derive_legacy_material(
+            purposes::skill_hub::PACK_BYTE_MAP_CARRIER,
             &[hash.as_bytes()],
         )?
     };
@@ -318,8 +319,8 @@ fn a_refused_delete_of_the_pack_map_carrier_leaves_it_live() -> Result<()> {
     let vault = Arc::new(vault);
     install(&vault, &[kind("alpha")]);
     let snapshot = vault.pack_byte_map_snapshot()?.unwrap();
-    let carrier = crate::codebase::entity_id_from_hash_material(
-        b"oneiron:pack-byte-map-carrier:v1",
+    let carrier = EntityId::derive_legacy_material(
+        purposes::skill_hub::PACK_BYTE_MAP_CARRIER,
         &[blake3::hash(&serde_json::to_vec(&snapshot).unwrap()).as_bytes()],
     )?;
     let raw = vault.get_raw(&carrier)?.expect("the carrier row");

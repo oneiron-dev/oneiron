@@ -11,6 +11,7 @@
 //! sent it, when one is known (FIX 15412): that names the speaker, never a
 //! writer.
 
+use oneiron_contracts::fingerprint::Purpose;
 use rmpv::Value as Msgpack;
 use serde_json::{Map, Value};
 
@@ -83,9 +84,9 @@ fn label(text: &str) -> String {
     text[..end].to_owned()
 }
 
-fn derive(domain: &[u8], parts: &[&str]) -> Result<EntityId> {
+fn derive(purpose: Purpose, parts: &[&str]) -> Result<EntityId> {
     let parts: Vec<&[u8]> = parts.iter().map(|part| part.as_bytes()).collect();
-    EntityId::derive(domain, &parts)
+    EntityId::derive(purpose, &parts)
 }
 
 /// The CONVERSATION a thread's new message lands in: the thread's own, or

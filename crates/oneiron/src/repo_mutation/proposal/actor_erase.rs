@@ -17,6 +17,7 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::receipt::ERASED_CALL_IDENTITY;
 use crate::registry::ENTITY_TYPE_CLAIM;
+use oneiron_contracts::fingerprint::purposes;
 
 /// Who opened a repo proposal: an actor, or no one once that actor was
 /// erased (FIX 3520). It reads and writes as the actor's hex id, or as
@@ -142,8 +143,8 @@ impl RepoProposal {
 /// The session claim a proposal writes beside its proposed diff: one per
 /// session and proposal, whose id hashes no actor (FIX 4479; a call).
 pub(super) fn session_claim_id(session: EntityId, proposal: EntityId) -> Result<EntityId> {
-    crate::codebase::entity_id_from_hash_material(
-        b"oneiron:repo-session-claim:v2",
+    EntityId::derive_legacy_material(
+        purposes::code::REPO_SESSION_CLAIM,
         &[session.as_bytes(), proposal.as_bytes()],
     )
 }

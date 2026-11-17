@@ -17,7 +17,9 @@ use super::serving_blob::{
     ServingBlobDescriptor, put_serving_blob_in_txn, retire_unpointed_version_in_txn,
 };
 use super::*;
+use crate::EntityId;
 use crate::side_table::Named;
+use oneiron_contracts::fingerprint::purposes;
 
 // Bounded parts, their spool and the complete receipt (FIX 9575).
 mod parts;
@@ -30,7 +32,6 @@ pub(crate) use self::parts::{
 const PUBLICATION_OUTBOX: SideTable<ArtifactPointerRowKey, PublicationOutboxMarker, Named> =
     SideTable::new(&side_table::ARTIFACT_SYNC_OUTBOX);
 
-const PUBLICATION_ID_DOMAIN: &[u8] = b"oneiron.artifact.publication.v1";
 const RECEIPT_LEN: usize = 33;
 
 /// The change a pointer's outbox marker names: 16 random bytes, fresh for
@@ -136,8 +137,8 @@ pub(super) fn mark_publication_in_txn(
 }
 
 fn publication_entity_id(channel: ArtifactPointerChannel, artifact: &str) -> Result<EntityId> {
-    crate::store::code_snapshot::entity_id_from_hash_material(
-        PUBLICATION_ID_DOMAIN,
+    EntityId::derive_legacy_material(
+        purposes::artifact_hosting::PUBLICATION,
         &[&[channel.key_byte()], artifact.as_bytes()],
     )
 }

@@ -27,6 +27,7 @@
 
 use std::ops::Bound;
 
+use oneiron_contracts::fingerprint::purposes;
 use oneiron_store::receipt_ref::ReceiptRef;
 
 use crate::Vault;
@@ -45,6 +46,8 @@ use super::highway_types::{TaskCallReceipt, TaskLifecycleRecord};
 use super::task_actor::names_no_actor;
 use super::wire_decode::task_verb_body_in;
 
+/// What every lifecycle receipt id starts with.
+const RECEIPT_ID_PREFIX: &str = "task_lifecycle:";
 /// Domain of a lifecycle receipt's id.
 const RECEIPT_ID_DOMAIN: &[u8] = b"oneiron.tasks.lifecycle_receipt.v1";
 /// The receipt field naming the highway call it records.
@@ -73,7 +76,7 @@ pub(super) fn receipt_id(call: &str, parts: &[&[u8]]) -> MemoryResult<String> {
     let mut material: Vec<&[u8]> = Vec::with_capacity(parts.len() + 1);
     material.push(call.as_bytes());
     material.extend_from_slice(parts);
-    let id = EntityId::derive(RECEIPT_ID_DOMAIN, &material)?;
+    let id = EntityId::derive(purposes::task::LIFECYCLE_RECEIPT, &material)?;
     Ok(ReceiptRef::task_lifecycle(id).to_string())
 }
 

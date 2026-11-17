@@ -14,6 +14,8 @@
 
 use std::time::Instant;
 
+use oneiron_contracts::fingerprint::purposes;
+
 use super::*;
 use crate::llm::decision::DecisionLadder;
 use crate::retrieval_depth::RetrievalDeadline;
@@ -63,7 +65,7 @@ impl AskAutoGate {
         }
         let actor = memory.actor();
         let launch_ref = EntityId::derive(
-            LAUNCH_REF_DOMAIN,
+            purposes::task::FANOUT_LAUNCH,
             &[b"ask_auto", actor.as_bytes(), input.intent_key.as_bytes()],
         )
         .ok()?;

@@ -9,10 +9,10 @@ use crate::error::{Error, Result};
 use crate::git_wire::{
     GitCommitRequest, GitOid, GitRefName, GitWire, GitWireRepo, lock_repository,
 };
-use crate::store::code_snapshot::entity_id_from_hash_material;
 use crate::store::repo_mutation_record::RepoConflictClaim;
 use crate::temporal::TimeRange;
 use crate::write_envelope::claim_body::ClaimSubject;
+use oneiron_contracts::fingerprint::purposes;
 use std::collections::BTreeMap;
 
 pub const CONFLICT_TREE_ENCODING: &str = "oneiron.conflict-tree.v1";
@@ -102,8 +102,8 @@ impl Vault {
             request.now,
         )?;
         let repo_id = crate::origin::lfs::lfs_repo_id(&repo.identity().as_hex())?;
-        let intent = entity_id_from_hash_material(
-            b"oneiron:conflict-export-intent:v1",
+        let intent = EntityId::derive_legacy_material(
+            purposes::origin::CONFLICT_EXPORT_INTENT,
             &[
                 repo_id.as_bytes(),
                 conflict.claim_id.as_bytes(),

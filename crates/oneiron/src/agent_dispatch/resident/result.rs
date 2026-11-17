@@ -12,6 +12,7 @@ use crate::provenance::body::{BodyLocation, BodyRef, BodyState, OwnedBody};
 use crate::registry::ENTITY_TYPE_SESSION;
 use crate::store::conversation_record::{AddressMode, AppendRecord};
 use crate::{EdgeActorClass, EntityId, TimeRange, WriteActor};
+use oneiron_contracts::fingerprint::purposes;
 use rmpv::Value;
 
 /// A completed agent run's result TURN. Parts: attempt.
@@ -134,7 +135,10 @@ impl AgentDispatcher<'_> {
         attempt: &AttemptRecord,
         run: &CodeRunReplayRecord,
     ) -> Result<PreparedRunResult> {
-        let result_ref = EntityId::derive(RUN_RESULT, &[attempt.id.as_bytes().as_slice()])?;
+        let result_ref = EntityId::derive(
+            purposes::agent::RUN_RESULT,
+            &[attempt.id.as_bytes().as_slice()],
+        )?;
         // The finished step's observation or its accepted native decline reason,
         // never a marker or an unrelated file.
         let answer = self.agent_run_output(attempt, run);
@@ -174,8 +178,10 @@ impl AgentDispatcher<'_> {
                     .store
                     .body_file_present(&output.raw_blake3, output.raw_len)? =>
             {
-                let occurrence =
-                    EntityId::derive(RUN_RESULT_BODY, &[result_ref.as_bytes().as_slice()])?;
+                let occurrence = EntityId::derive(
+                    purposes::agent::RUN_RESULT_BODY,
+                    &[result_ref.as_bytes().as_slice()],
+                )?;
                 Some(OwnedBody {
                     owner: result_ref,
                     occurrence,
@@ -268,7 +274,7 @@ impl AgentDispatcher<'_> {
             return Ok(());
         };
         let session = EntityId::derive(PLAN_RUN_SESSION, &[task.as_bytes()])?;
-        let record = EntityId::derive(PLAN_RUN_RESULT_RECORD, &[result.as_bytes()])?;
+        let record = EntityId::derive_unregistered(PLAN_RUN_RESULT_RECORD, &[result.as_bytes()])?;
         let store = &self.vault.store;
         self.vault.with_write_txn_grouped(|txn| {
             let live = crate::vault::live_entity_row_in_txn(store, txn, &session)?.live_type();
@@ -376,7 +382,12 @@ impl AgentDispatcher<'_> {
         let Ok(turn) = EntityId::from_hex(result_ref) else {
             return Ok(None);
         };
-        if turn != EntityId::derive(RUN_RESULT, &[attempt.as_bytes().as_slice()])? {
+        if turn
+            != EntityId::derive(
+                purposes::agent::RUN_RESULT,
+                &[attempt.as_bytes().as_slice()],
+            )?
+        {
             return Ok(None);
         }
         let Some(bytes) = self.vault.get(&turn)? else {

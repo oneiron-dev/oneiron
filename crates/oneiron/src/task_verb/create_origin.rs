@@ -17,6 +17,7 @@
 //! conversation the host stamped when one exists (OF-221). An approval or
 //! wave cut carries that first provenance rather than the later approver's.
 
+use oneiron_contracts::fingerprint::purposes;
 use serde::{Deserialize, Serialize};
 
 use crate::Vault;
@@ -32,9 +33,6 @@ use crate::write_envelope::WriteActor;
 
 use super::highway::{forbidden, invalid_state};
 use super::highway_types::HostBinding;
-
-/// Domain of the witness key a wave planning attempt derives.
-const WAVE_PLAN_ORIGIN_DOMAIN: &[u8] = b"oneiron.tasks.create_origin.wave_plan.v1";
 
 /// Proposal claim, or the id a wave planning attempt derives → the creator
 /// its TASKs land under.
@@ -326,7 +324,7 @@ pub(super) fn proposal_origin_in(
 }
 
 fn wave_plan_key(attempt: AttemptId) -> crate::Result<[u8; 16]> {
-    Ok(*EntityId::derive(WAVE_PLAN_ORIGIN_DOMAIN, &[attempt.as_bytes()])?.as_bytes())
+    Ok(*EntityId::derive(purposes::task::WAVE_PLAN_ORIGIN, &[attempt.as_bytes()])?.as_bytes())
 }
 
 /// Witnesses the creator a wave planning attempt's cut lands under, in the

@@ -3,6 +3,8 @@
 
 pub use oneiron_store::result_manifest::*;
 
+use oneiron_contracts::fingerprint::purposes;
+
 use crate::error::ArtifactError;
 use crate::{EntityId, Error, Result};
 
@@ -138,7 +140,7 @@ impl ResultOccurrence {
         match owner {
             Some(owner) => Self::owned(owner, &output.path),
             None => Ok(Self(EntityId::derive(
-                b"oneiron:code-run-output-unowned:v1",
+                purposes::code_run::OUTPUT_UNOWNED,
                 &[output.raw_blake3.as_slice()],
             )?)),
         }
@@ -147,7 +149,7 @@ impl ResultOccurrence {
     /// The occurrence run `owner` holds at `path`.
     pub fn owned(owner: EntityId, path: &str) -> Result<Self> {
         Ok(Self(EntityId::derive(
-            b"oneiron:code-run-output-occurrence:v1",
+            purposes::code_run::OUTPUT_OCCURRENCE,
             &[owner.as_bytes().as_slice(), path.as_bytes()],
         )?))
     }
@@ -163,7 +165,7 @@ impl ResultOccurrence {
         digest: &[u8; CODE_RUN_REPLAY_HASH_LEN],
     ) -> Result<Self> {
         Ok(Self(EntityId::derive(
-            b"oneiron:code-run-output-raw-hold:v1",
+            purposes::code_run::OUTPUT_RAW_HOLD,
             &[
                 owner.as_bytes().as_slice(),
                 path.as_bytes(),
