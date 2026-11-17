@@ -37,8 +37,8 @@ use oneiron::task_verb::sdk::{BookingRung2ReleaseOnceResponse, BookingRung2Relea
 use super::super::admission::rung2_send_facts;
 use super::super::front::ConstraintTurnResponse;
 use super::super::rung2::{
-    Rung2Dispatched, Rung2Send, Rung2SendInput, Rung2SendResponse, rung2_continuations,
-    rung2_turn_answer,
+    Rung2Dispatched, Rung2Send, Rung2SendInput, Rung2SendResponse, kept_continuation,
+    rung2_continuations, rung2_turn_answer,
 };
 use super::super::rung2_release::release_kept_first_send;
 use super::super::subject::session_key;
@@ -196,12 +196,14 @@ impl Rung2Page {
             session_ref: session.to_owned(),
         };
         let facts = facts(self.fixture.page, email, session);
+        let continuation = kept_continuation(self.fixture.page, session, now());
         Rung2Send {
             server: self.server(),
             authority: &authority,
             front: &front,
             sender: &self.sender(),
             input: &input,
+            continuation: continuation.as_ref(),
             facts: &facts,
             now: now(),
         }
@@ -485,8 +487,76 @@ fn a_session_continues_by_email_to_one_address() {
     };
     assert_eq!(send_ref, first.send_ref);
     assert_eq!(message_id, first.message_id);
-    assert_eq!(page.kept(session), Some(first), "the first words stay");
-    assert_eq!(dispatched.borrow().len(), 1, "never dispatched again");
+    assert_eq!(
+        page.kept(session),
+        Some(first.clone()),
+        "the first words stay"
+    );
+    assert_eq!(
+        *dispatched.borrow(),
+        vec![first.clone(), first],
+        "a retried press dispatches the kept send again, which the intent ledger answers \
+         from its record"
+    );
+}
+
+/// A keep whose process stopped before its dispatch is resumed: the
+/// session's next press dispatches the kept send (review #8185 round 1).
+#[test]
+fn a_press_resumes_a_kept_send_that_was_never_dispatched() {
+    let page = Rung2Page::new(true);
+    let session = "rung2-resume";
+    let message = oneiron::channel_identity_provider::stalwart::NativeMailMessage::new(
+        VISITOR,
+        "Times that fit",
+        Some("The words the first press kept.".to_owned()),
+        None,
+    )
+    .expect("message");
+    let kept = page
+        .server()
+        .vault
+        .keep_booking_rung2_first_send(
+            &page.adapter,
+            &page.sender(),
+            continuation(session),
+            message,
+            now(),
+        )
+        .expect("keep")
+        .expect("kept");
+    let dispatched = RefCell::new(Vec::new());
+    let again = page
+        .press(session, VISITOR, &dispatched)
+        .expect("the press after the stop");
+    assert!(
+        matches!(again, Rung2SendResponse::AlreadyKept { .. }),
+        "{again:?}"
+    );
+    assert_eq!(
+        *dispatched.borrow(),
+        vec![kept],
+        "the kept send is dispatched"
+    );
+}
+
+/// A turn's continuation for an event type the page no longer publishes
+/// keeps nothing and sends nothing: the press answers as a listing of that
+/// type would (review #8185 round 1).
+#[test]
+fn a_press_for_an_event_type_the_page_withdrew_keeps_nothing() {
+    let page = Rung2Page::new(true);
+    let session = "rung2-withdrawn";
+    let mut withdrawn = continuation(session);
+    withdrawn.event_type = EventTypeKey("withdrawn".to_owned());
+    rung2_continuations().keep(session_key(page.fixture.page, session), withdrawn, now());
+    let dispatched = RefCell::new(Vec::new());
+    let refused = page
+        .press(session, VISITOR, &dispatched)
+        .expect_err("a withdrawn event type is refused");
+    assert_eq!(refused.status(), StatusCode::NOT_FOUND);
+    assert!(page.kept(session).is_none(), "nothing is kept");
+    assert!(dispatched.borrow().is_empty(), "nothing is dispatched");
 }
 
 /// The owner's `Rung2SendRate` row bounds presses per source address per

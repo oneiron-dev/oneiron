@@ -107,6 +107,7 @@ pub(crate) use self::connector_task::{
     connector_send_attempt_payload, put_connector_send_task_in_txn,
 };
 pub(crate) use self::receipt_fields::{APPROVAL_DIGEST_FIELD, RECIPIENTS_FIELD};
+pub(crate) use self::reply_job::erase_connector_reply_body_artifact_in_txn;
 pub(crate) use self::reply_job::{
     connector_event_participant_ids, connector_witness_rows_in_txn,
     erase_connector_reply_bodies_by_authors_in_txn, erase_connector_reply_bodies_for_events_in_txn,
