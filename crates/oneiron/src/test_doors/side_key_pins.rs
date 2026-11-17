@@ -1,8 +1,10 @@
-//! Doors for `tests/side_key_pins.rs` (UC-06 PR 2 K-proof): one fixture key of each
-//! crate-private side-table key type that PR 2 derives, with the reader of its type. Compiled
+//! Doors for `tests/side_key_pins.rs` (UC-06 K-proofs of PRs 2 and 3): one fixture key of each
+//! crate-private side-table key type that those PRs derive, with the reader of its type. Compiled
 //! only under `--cfg oneiron_test_support`; never API.
 
+use crate::attempt_queue::AttemptId;
 use crate::entity_id::EntityId;
+use crate::ports::{DocumentSlot, DocumentUpdateKey, UpdateSeq};
 use crate::side_table::SideKey;
 
 /// One fixture key: the bytes it spells after its table prefix, and what its type reads from
@@ -81,4 +83,44 @@ pub fn receive_pack_progress_key(
         operation_id,
         batch,
     )
+}
+
+/// `llm::decision::questions::ask_history::AskHistoryKey`: the question id, then the sequence as
+/// eight big-endian bytes.
+pub fn ask_history_key(question: EntityId, sequence: u64) -> Pin {
+    crate::llm::decision::questions::ask_history_key_pin_for_test(question, sequence)
+}
+
+/// `llm::step::step_index::StepIndexKey`: the raw attempt id, then the 32-byte step hash.
+pub fn step_index_key(attempt_id: [u8; 16], step_hash: [u8; 32]) -> Pin {
+    let attempt_id = AttemptId::from_bytes(&attempt_id).expect("an attempt id is any 16 bytes");
+    crate::llm::step_index_key_pin_for_test(attempt_id, step_hash)
+}
+
+/// `llm::step::step_index::StepIndexClaimKey`: `i:`, then the raw claim id.
+pub fn step_index_claim_key(claim: EntityId) -> Pin {
+    crate::llm::step_index_claim_key_pin_for_test(claim)
+}
+
+/// `ports::DocumentSlot`: the document id as 32 lower-case hex characters.
+pub fn document_slot(document: EntityId) -> Pin {
+    Pin::of(&DocumentSlot::of(document))
+}
+
+/// `ports::DocumentUpdateKey` of an appended update: the slot, `:`, the sequence as 8 lower-case
+/// hex digits.
+pub fn document_update_key_of_sequence(document: EntityId, sequence: u32) -> Pin {
+    Pin::of(&DocumentUpdateKey {
+        slot: DocumentSlot::of(document),
+        seq: UpdateSeq::Sequence(sequence),
+    })
+}
+
+/// `ports::DocumentUpdateKey` of an entity-document commit: the slot, `:`, the head's generation
+/// as 20 decimal digits.
+pub fn document_update_key_of_generation(document: EntityId, generation: u64) -> Pin {
+    Pin::of(&DocumentUpdateKey {
+        slot: DocumentSlot::of(document),
+        seq: UpdateSeq::Generation(generation),
+    })
 }

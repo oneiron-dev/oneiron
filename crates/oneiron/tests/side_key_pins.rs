@@ -1,18 +1,20 @@
-//! UC-06 PR 2 K-proof: the nine roster and origin side-table keys that PR 2 derives spell the
-//! same bytes and read the same inputs as their hand-written impls (M-1 STORED-CHANGE-RULE = A: a
-//! key a vault already holds keeps its meaning).
+//! UC-06 K-proofs of PRs 2 and 3: the side-table keys those PRs derive spell the same bytes and
+//! read the same inputs as their hand-written impls (M-1 STORED-CHANGE-RULE = A: a key a vault
+//! already holds keeps its meaning). PR 2 derives nine roster and origin keys, PR 3 five
+//! question, step and document keys.
 //!
-//! The test builds one table: for every fixture key, the bytes it spells, and the verdict
+//! Each test builds one table: for every fixture key, the bytes it spells, and the verdict
 //! (refused, or the bytes of the key read back) on those bytes and on malformed copies of them
 //! (one byte short, the first byte dropped, a trailing digit, NUL or `:`, a leading `:`, upper
 //! case, a `+` in the first, last and hex-tail places, the separator swapped, a byte that is not
 //! UTF-8), plus some raw inputs per key (a reserved id, a missing or doubled separator, an empty
-//! key). The table's sha256 is the one a model of the hand-written decoders gives
-//! (`lanes/kimi/OPUS-UC06-SIDEKEYS/check/pins/pin_table_model_pr2.py`), and each run prints the
-//! table so a base run and a head run can be compared line by line.
+//! key). A table's sha256 is the one a model of the hand-written decoders gives
+//! (`lanes/kimi/OPUS-UC06-SIDEKEYS/check/pins/pin_table_model_pr2.py` and
+//! `pin_table_model_pr3.py`), and each run prints the table so a base run and a head run can be
+//! compared line by line.
 //!
-//! `ProjectRevisionHash` is public; the other eight keys are crate-private and are reached
-//! through `test_doors::side_key_pins`. Needs the doors:
+//! `ProjectRevisionHash` is public; the other keys are crate-private and are reached through
+//! `test_doors::side_key_pins`. Needs the doors:
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features
 //! --test side_key_pins -- --nocapture`.
 #![cfg(oneiron_test_support)]
@@ -21,13 +23,18 @@ use std::fmt::Write as _;
 
 use oneiron::EntityId;
 use oneiron::test_doors::side_key_pins::{
-    Pin, fact_key, lfs_ref_key, member_intent_key, provenance_ref_key, receive_pack_intent_key,
-    receive_pack_progress_key, repo_revision_key, roster_member_key,
+    Pin, ask_history_key, document_slot, document_update_key_of_generation,
+    document_update_key_of_sequence, fact_key, lfs_ref_key, member_intent_key, provenance_ref_key,
+    receive_pack_intent_key, receive_pack_progress_key, repo_revision_key, roster_member_key,
+    step_index_claim_key, step_index_key,
 };
 use oneiron_verb_wire::workspace_roster::ProjectRevisionHash;
 use sha2::{Digest, Sha256};
 
-const TABLE_SHA256: &str = "0a89c3d563672feba0da1737e18176ecda7557e1a1d154cf3a81860cf206d821";
+const ROSTER_ORIGIN_TABLE_SHA256: &str =
+    "0a89c3d563672feba0da1737e18176ecda7557e1a1d154cf3a81860cf206d821";
+const QUESTION_STEP_DOCUMENT_TABLE_SHA256: &str =
+    "881290dbcb9d8eddaa4f2327a34bce50e899abbda1135d7b745fbab584855bcf";
 
 const ID_A: &str = "0123456789abcdef0123456789abcdef";
 const ID_B: &str = "fedcba9876543210fedcba9876543210";
@@ -46,6 +53,15 @@ fn id_a() -> EntityId {
 
 fn id_b() -> EntityId {
     id(ID_B)
+}
+
+/// A 32-byte hash whose bytes run 0x00, 0x11, .. 0xff twice.
+fn pattern_hash() -> [u8; 32] {
+    let mut hash = [0_u8; 32];
+    for (index, byte) in hash.iter_mut().enumerate() {
+        *byte = u8::try_from(index % 16).expect("below 16") * 0x11;
+    }
+    hash
 }
 
 fn hex(bytes: &[u8]) -> String {
@@ -128,12 +144,26 @@ fn pin(table: &mut String, name: &str, fixtures: Vec<(&str, Pin)>, raw: &[(&str,
     }
 }
 
+/// Prints `table` under `name`, line by line, and checks its sha256 against `expected`, the one
+/// the model of the hand-written decoders gives.
+fn assert_table(name: &str, table: &str, expected: &str) {
+    let digest = hex(&Sha256::digest(table.as_bytes()));
+    for line in table.lines() {
+        println!("PIN {name} {line}");
+    }
+    println!(
+        "PIN-TABLE {name} lines={} sha256={digest}",
+        table.lines().count()
+    );
+    assert_eq!(
+        digest, expected,
+        "the {name} key table differs from the hand-written decoders' table"
+    );
+}
+
 #[test]
 fn roster_and_origin_keys_spell_and_read_as_the_hand_impls() {
-    let mut hash = [0_u8; 32];
-    for (index, byte) in hash.iter_mut().enumerate() {
-        *byte = u8::try_from(index % 16).expect("below 16") * 0x11;
-    }
+    let hash = pattern_hash();
     let mut digest_16 = [0_u8; 16];
     digest_16.copy_from_slice(&hash[..16]);
     let one_32 = [1_u8; 32];
@@ -300,16 +330,139 @@ fn roster_and_origin_keys_spell_and_read_as_the_hand_impls() {
         ],
     );
 
-    let digest = hex(&Sha256::digest(table.as_bytes()));
-    for line in table.lines() {
-        println!("PIN {line}");
-    }
-    println!(
-        "PIN-TABLE roster-origin lines={} sha256={digest}",
-        table.lines().count()
+    assert_table("roster-origin", &table, ROSTER_ORIGIN_TABLE_SHA256);
+}
+
+#[test]
+fn question_step_and_document_keys_spell_and_read_as_the_hand_impls() {
+    let hash = pattern_hash();
+    let a = *id_a().as_bytes();
+    let slot_a = ID_A.as_bytes();
+    let after_slot_a = |rest: &[u8]| joined(&[slot_a, rest]);
+    let empty: (&str, Vec<u8>) = ("empty", Vec::new());
+    let mut table = String::new();
+
+    pin(
+        &mut table,
+        "AskHistoryKey",
+        vec![
+            ("zero", ask_history_key(id_a(), 0)),
+            ("max", ask_history_key(id_b(), u64::MAX)),
+            (
+                "colons",
+                ask_history_key(id(ID_COLON), u64::from_be_bytes([b':'; 8])),
+            ),
+            ("question_with_nul", ask_history_key(id(ID_NUL), 1)),
+        ],
+        &[
+            ("nil_question", vec![0; 24]),
+            ("max_question", joined(&[&[0xff; 16], &[0; 8]])),
+            ("question_only", a.to_vec()),
+            empty.clone(),
+        ],
     );
-    assert_eq!(
-        digest, TABLE_SHA256,
-        "the roster and origin key table differs from the hand-written decoders' table"
+    pin(
+        &mut table,
+        "StepIndexKey",
+        vec![
+            ("nil_attempt", step_index_key([0; 16], hash)),
+            ("max", step_index_key([0xff; 16], [0xff; 32])),
+            ("colons", step_index_key([b':'; 16], [b':'; 32])),
+        ],
+        &[
+            ("attempt_only", a.to_vec()),
+            ("claim_shape", joined(&[b"i:", &a])),
+            empty.clone(),
+        ],
+    );
+    pin(
+        &mut table,
+        "StepIndexClaimKey",
+        vec![
+            ("claim", step_index_claim_key(id_a())),
+            ("colons", step_index_claim_key(id(ID_COLON))),
+            ("claim_with_nul", step_index_claim_key(id(ID_NUL))),
+        ],
+        &[
+            ("nil_claim", joined(&[b"i:", &[0; 16]])),
+            ("no_tag", a.to_vec()),
+            ("upper_tag", joined(&[b"I:", &a])),
+            ("tag_only", b"i:".to_vec()),
+            ("forward_shape", joined(&[&a, &hash])),
+            empty.clone(),
+        ],
+    );
+    pin(
+        &mut table,
+        "DocumentSlot",
+        vec![
+            ("a", document_slot(id_a())),
+            ("b", document_slot(id_b())),
+            ("colons", document_slot(id(ID_COLON))),
+        ],
+        &[
+            ("nil", "00".repeat(16).into_bytes()),
+            ("max", "ff".repeat(16).into_bytes()),
+            ("upper", ID_A.to_ascii_uppercase().into_bytes()),
+            ("raw_id", a.to_vec()),
+            ("two_ids", joined(&[ID_A.as_bytes(), ID_B.as_bytes()])),
+            empty.clone(),
+        ],
+    );
+    pin(
+        &mut table,
+        "DocumentUpdateKey",
+        vec![
+            ("sequence_zero", document_update_key_of_sequence(id_a(), 0)),
+            (
+                "sequence_max",
+                document_update_key_of_sequence(id_b(), u32::MAX),
+            ),
+            (
+                "sequence_hex",
+                document_update_key_of_sequence(id_a(), 0x0a0b_0c0d),
+            ),
+            (
+                "generation_zero",
+                document_update_key_of_generation(id_a(), 0),
+            ),
+            (
+                "generation_max",
+                document_update_key_of_generation(id_b(), u64::MAX),
+            ),
+        ],
+        &[
+            ("sequence_upper", after_slot_a(b":0000000A")),
+            ("sequence_plus", after_slot_a(b":+0000001")),
+            ("sequence_seven", after_slot_a(b":0000001")),
+            ("sequence_nine", after_slot_a(b":000000001")),
+            ("sequence_digits", after_slot_a(b":12345678")),
+            ("generation_nineteen", after_slot_a(b":0000000000000000001")),
+            (
+                "generation_overflow",
+                after_slot_a(b":18446744073709551616"),
+            ),
+            ("generation_plus", after_slot_a(b":+0000000000000000001")),
+            ("generation_hex", after_slot_a(b":0000000000000000000a")),
+            ("no_sequence", after_slot_a(b":")),
+            ("slot_only", slot_a.to_vec()),
+            ("no_sep", after_slot_a(b"00000000")),
+            ("double_sep", after_slot_a(b"::0000000")),
+            (
+                "nil_slot",
+                joined(&["00".repeat(16).as_bytes(), b":00000000"]),
+            ),
+            (
+                "upper_slot",
+                joined(&[ID_A.to_ascii_uppercase().as_bytes(), b":00000000"]),
+            ),
+            empty,
+        ],
+    );
+
+    assert_table(
+        "question-step-document",
+        &table,
+        QUESTION_STEP_DOCUMENT_TABLE_SHA256,
     );
 }
