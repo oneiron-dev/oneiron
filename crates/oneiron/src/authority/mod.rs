@@ -569,6 +569,8 @@ pub(crate) use principal_standing::{
     principal_standing_covering_or_lapse_in_txn, principal_standing_in, principal_standing_in_txn,
     principal_standing_or_lapse_in_txn,
 };
+#[cfg(oneiron_test_support)]
+pub(crate) use readonly_fold::adopted_door;
 pub(crate) use readonly_fold::AuthorityView;
 pub(crate) use readonly_fold::authority_view_readonly_for_store_in_txn;
 #[cfg(feature = "sync")]
