@@ -65,6 +65,7 @@ pub use idle_return_tables::COACH_IDLE_RETURN_TABLES_FACET;
 pub use strength::CONSOLIDATION_STRENGTH_FACET;
 pub mod representation;
 mod retrieval_policy;
+pub mod retrieval_skill_review;
 mod room_upkeep;
 pub mod seal_checks;
 pub(crate) mod setting_keys;
@@ -295,7 +296,7 @@ pub(crate) fn execute(
             action_mode::run(ctx.vault, attempt, ctx.now_ms / 1000)?;
         }
         super::COACH_RETRIEVAL_TUNE_FACET => {
-            retrieval_policy::run(ctx.vault)?;
+            retrieval_policy::run(ctx.vault, attempt, ctx.now_ms / 1000)?;
         }
         honesty::HONESTY_AUDIT_FACET => {
             let _ = honesty::run(ctx.vault, ctx.now_ms / 1000)?;
