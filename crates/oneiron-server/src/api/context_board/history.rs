@@ -5,6 +5,7 @@
 //! that stands for it (FIX 5038): a separate answer, never a board.
 
 use super::super::core_engine_error;
+use super::super::parse_entity_id_param;
 use super::ContextBoardResponse;
 use crate::auth::CoreAuth;
 use crate::auth::CoreScope;
