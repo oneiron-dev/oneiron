@@ -137,3 +137,50 @@ fn a_value_in_vault_custody_first_takes_its_handle_in_a_rooms_side_row() -> Test
     );
     Ok(())
 }
+
+/// A second GitHub token, which only the fixture puts in vault custody.
+const OTHER_KEY: &str = "ghp_zyxwvutsrqponmlkjihgfedcba9876543210";
+
+/// A replay row's JSON document that holds [`KEY`] under a credential name
+/// as byte values: no span of the door's text rules places it, so the
+/// side-row wall seals the array whole (L7-30) and mints a record for it.
+fn sealed_key_row() -> TestResult<Vec<u8>> {
+    let token = format!("TOKEN={KEY}");
+    Ok(serde_json::to_vec(&serde_json::json!({
+        "step": "output",
+        "notes": token.as_bytes(),
+    }))?)
+}
+
+#[test]
+fn a_sealed_fresh_key_in_a_rooms_side_row_names_the_off_record_remedy() -> TestResult {
+    let (_directory, vault) = vault()?;
+    // FIXTURE: vault custody holds another value, so the room's base holds
+    // a known-value index and the wall seals in the room's row.
+    put_vault_replay_row(
+        &vault,
+        EntityId::now(),
+        format!("step output: {OTHER_KEY}\n").as_bytes(),
+    )?;
+    let session = vault
+        .off_record_session_vault()
+        .enter("sess-side-row-sealed-key", OffRecordBackendClass::Local)?;
+
+    let codes = reason_codes(put_room_replay_row(
+        &session,
+        EntityId::now(),
+        &sealed_key_row()?,
+    ))?;
+    assert!(
+        codes
+            .first()
+            .is_some_and(|code| code.starts_with("gate.secret_scan.")),
+        "the scan's own reason comes first: {codes:?}"
+    );
+    assert_eq!(
+        codes.last().copied(),
+        Some(OFF_RECORD_FRESH_KEY),
+        "a value the room's row would seal names the remedy too: {codes:?}"
+    );
+    Ok(())
+}
