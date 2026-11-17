@@ -422,11 +422,11 @@ names the field and never its value:
   the like). An import queue with no `claude_code_root` and `codex_root` of
   its own would read the defaults under HOME, so it stops the vault too.
 
-The supervisor binds ten more settings on argv alone; a settings file that
+The supervisor binds eleven more settings on argv alone; a settings file that
 names `browser_runtime`, `desktop_runtime`, `organ_dir`, `mesh_bind`,
 `mesh_relays`, `shared_model_root`, `container_home`,
-`container_runtime_dir`, `guest_runtime_fact` or `hosted_private_origins` is
-refused `SupervisorOwned`:
+`container_runtime_dir`, `guest_runtime_fact`, `hosted_private_origins` or
+`hosted_private_networks` is refused `SupervisorOwned`:
 
 - `--browser-runtime <path>` and `--desktop-runtime <path>`: the browser and
   desktop guests' container CLI, an absolute path on the vault's own host or
@@ -501,13 +501,39 @@ refused `SupervisorOwned`:
   scheme or port no entry lists is refused. A listed origin never admits
   infrastructure, an address-literal URL or a raw connection: a headless
   render's relay (WebSocket, worker and other raw TCP or UDP traffic) knows
-  only addresses and refuses every private one. The host's DNS (its own
+  only addresses and refuses every private one outside a listed network
+  (`--hosted-private-network`, below). The host's DNS (its own
   lookups and the guest's port-53 datagrams to the host's resolvers) stays
-  unchecked. Without the flag the list is empty and every private address is
-  refused. Plain serve and self-hosted nodes carry no guard and fetch as
+  unchecked. Without the flag the list is empty and every private address
+  outside a listed network is refused. Plain serve and self-hosted nodes carry no guard and fetch as
   before. A vault VM has no config-drive file for it. An engine from before
   this flag refuses it, so a supervisor passes it only to engines at or
   after the merge that added it (`version.rs`, hosted private origins).
+- `--hosted-private-network <network>` (managed only, repeatable): a private
+  network the hosted node's web fetch and calendar feed polls may reach,
+  every address in it
+  (HOSTED-EGRESS-OPERATOR-SETTING): `rfc1918` (`10.0.0.0/8`, `172.16.0.0/12`,
+  `192.168.0.0/16`), `cgnat` (`100.64.0.0/10`) or `ula` (`fc00::/7`), spelled
+  exactly so; any other spelling stops the start. It is the hosting
+  operator's setting, never a vault owner's: a managed settings file that
+  names `hosted_private_networks` is refused. A listed network is judged by
+  address, so it admits its addresses at every check, an address-literal
+  URL and a headless render's raw connections included; a name a
+  `--hosted-private-origin` lists stays bound to the schemes and ports its
+  origins list. It never admits the infrastructure the engine knows inside
+  it: Alibaba Cloud's metadata endpoint (`100.100.100.200`) and Tailscale's
+  node address (`100.100.100.100`) in CGNAT; the AWS (`fd00:ec2::254`, EKS
+  Pod Identity `fd00:ec2::23`), Google Cloud (`fd20:ce::254`), Oracle Cloud
+  (`fd00:c1::a9fe:a9fe`), Scaleway (`fd00:42::42`) and Akamai
+  (`fd00:a9fe:a9fe::1`) metadata endpoints and Tailscale's
+  `fd7a:115c:a1e0::53` in ULA; and the node's own addresses. Another
+  provider's endpoint inside an admitted network is reachable, so an
+  operator admits a network only where no such endpoint sits. Without the
+  flag no network is listed, and the node refuses all three except at a
+  listed origin, as before. Plain serve and self-hosted nodes carry no
+  guard. A vault VM has no config-drive file for it. An engine from before
+  this flag refuses it, so a supervisor passes it only to engines at or
+  after the merge that added it (`version.rs`, hosted private networks).
 
 The container CLI gets `HOME` and `XDG_RUNTIME_DIR` from these two flags
 alone. Every call the engine makes to it for a guest (run, inspect and

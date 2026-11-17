@@ -8,7 +8,9 @@
 use serde::{Deserialize, Serialize};
 
 use super::record::{AppliedEdge, ItemRecord, batch_record_in_txn};
+use crate::claim::PREDICATE_CONFLICT_RESOLVED;
 use crate::consent::AuthenticatedOwner;
+use crate::dreamer_promotion::KeptConflictLink;
 use crate::edge::EdgeKind;
 use crate::error::{Error, GateError, Result};
 use crate::gate::{DeriveCapability, derive_verdict_in_txn};
@@ -30,6 +32,13 @@ pub const REVERT_NO_INVERSE: &str = "derive.revert.no_inverse";
 
 /// Why an item was left alone: its inverse refused, so it stands.
 pub const REVERT_INVERSE_REFUSED: &str = "derive.revert.inverse_refused";
+
+/// Why an item was left alone: its inverse would close a claim that
+/// restricts someone's access, and no owner reverts. A batch's own
+/// restriction, or the winner its settlement landed, is lifted only by the
+/// owner's revert (RULING RESTRICTION-CLOSE-BY-DERIVE-ITEM; the direct
+/// retract door asks the same, RESTRICTION-CLAIM-OVERWRITE-AND-SELF-RETRACT).
+pub const REVERT_LIFTS_RESTRICTION: &str = "derive.revert.lifts_restriction";
 
 /// The refusal of a revert by an actor that is neither the batch's
 /// committing actor, with its derive verdict standing, nor the owner.
@@ -166,6 +175,10 @@ impl Vault {
                 left.push((item.local.clone(), REVERT_CHANGED_SINCE.to_owned()));
                 continue;
             }
+            if owner.is_none() && self.inverse_lifts_restriction_in(txn, item)? {
+                left.push((item.local.clone(), REVERT_LIFTS_RESTRICTION.to_owned()));
+                continue;
+            }
             let mut savepoint = self.store.env.nested_write_txn(txn)?;
             match self.undo_item_in_txn(&mut savepoint, &record.actor, reverter, item, now_ms) {
                 Ok(true) => {
@@ -193,6 +206,49 @@ impl Vault {
             left,
             receipt,
         })
+    }
+
+    /// Whether undoing `item` would close a claim that restricts someone's
+    /// access (`federation::claim_removal_widens_in`): a claim item whose
+    /// row stands, which its inverse retracts, or a settlement whose answer
+    /// names a winner it landed from retained candidates
+    /// (`dreamer_consolidation::settlement_revert_lifts_restriction_in`). A
+    /// claim item whose row is a settlement answer reverts as a settlement
+    /// (`dreamer_consolidation::revert` routes it so), so it is judged as
+    /// one too (Muse delta review on #8238). Reopening a superseded claim or
+    /// an archived row, and taking back an edge, close nothing.
+    fn inverse_lifts_restriction_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        item: &ItemRecord,
+    ) -> Result<bool> {
+        match item.kind.as_str() {
+            "claim" => {
+                for row in &item.rows {
+                    if let Some(body) = self.get_claim_in_txn(txn, row)?
+                        && body.lifecycle == crate::claim::ClaimLifecycleStatus::Active
+                        && crate::federation::claim_removal_widens_in(self, txn, &body)?
+                    {
+                        return Ok(true);
+                    }
+                    if crate::dreamer_consolidation::settlement_revert_lifts_restriction_in(
+                        self, txn, *row,
+                    )? {
+                        return Ok(true);
+                    }
+                }
+                Ok(false)
+            }
+            "settle" => match item.rows.first() {
+                Some(resolved) => {
+                    crate::dreamer_consolidation::settlement_revert_lifts_restriction_in(
+                        self, txn, *resolved,
+                    )
+                }
+                None => Ok(false),
+            },
+            _ => Ok(false),
+        }
     }
 
     /// Undoes one landed item in `txn`. `false` when its kind has no inverse
@@ -239,14 +295,27 @@ impl Vault {
                     return Err(Error::InvalidClaimBody("the superseded claim stays closed"));
                 }
             }
+            // A settlement's first row is its answer or its staged Keep.
+            // Only a staged Keep linked to this item's marker is retracted.
             "settle" => {
-                crate::dreamer_consolidation::revert_settlement_in_txn(
-                    self,
-                    txn,
-                    first()?,
-                    reverter,
-                    now_ms,
-                )?;
+                let staged = first()?;
+                let claim = self
+                    .get_claim_in_txn(txn, &staged)?
+                    .ok_or(Error::EntityNotFound)?;
+                if claim.predicate == PREDICATE_CONFLICT_RESOLVED {
+                    crate::dreamer_consolidation::revert_settlement_in_txn(
+                        self, txn, staged, reverter, now_ms,
+                    )?;
+                } else {
+                    if !KeptConflictLink::of_claim(&claim)
+                        .is_some_and(|link| item.rows.get(1) == Some(&link.marker))
+                    {
+                        return Err(Error::InvalidClaimBody(
+                            "the staged Keep does not name this item's marker",
+                        ));
+                    }
+                    self.retract_claim_in_txn_as(txn, &staged, now_ms / 1_000, Some(reverter))?;
+                }
             }
             "archive" => {
                 self.restore_archived_in_txn(txn, &first()?)?;

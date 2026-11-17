@@ -389,7 +389,8 @@ pub static TEST_REARM: JobSpec = JobSpec {
 };
 
 /// The next run of `sweep` in `vault` notes a deadline at `at` while it runs, after it listed
-/// the deadlines it covers, as a door that writes during the run does (stage 5b-1).
+/// the deadlines it covers, as a door that writes during the run does (stage 5a-2, review round 2
+/// of #9300).
 pub fn note_deadline_during_next_run(vault: &Vault, sweep: HousekeepingSweep, at: u64) {
     PLANTED_DEADLINES
         .lock()
