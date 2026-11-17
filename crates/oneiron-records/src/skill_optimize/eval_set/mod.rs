@@ -38,6 +38,9 @@ pub use oneiron_verb_wire::skill_optimize::eval_set::repair_task::EvalRepairActi
 pub use oneiron_verb_wire::skill_optimize::eval_set::repair_task::EvalRepairGrader;
 pub use oneiron_verb_wire::skill_optimize::eval_set::repair_task::EvalRepairPrecondition;
 pub use oneiron_verb_wire::skill_optimize::eval_set::repair_task::EvalRepairTaskSpec;
+pub use oneiron_verb_wire::skill_optimize::eval_set::repair_task::EvalRepairTool;
+pub use oneiron_verb_wire::skill_optimize::eval_set::repair_task::EvalRepairToolCall;
+pub use oneiron_verb_wire::skill_optimize::eval_set::repair_task::EvalRepairToolEffect;
 pub use oneiron_verb_wire::skill_optimize::eval_set::repair_task::EvalRepairWorld;
 pub use oneiron_verb_wire::skill_optimize::eval_set::sufficiency::SufficiencyInput;
 
