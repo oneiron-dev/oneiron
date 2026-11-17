@@ -136,12 +136,6 @@ pub(crate) fn receipts(vault: &Vault, entity: &str) -> OwnerResult<Vec<Erased>> 
         .collect())
 }
 
-fn erase_error(error: MemoryError) -> OwnerError {
-    match error.code.as_str() {
-        oneiron::memory::MEMORY_CODE_BAD_REQUEST => OwnerError::Invalid(error.message),
-        oneiron::memory::MEMORY_CODE_FORBIDDEN => OwnerError::Refused(error.message),
-        oneiron::memory::MEMORY_CODE_NOT_FOUND => OwnerError::NotFound("text", error.message),
-        oneiron::memory::MEMORY_CODE_INVALID_STATE => OwnerError::Changed(error.message),
-        _ => OwnerError::Host(anyhow::anyhow!("erase history: {}", error.message)),
-    }
+pub(crate) fn erase_error(error: MemoryError) -> OwnerError {
+    OwnerError::from_memory_code(error, Some("text"), "erase history")
 }

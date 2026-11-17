@@ -7,7 +7,7 @@ use oneiron_docedit::xlsx_body::read_xlsx_cells;
 use oneiron_xlsx_formula::cell_display_text;
 
 use super::super::model::{A1Range, Locator};
-use super::{MAX_OFFERS, TextLimits};
+use super::TextLimits;
 use crate::edit_roundtrip::CellRef;
 
 /// Cells joined in a range snapshot: across a row, then down rows.
@@ -170,7 +170,7 @@ pub(super) fn find_in_sheets(
                     sheet: sheet.clone(),
                     range,
                 });
-                if out.len() >= MAX_OFFERS {
+                if out.len() >= limits.max_offers {
                     return Ok(out);
                 }
             }
