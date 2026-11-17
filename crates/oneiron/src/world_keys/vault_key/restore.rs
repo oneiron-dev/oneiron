@@ -17,7 +17,7 @@
 //! with none it is the restored key header's alone, and said so.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::sync::{Arc, PoisonError};
+use std::sync::Arc;
 
 use oneiron_crypto::HybridPublicKey;
 
@@ -198,7 +198,6 @@ impl Vault {
         }
         let fresh = cap.checked_lists()?;
         let txn = self.store.env.read_txn().map_err(crate::Error::from)?;
-        // The restored key is held, as its rows name it, to seal the wraps.
         if STATE
             .get(&self.store, &txn, &())?
             .is_none_or(|state| state.commitment != key.commitment())
@@ -208,11 +207,6 @@ impl Vault {
                 refused("the restored vault's data key is not the delivered one"),
             ));
         }
-        *self
-            .world_keys
-            .vault_key
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner) = Some(Arc::clone(key.data_key()));
         let retired_labels: BTreeSet<String> = ESCROW_RETIRED
             .scan(&self.store, &txn)?
             .into_iter()
@@ -221,6 +215,12 @@ impl Vault {
         let held: BTreeMap<String, StoredWrap> =
             WRAPS.scan(&self.store, &txn)?.into_iter().collect();
         drop(txn);
+        // The restored key is held, as its rows name it, to seal the wraps:
+        // with the ring of its earlier generations, set as every hold sets
+        // them, after the read above ends (the store's read slots are per
+        // thread).
+        self.install_vault_key(Arc::clone(key.data_key()))
+            .map_err(|error| Rejected::new(R::DataKeyMismatch, error))?;
         // A fresh recipient never reuses a retired identity, under any label.
         let retired_prefixes: BTreeSet<&str> = retired_labels
             .iter()

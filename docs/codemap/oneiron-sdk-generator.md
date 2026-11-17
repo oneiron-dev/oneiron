@@ -59,3 +59,4 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/py/value.rs` | src | m | 23 crate-vis | — | `Value`: a decoded JSON value with Python's meaning (DESIGN 3) |
 | `src/uniffi_types.rs` | src | XL | 1 struct · 15 crate-vis | — | The UniFFI records and enums for the facade rows' wire types (OF-237), projected from the one facade type… |
 | `src/verb_table.rs` | src | s | 5 crate-vis | — | The verb table, one JSON file per verb under `scripts/sdk/verbs/`, named by its verb, read in file-name order |
+| `tests/sdk_generated_header_text.rs` | test | s | — | — | FIX-LIST 22920 [SDK-GENERATED-HEADER-TEXT]: every generated SDK output names `crates/oneiron-sdk-generator`… |

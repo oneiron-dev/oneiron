@@ -3,6 +3,17 @@
 
 pub const MAX_DBS: u32 = 32;
 
+/// v35 (FIX SEQUENCE-FLOOR-DELIVERY-ORDER, CHECKPOINT-RAW-FLOOR-CLEARED-ROW):
+/// stored authority-log rows keep their bytes and can change meaning. A
+/// row's sequence floor comes from its signer's rows in its scope, not from
+/// the order they arrived in, and no row is refused for its floor: a granting
+/// row below it counts in full and the fold records its signer's fork as a
+/// `SequenceFork` issue. An install that already holds a forked signer's rows
+/// can fold them differently than before. A stored checkpoint image written
+/// before it no longer decodes (the authority fold schema moves with it). No
+/// old-meaning reader or migration is provided (the lead's M-1 stored-change
+/// rule, path "loud").
+///
 /// v34 (row HOSTED-ROOT-REVOKES-OWNER-KEY): stored authority-log rows keep
 /// their bytes and change meaning. A `RevokeDevice` of an owner key counts
 /// only with an owner key's proof, as its signer or a cosign, so a revoke the
