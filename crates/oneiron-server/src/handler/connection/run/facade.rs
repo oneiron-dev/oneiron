@@ -292,7 +292,9 @@ impl FacadeSocket {
             &payload,
             &self.direct_tx,
             Some(&mut self.app_connection),
-        ) {
+        )
+        .await
+        {
             Ok(Some(call)) => {
                 self.verb_calls
                     .spawn(call.answer(Arc::clone(&self.server), self.direct_tx.clone()));
