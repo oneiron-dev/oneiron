@@ -540,6 +540,42 @@ fn a_reconnected_phone_keeps_its_reported_fetch_conditions() {
     );
 }
 
+/// The shell may report before any connection runs (an embedded engine reports at app start,
+/// before device sync dials its home): the report stands on the open vault, and the first
+/// connection fetches on it.
+#[test]
+fn a_shell_report_before_the_connection_opens_its_gate() {
+    run_async(
+        "a_shell_report_before_the_connection_opens_its_gate",
+        || async {
+            let device = Device::open_as(MachineDeviceClass::Phone);
+            assert_eq!(
+                device.vault.reported_fetch_conditions(),
+                FetchConditions::default(),
+                "closed until the shell reports"
+            );
+            let open = FetchConditions {
+                unmetered: true,
+                powered: true,
+            };
+            device.vault.report_fetch_conditions(open);
+            assert_eq!(device.vault.reported_fetch_conditions(), open);
+            let predicted = Arc::new(PredictedHome::default());
+            let (url, _seen) = start_home(Arc::clone(&predicted)).await;
+            let connection = device_connection(&device, url);
+            let window = adopt_one_predicted_window(&device, &connection, &predicted).await;
+            run_predicted_pass(&connection)
+                .await
+                .expect("the fetching pass");
+            assert_eq!(predicted.asks.lock().expect("the asks").len(), 1);
+            assert_eq!(
+                *predicted.promotes.lock().expect("the promotes"),
+                vec![window.as_str().to_owned()]
+            );
+        },
+    );
+}
+
 #[test]
 fn a_dropped_window_is_demoted_never_deleted() {
     run_async("a_dropped_window_is_demoted_never_deleted", || async {

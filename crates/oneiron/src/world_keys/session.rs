@@ -78,6 +78,11 @@ pub(crate) struct WorldKeySession {
     /// The last device-sync start outcome this open session observed, shared
     /// by its clones. `None` until a host records one; never current health.
     pub(crate) device_sync_start: Mutex<Option<DeviceSyncStart>>,
+    /// What the app shell last reported about fetching predictions on this machine
+    /// (`crate::sync::FetchConditions`): closed until it reports, in memory only, and read by
+    /// every sync connection this open session runs.
+    #[cfg(feature = "sync")]
+    pub(crate) fetch_conditions: tokio::sync::watch::Sender<crate::sync::FetchConditions>,
     /// Held while a sealed window's mirror is read, extended and written back.
     #[cfg(feature = "sync")]
     pub(crate) sealing: Mutex<()>,

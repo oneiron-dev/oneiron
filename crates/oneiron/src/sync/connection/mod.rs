@@ -109,15 +109,13 @@ pub struct SyncConnection {
     /// residence upkeep rings it once the authority history is in (OF-534).
     directive_wake: Arc<tokio::sync::Notify>,
     /// Wakes the predicted level's upkeep on this machine: the residence upkeep rings it once
-    /// the authority history is in, a newly applied prediction rings it, and the app shell's
-    /// fetch conditions ring it (ARCH-0023b #predicted-residence).
+    /// the authority history is in and a newly applied prediction rings it (ARCH-0023b
+    /// #predicted-residence). A change of the app shell's fetch conditions wakes the upkeep
+    /// through the open vault's report ([`crate::Vault::report_fetch_conditions`]).
     predicted_wake: Arc<tokio::sync::Notify>,
     /// A (re)connect completed since the predicted upkeep last asked for a prediction, so it
     /// asks again even before its 6 h are up (Engine ruling L7-46-MERGE A).
     predicted_connected: std::sync::atomic::AtomicBool,
-    /// What the app shell last reported about fetching predictions on this machine, both false
-    /// until it reports (a phone fetches only on a reported unmetered and powered state).
-    fetch_conditions: std::sync::Mutex<FetchConditions>,
     /// Wakes the steady loop to judge again which worlds this machine
     /// follows: a world pick, each residence upkeep tick and an authority
     /// catch-up that took rows ring it. A changed set renegotiates at once
@@ -172,16 +170,7 @@ pub struct ResidenceModeChange {
     pub pruned_items: usize,
 }
 
-/// What the app shell reports about fetching predictions on this machine (ARCH-0023b
-/// #predicted-residence: "Phones fetch only on Wi-Fi and power"). A computer fetches whatever
-/// the shell reports; a phone fetches only when both hold, closed by default.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct FetchConditions {
-    /// Whether the machine is on an unmetered network.
-    pub unmetered: bool,
-    /// Whether the machine is on power.
-    pub powered: bool,
-}
+pub use crate::sync::fetch_conditions::FetchConditions;
 
 impl SyncConnection {
     /// Creates a new connection manager over manager-owned windows. An own
@@ -225,7 +214,6 @@ impl SyncConnection {
             directive_wake: Arc::default(),
             predicted_wake: Arc::default(),
             predicted_connected: std::sync::atomic::AtomicBool::new(false),
-            fetch_conditions: std::sync::Mutex::default(),
             follow_wake: Arc::default(),
             home_handoff_wake: Arc::default(),
             left: tokio::sync::watch::channel(left).0,
@@ -538,26 +526,23 @@ impl SyncConnection {
         self.directive_wake.notify_one();
     }
 
-    /// Records what the app shell reports about fetching predictions on this machine, and rings
-    /// the predicted upkeep so a newly opened gate fetches now rather than at the next upkeep.
+    /// Records what the app shell reports about fetching predictions on this machine, on the
+    /// open vault this connection runs ([`crate::Vault::report_fetch_conditions`]), so a
+    /// connection rebuilt later starts from it too. A change rings the predicted upkeep, so a
+    /// newly opened gate fetches now rather than at the next upkeep.
     pub fn set_fetch_conditions(&self, conditions: FetchConditions) {
-        if let Ok(mut current) = self.fetch_conditions.lock() {
-            *current = conditions;
-        }
-        self.predicted_wake.notify_one();
+        self.manager.vault().report_fetch_conditions(conditions);
     }
 
     /// Whether the predicted upkeep may ask and fetch now: a computer always may, and any other
-    /// machine only on a reported unmetered and powered state. A poisoned lock reads as closed.
+    /// machine only on the open vault's reported unmetered and powered state.
     fn fetch_gate_open(&self) -> bool {
-        if self.manager.vault().config.machine_device_class
-            == crate::authority::MachineDeviceClass::Computer
-        {
+        let vault = self.manager.vault();
+        if vault.config.machine_device_class == crate::authority::MachineDeviceClass::Computer {
             return true;
         }
-        self.fetch_conditions
-            .lock()
-            .is_ok_and(|conditions| conditions.unmetered && conditions.powered)
+        let conditions = vault.reported_fetch_conditions();
+        conditions.unmetered && conditions.powered
     }
 
     /// [`Self::set_residence_mode`], with `finish` run in the transaction
