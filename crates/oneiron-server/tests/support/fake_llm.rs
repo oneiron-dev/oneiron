@@ -29,6 +29,16 @@ pub(crate) enum Reply {
     /// Answer with this text, in the protocol and mode the request asked
     /// for. `model` is what the reply claims served it.
     Text { text: String, model: String },
+    /// Answer with this text, reporting `cache_write` created and
+    /// `cache_read` read tokens in its Anthropic usage (L2-37 PR-3): the
+    /// warm send's write, the refresh's read. Other protocols answer plain
+    /// text.
+    CachedText {
+        text: String,
+        model: String,
+        cache_write: u64,
+        cache_read: u64,
+    },
     /// Answer with these deltas as a stream (or their concatenation when
     /// the request did not stream).
     Deltas { deltas: Vec<String>, model: String },
@@ -49,11 +59,6 @@ pub(crate) enum Reply {
     Hold { text: String },
     /// Answer with text computed from the request (to echo ids it carries).
     Computed(Compute),
-    /// Like `Computed`, and an Anthropic-compatible reply's usage also
-    /// reports `cache_write` prompt tokens written to the provider's cache
-    /// (`cache_creation_input_tokens`), as the API reports a marked prefix
-    /// it now holds. An OpenAI-compatible reply carries no such field.
-    ComputedCacheWrite { compute: Compute, cache_write: u64 },
     /// Answer with this exact event-stream body, one event per chunk: an
     /// empty stream, a lone `[DONE]`, a stream cut after its first event.
     Raw(String),
@@ -235,8 +240,12 @@ async fn answer(
         None => Reply::Status(500),
     };
     let usage = !matches!(reply, Reply::NoUsage { .. });
-    let cache_write = match &reply {
-        Reply::ComputedCacheWrite { cache_write, .. } => Some(*cache_write),
+    let cache = match &reply {
+        Reply::CachedText {
+            cache_write,
+            cache_read,
+            ..
+        } => Some((*cache_write, *cache_read)),
         _ => None,
     };
     let (deltas, model) = match reply {
@@ -264,10 +273,9 @@ async fn answer(
             return response;
         }
         Reply::Text { text, model } => (vec![text], model),
+        Reply::CachedText { text, model, .. } => (vec![text], model),
         Reply::Deltas { deltas, model } | Reply::NoUsage { deltas, model } => (deltas, model),
-        Reply::Computed(compute) | Reply::ComputedCacheWrite { compute, .. } => {
-            (vec![compute(&body)], "fake-model".to_owned())
-        }
+        Reply::Computed(compute) => (vec![compute(&body)], "fake-model".to_owned()),
         Reply::Raw(body) => return sse_body(body),
         Reply::Oversized { status, bytes } => {
             return oversized(Arc::clone(&shared), status, bytes);
@@ -291,11 +299,13 @@ async fn answer(
         }
         (true, false) => {
             let mut reply = anthropic_json(&deltas.concat(), &model);
-            if let Some(tokens) = cache_write {
-                reply["usage"]["cache_creation_input_tokens"] = json!(tokens);
-            }
             if !usage {
                 reply["usage"] = Value::Null;
+            } else if let Some((cache_write, cache_read)) = cache {
+                if let Some(object) = reply.get_mut("usage").and_then(Value::as_object_mut) {
+                    object.insert("cache_creation_input_tokens".to_owned(), json!(cache_write));
+                    object.insert("cache_read_input_tokens".to_owned(), json!(cache_read));
+                }
             }
             axum::Json(reply).into_response()
         }
@@ -307,12 +317,7 @@ async fn answer(
             sse(events)
         }
         (true, true) => {
-            let mut events = anthropic_events(&deltas, &model);
-            if let Some(tokens) = cache_write
-                && let Some((_, start)) = events.first_mut()
-            {
-                start["message"]["usage"]["cache_creation_input_tokens"] = json!(tokens);
-            }
+            let mut events = anthropic_events(&deltas, &model, cache);
             if !usage {
                 for (_, event) in &mut events {
                     if let Some(message) = event.get_mut("message").and_then(Value::as_object_mut) {
@@ -375,12 +380,24 @@ fn openai_events(deltas: &[String], model: &str) -> Vec<(Option<&'static str>, V
     events
 }
 
-fn anthropic_events(deltas: &[String], model: &str) -> Vec<(Option<&'static str>, Value)> {
+fn anthropic_events(
+    deltas: &[String],
+    model: &str,
+    cache: Option<(u64, u64)>,
+) -> Vec<(Option<&'static str>, Value)> {
+    let mut start = json!({"type": "message_start", "message": {"id": "msg_fake", "type": "message", "role": "assistant", "model": model, "content": [], "usage": {"input_tokens": 11, "output_tokens": 1}}});
+    if let Some((cache_write, cache_read)) = cache {
+        if let Some(object) = start
+            .get_mut("message")
+            .and_then(|message| message.get_mut("usage"))
+            .and_then(Value::as_object_mut)
+        {
+            object.insert("cache_creation_input_tokens".to_owned(), json!(cache_write));
+            object.insert("cache_read_input_tokens".to_owned(), json!(cache_read));
+        }
+    }
     let mut events = vec![
-        (
-            Some("message_start"),
-            json!({"type": "message_start", "message": {"id": "msg_fake", "type": "message", "role": "assistant", "model": model, "content": [], "usage": {"input_tokens": 11, "output_tokens": 1}}}),
-        ),
+        (Some("message_start"), start),
         (
             Some("content_block_start"),
             json!({"type": "content_block_start", "index": 0, "content_block": {"type": "text", "text": ""}}),

@@ -66,7 +66,8 @@ fn cache_profile(rung: &LadderRung, request: &LlmRequest) -> Option<CacheProfile
     if binding.custody == KeyCustody::T0 {
         return None;
     }
-    if !anthropic_route(&binding.route) {
+    let route = &binding.route;
+    if !anthropic_profiled(route.adapter(), route.origin()) {
         return None;
     }
     let lifetime = match AnthropicProviderOptions::from_request(request)
@@ -82,16 +83,15 @@ fn cache_profile(rung: &LadderRung, request: &LlmRequest) -> Option<CacheProfile
     })
 }
 
-/// Whether `route` is [`ANTHROPIC_ROUTE`], the one route the lifetime table
-/// knows. In this crate's own test build an Anthropic-compatible route on
-/// loopback, where the scripted fake model listens, reads as that route
-/// too, so a chat fixture whose fake reports a cache write warms a prefix
-/// (FIX-LIST SELF-COMPACTION-AUTO-FALLBACK-UNTESTED). Every other build
-/// keeps that route cold.
-fn anthropic_route(route: &oneiron::llm::run_admission::OfferRoute) -> bool {
-    let at = (route.adapter(), route.origin());
-    at == ANTHROPIC_ROUTE
-        || (cfg!(test) && at.0 == ANTHROPIC_ROUTE.0 && at.1.starts_with("http://127.0.0.1:"))
+/// Whether a route at `adapter` and `origin` takes the Anthropic route's
+/// lifetimes: the Anthropic API's own route, and under the test cfg only
+/// an anthropic-compat route on loopback, where the integration tests'
+/// fake provider speaks the Anthropic protocol (L2-37 PR-3).
+fn anthropic_profiled(adapter: &str, origin: &str) -> bool {
+    (adapter, origin) == ANTHROPIC_ROUTE
+        || (cfg!(oneiron_test_support)
+            && adapter == ANTHROPIC_ROUTE.0
+            && origin.starts_with("http://127.0.0.1:"))
 }
 
 /// One reusable prefix of a request as its rung sends it: the content block
