@@ -47,6 +47,7 @@ fn witness_owner_words(vault: &Vault, owner: EntityId, words: &str) -> (EntityId
             conversation_ref: EntityId::now().to_hex(),
             turn_ref: Some(turn.to_hex()),
             thread_audience: None,
+            project: None,
             messages: vec![WitnessMessage {
                 id: Some(message.to_hex()),
                 author: WitnessAuthor::User,
