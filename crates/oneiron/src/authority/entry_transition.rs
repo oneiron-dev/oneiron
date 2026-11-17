@@ -551,9 +551,12 @@ pub(super) fn fold_entry_state(
         ) {
             Err(issue) => return EntryFold::Invalid(issue),
             Ok(OwnerKeyEnrollReading::Enrolment) => {
-                apply_op(&mut state, &entry.op, hash, entry.signer_key());
+                // The passkey facts first: the roster's writer remembers the
+                // key for good when it gives the owner's proof, which a
+                // passkey's vouch withholds until confirmed.
                 super::owner_key_enrollment::remember_passkey_context(&mut state, enroll);
                 super::owner_key_enrollment::remember_passkey_vouch(&mut state, entry, enroll);
+                apply_op(&mut state, &entry.op, hash, entry.signer_key());
             }
             Ok(OwnerKeyEnrollReading::Confirmation) => {
                 state
