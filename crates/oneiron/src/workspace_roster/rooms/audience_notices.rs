@@ -100,8 +100,13 @@ impl std::fmt::Debug for ExportThreadRoots {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ThreadNotice {
     /// The acting person walked in, reading from now on; `event` is the
-    /// walk-in's audience edit TURN.
-    WalkIn { event: EntityId },
+    /// walk-in's audience edit TURN. `agent_role` is the role an agent
+    /// walked in as, its PERSON's (OF-529): `owner` or `admin`; `None` for
+    /// a person.
+    WalkIn {
+        event: EntityId,
+        agent_role: Option<&'static str>,
+    },
     /// The Owner opened the thread's full history to themselves; `event` is
     /// that audience edit TURN.
     OpenFullHistory { event: EntityId },
@@ -139,7 +144,7 @@ impl ThreadNotice {
     /// What the notice tells of: the audience edit, or the export.
     const fn occasion(self) -> EntityId {
         match self {
-            Self::WalkIn { event }
+            Self::WalkIn { event, .. }
             | Self::OpenFullHistory { event }
             | Self::OwnerAddedFullHistory { event, .. }
             | Self::JoinRequested { event }
@@ -162,6 +167,18 @@ impl ThreadNotice {
             Self::WalkIn { .. } | Self::OpenFullHistory { .. } | Self::VaultExported { .. } => {
                 vec![root, actor]
             }
+        }
+    }
+
+    /// The producer's words on the notice, as the inbox shows them: its op,
+    /// and for an agent's walk-in the role it walked in as (OF-529).
+    fn detail(self) -> String {
+        match self {
+            Self::WalkIn {
+                agent_role: Some(role),
+                ..
+            } => format!("{} as {role}", self.op()),
+            _ => self.op().to_owned(),
         }
     }
 
@@ -316,7 +333,7 @@ fn record_notice_in_txn(
                 recipient.to_hex()
             ),
             result: Some(root.to_hex()),
-            detail: Some(notice.op().to_owned()),
+            detail: Some(notice.detail()),
             ..NotificationSource::default()
         },
         subject_refs: notice.subjects(root, actor),

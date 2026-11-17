@@ -6,6 +6,7 @@
 
 pub mod access_request_seed;
 pub mod advisory_rate_window;
+pub mod agent_authoring;
 pub mod agent_definition_scans;
 pub mod agent_health;
 pub mod agent_pair_grant_orphan;
@@ -26,13 +27,16 @@ pub mod authority_view_grant;
 pub mod authority_world_undo;
 pub mod board_child_done;
 pub mod board_task_wakes;
+pub mod booking_anti_abuse_manifest;
 pub mod booking_side_table_rows;
+pub mod bootstrap_skills;
 pub mod builtin_pack_seed;
 pub mod call_receipt_damage;
 pub mod callable_skill;
 pub mod campaign_member_index;
 pub mod campaign_opt_out_line;
 pub mod check_in;
+pub mod checker_masked_candidate;
 pub mod checkpoint_descriptor;
 pub mod checkpoint_pins;
 pub mod checkpoint_registry;
@@ -58,6 +62,7 @@ pub mod comm_late_stop;
 pub mod comm_party_lookup_reads;
 pub mod comm_thread_member_claim_reads;
 pub mod comm_widen_standing;
+pub mod compaction;
 pub mod compaction_request;
 pub mod companion_grant_index;
 pub mod connector_key_suspend;
@@ -91,9 +96,16 @@ pub mod dreamer_stage_line;
 pub mod enum_name_rows;
 pub mod epoch_lineage_pointer;
 pub mod esign_commitments;
+pub mod esign_send_binding;
 pub mod eval_authoring_execution_fault;
 pub mod extra_room_index;
+pub mod extraction_decisions;
+pub mod extraction_inputs;
 pub mod extraction_probe;
+pub mod extraction_routing;
+pub mod extraction_single_valued;
+pub mod extraction_steps;
+pub mod extraction_verdict;
 pub mod fanout_admission;
 pub mod feed_prune;
 pub mod feeds;
@@ -124,6 +136,7 @@ pub mod home_handoff_retire;
 pub mod home_pick_fold;
 #[cfg(feature = "sync")]
 pub mod home_sections;
+pub mod host_cancel_refund;
 #[cfg(feature = "sync")]
 pub mod host_node_seals;
 pub mod host_root_loss;
@@ -133,6 +146,7 @@ pub mod host_taint_replica;
 pub mod host_write_origin;
 pub mod house_link;
 pub mod hydration_decode_guard;
+pub mod identity_ramp;
 pub mod identity_recheck;
 pub mod idle_fold;
 pub mod imported_evidence;
@@ -211,6 +225,7 @@ pub mod room_facet_set;
 #[cfg(feature = "sync")]
 pub mod room_fact_marks;
 pub mod room_turn_backfill;
+pub mod root_appointment;
 pub mod roster_slot_reservation;
 pub mod run_changes;
 pub mod run_hold;
@@ -223,6 +238,7 @@ pub mod scrub_keeps_hint_and_name_rows;
 pub mod seat_park_model_step;
 #[cfg(feature = "sync")]
 pub mod secret_same_value;
+pub mod selector_grant;
 pub mod setting;
 pub mod setting_keys;
 pub mod settle_backoff;
@@ -234,6 +250,7 @@ pub mod side_key_pins;
 pub mod skill_gate;
 pub mod skill_hub_restore;
 pub mod skill_judgment_cut;
+pub mod skill_optimize_files;
 pub mod skill_package;
 pub mod skill_read_hold;
 pub mod slack_install_rows;
@@ -250,12 +267,13 @@ pub mod stretch_pack_finalize;
 pub mod substrate_reads;
 #[cfg(feature = "sync")]
 pub mod sync_checkpoint_pins;
-#[cfg(feature = "sync")]
 pub mod sync_parted_row_binding;
 #[cfg(feature = "sync")]
 pub mod sync_whole_row_binding;
 pub mod task_ask_role_routing;
 pub mod task_refusal_output;
+#[cfg(feature = "sync")]
+pub mod training_corpus;
 pub mod tray_answered_removal;
 pub mod turn_programs;
 pub mod turn_sitting;

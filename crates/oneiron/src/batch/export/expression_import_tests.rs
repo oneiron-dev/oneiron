@@ -1,4 +1,5 @@
 //! Native writer fixtures for the Imported-only expression archive adapter.
+use super::archive_rewrite_fixture::rewrite_archive_rows;
 use super::*;
 use crate::batch::{BatchOp, apply_ops};
 use crate::claim::{
@@ -6,7 +7,6 @@ use crate::claim::{
     ExpressionPreferenceChange, ExpressionPreferenceKind, ExpressionPreferenceOrigin,
     ExpressionPreferenceValue, decode_claim_body, encode_claim_body,
 };
-use crate::context_pack::PackFormat;
 use crate::edge::{EdgeActorClass, EdgeKind};
 use crate::error::{Error, GateError, Result};
 use crate::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_POLICY_MANIFEST};
@@ -101,6 +101,7 @@ fn local_policy(vault: &Vault, permit: Option<EntityId>, ceiling: &str) -> Resul
                 entity_type: ENTITY_TYPE_POLICY_MANIFEST,
                 occurred: at(1),
                 learned_at: 1,
+                row_version: None,
                 data,
                 allow_maintenance: true,
                 allow_reserved_predicate: false,
@@ -167,10 +168,7 @@ fn archive(origins: [ExpressionPreferenceOrigin; 2]) -> Result<Archive> {
         at(30),
         30,
     )?;
-    let bytes = source
-        .export_whole_vault(PackFormat::Json)?
-        .bytes()
-        .to_vec();
+    let bytes = source.export_whole_vault(false)?.bytes().to_vec();
     Ok(Archive {
         bytes,
         subject,
@@ -182,8 +180,8 @@ fn archive(origins: [ExpressionPreferenceOrigin; 2]) -> Result<Archive> {
 }
 
 fn stored_graph(vault: &Vault) -> Result<(Vec<ExportEntity>, Vec<ExportEdge>)> {
-    let export = vault.export_whole_vault(PackFormat::Json)?;
-    let document = vault.read_whole_vault_json(export.bytes())?;
+    let export = vault.export_whole_vault(false)?;
+    let document = vault.read_whole_vault_archive(export.bytes())?;
     let mut entities: Vec<_> = document.entities().cloned().collect();
     entities.sort_by(|a, b| a.id.cmp(&b.id));
     Ok((entities, document.evidence_ledger.edges))
@@ -193,19 +191,19 @@ fn stored_graph(vault: &Vault) -> Result<(Vec<ExportEntity>, Vec<ExportEdge>)> {
 fn expression_archive_requires_current_local_writer_and_auto_policy_atomically() -> Result<()> {
     let archive = archive([ExpressionPreferenceOrigin::ExplicitUser; 2])?;
     let (_dir, target, writer) = fresh_vault()?;
-    let manifest = target.read_whole_vault_json(&archive.bytes)?.manifest;
+    let manifest = target.read_whole_vault_archive(&archive.bytes)?.manifest;
     assert!(manifest.import_refusals.iter().any(|refusal| matches!(refusal,
         ExportImportRefusal::Entity { entity_id, reason: ImportRefusalReason::LocalExpressionWriterRequired }
             if *entity_id == archive.head.to_hex())));
     let before = stored_graph(&target)?;
     assert!(matches!(
-        target.import_whole_vault_json(&archive.bytes),
+        target.import_whole_vault_archive(&archive.bytes),
         Err(Error::InvalidConfig(_))
     ));
     assert_eq!(stored_graph(&target)?, before);
     // An archive author is not a local writer even when the archive carries its PERSON.
     assert!(matches!(
-        target.import_whole_vault_json_with_actor(&archive.bytes, &archive.foreign_writer),
+        target.import_whole_vault_archive_with_actor(&archive.bytes, &archive.foreign_writer),
         Err(Error::EntityNotFound)
     ));
     assert_eq!(stored_graph(&target)?, before);
@@ -217,7 +215,7 @@ fn expression_archive_requires_current_local_writer_and_auto_policy_atomically()
         local_policy(&target, permit, ceiling)?;
         let before = stored_graph(&target)?;
         assert!(matches!(
-            target.import_whole_vault_json_with_actor(&archive.bytes, &writer),
+            target.import_whole_vault_archive_with_actor(&archive.bytes, &writer),
             Err(Error::Gate(GateError::FamilyRequiresAutoGrant { .. }))
         ));
         assert_eq!(stored_graph(&target)?, before);
@@ -234,7 +232,7 @@ fn expression_archive_restores_native_generations_with_fresh_provenance_and_safe
     let archive = archive([ExpressionPreferenceOrigin::ExplicitUser; 2])?;
     let (_dir, target, writer) = fresh_vault()?;
     local_policy(&target, Some(writer.entity_ref()), "auto")?;
-    target.import_whole_vault_json_with_actor(&archive.bytes, &writer)?;
+    target.import_whole_vault_archive_with_actor(&archive.bytes, &writer)?;
     for (id, lifecycle, valid_to) in [
         (archive.first, ClaimLifecycleStatus::Superseded, Some(20)),
         (archive.head, ClaimLifecycleStatus::Active, None),
@@ -272,23 +270,27 @@ fn expression_archive_restores_native_generations_with_fresh_provenance_and_safe
             .any(|edge| edge.kind == EdgeKind::Supersedes && edge.target == archive.first)
     );
     let before = stored_graph(&target)?;
-    let repeated = target.import_whole_vault_json_with_actor(&archive.bytes, &writer)?;
+    let repeated = target.import_whole_vault_archive_with_actor(&archive.bytes, &writer)?;
     assert_eq!(repeated.inserted_entities, 0);
     assert_eq!(stored_graph(&target)?, before);
     // Same id and provenance, divergent archive body: the local receipt is not
     // an id-wide permit. Keep the derivation index unchanged (evidence is unchanged).
-    let mut divergent = target.read_whole_vault_json(&archive.bytes)?;
-    let row = divergent
-        .claims
-        .iter_mut()
-        .find(|row| row.id == archive.head.to_hex())
-        .unwrap();
-    let mut body = decode_claim_body(&row.body.to_bytes()?, false)?;
-    body.value = "de-DE".into();
-    row.body = ExportBody::from_bytes(&encode_claim_body(&body)?, row.entity_type);
+    let divergent = rewrite_archive_rows(
+        &archive.bytes,
+        "records/entity/claim.jsonl",
+        |mut rows: Vec<ExportEntity>| {
+            let row = rows
+                .iter_mut()
+                .find(|row| row.id == archive.head.to_hex())
+                .unwrap();
+            let mut body = decode_claim_body(&row.body.to_bytes().unwrap(), false).unwrap();
+            body.value = "de-DE".into();
+            row.body = ExportBody::from_bytes(&encode_claim_body(&body).unwrap(), row.entity_type);
+            rows
+        },
+    )?;
     assert!(matches!(
-        target
-            .import_whole_vault_json_with_actor(&serde_json::to_vec(&divergent).unwrap(), &writer),
+        target.import_whole_vault_archive_with_actor(&divergent, &writer),
         Err(Error::InvalidConfig(_))
     ));
     assert_eq!(stored_graph(&target)?, before);
@@ -303,7 +305,7 @@ fn expression_archive_restores_native_generations_with_fresh_provenance_and_safe
     )?;
     let before = stored_graph(&target)?;
     assert!(matches!(
-        target.import_whole_vault_json_with_actor(&archive.bytes, &writer),
+        target.import_whole_vault_archive_with_actor(&archive.bytes, &writer),
         Err(Error::InvalidConfig(_))
     ));
     assert_eq!(stored_graph(&target)?, before);
@@ -320,18 +322,21 @@ fn expression_archive_refuses_mixed_precedence_and_missing_history_without_write
     ])?;
     let before = stored_graph(&target)?;
     assert!(matches!(
-        target.import_whole_vault_json_with_actor(&mixed.bytes, &writer),
+        target.import_whole_vault_archive_with_actor(&mixed.bytes, &writer),
         Err(Error::InvalidConfig(_))
     ));
     assert_eq!(stored_graph(&target)?, before);
     let archive = archive([ExpressionPreferenceOrigin::ExplicitUser; 2])?;
-    let mut missing = target.read_whole_vault_json(&archive.bytes)?;
-    missing
-        .evidence_ledger
-        .edges
-        .retain(|edge| edge.kind != EdgeKind::Supersedes as u8);
+    let missing = rewrite_archive_rows(
+        &archive.bytes,
+        "records/edge.jsonl",
+        |mut rows: Vec<ExportEdge>| {
+            rows.retain(|edge| edge.kind != EdgeKind::Supersedes as u8);
+            rows
+        },
+    )?;
     assert!(matches!(
-        target.import_whole_vault_json_with_actor(&serde_json::to_vec(&missing).unwrap(), &writer),
+        target.import_whole_vault_archive_with_actor(&missing, &writer),
         Err(Error::InvalidConfig(_))
     ));
     assert_eq!(stored_graph(&target)?, before);
