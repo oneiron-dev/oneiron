@@ -91,7 +91,7 @@ pub use pairing::{
     CheckpointPinPosture, CheckpointPinRoot, CheckpointPinSignature, CheckpointPinSuite,
     CheckpointPinTier,
 };
-pub use receipt_page::FacadeReceiptPage;
+pub use receipt_page::{FacadeActorAttribution, FacadeActorAttributionKind, FacadeReceiptPage};
 
 use std::sync::Arc;
 
