@@ -50,8 +50,8 @@ pub(crate) struct AuthorityStructure {
     removed: BTreeSet<crate::EntityId>,
     /// The owner anchors a root record named, each signed by its own anchor
     /// alone (world privacy P6b). An anchor signs only what the fold's anchor
-    /// rules let it: its own root records and its machine marks. It never
-    /// becomes an admitter or a slip issuer.
+    /// rules let it: its own root records, its machine marks and its root
+    /// appointments. It never becomes an admitter or a slip issuer.
     anchors: BTreeSet<[u8; 32]>,
     /// The anchors this install takes rows from as its own: [`LocalRoots`]'
     /// anchors.
@@ -316,7 +316,9 @@ impl<'a> StructureBuilder<'a> {
                     self.root_roles |= device.roles;
                 }
             }
-            AuthorityOp::MachineProfile(_) | AuthorityOp::OwnerRoot(_) => self.fresh.push(entry),
+            AuthorityOp::MachineProfile(_)
+            | AuthorityOp::OwnerRoot(_)
+            | AuthorityOp::RootAppointment(_) => self.fresh.push(entry),
             op => {
                 if admits_device(op).is_some_and(is_consent_device) {
                     self.fresh.push(entry);
@@ -367,6 +369,20 @@ impl<'a> StructureBuilder<'a> {
                 }
             } else if matches!(entry.op, AuthorityOp::MachineProfile(_)) {
                 self.file_profile(entry);
+            } else if let AuthorityOp::RootAppointment(appointment) = &entry.op {
+                // The pinned root's anchor's appointment admits its
+                // successor, a root key (OWNER-ANCHOR-ROOT-RECOVERY); the
+                // anchor itself stays no admitter and no issuer, and an
+                // appointment out of shape (its successor its own signer, or
+                // not in the one successor shape) admits nothing. Another
+                // anchor's admits nothing: only this install's pin counts one.
+                if self.structure.is_own_anchor(entry.signer_key())
+                    && entry.cosigns.is_empty()
+                    && entry.validate_shape().is_ok()
+                    && verify_entry_signatures(entry).is_ok()
+                {
+                    self.admit_key(&appointment.successor, &mut admitted, &mut issued);
+                }
             } else if signed_by(entry, &self.structure.admitters) {
                 self.admit(entry, &mut admitted, &mut issued);
             } else {
@@ -417,6 +433,17 @@ impl<'a> StructureBuilder<'a> {
         if verify_entry_signatures(entry).is_err() {
             return;
         }
+        self.admit_key(device, admitted, issued);
+    }
+
+    /// Admits `device`'s key, and makes it a slip issuer when it holds the
+    /// owner role.
+    fn admit_key(
+        &mut self,
+        device: &DeviceAuthority,
+        admitted: &mut Vec<AuthorityKey>,
+        issued: &mut Vec<AuthorityKey>,
+    ) {
         if device.roles & ROLE_OWNER != 0 && self.structure.issuers.insert(device.key.clone()) {
             issued.push(device.key.clone());
         }
@@ -544,6 +571,11 @@ impl AuthorityStructure {
                 None => self.is_anchor(entry.signer_key()) && entry.cosigns.is_empty(),
             },
             AuthorityOp::OwnerRoot(_) => self_signed_root(entry).is_some(),
+            // A root appointment (OWNER-ANCHOR-ROOT-RECOVERY): a stored
+            // root's anchor signs it alone, as its marks.
+            AuthorityOp::RootAppointment(_) => {
+                self.is_anchor(entry.signer_key()) && entry.cosigns.is_empty()
+            }
             // An owner answer: its carrier's install key, alone or beside one
             // owner key's proof, which the fold judges (mesh PR1b, row
             // CARRIER-OWNER-PROOF).
@@ -631,6 +663,9 @@ impl AuthorityStructure {
                             if self.awaited_anchors.contains(anchor))
                 }
             },
+            // Only the pinned root's anchor appoints a root here: another
+            // anchor's appointment admits no successor.
+            AuthorityOp::RootAppointment(_) => !self.is_own_anchor(signer),
             _ => false,
         }
     }
@@ -649,6 +684,29 @@ impl AuthorityStructure {
 
     pub(super) fn is_own_anchor(&self, key: &AuthorityKey) -> bool {
         matches!(key, AuthorityKey::Ed25519(anchor) if self.own_anchors.contains(anchor))
+    }
+
+    /// Whether this install believes `entry` (design pass 29: "a chain is
+    /// read only by a reader that believes its admitter"): a key may vouch
+    /// for it, it vouches as no stranger's, and no anchor this install only
+    /// awaits signed it. The roster's rows and the rows of this install's own
+    /// anchors (the pin's and the earlier admitter's) are believed. A foreign
+    /// anchor's rows, an awaited root's own rows, the rows of install keys
+    /// only such marks name, a removed machine's frontier joins (every row
+    /// [`Self::is_stranger`] reads as a stranger's), and rows no key vouches
+    /// for are not: the fold
+    /// trusts an anchor's chains only under the pin (`FoldedMachine::trusted`),
+    /// and awaiting widens only what the gate stores.
+    pub(super) fn believes(&self, entry: &AuthorityLogEntry) -> bool {
+        self.vouches_for(entry)
+            && !self.is_stranger(entry)
+            && (signed_by(entry, &self.admitters) || !self.is_awaited_only(entry.signer_key()))
+    }
+
+    /// An anchor of a root this install awaits and does not take as its own.
+    fn is_awaited_only(&self, key: &AuthorityKey) -> bool {
+        matches!(key, AuthorityKey::Ed25519(anchor)
+            if self.awaited_anchors.contains(anchor) && !self.own_anchors.contains(anchor))
     }
 
     /// Whether `key` signs rows the fold may come to admit: an admitter, an

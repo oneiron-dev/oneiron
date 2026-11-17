@@ -190,15 +190,24 @@ impl SyncServer {
         // V2-R3: a lock of this vault waits for this process's snapshot
         // release before its key drops; an erase drops its sessions.
         crate::models::install_snapshot_runtime(&vault);
+        // A model install on this process reads this vault's owner's
+        // licence choice (models.install.allow_noncommercial_licences).
+        crate::model_artifacts::licence::bind_licence_vault(&vault);
         // FIX 14976: this vault's drafter bindings are served on this
         // process's own managed worker, where it launches one for this vault.
         crate::models::install_drafter_serving(&vault);
         // F1-6: this vault's guests run on the isolating backends this build
-        // carries, installed on the vault, not named by a process global. A
-        // vault an earlier server of this process installed keeps its set.
+        // carries, installed on the vault, not named by a process global, and
+        // on the vendor sandboxes this server serves (L8-43). A vault an
+        // earlier server of this process installed keeps its set.
         let _ = vault.install_sandbox_backends(Arc::new(
-            oneiron_agent_runtime::code_sandbox::CompiledSandboxBackends,
+            crate::sandbox_vendor::ServedSandboxBackends::new(&vault),
         ));
+        // Fix list row 17645: the mail pack's blocking network checks (an
+        // IMAP reply with files asks its submission server the size it
+        // takes) run on this server's blocking hop, under its `[mail]`
+        // settings.
+        crate::api::install_mail_host(&vault, &config.mail);
         // Provider media replies are booked on their own line (FIX 8615),
         // this vault's, as its mesh bytes are (FIX 9321, FIX 9323).
         let model_budgets = crate::models::ModelHostBudgets::new(
@@ -434,6 +443,7 @@ impl SyncServer {
             api_addr: None,
             artifact_socket: false,
             booking_calls: Default::default(),
+            booking_deposit_stripe_base: crate::booking_deposit::stripe::STRIPE_API_BASE.to_owned(),
             booking_turn_lines: Default::default(),
             #[cfg(test)]
             booking_test_now_secs: None,

@@ -2,7 +2,8 @@
 //! build script places it in `side_table`'s catalogue.
 
 crate::side_table::side_tables! {
-    /// Marker (engine version string) that the built-in bootstrap skill set has been seeded. Key: ().
+    /// Marker that the built-in bootstrap skill set has been seeded: the engine version string,
+    /// then one line per shipped skill name a seed pass has offered. Key: ().
     SKILL_HUB_BOOTSTRAP_SEED: VaultMeta b"bootstrap_skills/seeded/v1" Raw
         [restore: content] [family: unclassified] [tier: canonical];
     /// Each model pack's version a same-name update replaced, as its install receipt named it:

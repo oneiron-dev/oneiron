@@ -40,8 +40,8 @@ use super::resources::{document_version, standing};
 use super::value_projection::rmpv_to_json;
 use crate::attempt_queue::AttemptId;
 use crate::claim::{
-    PREDICATE_CONFLICT_OPEN, PREDICATE_CONFLICT_RESOLVED, ScopedRead, claim_sensitivity_band,
-    decode_claim_body, is_reserved_predicate,
+    PREDICATE_CONFLICT_OPEN, PREDICATE_CONFLICT_RESOLVED, ScopedRead, claim_evidence_admissible,
+    claim_sensitivity_band, decode_claim_body, is_reserved_predicate,
 };
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_ORG, ENTITY_TYPE_PERSON, ENTITY_TYPE_PLACE};
 use crate::settings::ReadDestination;
@@ -156,6 +156,9 @@ struct KnownClaim {
     rel: crate::claim::RelationshipScope,
     /// The stored question key as JSON, when the claim carries one.
     topic_key: Option<String>,
+    /// Whether verification may take the head as evidence: a generated head
+    /// never corroborates (GATE-11), so the listing marks it uncitable.
+    citable: bool,
 }
 
 impl Neighbourhood {
@@ -692,6 +695,7 @@ fn listable(
                 .find(|(key, _)| key.as_str() == Some("topic_key"))
                 .map(|(_, topic)| rmpv_to_json(topic).to_string())
         }),
+        citable: claim_evidence_admissible(&prior.body),
     })
 }
 

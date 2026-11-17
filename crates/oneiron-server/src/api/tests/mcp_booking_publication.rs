@@ -23,6 +23,7 @@ fn config(host: oneiron::EntityId) -> EventTypeConfig {
         booking_window_secs: 7 * 86_400,
         daily_cap: None,
         weekly_cap: None,
+        deposit: None,
         routing: RoutingMode::Either,
         hosts: vec![HostAvailabilityConfig {
             host_ref: host,
@@ -55,6 +56,7 @@ fn publication(config: &EventTypeConfig, owner_display: &str) -> serde_json::Val
         event_types: vec![EventTypeCard {
             key: EventTypeKey("intro".to_owned()),
             title: "Intro".to_owned(),
+            deposit: None,
             duration_min: 30,
             description: "A first call".to_owned(),
         }],
@@ -155,15 +157,10 @@ async fn public_page_status(server: &Arc<SyncServer>, page: oneiron::EntityId) -
 #[tokio::test]
 async fn a_propose_only_slip_cannot_take_a_public_booking_page_offline() {
     let (_dir, server) = auth_test_server();
-    let owner = seeded_test_entity_id(0x0024_7101);
+    let owner = server.vault.ensure_embedded_owner_actor().unwrap();
     let page = seeded_test_entity_id(0x0024_7102);
     let host = seeded_test_entity_id(0x0024_7103);
     for (id, kind, body) in [
-        (
-            owner,
-            oneiron::registry::ENTITY_TYPE_PERSON,
-            &b"page owner"[..],
-        ),
         (host, oneiron::registry::ENTITY_TYPE_PERSON, &b"host"[..]),
         (
             page,

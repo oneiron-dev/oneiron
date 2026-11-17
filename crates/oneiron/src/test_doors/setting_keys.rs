@@ -61,6 +61,9 @@ fn window_no_wider(a: &u64, b: &u64) -> bool {
 /// How many changes `test.hooked` has seen.
 static HOOKED_CHANGES: AtomicU64 = AtomicU64::new(0);
 
+/// The time the last change `test.hooked`'s hook saw was stamped with.
+static HOOKED_LAST_AT: AtomicU64 = AtomicU64::new(0);
+
 /// How many times `test.after_commit`'s after-commit hook has run.
 static AFTER_COMMITS: AtomicU64 = AtomicU64::new(0);
 
@@ -156,8 +159,9 @@ fn no_credential_named_members() -> CredentialNamedMembers {
 fn count_change(
     _vault: &crate::Vault,
     _txn: &mut heed::RwTxn<'_>,
-    _change: &SettingChange,
+    change: &SettingChange,
 ) -> Result<()> {
+    HOOKED_LAST_AT.store(change.at, Ordering::SeqCst);
     HOOKED_CHANGES.fetch_add(1, Ordering::SeqCst);
     Ok(())
 }
@@ -166,6 +170,12 @@ fn count_change(
 #[must_use]
 pub fn hooked_changes() -> u64 {
     HOOKED_CHANGES.load(Ordering::SeqCst)
+}
+
+/// The time the last change `test.hooked`'s hook ran for was stamped with.
+#[must_use]
+pub fn hooked_last_at() -> u64 {
+    HOOKED_LAST_AT.load(Ordering::SeqCst)
 }
 
 /// `test.after_commit`'s after-commit hook: it reads the key in a read of its own, which sees
