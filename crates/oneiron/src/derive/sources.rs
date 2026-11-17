@@ -27,7 +27,9 @@ pub const SOURCE_WITHHELD: &str = "gate.deny.derive.source_withheld";
 ///
 /// The gate's refusal ([`SOURCE_MOVED`], [`SOURCE_WITHHELD`],
 /// [`SOURCE_FOREIGN_COPY`]) for the first source that no longer stands or is
-/// a foreign copy, which aborts the commit, and storage errors.
+/// a foreign copy, which aborts the commit; the same refusal with
+/// `gate.deny.derive.read_not_live` when the actor's read credential is not
+/// live, which serves nothing to judge by; and storage errors.
 pub(super) fn recheck_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -38,6 +40,15 @@ pub(super) fn recheck_in_txn(
         return Ok(());
     }
     let read = super::actor_read(vault, stamp.actor)?;
+    // A read whose credential is not live serves nothing, so no cited
+    // version can be judged: deny the commit with the row token the claim
+    // and evidence items refuse with, instead of failing the batch.
+    if !read.proof_live_in(txn)? {
+        return Err(Error::Gate(GateError::GateWriteRejected {
+            outcome: "deny",
+            reason_codes: vec![super::READ_NOT_LIVE],
+        }));
+    }
     for version in &batch.sources {
         let refusal = match version.recheck_in_txn(&read, txn)? {
             SourceVersionCheck::Current

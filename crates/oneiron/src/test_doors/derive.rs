@@ -495,6 +495,47 @@ pub fn narrow_steward_grant_to_project(
     })
 }
 
+/// Expires the agent grant `grant` at second 1, as if the owner had minted
+/// it with an expiry long passed, leaving every other field unchanged.
+///
+/// # Errors
+///
+/// The vault's, or a missing or malformed grant row.
+pub fn expire_agent_grant(vault: &Vault, grant: EntityId) -> Result<()> {
+    use crate::federation::{decode_federation_grant_body, encode_federation_grant_body};
+    let raw = vault.get(&grant)?.ok_or(crate::Error::EntityNotFound)?;
+    let mut body = decode_federation_grant_body(&raw)?;
+    body.expires_at = Some(1);
+    let now = vault.now_recorded_at();
+    vault.with_write_txn_grouped(|txn| {
+        crate::batch::apply_ops(
+            &vault.store,
+            &vault.config,
+            &vault.analyzer,
+            txn,
+            vec![crate::batch::BatchOp::Put {
+                id: grant,
+                entity_type: crate::registry::ENTITY_TYPE_FEDERATION_GRANT,
+                occurred: crate::TimeRange {
+                    start: now,
+                    end: now,
+                },
+                learned_at: now,
+                row_version: None,
+                data: encode_federation_grant_body(&body)?,
+                allow_maintenance: true,
+                allow_reserved_predicate: false,
+                hub_sync_imported: false,
+            }],
+            vault
+                .text_index_trusted
+                .load(std::sync::atomic::Ordering::Acquire),
+            false,
+            true,
+        )
+    })
+}
+
 /// Writes a user's TURN stamped as imported words (ARCH-0027), as an import
 /// lands one; its id.
 ///
@@ -1144,6 +1185,46 @@ pub fn open_conflict_with_alternative(
     member: EntityId,
     value: &str,
 ) -> Result<(EntityId, EntityId)> {
+    open_conflict_with_alternative_evidence(vault, member, value, member)
+}
+
+/// Opens a conflict over `member`, retaining `value` from imported words
+/// (FIX 5754). Its Keep stages in review, with the marker open. Returns the
+/// marker and the alternative's selector.
+///
+/// # Errors
+///
+/// The vault's, a member that is no claim, or inadmissible evidence.
+pub fn open_conflict_with_imported_alternative(
+    vault: &Vault,
+    member: EntityId,
+    value: &str,
+) -> Result<(EntityId, EntityId)> {
+    let words = rmp_serde::to_vec_named(&std::collections::BTreeMap::from([
+        ("speaker", "user"),
+        ("txt", value),
+        (crate::memory::IMPORTED_SOURCE_KEY, "transcript"),
+    ]))
+    .map_err(|_| crate::error::Error::InvalidClaimBody("an imported TURN body does not encode"))?;
+    let imported = EntityId::now();
+    let at = vault.now_recorded_at();
+    vault.put_entity(
+        &imported,
+        crate::registry::ENTITY_TYPE_TURN,
+        crate::TimeRange { start: at, end: at },
+        at,
+        &words,
+    )?;
+    open_conflict_with_alternative_evidence(vault, member, value, imported)
+}
+
+/// Opens a conflict over `member`, retaining `value` from `evidence_source`.
+fn open_conflict_with_alternative_evidence(
+    vault: &Vault,
+    member: EntityId,
+    value: &str,
+    evidence_source: EntityId,
+) -> Result<(EntityId, EntityId)> {
     use crate::dreamer_consolidation::evidence::{VerifiedCandidate, VerifiedEvidenceSet};
     use crate::dreamer_consolidation::{PromotionCandidate, retained_alternatives_entry_for_test};
     use crate::write_envelope::{ClaimCandidate, WriteEnvelope, WriteProvenance};
@@ -1163,7 +1244,7 @@ pub fn open_conflict_with_alternative(
             vault,
             &read,
             &txn,
-            &[member],
+            &[evidence_source],
             ClaimSource::Generated,
         )?
     };

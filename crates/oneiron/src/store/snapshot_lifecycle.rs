@@ -12,6 +12,7 @@ pub use crate::store::snapshot_lock_result::{
 use oneiron_model::llm::VaultRef;
 use std::future::Future;
 use std::pin::Pin;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError, RwLock, TryLockError};
 use std::time::Duration;
 
@@ -26,6 +27,26 @@ pub(crate) struct SnapshotLifecycle {
     /// sweep of the body files, so a sweep never takes a body whose row is
     /// about to commit.
     files: Mutex<()>,
+    /// The data-key handoffs in flight ([`SnapshotAdmissionPause`]): while
+    /// any is, no admission is granted. Read and changed under the gate.
+    paused: AtomicU32,
+}
+
+/// Holds snapshot admission shut while the vault's data key changes hands, a
+/// new data-key generation from its draft to its finish: no admission
+/// granted before it holds, and none is granted while it lives, so no
+/// snapshot sealed under the old key commits after the act. Dropping it
+/// opens admission again only as far as the gate is open: a lock in between
+/// keeps it shut.
+pub(crate) struct SnapshotAdmissionPause<'a> {
+    lifecycle: &'a SnapshotLifecycle,
+}
+
+impl Drop for SnapshotAdmissionPause<'_> {
+    fn drop(&mut self) {
+        let _gate = self.lifecycle.gate();
+        self.lifecycle.paused.fetch_sub(1, Ordering::SeqCst);
+    }
 }
 
 impl SnapshotLifecycle {
@@ -78,7 +99,8 @@ impl SnapshotLifecycle {
 
     pub(crate) fn admission(&self) -> Option<SnapshotAdmission> {
         let gate = self.gate();
-        gate.open.then_some(SnapshotAdmission {
+        let paused = self.paused.load(Ordering::SeqCst) != 0;
+        (gate.open && !paused).then_some(SnapshotAdmission {
             generation: gate.generation,
             erase_generation: gate.erase_generation,
         })
@@ -97,5 +119,16 @@ impl SnapshotLifecycle {
     pub(crate) fn erased(&self) {
         let mut gate = self.gate();
         gate.erase_generation = gate.erase_generation.wrapping_add(1);
+    }
+
+    /// Pauses admission for a data-key handoff until the returned guard
+    /// drops: every admission granted before stops holding, as after an
+    /// erase, and none is granted meanwhile.
+    pub(crate) fn pause_for_key_handoff(&self) -> SnapshotAdmissionPause<'_> {
+        let mut gate = self.gate();
+        gate.erase_generation = gate.erase_generation.wrapping_add(1);
+        self.paused.fetch_add(1, Ordering::SeqCst);
+        drop(gate);
+        SnapshotAdmissionPause { lifecycle: self }
     }
 }
