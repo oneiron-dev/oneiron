@@ -291,6 +291,7 @@ impl Memory<'_> {
             actor.entity_ref(),
             upload.rewrite,
             stored,
+            None,
         )?;
         Ok(Ok(()))
     }
