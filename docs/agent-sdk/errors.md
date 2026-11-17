@@ -17,6 +17,7 @@ or downgrades the engine's refusal. Future remote codes pass through verbatim.
 | `INTERNAL_SERVER_ERROR` | Check the server endpoint, network and health. Report reproducible SDK boundary failures. |
 | `LEASE_REQUIRED` | Use light or medium recall, or present a budget lease. |
 | `IDENTITY_UNSETTLED` | The effect named a person through a mention that is not settled yet. Settle it with `self.identity.settle`, then act. |
+| `OWNER_CONFIRM_REQUIRED` | A one-way act runs only on the owner's confirm of its preview. Call `vault.owner_confirm.preview` with the verb and its input, show the owner what it takes, and pass its `confirm` back in the call. A state that changed since needs a new preview. |
 | `BUDGET_SPENT` | The line a paid call spends on is spent, or the vault's budget policy refuses it. Use light or medium recall, or ask the owner to raise the line. |
 | `MODEL_UNAVAILABLE` | The model the request needs did not answer usably; nothing stands in for it. Use light or medium recall, or ask the owner to check the model route. |
 | `MODEL_PIN_UNAVAILABLE` | The owner pinned a model that no offered seat serves; nothing stands in for it. Offer a seat for that model, or ask the owner to change or clear the pin. |

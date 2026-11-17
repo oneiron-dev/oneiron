@@ -3,7 +3,7 @@
 
 pub use oneiron_store::vault_cleanup::run_snapshot::*;
 
-use super::run_record::{self, KEY_REVERT, KEY_SNAPSHOT};
+use super::run_record::{self, KEY_REVERT, KEY_SNAPSHOT, RUN_LABEL};
 use super::run_revert::{CleanupRunRevert, decode_revert};
 use super::{
     CleanupDecision, CleanupKind, CleanupPosture, CleanupProposal, CleanupRunReport, KEY_AT,
@@ -62,14 +62,14 @@ pub fn cleanup_runs(vault: &Vault) -> Result<CleanupRuns> {
 
 fn decode_run(attempt: AttemptId, raw: &[u8]) -> Result<Option<CleanupRunRecord>> {
     let fields = run_record::decode_fields(raw)?;
-    let Some(snapshot) = field(&fields, KEY_SNAPSHOT)
+    let Some(snapshot) = field(&fields, KEY_SNAPSHOT, RUN_LABEL)?
         .map(decode_snapshot)
         .transpose()?
         .flatten()
     else {
         return Ok(None);
     };
-    let revert = match field(&fields, KEY_REVERT) {
+    let revert = match field(&fields, KEY_REVERT, RUN_LABEL)? {
         None | Some(Value::Nil) => None,
         Some(value) => Some(decode_revert(attempt, value)?),
     };
@@ -134,14 +134,14 @@ pub(super) fn decode_snapshot(value: &Value) -> Result<Option<CleanupRunSnapshot
         Value::Map(parts) => parts,
         _ => return Err(corrupt()),
     };
-    let Some(Value::Array(rows)) = field(parts, KEY_ENTRIES) else {
+    let Some(Value::Array(rows)) = field(parts, KEY_ENTRIES, SNAPSHOT_LABEL)? else {
         return Err(corrupt());
     };
     Ok(Some(CleanupRunSnapshot {
-        at: field(parts, KEY_AT)
+        at: field(parts, KEY_AT, SNAPSHOT_LABEL)?
             .and_then(Value::as_u64)
             .ok_or_else(corrupt)?,
-        decision: field(parts, KEY_DECISION)
+        decision: field(parts, KEY_DECISION, SNAPSHOT_LABEL)?
             .and_then(Value::as_str)
             .and_then(CleanupDecision::parse)
             .ok_or_else(corrupt)?,
@@ -163,18 +163,19 @@ fn decode_entry(row: &Value) -> Option<CleanupSnapshotEntry> {
     };
     Some(CleanupSnapshotEntry {
         entity: entity_at(parts, KEY_ENTITY)?,
-        kind: field(parts, KEY_KIND)
+        kind: field(parts, KEY_KIND, SNAPSHOT_LABEL)
+            .ok()?
             .and_then(Value::as_str)
             .and_then(CleanupKind::parse)?,
-        revision: match field(parts, KEY_REVISION)? {
+        revision: match field(parts, KEY_REVISION, SNAPSHOT_LABEL).ok()?? {
             Value::Nil => None,
             value => Some(value.as_slice()?.try_into().ok()?),
         },
-        before: match field(parts, KEY_BEFORE)? {
+        before: match field(parts, KEY_BEFORE, SNAPSHOT_LABEL).ok()?? {
             Value::Nil => None,
             value => Some(value.as_slice()?.to_vec()),
         },
-        after: match field(parts, KEY_AFTER)? {
+        after: match field(parts, KEY_AFTER, SNAPSHOT_LABEL).ok()?? {
             Value::Nil => None,
             value => Some(value.as_slice()?.to_vec()),
         },
@@ -183,7 +184,8 @@ fn decode_entry(row: &Value) -> Option<CleanupSnapshotEntry> {
 
 /// The entity id a row holds as hex under `key`.
 pub(super) fn entity_at(parts: &[(Value, Value)], key: &str) -> Option<EntityId> {
-    field(parts, key)
+    field(parts, key, SNAPSHOT_LABEL)
+        .ok()?
         .and_then(Value::as_str)
         .and_then(|hex| EntityId::from_hex(hex).ok())
 }
