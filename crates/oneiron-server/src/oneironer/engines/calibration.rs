@@ -367,3 +367,6 @@ pub(super) fn measure_loaded(
         detail: None,
     }
 }
+
+#[cfg(test)]
+mod tests;
