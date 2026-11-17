@@ -456,6 +456,7 @@ fn the_diary_review_reads_off_until_the_owners_row() {
             expected_revision: None,
             why: None,
             check_in_ref: None,
+            weight_runs: None,
         },
     );
     assert!(
@@ -479,6 +480,7 @@ fn the_diary_review_reads_off_until_the_owners_row() {
             expected_revision: None,
             why: None,
             check_in_ref: None,
+            weight_runs: None,
         },
     );
     assert!(
@@ -512,6 +514,7 @@ fn the_plan_mode_reads_optional_until_the_owners_row() {
             expected_revision: None,
             why: None,
             check_in_ref: None,
+            weight_runs: None,
         },
     );
     assert_eq!(
@@ -537,6 +540,7 @@ fn the_plan_mode_reads_optional_until_the_owners_row() {
             expected_revision: None,
             why: None,
             check_in_ref: None,
+            weight_runs: None,
         },
     );
     assert_eq!(
@@ -581,6 +585,7 @@ fn the_retained_work_wait_reads_its_default_until_the_owners_row() {
             expected_revision: None,
             why: None,
             check_in_ref: None,
+            weight_runs: None,
         },
     );
     assert_eq!(
@@ -625,6 +630,7 @@ fn the_scan_threshold_reads_its_default_until_the_owners_row() {
             expected_revision: None,
             why: None,
             check_in_ref: None,
+            weight_runs: None,
         },
     );
     assert_eq!(
@@ -681,6 +687,7 @@ fn the_ceiling_reads_no_dial_until_the_owners_row() {
             expected_revision: None,
             why: None,
             check_in_ref: None,
+            weight_runs: None,
         },
     );
     let set = get_item(&me, CEILING, &dial, json!([]));
@@ -737,6 +744,7 @@ fn the_notification_rows_read_their_defaults_until_the_owners_row() {
             expected_revision: None,
             why: None,
             check_in_ref: None,
+            weight_runs: None,
         },
     );
     set_applied(
@@ -751,6 +759,7 @@ fn the_notification_rows_read_their_defaults_until_the_owners_row() {
             expected_revision: None,
             why: None,
             check_in_ref: None,
+            weight_runs: None,
         },
     );
     let mode = get(&me, NOTIF_MODE, json!([person_scope(person)]));
@@ -778,6 +787,7 @@ fn the_notification_rows_read_their_defaults_until_the_owners_row() {
             expected_revision: None,
             why: None,
             check_in_ref: None,
+            weight_runs: None,
         },
     );
     let own = get(&me, NOTIF_MODE, json!([person_scope(person)]));
@@ -811,6 +821,7 @@ fn the_old_checks_refuse_what_they_refused() {
             expected_revision: None,
             why: None,
             check_in_ref: None,
+            weight_runs: None,
         },
     );
     assert!(
@@ -830,6 +841,7 @@ fn the_old_checks_refuse_what_they_refused() {
             expected_revision: None,
             why: None,
             check_in_ref: None,
+            weight_runs: None,
         },
     );
     assert!(
@@ -849,6 +861,7 @@ fn the_old_checks_refuse_what_they_refused() {
             expected_revision: None,
             why: None,
             check_in_ref: None,
+            weight_runs: None,
         },
     );
     assert!(
@@ -869,6 +882,7 @@ fn the_old_checks_refuse_what_they_refused() {
                 expected_revision: None,
                 why: None,
                 check_in_ref: None,
+                weight_runs: None,
             },
         );
         assert!(
@@ -889,6 +903,7 @@ fn the_old_checks_refuse_what_they_refused() {
             expected_revision: None,
             why: None,
             check_in_ref: None,
+            weight_runs: None,
         },
     );
     assert!(
@@ -933,6 +948,7 @@ fn a_person_sets_only_their_own_notification_row() {
                 expected_revision: None,
                 why: None,
                 check_in_ref: None,
+                weight_runs: None,
             },
         )
         .expect("a person sets their own row");
@@ -960,6 +976,7 @@ fn a_person_sets_only_their_own_notification_row() {
                 expected_revision: None,
                 why: None,
                 check_in_ref: None,
+                weight_runs: None,
             },
         )
         .expect("a person sets their own interval");
@@ -994,6 +1011,7 @@ fn a_person_sets_only_their_own_notification_row() {
                         expected_revision: None,
                         why: None,
                         check_in_ref: None,
+                        weight_runs: None,
                     },
                 )
                 .expect_err("another person's row is refused")
