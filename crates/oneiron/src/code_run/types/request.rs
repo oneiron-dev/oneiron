@@ -209,6 +209,58 @@ impl SelfSpeechCall {
     }
 }
 
+/// A code run's plain `say(result)` (L8-25): one of the run's own results,
+/// by the ref the guest gave (`r7`, a handle or a card's ref), spoken where
+/// the run speaks as its typed-result bubble. It is the run's `self.speak`
+/// with a result for its words. `order` and `occurred_at` are the bridge's
+/// stamps, as a speech call's are. `bound` is the result as the host
+/// resolved it in the run: the host's, never the guest's, and the run's
+/// record keeps the guest's call without it, so a replay resolves nothing.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SelfSayResultCall {
+    pub result: String,
+    pub order: u32,
+    pub occurred_at: u64,
+    pub(crate) bound: Option<SaidResult>,
+}
+
+/// A `say(result)`'s result as the host bound it: the attachment its bubble
+/// carries, and the rows the run's verb answers served it from.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct SaidResult {
+    pub(crate) attachment: crate::memory::MessageResultAttachment,
+    pub(crate) served_rows: Option<Vec<EntityId>>,
+}
+
+impl SelfSayResultCall {
+    /// A `say(result)` carrying only the guest's ref. Order and timestamp
+    /// are zero until the bridge stamps them; nothing is bound until the
+    /// host resolves the ref.
+    #[must_use]
+    pub fn new(result: impl Into<String>) -> Self {
+        Self {
+            result: result.into(),
+            order: 0,
+            occurred_at: 0,
+            bound: None,
+        }
+    }
+
+    #[must_use]
+    pub fn with_bridge_stamp(mut self, order: u32, occurred_at: u64) -> Self {
+        self.order = order;
+        self.occurred_at = occurred_at;
+        self
+    }
+
+    /// The call with the result the host resolved bound to it.
+    #[must_use]
+    pub(crate) fn with_bound(mut self, said: SaidResult) -> Self {
+        self.bound = Some(said);
+        self
+    }
+}
+
 /// Arguments for destructive/outbound fixture effects.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SelfFixtureEffectCall {

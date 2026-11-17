@@ -31,7 +31,7 @@ use super::super::budget::{
 };
 use super::super::builder::PipelineBuilder;
 use super::super::capabilities::{memory_candidate_count, partition_capabilities};
-use super::super::channels::{execute_phonetic, fusion_fetch_limit};
+use super::super::channels::fusion_fetch_limit;
 use super::super::corpus_filter::CorpusFilter;
 use super::super::criticality::critical_candidate_ids;
 use super::super::filters::{apply_claim_status_gate, apply_relationship_filter};
@@ -67,7 +67,7 @@ struct SnapshotInputs<'a> {
 struct StagePlan(usize);
 
 impl StagePlan {
-    fn new(planned: [bool; 6]) -> Self {
+    fn new(planned: [bool; 7]) -> Self {
         Self(planned.into_iter().filter(|planned| *planned).count())
     }
     /// The stages left, this one included; counts this one down.
@@ -253,6 +253,7 @@ impl PipelineBuilder<'_> {
                 hyde_expansion.is_some(),
                 self.text_search.is_some(),
                 self.phonetic_search.is_some(),
+                self.phonetic_vector_search.is_some(),
                 self.temporal_search.is_some(),
                 self.ppr_search.is_some(),
             ]);
@@ -363,7 +364,7 @@ impl PipelineBuilder<'_> {
             if let Some(codes) = &self.phonetic_search
                 && let Some(phonetic_results) =
                     self.run_stage(RetrievalSignal::Phonetic, stages.next(), || {
-                        execute_phonetic(&self.read, rtxn, codes, self.deadline)
+                        self.scoped_phonetic_results(rtxn, codes, filter_config, &claim_gate)
                     })?
             {
                 diagnostics.succeeded.push(RetrievalSignal::Phonetic);
@@ -375,6 +376,27 @@ impl PipelineBuilder<'_> {
                     filter_config,
                     &mut metadata_cache,
                 )?);
+            }
+
+            // The learned rung: its own ranked list of the phonetic channel, scored over its
+            // hits as a dense list is, never mixed raw with the code rung's.
+            if let Some(query) = &self.phonetic_vector_search
+                && let Some(learned_results) =
+                    self.run_stage(RetrievalSignal::Phonetic, stages.next(), || {
+                        self.phonetic_vector_results(rtxn, query, filter_config, &claim_gate)
+                    })?
+            {
+                if !diagnostics.succeeded.contains(&RetrievalSignal::Phonetic) {
+                    diagnostics.succeeded.push(RetrievalSignal::Phonetic);
+                }
+                acc.admit_channel(
+                    RetrievalSignal::Phonetic,
+                    learned_results,
+                    &self.read,
+                    rtxn,
+                    filter_config,
+                    &mut metadata_cache,
+                )?;
             }
 
             if let Some(config) = &self.temporal_search

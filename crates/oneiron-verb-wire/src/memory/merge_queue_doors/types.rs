@@ -24,14 +24,17 @@ pub struct MergeQueueBatchRequest {
     pub batch_ref: String,
 }
 
-/// Stored repository proposals to queue as one batch. The proposals carry
-/// their own bytes and reviews; this request carries neither.
+/// Stored repository proposals to queue: one batch, or consecutive batches
+/// of at most 63 when there are more. The proposals carry their own bytes
+/// and reviews; this request carries neither.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct MergeQueueEnqueueRequest {
     /// An existing CODE_ARTIFACT whose stored pointer is a local folder.
     pub repo: EntityId,
-    /// Stored repository proposals, in batch order. One call is one batch.
+    /// Stored repository proposals, in batch order. One call is one batch of
+    /// up to 63; more form consecutive batches in this order, each staged on
+    /// the head the one before it landed.
     pub proposals: Vec<EntityId>,
     /// The queue green Git commit the caller observed, 40 hex characters.
     /// Each proposal must be pinned at it.

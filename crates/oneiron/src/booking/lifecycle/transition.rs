@@ -8,6 +8,7 @@ use super::claim::{
 use super::occurrence::{confirm_solve_window, inclusive_occurrence, offers_slot};
 use super::passport::{mint_booking_uid, supersede_outbound_passport, write_outbound_passport};
 use super::public_authority::booking_writer_with_publication;
+use super::setting_keys::reschedule_after_start_in_txn;
 use super::storage::{
     HOLD, calendar_wrap, claims_for_subject, confirm_receipt_key, encode_claim_value,
     engine_failure, read_receipt, refused, revision_receipt_key, write_receipt,
@@ -188,6 +189,7 @@ pub(crate) fn execute_hold(
                 token_hash: token_digest(&token),
                 expires_at,
                 checkout_lease_hash,
+                cap_override: spec.cap_override.clone(),
             };
             HOLD.put(&vault.store, wtxn, &digest, &row)
                 .map_err(|error| engine_failure("meta write", error))?;
@@ -345,16 +347,22 @@ fn confirm_in_writer(
         return Err(refused("hold token does not match this session's hold"));
     }
 
-    // (3) Fresh availability, read while we hold the writer.
+    // (3) Fresh availability, read while we hold the writer. A hold the owner
+    // took past the meeting caps is re-solved past them, and only it.
     let solve_over = |window: crate::temporal::TimeRange| {
-        oracle.solve(&SolveRequest {
+        let request = SolveRequest {
             event_type: hold.event_type.clone(),
             window,
             constraint: hold.constraint.clone(),
             visitor_tz: hold.visitor_tz.clone(),
             // The held slot names its length (BK-VARIABLE-DURATION).
             duration_min: SolveRequest::slot_duration_min(hold.slot),
-        })
+        };
+        if hold.cap_override.is_some() {
+            oracle.solve_past_caps(&request)
+        } else {
+            oracle.solve(&request)
+        }
     };
     let solved = solve_over(confirm_solve_window(hold.slot)?)?;
     // The wide solve carries the alternatives, and the oracle offers the flex
@@ -470,9 +478,9 @@ pub(super) fn booking_read_rows(
 ///
 /// # Errors
 ///
-/// [`BookingError::InvalidConstraint`] on an unknown or wrongly-scoped token or
-/// an unavailable slot; [`BookingError::SlotOracle`] on store or calendar
-/// failures.
+/// [`BookingError::InvalidConstraint`] on an unknown or wrongly-scoped token,
+/// a cancelled booking, a booking whose start has come, or an unavailable
+/// slot; [`BookingError::SlotOracle`] on store or calendar failures.
 pub(crate) fn execute_reschedule(
     vault: &Vault,
     oracle: &dyn SlotOracle,
@@ -512,6 +520,22 @@ pub(crate) fn execute_reschedule(
             {
                 let (calendar, reads) = recorded.into_revision_and_reads();
                 return Ok(RevisionReceipt { calendar, reads });
+            }
+
+            // A booking whose start has come is a meeting that is happening or
+            // that happened (held, or a no-show), not one at an inconvenient time.
+            // Moving it would re-put that EVENT at a future interval under the
+            // outcome it already carries, and hand the visitor a second meeting
+            // from one booking. The line is the start second itself, where the
+            // owner's emergency path, reminders and CAL-07 already draw it. A retry
+            // of a move made before the start was answered above. The host may
+            // let visitors move a started booking (`booking.reschedule.after_start`,
+            // default off); the move then keeps its deposit rules.
+            if now_utc >= booking.slot.start
+                && !reschedule_after_start_in_txn(vault, &*wtxn)
+                    .map_err(|error| engine_failure("reschedule setting read", error))?
+            {
+                return Err(refused("a booking that has started cannot be rescheduled"));
             }
 
             let context = booking
