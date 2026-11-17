@@ -14,6 +14,11 @@
 //!   signed cancel is refused before the device holds its carrier's profile; once the
 //!   authority history arrives, the task reads as a refusal. Red at the pin (the refusal
 //!   found no proof, kept nothing, and the task read with no cancel); green on the head.
+//! - `a_forged_replay_of_a_refused_cancel_keeps_its_refusal` (REVIEW-9438 round 2 P1): the
+//!   owner's signed cancel is refused at a deleted id, then its row comes again with another
+//!   time under the original signature. Red at the pin
+//!   opus-task-proof/restore-counts-live-task-facts-red-forged-replay (the replay replaced
+//!   the kept body, and the task read with no cancel); green on the head.
 //!
 //! Run: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test task_fact_refused_at_deleted_id`.
@@ -319,5 +324,54 @@ fn a_refused_cancel_counts_once_its_carrier_is_admitted() {
     assert!(
         reads_suppressed(&device.vault, task),
         "once its carrier is admitted, the refused cancel fails its task's read"
+    );
+}
+
+/// `body` with its `occurred_at` moved by one second and every other byte kept, its
+/// carrier signature included: a replay of the row that no carrier signed.
+fn with_moved_time(body: &[u8]) -> Vec<u8> {
+    let Value::Map(mut entries) =
+        rmpv::decode::read_value(&mut &body[..]).expect("the fact body decodes")
+    else {
+        panic!("a fact body is a map");
+    };
+    for (key, value) in &mut entries {
+        if key.as_str() == Some("occurred_at") {
+            *value = Value::from(value.as_u64().expect("the fact's time") + 1);
+        }
+    }
+    let mut bytes = Vec::new();
+    rmpv::encode::write_value(&mut bytes, &Value::Map(entries)).expect("encode fixture");
+    bytes
+}
+
+#[test]
+fn a_forged_replay_of_a_refused_cancel_keeps_its_refusal() {
+    let host = host();
+    let device = device(&host);
+    let task = owner_task(&host.vault, host.owner, "a task the owner cancels");
+    sync_facts(&host, &device, task);
+    let cancel = mint_fact(
+        &host.vault,
+        task,
+        TaskAuthorityFactKind::Cancelled,
+        host.owner,
+        None,
+    )
+    .expect("the host's door writes the owner's cancel");
+    let cancel_body = fact_body(&host.vault, task, cancel);
+    note_refused_fact(&device.vault, cancel, &cancel_body)
+        .expect("the device refuses the cancel's row, deleted there");
+    assert!(
+        reads_suppressed(&device.vault, task),
+        "a refused cancel the device would count fails its task's read"
+    );
+    let forged = with_moved_time(&cancel_body);
+    assert_ne!(forged, cancel_body, "the replay carries another body");
+    note_refused_fact(&device.vault, cancel, &forged)
+        .expect("the device refuses the replayed row, deleted there");
+    assert!(
+        reads_suppressed(&device.vault, task),
+        "a replay its carrier never signed does not replace the refused cancel"
     );
 }
