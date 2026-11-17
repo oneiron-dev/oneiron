@@ -27,6 +27,11 @@
 //! process, so a changed `recovery.wait` reaches the box within one look and
 //! a report the box refused goes again at the next. Like every wait report,
 //! it does not wait for the boot heal.
+//!
+//! A failed hold or report may still have reached the box: the relay can
+//! fail after it wrote the whole request. So a failure forgets what the box
+//! last acknowledged, and the next look sends the current fact and wait even
+//! when they equal that earlier value.
 
 use std::cell::Cell;
 use std::future::Future;
@@ -89,7 +94,9 @@ pub(crate) fn fold_kit_only_fact() -> KitOnlyFactRead {
 
 /// What the watch keeps between looks, in this process only: the fact the
 /// box last acknowledged, and which failure it already warned about, so a
-/// failure that repeats every look is logged once at warn.
+/// failure that repeats every look is logged once at warn. A failed hold
+/// forgets the acknowledged fact, since the box may have taken the failed
+/// one.
 #[derive(Debug, Default)]
 pub(crate) struct KitOnlyFollow {
     acknowledged: Option<KitOnlyFact>,
@@ -119,11 +126,26 @@ pub enum KitOnlyLook {
 
 /// What the watch keeps of the wait report between looks, in this process
 /// only: the wait the box last took, and whether a failure was already
-/// warned about.
+/// warned about. A failed report forgets the wait the box took, since the
+/// box may have taken the failed one.
 #[derive(Debug, Default)]
 pub(crate) struct WaitReportFollow {
     reported: Option<Duration>,
     warned: bool,
+}
+
+#[cfg(oneiron_test_support)]
+impl WaitReportFollow {
+    /// The wait the box last took in this process, as the watch holds it.
+    pub(crate) fn reported(&self) -> Option<Duration> {
+        self.reported
+    }
+
+    /// Holds `wait` as the one the box last took, as an earlier report in
+    /// this process would have.
+    pub(crate) fn set_reported(&mut self, wait: Duration) {
+        self.reported = Some(wait);
+    }
 }
 
 /// What one wait report did.
@@ -209,6 +231,8 @@ impl HypnosRecoveryBoxHold {
                 }
             }
             Err(error) => {
+                // The box may have taken the wait this report sent.
+                follow.reported = None;
                 if follow.warned {
                     tracing::debug!(
                         kind = ?error.kind(),
@@ -280,6 +304,8 @@ impl HypnosRecoveryBoxHold {
                 }
             }
             Err(error) => {
+                // The box may have taken the choice this hold sent.
+                follow.acknowledged = None;
                 if follow.hold_warned == Some(fact) {
                     tracing::debug!(
                         kind = ?error.kind(),

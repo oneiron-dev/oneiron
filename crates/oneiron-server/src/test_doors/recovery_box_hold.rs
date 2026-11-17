@@ -111,6 +111,21 @@ impl KitOnlyWatch {
         self.client
             .report_wait_when_changed(&self.vault, &self.admit, &mut self.wait)
     }
+
+    /// The wait the watch holds as the one the box last took in this
+    /// process: a later report sends nothing while the vault's wait equals it.
+    #[must_use]
+    pub fn reported_wait(&self) -> Option<Duration> {
+        self.wait.reported()
+    }
+
+    /// Holds `wait` as the one the box last took, as an earlier report in
+    /// this process would have: the stand-in for a `recovery.wait` that
+    /// changed since, which the 24-hour default cannot do until that Setting
+    /// lands.
+    pub fn set_reported_wait(&mut self, wait: Duration) {
+        self.wait.set_reported(wait);
+    }
 }
 
 /// The kit-only watch over `vault`, with nothing acknowledged yet, as a
