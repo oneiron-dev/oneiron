@@ -601,6 +601,30 @@ pub fn record_reply_model_call_in_txn(
     MODEL_CALL_REPLIES.put(&vault.store, txn, &(reply, key), &())
 }
 
+/// The calls linked to the saved reply MESSAGE `reply`, in key order, read in
+/// `txn` (THREAD-PROVENANCE-READ). A link whose call row is gone or does not
+/// decode reads as no call. Empty for a reply no call was linked to: one
+/// captured before the link existed, or one off the record.
+pub(crate) fn model_calls_for_reply_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    reply: &EntityId,
+) -> Result<Vec<ModelCallRecord>> {
+    let mut records = Vec::new();
+    for (_, key) in MODEL_CALL_REPLIES.scan_keys(&vault.store, txn, reply.as_bytes())? {
+        match MODEL_CALLS.get(&vault.store, txn, &key) {
+            Ok(Some(record)) => records.push(record),
+            Ok(None) => {}
+            Err(error) => tracing::debug!(
+                %error,
+                reply = %reply.to_hex(),
+                "a linked model-call row did not decode; it reads as no call"
+            ),
+        }
+    }
+    Ok(records)
+}
+
 pub fn model_call_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
