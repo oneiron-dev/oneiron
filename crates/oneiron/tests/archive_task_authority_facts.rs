@@ -22,6 +22,9 @@
 //! - `a_restored_fact_counts_on_a_second_device_of_a_rooted_vault`: red on the base, as
 //!   above; on the head the restored facts' signed twins prove themselves on a device that
 //!   holds no index entry for them.
+//! - `the_owners_restore_counts_a_fact_the_vault_held_from_sync` (blind review P1,
+//!   REVIEW-9365): red at 1d4c09536b55 (the import meets the fact held unchanged, skips it,
+//!   and the task reads no owner); green on the head.
 //!
 //! Run: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test archive_task_authority_facts`.
 #![cfg(oneiron_test_support)]
@@ -43,7 +46,7 @@ use oneiron::sync::client::ImportTier;
 use oneiron::sync::replay::{ReplicatedEntity, replay_entity};
 use oneiron::task_verb::TaskCreateSpec;
 use oneiron::{EdgeActorClass, EdgeKind, EntityId, TimeRange, Vault, VaultConfig};
-use oneiron_contracts::record_layout::ENTITY_METADATA_HEADER_LEN;
+use oneiron_contracts::record_layout::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use oneiron_keystore::MemoryKeystore;
 use rmpv::Value;
 
@@ -363,5 +366,62 @@ fn a_restored_fact_counts_on_a_second_device_of_a_rooted_vault() -> TestResult {
         there.cancelled,
         "the signed twin of the restored cancel counts on the device"
     );
+    Ok(())
+}
+
+/// Blind review P1 (REVIEW-9365): a fact an own device sent here unsigned proves nothing
+/// here. The owner's restore of the archive that holds it, byte for byte and at its own
+/// times, meets the row unchanged; it counts the fact as one it lands, and twins it under
+/// this install's signature.
+#[test]
+fn the_owners_restore_counts_a_fact_the_vault_held_from_sync() -> TestResult {
+    let source_directory = tempfile::tempdir()?;
+    let source = Vault::open(source_directory.path(), VaultConfig::default())?;
+    let (task, fact) = owned_task(&source)?;
+    let owner = source.ensure_embedded_owner_actor()?;
+    let archive = source.export_whole_vault(true)?.bytes().to_vec();
+    let raw = source.get_raw(&fact)?.expect("the source's Owner fact row");
+    let header = EntityMetadataHeader::parse(&raw).expect("the fact row's header");
+
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+    let dest_directory = tempfile::tempdir()?;
+    let dest = Vault::open_owned(dest_directory.path(), VaultConfig::device())?;
+    dest.install_device_keystore(Arc::new(MemoryKeystore::default()));
+    assert_eq!(
+        dest.profile_local_open(Some(b"archive task facts held from sync"), true)?,
+        LocalOpenProfile::RootedAndProfiled,
+    );
+    replay_entity(
+        &dest,
+        ReplicatedEntity {
+            id: fact,
+            entity_type: ENTITY_TYPE_TASK,
+            occurred: TimeRange {
+                start: header.occurred_start,
+                end: header.occurred_end,
+            },
+            learned_at: header.learned_at,
+            row_version: 0,
+            body: &raw[ENTITY_METADATA_HEADER_LEN..],
+        },
+        ImportTier::OwnDevice,
+    )?;
+    assert!(
+        holds_task_row(&dest, fact)?,
+        "the own-device replay door lands the source's unsigned Owner fact"
+    );
+
+    let proof = owner_proof(&dest)?;
+    if let Err(error) = dest.import_whole_vault_archive_from_as_owner(Cursor::new(&archive), &proof)
+    {
+        panic!("the owner's whole archive must restore over the held fact: {error:?}");
+    }
+    let state = dest
+        .task_authority_state(task)?
+        .expect("the owner's restore counts the fact the vault held from sync");
+    assert_eq!(state.owner_ref, owner);
+    let restored = authority_facts(&dest, task)?;
+    assert!(restored.contains(&fact), "the held fact stays at its id");
+    assert_eq!(restored.len(), 2, "the held fact and a signed twin of it");
     Ok(())
 }

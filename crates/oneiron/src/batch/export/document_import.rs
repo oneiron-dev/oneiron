@@ -424,6 +424,13 @@ impl Vault {
                             self, &wtxn, &archive, &id,
                         )?;
                     }
+                    // Blind review P1 (REVIEW-9365): the owner's restore counts a
+                    // TASK authority fact it finds held unchanged, as one it lands.
+                    if row.entity_type == ENTITY_TYPE_TASK
+                        && owner_restore.is_some_and(|restore| !restore.foreign_chain)
+                    {
+                        self.restore_held_task_fact_in_txn(&mut wtxn, &id)?;
+                    }
                     stamp_archived_birth(self, &mut wtxn, &archive, &id)?;
                     unchanged_entities += 1;
                     continue;
@@ -464,6 +471,12 @@ impl Vault {
                         super::evidence_import::validate_stored_message(
                             self, &wtxn, &archive, &id,
                         )?;
+                    }
+                    // Blind review P1 (REVIEW-9365), as above.
+                    if row.entity_type == ENTITY_TYPE_TASK
+                        && owner_restore.is_some_and(|restore| !restore.foreign_chain)
+                    {
+                        self.restore_held_task_fact_in_txn(&mut wtxn, &id)?;
                     }
                     stamp_archived_birth(self, &mut wtxn, &archive, &id)?;
                     unchanged_entities += 1;
