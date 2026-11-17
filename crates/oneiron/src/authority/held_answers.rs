@@ -60,6 +60,10 @@ const TWO_ANSWERS: &str =
 const REPLACES_KEYS: &str = "the held answer names other keys than its machine stands under: \
      a confirm never replaces a machine's keys; nothing was written";
 
+/// A confirm presented a revision for a held answer it does not name.
+const UNNAMED_SEEN: &str = "a seen revision names a held answer the confirm does not name: \
+     nothing was written";
+
 /// One held machine answer as the owner's surface lists it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ListedHeldAnswer {
@@ -70,6 +74,10 @@ pub struct ListedHeldAnswer {
     pub answer: MachineRevision,
     /// The role the machine stands in now; `None` when no revision names it.
     pub standing: Option<MachineRole>,
+    /// The machine's answer revision as this list read it
+    /// ([`FoldedMachine::answer_revision`]; zero when no revision names the
+    /// machine): what a confirm of this entry presents back as `seen`.
+    pub revision: [u8; 32],
     /// The role the answer's carrier stands in; `None` when no revision
     /// names the carrier.
     pub carrier_role: Option<MachineRole>,
@@ -91,7 +99,9 @@ pub struct HeldAnswerListing {
     pub answers: Vec<ListedHeldAnswer>,
     /// Each owner choice that waits for his proof and still asks, by entry
     /// ([`AuthorityFold::waiting_owner_choices`]). He confirms one by making
-    /// the choice again on an owner device.
+    /// the choice again on an owner device. A person's own waiting choice
+    /// (their opt back in to conversation training) is listed too, and only
+    /// that person makes it again.
     pub waiting_choices: Vec<AuthorityEntryHash>,
     /// Whether this install holds an owner key, so a confirm here is proven.
     pub can_confirm: bool,
@@ -131,11 +141,12 @@ fn named_held_answers(
 
 /// The owner's answer that confirms the held profile `held`: its own
 /// identity material, role and class, at the next revision above every
-/// standing head of the machine, or at the first revision of a machine no
-/// revision names. A held answer is no head, so the revision never rests on
-/// one. The machine's own proof covers its identity material and no
-/// revision, so it verifies under the confirm as it did under the held
-/// answer.
+/// standing head of the machine ([`FoldedMachine::standing_heads`]: the
+/// roster's and the pinned anchor's, never another anchor's), or at the
+/// first revision of a machine no such head names. A held answer is no
+/// head, so the revision never rests on one. The machine's own proof covers
+/// its identity material and no revision, so it verifies under the confirm
+/// as it did under the held answer.
 ///
 /// A machine that stands keeps its keys: a held answer that names others is
 /// refused ([`AuthorityFold::replaces_standing_keys`]). The fold lets an
@@ -147,12 +158,10 @@ fn confirming_profile(
     owner: EntityId,
     held: &MachineProfile,
 ) -> Result<MachineProfile> {
-    let heads: Vec<_> = fold
+    let heads = fold
         .machine(held.machine)
-        .into_iter()
-        .flat_map(|folded| folded.chains())
-        .map(|(_, head)| head)
-        .collect();
+        .map(|folded| folded.standing_heads(fold.pinned_root.as_ref()))
+        .unwrap_or_default();
     if heads.iter().any(|head| head.removed) {
         return Err(invalid_authority());
     }
@@ -174,18 +183,20 @@ fn confirming_profile(
 
 impl AuthorityFold {
     /// Whether `answer` names another machine key or encryption key than a
-    /// standing head of its machine holds: the roster's head, the roster
-    /// revision the owner approved (it decides trust, and a custodial
-    /// revision on another branch can stand above it as the roster's head),
-    /// or an anchor's. False for a machine no revision names: a first answer
-    /// replaces nothing, and the owner checks its machine key against the
-    /// machine itself, as at any pairing.
+    /// standing head of its machine holds ([`FoldedMachine::standing_heads`]):
+    /// the roster's head, the roster revision the owner approved (it decides
+    /// trust, and a custodial revision on another branch can stand above it
+    /// as the roster's head), or the pinned anchor's. The keys another
+    /// anchor's chain names never count: a root nobody here pins marks any
+    /// machine under any keys. False for a machine no such head names: a
+    /// first answer replaces nothing, and the owner checks its machine key
+    /// against the machine itself, as at any pairing.
     #[must_use]
     pub fn replaces_standing_keys(&self, answer: &MachineProfile) -> bool {
         self.machine(answer.machine).is_some_and(|folded| {
             folded
-                .chains()
-                .map(|(_, head)| head)
+                .standing_heads(self.pinned_root.as_ref())
+                .into_iter()
                 .chain(folded.roster_trusted.iter())
                 .any(|head| {
                     head.profile.machine_key != answer.machine_key
@@ -248,6 +259,9 @@ impl Vault {
                     entry: *entry,
                     answer: answer.clone(),
                     standing: role_of(*machine),
+                    revision: fold
+                        .machine(*machine)
+                        .map_or([0; 32], FoldedMachine::answer_revision),
                     carrier_role: carrier.and_then(role_of),
                     carrier_is_mine: carrier
                         .is_some_and(|carrier| fold.trusted_machine(carrier).is_some()),
@@ -271,23 +285,34 @@ impl Vault {
     /// stand or nothing is written. A confirm names entries, never "all that
     /// is held now": an answer that arrived after his surface listed them is
     /// never confirmed unseen. A confirm gives a machine a role and a class,
-    /// never other keys than it stands under. His answer about a machine
-    /// ends the ask of every held answer about it that it saw. The
+    /// never other keys than it stands under on this install
+    /// ([`AuthorityFold::replaces_standing_keys`]). His answer about a
+    /// machine ends the ask of every held answer about it that it saw. The
     /// credentials are sealed again for the roster the confirm changed.
+    ///
+    /// `seen` gives, for any named entry, the answer revision of its machine
+    /// that his surface listed beside it ([`ListedHeldAnswer::revision`]).
+    /// Where an answer about that machine landed since and the held answer
+    /// still asks, the confirm is a conflict and nothing is written, as at
+    /// [`Self::set_machine_role`]: the confirm never overwrites an answer
+    /// his list did not show. An entry with no revision in `seen` takes the
+    /// machine's current one.
     ///
     /// # Errors
     /// [`RecordError::OwnerKeyRequired`] when this install holds no owner
-    /// key; [`Error::ConcurrentWrite`] when an entry no longer asks;
-    /// [`Error::InvalidConfig`] when two entries name one machine, when an
-    /// entry names other keys than its machine stands under, or when this
-    /// install carries no live profile; an authority refusal when a
-    /// confirmed answer does not stand; a refusal when the proof is no
-    /// longer the vault's live owner.
+    /// key; [`Error::ConcurrentWrite`] when an entry no longer asks, or when
+    /// its machine's answer is not the one `seen` names for it;
+    /// [`Error::InvalidConfig`] when two entries name one machine, when
+    /// `seen` names an entry the confirm does not, when an entry names other
+    /// keys than its machine stands under, or when this install carries no
+    /// live profile; an authority refusal when a confirmed answer does not
+    /// stand; a refusal when the proof is no longer the vault's live owner.
     pub fn confirm_held_machine_answers(
         &self,
         owner: &AuthenticatedOwner,
         surface: ActSurface,
         entries: &[AuthorityEntryHash],
+        seen: &BTreeMap<AuthorityEntryHash, [u8; 32]>,
     ) -> Result<ConfirmedHeldAnswers> {
         let mut txn = self.store.env.write_txn()?;
         let actor = owner.revalidate_as_vault_owner_in_txn(self, &txn)?;
@@ -295,11 +320,17 @@ impl Vault {
         if self.owner_proof_signer(&fold).is_none() {
             return Err(Error::Record(RecordError::OwnerKeyRequired));
         }
+        if seen.keys().any(|entry| !entries.contains(entry)) {
+            return Err(Error::InvalidConfig(UNNAMED_SEEN.to_owned()));
+        }
         let mut removed = Vec::new();
         for (machine, (entry, held)) in named_held_answers(&fold, entries)? {
             let fold = self.authority_view_readonly_in_txn(&txn)?;
             let profile = confirming_profile(&fold, actor, &held)?;
-            let answer = AnswerAct::by_owner(actor, surface, profile.role, None);
+            // The answer door compares it with the machine's revision in
+            // this transaction, before it signs.
+            let answer =
+                AnswerAct::by_owner(actor, surface, profile.role, seen.get(&entry).copied());
             if profile.role == MachineRole::Removed {
                 removed.push(machine);
             }
