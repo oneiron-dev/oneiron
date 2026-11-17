@@ -506,9 +506,13 @@ impl AuthorityFold {
         // refuses: it is judged with each such row crossed
         // (`refold_world_edits`), so only its own signer counts here (Wonder
         // P2 round 1, W4). A settings edit is a main-log row now (mesh
-        // contract §6) and keeps this rule.
+        // contract §6) and keeps this rule. So does an act on a grant line,
+        // which is folded again the same way (pass 28 R1; review #8845
+        // P1-2): an end refused here for a retired row below it would leave
+        // its Grant's row standing.
         if super::world_privacy::side_world(&entry.op).is_some()
             || matches!(entry.op, AuthorityOp::WorldPrivacy(_))
+            || super::world_refold::on_grant_line(&entry.op)
         {
             return Ok(!self.valid_entries.contains(hash)
                 && entry_signer_keys(entry).any(|key| self.retired_keys.contains(key)));

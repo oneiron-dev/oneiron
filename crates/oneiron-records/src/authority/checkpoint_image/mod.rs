@@ -74,7 +74,9 @@ use serde::Serialize;
 /// = A).
 /// 44: the fold keeps each enrolled passkey's assertion contexts, each key a passkey vouched
 /// for and each such key a second vouch confirmed (row WEB-PASSKEY-OWNER-KEY).
-pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 44;
+/// 45: the fold keeps each Grant's counted givings and ends, and an install's fold the line
+/// each Grant stands on (pass 28 R1, grant lines).
+pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 45;
 
 /// The domain every encoded image starts with.
 pub const AUTHORITY_CHECKPOINT_V2_DOMAIN: &[u8] = b"oneiron/authority/checkpoint/v2";

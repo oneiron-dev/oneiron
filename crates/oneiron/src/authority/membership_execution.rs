@@ -84,6 +84,7 @@ pub(super) fn apply_membership_execution(
     }
     for grant in &record.withdrawn_grants {
         state.slips.revoke_grant(grant.to_hex());
+        state.grant_lines.end(*grant, hash);
     }
     Ok(())
 }
