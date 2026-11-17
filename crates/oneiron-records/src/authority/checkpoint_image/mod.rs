@@ -72,12 +72,14 @@ use serde::Serialize;
 /// row that grants counts in full, a world key record included, and the image records its fork
 /// as a `SequenceFork` issue (Engine RULINGs SEQ-FLOOR-SHAPE-S = B, SEQ-FLOOR-S-WORLD-KEY-FLOOR
 /// = A).
-/// 44: an owner choice or a carried machine answer outside a proving owner-key enrolment's line
+/// 44: the fold keeps each enrolled passkey's assertion contexts, each key a passkey vouched
+/// for and each such key a second vouch confirmed (row WEB-PASSKEY-OWNER-KEY).
+/// 45: an owner choice or a carried machine answer outside a proving owner-key enrolment's line
 /// waits for the owner's proof, and an enrolment of the owner's key (a rotation or a handoff that
 /// names it too) outside the line of the enrolment that made it the owner's is refused, and a
 /// device revocation proved through such an enrolment of its key ends nothing (row
 /// CARRIER-PROOF-OLD-PARENTS).
-pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 44;
+pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 45;
 
 /// The domain every encoded image starts with.
 pub const AUTHORITY_CHECKPOINT_V2_DOMAIN: &[u8] = b"oneiron/authority/checkpoint/v2";

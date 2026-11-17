@@ -23,7 +23,7 @@ const QUERY_WORDS: usize = 16;
 
 /// The claim ids `vault.claims.list` shows now, and whether the list was
 /// cut at its limit (then a diff can miss rows).
-pub(super) fn listed(agent: &Agent) -> Result<(BTreeSet<String>, bool), String> {
+pub(in crate::load) fn listed(agent: &Agent) -> Result<(BTreeSet<String>, bool), String> {
     let answer = agent
         .post("vault.claims.list", &json!({"limit": LIST_LIMIT}))
         .1

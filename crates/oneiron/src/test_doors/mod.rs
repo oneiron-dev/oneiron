@@ -32,6 +32,8 @@ pub mod callable_skill;
 pub mod campaign_member_index;
 pub mod campaign_opt_out_line;
 pub mod check_in;
+pub mod checkpoint_descriptor;
+pub mod checkpoint_pins;
 pub mod checkpoint_registry;
 pub mod claim_facet_birth;
 pub mod claim_refinement_erase;
@@ -40,6 +42,7 @@ pub mod claim_transition;
 pub mod claim_value_redaction;
 pub mod cleanup_archive;
 pub mod coach;
+pub mod coach_retrieval_review;
 pub mod code_mode_capture;
 pub mod code_reply_healer;
 pub mod code_result_search;
@@ -174,12 +177,13 @@ pub mod pad_offer_invalidation;
 pub mod pairing_pending_rows;
 pub mod park_typed_wait;
 pub mod parked_own_retract;
+pub mod passkey_vouch_limits;
 pub mod payment_credential;
 #[cfg(feature = "sync")]
 pub mod peer_author_redaction;
-pub mod pending_write_tray;
 #[cfg(feature = "sync")]
 pub mod pending_work_reports;
+pub mod pending_write_tray;
 #[cfg(feature = "sync")]
 pub mod predicted_residence;
 pub mod provenance_body_checkpoint;
