@@ -87,9 +87,9 @@ pub use push::{
     InquiryPushState, InquiryPushTransport, InquiryPushView, InquiryPushWire, InquiryPushed,
     MAX_INQUIRY_PUSH_STATEMENT_BYTES, MAX_INQUIRY_PUSH_WIRE_BYTES,
 };
-#[cfg_attr(not(oneiron_test_support), allow(unused_imports))]
-pub(crate) use receipt::write_inquiry_receipt_in_txn;
 pub(crate) use receipt::{erase_inquiry_receipt_actor_in_txn, inquiry_receipts};
+#[cfg_attr(not(oneiron_test_support), allow(unused_imports))]
+pub(crate) use receipt::{write_inquiry_receipt_in_txn, write_inquiry_terms_receipt_in_txn};
 pub use record::{
     Inquiry, InquiryAnswer, InquiryAsker, InquiryKeep, InquiryOutcome, InquiryStatement,
     InquiryTask, MAX_INQUIRY_PURPOSE_BYTES, MAX_INQUIRY_QUESTION_BYTES, MAX_INQUIRY_ROLE_BYTES,

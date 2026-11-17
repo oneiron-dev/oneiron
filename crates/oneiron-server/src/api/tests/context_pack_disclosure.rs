@@ -1017,6 +1017,16 @@ async fn a_room_with_the_owners_own_agent_reads_its_own_history() {
     let space = seeded_test_entity_id(0x2094_0304);
     server
         .vault
+        .put_entity(
+            &space,
+            oneiron::registry::ENTITY_TYPE_RELATIONSHIP,
+            oneiron::TimeRange { start: 1, end: 1 },
+            1,
+            b"relationship",
+        )
+        .expect("a relationship");
+    server
+        .vault
         .memory(owner, oneiron::EdgeActorClass::Human)
         .rooms_speak(&oneiron::memory::WitnessTurn {
             conversation_ref: room.to_hex(),
@@ -1035,6 +1045,7 @@ async fn a_room_with_the_owners_own_agent_reads_its_own_history() {
             occurred_at: 2,
             assertions: Default::default(),
             thread_audience: None,
+            project: None,
         })
         .expect("speak");
 

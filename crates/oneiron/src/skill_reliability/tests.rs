@@ -291,6 +291,16 @@ fn claims(
         .collect()
 }
 
+// The untyped read: the vault's root placement on the default outcome axis.
+fn reliability_query() -> SkillReliabilityQuery {
+    SkillReliabilityQuery {
+        type_ref: crate::receipt::task_type_ref::TypeRef::root(0),
+        axis: SKILL_OUTCOME_AXIS.to_owned(),
+        type_parents: Vec::new(),
+        project: None,
+    }
+}
+
 // ─── posterior arithmetic ───────────────────────────────────────────────
 
 #[test]
@@ -410,7 +420,7 @@ fn defect_judgments_lower_the_posterior_and_lapses_leave_it_alone() {
     let (_, lapse) = route(&vault, &skill, &actor, "sk05.skill.defect", false, true, 31);
     assert_eq!(lapse.len(), 1);
     assert_eq!(lapse[0].verdict, AttributionVerdict::ExecutionLapse);
-    assert_eq!(lapse[0].subject, actor);
+    assert_eq!(lapse[0].subject, Some(actor));
     let touched = project_skill_reliability(&vault, &lapse).expect("project lapse");
     assert!(touched.is_empty(), "a lapse projects no skill posterior");
     let after_lapse = skill_reliability_posterior(&vault, &skill)
@@ -610,8 +620,9 @@ fn a_forged_judgment_writes_no_reserved_claim() {
 
     let fabricated = AttributionJudgment {
         sequence: 1,
+        row_id: EntityId::now(),
         verdict: AttributionVerdict::SkillDefect,
-        subject: skill,
+        subject: Some(skill),
         evidence_receipts: vec!["attempt-receipt:deadbeef".to_owned()],
         at: 30,
     };
@@ -937,8 +948,8 @@ fn archived_reliability_does_not_seed_a_posterior_cache_or_local_projection() ->
         })
         .unwrap();
     let original = source.get_claim(&id)?.unwrap();
-    let export = source.export_whole_vault(crate::context_pack::PackFormat::Json)?;
-    target.import_whole_vault_json(export.bytes())?;
+    let export = source.export_whole_vault(true)?;
+    target.import_whole_vault_archive(export.bytes())?;
     let imported = target.get_claim(&id)?.unwrap();
     assert_eq!(imported.value, original.value);
     assert_eq!(imported.evidence, original.evidence);
@@ -967,6 +978,7 @@ fn archived_reliability_does_not_seed_a_posterior_cache_or_local_projection() ->
                     crate::registry::ENTITY_TYPE_CLAIM,
                     t(90),
                     90,
+                    None,
                     &bytes
                 )
                 .commit()
@@ -996,11 +1008,14 @@ fn swapping_executor_forks_statistics_without_retiring_skill() -> crate::error::
     let old_posterior = skill_reliability_posterior_for_executor(&vault, &skill, "old@1")?.unwrap();
     assert_eq!(old_posterior.alpha, prior.alpha + 1.0);
     assert_eq!(
-        skill_executor_reliability(&vault, &skill, "new@2")?.posterior,
+        skill_executor_reliability(&vault, &skill, "new@2", &reliability_query())?.posterior,
         prior
     );
-    assert_eq!(skill_executor_reliability(&vault, &skill, "new@2")?.runs, 0);
-    assert!(skill_executor_reliability(&vault, &skill, "new@2")?.new_model);
+    assert_eq!(
+        skill_executor_reliability(&vault, &skill, "new@2", &reliability_query())?.runs,
+        0.0
+    );
+    assert!(skill_executor_reliability(&vault, &skill, "new@2", &reliability_query())?.new_model);
     assert_eq!(
         skill_reliability_posterior_for_executor(&vault, &skill, "new@2")?,
         None
@@ -1024,8 +1039,8 @@ fn swapping_executor_forks_statistics_without_retiring_skill() -> crate::error::
         record_skill_contributing_win(&vault, &skill, &new_receipt, 22)?;
         project_skill_reliability_for_executor(&vault, &skill, "new@2", 23)?;
     }
-    let new = skill_executor_reliability(&vault, &skill, "new@2")?;
-    assert_eq!(new.runs, 2);
+    let new = skill_executor_reliability(&vault, &skill, "new@2", &reliability_query())?;
+    assert_eq!(new.runs, 2.0);
     assert!(!new.new_model);
     assert_eq!(new.posterior.alpha, prior.alpha + 2.0);
     assert_eq!(
@@ -1037,7 +1052,7 @@ fn swapping_executor_forks_statistics_without_retiring_skill() -> crate::error::
         None
     );
     assert_eq!(
-        skill_selection_score_for_executor(&vault, &skill, "new@3", 8)?,
+        skill_selection_score_for_executor(&vault, &skill, "new@3", &reliability_query(), 8)?,
         prior.ucb(8)
     );
 
@@ -1166,8 +1181,8 @@ fn displaced_judge_marks_receipt_and_supersedes_weight_without_erasing() -> crat
     let judgments = run_attribution_projector(&vault, read_attribution_cursor(&vault)?)?;
     project_skill_reliability(&vault, &judgments)?;
     assert_eq!(
-        skill_executor_reliability(&vault, &skill, "executor@1")?.runs,
-        1
+        skill_executor_reliability(&vault, &skill, "executor@1", &reliability_query())?.runs,
+        1.0
     );
     let marked = crate::skill_attribution::supersede_displaced_judge_receipts(
         &vault,
@@ -1178,8 +1193,8 @@ fn displaced_judge_marks_receipt_and_supersedes_weight_without_erasing() -> crat
     assert_eq!(marked.len(), 1);
     assert_eq!(marked[0].receipt_ref, receipt);
     assert_eq!(
-        skill_executor_reliability(&vault, &skill, "executor@1")?.runs,
-        0
+        skill_executor_reliability(&vault, &skill, "executor@1", &reliability_query())?.runs,
+        0.0
     );
     assert_eq!(
         crate::skill_attribution::attribution_judgments(&vault)?,
@@ -1198,8 +1213,8 @@ fn displaced_judge_marks_receipt_and_supersedes_weight_without_erasing() -> crat
     );
     project_skill_reliability(&vault, &judgments)?;
     assert_eq!(
-        skill_executor_reliability(&vault, &skill, "executor@1")?.runs,
-        0
+        skill_executor_reliability(&vault, &skill, "executor@1", &reliability_query())?.runs,
+        0.0
     );
     Ok(())
 }
@@ -1276,8 +1291,8 @@ fn replay_cannot_reassign_an_unknown_judgment_to_a_new_judge() -> crate::error::
         .is_empty()
     );
     assert_eq!(
-        skill_executor_reliability(&vault, &skill, "model@1")?.runs,
-        1
+        skill_executor_reliability(&vault, &skill, "model@1", &reliability_query())?.runs,
+        1.0
     );
     Ok(())
 }
@@ -1320,8 +1335,8 @@ fn displacement_between_batch_read_and_writer_cannot_restore_loss() -> crate::er
         Ok(())
     })?;
     assert_eq!(
-        skill_executor_reliability(&vault, &skill, "model@1")?.runs,
-        0
+        skill_executor_reliability(&vault, &skill, "model@1", &reliability_query())?.runs,
+        0.0
     );
     assert_eq!(
         crate::skill_attribution::displaced_judge_receipts(&vault)?.len(),
@@ -1462,8 +1477,8 @@ fn displacement_scan_cannot_miss_a_judgment_committed_before_its_writer() -> cra
         Ok(())
     })?;
     assert_eq!(
-        skill_executor_reliability(&vault, &skill, "model@1")?.runs,
-        0
+        skill_executor_reliability(&vault, &skill, "model@1", &reliability_query())?.runs,
+        0.0
     );
     assert!(
         claims(

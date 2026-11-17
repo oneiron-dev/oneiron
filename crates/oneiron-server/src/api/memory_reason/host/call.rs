@@ -65,6 +65,10 @@ impl RunReceiptSink for Receipts {
             .unwrap_or_else(PoisonError::into_inner)
             .push((seat.to_owned(), guard.clone(), denied.clone()));
     }
+
+    fn source_worlds(&self, rows: &[oneiron::EntityId]) -> Option<Vec<oneiron::EntityId>> {
+        self.durable.source_worlds(rows)
+    }
 }
 
 impl Drop for Receipts {
@@ -104,6 +108,10 @@ impl RunReceiptSink for Tee {
 
     fn budget_hit(&self, seat: &str, guard: &BudgetGuard, denied: &BudgetDenied) {
         self.request.budget_hit(seat, guard, denied);
+    }
+
+    fn source_worlds(&self, rows: &[oneiron::EntityId]) -> Option<Vec<oneiron::EntityId>> {
+        self.request.source_worlds(rows)
     }
 }
 
@@ -195,9 +203,18 @@ impl Backend {
             sink,
             None,
         )
-        .for_memory_work()
-        .sourced(Some(pins.iter().map(|pin| pin.id).collect()))
-        .initiated_by(request_principal(&self.auth));
+        .for_memory_work();
+        // A caller verified in an off-record session that keeps no model-call
+        // record (every mode but on record, not only anonymous): the run
+        // names none of its pinned rows, nor their worlds (census L5-25).
+        let run = if keeps_no_record(&self.server, &self.auth) {
+            run.off_record()
+        } else {
+            run
+        };
+        let run = run
+            .sourced(Some(pins.iter().map(|pin| pin.id).collect()))
+            .initiated_by(request_principal(&self.auth));
         let run = run.with_work_context({
             let mut context = run.work_context();
             context.class = WorkClass::Background;
@@ -283,6 +300,14 @@ impl Backend {
 
 fn anonymous(server: &SyncServer, auth: &CoreAuth) -> bool {
     session_is_anonymous_for(server, auth.off_record_session(), request_principal(auth))
+}
+
+/// Whether `auth` is verified in an off-record session that keeps no
+/// model-call record ([`oneiron::Vault::model_call_keeps_no_record_for`]).
+fn keeps_no_record(server: &SyncServer, auth: &CoreAuth) -> bool {
+    server
+        .vault()
+        .model_call_keeps_no_record_for(auth.off_record_session(), request_principal(auth))
 }
 
 pub(super) fn text(response: &LlmResponse) -> String {

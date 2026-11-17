@@ -103,8 +103,12 @@ pub(crate) fn spawn_calendar_polls(
                 } else {
                     run_due_polls(server.vault(), egress.as_ref())
                 };
-                let sent =
-                    send_booking_revision_invites(server.vault(), line_push_allowance, &mut kept);
+                let sent = send_booking_revision_invites(
+                    server.vault(),
+                    egress.as_ref(),
+                    line_push_allowance,
+                    &mut kept,
+                );
                 (polled.and(sent), kept)
             })
             .await;
@@ -193,7 +197,7 @@ fn run_due_polls(
         let ClaimOutcome::Claimed(attempt) = claimed else {
             break;
         };
-        settle_connector(&queue, vault, &owner, &attempt)?;
+        settle_connector(&queue, vault, &owner, &attempt, egress)?;
     }
     Ok(())
 }
@@ -204,12 +208,13 @@ fn run_due_polls(
 /// runtime, when the worker has none yet.
 fn send_booking_revision_invites(
     vault: &Vault,
+    egress: Option<&Arc<HostedEgressGuard>>,
     line_push_allowance: u32,
     clients: &mut Option<CalendarSendClients>,
 ) -> anyhow::Result<()> {
     let clients = match clients {
         Some(clients) => clients,
-        None => clients.insert(CalendarSendClients::new()?),
+        None => clients.insert(CalendarSendClients::new(egress.cloned())?),
     };
     let mut sink = CalendarChannelSink::new(vault, line_push_allowance, clients);
     let drain = run_booking_revision_invites(
@@ -407,6 +412,7 @@ fn settle_connector(
     vault: &Arc<Vault>,
     owner: &AuthenticatedOwner,
     attempt: &AttemptRecord,
+    egress: Option<&Arc<HostedEgressGuard>>,
 ) -> anyhow::Result<()> {
     let payload = match serde_json::from_slice::<CalendarConnectorSyncPayload>(&attempt.payload) {
         Ok(payload) => payload,
@@ -431,7 +437,7 @@ fn settle_connector(
         })?;
         return Ok(());
     }
-    match poll_installed_seat(vault, owner, &payload.config) {
+    match poll_installed_seat(vault, owner, &payload.config, egress) {
         Ok(()) => {
             queue.complete(CompleteAttempt {
                 id: attempt.id,
@@ -482,6 +488,7 @@ fn poll_installed_seat(
     vault: &Arc<Vault>,
     owner: &AuthenticatedOwner,
     config: &CalendarConnectorSeatConfig,
+    egress: Option<&Arc<HostedEgressGuard>>,
 ) -> anyhow::Result<()> {
     let memory = vault.memory(owner.actor_for_read(vault)?, EdgeActorClass::Human);
     let request = CalendarConnectorRequest {
@@ -494,7 +501,12 @@ fn poll_installed_seat(
         tracing::info!(seat = %config.seat_ref, "calendar connector sync row outlived its seat");
         return Ok(());
     }
-    let wire = super::HttpCalDav::new(Arc::clone(vault), owner.clone(), row.clone())?;
+    let wire = super::HttpCalDav::new(
+        Arc::clone(vault),
+        owner.clone(),
+        row.clone(),
+        egress.cloned(),
+    )?;
     let operation = wire.operation().clone();
     let now = vault.now_recorded_at();
     let outcome = oneiron::calendar::run_calendar_connector_sync(

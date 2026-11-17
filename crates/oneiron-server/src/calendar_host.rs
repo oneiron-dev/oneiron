@@ -1,5 +1,13 @@
 //! The calendar host's real CalDAV wire and iMIP submission transport.
 //! Endpoints are installed only through the owner-proof typed setup doors.
+//!
+//! Every calendar request goes out through the one shared network boundary
+//! (ARCH-0046, ARCH-0060): on a managed node the hosted egress guard refuses
+//! an endpoint whose address is private or the node's own, by its literal
+//! before any byte is sent and by its name's answers in the client's resolver.
+//! A self-hosted node sends as before.
+use std::net::IpAddr;
+use std::sync::Arc;
 use std::time::Duration;
 
 use oneiron::Vault;
@@ -10,6 +18,7 @@ use oneiron::outbound::{
     OutboundIntent, SentLookup, SentLookupTarget, ServedChannelSink,
 };
 use oneiron::outbound_intent_ledger::DeliveryReadBack;
+use oneiron::web_fetch::HostedEgressGuard;
 use reqwest::header::HeaderValue;
 
 use crate::inquiry_delivery::HttpInquiryTransport;
@@ -23,6 +32,8 @@ mod safeguard;
 mod transcript_drain;
 mod xml;
 pub(crate) use caldav::HttpCalDav;
+#[cfg(oneiron_test_support)]
+pub(crate) use caldav::caldav_endpoint_client;
 pub(crate) use card_pass::spawn_calendar_card_pass;
 pub(crate) use feed_poll::spawn_calendar_polls;
 pub(crate) use ics::{HttpIcsFeed, admit_feed_url, get_admitted};
@@ -35,20 +46,60 @@ pub(crate) use transcript_drain::spawn_pending_transcript_drain;
 /// CalDAV report can carry up to sixteen megabytes.
 const CALENDAR_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
-/// The calendar's client, built on the shared outbound network boundary
-/// ([`ServedChannelSink::client_with_timeout`]) with the calendar's bound.
-pub(super) fn client() -> oneiron::Result<reqwest::blocking::Client> {
-    ServedChannelSink::client_with_timeout(CALENDAR_REQUEST_TIMEOUT)
-}
-
-/// The ICS feed's client: [`client`], and on a managed node (`Some(egress)`,
-/// from `SyncServer::hosted_egress_guard`) every name
-/// it connects to resolves through the hosted egress guard, so a feed name
-/// that answers with a private or node address is refused at connect time.
-pub(super) fn feed_client(
-    egress: Option<std::sync::Arc<oneiron::web_fetch::HostedEgressGuard>>,
+/// The calendar's client (ICS feed, CalDAV and iMIP submission), built on the
+/// shared outbound network boundary
+/// ([`ServedChannelSink::guarded_client_with_timeout`]) with the calendar's
+/// bound. On a managed node (`Some(egress)`, from
+/// `SyncServer::hosted_egress_guard`) every name it connects to resolves
+/// through the hosted egress guard, so a name that answers with a private or
+/// node address is refused at connect time. With `None` (a self-hosted node)
+/// it resolves as before.
+pub(super) fn client(
+    egress: Option<Arc<HostedEgressGuard>>,
 ) -> oneiron::Result<reqwest::blocking::Client> {
     ServedChannelSink::guarded_client_with_timeout(CALENDAR_REQUEST_TIMEOUT, egress)
+}
+
+/// Whether a managed node's hosted egress guard refuses `url` before any byte
+/// is sent: by its address literal, or by a listed private name at an origin
+/// the operator did not list. A name's own answers are checked by
+/// [`client`]'s resolver as it connects. `None` (a self-hosted node) refuses
+/// nothing.
+pub(super) fn hosted_guard_refuses(url: &reqwest::Url, egress: Option<&HostedEgressGuard>) -> bool {
+    let Some(guard) = egress else {
+        return false;
+    };
+    let literal = url
+        .host_str()
+        .map(|host| host.trim_start_matches('[').trim_end_matches(']'))
+        .and_then(|host| host.parse::<IpAddr>().ok());
+    match literal {
+        Some(ip) => guard.refuses(ip),
+        None => guard.refuses_origin(url),
+    }
+    .is_some()
+}
+
+/// The refusal a managed node gives a CalDAV or iMIP submission endpoint
+/// whose address the hosted egress guard refuses.
+pub(crate) const PRIVATE_ENDPOINT_REFUSAL: &str =
+    "calendar endpoint names a private or node address, which a hosted node does not reach";
+
+/// Admits the owner's installed iMIP submission endpoint at the shared network
+/// boundary ([`hosted_guard_refuses`]) before the send. An endpoint that does
+/// not parse is left to the request, which fails as before.
+///
+/// # Errors
+///
+/// [`PRIVATE_ENDPOINT_REFUSAL`] when the guard refuses the endpoint.
+pub(crate) fn admit_calendar_endpoint(
+    endpoint: &str,
+    egress: Option<&HostedEgressGuard>,
+) -> Result<(), &'static str> {
+    match reqwest::Url::parse(endpoint) {
+        Ok(url) if hosted_guard_refuses(&url, egress) => Err(PRIVATE_ENDPOINT_REFUSAL),
+        _ => Ok(()),
+    }
 }
 
 pub(super) fn authorization(value: &[u8]) -> oneiron::Result<HeaderValue> {
@@ -73,22 +124,37 @@ pub(super) fn authorization(value: &[u8]) -> oneiron::Result<HeaderValue> {
 pub(crate) struct CalendarSendClients {
     ordinary: reqwest::blocking::Client,
     calendar: reqwest::blocking::Client,
+    egress: Option<Arc<HostedEgressGuard>>,
 }
 
 impl CalendarSendClients {
-    pub(crate) fn new() -> oneiron::Result<Self> {
+    /// `egress` is the node's hosted egress guard
+    /// (`SyncServer::hosted_egress_guard`): `Some` on a managed node, `None`
+    /// on a self-hosted one. The calendar submission goes out through it.
+    pub(crate) fn new(egress: Option<Arc<HostedEgressGuard>>) -> oneiron::Result<Self> {
         Ok(Self {
             ordinary: ServedChannelSink::client()?,
-            calendar: client().map_err(|_| {
+            calendar: client(egress.clone()).map_err(|_| {
                 oneiron::Error::InvalidConfig("calendar send client unavailable".into())
             })?,
+            egress,
         })
+    }
+
+    /// The iMIP submission client, for the network-boundary door
+    /// (`test_doors::calendar_egress`).
+    #[cfg(oneiron_test_support)]
+    pub(crate) fn submission_client(&self) -> &reqwest::blocking::Client {
+        &self.calendar
     }
 }
 
 /// Extends the existing served sink, rather than running a second executor.
 pub(crate) struct CalendarChannelSink<'a> {
     vault: &'a Vault,
+    /// The managed node's hosted egress guard the iMIP send admits its
+    /// endpoint with; `None` on a self-hosted node.
+    egress: Option<Arc<HostedEgressGuard>>,
     ordinary: ServedChannelSink<'a>,
     client: reqwest::blocking::Client,
     /// The member's told statements (`inquiry_push`, L7-03), sent over the
@@ -106,6 +172,7 @@ impl<'a> CalendarChannelSink<'a> {
     ) -> Self {
         Self {
             vault,
+            egress: clients.egress.clone(),
             ordinary: ServedChannelSink::with_client(vault, clients.ordinary.clone())
                 .with_line_push_allowance(line_push_allowance),
             client: clients.calendar.clone(),
@@ -152,6 +219,9 @@ impl<'a> CalendarChannelSink<'a> {
             Ok(Some(config)) => config,
             _ => return OutboundExecutionOutcome::failed("calendar_imip_not_configured"),
         };
+        if admit_calendar_endpoint(&config.endpoint, self.egress.as_deref()).is_err() {
+            return OutboundExecutionOutcome::failed("calendar_imip_endpoint_refused");
+        }
         let sender = request
             .channel_identity_ref
             .and_then(|id| self.vault.get_channel_identity(&id).ok().flatten())

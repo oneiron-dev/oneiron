@@ -8,7 +8,7 @@ use crate::claim::{ClaimBody, ClaimLifecycleStatus, ClaimSubject};
 use crate::counterparty_contact::normalize_channel_class;
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::gate::ExternalEffectGateInput;
+use crate::gate::{ApprovalTarget, ExternalEffectGateInput};
 use crate::store::Store;
 
 use super::codec::{
@@ -178,8 +178,9 @@ pub(super) fn hydrate_dispatch_compliance_facts(
 ) -> Result<DispatchComplianceFacts> {
     let observation = jurisdiction_observation_in_txn(store, txn, &counterparty)?;
     let channel = normalize_channel_class(&effect.channel);
-    let evidence = dispatch_evidence_in_txn(store, txn, &counterparty, effect, &channel)?;
-    let elements = message_elements_in_txn(store, txn, effect.channel_identity_ref)?;
+    let identity = sending_identity(effect);
+    let evidence = dispatch_evidence_in_txn(store, txn, &counterparty, identity, &channel)?;
+    let elements = message_elements_in_txn(store, txn, identity)?;
     Ok(DispatchComplianceFacts {
         counterparty,
         jurisdiction: observation.as_ref().map(|(token, _)| token.clone()),
@@ -189,9 +190,9 @@ pub(super) fn hydrate_dispatch_compliance_facts(
         list_provenance: evidence.list_provenance,
         jp_publication: evidence.jp_publication,
         consent: evidence.consent,
-        // A send with no bound sending identity has no identity to disclose,
+        // A send with no sending identity has no identity to disclose,
         // whatever a configuration row claims.
-        sender_identity_present: elements.sender_identity && effect.channel_identity_ref.is_some(),
+        sender_identity_present: elements.sender_identity && identity.is_some(),
         physical_address_present: elements.physical_address,
         optout_mechanism_present: elements.optout_mechanism,
         commercial_marking_present: elements.commercial_marking,
@@ -233,7 +234,7 @@ fn dispatch_evidence_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     subject: &EntityId,
-    effect: &ExternalEffectGateInput,
+    sending_identity: Option<EntityId>,
     channel: &str,
 ) -> Result<DispatchEvidence> {
     let Some(body) =
@@ -246,7 +247,7 @@ fn dispatch_evidence_in_txn(
         legal_form: nested_text(entries, "legal_form"),
         list_provenance: hydrate_list_provenance(store, txn, subject, entries)?,
         jp_publication: hydrate_jp_publication(store, txn, subject, entries)?,
-        consent: hydrate_consent(store, txn, subject, entries, effect, channel)?,
+        consent: hydrate_consent(store, txn, subject, entries, sending_identity, channel)?,
     })
 }
 
@@ -342,14 +343,15 @@ mod consent_record {
 /// recipient, like every cited record; superseding or retracting it is how
 /// consent is withdrawn, and it carries no expiry of its own. Its opt-in counts
 /// only for a channel it names (or `*`), and, when it names a sending
-/// identity, only for that one. An unresolved record is no consent record:
-/// every fact it would carry is `false`.
+/// identity, only for that one: the send's [`sending_identity`]. An
+/// unresolved record is no consent record: every fact it would carry is
+/// `false`.
 fn hydrate_consent(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     subject: &EntityId,
     entries: &[(rmpv::Value, rmpv::Value)],
-    effect: &ExternalEffectGateInput,
+    sending_identity: Option<EntityId>,
     channel: &str,
 ) -> Result<HydratedConsentFacts> {
     let Some(record_ref) = nested_map(entries, consent_record::EVIDENCE_KEY)
@@ -372,7 +374,7 @@ fn hydrate_consent(
         .iter()
         .any(|named| named == CHANNEL_WILDCARD || normalize_channel_class(named) == channel);
     let sender_covered = nested_entity_ref(facts, consent_record::SENDER_REF)
-        .is_none_or(|sender| effect.channel_identity_ref == Some(sender));
+        .is_none_or(|sender| sending_identity == Some(sender));
     Ok(HydratedConsentFacts {
         record_ref: Some(record_ref),
         explicit_opt_in: nested_flag(facts, consent_record::OPT_IN)
@@ -421,15 +423,38 @@ struct MessageElements {
     commercial_marking: bool,
 }
 
+/// The sending identity of a send: the channel identity the effect is bound
+/// to, else, for a campaign send, the step's sticky sender
+/// (`provenance.actor_entity_ref` = the step's `sender_ref`). Its template
+/// carries the message elements, and a consent record that names a sender
+/// counts only for this one. ARCH-0059: "The compliance elements of a campaign
+/// message come from the sending identity, the opt-out among them."
+///
+/// A campaign leg binds no channel identity (FIX 11641: the may-send check
+/// would refuse every campaign email), so the message elements and the
+/// consent record's sender match read the campaign sender (rulings
+/// CAMPAIGN-LEG-SENDER-IDENTITY = A, CAMPAIGN-CONSENT-SENDER-MATCH = A); the
+/// may-send and cold-recipient reads stay on `channel_identity_ref`.
+fn sending_identity(effect: &ExternalEffectGateInput) -> Option<EntityId> {
+    match (
+        effect.channel_identity_ref,
+        &effect.provenance.approval_target,
+    ) {
+        (Some(identity), _) => Some(identity),
+        (None, Some(ApprovalTarget::Campaign(_))) => effect.provenance.actor_entity_ref,
+        (None, _) => None,
+    }
+}
+
 /// Message elements are a property of the SENDING identity's template, so they
-/// are read from the channel identity the effect is bound to. No identity, or
-/// no configuration row, means no element is established.
+/// are read from the identity [`sending_identity`] names. No identity, or no
+/// configuration row, means no element is established.
 fn message_elements_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
-    channel_identity_ref: Option<EntityId>,
+    sending_identity: Option<EntityId>,
 ) -> Result<MessageElements> {
-    let Some(identity) = channel_identity_ref else {
+    let Some(identity) = sending_identity else {
         return Ok(MessageElements::default());
     };
     let Some(body) = sole_active_claim_body_in_txn(

@@ -279,12 +279,29 @@ pub(super) fn refuse_peer_task_authority_fact(blob: &[u8]) -> Result<()> {
         .get(ENTITY_METADATA_HEADER_LEN..)
         .ok_or(Error::CorruptedIndex("entity metadata"))?;
     if crate::task_authority::is_task_authority_fact_body(body) {
-        return Err(RecordError::InvalidTaskBody(
-            "a federation peer cannot send a task authority fact",
-        )
-        .into());
+        return Err(RecordError::InvalidTaskBody(PEER_TASK_AUTHORITY_FACT_REFUSAL).into());
     }
     Ok(())
+}
+
+/// The verdict [`refuse_peer_task_authority_fact`] refuses with.
+#[cfg(feature = "sync")]
+const PEER_TASK_AUTHORITY_FACT_REFUSAL: &str =
+    "a federation peer cannot send a task authority fact";
+
+/// Whether `error` is [`refuse_peer_task_authority_fact`]'s refusal. A staged
+/// import holding such a fact is a defect of the artifact, not of local
+/// policy: the predicate reads only the digest-pinned bytes, so no later
+/// policy admits them. Its stage and its confirmation therefore settle the
+/// receipt `Failed(AdmissionRejected)` instead of leaving it to retry
+/// (FIX TASK-FACT-STAGED-CONFIRM-NEVER-SETTLES).
+#[cfg(feature = "sync")]
+pub(crate) fn is_peer_task_authority_fact_refusal(error: &Error) -> bool {
+    matches!(
+        error,
+        Error::Record(RecordError::InvalidTaskBody(verdict))
+            if *verdict == PEER_TASK_AUTHORITY_FACT_REFUSAL
+    )
 }
 
 /// The source a foreign TURN or CONVERSATION is stamped with (OF-149).

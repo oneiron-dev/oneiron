@@ -191,7 +191,7 @@ fn send_pass(
     let vault = server.vault();
     let clients = match clients {
         Some(clients) => clients,
-        None => clients.insert(CalendarSendClients::new()?),
+        None => clients.insert(CalendarSendClients::new(server.hosted_egress_guard())?),
     };
     let inquiry_transport = server.host_issuer().map(HttpInquiryTransport::new);
     let mut sink = CalendarChannelSink::new(vault, line_push_allowance, clients);

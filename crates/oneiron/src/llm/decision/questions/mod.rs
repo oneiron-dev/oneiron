@@ -26,8 +26,6 @@ mod store;
 mod task_ask;
 mod windows;
 
-// FIX [LIBTEST-QUARANTINE-LLM-DECISION-QUESTIONS-STANDING-TESTS]: the lib test target's type check fails here (26 errors: E0308 x16, E0063 x9, E0639 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod standing_tests;
 
@@ -37,6 +35,8 @@ pub use answer_scope::{
     read_question_in_lane, schedule_backfill_in_lane,
 };
 pub use answers::question_answers;
+#[cfg(oneiron_test_support)]
+pub(crate) use arrival::watch_key_pin_for_test;
 pub(crate) use arrival::{project_arrivals_for_changes_in_txn, project_arrivals_in_txn};
 pub(crate) use artifact_refresh::artifact_unit_receipts;
 pub use artifact_refresh::{
@@ -46,6 +46,8 @@ pub use artifact_refresh::{
     ArtifactRefreshBatch, ArtifactRefreshFailure, refresh_artifact_question_now,
     refresh_due_artifact_questions, refresh_due_artifact_questions_while,
 };
+#[cfg(oneiron_test_support)]
+pub(crate) use ask_history::ask_history_key_pin_for_test;
 pub(crate) use ask_history::erase_ask_history_actor_in_txn;
 pub(crate) use ask_history::{
     StandingReask, record_failed_standing_reask, record_standing_reask_in_txn,
@@ -90,6 +92,8 @@ pub use route_calibration::{
     RouteCalibrationGroup, RouteCalibrationMap, RouteCalibrationReport, RouteFit, RouteFitRefusal,
     RouteGroupKey, route_calibration_report,
 };
+#[cfg(oneiron_test_support)]
+pub(crate) use saved_reader::{saved_reader, saved_source_key_in_txn};
 pub(crate) use saved_reader::{wake_artifact_reads, wake_lane};
 pub use standing::{
     StandingAnswer, admit_standing_answer, backfill_standing_answer, prepare_standing_answer,
@@ -107,7 +111,5 @@ pub use windows::{
     next_outcome_window_close_at,
 };
 
-// FIX [LIBTEST-QUARANTINE-LLM-DECISION-QUESTIONS-GRAPH-ASK-TESTS]: the lib test target's type check fails here (26 errors: E0061 x20, E0063 x6); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod graph_ask_tests;
