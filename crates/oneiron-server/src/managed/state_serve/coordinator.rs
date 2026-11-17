@@ -135,7 +135,7 @@ async fn serve_with_handles(
     // process attests the owner on each route: a request with no credential
     // is anonymous. The Linear mirror checks this declaration, not a secret.
     server_config.ingress = crate::config::IngressAuth::Supervisor;
-    server_config.hosted_private_origins = managed.hosted_private_origins.clone();
+    managed.carry_hosted_egress(&mut server_config);
     // The host root signs with this vault's own independent issuer seed,
     // kept in this install's keystore slot under the supervisor's key
     // directory (FIX-LIST 3018): never the delivered DEK, which escrow
@@ -782,6 +782,10 @@ async fn serve_with_handles(
     // `quiescent: true` is a claim about a gate that nothing reaches. Each
     // socket upgraded on it or the mesh sees the shutdown, and is waited
     // for with the calls it admitted before any worker stops (FIX 4757).
+    // The event-loop watchdog (L8-11): a hung or recovering vault takes no
+    // new work, and `Ping` tells the supervisor. It runs until serve returns.
+    let _process_watchdog = sync_server
+        .start_process_watchdog(crate::process_readiness::ProcessHealthSettings::managed());
     let (app, upgrades) = crate::embedded::upgrade_lifetime(
         build_managed_app(Arc::clone(&sync_server), Arc::clone(&state)).layer(cors),
         shutdown.0.subscribe(),
