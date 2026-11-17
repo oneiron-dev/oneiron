@@ -832,6 +832,21 @@ impl StepRunner {
         let logical_budget_units = continuation
             .as_ref()
             .map_or(self.budget_units, |saved| saved.progress.budget_units);
+        // A try whose attempt carries a dialed landing reserve (ONE-1896 §4)
+        // meters its ordinary calls on that dial less the reserve, as the
+        // Dreamer's turn program does, so no ordinary call reaches the slice
+        // kept for its landing (FIX 4208). The bound holds the guard and the
+        // live lease alike. A retry is a fresh row that keeps its source's
+        // dial values but not its one-shot mark (`successor_row`), and the
+        // workflow path never dials it again, so the values it carries fence
+        // it as they fenced the try before it: only a dial writes a reserve's
+        // limit. An attempt no dial reached keeps the step's budget.
+        let landing = attempt.landing_reserve();
+        let logical_budget_units = if landing.is_dialed() || landing.limit_units > 0 {
+            logical_budget_units.min(landing.ordinary_limit_units())
+        } else {
+            logical_budget_units
+        };
         // OF-531: a room-paid step bills its root payer's own account, bound
         // before anything is reserved, never the vault owner's by default;
         // so does a member's bound run's step (FIX 5316). A payer this host
