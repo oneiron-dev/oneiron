@@ -3,23 +3,25 @@
 use crate::conversation_dag::{ScopePath, ScopeSelector};
 use crate::dreamer_runner::{DreamerAdmittedAttempt, DreamerRunnerStore};
 use crate::scope_summary::{ScopeSummaryRequest, ScopeSummaryTarget};
-use crate::side_table::{self, LegacyJson, SideTable};
-use crate::{Error, Result, Vault};
+use crate::{Result, Vault};
 
 use super::sieve;
-
-const POLICY: SideTable<(), WakeRecipePolicy, LegacyJson> =
-    SideTable::new(&side_table::DREAMER_WAKE_RECIPE_POLICY);
 
 #[doc(hidden)]
 pub use oneiron_wake_contract::dreamer_wake::recipes::WakeRecipePolicy;
 
+/// The shipped recipe policy (`recipe_policy_defaults.json`): the default of the setting
+/// `dreamer.wake.recipe_policy`.
+pub(super) fn shipped_recipe_policy() -> WakeRecipePolicy {
+    serde_json::from_str(include_str!("recipe_policy_defaults.json"))
+        .expect("the shipped recipe_policy_defaults.json decodes")
+}
+
+/// The recipe policy in force: the owner's `dreamer.wake.recipe_policy`, else the shipped one.
 pub(crate) fn policy_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<WakeRecipePolicy> {
-    let policy = match POLICY.get(&vault.store, txn, &())? {
-        Some(policy) => policy,
-        None => serde_json::from_str(include_str!("recipe_policy_defaults.json"))
-            .map_err(|_| Error::InvalidConfig("invalid shipped Dreamer recipe policy".into()))?,
-    };
+    let policy = super::setting_keys::RECIPE_POLICY
+        .read_in_txn(vault, txn, &[], None)?
+        .value;
     policy.validate()?;
     Ok(policy)
 }
@@ -28,18 +30,6 @@ impl Vault {
     pub fn dreamer_recipe_policy(&self) -> Result<WakeRecipePolicy> {
         let txn = self.store.env.read_txn()?;
         policy_in_txn(self, &txn)
-    }
-
-    pub fn set_dreamer_recipe_policy(
-        &self,
-        owner: &crate::consent::AuthenticatedOwner,
-        policy: WakeRecipePolicy,
-    ) -> Result<()> {
-        policy.validate()?;
-        self.with_write_txn_grouped(|txn| {
-            crate::dreamer_runner::maintenance::validate_owner_in_txn(self, txn, owner)?;
-            POLICY.put(&self.store, txn, &(), &policy)
-        })
     }
 }
 
