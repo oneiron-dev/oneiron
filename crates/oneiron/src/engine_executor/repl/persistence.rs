@@ -193,6 +193,7 @@ impl EngineNativeExecutor<'_> {
         observation: String,
         correction: &CodeRunCorrectionDraft<'_>,
         config: &EngineExecutorConfig,
+        takes_pause: bool,
     ) -> EngineExecutorResult<Option<EngineExecutorStatus>> {
         self.gated_write.refuse_a_step_that_dropped_a_write(
             config.run_id,
@@ -317,9 +318,17 @@ impl EngineNativeExecutor<'_> {
             result => result?,
         };
         // The run parks on the step's wait; a reply already delivered
-        // resumes it at its next entry.
-        if let Some(EngineExecutorStatus::Waiting(wait)) = &terminal_status {
+        // resumes it at its next entry. A person's pause pending there is
+        // taken at the wait, as at a step that did not fail, and the run
+        // returns paused; an entry its root cancelled (`takes_pause` false)
+        // takes none and still fails (FIX PAUSE-BOUNDARY-PARKED-RUN).
+        if let Some(status) = &terminal_status
+            && let EngineExecutorStatus::Waiting(wait) = status
+        {
             self.park(record, wait)?;
+            if takes_pause && let Some(paused) = self.pause_at_wait(record, status)? {
+                return Ok(Some(paused));
+            }
         }
         Ok(terminal_status)
     }

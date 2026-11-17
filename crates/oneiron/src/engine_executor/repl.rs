@@ -169,10 +169,7 @@ impl EngineNativeExecutor<'_> {
                     .await?
                 {
                     TurnProgram::Generated(program) => (program, None),
-                    // A turn hook's ask the run stops on, before its model
-                    // request, takes a pending pause too.
                     TurnProgram::Ended(status) => {
-                        let status = self.pause_at_wait(&record, &status)?.unwrap_or(status);
                         return Ok(self.outcome(status, steps_run, record));
                     }
                 },
@@ -311,11 +308,11 @@ impl EngineNativeExecutor<'_> {
                             format!("Runtime error after host bridge calls: {err}"),
                             &correction,
                             config,
+                            !cancelled,
                         )?
                         && !cancelled
                     {
                         checking.ended(Some(&status));
-                        let status = self.pause_at_wait(&record, &status)?.unwrap_or(status);
                         return Ok(self.outcome(status, steps_run + 1, record));
                     }
                     // A response whose program failed before its first host bridge call
@@ -369,9 +366,9 @@ impl EngineNativeExecutor<'_> {
                     format!("Host bridge call failed: {failure}"),
                     &correction,
                     config,
+                    !cancel.is_cancelled(),
                 )? {
                     checking.ended(Some(&status));
-                    let status = self.pause_at_wait(&record, &status)?.unwrap_or(status);
                     return Ok(self.outcome(status, steps_run + 1, record));
                 }
                 return Err(failure.into());
@@ -416,10 +413,10 @@ impl EngineNativeExecutor<'_> {
                             ),
                             &correction,
                             config,
+                            !cancel.is_cancelled(),
                         )?
                     {
                         checking.ended(Some(&status));
-                        let status = self.pause_at_wait(&record, &status)?.unwrap_or(status);
                         return Ok(self.outcome(status, steps_run + 1, record));
                     }
                     return Err(err);
