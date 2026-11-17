@@ -109,14 +109,7 @@ fn retention_archives_only_old_completed_tasks_and_resolver_restores_same_bytes(
 fn archive_purge_previews_bytes_requires_owner_and_returns_erase_receipts() -> crate::Result<()> {
     let dir = tempfile::tempdir()?;
     let vault = Vault::open(dir.path(), VaultConfig::default())?;
-    let owner = EntityId::now();
-    vault.put_entity(
-        &owner,
-        crate::registry::ENTITY_TYPE_PERSON,
-        TimeRange { start: 1, end: 1 },
-        1,
-        b"owner",
-    )?;
+    let owner = vault.ensure_embedded_owner_actor().expect("owner");
     crate::test_util::bind_test_owner(&vault, owner);
     let ids = [EntityId::now(), EntityId::now()];
     for id in ids {
