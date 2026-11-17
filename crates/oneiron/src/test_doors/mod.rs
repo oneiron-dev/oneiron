@@ -125,6 +125,8 @@ pub mod fingerprint_keep_index_keys;
 pub mod fingerprint_keep_origin;
 pub mod fingerprint_keep_saved_query;
 pub mod fingerprint_keep_store_digests;
+#[cfg(feature = "sync")]
+pub mod fingerprint_keep_sync_digests;
 pub mod fingerprint_keep_typed_feeds;
 pub mod free_time_cycle_writer;
 #[cfg(feature = "sync")]
