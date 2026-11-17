@@ -172,6 +172,7 @@ pub mod mail_landing;
 pub mod mail_pack_setting_keys;
 #[cfg(feature = "sync")]
 pub mod maintenance_facet_receipts;
+pub mod masked_checkout;
 #[cfg(feature = "sync")]
 pub mod media_vector_replica;
 pub mod meeting_follow_up;
