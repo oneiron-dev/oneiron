@@ -92,18 +92,28 @@ pub(super) async fn attest(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
     payload: OwnerJsonBody<AttestRequest>,
-) -> OwnerReply<KeyView> {
+) -> OwnerReply<Attested> {
     let owner = owner(&auth, &server)?;
     let request = payload.read(&server).await?;
     let reply = blocking(move || attest_connector(&server, &owner, &request)).await?;
     Ok(Json(reply))
 }
 
+/// The attest answer: the key as attested, and what a stdio connector runs
+/// and where it sends a credential, which the owner attests for it.
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+pub(super) struct Attested {
+    #[serde(flatten)]
+    key: KeyView,
+    /// None for an HTTP connector.
+    stdio: Option<StdioInstalled>,
+}
+
 fn attest_connector(
     server: &SyncServer,
     owner: &AuthenticatedOwner,
     request: &AttestRequest,
-) -> OwnerResult<KeyView> {
+) -> OwnerResult<Attested> {
     let vault = server.vault();
     let name = normalize_name(&request.connector);
     let installed = installed_config(server, &name).ok_or_else(not_installed)?;
@@ -143,12 +153,19 @@ fn attest_connector(
         vault.attest_connector_key(owner, &catalog.key, &revision, now)
     }
     .map_err(engine)?;
+    let stdio = StdioInstalled::of(installed);
     // The attested listing may change no manifest: nothing is left to approve.
     if record.pending_manifest.is_none() && record.retained_manifest.is_some() {
-        return Ok(KeyView::new(catalog.key, record)?);
+        return Ok(Attested {
+            key: KeyView::new(catalog.key, record)?,
+            stdio,
+        });
     }
     let approved = approve(vault, owner, catalog.key)?;
-    Ok(KeyView::new(catalog.key, approved)?)
+    Ok(Attested {
+        key: KeyView::new(catalog.key, approved)?,
+        stdio,
+    })
 }
 
 /// The connector's tools, as `discovery` listed them again at the pinned

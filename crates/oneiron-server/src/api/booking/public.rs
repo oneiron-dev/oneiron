@@ -161,6 +161,7 @@ pub(crate) async fn render_public_booking_page(
         slots,
         flex_used,
         full_days,
+        ..
     } = response
     else {
         return Err(ApiError::internal_server_error(
@@ -430,6 +431,9 @@ mod deposit_tests;
 #[cfg(test)]
 #[path = "public_fixture.rs"]
 mod fixture;
+#[cfg(test)]
+#[path = "public_grant_view_tests.rs"]
+mod grant_view_tests;
 #[cfg(test)]
 #[path = "public_lifecycle_tests.rs"]
 mod lifecycle_tests;
