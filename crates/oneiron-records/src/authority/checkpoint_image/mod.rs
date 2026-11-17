@@ -72,13 +72,15 @@ use serde::Serialize;
 /// row that grants counts in full, a world key record included, and the image records its fork
 /// as a `SequenceFork` issue (Engine RULINGs SEQ-FLOOR-SHAPE-S = B, SEQ-FLOOR-S-WORLD-KEY-FLOOR
 /// = A).
-/// 44: a counted root appointment folds its line as its own ancestry's fold did, and a
+/// 44: the fold keeps each enrolled passkey's assertion contexts, each key a passkey vouched
+/// for and each such key a second vouch confirmed (row WEB-PASSKEY-OWNER-KEY).
+/// 45: a counted root appointment folds its line as its own ancestry's fold did, and a
 /// rootless roster names itself (OWNER-ANCHOR-ROOT-RECOVERY).
-/// 45: the fold keeps every key it ever held as the owner's, and a vault that held one asks for
+/// 46: the fold keeps every key it ever held as the owner's, and a vault that held one asks for
 /// an owner key until the owner switches it back to web sign-in (the owner's ruling AUTH-5); an
 /// image's projected fold carries what the vault asks of its owner and how each act of the web
 /// sign-in setting landed.
-pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 45;
+pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 46;
 
 /// The domain every encoded image starts with.
 pub const AUTHORITY_CHECKPOINT_V2_DOMAIN: &[u8] = b"oneiron/authority/checkpoint/v2";

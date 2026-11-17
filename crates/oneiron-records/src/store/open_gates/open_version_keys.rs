@@ -3,24 +3,33 @@
 
 pub const MAX_DBS: u32 = 32;
 
-/// v37 (the owner's ruling AUTH-5, the owner-key ratchet): stored
+/// v38 (the owner's ruling AUTH-5, the owner-key ratchet): stored
 /// authority-log rows keep their bytes and change meaning, and a stored
 /// checkpoint image written before it no longer decodes (it has no memory of
 /// the owner keys the vault held). A vault that has ever held an owner key
 /// asks for one after its last key is removed, so a carried act that landed
 /// there with no proof folds as waiting, until the owner switches the vault
-/// back to web sign-in. The authority fold schema moves 44 -> 45 with it. No
+/// back to web sign-in. The authority fold schema moves 45 -> 46 with it. No
 /// old-meaning reader or migration is provided (the lead's M-1 stored-change
 /// rule, path "loud").
 ///
-/// v36 (row OWNER-ANCHOR-ROOT-RECOVERY, FIX OWNER-ANCHOR-NO-ROOT-RECOVERY): the
-/// authority fold schema moves 43 -> 44, and a stored checkpoint image
+/// v37 (row OWNER-ANCHOR-ROOT-RECOVERY, FIX OWNER-ANCHOR-NO-ROOT-RECOVERY): the
+/// authority fold schema moves 44 -> 45, and a stored checkpoint image
 /// written before it no longer decodes. The fold names a roster with no live
 /// root key (`NoRootKey`), and it counts a root appointment that the pinned
 /// root's anchor signed: the appointment's line folds as its own ancestry's
 /// fold did. Stored authority-log rows keep their bytes. No old-meaning
 /// reader or migration is provided (the lead's M-1 stored-change rule, path
 /// "loud").
+///
+/// v36 (row WEB-PASSKEY-OWNER-KEY, owner passkeys): stored authority-log rows
+/// keep their bytes and meaning. The authority fold gains each enrolled
+/// passkey's assertion contexts, each key a passkey vouched for and each such
+/// key a second vouch confirmed, so the authority fold schema moves 43 -> 44
+/// with it: a stored checkpoint image written before it no longer decodes,
+/// and an older build refuses an image that carries them rather than dropping
+/// the passkey limits. No old-meaning reader or migration is provided (the
+/// lead's M-1 stored-change rule, path "loud").
 ///
 /// v35 (FIX SEQUENCE-FLOOR-DELIVERY-ORDER, CHECKPOINT-RAW-FLOOR-CLEARED-ROW):
 /// stored authority-log rows keep their bytes and can change meaning. A
@@ -213,7 +222,7 @@ pub const MAX_DBS: u32 = 32;
 /// `RECEIPT_FAMILY_INDEX_VERSION` requires bumping this version too.
 /// v27 hashes full run/group identifiers in their v2 secondary-index keys.
 /// v26 is reserved for the separately landing attempt-record v4 format.
-pub const STORAGE_ABI_VERSION: u16 = 37;
+pub const STORAGE_ABI_VERSION: u16 = 38;
 
 pub const STORAGE_SCHEMA_VERSION: u16 = 1;
 

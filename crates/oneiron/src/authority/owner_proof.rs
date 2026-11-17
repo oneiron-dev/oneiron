@@ -97,9 +97,17 @@ fn proves_for_the_owner(state: &FoldState, key: &AuthorityKey) -> bool {
 /// proof that no key it has held could give. A key of the owner's in
 /// another suite (a P-256 key, a passkey's suite) is the owner's key and
 /// gives no proof; when the fold learns that suite's proof form, this is the
-/// one place that widens.
+/// one place that widens. A key only a passkey vouched for, until a key that
+/// is no passkey confirms it, gives no proof either
+/// ([`FoldState::passkey_limited`]; Engine ANSWER
+/// WEBPASSKEY-LIMITED-KEY-OWNER-PROOF = A): its cosign would answer a machine
+/// as the owner's through a carrier, the act its own signature may not make,
+/// and a vault whose only Ed25519 owner keys are such keys asks for no proof,
+/// as a passkey-only vault does.
 fn gives_owner_proof(state: &FoldState, key: &AuthorityKey) -> bool {
-    matches!(key, AuthorityKey::Ed25519(_)) && proves_for_the_owner(state, key)
+    matches!(key, AuthorityKey::Ed25519(_))
+        && proves_for_the_owner(state, key)
+        && !state.passkey_limited(key)
 }
 
 /// Remembers `key` as one the fold held as the owner's, when it can give the
@@ -394,14 +402,19 @@ pub(super) fn asking_owner_choices(state: &FoldState) -> BTreeSet<AuthorityEntry
 }
 
 impl AuthorityFold {
-    /// Whether `key` is a key this fold trusts as the owner's: live on the
-    /// roster with `ROLE_OWNER`, and outside the host's custody when the
-    /// vault is `hosted`. The writer's side of `proves_for_the_owner`; the
-    /// fold takes a proof cosign only from such a key in the Ed25519 suite
-    /// ([`owner_proof_key`]), and every signer an install holds is one.
+    /// Whether `key` is a key whose cosign this fold takes as the owner's
+    /// proof: live on the roster with `ROLE_OWNER`, outside the host's
+    /// custody when the vault is `hosted`, and held by no passkey limit (a
+    /// key only a passkey vouched for, until confirmed). The writer's side
+    /// of `gives_owner_proof`, read on the merged history, so an install
+    /// never signs a proof cosign the fold judges forged (REVIEW-8451 P1);
+    /// the fold takes one only in the Ed25519 suite ([`owner_proof_key`]),
+    /// and every signer an install holds is one.
     #[must_use]
     pub(crate) fn proves_owner_acts(&self, key: &AuthorityKey, hosted: bool) -> bool {
-        roster_has_live_owner(&self.roster, key) && !(hosted && self.in_host_custody(key))
+        roster_has_live_owner(&self.roster, key)
+            && !(hosted && self.in_host_custody(key))
+            && !self.passkey_limited_keys.contains(key)
     }
 
     /// A choice door's answer about `act`, the choice it appended in its

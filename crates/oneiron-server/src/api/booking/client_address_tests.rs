@@ -152,10 +152,12 @@ async fn authenticated_booking_charges_the_connection_not_a_forwarding_header() 
         if !same_minute(now) {
             continue;
         }
+        // FIX 128: an authenticated listing is counted, never windowed, so
+        // neither the connection nor the header it names spends a window.
         assert_eq!(
             spent(&fixture, &owner_key(&fixture, "203.0.113.9"), now),
-            2,
-            "the connection pays"
+            0,
+            "an authenticated listing spends no window"
         );
         for named in ["198.51.100.7", "198.51.100.8"] {
             assert_eq!(spent(&fixture, named, now), 0, "{named} minted no budget");
@@ -195,7 +197,13 @@ async fn supervisor_listing_charges_loopback(owner: bool) {
         } else {
             "127.0.0.1".to_owned()
         };
-        assert_eq!(spent(&fixture, &loopback, now), 1, "owner route: {owner}");
+        // FIX 128: an authenticated listing spends no window; an anonymous
+        // one is charged to loopback once.
+        assert_eq!(
+            spent(&fixture, &loopback, now),
+            u32::from(!owner),
+            "owner route: {owner}"
+        );
         return;
     }
     panic!("could not list within one rate window");
@@ -243,7 +251,7 @@ async fn trusted_proxy_chain_charges_each_client_behind_it() {
             (proxy, &["not-an-address"], false),
             // A peer outside the trusted block is charged as itself.
             (Peer::Tcp("203.0.113.9"), &["198.51.100.10"], false),
-            // The authenticated route reads the same chain.
+            // The authenticated route spends no window (FIX 128).
             (proxy, &["198.51.100.11"], true),
         ];
         for (nth, (peer, forwarded, owner)) in listings.into_iter().enumerate() {
@@ -266,8 +274,8 @@ async fn trusted_proxy_chain_charges_each_client_behind_it() {
         let owner = owner_key(&fixture, "198.51.100.11");
         assert_eq!(
             spent(&fixture, &owner, now),
-            1,
-            "the owner listing pays once"
+            0,
+            "the owner listing spends no window"
         );
         for untouched in ["192.0.2.50", "10.0.0.3", "192.0.2.51", "198.51.100.10"] {
             assert_eq!(spent(&fixture, untouched, now), 0, "{untouched}");
