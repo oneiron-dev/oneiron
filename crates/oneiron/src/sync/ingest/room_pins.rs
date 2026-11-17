@@ -27,8 +27,7 @@ use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::registry::ENTITY_TYPE_CONVERSATION;
 use crate::store::conversation_body::{
-    ROOM_PINS_KEY, ROOM_UNPINNED_KEY, decode, encode, invalid, merge_room_pins,
-    validate_room_pins,
+    ROOM_PINS_KEY, ROOM_UNPINNED_KEY, decode, encode, invalid, merge_room_pins, validate_room_pins,
 };
 
 /// A room body's MessagePack map, with the pin records and unpinned records
