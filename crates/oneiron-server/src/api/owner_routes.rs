@@ -102,6 +102,7 @@ pub(super) mod pack_routes;
 pub(super) mod pad_routes;
 pub(super) mod peer_confidence_routes;
 pub(super) mod proactivity_routes;
+mod recovery_box_routes;
 pub(super) mod recovery_kit_routes;
 pub(super) mod recovery_kit_target_routes;
 mod remote_task_input_routes;
@@ -209,6 +210,7 @@ fn owner_tables() -> OwnerTable {
         hook_check_routes::owner_table(),
         space_posting_routes::owner_table(),
         vault_key_routes::owner_table(),
+        recovery_box_routes::owner_table(),
         recovery_kit_routes::owner_table(),
         secret_control_routes::owner_table(),
         secret_use_routes::owner_table(),
