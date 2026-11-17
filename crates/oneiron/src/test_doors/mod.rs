@@ -83,6 +83,7 @@ pub mod dreamer_partition_window;
 pub mod dreamer_promotion_seconds;
 pub mod dreamer_stage_line;
 pub mod enum_name_rows;
+pub mod epoch_lineage_pointer;
 pub mod esign_commitments;
 pub mod eval_authoring_execution_fault;
 pub mod extra_room_index;
