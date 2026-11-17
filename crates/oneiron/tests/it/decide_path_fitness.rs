@@ -170,6 +170,12 @@ const OUTSIDE: &[Pin] = &[
     ),
     pin(
         "crates/oneiron-server/src/models/run_backend.rs",
+        "generate",
+        "self.ladder.generate(&run, request, None).await",
+        "run backend: a sourced call forwarding to the ladder on its rows",
+    ),
+    pin(
+        "crates/oneiron-server/src/models/run_backend.rs",
         "stream",
         "self.ladder.stream(&self.run, request, None)",
         "run backend stream forwarding to the ladder",
@@ -729,7 +735,7 @@ const OUTSIDE: &[Pin] = &[
     pin(
         "crates/oneiron/src/code_run/contribution/generation.rs",
         "generate",
-        "let Some(response) = self.model.generate(request, &rung, self.clock)? else {",
+        "let Some(response) = self.model.generate(request, rows, &rung, self.clock)? else {",
         "contribution replay: one fork's answer from the capsule's own model, kept as a receipt before scoring",
     ),
     pin(
