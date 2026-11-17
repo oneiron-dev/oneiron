@@ -63,6 +63,11 @@ pub enum AuthorityFoldIssue {
         /// The floor, in bytes.
         floor_bytes: u64,
     },
+    /// A counted entry below its sequence floor, the highest sequence among
+    /// its signer's entries in its scope that do not descend from it: its
+    /// signer forked its sequence. The entry counts in full; this is the
+    /// fork's record, not a verdict on it (Engine RULING SEQ-FLOOR-SHAPE-S).
+    SequenceFork(AuthorityEntryHash),
 }
 
 /// Why the fold refused an actor-binding op.
