@@ -205,6 +205,8 @@ pub mod substrate_reads;
 pub mod sync_checkpoint_pins;
 #[cfg(feature = "sync")]
 pub mod sync_parted_row_binding;
+#[cfg(feature = "sync")]
+pub mod sync_whole_row_binding;
 pub mod task_ask_role_routing;
 pub mod tray_answered_removal;
 pub mod turn_programs;
