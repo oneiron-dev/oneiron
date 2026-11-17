@@ -45,6 +45,8 @@ mod agent_tier;
 mod agent_world_undo;
 mod ai_grant;
 mod ancestor_index;
+#[cfg(oneiron_test_support)]
+pub(crate) mod ancestor_index_door;
 mod ancestry_evaluator;
 mod anchor_fold;
 mod anchor_marks;
@@ -137,6 +139,7 @@ mod owner_act;
 mod owner_choice;
 mod owner_key_enrollment;
 mod owner_key_enrollment_door;
+mod owner_key_move_confirm;
 mod owner_project_slip;
 mod owner_proof;
 mod owner_roots;
@@ -153,8 +156,11 @@ mod recovery;
 mod retired_signers;
 mod revocation_notice;
 mod revoke_proof;
+mod rows_floor;
 mod seat_child_slip;
 mod sequence_ancestry;
+#[cfg(oneiron_test_support)]
+pub(crate) mod sequence_floor_door;
 mod sequence_observation;
 pub(crate) mod setting_keys;
 mod slip;
@@ -272,6 +278,9 @@ pub use admission::{
     AuthorityWorkWaitExpired, authority_work_policy, set_authority_work_policy,
     set_authority_work_wait_ms,
 };
+pub use agent_grant_act::{
+    AGENT_GRANT_ACT_NO_CARRIER, AGENT_GRANT_ACT_NOT_COUNTED, AGENT_GRANT_ACT_TOO_MANY_HEADS,
+};
 pub use backup_signer_delegation::{
     BACKUP_SIGNER_DELEGATION_DOMAIN, BackupModeRootPolicy, BackupModeRoots, BackupSignerDelegation,
     BackupSignerStatement,
@@ -362,6 +371,7 @@ pub use machine_identity::{
     LocalMachine, MACHINE_PROOF_HEADER, MachineEnrolmentRequest, PeerMachine, RequestCode,
     machine_connection_transcript, machine_proof_header_value,
 };
+pub(crate) use machine_profile::YoursProof;
 pub use machine_profile::{
     FoldedMachine, MachineAdmitter, MachineRevision, PinnedRoot, SignerClass, TrustedMachine,
 };
@@ -401,6 +411,11 @@ pub(crate) use owner_act::{
 pub use owner_choice::OwnerChoiceHead;
 pub use owner_key_enrollment_door::{
     EnrolledOwnerKey, OwnerKeyEnrollment, OwnerKeyEnrollmentReceipt,
+};
+pub use owner_key_move_confirm::{
+    OWNER_KEY_MOVE_MEMBER_NOT_CONFIRMED, OWNER_KEY_MOVE_NO_HELD_KEY, OWNER_KEY_MOVE_NOT_PLANNED,
+    OWNER_KEY_MOVE_NOT_SYNCED, OWNER_KEY_MOVE_PLAN_STALE, OWNER_KEY_MOVE_SIGNER_NOT_EXECUTORS,
+    OwnerKeyMovePlan, OwnerKeyMoveSigner, sign_owner_key_move,
 };
 pub(crate) use owner_roots::anchor_signed_entry;
 pub use owner_roots::{AwaitedRoot, OwnerRootView};
