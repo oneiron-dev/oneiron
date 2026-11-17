@@ -269,6 +269,15 @@ pub(crate) fn side_door_recheck_for_test(
     record.check_live_in(&read, &txn, turn)
 }
 
+/// The park cause a recipe step takes on `error` ([`recipe_failure`]), for
+/// tests/message_rel_relationship_row.rs. Not API.
+#[cfg(oneiron_test_support)]
+pub(crate) fn recipe_park_cause_for_test(
+    error: &crate::Error,
+) -> crate::dreamer_runner::DreamerParkCause {
+    recipe_failure::RecipeFailure::of_error(error).park_cause()
+}
+
 /// Encodes the candidates retained on a conflict marker.
 #[cfg(oneiron_test_support)]
 pub(crate) fn retained_alternatives_entry_for_test(
