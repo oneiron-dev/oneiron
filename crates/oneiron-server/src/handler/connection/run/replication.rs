@@ -91,7 +91,8 @@ pub(super) async fn handle_connection(
     };
 
     // Subscribe to broadcast channel for outbound messages
-    let mut subscriber = BroadcastSubscriber::new(conn_id, &server.broadcast_tx);
+    let mut subscriber =
+        BroadcastSubscriber::new(conn_id, &server.broadcast_tx, &server.broadcast_sessions);
 
     // Phase 1: Send root doc snapshot to client.
     // Root doc is server-authoritative — client only reads it.
