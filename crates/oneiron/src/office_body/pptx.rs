@@ -755,3 +755,27 @@ pub(crate) fn live_refused(error: LiveError) -> Error {
         nodes,
     })
 }
+
+/// Puts a deck-oracle row for the checkpoint-pins door: `profile`'s receipt
+/// `receipt` recorded by `recorded_by` at `recorded_at`, with no run-form
+/// check and no clock read.
+#[cfg(oneiron_test_support)]
+pub(crate) fn put_pins_oracle_in_txn(
+    store: &impl crate::store::ManifestDbs,
+    txn: &mut heed::RwTxn<'_>,
+    profile: &str,
+    receipt: &OracleReceipt,
+    recorded_by: &BodyActor,
+    recorded_at: u64,
+) -> crate::error::Result<()> {
+    ORACLE.put(
+        store,
+        txn,
+        &profile.to_owned(),
+        &OracleRecord {
+            receipt: receipt.clone(),
+            recorded_by: *recorded_by,
+            recorded_at,
+        },
+    )
+}

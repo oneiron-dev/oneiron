@@ -1,0 +1,24 @@
+{
+  "contract": "oneiron.bm25_rank_profile.v1",
+  "formula": {
+    "kind": "okapi"
+  },
+  "channels": {
+    "surface": {
+      "weight": 1.0,
+      "b": 0.75
+    },
+    "stem": {
+      "weight": 0.35,
+      "b": 0.65
+    },
+    "normalized_overlay": {
+      "weight": 0.55,
+      "b": 0.0
+    },
+    "cjk_ngram": {
+      "weight": 0.0,
+      "b": 0.3
+    }
+  }
+}
