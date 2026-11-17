@@ -32,14 +32,22 @@ pub(super) enum ThreadDelete {
     Owner,
     /// A human Admin, while the Owner's switch allows it.
     Admin,
+    /// A human Admin while an Owner keeps the org two-admin rule on: the
+    /// Admin's power over the thread is held, so only a seated room role
+    /// still deletes, by its own room policy; with none the delete refuses
+    /// with the hold's reason (Engine ANSWER UNBUILT06-PR2-UNHELD-ROLE-DOORS
+    /// = A).
+    HeldAdmin,
 }
 
 impl ThreadDelete {
-    /// The role the delete's gate context names for this record alone.
-    pub(super) const fn role(self) -> RoomRole {
+    /// The role the delete's gate context names for this record alone; a
+    /// held Admin's is the hold's refusal.
+    pub(super) fn role(self) -> Result<RoomRole> {
         match self {
-            Self::Owner => RoomRole::Owner,
-            Self::Admin => RoomRole::Admin,
+            Self::Owner => Ok(RoomRole::Owner),
+            Self::Admin => Ok(RoomRole::Admin),
+            Self::HeldAdmin => Err(crate::federation::two_admin_hold_refusal()),
         }
     }
 }
@@ -114,7 +122,11 @@ pub(super) fn private_thread_delete_in(
             if !room_thread_admin_settings_in_txn(vault, txn)?.admin_delete {
                 return Err(admin_delete_off());
             }
-            ThreadDelete::Admin
+            if crate::workspace_roster::admin_standing_held_in(vault, txn, actor.entity_ref())? {
+                ThreadDelete::HeldAdmin
+            } else {
+                ThreadDelete::Admin
+            }
         }
     };
     if actor.actor_class() != crate::EdgeActorClass::Human {
