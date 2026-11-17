@@ -30,6 +30,7 @@ mod types;
 
 pub use check_receipt::{
     CodeCheckAttemptView, CodeCheckCommandResult, CodeCheckReceiptRequest, CodeCheckReceiptView,
+    CodeCheckReuseSource,
 };
 pub(crate) use checker::check_work_view;
 pub use checker_types::*;
@@ -178,6 +179,8 @@ fn batch_view(batch: MergeBatch, receipts: QueueBatchReceipts) -> MergeQueueBatc
         selected_tests: batch.selected_tests,
         admission_receipt: receipts.admission,
         completion_receipt: receipts.completion,
+        follows: batch.follows,
+        followed_by: batch.followed_by,
         proposal_admission_receipts: receipts.proposals,
     }
 }

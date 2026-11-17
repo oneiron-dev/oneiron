@@ -52,8 +52,27 @@ use serde::Serialize;
 /// working view (row 6 WORKING-VIEW-EDIT).
 /// 37: an image's revoke facts carry each device revocation proved on its own signed branch,
 /// so a key a dropped branch revoked stays revoked (FIX [CONFIRM-COLLISION-SUBTREE-ROLLBACK]).
-/// 34 to 36 are taken by open PRs (OPUS-SPLIT-6's carrier stack, #8449).
-pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 37;
+/// 34 to 36 are unused: they were left for PRs that were open when 37 landed, and each of
+/// those takes the next number at its own landing.
+/// 39: two concurrent federation confirmations that share an id or a nonce both stay valid as
+/// spent evidence, and settlement removes neither nor any row above it (FIX
+/// CONFIRM-COLLISION-SUBTREE-ROLLBACK). 38 is unused: it was an open PR's number when the
+/// train assigned this one.
+/// 40: a revocation retires its key on every branch, as a handoff retires its predecessors
+/// (REVOKED-OWNER-ROOT-SIBLING-ENROL).
+/// 41: a carried machine answer that needed an owner key's proof and carried none is held
+/// beside the chains, never in them, and an owner answer may carry that one proof cosign (row
+/// CARRIER-OWNER-PROOF).
+/// 42: a `RevokeDevice` of an owner key counts only with an owner key's proof, as its signer or a
+/// cosign; the custodial root alone never ends one, and every row above such a revoke is refused
+/// with it (row HOSTED-ROOT-REVOKES-OWNER-KEY).
+/// 43: each covered row's sequence floor comes from the covered rows, not from the order
+/// they arrived in, and a row that only takes away is never floored (FIX
+/// [SEQUENCE-FLOOR-DELIVERY-ORDER], [CHECKPOINT-RAW-FLOOR-CLEARED-ROW]); below its floor a
+/// row that grants counts in full, a world key record included, and the image records its fork
+/// as a `SequenceFork` issue (Engine RULINGs SEQ-FLOOR-SHAPE-S = B, SEQ-FLOOR-S-WORLD-KEY-FLOOR
+/// = A).
+pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 43;
 
 /// The domain every encoded image starts with.
 pub const AUTHORITY_CHECKPOINT_V2_DOMAIN: &[u8] = b"oneiron/authority/checkpoint/v2";

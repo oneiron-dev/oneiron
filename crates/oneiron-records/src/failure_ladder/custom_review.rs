@@ -10,7 +10,9 @@ use serde::Serialize;
 pub const VERSION: u8 = 1;
 
 /// Version-one agent observability taxonomy; not the failure ladder's routing class.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, schemars::JsonSchema,
+)]
 #[repr(u8)]
 #[serde(rename_all = "snake_case")]
 pub enum FailureSignalClass {
