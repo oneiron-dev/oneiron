@@ -1,0 +1,17 @@
+{
+  "name": "vault.settings.sandbox_provider.replace",
+  "description": "Replaces the owner's sandbox provider switch under the owner proof: ours, or a named vendor. A vendor this host cannot serve refuses each run, typed, and ours never runs in its place.",
+  "input": "crate::settings::sandbox_provider::SandboxProviderSetting",
+  "output": "crate::settings::sandbox_provider::SandboxProviderAnswer",
+  "call": "crate::settings::sandbox_provider::replace_sandbox_provider_setting_embedded(memory, input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "act_class": "reversible_work",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}
