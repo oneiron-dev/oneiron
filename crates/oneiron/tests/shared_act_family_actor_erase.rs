@@ -25,7 +25,7 @@ use oneiron::federation::{
 use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::store::GateDecisionId;
 use oneiron::temporal::TimeRange;
-use oneiron::test_doors::shared_act_family::rows_naming;
+use oneiron::test_doors::shared_act_family::{overwrite_pending_act_payload, rows_naming};
 use oneiron::{DeleteReason, EntityId, Vault, VaultConfig};
 
 const SHARED: u64 = 42;
@@ -233,12 +233,13 @@ fn an_erased_askers_erase_ask_keeps_its_record_target_as_scaffold() {
     assert_resolves_to_nothing(&vault, admin);
 }
 
-/// Review round 1 of #7759: `start_authority_act` checks a built-in act's
-/// name, not its plan, so an Owner can store an `add_owner` act whose plan
-/// does not decode. Every person's erase scans each pending act; at
+/// Review round 1 of #7759: a start once stored an `add_owner` act whose plan
+/// did not decode, and every person's erase scans each pending act; at
 /// f586cf806ad4 it failed on that one row, so no erase could finish. Now
 /// the erase ends: an unreadable plan that named the erased person holds the
 /// erased marker in their place, and one that named no one stays as stored.
+/// The starts below hold legacy rows past the start door, which refuses such
+/// a plan today.
 #[test]
 fn an_unreadable_plan_does_not_stop_a_hard_erase() {
     let dir = tempfile::tempdir().expect("tempdir");
@@ -247,9 +248,18 @@ fn an_unreadable_plan_does_not_stop_a_hard_erase() {
     let candidate = person(&vault);
     share(&vault, owner, None);
     let owner_proof = proof(&vault, owner);
+    // The start door refuses a plan that does not decode, so each act starts
+    // with a plan it accepts and the legacy bytes are written past the door.
+    let seed = serde_json::to_vec(&AddOwnerPlan {
+        v: 1,
+        owner: owner.to_hex(),
+    })
+    .expect("a plan the start door accepts");
     let empty = vault
-        .start_authority_act(&owner_proof, SHARED, "add_owner", b"{}".to_vec())
-        .expect("the Owner stores an add_owner act with an empty plan");
+        .start_authority_act(&owner_proof, SHARED, "add_owner", seed.clone())
+        .expect("the Owner starts an add_owner act");
+    overwrite_pending_act_payload(&vault, empty.id.as_str(), b"{}".to_vec())
+        .expect("a legacy row holds an empty plan");
     // The unknown field fails the plan's decode; the bytes still name the
     // candidate, in upper case.
     let unreadable = format!(
@@ -257,8 +267,10 @@ fn an_unreadable_plan_does_not_stop_a_hard_erase() {
         candidate.to_hex().to_uppercase()
     );
     let naming = vault
-        .start_authority_act(&owner_proof, SHARED, "add_owner", unreadable.into_bytes())
-        .expect("the Owner stores an add_owner act with an unreadable plan");
+        .start_authority_act(&owner_proof, SHARED, "add_owner", seed)
+        .expect("the Owner starts an add_owner act");
+    overwrite_pending_act_payload(&vault, naming.id.as_str(), unreadable.into_bytes())
+        .expect("a legacy row holds an unreadable plan");
 
     hard_erase(&vault, bystander);
     hard_erase(&vault, candidate);
@@ -307,14 +319,18 @@ fn an_unreadable_plan_that_escapes_the_persons_hex_holds_the_marker() {
         json_escaped(first),
         json_escaped(&hex)
     );
+    // The start door refuses a plan that does not decode, so the act starts
+    // with a plan it accepts and the legacy bytes are written past the door.
+    let seed = serde_json::to_vec(&AddOwnerPlan {
+        v: 1,
+        owner: owner.to_hex(),
+    })
+    .expect("a plan the start door accepts");
     let act = vault
-        .start_authority_act(
-            &proof(&vault, owner),
-            SHARED,
-            "add_owner",
-            escaped.into_bytes(),
-        )
-        .expect("the Owner stores an add_owner act with an escaped plan");
+        .start_authority_act(&proof(&vault, owner), SHARED, "add_owner", seed)
+        .expect("the Owner starts an add_owner act");
+    overwrite_pending_act_payload(&vault, act.id.as_str(), escaped.into_bytes())
+        .expect("a legacy row holds an escaped plan");
 
     hard_erase(&vault, candidate);
 

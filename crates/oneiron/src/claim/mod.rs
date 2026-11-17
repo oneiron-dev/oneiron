@@ -105,6 +105,7 @@ pub mod relationship_predicates;
 mod scope;
 mod scope_stamp;
 mod scoped_read;
+pub(crate) mod setting_keys;
 mod source_trust;
 pub(crate) mod supersession_diff;
 mod supersession_provenance;
@@ -125,9 +126,8 @@ pub use lexical_query_hint::*;
 pub(crate) use lifecycle::is_observed_preference;
 pub(crate) use machine_birth::SignedClaimBirth;
 pub(crate) use observed_preference::{
-    OBSERVED_PREFERENCE_MIN_OBSERVATIONS, OBSERVED_PREFERENCE_MIN_SESSIONS,
-    is_preference_predicate, observed_preference_support_in_txn, preference_answers_agree,
-    stated_preference_peers_in_txn,
+    is_preference_predicate, observed_preference_bar_in_txn, observed_preference_support_in_txn,
+    preference_answers_agree, stated_preference_peers_in_txn,
 };
 pub use oneiron_contracts::claim::{
     ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource, ConfidenceBand, ConfidenceDetails,
@@ -153,6 +153,10 @@ pub(crate) use scoped_read::{
     erase_weave_decision_labels_in_txn, invalidate_weave_digest_source_in_txn,
     saved_weave_loop_reason_decisions_in_txn, scrub_saved_weave_loop_reasons_in_txn,
 };
+pub(crate) use scoped_read::{
+    PendingReadExposure, erase_read_exposure_reader_in_txn,
+    erase_read_exposure_record_reader_in_txn, erase_read_exposure_records_in_txn,
+};
 pub use source_trust::*;
 pub(crate) use supersession_provenance::{ConflictMarker, conflict_marker, write_coaching};
 pub(crate) use write_target::validate_claim_write_target_in_txn;
@@ -165,3 +169,8 @@ pub mod reaction_record;
 #[cfg(feature = "sync")]
 pub mod selector_world;
 pub(crate) mod tables;
+
+// The door test_doors/read_exposure.rs reads through (L8-65); at the file's end, clear of the
+// re-export list above that other changes edit.
+#[cfg(oneiron_test_support)]
+pub(crate) use scoped_read::exposed_records_in;
