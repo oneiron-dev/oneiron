@@ -145,8 +145,10 @@ impl Vault {
         Ok(rows)
     }
 
-    /// The first of one repository's journal rows that `matches`.
-    pub(in crate::origin) fn find_origin_publication(
+    /// The first of one repository's journal rows that `matches`. A runner
+    /// attempt's checkout end reads its pushed-head receipt here
+    /// (dispatch_byoa/repo_binding/checkout_end.rs).
+    pub(crate) fn find_origin_publication(
         &self,
         repo_id: EntityId,
         mut matches: impl FnMut(&OriginPublicationRecord) -> bool,

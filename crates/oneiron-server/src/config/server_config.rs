@@ -33,6 +33,9 @@ const DEFAULT_MAX_FRAME_SIZE: usize =
         + 3
         + oneiron::sync::transport::MAX_WINDOW_KEY_LEN;
 
+/// The `*.localhost` host a local vault answers on.
+mod artifact_localhost;
+
 /// The two configs' redacting `Debug`.
 mod debug;
 
