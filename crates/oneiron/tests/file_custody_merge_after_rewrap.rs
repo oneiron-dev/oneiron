@@ -703,7 +703,12 @@ struct OpenedOnB {
     id_a: EntityId,
     id_b: EntityId,
     name_b: String,
-    _windows: (LoadedWindow, LoadedWindow, Arc<Materializer>, Arc<Materializer>),
+    _windows: (
+        LoadedWindow,
+        LoadedWindow,
+        Arc<Materializer>,
+        Arc<Materializer>,
+    ),
     _vault_a: Arc<Vault>,
     _dirs: (tempfile::TempDir, tempfile::TempDir),
 }
