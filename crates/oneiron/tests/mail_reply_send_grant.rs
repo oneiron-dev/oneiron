@@ -9,6 +9,10 @@
 //! - With no row, the Member role default asks: the dispatch is held, the
 //!   draft stays `Proposed` with its outcome `held: ...` and its Ask
 //!   standing, and the mailbox's person still sends it by approving it.
+//! - Once the Gate admits the drafter's send, the revision is neither
+//!   discarded nor drafted again until the send's outcome settles it (the
+//!   pipeline review of #8870): a discard or a redraft made while the
+//!   provider send runs is refused, and the draft ends `Sent`.
 //! - A mailbox whose person is not the vault's Owner is never dispatched,
 //!   even under a full-access row: the draft stays `Proposed` with
 //!   `held: mailbox_person_approves`, keeping that person's press. A Google
@@ -35,9 +39,9 @@ use oneiron::consent::AuthenticatedOwner;
 use oneiron::mail_pack::{
     IMAP_CONNECTOR_EFFECTOR, MailAttachmentRef, MailFull, MailHeaders, MailHistoryPage,
     MailHistoryRead, MailIdPage, MailInboxRequest, MailListQuery, MailMessageRef, MailProvider,
-    MailProviderWire, MailReplyApproveRequest, MailReplyDraftRequest, MailReplyDraftState,
-    MailReplyDraftView, MailReplySendRequest, MailSourceConnectRequest, MailSourceKind,
-    MailSyncBudget, MailSyncSource, SMTP_SUBMISSION_CONNECTOR_EFFECTOR,
+    MailProviderWire, MailReplyApproveRequest, MailReplyDraftRef, MailReplyDraftRequest,
+    MailReplyDraftState, MailReplyDraftView, MailReplySendRequest, MailSourceConnectRequest,
+    MailSourceKind, MailSyncBudget, MailSyncSource, SMTP_SUBMISSION_CONNECTOR_EFFECTOR,
     install_mail_calendar_pack_embedded,
 };
 use oneiron::memory::Memory;
@@ -775,5 +779,174 @@ fn a_members_mailbox_keeps_its_persons_press() {
     assert!(
         reply_ask_open(&vault, draft_id, 1).expect("read the revision's Ask"),
         "the waiting revision's Ask stands: {waiting:?}"
+    );
+}
+
+/// The first test's world: the owner's IMAP mailbox with one landed parent,
+/// a drafter in it under the full-access send row, and the drafter's reply.
+/// Answers the drafter, the reply's thread and parent turn, and the draft.
+fn owner_mailbox_draft(
+    vault: &Vault,
+    owner: EntityId,
+) -> (EntityId, String, String, MailReplyDraftView) {
+    install_pack(vault, owner);
+    let owner_memory = vault.memory(owner, EdgeActorClass::Human);
+    let source = connect_imap_mailbox(
+        vault,
+        &owner_memory,
+        OWNER_ADDRESS,
+        "owner",
+        "fixture-imap-owner",
+        None,
+    );
+    let sync_proof = owner_memory
+        .embedded_owner("vault.mail.sources.sync")
+        .expect("prove the owner for the sync step");
+    land_one_message(
+        vault,
+        &sync_proof,
+        source,
+        COUNTERPARTY,
+        OWNER_ADDRESS,
+        PARENT_MESSAGE_ID,
+    );
+    let create_proof = owner_memory
+        .embedded_owner("vault.agents.put")
+        .expect("prove the owner to create the drafter");
+    let agent = create_drafter(vault, &create_proof, owner, owner, "reply-send.drafter");
+    let install_proof = owner_memory
+        .embedded_owner("vault.policy.put")
+        .expect("prove the owner to install policy");
+    install_policy(vault, &install_proof, agent, true);
+    let agent_memory = vault.memory(agent, EdgeActorClass::Agent);
+    let (thread_ref, turn_ref) = thread_and_parent(&agent_memory, source);
+    let draft = draft_reply(&agent_memory, &thread_ref, &turn_ref);
+    (agent, thread_ref, turn_ref, draft)
+}
+
+/// What a sink does to the draft while its provider send runs.
+enum DuringSend {
+    /// The mailbox's owner discards the draft.
+    Discard,
+    /// The drafter drafts the reply again, in other words.
+    Redraft {
+        thread_ref: String,
+        turn_ref: String,
+    },
+}
+
+/// Changes the draft as `during` says from inside the provider send, the
+/// moment a discard or redraft racing the dispatch would land, records that
+/// answer, and answers that the provider took the reply.
+struct ChangingSink<'a, 'm> {
+    memory: &'a Memory<'m>,
+    draft_ref: String,
+    during: DuringSend,
+    calls: usize,
+    change: Option<Result<MailReplyDraftView, String>>,
+}
+
+impl OutboundExecutionSink for ChangingSink<'_, '_> {
+    fn execute(&mut self, _request: &OutboundExecutionRequest<'_>) -> OutboundExecutionOutcome {
+        self.calls += 1;
+        let change = match &self.during {
+            DuringSend::Discard => self.memory.mail_reply_discard(&MailReplyDraftRef {
+                draft_ref: self.draft_ref.clone(),
+            }),
+            DuringSend::Redraft {
+                thread_ref,
+                turn_ref,
+            } => self.memory.mail_reply_draft(&MailReplyDraftRequest {
+                thread_ref: thread_ref.clone(),
+                parent_turn_ref: Some(turn_ref.clone()),
+                body: "Thursday no longer works; Friday instead.".to_owned(),
+                body_html: None,
+                reply_all: false,
+                cc: Vec::new(),
+                request_key: "reply-send-fixture-1".to_owned(),
+            }),
+        };
+        self.change = Some(change.map_err(|error| format!("{error:?}")));
+        OutboundExecutionOutcome::delivered_to_channel("provider:reply:1")
+    }
+
+    fn delivers_recipient_lists(&self) -> bool {
+        true
+    }
+}
+
+#[test]
+fn a_discard_while_the_drafters_send_runs_is_refused() {
+    let (_directory, vault, owner) = owned_vault();
+    let (agent, _, _, draft) = owner_mailbox_draft(&vault, owner);
+    let owner_memory = vault.memory(owner, EdgeActorClass::Human);
+    let agent_memory = vault.memory(agent, EdgeActorClass::Agent);
+    let mut sink = ChangingSink {
+        memory: &owner_memory,
+        draft_ref: draft.draft_ref.clone(),
+        during: DuringSend::Discard,
+        calls: 0,
+        change: None,
+    };
+    let sent = mail_reply_send_into(
+        &agent_memory,
+        &MailReplySendRequest {
+            draft_ref: draft.draft_ref.clone(),
+            revision: 1,
+        },
+        &mut sink,
+    )
+    .expect("send the draft under the row");
+    assert_eq!(sink.calls, 1, "the admitted send reaches the provider once");
+    let discard = sink.change.take().expect("the sink tried the discard");
+    assert!(
+        discard
+            .as_ref()
+            .is_err_and(|error| error.contains("send was admitted")),
+        "a discard while the admitted send runs is refused: {discard:?}"
+    );
+    assert_eq!(
+        sent.state,
+        MailReplyDraftState::Sent,
+        "the reply the provider took is recorded sent, not discarded: {sent:?}"
+    );
+}
+
+#[test]
+fn a_redraft_while_the_drafters_send_runs_is_refused() {
+    let (_directory, vault, owner) = owned_vault();
+    let (agent, thread_ref, turn_ref, draft) = owner_mailbox_draft(&vault, owner);
+    let agent_memory = vault.memory(agent, EdgeActorClass::Agent);
+    let mut sink = ChangingSink {
+        memory: &agent_memory,
+        draft_ref: draft.draft_ref.clone(),
+        during: DuringSend::Redraft {
+            thread_ref,
+            turn_ref,
+        },
+        calls: 0,
+        change: None,
+    };
+    let sent = mail_reply_send_into(
+        &agent_memory,
+        &MailReplySendRequest {
+            draft_ref: draft.draft_ref.clone(),
+            revision: 1,
+        },
+        &mut sink,
+    )
+    .expect("send the draft under the row");
+    assert_eq!(sink.calls, 1, "the admitted send reaches the provider once");
+    let redraft = sink.change.take().expect("the sink tried the redraft");
+    assert!(
+        redraft
+            .as_ref()
+            .is_err_and(|error| error.contains("send was admitted")),
+        "a redraft while the admitted send runs is refused: {redraft:?}"
+    );
+    assert_eq!(
+        (sent.revision, sent.state),
+        (1, MailReplyDraftState::Sent),
+        "the revision the provider took stays the draft's, recorded sent: {sent:?}"
     );
 }
