@@ -5,11 +5,23 @@ use crate::attempt_queue::{
     AttemptId, AttemptQueue, AttemptRecord, AttemptResultRef, SetAttemptResult,
 };
 use crate::code_run::CodeRunReplayRecord;
+use crate::edge::EdgeKind;
+use crate::entity_id::derived_domains::PLAN_RUN_SESSION;
 use crate::error::{Error, Result};
 use crate::provenance::body::{BodyLocation, BodyRef, BodyState, OwnedBody};
-use crate::{EntityId, TimeRange};
+use crate::registry::ENTITY_TYPE_SESSION;
+use crate::store::conversation_record::{AddressMode, AppendRecord};
+use crate::{EdgeActorClass, EntityId, TimeRange, WriteActor};
 use oneiron_contracts::fingerprint::purposes;
 use rmpv::Value;
+
+/// A completed agent run's result TURN. Parts: attempt.
+const RUN_RESULT: &[u8] = b"oneiron:agent-run-result:v1";
+/// The run's answer body, as the result TURN holds it. Parts: result TURN.
+const RUN_RESULT_BODY: &[u8] = b"oneiron:agent-run-result-body:v1";
+/// The record that files a plan run's result TURN into the run's
+/// sub-session. Parts: result TURN.
+const PLAN_RUN_RESULT_RECORD: &[u8] = b"oneiron:plan-run-result-record:v1";
 
 struct PreparedRunResult {
     id: EntityId,
@@ -50,6 +62,7 @@ impl AgentDispatcher<'_> {
         )?;
         txn.commit()?;
         self.vault.store.notify_attempt_observers();
+        self.file_plan_run_result(attempt, result.id, run.run_id, now);
         Ok(result.id)
     }
 
@@ -83,6 +96,7 @@ impl AgentDispatcher<'_> {
         crate::agent_dispatch::fence_agent_run_settlement_in_txn(self.vault, &txn, attempt.id)?;
         self.put_agent_run_result_in_txn(&mut txn, &result, now)?;
         txn.commit()?;
+        self.file_plan_run_result(attempt, result.id, run.run_id, now);
         Ok(Some(result.id))
     }
 
@@ -222,6 +236,114 @@ impl AgentDispatcher<'_> {
             crate::provenance::body::publish_body_in_txn(&self.vault.store, txn, held)?;
         }
         Ok(())
+    }
+
+    /// Files plan run `attempt`'s result TURN `result` into the run's
+    /// sub-session (PLAN-RUN-TRACE-INTO-SUB-SESSION = B, Engine 17 Nov
+    /// 00:11). It is one record that names the result, continuing the
+    /// approving TURN in that TURN's room and leaving HEAD where it is. Only
+    /// a run whose approval named a TURN has a sub-session, and only a room
+    /// its owner alone reads takes the record, so a run that used the
+    /// owner's reach never posts its answer to another reader. The result
+    /// commits first, in its own write: a filing that fails is logged and
+    /// never fails the run's settlement, and a replayed completion files it.
+    fn file_plan_run_result(
+        &self,
+        attempt: &AttemptRecord,
+        result: EntityId,
+        run: EntityId,
+        now: u64,
+    ) {
+        if let Err(error) = self.file_plan_run_result_in(attempt, result, run, now) {
+            tracing::warn!(%error, result = %result.to_hex(), "plan run result not filed into its sub-session");
+        }
+    }
+
+    fn file_plan_run_result_in(
+        &self,
+        attempt: &AttemptRecord,
+        result: EntityId,
+        run: EntityId,
+        now: u64,
+    ) -> Result<()> {
+        let Some(task) = attempt
+            .task_ref
+            .as_deref()
+            .and_then(|task| EntityId::from_hex(task).ok())
+        else {
+            return Ok(());
+        };
+        let session = EntityId::derive(PLAN_RUN_SESSION, &[task.as_bytes()])?;
+        let record = EntityId::derive_unregistered(PLAN_RUN_RESULT_RECORD, &[result.as_bytes()])?;
+        let store = &self.vault.store;
+        self.vault.with_write_txn_grouped(|txn| {
+            let live = crate::vault::live_entity_row_in_txn(store, txn, &session)?.live_type();
+            if live != Some(ENTITY_TYPE_SESSION)
+                || crate::ports::EntityStoreRead::port_entity_present(store, txn, &record)?
+            {
+                return Ok(());
+            }
+            let [turn] = crate::conversation_dag::edge_ids(
+                store,
+                txn,
+                &session,
+                EdgeKind::SpawnedBy,
+                false,
+                2,
+            )?[..] else {
+                return Ok(());
+            };
+            // A thread's turn takes no trunk continuation, and a thread has
+            // its own audience: its run's result stays where it is.
+            let threaded = match crate::vault::live_entity_row_in_txn(store, txn, &turn)? {
+                crate::vault::LiveEntityRow::Live { body, .. } => {
+                    crate::workspace_roster::thread_binding(&body)?.is_some()
+                }
+                _ => return Ok(()),
+            };
+            if threaded || crate::conversation_dag::is_thread_record(store, txn, &turn)? {
+                return Ok(());
+            }
+            let room = crate::conversation_dag::conversation_of(store, txn, &turn)?;
+            let Some(owner) =
+                crate::workspace_roster::room_sole_owner_reader_in(self.vault, txn, room)?
+            else {
+                return Ok(());
+            };
+            let field = |key: &str, value: Value| (Value::from(key), value);
+            let filed = Value::Map(vec![
+                field("kind", Value::from("plan.run_result")),
+                field("result_ref", Value::from(result.to_hex())),
+                field("run_ref", Value::from(run.to_hex())),
+                field("task_ref", Value::from(task.to_hex())),
+            ]);
+            let mut body = Vec::new();
+            rmpv::encode::write_value(&mut body, &filed)
+                .map_err(|error| Error::InvalidConfig(error.to_string()))?;
+            let input = AppendRecord {
+                conversation: room,
+                parent: Some(turn),
+                reply_to: None,
+                quote: None,
+                address: AddressMode::Broadcast,
+                recipients: Vec::new(),
+                advance: false,
+                kind: crate::registry::ENTITY_TYPE_TURN,
+                containing_turn: None,
+                occurred: TimeRange {
+                    start: now,
+                    end: now,
+                },
+                learned_at: now,
+                body,
+                text: Vec::new(),
+                session: Some(session),
+                actor: WriteActor::new(owner, EdgeActorClass::Human),
+                thread_audience: None,
+            };
+            crate::conversation_dag::append_composed_at_in_txn(self.vault, txn, &input, record)?;
+            Ok(())
+        })
     }
 
     /// The answer a completed agent run's result names, for a reader that

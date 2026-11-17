@@ -102,12 +102,19 @@ impl crate::Vault {
     /// [`Self::get_raw`]'s seal and absent rules, as the public read is.
     /// `None` for a row of an earlier schema, whose sources name no exact
     /// words (FIX 11766): known from its envelope, its payload never decoded.
+    /// A profile row whose own deletion is recorded is missing, whatever
+    /// bytes its shell still holds, as in [`Self::get_psych_profile_in_txn`]
+    /// (FIX 10056); a deletion marker that cannot be read leaves the read as
+    /// it was.
     pub(crate) fn psych_profile_sealed_state_in_txn(
         &self,
         rtxn: &heed::RoTxn<'_>,
         id: &EntityId,
         expected_source_revision_ids: Option<&[EntityId]>,
     ) -> Result<Option<PsychProfileState>> {
+        if crate::ports::removed_in_txn(&self.store, rtxn, id).unwrap_or(false) {
+            return Ok(Some(PsychProfileState::Missing));
+        }
         Ok(
             match decode_psych_profile_row(self.get_raw_sealed_in_txn(rtxn, id)?)? {
                 PsychProfileRow::WithoutSourceWords => None,

@@ -6,7 +6,7 @@
 //! a u64 little-endian salt, then each part as its u64 little-endian length and its bytes. The
 //! id is the first 16 bytes, with no version stamp; a reserved result takes the next salt.
 //! Every one of these ids is a key that vaults already hold, so its bytes are kept until the
-//! launch reset (PLAN-UC-04 stage 9). The three after them are digests; each entry says what
+//! launch reset (PLAN-UC-04 stage 9). The four after them are digests; each entry says what
 //! it hashes.
 
 purposes! {
@@ -81,6 +81,18 @@ legacy_purposes! {
 
     /// A wake's weave recipe claim (`dreamer_wake::recipe::claim_id`). Parts: the attempt.
     WEAVE_RECIPE_CLAIM = (Blake3, HashedFirst, "oneiron:dreamer:weave-recipe-claim:v1");
+
+    /// An agent-health trend DIAGNOSTIC's replay hash
+    /// (`dreamer_runner::maintenance::agent_health::trend_output`). BLAKE3: the tag first;
+    /// the margin (`actor` and the actor id, or `project` and the project id, 16 zero bytes
+    /// when none; the words and ids not framed); the task-type node; the model, or one
+    /// `0xff` byte when none; the metric token; then per side, prior then latest, its first
+    /// and last day, numerator, denominator, known and eligible counts (each 8 bytes, u64
+    /// little-endian), the attempt count and each attempt id, the ref count and each ref id,
+    /// and the scope count and each scope. Every string is framed by its length and every
+    /// count is written, each as a u64 little-endian. Stored as the DIAGNOSTIC body's
+    /// `replay.content_hash`, which the row id binds, and returned in diagnostic reads.
+    AGENT_HEALTH_TREND = (Blake3, HashedFirst, "oneiron.coach.agent_health.trend.v1");
 
     /// A multi-part consolidation branch's identity
     /// (`dreamer_consolidation::branch::ConsolidationBranchPlan::identity`). Plain BLAKE3,

@@ -140,8 +140,22 @@ fn write_owner_intent_in_txn(
                 source_meet: ClaimSource::UserStated,
             },
         ));
-        // The words keep their MESSAGE's audience (OPUS-LEAKS).
+        // The words keep their MESSAGE's audience (OPUS-LEAKS) and the
+        // project and world it is read at (ONE-1592 P3; FIX
+        // INTENT-DISTINCT-PROJECT-WORLD). A MESSAGE with no place has no
+        // audience either, and is refused above. The facet stays the vault
+        // default: a MESSAGE has no stored FACET of its own (ONE-1645).
         let (relationships, private) = message_audience_in_txn(vault, txn, &message)?;
+        let (project, world) = vault
+            .derivation_project_and_world_in_txn(txn, message)?
+            .ok_or_else(|| {
+                invalid("a stated intent cites a MESSAGE whose place does not resolve")
+            })?;
+        let facet = vault.claim_put_facet_in_txn(txn, &id)?;
+        candidate = candidate.with_scope_stamps(facet, project);
+        if world != crate::claim::base_world_id() {
+            candidate = candidate.with_world(world);
+        }
         if relationships.is_some() {
             candidate = candidate.with_relationships(relationships);
         }
@@ -180,7 +194,11 @@ fn write_owner_intent_in_txn(
 /// The audience the words of `message` carry, as the read gate judges a
 /// MESSAGE: the relationships whose members read them (`None` for an open
 /// MESSAGE), and whether they are private. A MESSAGE whose audience does
-/// not resolve reads to no gated reader, so no intent lands from it.
+/// not resolve reads to no gated reader, so no intent lands from it. A gated
+/// MESSAGE that names no relationship reads only through a grant on its
+/// conversation, which a CLAIM never carries, so its intent is private, as
+/// the distinct fact an identity answer derives from it is (review round 2
+/// of #6971).
 fn message_audience_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -194,6 +212,7 @@ fn message_audience_in_txn(
         RelationshipRead::Decided(false) => Err(invalid(
             "a stated intent cites a MESSAGE whose audience does not resolve",
         )),
+        RelationshipRead::Gated { space: None, .. } => Ok((None, true)),
         RelationshipRead::Gated { space, private, .. } => Ok((space, private)),
     }
 }
@@ -267,12 +286,19 @@ fn intent_question_text(turn: EntityId, (start, end): (usize, usize), words: &st
 }
 
 /// The MESSAGE the words at `start..end` of `record` came from; none for a
-/// TURN's own inline text.
+/// TURN's own inline text. A witnessed TURN joins its MESSAGEs with exactly
+/// `"\n"` (`turn_text`), and a stated sentence ends at a line break
+/// ([`intent_sentence`]), so its words lie in one MESSAGE. Words over more
+/// than one are refused, never read as their first MESSAGE's alone (FIX
+/// INTENT-ASK-FIRST-SPAN).
 fn intent_message(record: &TurnText, start: usize, end: usize) -> Result<Option<EntityId>> {
-    Ok(record
-        .spans(Some((start, end)))?
-        .first()
-        .map(|span| span.message))
+    match record.spans(Some((start, end)))?.as_slice() {
+        [] => Ok(None),
+        [span] => Ok(Some(span.message)),
+        _ => Err(invalid(
+            "a stated intent's words span more than one MESSAGE",
+        )),
+    }
 }
 
 /// Raises the optional intent ask for each stated intent among a scan's new

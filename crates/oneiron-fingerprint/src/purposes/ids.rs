@@ -66,6 +66,11 @@ purposes! {
     /// name's byte range in it (empty, or `0x01`, start and end as u64 big-endian).
     DREAMER_PERSON = "oneiron:dreamer-person:v1";
 
+    /// A PERSON a derivation batch's Person item mints (`derive::person`, untangle
+    /// 6.9h). Parts: the first try of the committing attempt's retry lineage, the
+    /// normalized name, then the smallest TURN that names it.
+    DERIVE_PERSON = "oneiron:derive-person:v1";
+
     /// A project's home room (`workspace_roster::project`). Parts: project.
     PROJECT_HOME_ROOM = "project.home_room.v1/";
 

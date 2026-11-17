@@ -1,0 +1,3 @@
+q1 Q0 lantern#0 1
+q1 Q0 lantern#1 1
+q1 Q0 lantern#2 0

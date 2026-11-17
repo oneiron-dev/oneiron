@@ -94,7 +94,7 @@ impl CoreAuth {
             return Err(ApiError::unauthorized());
         }
         let mut auth = Self::from_verified(verified, slip.caveats.is_empty())?;
-        auth.instrument = Some(*blake3::hash(token.as_bytes()).as_bytes());
+        auth.instrument = Some(Self::token_instrument(token));
         // The work this request queues carries the slip it was admitted on,
         // judged again when that work runs. A registry that keeps none
         // leaves the request nothing to queue slip-bound work with.
@@ -166,6 +166,12 @@ impl CoreAuth {
     /// The exact instrument this credential was authenticated on, if any.
     pub(crate) const fn instrument(&self) -> Option<[u8; 32]> {
         self.instrument
+    }
+    /// The instrument `token` is authenticated on: BLAKE3 of its text. A
+    /// request's slip and the held root's boot caller name their token by
+    /// it, so one token is one instrument on every path.
+    pub(crate) fn token_instrument(token: &str) -> [u8; 32] {
+        *blake3::hash(token.as_bytes()).as_bytes()
     }
     /// BLAKE3 of the authority this credential projects: its principal, its
     /// scopes and its exact instrument. A verb hook's ask saves it as the

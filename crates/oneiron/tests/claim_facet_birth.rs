@@ -347,31 +347,31 @@ fn line_chat_observation_is_born_in_a_stored_facet() {
     let (_directory, vault) = fresh_vault();
     let destination = format!("U{}", "2".repeat(32));
     let chat = LineChat::new(LineChatKind::Group, format!("C{}", "1".repeat(32)));
-    // The provider-inbound MACHINE the observation is about, stored with the
-    // body `archive_provider_event` gives it. The archive call itself is
-    // refused on this rooted vault: its blob version write as that MACHINE
-    // carries no signature (FIX [PROVIDER-EVENT-ARCHIVE-MACHINE-UNSIGNED]).
+    // The event is archived first, as the LINE door does. The host
+    // provisioned the provider-inbound MACHINE with the engine writers, so
+    // its signed version write is admitted on this rooted vault
+    // (FIX [PROVIDER-EVENT-ARCHIVE-MACHINE-UNSIGNED]).
+    let event = json!({
+        "destination": destination,
+        "event": { "type": "join", "source": { "type": "group", "groupId": chat.id } },
+    });
+    let payload_ref = vault
+        .archive_provider_event(
+            "line",
+            "line-join-facet-birth",
+            event.to_string().as_bytes(),
+            14,
+        )
+        .expect("the LINE event is archived");
+    assert!(payload_ref.starts_with(PROVIDER_EVENT_REF_PREFIX));
+    // The archive keeps the provider-inbound MACHINE the observation is about.
     let inbound =
         EntityId::derive(SURFACE_PROVIDER_INBOUND_ACTOR, &[]).expect("provider-inbound id");
-    let mut machine_body = Vec::new();
-    rmpv::encode::write_value(
-        &mut machine_body,
-        &Value::Map(vec![(
-            Value::from("name"),
-            Value::from("provider event inbound"),
-        )]),
-    )
-    .expect("MACHINE body encode");
-    vault
-        .put_entity(
-            &inbound,
-            ENTITY_TYPE_MACHINE,
-            TimeRange { start: 14, end: 14 },
-            14,
-            &machine_body,
-        )
-        .expect("the provider-inbound MACHINE is stored");
-    let payload_ref = format!("{PROVIDER_EVENT_REF_PREFIX}{}@1", EntityId::now().to_hex());
+    assert_eq!(
+        vault.get_entity_type(&inbound).expect("entity type read"),
+        Some(ENTITY_TYPE_MACHINE),
+        "the provider-inbound MACHINE is stored"
+    );
     let claim = vault
         .observe_line_chat(&destination, &chat, &payload_ref, 14)
         .expect("a LINE chat is observed");

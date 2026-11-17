@@ -1,5 +1,7 @@
 //! Purposes of channel identities (`crates/oneiron/src/channel_identity_lifecycle`,
 //! `channel_identity_provider`).
+//!
+//! Purposes of channel identities (`crates/oneiron/src/channel_identity`).
 
 purposes! {
     /// A request ref its host's invocation fixes (`channel_identity_lifecycle::approval`).
@@ -21,4 +23,9 @@ purposes! {
     WORKSPACE_WRITE_INVOCATION = "oneiron.workspace_write_invocation.v1";
 }
 
-legacy_purposes! {}
+legacy_purposes! {
+    /// The key an assignment's two slots are kept under (`channel_identity::assignment`):
+    /// plain BLAKE3, no tag, then the canonical channel and the address or handle, each a u64
+    /// big-endian length and its bytes.
+    ASSIGNMENT_INDEX_KEY = (Blake3, NotHashed, "oneiron.channel_identity.assignment_index_key.v1");
+}

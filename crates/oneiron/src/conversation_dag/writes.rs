@@ -182,6 +182,18 @@ pub(crate) fn append_composed_in_txn(
     )
 }
 
+/// [`append_composed_in_txn`] at `id`, an id its caller derives so a
+/// replayed write finds the record it made: an approved plan's run result,
+/// filed into the run's sub-session.
+pub(crate) fn append_composed_at_in_txn(
+    vault: &Vault,
+    txn: &mut RwTxn<'_>,
+    input: &AppendRecord,
+    id: EntityId,
+) -> Result<AppendedRecord> {
+    append_at_in_txn(vault, txn, input, None, false, id, AppendDoor::Composed)
+}
+
 /// Appends a Retry's assistant TURN under the record id `id` its reply's
 /// stream opened under, in the stream's terminal write (FIX 3152). The TURN
 /// holds no words: they are its MESSAGE's, witnessed in the same write. It

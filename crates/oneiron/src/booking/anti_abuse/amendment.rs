@@ -216,16 +216,33 @@ fn rule_ordering(current: &BookingAntiAbuseRule, proposed: &BookingAntiAbuseRule
                 check_syntax: current_syntax,
                 check_mx: current_mx,
                 check_disposable_domain: current_disposable,
+                prompt_at_failed_checks: current_prompt_at,
+                quarantine_at_failed_checks: current_quarantine_at,
             },
             Rule::EmailPromptToCorrect {
                 check_syntax: proposed_syntax,
                 check_mx: proposed_mx,
                 check_disposable_domain: proposed_disposable,
+                prompt_at_failed_checks: proposed_prompt_at,
+                quarantine_at_failed_checks: proposed_quarantine_at,
             },
         ) => {
             fold_flag(&mut ordering, *proposed_syntax, *current_syntax);
             fold_flag(&mut ordering, *proposed_mx, *current_mx);
             fold_flag(&mut ordering, *proposed_disposable, *current_disposable);
+            // Fewer failed checks to prompt or to quarantine is the tighter row.
+            fold_axis(
+                &mut ordering,
+                proposed_prompt_at.get().into(),
+                current_prompt_at.get().into(),
+                true,
+            );
+            fold_axis(
+                &mut ordering,
+                proposed_quarantine_at.get().into(),
+                current_quarantine_at.get().into(),
+                true,
+            );
         }
         (Rule::QuarantineBorderline, Rule::QuarantineBorderline) => {}
         (

@@ -108,7 +108,7 @@ async fn served_pass(wording: &str, files: &[(&str, &str)]) -> (Vec<Seen>, Strin
     let vault_path = dir.path().join("vault");
     std::fs::create_dir_all(&vault_path).unwrap();
     for (name, text) in files {
-        std::fs::write(dir.path().join(name), text).unwrap();
+        write_referenced_file(&dir.path().join(name), text);
     }
     witness(&vault_path);
     let fake = FakeLlm::start(Vec::new(), Some(Reply::text(NOTHING))).await;
@@ -300,7 +300,9 @@ async fn refused(config: &Path, log: &Path) -> String {
 }
 
 /// A missing file fails the load with its path, and a wording file naming
-/// a question the engine does not ask fails it with that key.
+/// a question the engine does not ask fails it with the config key, the
+/// file and the place, never the parser's message, which names what it
+/// refused (FIX CONFIG-SIDE-FILE-PARSE-ERRORS-PRINT-PARSER-MESSAGE).
 #[tokio::test]
 async fn a_missing_file_or_an_unknown_question_refuses_the_config() {
     let dir = tempfile::tempdir().unwrap();
@@ -321,11 +323,10 @@ async fn a_missing_file_or_an_unknown_question_refuses_the_config() {
         "the refusal names the key and the missing file's path: {output}"
     );
 
-    std::fs::write(
-        dir.path().join("questions.json"),
+    write_referenced_file(
+        &dir.path().join("questions.json"),
         json!({"verdict": "Which value wins?"}).to_string(),
-    )
-    .unwrap();
+    );
     let config = config_with(
         dir.path(),
         &vault_path,
@@ -333,9 +334,28 @@ async fn a_missing_file_or_an_unknown_question_refuses_the_config() {
         "\n[models.dreamer.wording]\nconsolidation_wording_file = \"questions.json\"\n",
     );
     let output = refused(&config, &dir.path().join("unknown.log")).await;
+    let questions = dir.path().join("questions.json");
     assert!(
-        output.contains("consolidation_wording_file") && output.contains("unknown field `verdict`"),
-        "the refusal names the key and the question it does not know: {output}"
+        output.contains("consolidation_wording_file")
+            && output.contains(&questions.display().to_string())
+            && output.contains("at line 1, column"),
+        "the refusal names the key, the file and the place: {output}"
+    );
+    assert!(
+        !output.contains("verdict"),
+        "the refusal never repeats the parser's message: {output}"
     );
     assert!(fake.seen().is_empty(), "a refused config calls no model");
+}
+
+/// Writes a file the config refers to with mode 0644. Serve reads such a
+/// file only once no other user can write it, so a bare write would take its
+/// mode from the host's umask (FIX SIDE-FILE-TESTS-UMASK-DEPENDENT).
+fn write_referenced_file(path: &Path, text: impl AsRef<[u8]>) {
+    std::fs::write(path, text).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o644)).unwrap();
+    }
 }

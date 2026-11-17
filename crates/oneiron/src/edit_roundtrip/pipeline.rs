@@ -14,6 +14,7 @@ use super::{
 use crate::blob_artifact::{BlobVersionProvenance, CalcEngineStamp};
 use crate::entity_id::EntityId;
 use crate::error::{ArtifactError, Error, Result};
+use oneiron_contracts::fingerprint::ContentHash;
 use oneiron_docedit::retained_opc::Limits;
 
 #[doc(hidden)]
@@ -304,7 +305,7 @@ fn run_pipeline<S: EditSession>(
         // The raw round-trip has no artifact/version context; the base is the
         // input bytes it edited. `propose_blob_artifact_edit` fills base_version.
         base_version: None,
-        base_content_hash: *blake3::hash(input_bytes).as_bytes(),
+        base_content_hash: *ContentHash::of(input_bytes).as_bytes(),
         sheet_answers: None,
     })))
 }
