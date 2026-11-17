@@ -478,8 +478,9 @@ impl<K: SideKey, V, C: SideCodec<V>> SideTable<K, V, C> {
         })
     }
 
-    /// Writes bytes the codec would never produce, for fixtures that plant a damaged row.
-    #[cfg(any(test, feature = "test-support"))]
+    /// Writes bytes the codec would never produce, for fixtures that plant a damaged row. The
+    /// test cfg builds it too: the cfg-only door `test_doors::call_receipt_damage` calls it.
+    #[cfg(any(test, feature = "test-support", oneiron_test_support))]
     pub(crate) fn put_undecodable(
         &self,
         dbs: &impl SideTableDbs,

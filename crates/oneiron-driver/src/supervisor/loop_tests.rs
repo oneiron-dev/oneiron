@@ -8,7 +8,7 @@ use oneiron::attempt_queue::AttemptState;
 use oneiron::{
     BudgetGuard, DREAMER_EXECUTOR_ERROR_PARK_REASON, DreamerAdmittedAttempt,
     DreamerAttemptExecution, DreamerAttemptExecutor, DreamerConsolidationScope, DreamerRunnerStore,
-    Result, WakeAttemptContext, WakeCancellation, WakeTrigger,
+    Result, WakeAttemptContext, WakeTrigger,
 };
 
 #[test]
@@ -682,6 +682,7 @@ async fn failed_digest_projection_does_not_block_due_attempt() {
 async fn presentation_failure_does_not_repeat_digest_tick_or_starve_macro_and_push() {
     use crate::tick::{AttemptQueueDeadlines, HybridTick, TickSource, TimerTick};
     use oneiron::ClaimCandidate;
+    use oneiron::WakeCancellation;
     use oneiron::claim::{ClaimApprovalStatus, ClaimSource, ClaimSubject};
     use oneiron::temporal::TimeRange;
     use oneiron::write_envelope::{WriteEnvelope, WriteProvenance};
