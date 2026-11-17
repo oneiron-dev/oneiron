@@ -39,6 +39,9 @@ pub(in crate::config) struct LimitsConfigOverride {
     pub(in crate::config) pairing_redeem_free_failures: Option<u32>,
     pub(in crate::config) pairing_redeem_wait_ceiling_ms: Option<u64>,
     pub(in crate::config) pairing_redeem_quiet_ms: Option<u64>,
+    pub(in crate::config) esign_exchange_seconds: Option<u64>,
+    pub(in crate::config) esign_session_idle_seconds: Option<u64>,
+    pub(in crate::config) esign_session_absolute_seconds: Option<u64>,
     pub(in crate::config) keyed_filter_json_bytes: Option<u64>,
     pub(in crate::config) keyed_namespace_segments: Option<u64>,
     pub(in crate::config) keyed_namespace_bytes: Option<u64>,
@@ -204,4 +207,5 @@ pub(in crate::config) struct LimitsConfigOverride {
     pub(in crate::config) context_edge_hops: Option<u64>,
     pub(in crate::config) context_neighbors: Option<u64>,
     pub(in crate::config) context_selected_edges: Option<u64>,
+    pub(in crate::config) actor_exposed_records: Option<u64>,
 }

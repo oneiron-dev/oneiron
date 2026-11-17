@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
 
-use crate::cli::HookEffort;
+use crate::cli::{HookEffort, HookHost};
 use crate::commands::mcp_bridge::{INVOCATION_META, mint_invocation};
 
 /// One hit's longest text, in characters.
@@ -31,9 +31,14 @@ pub(super) enum RecallAuth<'a> {
     /// The vault's owner, by the upgrade headers the surface he signed in
     /// on wrote (`oneiron mcp --auth-mode owner`).
     Owner(&'a Path),
+    /// An OAuth agent of the vault, by the sign-in `oneiron hosted login`
+    /// wrote (`oneiron mcp --auth-mode oauth`).
+    OAuth(&'a Path),
 }
 
 pub(super) struct Recall<'a> {
+    /// The harness the session runs in, which the call's consent names.
+    pub(super) host: HookHost,
     pub(super) oneiron: &'a Path,
     pub(super) url: &'a str,
     pub(super) auth: RecallAuth<'a>,
@@ -169,8 +174,11 @@ impl Recall<'_> {
             json!({
                 "schema_version": version,
                 "consent": {
-                    "policy_ref": "policy:claude-code-hooks",
-                    "purpose": "recall context for a new Claude Code session",
+                    "policy_ref": format!("policy:{}-hooks", self.host.as_str()),
+                    "purpose": format!(
+                        "recall context for a new {} session",
+                        self.host.product_name()
+                    ),
                 },
                 "arguments": arguments,
             }),
@@ -233,6 +241,11 @@ impl Bridge {
                 for name in SLIP_ENV {
                     command.env_remove(name);
                 }
+            }
+            RecallAuth::OAuth(sign_in) => {
+                command
+                    .args(["--auth-mode", "oauth", "--oauth-token-file"])
+                    .arg(sign_in);
             }
         }
         let mut child = command
