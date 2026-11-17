@@ -88,22 +88,25 @@ impl Vault {
         Ok(proposals)
     }
 
-    /// The owner applies the proposal `entry` with one tap (module doc): his own change of its
-    /// row to its value, from this install, judged by the setter's door like any change of his.
+    /// The owner applies `proposal`, one his list showed, with one tap (module doc): his own
+    /// change of its row to its value, from this install, judged by the setter's door like any
+    /// change of his. A batch act that waits names several rows, each its own proposal under the
+    /// one entry: the tap names the entry and the row, and changes that row alone.
     ///
     /// # Errors
     ///
-    /// `ConcurrentWrite` when `entry` is no proposal that still asks; the door's refusal, among
-    /// them `OwnerKeyRequired` where this install cannot prove the owner's act; storage errors.
+    /// `ConcurrentWrite` when `proposal` is no proposal that still asks; the door's refusal,
+    /// among them `OwnerKeyRequired` where this install cannot prove the owner's act; storage
+    /// errors.
     pub fn apply_setting_proposal(
         &self,
         owner: &AuthenticatedOwner,
-        entry: AuthorityEntryHash,
+        proposal: &SettingProposal,
     ) -> Result<SetSettingOutcome> {
         let proposal = self
             .setting_proposals()?
             .into_iter()
-            .find(|proposal| proposal.entry == entry)
+            .find(|listed| listed == proposal)
             .ok_or(Error::ConcurrentWrite(STALE))?;
         self.set_setting(
             SettingCaller::Owner(owner),

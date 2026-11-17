@@ -5,7 +5,9 @@
 //!   came from (`with`) and how they stood (`standing`); a raced tightening below a wider head
 //!   narrows, and its change says so;
 //! - a pin that counts as a safe move is read as a value row at its scope: it narrows and
-//!   releases nothing;
+//!   releases nothing; at the vault it starts nothing either, so the default or the owner's
+//!   vault value starts the read and the pin only narrows it (REVIEW-9332 P1-1: red at the 7b-3
+//!   head `881ae2d70739`, where the raced vault pin of 12 reads 12 over the default of 10);
 //! - the first raced act on an item's vault value row is met with the accepted default, as on
 //!   the item-less row;
 //! - a key judged by its own comparator takes a raced act only where it is no wider than what
@@ -348,6 +350,28 @@ fn a_pin_that_counts_as_a_safe_move_narrows_and_releases_nothing() {
         fx.cap_at(&[SettingScope::Project(counted)]).0,
         9,
         "a pin that counts in full releases the vault's 6"
+    );
+}
+
+#[test]
+fn a_raced_pin_at_the_vault_bounds_the_vaults_start_and_never_widens_it() {
+    let fx = Fixture::rooted();
+    let vault_pin = (CAP, None, SettingMode::Pin, SettingScope::Vault);
+    let other = fx.other_machine(0x76);
+    let empty = fx.frontier_of(vault_pin.clone());
+    fx.removes(&other);
+    fx.lands_from(&other, &empty, vault_pin, json!(12));
+    assert_eq!(
+        fx.cap().0,
+        10,
+        "with no vault value row the default starts the read: the raced pin of 12 never widens it"
+    );
+
+    fx.owner_sets(CAP, json!(15));
+    assert_eq!(
+        fx.cap().0,
+        12,
+        "the owner's vault value of 15 starts the read, and the raced pin of 12 narrows it"
     );
 }
 

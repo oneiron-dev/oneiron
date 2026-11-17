@@ -84,6 +84,8 @@ pub(super) struct Loaded {
     pub(super) scope: SettingScope,
     pub(super) found: FoundRow<EncodedValue>,
     pub(super) revision: u64,
+    /// Whether it is a pin read as a value row (stage 7b-3, [`load_in_txn`]).
+    pub(super) pin_read_as_value: bool,
 }
 
 /// The chain a read of `spec` walks from the places `known`: every project line the reader
@@ -146,7 +148,8 @@ pub(super) fn load_in_txn(
                 let Some(bytes) = table.get_bytes(dbs, txn, &key.encode())? else {
                     continue;
                 };
-                let mode = if pin_reads_as_value_in_txn(dbs, txn, &key)? {
+                let pin_read_as_value = pin_reads_as_value_in_txn(dbs, txn, &key)?;
+                let mode = if pin_read_as_value {
                     SettingMode::Value
                 } else {
                     mode
@@ -166,6 +169,7 @@ pub(super) fn load_in_txn(
                         value,
                     },
                     revision: row.map_or(0, |row| row.change),
+                    pin_read_as_value,
                 });
             }
         }
@@ -201,7 +205,65 @@ fn decoded<V>(loaded: &[Loaded], decode: impl Fn(&EncodedValue) -> Option<V>) ->
 /// The read of a key whose order has a meet ([`decide_met`]), over loaded rows on `chain`, with
 /// values decoded by `decode`. The source is the narrowest row that holds the result; the
 /// default when no row took part or the result is the default; else [`SettingSource::Met`].
+///
+/// A pin read as a value row at the vault ([`Loaded::pin_read_as_value`]) bounds the read and
+/// starts nothing: the vault's own value rows, else the default, start it as they would without
+/// the pin, and the pin meets the result wherever a value row at the vault takes part. So it
+/// narrows and never widens (stage 7b-3; DESIGN 1.6, "The read of one slot", step 3).
 pub(super) fn walk_met<V: Clone + PartialEq>(
+    loaded: &[Loaded],
+    chain: &[SettingScope],
+    decode: impl Fn(&EncodedValue) -> Option<V>,
+    meet: &dyn Fn(&V, &V) -> V,
+    default: &V,
+) -> Walked<V> {
+    let vault_at = chain.len().saturating_sub(1);
+    let is_bound = |row: &Loaded| row.pin_read_as_value && row.found.at == vault_at;
+    if !loaded.iter().any(is_bound) {
+        return walk_met_rows(loaded, chain, decode, meet, default);
+    }
+    let (bounds, rows): (Vec<Loaded>, Vec<Loaded>) = loaded.iter().cloned().partition(is_bound);
+    let walked = walk_met_rows(&rows, chain, &decode, meet, default);
+    // An owner pin narrower than the vault releases every row at the vault (decide_met).
+    let released = rows.iter().any(|row| {
+        row.found.mode == SettingMode::Pin && row.found.by_owner && row.found.at < vault_at
+    });
+    if released {
+        return walked;
+    }
+    bounds.iter().fold(walked, |walked, bound| {
+        let so_far = match &walked {
+            Walked::Unreadable(_) => None,
+            Walked::Row { value, .. } => Some(value.clone()),
+            Walked::Default => Some(default.clone()),
+        };
+        let Some(so_far) = so_far else {
+            return walked;
+        };
+        let Some(value) = bound.found.value.as_ref().and_then(&decode) else {
+            return Walked::Unreadable(bound.scope.clone());
+        };
+        let met = meet(&so_far, &value);
+        if met == so_far {
+            walked
+        } else if met == value {
+            Walked::Row {
+                value: met,
+                source: source_of(SettingMode::Value, &bound.scope),
+                revision: bound.revision,
+            }
+        } else {
+            Walked::Row {
+                value: met,
+                source: SettingSource::Met,
+                revision: 0,
+            }
+        }
+    })
+}
+
+/// [`walk_met`] over rows none of which is a bound.
+fn walk_met_rows<V: Clone + PartialEq>(
     loaded: &[Loaded],
     chain: &[SettingScope],
     decode: impl Fn(&EncodedValue) -> Option<V>,
