@@ -79,6 +79,13 @@ pub enum SourceComponent {
     InquiryReceipt = 13,
     /// One exact stored federation delivery ledger row.
     DeliveryRecord = 14,
+    /// The whole body file of a file-plane ASSET an owner's hold names, whose
+    /// stored row keeps only its manifest. Its revision is the BLAKE3 of the
+    /// ASSET's full stored entity row, the revision of its `MessageRow`; its
+    /// source key is the ASSET's entity key; its fingerprint and length are
+    /// the whole body's, as its manifest names them. 13 and 14 are the
+    /// inquiry components.
+    AssetBodyFile = 15,
 }
 
 impl SourceComponent {
@@ -99,6 +106,7 @@ impl SourceComponent {
             12 => Ok(Self::MessageRevision),
             13 => Ok(Self::InquiryReceipt),
             14 => Ok(Self::DeliveryRecord),
+            15 => Ok(Self::AssetBodyFile),
             _ => Err(Error::NonCanonical),
         }
     }

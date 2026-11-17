@@ -371,6 +371,7 @@ fn component_family(component: SourceComponent) -> &'static str {
         SourceComponent::MessageRevision => "revision",
         SourceComponent::InquiryReceipt => "inquiry_receipt",
         SourceComponent::DeliveryRecord => "federation_delivered_record",
+        SourceComponent::AssetBodyFile => "asset:body_file",
     }
 }
 
