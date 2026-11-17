@@ -1,7 +1,6 @@
 //! Moved from `crates/oneiron/src/workspace_roster/project/revision.rs` (lib split W1: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use oneiron_store::side_table::key::FixedSideKey;
 use oneiron_store::side_table::key::SideKey;
 use serde::Deserialize;
 use serde::Serialize;
@@ -10,7 +9,7 @@ use serde::Serialize;
 /// `purposes::workspace_roster::PROJECT_REVISION_HASH`. Serde: a MessagePack bin of
 /// exactly 32 bytes, or the array of exactly 32 numbers serde_json writes for
 /// it; another length is refused.
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, SideKey)]
 pub struct ProjectRevisionHash(pub [u8; 32]);
 
 impl std::fmt::Debug for ProjectRevisionHash {
@@ -66,18 +65,4 @@ impl<'de> Deserialize<'de> for ProjectRevisionHash {
         }
         deserializer.deserialize_bytes(Bytes32)
     }
-}
-
-impl SideKey for ProjectRevisionHash {
-    fn encode_into(&self, out: &mut Vec<u8>) {
-        out.extend_from_slice(&self.0);
-    }
-
-    fn decode_key(bytes: &[u8]) -> Option<Self> {
-        bytes.try_into().ok().map(Self)
-    }
-}
-
-impl FixedSideKey for ProjectRevisionHash {
-    const WIDTH: usize = 32;
 }
