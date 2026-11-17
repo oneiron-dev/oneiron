@@ -10,7 +10,6 @@ use std::collections::BTreeSet;
 use heed::RoTxn;
 
 use crate::Vault;
-use crate::deletion::LegalHoldTarget;
 use crate::entity_id::EntityId;
 use crate::error::{ErasedHoldTarget, Error, RecordError, Result};
 use crate::side_table::{self, Raw, SideKey, SideTable};
@@ -329,27 +328,21 @@ impl Vault {
 
     /// Hold the entire exterior-key partition, not an individual decision.
     /// `None` names the plaintext, claim-free partition. A hold must be
-    /// released explicitly; the age sweep never clears it. A claim whose
-    /// erase committed refuses a hold until its key is destroyed. A
-    /// host-facing door: the partition's own row in the one legal-hold store
-    /// (OF-470), logged; releasing it lifts that hold alone, never another
-    /// hold naming the same claim. Once a release commits, the due legal-hold
-    /// pass settles what the hold kept from an erase (FIX 7993, 7994).
+    /// released explicitly. A claim whose erase committed refuses a hold
+    /// until its key is destroyed. A host-facing door: the partition's own
+    /// row in the one legal-hold store (OF-470), logged. No hold keeps a
+    /// decision in the vault (LEGAL-HOLD-USE = B): placing it writes a sealed
+    /// copy of the partition's decisions to the hold store, as an owner's
+    /// hold does, and the age sweep runs as it would without it. Releasing it
+    /// lifts that hold alone, never another hold naming the same claim, and
+    /// destroys its copy. Once a release commits, the due legal-hold pass
+    /// settles the decision scrubs (FIX 7993, 7994).
     pub fn set_gate_decision_partition_hold(
         &self,
         claim_partition: Option<[u8; 16]>,
         held: bool,
     ) -> Result<()> {
-        let claim = claim_partition.map(EntityId::from_bytes).transpose()?;
-        self.with_write_txn_grouped(|txn| {
-            if held && let Some(claim) = claim_partition.as_ref() {
-                self.store
-                    .refuse_hold_on_erased_partition_in_txn(txn, claim)?;
-            }
-            let now = self.store.clock.now_recorded_at();
-            let target = LegalHoldTarget::GatePartition(claim);
-            legal_hold::set_partition_hold_in_txn(&self.store, txn, target, held, now)
-        })?;
+        self.set_gate_partition_hold(claim_partition, held)?;
         // A released partition hold may free a deferred delete (FIX 1488),
         // and the decision scrubs it kept (FIX 7993, 7994).
         if !held {

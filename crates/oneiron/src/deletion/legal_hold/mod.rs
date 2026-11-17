@@ -210,6 +210,66 @@ impl Vault {
         clone::legal_hold_store::remove_hold_dir_best_effort(self, hold_id);
     }
 
+    /// Places or releases the gate-decision partition `claim_partition`'s own
+    /// hold, for [`Vault::set_gate_decision_partition_hold`]. A placement
+    /// writes the hold's sealed copy of the partition's decisions inside the
+    /// writer, as an owner's placement does; a claim whose erase committed
+    /// refuses it. A release lifts the hold, then destroys its copy and logs
+    /// `CloneDestroyed`, as an owner's lift does.
+    ///
+    /// # Errors
+    /// The claim's erase committed (placement), or the hold store is unset or
+    /// its files cannot be written or removed. A release whose removal failed
+    /// reads released, and a repeat release finishes the removal.
+    pub(crate) fn set_gate_partition_hold(
+        &self,
+        claim_partition: Option<[u8; 16]>,
+        held: bool,
+    ) -> Result<()> {
+        let claim = claim_partition.map(EntityId::from_bytes).transpose()?;
+        let target = LegalHoldTarget::GatePartition(claim);
+        let hold_id = hold_store::partition_hold_id(&target)?;
+        let mut wrote_copy = false;
+        let outcome = self.with_write_txn_grouped(|txn| {
+            if held && let Some(claim) = claim_partition.as_ref() {
+                self.store
+                    .refuse_hold_on_erased_partition_in_txn(txn, claim)?;
+            }
+            let now = self.store.clock.now_recorded_at();
+            hold_store::set_partition_hold_in_txn(
+                &self.store,
+                txn,
+                target,
+                held,
+                now,
+                |txn, hold_id| {
+                    wrote_copy = true;
+                    // What an earlier release of this hold left goes first.
+                    clone::legal_hold_store::destroy_hold_copy(self, &hold_id)?;
+                    clone::legal_hold_store::write_hold_clone_in_txn(self, txn, hold_id, &[target])
+                },
+            )
+        });
+        let hold = match outcome {
+            Ok(hold) => hold,
+            Err(error) => {
+                if wrote_copy {
+                    self.remove_uncommitted_hold_copy(&hold_id);
+                }
+                return Err(error);
+            }
+        };
+        if hold.is_some_and(|hold| !hold.stands()) {
+            self.with_write_txn_grouped(|txn| {
+                let now = self.store.clock.now_recorded_at();
+                hold_store::finish_partition_release_in_txn(&self.store, txn, &hold_id, now, || {
+                    clone::legal_hold_store::destroy_hold_copy(self, &hold_id)
+                })
+            })?;
+        }
+        Ok(())
+    }
+
     /// Adds `targets` to the owner's standing hold `hold_id`, logged as a
     /// scope change. A hold narrows only through the owner's one confirm.
     ///
