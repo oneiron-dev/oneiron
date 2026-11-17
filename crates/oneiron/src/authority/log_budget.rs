@@ -525,6 +525,15 @@ pub(crate) struct AuthorityDoorView {
     pub(super) evidence: Option<Arc<AdoptedEvidence>>,
 }
 
+impl AuthorityDoorView {
+    /// Whether this install believes `entry`, as this view's structure reads
+    /// it (`AuthorityStructure::believes`): the roster's rows and this
+    /// install's own anchors' rows.
+    pub(super) fn believes(&self, entry: &AuthorityLogEntry) -> bool {
+        self.structure.believes(entry)
+    }
+}
+
 /// The per-signer and log-wide counts of a door view.
 #[derive(Default)]
 struct Tally {

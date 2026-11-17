@@ -554,6 +554,7 @@ impl Vault {
                     actor,
                     DeleteReason::GdprDelete,
                     Some(person),
+                    None,
                     &mut progress,
                 )?);
             }
@@ -596,6 +597,7 @@ impl Vault {
                     actor,
                     DeleteReason::GdprDelete,
                     Some(person),
+                    None,
                     &mut progress,
                 )?);
             }

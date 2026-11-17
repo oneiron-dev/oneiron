@@ -25,11 +25,13 @@
 //! corpus is synthetic test data), never the key.
 
 mod call_proxy;
-mod cycle;
-mod proof;
+// The lives screen's dreamed arm sets up, hints and waits on its Dreamer as
+// `load dream` does, and counts what it landed the same way.
+pub(super) mod cycle;
+pub(super) mod proof;
 mod report;
-mod server_log;
-mod setup;
+pub(super) mod server_log;
+pub(super) mod setup;
 mod turns;
 
 use std::io::Write as _;
@@ -154,6 +156,12 @@ pub(super) fn run(args: &[String]) -> Result<(), String> {
     execute(&parse(args)?)
 }
 
+/// The server's log level (`RUST_LOG`), for the lives screen's spawned
+/// dreamed arm, which watches the same Dreamer lines.
+pub(super) fn server_log_level() -> &'static str {
+    RUST_LOG
+}
+
 fn say(text: &str) {
     let _ = writeln!(
         std::io::stderr().lock(),
@@ -175,7 +183,7 @@ fn execute(plan: &Plan) -> Result<(), String> {
     let queries = turns::queries(&turns, QUERY_CAP);
     let key = setup::read_key(&plan.model_key_file)?;
     say(&format!("model preflight: {}", plan.model));
-    let preflight = setup::preflight(&plan.model_base_url, &plan.model, &key)?;
+    let preflight = setup::preflight(&plan.model_base_url, &plan.model, Some(&key))?;
     let dir = plan.work.join("dream");
     if dir.exists() {
         std::fs::remove_dir_all(&dir).map_err(|e| format!("clear {}: {e}", dir.display()))?;
@@ -198,8 +206,9 @@ fn execute(plan: &Plan) -> Result<(), String> {
             }),
         &plan.model,
         plan.model_context_tokens,
+        true,
     )?;
-    let grant = setup::grant(&plan.server, &vault)?;
+    let grant = setup::grant(&plan.server, &vault, setup::route(true))?;
     let credentials = [
         vault.mint_agent(&plan.server, "dream-seed")?,
         vault.mint_agent(&plan.server, "dream-recall")?,

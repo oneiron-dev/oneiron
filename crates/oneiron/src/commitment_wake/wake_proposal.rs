@@ -26,7 +26,10 @@ use super::wake_event::{
     PROVENANCE_KEY_SURFACE, decode_commitment_wake_event, validate_optional_wake_string,
     validate_wake_string,
 };
-use super::wake_fire::{CommitmentWakeSkip, WakeEligibility, instance_wake_eligibility};
+use super::wake_fire::{
+    CommitmentWakeSkip, WakeEligibility, instance_wake_eligibility,
+    instance_wake_eligibility_in_txn,
+};
 
 // ---------------------------------------------------------------------------
 // 4. Proposal planner, deterministic claim id, and the wrapper executor
@@ -129,6 +132,15 @@ impl CommitmentWakeProposalSkip {
             Self::MissingInstance => "missing_instance",
             Self::IneligibleInstance => "ineligible_instance",
             Self::NoRoute => "no_route",
+        }
+    }
+
+    /// The executor's skip for an instance the wake verdict refuses: a
+    /// missing instance is missing, every other refusal is ineligible.
+    const fn for_instance(skip: CommitmentWakeSkip) -> Self {
+        match skip {
+            CommitmentWakeSkip::MissingInstance => Self::MissingInstance,
+            _ => Self::IneligibleInstance,
         }
     }
 }
@@ -243,16 +255,9 @@ impl<E> CommitmentWakeExecutor<'_, E> {
         // ineligible (FIX 22383).
         let record = match instance_wake_eligibility(ctx.vault, &event.instance_id)? {
             WakeEligibility::Eligible(record) => record,
-            WakeEligibility::Skip(CommitmentWakeSkip::MissingInstance) => {
+            WakeEligibility::Skip(skip) => {
                 return Ok(skip_completion(
-                    CommitmentWakeProposalSkip::MissingInstance,
-                    event,
-                    attempt_id,
-                ));
-            }
-            WakeEligibility::Skip(_) => {
-                return Ok(skip_completion(
-                    CommitmentWakeProposalSkip::IneligibleInstance,
+                    CommitmentWakeProposalSkip::for_instance(skip),
                     event,
                     attempt_id,
                 ));
@@ -299,7 +304,7 @@ impl<E> CommitmentWakeExecutor<'_, E> {
             ));
         };
         draft.validate()?;
-        write_commitment_wake_proposal(
+        if let Some(skip) = write_commitment_wake_proposal(
             ctx.vault,
             &ProposalWrite {
                 event,
@@ -308,7 +313,9 @@ impl<E> CommitmentWakeExecutor<'_, E> {
                 run_id: attempt.status.attempt.run_id.as_deref(),
                 agent_actor,
             },
-        )?;
+        )? {
+            return Ok(skip_completion(skip, event, attempt_id));
+        }
         Ok(DreamerAttemptExecution::Completed {
             completed_units: 0,
             step_bindings: Vec::new(),
@@ -352,7 +359,16 @@ struct ProposalWrite<'a> {
 /// identical immutables are success with NO write — even after the inbox has
 /// advanced the row to `Approved` — and differing immutables at the same
 /// deterministic id are typed corruption.
-fn write_commitment_wake_proposal(vault: &Vault, write: &ProposalWrite<'_>) -> Result<()> {
+///
+/// A new proposal is written only while the instance may still wake, asked
+/// again inside this transaction: the step-3 verdict came from an earlier
+/// read, and the instance can close or be withdrawn while the planner runs.
+/// `Some(skip)`: no proposal was written, and the attempt completes as
+/// `skip`. `None`: the proposal stands, written now or landed before.
+fn write_commitment_wake_proposal(
+    vault: &Vault,
+    write: &ProposalWrite<'_>,
+) -> Result<Option<CommitmentWakeProposalSkip>> {
     let claim_id = commitment_wake_proposal_claim_id(write.attempt_id);
     let expected_run = write.event.idempotency_key();
     if write.run_id != Some(expected_run.as_str()) {
@@ -387,7 +403,12 @@ fn write_commitment_wake_proposal(vault: &Vault, write: &ProposalWrite<'_>) -> R
 
     vault.with_write_txn_grouped(|wtxn| {
         if let Some(landed) = vault.get_claim_in_txn(&*wtxn, &claim_id)? {
-            return match_landed_proposal(&landed, write.event, &value, &provenance);
+            return match_landed_proposal(&landed, write.event, &value, &provenance).map(|()| None);
+        }
+        if let WakeEligibility::Skip(skip) =
+            instance_wake_eligibility_in_txn(vault, &*wtxn, &write.event.instance_id)?
+        {
+            return Ok(Some(CommitmentWakeProposalSkip::for_instance(skip)));
         }
         // The ONE write door: a raw claim write that omits recording gate
         // decisions would omit the pending consent row and remove the inbox
@@ -409,7 +430,7 @@ fn write_commitment_wake_proposal(vault: &Vault, write: &ProposalWrite<'_>) -> R
             .ok_or(Error::InvalidClaimBody(
                 "commitment wake proposal is missing inside its own write transaction",
             ))?;
-        Ok(())
+        Ok(None)
     })
 }
 
