@@ -10,7 +10,7 @@
 //! code view is a host directory, its id no record.
 //!
 //! The whole-vault archive also carries the retained rows: one inert copy of every row of the
-//! 95 retained side tables, each naming its source table with the row's original key suffix
+//! 93 retained side tables, each naming its source table with the row's original key suffix
 //! and value bytes, and declares the 23 omitted tables with their reasons in its manifest. No
 //! live reader reads a retained copy; the next archive carries it again.
 //!

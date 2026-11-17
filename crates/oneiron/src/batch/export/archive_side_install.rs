@@ -75,7 +75,7 @@ pub(crate) enum ArchivedSideGroup {
     WithdrawnGrant,
     /// Project history budgets.
     ProjectHistory,
-    /// Message-stream defaults for new sessions.
+    /// Export audit rows.
     Memory,
     /// Dreamer free-time receipts.
     DreamerRunner,
@@ -85,8 +85,6 @@ pub(crate) enum ArchivedSideGroup {
     MergeQueue,
     /// Owner learning rows before holder rows.
     LearningSetting,
-    /// Retrieval pins and local active weights.
-    RetrievalPins,
     /// Drafter policy and serving binding repair.
     Drafter,
     /// Owner grant act history.
@@ -143,16 +141,11 @@ pub(crate) fn archived_side_group(source_table: &str) -> Option<ArchivedSideGrou
         name if name == side_table::HOUSEKEEPING_WAKE.name => Some(Group::HousekeepingWake),
         name if name == side_table::AUTHORITY_WITHDRAWN_GRANT.name => Some(Group::WithdrawnGrant),
         name if name == side_table::PROJECT_HISTORY_POLICY.name => Some(Group::ProjectHistory),
-        name if name == side_table::MESSAGE_STREAM_POLICY.name
-            || name == side_table::EXPORT_RECEIPT.name =>
-        {
-            Some(Group::Memory)
-        }
+        name if name == side_table::EXPORT_RECEIPT.name => Some(Group::Memory),
         name if name == side_table::DREAMER_FREE_TIME_RECEIPT.name => Some(Group::DreamerRunner),
         name if name == side_table::ORIGIN_LFS_PATH_POLICY.name => Some(Group::OriginLfs),
         name if name == side_table::MERGE_QUEUE_REVIEW_POLICY.name => Some(Group::MergeQueue),
         name if name == side_table::LEARNING_SETTING.name => Some(Group::LearningSetting),
-        name if name == side_table::RETRIEVAL_POLICY_PINS.name => Some(Group::RetrievalPins),
         name if name == side_table::DRAFTER_POLICY.name => Some(Group::Drafter),
         name if name == side_table::ACCESS_GRANT_OWNER_ACT.name => Some(Group::AccessGrant),
         name if name == side_table::POLICY_SETTING_ACT.name => Some(Group::PolicySetting),
@@ -251,9 +244,6 @@ pub(crate) fn land_archived_side_group_in_txn(
             crate::learning_setting::land_archived_learning_setting_rows_in_txn(
                 vault, txn, permit, rows,
             )
-        }
-        ArchivedSideGroup::RetrievalPins => {
-            crate::store::Store::land_archived_retrieval_pins_rows_in_txn(vault, txn, permit, rows)
         }
         ArchivedSideGroup::Drafter => {
             crate::Vault::land_archived_drafter_rows_in_txn(vault, txn, permit, rows)

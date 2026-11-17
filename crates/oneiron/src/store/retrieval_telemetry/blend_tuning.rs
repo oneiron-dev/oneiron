@@ -6,9 +6,10 @@ use heed::{RoTxn, RwTxn};
 use oneiron_contracts::retrieval_telemetry::validate_retrieval_blend_weights;
 
 use crate::error::{Error, Result};
-use crate::side_table::{self, CodecError, Named, Raw, RawValue, SideTable};
+use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
 use crate::store::EngineScan;
 use crate::store::scan_count::ScanCount;
+use crate::store::setting_keys::RETRIEVAL_POLICY_PINS;
 use crate::store::{Store, active_write_txn_depth};
 
 use super::run_store::{RETRIEVAL_RUN, retrieval_outcomes_for_run_in_txn};
@@ -16,9 +17,8 @@ use super::types::{
     RETRIEVAL_BLEND_TUNER_ALGORITHM, RETRIEVAL_BLEND_WEIGHT_TABLE_VERSION, RetrievalBlendSignal,
     RetrievalBlendTuningConfig, RetrievalBlendWeightDataWindow, RetrievalBlendWeightTableEntry,
     RetrievalBlendWeights, RetrievalOutcomeRecord, RetrievalPolicyCandidate,
-    RetrievalPolicyEvaluation, RetrievalPolicyHeldOut, RetrievalPolicyPin, RetrievalPolicyPins,
-    RetrievalPolicyVerdict, RetrievalRunRecord, RetrievalSignal, RetrievalWeightOrigin,
-    retrieval_weight_rows,
+    RetrievalPolicyEvaluation, RetrievalPolicyHeldOut, RetrievalPolicyPins, RetrievalPolicyVerdict,
+    RetrievalRunRecord, RetrievalSignal, RetrievalWeightOrigin, retrieval_weight_rows,
 };
 
 /// Kept as a standalone constant (not just `TABLE.decl().prefix`) because
@@ -32,9 +32,6 @@ pub(in crate::store) const RETRIEVAL_BLEND_WEIGHT_TABLE_KEY: &[u8] =
 /// `encode_retrieval_blend_weight_table`/`decode_retrieval_blend_weight_table`.
 const TABLE: SideTable<(), RetrievalBlendWeightTableEntry, Raw> =
     SideTable::new(&side_table::RETRIEVAL_BLEND_WEIGHTS_ACTIVE);
-
-const PINS: SideTable<(), RetrievalPolicyPins, Named> =
-    SideTable::new(&side_table::RETRIEVAL_POLICY_PINS);
 
 /// ARCH-0037's hold-out: the newest accepted run and every fifth after it
 /// never train the update; they judge it against the active weights.
@@ -119,8 +116,12 @@ impl Store {
         self.retrieval_blend_weight_table_in_txn(&rtxn)
     }
 
+    /// The owner's pins in force: the `retrieval.policy_pins` key (DESIGN 15-setting-primitive,
+    /// stage 1).
     fn retrieval_policy_pins_in_txn(&self, rtxn: &RoTxn<'_>) -> Result<RetrievalPolicyPins> {
-        let pins = PINS.get(self, rtxn, &())?.unwrap_or_default();
+        let pins = RETRIEVAL_POLICY_PINS
+            .read_in_dbs_txn(self, rtxn, &[], None)?
+            .value;
         pins.validate()?;
         Ok(pins)
     }
@@ -131,51 +132,16 @@ impl Store {
         self.retrieval_policy_pins_in_txn(&rtxn)
     }
 
-    /// Replaces the owner pins and holds the active weights to them, in the
-    /// same write transaction. Returns the active entry as now served.
-    pub fn put_retrieval_policy_pins(
-        &self,
-        pins: RetrievalPolicyPins,
-    ) -> Result<RetrievalBlendWeightTableEntry> {
-        pins.validate()?;
-        let _tuning_guard =
-            self.tuning_guard("retrieval policy pin skipped inside active write transaction")?;
-        let mut wtxn = self.env.write_txn()?;
-        let entry = self.write_retrieval_policy_pins_in_txn(&mut wtxn, &pins)?;
-        wtxn.commit()?;
-        Ok(entry)
-    }
-
-    /// Sets one owner pin at `value`, or clears it when `value` is absent,
-    /// merging against the pins read inside the same write transaction so
-    /// a concurrent pin change is never silently dropped.
-    pub fn put_retrieval_policy_pin(
-        &self,
-        signal: RetrievalBlendSignal,
-        value: Option<f32>,
-    ) -> Result<RetrievalBlendWeightTableEntry> {
-        let _tuning_guard =
-            self.tuning_guard("retrieval policy pin skipped inside active write transaction")?;
-        let mut wtxn = self.env.write_txn()?;
-        let mut pins = self.retrieval_policy_pins_in_txn(&wtxn)?;
-        pins.pins.retain(|pin| pin.signal != signal);
-        if let Some(value) = value {
-            pins.pins.push(RetrievalPolicyPin { signal, value });
-        }
-        pins.validate()?;
-        let entry = self.write_retrieval_policy_pins_in_txn(&mut wtxn, &pins)?;
-        wtxn.commit()?;
-        Ok(entry)
-    }
-
-    fn write_retrieval_policy_pins_in_txn(
+    /// Holds the active weights to the owner's `pins`, in the write that changes them: the
+    /// `retrieval.policy_pins` key's hook. A learned update that trained under other pins is
+    /// refused at its admission, which reads the pins again in its own write.
+    pub(crate) fn hold_weights_to_pins_in_txn(
         &self,
         wtxn: &mut RwTxn<'_>,
         pins: &RetrievalPolicyPins,
     ) -> Result<RetrievalBlendWeightTableEntry> {
         let previous = self.retrieval_blend_weight_table_in_txn(wtxn)?;
         let entry = self.project_retrieval_policy_pins(pins, previous)?;
-        PINS.put(self, wtxn, &(), pins)?;
         self.write_retrieval_pinned_weights_in_txn(wtxn, &entry)?;
         Ok(entry)
     }
@@ -207,67 +173,6 @@ impl Store {
         entry: &RetrievalBlendWeightTableEntry,
     ) -> Result<()> {
         TABLE.put(self, txn, &(), entry)
-    }
-
-    /// Lands archived pins and their local active-weight projection under the import's guard.
-    pub(crate) fn land_archived_retrieval_pins_rows_in_txn(
-        vault: &crate::Vault,
-        txn: &mut RwTxn<'_>,
-        permit: &crate::batch::export::OwnerArchiveRestorePermit,
-        rows: &[crate::batch::export::ArchiveRetainedSideRow],
-    ) -> Result<Vec<crate::batch::export::archive_side_install::ArchivedSideRowOutcome>> {
-        use crate::batch::export::RetainedSideHeldBackReason;
-        use crate::batch::export::archive_side_install::{
-            ArchivedSideRowOutcome, decode_archived_row, install_archived_row,
-        };
-
-        rows.iter()
-            .map(|row| {
-                let (key, pins) = match decode_archived_row(&PINS, row) {
-                    Ok(decoded) => decoded,
-                    Err(reason) => return Ok(ArchivedSideRowOutcome::HeldBack(reason)),
-                };
-                if pins.validate().is_err() {
-                    return Ok(ArchivedSideRowOutcome::HeldBack(
-                        RetainedSideHeldBackReason::InvalidValue,
-                    ));
-                }
-                match PINS.get_bytes(vault, txn, &key)? {
-                    Some(stored) if stored == row.source_value => {
-                        return Ok(ArchivedSideRowOutcome::Unchanged);
-                    }
-                    Some(_) => return Ok(ArchivedSideRowOutcome::KeptLive),
-                    None => {}
-                }
-                // Read storage separately so an I/O failure still aborts the import.
-                let previous = match TABLE.get_bytes(vault, txn, &())? {
-                    Some(bytes) => match TABLE.decode_value(&bytes) {
-                        Ok(entry) => entry,
-                        Err(_) => {
-                            return Ok(ArchivedSideRowOutcome::HeldBack(
-                                RetainedSideHeldBackReason::InconsistentCompanion,
-                            ));
-                        }
-                    },
-                    None => RetrievalBlendWeightTableEntry::bootstrap(),
-                };
-                let entry = match vault.store.project_retrieval_policy_pins(&pins, previous) {
-                    Ok(entry) => entry,
-                    Err(_) => {
-                        return Ok(ArchivedSideRowOutcome::HeldBack(
-                            RetainedSideHeldBackReason::InconsistentCompanion,
-                        ));
-                    }
-                };
-                let outcome = install_archived_row(&PINS, vault, txn, permit, &key, row)?;
-                if matches!(outcome, ArchivedSideRowOutcome::Installed) {
-                    vault
-                        .store
-                        .write_retrieval_pinned_weights_in_txn(txn, &entry)?;
-                }
-                Ok(outcome)
-            })
-            .collect()
     }
 
     pub fn tune_retrieval_blend_weights(

@@ -340,3 +340,12 @@ pub struct RetrievalTrace {
     #[serde(default)]
     pub fusion_list_length: u32,
 }
+
+/// The owner's pins are a Setting value (`retrieval.policy_pins`, DESIGN 15-setting-primitive,
+/// stage 1): [`RetrievalPolicyPins::validate`] is its check.
+impl oneiron_setting_contract::SettingValue for RetrievalPolicyPins {
+    fn check(self) -> Result<Self> {
+        self.validate()?;
+        Ok(self)
+    }
+}

@@ -182,8 +182,8 @@ impl Memory<'_> {
                 "message, turn and conversation IDs must differ",
             ));
         }
-        let policy = self.vault.message_stream_policy()?;
-        let mode = policy.resolve(&self.actor, mode);
+        let policy = super::policy::policy_for(self.vault, Some(self.actor))?;
+        let mode = policy.resolve(mode);
         mode.validate()?;
         let seed = Seed {
             message_id: id,

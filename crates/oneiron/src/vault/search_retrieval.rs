@@ -8,10 +8,10 @@ use crate::limit_ask::EngineLimit;
 use crate::store::retrieval_values::RetrievalWithTelemetry;
 use crate::store::{
     GateDecisionRecord, PendingGateConsentGroup, PendingGateConsentRecord, RetrievalAction,
-    RetrievalBlendSignal, RetrievalBlendTuningConfig, RetrievalBlendWeightTableEntry,
-    RetrievalBlendWeights, RetrievalEndOutcome, RetrievalOutcome, RetrievalOutcomeRecord,
-    RetrievalPolicyPins, RetrievalRunId, RetrievalRunRecord, RetrievalScoreBreakdown,
-    RetrievalScoreComponent, RetrievalSignal, RetrievalTrace, RetrievalTraceForkHash,
+    RetrievalBlendTuningConfig, RetrievalBlendWeightTableEntry, RetrievalBlendWeights,
+    RetrievalEndOutcome, RetrievalOutcome, RetrievalOutcomeRecord, RetrievalPolicyPins,
+    RetrievalRunId, RetrievalRunRecord, RetrievalScoreBreakdown, RetrievalScoreComponent,
+    RetrievalSignal, RetrievalTrace, RetrievalTraceForkHash,
 };
 use crate::{BatchBuilder, ContextPackBuilder, PipelineBuilder};
 use oneiron_retrieval::pipeline::ScoredEntity;
@@ -501,25 +501,6 @@ impl Vault {
     /// Returns the owner pins no learned retrieval-policy update may move.
     pub fn retrieval_policy_pins(&self) -> Result<RetrievalPolicyPins> {
         self.store.retrieval_policy_pins()
-    }
-
-    /// Replaces the owner retrieval-policy pins and holds the active
-    /// weights to them, returning the entry as now served.
-    pub fn put_retrieval_policy_pins(
-        &self,
-        pins: RetrievalPolicyPins,
-    ) -> Result<RetrievalBlendWeightTableEntry> {
-        self.store.put_retrieval_policy_pins(pins)
-    }
-
-    /// Sets one owner retrieval-policy pin, or clears it when `value` is
-    /// absent, merging inside the store's write transaction.
-    pub fn put_retrieval_policy_pin(
-        &self,
-        signal: RetrievalBlendSignal,
-        value: Option<f32>,
-    ) -> Result<RetrievalBlendWeightTableEntry> {
-        self.store.put_retrieval_policy_pin(signal, value)
     }
 
     /// Trains a retrieval-policy candidate from gated outcomes without

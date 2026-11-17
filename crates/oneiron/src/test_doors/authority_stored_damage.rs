@@ -3,13 +3,10 @@
 //! report store damage. Census L7-19: store rows as a vault did before every
 //! store door held a stranger's row (#1449, H72).
 
-use crate::authority::{
-    AuthorityLogEntry, AuthorityObservationPolicy, advance_authority_cache_generation,
-};
+use crate::authority::{AuthorityLogEntry, advance_authority_cache_generation};
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::ports::EntityStoreRead;
 use crate::registry::ENTITY_TYPE_AUTHORITY_LOG;
-use crate::side_table::{self, Raw, SideTable};
 use crate::{EntityId, Error, Result, TimeRange, Vault};
 
 /// Overwrites the signed body of the first stored AUTHORITY_LOG row with
@@ -47,20 +44,23 @@ pub fn damage_first_stored_authority_log_body(vault: &Vault) -> Result<EntityId>
     Ok(id)
 }
 
-/// Stores `raw` as this vault's authority observation policy row, past the
-/// write door's check, and drops the cached fold.
+/// Stores `raw` as the stored value of this vault's authority observation
+/// policy row (the `authority.observation_policy` Setting key's vault row),
+/// past the setting door's check, and drops the cached fold.
 ///
 /// # Errors
 ///
 /// The store refuses the write.
+#[cfg(feature = "test-support")]
 pub fn put_raw_authority_observation_policy(vault: &Vault, raw: &[u8]) -> Result<()> {
-    let table: SideTable<(), AuthorityObservationPolicy, Raw> =
-        SideTable::new(&side_table::AUTHLOG_OBSERVATION_POLICY);
-    let key = table.key_bytes(&());
-    let key = std::str::from_utf8(&key)
-        .map_err(|_| Error::InvariantViolation("the policy row key is not UTF-8"))?;
+    crate::setting::put_stored_bytes(
+        vault,
+        "authority.observation_policy",
+        crate::setting::SettingMode::Value,
+        crate::setting::SettingScope::Vault,
+        raw,
+    )?;
     vault.with_write_txn(|txn| {
-        vault.store.sync_state.put(txn, key, raw)?;
         advance_authority_cache_generation(&vault.store, txn)?;
         Ok(())
     })?;

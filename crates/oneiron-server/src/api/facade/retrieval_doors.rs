@@ -244,31 +244,6 @@ pub(crate) async fn vault_retrieval_policy_get(
     .await
 }
 
-pub(crate) async fn vault_retrieval_policy_pin(
-    server: &Arc<SyncServer>,
-    auth: &CoreAuth,
-    input: oneiron::task_verb::sdk::RetrievalPolicyPinRequest,
-) -> Listed<oneiron::task_verb::sdk::RetrievalPolicyView> {
-    let admitted = || -> MemoryResult<_> {
-        let owner = owner_proof(auth, server, "vault.retrieval.policy.pin")?;
-        let caller =
-            super::facade_actor(server, auth).map_err(FacadeApiError::into_memory_error)?;
-        Ok((owner, caller))
-    };
-    let (owner, caller) = match admitted() {
-        Ok(admitted) => admitted,
-        Err(error) => return (Err(error), Vec::new()),
-    };
-    credential_listing(
-        server,
-        auth,
-        caller,
-        "vault.retrieval.policy.pin",
-        move |_, _, memory| sdk::retrieval_policy_pin_as_owner(&memory, &owner, input),
-    )
-    .await
-}
-
 pub(crate) async fn vault_retrieval_policy_train(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,

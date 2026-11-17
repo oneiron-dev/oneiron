@@ -1,5 +1,5 @@
-//! The authority's owner Setting keys (DESIGN 15-setting-primitive): rows the setting catalogue
-//! reads from this file.
+//! The authority's Setting keys (DESIGN 15-setting-primitive): rows the setting catalogue reads
+//! from this file. This machine's authority observation policy, and the owner's lifetimes below.
 //!
 //! Each key holds a lifetime the code fixed before (restriction census wave 1; owner 16 Nov
 //! 00:44: "we apply the optional freedom with good defaults everywhere"). Its default is that
@@ -10,9 +10,10 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use super::AuthorityObservationPolicy;
 use super::step_up::STEP_UP_CHALLENGE_TTL_SECS;
 use crate::error::{Error, Result};
-use crate::setting::{Kind, SettingValue, lower_is_tighter};
+use crate::setting::{Kind, SettingSync, SettingValue, lower_is_tighter};
 
 /// A lifetime in whole seconds, at least one: a lifetime of zero ends before anything can use it.
 #[derive(
@@ -89,6 +90,15 @@ fn pairing_code_default() -> PairingCodeSecs {
 }
 
 crate::setting::setting_keys! {
+    /// This machine's authority observation bounds: the stale-roster window, the ingest
+    /// window and its check threshold, the log's signer bound, the fold's headroom for rows,
+    /// handoffs and ancestor pairs, and its memory floor. A choice about this machine; it never
+    /// changes a signed entry.
+    pub(crate) AUTHORITY_OBSERVATION_POLICY: AuthorityObservationPolicy = "authority.observation_policy" {
+        kind: Kind::new(AuthorityObservationPolicy::default),
+        sync: SettingSync::Install,
+    };
+
     /// How long a step-up ceremony stays open, in seconds: a passkey challenge, and an
     /// authenticator app's enrolment, must be answered within it, or the ceremony starts again.
     /// Five minutes by default, WebAuthn's own default ceremony timeout. Each challenge still

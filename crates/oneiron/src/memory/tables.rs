@@ -48,9 +48,6 @@ crate::side_table::side_tables! {
     /// the erase commits (FIX 9973). Key: hex32(message id) ":" hex32(generation).
     MESSAGE_STREAM_ERASED: VaultMeta b"message_stream_erased:v1:" Raw
         [restore: content] [family: unclassified] [tier: canonical];
-    /// Vault default message-streaming policy. Key: ().
-    MESSAGE_STREAM_POLICY: VaultMeta b"message_stream_policy:v1" Named
-        [restore: live] [family: unclassified] [tier: canonical];
     /// Latest terminal stream receipt of a message. Key: id16.
     MESSAGE_STREAM_RECEIPT: VaultMeta b"message_stream_receipt:v1:" Named
         [restore: content] [family: unclassified] [tier: canonical];
