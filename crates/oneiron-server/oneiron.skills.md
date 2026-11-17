@@ -1283,7 +1283,9 @@ Operations:
   sentence never reaches the oracle. Response: `slots` (UTC `start_utc`/`end_utc`/`rank`),
   `flex_used`, and `full_days`: each visitor-local day (`date`, `YYYY-MM-DD`) whose times a meeting
   cap removed, with the `cap` that filled it (`daily` or `weekly`). A full day has no slots; it
-  carries no booking detail.
+  carries no booking detail. A caller whose live calendar grants name every calendar a host binds
+  also gets `busy`: per host, its `calendar_refs` and opaque `busy` blocks (`start_utc`/`end_utc`)
+  inside the host's working hours. The field is absent for every other caller.
 - `book` — body is tagged by `stage`. `hold` takes `event_type`, `selected_slot`, `visitor_tz`,
   `constraint`, `session_ref`, `checkout_lease_token`, `idempotency_key`, and returns
   `hold_token`, `selected_slot`, and a server-capped `expires_at`. There is no TTL field: a longer

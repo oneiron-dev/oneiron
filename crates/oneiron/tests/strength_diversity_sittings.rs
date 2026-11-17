@@ -129,6 +129,7 @@ fn witness_words(
         }],
         occurred_at: fixture.vault.now_recorded_at(),
         assertions: WitnessAssertions::default(),
+        project: None,
     })?;
     assert_eq!(receipt.turn_id, turn);
     Ok(turn)
