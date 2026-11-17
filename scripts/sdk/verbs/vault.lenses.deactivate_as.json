@@ -11,6 +11,6 @@
     "unrestricted_record_scope": true
   },
   "section": false,
-  "mcp_scope": "filtered",
+  "mcp_scope": "unrestricted",
   "openapi": true
 }

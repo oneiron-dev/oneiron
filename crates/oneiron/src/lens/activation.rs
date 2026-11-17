@@ -13,7 +13,9 @@
 //! (DEC-0006).
 
 use super::GeneratedLens;
-use super::proposal::{LensSlotRecord, PROPOSALS, SLOTS, active_at, invalid_state, slot_key};
+use super::proposal::{
+    LensProposalRecord, LensSlotRecord, PROPOSALS, SLOTS, active_at, invalid_state, slot_key,
+};
 use super::setting_keys::LENS_SLOT_AGENT_SELECT;
 use crate::agent_dispatch::{LineageStart, settling_lineage_in_txn};
 use crate::attempt_queue::AttemptId;
@@ -127,17 +129,20 @@ impl SlotDecider {
         })
     }
 
-    /// Refuses an agent's selection of a revision `proposed_by` proposed when
-    /// the two share a lineage ([`settling_lineage_in_txn`]): the opener's
+    /// Refuses an agent's selection of `proposal` when the agent and its
+    /// proposer share a lineage ([`settling_lineage_in_txn`]): the opener's
     /// lineage and its forks never settle their own proposal (DEC-0006),
-    /// whatever the key says. A proposer the record no longer names (an
-    /// erased one), or a lineage the engine cannot read whole, counts as the
+    /// whatever the key says. Each side is its actor and the run attempt its
+    /// handle wrote from, since a dispatch at the dispatcher's own ceiling
+    /// pins no delegation parent on the child. A proposer the record no
+    /// longer names (an erased one), a stored run attempt that does not
+    /// parse, or a lineage the engine cannot read whole, counts as the
     /// agent's own. The owner's selection is not a lineage's.
     fn refuse_own_lineage_in_txn(
         &self,
         vault: &Vault,
         txn: &heed::RoTxn<'_>,
-        proposed_by: &str,
+        proposal: &LensProposalRecord,
     ) -> MemoryResult<()> {
         if self.actor_class != EdgeActorClass::Agent {
             return Ok(());
@@ -151,13 +156,22 @@ impl SlotDecider {
                 &["Ask the owner, or an agent outside the proposer's lineage, to select it."],
             )
         };
-        let Ok(proposer) = EntityId::from_hex(proposed_by) else {
+        let Ok(proposer) = EntityId::from_hex(&proposal.proposed_by) else {
             return Err(refused());
         };
+        let mut proposer_starts = vec![LineageStart::Actor(proposer)];
+        if let Some(attempt) = proposal.proposed_by_run_attempt.as_deref() {
+            let Some(attempt) = oneiron_hex::decode::<16>(attempt)
+                .and_then(|bytes| AttemptId::from_bytes(&bytes).ok())
+            else {
+                return Err(refused());
+            };
+            proposer_starts.push(LineageStart::Attempt(attempt));
+        }
         let mut starts = vec![LineageStart::Actor(self.actor)];
         starts.extend(self.run_attempt.map(LineageStart::Attempt));
         let decider = settling_lineage_in_txn(vault, txn, &starts)?;
-        let proposer = settling_lineage_in_txn(vault, txn, &[LineageStart::Actor(proposer)])?;
+        let proposer = settling_lineage_in_txn(vault, txn, &proposer_starts)?;
         match (decider, proposer) {
             (Some(decider), Some(proposer)) if decider.is_disjoint(&proposer) => Ok(()),
             _ => Err(refused()),
@@ -248,7 +262,7 @@ impl Vault {
                 "Propose the lens again against the installed pack.",
             ));
         }
-        decider.refuse_own_lineage_in_txn(self, txn, &proposal.proposed_by)?;
+        decider.refuse_own_lineage_in_txn(self, txn, &proposal)?;
         let key = slot_key(&proposal.pack_name, &skill_id);
         let previous = SLOTS.get(&self.store, txn, &key)?.map(|slot| slot.lens_ref);
         if previous != expected.map(|id| id.to_hex()) {
