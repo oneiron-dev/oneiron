@@ -156,7 +156,9 @@ impl Vault {
     }
 
     /// Replaces the bounds under the owner's proof. The returned bounds are
-    /// the ones this transaction stored; the next page reads them.
+    /// the ones this transaction stored; the next page reads them, and a page
+    /// being read when they change is judged against them when its rows are
+    /// counted.
     ///
     /// # Errors
     ///
@@ -185,8 +187,10 @@ impl Vault {
     /// own expiry is not a bound of this row and does not move.
     ///
     /// The next page of any handle is held to the new page and handle
-    /// bounds. A handle that is already open keeps the lifetime it was
-    /// opened with, and stays open when fewer may now be open at once.
+    /// bounds, and so is a page being read when they change: the write that
+    /// counts its rows judges it against them. A handle that is already open
+    /// keeps the lifetime it was opened with, and stays open when fewer may
+    /// now be open at once.
     /// Returns the receipt.
     ///
     /// # Errors

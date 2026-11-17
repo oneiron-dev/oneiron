@@ -26,9 +26,12 @@
 //! concurrent taker finds the lease moved, or the try's id taken, and does
 //! nothing; two machines that take at once resolve as the lease does, by
 //! whole-row LWW and the fence, so one executor stands down once copies
-//! agree. The take reserves the run's launch spend here as its dispatch did
-//! (`AgentDispatcher::reserve_handed_over_launch_in_txn`), and seeds nothing
-//! the other machine spent: cross-node budget custody is FIX 4889.
+//! agree. The take reserves only what the launch reserved less what the
+//! machines that ran it committed of it, as the run TASK's spend carry
+//! records it (FIX 4889), and waits when nothing is left; the machine whose
+//! tree funded the launch keeps the one counter (canon ARCH-0026:242). A
+//! take-back on the custody machine keeps the run's scope and folds the
+//! other machines' shares into it (FIX 4889).
 //!
 //! A take that queues a try from the TASK's frozen payload, a re-created
 //! live try or a successor, first asks that the payload's writer proof counts
@@ -59,8 +62,8 @@ use std::collections::BTreeMap;
 
 use super::run_task::{
     AgentRunExecutorLease, AgentRunTaskBody, agent_run_lease_held_until, agent_run_lease_renewal,
-    agent_run_task_body_in, agent_run_task_ref_in, closing, open_agent_runs_in,
-    update_agent_run_task_body_in_txn,
+    agent_run_task_body_in, agent_run_task_ref_in, attempt_id_from_hex, closing,
+    open_agent_runs_in, update_agent_run_task_body_in_txn,
 };
 use super::{
     AGENT_DISPATCH_ATTEMPT_TYPE, AgentDispatchInput, AgentDispatcher, decode_agent_dispatch_input,
@@ -571,8 +574,9 @@ fn world_readable_here_in(vault: &Vault, txn: &heed::RoTxn<'_>, world: &str) -> 
 /// queue (a root's, or a child's that outlived its root), read in `txn`,
 /// each with its newest such try's id and state. A pending child under a
 /// run's TASK is no try of it here (REVIEW-6638): the take never keeps it as
-/// the run's try, and it renews nothing.
-fn local_agent_run_tries_in(
+/// the run's try, and it renews nothing. The custody reconcile reads it too
+/// (FIX 4889).
+pub(super) fn local_agent_run_tries_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
 ) -> Result<BTreeMap<EntityId, (AttemptId, AttemptState)>> {
@@ -611,7 +615,9 @@ fn take_expired_agent_run(
 /// this machine can fund it; a re-created or successor try only while the
 /// TASK's writer proof counts here; then the lease moves here at the next
 /// generation with a fresh hold, and the TASK names a re-created or
-/// successor try as its live one. A kept try is named by its own claim.
+/// successor try as its live one. A kept try is named by its own claim, and
+/// its scope is judged as a re-created try's is. What the take folded into
+/// the kept scope lands on the TASK's carry (FIX 4889).
 fn take_expired_agent_run_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -632,7 +638,7 @@ fn take_expired_agent_run_in_txn(
         return Ok(AgentRunTake::Waits(RUN_TASK_UNREADABLE));
     };
     let queue = AttemptQueue::new(vault);
-    let (try_id, resume) = match run.local {
+    let (try_id, resume, folded) = match run.local {
         LocalTry::Wait(reason) => return Ok(AgentRunTake::Waits(reason)),
         LocalTry::Keep(id) => {
             let queued = queue.get_in_txn(&*wtxn, id)?.is_some_and(|row| {
@@ -641,7 +647,38 @@ fn take_expired_agent_run_in_txn(
             if !queued {
                 return Ok(AgentRunTake::Waits(LOCAL_TRY_CHANGED));
             }
-            (id, AgentRunResume::QueuedHere)
+            // The queued try spends under the scope its dispatch or an
+            // earlier take kept for it here. The take judges that scope as
+            // it judges a re-created try's (FIX 4889): the custody machine
+            // folds what the other machines committed since, and elsewhere a
+            // pinned scope comes down to the remainder. A run with no carry
+            // runs as its try stands.
+            let folded = match body.spend.as_ref() {
+                None => 0,
+                Some(carry) => {
+                    let Some(input) = frozen_dispatch_input(&body.queue_payload) else {
+                        return Ok(AgentRunTake::Waits(RUN_TASK_UNREADABLE));
+                    };
+                    let mut savepoint = vault.store.env.nested_write_txn(wtxn)?;
+                    match AgentDispatcher::new(vault).reserve_handed_over_launch_in_txn(
+                        &mut savepoint,
+                        id,
+                        &input,
+                        Some(carry),
+                        node_id,
+                        now,
+                    )? {
+                        super::spend_custody::HandedOverLaunchReserve::Unfunded => {
+                            return Ok(AgentRunTake::Waits(LAUNCH_UNFUNDED_HERE));
+                        }
+                        super::spend_custody::HandedOverLaunchReserve::Reserved { folded } => {
+                            savepoint.commit()?;
+                            folded
+                        }
+                    }
+                }
+            };
+            (id, AgentRunResume::QueuedHere, folded)
         }
         LocalTry::Recreate | LocalTry::Succeed(_) => {
             // The try runs from the TASK's frozen payload, so a machine that
@@ -689,19 +726,24 @@ fn take_expired_agent_run_in_txn(
             if !super::agent_run::agent_pump_claims_in(vault, &savepoint, &record)? {
                 return Ok(AgentRunTake::Waits(NOT_THE_AGENT_PUMPS));
             }
-            if !AgentDispatcher::new(vault).reserve_handed_over_launch_in_txn(
+            let folded = match AgentDispatcher::new(vault).reserve_handed_over_launch_in_txn(
                 &mut savepoint,
                 record.id,
                 &input,
+                body.spend.as_ref(),
+                node_id,
                 now,
             )? {
-                return Ok(AgentRunTake::Waits(LAUNCH_UNFUNDED_HERE));
-            }
+                super::spend_custody::HandedOverLaunchReserve::Unfunded => {
+                    return Ok(AgentRunTake::Waits(LAUNCH_UNFUNDED_HERE));
+                }
+                super::spend_custody::HandedOverLaunchReserve::Reserved { folded } => folded,
+            };
             savepoint.commit()?;
             // The transaction's owner re-arms the deadline watch after its
             // commit, as a dispatch's enqueue does.
             crate::batch::queue_proactivity_change(vault, wtxn);
-            (record.id, resume)
+            (record.id, resume, folded)
         }
     };
     let lease = AgentRunExecutorLease {
@@ -709,10 +751,22 @@ fn take_expired_agent_run_in_txn(
         generation: run.lease.generation.saturating_add(1),
         held_until: agent_run_lease_held_until(now),
     };
+    // The take stamps the share of the scope its try spends under here
+    // (REVIEW-7890): a kept queued try becomes the TASK's live one only at
+    // its claim, so the executor's stamp of the live try alone would miss
+    // the scope this take just folded into, while the fold counts against
+    // the shares at once.
+    let taken_scope = AgentDispatcher::new(vault).attempt_spend_scope_in_txn(&*wtxn, try_id)?;
     update_agent_run_task_body_in_txn(vault, wtxn, run.task_ref, now, |body| {
         body.executor = lease;
         if resume != AgentRunResume::QueuedHere {
             body.live_attempt_ref = bytes_to_hex_lower(try_id.as_bytes());
+        }
+        if let Some(carry) = body.spend.as_mut() {
+            carry.custody_folded_units = carry.custody_folded_units.saturating_add(folded);
+            if let Some(scope) = &taken_scope {
+                carry.stamp(node_id, scope);
+            }
         }
         Ok(())
     })?;
@@ -731,9 +785,4 @@ fn frozen_dispatch_input(payload: &[u8]) -> Option<AgentDispatchInput> {
         return None;
     }
     decode_agent_dispatch_input(&payload.input).ok()
-}
-
-/// An attempt id from the 32-hex form a run TASK stores it in.
-fn attempt_id_from_hex(hex: &str) -> Option<AttemptId> {
-    AttemptId::from_bytes(&crate::task_verb::decode_hex::<16>(hex)?).ok()
 }

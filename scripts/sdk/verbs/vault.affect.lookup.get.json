@@ -1,0 +1,17 @@
+{
+  "name": "vault.affect.lookup.get",
+  "description": "The owner reads the coping lookup's nearest-state metric and cold-start outcome floor with the trusted manifest hash; an absent row reads as the starting values.",
+  "input": "EmptyRequest",
+  "output": "crate::policy_manifest_doors::AffectLookupView",
+  "call": "crate::policy_manifest_doors::affect_lookup_as_owner(memory.vault(), &memory.embedded_owner(\"vault.affect.lookup.get\")?).map_err(crate::memory::MemoryError::from)?",
+  "scope": "Read",
+  "act_class": "read",
+  "host_door": true,
+  "host_door_lists": true,
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

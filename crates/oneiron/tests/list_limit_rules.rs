@@ -645,6 +645,7 @@ fn record_links_turn_page_refuses_zero_and_cuts_at_its_maximum() -> TestResult {
             messages,
             occurred_at: 900,
             assertions: WitnessAssertions::default(),
+            project: None,
         })?
         .turn_id
         .to_hex();
