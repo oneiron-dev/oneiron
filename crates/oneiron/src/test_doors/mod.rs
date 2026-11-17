@@ -180,9 +180,9 @@ pub mod passkey_vouch_limits;
 pub mod payment_credential;
 #[cfg(feature = "sync")]
 pub mod peer_author_redaction;
-pub mod pending_write_tray;
 #[cfg(feature = "sync")]
 pub mod pending_work_reports;
+pub mod pending_write_tray;
 #[cfg(feature = "sync")]
 pub mod predicted_residence;
 pub mod provenance_body_checkpoint;
