@@ -666,6 +666,9 @@ pub(super) fn append_stats_line(out: &mut String, stats: &PackStats, format: Pac
             working_set.over_cap,
             working_set.overlap
         ));
+        if working_set.stale {
+            stats_line.push_str(", stale packet");
+        }
     }
     if format == PackFormat::Yaml {
         out.push_str("# ");
@@ -741,6 +744,7 @@ pub(super) fn json_stats(pack_stats: &PackStats) -> Value {
         counts.insert("dropped".to_owned(), Value::from(working_set.dropped));
         counts.insert("over_cap".to_owned(), Value::from(working_set.over_cap));
         counts.insert("overlap".to_owned(), Value::from(working_set.overlap));
+        counts.insert("stale".to_owned(), Value::Bool(working_set.stale));
         stats.insert("working_set".to_owned(), Value::Object(counts));
     }
     Value::Object(stats)

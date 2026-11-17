@@ -53,6 +53,7 @@ pub use types::{
     PackStats, PackTokenStats, TokenAllocation,
 };
 pub(crate) use types::{PackCriticalAccounting, PackWorldShare};
+pub(crate) use working_set::dedupe_working_set;
 pub use working_set::{MAX_WORKING_SET_REFS, PackWorkingSetStats};
 pub use world_partition::{BASE_WORLD_SECTION, WORLD_SECTION_FIELD, WORLD_STALE_FIELD};
 

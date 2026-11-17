@@ -76,13 +76,17 @@ pub struct PackWorkingSetStats {
     /// Working-set rows the ranked fill also found. Each is served once, as
     /// a working-set row.
     pub overlap: usize,
+    /// The epoch summary the pack rehydrates from
+    /// (`oneiron::context_pack::ContextPackBuilder::rehydrate_from`) was a
+    /// stale packet, so it seeded nothing: the pack is today's pack.
+    pub stale: bool,
 }
 
 impl PackWorkingSetStats {
-    /// Whether the pack was seeded at all.
+    /// Whether the pack was seeded at all, or asked to be.
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.asked == 0
+        self.asked == 0 && !self.stale
     }
 
     /// Keeps in [`Self::served`] only the rows `held` says the pack still

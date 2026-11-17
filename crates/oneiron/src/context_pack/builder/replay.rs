@@ -55,6 +55,12 @@ impl ContextPackBuilder<'_> {
                 ),
             );
         }
+        // A rehydrated pack replays from the same packet, judged afresh.
+        if let Some(summary) = self.rehydrate_from
+            && let Some(assembly) = config.get_mut("assembly").and_then(Value::as_object_mut)
+        {
+            assembly.insert("rehydrate_from".to_owned(), Value::from(summary.to_hex()));
+        }
         config
     }
 }
