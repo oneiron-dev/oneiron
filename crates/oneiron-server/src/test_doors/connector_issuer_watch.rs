@@ -1,8 +1,10 @@
 //! Door for `tests/connector_issuer_prm_refusal.rs` (L5-11): the issuer
 //! watch a connector send runs at a refusal, on the send's own HTTP client,
-//! as the three refusal sites of one send call it.
+//! as the three refusal sites of one send call it, and the baseline the
+//! owner's admission of a connector records.
 
 use oneiron::connector_key::ConnectorCredentialBinding;
+use oneiron::consent::AuthenticatedOwner;
 use oneiron::secret_custody::SentValue;
 use oneiron::{EntityId, Vault};
 use reqwest::StatusCode;
@@ -76,5 +78,29 @@ fn watch(
     }
     issuer_watch::detect_at_refusal(
         vault, &client, endpoint, key_ref, status, &headers, presented,
+    )
+}
+
+/// The baseline `/qualify` and `/attest` record for catalog connector
+/// `connector` (key `catalog_key`) at `endpoint`, its route presenting
+/// `credential_ref`. Answers the binding recorded now, if any.
+///
+/// # Errors
+/// As the admission's own baseline read.
+pub fn baseline_at_admission(
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    connector: &str,
+    catalog_key: &EntityId,
+    endpoint: &str,
+    credential_ref: Option<&str>,
+) -> oneiron::Result<Option<ConnectorCredentialBinding>> {
+    issuer_watch::baseline_at_admission(
+        vault,
+        owner,
+        connector,
+        catalog_key,
+        endpoint,
+        credential_ref,
     )
 }
