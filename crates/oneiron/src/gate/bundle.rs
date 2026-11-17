@@ -541,7 +541,8 @@ impl Vault {
                     return Err(Error::Gate(GateError::GateWriteRejected {
                         outcome: "pending",
                         reason_codes: ceiling,
-                    }));
+                    })
+                    .into());
                 }
                 match settler {
                     BundleSettler::Owner(owner) if action == GateConsentBundleAction::Approve => {
