@@ -2,9 +2,13 @@
 use super::{ClaimApprovalStatus, ClaimBody, ClaimSource, encode_claim_body};
 use crate::gate::{GateReasonCode, PolicyCriticality};
 use crate::side_table::{Named, SideTable};
-use crate::store::{GateDecisionId, GateDecisionRecord, PendingGateConsentRecord};
+use crate::store::gate_reason::GateReceiptOutcome;
+use crate::store::{
+    GateDecisionRecord, GateReceipt, PendingGateConsentRecord, PolicyBasis, ReceiptActor,
+};
 use crate::write_envelope::WriteEnvelope;
 use crate::{EntityId, Error, Result, Vault};
+use oneiron_contracts::RecordedSeconds;
 use serde::{Deserialize, Serialize};
 
 mod retract;
@@ -212,6 +216,28 @@ impl Vault {
     ) -> Result<bool> {
         Ok(load(self, txn, id)?.is_some_and(|row| row.action.demotes_in_place()))
     }
+    /// Whether completing the action parked on `id` closes a claim that
+    /// restricts someone's access ([`crate::federation::claim_removal_widens_in`]):
+    /// a supersession closes the claim it names, and a retract, a weakening
+    /// or a stale mark closes `id` itself, whose stored body is `body`. A
+    /// decay keeps the claim's hold, as `claim_demote` reads it. No parked
+    /// action closes nothing.
+    pub(crate) fn deferred_close_lifts_restriction_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+        body: &ClaimBody,
+    ) -> Result<bool> {
+        match load(self, txn, id)?.map(|row| row.action) {
+            Some(DeferredAction::Supersede { old, .. }) => {
+                crate::federation::stored_removal_widens_in(self, txn, &EntityId::from_bytes(old)?)
+            }
+            Some(DeferredAction::Retract | DeferredAction::Weaken(_) | DeferredAction::Stale) => {
+                crate::federation::claim_removal_widens_in(self, txn, body)
+            }
+            Some(DeferredAction::Decay(_)) | None => Ok(false),
+        }
+    }
     pub(crate) fn cancel_deferred_claim_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
@@ -265,6 +291,23 @@ impl Vault {
             )?;
         }
         Ok(())
+    }
+
+    /// [`Self::stage_claim_supersession_in_txn`] for a proposed `new` that an
+    /// earlier write filed: the replacement is parked under `new`'s own
+    /// stored write envelope, the one its completion reads back.
+    pub(crate) fn stage_stored_claim_supersession_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        new: &EntityId,
+        old: &EntityId,
+        now: u64,
+    ) -> Result<()> {
+        let body = self
+            .get_claim_in_txn(txn, new)?
+            .ok_or(Error::EntityNotFound)?;
+        let envelope = super::supersession_provenance::envelope(&body)?;
+        self.stage_claim_supersession_in_txn(txn, new, old, &envelope, now)
     }
 
     /// Closes `old` under `new`, its owner's direct correction, inside the
@@ -332,27 +375,18 @@ impl Vault {
                 ],
             ),
         };
-        let mut record = GateDecisionRecord {
-            version: 0,
-            decision_id: GateDecisionId::from_bytes(self.store.clock.ulid()?),
-            created_at: now,
-            outcome: "allow".to_owned(),
-            reason_codes: vec![reason_code.to_owned()],
-            receipt_reasons,
-            system_notices: Vec::new(),
-            actor_class: owner.actor_class().gate_actor_class().to_owned(),
-            actor_ref: Some(owner.entity_ref().to_hex()),
-            content_kind: "claim".to_owned(),
-            policy_manifest_version: crate::gate::POLICY_SCHEMA_VERSION.to_owned(),
-            claim_id: Some(*new.as_bytes()),
-            grant_ref: None,
+        let mut receipt = GateReceipt::new(
+            GateReceiptOutcome::Approved,
+            "claim",
+            reason_code,
+            ReceiptActor::Row(owner),
             diff_handle,
-            read_frontier_hash,
-            context: Default::default(),
-            redacted_at: None,
-        };
-        self.store
-            .append_fresh_gate_decision_in_txn(txn, &mut record)
+            PolicyBasis::frontier(read_frontier_hash),
+        );
+        receipt.receipt_reasons = receipt_reasons;
+        receipt.about = Some(*new);
+        self.store.record_gate_receipt_in_txn(txn, receipt)?;
+        Ok(())
     }
 
     /// Re-evaluate an ordinary parked replacement for Auto and close the
@@ -426,7 +460,16 @@ impl Vault {
                     claim_id: *id,
                 }));
             }
-            if proposal.critical || attributed(&prior) || attributed(&body) {
+            // An Auto grant is no person's: a replacement that would close a
+            // claim restricting someone's access waits for the owner, as a
+            // critical one does (RULING RESTRICTION-CLOSE-BY-CONFLICT-SETTLE;
+            // the owner, 15 Nov 18:3x: "Dreamer having to ask the owner is
+            // ok"; Astra review on #8189, F4).
+            if proposal.critical
+                || attributed(&prior)
+                || attributed(&body)
+                || crate::federation::claim_removal_widens_in(self, txn, &prior)?
+            {
                 return Err(Error::Gate(crate::error::GateError::GateWriteRejected {
                     outcome: "pending",
                     reason_codes: vec![GateReasonCode::PendingCriticalityFloor.as_str()],
@@ -502,10 +545,12 @@ impl Vault {
             && pending.reason_codes == [reason(&proposal.action, critical)];
         let parked_by = self.store.gate_decision_in_txn(txn, pending.decision_id)?;
         let parker = Parker {
-            actor_class: parked_by
-                .as_ref()
-                .map_or_else(|| "system".to_owned(), |record| record.actor_class.clone()),
-            actor_ref: parked_by.and_then(|record| record.actor_ref),
+            // The new pending row keeps the class and ref of the row it
+            // replaces.
+            actor: parked_by.map_or(ReceiptActor::Engine, |record| ReceiptActor::Verbatim {
+                class: record.actor_class,
+                actor_ref: record.actor_ref,
+            }),
             run: pending.dreamer_run_id.clone(),
             // A re-staged row is a new pending decision, so a critical
             // confirm it newly needs gets its whole window.
@@ -615,8 +660,7 @@ impl Vault {
                 self.store.close_pending_gate_consent_as_in_txn(
                     txn,
                     id,
-                    now,
-                    "superseded",
+                    GateReceiptOutcome::Superseded,
                     vec!["gate.supersede.contradiction_closure".to_owned()],
                     None,
                     // Keep the outer Clear's existing obligation result.
@@ -687,10 +731,7 @@ pub(super) fn put_pending(
     }
     let actor = envelope.map(WriteEnvelope::actor);
     let parker = Parker {
-        actor_class: actor
-            .map_or("system", |actor| actor.actor_class().gate_actor_class())
-            .to_owned(),
-        actor_ref: actor.map(|actor| actor.entity_ref().to_hex()),
+        actor: actor.map_or(ReceiptActor::Engine, ReceiptActor::Row),
         run: envelope.and_then(|envelope| match envelope.provenance().value() {
             rmpv::Value::Map(rows) => rows
                 .iter()
@@ -706,8 +747,7 @@ pub(super) fn put_pending(
 
 /// Who parked a deferred action, the run review it shows in, and when.
 struct Parker {
-    actor_class: String,
-    actor_ref: Option<String>,
+    actor: ReceiptActor,
     run: Option<String>,
     created_at: u64,
 }
@@ -742,26 +782,17 @@ fn park(
         diff_handle = critical_diff(&diff_handle, &encoded);
     }
     let reason = reason(&proposal.action, proposal.critical);
-    let record = GateDecisionRecord {
-        version: 0,
-        decision_id: GateDecisionId::now(),
-        created_at: now,
-        outcome: "pending".to_owned(),
-        reason_codes: vec![reason.to_owned()],
-        receipt_reasons: Vec::new(),
-        system_notices: Vec::new(),
-        actor_class: parker.actor_class,
-        actor_ref: parker.actor_ref,
-        content_kind: "claim".to_owned(),
-        policy_manifest_version: crate::gate::POLICY_SCHEMA_VERSION.to_owned(),
-        claim_id: Some(*id.as_bytes()),
-        grant_ref: None,
-        diff_handle: diff_handle.clone(),
-        read_frontier_hash,
-        context: Default::default(),
-        redacted_at: None,
-    };
-    vault.store.append_gate_decision_in_txn(txn, &record)?;
+    let mut receipt = GateReceipt::new(
+        GateReceiptOutcome::Pending,
+        "claim",
+        reason,
+        parker.actor,
+        diff_handle.clone(),
+        PolicyBasis::frontier(read_frontier_hash),
+    );
+    receipt.about = Some(*id);
+    receipt.decided_at = Some(RecordedSeconds::from_secs(now));
+    let record = vault.store.record_gate_receipt_in_txn(txn, receipt)?;
     vault.store.put_pending_gate_consent_in_txn(
         txn,
         &PendingGateConsentRecord {

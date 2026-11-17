@@ -169,6 +169,7 @@ fn registry_row(
         scores: BTreeMap::new(),
         fetched_at: BTreeMap::new(),
         tokens_per_o200k: None,
+        answer_tokens_per_o200k: None,
         stale_since: None,
         source_rows: None,
     })
@@ -375,7 +376,8 @@ pub fn ensure_completed_trial_offer(vault: &Vault) -> Result<TrialFixture> {
                     scope_facet_id: vault.default_facet()?.to_hex(),
                     scope_relationship_id: ClaimRelationships::All(AllRelationships::All),
                     scope_project_id: default_project_id().to_hex(),
-                },
+                }
+                .into(),
                 sensitivity: None,
                 evidence_turn_refs: Vec::new(),
                 valid_from: None,

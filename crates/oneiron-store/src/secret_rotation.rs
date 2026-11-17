@@ -36,15 +36,13 @@
 //! * blob artifacts carry them IN BODY under the pinned
 //!   `secret_taint.refs` key
 //!   ([`crate::blob_artifact::BLOB_ARTIFACT_OPTIONAL_BODY_KEYS`]),
-//!   so the attach is the artifact put itself;
+//!   so the attach is the artifact put itself, and a host's later mark
+//!   joins the same key, so it replicates with the row;
 //! * code-run raw outputs carry them in a `vault_meta` SIDECAR row written in
 //!   the same transaction as the raw-output row
-//!   (`crate::code_run` owns that key);
-//! * any other exhaust ENTITY (the code artifact a build leg produced, which
-//!   is what an artifact pointer publishes) carries them in the entity-keyed
-//!   sidecar row under [`SECRET_EXHAUST_TAINT_PREFIX`].
+//!   (`crate::code_run` owns that key).
 //!
-//! All three are forward-only. None of them is an index a rotation could
+//! Both are forward-only. None of them is an index a rotation could
 //! walk, and that is the point.
 //!
 //! # What never crosses this module
@@ -66,6 +64,7 @@ use oneiron_base::error::SecretError;
 use oneiron_base::registry::ENTITY_TYPE_ASSET;
 use oneiron_base::registry::ENTITY_TYPE_BLOB_ARTIFACT;
 use oneiron_contracts::entity_id::EntityId;
+use oneiron_contracts::msgpack::{self, Entries, MsgpackError};
 
 /// The custody secret-name bound, also used for stored taint refs.
 pub const SECRET_TAINT_REF_MAX_BYTES: usize = crate::secret_record::types::SECRET_NAME_MAX_BYTES;
@@ -75,16 +74,7 @@ pub fn invalid_body(reason: &'static str) -> Error {
 }
 
 pub fn required_value<'a>(entries: &'a [(Value, Value)], key: &str) -> Option<&'a Value> {
-    let mut found = None;
-    for (k, v) in entries {
-        if k.as_str() == Some(key) {
-            if found.is_some() {
-                return None;
-            }
-            found = Some(v);
-        }
-    }
-    found
+    Entries::new(entries).get(key).ok().flatten()
 }
 
 pub fn as_u64(value: &Value) -> Option<u64> {
@@ -102,7 +92,8 @@ pub fn as_u64(value: &Value) -> Option<u64> {
 const TAINT_REF_KEYS: [&str; 2] = ["secret_ref", "generation"];
 
 /// Encodes taint refs as the canonical MessagePack array-of-maps that both
-/// the sidecar rows and the `secret_taint.refs` artifact body key carry.
+/// the code-run sidecar rows and the `secret_taint.refs` artifact body key
+/// carry.
 ///
 /// ONE shape for both storage planes on purpose: a consumer that learns to
 /// read a taint ref has learned to read every taint ref this crate writes.
@@ -196,20 +187,13 @@ impl crate::side_table::codec::RawValue for Vec<SecretTaintRef> {
 
 pub fn encode_taint_refs_row(refs: &[SecretTaintRef]) -> Result<Vec<u8>> {
     validate_taint_refs(refs)?;
-    let mut out = Vec::new();
-    rmpv::encode::write_value(&mut out, &taint_refs_to_value(refs))
-        .map_err(|_| invalid_body("encode taint refs row"))?;
-    Ok(out)
+    Ok(msgpack::encode(&taint_refs_to_value(refs)))
 }
 
 pub fn decode_taint_refs_row(bytes: &[u8]) -> Result<Vec<SecretTaintRef>> {
-    use std::io::Cursor;
-
-    let mut cursor = Cursor::new(bytes);
-    let value =
-        rmpv::decode::read_value(&mut cursor).map_err(|_| invalid_body("decode taint refs row"))?;
-    if cursor.position() != bytes.len() as u64 {
-        return Err(invalid_body("trailing bytes after taint refs row"));
-    }
+    let value = msgpack::decode(bytes).map_err(|error| match error {
+        MsgpackError::Trailing => invalid_body("trailing bytes after taint refs row"),
+        _ => invalid_body("decode taint refs row"),
+    })?;
     taint_refs_from_value(&value).ok_or(invalid_body("taint refs row"))
 }

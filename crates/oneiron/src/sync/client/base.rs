@@ -7,21 +7,19 @@ use std::sync::Mutex;
 use loro::{LoroDoc, VersionVector};
 use tokio::sync::mpsc;
 
-use super::types::{EphemeralChangeOrigin, SVF_FRESH, SyncClientConfig, SyncEvent, SyncStatus};
+use super::types::{EphemeralChangeOrigin, SyncClientConfig, SyncEvent, SyncStatus};
 use crate::Vault;
 use crate::error::{
     Error, Result, SyncConfigField, SyncEngineContext, SyncError, SyncProtocolValidation,
 };
-use crate::sync::loro_support::{doc_from_snapshot, doc_version_vector, export_snapshot};
+use crate::sync::loro_support::doc_from_snapshot;
 use crate::sync::manager::WindowManager;
 use crate::sync::schema::read_window_list;
 use crate::sync::transport;
 use crate::sync::transport::TransportError;
 use crate::sync::types::{WindowKey, parse_window_key_str};
 use crate::sync::window::{LoadedWindow, UpdateVerdict, Withhold};
-use crate::sync::window_rows::{
-    LAST_SYNC, ROOT_SHALLOW_FENCE, ROOT_SNAPSHOT, ROOT_STATE_VECTOR, ROOT_UPDATE,
-};
+use crate::sync::window_rows::{LAST_SYNC, ROOT_SNAPSHOT, ROOT_UPDATE};
 use crate::sync::{
     EphemeralEventTrigger, EphemeralStore, EphemeralStoreEvent, LoroValue, Subscription,
 };
@@ -776,11 +774,7 @@ impl SyncClient {
         if self.config.federation_peer.is_some() {
             return Ok(());
         }
-        // Saturate to 0 on pre-epoch wall clock — matches the other
-        // SystemTime uses in this module.
-        let now_secs = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0, |d| d.as_secs());
+        let now_secs = crate::unix_seconds_now();
         self.vault.with_write_txn_grouped(|wtxn| {
             LAST_SYNC.put(&self.vault.store, wtxn, &(), &now_secs.to_le_bytes())?;
             Ok(())
@@ -793,16 +787,20 @@ impl SyncClient {
     /// into its `ls:` row in the SAME txn, so the replay doors' lease reads
     /// can never observe a root state without its registry rows. Malformed
     /// entries quarantine (x: row) and keep any previous good `ls:` row.
+    ///
+    /// This is the put the device's own server uses, so the rows and the
+    /// mirror keep every root op that server wrote since this doc was loaded:
+    /// a window it added, a lease it revoked or expired
+    /// (`server_state::persist_root_with_lease_mirror_in_txn`). This doc
+    /// itself stays the home's root.
     pub(super) fn persist_root_state(&self) -> Result<()> {
         let frontiers_before = self.root_doc.state_frontiers();
-        let snapshot = export_snapshot(&self.root_doc)?;
-        let vv = doc_version_vector(&self.root_doc);
         if let Err(err) = self.vault.with_write_txn_grouped(|wtxn| {
-            ROOT_SNAPSHOT.put(&self.vault.store, wtxn, &(), &snapshot)?;
-            ROOT_STATE_VECTOR.put(&self.vault.store, wtxn, &(), &vv)?;
-            ROOT_SHALLOW_FENCE.put(&self.vault.store, wtxn, &(), &[SVF_FRESH])?;
-            crate::sync::lease::mirror_leases_from_root_in_txn(&self.vault, wtxn, &self.root_doc)?;
-            Ok(())
+            crate::sync::server_state::persist_root_with_lease_mirror_in_txn(
+                &self.vault,
+                wtxn,
+                &self.root_doc,
+            )
         }) {
             if let Err(revert_err) = self.root_doc.revert_to(&frontiers_before) {
                 return Err(Error::sync_engine_rollback(

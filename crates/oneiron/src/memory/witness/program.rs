@@ -102,13 +102,21 @@ pub(crate) struct ImportedTurnStamp {
     /// A source landing's proof (fix list row 16256): with it, the
     /// CONVERSATION, the TURN and every MESSAGE revision this turn lands
     /// carry the source-audience obligation in their own bytes, and the turn
-    /// joins only containers that carry it. History and connector imports
-    /// hold none, and land no row that names it. `source` stays import
-    /// provenance only.
+    /// joins only containers that carry it. A history import holds one for a
+    /// conversation its source shared; other history imports and connector
+    /// imports hold none, and land no row that names it. `source` stays
+    /// import provenance only.
     pub(crate) source_audience: Option<SourceAudienceBirth>,
     /// Whom the source names as each message's speaker, resolved in the
     /// landing's writer before admission.
     pub(crate) attribution: super::SourceAttribution,
+    /// The FACET a TURN this landing births is born under: a shared
+    /// workspace's own facet for a history import of it (Engine ruling
+    /// L2-18-WORKSPACE-FACET-CARRIER = A); `None` stamps the vault default,
+    /// as every other landing does. Only the TURN takes it: the FacetOf
+    /// table admits no CONVERSATION or MESSAGE (ONE-1645), so those keep
+    /// their substrate facet.
+    pub(crate) facet: Option<EntityId>,
 }
 
 /// Who holds the door, and which turn-id capability they carry.

@@ -233,7 +233,8 @@ pub use self::labels::{
     set_judge_digest_minutes,
 };
 pub(crate) use self::labels::{
-    judge_ask_room, recheck_judge_labels, take_digest_asks_in_txn, take_digest_eval_asks_in_txn,
+    judge_ask_room, pinned_judge_rubric_in_txn, recheck_judge_labels, take_digest_asks_in_txn,
+    take_digest_eval_asks_in_txn,
 };
 pub use self::offer::{
     ComputeDestination, OFFER_SKILL_AXIS, OfferAnswer, OfferAnswerRecord, OfferCandidate,
@@ -241,7 +242,7 @@ pub use self::offer::{
     OfferModelPin, OfferOption, SeatWorkload, TrainingOffer, TrainingOfferDraft,
     eval_authoring_skill_id, offer_skill_cell, pending_training_offers, record_offer_check,
     record_training_offer, training_offer, training_offer_checks, training_offer_skill_id,
-    training_offers, union_source_rows,
+    training_offer_skill_in_force, training_offers, union_source_rows,
 };
 pub(crate) use self::offer::{
     erase_offer_answer_actor_in_txn, erase_offer_source_in_txn, live_source_rows_in,

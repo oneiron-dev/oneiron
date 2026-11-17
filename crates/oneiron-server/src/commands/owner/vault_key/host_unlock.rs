@@ -6,7 +6,9 @@ use std::path::Path;
 use std::sync::Arc;
 
 use oneiron::recovery::{KitId, KitSecretKind, checkpoint::CheckpointKey};
-use oneiron::world_keys::{HybridSecretKey, RecoveryRootSeed, VaultKeyUnlock, WORLD_KIT_ESCROW};
+use oneiron::world_keys::{
+    HybridSecretKey, KitPasskey, RecoveryRootSeed, RecoverySheet, VaultKeyUnlock, WORLD_KIT_ESCROW,
+};
 use oneiron_keystore::DeviceKeystore;
 use zeroize::Zeroizing;
 
@@ -56,7 +58,12 @@ pub(crate) enum HostUnlock {
         vault_id: [u8; 32],
         pieces: Vec<oneiron::recovery::KitPiece>,
         passphrase: Option<oneiron::recovery::KitPassphrase>,
+        /// The synced passkey's credential name and PRF output: the piece
+        /// a `kit_point` wrap seals under it joins `pieces` (census L10-18).
+        passkey: Option<(String, Zeroizing<[u8; 32]>)>,
     },
+    /// The printed recovery sheet, read from its code.
+    Sheet(RecoverySheet),
 }
 
 impl HostUnlock {
@@ -147,7 +154,8 @@ impl HostUnlock {
     /// reads; a registry capsule's report must name that vault, and the
     /// engine opens it only to the key the vault's commitment names. The kit
     /// is bound to the vault id the owner names, never the one a mirror or
-    /// the store carries.
+    /// the store carries; the synced passkey the request names counts its
+    /// sealed piece as one of the kit's (census L10-18).
     pub(super) fn read_for_vault(
         request: &UnlockRequest<'_>,
         vault_id: impl FnOnce() -> anyhow::Result<[u8; 32]>,
@@ -156,10 +164,15 @@ impl HostUnlock {
         before_secret: impl FnOnce(bool) -> anyhow::Result<()>,
     ) -> anyhow::Result<Self> {
         if request.method == UnlockMethod::Kit {
+            let passkey = super::super::recovery_kit::kit_passkey(
+                request.kit_passkey_prf_file,
+                request.credential,
+            )?;
             return super::super::recovery_kit::kit_unlock_existing(
                 request.vault_id,
                 request.pieces,
                 request.secret.secret_file.as_deref(),
+                passkey,
                 |kind, kit| match open_vault {
                     Some(vault) => Ok(vault.keeps_kit_piece_for(kind, kit)),
                     None => match Self::open_kit_keystore(config, &config.vault_path) {
@@ -243,6 +256,13 @@ impl HostUnlock {
                     kit_seed: None,
                 }
             }
+            UnlockMethod::Sheet => {
+                let code = read_secret(secret, "the recovery sheet's code")?;
+                let code = std::str::from_utf8(&code).map_err(|_| {
+                    anyhow::anyhow!("a recovery sheet's code is 56 letters and digits")
+                })?;
+                Self::Sheet(RecoverySheet::from_code(code)?)
+            }
             UnlockMethod::Kit => anyhow::bail!(
                 "--unlock kit opens with the kit's pieces (--piece) and the vault id it is bound \
                  to (--vault-id)"
@@ -260,6 +280,7 @@ impl HostUnlock {
             // `--unlock kit`, as the flag names it; a pre-open world kit's
             // Escrow says its wrap above.
             Self::WorldKit { .. } | Self::VaultKeyKit { .. } => "kit".to_owned(),
+            Self::Sheet(_) => "sheet".to_owned(),
         }
     }
 
@@ -297,12 +318,17 @@ impl HostUnlock {
                 vault_id,
                 pieces,
                 passphrase,
+                passkey,
             } => Some(VaultKeyUnlock::Kit {
                 vault_id: *vault_id,
                 pieces,
                 passphrase: passphrase.as_ref(),
+                passkey: passkey
+                    .as_ref()
+                    .map(|(credential, prf)| KitPasskey { credential, prf }),
                 keystore: None,
             }),
+            Self::Sheet(sheet) => Some(VaultKeyUnlock::Sheet(sheet)),
         }
     }
 
@@ -380,7 +406,20 @@ impl HostUnlock {
                 vault_id,
                 pieces,
                 passphrase,
+                passkey: None,
             } => vault.unlock_vault_key_with_kit(vault_id, pieces, passphrase.as_ref()),
+            Self::VaultKeyKit {
+                vault_id,
+                pieces,
+                passphrase,
+                passkey: Some((credential, prf)),
+            } => vault.unlock_vault_key_with_kit_and_passkey(
+                vault_id,
+                pieces,
+                passphrase.as_ref(),
+                KitPasskey { credential, prf },
+            ),
+            Self::Sheet(sheet) => vault.unlock_vault_key_with_sheet(sheet),
         }
     }
 }

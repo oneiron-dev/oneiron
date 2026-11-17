@@ -70,6 +70,13 @@ pub enum SecretError {
     /// reason is the scan's code and never holds secret bytes.
     #[error("a masked copy of this file is withheld: {reason}")]
     MaskedCopyWithheld { reason: &'static str },
+    /// A credential the owner marks as a payment credential is withheld at
+    /// both value doors while this host's runner fence is unproven and its
+    /// self-hoster has not lifted the withholding (L8-60; CROSS-ARCH-0019
+    /// `#fence-unproven`, OSH-5). Every other credential stays at its rung,
+    /// and the run goes on without this one.
+    #[error("payment credential `{secret_ref}` is withheld: this host's runner fence is unproven")]
+    PaymentCredentialWithheld { secret_ref: String },
     /// The credential-door dial no longer admits this door-bound T0/T1
     /// materialization. The reason never contains secret or manifest bytes.
     #[error("secret materialization refused by credential-door policy: {reason}")]
@@ -189,6 +196,13 @@ pub enum SecretError {
     /// may not hold. The reason is a fixed name, never key or envelope bytes.
     #[error("world key refused: {0}")]
     WorldKeyRefused(&'static str),
+    /// A data-key generation met a wrap no presented way covers and the
+    /// owner did not confirm for removal: the way would stop unlocking new
+    /// data. A world key refusal by kind; nothing is written.
+    #[error(
+        "world key refused: the way {id} would stop unlocking new data: present it or confirm its removal"
+    )]
+    DataKeyGenerationWayUnconfirmed { id: String },
     /// No capsule of a sealed bundle or pad object opens for this key: it was
     /// sealed to other readers, as before this machine was added (FIX 4274).
     /// A world key refusal by kind.
@@ -274,6 +288,7 @@ impl SecretError {
             Self::SecretTierDenied { .. } => ErrorKind::SecretTierDenied,
             Self::SealedFileWithheld => ErrorKind::SealedFileWithheld,
             Self::MaskedCopyWithheld { .. } => ErrorKind::MaskedCopyWithheld,
+            Self::PaymentCredentialWithheld { .. } => ErrorKind::PaymentCredentialWithheld,
             Self::SecretDoorPolicyRefused { .. } => ErrorKind::SecretDoorPolicyRefused,
             Self::SecretRefNotFound { .. } => ErrorKind::SecretRefNotFound,
             Self::SecretWiderThanManifest { .. } => ErrorKind::SecretWiderThanManifest,
@@ -293,6 +308,7 @@ impl SecretError {
             Self::SecretHostDeliveryRefused { .. } => ErrorKind::SecretHostDeliveryRefused,
             Self::SecretGrantCleanupKept { .. } => ErrorKind::SecretGrantCleanupKept,
             Self::WorldKeyRefused(_)
+            | Self::DataKeyGenerationWayUnconfirmed { .. }
             | Self::SealedBundleNoCapsule
             | Self::StalePageSealCredential
             | Self::UnfinishedSealedCreation => ErrorKind::WorldKeyRefused,

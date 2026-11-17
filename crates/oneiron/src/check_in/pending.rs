@@ -17,11 +17,9 @@
 //! resolver over the verified records (2c). The host that wakes a due row is
 //! 2e; the agent verbs are 2f and 2l.
 
-use serde::{Deserialize, Serialize};
-
 use super::act_class::{ActClass, ProofKind};
 use super::mode::CheckInMode;
-use super::policy::{CheckInScope, ClassWait};
+use super::policy::CheckInScope;
 use super::receipt::{CheckInOutcome, ReceiptFields, write_check_in_receipt_in_txn};
 use super::resolve::WaitReason;
 use super::waits::{enter_next_rung, refuse};
@@ -88,94 +86,16 @@ fn delete_pending_in_txn(store: &Store, txn: &mut heed::RwTxn<'_>, id: &EntityId
     Ok(())
 }
 
-/// The BLAKE3 natural key of an ask: the asker, the verb, the act class,
-/// where the effect sits and the effect's digest (P23-SHAPE Q2 = A). Two
-/// opens with one key are the same saved call.
-fn open_key_of(
-    asker: EntityId,
-    verb: &str,
-    act: ActClass,
-    scope: &CheckInScope,
-    effect_digest: &[u8; 32],
-) -> [u8; 32] {
-    let mut hasher = blake3::Hasher::new_derive_key("oneiron.check_in.open_key.v1");
-    hasher.update(asker.as_bytes());
-    for part in [
-        Some(verb),
-        Some(act.as_str()),
-        scope.world_ref.as_deref(),
-        scope.project_ref.as_deref(),
-    ] {
-        match part {
-            Some(text) => {
-                hasher.update(&[1]);
-                hasher.update(&(text.len() as u64).to_be_bytes());
-                hasher.update(text.as_bytes());
-            }
-            None => {
-                hasher.update(&[0]);
-            }
-        }
-    }
-    hasher.update(effect_digest);
-    *hasher.finalize().as_bytes()
-}
-
-/// A rung of the ladder above rung 1 (ARCH-0082 #ladder).
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Rung {
-    /// Rung 2: the parent of a spawned child, the person behind a companion,
-    /// the binder of a house agent.
-    Grantor,
-    /// Rung 3: the next holders up the grant chain, all holders of a role at
-    /// once.
-    ChainHolders,
-    /// Rung 4: the Owner role, where the chain ends.
-    Owner,
-}
-
-impl Rung {
-    /// The rung's number on canon's ladder.
-    #[must_use]
-    pub const fn number(self) -> u8 {
-        match self {
-            Self::Grantor => 2,
-            Self::ChainHolders => 3,
-            Self::Owner => 4,
-        }
-    }
-
-    /// The rung above this one; `None` above the Owner.
-    #[must_use]
-    pub const fn next(self) -> Option<Self> {
-        match self {
-            Self::Grantor => Some(Self::ChainHolders),
-            Self::ChainHolders => Some(Self::Owner),
-            Self::Owner => None,
-        }
-    }
-
-    /// The receipt token.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Grantor => "grantor",
-            Self::ChainHolders => "chain_holders",
-            Self::Owner => "owner",
-        }
-    }
-}
+#[doc(hidden)]
+use oneiron_records::check_in::pending::open_key_of;
+#[doc(hidden)]
+pub use oneiron_records::check_in::pending::{
+    CapturedWait, DelayWindow, EligibleBasis, Extension, HolderAnswer, Objection, PendingCheckIn,
+    PendingState, Rung, RungEntry, RungHolder,
+};
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::check_in::pending::HolderKind;
-
-/// One holder a rung asks, pinned when the ask enters the rung.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
-pub struct RungHolder {
-    pub principal: EntityId,
-    pub kind: HolderKind,
-}
 
 /// Who a rung asks, as a [`RungResolver`] reads the verified records.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -223,90 +143,14 @@ pub(crate) trait RungResolver {
     /// enters the agent's rung (P22-SHAPE Q4 = A). `None`: no verdict, and
     /// the agent passes the ask up.
     fn agent_verdict(&self, pending: &PendingCheckIn, holder: &RungHolder) -> Option<HolderAnswer>;
-}
 
-/// The wait a person rung captured when the ask entered it (P22-SHAPE Q5).
-/// A policy change applies only to rungs entered after it.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-pub struct CapturedWait {
-    /// The act class's effective wait per person rung, and its source.
-    pub floor: ClassWait,
-    /// The wait this rung runs: the floor, or the asker's longer wait.
-    pub secs: u64,
-    pub due_at: u64,
-}
-
-/// A holder's "give me until <time>" on one rung, receipted. `by` is `None`
-/// once the holder's erase scrubbed it; the extension stands.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
-pub struct Extension {
-    pub until: u64,
-    pub by: Option<EntityId>,
-    pub at: u64,
-}
-
-/// One rung the ask entered.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-pub struct RungEntry {
-    pub rung: Rung,
-    pub entered_at: u64,
-    /// The holders pinned on entry; empty on a skipped rung.
-    pub holders: Vec<RungHolder>,
-    /// The missing link of a skipped rung.
-    pub skipped: Option<String>,
-    /// The person wait; `None` on a rung with no person holder.
-    pub wait: Option<CapturedWait>,
-    /// The latest extension a holder gave on this rung.
-    pub extension: Option<Extension>,
-}
-
-impl RungEntry {
-    /// When the rung's wait ends: the extension, else the captured wait. A
-    /// rung with no person holder is due when it is entered.
-    #[must_use]
-    pub fn due_at(&self) -> u64 {
-        match (&self.extension, &self.wait) {
-            (Some(extension), _) => extension.until,
-            (None, Some(wait)) => wait.due_at,
-            (None, None) => self.entered_at,
-        }
-    }
-}
-
-/// An objection to a delay window, admitted by canon's PR 4 producer. `by`
-/// is `None` once the objector's erase scrubbed it; the objection stands.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
-pub struct Objection {
-    pub by: Option<EntityId>,
-    pub at: u64,
-}
-
-/// A delay window the act's proof is (ARCH-0082 #no-answer): silence at its
-/// end is the proof, and an objection holds it. Its notice and objections
-/// come from canon's PR 4 producer; this row keeps them.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-pub struct DelayWindow {
-    pub notice_at: u64,
-    pub ends_at: u64,
-    pub objections: Vec<Objection>,
-}
-
-/// A holder's answer.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum HolderAnswer {
-    Approve,
-    Deny,
-}
-
-impl HolderAnswer {
-    /// The receipt token.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Approve => "approve",
-            Self::Deny => "deny",
-        }
+    /// The asker's spawn parent this chain was built with, which an open
+    /// stores on the row ([`PendingCheckIn::spawn_parent`]) before it enters
+    /// the first rung, so every later rung reads it from the row. `None`
+    /// unless the agent verb door built the chain from the caller's running
+    /// attempt (FIX CHECK-IN-SPAWN-PARENT-PRINCIPAL).
+    fn spawn_parent(&self) -> Option<EntityId> {
+        None
     }
 }
 
@@ -316,185 +160,6 @@ impl HolderAnswer {
 pub struct HolderReply {
     pub effect_digest: [u8; 32],
     pub answer: HolderAnswer,
-}
-
-/// Where a pending check-in stands. Every state but `Open` is final, and
-/// each is receipted (canon's table "When nobody answers").
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum PendingState {
-    /// On a rung, or past the last rung while its delay window runs.
-    Open,
-    /// The first valid answer landed; every other holder reads who gave it
-    /// (`None` once that holder's erase scrubbed it).
-    Answered {
-        answer: HolderAnswer,
-        by: Option<EntityId>,
-        rung: Rung,
-        at: u64,
-    },
-    /// The asker's `until` passed: the ask let go, and nothing happens.
-    LetGo { at: u64 },
-    /// The chain is exhausted and the act may not proceed on silence: it
-    /// holds, and the agent goes on with other work.
-    Held { at: u64 },
-    /// The chain is exhausted, the act is undoable and its mode is
-    /// `AskWhenUnsure`: it may proceed with this undo plan (ARCH-0076, a
-    /// reversible step takes the answer). Running it is 2e.
-    ProceedWithUndo { at: u64, undo_plan: String },
-    /// The delay window ended in silence: that is the proof.
-    WindowPassed { at: u64 },
-    /// The delay window ended with an objection standing: it holds.
-    ObjectionHeld { at: u64 },
-}
-
-/// Why a settled check-in's act may run (Engine ruling P23-SHAPE Q3 = A).
-/// Three final states make it eligible, each on its own basis; every other
-/// state makes nothing eligible, so silence is never a yes outside canon's
-/// two no-answer rows (ARCH-0082 "When nobody answers").
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum EligibleBasis {
-    /// A holder approved the exact effect.
-    Approved,
-    /// The chain ended in silence on an undoable act asked when unsure: it
-    /// runs with the undo plan the asker gave.
-    ProceedWithUndo,
-    /// The delay window ended in silence: that is the proof.
-    WindowPassed,
-}
-
-impl EligibleBasis {
-    /// The receipt token.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Approved => "approved",
-            Self::ProceedWithUndo => "proceed_with_undo",
-            Self::WindowPassed => "window_passed",
-        }
-    }
-}
-
-/// A pending check-in.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-pub struct PendingCheckIn {
-    pub id: EntityId,
-    pub asker: EntityId,
-    /// The asker's grant on this vault link, by its ref.
-    pub grant_ref: String,
-    /// The exact verb that waits.
-    pub verb: String,
-    pub act: ActClass,
-    pub scope: CheckInScope,
-    /// The digest of the exact effect; an answer over any other settles
-    /// nothing.
-    pub effect_digest: [u8; 32],
-    /// The mode the check-in resolved to.
-    pub mode: CheckInMode,
-    pub reason: WaitReason,
-    pub opened_at: u64,
-    /// The asker's longer wait per person rung, beside `until`.
-    pub asker_wait_secs: Option<u64>,
-    /// The asker's cutoff: at it the ask lets go.
-    pub until: Option<u64>,
-    /// The domain undo the caller gave at open; without one an exhausted
-    /// chain holds.
-    pub undo_plan: Option<String>,
-    pub delay_window: Option<DelayWindow>,
-    /// Every rung the ask entered, in order; the last is the current one.
-    pub rungs: Vec<RungEntry>,
-    /// When the ask passed the last rung while its delay window still ran.
-    pub chain_exhausted_at: Option<u64>,
-    pub state: PendingState,
-    /// The receipts written so far; the next receipt's sequence.
-    pub transitions: u32,
-    /// When the act this row held ran, on its eligible basis: it runs once.
-    #[serde(default)]
-    pub consumed_at: Option<u64>,
-    /// The logical call that opened the row through `vault.check_in.open`,
-    /// when its host bound one (2f; P23-SHAPE Q2 = A). The act's own gate
-    /// that resends under it is PR 3's.
-    #[serde(default)]
-    pub invocation: Option<[u8; 16]>,
-}
-
-impl PendingCheckIn {
-    /// The rung the ask is on.
-    #[must_use]
-    pub fn current_rung(&self) -> Option<&RungEntry> {
-        self.rungs.last()
-    }
-
-    /// The basis on which the act this row holds may run, or `None`: an
-    /// allow-list over the states (P23-SHAPE Q3 = A). A denial, a let-go, a
-    /// hold, a standing objection or an open ask makes nothing eligible. It
-    /// says nothing of whether the act already ran (`consumed_at`).
-    #[must_use]
-    pub fn eligible_basis(&self) -> Option<EligibleBasis> {
-        match &self.state {
-            PendingState::Answered {
-                answer: HolderAnswer::Approve,
-                ..
-            } => Some(EligibleBasis::Approved),
-            PendingState::ProceedWithUndo { .. } => Some(EligibleBasis::ProceedWithUndo),
-            PendingState::WindowPassed { .. } => Some(EligibleBasis::WindowPassed),
-            PendingState::Open
-            | PendingState::Answered {
-                answer: HolderAnswer::Deny,
-                ..
-            }
-            | PendingState::LetGo { .. }
-            | PendingState::Held { .. }
-            | PendingState::ObjectionHeld { .. } => None,
-        }
-    }
-
-    /// The row's natural key: its asker, verb, act class, scope and effect
-    /// digest.
-    #[must_use]
-    pub(crate) fn open_key(&self) -> [u8; 32] {
-        open_key_of(
-            self.asker,
-            &self.verb,
-            self.act,
-            &self.scope,
-            &self.effect_digest,
-        )
-    }
-
-    /// Whether a repeat open of the same saved call returns this row: while
-    /// it is open, and once settled until its act ran. A let-go ask (the
-    /// asker stopped waiting) and a spent one are asked afresh; a denial, a
-    /// hold or a standing objection stays the answer, so a repeat never asks
-    /// the ladder again.
-    #[must_use]
-    pub fn answers_a_repeat(&self) -> bool {
-        !matches!(self.state, PendingState::LetGo { .. }) && self.consumed_at.is_none()
-    }
-
-    /// The next instant a transition is due, for the host that wakes it:
-    /// the earliest of `until`, the window's end and the current rung's
-    /// end. `None` once the state is final.
-    #[must_use]
-    pub fn next_due_at(&self) -> Option<u64> {
-        if self.state != PendingState::Open {
-            return None;
-        }
-        let rung = if self.chain_exhausted_at.is_some() {
-            None
-        } else {
-            self.current_rung().map(RungEntry::due_at)
-        };
-        [
-            self.until,
-            self.delay_window.as_ref().map(|window| window.ends_at),
-            rung,
-        ]
-        .into_iter()
-        .flatten()
-        .min()
-    }
 }
 
 /// The window an asker's caller opens with, from canon's PR 4 producer.
@@ -564,7 +229,21 @@ pub(crate) fn open_pending_check_in_in_txn(
     chain: &dyn RungResolver,
     now: u64,
 ) -> Result<PendingCheckIn> {
-    validate_open(&request, now)?;
+    create_open_row_in_txn(vault, txn, request, None, chain, now)
+}
+
+/// [`open_pending_check_in_in_txn`], for the closed `room` when it is
+/// `Some`: the row enters only [`Rung::RoomOwner`], and its grant ref may be
+/// empty, for an adder who holds no grant on the vault.
+fn create_open_row_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    request: OpenPendingCheckIn,
+    room: Option<EntityId>,
+    chain: &dyn RungResolver,
+    now: u64,
+) -> Result<PendingCheckIn> {
+    validate_open(&request, room.is_some(), now)?;
     let floor = super::waits::class_wait_in_txn(vault, txn, request.act, &request.scope)?;
     if request
         .asker_wait_secs
@@ -577,6 +256,7 @@ pub(crate) fn open_pending_check_in_in_txn(
     let mut row = PendingCheckIn {
         id: vault.store.clock.entity_id()?,
         asker: request.asker,
+        spawn_parent: chain.spawn_parent(),
         grant_ref: request.grant_ref,
         verb: request.verb,
         act: request.act,
@@ -599,6 +279,7 @@ pub(crate) fn open_pending_check_in_in_txn(
         transitions: 0,
         consumed_at: None,
         invocation: None,
+        room,
     };
     let fields = ReceiptFields::new(&row)
         .with("verb", row.verb.clone())
@@ -608,6 +289,10 @@ pub(crate) fn open_pending_check_in_in_txn(
             "effect_digest",
             crate::receipt::hex_lower(&row.effect_digest),
         );
+    let fields = match row.room {
+        Some(room) => fields.with("room", room.to_hex()),
+        None => fields,
+    };
     let asker = row.asker;
     write_check_in_receipt_in_txn(
         &vault.store,
@@ -639,8 +324,17 @@ pub(crate) fn keyed_pending_check_in_in_txn(
     scope: &CheckInScope,
     effect_digest: &[u8; 32],
 ) -> Result<Option<PendingCheckIn>> {
-    let key = open_key_of(asker, verb, act, scope, effect_digest);
-    let Some(id) = OPEN_KEY.get(store, txn, &key)? else {
+    let key = open_key_of(asker, verb, act, scope, effect_digest, None);
+    keyed_row_in_txn(store, txn, &key)
+}
+
+/// The row the natural key `key` names while it answers a repeat.
+fn keyed_row_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    key: &[u8; 32],
+) -> Result<Option<PendingCheckIn>> {
+    let Some(id) = OPEN_KEY.get(store, txn, key)? else {
         return Ok(None);
     };
     Ok(PENDING
@@ -665,18 +359,50 @@ pub(crate) fn open_keyed_pending_check_in_in_txn(
     chain: &dyn RungResolver,
     now: u64,
 ) -> Result<(PendingCheckIn, bool)> {
-    if let Some(row) = keyed_pending_check_in_in_txn(
-        &vault.store,
-        txn,
+    open_keyed_row_in_txn(vault, txn, request, None, invocation, chain, now)
+}
+
+/// [`open_keyed_pending_check_in_in_txn`] for an add into the closed `room`
+/// (ARCH-0082 #closed-room; P26-SHAPE Q5 = A): the row enters only
+/// [`Rung::RoomOwner`], its key names the room, and its grant ref may be
+/// empty, for an adder who holds no grant on the vault.
+///
+/// # Errors
+///
+/// As [`open_pending_check_in_in_txn`].
+pub(crate) fn open_keyed_room_owner_check_in_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    request: OpenPendingCheckIn,
+    room: EntityId,
+    invocation: Option<[u8; 16]>,
+    chain: &dyn RungResolver,
+    now: u64,
+) -> Result<(PendingCheckIn, bool)> {
+    open_keyed_row_in_txn(vault, txn, request, Some(room), invocation, chain, now)
+}
+
+fn open_keyed_row_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    request: OpenPendingCheckIn,
+    room: Option<EntityId>,
+    invocation: Option<[u8; 16]>,
+    chain: &dyn RungResolver,
+    now: u64,
+) -> Result<(PendingCheckIn, bool)> {
+    let key = open_key_of(
         request.asker,
         &request.verb,
         request.act,
         &request.scope,
         &request.effect_digest,
-    )? {
+        room.as_ref(),
+    );
+    if let Some(row) = keyed_row_in_txn(&vault.store, txn, &key)? {
         return Ok((row, false));
     }
-    let mut row = open_pending_check_in_in_txn(vault, txn, request, chain, now)?;
+    let mut row = create_open_row_in_txn(vault, txn, request, room, chain, now)?;
     if invocation.is_some() {
         row.invocation = invocation;
         store_pending_in_txn(&vault.store, txn, &row)?;
@@ -685,11 +411,12 @@ pub(crate) fn open_keyed_pending_check_in_in_txn(
     Ok((row, true))
 }
 
-fn validate_open(request: &OpenPendingCheckIn, now: u64) -> Result<()> {
+/// `room_route`: a closed room's ask, whose adder may hold no grant.
+fn validate_open(request: &OpenPendingCheckIn, room_route: bool, now: u64) -> Result<()> {
     if request.mode == CheckInMode::NeverAsk {
         return Err(refuse("a NeverAsk act does not wait"));
     }
-    if request.verb.is_empty() || request.grant_ref.is_empty() {
+    if request.verb.is_empty() || (request.grant_ref.is_empty() && !room_route) {
         return Err(refuse("a pending check-in names its verb and grant"));
     }
     if request.until.is_some_and(|until| until <= now) {
@@ -995,8 +722,11 @@ fn require_may_answer(
 /// a pending check-in the actor asked is removed, since no act of theirs
 /// waits any more; every other row drops the actor from its pinned holders
 /// and from a skipped rung's missing link, and names nobody where it named
-/// the actor as the one who answered, extended or objected. The answer, the
-/// extension, the objection and the skip stand. The receipts stand,
+/// the actor as the one who answered, extended or objected, or as the
+/// asker's spawn parent. A rung the ask enters after that reads the asker's
+/// grantor as an ask no spawned run opened does (the grant's
+/// `delegated_by`). The answer, the extension, the objection and the skip
+/// stand. The receipts stand,
 /// scrubbed by their own table's scrub, which takes the actor out of the
 /// same `missing_link` value the same way.
 ///
@@ -1039,6 +769,7 @@ fn scrub_row(row: &mut PendingCheckIn, actor: &EntityId) -> bool {
     if let PendingState::Answered { by, .. } = &mut row.state {
         scrub(by);
     }
+    scrub(&mut row.spawn_parent);
     for entry in &mut row.rungs {
         if let Some(extension) = entry.extension.as_mut() {
             scrub(&mut extension.by);

@@ -154,12 +154,17 @@ impl ScopedRead<'_> {
             // #e5-read-union-open, ROOM-PACK-MEMBER-COUNT).
             pack.stats.entities_hydrated = pack.results.len();
             pack.stats.neighbors_hydrated = pack.neighbors.len();
+            let kept_rows = &pack.results;
+            pack.stats
+                .working_set
+                .settle(|id| kept_rows.iter().any(|entity| entity.id == *id));
             pack.stats.claims_suppressed +=
                 result_suppressed + neighbor_suppressed + reachability_claims;
             let mut admitted = PackCriticalAccounting::default();
             for id in &critical.budget_omitted_ids {
                 if self.is_entity_retrievable_held_in(&rtxn, &policy, &filter, id, &held)?
                     && crate::context_pack::disclosure_admits_target(
+                        self.vault,
                         &self.store_read(),
                         &rtxn,
                         disclosure,
@@ -188,6 +193,19 @@ impl ScopedRead<'_> {
             crate::disclosure::project_model_pack_in(self.vault, &rtxn, &self.actor_key, pack)?;
             // A neighbor the reachability cut dropped keeps no entry.
             producers.retain_returned(pack);
+            // What the lane releases counts toward its reader's exposure
+            // (L8-65); a later cut to a response's limits takes none back.
+            self.charge_served(
+                pack.results
+                    .iter()
+                    .chain(&pack.neighbors)
+                    .map(|row| row.id)
+                    .chain(
+                        pack.l2_base
+                            .iter()
+                            .flat_map(|base| base.evidence_ids().iter().copied()),
+                    ),
+            );
             // The pack's receipt reports the candidates its search ranked,
             // the key's own rows and its own live Grants' (FIX 7528).
             let candidates = self.candidate_filter_in(&rtxn, &policy, &filter, None);
@@ -401,8 +419,8 @@ impl ScopedRead<'_> {
             return Ok(true);
         }
         if let Some(clamp) = disclosure
-            && !clamp.admits(
-                &self.vault.store,
+            && !clamp.admits_in(
+                self.vault,
                 rtxn,
                 &entity.id,
                 crate::registry::ENTITY_TYPE_TURN,
