@@ -462,7 +462,9 @@ impl ScopedRead<'_> {
 }
 
 /// What a relationship read decides one stored row on, before it knows who
-/// reads it.
+/// reads it. A deleted row's captured scope keeps it (`DeletedRecordScope`),
+/// so this shape is also a stored row format.
+#[derive(serde::Serialize, serde::Deserialize)]
 pub(crate) enum RelationshipRead {
     /// The row decides alone: a kind relationship reads do not gate
     /// (`true`), or one whose scope fields or record position do not resolve
@@ -647,7 +649,7 @@ pub(crate) fn owner_only_audience_change() -> crate::error::Error {
 /// [`relationship_read_keyed`] for an identity topology event (FIX
 /// DISTINCT-EVENT-UNGATED, OPUS-LEAKS). An AssertDistinct event names its
 /// pair and its `entity.distinct_from` CLAIM, and that CLAIM carries the
-/// audience of the words that asserted it (`narrow_distinct_claim_in_txn`).
+/// audience of the words that asserted it (`DistinctClaimPlace`).
 /// So the event reads as its CLAIM reads, on the CLAIM's live axes in the
 /// same transaction. A CLAIM that is gone, deleted, or not the event's pair
 /// withholds the event. Every other topology action keeps today's verdict.

@@ -1,0 +1,20 @@
+[package]
+name = "oneiron-setting-contract"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "The Setting vocabulary below the oneiron engine: scopes, modes, the value contract, restore and sync classes, and the pure decision of which stored row a read takes"
+repository.workspace = true
+
+[lib]
+doctest = false
+
+[dependencies]
+oneiron-contracts = { version = "0.1.0", path = "../oneiron-contracts" }
+rmp-serde = { workspace = true }
+schemars = "=0.8.22"
+serde = { workspace = true }
+
+[lints]
+workspace = true

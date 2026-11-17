@@ -220,7 +220,9 @@ impl<'a> ScopedRead<'a> {
         let human = crate::edge::EdgeActorClass::Human;
         crate::memory::verify_actor_binding_in_txn(self.vault, txn, owner, human)
             .and_then(|()| {
-                if crate::vault::embedded_owner_actor_id().ok() == Some(owner) {
+                if crate::vault::embedded_owner_actor_id().ok() == Some(owner)
+                    && crate::memory::embedded_owner_shortcut_holds_in_txn(self.vault, txn)?
+                {
                     Ok(())
                 } else {
                     crate::memory::verify_owner_actor_binding_in_txn(self.vault, txn, owner)
@@ -283,6 +285,17 @@ impl<'a> ScopedRead<'a> {
         let claims = proof.claims();
         let now = self.vault.instant_in_txn(txn)?.secs();
         if now < claims.issued_at || now >= claims.expires_at {
+            return Ok(false);
+        }
+        // A slip follows its holder's row (RULING DELETED-ACTOR-SLIP-AUTH =
+        // A): a key kept from a holder's verified slip reads nothing once
+        // that holder is deleted, as the slip's own doors refuse it then
+        // (Astra review of #8289, finding 1).
+        if crate::authority::slip_holder_is_deleted_in_txn(
+            &self.vault.store,
+            txn,
+            &claims.holder_ref,
+        )? {
             return Ok(false);
         }
         if let Some(share) = &claims.share_ref {

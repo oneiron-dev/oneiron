@@ -267,6 +267,27 @@ fn named_ids(body: &ClaimBody) -> Vec<EntityId> {
         .collect()
 }
 
+/// [`named_ids`] without a stored row that is no CLAIM. A consolidation
+/// marker's evidence cites TURNs beside its members, and a claim read of a
+/// TURN is an error, not an absence. An id stored as nothing yet stays: a
+/// retained alternative is named before it is kept (FIX 7072).
+fn named_claim_ids_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    body: &ClaimBody,
+) -> Result<Vec<EntityId>> {
+    let mut named = Vec::new();
+    for id in named_ids(body) {
+        if vault
+            .get_entity_type_in_txn(txn, &id)?
+            .is_none_or(|kind| kind == crate::registry::ENTITY_TYPE_CLAIM)
+        {
+            named.push(id);
+        }
+    }
+    Ok(named)
+}
+
 /// The predicates a marker contests: a coaching marker's value is the
 /// predicate; a consolidation marker lists them, or names its one.
 fn contested_predicates(body: &ClaimBody) -> Vec<String> {
@@ -312,7 +333,7 @@ fn open_conflict_from(
     // since in its import's review is one, standing for it (FIX 6152)
     // unless the owner declined it there; a declined one stays a member
     // standing for nothing (FIX 7072).
-    let named = named_ids(&body);
+    let named = named_claim_ids_in_txn(vault, txn, &body)?;
     let kept =
         super::retained_keep::keep_history_in_txn(vault, txn, marker, subject, &named, reverted)?;
     let staged = kept.staged.iter().map(|(_, staged)| *staged);
@@ -469,7 +490,15 @@ pub(crate) fn open_conflict_in_txn(
 /// closes), under the claim lifecycle's own guards: a generated claim still
 /// never supersedes user-stated truth.
 /// Only a `person` closes user-stated truth at all: an agent's settlement
-/// that would is refused, and the conflict stays for the owner. `close_as`
+/// that would is refused, and the conflict stays for the owner. Only a
+/// `person` supersedes a member that restricts someone's access either
+/// (a delivery window, an opt-out, a do-not-contact, a held campaign
+/// membership, ...; [`crate::federation::claim_removal_widens_in`]),
+/// whatever its source: removing a restriction widens access, and an
+/// agent's widening always asks the person affected (canon
+/// #widen-world-floor). An agent holder's or the Dreamer's settlement that
+/// would is refused, and the conflict stays for a person holder or the
+/// owner (RULING RESTRICTION-CLOSE-BY-CONFLICT-SETTLE). `close_as`
 /// attributes a delegate's close; the owner's close is the owner's. The
 /// answering claim then records the settlement on the marker's own axes.
 /// `keep_as` says how a kept retained alternative lands (FIX 5753). `now` is
@@ -553,12 +582,16 @@ pub(crate) fn apply_settlement_in_txn(
                     "only a person supersedes user-stated truth",
                 ));
             }
+            if !person && crate::federation::claim_removal_widens_in(vault, txn, &body)? {
+                return Err(invalid_consolidation(
+                    "only a person supersedes a claim that restricts someone's access",
+                ));
+            }
             vault.cancel_deferred_claim_in_txn(txn, &loser)?;
             vault.store.close_pending_gate_consent_in_txn(
                 txn,
                 &loser,
-                now / 1_000,
-                "superseded",
+                crate::store::gate_reason::GateReceiptOutcome::Superseded,
                 reasons(),
                 None,
             )?;
@@ -568,8 +601,7 @@ pub(crate) fn apply_settlement_in_txn(
             vault.store.close_pending_gate_consent_in_txn(
                 txn,
                 &loser,
-                now / 1_000,
-                "superseded",
+                crate::store::gate_reason::GateReceiptOutcome::Superseded,
                 reasons(),
                 None,
             )?;
@@ -763,6 +795,43 @@ pub(crate) fn revert_settlement_in_txn(
         reverted.retracted = Some(kept);
     }
     Ok(reverted)
+}
+
+/// Whether reverting the settlement `resolved` answers would retract a
+/// claim that restricts someone's access
+/// ([`crate::federation::claim_removal_widens_in`]): the winner it landed
+/// from its marker's retained candidates, still standing, which
+/// [`revert_settlement_in_txn`] retracts. The members it restores close
+/// nothing. An answer that is no standing settlement's lifts nothing: its
+/// revert refuses.
+pub(crate) fn settlement_revert_lifts_restriction_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    resolved: EntityId,
+) -> Result<bool> {
+    let Some(answer) = vault.get_claim_in_txn(txn, &resolved)? else {
+        return Ok(false);
+    };
+    if answer.predicate != PREDICATE_CONFLICT_RESOLVED || !claim_surfaceable(&answer) {
+        return Ok(false);
+    }
+    let Some(resolution) = string_at(&answer.value, "resolution")
+        .filter(|resolution| string_at(resolution, "settlement").is_some())
+    else {
+        return Ok(false);
+    };
+    let Some(kept) = marker_ids(resolution, "kept").next() else {
+        return Ok(false);
+    };
+    if marker_ids(resolution, MATERIALIZED_KEY).next() != Some(kept) {
+        return Ok(false);
+    }
+    match vault.get_claim_in_txn(txn, &kept)? {
+        Some(body) if body.lifecycle == ClaimLifecycleStatus::Active => {
+            crate::federation::claim_removal_widens_in(vault, txn, &body)
+        }
+        _ => Ok(false),
+    }
 }
 
 /// Where a revert's fresh Dreamer copy says it came from: its provenance

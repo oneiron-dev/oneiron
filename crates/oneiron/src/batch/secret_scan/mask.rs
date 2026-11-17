@@ -86,7 +86,8 @@ use crate::write_envelope::ClaimCandidate;
 pub(in crate::batch) use batch_door::mask_batch_ops;
 pub(crate) use promoted_message_parts::seal_promoted_message_ops_in_txn;
 use split_phrase::Spread;
-use text_spans::{file_spans, merged, occurrences, secret_spans};
+pub(crate) use text_spans::{file_spans, span_placed_for};
+use text_spans::{merged, occurrences, secret_spans};
 use wipe::{PlanOps, PlanValues, replace_wiped};
 
 const REASON_BLOCKLIST: &str = "gate.secret_scan.blocklist";
@@ -173,6 +174,42 @@ pub(crate) fn rebind_mask_origin_in_txn(
     }
     origin.record = *new;
     MASK_ORIGIN.put(store, wtxn, custody, &origin)
+}
+
+/// The place a mask on write names for a key it lifted out of a stored
+/// file's bytes: the file keeps its bytes, and only its mark names the
+/// record.
+pub(crate) const FILE_PLACE: &str = "file";
+
+/// Each custody record a mask on write minted for a key it lifted out of a
+/// stored file, read in `txn`: the records whose only marks are the
+/// files' own (FILE-CUSTODY-MERGE-AFTER-REWRAP).
+pub(crate) fn file_mints_in_txn(store: &Store, txn: &heed::RoTxn<'_>) -> Result<Vec<EntityId>> {
+    Ok(MASK_ORIGIN
+        .scan(store, txn)?
+        .into_iter()
+        .filter(|(_, origin)| origin.place == FILE_PLACE)
+        .map(|(custody, _)| custody)
+        .collect())
+}
+
+/// Moves the mask origin of the custody record `from` to the record `to`
+/// (FILE-CUSTODY-MERGE-AFTER-REWRAP): `to` takes it unless it holds one of
+/// its own, and `from` keeps none.
+pub(crate) fn move_mask_origin_in_txn(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    from: &EntityId,
+    to: &EntityId,
+) -> Result<()> {
+    let Some(origin) = MASK_ORIGIN.get(store, wtxn, from)? else {
+        return Ok(());
+    };
+    if MASK_ORIGIN.get(store, wtxn, to)?.is_none() {
+        MASK_ORIGIN.put(store, wtxn, to, &origin)?;
+    }
+    MASK_ORIGIN.delete(store, wtxn, from)?;
+    Ok(())
 }
 
 /// Keeps an immutable part whole in existing custody. Only its handle leaves
@@ -529,7 +566,7 @@ impl Masker {
                     if self.minted {
                         continue;
                     }
-                    self.at = Some((*id, "file".to_owned()));
+                    self.at = Some((*id, FILE_PLACE.to_owned()));
                     if let Some(copy) = self.mark_file(*id, data)? {
                         replace_wiped(data, copy);
                     }

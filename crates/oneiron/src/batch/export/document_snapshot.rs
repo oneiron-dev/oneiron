@@ -282,6 +282,18 @@ impl Vault {
     ) -> std::result::Result<(W, WholeVaultExportReceipt), E> {
         let destination: ReadDestination = destination.into();
         let locality = crate::settings::read_destination_locality(&destination);
+        // L2-23: an archive's manifest is signed by this install's machine
+        // key, read here outside every transaction. This signer lookup
+        // writes no vault row and no slot (the export's callers still write
+        // its receipt and audit rows, as before): it never mints a machine
+        // id or a seed, and never forgets a machine whose slot is empty
+        // (`Vault::read_install_signer`, which names the one keystore that
+        // makes its own sealing key on a read). With no keystore, no machine
+        // id or no seed it goes out unsigned, as before: the export never
+        // refuses (ARCH-0052 P6).
+        let signer = (cut == ExportCut::Archive)
+            .then(|| self.read_install_signer().ok().flatten())
+            .flatten();
         let artifact = self.whole_vault_export_manifest_artifact(
             ExportSecretsNulledManifest::from_redacted(false),
         )?;
@@ -650,17 +662,40 @@ impl Vault {
         // ruling 1-EXPORT = B), never with a records archive. A carried
         // record whose family names a carrier left out is named in the
         // manifest instead.
+        let mut side_table_omissions = Vec::new();
         if cut == ExportCut::Archive {
-            let (rows, withheld) = super::archive_side_rows_in_txn(
-                &self.store,
-                &rtxn,
-                &included,
-                only.is_none() && (owner_export || locality == CallerLocality::OnDevice),
-            )?;
+            let include_vault_wide =
+                only.is_none() && (owner_export || locality == CallerLocality::OnDevice);
+            let (rows, withheld) =
+                super::archive_side_rows_in_txn(&self.store, &rtxn, &included, include_vault_wide)?;
             for row in rows {
                 writer.side_row(row)?;
             }
             writer.side_rows_withheld(withheld);
+            // SIDE-1: the retained rows go only with an unscoped whole-vault archive, under
+            // the same vault-wide gate as the other vault-wide families; a records, OKF,
+            // scoped or projected export gets none. Collected into memory like the 41-family
+            // writer.
+            if scope == ExportScope::WholeVault && include_vault_wide {
+                for row in super::archive_retained_side_rows::collect_retained_side_rows_in_txn(
+                    &self.store,
+                    &rtxn,
+                )? {
+                    writer.side_row(row)?;
+                }
+                side_table_omissions =
+                    super::archive_retained_side_rows::omitted_side_table_counts_in_txn(
+                        &self.store,
+                        &rtxn,
+                    )?
+                    .into_iter()
+                    .map(|(table, reason, rows)| super::ArchiveSideTableOmission {
+                        table: table.to_owned(),
+                        reason,
+                        rows,
+                    })
+                    .collect();
+            }
         }
         // FIX 11844: a custody secret only the fold knows here is named for
         // its holder too, as a held row's unopened value is above.
@@ -706,7 +741,9 @@ impl Vault {
                         && cut == ExportCut::Archive,
                     fold_only_secrets,
                     embedding_setup,
+                    side_table_omissions,
                     sources: sources.into_iter().collect(),
+                    signer,
                 },
                 sink,
             )

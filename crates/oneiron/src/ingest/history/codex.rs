@@ -596,7 +596,7 @@ impl Rollout {
                 HistoryRole::Assistant => message.tools = std::mem::take(&mut pending),
                 HistoryRole::User => {
                     pending.clear();
-                    message.said_by = said_by(&self.threads, line);
+                    message.said_by = said_by(&self.threads, line).map(str::to_owned);
                 }
             }
             conversation.messages.push(message);

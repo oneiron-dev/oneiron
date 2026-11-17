@@ -49,6 +49,7 @@ pub(in crate::batch) fn stage_entity_body_row(
         crate::note::validate_registered_kind(store, wtxn, data)?;
     }
     crate::access_grant::reindex_companion_grant(store, wtxn, id, Some((entity_type, data)))?;
+    crate::batch::reindex_lexical_query_hint(store, wtxn, id, Some((entity_type, data)))?;
     crate::store::identity_hints::reindex_identity_hints(
         store,
         wtxn,
@@ -65,6 +66,13 @@ pub(in crate::batch) fn stage_entity_body_row(
     payload.0.extend_from_slice(&row_version.to_be_bytes());
     payload.0.extend_from_slice(data);
     crate::vault::entity_revision::capture_entity_revision(store, wtxn, id, &payload.0)?;
+    // Reads the stored row's party keys, so it runs before the new row goes in.
+    crate::store::person_party_keys::reindex_person_party_keys(
+        store,
+        wtxn,
+        id,
+        Some((entity_type, data)),
+    )?;
     store.port_stage_entity_row(wtxn, id, &payload.0)?;
     crate::vault::entity_revision::index_name_phonetic(store, wtxn, id, entity_type, data)?;
     crate::conversation_dag::pin_typed_record(store, wtxn, id, entity_type, data)?;
