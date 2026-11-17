@@ -85,7 +85,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/batch/secret_scan/mod.rs` | src | s | 1 mod · 7 re-export | — | — |
 | `src/booking/agent_api.rs` | src | s | 2 struct · 1 enum · 3 fn · 1 const · 8 re-export | BookingAgentEndpoint, BookingAgentInstructionsBlock, BookingAgentInstructionsDefect | Moved from `crates/oneiron/src/booking/agent_api.rs` (lib split R2: record types below the lib) |
 | `src/booking/anti_abuse/mod.rs` | src | s | 1 mod · 4 re-export | — | — |
-| `src/booking/anti_abuse/rules.rs` | src | s | 3 struct · 1 enum · 2 fn · 1 mod | BookingAntiAbuseOwnerConfig, BookingAntiAbuseRule, BookingRuleOwnerStampBinding, BookingRuleScope | Moved from `crates/oneiron/src/booking/anti_abuse/rules.rs` (lib split R2: record types below the lib) |
+| `src/booking/anti_abuse/rules.rs` | src | s | 3 struct · 1 enum · 4 fn · 1 mod | BookingAntiAbuseOwnerConfig, BookingAntiAbuseRule, BookingRuleOwnerStampBinding, BookingRuleScope | Moved from `crates/oneiron/src/booking/anti_abuse/rules.rs` (lib split R2: record types below the lib) |
 | `src/booking/companion_preset/mod.rs` | src | s | 2 mod · 9 re-export | — | — |
 | `src/booking/companion_preset/preset.rs` | src | s | 2 enum | CompanionConfirmationMode, ProposalCarrier | Moved from `crates/oneiron/src/booking/companion_preset/preset.rs` (lib split R2: record types below the lib) |
 | `src/booking/companion_preset/proposal.rs` | src | s | 7 struct · 3 fn · 1 mod | ChoiceId, CompanionProposal, CompanionSoftConfirmation, ProposalChoice, ProposalId, ProposalTap, TapAggregate | Moved from `crates/oneiron/src/booking/companion_preset/proposal.rs` (lib split R2: record types below the… |
