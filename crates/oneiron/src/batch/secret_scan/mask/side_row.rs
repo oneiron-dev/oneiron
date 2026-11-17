@@ -615,7 +615,9 @@ fn admitted(
         part.mask(&mut minted, pass.refs)?;
     }
     // Each seal's value, as the minted pass left it, goes to custody whole
-    // and joins the values this writer lifted.
+    // and joins the values this writer lifted. With no door a value custody
+    // does not hold whole refuses; in an off-record room's row that refusal
+    // names the remedy too (FIX 2329).
     seal_whole::mint_part_seals(
         door,
         wtxn,
@@ -624,7 +626,14 @@ fn admitted(
         seals,
         known.as_deref(),
         &mut seed.0,
-    )?;
+    )
+    .map_err(|refusal| {
+        if scope.off_record {
+            off_record_fresh_key_refusal(refusal)
+        } else {
+            refusal
+        }
+    })?;
     if !accepts(parts) {
         return Err(Error::InvariantViolation(
             "a side row's own reading refused the handles its plan placed",
