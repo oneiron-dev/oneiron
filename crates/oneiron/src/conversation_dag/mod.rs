@@ -10,17 +10,18 @@
 mod admission;
 mod graph;
 #[cfg(feature = "sync")]
-pub(crate) use admission::{addressed_to_echo, addressed_to_echo_in_txn};
+pub(crate) use admission::addressed_to_echo;
 pub(crate) mod topology;
 #[cfg(test)]
 pub(crate) use admission::stored_body_pin_for_test;
-pub(crate) use admission::{
-    addressing, exact_core_turn_retry_in_txn, guard_record_put, guard_room_membership_delete,
-    guard_room_turn_delete, keep_membership_pin, landing_reply_waits_in, pin_membership,
-    pin_typed_record, record_is_append_only_in_txn, room_turn_owner, validate_local_membership,
-};
 #[cfg(feature = "sync")]
-pub(crate) use admission::{validate_received_edge, validate_received_parent_value};
+pub(crate) use admission::validate_received_parent_value;
+pub(crate) use admission::{
+    addressed_to_echo_in_txn, addressing, exact_core_turn_retry_in_txn, guard_record_put,
+    guard_room_membership_delete, guard_room_turn_delete, keep_membership_pin,
+    landing_reply_waits_in, pin_membership, pin_typed_record, record_is_append_only_in_txn,
+    room_turn_owner, validate_local_membership, validate_received_edge,
+};
 pub(crate) use topology::record_kind;
 mod membership;
 mod migration;
@@ -47,7 +48,7 @@ mod writes;
 pub(crate) use branch_scope::{prove_branch_anchor, prove_branch_span};
 pub(crate) use graph::{
     actor_in_txn, chain as retained_chain, conversation_of, counted_edge_ids, edge_ids,
-    is_sub_session_record, is_thread_record, keeps_dag_topology, named_room,
+    is_sub_session_record, is_thread_record, keeps_dag_topology, local_head_in, named_room,
     parent as retained_parent, record_has_dag_topology, require_type,
 };
 pub(crate) use participation::erased_thread_room_in_txn;
