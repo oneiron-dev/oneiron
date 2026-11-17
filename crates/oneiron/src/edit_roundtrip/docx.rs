@@ -11,6 +11,7 @@ use super::{
 use crate::blob_artifact::read_blob_artifact_head_in_txn;
 use crate::entity_id::EntityId;
 use crate::error::{ArtifactError, Error, Result};
+use oneiron_contracts::fingerprint::ContentHash;
 use oneiron_docedit::ArchiveLimits;
 
 /// Apply one native, guarded Word transaction and return an uncommitted proposal.
@@ -119,7 +120,7 @@ pub(super) fn run_docx_revision_with_limits(
         recalc: RecalcStatus::NotNeeded,
         calc_engine: None,
         base_version: None,
-        base_content_hash: *blake3::hash(input_bytes).as_bytes(),
+        base_content_hash: *ContentHash::of(input_bytes).as_bytes(),
         sheet_answers: None,
     })))
 }

@@ -14,6 +14,7 @@ use crate::gate::{NativeAutoChecker, resolve_policy_manifest};
 use crate::write_envelope::WriteActor;
 use crate::write_envelope::provenance::made_by::MadeBy;
 use crate::{EntityId, Error, Result, Vault};
+use oneiron_contracts::fingerprint::ContentHash;
 use sha2::{Digest, Sha256};
 
 /// Only this module can construct one; the producer supplies both verifier results.
@@ -249,7 +250,7 @@ impl SealJobWrite<'_> {
             || actor.actor_class() != EdgeActorClass::System
             || artifact != &self.artifact()
             || provenance != &job.provenance
-            || content_hash != blake3::hash(self.bytes()).as_bytes()
+            || content_hash != ContentHash::of(self.bytes()).as_bytes()
             || version != 1
             || parent.is_some()
             || fork.is_some()
