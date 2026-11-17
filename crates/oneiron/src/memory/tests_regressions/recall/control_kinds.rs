@@ -20,7 +20,6 @@ fn recall_leaves_a_fresh_slip_mint_out_unless_the_kind_is_named() {
                 "I prefer a window seat when I fly.",
             )],
             occurred_at: crate::unix_seconds_now() - 28 * 86_400,
-            project: None,
         })
         .expect("witness");
 
@@ -135,7 +134,6 @@ fn recall_after_control_writes_fixture_in(
             turn_ref: None,
             messages: vec![message],
             occurred_at: crate::unix_seconds_now() - 28 * 86_400,
-            project: None,
         })
         .expect("witness message");
 

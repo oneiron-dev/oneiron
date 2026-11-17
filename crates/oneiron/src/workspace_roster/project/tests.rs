@@ -848,7 +848,6 @@ fn leaders_open_direct_chat_under_own_scopes_and_root_rule_narrows() -> Result<(
                 is_visible: true,
                 order: 0,
             }],
-            project: None,
         };
         let receipt = vault
             .memory(actor, EdgeActorClass::Human)
@@ -878,7 +877,6 @@ fn leaders_open_direct_chat_under_own_scopes_and_root_rule_narrows() -> Result<(
             is_visible: true,
             order,
         }],
-        project: None,
     };
     let bob_message = EntityId::now();
     let denied = vault
@@ -922,7 +920,6 @@ fn leaders_open_direct_chat_under_own_scopes_and_root_rule_narrows() -> Result<(
             is_visible: true,
             order: 0,
         }],
-        project: None,
     };
     let alice_memory = vault.memory(alice, EdgeActorClass::Human);
     let handle = alice_memory
@@ -1076,7 +1073,6 @@ fn leaders_open_direct_chat_under_own_scopes_and_root_rule_narrows() -> Result<(
             is_visible: true,
             order: 0,
         }],
-        project: None,
     };
     let denied = vault
         .memory(alice, EdgeActorClass::Human)

@@ -36,7 +36,6 @@ fn speak(
                 is_visible: true,
                 order: 0,
             }],
-            project: None,
         })
         .unwrap();
     id

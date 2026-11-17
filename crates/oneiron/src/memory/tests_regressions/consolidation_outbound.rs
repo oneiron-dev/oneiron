@@ -92,7 +92,6 @@ fn consolidation_queue_round_trip_with_facade_writeback() {
                 "mid-consolidation note",
             )],
             occurred_at: 2003,
-            project: None,
         })
         .expect("source write never queues behind derived work");
 

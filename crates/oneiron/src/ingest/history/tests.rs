@@ -184,7 +184,6 @@ fn plain_turn(conversation_ref: String, turn_ref: Option<String>) -> WitnessTurn
             order: 40,
         }],
         occurred_at: IMPORTED_AT + 100,
-        project: None,
     }
 }
 
@@ -447,7 +446,6 @@ fn an_import_never_lands_in_a_plain_conversation_at_its_derived_id() {
                 order: 0,
             }],
             occurred_at: WITNESSED_AT,
-            project: None,
         })
         .expect("plain witness");
 

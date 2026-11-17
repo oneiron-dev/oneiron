@@ -1272,7 +1272,6 @@ fn graph_fs_listings_expire_grants_without_other_writes() -> Result<()> {
                 is_visible: true,
                 order: 0,
             }],
-            project: None,
         })
         .expect("witness message");
     let reader = vault.scoped_read(

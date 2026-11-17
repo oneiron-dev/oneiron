@@ -584,7 +584,6 @@ fn witnessed_chat_session(vault: &Vault, turn_count: usize, now: u64) -> Result<
                     order: 0,
                 }],
                 occurred_at: now + index,
-                project: None,
             })
             .expect("the witness door lands the turn");
     }

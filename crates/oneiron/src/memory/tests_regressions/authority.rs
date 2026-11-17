@@ -88,7 +88,6 @@ fn asserted_actor_bindings_resolve_against_the_store() {
                 turn_ref: None,
                 messages: vec![witness_message(0, WitnessAuthor::User, "x")],
                 occurred_at: 671,
-                project: None,
             })
             .expect_err("ghost witness"),
     ] {
@@ -360,7 +359,6 @@ fn hard_deleted_ids_cannot_be_recreated_through_the_facade() {
             turn_ref: None,
             messages: vec![ghost_message],
             occurred_at: 707,
-            project: None,
         })
         .expect_err("witness message at purged id");
     assert_eq!(err.code, MEMORY_CODE_FORBIDDEN);

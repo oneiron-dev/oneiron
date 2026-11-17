@@ -36,7 +36,6 @@ fn surfaced_failure_card_accepts_canonical_witness_membership() -> Result<()> {
                 order: 0,
             }],
             occurred_at: 100,
-            project: None,
         })
         .expect("witness a canonical Q&A message");
 

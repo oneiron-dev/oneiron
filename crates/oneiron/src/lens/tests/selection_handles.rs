@@ -88,7 +88,6 @@ fn quote_fixture() -> Result<SpanFixture> {
                 order: 0,
             }],
             occurred_at: 500,
-            project: None,
         })
         .expect("witness canonical MESSAGE");
     let message = vault

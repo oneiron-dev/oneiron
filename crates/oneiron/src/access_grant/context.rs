@@ -342,7 +342,6 @@ mod tests {
                     is_visible: true,
                     order: 0,
                 }],
-                project: None,
             })
             .expect("authenticated witness message");
         vault.put_entity(&summary, ENTITY_TYPE_SUMMARY, when, 1, &body)?;

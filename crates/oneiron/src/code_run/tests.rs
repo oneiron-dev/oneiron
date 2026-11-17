@@ -2300,7 +2300,6 @@ fn ordinary_thought_and_public_witness_cannot_forge_blocked_receipts() -> Result
             order: 0,
         }],
         occurred_at: 1_719_000_000,
-        project: None,
     };
     let error = vault
         .memory(actor, EdgeActorClass::Agent)

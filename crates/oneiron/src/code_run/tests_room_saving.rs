@@ -353,7 +353,6 @@ fn a_save_refuses_a_copy_whose_order_the_turn_took_since() {
                 order: 1,
             }],
             occurred_at: 60_500,
-            project: None,
         })
         .expect("an ordinary witness appends to the saved turn");
     assert_eq!(base_orders(&vault, &turn), vec![0, 1]);

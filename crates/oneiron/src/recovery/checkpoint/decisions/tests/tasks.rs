@@ -301,7 +301,6 @@ pub(super) fn resident_wakes() -> Result<Case> {
                 is_visible: true,
                 order: 0,
             }],
-            project: None,
         })
         .map_err(memory)?;
     let auth = vault.authenticate_owner(owner, &owner.to_hex(), true, GateDecisionId::now())?;

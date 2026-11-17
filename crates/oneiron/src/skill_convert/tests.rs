@@ -146,7 +146,6 @@ fn witnessed_turns(vault: &Vault, lines: &[&str], now: u64) -> Vec<EntityId> {
                         order: 0,
                     }],
                     occurred_at: now + u64::try_from(index).expect("fixture turn counts are small"),
-                    project: None,
                 })
                 .expect("the witness door lands the turn");
             turn

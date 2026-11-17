@@ -435,7 +435,6 @@ fn relationship_message_requires_principal_grant_before_provider_and_at_settle()
                 is_visible: true,
                 order: 0,
             }],
-            project: None,
         })?;
     crate::test_util::authorize_readers(
         &vault,

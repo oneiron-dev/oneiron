@@ -730,7 +730,6 @@ fn a_failed_turn_exports_as_counts_never_its_text() -> Result<()> {
                 is_visible: true,
                 order: 0,
             }],
-            project: None,
         })
         .expect("authorized witness");
     // The turn's retrieval came back empty: a memory miss.

@@ -110,7 +110,6 @@ fn a_continuation_behind_a_later_consumed_turn_is_selected_again() -> Result<()>
             turn_ref: Some(later.to_hex()),
             messages: vec![message(0, WitnessAuthor::User, "the weather is fine", true)],
             occurred_at: 20,
-            project: None,
         })
         .expect("a later turn");
     assert_eq!(dirty(&vault)?, vec![turn, later], "both turns are dirty");
@@ -180,7 +179,6 @@ fn a_same_second_continuation_is_planned_by_its_close_and_strands_no_new_turn() 
         turn_ref: Some(turn.to_hex()),
         messages: vec![message(0, WitnessAuthor::User, "", true)],
         occurred_at: now,
-        project: None,
     };
     end_stream(&vault, writer, &input, "call me", "finalize");
     for (round, words) in [(1, " Owen"), (2, " please"), (3, "")] {
@@ -203,7 +201,6 @@ fn a_same_second_continuation_is_planned_by_its_close_and_strands_no_new_turn() 
             turn_ref: Some(later.to_hex()),
             messages: vec![message(0, WitnessAuthor::User, "the weather is fine", true)],
             occurred_at: now,
-            project: None,
         })
         .expect("a new turn in the same second");
     assert_eq!(

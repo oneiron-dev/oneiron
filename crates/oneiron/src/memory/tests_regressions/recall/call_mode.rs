@@ -34,7 +34,6 @@ fn witness_said(facade: &Memory<'_>, conversation: u8, said: &str, age_days: u64
             turn_ref: None,
             messages: vec![witness_message(0, WitnessAuthor::User, said)],
             occurred_at: crate::unix_seconds_now() - age_days * 86_400,
-            project: None,
         })
         .expect("witness");
 }
@@ -249,7 +248,6 @@ fn call_mode_never_returns_a_row_a_normal_recall_withholds() {
                 "lantern secret to forget",
             )],
             occurred_at: crate::unix_seconds_now() - 3 * 86_400,
-            project: None,
         })
         .expect("witness");
     let erased = resolve_entity_ref(&vault, &erased.message_short_ids[0]).expect("message id");

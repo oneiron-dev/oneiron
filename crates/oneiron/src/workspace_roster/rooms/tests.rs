@@ -24,7 +24,6 @@ fn turn(
             order: 0,
         }],
         occurred_at: at,
-        project: None,
     }
 }
 fn permit_room_reads(vault: &Vault, actors: &[EntityId]) -> Result<()> {

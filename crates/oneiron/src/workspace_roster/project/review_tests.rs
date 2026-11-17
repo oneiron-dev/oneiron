@@ -54,7 +54,6 @@ fn room_fixture() -> Result<(
             order: 0,
         }],
         occurred_at: 2,
-        project: None,
     };
     let user = vault.memory(host, EdgeActorClass::Human);
     user.rooms_speak(&speak(trunk, "trunk", None))
