@@ -1236,7 +1236,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/connector_admission_host.rs` | src | L | 17 crate-vis | — | The host half of a generic MCP catalog connector's first admission (OF-189): discovery at the endpoint… |
 | `src/connector_admission_host/issuer_rerun.rs` | src | s | 1 crate-vis | — | FIX 9304: the re-run an accepted issuer revision starts |
 | `src/connector_admission_host/reply_read.rs` | src | s | 1 crate-vis | — | Reading one admission reply body, JSON or an event stream, until the response that answers a request |
-| `src/connector_call_host.rs` | src | L | 1 struct · 1 fn · 1 mod · 21 crate-vis | ServedConnectorCallHost | The served [`ConnectorCallHost`] (ONE-2510): the generic connector call's transport, credential and reply… |
+| `src/connector_call_host.rs` | src | L | 1 struct · 1 fn · 1 mod · 23 crate-vis | ServedConnectorCallHost | The served [`ConnectorCallHost`] (ONE-2510): the generic connector call's transport, credential and reply… |
+| `src/connector_call_host/issuer_watch.rs` | src | s | 3 crate-vis | — | L5-11 (ARCH-0072 #drift; ARCH-0054 #auth "PRM 401 bootstrap"): automatic issuer change detection at a… |
 | `src/connector_call_host/json_wire.rs` | src | s | 6 crate-vis | — | The JSON a call writes and keeps: one POST of a JSON body, and a foreign value kept serialized until it goes… |
 | `src/connector_call_host/live_exchange.rs` | src | L | 20 crate-vis | — | The live half of the call host: the worker that owns an exchange once its send returned |
 | `src/connector_call_host/presenting.rs` | src | m | 21 crate-vis | — | What one send presents, and everything its connector says cleared of that value inside the door (FIX 7646… |
@@ -2073,6 +2074,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/test_doors/coach_round.rs` | src | s | 1 fn | — | Door for `tests/eval_authoring_execute_lapsed_lease.rs`: one Coach host round, the nightly worker's unit of… |
 | `src/test_doors/coach_wake.rs` | src | s | 1 fn | — | Door for `tests/eval_authoring_execute_unrecorded_end.rs`: one admitted coach-host job through the wake… |
 | `src/test_doors/compaction_pass.rs` | src | s | 1 re-export | — | Doors for `tests/compaction_seat_exact_model.rs` (FIX-LIST SELF-WRITER-HOUSE-FALLBACK-SEAT-EXACT-REFUSED)… |
+| `src/test_doors/connector_issuer_watch.rs` | src | s | 4 fn | — | Door for `tests/connector_issuer_prm_refusal.rs` (L5-11): the issuer watch a connector send runs at a… |
 | `src/test_doors/connector_sends.rs` | src | s | 1 fn | — | Door for `tests/inquiry_federation.rs`: one pass of the served connector-send drain… |
 | `src/test_doors/embedding_line.rs` | src | s | 2 fn | — | Doors for `tests/embedder_host_line_notice.rs` (0053-EMB, on census L1-27): a server holding an endpoint… |
 | `src/test_doors/history_import.rs` | src | s | 1 fn | — | Doors for `tests/history_import_review_id_same_second.rs` ([HISTORY-IMPORT-REVIEW-ID-SAME-SECOND]): the… |
@@ -2093,7 +2095,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/test_doors/mcp_surface.rs` | src | s | 2 fn | — | Door for `tests/mcp_surface_registration_latency.rs`: the MCP surface a server serves, read through the… |
 | `src/test_doors/media_job_spend.rs` | src | s | 2 struct · 11 fn | ScopedJobSpend, ScopedMediaJob | Doors for `tests/media_job_staged_spend.rs` ([MEDIA-JOB-SPEND-LOST-ON-PROCESS-DEATH], S7299-P1): a scoped… |
 | `src/test_doors/merge_queue_checker_pressure.rs` | src | s | 1 fn | — | Doors for `tests/merge_queue_checker_pressure.rs` ([GUEST-PIDS-PRESSURE-MERGE-QUEUE-CHECKER], FIX 8013… |
-| `src/test_doors/mod.rs` | src | s | 59 mod | — | Doors for the integration tests to crate-private items, as in `oneiron::test_doors` |
+| `src/test_doors/mod.rs` | src | s | 60 mod | — | Doors for the integration tests to crate-private items, as in `oneiron::test_doors` |
 | `src/test_doors/model_licence.rs` | src | s | 1 fn | — | The model licence admission under the owner's choice (`models.install.allow_noncommercial_licences`), read… |
 | `src/test_doors/native_board.rs` | src | s | 2 fn | — | Doors for `tests/room_pins_native.rs` (ROOM-SCOPED-PINS P2c): what a pumped run's native board and self… |
 | `src/test_doors/off_router_wire_counts.rs` | src | s | 2 fn | — | Doors for `tests/wire_counts_off_runtime.rs`: the wire counts an e-sign QR capability refusal and an MCP… |
@@ -2235,6 +2237,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/config_file_admission.rs` | test | s | — | — | FIX [CONFIG-VALIDATION-PORT]: a config file is read only once it is admitted by who else can reach it |
 | `tests/config_referenced_file_admission.rs` | test | s | — | — | FIX [CONFIG-SIDE-FILES-MODE-UNCHECKED] and [CONFIG-SIDE-FILE-PARSE-ERRORS-PRINT-PARSER-MESSAGE]: a file a… |
 | `tests/config_refusal_origin.rs` | test | s | — | — | FIX [CONFIG-REFUSED-VALUE-NAMES-NO-FILE-LINE]: a value serve refuses after the parse names where it was set |
+| `tests/connector_issuer_prm_refusal.rs` | test | m | — | — | L5-11 (ARCH-0054 #auth "PRM 401 bootstrap"; ARCH-0072 #drift): the issuer watch a connector send runs at a… |
 | `tests/connector_scope_signal_doors.rs` | test | m | — | — | Success paths of the connector scope revision doors (FIX [CONNECTORS-SCOPE-SIGNAL-NO-PUBLIC-GETTER])… |
 | `tests/connector_send_no_transport.rs` | test | m | — | — | FIX COMMITMENT-NO-TRANSPORT-NOT-STARTED-NO-TEST |
 | `tests/consent_revoke_grantee_renounce.rs` | test | m | — | — | A grantee may renounce its own standing consent grant (P-GATE-010, DEC-0006) |
