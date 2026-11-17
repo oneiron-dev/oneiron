@@ -10,7 +10,7 @@ use std::sync::Arc;
 use oneiron::llm::media::wav::WavClip;
 use oneiron::llm::media::{
     AiOperation, InterruptedMediaCall, MediaBackend, MediaFuture, MediaPart, MediaProgressFuture,
-    MediaRequest, MediaResponse, MediaUsage,
+    MediaRequest, MediaResponse, MediaUsage, run_once_released,
 };
 use oneiron::llm::{BrokerIsolation, DispatchRelease, INFERENCE_CALLS_KEY, InferenceCallReceipt};
 use oneiron::{BudgetLease, FatalLlmError, LlmResult, ModelId};
@@ -160,7 +160,7 @@ impl<T: OpenAiMediaTransport> MediaBackend for OpenAiAsrBackend<T> {
         release: Option<DispatchRelease<'a>>,
     ) -> MediaProgressFuture<'a> {
         if request.operation != AiOperation::Transcribe {
-            return self.run_progress(request, lease);
+            return run_once_released(self, request, lease, None);
         }
         Box::pin(async move {
             if request.voice.is_some() {

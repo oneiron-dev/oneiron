@@ -103,6 +103,14 @@ impl CheckpointRootSigner for OwnerRootSigner {
         }
         Ok(self.signing.sign(transcript).to_bytes().to_vec())
     }
+
+    /// Refused for any bytes outside the ask word proof domain.
+    fn sign_ask_word_proof(&self, transcript: &[u8]) -> Result<Vec<u8>> {
+        if !transcript.starts_with(crate::authority::ASK_WORD_PROOF_DOMAIN) {
+            return Err(invalid_authority());
+        }
+        Ok(self.signing.sign(transcript).to_bytes().to_vec())
+    }
 }
 
 /// This install's owner signing key as an enrollment finds it: live on the
