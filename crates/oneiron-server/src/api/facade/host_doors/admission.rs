@@ -169,11 +169,11 @@ pub(in crate::api::facade) fn door_admits(
         Proof::VoiceBank => {
             crate::api::facade::voice_bank_doors::voice_bank_admits(server, auth, verb)
         }
-        // The recognition withdrawal (VOICE-WITHDRAW-AGENT-ON-CALL): a person's proof as
-        // `SharedPerson`, or an agent whose own Grant naming the consent-log verb the engine's
-        // withdrawal admits.
-        Proof::RecognitionWithdrawer => {
-            crate::api::facade::voice_recognition_doors::withdrawer_admits(server, auth, verb)
+        // The recognition consent and withdrawal doors (VOICE-CONSENT-LOG-WHO = A,
+        // VOICE-WITHDRAW-AGENT-ON-CALL): a person's proof as `SharedPerson`, or an
+        // agent whose own Grant naming the consent-log verb the engine's recorder admits.
+        Proof::RecognitionRecorder => {
+            crate::api::facade::voice_recognition_doors::recorder_admits(server, auth, verb)
         }
         // The exact publish rows (FIX 6866): the owner, or a bound principal
         // whose one Grant the engine door admits in its own snapshot.

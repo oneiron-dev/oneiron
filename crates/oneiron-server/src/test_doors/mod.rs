@@ -6,13 +6,16 @@
 
 pub mod background_embedding;
 pub mod big_rung;
+pub mod board_keyframe_child_release;
 pub mod booking_turn_line;
 pub mod build_server;
 pub mod calendar_ics_egress;
 pub mod catch_all_status;
 pub mod coach_round;
+pub mod coach_wake;
 pub mod compaction_pass;
 pub mod connector_sends;
+pub mod embedding_line;
 pub mod fingerprint_keep_lens_callback;
 pub mod history_import;
 #[cfg(unix)]
@@ -38,8 +41,10 @@ pub mod openapi_document;
 pub mod owner_backup;
 pub mod parked_step_resume;
 pub mod pre_idle_reuse;
+pub mod question_heads;
 #[cfg(unix)]
 pub mod recovery_box_hold;
+pub mod refusal_wire;
 pub mod replay_admission;
 pub mod residence_connection;
 pub mod resident_pump;
