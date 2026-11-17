@@ -28,7 +28,8 @@
 //! later pass with room, the owner's share write), and
 //! the owner may free it as well. Resume wakes the park's trap in the release write, so the try runs again
 //! as the same try; Stop wakes the trap the same way and ends the try through the owner force-cancel, so the trap
-//! is consumed and nothing waits on it. Such a park raises no notice: it does not wait on the owner.
+//! is consumed and nothing waits on it. Such a park raises no notice. A `Budget` or `ResidentShare` park asks the
+//! owner through the run-budget family instead (RUNBUDGET-SCOPE = B), and its wake here withdraws that ask.
 
 use serde::{Deserialize, Serialize};
 

@@ -46,6 +46,7 @@ pub(crate) fn sdk_error(
         reason_codes: Vec::new(),
         legal_hold: None,
         room_join_hold: None,
+        pending: None,
     }
 }
 

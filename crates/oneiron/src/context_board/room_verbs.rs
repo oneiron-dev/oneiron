@@ -80,6 +80,19 @@ impl Memory<'_> {
                     .facets_allow_id(&room)?))
     }
 
+    /// Whether the caller reads `room`'s roster as [`Self::room_roster`]
+    /// admits a reader past the room's row ([`room_reader_in`]): a member,
+    /// an agent on a Ready join, a leader chat reader or the room's host.
+    /// `false` for an id that names no room.
+    pub(crate) fn room_roster_reader(&self, room: EntityId) -> MemoryResult<bool> {
+        let vault = self.vault();
+        let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
+        let Some(members) = room_members_in(vault, &txn, room)? else {
+            return Ok(false);
+        };
+        Ok(room_reader_in(vault, &txn, room, &members, self.actor())?)
+    }
+
     /// Refuses a turn in a room whose own row sits outside the facets this
     /// caller's credential reads, as it refuses an unknown room (owner ruling
     /// FACET-READ): the turn would confirm the room and report its Scope.
