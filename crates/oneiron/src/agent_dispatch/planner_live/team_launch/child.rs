@@ -72,13 +72,17 @@ impl AgentDispatcher<'_> {
             return Ok(view);
         }
         let name = IntentName::leased(leased, &entity, request)?;
-        // The leader goes under the spawning attempt, on its run, in the
-        // context the agent asked for; it spends under its parent's scope
-        // and names no spend of its own.
+        // The leader goes under the spawning attempt, on its run (a
+        // run-id-less parent's `agent:<parent hex>`, L7-32), in the context
+        // the agent asked for; it spends under its parent's scope and names
+        // no spend of its own.
         let launch = GroupLaunch {
             name: &name,
             parent: Some(leased.id),
-            run_id: leased.run_id.clone(),
+            run_id: Some(crate::code_run::agent_attempt_run_ref(
+                leased.id,
+                leased.run_id.clone(),
+            )),
             leader: AgentSpawnContext {
                 spend: None,
                 ..request.context.clone()

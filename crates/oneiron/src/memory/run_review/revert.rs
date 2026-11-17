@@ -62,65 +62,92 @@ impl Memory<'_> {
             not_undone: Vec::new(),
         };
         // Reverse explicit membership order, so a dependent child listed
-        // after its input can be compensated before that input.
-        for (key, member) in members.iter().rev() {
-            let change = member.member.change();
-            if !selected.contains(&change) {
-                if let Some(receipt) = &member.compensation {
-                    outcome.compensated.push(RunCompensation {
-                        change,
-                        receipt: receipt.clone(),
-                    });
-                    outcome
-                        .not_undone
-                        .extend(member.unrestored.iter().map(|change| RunNotUndone {
-                            change: change.clone(),
-                            reason: RunNotUndoneReason::Dependent,
-                        }));
-                } else {
-                    outcome.not_undone.push(RunNotUndone {
-                        change,
-                        reason: RunNotUndoneReason::NotSelected,
-                    });
-                }
+        // after its input can be compensated before that input. A change that
+        // reads as dependent is tried again once a pass took another change
+        // back, until a pass takes nothing back: two NOTE forks of one run
+        // landed out of their fork order unwind in landing order, each from
+        // the text the other left (review round 1 of #8214).
+        let mut pending = Vec::new();
+        for entry in members.iter().rev() {
+            let change = entry.1.member.change();
+            if selected.contains(&change) {
+                pending.push(entry);
                 continue;
             }
-            let result = self.with_verified_actor_write_txn(|txn| {
-                let actor = require_owner(self, txn, owner)?;
-                if let Some(key) = key {
-                    return super::changes::undo_journal_member_in_txn(
-                        self, txn, owner, actor, key,
-                    );
-                }
-                let mut journal = SETTLEMENTS
-                    .get(&self.vault().store, txn, &run)?
-                    .ok_or_else(|| MemoryError::not_found("run settlement is absent"))?;
-                let row = journal
-                    .changes
-                    .iter_mut()
-                    .find(|row| row.member.change() == change)
-                    .ok_or_else(|| MemoryError::bad_request("change left the run"))?;
-                let fresh = row.compensation.is_none();
-                let undone = undo_member_in_txn(self, txn, owner, actor, row)?;
-                if fresh && undone.is_ok() {
-                    SETTLEMENTS.put(&self.vault().store, txn, &run, &journal)?;
-                }
-                Ok(undone)
-            })?;
-            match result {
-                Ok((receipt, unrestored)) => {
-                    outcome
-                        .compensated
-                        .push(RunCompensation { change, receipt });
-                    outcome
-                        .not_undone
-                        .extend(unrestored.into_iter().map(|change| RunNotUndone {
-                            change,
-                            reason: RunNotUndoneReason::Dependent,
-                        }));
-                }
-                Err(reason) => outcome.not_undone.push(RunNotUndone { change, reason }),
+            let member = &entry.1;
+            if let Some(receipt) = &member.compensation {
+                outcome.compensated.push(RunCompensation {
+                    change,
+                    receipt: receipt.clone(),
+                });
+                outcome
+                    .not_undone
+                    .extend(member.unrestored.iter().map(|change| RunNotUndone {
+                        change: change.clone(),
+                        reason: RunNotUndoneReason::Dependent,
+                    }));
+            } else {
+                outcome.not_undone.push(RunNotUndone {
+                    change,
+                    reason: RunNotUndoneReason::NotSelected,
+                });
             }
+        }
+        loop {
+            let mut dependent = Vec::new();
+            let mut took_back = false;
+            for entry in pending {
+                let (key, member) = entry;
+                let change = member.member.change();
+                let result = self.with_verified_actor_write_txn(|txn| {
+                    let actor = require_owner(self, txn, owner)?;
+                    if let Some(key) = key {
+                        return super::changes::undo_journal_member_in_txn(
+                            self, txn, owner, actor, key,
+                        );
+                    }
+                    let mut journal = SETTLEMENTS
+                        .get(&self.vault().store, txn, &run)?
+                        .ok_or_else(|| MemoryError::not_found("run settlement is absent"))?;
+                    let row = journal
+                        .changes
+                        .iter_mut()
+                        .find(|row| row.member.change() == change)
+                        .ok_or_else(|| MemoryError::bad_request("change left the run"))?;
+                    let fresh = row.compensation.is_none();
+                    let undone = undo_member_in_txn(self, txn, owner, actor, row)?;
+                    if fresh && undone.is_ok() {
+                        SETTLEMENTS.put(&self.vault().store, txn, &run, &journal)?;
+                    }
+                    Ok(undone)
+                })?;
+                match result {
+                    Ok((receipt, unrestored)) => {
+                        took_back = true;
+                        outcome
+                            .compensated
+                            .push(RunCompensation { change, receipt });
+                        outcome
+                            .not_undone
+                            .extend(unrestored.into_iter().map(|change| RunNotUndone {
+                                change,
+                                reason: RunNotUndoneReason::Dependent,
+                            }));
+                    }
+                    Err(RunNotUndoneReason::Dependent) => dependent.push(entry),
+                    Err(reason) => outcome.not_undone.push(RunNotUndone { change, reason }),
+                }
+            }
+            if !took_back || dependent.is_empty() {
+                outcome
+                    .not_undone
+                    .extend(dependent.into_iter().map(|(_, member)| RunNotUndone {
+                        change: member.member.change(),
+                        reason: RunNotUndoneReason::Dependent,
+                    }));
+                break;
+            }
+            pending = dependent;
         }
         self.produced_from(
             members
@@ -153,7 +180,9 @@ pub(super) fn undo_member_in_txn(
     }
     let now = memory.vault().store.clock.now_recorded_at();
     let receipt = match &row.member {
-        RunReviewChange::ExternalEffect { .. } | RunReviewChange::Erase { .. } => {
+        RunReviewChange::ExternalEffect { .. }
+        | RunReviewChange::Erase { .. }
+        | RunReviewChange::OwnerTaskCancel { .. } => {
             return Ok(Err(RunNotUndoneReason::OneWay));
         }
         // Its author was erased since it landed (FIX 4727).
@@ -226,7 +255,9 @@ fn compensate(
                 id,
                 EntityId::from_hex(author)?,
                 actor,
-                now,
+                // That inverse takes milliseconds; `now` is the store
+                // clock's Unix seconds.
+                now.saturating_mul(1_000),
             )?;
             let unrestored = reverted
                 .left_closed
@@ -250,7 +281,7 @@ fn compensate(
             {
                 return Ok(None);
             }
-            vault.retract_claim_in_txn_as(txn, &id, now / 1_000, Some(actor))?;
+            vault.retract_claim_in_txn_as(txn, &id, now, Some(actor))?;
             Ok(Some((id.to_hex(), Vec::new())))
         }
         Some(RunInverse::Note(undo)) => crate::note::revert_run_note_in_txn(memory, txn, undo)

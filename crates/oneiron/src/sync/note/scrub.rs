@@ -251,6 +251,7 @@ pub(crate) fn seed_waiting_bundle(
         rewrite: false,
         proposal: None,
         decided: false,
+        run: None,
     };
     let carrier = BundleCarrier {
         bundle: NoteReviewBundle {

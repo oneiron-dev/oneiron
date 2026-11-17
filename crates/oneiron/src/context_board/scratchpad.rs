@@ -585,7 +585,7 @@ impl Memory<'_> {
                     return Err(sealed_pad());
                 }
                 self.vault()
-                    .edit_note_landing_in_txn(txn, pad, &edit, actor, lane, landing)
+                    .edit_note_landing_in_txn(txn, pad, &edit, actor, lane, landing, None)
             })
         })?;
         #[cfg(feature = "sync")]

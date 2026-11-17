@@ -521,6 +521,7 @@ fn note_fork(actor: NoteActor) -> NoteFork {
         rewrite: false,
         proposal: None,
         decided: false,
+        run: None,
     }
 }
 

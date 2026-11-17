@@ -132,6 +132,16 @@ impl TaskCreateOrigin {
     pub(crate) fn run_id(&self) -> Option<String> {
         self.run_id.clone()
     }
+
+    /// The run a child agent this create dispatches joins: its creator's
+    /// run, a run-id-less creator's `agent:<creator hex>` included (L7-32),
+    /// so one undo-all of the root takes back the child's changes too.
+    /// `None` for a root create, which has no creator. The origin keeps the
+    /// creator's own `run_id`, which an ask's identity names.
+    pub(crate) fn child_run_id(&self) -> Option<String> {
+        self.parent_attempt
+            .map(|parent| crate::code_run::agent_attempt_run_ref(parent, self.run_id.clone()))
+    }
 }
 
 fn creator_gone() -> crate::memory::MemoryError {

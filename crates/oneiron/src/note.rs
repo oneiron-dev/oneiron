@@ -46,7 +46,8 @@ mod proposals;
 mod run_review;
 pub(crate) mod setting_keys;
 pub(crate) use run_review::{
-    RunNoteUndo, revert_run_note_in_txn, run_note_review_in_txn, settle_run_note_in_txn,
+    NoteForkState, RunNoteUndo, note_fork_state_in_txn, note_stands_in_txn, revert_run_note_in_txn,
+    run_note_review_in_txn, settle_run_note_in_txn,
 };
 mod tombstone_review;
 mod verbs;

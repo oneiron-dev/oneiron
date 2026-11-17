@@ -126,7 +126,11 @@ impl AgentDispatcher<'_> {
                 "contextFrom requires a parent attempt row",
             )));
         };
-        if parent_record.run_id.as_deref() != run_id {
+        if !super::run_lineage::child_shares_parent_run(
+            parent_attempt,
+            parent_record.run_id.as_deref(),
+            run_id,
+        ) {
             return Err(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
                 "contextFrom is admitted only inside the parent attempt's run",
             )));

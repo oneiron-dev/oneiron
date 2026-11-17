@@ -5,10 +5,15 @@
 //! reference its dispatcher bound, never guessed from an actor or a time.
 //! `Memory::run_changes_as_owner` is its call surface;
 //! `record_run_claim_in_txn` is its claim writer,
-//! `record_run_topology_in_txn` its identity-topology writer and
-//! `record_run_deletion_in_txn` its delete and erase writer. A run nobody
-//! settled is reverted from this journal (`journal_members_in_txn`), and each
-//! change's compensation is kept on its first row.
+//! `record_run_edge_in_txn` its code-run edge writer,
+//! `record_run_topology_in_txn` its identity-topology writer,
+//! `record_run_deletion_in_txn` its delete and erase writer,
+//! `record_run_effect_in_txn` its external-effect writer,
+//! `record_run_owner_task_cancel_in_txn` its writer of the owner's gate-free
+//! TASK cancel and `record_run_note_in_txn` its NOTE fork writer, whose
+//! landing keeps its undo through `record_run_note_landing_in_txn`. A run
+//! nobody settled is reverted from this journal (`journal_members_in_txn`),
+//! and each change's compensation is kept on its first row.
 
 use super::*;
 use crate::claim::ClaimApprovalStatus;
@@ -20,9 +25,10 @@ pub struct RunChangesRequest {
     pub run_id: String,
 }
 
-/// Every change the run wrote, once each and in write order. Child jobs of a
-/// run with a run id write under that same run, so their changes are here
-/// too. `changes` is the set `vault.runs.review` takes.
+/// Every change the run wrote, once each and in write order. Every child job
+/// writes under its root's run, a run-id-less root's `agent:<root hex>`
+/// included (L7-32), so their changes are here too. `changes` is the set
+/// `vault.runs.review` takes.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct RunChanges {
     pub run_id: String,
@@ -32,7 +38,9 @@ pub struct RunChanges {
 /// One journal row: the run, spelled whole beside its hashed key, and the
 /// change. A change's first row keeps the owner's compensation receipt once a
 /// revert took it back, and the later changes that compensation left
-/// standing; rows written before the first revert hold neither.
+/// standing; rows written before the first revert hold neither. A NOTE
+/// fork's first row keeps the undo its landing took, whoever landed it
+/// (ruling RUNCHANGES-NOTE-UNDO = A); a fork not landed has none.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct RunChangeRow {
     run: String,
@@ -41,6 +49,25 @@ struct RunChangeRow {
     compensation: Option<String>,
     #[serde(default)]
     unrestored: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    note_undo: Option<crate::note::RunNoteUndo>,
+    /// For an external effect a held call asked: that call, and the newest
+    /// later decision on it, which the effect's verdict follows. `None` for
+    /// every other change and for an effect whose gate input names no call.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    effect_call: Option<EffectCall>,
+}
+
+/// The held call an external-effect receipt stands for: its approval
+/// target's digest (`ApprovalTarget::held_digest`: the call's attempt, call
+/// sequence and frozen payload), which the gate's effect binding leaves out,
+/// so two calls of one AlwaysAsk tool share a binding and its pending
+/// receipt. `answer` is the newest later decision on this same call.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct EffectCall {
+    call: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    answer: Option<String>,
 }
 
 /// A journal row's key: the run's hashed head and the change's write order.
@@ -80,6 +107,32 @@ pub(crate) fn record_run_claim_in_txn(
         run,
         RunReviewChange::Claim {
             claim_ref: id.to_hex(),
+        },
+    )
+}
+
+/// Records that the run `envelope` names put an edge whose `edge.provenance`
+/// Claim is `provenance`, in the edge's own write transaction (ruling
+/// RUNCHANGES-EDGE-REF = A). An envelope no code run built names no run, and
+/// records nothing.
+///
+/// # Errors
+/// A store failure.
+pub(crate) fn record_run_edge_in_txn(
+    store: &crate::store::Store,
+    txn: &mut heed::RwTxn<'_>,
+    envelope: &crate::WriteEnvelope,
+    provenance: EntityId,
+) -> crate::Result<()> {
+    let Some(run) = crate::code_run::envelope_run_ref(envelope) else {
+        return Ok(());
+    };
+    record_change_in_txn(
+        store,
+        txn,
+        run,
+        RunReviewChange::Edge {
+            provenance_ref: provenance.to_hex(),
         },
     )
 }
@@ -129,12 +182,219 @@ pub(crate) fn record_run_deletion_in_txn(
     record_change_in_txn(store, txn, run, change)
 }
 
+/// Records that `run` asked the external effect whose gate receipt is
+/// `decision`, in the receipt's own write. `call` is the held call the effect
+/// is, when its gate input names one: its approval target's digest. A receipt
+/// the run already lists is not listed again. Nor is a later decision on an
+/// effect whose pending receipt the run lists for the same call, or, when
+/// neither names a call, for the same effect binding: that pending receipt
+/// stands for the effect (FIX 11478). For a named call its row keeps that
+/// newest decision, which its verdict follows. A decision on another call
+/// of the same binding is listed for itself, with its own verdict, though
+/// the gate's binding does not tell the two calls apart. A revert never
+/// replays an effect; it reports one that ran as one-way.
+///
+/// # Errors
+/// A store failure.
+pub(crate) fn record_run_effect_in_txn(
+    store: &crate::store::Store,
+    txn: &mut heed::RwTxn<'_>,
+    run: &str,
+    decision: crate::store::GateDecisionId,
+    call: Option<&str>,
+) -> crate::Result<()> {
+    let run = run.strip_prefix("run:").unwrap_or(run);
+    let receipt_ref = format!("gate:{}", decision.to_hex());
+    let record = store.gate_decision_in_txn(&*txn, decision)?;
+    let mut answered = None;
+    for row in CHANGES.iter_from(store, &*txn, &run_hash(run))? {
+        let (key, row) = row?;
+        let RunReviewChange::ExternalEffect {
+            receipt_ref: listed,
+        } = &row.change
+        else {
+            continue;
+        };
+        if row.run != run {
+            continue;
+        }
+        if *listed == receipt_ref {
+            return Ok(());
+        }
+        if row.effect_call.as_ref().map(|listed| listed.call.as_str()) != call {
+            continue;
+        }
+        let Some(record) = &record else {
+            continue;
+        };
+        let Some(listed) = listed
+            .strip_prefix("gate:")
+            .and_then(|hex| EntityId::from_hex(hex).ok())
+        else {
+            continue;
+        };
+        let listed = store.gate_decision_in_txn(
+            &*txn,
+            crate::store::GateDecisionId::from_bytes(*listed.as_bytes()),
+        )?;
+        if listed.is_some_and(|listed| {
+            listed.outcome == "pending"
+                && listed.content_kind == record.content_kind
+                && !record.diff_handle.is_empty()
+                && listed.diff_handle == record.diff_handle
+        }) {
+            answered = Some((key, row));
+            break;
+        }
+    }
+    if let Some((key, mut row)) = answered {
+        if let Some(effect_call) = &mut row.effect_call {
+            effect_call.answer = Some(receipt_ref);
+            CHANGES.put(store, txn, &key, &row)?;
+        }
+        return Ok(());
+    }
+    append_row_in_txn(
+        store,
+        txn,
+        run,
+        RunReviewChange::ExternalEffect { receipt_ref },
+        None,
+        call.map(|call| EffectCall {
+            call: call.to_owned(),
+            answer: None,
+        }),
+    )
+}
+
+/// Records that `run` opened `fork` of `note`, in the fork's own write. The
+/// fork lands later, or never; its landing keeps the undo on this row.
+///
+/// # Errors
+/// A store failure.
+pub(crate) fn record_run_note_in_txn(
+    store: &crate::store::Store,
+    txn: &mut heed::RwTxn<'_>,
+    run: &str,
+    note: EntityId,
+    fork: EntityId,
+) -> crate::Result<()> {
+    record_change_in_txn(
+        store,
+        txn,
+        run,
+        RunReviewChange::Note {
+            note_ref: note.to_hex(),
+            fork_ref: fork.to_hex(),
+        },
+    )
+}
+
+/// Keeps `undo`, which restores the revision `run`'s fork `fork` landed
+/// over, on that fork's first journal row, in the landing's own write,
+/// whoever landed it (ruling RUNCHANGES-NOTE-UNDO = A). A run whose journal
+/// does not list the fork lists it now, with its undo.
+///
+/// # Errors
+/// A store failure.
+pub(crate) fn record_run_note_landing_in_txn(
+    store: &crate::store::Store,
+    txn: &mut heed::RwTxn<'_>,
+    run: &str,
+    fork: EntityId,
+    undo: &crate::note::RunNoteUndo,
+) -> crate::Result<()> {
+    let run = run.strip_prefix("run:").unwrap_or(run);
+    let fork_ref = fork.to_hex();
+    let listed = CHANGES
+        .iter_from(store, &*txn, &run_hash(run))?
+        .find_map(|row| match row {
+            Ok((key, row)) if row.run == run && row.change.change() == fork_ref => {
+                Some(Ok((key, row)))
+            }
+            Ok(_) => None,
+            Err(error) => Some(Err(error)),
+        })
+        .transpose()?;
+    match listed {
+        Some((key, mut row)) => {
+            row.note_undo = Some(undo.clone());
+            CHANGES.put(store, txn, &key, &row)
+        }
+        None => append_row_in_txn(
+            store,
+            txn,
+            run,
+            RunReviewChange::Note {
+                note_ref: undo.note.clone(),
+                fork_ref,
+            },
+            Some(undo.clone()),
+            None,
+        ),
+    }
+}
+
+/// The undo the landing of `run`'s fork `fork_ref` kept on the run's
+/// journal, for a settlement of a fork that landed before it.
+pub(super) fn journal_note_undo_in_txn(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    run: &str,
+    fork_ref: &str,
+) -> MemoryResult<Option<crate::note::RunNoteUndo>> {
+    Ok(first_rows_in_txn(store, txn, run)?
+        .into_iter()
+        .find(|(_, row)| row.change.change() == fork_ref)
+        .and_then(|(_, row)| row.note_undo))
+}
+
+/// Records that `run` cancelled the vault owner's own TASK `task` on the
+/// owner's proof, with no gate asked (OWNER-SOFT-CANCEL), in the cancel's own
+/// write. No gate receipt stands for that cancel, so the change names the
+/// TASK and `cancel`, an id the cancel takes for itself. A revert never
+/// replays or undoes it; it reports it one-way (ruling
+/// RUNCHANGES-OWNER-CANCEL-IN-RUN = B, 16 Nov).
+///
+/// # Errors
+/// A store failure.
+pub(crate) fn record_run_owner_task_cancel_in_txn(
+    store: &crate::store::Store,
+    txn: &mut heed::RwTxn<'_>,
+    run: &str,
+    task: EntityId,
+    cancel: EntityId,
+) -> crate::Result<()> {
+    record_change_in_txn(
+        store,
+        txn,
+        run,
+        RunReviewChange::OwnerTaskCancel {
+            task_ref: task.to_hex(),
+            cancel_ref: cancel.to_hex(),
+        },
+    )
+}
+
 /// Appends `change` after the run's last recorded change.
 fn record_change_in_txn(
     store: &crate::store::Store,
     txn: &mut heed::RwTxn<'_>,
     run: &str,
     change: RunReviewChange,
+) -> crate::Result<()> {
+    append_row_in_txn(store, txn, run, change, None, None)
+}
+
+/// Appends `change` after the run's last recorded change, with a NOTE
+/// landing's `note_undo`, or the held call an external effect stands for.
+fn append_row_in_txn(
+    store: &crate::store::Store,
+    txn: &mut heed::RwTxn<'_>,
+    run: &str,
+    change: RunReviewChange,
+    note_undo: Option<crate::note::RunNoteUndo>,
+    effect_call: Option<EffectCall>,
 ) -> crate::Result<()> {
     let run = run.strip_prefix("run:").unwrap_or(run);
     let head = run_hash(run);
@@ -154,6 +414,8 @@ fn record_change_in_txn(
             change,
             compensation: None,
             unrestored: Vec::new(),
+            note_undo,
+            effect_call,
         },
     )
 }
@@ -186,6 +448,32 @@ pub(super) fn run_changes_in_txn(
         .into_iter()
         .map(|(_, row)| row.change)
         .collect())
+}
+
+/// The verdict of each external-effect receipt of `run` that a held call
+/// asked, read from that call's own answer (`call_effect_verdict_in_txn`),
+/// by change ref: a review reads these in place of the effect binding's
+/// newest decision, which another call of that binding may have made.
+pub(super) fn call_effect_verdicts_in_txn(
+    memory: &Memory<'_>,
+    txn: &heed::RoTxn<'_>,
+    run: &str,
+) -> MemoryResult<std::collections::BTreeMap<String, RunChangeVerdict>> {
+    let mut verdicts = std::collections::BTreeMap::new();
+    for (_, row) in first_rows_in_txn(&memory.vault().store, txn, run)? {
+        if let (RunReviewChange::ExternalEffect { receipt_ref }, Some(call)) =
+            (&row.change, &row.effect_call)
+        {
+            let verdict = super::snapshot::call_effect_verdict_in_txn(
+                memory.vault(),
+                txn,
+                receipt_ref,
+                call.answer.as_deref(),
+            )?;
+            verdicts.insert(receipt_ref.clone(), verdict);
+        }
+    }
+    Ok(verdicts)
 }
 
 /// The run's journal as revert members, for a run nobody settled (ARCH-0040
@@ -222,10 +510,32 @@ fn journal_member_in_txn(
         RunReviewChange::Delete { .. } | RunReviewChange::Erase { .. } => {
             (RunChangeVerdict::Landed, None)
         }
-        _ => {
-            return Err(MemoryError::bad_request(
-                "the run journal holds a change kind it does not record",
-            ));
+        // Journaled in the write that ran it, so it landed; it has no undo,
+        // so the revert reports it one-way.
+        RunReviewChange::OwnerTaskCancel { .. } => (RunChangeVerdict::Landed, None),
+        // Its verdict as a settle reads it; it has no undo, so the revert
+        // reports one that ran as one-way. A receipt redacted since may have
+        // gone out, so it reads as landed.
+        RunReviewChange::ExternalEffect { receipt_ref } => (
+            match &row.effect_call {
+                // A held call's receipt reads its own call's answer.
+                Some(call) => super::snapshot::call_effect_verdict_in_txn(
+                    memory.vault(),
+                    txn,
+                    receipt_ref,
+                    call.answer.as_deref(),
+                )?,
+                None => super::snapshot::effect_receipt_in_txn(memory.vault(), txn, receipt_ref)?
+                    .map_or(RunChangeVerdict::Landed, |(_, verdict)| verdict),
+            },
+            None,
+        ),
+        RunReviewChange::Note { note_ref, fork_ref } => {
+            note_member_in_txn(memory.vault(), txn, &row, note_ref, fork_ref)?
+        }
+        // Its provenance Claim is read as a claim is; its undo retracts it.
+        RunReviewChange::Edge { provenance_ref } => {
+            claim_member_in_txn(memory, txn, &row, provenance_ref)?
         }
     };
     Ok(StoredChange {
@@ -237,12 +547,13 @@ fn journal_member_in_txn(
     })
 }
 
-/// A journal claim's verdict and undo. A claim the gate still holds, or
-/// refused, never landed. A landed claim takes the undo a settle would give
-/// it: Authored, from the claim's own author, bound to the claim as it
-/// stands now; the revert's own checks then keep it when a later change
-/// rests on it. A claim deleted since the run wrote it has no undo, so the
-/// revert reports it as dependent.
+/// A journal claim's verdict and undo, or a journal edge's, read from its
+/// provenance Claim. A claim the gate still holds, or refused, never landed.
+/// A landed claim takes the undo a settle would give it: Authored, from the
+/// claim's own author, bound to the claim as it stands now; the revert's own
+/// checks then keep it when a later change rests on it. A claim deleted
+/// since the run wrote it has no undo, so the revert reports it as
+/// dependent.
 fn claim_member_in_txn(
     memory: &Memory<'_>,
     txn: &heed::RoTxn<'_>,
@@ -271,6 +582,44 @@ fn claim_member_in_txn(
             ),
         },
     })
+}
+
+/// A journal NOTE fork's verdict and undo (ruling RUNCHANGES-NOTE-UNDO =
+/// A): a fork that landed, whoever landed it, takes the undo its landing
+/// kept on this row, which restores the revision from before it; a pending
+/// fork waits, and a rejected fork, or one an erase of its opener took,
+/// never landed. A landed fork whose row kept no undo has none, and neither
+/// has one whose NOTE was erased or archived since, so the revert reports it
+/// as dependent.
+fn note_member_in_txn(
+    vault: &crate::Vault,
+    txn: &heed::RoTxn<'_>,
+    row: &RunChangeRow,
+    note_ref: &str,
+    fork_ref: &str,
+) -> MemoryResult<(RunChangeVerdict, Option<RunInverse>)> {
+    use crate::note::{NoteForkState, NoteVerdict};
+    if let Some(undo) = &row.note_undo {
+        let stands = crate::note::note_stands_in_txn(vault, txn, EntityId::from_hex(note_ref)?)?;
+        return Ok((
+            RunChangeVerdict::Landed,
+            stands.then(|| RunInverse::Note(undo.clone())),
+        ));
+    }
+    Ok(
+        match crate::note::note_fork_state_in_txn(
+            vault,
+            txn,
+            EntityId::from_hex(note_ref)?,
+            EntityId::from_hex(fork_ref)?,
+        )? {
+            NoteForkState::Waiting => (RunChangeVerdict::Waiting, None),
+            NoteForkState::Absent | NoteForkState::Decided(Some(NoteVerdict::Reject)) => {
+                (RunChangeVerdict::Rejected, None)
+            }
+            NoteForkState::Decided(_) => (RunChangeVerdict::Landed, None),
+        },
+    )
 }
 
 /// A journal topology event's verdict and undo, from the effective ledger
@@ -310,7 +659,12 @@ pub(super) fn undo_journal_member_in_txn(
     let row = CHANGES
         .get(store, &*txn, key)?
         .ok_or_else(|| MemoryError::bad_request("change left the run"))?;
-    let (run, fresh) = (row.run.clone(), row.compensation.is_none());
+    let (run, fresh, note_undo, effect_call) = (
+        row.run.clone(),
+        row.compensation.is_none(),
+        row.note_undo.clone(),
+        row.effect_call.clone(),
+    );
     let mut member = journal_member_in_txn(memory, &*txn, row)?;
     let undone = super::revert::undo_member_in_txn(memory, txn, owner, actor, &mut member)?;
     if fresh && undone.is_ok() {
@@ -323,6 +677,8 @@ pub(super) fn undo_journal_member_in_txn(
                 change: member.member,
                 compensation: member.compensation,
                 unrestored: member.unrestored,
+                note_undo,
+                effect_call,
             },
         )?;
     }
