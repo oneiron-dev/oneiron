@@ -25,6 +25,8 @@ pub struct DocxGroupEvents {
 /// mints positional ids, so chaining [`project_docx`] over bytes would
 /// misaddress later groups). One group through the session builds and runs
 /// exactly what a lone [`project_docx`] call builds and runs.
+///
+/// [`project_docx`]: crate::docx_body::project_docx
 pub struct DocxProjection {
     doc: Document,
     limits: ArchiveLimits,
@@ -205,6 +207,8 @@ impl DocxProjection {
 
     /// Serialize the projection through the blocking gate. With no applied
     /// group, the source bytes unchanged (as an empty [`project_docx`]).
+    ///
+    /// [`project_docx`]: crate::docx_body::project_docx
     pub fn finish(self) -> Result<Vec<u8>, DoceditError> {
         if !self.applied {
             return Ok(self.source);

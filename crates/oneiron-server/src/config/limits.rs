@@ -239,8 +239,8 @@ impl Default for LimitsConfig {
             // The door window's family (`DOOR_WINDOW_TIMEOUT`): long enough
             // for a slow link, short against a held-open socket.
             transfer_idle_timeout_ms: 300_000,
-            // Format bounds far above a question or a page of bodies: 128
-            // times the facade's 8 KiB query and 64 times one entity payload.
+            // Format bounds far above a question or a page of bodies: 1 MiB
+            // of query text and 64 times one entity payload.
             retrieval_query_bytes: 1 << 20,
             semantic_query_bytes: 8_388_608,
             projection_body_bytes: 4 << 20,

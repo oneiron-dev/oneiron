@@ -109,6 +109,11 @@ fn mcp_refusal_row(code: &str) -> (i64, Option<&'static str>) {
         // refusal, never an argument error, and keeps its name, so an agent
         // reads it as `error.data.error_code`, not prose.
         oneiron::memory::MEMORY_CODE_IDENTITY_UNSETTLED => (-32020, Some("identity_unsettled")),
+        // A one-way act's call carried no confirm, or not the caller's live
+        // preview of this call: a typed refusal, never an argument error.
+        oneiron::memory::MEMORY_CODE_OWNER_CONFIRM_REQUIRED => {
+            (-32020, Some("owner_confirm_required"))
+        }
         // FIX 2222: one stable kind for the typed host refusal, whichever
         // door reported it.
         oneiron::memory::MEMORY_CODE_HOST_ACTION_REFUSED => (-32020, Some(MCP_HOST_ACTION_REFUSED)),
