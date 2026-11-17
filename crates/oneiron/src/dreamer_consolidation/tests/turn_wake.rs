@@ -827,7 +827,7 @@ fn a_repeat_is_read_again_when_a_cancelled_continuation_withdraws_what_it_repeat
     let at = vault.now_recorded_at();
     assert!(vault.wake_dreamer_on_turn(WakeTurnSubject::Vault, at)?);
     complete(&vault, &claim_micro(&vault, at + 1)?, at + 2)?;
-    let writer = EntityId::from_bytes([0x81; 16])?;
+    let writer = vault.ensure_embedded_owner_actor().expect("owner");
     let back = witness_into(
         &vault,
         writer,

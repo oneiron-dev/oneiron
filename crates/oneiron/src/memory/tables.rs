@@ -66,4 +66,10 @@ crate::side_table::side_tables! {
     /// Per-generation stream receipt keyed by its receipt ref. Key: hex32 ":" hex32.
     MESSAGE_STREAM_RECEIPT_BY_REF: VaultMeta b"stream:v1:" Named
         [restore: content] [family: unclassified] [tier: canonical];
+    /// One operation's first `vault.recall` answer by identity, for its replay (RESEARCH-0363
+    /// p5): item ids, served revisions and digests, no memory text. Node-local, aged out.
+    /// Key: id16(actor) + bytes32(blake3 of actor class and operation id).
+    RECALL_REPLAY: VaultMeta b"recall_replay:v1:" Named
+        [restore: not_imaged] [family: not_imaged] [tier: runtime]
+        => crate::memory::recall_replay::erase_recall_replay_actor_in_txn;
 }

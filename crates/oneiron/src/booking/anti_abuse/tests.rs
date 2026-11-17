@@ -7,12 +7,18 @@ use crate::booking::config::{
     DEFAULT_INTRO_DURATION_MIN, DEFAULT_MIN_NOTICE_SECS, EventTypeConfig, HostAvailabilityConfig,
     RoutingMode, WeeklyWallWindow, encode_event_type_claim_value,
 };
-use crate::test_util::entity as id;
-
 const PAGE: u8 = 0x51;
 const OWNER: u8 = 0x52;
 const STAMP: u8 = 0x53;
 const OTHER_PAGE: u8 = 0x54;
+
+fn id(byte: u8) -> crate::EntityId {
+    if byte == OWNER {
+        // The fixture owner is the embedded owner, so the bound owner passes the live owner census.
+        return crate::vault::embedded_owner_actor_id().expect("owner");
+    }
+    crate::test_util::entity(byte)
+}
 
 fn open_vault() -> (tempfile::TempDir, Vault) {
     let dir = tempfile::tempdir().expect("temp dir");

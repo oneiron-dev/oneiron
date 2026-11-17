@@ -154,6 +154,10 @@ impl ScopedRead<'_> {
             // #e5-read-union-open, ROOM-PACK-MEMBER-COUNT).
             pack.stats.entities_hydrated = pack.results.len();
             pack.stats.neighbors_hydrated = pack.neighbors.len();
+            let kept_rows = &pack.results;
+            pack.stats
+                .working_set
+                .settle(|id| kept_rows.iter().any(|entity| entity.id == *id));
             pack.stats.claims_suppressed +=
                 result_suppressed + neighbor_suppressed + reachability_claims;
             let mut admitted = PackCriticalAccounting::default();
@@ -414,9 +418,11 @@ impl ScopedRead<'_> {
         if entity.entity_type != crate::registry::ENTITY_TYPE_TURN {
             return Ok(true);
         }
+        let store = self.store_read();
         if let Some(clamp) = disclosure
-            && !clamp.admits_in(
+            && !clamp.admits_in_from(
                 self.vault,
+                &store,
                 rtxn,
                 &entity.id,
                 crate::registry::ENTITY_TYPE_TURN,
@@ -433,7 +439,6 @@ impl ScopedRead<'_> {
             .map_or(crate::vault::ReadMode::Live, |revision| {
                 crate::vault::ReadMode::Pinned(crate::vault::RevisionRef(revision))
             });
-        let store = self.store_read();
         let Some(served) = crate::vault::entity_revision::served_turn_text_in_txn(
             self.vault, &store, rtxn, &entity.id, mode, true,
         )?
