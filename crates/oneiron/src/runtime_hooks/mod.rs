@@ -27,6 +27,7 @@ mod runner;
 #[cfg(feature = "code-sandbox-wasmtime")]
 pub mod sandbox;
 mod scope;
+pub(crate) mod setting_keys;
 mod source;
 mod store;
 pub(crate) mod tables;
@@ -34,9 +35,9 @@ pub mod verb;
 
 pub use block::{HookBlock, HookBlockLifetime, HookTurnTarget};
 pub use body::{
-    HookBodyRun, HookBodyRuntime, HookBodyUsage, HookBudgetOverrun, HookPreparation,
-    HookRunContext, HookSettledCallRef, HookVerdict, HookVerdictCall, HookVerdictContext,
-    HookVerdictReply,
+    DEFAULT_HOOK_MAX_BUDGET_MS, HookBodyRun, HookBodyRuntime, HookBodyUsage, HookBudgetOverrun,
+    HookMaxBudgetMs, HookPreparation, HookRunContext, HookSettledCallRef, HookVerdict,
+    HookVerdictCall, HookVerdictContext, HookVerdictReply,
 };
 pub use grant::HookGrant;
 pub(crate) use grant::carry_hook_grant_in_txn;
@@ -84,10 +85,16 @@ pub(crate) use source::{
     record_surface_inbound_in_txn, release_due_ticks, release_task_tick_hold_in_txn,
     releases_here as releases_ticks_here, task_tick_held_in_txn, task_tick_waiting_in_txn,
 };
+#[cfg(oneiron_test_support)]
+pub(crate) use source::{
+    settlement_input_hash_for_test, surface_inbound_input_hash_for_test, tick_input_hash_for_test,
+};
 pub(crate) use store::{
     forget_scrubbed_source_in_txn, hook_receipts, hook_run_read_rows, scrub_erased_hook_sources,
     scrub_erased_in_session_stores, scrub_hook_source_in_txn, sync_binding_cursor_in_txn,
 };
+#[cfg(oneiron_test_support)]
+pub(crate) use store::{run_key_for_test, selector_params_hash_for_test};
 pub use verb::{
     InvocationId, VerbCall, VerbCallScope, VerbDomain, VerbHookPre, VerbHookPreSnapshot,
     VerbHookStop, hook_class,

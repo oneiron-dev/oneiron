@@ -987,6 +987,29 @@ fn device_revocation_past_an_adopted_image_folds() {
 }
 
 #[test]
+fn successor_image_past_a_device_revocation_keeps_the_whole_history_revoke_facts() {
+    let fixture = fixture();
+    let revoke = revoke_agent(&fixture);
+    let hash = authority_entry_hash(&revoke).expect("revoke hash");
+    // Home's image over its whole history, and the image the adopting vault
+    // builds past its adopted one, over the same rows.
+    let home_rows = oneiron::test_doors::foldpast::image_revoke_fact_rows(&written_image(
+        &fixture.home,
+        &fixture.issuer,
+    ));
+    assert!(
+        home_rows.contains(&hash),
+        "home's image holds the device revocation as a restrictive fact"
+    );
+    let successor = written_image(&fixture.adopting, &fixture.issuer);
+    assert_eq!(
+        oneiron::test_doors::foldpast::image_revoke_fact_rows(&successor),
+        home_rows,
+        "the successor image keeps home's restrictive facts"
+    );
+}
+
+#[test]
 fn covered_approval_on_a_revoked_device_lapses_on_the_adoption_clock() {
     let (fixture, confirm) = cosigned_confirm_fixture();
     let key = agent_key();

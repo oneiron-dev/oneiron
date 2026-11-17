@@ -203,6 +203,13 @@ impl AuthorityCheckpointV2 {
         self.safety.issuers.clone()
     }
 
+    /// The rows this image's restrictive facts were proved on, for a test
+    /// that compares two images built over the same rows.
+    #[cfg(oneiron_test_support)]
+    pub(crate) fn revoke_fact_rows_for_test(&self) -> BTreeSet<AuthorityEntryHash> {
+        self.safety.revoke_facts.rows_for_test()
+    }
+
     /// The canonical bytes: the v2 domain, then named MessagePack, after the
     /// shape check. There is no total-image policy ceiling.
     pub fn encode(&self) -> Result<Vec<u8>> {
@@ -627,13 +634,14 @@ impl Vault {
             .copied()
             .collect();
         // A local floor is an anti-rollback receipt: an image never carries
-        // what one decided.
+        // what one decided. It decides no roster row (`changes_roster`).
         let observations = authority_local_observations_in_txn(store, txn, &entries)?;
         if entries.iter().zip(&covered).any(|(entry, hash)| {
             observations
                 .sequence_floors
                 .get(hash)
                 .is_some_and(|floor| entry.seq < *floor)
+                && !super::entry_transition::changes_roster(&entry.op)
         }) {
             return Err(refused(
                 "a local sequence floor decides a covered authority row",
