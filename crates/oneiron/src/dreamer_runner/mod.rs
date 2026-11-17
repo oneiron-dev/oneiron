@@ -5,6 +5,7 @@
 //! in private LMDB rows and is not sync materialized as vault entities.
 
 mod admission;
+pub(crate) mod archive_restore;
 mod attempt_binding;
 mod claim_authoring;
 mod codec;
@@ -167,3 +168,8 @@ pub(crate) use self::maintenance::digest::dreamer_proactivity_digest_accepts_mas
 pub(crate) use self::maintenance::dreamer_curator_rubric_accepts_masked;
 pub(crate) use self::maintenance::stewardship::dreamer_stewardship_rules_accepts_masked;
 pub(crate) use self::store::dreamer_parked_accepts_masked;
+
+#[cfg(oneiron_test_support)]
+pub(crate) use self::{
+    admission::budget_reservation_key_pin_for_test, milestone::milestone_candidate_key_pin_for_test,
+};

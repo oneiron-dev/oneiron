@@ -19,8 +19,11 @@ use crate::{Error, Vault};
 
 /// Steps in a page when the request names no limit.
 pub const CHECKPOINT_READ_DEFAULT_LIMIT: u32 = 32;
-/// The most steps one page carries; a larger limit reads this many, and
-/// `next_step` names where the following page starts.
+/// The most steps one page carries while the owner has set no
+/// `engine_executor.checkpoint_read.max_limit` row: that key's default. A larger limit reads the
+/// value in force, and `next_step` names where the following page starts. The other owner reads
+/// that borrow this page convention (`crate::dreamer_runner::owner_read_page_limit`) keep this
+/// const: the key covers checkpoint pages only.
 pub const CHECKPOINT_READ_MAX_LIMIT: u32 = 128;
 
 #[doc(hidden)]
@@ -51,13 +54,18 @@ pub(crate) fn checkpoint_projection(
     let vault = memory.vault();
     let run = EntityId::from_hex(input.run_ref.trim())
         .map_err(|_| MemoryError::bad_request("run_ref must be a 32-hex code-run id"))?;
-    let limit = page_limit_zero_refused(
-        input.limit,
-        CHECKPOINT_READ_DEFAULT_LIMIT,
-        CHECKPOINT_READ_MAX_LIMIT,
-    )
-    .map_err(|ZeroLimitRefused| MemoryError::bad_request("limit must be positive"))?
-    .rows;
+    // The cap in force bounds the default page too: an owner who sets a max below
+    // CHECKPOINT_READ_DEFAULT_LIMIT gets that many steps from a request that names no limit.
+    let max_limit = {
+        let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
+        super::setting_keys::CHECKPOINT_READ_MAX_LIMIT_SETTING
+            .read_in_txn(vault, &txn, &[], None)?
+            .value
+            .max(1)
+    };
+    let limit = page_limit_zero_refused(input.limit, CHECKPOINT_READ_DEFAULT_LIMIT, max_limit)
+        .map_err(|ZeroLimitRefused| MemoryError::bad_request("limit must be positive"))?
+        .rows;
     let Some((view, sources)) = project(vault, run, input.from_step, limit).map_err(engine)? else {
         return Ok(None);
     };
