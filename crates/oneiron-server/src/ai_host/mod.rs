@@ -28,9 +28,12 @@ use crate::server::SyncServer;
 #[cfg(feature = "code-sandbox-wasmtime")]
 mod code_mode;
 mod compaction;
+#[cfg(oneiron_test_support)]
+pub(crate) use compaction::pass_door;
 #[cfg(all(test, feature = "code-sandbox-wasmtime"))]
 pub(crate) use compaction::tests::cross_the_passes;
 pub(crate) use compaction::{ChatBreakpointCall, ChatSelfMode};
+mod attempt_retry;
 pub mod browser_planner;
 pub(crate) mod browser_program_admission;
 mod coach_browser_programs;
@@ -63,6 +66,7 @@ mod judge_swap;
 mod lens_callbacks;
 pub mod live_lease;
 mod local_vision;
+mod meeting_follow_up_drafting;
 pub(crate) mod payer_funding;
 mod policy;
 mod question_timer;
