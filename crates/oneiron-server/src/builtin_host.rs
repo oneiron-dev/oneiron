@@ -96,10 +96,9 @@ pub(crate) fn install_served_transports(server: &Arc<SyncServer>, models: Option
             .connectors
             .iter()
             .map(|(name, connector)| {
-                (
-                    crate::config::connectors::normalize_name(name),
-                    connector.endpoint.clone(),
-                )
+                let name = crate::config::connectors::normalize_name(name);
+                let endpoint = connector.installed_endpoint(&name);
+                (name, endpoint)
             })
             .collect(),
     );

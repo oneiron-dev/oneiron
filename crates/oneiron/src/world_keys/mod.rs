@@ -146,7 +146,7 @@ pub use self::root::{
 };
 pub use self::root_doors::{ActivatedRoot, AnchoredMachine, KitConfirmation, RootRestore};
 pub use self::root_issue::PreparedRoot;
-pub use self::root_work::{RootMaterial, RootSecret, RootWorkDone};
+pub use self::root_work::{ListedRootRequest, RootMaterial, RootSecret, RootWorkDone};
 pub(crate) use self::sealed_update::{
     OpenedWorldUpdate, SEALED_UPDATE_PART_BYTES, SealedUpdateKind, open_world_update,
     seal_world_message,
@@ -159,9 +159,9 @@ pub(crate) use self::vault_key::CarriedVaultKey;
 pub use self::vault_key::kit::{IssuedVaultKeyKit, sealed_keeps_kit_piece};
 pub(crate) use self::vault_key::restore::{RecipientCustody, RestoreAdmissionCapability};
 pub use self::vault_key::{
-    DataKeyGenerationCause, DataKeyGenerationDraft, DataKeyGenerationOutcome,
-    DataKeyGenerationProposal, DataKeyGenerationWays, EscrowAddWarning, EscrowAdded,
-    EscrowRetirement, KitPasskey, NOTIFICATION_PRODUCER_DATA_KEY_GENERATION_PROPOSAL,
+    DATA_KEY_GENERATION_PAGE_SEAL_NOTICE, DataKeyGenerationCause, DataKeyGenerationDraft,
+    DataKeyGenerationOutcome, DataKeyGenerationProposal, DataKeyGenerationWays, EscrowAddWarning,
+    EscrowAdded, EscrowRetirement, KitPasskey, NOTIFICATION_PRODUCER_DATA_KEY_GENERATION_PROPOSAL,
     NewVaultKeyWrap, RecoveryPreset, RecoveryPresetAnyTwoChange, RecoveryPresetChange,
     RecoverySheet, ResealedEscrowCapsule, VaultKeyEscrowCapsule, VaultKeyStatus, VaultKeyUnlock,
     VaultKeyWrapInfo, VaultKeyWrapKind, escrow_recipient, passkey_prf_input, reseal_escrow_capsule,

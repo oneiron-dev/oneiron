@@ -47,27 +47,28 @@ use super::presence_scan::{
 };
 use super::rate_limit::task_create_owner_in;
 use super::route_receipts::{
-    DEFAULT_TASK_CANCEL_MODE, TaskCancelMode, TaskCancelReceipt, TaskCancelTarget, TaskDescription,
-    TaskUpdateReceipt,
+    DEFAULT_TASK_CANCEL_MODE, TaskCancelReceipt, TaskCancelTarget, TaskDescription,
+    TaskUpdateReceipt, cancel_ceiling,
 };
-use super::{TaskCall, TaskReport, TaskReportBody, TaskVia, sdk};
+use super::{CheckInMode, TaskCall, TaskReport, TaskReportBody, TaskVia, sdk};
 
 mod cancel_effect;
 mod proposal;
 mod read;
 
 impl Memory<'_> {
-    /// Cancels under the own-scoped `auto` default.
+    /// Cancels under the own-scoped `auto` default. The vault owner's own
+    /// TASK cancels on the owner's proof, with no gate (ARCH-0067 `cancel(h)`).
     pub fn cancel(&self, target: TaskCancelTarget) -> MemoryResult<TaskCancelReceipt> {
         self.cancel_with_mode(target, DEFAULT_TASK_CANCEL_MODE)
     }
 
-    /// Cancels under one ladder vocabulary token. `auto` and `full-access`
-    /// map to the existing Auto ceiling; `manual` maps to Proposed.
+    /// Cancels under one check-in mode. `auto` and `full-access` map to the
+    /// existing Auto ceiling; `manual` maps to Proposed.
     pub fn cancel_with_mode(
         &self,
         target: TaskCancelTarget,
-        mode: TaskCancelMode,
+        mode: CheckInMode,
     ) -> MemoryResult<TaskCancelReceipt> {
         verify_actor_binding(self.vault(), self.actor(), self.actor_class())?;
         let state = cancel_target_state(self.vault(), self.actor(), target)?;
@@ -80,7 +81,7 @@ impl Memory<'_> {
     #[cfg(test)]
     pub(super) fn cancel_with_injected_state_for_test(
         &self,
-        mode: TaskCancelMode,
+        mode: CheckInMode,
         state: CancelTargetState,
     ) -> MemoryResult<TaskCancelReceipt> {
         verify_actor_binding(self.vault(), self.actor(), self.actor_class())?;
@@ -237,13 +238,13 @@ impl Memory<'_> {
 
     fn cancel_resolved(
         &self,
-        mode: TaskCancelMode,
+        mode: CheckInMode,
         state: CancelTargetState,
     ) -> MemoryResult<TaskCancelReceipt> {
         let verb = crate::verb_names::CANCEL;
         let now = self.vault().store.clock.now_recorded_at();
         let provenance = facade_provenance(verb);
-        if !state.owned || mode.ceiling() == PolicyApprovalCeiling::Proposed {
+        if !state.owned || cancel_ceiling(mode) == PolicyApprovalCeiling::Proposed {
             let (proposal_ref, gate_decision_ref) = self.persist_task_proposal(
                 TASK_CANCEL_PROPOSAL_PREDICATE,
                 Value::Map(vec![
@@ -263,6 +264,18 @@ impl Memory<'_> {
                 cancel_requested: false,
                 forced: false,
             });
+        }
+
+        // ARCH-0067 `cancel(h)`: AUTO the default, covering own tasks. For a
+        // TASK the vault owner created, the owner's proof is that authority,
+        // as it is for `vault.tasks.cancel.force`: no gate is asked and no
+        // proposal opens. Every other caller (an agent, a person who is not
+        // the owner, a spawn target) takes the gate below, unchanged.
+        if let Some(task_ref) = state.task_ref
+            && let Ok(owner) = self.embedded_owner(verb)
+            && let Some(receipt) = self.owner_cancel_own_task(&owner, task_ref, &state, now)?
+        {
+            return Ok(receipt);
         }
 
         let (gate_decision_ref, gate_outcome, effected, status, cancel_requested) = self
@@ -328,6 +341,43 @@ impl Memory<'_> {
             // The cooperative verb never forces. Rung 2 is its own door.
             forced: false,
         })
+    }
+
+    /// The vault owner's soft cancel of a TASK it created, on `owner`'s proof
+    /// (OWNER-SOFT-CANCEL; the Engine's 15 Nov 13:13 ruling from ARCH-0067
+    /// `cancel(h)`). The proof and the TASK's create-owner record are
+    /// rechecked in the writing transaction, before a row changes. `None`
+    /// when that record no longer names this actor there: the caller then
+    /// takes the ladder's gate, as for any other caller.
+    fn owner_cancel_own_task(
+        &self,
+        owner: &crate::consent::AuthenticatedOwner,
+        task_ref: EntityId,
+        state: &CancelTargetState,
+        now: u64,
+    ) -> MemoryResult<Option<TaskCancelReceipt>> {
+        let effect = self.with_verified_actor_write_txn(|wtxn| {
+            let actor = owner.revalidate_in_txn(self.vault(), wtxn)?;
+            if actor != self.actor()
+                || task_create_owner_in(self.vault(), &*wtxn, task_ref)? != Some(actor)
+            {
+                return Ok(None);
+            }
+            self.soft_cancel_in(wtxn, state, now).map(Some)
+        })?;
+        let Some((effected, status, cancel_requested)) = effect else {
+            return Ok(None);
+        };
+        Ok(Some(TaskCancelReceipt {
+            approval: ClaimApprovalStatus::Auto,
+            effected,
+            proposal_ref: None,
+            // No gate was asked: the owner's proof is the authority.
+            gate_decision_ref: None,
+            status,
+            cancel_requested,
+            forced: false,
+        }))
     }
 }
 

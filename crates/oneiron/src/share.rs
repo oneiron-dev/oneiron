@@ -49,6 +49,7 @@ pub use actor_erase::{ACTOR_ERASE_SHARE_ADMISSION, ShareAdmissionErase};
 pub(crate) use admission_refs::share_gate_decision_refs_in_txn;
 pub use history::{ACTOR_ERASE_SHARE_RECIPIENT, ShareRecipientErase};
 pub(crate) use history::{ShareView, read_share_history_in_txn};
+pub(crate) use revoke::owner_revokes_every_share_in_txn;
 pub(crate) use view_link::{
     authorize_share_link_in_txn, live_share_for_holder_in_txn, share_prompt_sources,
 };
@@ -515,10 +516,14 @@ pub(crate) fn active_brief_shares_for(
 }
 
 fn verify_share_actor(store: &Store, txn: &heed::RoTxn<'_>, actor: &WriteActor) -> Result<()> {
-    let raw = store
-        .port_entity_record(txn, &actor.entity_ref())?
-        .ok_or(Error::EntityNotFound)?;
-    crate::provenance::validate_actor_class(raw.entity_type, actor.actor_class())
+    // A deleted shell keeps its header and type byte, so the raw row alone
+    // would admit a deleted issuer; only a live row names one.
+    let crate::vault::LiveEntityRow::Live { entity_type, .. } =
+        crate::vault::live_entity_row_in_txn(store, txn, &actor.entity_ref())?
+    else {
+        return Err(Error::EntityNotFound);
+    };
+    crate::provenance::validate_actor_class(entity_type, actor.actor_class())
 }
 
 // PERSON admits both human and agent. Only a live, verified authority binding

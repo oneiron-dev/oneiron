@@ -7,10 +7,14 @@
 //! download route (RULING ESIGN-QR-POSSESSION-FACTOR B) refuses and counts
 //! the same way.
 //!
-//! Fleet command: `cargo test --locked -p oneiron-server --all-features
-//! --test esign_qr_refusals`.
+//! Sets its wire rows through `oneiron_server::test_doors::wire_thresholds`:
+//! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron-server
+//! --all-features --test esign_qr_refusals`.
+#![cfg(oneiron_test_support)]
+
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
+use oneiron_server::test_doors::wire_thresholds::set_thresholds;
 use oneiron_server::wire_telemetry::{WireTelemetry, WireThresholds};
 use oneiron_server::{
     ENGINE_THREAD_STACK_BYTES, build_app, config::SyncServerConfig, server::SyncServer,
@@ -58,13 +62,15 @@ fn serve(
         oneiron::Vault::open(dir.path(), oneiron::VaultConfig::device()).expect("open the vault"),
     );
     let observer = WireTelemetry::new(Arc::clone(&vault));
-    observer
-        .set_thresholds(&WireThresholds {
+    set_thresholds(
+        &observer,
+        &WireThresholds {
             window_secs,
             per_verb,
             per_actor: u64::MAX,
-        })
-        .expect("set the wire rows");
+        },
+    )
+    .expect("set the wire rows");
     drop(observer);
     let server = Arc::new(
         SyncServer::new(

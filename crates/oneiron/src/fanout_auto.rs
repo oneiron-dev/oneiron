@@ -48,7 +48,7 @@ use serde_json::{Value, json};
 use crate::edit_distance::escalation::{
     EscalationReceipt, EscalationRuling, EscalationStats, EscalationTrigger, StandingPolicy,
     StandingPolicyStatus, escalation_stats, maybe_propose_standing_policy, record_escalation,
-    standing_policy_for,
+    standing_policy_for, standing_policy_for_in,
 };
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
@@ -423,15 +423,30 @@ fn standing_verdict(row: &StandingPolicy, ask_band: Option<u64>) -> FanoutAskVer
     }
 }
 
+/// The rung-0 row of a budget ask of `magnitude` (ARCH-0082 #ladder, rung 0;
+/// CHECKIN-PR1-SHAPE Q2): `standing`, the scope's standing row, when it is an
+/// accepted approval whose band covers the ask. Check-in reads rung 0 before
+/// the mode, so the row clears the ask under `manual` as under `auto`, and
+/// no classifier is asked. A proposed or band-less row, a band under the ask,
+/// a denial and an amend posture are no rung-0 row.
+pub(crate) fn rung_zero_row(standing: Option<&StandingPolicy>, magnitude: u64) -> Option<EntityId> {
+    standing
+        .filter(|row| standing_verdict(row, Some(magnitude)) == FanoutAskVerdict::Allow)
+        .map(|row| row.row_ref)
+}
+
 /// The accepted standing approval that clears a budget ask of `magnitude` in
-/// `scope` without asking anyone, if one does: the policy row an AUTO
-/// clearance of a width check cites (OF-393). A read failure, a proposed or
-/// band-less row, or a denial is no clearance.
-pub(crate) fn covering_approval(vault: &Vault, scope: &str, magnitude: u64) -> Option<EntityId> {
-    let Ok(Some(row)) = standing_policy_for(vault, scope, EscalationTrigger::Budget) else {
-        return None;
-    };
-    (standing_verdict(&row, Some(magnitude)) == FanoutAskVerdict::Allow).then_some(row.row_ref)
+/// `scope` without asking anyone, read in `txn` (a writer's included, FIX
+/// 10696): the rung-0 row of [`rung_zero_row`], and the policy row a cleared
+/// width check cites (OF-393). A read failure is no clearance.
+pub(crate) fn covering_approval_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    scope: &str,
+    magnitude: u64,
+) -> Option<EntityId> {
+    let standing = standing_policy_for_in(vault, txn, scope, EscalationTrigger::Budget).ok()?;
+    rung_zero_row(standing.as_ref(), magnitude)
 }
 
 /// ED-06's folded history, flattened for the decision state.

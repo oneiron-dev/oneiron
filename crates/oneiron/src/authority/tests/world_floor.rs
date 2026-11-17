@@ -1492,7 +1492,7 @@ fn a_narrowing_a_vouched_demotion_voids_still_narrows() {
 pub(super) fn vouch_widenings(vault: &Vault) -> (bool, Vec<String>) {
     let entries = stored_entries(vault);
     let txn = vault.store.env.read_txn().unwrap();
-    let observations = authority_local_observations_in_txn(&vault.store, &txn, &entries).unwrap();
+    let observations = authority_local_observations_in_txn(&vault.store, &txn).unwrap();
     let fold = |observations: &AuthorityLocalObservations| {
         fold_authority_log_with_local_observations_and_posture(
             &entries,
