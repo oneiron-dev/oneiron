@@ -218,6 +218,7 @@ pub mod decision;
 pub(crate) mod setting_keys;
 pub(crate) mod tables;
 pub(crate) use budget::RsiSigning;
+pub(crate) use budget::resident_share_in_txn;
 pub use budget::rsi_doors;
 pub use budget::{
     ResidentShareRead, RsiBudgetConfig, RsiBudgetError, RsiBudgetRead, RsiBudgetShare,
