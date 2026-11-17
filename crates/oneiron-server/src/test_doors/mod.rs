@@ -30,6 +30,7 @@ pub mod mcp_carrier_release;
 pub mod mcp_code_mode_verbs;
 pub mod mcp_page_mint;
 pub mod mcp_refusal_status;
+pub mod mcp_run_claim_lane;
 pub mod mcp_surface;
 pub mod media_job_spend;
 #[cfg(unix)]
