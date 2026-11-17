@@ -393,6 +393,23 @@ fn resolve_reassignment_in_txn(
     map: &ReassignmentMap,
     targets: ReassignmentContext<'_>,
 ) -> Result<Vec<(EntityId, Option<EntityId>)>> {
+    let entries = origin_claim_entries_in_txn(store, rtxn, origin, map)?;
+    let mut rows = Vec::with_capacity(entries.len());
+    for (claim, target) in entries {
+        rows.push((claim, targets.resolve(target)?));
+    }
+    Ok(rows)
+}
+
+/// The entries of `map` that [`resolve_reassignment_in_txn`] keeps: each
+/// stored claim of `origin`'s (through its merges) with the target its entry
+/// names, in map order.
+fn origin_claim_entries_in_txn<'m>(
+    store: &Store,
+    rtxn: &heed::RoTxn<'_>,
+    origin: &EntityId,
+    map: &'m ReassignmentMap,
+) -> Result<Vec<(EntityId, &'m ReassignmentTarget)>> {
     let members = merged_members_in_txn(store, rtxn, origin)?;
     let mut rows = Vec::with_capacity(map.entries.len());
     'entries: for entry in &map.entries {
@@ -409,12 +426,37 @@ fn resolve_reassignment_in_txn(
                 .port_edge_get(rtxn, &claim, EdgeKind::ClaimOf, member)?
                 .is_some()
             {
-                rows.push((claim, targets.resolve(&entry.target)?));
+                rows.push((claim, &entry.target));
                 continue 'entries;
             }
         }
     }
     Ok(rows)
+}
+
+/// The claims a facet op on `entity` with `map` forks, each fork closing its
+/// origin: the claims [`apply_reassignment_in_txn`] hands back as forks,
+/// read before the op mints its facets. A derive item asks this before it
+/// applies the op, in the same write.
+///
+/// # Errors
+///
+/// The store's.
+pub(crate) fn facet_fork_origins_in_txn(
+    store: &Store,
+    rtxn: &heed::RoTxn<'_>,
+    entity: &EntityId,
+    map: &ReassignmentMap,
+) -> Result<Vec<EntityId>> {
+    let mut origins = Vec::new();
+    for (claim, target) in origin_claim_entries_in_txn(store, rtxn, entity, map)? {
+        if matches!(target, ReassignmentTarget::Facet { .. })
+            && claim_is_forkable_in_txn(store, rtxn, &claim)?
+        {
+            origins.push(claim);
+        }
+    }
+    Ok(origins)
 }
 
 /// `origin` first, then every entity merged into it, through merges of
