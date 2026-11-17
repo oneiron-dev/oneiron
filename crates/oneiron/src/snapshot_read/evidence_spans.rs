@@ -18,7 +18,9 @@ use crate::dreamer_consolidation::TurnText;
 use crate::dreamer_runner::DreamerAttemptBinding;
 use crate::memory::{Memory, MemoryError, MemoryResult};
 
-/// The most byte ranges one `vault.evidence.spans` request names.
+/// The most byte ranges one `vault.evidence.spans` request names while the
+/// owner has set no `snapshot_read.evidence.max_ranges` row: that key's
+/// default.
 pub const EVIDENCE_SPANS_MAX_RANGES: usize = 64;
 
 /// The reason code of the refusal a reader other than the owner gets when a
@@ -70,16 +72,19 @@ pub struct EvidenceSpans {
     pub masked: bool,
 }
 
-/// The request's shape checks, run before the caller is resolved.
+/// The request's shape checks, run before the caller is resolved. The bound is
+/// `snapshot_read.evidence.max_ranges` in force, [`EVIDENCE_SPANS_MAX_RANGES`] by default.
 ///
 /// # Errors
 ///
-/// More than [`EVIDENCE_SPANS_MAX_RANGES`] ranges, an empty range, or a
-/// version of another row.
-pub fn validate_evidence_spans(input: &EvidenceSpansRequest) -> MemoryResult<()> {
-    if input.ranges.len() > EVIDENCE_SPANS_MAX_RANGES {
+/// More than `max_ranges` ranges, an empty range, or a version of another row.
+pub fn validate_evidence_spans(
+    input: &EvidenceSpansRequest,
+    max_ranges: usize,
+) -> MemoryResult<()> {
+    if input.ranges.len() > max_ranges {
         return Err(MemoryError::bad_request(format!(
-            "at most {EVIDENCE_SPANS_MAX_RANGES} evidence ranges per request"
+            "at most {max_ranges} evidence ranges per request"
         )));
     }
     if input.ranges.iter().any(|range| range.start >= range.end) {
@@ -95,6 +100,16 @@ pub fn validate_evidence_spans(input: &EvidenceSpansRequest) -> MemoryResult<()>
         return Err(MemoryError::bad_request("the version names another source"));
     }
     Ok(())
+}
+
+/// The range cap in force in `txn`: `snapshot_read.evidence.max_ranges`, a
+/// stored 0 read as 1.
+fn max_ranges_in_txn(memory: &Memory<'_>, txn: &heed::RoTxn<'_>) -> MemoryResult<usize> {
+    let cap = super::setting_keys::EVIDENCE_SPANS_MAX_RANGES_SETTING
+        .read_in_txn(memory.vault(), txn, &[], None)?
+        .value
+        .max(1);
+    Ok(usize::try_from(cap).unwrap_or(usize::MAX))
 }
 
 /// Reads one source through the caller's scoped read, in one snapshot.
@@ -128,7 +143,9 @@ pub fn evidence_spans(
 }
 
 /// Reads the evidence spans after proving the binding in the spans' own
-/// read transaction, before any row is read.
+/// read transaction, before any source row is read. The range cap is engine
+/// configuration: its Setting row is read first, for the shape check, as an
+/// unbound call reads it.
 ///
 /// # Errors
 ///
@@ -147,8 +164,12 @@ fn bound_evidence_spans(
     input: &EvidenceSpansRequest,
     binding: Option<&DreamerAttemptBinding>,
 ) -> MemoryResult<ScopedReadResult<EvidenceSpans>> {
-    validate_evidence_spans(input)?;
     let vault = memory.vault();
+    let max_ranges = {
+        let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
+        max_ranges_in_txn(memory, &txn)?
+    };
+    validate_evidence_spans(input, max_ranges)?;
     let read = memory.read_lane(ClaimReadStatus::Recorded)?;
     let _pins = read.prepare_point_read::<MemoryError>()?;
     let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
@@ -169,6 +190,8 @@ fn bound_evidence_spans(
 /// Serves one source and its masked spans through an existing live read transaction.
 ///
 /// The caller proves its authority and binding before entering this shared body.
+/// The request's shape is checked here too, against the range cap `txn` reads,
+/// because the pack check enters with a request of its own.
 ///
 /// # Errors
 ///
@@ -179,7 +202,7 @@ pub(crate) fn evidence_spans_in_txn(
     txn: &heed::RoTxn<'_>,
     input: &EvidenceSpansRequest,
 ) -> MemoryResult<EvidenceSpans> {
-    validate_evidence_spans(input)?;
+    validate_evidence_spans(input, max_ranges_in_txn(memory, txn)?)?;
     if let Some(asked) = &input.version {
         match asked.recheck_in_txn(read, txn)? {
             SourceVersionCheck::Current => {}
