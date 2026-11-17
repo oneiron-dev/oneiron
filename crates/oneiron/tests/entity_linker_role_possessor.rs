@@ -120,6 +120,7 @@ fn says_my_manager(vault: &Vault, author: EntityId, turn: &str) -> (EntityId, Me
         speaker_links: Vec::new(),
         stack_sha16: None,
         mood_parts: Vec::new(),
+        relations: None,
     };
     let (_, outcome) = vault
         .memory(author, EdgeActorClass::Human)
@@ -338,6 +339,7 @@ fn a_role_phrase_takes_its_antecedents_ordinary_name() {
         speaker_links: Vec::new(),
         stack_sha16: None,
         mood_parts: Vec::new(),
+        relations: None,
     };
     let (_, outcome) = vault
         .memory(xavier, EdgeActorClass::Human)
