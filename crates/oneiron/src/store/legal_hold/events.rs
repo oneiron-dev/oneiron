@@ -121,6 +121,27 @@ pub(crate) fn logged_in_txn(
         .any(|(_, row)| row.event == event))
 }
 
+/// Whether `hold`'s own log holds an `event` row after its last `since`
+/// row. The gate-partition door places and lifts one hold id again and
+/// again, so a release's follow-up reads only the rows since that release.
+pub(crate) fn logged_since_in_txn(
+    dbs: &impl SideTableDbs,
+    txn: &RoTxn<'_>,
+    hold: &LegalHold,
+    event: LegalHoldEventKind,
+    since: LegalHoldEventKind,
+) -> Result<bool> {
+    let mut logged = false;
+    for (_, row) in own_log(hold).scan_from(dbs, txn, hold.hold_id.as_bytes())? {
+        if row.event == since {
+            logged = false;
+        } else if row.event == event {
+            logged = true;
+        }
+    }
+    Ok(logged)
+}
+
 fn by_time(table: Events, dbs: &impl SideTableDbs, txn: &RoTxn<'_>) -> Result<Vec<LegalHoldEvent>> {
     let mut events: Vec<LegalHoldEvent> = table
         .scan(dbs, txn)?

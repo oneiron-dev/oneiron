@@ -36,8 +36,8 @@ use heed::{RoTxn, RwTxn};
 pub(crate) use events::{host_events_in_txn, log_in_txn, owner_events_in_txn};
 
 use crate::deletion::{
-    LEGAL_HOLD_LOG_RETENTION_MONTHS, LegalHold, LegalHoldActorKind, LegalHoldEventKind,
-    LegalHoldKind, LegalHoldReason, LegalHoldTarget,
+    HoldCloneCapture, LEGAL_HOLD_LOG_RETENTION_MONTHS, LegalHold, LegalHoldActorKind,
+    LegalHoldEvent, LegalHoldEventKind, LegalHoldKind, LegalHoldReason, LegalHoldTarget,
 };
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -222,44 +222,60 @@ impl Store {
     }
 }
 
+/// The gate-decision partition door's hold id on `target`: derived from the
+/// partition, so the door names one hold per partition.
+pub(crate) fn partition_hold_id(target: &LegalHoldTarget) -> Result<EntityId> {
+    let mut seed = b"legal_hold:gate_partition:v1".to_vec();
+    seed.extend_from_slice(&held_key(target));
+    let digest = blake3::hash(&seed);
+    let mut id = [0; 16];
+    id.copy_from_slice(&digest.as_bytes()[..16]);
+    EntityId::from_bytes(id)
+}
+
 /// The gate-decision partition door's own hold on `target`: one row per
-/// partition, its id derived from the partition, so placing it twice is one
-/// hold and releasing it lifts that hold alone.
+/// partition, its id [`partition_hold_id`], so placing it twice is one hold
+/// and releasing it lifts that hold alone. No hold keeps a partition in place
+/// (LEGAL-HOLD-USE = B), so a placement writes the hold's sealed copy through
+/// `capture`, inside this writer and before the row, as an owner's placement
+/// does, and its `Placed` event carries the copy's fingerprint. `capture` runs
+/// only when this call places the hold. A placement after a release whose
+/// `CloneDestroyed` was never logged logs it first: `capture` removes what
+/// that release left before it writes the new copy. Returns the partition's
+/// hold row as this call leaves it; a released row's copy is destroyed by
+/// [`finish_partition_release_in_txn`] after the release commits.
 pub(crate) fn set_partition_hold_in_txn(
     dbs: &impl SideTableDbs,
     txn: &mut RwTxn<'_>,
     target: LegalHoldTarget,
     held: bool,
     now: u64,
-) -> Result<()> {
-    let mut seed = b"legal_hold:gate_partition:v1".to_vec();
-    seed.extend_from_slice(&held_key(&target));
-    let digest = blake3::hash(&seed);
-    let mut id = [0; 16];
-    id.copy_from_slice(&digest.as_bytes()[..16]);
-    let hold_id = EntityId::from_bytes(id)?;
+    capture: impl FnOnce(&RoTxn<'_>, EntityId) -> Result<Vec<HoldCloneCapture>>,
+) -> Result<Option<LegalHold>> {
+    let hold_id = partition_hold_id(&target)?;
     let existing = ROWS.get(dbs, txn, &hold_id)?;
     let actor = HoldActor::new(LegalHoldActorKind::Host, None);
     match (existing, held) {
-        (Some(hold), true) if hold.stands() => Ok(()),
-        (Some(mut hold), true) => {
-            hold.lifted_at = None;
-            hold.placed_at = now;
-            put_hold_in_txn(dbs, txn, &hold)?;
-            log_in_txn(
-                dbs,
-                txn,
-                &hold,
-                LegalHoldEventKind::Placed,
-                LegalHoldReason::HostPlaced,
-                hold.targets.clone(),
-                &actor,
-                now,
-                None,
-            )
-        }
-        (None, true) => {
-            let hold = LegalHold {
+        (Some(hold), true) if hold.stands() => Ok(Some(hold)),
+        (existing, true) => {
+            let undestroyed = match &existing {
+                Some(hold) if !hold.clone_captures.is_empty() => !events::logged_since_in_txn(
+                    dbs,
+                    txn,
+                    hold,
+                    LegalHoldEventKind::CloneDestroyed,
+                    LegalHoldEventKind::Lifted,
+                )?,
+                _ => false,
+            };
+            let captures = capture(&**txn, hold_id)?;
+            let fingerprint = captures
+                .first()
+                .ok_or(Error::InvariantViolation(
+                    "a legal hold wrote no sealed capture",
+                ))?
+                .fingerprint;
+            let mut hold = existing.unwrap_or_else(|| LegalHold {
                 hold_id,
                 kind: LegalHoldKind::Customer,
                 targets: vec![target],
@@ -277,19 +293,38 @@ pub(crate) fn set_partition_hold_in_txn(
                 requires_non_use: false,
                 clone_captures: Vec::new(),
                 future_messages: None,
-            };
+            });
+            if undestroyed {
+                log_in_txn(
+                    dbs,
+                    txn,
+                    &hold,
+                    LegalHoldEventKind::CloneDestroyed,
+                    LegalHoldReason::HostReleased,
+                    hold.targets.clone(),
+                    &actor,
+                    now,
+                    None,
+                )?;
+            }
+            hold.lifted_at = None;
+            hold.placed_at = now;
+            hold.clone_captures = captures;
             put_hold_in_txn(dbs, txn, &hold)?;
-            log_in_txn(
-                dbs,
-                txn,
-                &hold,
-                LegalHoldEventKind::Placed,
-                LegalHoldReason::HostPlaced,
-                vec![target],
-                &actor,
-                now,
-                None,
-            )
+            let row = LegalHoldEvent {
+                clone_fingerprint: Some(fingerprint),
+                ..events::event_row(
+                    &hold,
+                    LegalHoldEventKind::Placed,
+                    LegalHoldReason::HostPlaced,
+                    hold.targets.clone(),
+                    &actor,
+                    now,
+                    None,
+                )
+            };
+            events::append_event_in_txn(dbs, txn, &hold, &row)?;
+            Ok(Some(hold))
         }
         (Some(mut hold), false) if hold.stands() => {
             hold.lifted_at = Some(now);
@@ -304,10 +339,54 @@ pub(crate) fn set_partition_hold_in_txn(
                 &actor,
                 now,
                 None,
-            )
+            )?;
+            Ok(Some(hold))
         }
-        (_, false) => Ok(()),
+        (existing, false) => Ok(existing),
     }
+}
+
+/// After a release of the partition door's hold `hold_id` commits: runs
+/// `destroy`, which removes the hold's sealed copy, and logs `CloneDestroyed`
+/// once for that release. A hold placed again since, a release already
+/// logged as destroyed, or a hold with no copy leaves `destroy` unrun. The
+/// caller runs this inside a writer, so no placement of the same partition
+/// can write its new copy between the read and the removal; a repeat release
+/// finishes a removal a failure cut short.
+pub(crate) fn finish_partition_release_in_txn(
+    dbs: &impl SideTableDbs,
+    txn: &mut RwTxn<'_>,
+    hold_id: &EntityId,
+    now: u64,
+    destroy: impl FnOnce() -> Result<()>,
+) -> Result<()> {
+    let Some(hold) = ROWS.get(dbs, txn, hold_id)? else {
+        return Ok(());
+    };
+    if hold.stands()
+        || hold.clone_captures.is_empty()
+        || events::logged_since_in_txn(
+            dbs,
+            txn,
+            &hold,
+            LegalHoldEventKind::CloneDestroyed,
+            LegalHoldEventKind::Lifted,
+        )?
+    {
+        return Ok(());
+    }
+    destroy()?;
+    log_in_txn(
+        dbs,
+        txn,
+        &hold,
+        LegalHoldEventKind::CloneDestroyed,
+        LegalHoldReason::HostReleased,
+        hold.targets.clone(),
+        &HoldActor::new(LegalHoldActorKind::Host, None),
+        now,
+        None,
+    )
 }
 
 /// When a released hold's log rows expire: its release plus 24 calendar
