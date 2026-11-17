@@ -712,7 +712,7 @@
      "path": "src/agent_def/id_pin.rs",
      "purpose": "The pin an agent id keeps (H215): the widest ceiling a row at the id may hold, and the fork lineage it was…",
      "surface": {
-      "crate-vis": 17
+      "crate-vis": 19
      }
     },
     {
@@ -1772,7 +1772,7 @@
      "path": "src/agent_dispatch/run_lineage.rs",
      "purpose": "The store-only lineage step the Gate's delegation-chain read takes at each write of a delegated run (FIX…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 3
      }
     },
     {
@@ -24366,6 +24366,7 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "ConnectorIssuerDetection",
       "ConnectorIssuerObservation"
      ],
      "path": "src/connector_key/credential_binding.rs",
@@ -24373,9 +24374,9 @@
      "surface": {
       "const": 1,
       "crate-vis": 6,
-      "fn": 5,
+      "fn": 6,
       "re-export": 2,
-      "struct": 1
+      "struct": 2
      }
     },
     {
@@ -25189,7 +25190,7 @@
      "surface": {
       "const": 3,
       "crate-vis": 1,
-      "re-export": 1
+      "re-export": 2
      }
     },
     {
@@ -43752,7 +43753,25 @@
      "surface": {
       "const": 3,
       "crate-vis": 1,
-      "fn": 5
+      "fn": 5,
+      "re-export": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "GateConsentBundleMemberView",
+      "GateConsentBundleResolution",
+      "GateConsentBundleResolveRequest",
+      "GateConsentBundleReview",
+      "GateConsentBundleReviewRequest"
+     ],
+     "path": "src/gate/bundle/agent_settle.rs",
+     "purpose": "An agent's review and settlement of a Dreamer consent bundle, beside the owner's (restriction census C29…",
+     "surface": {
+      "fn": 2,
+      "struct": 5
      }
     },
     {
@@ -44380,7 +44399,7 @@
      "path": "src/gate/doors/recorded.rs",
      "purpose": "Recorded claim decisions retained until transaction commit or selective denial rollback",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -44720,7 +44739,7 @@
      "path": "src/gate/mod.rs",
      "purpose": "DEC-0005 Gate policy manifest resolver",
      "surface": {
-      "crate-vis": 98,
+      "crate-vis": 99,
       "mod": 2,
       "re-export": 8
      }
@@ -45364,6 +45383,14 @@
      "surface": {
       "crate-vis": 2
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/gate/setting_keys.rs",
+     "purpose": "The gate's owner Setting keys (DESIGN 15-setting-primitive): rows the setting catalogue reads from this file",
+     "surface": {}
     },
     {
      "bucket": "s",
@@ -49602,13 +49629,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/lens/activation.rs",
-     "purpose": "The owner's selection of a proposed pack lens for its slot, and its clearing (OF-250)",
+     "purpose": "The owner's selection of a proposed pack lens for its slot, and its clearing (OF-250), and an agent's beside…",
      "surface": {
-      "fn": 5,
+      "fn": 7,
       "re-export": 1
      }
     },
@@ -105725,6 +105752,14 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/connector_issuer_detection.rs",
+     "purpose": "L5-11 (ARCH-0072 #drift, #living; ARCH-0054 #auth): the engine's own detection of a credential issuer change",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -106853,6 +106888,14 @@
      "notable": [],
      "path": "tests/gate_census_pins.rs",
      "purpose": "OPUS-GATECENSUS row 2 (Engine ruling 12 Nov 16:2x): green pins for three write gates added or tightened…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/gate_consent_bundle_agent_settle.rs",
+     "purpose": "Restriction census C29: an owner hands a Dreamer consent bundle's settlement to a named agent with the…",
      "surface": {}
     },
     {
@@ -108611,6 +108654,14 @@
      "notable": [],
      "path": "tests/lens_result_set_selection.rs",
      "purpose": "A generated card's result-set action reaches only the rows its clicker ticked (GENUI-SELECTION-EVENT; Engine…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/lens_slot_agent_select.rs",
+     "purpose": "Restriction wave 9b, census C33: the owner's Setting key `lens.slot.agent_select` lets a named agent select…",
      "surface": {}
     },
     {
@@ -113156,7 +113207,7 @@
      "purpose": "Value-free file-mask paths, read visibility, and byte-span transformations"
     },
     "gate": {
-     "files": 212,
+     "files": 214,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -114180,8 +114231,8 @@
    },
    "over_bar": 299,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 8106,
-   "test_files": 1854
+   "source_files": 8108,
+   "test_files": 1857
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -163314,10 +163365,20 @@
      "path": "src/connector_call_host.rs",
      "purpose": "The served [`ConnectorCallHost`] (ONE-2510): the generic connector call's transport, credential and reply…",
      "surface": {
-      "crate-vis": 21,
+      "crate-vis": 23,
       "fn": 1,
       "mod": 1,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/connector_call_host/issuer_watch.rs",
+     "purpose": "L5-11 (ARCH-0072 #drift; ARCH-0054 #auth \"PRM 401 bootstrap\"): automatic issuer change detection at a…",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -172259,6 +172320,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/test_doors/connector_issuer_watch.rs",
+     "purpose": "Door for `tests/connector_issuer_prm_refusal.rs` (L5-11): the issuer watch a connector send runs at a…",
+     "surface": {
+      "fn": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/test_doors/connector_sends.rs",
      "purpose": "Door for `tests/inquiry_federation.rs`: one pass of the served connector-send drain…",
      "surface": {
@@ -172484,7 +172555,7 @@
      "path": "src/test_doors/mod.rs",
      "purpose": "Doors for the integration tests to crate-private items, as in `oneiron::test_doors`",
      "surface": {
-      "mod": 59
+      "mod": 60
      }
     },
     {
@@ -173937,6 +174008,14 @@
      "notable": [],
      "path": "tests/config_refusal_origin.rs",
      "purpose": "FIX [CONFIG-REFUSED-VALUE-NAMES-NO-FILE-LINE]: a value serve refuses after the parse names where it was set",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/connector_issuer_prm_refusal.rs",
+     "purpose": "L5-11 (ARCH-0054 #auth \"PRM 401 bootstrap\"; ARCH-0072 #drift): the issuer watch a connector send runs at a…",
      "surface": {}
     },
     {
@@ -176228,7 +176307,7 @@
      "purpose": "The host half of a generic MCP catalog connector's first admission (OF-189): discovery at the endpoint…"
     },
     "connector_call_host": {
-     "files": 13,
+     "files": 14,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -176641,7 +176720,7 @@
      "purpose": "Request fixtures mint real logged slips before crossing the production router"
     },
     "test_doors": {
-     "files": 61,
+     "files": 62,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -176706,8 +176785,8 @@
    },
    "over_bar": 69,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 2012,
-   "test_files": 480
+   "source_files": 2014,
+   "test_files": 481
   },
   "oneiron-setting-contract": {
    "files": [
