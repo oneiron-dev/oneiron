@@ -29,8 +29,8 @@ use oneiron::booking::anti_abuse::BookingRequestFacts;
 use oneiron::booking::publication::PublicBookingAuthority;
 use oneiron::booking::rung2::{Rung2FirstSend, Rung2Offer, Rung2Sender, Rung2Unavailable};
 use oneiron::booking::{
-    PublicBookingPageToken, RankedSlot, SessionKey, SlotMask, SlotOracle, SolveRequest,
-    booking_snippet_links, booking_zoned_time, slot_mask,
+    ConstraintObject, EventTypeKey, PublicBookingPageToken, RankedSlot, SessionKey, SlotMask,
+    SlotOracle, SolveRequest, booking_snippet_links, booking_zoned_time, slot_mask,
 };
 use oneiron::channel_identity_provider::native_mail::{
     NativeMailAdapter, NativeMailHost, NativeMailPack,
@@ -418,13 +418,9 @@ impl Rung2Send<'_> {
         }
     }
 
-    /// The window a first send solves over: from now over the event type's
-    /// own booking window.
+    /// The window a first send solves over: [`rung2_solve_window`].
     fn solve_window(&self) -> TimeRange {
-        TimeRange {
-            start: self.now,
-            end: self.now.saturating_add(RUNG2_SOLVE_HORIZON_SECS),
-        }
+        rung2_solve_window(self.now)
     }
 
     /// The first send's message: the template over the solver's offers for
@@ -434,24 +430,15 @@ impl Rung2Send<'_> {
         &self,
         continuation: &ConstraintContinuation,
     ) -> Result<NativeMailMessage, ApiError> {
-        let page_ref = self.authority.page_ref;
-        let request = SolveRequest {
-            event_type: continuation.event_type.clone(),
-            window: self.solve_window(),
-            constraint: Some(continuation.constraint.clone()),
-            visitor_tz: continuation.visitor_tz.clone(),
-        };
-        let oracle = PublicSlotOracle(booking_oracle(self.server, page_ref, None, self.now)?);
-        let mask = slot_mask(&request, oracle.solve(&request).map_err(booking_error)?);
-        let offered = top_ranked_slots(&mask.slots, self.front.max_offered_slots);
-        let token = PublicBookingPageToken::for_page(page_ref);
-        let page_url = self
-            .server
-            .config
-            .booking
-            .as_ref()
-            .map(|booking| booking.page_url(&token));
-        let offers = offer_lines(&mask, &offered, &continuation.visitor_tz, &token, page_url)?;
+        let offers = rung2_offers(
+            self.server,
+            self.authority.page_ref,
+            &continuation.event_type,
+            &continuation.constraint,
+            &continuation.visitor_tz,
+            self.front.max_offered_slots,
+            self.now,
+        )?;
         let text = render_rung2_first_send_text(&self.front.copy(), &offers);
         NativeMailMessage::new(
             &self.input.visitor_email,
@@ -466,6 +453,38 @@ impl Rung2Send<'_> {
             )
         })
     }
+}
+
+/// The solver's offers for `constraint` on `page_ref`, each as its line:
+/// from now over the event type's own booking window, clamped to the public
+/// rung, the top-ranked `max_offered` slots (the page's
+/// [`ConstraintFrontConfig::max_offered_slots`]), as its card renders them. A
+/// first send and a reply on its thread offer the same way.
+pub(super) fn rung2_offers(
+    server: &SyncServer,
+    page_ref: EntityId,
+    event_type: &EventTypeKey,
+    constraint: &ConstraintObject,
+    visitor_tz: &str,
+    max_offered: u16,
+    now: u64,
+) -> Result<Vec<Rung2OfferLine>, ApiError> {
+    let request = SolveRequest {
+        event_type: event_type.clone(),
+        window: rung2_solve_window(now),
+        constraint: Some(constraint.clone()),
+        visitor_tz: visitor_tz.to_owned(),
+    };
+    let oracle = PublicSlotOracle(booking_oracle(server, page_ref, None, now)?);
+    let mask = slot_mask(&request, oracle.solve(&request).map_err(booking_error)?);
+    let offered = top_ranked_slots(&mask.slots, max_offered);
+    let token = PublicBookingPageToken::for_page(page_ref);
+    let page_url = server
+        .config
+        .booking
+        .as_ref()
+        .map(|booking| booking.page_url(&token));
+    offer_lines(&mask, &offered, visitor_tz, &token, page_url)
 }
 
 /// Each offered slot's line: its slot link when the host names its public
@@ -509,6 +528,15 @@ fn offer_lines(
             }
         })
         .collect()
+}
+
+/// The window a rung-2 send or reply solves over: from `now` over the event
+/// type's own booking window.
+pub(super) fn rung2_solve_window(now: u64) -> TimeRange {
+    TimeRange {
+        start: now,
+        end: now.saturating_add(RUNG2_SOLVE_HORIZON_SECS),
+    }
 }
 
 /// The continuation the session's no-fit turn kept, while it is live.

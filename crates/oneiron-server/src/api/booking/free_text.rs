@@ -82,6 +82,33 @@ fn parse_on_seat(
     visitor_tz: String,
     now: u64,
 ) -> Result<(ConstraintObject, Option<String>), ApiError> {
+    match parse_disposition_on_seat(
+        server, settings, principal, sponsor, free_text, visitor_tz, now,
+    )? {
+        ConstraintParseDisposition::Constraint {
+            object,
+            visitor_tz_override,
+        } => Ok((object, visitor_tz_override)),
+        ConstraintParseDisposition::OffTopic => Err(ApiError::bad_request(
+            "the constraint text is not a scheduling preference",
+            Some("constraint"),
+        )),
+    }
+}
+
+/// What the parse seat makes of `free_text`: a canonical constraint, or a
+/// text about something other than scheduling. The page's free text refuses
+/// the second; a rung-2 reply answers it with the owner's off-topic line
+/// (RUNG2-REPLY-OFF-TOPIC = B). Called from a blocking thread.
+pub(super) fn parse_disposition_on_seat(
+    server: &SyncServer,
+    settings: &BookingParseSettings,
+    principal: Option<WriteActor>,
+    sponsor: Option<EntityId>,
+    free_text: String,
+    visitor_tz: String,
+    now: u64,
+) -> Result<ConstraintParseDisposition, ApiError> {
     let request = ConstraintParseRequest {
         free_text,
         detected_visitor_tz: visitor_tz,
@@ -93,19 +120,11 @@ fn parse_on_seat(
         principal,
         sponsor,
         now,
-        |backend, lease, config| match block_on(parse_constraint_with_backend(
-            backend, lease, &request, config,
-        ))
-        .map_err(booking_error)?
-        {
-            ConstraintParseDisposition::Constraint {
-                object,
-                visitor_tz_override,
-            } => Ok((object, visitor_tz_override)),
-            ConstraintParseDisposition::OffTopic => Err(ApiError::bad_request(
-                "the constraint text is not a scheduling preference",
-                Some("constraint"),
-            )),
+        |backend, lease, config| {
+            block_on(parse_constraint_with_backend(
+                backend, lease, &request, config,
+            ))
+            .map_err(booking_error)
         },
     )
 }
@@ -191,7 +210,7 @@ pub(super) fn on_parse_seat<T>(
 /// records as its live owner pays as himself while a live grant here names
 /// him, and here, as an anonymous visitor, otherwise or once that grant no
 /// longer stands (FIX 5327, `BookingAdmissionContext::payer_now`).
-fn anonymous_payer(
+pub(super) fn anonymous_payer(
     vault: &oneiron::Vault,
     sponsor: Option<EntityId>,
 ) -> Result<WriteActor, oneiron::MemoryError> {
