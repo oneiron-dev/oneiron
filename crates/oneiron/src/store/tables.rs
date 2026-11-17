@@ -568,6 +568,14 @@ crate::side_table::side_tables! {
     /// to the entity id it names, for lookup-before-mint resolution. Key: u8 + hash32 + id16.
     INGEST_IDENTITY_HINT: VaultMeta b"identity-hint:v1:" Raw
         [restore: content] [family: unclassified] [tier: canonical];
+    /// Empty-marker index of the PERSONs whose synced body carries a `party_key`, under that
+    /// key, derived on each replica in the transaction that writes the body (L6-22). Key:
+    /// hash32 (sha256 of the exact party key) + id16.
+    PERSON_PARTY_KEY_INDEX: VaultMeta b"person-party-key:v1:" Raw
+        [restore: not_imaged] [family: not_imaged] [tier: derived];
+    /// Completeness flag of the party-key index above (u64 version). Key: ().
+    PERSON_PARTY_KEY_INDEX_STATE: VaultMeta b"person-party-key-state:v1" Raw
+        [restore: not_imaged] [family: not_imaged] [tier: derived];
     /// Canonical caller-supplied text fields backing one document's bm25 index, used to rebuild
     /// postings. Key: id16.
     INDEX_SOURCE_TEXT: VaultMeta b"index_source:text:v1:" Named
@@ -1166,6 +1174,11 @@ crate::side_table::side_tables! {
     /// One way to unlock the vault data key: an E0 `VaultDek` envelope and its public
     /// metadata. Key: string (wrap id).
     VAULT_KEY_WRAP: VaultMeta b"vault_key:wrap:v1:" Named
+        [restore: live] [family: unclassified] [tier: canonical];
+    /// One link of the vault's data-key chain: the key of generation `n - 1`
+    /// sealed under a key derived from generation `n`'s key. Key: string (the
+    /// generation as a zero-padded decimal, so the keys sort by generation).
+    VAULT_KEY_LINK: VaultMeta b"vault_key:link:v1:" Named
         [restore: live] [family: unclassified] [tier: canonical];
     /// Voice reference pack. Key: string (pack id).
     VOICE_OWNER_REF: VaultMeta b"voice:owner_ref:v1:" Named

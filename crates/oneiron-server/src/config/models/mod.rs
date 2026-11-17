@@ -91,6 +91,11 @@ pub(crate) struct ModelsFile {
     prefer_local: Option<bool>,
     extraction_egress: Option<bool>,
     raw_budget_units: Option<u64>,
+    /// A down provider's first health rest, in seconds (FIX 11226).
+    health_rest_secs: Option<u64>,
+    /// How long one durable step submission waits for its offer back from a
+    /// health rest before the step parks, in seconds (FIX 11226).
+    step_rest_wait_secs: Option<u64>,
     #[serde(default)]
     providers: BTreeMap<String, ProviderFile>,
     #[serde(default)]
@@ -223,6 +228,16 @@ pub struct ModelsConfig {
     pub extraction_egress: bool,
     /// Process-lifetime meter for the raw `/v1/llm` routes.
     pub raw_budget_units: u64,
+    /// `health_rest_secs`: a down provider's first health rest, in seconds
+    /// (FIX 11226). Each failure in a row doubles it, up to the longest
+    /// health rest, 60 seconds. Unset keeps 5; one second is the floor of
+    /// the vault's seconds clock.
+    pub health_rest_secs: u64,
+    /// `step_rest_wait_secs`: how long, in all, one `ai.steps.submit` waits
+    /// for its offer back from a health rest before the step parks and
+    /// resumes on its own (FIX 11226). The vault's longest wait for an offer
+    /// back caps it; unset is that longest wait.
+    pub step_rest_wait_secs: Option<u64>,
     pub dreamer: DreamerSettings,
     pub chat: ChatSettings,
     pub workflows: WorkflowSettings,
@@ -561,6 +576,15 @@ impl ModelsFile {
                 .unwrap_or(DEFAULT_STEP_RETRY_BACKOFF_SECS),
         };
         let raw_budget_units = self.raw_budget_units.unwrap_or(DEFAULT_RAW_BUDGET_UNITS);
+        let health_rest_secs = self
+            .health_rest_secs
+            .unwrap_or(crate::models::HEALTH_REST_SECS);
+        if !(1..=crate::models::HEALTH_REST_MAX_SECS).contains(&health_rest_secs) {
+            anyhow::bail!(
+                "models.health_rest_secs must be between 1 and {}",
+                crate::models::HEALTH_REST_MAX_SECS
+            );
+        }
         let step_wall = self
             .code_mode
             .step_wall_secs
@@ -652,6 +676,8 @@ impl ModelsFile {
             }),
             extraction_egress: self.extraction_egress.unwrap_or(false),
             raw_budget_units,
+            health_rest_secs,
+            step_rest_wait_secs: self.step_rest_wait_secs,
             dreamer,
             chat,
             workflows,
@@ -707,9 +733,11 @@ impl CodeCheckFile {
 
 impl ModelsConfig {
     /// A `[models]` section's body on its own, as a host that embeds this
-    /// crate writes it. `base` resolves relative prompt files.
+    /// crate writes it. `base` resolves relative prompt files. A body that
+    /// does not parse names the place, never the parser's message, which
+    /// quotes the line (FIX CONFIG-SIDE-FILE-PARSE-ERRORS-PRINT-PARSER-MESSAGE).
     pub fn from_toml(text: &str, base: Option<&Path>) -> anyhow::Result<Self> {
-        let file: ModelsFile = toml::from_str(text)?;
+        let file: ModelsFile = crate::config::diagnostics::parse_toml_text(text)?;
         file.resolve(base)
     }
 

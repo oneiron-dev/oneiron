@@ -18,17 +18,10 @@ use super::invalid;
 /// The key a trainer's receipt carries its data timeline under.
 pub const TIMELINE_RECEIPT_KEY: &str = "timeline";
 
-/// A point inside one run: the optimizer step and the tokens trained so far.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub struct TrainingBoundary {
-    pub step: u64,
-    pub tokens: u64,
-}
-
-impl TrainingBoundary {
-    /// The run's start, at its starting checkpoint.
-    pub const START: Self = Self { step: 0, tokens: 0 };
-}
+#[doc(hidden)]
+pub use oneiron_records::training_pack::timeline::{
+    ParentCheckpoint, PhaseOutcome, TrainingBoundary,
+};
 
 /// A data mixture, pinned by the BLAKE3 of its definition, with the weight
 /// of each source in it.
@@ -37,24 +30,6 @@ pub struct MixturePin {
     #[serde(with = "hex32")]
     pub definition_blake3: [u8; 32],
     pub weights: BTreeMap<String, f64>,
-}
-
-/// The earlier checkpoint a phase restarted from, and why.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ParentCheckpoint {
-    pub step: u64,
-    #[serde(with = "hex32")]
-    pub blake3: [u8; 32],
-    pub reason: String,
-}
-
-/// How an executed phase ended.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum PhaseOutcome {
-    Completed,
-    Failed,
-    Aborted,
 }
 
 /// One phase of the recipe's schedule: from this boundary on, this mixture.

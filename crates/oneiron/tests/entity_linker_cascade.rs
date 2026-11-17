@@ -170,6 +170,7 @@ fn save_as(vault: &Vault, author: EntityId, text: &str, name: &str) -> (EntityId
         vad: None,
         context_links: Vec::new(),
         speaker_links: Vec::new(),
+        relations: None,
         stack_sha16: None,
         mood_parts: Vec::new(),
     };
@@ -1068,6 +1069,7 @@ impl ExtractionEncoder for Owens {
                 context_links: Vec::new(),
                 speaker_links: Vec::new(),
                 mood_parts: Vec::new(),
+                relations: None,
                 stack_sha16: None,
             }),
         }
@@ -1386,6 +1388,7 @@ impl ExtractionEncoder for ManagerAfterOrg {
                 context_links: Vec::new(),
                 speaker_links: Vec::new(),
                 mood_parts: Vec::new(),
+                relations: None,
                 stack_sha16: None,
             }),
         }
