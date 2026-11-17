@@ -95,6 +95,7 @@ pub(crate) use provisional::{
 };
 #[cfg(feature = "sync")]
 pub(crate) use provisional::{demote_in_txn as demote_tags_in_txn, demotion_kept_origins_in_txn};
+pub(crate) use role::possessor_in_txn;
 pub(crate) use save::{
     role_hits_in_txn, save_shadow_output_in_txn, shares_world_in_txn, sounds_like_in_txn,
 };

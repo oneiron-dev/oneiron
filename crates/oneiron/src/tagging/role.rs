@@ -48,6 +48,24 @@ pub(super) fn role_word(kind: u8, mention: &str) -> Option<String> {
     (relationship_trust_class(&word) != RelationshipTrustClass::Unlabeled).then_some(word)
 }
 
+/// The possessor of the mention `mention` of `kind` said in `message`: for
+/// a role phrase ([`role_word`]), the one author of the message, whose
+/// relation it names; `None` for any other mention, and for a role phrase
+/// of no single author. A provisional person minted for a role phrase is
+/// its possessor's alone (FIX LINKER-ROLE-PROVISIONAL-PER-SPEAKER).
+pub(crate) fn possessor_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    kind: u8,
+    mention: &str,
+    message: &EntityId,
+) -> Result<Option<EntityId>> {
+    if role_word(kind, mention).is_none() {
+        return Ok(None);
+    }
+    speaker_in_txn(vault, txn, message)
+}
+
 /// The one author of `message`, whom its `my` names; `None` when it has no
 /// author or several.
 pub(super) fn speaker_in_txn(
