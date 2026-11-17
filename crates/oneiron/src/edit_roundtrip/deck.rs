@@ -19,6 +19,7 @@ use crate::blob_artifact::{BLOB_ARTIFACT_RUN_REF_MAX_BYTES, read_blob_artifact_h
 use crate::entity_id::EntityId;
 use crate::error::{ArtifactError, Error, Result};
 use crate::side_table::{self, Named, SideTable};
+use oneiron_contracts::fingerprint::ContentHash;
 use oneiron_docedit::design_plan::MediaType;
 use oneiron_docedit::edit::transaction::{
     AssetRef, Assets, DeckTransaction, IdMarks, TransactionError, run_transaction,
@@ -184,7 +185,7 @@ pub fn run_deck_transaction(
         recalc: RecalcStatus::NotNeeded,
         calc_engine: None,
         base_version: None,
-        base_content_hash: *blake3::hash(input).as_bytes(),
+        base_content_hash: *ContentHash::of(input).as_bytes(),
         sheet_answers: None,
     })))
 }
@@ -249,7 +250,7 @@ pub(crate) fn verify_deck_proposal(
         || proposal.manifest.format != OfficeFormat::Pptx
         || proposal.manifest.schema_version != EDIT_MANIFEST_SCHEMA_VERSION
         || proposal.manifest.mutation_mode != MutationMode::Minimal
-        || proposal.base_content_hash != *blake3::hash(base).as_bytes()
+        || proposal.base_content_hash != *ContentHash::of(base).as_bytes()
     {
         return Err(invalid("deck proposal does not name its pinned base"));
     }

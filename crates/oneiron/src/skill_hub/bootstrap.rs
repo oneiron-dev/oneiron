@@ -1,5 +1,7 @@
 //! Build-embedded bootstrap skills; import and activation commit together on first open.
 
+use std::collections::BTreeSet;
+
 use rmpv::Value;
 
 use super::{HubAdmissionProof, HubFile, HubPackage, HubPin, HubRef, SkillCapabilitySurface};
@@ -33,8 +35,11 @@ impl Vault {
     }
 }
 
-/// Marker (engine version string) that the built-in bootstrap skill set has
-/// been seeded.
+/// Marker that the built-in bootstrap skill set has been seeded: the engine
+/// version that last seeded, then one line per `FILES` name a seed pass has
+/// offered. The loop's shipped skills version with the engine (ARCH-0053:273),
+/// so a later open offers each name its engine ships and the marker lacks
+/// (BOOTSTRAP-SEED-ON-UPGRADE = A). A marker with no name lines names none.
 const SEEDED: SideTable<(), String, Raw> = SideTable::new(&side_table::SKILL_HUB_BOOTSTRAP_SEED);
 const FILES: [(&str, &str); 5] = [
     (
@@ -269,8 +274,34 @@ pub(crate) fn bootstrap_skill_ids_and_hashes()
 }
 
 pub(crate) fn seed_bootstrap_skills(vault: &Vault) -> Result<()> {
+    seed_bootstrap_skill_files(vault, &FILES)
+}
+
+/// The names a seed marker records as offered.
+fn offered_names(marker: &str) -> BTreeSet<&str> {
+    marker.lines().skip(1).collect()
+}
+
+/// The entries of `files` a seed pass still has to offer under `marker`:
+/// every entry before the first pass, else those whose name the marker lacks.
+fn unoffered<'a>(marker: Option<&str>, files: &[(&'a str, &'a str)]) -> Vec<(&'a str, &'a str)> {
+    let offered = marker.map(offered_names).unwrap_or_default();
+    files
+        .iter()
+        .copied()
+        .filter(|(name, _)| !offered.contains(name))
+        .collect()
+}
+
+/// The seed pass over `files` (the shipped `FILES`, or a test door's list).
+/// It offers only the names the marker lacks; each offer is skipped, as at
+/// first open, when its seed id is present, deleted or stale, or when another
+/// import holds its bytes, so a later pass never revives what the owner
+/// deleted or replaced.
+fn seed_bootstrap_skill_files(vault: &Vault, files: &[(&str, &str)]) -> Result<()> {
     let rtxn = vault.store.env.read_txn()?;
-    if SEEDED.contains(&vault.store, &rtxn, &())? {
+    let marker = SEEDED.get(&vault.store, &rtxn, &())?;
+    if marker.is_some() && unoffered(marker.as_deref(), files).is_empty() {
         return Ok(());
     }
     drop(rtxn);
@@ -283,74 +314,111 @@ pub(crate) fn seed_bootstrap_skills(vault: &Vault) -> Result<()> {
         return Ok(());
     }
     let mut wtxn = vault.store.env.write_txn()?;
-    if SEEDED.contains(&vault.store, &wtxn, &())? {
+    let marker = SEEDED.get(&vault.store, &wtxn, &())?;
+    let pending = unoffered(marker.as_deref(), files);
+    if marker.is_some() && pending.is_empty() {
         return Ok(());
     }
-    let occurred = TimeRange { start: 0, end: 0 };
-    for (name, markdown) in FILES {
-        let package = package(name, markdown)?;
-        let seed_id = stable_id(name)?;
-        let content_hash = package.content_hash()?;
-        // A caller-chosen record (or a deleted seed) owns this ID regardless
-        // of its files. Never offer it to the import/update door: doing so
-        // could rewrite the holder or make Vault::open fail on immutable fields.
-        let deletion =
-            crate::ports::TombstoneStoreRead::port_deletion_state(&vault.store, &wtxn, &seed_id)?;
-        if crate::ports::EntityStoreRead::port_entity_present(&vault.store, &wtxn, &seed_id)?
-            || deletion.deleted
-            || deletion.stale
-        {
-            continue;
+    let mut offered: BTreeSet<String> = marker
+        .as_deref()
+        .map(offered_names)
+        .unwrap_or_default()
+        .into_iter()
+        .map(str::to_owned)
+        .collect();
+    for (name, markdown) in pending {
+        offered.insert(name.to_owned());
+        if let Err(error) = seed_bootstrap_file_in_txn(vault, &mut wtxn, name, markdown) {
+            // A vault that has opened before keeps opening: the pass rolls
+            // back whole (this transaction is dropped unwritten), so a later
+            // engine's loop skill that fails to seed is offered again at the
+            // next open. A first open fails as before.
+            if marker.is_some() {
+                tracing::warn!(
+                    kind = ?error.kind(),
+                    skill = name,
+                    "a shipped loop skill was not seeded; the next open offers it again"
+                );
+                return Ok(());
+            }
+            return Err(error);
         }
-        // A prior import already holds these exact files. Its entity ID is
-        // not bootstrap admission, even when it equals our deterministic ID.
-        // Check before the import door can attach provenance, scans, receipts
-        // or capabilities, and promote only a record minted by this pass.
-        if vault
-            .skill_entity_for_content_hash_in_txn(&wtxn, content_hash)?
-            .is_some()
-        {
-            continue;
-        }
-        let hub_ref = HubRef::new(
-            stable_id("hub")?,
-            name,
-            HubPin::ContentHash(content_hash.to_hex()),
-        )?;
-        let id = vault.import_skill_from_hub_in_txn(
-            &mut wtxn,
-            &hub_ref,
-            &package,
-            seed_id,
-            occurred,
-            0,
-            &mut super::SkillImportRows::default(),
-        )?;
-        if id != seed_id {
-            // A different holder cannot appear while this write transaction owns
-            // the preflight and import; roll back rather than mutate it.
-            return Err(Error::InvariantViolation("bootstrap skill holder changed"));
-        }
-        let mut record = vault.read_skill_record_in_txn(&wtxn, &id)?;
-        // Local seed admission, not a remote package's approval stamp. The
-        // ordinary update/scan gates still run. Reopen never reactivates edits.
-        if record.lifecycle_status == SkillLifecycle::Candidate {
-            record.lifecycle_status = SkillLifecycle::Active;
-            let data = crate::skill::encode_skill_record(&record)?;
-            let proof = HubAdmissionProof::bootstrap(id, &data);
-            vault.admit_hub_skill_record_in_txn(&mut wtxn, occurred, 0, data, proof)?;
-        }
-        // A pattern skill is a team the planner can offer only once bound
-        // (OF-540), in the transaction that admitted it.
-        bind_shipped_pattern_in_txn(vault, &mut wtxn, name, id)?;
     }
-    SEEDED.put(
-        &vault.store,
-        &mut wtxn,
-        &(),
-        &env!("CARGO_PKG_VERSION").to_owned(),
-    )?;
+    let mut value = env!("CARGO_PKG_VERSION").to_owned();
+    for name in &offered {
+        value.push('\n');
+        value.push_str(name);
+    }
+    SEEDED.put(&vault.store, &mut wtxn, &(), &value)?;
     wtxn.commit()?;
+    Ok(())
+}
+
+/// Seeds one shipped skill at its bootstrap id with the bootstrap proof, in
+/// the seed pass's write transaction. Skips it when its seed id is present,
+/// deleted or stale, or when another import holds its bytes.
+fn seed_bootstrap_file_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    name: &str,
+    markdown: &str,
+) -> Result<()> {
+    let occurred = TimeRange { start: 0, end: 0 };
+    let package = package(name, markdown)?;
+    let seed_id = stable_id(name)?;
+    let content_hash = package.content_hash()?;
+    // A caller-chosen record (or a deleted seed) owns this ID regardless
+    // of its files. Never offer it to the import/update door: doing so
+    // could rewrite the holder or make Vault::open fail on immutable fields.
+    let deletion =
+        crate::ports::TombstoneStoreRead::port_deletion_state(&vault.store, wtxn, &seed_id)?;
+    if crate::ports::EntityStoreRead::port_entity_present(&vault.store, wtxn, &seed_id)?
+        || deletion.deleted
+        || deletion.stale
+    {
+        return Ok(());
+    }
+    // A prior import already holds these exact files. Its entity ID is
+    // not bootstrap admission, even when it equals our deterministic ID.
+    // Check before the import door can attach provenance, scans, receipts
+    // or capabilities, and promote only a record minted by this pass.
+    if vault
+        .skill_entity_for_content_hash_in_txn(wtxn, content_hash)?
+        .is_some()
+    {
+        return Ok(());
+    }
+    let hub_ref = HubRef::new(
+        stable_id("hub")?,
+        name,
+        HubPin::ContentHash(content_hash.to_hex()),
+    )?;
+    let id = vault.import_skill_from_hub_in_txn(
+        wtxn,
+        &hub_ref,
+        &package,
+        seed_id,
+        occurred,
+        0,
+        &mut super::SkillImportRows::default(),
+    )?;
+    if id != seed_id {
+        // A different holder cannot appear while this write transaction owns
+        // the preflight and import; roll back rather than mutate it.
+        return Err(Error::InvariantViolation("bootstrap skill holder changed"));
+    }
+    let mut record = vault.read_skill_record_in_txn(wtxn, &id)?;
+    // Local seed admission, not a remote package's approval stamp. The
+    // ordinary update/scan gates still run. Reopen never reactivates edits.
+    if record.lifecycle_status == SkillLifecycle::Candidate {
+        record.lifecycle_status = SkillLifecycle::Active;
+        let data = crate::skill::encode_skill_record(&record)?;
+        let proof = HubAdmissionProof::bootstrap(id, &data);
+        vault.admit_hub_skill_record_in_txn(wtxn, occurred, 0, data, proof)?;
+    }
+    // A pattern skill is a team the planner can offer only once bound
+    // (OF-540), in the transaction that admitted it.
+    bind_shipped_pattern_in_txn(vault, wtxn, name, id)?;
     Ok(())
 }
 
@@ -412,11 +480,31 @@ impl Vault {
         self.default_skill_present_for_entity_in_txn(&txn, entity, source)
     }
 
+    /// The fresh imports restore defaults made of the shipped skill `name`
+    /// ([`Self::restore_bootstrap_skills`]), whichever engine's bytes they
+    /// carry, in id order: the holders of the bootstrap hub's `name` alias
+    /// at any pin, other than the seed id. Empty for a name not shipped.
+    pub(crate) fn restored_bootstrap_skills_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        name: &str,
+    ) -> Result<Vec<EntityId>> {
+        let Some(&(_, markdown)) = FILES.iter().find(|(shipped, _)| *shipped == name) else {
+            return Ok(Vec::new());
+        };
+        let hash = package(name, markdown)?.content_hash()?;
+        let source = HubRef::new(stable_id("hub")?, name, HubPin::ContentHash(hash.to_hex()))?;
+        self.hub_skill_holders_at_any_pin_in_txn(txn, &source, name, &stable_id(name)?)
+    }
+
     /// Explicitly re-imports missing or locally retired shipped bootstrap
     /// skills from the bytes embedded in this engine build. An unchanged
     /// default is left alone. Restored skills get new IDs and enter as
     /// Candidates through the ordinary scanner/import door; unlike first-open
-    /// seeding, this verb never grants activation authority. Crate-visible for
+    /// seeding, this verb never grants activation authority. Once admitted, a
+    /// restored skill is the one the loop loads in place of a seed whose
+    /// succession holds no loadable revision
+    /// (`agent_dispatch::bootstrap_skill_root_in_txn`). Crate-visible for
     /// the test door `test_doors::skill_hub_restore` (G99 pin).
     pub(crate) fn restore_bootstrap_skills(
         &self,
@@ -448,6 +536,48 @@ impl Vault {
         }
         txn.commit()?;
         Ok(restored)
+    }
+}
+
+#[cfg(oneiron_test_support)]
+impl Vault {
+    /// Test door body (`test_doors::bootstrap_skills`): a later open's seed
+    /// pass, as an engine that ships `FILES` plus `extra` runs it.
+    pub(crate) fn seed_bootstrap_skills_adding_for_test(
+        &self,
+        extra: &[(&'static str, &'static str)],
+    ) -> Result<()> {
+        let files: Vec<(&str, &str)> = FILES.iter().copied().chain(extra.iter().copied()).collect();
+        seed_bootstrap_skill_files(self, &files)
+    }
+
+    /// Test door body (`test_doors::bootstrap_skills`): writes the seed
+    /// marker as `value`.
+    pub(crate) fn write_bootstrap_seed_marker_for_test(&self, value: &str) -> Result<()> {
+        self.with_write_txn(|txn| SEEDED.put(&self.store, txn, &(), &value.to_owned()))
+    }
+
+    /// Test door body (`test_doors::bootstrap_skills`): the seed marker.
+    pub(crate) fn bootstrap_seed_marker_for_test(&self) -> Result<Option<String>> {
+        let txn = self.store.env.read_txn()?;
+        SEEDED.get(&self.store, &txn, &())
+    }
+
+    /// Test door body (`test_doors::bootstrap_skills`): the fit rung's
+    /// activation write for the restored default `id` (a held-out win that
+    /// asks no permission), without the scorer.
+    pub(crate) fn admit_restored_default_for_test(&self, id: &EntityId, at: u64) -> Result<()> {
+        self.with_write_txn(|txn| {
+            let record = self.read_skill_record_in_txn(txn, id)?;
+            self.activate_scored_hub_record_in_txn(
+                txn,
+                id,
+                &record,
+                TimeRange { start: at, end: at },
+                at,
+                None,
+            )
+        })
     }
 }
 
