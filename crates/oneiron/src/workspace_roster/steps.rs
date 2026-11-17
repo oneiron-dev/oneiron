@@ -293,7 +293,21 @@ pub(super) fn grant_member_bundle(
                 .load(std::sync::atomic::Ordering::Acquire),
             false,
             true,
-        )
+        )?;
+        // The grant is the onboarding's admin act; a retry that finds it
+        // written above logs nothing again.
+        let now = crate::ports::recorded_at_in_txn(&vault.store, wtxn)?;
+        vault.record_admin_act_in_txn(
+            wtxn,
+            intent.workspace.workspace_vault_id,
+            writer.entity_ref(),
+            crate::federation::SharedVaultChange::MemberOnboarded {
+                member: intent.person_ref.to_hex(),
+                role: intent.grant_bundle.role,
+            },
+            now,
+        )?;
+        Ok(())
     })
 }
 
@@ -796,7 +810,9 @@ pub(super) fn ensure_companion_profile_grant(
 
 /// Writes the preset row, or verifies the stored one agrees with it. A new
 /// workspace starts at the default `work_companion` policy; an existing one
-/// keeps whatever its owner set.
+/// keeps whatever its owner set. A new row brings its house and its slots
+/// into its org, so the companion split is checked across that org before
+/// the row commits: a member's reservation saw only published presets.
 pub(super) fn ensure_preset_row(
     vault: &Vault,
     preset: &WorkspaceRosterPreset,
@@ -818,7 +834,7 @@ pub(super) fn ensure_preset_row(
             return Ok(());
         }
         PRESET.put(&vault.store, wtxn, &key, &row)?;
-        Ok(())
+        super::companion_bind::require_org_companion_split_in_txn(vault, wtxn, &preset.org_ref)
     })
 }
 

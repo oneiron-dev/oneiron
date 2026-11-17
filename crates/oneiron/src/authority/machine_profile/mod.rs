@@ -37,6 +37,26 @@ pub use oneiron_records::authority::machine_profile::{
     MachineAdmitter, PinnedRoot, SignerClass, TrustedMachine,
 };
 
+/// What a trusted `Yours` revision rests on as the owner's own say-so
+/// ([`AuthorityFold::trusted_yours_revision`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum YoursProof {
+    /// Its own signer: the mark the recovery root this install pins signed
+    /// with its anchor key, or, on a vault that is not hosted, a roster
+    /// revision an owner-held key signed with no act.
+    RevisionSigner,
+    /// An owner's answer a machine carried, on a vault that is not hosted:
+    /// the carrier's word, and the owner's say-so only by the one proof
+    /// cosign its row carries, by a key the fold trusts as the owner's (row
+    /// EXPORT-PROOF-OWNER-SIGNED-CARRIED-YOURS; the lead's
+    /// CARRIER-SELF-ANSWER: a carried `Owned(Yours)` stands only with an
+    /// owner-device-key signature). The caller reads that cosign off the row.
+    ProofCosign,
+    /// Neither: a carrier's word alone, or any roster revision of a hosted
+    /// vault.
+    Unproven,
+}
+
 /// The winning revision of one admitter's chain for one machine.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct MachineRevision {
@@ -330,6 +350,30 @@ impl FoldedMachine {
             .collect()
     }
 
+    /// The heads this machine stands under on an install with `pin`: the
+    /// roster's head, then the head of the chain of the anchor that install
+    /// pins. They are the admitters its trust reads ([`Self::trust_chains`]),
+    /// with the roster's own head in place of the accepted revision, since a
+    /// new roster revision goes above that head. The writers of an owner's
+    /// answer number it above these heads, take the machine's identity from
+    /// the newest of them, and check them for a removal and for other keys;
+    /// they read no other chain.
+    ///
+    /// Another anchor's chain is never among them, wherever its rows sit in
+    /// the log (FIX FOREIGN-ANCHOR-MARK-BLOCKS-MACHINE-DOORS): any fresh key
+    /// publishes a root and marks any machine in that root's own chain, at
+    /// any revision, removed or under other keys, and one main-log row that
+    /// names such a mark carries it into every later state. The roster's
+    /// rows and the pinned anchor's are main-log rows on that install, so
+    /// its view and an answer's parents name the same two head entries; what
+    /// this install holds or counts stale are flags on them, not other heads.
+    pub(super) fn standing_heads(&self, pin: Option<&PinnedRoot>) -> Vec<&MachineRevision> {
+        self.roster
+            .iter()
+            .chain(pin.and_then(|pin| self.anchored.get(&pin.anchor_key)))
+            .collect()
+    }
+
     /// Two live or held chains of `T(admitter)` name other keys, or another
     /// machine claims a key one of them names within it: never mine there,
     /// and no edit's race passes there.
@@ -533,46 +577,48 @@ impl AuthorityFold {
     }
 
     /// The revision `machine`'s trusted `Yours` here
-    /// ([`Self::trusted_machine`]) stands by, and whether this fold reads it
-    /// as the owner's own signature, out of every carrier's reach (Engine
+    /// ([`Self::trusted_machine`]) stands by, and what this fold reads it as
+    /// the owner's own say-so by, out of every carrier's reach (Engine
     /// RULING L2-23-SIGNER = B under the lead's HOSTED-CARRIER-FIRST-PIN = D:
-    /// "a carrier's word is not him saying so"): the mark the recovery root
-    /// this install pins signed with its anchor key, or, on a vault that is
-    /// not `hosted`, a roster revision an owner-held key signed. An admitted
-    /// answer stands on its carrier's act, so it reads `false`, and so does
-    /// every roster revision of a hosted vault, where the host holds the root
-    /// and an owner act its own node carries enrols an owner-held key. `None`
-    /// when this install does not trust the machine as `Yours`.
+    /// "a carrier's word is not him saying so"), as [`YoursProof`] names it.
+    /// `None` when this install does not trust the machine as `Yours`.
     ///
-    /// `true` is the fold's word, not the signature: a checkpoint image the
-    /// host attests supplies its revisions with their signers and classes,
-    /// and this install never folded them (L2-23 Sol r2 P1). A caller that
-    /// proves the owner's say-so by it checks the row the revision's
-    /// [`MachineRevision::entry`] names.
+    /// Every roster revision of a `hosted` vault reads
+    /// [`YoursProof::Unproven`]: the host holds the root, an owner act its
+    /// own node carries enrols an owner-held key, and a key its custodial
+    /// root enrols starts its own custody line, so it proves for the owner
+    /// there too (FIX [HOSTED-ROOT-ENROLS-PROOF-KEY]).
+    ///
+    /// The proof is the fold's word, not the signature: a checkpoint image
+    /// the host attests supplies its revisions with their signers and
+    /// classes, and this install never folded them (L2-23 Sol r2 P1). A
+    /// caller that proves the owner's say-so by it checks the row the
+    /// revision's [`MachineRevision::entry`] names.
     #[must_use]
     pub(crate) fn trusted_yours_revision(
         &self,
         machine: EntityId,
         hosted: bool,
-    ) -> Option<(&MachineRevision, bool)> {
+    ) -> Option<(&MachineRevision, YoursProof)> {
         let pin = self.pinned_root.as_ref();
         let (chain, revision) = self.machines.get(&machine)?.trusted_revision_under(
             &pin.map_or(MachineAdmitter::Roster, |pin| {
                 MachineAdmitter::Anchor(pin.anchor_key)
             }),
         )?;
-        let owner_signed =
-            revision.act.is_none() && revision.signer_class == SignerClass::OwnerHeld;
-        Some((
-            revision,
-            owner_signed
-                && match chain {
-                    MachineAdmitter::Anchor(anchor) => {
-                        revision.signer == AuthorityKey::Ed25519(anchor)
-                    }
-                    MachineAdmitter::Roster => !hosted,
-                },
-        ))
+        let owner_held = revision.act.is_none() && revision.signer_class == SignerClass::OwnerHeld;
+        let carried = revision.act.is_some() && revision.signer_class == SignerClass::Carrier;
+        let proof = match chain {
+            MachineAdmitter::Anchor(anchor)
+                if owner_held && revision.signer == AuthorityKey::Ed25519(anchor) =>
+            {
+                YoursProof::RevisionSigner
+            }
+            MachineAdmitter::Roster if !hosted && owner_held => YoursProof::RevisionSigner,
+            MachineAdmitter::Roster if !hosted && carried => YoursProof::ProofCosign,
+            MachineAdmitter::Anchor(_) | MachineAdmitter::Roster => YoursProof::Unproven,
+        };
+        Some((revision, proof))
     }
 
     /// The machine key a connection proves to stand as `machine` here: its

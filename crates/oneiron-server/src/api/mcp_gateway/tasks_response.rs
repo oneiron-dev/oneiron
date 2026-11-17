@@ -446,6 +446,7 @@ pub(crate) fn mcp_api_error(error: ApiError) -> McpGatewayError {
     };
     let mut gateway = McpGatewayError::new(code, error.code().as_str(), error.message());
     gateway.room_join_hold = error.room_join_hold().cloned().map(Box::new);
+    gateway.pending = error.pending().cloned().map(Box::new);
     if let ApiErrorDetails::BadRequest { field } = error.details()
         && let Some(field) = field
     {
@@ -690,6 +691,11 @@ pub(crate) fn mcp_error_response(id: Value, error: McpGatewayError) -> Value {
         && let Some(object) = data.as_object_mut()
     {
         object.insert("room_join_hold".to_owned(), json!(*room_join_hold));
+    }
+    if let Some(pending) = error.pending
+        && let Some(object) = data.as_object_mut()
+    {
+        object.insert("pending".to_owned(), json!(*pending));
     }
     if let Some(retry_after) = error.retry_after
         && let Some(object) = data.as_object_mut()
@@ -959,8 +965,9 @@ async fn mcp_off_runtime_row<T: Send + 'static>(
 
 /// The proof a direct MCP caller's own request binds for `tool`, as the
 /// HTTP facade binds it outside a room turn: the work-companion setting
-/// takes the person's own proof (OF-417), an attendee ask's answer the
-/// owner's own authorship (OF-365), and the owner's own `vault.delete` his
+/// takes the person's own proof (OF-417), an ask's answer the owner's own
+/// authorship (OF-365) or else the answering person's person-tier proof
+/// (UC-05), and the owner's own `vault.delete` his
 /// authorship and this host's slip issuer, so deleting a Connect guest's
 /// PERSON withdraws its grants first (FIX 3875, 5317). Every other row binds
 /// none here, and a code-mode call's host origin suppresses either in the

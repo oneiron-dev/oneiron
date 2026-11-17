@@ -3,6 +3,7 @@
 use super::kernel::{FIELD_TASK_REF, FIELD_TRANSPORT_DISPATCHED, ReceiptRecord};
 use super::ledgers::{DurableSendReceipt, SendReceiptOutcome, decode_durable_send_receipt};
 use crate::Vault;
+use crate::batch::export::RetainedSideHeldBackReason;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::store::{SEND_RECEIPT_RECORD_VERSION, Store};
@@ -107,4 +108,28 @@ pub(crate) fn delivered_send_exists_in_txn(
         decode_durable_send_receipt(task_ref.as_bytes(), &raw)?.outcome
             == SendReceiptOutcome::Delivered,
     )
+}
+
+impl Vault {
+    /// Decodes archived `DurableSendReceipt` bytes for owner restore: typed validation plus
+    /// canonical re-encode equality, returning the receipt and outcome.
+    pub(crate) fn decode_archived_send_receipt_for_restore(
+        task_id: &EntityId,
+        raw: &[u8],
+    ) -> std::result::Result<(ReceiptRecord, SendReceiptOutcome), RetainedSideHeldBackReason> {
+        use RetainedSideHeldBackReason::{InvalidEncoding, InvalidValue};
+        match decode_durable_send_receipt(task_id.as_bytes(), raw) {
+            Ok(durable) => {
+                let encoded = rmp_serde::to_vec_named(&durable).map_err(|_| InvalidEncoding)?;
+                if encoded != raw {
+                    return Err(InvalidEncoding);
+                }
+                Ok((durable.receipt, durable.outcome))
+            }
+            Err(_) => {
+                rmp_serde::from_slice::<DurableSendReceipt>(raw).map_err(|_| InvalidEncoding)?;
+                Err(InvalidValue)
+            }
+        }
+    }
 }

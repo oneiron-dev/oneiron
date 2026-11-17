@@ -199,6 +199,31 @@ pub fn plant_timer_arming(
     )
 }
 
+/// Claims the try admitted for `registration` through the program kind's
+/// point-claim door, then holds it as an unfinished program through the
+/// runtime's hold writer. Returns the try and its stored park, including
+/// the exact reason and parked time the owner's release must name.
+/// No pass budget is reserved; settlement fixtures plant their own.
+///
+/// # Errors
+///
+/// No admitted try for the registration, a try that is not ready or is not
+/// a program, or the claim, hold or store writer's errors.
+pub fn hold_admitted_program_try(
+    vault: &Vault,
+    registration: EntityId,
+    now: u64,
+) -> Result<(
+    crate::attempt_queue::AttemptId,
+    crate::dreamer_runner::DreamerParkedAttemptRecord,
+)> {
+    crate::dreamer_runner::turn_program_test_hooks::hold_admitted_program_try(
+        vault,
+        registration,
+        now,
+    )
+}
+
 /// Whether this machine keeps a disarm row for the registration.
 ///
 /// # Errors
@@ -215,4 +240,78 @@ pub fn disarm_kept_here(vault: &Vault, actor: EntityId, registration: EntityId) 
 /// No such arming, a store failure, or a row that cannot encode.
 pub fn arming_row_bytes(vault: &Vault, actor: EntityId, registration: EntityId) -> Result<Vec<u8>> {
     crate::dreamer_runner::turn_program_test_hooks::arming_row_bytes(vault, actor, registration)
+}
+
+/// Overwrites the ARM row (`actor`, `registration`) with bytes that decode as no arming,
+/// as a damaged row sits.
+///
+/// # Errors
+///
+/// A store failure.
+pub fn damage_arming_row(vault: &Vault, actor: EntityId, registration: EntityId) -> Result<()> {
+    crate::dreamer_runner::turn_program_test_hooks::damage_arming_row(vault, actor, registration)
+}
+
+/// Erases `actor`'s turn programs as the owner's erase does, in one writer.
+///
+/// # Errors
+///
+/// A store failure.
+pub fn erase_actor_programs(vault: &Vault, actor: EntityId) -> Result<()> {
+    crate::dreamer_runner::turn_program_test_hooks::erase_actor_programs(vault, actor)
+}
+
+/// Each due row one of `actor`'s timers keeps: its due time and registration.
+///
+/// # Errors
+///
+/// A store failure.
+pub fn timer_due_rows_for_actor(vault: &Vault, actor: EntityId) -> Result<Vec<(u64, EntityId)>> {
+    crate::dreamer_runner::turn_program_test_hooks::timer_due_rows_for_actor(vault, actor)
+}
+
+/// Each idle or feed row one of `actor`'s programs keeps: its kind tag and registration.
+///
+/// # Errors
+///
+/// A store failure.
+pub fn trigger_rows_for_actor(vault: &Vault, actor: EntityId) -> Result<Vec<(u8, EntityId)>> {
+    crate::dreamer_runner::turn_program_test_hooks::trigger_rows_for_actor(vault, actor)
+}
+
+/// Whether this machine keeps a carried decision for the wake TURN `turn`
+/// owes `registration`.
+///
+/// # Errors
+///
+/// A store failure.
+pub fn decision_kept_here(vault: &Vault, turn: EntityId, registration: EntityId) -> Result<bool> {
+    crate::dreamer_runner::turn_program_test_hooks::decision_kept_here(vault, turn, registration)
+}
+
+/// The `Admitted` row a linked machine would carry for the owed wake of
+/// `registration`: its turn, its map key, and its bytes as the decision
+/// mirror encodes them.
+///
+/// # Errors
+///
+/// No such owed wake, a store failure, or a row that cannot encode.
+#[cfg(feature = "sync")]
+pub fn admitted_row_bytes(
+    vault: &Vault,
+    actor: EntityId,
+    registration: EntityId,
+) -> Result<(EntityId, String, Vec<u8>)> {
+    crate::dreamer_runner::turn_program_test_hooks::admitted_row_bytes(vault, actor, registration)
+}
+
+/// How many `Admitted` rows TURN `turn` owes the window from this machine's
+/// decisions.
+///
+/// # Errors
+///
+/// A store failure.
+#[cfg(feature = "sync")]
+pub fn decided_rows_for_turn(vault: &Vault, turn: EntityId) -> Result<usize> {
+    crate::dreamer_runner::turn_program_test_hooks::decided_rows_for_turn(vault, turn)
 }

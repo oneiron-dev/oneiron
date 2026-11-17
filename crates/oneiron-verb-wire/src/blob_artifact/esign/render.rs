@@ -9,6 +9,7 @@ pub use crate::blob_artifact::esign::render::presentation::FieldPresentation;
 pub use crate::blob_artifact::esign::render::presentation::PageGeometry;
 pub use lopdf::DecodeAdmissionError;
 use oneiron_contracts::limit_ask::EngineLimit;
+use oneiron_esign_render as leaf;
 pub use oneiron_store::blob_artifact::esign::render::admitted::InspectionMemory;
 
 pub type Result<T> = std::result::Result<T, PdfPreparationError>;
@@ -89,29 +90,43 @@ pub struct PdfFieldRect {
     pub height: f64,
 }
 
+/// A shared-renderer failure as the wire reads it: the display-size refusal
+/// as the codec-or-format limit, a lopdf failure through the existing
+/// conversion, and each logic failure 1:1. The wire admits nothing and runs
+/// no copier, so neither opaque arm is reachable.
+fn map_leaf(err: leaf::BurnError<std::convert::Infallible>) -> PdfPreparationError {
+    match err {
+        leaf::BurnError::Admit(refusal) => match refusal {},
+        leaf::BurnError::External(external) => match external {},
+        leaf::BurnError::Lopdf(err) => PdfPreparationError::from(err),
+        leaf::BurnError::DisplayTooLarge => PdfPreparationError::Limit,
+        leaf::BurnError::TooLarge => PdfPreparationError::InvalidSignatureImage,
+        leaf::BurnError::MalformedPdf => PdfPreparationError::MalformedPdf,
+        leaf::BurnError::UnsupportedPdf => PdfPreparationError::UnsupportedPdf,
+        leaf::BurnError::InvalidGeometry => PdfPreparationError::InvalidGeometry,
+        leaf::BurnError::InvalidSignatureImage => PdfPreparationError::InvalidSignatureImage,
+        leaf::BurnError::UnsupportedText => PdfPreparationError::UnsupportedText,
+        leaf::BurnError::FieldOverflow => PdfPreparationError::FieldOverflow,
+    }
+}
+
 /// Shared geometry for editor, ceremony and export. Page numbers are one-based.
 /// Use `PageGeometry` to convert rotated/scaled page displays before placement.
 pub fn render_field_geometry(g: &FieldGeometry, crop: [f64; 4]) -> Result<PdfFieldRect> {
-    let [left, bottom, right, top] = crop;
-    if g.page == 0
-        || crop.iter().any(|v| !v.is_finite() || v.abs() > 1_000_000.0)
-        || right <= left
-        || top <= bottom
-        || [g.x_percent, g.y_percent, g.width_percent, g.height_percent]
-            .iter()
-            .any(|v| !v.is_finite() || !(0.0..=100.0).contains(v))
-        || g.width_percent == 0.0
-        || g.height_percent == 0.0
-        || g.x_percent + g.width_percent > 100.0
-        || g.y_percent + g.height_percent > 100.0
-    {
-        return Err(PdfPreparationError::InvalidGeometry);
-    }
-    Ok(PdfFieldRect {
-        x: left + (right - left) * g.x_percent / 100.0,
-        y: top - (top - bottom) * (g.y_percent + g.height_percent) / 100.0,
-        width: (right - left) * g.width_percent / 100.0,
-        height: (top - bottom) * g.height_percent / 100.0,
-    })
+    let geometry = leaf::FieldGeometry {
+        page: g.page,
+        x_percent: g.x_percent,
+        y_percent: g.y_percent,
+        width_percent: g.width_percent,
+        height_percent: g.height_percent,
+    };
+    leaf::render_field_geometry(&geometry, crop)
+        .map(|rect| PdfFieldRect {
+            x: rect.x,
+            y: rect.y,
+            width: rect.width,
+            height: rect.height,
+        })
+        .map_err(map_leaf)
 }
 pub mod presentation;

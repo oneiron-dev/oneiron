@@ -344,6 +344,19 @@ async fn mcp_narrowed_admission_refuses_unscoped_execution_on_each_axis() {
     let facet_only =
         crate::mcp::McpConnectorScope::scoped(None, Some(seeded_test_entity_id(0x1704_00d3)));
     let vault_wide = crate::mcp::McpConnectorScope::vault_wide();
+    // A TASK is born under its facet as a facet_of edge (ARCH-0022), whose
+    // end must be a stored FACET: the facet-only credential's facet is one.
+    // The world axis names no row.
+    server
+        .vault()
+        .put_entity(
+            &seeded_test_entity_id(0x1704_00d3),
+            oneiron::registry::ENTITY_TYPE_FACET,
+            oneiron::TimeRange { start: 1, end: 1 },
+            1,
+            b"facet",
+        )
+        .expect("seed the facet-only credential's facet");
     register_scoped_mcp_actor(
         &server,
         "one-1704-world-only",
@@ -381,8 +394,9 @@ async fn mcp_narrowed_admission_refuses_unscoped_execution_on_each_axis() {
         };
 
     // Each axis alone lands its TASK at that axis and leaves the other at
-    // its default: a world-only TASK keeps its own substrate facet, a
-    // facet-only one stays in base reality.
+    // its default: a world-only TASK is born under the vault default facet
+    // (ARCH-0022: every TASK carries its facet as its facet_of birth edge),
+    // a facet-only one stays in base reality.
     for (credential, id, scope) in [
         ("one-1704-world-only", "axis-world", &world_only),
         ("one-1704-facet-only", "axis-facet", &facet_only),
@@ -405,7 +419,7 @@ async fn mcp_narrowed_admission_refuses_unscoped_execution_on_each_axis() {
             .unwrap_or_else(oneiron::claim::base_world_id);
         let facet = scope
             .facet_ref
-            .unwrap_or_else(|| oneiron::claim::substrate_facet_id(task).expect("facet"));
+            .unwrap_or_else(|| server.vault().default_facet().expect("vault default facet"));
         assert_eq!(
             (born.worlds, born.facets),
             (axis(world), axis(facet)),
@@ -704,6 +718,7 @@ async fn mcp_room_history_reads_inside_the_rosters_scope() {
             occurred_at: 2,
             assertions: Default::default(),
             thread_audience: None,
+            project: None,
         })
         .expect("speak");
     let history = |id: &'static str, arguments: Value| {
@@ -800,6 +815,7 @@ async fn mcp_agent_rooms_return_typed_outputs_and_engine_exhaustion() {
                 occurred_at: at + 2,
                 assertions: Default::default(),
                 thread_audience: None,
+                project: None,
             })
             .expect("speak");
         turns.push(turn);
@@ -1005,6 +1021,7 @@ async fn mcp_agent_rooms_return_typed_outputs_and_engine_exhaustion() {
             occurred_at: 1_000,
             assertions: Default::default(),
             thread_audience: None,
+            project: None,
         })
         .expect("thread");
     for (verb, args) in [
@@ -1228,6 +1245,7 @@ async fn mcp_room_with_turns(
                 occurred_at: at + 2,
                 assertions: Default::default(),
                 thread_audience: None,
+                project: None,
             })
             .expect("speak");
         turns.push(turn);

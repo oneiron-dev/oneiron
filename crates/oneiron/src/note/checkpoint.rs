@@ -31,7 +31,7 @@ mod pins;
 
 use std::collections::BTreeMap;
 
-use heed::{RoTxn, RwTxn};
+use heed::RoTxn;
 
 pub(crate) use self::body::{CORE_RAW_REFS, join_core_row, reads_core_row, split_core_row};
 pub(crate) use self::loro::{
@@ -41,6 +41,10 @@ pub(crate) use self::loro::{
 use super::documents::{NOTE_HEAD, NOTE_HEAD_DOC, NOTE_PROPOSAL_DOC};
 use super::lifecycle::NOTE_SEAL;
 use super::overrides::NOTE_OVERRIDE;
+use super::pin_index::{
+    NOTE_PIN_CITING, NOTE_PIN_CLAIM, NOTE_PIN_REQUEST_CITING, NOTE_PIN_REQUEST_CLAIM,
+    NOTE_PIN_REQUEST_SOURCE, NOTE_PIN_SOURCE,
+};
 use super::proposals::{
     ACTOR_ERASE_PENDING_NOTE_FORK, NOTE_FORK, NOTE_PROPOSAL_BUNDLE, NOTE_RECEIPT, NoteActor,
     NoteFork, PendingNoteForkErase,
@@ -51,10 +55,47 @@ use super::title_index;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::side_table::SideKey;
-use crate::store::ManifestDbs;
+use crate::store::checkpoint_payload::rows::descriptor::{
+    Adapter, Capture, CapturedByAdapter, Check, Join, Restore,
+};
 use crate::store::checkpoint_payload::rows::{
-    self, ActorPart, Captured, OpenedOwnerRows, OwnerRef, OwnerRows, Restored, RowDb, RowLocator,
-    RowPart, Unresolved,
+    self, ActorPart, Captured, OpenedOwnerRows, OwnerRef, RowDb, RowLocator, RowPart, Unresolved,
+};
+use crate::store::{ManifestDbs, Store};
+
+/// Every NOTE row by owner, its actors split out. The capture is the
+/// adapter's own: a proposal document splits only beside its fork record,
+/// and a bundle by its members. So is the check (a proposal's history, a
+/// title's spelling), and the join reads the whole compartment: a proposal
+/// document goes with a fork record that joins as one the erase deletes,
+/// and a title row's key is spelled back from its author's part.
+pub(crate) static ADAPTER: Adapter = Adapter {
+    tables: &[
+        &CapturedByAdapter(NOTE_HEAD),
+        &CapturedByAdapter(NOTE_HEAD_DOC),
+        &CapturedByAdapter(NOTE_OVERRIDE),
+        &CapturedByAdapter(NOTE_SEAL),
+        &CapturedByAdapter(NOTE_FORK),
+        &CapturedByAdapter(NOTE_RECEIPT),
+        &CapturedByAdapter(NOTE_PROPOSAL_BUNDLE),
+        &CapturedByAdapter(NOTE_PROPOSAL_DOC),
+        &CapturedByAdapter(SYNC_NC_E),
+        &CapturedByAdapter(NOTE_RECEIPT_BY_REQUEST),
+        &CapturedByAdapter(NOTE_FORK_AUTHORITY),
+        &CapturedByAdapter(NOTE_PIN_SOURCE),
+        &CapturedByAdapter(NOTE_PIN_CLAIM),
+        &CapturedByAdapter(NOTE_PIN_CITING),
+        &CapturedByAdapter(NOTE_PIN_REQUEST_CITING),
+        &CapturedByAdapter(NOTE_PIN_REQUEST_CLAIM),
+        &CapturedByAdapter(NOTE_PIN_REQUEST_SOURCE),
+        title_index::checkpoint::RESERVATION_TABLE,
+        title_index::checkpoint::BY_NOTE_TABLE,
+    ],
+    capture: Capture::Own(capture),
+    check: Check::Own(check),
+    row_owner: None,
+    join: Join::Compartment(join_row),
+    restore: Restore::Parts,
 };
 
 /// The field a row's one actor fills.
@@ -98,20 +139,19 @@ fn leading_note(key: &[u8]) -> Option<EntityId> {
 }
 
 /// Every NOTE row in `txn`, by owner.
-pub(crate) fn capture(dbs: &impl ManifestDbs, txn: &RoTxn<'_>) -> Result<Captured> {
-    let mut out = Captured::default();
-    for row in rows::typed_rows(dbs, txn, NOTE_HEAD, &mut out)? {
+fn capture(store: &Store, txn: &RoTxn<'_>, out: &mut Captured) -> Result<()> {
+    for row in rows::typed_rows(store, txn, NOTE_HEAD, out)? {
         out.exact(OwnerRef::entity(&row.key), row.at, row.bytes);
     }
-    for row in rows::typed_rows(dbs, txn, NOTE_HEAD_DOC, &mut out)? {
+    for row in rows::typed_rows(store, txn, NOTE_HEAD_DOC, out)? {
         out.exact(OwnerRef::entity(&row.key.0), row.at, row.bytes);
     }
-    for row in rows::typed_rows(dbs, txn, NOTE_OVERRIDE, &mut out)? {
+    for row in rows::typed_rows(store, txn, NOTE_OVERRIDE, out)? {
         out.exact(OwnerRef::entity(&row.key), row.at, row.bytes);
     }
-    for row in rows::typed_rows(dbs, txn, NOTE_SEAL, &mut out)? {
+    for row in rows::typed_rows(store, txn, NOTE_SEAL, out)? {
         let owner = OwnerRef::entity(&row.key);
-        rows::split_actors(&mut out, owner, NOTE_SEAL, row, |seal| {
+        rows::split_actors(out, owner, NOTE_SEAL, row, |seal| {
             take_actor(&mut seal.sealed_by)
         })?;
     }
@@ -119,7 +159,7 @@ pub(crate) fn capture(dbs: &impl ManifestDbs, txn: &RoTxn<'_>) -> Result<Capture
     // split under that NOTE: its proposal document goes with it when its
     // opener does not open, so the document splits only beside the record.
     let mut undecided = BTreeMap::new();
-    for row in rows::typed_rows(dbs, txn, NOTE_FORK, &mut out)? {
+    for row in rows::typed_rows(store, txn, NOTE_FORK, out)? {
         let owner = OwnerRef::entity(&row.value.note);
         if !row.value.decided {
             // The split places the record under `owner` exactly when its
@@ -128,26 +168,25 @@ pub(crate) fn capture(dbs: &impl ManifestDbs, txn: &RoTxn<'_>) -> Result<Capture
             let beside = row.key == row.value.fork && rows::spells_back(NOTE_FORK, &row);
             undecided.insert((row.value.note, row.value.fork), beside);
         }
-        rows::split_actors(&mut out, owner, NOTE_FORK, row, |fork| {
+        rows::split_actors(out, owner, NOTE_FORK, row, |fork| {
             take_actor(&mut fork.actor)
         })?;
     }
-    for row in rows::typed_rows(dbs, txn, NOTE_PROPOSAL_DOC, &mut out)? {
+    for row in rows::typed_rows(store, txn, NOTE_PROPOSAL_DOC, out)? {
         let note = row.key.0.0;
         let fork = undecided.get(&(note, row.key.1.0)).copied();
-        loro::capture_proposal(&mut out, note, fork, row);
+        loro::capture_proposal(out, note, fork, row);
     }
-    for row in rows::typed_rows(dbs, txn, NOTE_RECEIPT, &mut out)? {
+    for row in rows::typed_rows(store, txn, NOTE_RECEIPT, out)? {
         let owner = OwnerRef::entity(&row.value.note);
-        rows::split_actors(&mut out, owner, NOTE_RECEIPT, row, |receipt| {
+        rows::split_actors(out, owner, NOTE_RECEIPT, row, |receipt| {
             take_actor(&mut receipt.actor)
         })?;
     }
-    bundle::capture(dbs, txn, &mut out)?;
-    pins::capture(dbs, txn, &mut out)?;
-    capture_operation_receipts(dbs, txn, &mut out)?;
-    title_index::checkpoint::capture(dbs, txn, &mut out)?;
-    Ok(out)
+    bundle::capture(store, txn, out)?;
+    pins::capture(store, txn, out)?;
+    capture_operation_receipts(store, txn, out)?;
+    title_index::checkpoint::capture(store, txn, out)
 }
 
 /// Each applied or rejected operation receipt and each command receipt,
@@ -175,31 +214,6 @@ fn capture_operation_receipts(
         })?;
     }
     Ok(())
-}
-
-fn owns(at: &RowLocator) -> bool {
-    [
-        NOTE_HEAD.decl(),
-        NOTE_HEAD_DOC.decl(),
-        NOTE_OVERRIDE.decl(),
-        NOTE_SEAL.decl(),
-        NOTE_FORK.decl(),
-        NOTE_RECEIPT.decl(),
-        NOTE_PROPOSAL_BUNDLE.decl(),
-        NOTE_PROPOSAL_DOC.decl(),
-        SYNC_NC_E.decl(),
-        NOTE_RECEIPT_BY_REQUEST.decl(),
-        NOTE_FORK_AUTHORITY.decl(),
-    ]
-    .into_iter()
-    .any(|decl| at.in_table(decl))
-        || pins::owns(at)
-        || title_index::checkpoint::owns(at)
-}
-
-/// The bundle framing of `rows`' NOTE parts.
-pub(crate) fn bytes_for_owner(rows: &OwnerRows) -> Result<Vec<u8>> {
-    rows::frame_owner(rows, owns)
 }
 
 fn check(at: &RowLocator, value: &[u8]) -> Result<()> {
@@ -333,9 +347,11 @@ fn join(
 /// A no-one-form row with its opened actors back, at the key it restores
 /// to: a title row's key and value are spelled back from its NOTE half and
 /// its author's part ([`title_index::checkpoint::join`]), and every other
-/// row keeps its part's key ([`join`]).
+/// row keeps its part's key ([`join`]). A restore puts exact rows back as
+/// they are, and merges each bundle fragment and explainer copy into the
+/// bundle the owners restored so far hold.
 fn join_row(
-    dbs: &impl ManifestDbs,
+    store: &Store,
     view: &RoTxn<'_>,
     opened: &OpenedOwnerRows,
     at: &RowLocator,
@@ -345,19 +361,5 @@ fn join_row(
     if title_index::checkpoint::owns(at) {
         return title_index::checkpoint::join(at, value, parts);
     }
-    Ok(join(dbs, view, opened, at, value, parts)?.map(|value| (at.clone(), value)))
-}
-
-/// Puts `opened`'s NOTE rows back: exact rows as they are, each actor that
-/// opened back in its row, each bundle fragment and explainer copy merged
-/// into the bundle the owners restored so far hold, and each title row whose
-/// author opened, its key spelled back.
-pub(crate) fn restore_in_txn(
-    dbs: &impl ManifestDbs,
-    txn: &mut RwTxn<'_>,
-    opened: OpenedOwnerRows,
-) -> Result<Restored> {
-    rows::restore_parts_keyed(dbs, txn, &opened, check, |view, at, value, parts| {
-        join_row(dbs, view, &opened, at, value, parts)
-    })
+    Ok(join(store, view, opened, at, value, parts)?.map(|value| (at.clone(), value)))
 }

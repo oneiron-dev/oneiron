@@ -457,11 +457,66 @@ fn raw_for_revision(
     }
 }
 
+/// Text fields published from a live revision by the idle pass or a room.
+/// Claims keep their value index text, not generic string leaves; a claim
+/// that is not surfaceable must not publish.
+pub(crate) fn publication_text_fields(
+    store: &impl ManifestDbs,
+    txn: &RoTxn<'_>,
+    id: &EntityId,
+    live: RevisionRef,
+    entity_type: u8,
+    body: &[u8],
+) -> Result<Option<Vec<(String, String)>>> {
+    let fields = if entity_type == crate::registry::ENTITY_TYPE_CLAIM {
+        let claim = crate::write_envelope::claim_body::decode_claim_body(body, true)?;
+        if !crate::claim::claim_surfaceable(&claim) {
+            return Ok(None);
+        }
+        let text = crate::store::claim_lineage::claim_value_index_text(&claim.value);
+        if text.is_empty() {
+            Vec::new()
+        } else {
+            vec![("val".to_owned(), text)]
+        }
+    } else {
+        revision_text_fields(store, txn, id, live, body)?
+    };
+    Ok(Some(fields))
+}
+
+/// Reads fields only for a room row whose live revision still needs to
+/// publish. Births and metadata-only restages need no replacement index.
+pub(crate) fn room_restage_text_fields(
+    store: &impl ManifestDbs,
+    txn: &RoTxn<'_>,
+    id: &EntityId,
+) -> Result<Option<Vec<(String, String)>>> {
+    let Some(current) = state(store, txn, id)? else {
+        return Ok(None);
+    };
+    if current.live == current.indexed {
+        return Ok(None);
+    }
+    let raw = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)?
+        .ok_or(Error::CorruptedIndex("revision without entity"))?;
+    let live = raw_for_revision(store, txn, id, &raw, None)?;
+    publication_text_fields(
+        store,
+        txn,
+        id,
+        current.live,
+        live[0],
+        &live[ENTITY_METADATA_HEADER_LEN..],
+    )
+}
+
 /// Publishes the revision a room holds pending for `id`. A room indexes what
-/// it stages at once and runs no idle pass, so once it indexes a row it put,
-/// the row's indexed revision is its live one; base keeps its deferred
-/// interval. True when the body is not the one indexed before, so an index
-/// of the row that the room did not restage describes another body.
+/// it stages at once and runs no idle pass: a Put-only restage derives its
+/// text from the live body before publication, while explicit text or vector
+/// writes publish through their own apply. Base keeps its deferred interval.
+/// True when the body is not the one indexed before, so an index of the row
+/// that the room did not restage describes another body.
 pub(crate) fn publish_room_revision(
     store: &impl ManifestDbs,
     txn: &mut RwTxn<'_>,
@@ -853,4 +908,126 @@ fn unix_millis_at(now: std::time::SystemTime) -> u64 {
         .as_millis()
         .try_into()
         .unwrap_or(u64::MAX)
+}
+
+/// Puts a revision state for the checkpoint-pins door: `id`'s ledger row
+/// with fixed refs and time.
+#[cfg(oneiron_test_support)]
+pub(crate) fn put_pins_entity_revision_state_in_txn(
+    store: &impl ManifestDbs,
+    txn: &mut RwTxn<'_>,
+    id: &EntityId,
+    live: [u8; 16],
+    indexed: [u8; 16],
+    changed_at_ms: u64,
+    has_doc: bool,
+) -> Result<()> {
+    STATE.put(
+        store,
+        txn,
+        id,
+        &RevisionState {
+            live: RevisionRef(live),
+            indexed: RevisionRef(indexed),
+            changed_at_ms,
+            has_doc,
+        },
+    )
+}
+
+/// Puts a revision document for the checkpoint-pins door: `id`'s Loro
+/// snapshot bytes, built with a fixed peer and fixed commit times.
+#[cfg(oneiron_test_support)]
+pub(crate) fn put_pins_entity_revision_doc_in_txn(
+    store: &impl ManifestDbs,
+    txn: &mut RwTxn<'_>,
+    id: &EntityId,
+    bytes: &[u8],
+) -> Result<()> {
+    DOC.put(store, txn, id, &bytes.to_vec())
+}
+
+/// Puts a retained frontier for the checkpoint-pins door: `revision`'s
+/// entry of `id`'s ledger.
+#[cfg(oneiron_test_support)]
+pub(crate) fn put_pins_entity_revision_frontier_in_txn(
+    store: &impl ManifestDbs,
+    txn: &mut RwTxn<'_>,
+    id: &EntityId,
+    revision: [u8; 16],
+    value: &[u8],
+) -> Result<()> {
+    FRONTIER.put(store, txn, &(*id, revision), &value.to_vec())
+}
+
+/// The revision ref of `bytes` held by `id`, as `reference` derives it,
+/// for the checkpoint-pins door's frontier and identity rows.
+#[cfg(oneiron_test_support)]
+pub(crate) fn pins_revision_reference(id: &EntityId, bytes: &[u8]) -> [u8; 16] {
+    reference(id, bytes).0
+}
+
+/// A document frontier entry holding `frontier`, for the checkpoint-pins
+/// door's frontier rows.
+#[cfg(oneiron_test_support)]
+pub(crate) fn pins_frontier_document_value(frontier: &[u8]) -> Vec<u8> {
+    FrontierEntry::Document(frontier).encode()
+}
+
+/// One raw row into `doc`, as `write_doc_row` writes it but committing at
+/// `at`, so two processes build the same bytes.
+#[cfg(oneiron_test_support)]
+pub(crate) fn pins_write_doc_row(doc: &LoroDoc, raw: &[u8], at: i64) -> Result<()> {
+    let fields = text_fields(
+        raw.get(ENTITY_METADATA_HEADER_LEN..)
+            .ok_or(Error::CorruptedIndex("entity revision header"))?,
+    );
+    let names = doc.get_map("text_fields");
+    let mut previous = Vec::new();
+    names.for_each(|name, _| previous.push(name.to_owned()));
+    for name in previous {
+        if !fields.iter().any(|(current, _)| current == &name) {
+            doc.get_text(format!("field:{name}"))
+                .update("", Default::default())
+                .map_err(|_| Error::InvariantViolation("entity text update"))?;
+            names
+                .delete(&name)
+                .map_err(|_| Error::InvariantViolation("entity text field delete"))?;
+        }
+    }
+    for (name, text) in fields {
+        doc.get_text(format!("field:{name}"))
+            .update(&text, Default::default())
+            .map_err(|_| Error::InvariantViolation("entity text update"))?;
+        names
+            .insert(&name, true)
+            .map_err(|_| Error::InvariantViolation("entity text field insert"))?;
+    }
+    doc.get_map("record")
+        .insert("raw", raw)
+        .map_err(|_| Error::InvariantViolation("entity revision insert"))?;
+    doc.commit_with(loro::CommitOptions::new().timestamp(at));
+    Ok(())
+}
+
+/// Builds a revision document's snapshot bytes for the checkpoint-pins
+/// door: `raws` written under `peer` with every commit at `at`, with the
+/// frontiers `retain_frontier` would keep.
+#[cfg(oneiron_test_support)]
+pub(crate) fn pins_revision_doc_bytes(
+    peer: u64,
+    raws: &[Vec<u8>],
+    at: i64,
+) -> Result<(Vec<u8>, Vec<u8>)> {
+    let doc = LoroDoc::new();
+    doc.set_peer_id(peer)
+        .map_err(|_| Error::InvariantViolation("entity revision pins peer"))?;
+    for raw in raws {
+        pins_write_doc_row(&doc, raw, at)?;
+    }
+    let frontiers = doc.oplog_frontiers().encode();
+    let bytes = doc
+        .export(ExportMode::Snapshot)
+        .map_err(|_| Error::InvariantViolation("entity revision pins export"))?;
+    Ok((bytes, frontiers))
 }
