@@ -154,3 +154,18 @@ pub(crate) fn partition_held_in_txn(
         None => Ok(false),
     }
 }
+
+/// Every record a cooperative restriction keeps: each record with a
+/// restriction row, under any ask. A lift deletes its row, so every row read
+/// here stands; a row that does not decode fails the read rather than drop
+/// its record.
+pub(crate) fn records_under_cooperative_restriction_in_txn(
+    dbs: &impl SideTableDbs,
+    txn: &RoTxn<'_>,
+) -> Result<std::collections::BTreeSet<EntityId>> {
+    Ok(COOPERATIVE_RESTRICTIONS
+        .scan(dbs, txn)?
+        .into_iter()
+        .map(|((record, _, _), _)| record)
+        .collect())
+}
