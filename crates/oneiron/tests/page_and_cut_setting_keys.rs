@@ -429,6 +429,7 @@ fn refs_links_page_max_reads_a_turn_page_past_32() {
             messages,
             occurred_at: fx.vault.now_recorded_at(),
             assertions: WitnessAssertions::default(),
+            project: None,
         })
         .expect("a witnessed turn of 41 messages")
         .turn_id
@@ -581,6 +582,7 @@ fn lenses_default_thread_entry_cut_follows_excerpt_bytes() {
         }],
         occurred_at: fx.vault.now_recorded_at(),
         assertions: WitnessAssertions::default(),
+        project: None,
     })
     .expect("a thread MESSAGE source");
     let request = || LensDefaultRequest {
