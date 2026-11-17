@@ -31,7 +31,7 @@ use sha2::{Digest as _, Sha256};
 
 use crate::error::Result;
 
-use super::invalid_authority;
+use super::{canonical_p256_key_bytes, invalid_authority};
 
 /// The first byte of a passkey assertion envelope.
 pub const WEBAUTHN_ASSERTION_FORMAT: u8 = 1;
@@ -57,6 +57,27 @@ const WEBAUTHN_GET: &str = "webauthn.get";
 /// The domain of the challenge a passkey's assertion names: this format's
 /// own, so no other ceremony's digest of the same bytes is taken for it.
 pub const WEBAUTHN_AUTHORITY_CHALLENGE_DOMAIN: &[u8] = b"oneiron/webauthn-authority-assertion/v1\0";
+
+/// SubjectPublicKeyInfo DER prefix of an uncompressed P-256 key
+/// (id-ecPublicKey, prime256v1, BIT STRING of 66 bytes).
+const SPKI_P256_PREFIX: [u8; 26] = [
+    0x30, 0x59, 0x30, 0x13, 0x06, 0x07, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x02, 0x01, 0x06, 0x08, 0x2a,
+    0x86, 0x48, 0xce, 0x3d, 0x03, 0x01, 0x07, 0x03, 0x42, 0x00,
+];
+
+/// An ES256 credential's key as the browser's `getPublicKey()` hands it
+/// (SubjectPublicKeyInfo DER), as the canonical compressed SEC1 bytes an
+/// authority key holds.
+///
+/// # Errors
+/// Bytes that are not the SubjectPublicKeyInfo of a P-256 point.
+pub fn webauthn_es256_public_key(spki: &[u8]) -> Result<Vec<u8>> {
+    let point = spki
+        .strip_prefix(&SPKI_P256_PREFIX[..])
+        .filter(|point| point.len() == 65)
+        .ok_or_else(invalid_authority)?;
+    canonical_p256_key_bytes(point)
+}
 
 /// The challenge a passkey signs for `message` (an authority transcript or a
 /// possession transcript, each with its own domain): SHA-256 of
