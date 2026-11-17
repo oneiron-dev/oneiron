@@ -13,6 +13,7 @@ pub mod catch_all_status;
 pub mod coach_round;
 pub mod compaction_pass;
 pub mod connector_sends;
+pub mod history_import;
 #[cfg(unix)]
 pub mod hosted_import;
 pub mod lens_frames;
@@ -33,6 +34,7 @@ pub mod native_board;
 pub mod off_router_wire_counts;
 pub mod one_click_wire_counter;
 pub mod openapi_document;
+pub mod owner_backup;
 pub mod parked_step_resume;
 pub mod pre_idle_reuse;
 #[cfg(unix)]
@@ -40,9 +42,12 @@ pub mod recovery_box_hold;
 pub mod replay_admission;
 pub mod residence_connection;
 pub mod resident_pump;
+pub mod seal_judge;
 pub mod signing_session;
 pub mod siwc_seat;
 pub mod solved_runs;
+pub mod system_one_leg;
 pub mod voice_call;
 pub mod wire_health_sweep;
+pub mod wire_thresholds;
 pub mod workflow_park;

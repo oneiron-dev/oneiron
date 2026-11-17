@@ -61,6 +61,9 @@ pub(crate) struct WorldKeySession {
     pub(crate) ring: Mutex<HashMap<WorldKeyId, Arc<WorldKey>>>,
     /// The vault data key, once unlocked on this handle (OF-570 E1).
     pub(crate) vault_key: Mutex<Option<Arc<super::vault_key::VaultDataKey>>>,
+    /// The data keys of this vault's earlier generations, newest first, reached from the held key
+    /// through the link chain; wiped with it.
+    pub(crate) earlier_vault_keys: Mutex<Vec<Arc<super::vault_key::VaultDataKey>>>,
     /// The checkpoint root signers the host holds here (FIX 4882).
     pub(crate) checkpoint_roots: Mutex<Vec<Arc<dyn crate::authority::CheckpointRootSigner>>>,
     /// The image each linked machine is sending this home in parts to

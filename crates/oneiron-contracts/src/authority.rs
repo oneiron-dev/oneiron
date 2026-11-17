@@ -51,8 +51,10 @@ pub enum AuthorityHistoryReason {
     RejectedRowCrossed,
     /// A tail row is signed by a key the image retired.
     RetiredSigner,
-    /// This install's sequence floor refuses a tail row.
-    BelowSequenceFloor,
+    /// A tail row moves a covered row's sequence floor or sits past its own
+    /// (the rows floors): only the whole history judges those, though no
+    /// floor refuses a row.
+    SequenceFloorMoved,
     /// A residence result past an image that dropped its residence bodies.
     ResidenceBodiesDropped,
     /// A tail re-root's fence could refuse a tail row outside its line, or a
