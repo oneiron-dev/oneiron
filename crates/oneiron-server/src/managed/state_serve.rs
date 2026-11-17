@@ -556,9 +556,11 @@ impl ManagedState {
     /// commit a durable write.
     ///
     /// Two ways one can be live, and quiescence has to answer for both. A
-    /// session past its protocol hello holds a broadcast receiver for as long
-    /// as it runs, and it subscribes before it can import a single update, so
-    /// the receiver count covers every session that is able to write. A
+    /// session past its protocol hello holds a counted broadcast subscriber
+    /// for as long as it runs, and it subscribes before it can import a single
+    /// update, so the session count covers every session that is able to
+    /// write. The host's own subscribers (the cloud erase watch holds one for
+    /// the whole serve) are not sessions and are not counted (FIX 23314). A
     /// session that upgraded and has not spoken yet holds nothing to count, so
     /// a 15-second settle window (the protocol hello deadline plus margin)
     /// covers that blind window instead.
@@ -570,12 +572,9 @@ impl ManagedState {
     /// This vault's own device sync, dialing its home, is live too until its
     /// run and refresh have paused at the freeze (FIX 5127).
     pub fn live_sync_writer(&self) -> bool {
-        // Crate-internal on purpose: the receiver count is the only liveness
-        // signal a session leaves outside its own task, and adding a second
-        // registry to `SyncServer` would put the same fact in two places.
-        if self.server.broadcast_tx.receiver_count() > 0
-            || self.admission.in_flight().device_sync > 0
-        {
+        // Not the channel's receiver count: that also counts the host's own
+        // subscribers, so it never reads zero on a served host (FIX 23314).
+        if self.server.broadcast_sessions.live() > 0 || self.admission.in_flight().device_sync > 0 {
             return true;
         }
         let admitted = self.last_sync_upgrade.load(Ordering::SeqCst);

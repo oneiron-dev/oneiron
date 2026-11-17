@@ -207,7 +207,9 @@ const LOADED: [u8; 1] = [1];
 
 /// [`LOADED_SKILL`]'s key: the receipt id framed by its big-endian `u64` byte length, then the
 /// skill id.
+#[derive(SideKey)]
 pub(crate) struct LoadedSkillKey {
+    #[side_key(len = u64)]
     receipt: String,
     pub(crate) skill: EntityId,
 }
@@ -221,22 +223,13 @@ impl LoadedSkillKey {
     }
 }
 
-impl SideKey for LoadedSkillKey {
-    fn encode_into(&self, out: &mut Vec<u8>) {
-        (self.receipt.len() as u64).encode_into(out);
-        out.extend_from_slice(self.receipt.as_bytes());
-        self.skill.encode_into(out);
-    }
-
-    fn decode_key(bytes: &[u8]) -> Option<Self> {
-        let (length, rest) = bytes.split_at_checked(8)?;
-        let length = usize::try_from(u64::decode_key(length)?).ok()?;
-        let (receipt, skill) = rest.split_at_checked(length)?;
-        Some(Self {
-            receipt: std::str::from_utf8(receipt).ok()?.to_owned(),
-            skill: EntityId::decode_key(skill)?,
-        })
-    }
+/// One [`LoadedSkillKey`] for `test_doors::side_key_pins`.
+#[cfg(oneiron_test_support)]
+pub(crate) fn loaded_skill_key_pin_for_test(
+    receipt: &str,
+    skill: EntityId,
+) -> crate::test_doors::side_key_pins::Pin {
+    crate::test_doors::side_key_pins::Pin::of(&LoadedSkillKey::new(receipt, &skill))
 }
 
 pub(crate) fn bind_skill_in_txn(

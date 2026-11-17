@@ -59,6 +59,7 @@ use heed::RwTxn;
 use rmpv::Value;
 use zeroize::{Zeroize, Zeroizing};
 
+use super::FieldRule;
 use super::container::{self, Stop, holds_spans, is_sealed, masked_copy, walk_members};
 use super::scan_batch_ops;
 use super::shapes::{self, Door, HANDLE_OPEN};
@@ -520,6 +521,8 @@ struct Masker {
     /// The door's scan read each text this pass reads now by the same text
     /// rules and found no shape: none is sought again (speed).
     shapes_read: bool,
+    /// Which values under a credential name the field rule lifts whole.
+    field_rule: FieldRule,
     /// The batch door's plan: a recovery phrase split over a file's parts
     /// is marked word by word, one record for its words (LABEL-04). A
     /// carrier's text is placed as before, such a phrase left unplaced: a
@@ -766,9 +769,10 @@ impl Masker {
     }
 
     /// One map member under its `key`, as the field rule reads it: a value
-    /// under a credential name whole, any other member by member.
+    /// under a credential name whole (text alone under
+    /// [`FieldRule::TextOnly`]), any other member by member.
     fn mask_member(&mut self, key: &Value, member: &mut Value) -> Result<bool> {
-        if !credential_member(key, member) {
+        if !credential_member(key, member, self.field_rule) {
             return self.mask_value(member);
         }
         let secret = Zeroizing::new(match &*member {
@@ -1068,10 +1072,12 @@ fn part_at<'v>(value: &'v mut Value, path: &[usize]) -> Option<&'v mut Value> {
     Some(part)
 }
 
-/// Whether the field rule reads `member`, under `key`, whole: a value under a
-/// credential name, neither nil nor a placeholder.
-fn credential_member(key: &Value, member: &Value) -> bool {
-    key.as_str().is_some_and(shapes::sensitive_key)
+/// Whether the field rule `rule` reads `member`, under `key`, whole: a value
+/// under a credential name, neither nil nor a placeholder, of a shape `rule`
+/// reads whole.
+fn credential_member(key: &Value, member: &Value, rule: FieldRule) -> bool {
+    rule.reads_whole(member)
+        && key.as_str().is_some_and(shapes::sensitive_key)
         && !member.is_nil()
         && !member
             .as_str()
