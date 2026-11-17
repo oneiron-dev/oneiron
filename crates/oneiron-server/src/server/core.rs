@@ -92,6 +92,19 @@ pub struct SyncServer {
     /// Whether this server's merge queue checker ran a pass yet: its first
     /// asks again for a check that needed host configuration (FIX 7310).
     pub(crate) queue_driver_started: std::sync::atomic::AtomicBool,
+    /// Whether this server's vault syncs as a device of another home through a
+    /// link this process runs (the macOS app's `EmbeddedDeviceSync`), so it
+    /// serves the vault's other machines as a peer, never as their home (L7-47).
+    /// Set by its boot (`SyncServer::new_device_link`).
+    pub(crate) runs_device_link: bool,
+    /// Whether a device link this process runs over this vault opened: serve's,
+    /// managed serve's or the macOS app's (`device_sync::open`). Its client
+    /// imports the home's root into a doc of its own and persists it to
+    /// `d:root`, which this server loaded once, at start, so this server merges
+    /// that persisted root before it exports its own (SERVE-DEVICE-PEER-STALE-ROOT).
+    /// Set once and never cleared: after the link stops, a merge imports nothing
+    /// new.
+    pub(crate) device_link_opened: std::sync::atomic::AtomicBool,
     /// Server configuration.
     pub(crate) config: SyncServerConfig,
     /// Permits for git and LFS transfers, sized by `config.limits`.
@@ -385,6 +398,7 @@ const _: fn(&SyncServer) = |server| {
         broadcast_sessions,
         _reactive_tee, lifecycle_session_id, lifecycle_in_flight, housekeeping_passes,
         residence_work_changed, queue_driver_started, config, transfers, memory, renderer_turns,
+        runs_device_link, device_link_opened,
         context_reads, renderer_scratch, query_checks, managed_issuer, host_root_issuer,
         recovery_box_hold,
         policy_doors, account_keys, usage_ledger, retrieval_buffer, host_account, wire_telemetry,
@@ -924,6 +938,28 @@ impl SyncServer {
     /// assert sync_state durability).
     pub fn vault(&self) -> &Arc<oneiron::Vault> {
         &self.vault
+    }
+
+    /// Whether this server's vault syncs as a device of another home through a
+    /// link this process runs (the macOS app's `EmbeddedDeviceSync`), so it
+    /// serves the vault's other machines as a peer, never as their home (L7-47).
+    pub(crate) fn runs_device_link(&self) -> bool {
+        self.runs_device_link
+    }
+
+    /// Marks that a device link this process runs over this vault opened
+    /// (SERVE-DEVICE-PEER-STALE-ROOT): called by the link's opening, before its
+    /// client persists any root it learns from its home.
+    #[cfg(feature = "mesh")]
+    pub(crate) fn mark_device_link_opened(&self) {
+        self.device_link_opened.store(true, Ordering::Release);
+    }
+
+    /// Whether a device link this process runs over this vault opened, so the
+    /// vault's persisted root may hold what the link learned since this server
+    /// loaded it (SERVE-DEVICE-PEER-STALE-ROOT).
+    pub(crate) fn device_link_opened(&self) -> bool {
+        self.device_link_opened.load(Ordering::Acquire)
     }
 
     /// Installs this serve's dedicated shared environments once. A second
