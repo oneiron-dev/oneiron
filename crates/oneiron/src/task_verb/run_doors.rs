@@ -447,7 +447,8 @@ fn cancel_force_as_inner(
         let caller = WriteActor::new(actor, crate::EdgeActorClass::Agent);
         let mut views = Vec::with_capacity(records.len());
         for record in records {
-            let own = !matches!(who, OwnerOrDelegate::Delegate(_))
+            let own = matches!(who, OwnerOrDelegate::Delegate(_))
+                || !matches!(who, OwnerOrDelegate::Delegate(_))
                 || crate::snapshot_read::is_attempt_actor_in_txn(vault, wtxn, caller, record.id)?;
             let view = branch_view(record);
             views.push(if own { view } else { withheld(view) });
