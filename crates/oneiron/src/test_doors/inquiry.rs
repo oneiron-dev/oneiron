@@ -5,11 +5,14 @@
 //! [`cancel_task`] and counts the held answers through
 //! [`held_inquiry_answer_count`]; PR 6 reads a copied answer's
 //! retained-copy check through [`retained_copy_admits`].
+//! `tests/archive_import_owner_installs_side_receipts.rs` stores a terms
+//! change's Share receipt through [`record_terms_change`].
 
 use crate::error::Result;
 use crate::inquiry::{
-    Inquiry, InquiryAnswer, InquiryDecider, InquiryLogEntry, InquiryOutcome, log_inquiry_in_txn,
-    settle_inquiry_in_txn, write_inquiry_receipt_in_txn,
+    Inquiry, InquiryAnswer, InquiryDecider, InquiryEdge, InquiryLogEntry, InquiryOutcome,
+    InquiryTerms, InquiryTermsChangeOutcome, log_inquiry_in_txn, settle_inquiry_in_txn,
+    write_inquiry_receipt_in_txn, write_inquiry_terms_receipt_in_txn,
 };
 use crate::receipt::ReceiptRecord;
 use crate::{EntityId, Vault};
@@ -58,6 +61,26 @@ pub fn record_send(
     vault.with_write_txn(|txn| {
         let now = crate::ports::recorded_at_in_txn(&vault.store, txn)?;
         write_inquiry_receipt_in_txn(&vault.store, txn, inquiry, member, outcome, now)
+    })
+}
+
+/// The Share receipt of `member`'s change of `edge`'s terms from `previous`
+/// to the terms `edge` carries, through the writer the change itself calls.
+/// A test stores the receipt without the Connect that makes an edge live.
+///
+/// # Errors
+///
+/// As `write_inquiry_terms_receipt_in_txn`.
+pub fn record_terms_change(
+    vault: &Vault,
+    edge: &InquiryEdge,
+    previous: &InquiryTerms,
+    member: &EntityId,
+    outcome: InquiryTermsChangeOutcome,
+) -> Result<ReceiptRecord> {
+    vault.with_write_txn(|txn| {
+        let now = crate::ports::recorded_at_in_txn(&vault.store, txn)?;
+        write_inquiry_terms_receipt_in_txn(&vault.store, txn, edge, previous, member, outcome, now)
     })
 }
 
