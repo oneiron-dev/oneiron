@@ -874,6 +874,7 @@ fn owner_policy_action_is_unreachable_from_the_guest_imports() {
             idle_secs: 1,
             quiet_weave_secs: 3_600,
             weave_recipe_priority: crate::dreamer_wake::WeaveRecipePriority::BeforeConnectorEvent,
+            surprise_permille: 500,
         }),
         budget: None,
         view: None,

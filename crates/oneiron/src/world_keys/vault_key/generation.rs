@@ -300,7 +300,8 @@ impl Vault {
     /// census. A caller that holds the custody publication policy lock
     /// (`Store::custody_policy_guard`) from before the prepare until after
     /// [`Self::finish_data_key_generation`] also spares a pass that would
-    /// stay pending for it.
+    /// stay pending for it. The act settles every agent proposal for the
+    /// generation it replaces.
     pub(crate) fn start_data_key_generation_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
@@ -451,6 +452,7 @@ impl Vault {
                 recovery: state.recovery,
             },
         )?;
+        self.settle_data_key_generation_proposals_in_txn(txn, state.generation)?;
         transition.stage_generation(committed, || self.staged_wraps_in_txn(txn, None))?;
         // No inference snapshot admitted under the old key commits after
         // this write: the draft's pause ended every earlier admission and
