@@ -359,3 +359,59 @@ fn a_human_messages_resident_sleeps_through_a_person_merged_into_a_named_agent()
     assert_eq!(wakes(&vault, fixture.yuki)?, 0, "no wake on its run");
     Ok(())
 }
+
+/// A named agent's principal merged into an ordinary PERSON is still that
+/// agent: its message wakes no human-messages resident (REVIEW-9173 round 2
+/// P1). The merge runs the other way from the test above: the principal
+/// (`ensure_agent_principal`, no substrate) is the absorbed side and the
+/// ordinary PERSON (no substrate either) survives, so the principal resolves
+/// to a survivor whose own body names no agent. Red on the round-2 head
+/// 11fb813f1d: the named-agent check read only the survivor's body, so the
+/// principal's message woke the resident.
+#[test]
+fn a_human_messages_resident_sleeps_through_a_named_agent_merged_into_a_person() -> TestResult {
+    let clock = test_clock()?;
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open_owned(dir.path(), config(&clock))?;
+    let fixture = bind_resident(&vault)?;
+    let proof = owner_proof(&vault, fixture.owen)?;
+    let bot = vault.ensure_agent_principal("bot")?;
+    let survivor = EntityId::now();
+    let now = vault.now_recorded_at();
+    vault.put_entity(
+        &survivor,
+        ENTITY_TYPE_PERSON,
+        TimeRange {
+            start: now,
+            end: now,
+        },
+        now,
+        &rmp_serde::to_vec_named(&serde_json::json!({ "name": "the bot's other record" }))?,
+    )?;
+    let merge: ClusterMergeRequest = serde_json::from_value(serde_json::json!({
+        "merge": {
+            "sources": [bot.to_hex()],
+            "survivor": survivor.to_hex(),
+            "evidence": { "refs": [], "rationale": "the bot, written twice" },
+        },
+    }))?;
+    vault
+        .memory(fixture.owen, EdgeActorClass::Human)
+        .cluster_merge(Some(&proof), &merge)
+        .map_err(|error| format!("the owner merges the bot into the other record: {error:?}"))?;
+    assert_eq!(
+        vault.resolve_entity(&bot)?,
+        vec![survivor],
+        "the named agent's principal resolves to the surviving PERSON"
+    );
+
+    admit_person_message(&vault, fixture.inbox, fixture.yuki, bot, "from-merged-bot")?;
+    clock.advance(u64::from(HOLD_SECS) + 1);
+    let pass = inbox_pass(&vault, fixture.yuki, clock.now())?;
+    assert!(
+        pass.outcomes.is_empty(),
+        "a message from a named agent merged into a PERSON wakes no human-messages resident: {pass:?}"
+    );
+    assert_eq!(wakes(&vault, fixture.yuki)?, 0, "no wake on its run");
+    Ok(())
+}
