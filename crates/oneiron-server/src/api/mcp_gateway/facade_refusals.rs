@@ -127,6 +127,10 @@ fn mcp_refusal_row(code: &str) -> (i64, Option<&'static str>) {
         oneiron_contracts::memory::MEMORY_CODE_MODEL_PIN_UNAVAILABLE => {
             (-32020, Some("model_pin_unavailable"))
         }
+        // L3-39: a memory fork names a revision this machine holds no bytes of.
+        oneiron_contracts::memory::MEMORY_CODE_HISTORY_NOT_HELD => {
+            (-32020, Some("history_not_held"))
+        }
         // FIX 8753: a call its budget window paced waits in its caller's
         // line; the agent reads the name and `resets_at`, not the sentence.
         oneiron::memory::MEMORY_CODE_PACED_HOLD => (-32020, Some("paced_hold")),
