@@ -5,7 +5,6 @@
 //! that stands for it (FIX 5038): a separate answer, never a board.
 
 use super::super::core_engine_error;
-use super::super::parse_entity_id_param;
 use super::ContextBoardResponse;
 use crate::auth::CoreAuth;
 use crate::auth::CoreScope;
@@ -179,11 +178,11 @@ pub(crate) async fn board_turn_idempotency(
 /// source, kept beside it as `admit`) is one the caller's read still reads
 /// (409 `board_document_unreadable` otherwise). A board kept before those
 /// rows were never replays.
-/// The room the request named is resolved again, and so is the home its
-/// retrieval named, so every check meets that room's read and clamp and that
-/// home's clearance as they stand now, as a new board in it would; and
-/// each source the response carries without naming it, a standing block's
-/// CLAIMs, passes them as its documents do (FIX 8147, 8148).
+/// Each producer's authority is resolved again: retrieval rows meet their
+/// retrieval's audience and home, while room pins meet the board room's own
+/// audience, without a retrieval home override. Each source the response
+/// carries without naming it, a standing block's CLAIMs, meets the standing
+/// producer's own read and clamp (FIX 8147, 8148).
 /// Off this device it goes out only while every row it was derived from
 /// (`rows`, listed when it was cached) may leave this device, and it names
 /// no row a device-local world keeps now. A refused replay records nothing
@@ -213,6 +212,8 @@ fn release_board_replay(
     #[derive(Deserialize)]
     struct Row {
         id: String,
+        #[serde(default)]
+        room_pin: Option<serde::de::IgnoredAny>,
     }
     let auth = auth.ok_or_else(ApiError::unauthorized)?;
     let refused = || ApiError::invalid_state(Some("board_document_unreadable"));
@@ -258,42 +259,77 @@ fn release_board_replay(
         request.project.as_ref(),
     )?
     .room_id();
-    // Retrieval resolves its home independently of the room the board renders.
-    let home = request
-        .retrieval
-        .as_ref()
-        .map(|retrieval| {
-            let room = retrieval_room
-                .map(|room| parse_entity_id_param(room, "conversation_id"))
-                .transpose()?;
-            super::super::core_conversation_home(
-                &server.vault,
-                auth,
-                room,
-                retrieval.conversation_home(),
-            )
-        })
-        .transpose()?;
-    let mut documents = disclosed
+    let mut board_documents = BTreeSet::new();
+    let mut room_pin_documents = BTreeSet::new();
+    let mut retrieval_documents = BTreeSet::new();
+    for row in disclosed
         .memories
         .into_iter()
         .flat_map(|memories| memories.rows)
-        .chain(
-            disclosed
-                .pack
-                .into_iter()
-                .flat_map(|pack| pack.results.into_iter().chain(pack.neighbors)),
-        )
-        .map(|row| EntityId::from_hex(&row.id))
-        .collect::<Result<BTreeSet<_>, _>>()
-        .map_err(|_| unreadable())?;
-    documents.extend(replay.sources.iter().copied());
-    let (read, disclosure) = current_board_authority(&server.vault, auth, room, home)?;
+    {
+        let id = EntityId::from_hex(&row.id).map_err(|_| unreadable())?;
+        // Room pins replace any matching retrieval MEMORIES row. Pack rows
+        // remain independently disclosed and must still pass retrieval below.
+        if row.room_pin.is_some() {
+            room_pin_documents.insert(id);
+        } else if request.retrieval.is_none() {
+            board_documents.insert(id);
+        } else {
+            retrieval_documents.insert(id);
+        }
+    }
+    for row in disclosed
+        .pack
+        .into_iter()
+        .flat_map(|pack| pack.results.into_iter().chain(pack.neighbors))
+    {
+        retrieval_documents.insert(EntityId::from_hex(&row.id).map_err(|_| unreadable())?);
+    }
+    let (read, disclosure) = current_board_authority(&server.vault, auth, room)?;
     let admitted = server
         .vault
-        .board_documents_admitted(&documents, &read, disclosure.as_ref())
+        .board_documents_admitted(&board_documents, &read, disclosure.as_ref())
         .map_err(|_| check_failed())?;
-    if !admitted || !crate::idempotency::replay_admits(server, Some(auth), admit)? {
+    if !admitted {
+        return Err(refused());
+    }
+    if !super::memories::room_pins_admitted(
+        &server.vault,
+        auth,
+        room,
+        &room_pin_documents,
+        disclosure.as_ref(),
+    )? {
+        return Err(refused());
+    }
+    if let Some(retrieval) = &request.retrieval {
+        let audience = retrieval.replay_audience(&server.vault, auth)?;
+        let admitted = server
+            .vault
+            .board_documents_admitted(
+                &retrieval_documents,
+                &audience.read,
+                audience.disclosure.as_ref(),
+            )
+            .map_err(|_| check_failed())?;
+        if !admitted {
+            return Err(refused());
+        }
+    } else if !retrieval_documents.is_empty() {
+        return Err(refused());
+    }
+    if !replay.sources.is_empty() {
+        let (read, disclosure) = super::standing::standing_authority(&server.vault, auth, room)?;
+        let sources = replay.sources.iter().copied().collect();
+        let admitted = server
+            .vault
+            .board_documents_admitted(&sources, &read, disclosure.as_ref())
+            .map_err(|_| check_failed())?;
+        if !admitted {
+            return Err(refused());
+        }
+    }
+    if !crate::idempotency::replay_admits(server, Some(auth), admit)? {
         return Err(refused());
     }
     Ok(())
@@ -301,13 +337,12 @@ fn release_board_replay(
 
 /// The authority a board is handed back under: the caller's read scope and
 /// disclosure clamp as they stand now, the ones a new board would apply, in
-/// room `room` when it read in one, with `home` resolved independently from
-/// its kept retrieval when present.
+/// room `room` when it read in one. Retrieval and standing sources resolve
+/// their own producer authority separately.
 fn current_board_authority<'a>(
     vault: &'a oneiron::Vault,
     auth: &CoreAuth,
     room: Option<EntityId>,
-    home: Option<oneiron::ConversationHome>,
 ) -> Result<
     (
         oneiron::claim::ScopedRead<'a>,
@@ -316,7 +351,7 @@ fn current_board_authority<'a>(
     ApiError,
 > {
     let read = super::super::scoped_read_for_core_auth(vault, auth)?;
-    let audience = super::super::resolve_core_audience(vault, auth, read, room, home)?;
+    let audience = super::super::resolve_core_audience(vault, auth, read, room, None)?;
     Ok((audience.read, audience.disclosure))
 }
 
@@ -416,7 +451,7 @@ pub(crate) async fn context_board_turn_history(
     // Every item passes the caller's read scope and disclosure clamp as they
     // stand now, the ones a new board would apply: a past board never hands
     // back a document the caller can no longer read or be shown.
-    let (read, disclosure) = current_board_authority(&server.vault, &auth, None, None)?;
+    let (read, disclosure) = current_board_authority(&server.vault, &auth, None)?;
     let history = server
         .vault
         .board_turn_history_for(&id, &read, disclosure.as_ref())

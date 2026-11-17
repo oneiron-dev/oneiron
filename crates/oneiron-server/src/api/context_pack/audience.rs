@@ -58,9 +58,52 @@ pub(crate) fn resolve_core_audience<'a>(
     room_id: Option<oneiron::EntityId>,
     home: Option<oneiron::ConversationHome>,
 ) -> Result<CoreAudience<'a>, ApiError> {
+    resolve_audience(vault, auth, read, room_id, home, None)
+}
+
+/// A kept retrieval resolves the same audience inputs as fresh retrieval,
+/// independently of the board room that may add its own pins afterward.
+impl super::CoreContextPackRequest {
+    pub(crate) fn replay_audience<'a>(
+        &self,
+        vault: &'a oneiron::Vault,
+        auth: &CoreAuth,
+    ) -> Result<CoreAudience<'a>, ApiError> {
+        let read = super::super::scoped_read_for_core_auth(vault, auth)?;
+        let room = self
+            .conversation_id
+            .as_deref()
+            .map(|room| parse_entity_id_param(room, "conversation_id"))
+            .transpose()?;
+        let home = super::core_conversation_home(vault, auth, room, self.conversation_home())?;
+        let mut audience = resolve_audience(
+            vault,
+            auth,
+            read,
+            room,
+            Some(home),
+            self.interlocutors.as_ref(),
+        )?;
+        let filter = self
+            .filter
+            .as_ref()
+            .map(oneiron::memory::ReadFilterInput::to_filter);
+        audience.read = audience.read.with_read_filter(filter.as_ref());
+        Ok(audience)
+    }
+}
+
+fn resolve_audience<'a>(
+    vault: &'a oneiron::Vault,
+    auth: &CoreAuth,
+    read: oneiron::claim::ScopedRead<'a>,
+    room_id: Option<oneiron::EntityId>,
+    home: Option<oneiron::ConversationHome>,
+    interlocutors: Option<&super::CoreInterlocutorControls>,
+) -> Result<CoreAudience<'a>, ApiError> {
     let (room_members, room) = resolve_core_room(vault, auth, &read, room_id)?;
     let interlocutors =
-        super::resolve_core_interlocutor_set(vault, auth, &read, None, room.as_ref())?;
+        super::resolve_core_interlocutor_set(vault, auth, &read, interlocutors, room.as_ref())?;
     let read = narrow_to_core_audience(
         vault,
         auth,

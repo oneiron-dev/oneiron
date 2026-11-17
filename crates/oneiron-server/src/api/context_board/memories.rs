@@ -11,6 +11,9 @@ use serde::Deserialize;
 use serde::Serialize;
 use utoipa::ToSchema;
 
+mod replay;
+pub(super) use replay::room_pins_admitted;
+
 /// MEMORIES per-slot row caps. An unknown slot (such as the retired
 /// `companions`) is refused, not ignored.
 #[derive(Debug, Default, Deserialize, ToSchema)]
