@@ -419,7 +419,7 @@ fn a_held_window_a_legal_hold_names_is_still_pinned_and_cut() {
         .commit()
         .unwrap();
     vault
-        .place_legal_hold(&owner, vec![LegalHoldTarget::Record(held)], None)
+        .place_legal_hold(&owner, vec![LegalHoldTarget::Record(held)], None, None)
         .unwrap();
     let HeldWindow {
         window, sweep_key, ..
@@ -517,7 +517,7 @@ fn a_hold_placed_after_the_pin_leaves_the_holders_persist_a_cut() {
     let report = vault.maintain().run_hard_erase_sweep().run().unwrap();
     assert!(report.sweep_windows_compacted >= 1, "{report:?}");
     vault
-        .place_legal_hold(&owner, vec![LegalHoldTarget::Record(held)], None)
+        .place_legal_hold(&owner, vec![LegalHoldTarget::Record(held)], None, None)
         .unwrap();
     window.persist_state(&vault).unwrap();
 
@@ -543,7 +543,7 @@ fn a_hard_delete_published_into_a_pinned_window_drops_a_held_rows_older_revision
     let HeldWindow { window, .. } = window_with_obligation(&vault);
     let first = older_revision(&window.doc, &held);
     vault
-        .place_legal_hold(&owner, vec![LegalHoldTarget::Record(held)], None)
+        .place_legal_hold(&owner, vec![LegalHoldTarget::Record(held)], None, None)
         .unwrap();
     oneiron::sync::window::require_history_free_window(&vault, &WindowKey::new(WINDOW)).unwrap();
 

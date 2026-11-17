@@ -323,6 +323,7 @@ pub(crate) fn set_partition_hold_in_txn(
                 owner_told: true,
                 requires_non_use: false,
                 clone_captures: Vec::new(),
+                future_messages: None,
             });
             if undestroyed {
                 log_in_txn(

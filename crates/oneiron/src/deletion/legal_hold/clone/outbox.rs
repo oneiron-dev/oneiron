@@ -15,11 +15,10 @@ use std::sync::{Arc, Condvar, Mutex, PoisonError};
 use std::time::Duration;
 
 use oneiron_crypto::HybridPublicKey;
-use oneiron_vault_contract::host_legal::{CaptureExtent, CaptureRequest, FrameHeader, FrameKind};
+use oneiron_vault_contract::host_legal::{CaptureRequest, FrameHeader, FrameKind};
 
-use super::collector::{Collector, SummaryCounts};
 use crate::Vault;
-use crate::deletion::legal_hold::prospective::{self, OrderKey, OutboxEntry};
+use crate::deletion::legal_hold::prospective::{self, OrderKey};
 use crate::error::{Error, Result};
 
 impl super::HostLegalConnection {
@@ -57,7 +56,7 @@ impl super::HostLegalConnection {
         {
             let mut wtxn = vault.store.env.write_txn()?;
             check()?;
-            prospective::stand_in_txn(&vault.store, &mut wtxn, &request, request_digest)?;
+            prospective::stand_in_txn(&vault.store, &mut wtxn, &request, request_digest, None)?;
             wtxn.commit()?;
         }
         // The positive answer that this connection now stands the exact
@@ -133,34 +132,15 @@ impl super::HostLegalConnection {
             // Only the batch that reaches the next ordinal after every writer
             // stopped is final; an earlier slice of a long outbox is not.
             let last = finishing && end == next_ordinal;
-            let mut collector = Collector::pinned(&mut self.stream, &public, &request)?;
-            let mut counts = SummaryCounts {
-                batch_first_ordinal: first,
-                batch_entries: entries,
-                final_next_ordinal: last.then_some(next_ordinal),
-                ..SummaryCounts::default()
-            };
-            for (_, entry) in &batch {
-                match entry {
-                    OutboxEntry::SealedRow { sealed, .. } => {
-                        collector.stored_component(
-                            &sealed.frames,
-                            &sealed.descriptor_digest,
-                            sealed.plaintext_len,
-                            check,
-                        )?;
-                        counts.messages += 1;
-                    }
-                    OutboxEntry::SealedEdge { sealed, .. } => collector.stored_component(
-                        &sealed.frames,
-                        &sealed.descriptor_digest,
-                        sealed.plaintext_len,
-                        check,
-                    )?,
-                    OutboxEntry::Missed { message } => counts.missed_messages.push(*message),
-                }
-            }
-            collector.finish_counted(counts, CaptureExtent::ProspectiveMessages, check)?;
+            super::legal_hold_store::write_prospective_batch(
+                &mut self.stream,
+                &public,
+                &request,
+                &batch,
+                first,
+                last.then_some(next_ordinal),
+                check,
+            )?;
             let mut wtxn = vault.store.env.write_txn()?;
             if !prospective::acknowledge_in_txn(
                 &vault.store,

@@ -89,7 +89,12 @@ pub fn place_legal_hold_as(
     owner: &AuthenticatedOwner,
     input: LegalHoldPlaceRequest,
 ) -> MemoryResult<LegalHold> {
-    Ok(vault.place_legal_hold(owner, input.targets, input.matter_ref)?)
+    Ok(vault.place_legal_hold(
+        owner,
+        input.targets,
+        input.matter_ref,
+        input.future_messages,
+    )?)
 }
 
 /// `vault.legal_holds.widen`: adds targets to the owner's standing hold.

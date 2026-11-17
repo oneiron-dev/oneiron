@@ -280,11 +280,18 @@ pub fn legal_holds(command: crate::cli::LegalHoldsCommand) -> anyhow::Result<()>
             let LegalHoldPlaceArgs {
                 targets,
                 matter_ref,
+                future_messages_until,
                 ..
             } = *args;
             let request = sdk::LegalHoldPlaceRequest {
                 targets: hold_targets(&targets)?,
                 matter_ref,
+                future_messages: future_messages_until.map(|until| {
+                    oneiron::deletion::LegalHoldFutureMessages {
+                        selector: oneiron::deletion::MessageSelector::Vault,
+                        until,
+                    }
+                }),
             };
             hooked_row(
                 &vault,
@@ -292,7 +299,12 @@ pub fn legal_holds(command: crate::cli::LegalHoldsCommand) -> anyhow::Result<()>
                 "vault.legal_holds.place",
                 request,
                 |request: sdk::LegalHoldPlaceRequest| {
-                    Ok(vault.place_legal_hold(&owner, request.targets, request.matter_ref)?)
+                    Ok(vault.place_legal_hold(
+                        &owner,
+                        request.targets,
+                        request.matter_ref,
+                        request.future_messages,
+                    )?)
                 },
             )?
         }
