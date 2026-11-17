@@ -6,6 +6,7 @@ use std::collections::BTreeMap;
 use std::io::{Read, Seek};
 
 use heed::{RoTxn, RwTxn};
+use oneiron_contracts::fingerprint::{ContentHash, LegacyDigest, purposes};
 use oneiron_records::batch::export::archive_side_tables::byte_values;
 use serde::{Deserialize, Serialize};
 
@@ -73,25 +74,21 @@ mod bytes {
     }
 }
 
-/// The domain of [`retained_side_row_key`].
-const RETAINED_SIDE_ROW_DOMAIN: &[u8] = b"oneiron.archive.retained_side_row.v1";
-
-/// The physical key of one retained row: BLAKE3 over the domain and the length-framed logical
-/// identity (the source table name bytes, the source key bytes, the 32-byte value hash), each
-/// part as a u64 little-endian length followed by its bytes. `source_live` is no part of it.
+/// The physical key of one retained row: BLAKE3 over the domain
+/// (`purposes::archive::RETAINED_SIDE_ROW_KEY`) and the length-framed logical identity (the
+/// source table name bytes, the source key bytes, the 32-byte value hash), each part as a u64
+/// little-endian length followed by its bytes. `source_live` is no part of it.
 pub(crate) fn retained_side_row_key(row: &ArchiveRetainedSideRow) -> [u8; 32] {
-    let value_hash = blake3::hash(&row.source_value);
-    let mut hasher = blake3::Hasher::new();
-    hasher.update(RETAINED_SIDE_ROW_DOMAIN);
+    let value_hash = ContentHash::of(&row.source_value);
+    let mut digest = LegacyDigest::new(purposes::archive::RETAINED_SIDE_ROW_KEY);
     for part in [
         row.source_table.as_bytes(),
         row.source_key.as_slice(),
         value_hash.as_bytes().as_slice(),
     ] {
-        hasher.update(&(part.len() as u64).to_le_bytes());
-        hasher.update(part);
+        digest.len_u64_le(part.len()).raw(part);
     }
-    *hasher.finalize().as_bytes()
+    digest.finish()
 }
 
 /// The inert retained rows, keyed by [`retained_side_row_key`].
