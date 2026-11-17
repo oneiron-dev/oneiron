@@ -99,6 +99,9 @@ pub(crate) use step::{
     prune_step_response_pins_in_txn, release_step_response_pins_in_txn,
     retire_erased_step_responses_in_rows, step_response_version_pinned_in_txn,
 };
+// UC-06: the step-index keys' pin doors (`test_doors::side_key_pins`).
+#[cfg(oneiron_test_support)]
+pub(crate) use step::{step_index_claim_key_pin_for_test, step_index_key_pin_for_test};
 
 pub use oneiron_model::llm::{
     BUDGET_LAND_PROMPT_TEMPLATE, BUDGET_LAND_PROMPT_TEMPLATE_ID,
