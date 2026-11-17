@@ -114,7 +114,8 @@ pub(crate) fn registration_in_txn(
 /// Installing a feed starts its poll chain, due at once, in the same write; a chain already
 /// pending for the feed is adopted, never forked. A feed whose import waits on its owner, or
 /// was declined (CAL-02), starts no chain: the owner's approval starts it. Clearing an installed
-/// feed uninstalls it in the same write ([`uninstall_in_txn`]).
+/// feed uninstalls it in the same write ([`uninstall_in_txn`]), which runs under the calendar
+/// admission turn ([`ics_feed_write_turn`]), so it never lands inside a poll's admission.
 ///
 /// # Errors
 ///
@@ -199,6 +200,21 @@ pub(super) fn installed_in_txn(
     config: &IcsFeedPollConfig,
 ) -> crate::Result<bool> {
     Ok(registration_in_txn(vault, txn, &config.system)?.is_some_and(|row| row.config == *config))
+}
+
+/// The turn a `calendar.ics_feed` change takes before its write opens: the calendar admission
+/// turn an installed feed's poll holds from its check that the feed is installed to its
+/// completion row ([`run_installed_poll`]). An uninstall therefore lands before that check (the
+/// poll writes nothing) or after that row (the poll's claims settled under the consent the
+/// uninstall then ends), never between them.
+///
+/// # Errors
+///
+/// `InvalidConfig` when this thread already holds a calendar admission turn.
+pub(crate) fn ics_feed_write_turn(vault: &Vault) -> crate::Result<Box<dyn std::any::Any>> {
+    let turn = super::admission_turn(vault)
+        .map_err(|error| crate::Error::InvalidConfig(error.to_string()))?;
+    Ok(Box::new(turn))
 }
 
 /// Wakes the attempt observers and the job notices once a write that changed a feed's row has
@@ -337,6 +353,10 @@ pub fn run_installed_poll(
         return Err(MemoryError::bad_request(hold));
     }
     let now = vault.now_recorded_at();
+    // The poll's admission turn, held on through the completion row `observe_poll` writes: the
+    // owner's uninstall takes the turn too, so it lands before the poll's installed check or after
+    // that row, never between them.
+    let mut turn = None;
     let outcome = super::poll::run_feed_poll(
         vault,
         fetcher,
@@ -346,6 +366,7 @@ pub fn run_installed_poll(
         now,
         now,
         Some(owner),
+        Some(&mut turn),
     )
     .map_err(|error| MemoryError::bad_request(error.to_string()))?;
     observe_poll(memory, owner, config, poll_ref, outcome)
