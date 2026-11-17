@@ -87,6 +87,7 @@ pub mod epoch_lineage_pointer;
 pub mod esign_commitments;
 pub mod eval_authoring_execution_fault;
 pub mod extra_room_index;
+pub mod extraction_probe;
 pub mod fanout_admission;
 pub mod feed_prune;
 pub mod feeds;
