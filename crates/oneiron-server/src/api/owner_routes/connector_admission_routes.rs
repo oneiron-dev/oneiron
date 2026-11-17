@@ -57,6 +57,7 @@ use crate::api::body_spool::OwnerJsonBody;
 use crate::api::{query_params, unix_seconds_now};
 use crate::auth::CoreAuth;
 use crate::config::connectors::normalize_name;
+use crate::config::{ConnectorHostConfig, ConnectorTransport};
 use crate::connector_admission_host::{self as host, QualificationKit, ToolClass};
 use crate::owner::{OwnerError, OwnerResult, entity_id};
 use crate::server::SyncServer;
@@ -175,6 +176,9 @@ struct Refreshed {
 struct Registered {
     connector: String,
     endpoint: String,
+    /// What a stdio connector runs and where it sends a credential; none
+    /// for an HTTP connector.
+    stdio: Option<StdioInstalled>,
     key: String,
     status: &'static str,
     protocol_revision: Option<String>,
@@ -190,11 +194,43 @@ struct Setup {
     summary: String,
     /// The endpoint this host installed; none: no transport.
     endpoint: Option<String>,
+    /// What a stdio connector runs and where it sends a credential; none
+    /// for an HTTP connector, or no transport.
+    stdio: Option<StdioInstalled>,
     key: KeyView,
     slate: Option<SlateView>,
     /// A refresh's slate staged beside `slate`, which the key routes on
     /// until this one qualifies (FIX 11677); none: no slate waits.
     staged_slate: Option<SlateView>,
+}
+
+/// What a stdio connector this host installed runs, and the origin its
+/// upstream door sends the credential a call presents to: what the digest
+/// in its `stdio:` endpoint stands for, so the owner sees where a credential
+/// goes before granting it (FIX [STDIO-IDENTITY-64-BIT-ORIGIN-UNSHOWN]).
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+pub(super) struct StdioInstalled {
+    /// The child's program and its arguments.
+    command: Vec<String>,
+    /// The directory it starts in; none: its own temp directory.
+    cwd: Option<String>,
+    /// The API origin its calls' credentials are sent to; none: it names no
+    /// upstream, and no call presents it a credential.
+    upstream_origin: Option<String>,
+}
+
+impl StdioInstalled {
+    /// `installed`'s, when it is a stdio connector.
+    pub(super) fn of(installed: &ConnectorHostConfig) -> Option<Self> {
+        (installed.transport == ConnectorTransport::McpStdio).then(|| Self {
+            command: installed.command.clone(),
+            cwd: installed.cwd.as_ref().map(|cwd| cwd.display().to_string()),
+            upstream_origin: installed
+                .upstream
+                .as_ref()
+                .map(|upstream| upstream.origin.clone()),
+        })
+    }
 }
 
 /// An engine refusal as the owner reads it: a fixed sentence about the
@@ -212,23 +248,94 @@ pub(super) fn engine(error: oneiron::Error) -> OwnerError {
     }
 }
 
-/// The endpoint this host installed under the connector's name.
-fn installed_endpoint(server: &SyncServer, name: &str) -> Option<String> {
+/// The section this host installed under the connector's normalized name.
+pub(super) fn installed_config<'a>(
+    server: &'a SyncServer,
+    name: &str,
+) -> Option<&'a ConnectorHostConfig> {
     server
         .config
         .connectors
         .iter()
         .find(|(section, _)| normalize_name(section) == name)
-        .map(|(_, installed)| installed.endpoint.clone())
+        .map(|(_, installed)| installed)
 }
 
-/// The connector's name as the engine stores it, and its installed endpoint.
+/// The endpoint this host installed under the connector's name: a URL, or
+/// a stdio connector's `stdio:` endpoint (row L8-27).
+fn installed_endpoint(server: &SyncServer, name: &str) -> Option<String> {
+    installed_config(server, name).map(|installed| installed.installed_endpoint(name))
+}
+
+fn not_installed() -> OwnerError {
+    OwnerError::Invalid("this host installed no transport for the connector".to_owned())
+}
+
+/// The connector's name as the engine stores it, and the HTTP endpoint it
+/// is installed at. A stdio connector is refused here: a refresh, a probe
+/// run and a pack check speak MCP over HTTP; a stdio connector is
+/// registered and attested (row L8-27).
 pub(crate) fn installed(server: &SyncServer, connector: &str) -> OwnerResult<(String, String)> {
     let name = normalize_name(connector);
-    let endpoint = installed_endpoint(server, &name).ok_or_else(|| {
-        OwnerError::Invalid("this host installed no transport for the connector".to_owned())
-    })?;
+    let endpoint = installed_config(server, &name)
+        .ok_or_else(not_installed)?
+        .http_endpoint()
+        .ok_or_else(|| {
+            OwnerError::Invalid(
+                "this connector is installed as mcp_stdio: this step speaks MCP over HTTP; a \
+                 stdio connector is registered and attested"
+                    .to_owned(),
+            )
+        })?
+        .to_owned();
     Ok((name, endpoint))
+}
+
+/// Lists the connector `name`'s tools where this host installed it, at
+/// `pinned` as [`host::discover`] takes it: over HTTP with the credential
+/// `secret_ref` names, or from a fenced stdio child, which presents it only
+/// through its upstream door, so only when its connector names an upstream
+/// (B2, row L8-27). Either way the connector's issuer bindings are read
+/// first (FIX 9303).
+fn discover_installed(
+    server: &SyncServer,
+    name: &str,
+    installed: &ConnectorHostConfig,
+    secret_ref: Option<&str>,
+    pinned: Option<&str>,
+) -> OwnerResult<host::Discovery> {
+    let endpoint = installed.http_endpoint();
+    if endpoint.is_none() && installed.upstream.is_none() && secret_ref.is_some() {
+        return Err(OwnerError::Invalid(
+            "a stdio connector presents a credential only through its upstream door, and this \
+             one names no upstream"
+                .to_owned(),
+        ));
+    }
+    let door_origin = server.loopback_api_origin();
+    host::with_credential_and_value(
+        server.vault(),
+        secret_ref,
+        name,
+        |auth, value| match endpoint {
+            Some(endpoint) => host::discover(&host::client()?, endpoint, auth, pinned),
+            None => host::discover_stdio(
+                server.runner_fence().as_deref(),
+                name,
+                installed,
+                pinned,
+                &host::ListingDoor {
+                    doors: server.connector_stdio.upstream_doors(),
+                    origin: door_origin.as_deref(),
+                    auth,
+                    value,
+                    vault: server.vault(),
+                },
+            ),
+        },
+    )
+    .map_err(engine)?
+    .map_err(engine)
 }
 
 /// The catalog key registered under a name.
@@ -337,17 +444,21 @@ fn register_connector(
     request: RegisterRequest,
 ) -> OwnerResult<Registered> {
     let vault = server.vault();
-    let (name, endpoint) = installed(server, &request.connector)?;
+    let name = normalize_name(&request.connector);
+    let installed = installed_config(server, &name).ok_or_else(not_installed)?;
+    let endpoint = installed.installed_endpoint(&name);
     if vault.describe_connector(&name)?.is_some() {
         return Err(OwnerError::Invalid(
             "a connector is already registered under that name".to_owned(),
         ));
     }
-    let discovery = host::with_credential(vault, request.secret_ref.as_deref(), &name, |auth| {
-        host::discover(&host::client()?, &endpoint, auth, None)
-    })
-    .map_err(engine)?
-    .map_err(engine)?;
+    let discovery = discover_installed(
+        server,
+        &name,
+        installed,
+        request.secret_ref.as_deref(),
+        None,
+    )?;
     if let Some(unknown) = request
         .tools
         .keys()
@@ -403,6 +514,7 @@ fn register_connector(
     Ok(Registered {
         connector: name,
         endpoint,
+        stdio: StdioInstalled::of(installed),
         key: key.to_hex(),
         status: record.status.as_str(),
         protocol_revision: record.protocol_revision,
@@ -439,6 +551,7 @@ async fn setup(
             .transpose()?;
         Ok(Setup {
             endpoint: installed_endpoint(&server, &name),
+            stdio: installed_config(&server, &name).and_then(StdioInstalled::of),
             connector: name,
             summary: catalog.summary,
             key: KeyView::new(catalog.key, catalog.record)?,

@@ -37,6 +37,8 @@ oneiron-authority = { version = "0.1.0", path = "../oneiron-authority" }
 oneiron-wake-contract = { version = "0.1.0", path = "../oneiron-wake-contract" }
 # Consent state (core split slice 2).
 oneiron-consent-state = { version = "0.1.0", path = "../oneiron-consent-state" }
+# The Schedule vocabulary (DESIGN 15-setting-primitive, stage 0.2).
+oneiron-schedule-contract = { version = "0.1.0", path = "../oneiron-schedule-contract" }
 # The Setting vocabulary (DESIGN 15-setting-primitive, stage 0.1).
 oneiron-setting-contract = { version = "0.1.0", path = "../oneiron-setting-contract" }
 # The serde data types (lib split, stage A): the public verbs' wire types, and the stored records above them.
@@ -66,6 +68,8 @@ oneiron-persistent-collections = { version = "0.1.0", path = "../oneiron-persist
 # Default xlsx recalc of the edit round trip: the in-process formula engine on
 # the owned formualizer fork. It depends on docedit, never back on this crate.
 oneiron-xlsx-formula = { version = "0.1.0", path = "../oneiron-xlsx-formula" }
+# One shared e-sign field renderer for the pre-seal burn-in (ARCH-0064 [SGN-07]).
+oneiron-esign-render = { version = "0.1.0", path = "../oneiron-esign-render" }
 # Same Myers chars as docedit (disjoint span remap).
 similar = "2.7"
 lopdf = { version = "=0.44.0", default-features = false }

@@ -21,7 +21,6 @@ use super::self_heal::SelfHealConfig;
 use super::skills::SkillsConfig;
 use super::trusted_proxy::TrustedProxy;
 use crate::runtime::RuntimeConfig;
-use crate::usage::UsageMode;
 
 /// The default inbound WebSocket frame bound (Engine 10:44 for parked L14):
 /// the sync protocol's frame floor as base64 carries it, plus a window pad
@@ -36,6 +35,14 @@ const DEFAULT_MAX_FRAME_SIZE: usize =
 
 /// The two configs' redacting `Debug`.
 mod debug;
+
+/// The vault inputs an embedded binding resolved over its config file.
+mod embedded_holder;
+
+/// The methods of `SyncServerConfig`.
+mod sync_server_methods;
+
+pub use embedded_holder::EmbeddedHolderOverrides;
 
 /// Oneiron sync server configuration.
 ///
@@ -208,6 +215,12 @@ pub struct SyncServerConfig {
     /// `--hosted-private-origin` in managed boot alone (FIX 7657); empty
     /// everywhere else, and no config file, settings file or environment sets it.
     pub hosted_private_origins: std::collections::BTreeSet<oneiron::web_fetch::HostedPrivateOrigin>,
+    /// The private networks a managed node's egress guard admits, from
+    /// `--hosted-private-network` in managed boot alone
+    /// (HOSTED-EGRESS-OPERATOR-SETTING); empty everywhere else, and no config
+    /// file, settings file or environment sets it.
+    pub hosted_private_networks:
+        std::collections::BTreeSet<oneiron::web_fetch::HostedPrivateNetwork>,
 }
 
 /// Who authenticates the requests a server takes, as its serve entry
@@ -275,50 +288,7 @@ impl Default for SyncServerConfig {
             trusted_organ_builds: std::collections::BTreeSet::new(),
             release_payment_credentials_unfenced: false,
             hosted_private_origins: std::collections::BTreeSet::new(),
-        }
-    }
-}
-
-impl SyncServerConfig {
-    /// Usage debit mode, derived from the runtime mode.
-    pub fn runtime_usage_mode(&self) -> UsageMode {
-        self.runtime.mode.usage_mode()
-    }
-
-    pub fn validate(&self) -> Result<(), oneiron::Error> {
-        super::self_heal::validate_agent_failure_healer(self.agent_failure_healer.as_ref())?;
-        if self.ephemeral_timeout_ms <= 0 {
-            return Err(oneiron::Error::sync_protocol(
-                oneiron::SyncProtocolValidation::InvalidConfig {
-                    field: oneiron::SyncConfigField::EphemeralTimeoutMs,
-                },
-            ));
-        }
-        if self.max_ephemeral_snapshot_bytes == 0 {
-            return Err(oneiron::Error::sync_protocol(
-                oneiron::SyncProtocolValidation::InvalidConfig {
-                    field: oneiron::SyncConfigField::MaxEphemeralSnapshotBytes,
-                },
-            ));
-        }
-        Ok(())
-    }
-}
-
-/// The explicit vault inputs an embedded binding resolved over its config file.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct EmbeddedHolderOverrides {
-    pub vault_path: PathBuf,
-    pub dimensions: Option<usize>,
-}
-
-impl EmbeddedHolderOverrides {
-    pub(crate) fn serve_args(&self, config: Option<PathBuf>) -> super::ServeArgs {
-        super::ServeArgs {
-            config,
-            vault_path: Some(self.vault_path.clone()),
-            dimensions: self.dimensions,
-            ..Default::default()
+            hosted_private_networks: std::collections::BTreeSet::new(),
         }
     }
 }
@@ -465,6 +435,10 @@ pub struct ServeConfig {
     /// The `[linear]` section: the Linear mirror and its webhook's tracker
     /// mapping, absent until the config file names it.
     pub linear: Option<LinearConfig>,
+    /// The `[phonetic_embedder]` section: the model behind the learned
+    /// phonetic rung, absent until the config file names it. Absent means
+    /// no model: names keep their codes alone.
+    pub phonetic_embedder: Option<super::PhoneticEmbedderConfig>,
     /// Deployment posture handed to the engine through [`Self::vault_config`].
     pub privacy_posture: HostingPrivacyPosture,
     /// Operator-only enterprise/advanced checkpoint selection capability.
@@ -603,6 +577,7 @@ impl Default for ServeConfig {
             channel_endpoints: server.channel_endpoints.clone(),
             apns: server.apns.clone(),
             linear: None,
+            phonetic_embedder: None,
             // Hosting is opt-in: an operator must name the posture AND supply
             // its host-managed key reference before a vault is host-readable.
             privacy_posture: HostingPrivacyPosture::SelfHostLocal,
@@ -682,8 +657,10 @@ impl ServeConfig {
             agent_failure_healer: self.self_heal.agent_failure_healer.clone(),
             trusted_organ_builds: self.trusted_organ_builds.clone(),
             release_payment_credentials_unfenced: self.release_payment_credentials_unfenced,
-            // Managed boot alone sets it (FIX 7657).
+            // Managed boot alone sets these (FIX 7657,
+            // HOSTED-EGRESS-OPERATOR-SETTING).
             hosted_private_origins: std::collections::BTreeSet::new(),
+            hosted_private_networks: std::collections::BTreeSet::new(),
         };
         if let Err(error) = crate::oauth_relay::warm_if_configured(&sync) {
             tracing::warn!(
@@ -722,6 +699,10 @@ impl ServeConfig {
         config.assistant_display_names = self.assistant_display_names.clone();
         config.privacy = self.vault_privacy_config();
         config.allow_host_checkpoint_opt_out = self.allow_host_checkpoint_opt_out;
+        // `[import] storage_cap_bytes`: an archive an import unpacks stops at
+        // the room it leaves, in every door that unpacks one (ARCH-0027
+        // #archive-precheck).
+        config.storage_cap_bytes = self.import.storage_cap_bytes;
         config.machine_device_class = self.device_class;
         config.limits = self.limits.engine.clone();
         config.call_mode_deadline = std::time::Duration::from_millis(self.recall.call_deadline_ms);
