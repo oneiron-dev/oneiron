@@ -16,6 +16,7 @@ mod peer_import;
 // FIX 3656: a guest's carried birth placements, landed beside their rows.
 mod placement;
 mod promotion;
+mod room_pins;
 mod task_pairs;
 mod tombstone;
 

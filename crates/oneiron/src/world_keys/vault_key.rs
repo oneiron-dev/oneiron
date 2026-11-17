@@ -59,6 +59,7 @@ pub(super) use oneiron_store::vault_page_seal::WrapDigest;
 
 mod escrow;
 mod generation;
+mod generation_proposal;
 pub(super) mod kit;
 mod kit_passkey;
 mod recovery_preset;
@@ -74,6 +75,9 @@ pub use self::escrow::{
 pub use self::generation::{
     DATA_KEY_GENERATION_PAGE_SEAL_NOTICE, DataKeyGenerationCause, DataKeyGenerationDraft,
     DataKeyGenerationOutcome, DataKeyGenerationWays,
+};
+pub use self::generation_proposal::{
+    DataKeyGenerationProposal, NOTIFICATION_PRODUCER_DATA_KEY_GENERATION_PROPOSAL,
 };
 pub(super) use self::recovery_preset::EscrowOrigin;
 pub use self::recovery_preset::{RecoveryPresetAnyTwoChange, RecoveryPresetChange, RecoverySheet};
