@@ -1032,7 +1032,7 @@ impl SpentNonces {
         failure: JournalRecoveryFailure,
         proof_bound: u64,
     ) -> Result<()> {
-        let _active_write_txn = active_write_txn_guard();
+        let _active_write_txn = active_write_txn_guard(vault.store.env.id());
         let mut txn = vault.store.env.write_txn()?;
         let clock = admission_now_in_txn(vault, &mut txn)?;
         let floor = clock.now.max(proof_bound).saturating_add(WINDOW_SECS + 1);
@@ -1322,7 +1322,7 @@ impl NonceSpend {
             );
             return;
         };
-        let leader = active_write_txn_guard();
+        let leader = active_write_txn_guard(vault.store.env.id());
         if self.failures < NONCE_SPEND_ATTEMPTS {
             tracing::warn!(
                 failures = self.failures,

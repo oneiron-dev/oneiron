@@ -356,6 +356,14 @@ impl MemoryLedger {
         state.spare = state.spare.saturating_add(bytes);
     }
 
+    /// Reserved and not admitted: what the reservations made so far still
+    /// cover. The burn door subtracts it from what it reserved, so a test can
+    /// pin the bytes a burn admitted net of what it gave back.
+    #[cfg(all(feature = "native", oneiron_test_support))]
+    pub(crate) fn spare_bytes(&self) -> u64 {
+        lock(&self.state).spare
+    }
+
     /// Holds `bytes` for one copy the seal keeps, about to be made or just
     /// built (FIX 12260): from what the ledger has left, or reserved first,
     /// and back in what it has left when the hold drops with its copy. Never
