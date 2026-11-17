@@ -49,11 +49,6 @@ pub(super) struct ScheduleRow {
     /// answers a "run now". It stays until a run of the work ends done.
     #[serde(default)]
     pub(super) answering: bool,
-    /// The earliest time a door made the job due by while a run of it was in flight: work that
-    /// run read its state too early to see. The next run that ends done is due again by then
-    /// (as its own `due_by`), and so is a new arming made while the run went on.
-    #[serde(default)]
-    pub(super) pulled_to: Option<u64>,
 }
 
 /// The agent behind an arming.
@@ -95,8 +90,6 @@ impl ScheduleRow {
             resume_at: None,
             cursor: None,
             answering: false,
-            // Work a door made due while a run of the earlier arming went on is still owed.
-            pulled_to: prior.and_then(|prior| prior.pulled_to),
         })
     }
 }
@@ -613,10 +606,8 @@ pub(crate) fn request_runs(vault: &Vault, which: fn(&JobSpec) -> bool) -> Result
 }
 
 /// Pulls the due time of `job` about `subject` forward to `at` inside the caller's write: work
-/// a door made due before the job's next occurrence. A job with a run in flight keeps its due
-/// time, and that run's end makes it due by `at` (the run read its work before this write); a
-/// job that is backing off keeps its due time; one not armed, or already due by `at`, is left as
-/// it is.
+/// a door made due before the job's next occurrence. A job that is backing off, or has a run in
+/// flight, keeps its due time; one not armed, or already due by `at`, is left as it is.
 ///
 /// # Errors
 ///
@@ -632,22 +623,12 @@ pub(crate) fn due_by_in_txn(
     let Some(prior) = ROWS.get(store, txn, &key)? else {
         return Ok(());
     };
-    let row = if prior.started_at.is_some() {
-        if prior.pulled_to.is_some_and(|pulled| pulled <= at) {
-            return Ok(());
-        }
-        ScheduleRow {
-            pulled_to: Some(at),
-            ..prior.clone()
-        }
-    } else {
-        if prior.failures > 0 || prior.due_at() <= at {
-            return Ok(());
-        }
-        ScheduleRow {
-            next_due_at: at,
-            ..prior.clone()
-        }
+    if prior.failures > 0 || prior.started_at.is_some() || prior.due_at() <= at {
+        return Ok(());
+    }
+    let row = ScheduleRow {
+        next_due_at: at,
+        ..prior.clone()
     };
     store_row_in_txn(store, txn, &key, Some(&prior), Some(&row))
 }
