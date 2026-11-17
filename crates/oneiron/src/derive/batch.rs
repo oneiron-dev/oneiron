@@ -197,6 +197,19 @@ pub struct DerivedPsychProfile {
     pub profile: crate::psych_profile::PsychProfile,
 }
 
+/// A PERSON an agent found named in TURNs it reads (untangle 6.9h): the
+/// engine mints it as extraction does, under an id it derives, born where
+/// the words that name it are read.
+#[derive(Debug, Clone)]
+pub struct DerivedPerson {
+    /// The item's name inside its batch.
+    pub local: String,
+    /// The person's name, as the TURNs spell it.
+    pub name: String,
+    /// The TURNs that name the person.
+    pub evidence: Vec<ItemRef>,
+}
+
 /// One derived item. Each kind is one arm with a stager of its own.
 #[derive(Debug, Clone)]
 pub enum DerivationItem {
@@ -218,6 +231,8 @@ pub enum DerivationItem {
     PsychProfile(DerivedPsychProfile),
     /// A reversible archive (kind 6).
     Archive(DerivedArchive),
+    /// A PERSON named in TURNs.
+    Person(DerivedPerson),
 }
 
 impl DerivationItem {
@@ -233,6 +248,7 @@ impl DerivationItem {
             Self::PersonAbout(about) => &about.local,
             Self::PsychProfile(profile) => &profile.local,
             Self::Archive(archive) => &archive.local,
+            Self::Person(person) => &person.local,
         }
     }
 
@@ -248,29 +264,37 @@ impl DerivationItem {
             Self::PersonAbout(_) => "person_about",
             Self::PsychProfile(_) => "psych_profile",
             Self::Archive(_) => "archive",
+            Self::Person(_) => "person",
         }
     }
 
     /// Whether the item's first landed row is one the item itself creates:
     /// a claim, a settlement's answer, a link's status claim, a topology
-    /// event. Only such an item can be named by a later item. Every other
-    /// kind lands on a row that stood before it (a supersession's
-    /// replacement, an archived claim, a PERSON) or may replay one (an
-    /// evidence record, a profile at its address), and a name for such a row
-    /// would cite it with no version and no read of its own.
+    /// event, a person (never minted at an id that stood before). Only such
+    /// an item can be named by a later item. Every other kind lands on a row
+    /// that stood before it (a supersession's replacement, an archived claim,
+    /// a PERSON's `about` lines) or may replay one (an evidence record, a
+    /// profile at its address), and a name for such a row would cite it with
+    /// no version and no read of its own.
     pub(super) const fn creates_row(&self) -> bool {
         matches!(
             self,
-            Self::Claim(_) | Self::Settle(_) | Self::SameAs(_) | Self::Topology(_)
+            Self::Claim(_)
+                | Self::Settle(_)
+                | Self::SameAs(_)
+                | Self::Topology(_)
+                | Self::Person(_)
         )
     }
 
-    /// The rows the item cites as its sources: a claim's evidence and an
-    /// evidence item's sources. A stored one needs its version in the batch.
+    /// The rows the item cites as its sources: a claim's evidence, an
+    /// evidence item's sources and the TURNs naming a person. A stored one
+    /// needs its version in the batch.
     fn cited(&self) -> &[ItemRef] {
         match self {
             Self::Claim(claim) => &claim.evidence,
             Self::Evidence(evidence) => &evidence.sources,
+            Self::Person(person) => &person.evidence,
             _ => &[],
         }
     }
@@ -294,6 +318,7 @@ impl DerivationItem {
             Self::PersonAbout(about) => vec![&about.person],
             Self::PsychProfile(_) => Vec::new(),
             Self::Archive(archive) => vec![&archive.claim],
+            Self::Person(person) => person.evidence.iter().collect(),
         }
     }
 }

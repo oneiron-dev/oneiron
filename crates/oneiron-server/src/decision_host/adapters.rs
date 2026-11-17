@@ -10,7 +10,7 @@ use oneiron::llm::routing::DescriptionNotes;
 use oneiron::llm::run_admission::RunAdmission;
 use oneiron::skill_hub::claim_replay_filled_state;
 
-use crate::decision_verdict::{ModelCallCaller, model_call_context};
+use crate::decision_verdict::{ModelCallCaller, model_call_context, run_for_caller};
 use crate::models::native_call_capture::{NativeReadCapture, native_read_failure};
 
 use super::native_capture::{HouseReadObserver, HouseReadRun};
@@ -164,7 +164,8 @@ impl DecisionProvider for HouseRead {
         if let Some(run) = call.run {
             let gate = RunHouseGate {
                 gate: &self.gate,
-                run: run.sourced(Some(call.evidence.to_vec())),
+                // An off-record caller's run names no rows (census L5-25).
+                run: run_for_caller(&self.vault, run.sourced(Some(call.evidence.to_vec()))),
             };
             let observer = HouseReadObserver::new(self, HouseReadRun::Caller(&gate.run));
             return DecisionReadProvider::new(
@@ -186,7 +187,7 @@ impl DecisionProvider for HouseRead {
         if let Some(run) = pack.run {
             let gate = RunHouseGate {
                 gate: &self.gate,
-                run: run.sourced(Some(pack.evidence.to_vec())),
+                run: run_for_caller(&self.vault, run.sourced(Some(pack.evidence.to_vec()))),
             };
             let observer = HouseReadObserver::new(self, HouseReadRun::Caller(&gate.run));
             return DecisionReadProvider::new(
@@ -284,6 +285,8 @@ impl DecisionProvider for SystemOneRung {
                 crate::decision_verdict::rung_payer(),
             )
             .sourced(Some(call.evidence.to_vec()));
+        // An off-record caller's run names no rows (census L5-25).
+        let run = run_for_caller(&self.vault, run);
         let permit = run
             .admit_paid(&self.connector, guard.reserve_units())
             .map_err(|_| failed("refused by the budget"))?;
@@ -419,6 +422,8 @@ impl DecisionProvider for SystemOneRung {
                 (run, guard.reserve_units())
             }
         };
+        // An off-record caller's run names no rows (census L5-25).
+        let run = run_for_caller(&self.vault, run);
         let permit = run
             .admit_paid(&self.connector, reserve)
             .map_err(|_| failed("refused by the budget"))?;
@@ -506,7 +511,8 @@ impl SystemOneRung {
         run: &RunAdmission,
     ) -> oneiron::Result<ProviderDecision> {
         let failed = |what: &str| oneiron::Error::InvalidConfig(format!("system one: {what}"));
-        let run = run.sourced(Some(call.evidence.to_vec()));
+        // An off-record caller's run names no rows (census L5-25).
+        let run = run_for_caller(&self.vault, run.sourced(Some(call.evidence.to_vec())));
         let permit = run
             .admit_paid(&self.connector, run.declaration().budget().reserve_units)
             .map_err(|_| failed("refused by the budget"))?;

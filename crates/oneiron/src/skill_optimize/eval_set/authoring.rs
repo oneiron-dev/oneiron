@@ -50,6 +50,8 @@ pub use apply::{
     EvalCohortDecision, EvalCohortSetup, FamilyDecision, apply_eval_authoring_plan,
     setup_eval_cohorts,
 };
+#[cfg(oneiron_test_support)]
+pub(crate) use executions::fail_execution_writes;
 pub use executions::{
     EVAL_AUTHORING_EXECUTE_VERB, EvalAuthoringAdmission, EvalAuthoringCaller,
     EvalAuthoringExecuteAnswer, EvalAuthoringExecuteRequest, EvalAuthoringExecution,

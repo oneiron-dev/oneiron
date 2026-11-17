@@ -145,6 +145,7 @@ fn capped_config() -> EventTypeConfig {
         booking_window_secs: 7 * 24 * 3_600,
         daily_cap: Some(1),
         weekly_cap: None,
+        deposit: None,
         routing: RoutingMode::Either,
         hosts: vec![HostAvailabilityConfig {
             host_ref: test_id(HOST_SEED),

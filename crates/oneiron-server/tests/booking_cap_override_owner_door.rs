@@ -104,6 +104,7 @@ fn capped_config(host: EntityId, calendar: EntityId) -> EventTypeConfig {
         }],
         flex_with_ordinary: false,
         flex_windows: Vec::new(),
+        deposit: None,
     }
 }
 

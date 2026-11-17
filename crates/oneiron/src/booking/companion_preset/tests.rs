@@ -39,6 +39,7 @@ fn synthetic_config() -> EventTypeConfig {
         booking_window_secs: 14 * 24 * 3_600,
         daily_cap: None,
         weekly_cap: None,
+        deposit: None,
         routing: RoutingMode::Either,
         hosts: vec![HostAvailabilityConfig {
             host_ref: id(HOST),

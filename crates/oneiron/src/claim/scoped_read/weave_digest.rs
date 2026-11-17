@@ -24,6 +24,8 @@ use crate::ports::TombstoneStoreRead;
 use crate::store::Store;
 use crate::{EntityId, Vault};
 use serde::{Deserialize, Serialize};
+
+mod archive_restore;
 // The test module reaches this through `use super::*`; the wire rows that
 // named it outside tests moved to `wire.rs`, so tests resolve as before.
 #[cfg(test)]
@@ -1226,7 +1228,5 @@ impl ScopedRead<'_> {
     }
 }
 
-// FIX [LIBTEST-QUARANTINE-CLAIM-SCOPED-READ-WEAVE-DIGEST-TESTS]: the lib test target's type check fails here (4 errors: E0004 x2, E0063 x2); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;

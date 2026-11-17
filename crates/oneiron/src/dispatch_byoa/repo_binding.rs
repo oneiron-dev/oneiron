@@ -37,10 +37,17 @@
 //!   from is the host's policy: the fresh checkout materializes at the
 //!   repo's pin, and nothing is published for it.
 //!
+//! - **End** (Engine RULING EXPORTPROOF-RUNNER-CHECKOUT-END = A): once a
+//!   bound runner work's attempt is captured Completed and its work did not
+//!   move on, the host that ran it tears its reserved epoch down through the
+//!   shipped fail-closed teardown, under the attempt's own reservation
+//!   (`checkout_end.rs`). Every other end keeps the lease.
+//!
 //! A CLI row stored with no binding (`repo_binding: None`) binds at its
 //! execution like any unbound dispatch. Endpoint and MCP attempts have no
 //! checkout.
 
+mod checkout_end;
 mod execution;
 
 use serde::{Deserialize, Serialize};

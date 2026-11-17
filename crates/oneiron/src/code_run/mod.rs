@@ -61,8 +61,6 @@ pub(crate) mod tables;
 mod task_reporting;
 mod task_settlement;
 mod team_submit;
-// FIX [LIBTEST-QUARANTINE-CODE-RUN-TESTS]: the lib test target's type check fails here (19 errors: E0063 x11, E0277 x4, E0061 x3, E0599 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;
 mod type_diagnostics;
@@ -288,12 +286,12 @@ pub(crate) use self::wait_rows::{keep_wait_rows, parks_on};
 pub use self::reader::{
     ClaimOutcome, DEFAULT_READER_FOLD_RESERVE_MS, DEFAULT_READER_WINDOW_TOKENS, DelegatedSource,
     ReaderActor, ReaderFindingRef, ReaderJob, ReaderJobKind, ReaderJobRunner, ReaderJobState,
-    ReaderJobWake, ReaderParent, ReaderQueueCursor, ReaderQueuePage, ReaderReportReceipt,
-    ReaderRoute, ReaderRunEnd, ReaderSpawnReceipt, ReaderSpend, ResultOrigins, RunDeadline,
-    SUMMARY_GROUP_EXCEEDS_WINDOW, SUMMARY_READ_BYTES_PER_TOKEN, SUMMARY_WINDOW_DIVISOR,
-    SelfReaderReportCall, SelfReaderSpawnCall, SelfSummarizeCall, SourceDeliveryWitness,
-    SpawnHostSeat, SpawnParentBinding, SummarizeEffort, SummarizeRecipe, SummarizeReply,
-    TaskWaitFailure, TaskWaitFinding, TaskWaitPolicy, TaskWaitSet, TaskWaitSetCall,
+    ReaderJobStatus, ReaderJobWake, ReaderParent, ReaderQueueCursor, ReaderQueuePage,
+    ReaderReportReceipt, ReaderRoute, ReaderRunEnd, ReaderSpawnReceipt, ReaderSpend, ResultOrigins,
+    RunDeadline, SUMMARY_GROUP_EXCEEDS_WINDOW, SUMMARY_READ_BYTES_PER_TOKEN,
+    SUMMARY_WINDOW_DIVISOR, SelfReaderReportCall, SelfReaderSpawnCall, SelfSummarizeCall,
+    SourceDeliveryWitness, SpawnHostSeat, SpawnParentBinding, SummarizeEffort, SummarizeRecipe,
+    SummarizeReply, TaskWaitFailure, TaskWaitFinding, TaskWaitPolicy, TaskWaitSet, TaskWaitSetCall,
     TaskWaitSetResult, summary_exceeds_window, summary_exceeds_window_bytes, summary_token_budget,
 };
 pub(crate) use self::reader::{

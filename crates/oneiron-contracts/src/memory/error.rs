@@ -184,6 +184,15 @@ pub struct MemoryError {
     /// of `message`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub successor_short_id: Option<String>,
+    /// The native layout behind a bound extraction's `BAD_REQUEST` layout refusal.
+    ///
+    /// A job resubmits by this typed field and never parses `message`.
+    /// Boxed for the same reason `gate_denial` is: `MemoryError` is the `Err`
+    /// half of hundreds of `MemoryResult` returns by value, so an absent layout
+    /// must not add an inline payload to every return. The box is invisible
+    /// on the wire; `Option<Box<T>>` and `Option<T>` serialize identically.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub extraction_layout: Option<Box<ExtractionLayout>>,
     /// The typed Gate denial behind a `FORBIDDEN` refusal, present only when
     /// the engine error was [`GateError::GateWriteRejected`](crate::error::GateError::GateWriteRejected) (ONE-1686).
     ///
@@ -248,6 +257,69 @@ pub struct MemoryError {
     /// The held room join's original intent and every consent it still needs.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub room_join_hold: Option<Box<crate::room_join::RoomJoinHold>>,
+    /// What a `CHECK_IN_PENDING` refusal waits on, typed (Engine ruling
+    /// P38-PENDING-BLOCK-REACH = A): the check-in its one reason code names,
+    /// so no client parses the code. Absent on every other refusal. Boxed for
+    /// the same reason `gate_denial` is.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pending: Option<Box<MemoryPending>>,
+}
+
+/// What a pending refusal waits on. The tag leaves room for later kinds.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum MemoryPending {
+    /// The act waits on this pending check-in (ARCH-0082 #composing): once a
+    /// holder approves it, the same call with `check_in_ref` set to it runs.
+    CheckIn {
+        /// The pending check-in's id, 32 hex.
+        check_in: String,
+    },
+}
+
+/// The native layout a layout refusal carries instead of prose.
+/// A step refusal names the native slices the cited TURNs form, and a
+/// bound read refusal names that read's rebuilt pages, each in native order.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ExtractionLayout {
+    /// The cited TURNs grouped exactly as native's `extraction_slices`
+    /// groups them: one row per native slice, in native order.
+    StepSlices {
+        /// One row per native slice, in native order.
+        slices: Vec<ExtractionStepSlice>,
+    },
+    /// This layout names the correction read's rebuilt pages in native page order.
+    CorrectionPages {
+        /// Each page contains the (candidate, listed) pairs it asks, in native order.
+        pages: Vec<Vec<ExtractionCorrectionPair>>,
+    },
+    /// This layout names the resolution read's rebuilt pages in native page order.
+    ResolutionPages {
+        /// Each page contains the positions in the pack's `candidates` it shows, in native order.
+        pages: Vec<Vec<usize>>,
+    },
+}
+
+/// One native slice of a bound extraction step's cited TURNs: the request
+/// positions it holds and the listing pages it spans.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ExtractionStepSlice {
+    /// The positions in the request's evidence that fall in this slice, ascending.
+    pub evidence: Vec<usize>,
+    /// How many listing pages this slice spans.
+    pub pages: usize,
+}
+
+/// This pair identifies which pack candidate is asked about which rebuilt listed claim.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ExtractionCorrectionPair {
+    /// This is the position in the pack's `candidates` this pair asks about.
+    pub candidate: usize,
+    /// This is the position in the rebuilt correction listing this pair asks about.
+    pub listed: usize,
 }
 
 /// A wrong-root refusal's correction: the name the caller wrote, the
@@ -285,6 +357,7 @@ impl MemoryError {
             message: message.into(),
             suggestions: suggestions.iter().map(|s| (*s).to_owned()).collect(),
             successor_short_id: None,
+            extraction_layout: None,
             gate_denial: None,
             read_receipt: None,
             policy_denial: None,
@@ -295,6 +368,7 @@ impl MemoryError {
             reason_codes: Vec::new(),
             legal_hold: None,
             room_join_hold: None,
+            pending: None,
         }
     }
 

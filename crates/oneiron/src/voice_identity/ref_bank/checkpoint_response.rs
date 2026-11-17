@@ -19,7 +19,8 @@
 //! owner no row proves is reported, never guessed.
 
 use super::{
-    IDENTITIES, INCARNATIONS, OWNER_INDEX, PACKS, RENDER_CONSENT, RENDER_EVENTS, TARGETS, TargetKey,
+    IDENTITIES, INCARNATIONS, OWNER_INDEX, PACKS, RENDER_CONSENT, RENDER_EVENTS, TARGETS,
+    VoiceRowKey,
 };
 use crate::side_table::SideKey;
 use crate::store::{ResponseCarriage, ResponseOwners, ResponseScan, Store};
@@ -69,7 +70,7 @@ fn voice_of(key: &[u8]) -> Option<String> {
         return String::decode_key(rest);
     }
     key.strip_prefix(TARGETS.decl().prefix)
-        .and_then(TargetKey::decode_key)
+        .and_then(VoiceRowKey::decode_key)
         .map(|target| target.voice_id)
 }
 

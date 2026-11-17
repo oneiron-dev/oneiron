@@ -66,6 +66,7 @@ pub use quote::{QuoteAnchor, RoomQuote};
 pub use quote_strips::{
     QuoteReplyGroup, QuoteReplyStrip, QuoteStripStatus, ReplyStripsPage, ReplyStripsRequest,
 };
+pub(crate) use record_admission::RoomVerdicts;
 pub(crate) use redacted::capture_withdrawn_record_in_txn;
 #[cfg(feature = "sync")]
 pub(crate) use redacted::pin_shell_record_in_txn;
@@ -89,8 +90,6 @@ pub(crate) use writes::{
 #[cfg(test)]
 pub(crate) mod fixtures;
 
-// FIX [LIBTEST-QUARANTINE-CONVERSATION-DAG-TESTS]: the lib test target's type check fails here (168 errors: E0061 x159, E0599 x9); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;
 
