@@ -12,6 +12,8 @@ use crate::memory::{MemoryError, MemoryResult};
 enum ObservationSection {
     /// The candidate operand facts.
     Candidates,
+    /// The rebuilt correction listing facts.
+    Listed,
     /// The admitted prior facts.
     Priors,
     /// The separate unlisted provisional cohorts.
@@ -25,6 +27,7 @@ impl ObservationSection {
     fn as_str(self) -> &'static str {
         match self {
             Self::Candidates => "candidates",
+            Self::Listed => "listed",
             Self::Priors => "priors",
             Self::Replay => "replay",
             Self::Scores => "scores",
@@ -34,7 +37,8 @@ impl ObservationSection {
     /// Returns the following section, or none after the scores.
     fn following(self) -> Option<Self> {
         match self {
-            Self::Candidates => Some(Self::Priors),
+            Self::Candidates => Some(Self::Listed),
+            Self::Listed => Some(Self::Priors),
             Self::Priors => Some(Self::Replay),
             Self::Replay => Some(Self::Scores),
             Self::Scores => None,
@@ -45,6 +49,7 @@ impl ObservationSection {
     fn len(self, facts: &ObservationFacts) -> usize {
         match self {
             Self::Candidates => facts.candidates.len(),
+            Self::Listed => facts.listed.len(),
             Self::Priors => facts.priors.len(),
             Self::Replay => facts.replay.len(),
             Self::Scores => facts.scores.len(),
@@ -106,6 +111,7 @@ pub(super) fn page_observation_facts(
         policy_pin,
         facts_pin,
         candidates: Vec::new(),
+        listed: Vec::new(),
         priors: Vec::new(),
         replay: Vec::new(),
         scores: Vec::new(),
@@ -126,6 +132,7 @@ pub(super) fn page_observation_facts(
         }
         let size = match section {
             ObservationSection::Candidates => encoded_row_size(&facts.candidates[offset])?,
+            ObservationSection::Listed => encoded_row_size(&facts.listed[offset])?,
             ObservationSection::Priors => encoded_row_size(&facts.priors[offset])?,
             ObservationSection::Replay => encoded_row_size(&facts.replay[offset])?,
             ObservationSection::Scores => encoded_row_size(&facts.scores[offset])?,
@@ -147,6 +154,7 @@ pub(super) fn page_observation_facts(
             ObservationSection::Candidates => {
                 page.candidates.push(facts.candidates[offset].clone())
             }
+            ObservationSection::Listed => page.listed.push(facts.listed[offset].clone()),
             ObservationSection::Priors => page.priors.push(facts.priors[offset].clone()),
             ObservationSection::Replay => page.replay.push(facts.replay[offset].clone()),
             ObservationSection::Scores => page.scores.push(facts.scores[offset].clone()),
@@ -174,6 +182,7 @@ fn observation_cursor(cursor: &str) -> MemoryResult<(ObservationSection, usize, 
     let mut parts = suffix.split(':');
     let section = match parts.next() {
         Some("candidates") => ObservationSection::Candidates,
+        Some("listed") => ObservationSection::Listed,
         Some("priors") => ObservationSection::Priors,
         Some("replay") => ObservationSection::Replay,
         Some("scores") => ObservationSection::Scores,

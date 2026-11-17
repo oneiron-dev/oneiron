@@ -22,9 +22,9 @@
 //! and its finals list no listed claims with the rebuilt conflict heads. A final round
 //! consumes the pack's earlier answers against the canonical options of the questions they
 //! answer. Every rebuild refusal fails closed toward `BAD_REQUEST` in the bound handler,
-//! which maps these errors by message. The execution carries the checked owned rows out of
-//! the one validation transaction and runs them unsourced, since the extraction call
-//! source rows are unknown.
+//! which maps these errors by message plus the typed layout. The execution carries the
+//! checked owned rows out of the one validation transaction and runs them unsourced,
+//! since the extraction call source rows are unknown.
 
 mod checks;
 mod execution;
@@ -39,8 +39,8 @@ pub(crate) use checks::{
     extraction_not_served,
 };
 pub(crate) use execution::{CheckedExtractionRead, ExtractionReadExecution, execute_checked_read};
-pub(crate) use reads::check_pack_candidates;
 pub(in crate::dreamer_consolidation) use reads::parse_reference;
+pub(crate) use reads::{CheckedPack, check_pack_candidates};
 
 use super::ConsolidationBranchPlan;
 use super::support::invalid_consolidation;
@@ -48,7 +48,7 @@ use crate::attempt_queue::AttemptId;
 use crate::claim::ScopedRead;
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::memory::{Memory, MemoryResult};
+use crate::memory::{ExtractionLayout, Memory, MemoryError, MemoryResult};
 use crate::model_decision::AnswerContract;
 use crate::verbs::{ExtractionPack, ExtractionPart, ExtractionRead, PackQuestion};
 
@@ -80,6 +80,19 @@ pub(crate) struct RebuiltExtractionPack {
     pub(crate) questions: Vec<PackQuestion>,
     /// The checked owned rows the lent execution runs.
     pub(crate) execution: CheckedExtractionRead,
+}
+
+/// Builds the layout refusal carrying `layout` as a typed field.
+///
+/// The message stays human prose; clients read the layout from the typed
+/// field, never by parsing the message.
+pub(crate) fn extraction_layout_refusal(
+    message: impl Into<String>,
+    layout: ExtractionLayout,
+) -> MemoryError {
+    let mut error = MemoryError::bad_request(message);
+    error.extraction_layout = Some(Box::new(layout));
+    error
 }
 
 /// Rebuilds `pack`'s question keys and canonical options with the native

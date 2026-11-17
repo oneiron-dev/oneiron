@@ -60,6 +60,8 @@ fn dreamer_candidate(scalar: &Value, index: usize) -> CandidateObservation {
         "scope_facet": SCOPE_FACET,
         "scope_project": SCOPE_PROJECT,
         "replay_facet": REPLAY_FACET,
+        "correctable": [],
+        "single_valued": false,
     });
     serde_json::from_value(mirror).expect("the scalar expands")
 }
@@ -117,6 +119,7 @@ fn dreamer_observations(
         policy_pin: policy_pin.to_owned(),
         facts_pin: facts_pin.to_owned(),
         candidates: mirrors,
+        listed: Vec::new(),
         priors: Vec::new(),
         replay: Vec::new(),
         scores: Vec::new(),
@@ -246,6 +249,7 @@ fn f6_shared_arithmetic_proxies_through_extraction_score() {
         policy_pin: policy_pin.to_owned(),
         facts_pin: facts_pin.to_owned(),
         candidates: vec![dreamer_candidate(&scalar, 0)],
+        listed: Vec::new(),
         priors: Vec::new(),
         replay: Vec::new(),
         scores: Vec::new(),

@@ -1,9 +1,10 @@
 //! The bound extraction step's layout refusal carries its native slices as the
-//! typed `extraction_layout` field, never as prose a client parses. A later
-//! leaf (e2f.3) extends this file with the bound read's page-layout variant.
+//! typed `extraction_layout` field, never as prose a client parses. Bound
+//! read part refusals carry their rebuilt pages through the same field.
 
 use oneiron_contracts::memory::{
-    ExtractionLayout, ExtractionStepSlice, MEMORY_CODE_BAD_REQUEST, MemoryError,
+    ExtractionCorrectionPair, ExtractionLayout, ExtractionStepSlice, MEMORY_CODE_BAD_REQUEST,
+    MemoryError,
 };
 
 #[test]
@@ -43,6 +44,76 @@ fn extraction_layout_is_a_typed_refusal_field() {
     );
     let back: MemoryError = serde_json::from_value(wire).expect("the pinned shape deserializes");
     assert_eq!(back, error);
+
+    let mut correction = MemoryError::new(
+        MEMORY_CODE_BAD_REQUEST,
+        "extraction pack part does not match its read",
+        &["Fix the request shape and retry."],
+    );
+    correction.extraction_layout = Some(Box::new(ExtractionLayout::CorrectionPages {
+        pages: vec![
+            vec![ExtractionCorrectionPair {
+                candidate: 0,
+                listed: 0,
+            }],
+            vec![ExtractionCorrectionPair {
+                candidate: 0,
+                listed: 1,
+            }],
+        ],
+    }));
+    let correction_wire = serde_json::to_value(&correction).expect("a refusal serializes");
+    assert_eq!(
+        correction_wire,
+        serde_json::json!({
+            "code": "BAD_REQUEST",
+            "message": "extraction pack part does not match its read",
+            "suggestions": ["Fix the request shape and retry."],
+            "extraction_layout": {
+                "kind": "correction_pages",
+                "pages": [
+                    [{"candidate": 0, "listed": 0}],
+                    [{"candidate": 0, "listed": 1}],
+                ],
+            },
+        }),
+    );
+    let correction_back: MemoryError =
+        serde_json::from_value(correction_wire).expect("the pinned shape deserializes");
+    assert_eq!(correction_back, correction);
+
+    let mut resolution = MemoryError::new(
+        MEMORY_CODE_BAD_REQUEST,
+        "extraction pack part does not match its read",
+        &["Fix the request shape and retry."],
+    );
+    resolution.extraction_layout = Some(Box::new(ExtractionLayout::ResolutionPages {
+        pages: vec![vec![0], vec![1]],
+    }));
+    let resolution_wire = serde_json::to_value(&resolution).expect("a refusal serializes");
+    assert_eq!(
+        resolution_wire,
+        serde_json::json!({
+            "code": "BAD_REQUEST",
+            "message": "extraction pack part does not match its read",
+            "suggestions": ["Fix the request shape and retry."],
+            "extraction_layout": {
+                "kind": "resolution_pages",
+                "pages": [[0], [1]],
+            },
+        }),
+    );
+    let resolution_back: MemoryError =
+        serde_json::from_value(resolution_wire).expect("the pinned shape deserializes");
+    assert_eq!(resolution_back, resolution);
+
+    assert!(
+        serde_json::from_value::<ExtractionCorrectionPair>(
+            serde_json::json!({"candidate": 0, "listed": 0, "shown": "C1"})
+        )
+        .is_err(),
+        "an unknown pair field refuses",
+    );
 
     let plain = MemoryError::new(
         MEMORY_CODE_BAD_REQUEST,

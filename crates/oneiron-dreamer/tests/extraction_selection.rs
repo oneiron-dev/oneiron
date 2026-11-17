@@ -44,6 +44,8 @@ fn candidate_from_scalar(scalar: &Value, index: usize) -> CandidateObservation {
         "scope_facet": SCOPE_FACET,
         "scope_project": SCOPE_PROJECT,
         "replay_facet": REPLAY_FACET,
+        "correctable": [],
+        "single_valued": false,
     });
     serde_json::from_value(mirror).expect("the scalar expands to a mirror")
 }
@@ -80,6 +82,7 @@ fn observations_for_case(
         policy_pin: policy_pin.to_owned(),
         facts_pin: facts_pin.to_owned(),
         candidates: mirrors,
+        listed: Vec::new(),
         priors: Vec::new(),
         replay: Vec::new(),
         scores: Vec::new(),

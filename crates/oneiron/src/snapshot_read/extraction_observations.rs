@@ -10,7 +10,7 @@ mod types;
 
 pub use types::{
     CandidateObservation, ExtractionObservationsPage, ExtractionObservationsPageRequest,
-    PriorObservation, ReplayObservation, SimilarityScore,
+    ListedObservation, PriorObservation, ReplayObservation, SimilarityScore,
 };
 
 use self::facts::extraction_observation_facts;
@@ -101,8 +101,7 @@ fn bound_extraction_observations_page(
             key_rules: bound.key_rules().clone(),
         };
         let policy_pin = extraction_policy_pin(&policy)?;
-        let proposals = checked.rows.into_iter().map(|row| row.proposal).collect();
-        let facts = extraction_observation_facts(memory, &read, txn, &bound, input, proposals)?;
+        let facts = extraction_observation_facts(memory, &read, txn, &bound, input, &checked)?;
         let facts_pin = observation_facts_pin(input, &policy_pin, &facts)?;
         let bounds = vault.snapshot_read_settings_in_txn(txn)?;
         page_observation_facts(

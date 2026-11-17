@@ -43,7 +43,9 @@
     "named_facet": null,
     "scope_facet": "f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0",
     "scope_project": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0",
-    "replay_facet": "f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0"
+    "replay_facet": "f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0",
+    "correctable": [],
+    "single_valued": false
   },
   "prior": {
     "claim": "00000000000000000000000000000064",
@@ -62,7 +64,9 @@
     "writable": true,
     "scope_facet": "f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0",
     "scope_project": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0",
-    "scope_equal_candidates": []
+    "scope_equal_candidates": [],
+    "non_widening_candidates": [],
+    "subject_predicate_equal_candidates": []
   },
   "replay": {
     "index": 0,
