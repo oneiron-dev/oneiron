@@ -103,6 +103,10 @@ struct AnswerAsk {
     /// units; without it the overdraft is the cap the ask states.
     #[serde(default)]
     cap_units: Option<u64>,
+    /// The dollars of a run-budget ask's `add_funds` answer, in millionths of
+    /// a US dollar; that answer names them.
+    #[serde(default)]
+    amount_usd_micros: Option<u64>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -198,8 +202,9 @@ async fn answer(
                 .vault()
                 .press_remote_task_input_ask(&owner, request.seq, choice)?;
         }
-        // A run held at its spend cap takes the owner's choice, and an
-        // overdraft's cap, in the write that resumes it (RUNBUDGET-OVERDRAFT).
+        // A run held at its spend cap takes the owner's choice, an
+        // overdraft's cap, and the dollars he adds, in the write that resumes
+        // it (RUNBUDGET-OVERDRAFT; RUN-BUDGET-SPENT = B).
         let run_budget = match &request.answer {
             DecisionAnswer::Choice(token) => RunBudgetChoice::of_token(token),
             _ => None,
@@ -209,10 +214,31 @@ async fn answer(
                 "cap_units names the cap of a run-budget overdraft answer".to_owned(),
             ));
         }
-        if let Some(choice) = run_budget {
-            server
-                .vault()
-                .press_run_budget_ask(&owner, request.seq, choice, request.cap_units)?;
+        if request.amount_usd_micros.is_some() && run_budget != Some(RunBudgetChoice::AddFunds) {
+            return Err(OwnerError::Invalid(
+                "amount_usd_micros names the dollars of a run-budget add_funds answer".to_owned(),
+            ));
+        }
+        match run_budget {
+            Some(RunBudgetChoice::AddFunds) => {
+                let amount = request.amount_usd_micros.ok_or_else(|| {
+                    OwnerError::Invalid(
+                        "a run-budget add_funds answer names amount_usd_micros".to_owned(),
+                    )
+                })?;
+                server
+                    .vault()
+                    .press_run_budget_add_funds(&owner, request.seq, amount)?;
+            }
+            Some(choice) => {
+                server.vault().press_run_budget_ask(
+                    &owner,
+                    request.seq,
+                    choice,
+                    request.cap_units,
+                )?;
+            }
+            None => {}
         }
         asks.answer_with_reason(
             &owner,
