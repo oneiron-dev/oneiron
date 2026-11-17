@@ -44,6 +44,18 @@ crate::side_table::side_tables! {
     LEARNING_EVIDENCE: VaultMeta b"learning:evidence:v1:" Named
         [restore: content] [family: unclassified] [tier: canonical]
         => crate::learning::erase_learning_pack_context_in_txn;
+    /// One external reader's lifetime read exposure (L8-65): how many distinct records the
+    /// engine has served it, and when. Key: id16 (the reader).
+    READ_EXPOSURE: VaultMeta b"read:exposure:v1:" Named
+        // Restore class: the record of reads that already left the vault.
+        [restore: live] [family: unclassified] [tier: canonical]
+        => crate::claim::erase_read_exposure_reader_in_txn;
+    /// One record the engine served one external reader (L8-65); presence only. Key: id16 (the
+    /// record) + id16 (the reader), so an erased record's rows go by its prefix.
+    READ_EXPOSURE_RECORD: VaultMeta b"read:exposure-record:v1:" Raw
+        // Restore class: the record of reads that already left the vault.
+        [restore: live] [family: unclassified] [tier: canonical]
+        => crate::claim::erase_read_exposure_record_reader_in_txn;
     /// An owner's own behaviour with one period of his digest, for the Coach's digest settings
     /// rule (FIX 5495): when its due notice reached him and when he first opened it, no digest
     /// text. Key: id16 (owner) + u64be (scheduled_for).

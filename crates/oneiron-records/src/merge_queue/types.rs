@@ -35,4 +35,15 @@ pub struct MergeBatch {
     /// record, and the survivor links and diagnosis trace an owner's call
     /// also writes (FIX 4362). `None` until one is written.
     pub drive: Option<super::QueueBatchDrive>,
+    /// The batch of the same enqueue this one stages on once that one has
+    /// landed: an enqueue of more than one batch's proposals forms
+    /// consecutive batches ([MERGE-QUEUE-ENQUEUE-SPLITS-LARGE-BATCH]).
+    /// `None` for an enqueue's first batch; never written then, so every
+    /// row without it encodes as before.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub follows: Option<String>,
+    /// The batch of the same enqueue that stages on this one once it has
+    /// landed; `None` for an enqueue's last batch, never written then.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub followed_by: Option<String>,
 }

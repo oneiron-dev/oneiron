@@ -47,6 +47,7 @@ mod scoped_call_control;
 mod scoped_child;
 mod scoped_child_io;
 mod scoped_generation;
+mod speech_rows;
 pub use self::scoped_generation::{ScopedChildGeneration, ScopedChildGenerationCall};
 pub(crate) mod setting_keys;
 pub mod shadow_runner;
@@ -325,6 +326,7 @@ pub(crate) use self::storage::executor_speech_message_id;
 #[cfg(test)]
 pub(crate) use self::storage::require_facet_placement_in;
 pub(crate) use self::types::FoldWordRef;
+pub(crate) use self::types::SaidResult;
 pub use self::types::{
     FoldAnswer, SelfAgentDefinitionPutCall, SelfAgentDefinitionPutResult, SelfAgentSpawnCall,
     SelfAgentSpawnResult, SelfAskCall, SelfCall, SelfContextCall, SelfContextResult,
@@ -332,9 +334,10 @@ pub use self::types::{
     SelfEffect, SelfFailedResult, SelfFixtureEffectCall, SelfLeaderCall, SelfMemoryEdgeWriteResult,
     SelfMemoryPutClaimCall, SelfMemoryPutEdgeCall, SelfMemorySearchCall, SelfMemorySearchResult,
     SelfMemorySupersedeClaimCall, SelfMemoryWriteFixtureCall, SelfMemoryWriteResult,
-    SelfSandboxProposalDiskFloor, SelfSkillCall, SelfSkillCallResult, SelfSpawnAsk, SelfSpeechCall,
-    SelfSpeechResult, SelfStoredReply, SelfStoredReplyKind, SelfTaskRefusalResult,
-    SelfTaskRefuseCall, SelfTeamResult, SelfWakePolicyWriteCall, peer_result_wait,
+    SelfSandboxProposalDiskFloor, SelfSayResultCall, SelfSkillCall, SelfSkillCallResult,
+    SelfSpawnAsk, SelfSpeechCall, SelfSpeechResult, SelfStoredReply, SelfStoredReplyKind,
+    SelfTaskRefusalResult, SelfTaskRefuseCall, SelfTeamResult, SelfWakePolicyWriteCall,
+    peer_result_wait,
 };
 pub use run_verbs::{
     AgentSpawnInput, JS_SAFE_INTEGER, LeaderAdviceInput, LeaderPatternInput, LeaderSplitInput,
@@ -348,6 +351,7 @@ pub use run_verbs::{
     MemoryEdgeOutput, MemorySearchHit, MemorySearchOutput, MemoryWriteOutput, ReportBlockedOutput,
     TaskRefuseOutput, TaskWaitOutput,
 };
+pub use speech_rows::{SpeechOutput, SpokenText, ThinkAloudInput};
 pub use types::{
     AGENT_VERB_DOOR_UNBOUND, AGENT_VERB_SESSION_BOUND, AgentVerbAnswer, AgentVerbDoor,
     AgentVerbRefusal, AgentVerbRefusalWords, RunCall, RunObservation, RunSpeechDestination,
