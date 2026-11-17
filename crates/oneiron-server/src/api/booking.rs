@@ -42,8 +42,8 @@ use oneiron::booking::agent_api::{
 };
 use oneiron::booking::{
     BookingCapOverride, BookingError, BookingVerbReceipt, BookingVerbRequest, CancelSpec,
-    ConfirmSpec, ConstraintObject, HoldLeaseSpec, HoldSpec, OpaqueCheckoutLeaseToken,
-    OpaqueLifecycleToken, RescheduleSpec, SlotOracle, SolveRequest, SolveResult, token_page_ref,
+    ConfirmSpec, ConstraintObject, HoldLeaseSpec, HoldSpec, OpaqueLifecycleToken, RescheduleSpec,
+    SlotOracle, SolveRequest, SolveResult, token_page_ref,
 };
 use oneiron::{EntityId, Vault};
 
@@ -51,10 +51,11 @@ use super::booking_anti_abuse::{enforce_amend, enforce_hold, enforce_slot_list};
 use super::{json_payload, scoped_auth::check_request_owner_act};
 use crate::auth::ClientAddress;
 use crate::error::ApiError;
-use crate::server::SyncServer;
+use crate::server::{LinePlace, SyncServer};
 
 mod admission;
 mod constants;
+mod deposit;
 mod email_evidence;
 mod execute;
 mod free_text;
@@ -102,6 +103,8 @@ pub(crate) use self::transport::{
     is_booking_payer_door,
 };
 // The integration tests' door to the booking turn's line (census L3-11).
+#[cfg(oneiron_test_support)]
+pub(crate) use self::lifecycle::write_holding_line_place;
 #[cfg(oneiron_test_support)]
 pub(crate) use self::turn::Turn as BookingTurn;
 use self::validate::validate_operation_shape;
@@ -513,6 +516,7 @@ async fn execute_hold(
     now: u64,
     public_authority: Option<oneiron::booking::publication::PublicBookingAuthority>,
     owner_verified: bool,
+    place: Option<LinePlace>,
 ) -> Result<(BookingOperationResponse, Vec<EntityId>), ApiError> {
     let session_key = session_key(page_ref, &input.session_ref);
     // The owner's own hold past a full day (RULING BK-CAP-OVERRIDE-WHO = B):
@@ -554,12 +558,10 @@ async fn execute_hold(
     if let Some(unofferable) = unofferable {
         return Ok((unofferable, rows));
     }
-    let lease = match input.checkout_lease_token {
-        Some(token) => HoldLeaseSpec::CheckoutExtension {
-            server_issued_lease: OpaqueCheckoutLeaseToken(token),
-        },
-        None => HoldLeaseSpec::Ordinary,
-    };
+    // A deposit event type's hold opens its checkout first (BK-DEPOSITS),
+    // so the hold presents a lease bound to the session and the payment.
+    let (lease, deposit): (HoldLeaseSpec, _) =
+        self::deposit::hold_lease(server, page_ref, &input, session_key, now).await?;
     let (receipt, _) = run_booking_verb(
         server,
         BookingVerbRequest::Hold(HoldSpec {
@@ -576,6 +578,7 @@ async fn execute_hold(
         Some(session_key),
         now,
         public_authority,
+        place,
     )
     .await?;
     // The hold writer reads only node-local hold and lease rows beside the
@@ -589,6 +592,7 @@ async fn execute_hold(
                 end_utc: held.slot.end,
             },
             expires_at: held.expires_at,
+            deposit,
         }),
         BookingVerbReceipt::SlotTaken { alternatives } => {
             BookingOperationResponse::Book(BookingBookResult::SlotTaken { alternatives })
@@ -620,6 +624,8 @@ async fn execute_confirm(
     )?;
     let booker_contact =
         resolve_booker_contact(server, &input.booker_email, now, public_authority.as_ref())?;
+    // The visitor's card may be authorized before Stripe's webhook says so.
+    self::deposit::before_confirm(server, session_key, now).await;
     let (receipt, unkept) = run_booking_verb(
         server,
         BookingVerbRequest::Confirm(ConfirmSpec {
@@ -632,16 +638,21 @@ async fn execute_confirm(
         Some(session_key),
         now,
         public_authority,
+        None,
     )
     .await?;
     match receipt {
-        BookingVerbReceipt::Confirmed(confirmed) => Ok((
-            BookingOperationResponse::Book(BookingBookResult::Confirmed {
-                reschedule_token: confirmed.reschedule_token.0,
-                cancel_token: confirmed.cancel_token.0,
-            }),
-            confirmed.reads,
-        )),
+        BookingVerbReceipt::Confirmed(confirmed) => {
+            // Capture at confirm; a failure leaves it to the settle worker.
+            self::deposit::after_confirm(server, confirmed.calendar.event_ref, now).await;
+            Ok((
+                BookingOperationResponse::Book(BookingBookResult::Confirmed {
+                    reschedule_token: confirmed.reschedule_token.0,
+                    cancel_token: confirmed.cancel_token.0,
+                }),
+                confirmed.reads,
+            ))
+        }
         BookingVerbReceipt::SlotTaken { alternatives } => Ok((
             BookingOperationResponse::Book(BookingBookResult::SlotTaken { alternatives }),
             unkept,
@@ -678,6 +689,7 @@ async fn execute_reschedule(
         None,
         now,
         public_authority,
+        None,
     )
     .await?;
     match receipt {
@@ -717,6 +729,7 @@ async fn execute_cancel(
         None,
         now,
         public_authority,
+        None,
     )
     .await?;
     match receipt {

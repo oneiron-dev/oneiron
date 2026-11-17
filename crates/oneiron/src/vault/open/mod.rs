@@ -675,6 +675,7 @@ impl Vault {
             home_search: Default::default(),
             speculative_passes: Default::default(),
             lfs_read_room: Default::default(),
+            host_text_embedder: Default::default(),
             #[cfg(feature = "sync")]
             lfs_release_verdicts: Default::default(),
             host_net_floor: Default::default(),

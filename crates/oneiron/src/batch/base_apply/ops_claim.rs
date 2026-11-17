@@ -42,7 +42,8 @@ pub(super) fn apply_claim_candidate_arm(
     let pre_mask = state
         .masked_claims
         .get_mut(&id)
-        .and_then(VecDeque::pop_front);
+        .and_then(VecDeque::pop_front)
+        .flatten();
     let pending_prompt = super::pending_prompt_for(&state.births, &id);
     let applied = apply_claim_candidate(
         store,

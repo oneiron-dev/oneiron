@@ -18,9 +18,11 @@ pub use defaults::{
     PurposeDefaultSubmitter, purpose_default_grant_target,
 };
 mod inference_admission;
+mod quota_delegate;
 mod tagger_admission;
 pub use inference_admission::admitted_as;
 pub use tagger_admission::{TaggerCall, TaggerCallContext, TaggerEgressPredicate};
+pub(crate) mod model_licence;
 mod role_defaults;
 mod solo;
 pub use inference_admission::{
@@ -57,6 +59,12 @@ pub mod score_scraper;
 pub mod seat;
 mod step;
 pub use step::public as model_step;
+#[cfg(oneiron_test_support)]
+pub(crate) use step::step_state_present_for_attempt;
+pub(crate) use step::{
+    bind_step_input_versions, request_hash_step_receipt_in_txn, request_hash_submit_receipt,
+};
+
 pub mod tagger;
 
 pub use step::{
@@ -174,6 +182,9 @@ pub use self::autocheck::{
     AutoCheckCandidateOwned, AutoCheckDecisions, AutoCheckNotes, AutoCheckOutcome,
     AutoCheckSignals, AutoCheckWorldHold, BoundedAutoChecker,
 };
+pub use self::model_licence::{
+    NONCOMMERCIAL_LICENCES_HOSTED_REFUSAL, noncommercial_model_licences_admitted,
+};
 pub use self::role_defaults::RoleModelDefaults;
 pub use self::solo::{is_solo, mark_solo};
 pub(crate) use self::step::{
@@ -183,6 +194,7 @@ pub(crate) use self::step::{
 };
 pub use oneiron_model::llm::canonical_json_bytes;
 pub use oneiron_model::llm::limit;
+pub use oneiron_model::llm::provider_finish_reason;
 pub use oneiron_model::llm::{
     BrokerIsolation, BudgetDenied, BudgetLease, CallClass, CallEnvelope, CallPurpose, ContentPart,
     DEFAULT_ON_DEVICE_SAFEGUARD_TIER, DEFAULT_SAFEGUARD_MODEL_BINDING, DeterministicFallback,

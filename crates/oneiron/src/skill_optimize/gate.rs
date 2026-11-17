@@ -156,6 +156,8 @@ mod tradeoff_capacity;
 mod verdict;
 
 pub(crate) use decision::score_gate_skill_edit_as_owner;
+#[cfg(oneiron_test_support)]
+pub(crate) use live::live_axis_plan_digest_for_test;
 pub(crate) use live::measure_skill_edit_goal_axes_as_owner;
 pub(crate) use preflight::preflight_skill_edit_offline_floors_as_owner;
 

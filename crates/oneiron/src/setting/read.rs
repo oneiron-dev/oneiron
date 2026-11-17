@@ -301,6 +301,34 @@ impl<T: SettingValue> Setting<T> {
         self.read_in_dbs_txn(&vault.store, txn, known, item)
     }
 
+    /// Whether the row that decides [`Self::read_in_txn`] with no item is the owner's: a pin, or
+    /// a value row the owner set, the engine wrote, or an agent wrote spending a check-in the
+    /// owner approved (`StoredRow::by_owner`). The default, a learned fit, an unreadable row,
+    /// and a row a holder or a subject set are not.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::read_in_txn`].
+    pub(crate) fn decided_by_owner_in_txn(
+        &self,
+        vault: &Vault,
+        txn: &heed::RoTxn<'_>,
+        known: &[SettingScope],
+    ) -> Result<bool> {
+        let chain = SettingScope::chain(known, self.spec.scopes)?;
+        let (_, source, _) = in_force_in_txn(&vault.store, txn, self.spec, &chain, None)?;
+        let (scope, mode) = match source {
+            SettingSource::Pin(scope) => (scope, SettingMode::Pin),
+            SettingSource::Row(scope) => (scope, SettingMode::Value),
+            SettingSource::Fit(_) | SettingSource::Default | SettingSource::Unreadable(_) => {
+                return Ok(false);
+            }
+        };
+        Ok(load_in_txn(&vault.store, txn, self.spec, &chain, None)?
+            .iter()
+            .any(|row| row.scope == scope && row.found.mode == mode && row.found.by_owner))
+    }
+
     /// [`Self::read_in_txn`] below the vault: the same walk over the setting tables of `dbs`
     /// (a store, or any other holder of its side databases), for a reader that holds no
     /// [`Vault`].
@@ -392,6 +420,26 @@ impl<T: SettingValue> Setting<T> {
             value,
             in_force,
         })
+    }
+
+    /// The items of this family key that hold a stored row, each once, in item order. A caller
+    /// that must see every item reads each one with [`Self::read_in_txn`].
+    ///
+    /// # Errors
+    ///
+    /// Storage errors.
+    pub(crate) fn items_in_txn(&self, vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<Vec<String>> {
+        let mut items: Vec<String> = Vec::new();
+        let prefix = RowKey::name_prefix(self.spec.name);
+        for row in table_of(self.spec).iter_raw_from(&vault.store, txn, &prefix)? {
+            let (key, _) = row?;
+            if let Some(item) = RowKey::decode(&key).and_then(|key| key.item)
+                && items.last() != Some(&item)
+            {
+                items.push(item);
+            }
+        }
+        Ok(items)
     }
 }
 

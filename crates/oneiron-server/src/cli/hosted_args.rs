@@ -29,7 +29,8 @@ pub enum HostedCommand {
 
 #[derive(Args, Clone, Debug)]
 pub struct HostedLoginArgs {
-    /// The hosted vault's origin, as `oneiron mcp --url` takes it.
+    /// The hosted vault's origin, as `oneiron mcp --url` takes it. An OAuth
+    /// sign-in takes https, or http to this machine alone.
     #[arg(long)]
     pub origin: String,
 

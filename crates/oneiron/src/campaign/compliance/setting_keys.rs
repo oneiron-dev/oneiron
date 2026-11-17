@@ -8,6 +8,9 @@
 //! Direction: false is tighter (fewer people are contacted), so turning it back on is a
 //! loosening. A row that does not decode reads as false: the gate then asks for a recorded
 //! consent, and fails closed.
+//!
+//! The agent key `campaign.compliance.agent_may_decide` (restriction wave 11, census C60) is the
+//! last row: whether an agent may install compliance rows and reject a pending proposal.
 
 use crate::error::Result;
 use crate::setting::Kind;
@@ -48,4 +51,28 @@ pub(super) fn recorded_consent_required_in_txn(
     Ok(!CAMPAIGN_CONTACT_WITHOUT_RECORDED_OBJECTION
         .read_in_dbs_txn(store, txn, &[], None)?
         .value)
+}
+
+/// Off: only the owner installs or rejects.
+fn owner_decides() -> bool {
+    false
+}
+
+crate::setting::setting_keys! {
+    /// Let this agent install compliance rows and reject a pending proposal. Off by default:
+    /// install and reject take the authenticated owner, as before. On for an agent, it installs
+    /// cited rows through the amendment path (a loosening among them still waits for the
+    /// owner's exact-hash approval) and rejects a pending proposal (no active restriction
+    /// changes). Approve and verify stay the owner's stamp whatever this key says: "Tighten =
+    /// auto-apply + notice; loosen = owner-stamped" (ARCH-0059 r7; RESTRICTION-WAVE-11-OWNER-ROWS
+    /// Q2 = B). An agent's row names one agent; the vault row opens every agent, and an agent's
+    /// own row wins over it. On is the looser value, so only the owner turns it on; an agent's
+    /// change waits on the owner's answer (restriction wave 11, census C60).
+    pub(crate) CAMPAIGN_COMPLIANCE_AGENT_MAY_DECIDE: bool = "campaign.compliance.agent_may_decide" {
+        kind: Kind::new(owner_decides)
+            .strictest(owner_decides)
+            .tighter(crate::setting::lower_is_tighter::<bool>),
+        scopes: &[crate::setting::ScopeKind::Vault, crate::setting::ScopeKind::Agent],
+        act: crate::check_in::ActClass::GrantWiden,
+    };
 }

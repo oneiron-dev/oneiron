@@ -59,10 +59,18 @@ fn configured_backend_refuses_root_guest_identity_or_missing_jailer() {
             rootfs: [0; 32],
             component: [0; 32],
         },
+        oci_pins: std::collections::BTreeMap::new(),
     };
     assert!(FirecrackerBackend::configured(config.clone()).is_err());
     config.uid = 1000;
     assert!(FirecrackerBackend::configured(config).is_err());
+}
+
+/// Drops a booted step's streamed output: the real-boot runs below assert on
+/// its proposals only.
+#[cfg(target_os = "linux")]
+fn discard_output(_: crate::engine_executor::JsCodeModeStream<'_>, _: Vec<u8>) -> Result<()> {
+    Ok(())
 }
 
 #[cfg(target_os = "linux")]
@@ -128,7 +136,11 @@ fn firecracker_real_boot_returns_only_proposals() -> Result<()> {
     let image = GuestImage::new(kernel, rootfs, component);
     assert_eq!(
         adapter
-            .run(&image, ExecutionBudget::new(15, 128, 64))?
+            .run(
+                &image,
+                ExecutionBudget::new(15, 128, 64),
+                &mut discard_output
+            )?
             .status,
         0
     );
@@ -217,6 +229,7 @@ fn firecracker_real_boot_delete_rename_and_failed_run_preserve_base_and_reclaim_
             .run(
                 &image.clone().with_source(source),
                 ExecutionBudget::new(15, 128, 64),
+                &mut discard_output,
             )
             .and_then(|_| adapter.collect_overlay_proposals())
             .map(|deltas| deltas.iter().map(|delta| delta.write().clone()).collect());

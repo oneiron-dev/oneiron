@@ -13,26 +13,23 @@ use super::super::storage::checkpoint::by_revision;
 use super::PROMOTIONS;
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::store::ManifestDbs;
-use crate::store::checkpoint_payload::rows::{self, Captured, RowLocator};
+use crate::store::Store;
+use crate::store::checkpoint_payload::rows::descriptor::{AdapterTable, CapturedByAdapter};
+use crate::store::checkpoint_payload::rows::{self, Captured};
+
+/// The promotion receipts, which the code-revision getter's own capture
+/// places.
+pub(crate) const TABLE: &dyn AdapterTable = &CapturedByAdapter(PROMOTIONS);
 
 /// Files each receipt under its revision's session in `sessions`.
 pub(crate) fn capture(
-    dbs: &impl ManifestDbs,
+    store: &Store,
     txn: &RoTxn<'_>,
     sessions: &BTreeMap<EntityId, EntityId>,
     out: &mut Captured,
 ) -> Result<()> {
-    for row in rows::typed_rows(dbs, txn, PROMOTIONS, out)? {
+    for row in rows::typed_rows(store, txn, PROMOTIONS, out)? {
         by_revision(out, sessions, &row.key, row.at, row.bytes);
     }
     Ok(())
-}
-
-pub(crate) fn owns(at: &RowLocator) -> bool {
-    at.in_table(PROMOTIONS.decl())
-}
-
-pub(crate) fn check(at: &RowLocator, value: &[u8]) -> Result<()> {
-    rows::check_row(PROMOTIONS, at, value)
 }
