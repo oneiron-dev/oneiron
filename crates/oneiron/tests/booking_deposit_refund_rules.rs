@@ -1047,6 +1047,37 @@ fn a_tombstone_stopped_before_its_refund_and_sent_again_after_the_start_refunds(
     );
 }
 
+/// Review round 1 of #9255: an omission is no cancellation evidence, so it
+/// never dates the host's tombstone. The seat's complete listing leaves the
+/// booking out before the start; the provider's tombstone after the start,
+/// and the same tombstone sent again, keep the deposit.
+#[test]
+fn a_tombstone_sent_again_after_an_omission_before_the_start_keeps_the_deposit() {
+    let fixture = Fixture::open();
+    let booked = captured_booking(&fixture, "pi_tombstone_after_omission", 9);
+    let seat = host_seat_reading_and_written(&fixture, &booked, slot_at(9).start, NOW + 54);
+    // At 08:01 the seat's complete listing leaves the booking out.
+    seat.pull(
+        &fixture.vault,
+        &[SeatChange::omitted(&booked.calendar.uid)],
+        NOW + 60,
+    )
+    .expect("the omission before the start");
+    // At 09:01 the host's provider reports the event deleted, and at 09:02 it
+    // sends the same tombstone again.
+    seat_tombstone(&seat, &fixture, &booked, slot_at(9).start + 60)
+        .expect("the tombstone after the start");
+    seat_tombstone(&seat, &fixture, &booked, slot_at(9).start + 120)
+        .expect("the tombstone sent again");
+    assert_eq!(
+        fixture.state_of("pi_tombstone_after_omission"),
+        DepositState::Captured {
+            amount_minor: 4_000
+        },
+        "an omission before the start never dates the host's tombstone"
+    );
+}
+
 #[test]
 fn a_tombstone_in_another_calendar_before_the_start_does_not_date_the_host_tombstone() {
     let fixture = Fixture::open();

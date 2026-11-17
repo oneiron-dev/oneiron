@@ -214,6 +214,13 @@ impl PollAdmission<'_> {
                 let mut absent = value.clone();
                 absent.presence = CalendarPassportPresence::Absent;
                 absent.last_seen_at = self.now;
+                // A provider tombstone is this source's report of the UID
+                // cancelled, first seen now unless an earlier cancelled
+                // version already dated it; an omission is no cancellation
+                // evidence and dates nothing.
+                if absence_basis == CalendarStatusBasis::ImportedCancel {
+                    absent.cancelled_since = value.cancelled_since.or(Some(self.now));
+                }
                 // Absence carries no inbound content, so the screen body is
                 // empty — but the admission still crosses the hook and cites
                 // the complete feed that proved the omission.
@@ -562,41 +569,24 @@ impl PollAdmission<'_> {
     /// When the tombstone of this calendar, one the EVENT was written to,
     /// was first seen, for the deposit's start rule (RULING
     /// DEPOSIT-HOST-CANCEL-AFTER-START = A). The sweep commits this source's
-    /// passport absence, stamped with the sweep's time, before the refund
-    /// commits. A stop between the two leaves the passport absent with no
-    /// refund on record, and the same tombstone sent again flips nothing and
-    /// lands here, so the latest absence stamp of this source's own written
-    /// passports ([`names_written_calendar`]) is its first sighting. Only
-    /// those count: an absence in another calendar, one a visitor can write,
-    /// never dates the host's cancel. An Outbound passport never flips, so
-    /// its tombstone is seen now; so is one after an omission concluded the
-    /// absence (the EVENT reads cancelled with basis `imported_absence`),
-    /// since an omission is no cancellation evidence.
+    /// passport absence, stamped `cancelled_since` with the sweep's time,
+    /// before the refund commits. A stop between the two leaves the passport
+    /// absent with no refund on record, and the same tombstone sent again
+    /// flips nothing and lands here, so the latest `cancelled_since` of this
+    /// source's own absent written passports ([`names_written_calendar`]) is
+    /// its first sighting. Only those count: an absence in another calendar,
+    /// one a visitor can write, never dates the host's cancel. An omission
+    /// stamps no `cancelled_since`, since it is no cancellation evidence: a
+    /// tombstone of a passport an omission already flipped, or of an
+    /// Outbound passport, which never flips, is seen now.
     fn tombstone_seen_at(&self, event_ref: EntityId) -> Result<u64, CalendarError> {
-        for claim_id in self.vault.claims_for_subject(&event_ref)? {
-            let Some(claim) = self.vault.get_claim(&claim_id)? else {
-                continue;
-            };
-            if claim.predicate != PREDICATE_CALENDAR_STATUS
-                || claim.lifecycle != ClaimLifecycleStatus::Active
-            {
-                continue;
-            }
-            let current = decode_status_value(&claim.value)
-                .map_err(|_| ingest("stored status claim did not decode"))?;
-            if current.status == CalendarStatus::Cancelled
-                && current.basis == CalendarStatusBasis::ImportedAbsence
-            {
-                return Ok(self.now);
-            }
-        }
         Ok(live_passports_for_event(self.vault, &event_ref)?
             .into_iter()
             .filter(|(_, value)| {
                 names_written_calendar(self.system, value)
                     && value.presence == CalendarPassportPresence::Absent
             })
-            .map(|(_, value)| value.last_seen_at)
+            .filter_map(|(_, value)| value.cancelled_since)
             .max()
             .unwrap_or(self.now))
     }
