@@ -327,6 +327,34 @@ impl OfferLadder {
         }
     }
 
+    /// This ladder for a call of a role whose work never leaves the device
+    /// (`leave_device = "never"`): a call-local copy scoped so that no
+    /// owner's fallback that would take the call off the device is
+    /// reachable ([`Self::can_serve`]), as the role's own seat is scoped. A
+    /// role's route may hand out a ladder its seat does not scope: a
+    /// model's bare ladder, or another role's seat or rung (FIX-LIST
+    /// ROLE-LEAVE-DEVICE-LOST-ON-BARE-LADDER-FALLBACK). This ladder itself
+    /// when its scope already keeps the call on the device. The shared
+    /// ladder is never changed.
+    #[must_use]
+    pub(super) fn with_stays_on_device(self: &Arc<Self>) -> Arc<Self> {
+        if self.scope.stays_on_device {
+            return Arc::clone(self);
+        }
+        Arc::new(Self {
+            name: self.name.clone(),
+            rungs: self.rungs.clone(),
+            picked: self.picked,
+            rests: Arc::clone(&self.rests),
+            scope: SeatScope {
+                stays_on_device: true,
+                ..self.scope
+            },
+            prefix: self.prefix.clone(),
+            listed: self.listed.clone(),
+        })
+    }
+
     /// This ladder with its rungs in the order `routes` names them (FIX
     /// 11768 seam for L05): [`WorldModelRoutes::order`] over each rung's
     /// [`LadderRung::offer_id`], the same route id the ladder's doors
@@ -613,6 +641,13 @@ impl OfferLadder {
     #[must_use]
     pub fn rungs(&self) -> usize {
         self.rungs.len()
+    }
+
+    /// Whether an exact call may go out on this ladder: it is one picked
+    /// model, the guard every `generate_exact` keeps. A seat's ladder never
+    /// is.
+    pub(super) fn is_exact(&self) -> bool {
+        self.picked && self.rungs.len() == 1
     }
 
     /// Each rung's host-bound offer, in ladder order: the access a vault's
@@ -1122,10 +1157,13 @@ impl OfferLadder {
             return;
         }
         let rung = &self.rungs[index];
-        call.run.refuse(
+        // The row names the held call's own world (DEC-0005 fix 12), never
+        // the world that kept a call naming none on the device.
+        call.run.refuse_in_world(
             Some(call.selector.unwrap_or(self.name.as_str())),
             rung.model.as_str(),
             RunDenied::KeptOnDevice { reason },
+            call.request.envelope.scope.world,
         );
         tracing::info!(
             rung = rung.position,
@@ -1145,10 +1183,11 @@ impl OfferLadder {
             return;
         }
         let rung = &self.rungs[index];
-        call.run.refuse(
+        call.run.refuse_in_world(
             Some(call.selector.unwrap_or(self.name.as_str())),
             rung.model.as_str(),
             RunDenied::WorldRouteNotAdmitted,
+            call.request.envelope.scope.world,
         );
         tracing::info!(
             rung = rung.position,

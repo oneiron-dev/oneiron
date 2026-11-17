@@ -5,6 +5,7 @@
 //! in private LMDB rows and is not sync materialized as vault entities.
 
 mod admission;
+pub(crate) mod archive_restore;
 mod attempt_binding;
 mod claim_authoring;
 mod codec;

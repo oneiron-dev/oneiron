@@ -579,4 +579,7 @@ pub(crate) use thread_membership::active_thread_refs_in_txn;
 #[cfg(oneiron_test_support)]
 pub(crate) use thread_membership::take_thread_member_claim_reads;
 
+#[cfg(oneiron_test_support)]
+pub(crate) use parties::take_comm_party_row_reads;
+
 pub(crate) use projector::record_comm_thread_event_in_txn;

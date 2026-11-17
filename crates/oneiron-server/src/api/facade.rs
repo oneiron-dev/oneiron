@@ -38,6 +38,8 @@ mod agent_verbs {
     include!(concat!(env!("OUT_DIR"), "/agent_verbs.rs"));
 }
 mod aging_doors;
+// The output archive's judge door (ARM05 P3).
+mod archive_judge_doors;
 mod artifact_hosting_doors;
 mod asr_doors;
 mod authority_history_doors;
@@ -290,6 +292,7 @@ pub(crate) use host_doors::{
 pub(crate) use identity::*;
 pub(crate) use invocations::*;
 use invoke::*;
+pub(crate) use model_step_doors::resume_parked_model_steps;
 pub(crate) use model_stream_doors::ModelStreams;
 use output::*;
 use receipts::*;

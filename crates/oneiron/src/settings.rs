@@ -10,6 +10,7 @@ use crate::error::{Error, Result};
 use crate::setting::SettingValue;
 
 pub mod agent_world_access;
+pub(crate) mod archive_restore;
 pub mod backup;
 pub(crate) mod board_layout;
 pub mod default_facet;
