@@ -345,8 +345,8 @@ fn dropping_the_newest_reconciler_answers_for_the_older_one_still_live() {
     let newer = fixture.reconciler(FixedEmbedder::other_model());
     assert_eq!(
         verdict(&fixture.read(), fixture.world),
-        (WorldVectorsVerdict::None, None),
-        "the newest live reconciler runs another model",
+        (WorldVectorsVerdict::VaultSpace, None),
+        "the older reconciler embeds W while the newest live one runs another model",
     );
     drop(newer);
     assert_eq!(
@@ -359,6 +359,37 @@ fn dropping_the_newest_reconciler_answers_for_the_older_one_still_live() {
         verdict(&fixture.read(), fixture.world),
         (WorldVectorsVerdict::None, None),
         "with no live reconciler W answers none",
+    );
+}
+
+#[test]
+fn an_on_device_reconciler_beside_a_newer_off_device_one_embeds_a_private_world() {
+    let fixture = world_vectors_fixture();
+    fixture.set_models(ModelOrder::Inherit);
+    let on = fixture.reconciler(FixedEmbedder::on_device());
+    let _off = fixture.reconciler(FixedEmbedder::off_device());
+    let answer = fixture.read();
+    assert_eq!(
+        verdict(&answer, fixture.world),
+        (WorldVectorsVerdict::VaultSpace, None),
+        "the on-device reconciler embeds the private world while a newer off-device one lives",
+    );
+    assert_eq!(
+        verdict(&answer, base_world_id()),
+        (WorldVectorsVerdict::VaultSpace, None),
+        "both reconcilers take base reality's rows",
+    );
+    drop(on);
+    let answer = fixture.read();
+    assert_eq!(
+        verdict(&answer, fixture.world),
+        (WorldVectorsVerdict::None, None),
+        "only the off-device reconciler lives, and the private world is withheld from it",
+    );
+    assert_eq!(
+        verdict(&answer, base_world_id()),
+        (WorldVectorsVerdict::VaultSpace, None),
+        "the off-device reconciler still takes base reality's rows",
     );
 }
 
