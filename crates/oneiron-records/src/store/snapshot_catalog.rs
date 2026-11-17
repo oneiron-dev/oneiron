@@ -10,7 +10,6 @@ use oneiron_model::llm::ConditioningDigest;
 use oneiron_model::llm::ScopeDigest;
 use oneiron_model::llm::TokenDigest;
 use oneiron_model::llm::VaultRef;
-use oneiron_store::side_table::key::FixedSideKey;
 use oneiron_store::side_table::key::SideKey;
 use serde::Deserialize;
 use serde::Serialize;
@@ -19,8 +18,11 @@ use serde::Serialize;
 pub const SNAPSHOT_RECORD_SCHEMA: u32 = 1;
 
 /// A snapshot's catalog id: 16 random bytes, never taken from a digest, and
-/// not the sealed body's own id. The body's file name derives from it.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+/// not the sealed body's own id. The body's file name derives from it. Its
+/// side-table key is its 16 bytes.
+#[derive(
+    Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, SideKey,
+)]
 pub struct SnapshotId(pub [u8; 16]);
 
 impl SnapshotId {
@@ -39,20 +41,6 @@ impl SnapshotId {
     pub fn to_hex(&self) -> String {
         bytes_to_hex_lower(&self.0)
     }
-}
-
-impl SideKey for SnapshotId {
-    fn encode_into(&self, out: &mut Vec<u8>) {
-        out.extend_from_slice(&self.0);
-    }
-
-    fn decode_key(bytes: &[u8]) -> Option<Self> {
-        bytes.try_into().ok().map(Self)
-    }
-}
-
-impl FixedSideKey for SnapshotId {
-    const WIDTH: usize = 16;
 }
 
 /// What a snapshot's state was computed with, less the backend's epoch: a

@@ -546,6 +546,12 @@ name = "vault_retrieval_config_doors"
 path = "tests/vault_retrieval_config_doors.rs"
 required-features = ["oneiron/test-support"]
 
+# The data-key generation route roots its vault on a `MemoryKeystore`.
+[[test]]
+name = "vault_key_generation_route"
+path = "tests/vault_key_generation_route.rs"
+required-features = ["oneiron/test-support"]
+
 # Census L8-46's pin: a video job's poll and cancel reach the provider only for
 # the admitted job, through the broker and the same TLS fake provider.
 [[test]]
@@ -638,6 +644,12 @@ required-features = ["oneiron/test-support"]
 [[test]]
 name = "vault_off_record_doors"
 path = "tests/vault_off_record_doors.rs"
+required-features = ["oneiron/test-support"]
+
+# L5-11's issuer watch roots its owner on a `MemoryKeystore` too.
+[[test]]
+name = "connector_issuer_prm_refusal"
+path = "tests/connector_issuer_prm_refusal.rs"
 required-features = ["oneiron/test-support"]
 
 # The rerank pair template price cases root their owner on a `MemoryKeystore` too.

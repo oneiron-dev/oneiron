@@ -65,30 +65,21 @@ fn account_auth_migrates_managed_root_without_widening() {
         },
     };
     let vault = Vault::open(dir.path(), config).unwrap();
+    vault.install_device_keystore(std::sync::Arc::new(
+        oneiron_keystore::MemoryKeystore::default(),
+    ));
+    // The managed host's root: on a hosted vault the host stamps it
+    // `ROLE_CLOUD`, `CloudCustodial`.
+    let issuer = crate::test_fixtures::provision_engine_machines(&vault);
+    vault
+        .ensure_serving_install_profile(&issuer, MachineRole::Unanswered)
+        .unwrap();
     let actor = vault.ensure_embedded_owner_actor().unwrap();
-    let old = ed_key(140);
     let new = ed_key(141);
-    let key = authority_key_from_ed(&old);
-    let mut genesis = genesis_entry(140, 1);
-    if let AuthorityOp::Genesis { device, .. } = &mut genesis.op {
-        device.roles |= ROLE_CLOUD;
-        device.tier = AuthorityTier::CloudCustodial;
-    }
-    genesis = sign_ed(genesis, &old);
-    let id = genesis_vault_id(&genesis).unwrap();
-    store(&vault, &genesis);
-    let bind = sign_ed(
-        unsigned_entry(
-            Some(id),
-            1,
-            vec![authority_entry_hash(&genesis).unwrap()],
-            bind_op(&key, actor, "human", 1),
-            key.clone(),
-            2,
-        ),
-        &old,
-    );
-    store(&vault, &bind);
+    let key = issuer.public_key();
+    let root = vault.authority_fold().unwrap();
+    assert!(root.roster[&key].roles & ROLE_CLOUD != 0);
+    assert_eq!(root.roster[&key].tier, AuthorityTier::CloudCustodial);
     assert!(
         vault
             .authenticate_owner(
@@ -107,6 +98,12 @@ fn account_auth_migrates_managed_root_without_widening() {
             crate::store::GateDecisionId::now(),
         )
         .unwrap();
+    // The recovery needs the owner's binding, and a hosted fold counts it
+    // only with an owner key's proof: the custodial root alone binds no
+    // person there.
+    vault
+        .bind_host_owner_with_owner_key_for_test(&owner, &issuer, actor)
+        .unwrap();
     vault
         .recover_cloud_account(
             &owner,
@@ -116,11 +113,11 @@ fn account_auth_migrates_managed_root_without_widening() {
                 AuthorityTier::CloudCustodial,
             ),
             key.clone(),
-            |bytes| Ok(old.sign(bytes).to_bytes().to_vec()),
+            |bytes| Ok(issuer.sign_claim_handoff(bytes).to_vec()),
         )
         .unwrap();
     let fold = vault.authority_fold().unwrap();
-    assert_eq!(fold.vault_id, Some(id));
+    assert_eq!(fold.vault_id, root.vault_id);
     assert!(fold.roster[&key].revoked);
     assert!(!fold.roster[&authority_key_from_ed(&new)].revoked);
 }

@@ -136,14 +136,17 @@ fn create(vault: &Vault, owner: EntityId, extra: Value) -> oneiron::memory::Memo
     surface(vault, owner, "self.campaign.create", body)
 }
 
+/// `self.campaign.read`: the record of its `{found, record}` reply.
 fn read(vault: &Vault, owner: EntityId, campaign_ref: &str) -> Value {
-    surface(
+    let mut reply = surface(
         vault,
         owner,
         "self.campaign.read",
         json!({ "campaign_ref": campaign_ref }),
     )
-    .expect("the owner reads its campaign")
+    .expect("the owner reads its campaign");
+    assert_eq!(reply["found"], true, "the campaign is found: {reply}");
+    reply["record"].take()
 }
 
 fn campaign_ref(record: &Value) -> String {
