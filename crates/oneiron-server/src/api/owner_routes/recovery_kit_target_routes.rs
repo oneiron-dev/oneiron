@@ -151,7 +151,7 @@ enum Material {
 
 #[derive(Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
-struct RunRootRequest {
+pub(crate) struct RunRootRequest {
     /// The install this call's material is for, 32 hex: this one.
     target: String,
     /// The pending request, 64 hex: its receipt's `request`.
@@ -421,24 +421,38 @@ async fn run(
     let body = payload.read(&server).await?;
     kit_target(&server, &body.target)?;
     // The enrolment request reads as pairing reads it, before any work.
-    let enrolment = match &body.material {
-        Material::Anchor { enrolment, .. } => Some(enrolment.request()?),
-        _ => None,
-    };
+    let enrolment = body.enrolment()?;
     let authority = ActAuthority::Owner(owner, surface);
-    let answer = blocking(move || -> OwnerResult<RootWorkAnswer> {
-        let request = request_entry("request", &body.request)?;
-        let done = run_material(
-            server.vault(),
-            &authority,
-            request,
-            body.material,
-            enrolment,
-        )?;
-        Ok(RootWorkAnswer::of(server.vault(), done))
-    })
-    .await?;
+    let answer = blocking(move || run_answer(server.vault(), &authority, body, enrolment)).await?;
     Ok(Json(answer))
+}
+
+impl RunRootRequest {
+    /// An anchoring's enrolment request, read as pairing reads it, with
+    /// pairing's own refusal; `None` for every other material.
+    pub(crate) fn enrolment(
+        &self,
+    ) -> Result<Option<oneiron::authority::MachineEnrolmentRequest>, ApiError> {
+        match &self.material {
+            Material::Anchor { enrolment, .. } => enrolment.request().map(Some),
+            _ => Ok(None),
+        }
+    }
+}
+
+/// The run door's blocking body: `body`'s material runs the request pending
+/// on this install as `authority`, with `enrolment` read from it first
+/// ([`RunRootRequest::enrolment`]). The route reads the payload and checks
+/// the target first; the test doors call this directly.
+pub(crate) fn run_answer(
+    vault: &Vault,
+    authority: &ActAuthority,
+    body: RunRootRequest,
+    enrolment: Option<oneiron::authority::MachineEnrolmentRequest>,
+) -> OwnerResult<RootWorkAnswer> {
+    let request = request_entry("request", &body.request)?;
+    let done = run_material(vault, authority, request, body.material, enrolment)?;
+    Ok(RootWorkAnswer::of(vault, done))
 }
 
 fn run_material(
@@ -679,7 +693,7 @@ enum RootWorkReport {
 
 /// The target's answer: its report, and the engine's words for it.
 #[derive(Serialize, schemars::JsonSchema)]
-struct RootWorkAnswer {
+pub(crate) struct RootWorkAnswer {
     #[serde(flatten)]
     report: RootWorkReport,
     /// `RootWorkDone::text`.

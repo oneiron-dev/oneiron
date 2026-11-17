@@ -14,6 +14,7 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use oneiron::consent::AuthenticatedOwner;
 use oneiron::error::SecretError;
 use oneiron::recovery::{KitError, KitId, KitPassphrase, KitPiece, KitSecretKind, restore_kit};
 use oneiron::sync::WindowManager;
@@ -24,6 +25,7 @@ use oneiron::world_keys::{
     KitConfirmation, RecoveryRootId, RecoveryRootSeed, SealedKeyPads, SealedVaultBundle,
     WORLD_KIT_ESCROW, Withheld, WorldKeyId, WorldKitRestore,
 };
+use oneiron::{EntityId, Vault};
 use serde::Serialize;
 use zeroize::Zeroizing;
 
@@ -215,7 +217,7 @@ fn withheld(list: &[(WorldKeyId, Withheld)]) -> Vec<WithheldView> {
 
 /// What confirming a kit did.
 #[derive(Serialize)]
-struct Confirmed {
+pub(crate) struct Confirmed {
     kit_id: String,
     root: String,
     rewrapped: Vec<KeyView>,
@@ -262,13 +264,34 @@ fn confirm(args: RecoveryKitConfirmArgs) -> anyhow::Result<()> {
     let (pieces, passphrase) = read_kit_args(&args.kit)?;
     let owner = local_owner(&vault)?;
     let pieces: Vec<&KitPiece> = pieces.iter().collect();
-    let confirmed = vault.confirm_world_kit(&owner, &pieces, passphrase.as_ref(), &carry)?;
-    // OPUS-WAYBACK-BOX's deposit takes R's authority seed later; the server
-    // drops it for now.
+    let confirmed = confirm_on(&vault, &owner, &pieces, passphrase.as_ref(), &carry, None)?;
+    emit(&confirmed)
+}
+
+/// Confirms the kit `pieces` (and `passphrase`) rebuild on the open `vault`
+/// as `owner`, carrying `carry`: its root goes live here and the vault key
+/// gets its `world-kit` escrow wrap. RED PIN ONLY (tests-only commit, never
+/// merged): this base has no `--box-deposit-out` flag, so a call naming a
+/// file is refused as the argument parser refuses an unknown flag, before
+/// anything is confirmed.
+pub(crate) fn confirm_on(
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    pieces: &[&KitPiece],
+    passphrase: Option<&KitPassphrase>,
+    carry: &BTreeSet<EntityId>,
+    box_deposit_out: Option<&Path>,
+) -> anyhow::Result<Confirmed> {
+    if box_deposit_out.is_some() {
+        anyhow::bail!("unexpected argument '--box-deposit-out' found");
+    }
+    let confirmed = vault.confirm_world_kit(owner, pieces, passphrase, carry)?;
+    // OPUS-WAYBACK-BOX's deposit takes R's authority seed later; the
+    // server drops it for now.
     let _ = &confirmed.activated.authority_seed;
     let vault_id = vault.vault_key_vault_id();
     let keys = &confirmed.activated.keys;
-    emit(&Confirmed {
+    Ok(Confirmed {
         kit_id: kit_id(confirmed.kit),
         root: hex(&confirmed.activated.root.0),
         rewrapped: keys.rewrapped.iter().map(KeyView::from).collect(),
