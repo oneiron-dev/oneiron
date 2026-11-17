@@ -361,6 +361,7 @@ impl ScopedRead<'_> {
             tree = Some(nodes);
         }
         let receipt = self.receipt_for(None, &policy, &filter, 0);
+        self.charge_served(tree.iter().flatten().map(|node| node.id));
         Ok(ScopedReadResult {
             value: project(&txn, tree)?,
             receipt,
