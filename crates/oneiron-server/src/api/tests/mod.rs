@@ -68,6 +68,7 @@ mod retrieval_bounds;
 mod retrieval_bounds_rows;
 mod retrieval_depth_quality;
 mod retrieval_shaping;
+mod room_structure_doors;
 mod run_gate;
 mod run_tree;
 mod search_deadline;
@@ -762,6 +763,7 @@ pub(super) fn witness_vad_message_fixture(
             occurred_at,
             assertions: Default::default(),
             thread_audience: None,
+            project: None,
         })
         .expect("witness fixture turn");
 }
