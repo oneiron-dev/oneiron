@@ -40,6 +40,7 @@ mod redacted;
 mod reply;
 pub(crate) mod retained_path;
 mod scopes;
+pub(crate) mod setting_keys;
 mod thread_projection;
 mod types;
 mod writes;
