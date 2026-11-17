@@ -87,6 +87,7 @@ fn grant_person_reads(owner: &Memory<'_>, agent: EntityId) -> TestResult {
             verb_classes: BTreeSet::new(),
             wallet_ref: None,
             working_view_bounds: None,
+            check_in_ref: None,
         },
     )?;
     Ok(())

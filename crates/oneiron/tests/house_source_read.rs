@@ -276,6 +276,7 @@ fn the_seeded_houses_own_grant_still_reads_a_claim() -> TestResult {
             verb_classes: BTreeSet::new(),
             wallet_ref: None,
             working_view_bounds: None,
+            check_in_ref: None,
         },
     )?;
     assert_eq!(

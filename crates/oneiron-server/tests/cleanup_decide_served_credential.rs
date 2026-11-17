@@ -155,6 +155,7 @@ impl Fixture {
                 verb_classes: std::collections::BTreeSet::new(),
                 wallet_ref: None,
                 working_view_bounds: None,
+                check_in_ref: None,
             },
         )?;
         assert!(minted.grant.confers, "the agent's Grant confers");

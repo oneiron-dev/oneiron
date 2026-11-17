@@ -121,6 +121,7 @@ fn grant_create_root(fixture: &Fixture, agent: EntityId) -> EntityId {
             verb_classes: BTreeSet::new(),
             wallet_ref: None,
             working_view_bounds: None,
+            check_in_ref: None,
         },
     )
     .expect("owner mints the create_root Grant");

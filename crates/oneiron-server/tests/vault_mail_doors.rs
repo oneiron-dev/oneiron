@@ -232,6 +232,7 @@ fn agent_with_grant(fixture: &Fixture, agent_id: &str) -> (EntityId, CapabilityS
             verb_classes: BTreeSet::new(),
             wallet_ref: None,
             working_view_bounds: None,
+            check_in_ref: None,
         },
     )
     .expect("owner mints the agent a Grant");

@@ -698,6 +698,7 @@ fn a_plan_doc_approval_row_keeps_its_fields() -> TestResult {
             verb_classes: BTreeSet::new(),
             wallet_ref: None,
             working_view_bounds: None,
+            check_in_ref: None,
         },
     )
     .expect("the owner grants the agent base reach");

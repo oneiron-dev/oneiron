@@ -264,6 +264,7 @@ fn mint_backend_read_grant(fixture: &Fixture, expires_at: Option<u64>) {
             verb_classes: BTreeSet::new(),
             wallet_ref: None,
             working_view_bounds: None,
+            check_in_ref: None,
         },
     )
     .expect("owner mints the app backend a read Grant");

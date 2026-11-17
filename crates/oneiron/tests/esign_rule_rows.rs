@@ -238,6 +238,7 @@ fn agent_amends_optional_row_but_never_waives_the_ueta_row() -> TestResult {
             verb_classes: BTreeSet::new(),
             wallet_ref: None,
             working_view_bounds: None,
+            check_in_ref: None,
         },
     )?;
     assert!(minted.grant.confers, "the rule pack Grant confers");

@@ -310,6 +310,7 @@ pub(crate) fn grant(vault: &Vault, owner: &AuthenticatedOwner, agent: EntityId, 
             verb_classes: BTreeSet::new(),
             wallet_ref: None,
             working_view_bounds: None,
+            check_in_ref: None,
         },
     )
     .expect("the owner mints the Grant");
