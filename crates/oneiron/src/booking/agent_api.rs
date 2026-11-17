@@ -79,7 +79,8 @@ mod time_range_serde {
 pub use oneiron_verb_wire::booking::agent_api::{
     BookingAgentOperation, BookingBookResult, BookingCancelInput, BookingConfirmInput,
     BookingIntakeAnswer, BookingOperationResponse, BookingRescheduleInput,
-    BookingWaitlistClaimInput, BookingWaitlistLeaveInput, BookingWaitlistResult, SelectedSlot,
+    BookingWaitlistClaimInput, BookingWaitlistLeaveInput, BookingWaitlistResult, GrantedBusyView,
+    SelectedSlot,
 };
 
 // -------------------------------------------------------------------------
