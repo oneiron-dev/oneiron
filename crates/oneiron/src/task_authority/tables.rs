@@ -6,6 +6,11 @@ crate::side_table::side_tables! {
     /// was deleted here first, so the task's facts read as a refusal. Key: id16 (task).
     TASK_FACT_SUPPRESSED: VaultMeta b"tasks.fact_suppressed.v1/" Raw
         [restore: live] [family: unclassified] [tier: canonical];
+    /// An authority fact refused at admission because its id was deleted here first, as it
+    /// arrived: the TASK row's body. Its task's read judges it as the fold judges any fact, at
+    /// the time of the read. Key: id16 (task) + id16 (fact).
+    TASK_FACT_REFUSED: VaultMeta b"tasks.fact_refused.v1/" Raw
+        [restore: live] [family: unclassified] [tier: canonical];
     /// An authority fact this install's own door wrote: the content hash of the exact body it
     /// wrote (32 bytes). Local truth that never replicates, so no peer can make its own row read
     /// as one this install wrote; another machine's fact proves itself by its carrier's

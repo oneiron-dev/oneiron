@@ -167,7 +167,8 @@ pub fn proved_standing(vault: &Vault, task: EntityId) -> Result<Option<ProvedSta
 
 /// The step a replicated put takes when it refuses row `fact` because its id was deleted
 /// here (`task_authority::note_suppressed_fact_in_txn`), with `body` the TASK row's body:
-/// a fact that proves itself here marks its task, so the task's facts read as a refusal.
+/// the fact is kept under its task, and the task's facts read as a refusal once the fold
+/// would count it.
 ///
 /// # Errors
 ///

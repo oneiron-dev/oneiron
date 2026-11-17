@@ -667,6 +667,7 @@ fn pre_move_fixture_coverage_is_explicit() {
         "TASK_ASK_SOFT_CONFIRM_DELIVERY",
         "TASK_ASK_SOFT_CONFIRM_DELIVERY_CURSOR",
         "TASK_CONSULT_PARTY_BACKFILLED",
+        "TASK_FACT_REFUSED",
         "TASK_FACT_SUPPRESSED",
         "TASK_FACT_WRITTEN_HERE",
         "TEST_API_SLIP_CACHE",

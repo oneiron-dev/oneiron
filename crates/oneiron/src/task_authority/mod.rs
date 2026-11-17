@@ -365,6 +365,29 @@ impl TaskAuthorityFacts {
         Ok(folded)
     }
 
+    /// Whether the fold of `facts` would also count one of `refused`: each is judged as
+    /// [`Self::fold`] judges a fact of its pass, against the facts folded before that pass.
+    /// A fact the actor rule refuses, or an Owner fact whose maker derives another task, is
+    /// never counted.
+    fn counts_any_of(facts: &[TaskAuthorityFact], refused: &[TaskAuthorityFact]) -> Result<bool> {
+        let mut folded = Self::default();
+        for pass in 0..=2 {
+            if refused
+                .iter()
+                .filter(|fact| fact.kind.fold_pass() == pass)
+                .any(|fact| folded.admits(fact))
+            {
+                return Ok(true);
+            }
+            for fact in facts.iter().filter(|fact| fact.kind.fold_pass() == pass) {
+                if folded.admits(fact) {
+                    folded.absorb(fact)?;
+                }
+            }
+        }
+        Ok(false)
+    }
+
     /// Whether `fact`'s actor may make it, judged against the facts folded
     /// before its pass (Fable pass 28, DESIGN 2.2). The mint door asks the
     /// same before it writes ([`put_task_authority_fact_in_txn`]); each
@@ -966,20 +989,28 @@ fn optional_fact_body_field<'a>(
     Ok(value)
 }
 
-/// Tasks an authority fact of which was refused at admission because its id
-/// was deleted here before the fact arrived. Presence-only.
+/// Tasks a recovered canonical window names as holding a fact its source refused
+/// ([`restore_suppressed_in_txn`]). Presence-only. A fact refused here is kept in
+/// [`REFUSED`] instead, and judged when its task is read.
 const SUPPRESSED: SideTable<EntityId, [u8; 1], side_table::Raw> =
     SideTable::new(&side_table::TASK_FACT_SUPPRESSED);
 
-/// A replicated row `id` refused because it was deleted here: when it is a
-/// task authority fact this vault does not hold and the fact proves itself
-/// here, its task is marked, so the task's facts read as a refusal. A
-/// tombstone that reached this vault before a fact would otherwise make a
-/// cancellation or a consent requirement read as never made. A row that
-/// proves nothing marks nothing, so it cannot fail its task's read either.
-/// Nor does an Owner fact whose maker commitment derives another task than
-/// the one it names ([`TaskAuthorityFact::commits_to_its_task`]): the fold
-/// never counts it, so it cannot mark the task it claims.
+/// Each task authority fact refused at admission because its id was deleted here before it
+/// arrived, as it arrived: its body, under its task and its id. The task's read judges each
+/// as the fold judges any fact, at the time of the read ([`Vault::task_authority_facts_in`]).
+const REFUSED: SideTable<(EntityId, EntityId), Vec<u8>, side_table::Raw> =
+    SideTable::new(&side_table::TASK_FACT_REFUSED);
+
+/// A replicated row `id` refused because it was deleted here: when it is a task authority
+/// fact this vault does not hold, it is kept under its task ([`REFUSED`]), and the task's
+/// facts read as a refusal once the fold would count it. A tombstone that reached this vault
+/// before a fact would otherwise make a cancellation or a consent requirement read as never
+/// made. The read judges it, not this step: a fact whose carrier's profile arrives later
+/// counts once it has (blind review P1, REVIEW-9438), and a fact the fold's actor rule
+/// refuses, or an Owner fact whose maker derives another task than the one it names, never
+/// counts, so it never fails its task's read (blind review P1, REVIEW-9365). A row that can
+/// never prove itself, one with no carrier signature that this install's door did not
+/// write, is not kept.
 pub(crate) fn note_suppressed_fact_in_txn(
     store: &crate::store::Store,
     wtxn: &mut heed::RwTxn<'_>,
@@ -996,17 +1027,16 @@ pub(crate) fn note_suppressed_fact_in_txn(
     let Ok(carried) = decode_carried_task_authority_fact_body(body) else {
         return Ok(());
     };
-    let task = carried.fact.task_ref;
-    match proved_fact(&fact_proof::FactProof::in_txn(store, wtxn)?, id, body, task) {
-        Some(fact) if fact.commits_to_its_task() => SUPPRESSED.put(store, wtxn, &task, &[1]),
-        _ => Ok(()),
+    if carried.carrier.is_none() && !fact_proof::written_here_in(store, wtxn, id, body)? {
+        return Ok(());
     }
+    REFUSED.put(store, wtxn, &(carried.fact.task_ref, *id), &body.to_vec())
 }
 
 /// [`note_suppressed_fact_in_txn`] for a window document's entity carrier,
 /// header and body, that a local path removes because its id was deleted
-/// here: a fact the carrier holds that this vault never admitted marks its
-/// task, as admission would have.
+/// here: a fact the carrier holds that this vault never admitted is kept
+/// under its task, as admission would have kept it.
 pub(crate) fn note_removed_carrier_in_txn(
     store: &crate::store::Store,
     wtxn: &mut heed::RwTxn<'_>,
@@ -1086,8 +1116,11 @@ pub(crate) fn restore_suppressed_in_txn(
     Ok(())
 }
 
+/// The refusal a task's fact read fails with when it holds a fact this vault refused.
+const FACT_SUPPRESSED: &str = "task authority fact suppressed";
+
 fn fact_suppressed() -> Error {
-    Error::InvariantViolation("task authority fact suppressed")
+    Error::InvariantViolation(FACT_SUPPRESSED)
 }
 
 /// The fact `body` on row `fact_ref` states about `task_ref`, when it proves
@@ -1140,6 +1173,25 @@ impl FactCountRule {
             .proof
             .as_ref()
             .and_then(|proof| proved_fact(proof, fact_ref, body, task_ref)))
+    }
+
+    /// The fact the row `fact_ref` with `body` states about `task_ref`, when the row counts:
+    /// this install's door wrote exactly `body` and it names `task_ref`, or its carrier's
+    /// signature proves it.
+    fn counted(
+        &mut self,
+        vault: &Vault,
+        rtxn: &heed::RoTxn<'_>,
+        fact_ref: &EntityId,
+        body: &[u8],
+        task_ref: EntityId,
+    ) -> Result<Option<TaskAuthorityFact>> {
+        if fact_proof::written_here_in(&vault.store, rtxn, fact_ref, body)? {
+            return Ok(decode_task_authority_fact_body(body)
+                .ok()
+                .filter(|fact| fact.task_ref == task_ref));
+        }
+        self.proved(vault, rtxn, fact_ref, body, task_ref)
     }
 
     /// Whether the fact row `fact_ref` with `body`, about `task_ref`, counts in `vault`'s
@@ -1425,7 +1477,58 @@ impl Vault {
             proved.push(fact);
         }
         scanned.finish(self);
+        if self.counts_a_refused_fact_in(rtxn, task_ref, &proved, &mut count)? {
+            return Err(fact_suppressed());
+        }
         TaskAuthorityFacts::fold(&proved)
+    }
+
+    /// Whether the fold of `task_ref`'s counted `facts` would count a fact this vault refused
+    /// because its id was deleted here first ([`note_suppressed_fact_in_txn`]), judged now:
+    /// a refused row counts as any row counts ([`FactCountRule`]), so one whose carrier's
+    /// profile arrived since it was refused counts, and the fold's actor rule bounds it.
+    fn counts_a_refused_fact_in(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        task_ref: EntityId,
+        facts: &[TaskAuthorityFact],
+        count: &mut FactCountRule,
+    ) -> Result<bool> {
+        let mut refused = Vec::new();
+        for row in REFUSED.iter_from(&self.store, rtxn, task_ref.as_bytes())? {
+            let ((_, fact_ref), body) = row?;
+            if let Some(fact) = count.counted(self, rtxn, &fact_ref, &body, task_ref)? {
+                refused.push(fact);
+            }
+        }
+        if refused.is_empty() {
+            return Ok(false);
+        }
+        TaskAuthorityFacts::counts_any_of(facts, &refused)
+    }
+
+    /// Whether `task_ref`'s facts read as a refusal for a fact this vault refused: the task
+    /// is marked ([`fact_suppressed_in`]), or its fold would count a refused fact now. A
+    /// canonical capture carries the answer, so the recovered vault marks the task.
+    pub(crate) fn task_fact_suppressed_in(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        task_ref: EntityId,
+    ) -> Result<bool> {
+        if fact_suppressed_in(&self.store, rtxn, &task_ref)? {
+            return Ok(true);
+        }
+        if REFUSED
+            .iter_from(&self.store, rtxn, task_ref.as_bytes())?
+            .next()
+            .is_none()
+        {
+            return Ok(false);
+        }
+        Ok(matches!(
+            self.task_authority_facts_in(rtxn, task_ref),
+            Err(Error::InvariantViolation(message)) if message == FACT_SUPPRESSED
+        ))
     }
 }
 
