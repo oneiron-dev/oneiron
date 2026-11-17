@@ -1,13 +1,15 @@
 //! The managed (hosted) node's web-fetch egress guard (SCAN C447). A hosted
 //! node's fetcher never reaches the infrastructure it runs on: loopback,
-//! link-local (169.254.0.0/16, fe80::/10), the node's own addresses and the
-//! cloud metadata endpoints. Nor does it reach a private network (FIX 7657):
+//! link-local (169.254.0.0/16, fe80::/10), the node's own addresses (the
+//! address every Tailscale node answers itself among them) and the cloud
+//! metadata endpoints. Nor does it reach a private network (FIX 7657):
 //! RFC1918 (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16), CGNAT
-//! (100.64.0.0/10) and IPv6 ULA (fc00::/7), except at an origin the hosting
-//! operator names ([`HostedPrivateOrigin`]). Infrastructure is never
-//! excepted, and it wins over a private address anywhere in one name's
-//! answers. A self-hosted node carries no guard: the owner's own private
-//! services stay his to fetch.
+//! (100.64.0.0/10) and IPv6 ULA (fc00::/7), except in a network the hosting
+//! operator lets it reach ([`HostedPrivateNetwork`],
+//! HOSTED-EGRESS-OPERATOR-SETTING) or at an origin the operator names
+//! ([`HostedPrivateOrigin`]). Infrastructure is never excepted, and it wins
+//! over a private address anywhere in one name's answers. A self-hosted node
+//! carries no guard: the owner's own private services stay his to fetch.
 //!
 //! The guard judges RESOLVED addresses, never the URL's spelling, and reads
 //! the node's own addresses afresh at every check, so an address assigned
@@ -25,10 +27,14 @@
 //! ends the ladder typed ([`WebFetchError::HostedInfrastructure`] or
 //! [`WebFetchError::HostedPrivateNetwork`]).
 //!
-//! An operator's origin admits a private address only where the guard knows
-//! the name: a name's own answers, resolved at the check, and a URL whose
-//! scheme and port that origin lists. A check that sees only an address (an
-//! address-literal URL, a raw connection) refuses every private address.
+//! An operator's network admits its addresses at every check, by address
+//! alone, except that a name an operator origin lists stays bound to the
+//! schemes and ports its origins list. An operator's origin admits a private
+//! address only where the guard knows the name: a name's own answers,
+//! resolved at the check, and a URL whose scheme and port that origin lists.
+//! A check that sees only an address (an address-literal URL, a raw
+//! connection) refuses every private address outside the operator's
+//! networks.
 
 use std::collections::BTreeSet;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, ToSocketAddrs};
@@ -57,12 +63,29 @@ const CLOUD_METADATA_V4: [Ipv4Addr; 3] = [
     Ipv4Addr::new(168, 63, 129, 16),
 ];
 
-/// Cloud metadata endpoints on IPv6: AWS's (fd00:ec2::254) and Google
-/// Cloud's (fd20:ce::254).
-const CLOUD_METADATA_V6: [Ipv6Addr; 2] = [
+/// Cloud metadata and credential endpoints on IPv6, all inside ULA: AWS's
+/// instance metadata (fd00:ec2::254) and EKS Pod Identity agent
+/// (fd00:ec2::23), Google Cloud's (fd20:ce::254), Oracle Cloud's
+/// (fd00:c1::a9fe:a9fe), Scaleway's (fd00:42::42) and Akamai (Linode)'s
+/// (fd00:a9fe:a9fe::1). An operator who admits ULA
+/// (HOSTED-EGRESS-OPERATOR-SETTING) still never reaches one.
+const CLOUD_METADATA_V6: [Ipv6Addr; 6] = [
     Ipv6Addr::new(0xfd00, 0x0ec2, 0, 0, 0, 0, 0, 0x0254),
+    Ipv6Addr::new(0xfd00, 0x0ec2, 0, 0, 0, 0, 0, 0x0023),
     Ipv6Addr::new(0xfd20, 0x00ce, 0, 0, 0, 0, 0, 0x0254),
+    Ipv6Addr::new(0xfd00, 0x00c1, 0, 0, 0, 0, 0xa9fe, 0xa9fe),
+    Ipv6Addr::new(0xfd00, 0x0042, 0, 0, 0, 0, 0, 0x0042),
+    Ipv6Addr::new(0xfd00, 0xa9fe, 0xa9fe, 0, 0, 0, 0, 0x0001),
 ];
+
+/// The address every Tailscale node answers itself (its MagicDNS resolver
+/// and local services), inside CGNAT: the node's own daemon, never a peer,
+/// so one of the node's own addresses even where the operator admits the
+/// tailnet's network.
+const TAILSCALE_NODE_SERVICE_V4: Ipv4Addr = Ipv4Addr::new(100, 100, 100, 100);
+/// Its IPv6 twin, inside ULA.
+const TAILSCALE_NODE_SERVICE_V6: Ipv6Addr =
+    Ipv6Addr::new(0xfd7a, 0x115c, 0xa1e0, 0, 0, 0, 0, 0x0053);
 
 /// What a hosted node's fetcher may not reach, judged by resolved address.
 #[derive(Clone)]
@@ -72,12 +95,17 @@ pub struct HostedEgressGuard {
     node: Arc<dyn Fn() -> BTreeSet<IpAddr> + Send + Sync>,
     /// The private origins the hosting operator lets the fetcher reach.
     private_origins: Arc<BTreeSet<HostedPrivateOrigin>>,
+    /// The private networks the hosting operator lets the fetcher reach,
+    /// every address in them (HOSTED-EGRESS-OPERATOR-SETTING); empty, the
+    /// guard refuses all three.
+    private_networks: Arc<BTreeSet<HostedPrivateNetwork>>,
 }
 
 impl std::fmt::Debug for HostedEgressGuard {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("HostedEgressGuard")
             .field("private_origins", &self.private_origins)
+            .field("private_networks", &self.private_networks)
             .finish_non_exhaustive()
     }
 }
@@ -86,7 +114,8 @@ impl HostedEgressGuard {
     /// A guard that also refuses the node's own addresses, as `node_addresses`
     /// reads them at each check, and admits a private address only at one of
     /// `private_origins` (FIX 7657); with none, every private address is
-    /// refused.
+    /// refused. It admits no private network
+    /// ([`Self::with_private_networks`]).
     #[must_use]
     pub fn new(
         node_addresses: impl Fn() -> BTreeSet<IpAddr> + Send + Sync + 'static,
@@ -95,15 +124,33 @@ impl HostedEgressGuard {
         Self {
             node: Arc::new(node_addresses),
             private_origins: Arc::new(private_origins),
+            private_networks: Arc::new(BTreeSet::new()),
         }
+    }
+
+    /// This guard, admitting every address in `private_networks`, the
+    /// private networks the hosting operator lets the fetcher reach
+    /// (HOSTED-EGRESS-OPERATOR-SETTING), in place of any it admitted. An
+    /// admitted network admits no infrastructure inside it: a cloud
+    /// metadata endpoint this guard lists in CGNAT or ULA, Tailscale's node
+    /// address, or one of the node's own addresses, stays refused. A listed
+    /// origin's name stays bound to the schemes and ports its origins list
+    /// ([`Self::refuses_origin`]).
+    #[must_use]
+    pub fn with_private_networks(
+        mut self,
+        private_networks: BTreeSet<HostedPrivateNetwork>,
+    ) -> Self {
+        self.private_networks = Arc::new(private_networks);
+        self
     }
 
     /// Why `ip` is refused, by address alone: hosted infrastructure
     /// (loopback or "this host" (0.0.0.0/8, ::), link-local, a cloud metadata
     /// endpoint or one of the node's own addresses), or a private network
-    /// (RFC1918, CGNAT, ULA), an IPv4 address spelled inside IPv6
-    /// (IPv4-mapped, IPv4-compatible, NAT64) judged as itself. No operator
-    /// origin admits anything here.
+    /// (RFC1918, CGNAT, ULA) the operator does not admit, an IPv4 address
+    /// spelled inside IPv6 (IPv4-mapped, IPv4-compatible, NAT64) judged as
+    /// itself. No operator origin admits anything here.
     #[must_use]
     pub fn refuses(&self, ip: IpAddr) -> Option<HostedEgressRefusal> {
         self.refuses_any([ip])
@@ -127,7 +174,8 @@ impl HostedEgressGuard {
             {
                 return Some(HostedEgressRefusal::Infrastructure);
             }
-            private |= is_private_network(ip);
+            private |= HostedPrivateNetwork::of(ip)
+                .is_some_and(|network| !self.private_networks.contains(&network));
         }
         private.then_some(HostedEgressRefusal::PrivateNetwork)
     }
@@ -233,8 +281,8 @@ impl HostedEgressGuard {
     }
 
     /// Refuses `url`, a page the fetcher is asked for, when it resolves to
-    /// hosted infrastructure or to a private network no operator origin
-    /// admits.
+    /// hosted infrastructure or to a private address no operator network or
+    /// origin admits.
     pub(super) fn admit(&self, url: &Url) -> WebFetchResult<()> {
         match self.refuses_url(url) {
             Some(refused) => Err(refused.fetch_error(url.as_str())),
@@ -288,7 +336,8 @@ impl HostedEgressGuard {
 }
 
 /// Whether `ip`, already unwrapped, is infrastructure on every node: loopback,
-/// "this host", link-local or a cloud metadata endpoint.
+/// "this host", link-local, a cloud metadata endpoint or Tailscale's node
+/// address.
 fn is_infrastructure(ip: IpAddr) -> bool {
     match ip {
         IpAddr::V4(v4) => {
@@ -296,25 +345,73 @@ fn is_infrastructure(ip: IpAddr) -> bool {
                 || v4.octets()[0] == 0
                 || v4.is_link_local()
                 || CLOUD_METADATA_V4.contains(&v4)
+                || v4 == TAILSCALE_NODE_SERVICE_V4
         }
         IpAddr::V6(v6) => {
             v6.is_loopback()
                 || v6.is_unspecified()
                 || v6.is_unicast_link_local()
                 || CLOUD_METADATA_V6.contains(&v6)
+                || v6 == TAILSCALE_NODE_SERVICE_V6
         }
     }
 }
 
-/// Whether `ip`, already unwrapped, is in a private network a hosted node
-/// refuses (FIX 7657): RFC1918, CGNAT 100.64.0.0/10 or IPv6 ULA fc00::/7.
-fn is_private_network(ip: IpAddr) -> bool {
-    match ip {
-        IpAddr::V4(v4) => {
-            let [a, b, ..] = v4.octets();
-            v4.is_private() || (a == 100 && (64..=127).contains(&b))
+/// One private network a hosted node's fetcher refuses unless the hosting
+/// operator lets it reach it (FIX 7657; HOSTED-EGRESS-OPERATOR-SETTING,
+/// `--hosted-private-network`), spelled `rfc1918`, `cgnat` or `ula` and
+/// nothing else.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum HostedPrivateNetwork {
+    /// RFC1918: 10.0.0.0/8, 172.16.0.0/12 and 192.168.0.0/16.
+    Rfc1918,
+    /// Carrier-grade NAT: 100.64.0.0/10.
+    Cgnat,
+    /// IPv6 unique local addresses: fc00::/7.
+    Ula,
+}
+
+impl HostedPrivateNetwork {
+    /// The network `ip`, already unwrapped, is in, if it is private.
+    fn of(ip: IpAddr) -> Option<Self> {
+        match ip {
+            IpAddr::V4(v4) if v4.is_private() => Some(Self::Rfc1918),
+            IpAddr::V4(v4) => {
+                let [a, b, ..] = v4.octets();
+                (a == 100 && (64..=127).contains(&b)).then_some(Self::Cgnat)
+            }
+            IpAddr::V6(v6) => v6.is_unique_local().then_some(Self::Ula),
         }
-        IpAddr::V6(v6) => v6.is_unique_local(),
+    }
+
+    /// Its one spelling.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Rfc1918 => "rfc1918",
+            Self::Cgnat => "cgnat",
+            Self::Ula => "ula",
+        }
+    }
+}
+
+impl std::fmt::Display for HostedPrivateNetwork {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+/// Parses `rfc1918`, `cgnat` or `ula`, exactly.
+impl FromStr for HostedPrivateNetwork {
+    type Err = String;
+
+    fn from_str(raw: &str) -> Result<Self, Self::Err> {
+        [Self::Rfc1918, Self::Cgnat, Self::Ula]
+            .into_iter()
+            .find(|network| network.as_str() == raw)
+            .ok_or_else(|| {
+                "a hosted private network is rfc1918, cgnat or ula, spelled exactly so".to_owned()
+            })
     }
 }
 
