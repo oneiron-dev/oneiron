@@ -206,14 +206,15 @@ suite.test(test, "AUTHORITY-05", "Pairing and revoke should work", async () => {
   expect(reused.code).toBe(facts.unauthorizedCode);
 
   const client = new PublicHttpClient(engine.url, { credential: paired.credential, artifacts: engine.artifacts });
-  expect(Array.isArray(await client.call("vault.receipts", { limit: 1 }))).toBe(true);
+  // vault.receipts answers a page (VaultReceiptsPage): its rows are `receipts`.
+  expect(Array.isArray((await client.call("vault.receipts", { limit: 1 })).receipts)).toBe(true);
   const pythonRead = await engine.sdk.run("python", {
     mode: "remote", url: engine.url, credential: paired.credential,
   }, [{ verb: "receipts", limit: 1 }]);
   expect(pythonRead.results).toHaveLength(1);
   expect(pythonRead.results[0]?.ok).toBe(true);
   const socket = await WsClient.connect(engine.url, paired.credential);
-  try { expect(Array.isArray((await socket.call("vault.receipts", { limit: 1 })).value)).toBe(true) }
+  try { expect(Array.isArray((await socket.call("vault.receipts", { limit: 1 })).value.receipts)).toBe(true) }
   finally { socket.close() }
 
   const issued = mintedSlip(before, await auditRows(engine.client), engine.pairedActor.principalRef);
@@ -240,7 +241,7 @@ suite.test(test, "AUTHORITY-05", "Pairing and revoke should work", async () => {
   // Same principal, independent pairing: revoking the issued slip does not
   // revoke the original owner, nor confuse a dead server with an auth refusal.
   const control = await engine.websocket();
-  try { expect(Array.isArray((await control.call("vault.receipts", { limit: 1 })).value)).toBe(true) }
+  try { expect(Array.isArray((await control.call("vault.receipts", { limit: 1 })).value.receipts)).toBe(true) }
   finally { control.close() }
 });
 
@@ -275,13 +276,14 @@ suite.todo(test, "AUTHORITY-07", "waits on public vault-local lost-owner authori
 suite.test(test, "AUTHORITY-08", "Same-build re-root handoff should work", async () => {
   const engine = await EngineFixture.start({ id: "AUTHORITY-08", profile });
   const catalog = await loadFixtures();
-  const facts = catalog.expected<{ namespace: string[]; key: string; value: string; requestId: string }>("authority-host-note");
+  // A keyed value is always a JSON object (vault.kv.put refuses any other value).
+  const facts = catalog.expected<{ namespace: string[]; key: string; value: { text: string }; requestId: string }>("authority-host-note");
   const address = { namespace: facts.namespace, key: facts.key };
   const written = await engine.client.call("vault.kv.put", {
     ...address, value: facts.value, request_id: facts.requestId,
   });
-  expect(written.item.value).toBe(facts.value);
-  expect((await engine.client.call("vault.kv.get", address))?.value).toBe(facts.value);
+  expect(written.item.value).toEqual(facts.value);
+  expect((await engine.client.call("vault.kv.get", address))?.value).toEqual(facts.value);
   const before = await auditRows(engine.client);
   const genesis = before.filter(row => row.source_op === "genesis");
   expect(genesis).toHaveLength(1);
@@ -299,13 +301,13 @@ suite.test(test, "AUTHORITY-08", "Same-build re-root handoff should work", async
     expect(destination.report.retired_credentials.some(row => row.slip_id === mint.subject_ref)).toBe(true);
   }
   expect(destination.credential === engine.pairedActor.credential).toBe(false);
-  expect((await destination.client.call("vault.kv.get", address))?.value).toBe(facts.value);
+  expect((await destination.client.call("vault.kv.get", address))?.value).toEqual(facts.value);
   const oldRead = await engine.client.raw<{ error: { code: string } }>("POST", "/v1/core/facade/vault.kv.get", address);
   expect(oldRead.status).toBe(401);
   expect(oldRead.body.error.code).toBe("UNAUTHORIZED");
   await refusedUpgrade(engine.url, engine.pairedActor.credential);
   const newSocket = await WsClient.connect(engine.url, destination.credential);
-  try { expect((await newSocket.call("vault.kv.get", address)).value?.value).toBe(facts.value) }
+  try { expect((await newSocket.call("vault.kv.get", address)).value?.value).toEqual(facts.value) }
   finally { newSocket.close() }
 
   const after = await auditRows(destination.client);
