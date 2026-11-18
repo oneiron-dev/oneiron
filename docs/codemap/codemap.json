@@ -175550,6 +175550,14 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/recall_host_root_read.rs",
+     "purpose": "The owner's host-root recall reads on a self-hosted vault ([RECALL-HOST-ROOT-READ-REFUSED], FIX-LIST row…",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -177153,7 +177161,7 @@
    "over_bar": 70,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 2016,
-   "test_files": 483
+   "test_files": 484
   },
   "oneiron-setting-contract": {
    "files": [
