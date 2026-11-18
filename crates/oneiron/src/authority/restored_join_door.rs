@@ -19,6 +19,7 @@
 //! The signature proves the owner's word, not that no other machine exists:
 //! run on two copies of one image, each joins, as the owner said twice.
 
+use super::owner_proof::OwnerProofSigner;
 use super::world_key_support::{next_sequence, unsigned_side_entry};
 use super::*;
 use crate::consent::AuthenticatedOwner;
@@ -100,7 +101,7 @@ impl Vault {
             restored_machine_join_seen(&enrolment),
         );
         let op = AuthorityOp::RestoredMachineJoin(RestoredMachineJoin { act, enrolment });
-        self.append_owner_signed_in_txn(&mut txn, &fold, op, proof.as_ref())?;
+        self.append_owner_signed_in_txn(&mut txn, &fold, op, &proof)?;
         let after = self.authority_view_readonly_in_txn(&txn)?;
         let folded = after
             .machine(target)
@@ -119,16 +120,19 @@ impl Vault {
     /// Appends `op`, signed alone by `proof`'s owner key over the authority
     /// transcript, on `fold`'s main-log heads (joined first when wider than
     /// one entry names, in the host family, whose rule is a live owner
-    /// roster key: FIX 7908, 11867).
+    /// roster key: FIX 7908, 11867). The key signs each entry through its own
+    /// check, on the fold the entry is signed on: a join carries no op, so
+    /// every join's parent state is `fold`'s, and the row's is the joined
+    /// fold's.
     fn append_owner_signed_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         fold: &AuthorityFold,
         op: AuthorityOp,
-        proof: &dyn CheckpointRootSigner,
+        proof: &OwnerProofSigner<'_>,
     ) -> Result<()> {
-        let key = proof.root();
-        let sign = |transcript: &[u8]| proof.sign_owner_proof(transcript);
+        let key = proof.key();
+        let sign = |transcript: &[u8]| proof.sign(fold, transcript);
         let joiner = FrontierSigner::Callback(&key, &sign);
         let joined = self.prepare_authority_frontier_in_txn(txn, fold, joiner, MAX_PARENTS)?;
         let fold = joined.as_deref().unwrap_or(fold);
@@ -136,7 +140,7 @@ impl Vault {
         let parents = fold.append_heads.iter().copied().collect();
         let now = self.instant_in_txn(txn)?.secs();
         let mut entry = unsigned_side_entry(fold, key, seq, parents, op, now)?;
-        entry.signer.signature = proof.sign_owner_proof(&authority_transcript(&entry)?)?;
+        entry.signer.signature = proof.sign(fold, &authority_transcript(&entry)?)?;
         let at = TimeRange {
             start: now,
             end: now,
