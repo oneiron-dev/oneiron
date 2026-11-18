@@ -23,21 +23,28 @@ pub use questions::{
 };
 pub use steps::{correction_step, resolution_step};
 
-/// Borrows the complete operand universe and the observations served for it.
+/// Borrows the operands of one read and the observations served for them.
 #[derive(Debug, Clone, Copy)]
 pub struct Input<'a> {
-    /// Borrows candidate operands in unchanged request order.
+    /// Borrows the candidate operands in the order the pack sends them. A
+    /// correction read takes the reply's operands in unchanged request order.
+    /// A resolution read takes one nomination component in the selection's
+    /// ready order: the engine nominates over a pack's operands in the order
+    /// given, as its own pass nominates over the selection's ready list.
     pub candidates: &'a [Value],
     /// Borrows the engine's served claim identifiers, listing and prior pins.
     pub observations: &'a Observations,
 }
 
-/// Borrows one routed judge set within the complete operand universe.
+/// Borrows one routed judge set and the operands it is local to.
 #[derive(Debug, Clone, Copy)]
 pub struct ResolutionInput<'a> {
-    /// Borrows the complete operands and their observations.
+    /// Borrows the set's component operands and their observations.
     pub input: Input<'a>,
-    /// Borrows the set whose member positions select this conflict.
+    /// Borrows the set whose member positions select this conflict. The
+    /// positions name the operands above, so they ascend. A route's own set
+    /// names positions of the whole request in ready order:
+    /// `extraction_decisions::run` makes it local to its component first.
     pub set: &'a JudgeSet,
 }
 
