@@ -294,6 +294,50 @@ before this change.
 **Re-vendoring:** re-apply these three hunks with the FIX 1910 hunks, or take
 an upstream mdb.master3 that contains commit `567292b5d489`.
 
+## ITS#10519: overflow runs count the authentication area
+
+FIX row LMDB-MASTER3-UPSTREAM-FIXES-AUDIT. A sealed environment (OF-570)
+keeps `AUTH` = 40 bytes (the nonce, then the tag) at the tail of every page
+and every overflow run: `mdb_page_encrypt` (`:7162`) seals the run less its
+16-byte clear prefix and its last 40 bytes, and writes the nonce and tag into
+those 40. `me_pagespace` leaves the area out of a leaf or branch page, but
+`OVPAGES` sized an overflow run from the value alone,
+`(PAGEHDRSZ-1 + size) / psize + 1`. A value whose last byte fell into the
+run's last 40 bytes got one page too few. Those value bytes were never
+sealed, the commit still succeeded, and every later read returned other bytes
+in their place. With 4 KiB pages (`PAGEHDRSZ` 24) that is every value of
+4033-4072 bytes, and the same 40 lengths below each later page end. Two paths
+size a run: `mdb_node_add` (a new value) and the in-place overwrite in
+`mdb_cursor_put` (a value written earlier in the same transaction).
+
+Upstream fixed it on mdb.master3 in commit
+`e27f3d616b7b39c8294c0135ac60476b88cc5189` (9 Jun 2026, "ITS#10519 LMDB: fix
+ovpage size calculation with encryptino & checksums"). This copy carries its
+three hunks verbatim:
+
+- `OVPAGES(env, size)` (`:1154-1158`) adds `me_sumsize + me_esumsize` under
+  `MDB_RPAGE_CACHE`.
+- Its two callers, `_mdb_cursor_put` (`:8782`) and `mdb_node_add` (`:9259`),
+  pass the env.
+
+A plain environment (no page key, no checksum) has both sizes 0 and counts as
+before. A run keeps the page count it was written with (`op_pages` in its
+node); readers, `mdb_ovpage_free` and the overwrite test read that count,
+never `OVPAGES`, so runs an older build wrote read and free as before (stored
+change: keep). A value an older build already cut stays cut: its lost bytes
+were never written. `mdb.c` is now 12,349 lines, SHA-256
+`fd8391fc979ce2bee80d3645fd996b7d713818aa72c192fe41036d3b40627a82`. Every
+line this file cites in the vendored copy after `:1154` (FIX 1910, PAGE-FULL
+trace, ITS#10551) is now 4 lines further down. To find an upstream line after
+1154 in this copy, add 4 to the offset the sections above give (4 up to
+upstream line 6487, 24 after it, and so on).
+`crates/oneiron-store/tests/lmdb_sealed_overflow.rs` is the regression test:
+values of each length near the end of a one- and a two-page run, put new and
+overwritten in their transaction, read back from a sealed environment.
+
+**Re-vendoring:** re-apply these three hunks with the hunks above, or take an
+upstream mdb.master3 that contains commit `e27f3d616b7b`.
+
 ## Re-packaging for the Python sdist (ONE-1441)
 
 The workspace dependency also declares this vendor as a path dependency so
