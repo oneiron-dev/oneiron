@@ -12,6 +12,7 @@ fn fixture() -> (tempfile::TempDir, Vault, WriteActor, EntityId, EntityId) {
     let mut config = VaultConfig::device();
     config.embedding_model = Some("test/model@v1".to_owned());
     let vault = Vault::open(dir.path(), config).unwrap();
+    vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
     let alice = EntityId::now();
     let bob = EntityId::now();
     for id in [alice, bob] {

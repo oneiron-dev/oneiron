@@ -10,6 +10,7 @@ use crate::{TimeRange, Vault};
 fn vault() -> Result<(tempfile::TempDir, Vault)> {
     let dir = tempfile::tempdir()?;
     let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
+    vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
     Ok((dir, vault))
 }
 fn body() -> ClaimBody {
