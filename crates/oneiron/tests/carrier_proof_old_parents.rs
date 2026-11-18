@@ -34,10 +34,12 @@ use oneiron::{EntityId, HostingPrivacyPosture};
 use oneiron_authority::authority::{
     AuthorityConfirmAction, AuthorityConfirmKind, CheckpointPolicySet, CheckpointRootChoice,
     ConversationTrainingSet, ConversationTrainingVaultSet, DeviceSuccession, HomeNodePick,
-    OWNER_KEY_ENROLLMENT_SEEN, OWNER_KEY_POSSESSION_KIND, OriginCut, OwnerKeyEnroll, PolicySetting,
-    PolicySettingSet, checkpoint_policy_target, conversation_training_vault_target,
-    device_succession_target, home_pick_target, machine_answer_revision, origin_cut_target,
-    owner_key_enrollment_challenge, owner_key_enrollment_target, roster_has_live_owner,
+    OWNER_KEY_ENROLLMENT_SEEN, OWNER_KEY_POSSESSION_KIND, OWNER_PASSKEY_POSSESSION_KIND, OriginCut,
+    OwnerKeyEnroll, PolicySetting, PolicySettingSet, checkpoint_policy_target,
+    conversation_training_vault_target, device_succession_target, home_pick_target,
+    machine_answer_revision, origin_cut_target, owner_key_enrollment_challenge,
+    owner_key_enrollment_target, owner_passkey_possession_evidence, roster_has_live_owner,
+    webauthn_assertion_envelope, webauthn_challenge,
 };
 
 const ROOT_SEED: u8 = 61;
@@ -1605,6 +1607,165 @@ fn a_rotation_onto_an_owner_key_on_old_parents_does_not_end_it() {
     assert!(
         !fold.valid_entries.contains(&first) && !fold.valid_entries.contains(&second),
         "neither forked handoff installs: {:?}",
+        fold.issues
+    );
+}
+
+/// The owner's passkey of tests 21 and 22, as a platform authenticator holds
+/// it: a software P-256 key, and its credential id (`rawId`).
+const PASSKEY_SCALAR: [u8; 32] = [0x5A; 32];
+const PASSKEY_CREDENTIAL_ID: &[u8] = b"passkey-credential-0001";
+
+/// The passkey's assertion over `message`, in its envelope, as a browser's
+/// `navigator.credentials.get` returns it at the vault's origin with the
+/// person verified: authenticator data (RP id hash, user present and
+/// verified, a zero sign count), the client data JSON naming
+/// [`webauthn_challenge`] of `message`, and the DER signature over the one
+/// and SHA-256 of the other.
+fn passkey_assertion(passkey: &p256::ecdsa::SigningKey, message: &[u8]) -> Vec<u8> {
+    use base64::Engine as _;
+    use sha2::Digest as _;
+    let mut authenticator_data = sha2::Sha256::digest(b"oneiron.test").to_vec();
+    authenticator_data.push(0x05);
+    authenticator_data.extend_from_slice(&[0; 4]);
+    let client_data_json = format!(
+        r#"{{"type":"webauthn.get","challenge":"{}","origin":"https://oneiron.test","crossOrigin":false}}"#,
+        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(webauthn_challenge(message))
+    )
+    .into_bytes();
+    let mut signed = authenticator_data.clone();
+    signed.extend_from_slice(&sha2::Sha256::digest(&client_data_json));
+    let signature: p256::ecdsa::Signature = p256::ecdsa::signature::Signer::sign(passkey, &signed);
+    webauthn_assertion_envelope(
+        &authenticator_data,
+        &client_data_json,
+        signature.to_der().as_bytes(),
+    )
+    .expect("an envelope")
+}
+
+impl OldParents {
+    /// The root enrols the owner's passkey on the last row, carried by M:
+    /// the root signs, M cosigns, and the passkey's assertion over the
+    /// enrolment challenge proves possession, as the web's passkey door
+    /// writes it. Returns the entry's hash and the passkey's roster key
+    /// (compressed SEC1).
+    fn enrol_passkey_owner_key(&mut self) -> (AuthorityEntryHash, AuthorityKey) {
+        let passkey = p256::ecdsa::SigningKey::from_slice(&PASSKEY_SCALAR).expect("a P-256 scalar");
+        let public_key = passkey
+            .verifying_key()
+            .to_encoded_point(true)
+            .as_bytes()
+            .to_vec();
+        let vault_id = self.vault_id();
+        let target = owner_key_enrollment_target(&vault_id, &public_key).expect("the target");
+        let challenge =
+            owner_key_enrollment_challenge(&vault_id, self.machine, &public_key, owner())
+                .expect("the challenge");
+        let evidence = owner_passkey_possession_evidence(
+            PASSKEY_CREDENTIAL_ID,
+            &passkey_assertion(&passkey, &challenge),
+        )
+        .expect("the possession evidence");
+        let key = AuthorityKey::P256(public_key);
+        let op = AuthorityOp::OwnerKeyEnroll(OwnerKeyEnroll {
+            act: OwnerAct::by_owner(
+                owner(),
+                OwnerActKind::OwnerKeyEnrollment,
+                target,
+                ActSurface::ThisInstall,
+                OWNER_KEY_ENROLLMENT_SEEN,
+            ),
+            machine: self.machine,
+            carrier: self.machine,
+            device: DeviceAuthority {
+                key: key.clone(),
+                transport_key_binding: [0; 32],
+                attestation: AuthorityAttestation {
+                    kind: OWNER_PASSKEY_POSSESSION_KIND.to_owned(),
+                    evidence,
+                },
+                tier: AuthorityTier::Software,
+                roles: ROLE_OWNER,
+            },
+        });
+        self.root_seq += 1;
+        let seq = self.root_seq;
+        let parent = hash(self.rows.last().expect("a parent row"));
+        let row = signed(
+            Some(vault_id),
+            seq,
+            vec![parent],
+            op,
+            &self.root,
+            &[&self.node],
+        );
+        let entry = hash(&row);
+        self.rows.push(row);
+        (entry, key)
+    }
+}
+
+/// Test 21 of the row, for row PASSKEY-OWNER-KEY-DRAWS-NO-LINE (REVIEW2 #8502
+/// P2-1): test 19 with the owner's passkey as the owner key. A passkey is
+/// the owner's key (CARRIER-HOSTED-WEB-ACTS = C), though the fold takes no
+/// proof from it (CARRIER-ASKS-ON-PASSKEY-ONLY-VAULT = A), so its enrolment
+/// draws the line that refuses another enrolment of its key outside it
+/// (OLDPARENTS-ENROL-DODGE = A). From P, E enrols passkey K (carrier M); the
+/// root enrols K as an agent key on P (D) and revokes K on D (R), which
+/// waits with D. Main: no line, so D and R count, and a web-only owner's one
+/// key is revoked.
+#[test]
+fn a_revoke_above_an_agent_copy_of_a_passkey_owner_key_does_not_end_it() {
+    let mut vault = OldParents::new();
+    let before = hash(&vault.rows[1]);
+    let (enrolment, key) = vault.enrol_passkey_owner_key();
+    let agent_enrolment = vault.root_enrols_agent_key(before, key.clone());
+    let revoke = vault.push_root_row(
+        vec![agent_enrolment],
+        AuthorityOp::RevokeDevice {
+            revoked_key: key.clone(),
+        },
+    );
+    let fold = vault.fold();
+    assert!(
+        fold.valid_entries.contains(&enrolment),
+        "passkey enrolment counts: {:?}",
+        fold.issues
+    );
+    assert!(
+        !fold.valid_entries.contains(&agent_enrolment) && !fold.valid_entries.contains(&revoke),
+        "the agent copy of the passkey is refused and the revoke above it waits: {:?}",
+        fold.issues
+    );
+    assert!(
+        live_owner(&fold, &key),
+        "a revoke above the refused copy never ends the passkey: {key:?}"
+    );
+}
+
+/// Test 22 of the row, for row PASSKEY-OWNER-KEY-DRAWS-NO-LINE: the
+/// passkey's line asks for no proof (CARRIER-ASKS-ON-PASSKEY-ONLY-VAULT = A).
+/// From P, E enrols passkey K (carrier M), and M carries the owner's home
+/// pick on P. No key of the vault gives the owner's proof, so the pick lands
+/// and waits for nothing, on main and with the fix.
+#[test]
+fn an_old_parents_home_pick_lands_on_a_passkey_only_vault() {
+    let mut vault = OldParents::new();
+    let (vault_id, machine) = (vault.vault_id(), vault.machine);
+    let before = hash(&vault.rows[1]);
+    let (enrolment, key) = vault.enrol_passkey_owner_key();
+    let carried = vault.carry(vec![before], home_pick_op(vault_id, machine, PICKED_NODE));
+    let fold = vault.fold();
+    assert_enrolment_counted(&fold, &enrolment, &key);
+    assert!(
+        fold.valid_entries.contains(&carried) && !waits(&fold, &carried),
+        "the pick counts and waits for no proof: {:?}",
+        fold.issues
+    );
+    assert!(
+        in_force_home_pick(&fold),
+        "the pick is in force: {:?}",
         fold.issues
     );
 }
