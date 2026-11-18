@@ -12,6 +12,7 @@ use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::side_table::{self, Raw, SideTable};
 use crate::store::RetrievalRunRecord;
 use crate::{EntityId, Result, Vault};
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
 
 /// When a detector graded one window. Key: [`detector_window_key`].
 const GRADED: SideTable<[u8; 32], u64, Raw> =
@@ -33,14 +34,15 @@ pub struct T3Finding {
     pub label: Option<bool>,
 }
 
-/// The key of one oldest-first window under one detector wording at one tier.
+/// The key of one oldest-first window under one detector wording at one tier
+/// (`purposes::self_heal::DETECTOR_WINDOW`).
 #[must_use]
 pub fn detector_window_key(
     policy: &DetectorPolicy,
     tier: ProposedTier,
     runs: &[&RetrievalRunRecord],
 ) -> [u8; 32] {
-    let mut hash = blake3::Hasher::new();
+    let mut hash = LegacyDigest::new(purposes::self_heal::DETECTOR_WINDOW);
     for part in [
         tier.token(),
         policy.family.as_str(),
@@ -48,32 +50,32 @@ pub fn detector_window_key(
         policy.prompt.as_str(),
         policy.rubric.as_str(),
     ] {
-        hash.update(&(part.len() as u64).to_be_bytes());
-        hash.update(part.as_bytes());
+        hash.len_u64_be(part.len()).raw(part.as_bytes());
     }
-    hash.update(&(policy.consecutive as u64).to_be_bytes());
+    hash.raw(&(policy.consecutive as u64).to_be_bytes());
     for run in runs {
-        hash.update(&run.run_id.as_bytes());
+        hash.raw(&run.run_id.as_bytes());
     }
-    *hash.finalize().as_bytes()
+    hash.finish()
 }
 
 /// The key of one window under a registered T2: its seed's wording at T2b and
-/// the corpus revision it asks with, so a new revision grades it afresh.
+/// the corpus revision it asks with, so a new revision grades it afresh
+/// (`purposes::self_heal::MINTED_WINDOW`).
 #[must_use]
 pub fn minted_window_key(
     policy: &DetectorPolicy,
     revision: &[u8; 32],
     runs: &[&RetrievalRunRecord],
 ) -> [u8; 32] {
-    let mut hash = blake3::Hasher::new();
-    hash.update(&detector_window_key(
-        policy,
-        ProposedTier::PromptClassifier,
-        runs,
-    ));
-    hash.update(revision);
-    *hash.finalize().as_bytes()
+    LegacyDigest::new(purposes::self_heal::MINTED_WINDOW)
+        .raw(&detector_window_key(
+            policy,
+            ProposedTier::PromptClassifier,
+            runs,
+        ))
+        .raw(revision)
+        .finish()
 }
 
 /// The key of one T2 window once a T2a corpus is in force (FIX 2078): its
@@ -85,11 +87,24 @@ pub fn centroid_window_key(key: &[u8; 32], corpus: &CentroidCorpus) -> [u8; 32] 
     let Some(revision) = corpus.revision() else {
         return *key;
     };
-    let mut hash = blake3::Hasher::new();
-    hash.update(ProposedTier::Centroid.token().as_bytes());
-    hash.update(key);
-    hash.update(revision);
-    *hash.finalize().as_bytes()
+    centroid_revision_key(key, revision)
+}
+
+/// [`centroid_window_key`] once the corpus has a revision
+/// (`purposes::self_heal::CENTROID_WINDOW`).
+fn centroid_revision_key(key: &[u8; 32], revision: &[u8; 32]) -> [u8; 32] {
+    LegacyDigest::new(purposes::self_heal::CENTROID_WINDOW)
+        .raw(ProposedTier::Centroid.token().as_bytes())
+        .raw(key)
+        .raw(revision)
+        .finish()
+}
+
+/// [`centroid_revision_key`] for the K door
+/// (`test_doors::fingerprint_keep_self_heal_digests`). Not API.
+#[cfg(oneiron_test_support)]
+pub(crate) fn centroid_revision_key_for_test(key: &[u8; 32], revision: &[u8; 32]) -> [u8; 32] {
+    centroid_revision_key(key, revision)
 }
 
 impl Vault {

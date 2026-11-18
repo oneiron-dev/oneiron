@@ -130,12 +130,15 @@ fn a_checkpoint_sealed_after_a_new_generation_does_not_open_with_the_old_key() {
         }
     }
     let uncovered = vault
-        .data_key_generation_preview(&DataKeyGenerationWays {
-            password: None,
-            passkeys: Vec::new(),
-            escrows: Vec::new(),
-            confirmed_removals: BTreeSet::new(),
-        })
+        .data_key_generation_preview(
+            &DataKeyGenerationWays {
+                password: None,
+                passkeys: Vec::new(),
+                escrows: Vec::new(),
+                confirmed_removals: BTreeSet::new(),
+            }
+            .kept(),
+        )
         .expect("preview");
     let mut previewed: Vec<String> = uncovered.iter().map(|info| info.id.clone()).collect();
     previewed.sort();
@@ -236,7 +239,9 @@ fn a_checkpoint_sealed_before_a_new_generation_still_opens_and_restores() {
         escrows: Vec::new(),
         confirmed_removals: BTreeSet::new(),
     };
-    let preview = vault.data_key_generation_preview(&ways).expect("preview");
+    let preview = vault
+        .data_key_generation_preview(&ways.kept())
+        .expect("preview");
     assert!(preview.is_empty(), "every way is covered: {preview:?}");
     let outcome = vault
         .start_data_key_generation_as(

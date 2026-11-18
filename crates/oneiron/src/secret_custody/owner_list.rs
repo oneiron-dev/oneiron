@@ -169,6 +169,18 @@ struct Read {
     newest: u64,
 }
 
+/// One secret the list reads: its metadata (the local record's, or the kept
+/// transition's; `None` for a secret this vault knows only from the fold),
+/// the generation listed, whether this install holds that value, and the
+/// generation's known-value entry.
+struct ListedSecret<'r> {
+    id: EntityId,
+    record: Option<&'r SecretCustodyRecord>,
+    generation: u32,
+    held_here: bool,
+    print: Option<KnownEntry>,
+}
+
 impl Vault {
     /// Every secret in custody, value-free, one item per value (FIX
     /// [SECRETS-OWNER-LIST-READ]). An owner's read: the proof is revalidated
@@ -222,11 +234,13 @@ impl Vault {
                 txn,
                 &fold,
                 this,
-                id,
-                Some(&record),
-                generation,
-                true,
-                print,
+                ListedSecret {
+                    id,
+                    record: Some(&record),
+                    generation,
+                    held_here: true,
+                    print,
+                },
             )?);
         }
         for (id, generation) in fold.custody_held_generations() {
@@ -242,11 +256,13 @@ impl Vault {
                 txn,
                 &fold,
                 this,
-                id,
-                record.as_ref(),
-                generation,
-                false,
-                None,
+                ListedSecret {
+                    id,
+                    record: record.as_ref(),
+                    generation,
+                    held_here: false,
+                    print: None,
+                },
             )?);
         }
         let pairs = super::same_value::same_value_pairs_in_txn(self, txn, &fold);
@@ -269,21 +285,21 @@ impl Vault {
             && !super::run_bound::is_run_bound_name(name)
     }
 
-    /// One record's row of the list, read in `txn`: `record` is its
-    /// metadata (the local record's, or the kept transition's), `None` for a
-    /// secret this vault knows only from the fold.
-    #[allow(clippy::too_many_arguments)]
+    /// One secret's row of the list, read in `txn`.
     fn read_record_in_txn(
         &self,
         txn: &RoTxn<'_>,
         fold: &AuthorityFold,
         this: Option<EntityId>,
-        id: EntityId,
-        record: Option<&SecretCustodyRecord>,
-        generation: u32,
-        held_here: bool,
-        print: Option<KnownEntry>,
+        secret: ListedSecret<'_>,
     ) -> Result<Read> {
+        let ListedSecret {
+            id,
+            record,
+            generation,
+            held_here,
+            print,
+        } = secret;
         let store = &self.store;
         let mut holders = fold.custody_value_holders(id, generation);
         if held_here

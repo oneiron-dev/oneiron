@@ -34,8 +34,8 @@ fn concurrent_sessions_converge_and_receipts_survive_reopen() -> Result<()> {
     assert_eq!(a.frontier()?, b.frontier()?);
     assert_eq!(first.sequence, 1);
     assert_eq!(second.sequence, 2);
-    assert_eq!(first.actor, alice);
-    assert_eq!(second.actor, bob);
+    assert_eq!(first.actor, Some(alice));
+    assert_eq!(second.actor, Some(bob));
     assert_eq!(vault.code_document_at(&first.after)?, "A α β");
     assert_eq!(
         vault
@@ -299,6 +299,7 @@ fn exact_ingress_rejects_a_concurrent_base_and_rolls_back_every_file() -> Result
             operation: first,
             session: vault.open_code_document("repo", "a.rs", "ab", EntityId::now())?,
             edit: CodeFileEdit::between("a.rs", "ab", "aXb"),
+            metadata_edit: None,
             actor: owner,
             expected_text: "ab".into(),
         },
@@ -306,6 +307,7 @@ fn exact_ingress_rejects_a_concurrent_base_and_rolls_back_every_file() -> Result
             operation: second,
             session: vault.open_code_document("repo", "b.rs", "ab", EntityId::now())?,
             edit: CodeFileEdit::between("b.rs", "ab", "aYb"),
+            metadata_edit: None,
             actor: owner,
             expected_text: "ab".into(),
         },
@@ -343,6 +345,7 @@ fn exact_ingress_replays_receipts_without_reapplying_or_hiding_new_edits() -> Re
         operation: EntityId::now(),
         session: vault.open_code_document("repo", "a.rs", "ab", EntityId::now())?,
         edit: CodeFileEdit::between("a.rs", "ab", "aXb"),
+        metadata_edit: None,
         actor: actor(),
         expected_text: "ab".into(),
     }];

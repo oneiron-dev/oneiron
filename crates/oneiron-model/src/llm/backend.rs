@@ -10,6 +10,7 @@ use std::task::{Context, Poll};
 use futures_core::Stream;
 use oneiron_contracts::EntityId;
 
+use super::budget::ClosedLeaseCell;
 use super::inference_observation::InferenceObservations;
 use super::{
     InferenceCallObservation, InferenceObservationId, LlmError, LlmRequest, LlmResponse,
@@ -249,6 +250,11 @@ pub struct BudgetLease {
     physical_attempts: PhysicalAttempts,
     /// Independent pre-send conditions, conjoined across clones, not lease authority.
     dispatch_releases: Arc<Mutex<Vec<OwnedDispatchRelease>>>,
+    /// What the lease keeps once it settled or aborted, shared by its clones
+    /// and by the open record its meter holds until then. The meter drops that
+    /// record as the lease closes, and the lease answers for itself after
+    /// (FIX BUDGET-LINE-LEASE-TABLE-UNBOUNDED). Not part of its identity.
+    pub(super) closed: ClosedLeaseCell,
 }
 
 impl fmt::Debug for BudgetLease {
@@ -286,6 +292,7 @@ impl BudgetLease {
             work_context: Arc::default(),
             physical_attempts: PhysicalAttempts::default(),
             dispatch_releases: Arc::default(),
+            closed: ClosedLeaseCell::default(),
         }
     }
 

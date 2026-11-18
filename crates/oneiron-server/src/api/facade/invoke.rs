@@ -325,18 +325,25 @@ pub(super) fn facade_landing(
         auth.require_unrestricted_record_scope()?;
         return Ok(BirthPosition::default());
     }
-    let session = call.session()?;
+    let session = call
+        .session()?
+        .map(crate::api::write_facet::RequestSession::of_id);
     let write_facet = server
         .vault
         .paired_write_facet(&proof.claims().slip_id)
         .map_err(MemoryError::from)?;
-    let landing = landing_facet(&server.vault, session, &proof.scope().facets, write_facet)
-        .map_err(|_| {
-            FacadeApiError::forbidden(
-                "the session this request names does not place this credential's writes",
-                ["Name a session whose facet this credential reads, or none."],
-            )
-        })?;
+    let landing = landing_facet(
+        &server.vault,
+        session.as_ref(),
+        &proof.scope().facets,
+        write_facet,
+    )
+    .map_err(|_| {
+        FacadeApiError::forbidden(
+            "the session this request names does not place this credential's writes",
+            ["Name a session whose facet this credential reads, or none."],
+        )
+    })?;
     auth.require_record_scope_carried(
         ScopeAxis::All,
         landing.map_or(ScopeAxis::All, |facet| {

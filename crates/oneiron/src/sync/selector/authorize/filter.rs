@@ -1,5 +1,6 @@
 use super::release::{RowRelease, released_for_other_vault};
 use super::*;
+use crate::claim::history_projection::MachineHistoryReadCache;
 use crate::workspace_roster::project::extra_room_redaction;
 
 /// `withhold` names the worlds kept off the machine the export serves. Every
@@ -42,6 +43,9 @@ pub(in crate::sync::selector) fn filter_window_doc(
     // `Storage(Mdb(BadRslot))` under LMDB's single-slot rule, so the scope
     // doors take the txn instead of opening their own.
     let rtxn = vault.store.env.read_txn()?;
+    // Each machine CLAIM's history, resolved once for every control of it
+    // this export judges (FIX MACHINE-HISTORY-PAGE-PER-CONTROL-RESOLVE).
+    let history = MachineHistoryReadCache::new(vault);
     let flagged = withhold.worlds_in(vault, &rtxn)?;
     if key.world().is_some_and(|world| flagged.contains(&world)) {
         let out = create_window_doc("selector", key);
@@ -131,6 +135,10 @@ pub(in crate::sync::selector) fn filter_window_doc(
     // machines take every row as stored.
     let other_vault = matches!(reach, BirthReach::OtherVault(_));
     let mut rewritten = std::collections::BTreeMap::<EntityId, Vec<u8>>::new();
+    // Each candidate coreference claim's `same_as` link: written out, the
+    // claim carries it (SELECTOR-RELEASE-COREFERENCE-CONSENT = A).
+    let mut coreference_claims =
+        std::collections::BTreeMap::<EntityId, (EntityId, EntityId)>::new();
 
     map_for_each_value_bytes(&source_entities, |raw_key, maybe_blob| {
         let Some(blob) = maybe_blob else {
@@ -179,7 +187,7 @@ pub(in crate::sync::selector) fn filter_window_doc(
                 return;
             }
         }
-        match crate::authority::row_causal_admitted(vault, &rtxn, &id, blob) {
+        match crate::authority::row_causal_admitted_cached(&history, &rtxn, &id, blob) {
             Ok(true) => {}
             Ok(false) => return,
             // An undecodable CLAIM is a withheld row, not a failed export:
@@ -199,7 +207,14 @@ pub(in crate::sync::selector) fn filter_window_doc(
         // both hold (FIX-LIST 9433).
         let selected = note_world::selector_world_axis(selector.world);
         let held = [&grant.authority_scope.worlds, &selected];
-        let scope = match note_world::blob_scope_held_at(&vault.store, &rtxn, id, blob, &held) {
+        let scope = match note_world::blob_scope_held_at_with_history(
+            &vault.store,
+            &history,
+            &rtxn,
+            id,
+            blob,
+            &held,
+        ) {
             Ok(Some(scope)) => scope,
             Ok(None) => return,
             Err(error) => {
@@ -276,6 +291,7 @@ pub(in crate::sync::selector) fn filter_window_doc(
                         selector,
                         scope_position,
                         &facet_scope,
+                        &history,
                     )?
                     && crate::store::legal_hold::use_limit_in_txn(&vault.store, &rtxn, source)?
                         .is_none())
@@ -306,6 +322,9 @@ pub(in crate::sync::selector) fn filter_window_doc(
             }
         }
         candidates.insert(id);
+        if let Some(link) = decision.coreference_link {
+            coreference_claims.insert(id, link);
+        }
         if facets.is_some() {
             if decision.facet_visible {
                 kept.insert(id);
@@ -457,6 +476,15 @@ pub(in crate::sync::selector) fn filter_window_doc(
     crate::sync::window::test_hooks::run_device_only_flag_race(vault)?;
     kept.retain(|id| !withheld.contains(id));
     shipped.retain(|id| !withheld.contains(id));
+    // A queued answer leaves only while each link it carries is still shared
+    // into its pact (SELECTOR-RELEASE-COREFERENCE-CONSENT = A): the link of
+    // each coreference claim it ships, and below each `same_as` edge it
+    // writes. A link closure pulled a row across is written as an edge too.
+    for (id, (source, target)) in &coreference_claims {
+        if shipped.contains(id) {
+            coreference.record_carried(*source, *target);
+        }
+    }
 
     let out_entities = out.get_map("entities");
     for (id, raw) in &revision_rows {
@@ -524,6 +552,9 @@ pub(in crate::sync::selector) fn filter_window_doc(
             || (kept.contains(&tgt) && authorized_base.contains(&src))
             || window_world
         {
+            if kind == EdgeKind::SameAs {
+                coreference.record_carried(src, tgt);
+            }
             let _ = map_insert_bytes(&out_edges, raw_key, value);
         }
     });
@@ -622,6 +653,21 @@ pub(in crate::sync::selector) struct MemberAccess<'v> {
     /// stamped company content "was never saved in the member's vault"
     /// (ARCH-0043 `#leaving-a-company`).
     homed_here: bool,
+}
+
+impl MemberAccess<'_> {
+    /// What a selector answer's release compares this access by (FIX
+    /// SELECTOR-RELEASE-RECHECK): the reach the member reads relationship
+    /// labels with, `None` for an Owner's member, and whether it is homed
+    /// here.
+    pub(in crate::sync::selector) fn release_reach(
+        &self,
+    ) -> (Option<crate::access_grant::AccessContextSnapshot>, bool) {
+        (
+            self.labels.as_ref().map(|labels| labels.snapshot().clone()),
+            self.homed_here,
+        )
+    }
 }
 
 /// [`MemberAccess`] for `grant`'s member. An owner check that fails gates,

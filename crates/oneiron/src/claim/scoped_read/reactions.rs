@@ -3,9 +3,9 @@ use super::access_gate::HeldAuthority;
 use super::*;
 use crate::context_pack::{ComposedFieldProducers, ContextPack};
 use crate::disclosure::DisclosureContext;
-use crate::reaction::{REACTIONS_FIELD, ReactionPill, ReactionSignal};
+use crate::reaction::{REACTIONS_FIELD, ReactionHistoryEntry, ReactionPill, ReactionSignal};
 use crate::registry::{ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, btree_map::Entry};
 
 /// What one read admits a conversation record's reactions under, in one
 /// snapshot: the lane's own resolved request (its bound caller filter met
@@ -98,13 +98,24 @@ impl ScopedRead<'_> {
         counted: &mut Vec<EntityId>,
         named: &mut Vec<EntityId>,
     ) -> Result<Vec<String>> {
-        crate::reaction::grouped_lines_in(self.vault, rtxn, *record, named, |row| {
-            let admitted = self.row_admitted_in(rtxn, admission, &row.id)?;
-            if admitted {
-                counted.push(row.id);
-            }
-            Ok(admitted)
-        })
+        crate::reaction::grouped_lines_in(
+            self.vault,
+            rtxn,
+            *record,
+            named,
+            |row| {
+                let admitted = self.row_admitted_in(rtxn, admission, &row.id)?;
+                if admitted {
+                    counted.push(row.id);
+                }
+                Ok(admitted)
+            },
+            // A reactor is named only where this read admits their PERSON
+            // row, under the same admission and clamp as the reaction: a
+            // PERSON known only from a relationship's words stays unnamed
+            // outside it (FIX REACTION-NAMES-UNGATED).
+            |person| self.row_admitted_in(rtxn, admission, &person),
+        )
     }
 
     /// Whether `disclosure`, when the read runs under one, admits the stored
@@ -274,7 +285,7 @@ impl ScopedRead<'_> {
             })?;
         self.charge_served(counted);
         Ok(ScopedReadResult {
-            value,
+            value: self.pills_naming_readable_reactors_in(&rtxn, &admission, value)?,
             receipt: admission.receipt,
         })
     }
@@ -305,6 +316,83 @@ impl ScopedRead<'_> {
         Ok(self.row_admitted_in(&rtxn, &record, &signal.message)?
             && every_status.row_admitted_in(&rtxn, &reaction, &signal.reaction)?)
     }
+
+    /// The reactor `signal` names, when this read admits their PERSON row
+    /// under its whole admission and `disclosure`, as a reaction line names
+    /// them; otherwise none. A signal this read may see reaches it either
+    /// way, with no id in the second case (Engine ANSWER
+    /// REACTION-REACTOR-ID-SURFACES = A, 17 Nov 03:15).
+    pub fn reaction_signal_reactor_under(
+        &self,
+        signal: &ReactionSignal,
+        disclosure: Option<&DisclosureContext>,
+    ) -> Result<Option<EntityId>> {
+        let rtxn = self.grant_read_txn()?;
+        let admission = self.reaction_admission_in(&rtxn, disclosure)?;
+        Ok(self
+            .row_admitted_in(&rtxn, &admission, &signal.by)?
+            .then_some(signal.by))
+    }
+
+    /// `pills` with each pill's `by` cut to the reactors whose PERSON row
+    /// this read admits under `admission`, the admission of the reactions
+    /// they count; another reactor still counts, with no id (Engine ANSWER
+    /// REACTION-REACTOR-ID-SURFACES = A, 17 Nov 03:15).
+    fn pills_naming_readable_reactors_in(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        admission: &ReactionAdmission<'_>,
+        mut pills: BTreeMap<EntityId, Vec<ReactionPill>>,
+    ) -> Result<BTreeMap<EntityId, Vec<ReactionPill>>> {
+        let mut readable = BTreeMap::new();
+        for pill in pills.values_mut().flatten() {
+            let mut shown = Vec::with_capacity(pill.by.len());
+            for person in std::mem::take(&mut pill.by) {
+                if let Entry::Vacant(entry) = readable.entry(person) {
+                    entry.insert(self.row_admitted_in(rtxn, admission, &person)?);
+                }
+                if readable[&person] {
+                    shown.push(person);
+                }
+            }
+            pill.by = shown;
+        }
+        Ok(pills)
+    }
+
+    /// [`crate::Vault::reaction_history`] under this read, in one snapshot:
+    /// the chain of `by`'s `glyph` on `message`, each claim judged at every
+    /// status under the read's whole admission, so a removal stays readable
+    /// beside the put it removed. The chain is keyed by its reactor, so a
+    /// message this read does not read, or a reactor whose PERSON row it
+    /// does not read, has no history here at all (Engine ANSWER
+    /// REACTION-REACTOR-ID-SURFACES = A, 17 Nov 03:15). The entries come with
+    /// the receipt of that read (FIX 8669).
+    pub fn reaction_history(
+        &self,
+        message: EntityId,
+        by: EntityId,
+        glyph: &str,
+    ) -> Result<ScopedReadResult<Vec<ReactionHistoryEntry>>> {
+        let rtxn = self.grant_read_txn()?;
+        let every_status = self.at_every_claim_status()?;
+        let admission = self.reaction_admission_in(&rtxn, None)?;
+        let claims = every_status.reaction_admission_in(&rtxn, None)?;
+        let value = if self.row_admitted_in(&rtxn, &admission, &message)?
+            && self.row_admitted_in(&rtxn, &admission, &by)?
+        {
+            self.vault
+                .reaction_history_in(&rtxn, message, by, glyph, |row| {
+                    every_status.row_admitted_in(&rtxn, &claims, &row.id)
+                })?
+        } else {
+            Vec::new()
+        };
+        Ok(ScopedReadResult {
+            value,
+            receipt: admission.receipt,
+        })
+    }
 }
 
 impl<'a> ScopedRead<'a> {
@@ -325,6 +413,7 @@ impl<'a> ScopedRead<'a> {
             room_ceiling: Mutex::new(room_ceiling),
             room_ceilings_built: AtomicUsize::new(0),
             session_view: self.session_view,
+            stretch: self.stretch,
             claim_status: ClaimReadStatus::Recorded,
             recall_authority: Mutex::new(None),
             room_peer: self.room_peer,

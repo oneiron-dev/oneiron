@@ -24,12 +24,15 @@
 //! only. The report holds ids, counts, ms and the recall query strings (the
 //! corpus is synthetic test data), never the key.
 
+mod call_attribution;
 mod call_proxy;
-mod cycle;
-mod proof;
+// The lives screen's dreamed arm sets up, hints and waits on its Dreamer as
+// `load dream` does, and counts what it landed the same way.
+pub(super) mod cycle;
+pub(super) mod proof;
 mod report;
-mod server_log;
-mod setup;
+pub(super) mod server_log;
+pub(super) mod setup;
 mod turns;
 
 use std::io::Write as _;
@@ -54,8 +57,10 @@ const USAGE: &str = "usage: oneiron-bench load dream --server <oneiron-server> -
   [--cycle-timeout-s 1200] [--model-context-tokens N] [--label TEXT] [--log-extra DIRECTIVES]\n\
   (--model-base-url ends where /chat/completions follows, usually in /v1)";
 
-/// The server's log level: the Dreamer's stage and pass lines are info.
-const RUST_LOG: &str = "warn,oneiron::dreamer::stages=info";
+/// The server's log level: the Dreamer's stage and pass lines are info; the
+/// model request send lines and their step spans, which name the attempt and
+/// step of each proxy record (`call_attribution`), are debug.
+const RUST_LOG: &str = "warn,oneiron::dreamer::stages=info,oneiron::model::send=debug";
 const LOG_NAME: &str = "serve.log";
 /// The timing proxy's call records, one JSON line each.
 const CALLS_NAME: &str = "calls.jsonl";
@@ -154,6 +159,12 @@ pub(super) fn run(args: &[String]) -> Result<(), String> {
     execute(&parse(args)?)
 }
 
+/// The server's log level (`RUST_LOG`), for the lives screen's spawned
+/// dreamed arm, which watches the same Dreamer lines.
+pub(super) fn server_log_level() -> &'static str {
+    RUST_LOG
+}
+
 fn say(text: &str) {
     let _ = writeln!(
         std::io::stderr().lock(),
@@ -175,7 +186,7 @@ fn execute(plan: &Plan) -> Result<(), String> {
     let queries = turns::queries(&turns, QUERY_CAP);
     let key = setup::read_key(&plan.model_key_file)?;
     say(&format!("model preflight: {}", plan.model));
-    let preflight = setup::preflight(&plan.model_base_url, &plan.model, &key)?;
+    let preflight = setup::preflight(&plan.model_base_url, &plan.model, Some(&key))?;
     let dir = plan.work.join("dream");
     if dir.exists() {
         std::fs::remove_dir_all(&dir).map_err(|e| format!("clear {}: {e}", dir.display()))?;
@@ -198,8 +209,9 @@ fn execute(plan: &Plan) -> Result<(), String> {
             }),
         &plan.model,
         plan.model_context_tokens,
+        true,
     )?;
-    let grant = setup::grant(&plan.server, &vault)?;
+    let grant = setup::grant(&plan.server, &vault, setup::route(true))?;
     let credentials = [
         vault.mint_agent(&plan.server, "dream-seed")?,
         vault.mint_agent(&plan.server, "dream-recall")?,
@@ -251,8 +263,9 @@ fn execute(plan: &Plan) -> Result<(), String> {
     Ok(())
 }
 
-/// The report's `calls` part: the proxy's records and their spread before
-/// t0, during the cycle and after it.
+/// The report's `calls` part: the proxy's records, each with the attempt
+/// and step that sent it, their spread before t0, during the cycle and after
+/// it, and their spread per attempt.
 fn calls_json(
     report: &Value,
     proxy: Option<&call_proxy::CallProxy>,
@@ -264,13 +277,17 @@ fn calls_json(
     let calls = proxy.calls();
     let t0 = report["t0_ms_since_start"].as_f64().unwrap_or(0.0);
     let end = t0 + report["cycle"]["wall_ms"].as_f64().unwrap_or(0.0);
+    let attributed = call_attribution::attributed(&calls, &report["model_sends"]);
     json!({
         "proxy": proxy.base_url,
         "log": log.display().to_string(),
         "before_t0": call_proxy::summary(&calls, 0.0, t0),
         "during": call_proxy::summary(&calls, t0, end),
         "after": call_proxy::summary(&calls, end, f64::INFINITY),
-        "records": calls,
+        "by_attempt": attributed.by_attempt,
+        "unattributed": attributed.unattributed,
+        "ambiguous": attributed.ambiguous,
+        "records": attributed.records,
     })
 }
 

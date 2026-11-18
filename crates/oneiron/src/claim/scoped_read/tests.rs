@@ -30,6 +30,7 @@ fn put_claim(vault: &crate::Vault, id: EntityId, body: &ClaimBody, at: u64) -> R
             ENTITY_TYPE_CLAIM,
             crate::TimeRange { start: at, end: at },
             at,
+            None,
             &encode_claim_body(body)?,
         )
         .commit()
@@ -286,6 +287,7 @@ fn diagnostic_event_reads_keep_their_receipt() -> Result<()> {
     let event = DiagnosticEvent {
         detector_id: "test.failure".into(),
         event_class: DiagnosticEventClass::TestFailure,
+        signal: None,
         actor_class: "system".into(),
         actor_ref: None,
         source: DiagnosticSourceKind::Receipt,

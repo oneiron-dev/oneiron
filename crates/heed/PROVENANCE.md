@@ -199,13 +199,14 @@ their inputs.
 
 **Changed from upstream:**
 
-- `lmdb/libraries/liblmdb/mdb.c` (12,347 lines; upstream 12,327):
+- `lmdb/libraries/liblmdb/mdb.c` (12,347 lines with these hunks alone, 12,345
+  with the ITS#10551 hunks below; upstream 12,327):
   - `:6488-6506` adds `mdb_enckey_clear`, inside `#if MDB_RPAGE_CACHE`. It
     wipes the saved `me_enckey.mv_size` bytes through a volatile pointer, then
     frees them and sets the pointer to NULL and the length to zero.
   - `:6526`: `mdb_env_close` calls it in place of upstream's `free`
     (upstream `:6506`).
-  - `:11637`: `mdb_env_set_encrypt` calls it in place of upstream's `free`
+  - `:11635`: `mdb_env_set_encrypt` calls it in place of upstream's `free`
     (upstream `:11617`), once the new copy is allocated and filled. The
     `EINVAL` (bad argument, active env) and `ENOMEM` returns come first and
     keep the old key.
@@ -230,15 +231,16 @@ their inputs.
   (`:20-22`) names it.
 
 Line numbers elsewhere in this file cite the upstream `mdb.c` (SHA-256
-above). Add 20 to an upstream line after 6487 to find it in the vendored copy.
+above). Add 20 to an upstream line after 6487 to find it in the vendored copy;
+after upstream line 10678, see the ITS#10551 section for the offset.
 
 **Re-vendoring:** re-extract the crates.io archive with the checksum above.
 Re-copy the files listed, then re-apply the `mdb.c` and `Cargo.toml` hunks.
 
 ## PAGE-FULL trace: three read-only accessors
 
-FIX row TRAP-REGISTER-WAIT-PAGE-FULL: writes on several engine paths fail now
-and then with `MDB_PAGE_FULL`, and the cause is not established. The engine's
+FIX row TRAP-REGISTER-WAIT-PAGE-FULL: writes on several engine paths failed now
+and then with `MDB_PAGE_FULL` (the cause is in the next section). The engine's
 canonical accessors (`oneiron-store` `overlay_db/accessors.rs`) trace such a
 failure; the trace needs three facts heed 0.20.5 does not expose. Each is a
 read, opens no transaction, and runs only after a write has already failed:
@@ -254,6 +256,173 @@ read, opens no transaction, and runs only after a write has already failed:
 
 Each addition is marked `ONEIRON FORK (PAGE-FULL trace)`. Re-vendoring
 re-applies them with the files listed above.
+
+## PAGE-FULL cause: upstream ITS#10551 in `mdb.c`
+
+FIX row TRAP-REGISTER-WAIT-PAGE-FULL. mdb.master3 pads a leaf node's key and
+its data to even lengths separately (upstream ITS#8988, already in this copy):
+`LEAFSIZE` and `mdb_node_add` count `NODESIZE + EVEN(key) + EVEN(data)`.
+`mdb_page_split` still chose its split point with the older count,
+`NODESIZE + key + sizeof(indx_t) + data`, and padded only the running total.
+So it counted 2 bytes short for every node whose key and data are both
+odd-sized. With such nodes on the page, it could pick a split whose half was a
+few bytes over the page; `mdb_node_add` then answered `MDB_PAGE_FULL`, the
+transaction failed, and nothing was written. `vault_meta` keys are 33 bytes
+long, so many engine writes could reach it.
+
+Upstream fixed it on mdb.master3 in commit
+`567292b5d4896d558c7f4fffbf711b86432cc15a` (27 Jul 2026, "ITS#10551 lmdb: fix
+mdb_page_split nodesize calculation"). This copy carries its three hunks
+verbatim:
+
+- `mdb_branch_size` (`:9189`) returns `EVEN(sz + sizeof(indx_t))`.
+- `mdb_page_split` no longer pads the new node's size again after
+  `mdb_leaf_size` / `mdb_branch_size` (`:10695-10698`); both return even sizes.
+- Its split-point loop (`:10750`, `:10755`) adds
+  `NODESIZE + EVEN(NODEKSZ(node)) + sizeof(indx_t)` and `EVEN(NODEDSZ(node))`
+  per node, with no running `EVEN`.
+
+The page format does not change, only where a later split cuts a page; pages
+an older build wrote read as before. `mdb.c` is now 12,345 lines, SHA-256
+`ec8b7dbffb54a5775db1e67507f32cd3cad3152cbc09c5bb47bb81f2dac8df9c`. To find an
+upstream line in this copy, add 20 up to upstream line 10678, 19 from 10680 to
+10737, and 18 from 10739 on (upstream 10679 and 10738 are the two removed
+lines). `crates/oneiron-store/tests/lmdb_page_split.rs` is the regression
+test: four puts of 33-byte keys, the last of which answered `MDB_PAGE_FULL`
+before this change.
+
+**Re-vendoring:** re-apply these three hunks with the FIX 1910 hunks, or take
+an upstream mdb.master3 that contains commit `567292b5d489`.
+
+## ITS#10519: overflow runs count the authentication area
+
+FIX row LMDB-MASTER3-UPSTREAM-FIXES-AUDIT. A sealed environment (OF-570)
+keeps `AUTH` = 40 bytes (the nonce, then the tag) at the tail of every page
+and every overflow run: `mdb_page_encrypt` (`:7162`) seals the run less its
+16-byte clear prefix and its last 40 bytes, and writes the nonce and tag into
+those 40. `me_pagespace` leaves the area out of a leaf or branch page, but
+`OVPAGES` sized an overflow run from the value alone,
+`(PAGEHDRSZ-1 + size) / psize + 1`. A value whose last byte fell into the
+run's last 40 bytes got one page too few. Those value bytes were never
+sealed, the commit still succeeded, and every later read returned other bytes
+in their place. With 4 KiB pages (`PAGEHDRSZ` 24) that is every value of
+4033-4072 bytes, and the same 40 lengths below each later page end. Two paths
+size a run: `mdb_node_add` (a new value) and the in-place overwrite in
+`mdb_cursor_put` (a value written earlier in the same transaction).
+
+Upstream fixed it on mdb.master3 in commit
+`e27f3d616b7b39c8294c0135ac60476b88cc5189` (9 Jun 2026, "ITS#10519 LMDB: fix
+ovpage size calculation with encryptino & checksums"). This copy carries its
+three hunks verbatim:
+
+- `OVPAGES(env, size)` (`:1154-1158`) adds `me_sumsize + me_esumsize` under
+  `MDB_RPAGE_CACHE`.
+- Its two callers, `_mdb_cursor_put` (`:8782`) and `mdb_node_add` (`:9259`),
+  pass the env.
+
+A plain environment (no page key, no checksum) has both sizes 0 and counts as
+before. A run keeps the page count it was written with (`op_pages` in its
+node); readers, `mdb_ovpage_free` and the overwrite test read that count,
+never `OVPAGES`, so runs an older build wrote read and free as before (stored
+change: keep). A value an older build already cut stays cut: its lost bytes
+were never written. `mdb.c` is now 12,349 lines, SHA-256
+`fd8391fc979ce2bee80d3645fd996b7d713818aa72c192fe41036d3b40627a82`. Every
+line this file cites in the vendored copy after `:1154` (FIX 1910, PAGE-FULL
+trace, ITS#10551) is now 4 lines further down. To find an upstream line after
+1154 in this copy, add 4 to the offset the sections above give (4 up to
+upstream line 6487, 24 after it, and so on).
+`crates/oneiron-store/tests/lmdb_sealed_overflow.rs` is the regression test:
+values of each length near the end of a one- and a two-page run, put new and
+overwritten in their transaction, read back from a sealed environment.
+
+**Re-vendoring:** re-apply these three hunks with the hunks above, or take an
+upstream mdb.master3 that contains commit `e27f3d616b7b`.
+
+## Upstream LMDB hardening: ITS#10454, ITS#9291, ITS#10520
+
+FIX row LMDB-MASTER3-UPSTREAM-FIXES-AUDIT. The audit read every mdb.master3
+commit after this copy's base (`10161b20fef8`) up to `ba47717cc877`
+(20 Oct 2026) and took the ones that fix a fault on a path oneiron uses.
+This copy carries each one verbatim, in upstream order, plus fork hunks
+(`ONEIRON FORK (LMDB audit)`) that close faults the review of these hunks
+found (upstream's head `ba47717cc877` still has every one):
+
+- `bd9cd548b02e77fea8e9ba5d03993b1a688ef223` (15 Apr 2026, ITS#10454, "can't
+  rely on O_DSYNC on MacOS") and its follow-up
+  `4e8a093a861dbfd4adadd14fb66af9d233bf297e` (27 Apr 2026, "fix prev commit
+  for Mac OSX + WRITEMAP"). macOS does not honour `O_DSYNC` on the metapage
+  descriptor, so a commit could return before its meta page was stable.
+  `mdb_env_write_meta` (`:4811`) now syncs the meta write explicitly
+  (`MDB_FDATASYNC`, which is `F_FULLFSYNC` there), under `__APPLE__` only. The
+  follow-up corrects the WRITEMAP branch, which oneiron never takes (sealed
+  environments refuse WRITE_MAP), and is carried so the copy matches upstream.
+  - Fork (`:4929-4946`): upstream returns a failed sync as a plain error,
+    with the new meta still in the page cache, so the failed commit could
+    show on a later read or reopen. The fork handles it as the failed meta
+    `pwrite` above it: it writes the old meta back (retrying an interrupted
+    write) and marks the env `MDB_FATAL_ERROR`. If the old meta cannot be
+    written back whole, the commit is indeterminate (a reopen in the same
+    boot may see it), and the call answers `MDB_PANIC` instead of the sync's
+    error.
+- `340f04593e3a05db615b3444fac9f3572ed75e3f` (ITS#9291, "quick sanity check on
+  env open"). `mdb_env_open2` (`:5524-5556`) refuses a data file whose FREE or
+  MAIN root lies past its end (`MDB_PAGE_NOTFOUND`) or whose FREE and MAIN
+  page counts exceed it (`MDB_CORRUPTED`). Before it, a file truncated to its
+  meta pages opened, and the first read of a missing page faulted the process.
+  It is upstream's quick check, not a walk of every page: a file cut below a
+  named database's page only, with both roots and the counts inside it, still
+  opens (FIX row LMDB-TRUNCATED-NAMED-DB-PAGE-SIGBUS).
+  - Fork (`:5528-5532`): the check divides by the meta's page size, which
+    nothing had checked yet, so a meta page holding 0 faulted the process
+    (SIGFPE). The fork refuses a page size that `mdb_env_set_pagesize` would
+    refuse (under 256 or over `MAX_PAGESIZE`) with `MDB_INVALID`.
+  - Fork (`:5540-5544`): upstream compares a root with `>` against the count
+    of whole pages, so a root that starts exactly at the end of the file
+    passed. The fork compares with `>=`.
+- `c9912dbeaf10afa8a36c07a28d8daf270e7a6566` (10 Jun 2026, ITS#10520, "cleanup
+  on crypto errors and exits"). A sealed environment decrypts each page chunk
+  into a heap buffer (`menc`) that its page cache keeps until the environment
+  closes. `mdb_env_close_active` (`:6421-6424`) now frees each cached chunk's
+  buffer, and `mdb_rpage_get` frees the buffer of a chunk whose page fails to
+  open. Before it, every close leaked one buffer per chunk read (64 KiB on
+  4 KiB pages), and every open under a wrong page key leaked one.
+  - Fork (`:7126`, `:7197`): that failed chunk's mapping was leaked too,
+    since neither page cache holds it. The fork unmaps it next to
+    upstream's `free`.
+
+`mdb_enckey_clear` and its two calls (FIX 1910) are in other functions and
+unchanged. The page format does not change, and no stored row changes meaning
+(stored change: keep). `mdb.c` is now 12,415 lines, SHA-256
+`70c41d4acef742617239b29cd6f45b073e0334ce52cd6d6a4655d8ab2629d7f2`. Line
+numbers in this section cite this copy. The FIX 1910 hunks are now at `:6553`
+(`mdb_enckey_clear`), `:6590` (`mdb_env_close`) and `:11705`
+(`mdb_env_set_encrypt`); every vendored line after `:4862` that an older
+section cites has moved by up to 66 lines. Regression tests:
+`crates/oneiron-store/tests/lmdb_open_damaged_file.rs` (ITS#9291 and its
+fork hunks: a data file truncated to its meta pages, one cut so that its FREE
+root starts at the end, and one whose meta pages hold a zero page size each
+refuse to open) and
+`crates/oneiron-store/tests/lmdb_sealed_page_buffers.rs` (ITS#10520 and its
+fork hunk: the C heap stays flat over sealed read-and-close cycles, and the
+heap and the process's mappings stay flat over opens under a wrong page key;
+Linux with glibc). ITS#10454 and its fork hunk have no deterministic test:
+both are macOS durability paths that only a power loss or a failing disk
+shows.
+
+The audit left the rest, with its reasons in the FIX row: Windows- and
+BSD-only commits, the copy, compact-copy and incremental dump paths (oneiron
+never copies an environment, and heed refuses to copy a sealed one), checksums
+(oneiron sets none), PREVSNAPSHOT rollback, `MDB_MULTIPLE`, `mdb_drop` of
+MAIN_DBI, new error codes, the DUPSORT page-counter fixes (ITS#9388, #10642,
+#10643: no oneiron code reads a DUPSORT database's page counters), sub-page
+growth (ITS#7772: space use only, no fault), and ITS#10518 (`741c1e8c899d`,
+child-txn mutex init: no observable effect on glibc, macOS or Android, and on
+Windows its nested commit path frees the txn without destroying the new
+mutex, so it would leak one handle per nested commit).
+
+**Re-vendoring:** re-apply these commits and the five `ONEIRON FORK (LMDB
+audit)` hunks with the hunks above, or take an upstream mdb.master3 that
+contains commit `c9912dbeaf10` and re-check each fork hunk against it.
 
 ## Re-packaging for the Python sdist (ONE-1441)
 
