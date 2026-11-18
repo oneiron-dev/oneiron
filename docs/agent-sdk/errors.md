@@ -17,9 +17,11 @@ or downgrades the engine's refusal. Future remote codes pass through verbatim.
 | `INTERNAL_SERVER_ERROR` | Check the server endpoint, network and health. Report reproducible SDK boundary failures. |
 | `LEASE_REQUIRED` | Use light or medium recall, or present a budget lease. |
 | `IDENTITY_UNSETTLED` | The effect named a person through a mention that is not settled yet. Settle it with `self.identity.settle`, then act. |
+| `OWNER_CONFIRM_REQUIRED` | A one-way act runs only on the owner's confirm of its preview. Call `vault.owner_confirm.preview` with the verb and its input, show the owner what it takes, and pass its `confirm` back in the call. A state that changed since needs a new preview. |
 | `BUDGET_SPENT` | The line a paid call spends on is spent, or the vault's budget policy refuses it. Use light or medium recall, or ask the owner to raise the line. |
 | `MODEL_UNAVAILABLE` | The model the request needs did not answer usably; nothing stands in for it. Use light or medium recall, or ask the owner to check the model route. |
 | `MODEL_PIN_UNAVAILABLE` | The owner pinned a model that no offered seat serves; nothing stands in for it. Offer a seat for that model, or ask the owner to change or clear the pin. |
+| `HISTORY_NOT_HELD` | A memory fork names a revision of a row this machine holds no bytes of; the request was sound and the row stands. Read the row at the live head now, or read that frontier where the row's history is held. HTTP answers 409; over MCP the kind is `history_not_held` (-32020). |
 | `OFF_RECORD_SESSION_DOOR` | Use the owning off-record session handle. The canonical witness door is not that handle. |
 | `OFF_RECORD_ROOM_MANAGEMENT_CONSENT_UNAVAILABLE` | No record holds a room's consent to one caller managing its whole off-record stretch, on any host. Act as a member instead: status and witness, and save or export your own copy through the room's routes. |
 | `OWNER_BINDING_REQUIRED` | An owner device must bind this human actor in the authority log. Scope changes do not grant ownership. |
@@ -42,7 +44,7 @@ A server door refuses with these too; they pass through verbatim.
 | Code | Response |
 |---|---|
 | `DEADLINE_EXCEEDED` | The caller's signals_deadline_ms expired. HTTP answers 408 and publishes no partial signal page or advanced cursor. Retry from the previous successful cursor with a larger budget, or omit the explicit deadline. |
-| `AGENT_THREAD_WALK_IN_FORBIDDEN` | An agent may request to join a private thread it is not in; it cannot add itself. Ask the thread's members to add the agent, or have it request to join. HTTP answers 409; over MCP the kind is `agent_thread_walk_in_forbidden` (-32020). |
+| `AGENT_THREAD_WALK_IN_FORBIDDEN` | An agent whose PERSON is neither the vault's Owner nor an Admin may request to join a private thread it is not in; it cannot add itself. A pen of the Owner or an Admin walks in as that role, from now on. Ask the thread's members to add the agent, or have it request to join. HTTP answers 409; over MCP the kind is `agent_thread_walk_in_forbidden` (-32020). |
 | `writes_frozen` | This hosted vault is paused while the service prepares to reap it; the pause names no duration. Retry once the reap is aborted or the vault wakes. HTTP answers 503; over MCP the kind is `writes_frozen` (-32020). |
 | `render_deadline` | The deck render did not finish within its deadline, and nothing of it was kept. Ask again once `retry_after` seconds have passed. HTTP answers 503; over MCP the kind is `render_deadline` (-32020). |
 | `render_memory_floor` | This machine cannot hold the deck render's memory past its reserve. Ask on a host with more memory. HTTP answers 503; over MCP the kind is `render_memory_floor` (-32020). |

@@ -6,6 +6,7 @@ use crate::claim::{
 };
 use crate::settings::{ReadDestination, ReleaseHold};
 use crate::{ClaimSource, EntityId, Result, Vault};
+use oneiron_contracts::fingerprint::ContentHash;
 use std::collections::BTreeSet;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -176,7 +177,7 @@ fn destination_read(
         let hold = vault.release_hold_for(&[source.claim], destination)?;
         return Ok(Err(hold.unwrap_or(ReleaseHold::Placement)));
     };
-    if *blake3::hash(&bytes).as_bytes() != source.revision {
+    if *ContentHash::of(&bytes).as_bytes() != source.revision {
         return Ok(Err(ReleaseHold::Placement));
     }
     let world = decode_claim_body(&bytes, true)?
@@ -227,7 +228,7 @@ fn read_source(
     Ok(ScopedReadResult {
         value: RepresentationSource {
             claim: id,
-            revision: *blake3::hash(&bytes).as_bytes(),
+            revision: *ContentHash::of(&bytes).as_bytes(),
             text: text.into(),
         },
         receipt,

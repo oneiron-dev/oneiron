@@ -14,6 +14,20 @@ fn seed(vault: &Vault, id: EntityId) {
         .unwrap();
 }
 
+fn editor(vault: &Vault) -> crate::WriteActor {
+    let id = EntityId::now();
+    vault
+        .put_entity(
+            &id,
+            crate::registry::ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"actor",
+        )
+        .unwrap();
+    crate::WriteActor::new(id, crate::EdgeActorClass::Human)
+}
+
 #[test]
 fn document_crash_child() {
     let Some(path) = std::env::var_os("ONEIRON_DOCUMENT_CRASH_PATH") else {
@@ -22,13 +36,14 @@ fn document_crash_child() {
     let vault = Arc::new(Vault::open(path, VaultConfig::device()).unwrap());
     let id = EntityId::from_bytes([3; 16]).unwrap();
     seed(&vault, id);
+    let actor = editor(&vault);
     let registry = DocumentRegistry::new(vault);
     let doc = registry.open(id).unwrap();
-    doc.edit_text(0, 0, "snapshot").unwrap();
+    doc.edit_text(actor, 1, 0, 0, "snapshot").unwrap();
     drop(doc);
     // Reopening checkpoints the snapshot, then one more durable update remains.
     let doc = registry.open(id).unwrap();
-    doc.edit_text(8, 0, "+update").unwrap();
+    doc.edit_text(actor, 1, 8, 0, "+update").unwrap();
     std::process::abort();
 }
 
@@ -66,10 +81,11 @@ fn recovery_replays_snapshot_then_updates_after_kill_and_evicts_idle_docs() {
     let registry = DocumentRegistry::new(vault.clone());
     assert_eq!(registry.resident_count(), 0);
     let id = EntityId::from_bytes([3; 16]).unwrap();
+    let actor = editor(&vault);
     let doc = registry.open(id).unwrap();
     assert_eq!(doc.text().unwrap(), "snapshot+update");
     let same = registry.open(id).unwrap();
-    same.edit_text(15, 0, "!").unwrap();
+    same.edit_text(actor, 1, 15, 0, "!").unwrap();
     assert_eq!(doc.text().unwrap(), "snapshot+update!");
     assert_eq!(registry.resident_count(), 1);
     drop(same);
@@ -89,14 +105,15 @@ fn admission_and_behind_shallow_peer_get_state_never_delta_and_future_edits_conv
     let id = EntityId::now();
     seed(&vault, id);
     let registry = DocumentRegistry::new(vault.clone());
+    let actor = editor(&vault);
     let doc = registry.open(id).unwrap();
-    doc.edit_text(0, 0, "secret past").unwrap();
-    doc.edit_text(0, 11, "visible").unwrap();
+    doc.edit_text(actor, 1, 0, 0, "secret past").unwrap();
+    doc.edit_text(actor, 1, 0, 11, "visible").unwrap();
     let admission = doc
-        .export(
+        .export_admitted(
             b"selector-a",
             &VersionVector::default().encode(),
-            crate::FederationGrantScope::vault(7),
+            |_| Ok(()),
         )
         .unwrap();
     let frame = decode_document(&admission[1..]).unwrap();
@@ -105,26 +122,23 @@ fn admission_and_behind_shallow_peer_get_state_never_delta_and_future_edits_conv
     storage::import_complete(&peer, frame.payload).unwrap();
     assert_eq!(peer.get_text("body").to_string(), "visible");
     let behind = peer.oplog_vv().encode();
-    doc.edit_text(7, 0, " after purge").unwrap();
+    doc.edit_text(actor, 1, 7, 0, " after purge").unwrap();
     drop(doc);
     compact(&vault, id, false).unwrap();
     let doc = registry.open(id).unwrap();
-    doc.edit_text(19, 0, "!").unwrap();
+    doc.edit_text(actor, 1, 19, 0, "!").unwrap();
     // Pin the Loro 1.13.9 trap: an unchecked stale delta returns Ok with pending ops.
-    let raw = doc
-        .lock()
-        .unwrap()
+    let txn = vault.store.env.read_txn().unwrap();
+    let (current, _) = super::entity::document_in(&vault, &txn, id).unwrap();
+    drop(txn);
+    let raw = current
         .export(ExportMode::updates(&storage::decode_vv(&behind).unwrap()))
         .unwrap();
     let status = peer.import(&raw).unwrap();
     assert!(status.pending.is_some());
     assert_ne!(peer.get_text("body").to_string(), doc.text().unwrap());
     let response = doc
-        .export(
-            b"selector-a",
-            &behind,
-            crate::FederationGrantScope::vault(7),
-        )
+        .export_admitted(b"selector-a", &behind, |_| Ok(()))
         .unwrap();
     let frame = decode_document(&response[1..]).unwrap();
     assert_eq!(frame.kind, document_sub_tags::STATE);
@@ -132,10 +146,8 @@ fn admission_and_behind_shallow_peer_get_state_never_delta_and_future_edits_conv
     storage::import_complete(&peer, frame.payload).unwrap();
     assert_eq!(peer.get_text("body").to_string(), doc.text().unwrap());
     let vv = peer.oplog_vv().encode();
-    doc.edit_text(20, 0, " next").unwrap();
-    let delta = doc
-        .export(b"selector-a", &vv, crate::FederationGrantScope::vault(7))
-        .unwrap();
+    doc.edit_text(actor, 1, 20, 0, " next").unwrap();
+    let delta = doc.export_admitted(b"selector-a", &vv, |_| Ok(())).unwrap();
     let frame = decode_document(&delta[1..]).unwrap();
     assert_eq!(frame.kind, document_sub_tags::UPDATE);
     storage::import_complete(&peer, frame.payload).unwrap();
@@ -148,9 +160,10 @@ fn offline_document_journal_survives_eviction_and_clears_only_on_covering_ack() 
     let vault = Arc::new(Vault::open(dir.path(), VaultConfig::device()).unwrap());
     let id = EntityId::now();
     seed(&vault, id);
+    let actor = editor(&vault);
     let registry = DocumentRegistry::new(vault);
     let doc = registry.open(id).unwrap();
-    doc.edit_text(0, 0, "offline").unwrap();
+    doc.edit_text(actor, 1, 0, 0, "offline").unwrap();
     drop(doc);
     let doc = registry.open(id).unwrap();
     assert_eq!(doc.pending_frames().unwrap().len(), 1);
@@ -177,8 +190,9 @@ fn document_sweep_defers_live_editor_then_erases_snapshot_updates_and_journal() 
         Arc::new(Materializer::new()),
         "sweep",
     ));
+    let actor = editor(&vault);
     let doc = manager.documents().open(id).unwrap();
-    doc.edit_text(0, 0, "erase-this").unwrap();
+    doc.edit_text(actor, 1, 0, 0, "erase-this").unwrap();
     assert!(!vault.compact_document_for_sweep(id, true).unwrap());
     drop(doc);
     assert!(vault.compact_document_for_sweep(id, true).unwrap());
@@ -195,6 +209,7 @@ fn document_grant(vault: &Vault, id: EntityId, grant: crate::federation::Federat
             crate::registry::ENTITY_TYPE_FEDERATION_GRANT,
             TimeRange { start: 1, end: 1 },
             1,
+            None,
             &crate::federation::encode_federation_grant_body(&grant).unwrap(),
         )
         .commit()
@@ -266,8 +281,15 @@ fn peer_import_rechecks_role_selector_and_grant_in_the_committing_writer() {
     missing_write.authority_scope = crate::federation::scope_codec::read_preset();
     document_grant(&vault, grant_id, missing_write);
     assert_document_denied(
-        doc.import_from_peer(document_sub_tags::UPDATE, &update, scope, &selector)
-            .unwrap_err(),
+        doc.import_from_peer(
+            document_sub_tags::UPDATE,
+            &update,
+            scope,
+            &selector,
+            crate::authority::PeerMachine::Unknown,
+            |_| true,
+        )
+        .unwrap_err(),
     );
     let mut out_of_scope = grant.clone();
     out_of_scope.authority_scope.audience =
@@ -276,20 +298,41 @@ fn peer_import_rechecks_role_selector_and_grant_in_the_committing_writer() {
         ]));
     document_grant(&vault, grant_id, out_of_scope);
     assert_document_denied(
-        doc.import_from_peer(document_sub_tags::UPDATE, &update, scope, &selector)
-            .unwrap_err(),
+        doc.import_from_peer(
+            document_sub_tags::UPDATE,
+            &update,
+            scope,
+            &selector,
+            crate::authority::PeerMachine::Unknown,
+            |_| true,
+        )
+        .unwrap_err(),
     );
     document_grant(&vault, grant_id, grant.clone());
-    doc.import_from_peer(document_sub_tags::UPDATE, &update, scope, &selector)
-        .unwrap();
+    doc.import_from_peer(
+        document_sub_tags::UPDATE,
+        &update,
+        scope,
+        &selector,
+        crate::authority::PeerMachine::Unknown,
+        |_| true,
+    )
+    .unwrap();
     let before = doc.version_vector().unwrap();
     let next = peer_update("forbidden");
     let mut readonly = grant.clone();
     readonly.role = FederationGrantRole::Viewer;
     document_grant(&vault, grant_id, readonly.clone());
     assert_document_denied(
-        doc.import_from_peer(document_sub_tags::UPDATE, &next, scope, &selector)
-            .unwrap_err(),
+        doc.import_from_peer(
+            document_sub_tags::UPDATE,
+            &next,
+            scope,
+            &selector,
+            crate::authority::PeerMachine::Unknown,
+            |_| true,
+        )
+        .unwrap_err(),
     );
     assert_eq!(doc.version_vector().unwrap(), before);
     document_grant(&vault, grant_id, grant);
@@ -313,7 +356,14 @@ fn peer_import_rechecks_role_selector_and_grant_in_the_committing_writer() {
     let mut wrong_member = selector.clone();
     wrong_member.member_ref = EntityId::now();
     let error = doc
-        .import_from_peer(document_sub_tags::UPDATE, &next, scope, &wrong_member)
+        .import_from_peer(
+            document_sub_tags::UPDATE,
+            &next,
+            scope,
+            &wrong_member,
+            crate::authority::PeerMachine::Unknown,
+            |_| true,
+        )
         .unwrap_err();
     assert!(matches!(
         error,
@@ -329,6 +379,8 @@ fn peer_import_rechecks_role_selector_and_grant_in_the_committing_writer() {
             &next,
             crate::FederationGrantScope::vault(8),
             &selector,
+            crate::authority::PeerMachine::Unknown,
+            |_| true,
         )
         .unwrap_err();
     assert!(matches!(
@@ -343,12 +395,26 @@ fn peer_import_rechecks_role_selector_and_grant_in_the_committing_writer() {
     narrowed.bands =
         crate::sync::RequestedAxis::Named(vec![crate::federation::SelectorRange::Maintenance]);
     assert_document_denied(
-        doc.import_from_peer(document_sub_tags::UPDATE, &next, scope, &narrowed)
-            .unwrap_err(),
+        doc.import_from_peer(
+            document_sub_tags::UPDATE,
+            &next,
+            scope,
+            &narrowed,
+            crate::authority::PeerMachine::Unknown,
+            |_| true,
+        )
+        .unwrap_err(),
     );
     assert_document_denied(
-        doc.import_from_peer(document_sub_tags::STATE, &next, scope, &selector)
-            .unwrap_err(),
+        doc.import_from_peer(
+            document_sub_tags::STATE,
+            &next,
+            scope,
+            &selector,
+            crate::authority::PeerMachine::Unknown,
+            |_| true,
+        )
+        .unwrap_err(),
     );
     vault
         .delete_entity_with_options(
@@ -357,7 +423,14 @@ fn peer_import_rechecks_role_selector_and_grant_in_the_committing_writer() {
         )
         .unwrap();
     let error = doc
-        .import_from_peer(document_sub_tags::UPDATE, &next, scope, &selector)
+        .import_from_peer(
+            document_sub_tags::UPDATE,
+            &next,
+            scope,
+            &selector,
+            crate::authority::PeerMachine::Unknown,
+            |_| true,
+        )
         .unwrap_err();
     assert!(matches!(
         error,
@@ -430,6 +503,8 @@ fn peer_import_live_facet_scope_cannot_be_preserved_by_an_old_subscription() {
         &peer_update("one hop"),
         scope,
         &selector,
+        crate::authority::PeerMachine::Unknown,
+        |_| true,
     )
     .unwrap();
     let before = doc.version_vector().unwrap();
@@ -443,6 +518,8 @@ fn peer_import_live_facet_scope_cannot_be_preserved_by_an_old_subscription() {
             &peer_update("hidden"),
             scope,
             &selector,
+            crate::authority::PeerMachine::Unknown,
+            |_| true,
         )
         .unwrap_err(),
     );
@@ -459,6 +536,8 @@ fn peer_import_live_facet_scope_cannot_be_preserved_by_an_old_subscription() {
             &peer_update("no seed"),
             scope,
             &selector,
+            crate::authority::PeerMachine::Unknown,
+            |_| true,
         )
         .unwrap_err(),
     );

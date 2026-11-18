@@ -16,6 +16,16 @@
 //! until it runs out, and tries again. A refusal (an expired or revoked slip)
 //! stands until this machine is paired again.
 //!
+//! An install that is not a machine of the vault yet signs no machine proof,
+//! so it sends nothing: a freshly enrolled device has no vault authority
+//! here until its first sync lands the authority log, and its renewal at
+//! start comes before that. This is no refusal: the renewal is tried again
+//! as a failed one is, and an authority catch-up that takes rows, which the
+//! link signals, ends its wait at once (FIX
+//! DEVICE-RENEWAL-REFUSED-BEFORE-FIRST-SYNC). A catch-up that takes no rows
+//! (a pinned checkpoint that holds every entry) sends no signal, so the
+//! retry wait is what bounds that case.
+//!
 //! A move of the home the link's dials resolve to (FIX 3131) hands the link
 //! its current credential the same way, unwritten, so it rebuilds its
 //! connection on the home the move names ([`super::route`]).
@@ -24,6 +34,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
+use tokio::sync::Notify;
 use tokio::task::JoinHandle;
 use tokio::time::Instant;
 
@@ -93,6 +104,10 @@ pub(super) enum CommitOutcome {
 enum Failure {
     /// Refused for good: pair again.
     Refused(String),
+    /// Not possible yet: this install is not a machine of the vault, as its
+    /// authority log has not arrived here. Tried again after the retry wait,
+    /// or at once on the next authority catch-up that takes rows.
+    AwaitingAuthority(String),
     /// Never possible from here.
     Unusable(String),
     /// Failed this time.
@@ -115,6 +130,12 @@ pub(super) struct Renewal {
     in_flight: Option<JoinHandle<Result<Candidate, Failure>>>,
     /// Refused or unusable: no renewal until the next start.
     refused: bool,
+    /// The last renewal found this install not a machine of the vault yet:
+    /// a signal on `authority_caught_up` ends its retry wait.
+    awaiting_authority: bool,
+    /// Signalled by the link on each authority catch-up that takes rows. A
+    /// signal sent while no renewal waits is kept for the next wait.
+    authority_caught_up: Arc<Notify>,
     /// Moves of the home the link's dials resolve to (FIX 3131).
     route: super::route::RouteChanges,
 }
@@ -122,12 +143,16 @@ pub(super) struct Renewal {
 impl Renewal {
     /// Renews the credential in `credential_file` at the home `url` names,
     /// over `dialer` when the link has one, the first time at once, and
-    /// hands it back unrenewed on each move `route` sees.
+    /// hands it back unrenewed on each move `route` sees. A renewal that
+    /// finds this install not a machine of the vault yet is tried again
+    /// after the retry wait, or at once when `authority_caught_up` is
+    /// signalled.
     pub(super) fn new(
         url: &str,
         credential_file: PathBuf,
         vault: Arc<oneiron::Vault>,
         dialer: Option<Arc<dyn oneiron::sync::SyncDialer>>,
+        authority_caught_up: Arc<Notify>,
         route: super::route::RouteChanges,
     ) -> Self {
         let origin = origin(url);
@@ -146,6 +171,8 @@ impl Renewal {
             retry: RETRY_FIRST,
             in_flight: None,
             refused: false,
+            awaiting_authority: false,
+            authority_caught_up,
             route,
         }
     }
@@ -154,9 +181,12 @@ impl Renewal {
     /// with [`Self::commit`], or reports it unused with [`Self::failed`].
     /// A move of the home the link dials hands back the current credential
     /// instead ([`Self::retarget`]). Never ends once a renewal is refused,
-    /// but on such a move. Cancel-safe: a renewal still under way when the
-    /// caller stops waiting is the one the next call waits on, and one no
-    /// call takes writes nothing.
+    /// but on such a move. A renewal that found this install not a machine
+    /// of the vault yet is made again after the retry wait, or as soon as
+    /// the link signals an authority catch-up. Cancel-safe: a renewal still
+    /// under way when the caller stops waiting is the one the next call
+    /// waits on, and one no call takes writes nothing; a catch-up signalled
+    /// while no call waits is kept for the next one.
     pub(super) async fn next(&mut self) -> Candidate {
         loop {
             let Some(origin) = self.origin.clone().filter(|_| !self.refused) else {
@@ -169,11 +199,15 @@ impl Renewal {
             if self.in_flight.is_none() {
                 tokio::select! {
                     () = tokio::time::sleep_until(self.due) => {}
+                    // A catch-up may have landed this install's vault
+                    // authority: the renewal it waited on is made now.
+                    () = self.authority_caught_up.notified(), if self.awaiting_authority => {}
                     () = self.route.changed() => match self.retarget() {
                         Some(candidate) => return candidate,
                         None => continue,
                     },
                 }
+                self.awaiting_authority = false;
                 let (path, vault) = (self.credential_file.clone(), Arc::clone(&self.vault));
                 let dialer = self.dialer.clone();
                 self.in_flight = Some(tokio::spawn(async move {
@@ -214,6 +248,16 @@ impl Renewal {
                          until it expires; {PAIR_AGAIN}"
                     );
                     self.refused = true;
+                    continue;
+                }
+                Ok(Err(Failure::AwaitingAuthority(reason))) => {
+                    tracing::info!(
+                        retry_in_secs = self.retry.as_secs(),
+                        "device credential renewal waits ({reason}); it is made again once an \
+                         authority catch-up lands, or after the retry wait"
+                    );
+                    self.awaiting_authority = true;
+                    self.back_off();
                     continue;
                 }
                 Ok(Err(Failure::Unusable(reason))) => {
@@ -285,6 +329,12 @@ impl Renewal {
             retry_in_secs = self.retry.as_secs(),
             "device credential renewal failed ({reason}); the current credential stays"
         );
+        self.back_off();
+    }
+
+    /// The next renewal is due after the retry wait, which then doubles, up
+    /// to [`RETRY_MOST`].
+    fn back_off(&mut self) {
         self.due = Instant::now() + self.retry;
         self.retry = (self.retry * 2).min(RETRY_MOST);
     }
@@ -363,7 +413,7 @@ fn prepare(
         .machine_connection_proof(&current.token, timestamp, nonce)
         .map_err(|e| failed(&e))?
         .ok_or_else(|| {
-            Failure::Refused("this install is not a machine of the vault yet".to_owned())
+            Failure::AwaitingAuthority("this install is not a machine of the vault yet".to_owned())
         })?;
     Ok(Proofs {
         binding: proof.to_string(),
