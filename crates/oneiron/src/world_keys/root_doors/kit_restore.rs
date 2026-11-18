@@ -6,19 +6,23 @@ use super::*;
 /// A kit restore whose kit's authority key R is not a live owner key on the
 /// vault's roster (WAYBACK-KIT-RESTORE-NO-LIVE-R = A): a newer kit's
 /// activation revoked it, or the kit was never confirmed. Only R puts the
-/// restored machine on the roster, so the door refuses before any write.
+/// restored machine on the roster, so the kit restore door refuses before
+/// any write. The words say nothing of what was written: the sealed
+/// bundle's restore also refuses with them after its history's import
+/// committed, and between its base windows, which stay
+/// (`restore_with_kit`; REVIEW-9517 round 2 P1).
 const KIT_NOT_CURRENT: &str = "this recovery kit is not the vault's current kit: a newer kit \
                                replaced it, or it was never confirmed; use your newest kit, or \
-                               sign in from a device that is still yours; nothing was written";
+                               sign in from a device that is still yours";
 
 /// A kit restore whose kit's authority key R only a passkey vouched for,
 /// unconfirmed (lead ruling WEBPASSKEY-BLIND-SIGNATURE = B): such a key
 /// signs no machine profile, so R cannot put the restored machine on the
-/// roster, and the door refuses before any write (REVIEW-9488 P1 3).
+/// roster, and the door refuses (REVIEW-9488 P1 3). Like
+/// [`KIT_NOT_CURRENT`], the words say nothing of what was written.
 const KIT_ROOT_KEY_UNCONFIRMED: &str = "this recovery kit's root key was vouched for by a passkey \
                                         alone and is not confirmed: confirm the kit again from a \
-                                        device that is still yours, then restore; nothing was \
-                                        written";
+                                        device that is still yours, then restore";
 
 impl Vault {
     /// Kit restore: finds the stored root that matches the seed's id and both
