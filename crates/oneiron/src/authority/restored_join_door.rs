@@ -24,7 +24,7 @@ use super::world_key_support::{next_sequence, unsigned_side_entry};
 use super::*;
 use crate::consent::AuthenticatedOwner;
 use crate::error::Result;
-use crate::{TimeRange, Vault};
+use crate::{EntityId, TimeRange, Vault};
 
 /// The proof was carried by a transport credential or a host action: the
 /// owner joins a restored install from that install alone. Nothing was
