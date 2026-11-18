@@ -368,7 +368,8 @@ impl Memory<'_> {
             .owner_authorship()
             .map(|owner| EraseOwnerAct::new(owner, self.owner_surface()));
         // An owner deleting their own PERSON: once this delete's own scrub
-        // commits, its writes re-prove the binding alone (L9-52 (b)).
+        // commits, its writes re-prove the Active binding and the owner
+        // census with this owner's PERSON taken live (L9-52 (b)).
         let deleted = self.safe_delete_gated(
             &id,
             reason,
