@@ -118,6 +118,9 @@ mod report;
 pub(crate) use report::report_request_digest_for_test;
 mod triage;
 
+#[cfg(oneiron_test_support)]
+pub(crate) use self::triage::triage_digest_for_test;
+
 pub use self::bundle::{
     FEEDBACK_APPROVE_ONCE_ACTION, FEEDBACK_BUNDLE_ENCODING, FEEDBACK_BUNDLE_ENCODING_V2,
     FEEDBACK_BUNDLE_KEYS, FEEDBACK_EMBEDDING_MODEL_MAX_BYTES, FEEDBACK_ENGINE_VERSION_MAX_BYTES,
