@@ -469,12 +469,12 @@ pub(super) fn fold_authority_log_once_with(
         super::revoke_proof::derive_revoke_facts(&by_hash, &entry_ancestors, context);
     let issues_before_states = issues.len();
     // An owner key's enrolment reaches across branches, as a handoff does
-    // (row CARRIER-PROOF-OLD-PARENTS): while a fold's settled states hold a
-    // proving enrolment the folds before it did not take, and its line
+    // (row CARRIER-PROOF-OLD-PARENTS): while a fold's settled states hold an
+    // owner-key enrolment the folds before it did not take, and its line
     // changes the lines in force, the log folds again with the lines of
     // every enrolment taken so far, a key at a time, earliest first. Each
     // fold drops the issues of the one before it.
-    let mut owner_key_enrolments = super::owner_key_line::ProvingEnrolments::default();
+    let mut owner_key_enrolments = super::owner_key_line::OwnerKeyEnrolments::default();
     let mut owner_key_lines: Option<super::owner_key_line::OwnerKeyLines> = None;
     let (states, retirements) = loop {
         let context = FoldContext {

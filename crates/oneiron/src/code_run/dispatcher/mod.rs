@@ -58,6 +58,8 @@ use crate::vault::VaultId;
 use crate::{ClaimSource, Vault, WriteActor};
 
 use self::admission::{admit_recorded_answer, gate_rejection};
+#[cfg(oneiron_test_support)]
+pub(crate) use self::agent_verb::consent_request_digest_for_test;
 pub(crate) use self::agent_verb::recorded_call as recorded_verb_call;
 #[cfg(oneiron_test_support)]
 pub(crate) use self::agent_verb::resumed_write_meets_recorded_row;
@@ -65,18 +67,28 @@ pub(crate) use self::agent_verb::resumed_write_meets_recorded_row;
 pub(crate) use self::agent_verb::resumed_write_meets_stored_receipt;
 pub(crate) use self::agent_verb::write_receipt_may_have_run;
 pub(crate) use self::coordination::agent_attempt_run_ref;
+#[cfg(oneiron_test_support)]
+pub(crate) use self::emission::code_emission_record_id_for_test;
 #[cfg(test)]
 pub(super) use self::envelope::{SELF_PROVENANCE_CALL_KEY, edge_operation_gate_id};
 pub(super) use self::envelope::{SELF_PROVENANCE_SURFACE_KEY, lineage_for_run};
 pub(crate) use self::envelope::{check_write_gate_against_vault, envelope_run_ref};
 pub(crate) use self::executor_reply::{ExecutorReply, ExecutorReplyPublisher};
 use self::human_speech::HumanWaitDispatchTarget;
+#[cfg(oneiron_test_support)]
+pub(crate) use self::leader::spawn_slip_id_for_test;
 pub use self::leader::{HostPlannerBinding, HostPlannerDecisions};
 pub use self::memory_verbs::SELF_MEMORY_SEARCH_MAX_RESULTS;
+#[cfg(oneiron_test_support)]
+pub(crate) use self::program_step::{program_answer_digest_for_test, program_call_digest_for_test};
 pub(crate) use self::reader_spawn::{
     ReaderChildBinding, delegated_input, delegated_occurrence_input,
 };
 pub use self::repo_sources::RepoRequestWitness;
+#[cfg(oneiron_test_support)]
+pub(crate) use self::repo_sources::repo_params_hash_for_test;
+#[cfg(oneiron_test_support)]
+pub(crate) use self::team_submit::review_claim_id_for_test;
 
 /// Host-bound dispatcher for one first-party code run.
 ///

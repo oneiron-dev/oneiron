@@ -122,7 +122,9 @@ fn bare_vault() -> TestResult<(tempfile::TempDir, Vault)> {
 
 /// The owner rotates the custody record named `name` to `value`.
 fn rotate(vault: &Vault, name: &str, value: &str) -> oneiron::Result<()> {
-    let owner = vault.ensure_embedded_owner_actor()?;
+    let owner = vault
+        .ensure_embedded_owner_actor()
+        .map_err(|_| oneiron::Error::InvariantViolation("embedded owner"))?;
     let owner = vault.authenticate_owner(owner, &owner.to_hex(), true, GateDecisionId::now())?;
     vault
         .rotate_secret_as_owner(&owner, name, value.as_bytes(), 5)

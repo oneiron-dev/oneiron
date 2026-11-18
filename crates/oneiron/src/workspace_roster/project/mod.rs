@@ -57,7 +57,8 @@ pub(crate) use capture::{
 pub(crate) use capture::{
     exportable_revisions_in_txn, forged_revision_in_txn, inadmissible_revision_carriers,
 };
-pub(crate) use deletion::deindex_project_room;
+pub(crate) use deletion::reject_project_with_live_children;
+pub(crate) use deletion::{deindex_project_room, reject_root_project_delete};
 pub(crate) use edges::{
     validate_project_edge_delete, validate_project_edge_put, validate_project_graph,
 };

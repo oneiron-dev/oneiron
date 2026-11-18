@@ -1670,6 +1670,10 @@ struct MDB_env {
 	mdb_size_t	me_mapsize;		/**< size of the data memory map */
 	MDB_OFF_T	me_size;		/**< current file size */
 	pgno_t		me_maxpg;		/**< me_mapsize / me_psize */
+	/** ONEIRON FORK (page bound): whole pages in the data file at the last
+	 *	length read. It only lags the file, see #mdb_page_in_file().
+	 */
+	volatile pgno_t	me_file_pages;
 	MDB_dbx		*me_dbxs;		/**< array of static DB info */
 	uint16_t	*me_dbflags;	/**< array of flags from MDB_db.md_flags */
 	unsigned int	*me_dbiseqs;	/**< array of dbi sequence numbers */
@@ -1829,7 +1833,7 @@ static int	mdb_cursor_set(MDB_cursor *mc, MDB_val *key, MDB_val *data, MDB_curso
 static int	mdb_cursor_first(MDB_cursor *mc, MDB_val *key, MDB_val *data);
 static int	mdb_cursor_last(MDB_cursor *mc, MDB_val *key, MDB_val *data);
 
-static void	mdb_cursor_init(MDB_cursor *mc, MDB_txn *txn, MDB_dbi dbi, MDB_xcursor *mx);
+static int	mdb_cursor_init(MDB_cursor *mc, MDB_txn *txn, MDB_dbi dbi, MDB_xcursor *mx);
 static void	mdb_xcursor_init0(MDB_cursor *mc);
 static void	mdb_xcursor_init1(MDB_cursor *mc, MDB_node *node);
 static void	mdb_xcursor_init2(MDB_cursor *mc, MDB_xcursor *src_mx, int force);
@@ -5534,6 +5538,7 @@ mdb_env_open2(MDB_env *env, int prev)
 			MDB_dbi dbi;
 			pgno_t maxpgno = fsize / env->me_psize;
 			pgno_t sum = NUM_METAS;
+			env->me_file_pages = maxpgno;	/* ONEIRON FORK (page bound) */
 			for (dbi = FREE_DBI; dbi <= MAIN_DBI; dbi++) {
 				MDB_db *db = &meta.mm_dbs[dbi];
 				if (db->md_root != P_INVALID) {
@@ -7132,13 +7137,15 @@ retry:
 					goto found;
 				}
 			}
-			el[x].mref++;
 			if (env->me_encfunc || env->me_sumfunc) {
 				rc = mdb_rpage_encsum(env, &id3, rem, numpgs);
 				if (rc)
 					goto fail;
 				el[x].muse = id3.muse;
 			}
+			/* ONEIRON FORK (fetch rc): take the env ref only for a page that passed its
+			 * check. A failed check adds no txn entry, so no txn end would release it. */
+			el[x].mref++;
 			pthread_mutex_unlock(&env->me_rpmutex);
 			goto found;
 		}
@@ -7344,6 +7351,37 @@ static int mdb_page_chk_checksum(MDB_env *env, MDB_page *mp, size_t size)
 }
 #endif
 
+/** ONEIRON FORK (page bound): is [pgno, pgno + numpgs) inside the data file?
+ * A page past the end of a cut file would kill the process with SIGBUS
+ * when it is read through the map. Without #MDB_WRITEMAP the data file
+ * never shrinks, so #MDB_env.me_file_pages only lags the true length:
+ * a miss reads the length again before it refuses. Free pages past the
+ * end (see #MDB_meta.mm_last_pg) are never read through the map.
+ * The range test subtracts, so a corrupt run count cannot wrap past it,
+ * and a count of 0 checks the page itself.
+ * @return 0, or #MDB_CORRUPTED when the pages lie past the end.
+ */
+static int
+mdb_page_in_file(MDB_env *env, pgno_t pgno, pgno_t numpgs)
+{
+	mdb_size_t fsize = 0;
+	pgno_t pages = env->me_file_pages;
+
+	if (!numpgs)
+		numpgs = 1;
+	if (numpgs <= pages && pgno <= pages - numpgs)
+		return MDB_SUCCESS;
+	/* No length (a failed stat, a raw partition): read as before. */
+	if (mdb_fsize(env->me_fd, &fsize) != MDB_SUCCESS || !fsize)
+		return MDB_SUCCESS;
+	pages = fsize / env->me_psize;
+	env->me_file_pages = pages;
+	if (numpgs <= pages && pgno <= pages - numpgs)
+		return MDB_SUCCESS;
+	DPRINTF(("page %"Yu" past the end of the data file", pgno));
+	return MDB_CORRUPTED;
+}
+
 /** Find the address of the page corresponding to a given page number.
  * Set #MDB_TXN_ERROR on failure.
  * @param[in] mc the cursor accessing the page.
@@ -7403,6 +7441,18 @@ mdb_page_get(MDB_cursor *mc, pgno_t pgno,
 	}
 
 mapped:
+	/* ONEIRON FORK (page bound): refuse a page the file does not hold. */
+	if (!(txn->mt_env->me_flags & MDB_WRITEMAP)) {
+#if MDB_RPAGE_CACHE
+		int rc = mdb_page_in_file(txn->mt_env, pgno, (pgno_t)numpgs);
+#else
+		int rc = mdb_page_in_file(txn->mt_env, pgno, 1);
+#endif
+		if (rc) {
+			txn->mt_flags |= MDB_TXN_ERROR;
+			return rc;
+		}
+	}
 #if MDB_RPAGE_CACHE
 	if (MDB_REMAPPING(txn->mt_env->me_flags)) {
 		int rc = mdb_rpage_get(txn, pgno, numpgs, &p);
@@ -7767,8 +7817,9 @@ mdb_get(MDB_txn *txn, MDB_dbi dbi,
 	if (txn->mt_flags & MDB_TXN_BLOCKED)
 		return MDB_BAD_TXN;
 
-	mdb_cursor_init(&mc, txn, dbi, &mx);
-	rc = mdb_cursor_set(&mc, key, data, MDB_SET, &exact);
+	rc = mdb_cursor_init(&mc, txn, dbi, &mx);	/* ONEIRON FORK (fetch rc) */
+	if (rc == MDB_SUCCESS)
+		rc = mdb_cursor_set(&mc, key, data, MDB_SET, &exact);
 	/* unref all the pages when MDB_REMAP_CHUNKS - caller must copy the data
 	 * before doing anything else
 	 */
@@ -9610,8 +9661,15 @@ mdb_xcursor_init2(MDB_cursor *mc, MDB_xcursor *src_mx, int new_dupdata)
 		mx->mx_db.md_root));
 }
 
-/** Initialize a cursor for a given transaction and database. */
-static void
+/** Initialize a cursor for a given transaction and database.
+ * ONEIRON FORK (fetch rc): returns the rc of a stale named DB's root
+ * fetch: #MDB_NOTFOUND is success for an empty named tree, and
+ * #MDB_BAD_DBI for an empty main tree (the DB is gone). Upstream drops
+ * it: a failed fetch flags the txn, so the caller's next call answers
+ * #MDB_BAD_TXN instead of the fetch's own error.
+ * @return 0 on success, non-zero on failure.
+ */
+static int
 mdb_cursor_init(MDB_cursor *mc, MDB_txn *txn, MDB_dbi dbi, MDB_xcursor *mx)
 {
 	mc->mc_next = NULL;
@@ -9635,8 +9693,12 @@ mdb_cursor_init(MDB_cursor *mc, MDB_txn *txn, MDB_dbi dbi, MDB_xcursor *mx)
 		mc->mc_xcursor = NULL;
 	}
 	if (*mc->mc_dbflag & DB_STALE) {
-		mdb_page_search(mc, NULL, MDB_PS_ROOTONLY);
+		int rc = mdb_page_search(mc, NULL, MDB_PS_ROOTONLY);
+		if (rc == MDB_NOTFOUND)	/* empty: the named tree, or the main one if still stale */
+			return (*mc->mc_dbflag & DB_STALE) ? MDB_BAD_DBI : MDB_SUCCESS;
+		return rc;
 	}
+	return MDB_SUCCESS;
 }
 
 int
@@ -9658,7 +9720,12 @@ mdb_cursor_open(MDB_txn *txn, MDB_dbi dbi, MDB_cursor **ret)
 		size += sizeof(MDB_xcursor);
 
 	if ((mc = malloc(size)) != NULL) {
-		mdb_cursor_init(mc, txn, dbi, (MDB_xcursor *)(mc + 1));
+		/* ONEIRON FORK (fetch rc): a failed init holds no page ref. */
+		int rc = mdb_cursor_init(mc, txn, dbi, (MDB_xcursor *)(mc + 1));
+		if (rc) {
+			free(mc);
+			return rc;
+		}
 		if (txn->mt_cursors) {
 			mc->mc_next = txn->mt_cursors[dbi];
 			txn->mt_cursors[dbi] = mc;
@@ -9686,8 +9753,7 @@ mdb_cursor_renew(MDB_txn *txn, MDB_cursor *mc)
 	if (txn->mt_flags & MDB_TXN_BLOCKED)
 		return MDB_BAD_TXN;
 
-	mdb_cursor_init(mc, txn, mc->mc_dbi, mc->mc_xcursor);
-	return MDB_SUCCESS;
+	return mdb_cursor_init(mc, txn, mc->mc_dbi, mc->mc_xcursor);	/* ONEIRON FORK (fetch rc) */
 }
 
 /* Return the count of duplicate data items for the current key */
@@ -10593,7 +10659,9 @@ mdb_del0(MDB_txn *txn, MDB_dbi dbi,
 
 	DPRINTF(("====> delete db %u key [%s]", dbi, DKEY(key)));
 
-	mdb_cursor_init(&mc, txn, dbi, &mx);
+	rc = mdb_cursor_init(&mc, txn, dbi, &mx);	/* ONEIRON FORK (fetch rc) */
+	if (rc)
+		return rc;
 
 	if (data) {
 		op = MDB_GET_BOTH;
@@ -11073,7 +11141,9 @@ mdb_put(MDB_txn *txn, MDB_dbi dbi,
 
 	MDB_TRACE(("%p, %u, %"Z"u[%s], %"Z"u%s, %u",
 		txn, dbi, key ? key->mv_size:0, DKEY(key), data->mv_size, mdb_dval(txn, dbi, data, dbuf), flags));
-	mdb_cursor_init(&mc, txn, dbi, &mx);
+	rc = mdb_cursor_init(&mc, txn, dbi, &mx);	/* ONEIRON FORK (fetch rc) */
+	if (rc)
+		return rc;
 	mc.mc_next = txn->mt_cursors[dbi];
 	txn->mt_cursors[dbi] = &mc;
 	rc = _mdb_cursor_put(&mc, key, data, flags);
@@ -11966,7 +12036,9 @@ mdb_stat(MDB_txn *txn, MDB_dbi dbi, MDB_stat *arg)
 		MDB_cursor mc;
 		MDB_xcursor mx;
 		/* Stale, must read the DB's root. cursor_init does it for us. */
-		mdb_cursor_init(&mc, txn, dbi, &mx);
+		int rc = mdb_cursor_init(&mc, txn, dbi, &mx);	/* ONEIRON FORK (fetch rc) */
+		if (rc)
+			return rc;
 	}
 	return mdb_stat0(txn->mt_env, &txn->mt_dbs[dbi], arg);
 }
@@ -12026,8 +12098,17 @@ mdb_drop0(MDB_cursor *mc, int subs)
 		mdb_cursor_copy(mc, &mx);
 		if (MDB_REMAPPING(mc->mc_txn->mt_env->me_flags)) {
 		/* bump refcount for mx's pages */
-		for (i=0; i<mc->mc_snum; i++)
-			MDB_PAGE_GET(&mx, mc->mc_pg[i]->mp_pgno, 1, &mx.mc_pg[i]);
+		for (i=0; i<mc->mc_snum; i++) {
+			/* ONEIRON FORK (fetch rc): a failed bump leaves mx's slot
+			 * with mc's pointer and no ref of its own. Stop, and let
+			 * done: unref only the pages bumped so far.
+			 */
+			rc = MDB_PAGE_GET(&mx, mc->mc_pg[i]->mp_pgno, 1, &mx.mc_pg[i]);
+			if (rc) {
+				mx.mc_snum = i;
+				goto done;
+			}
+		}
 		}
 
 		while (mc->mc_snum > 0) {

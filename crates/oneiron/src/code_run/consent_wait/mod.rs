@@ -49,6 +49,8 @@ pub(crate) use self::replay::{
     consumed_external_code_reply, seal_parked_code_consent_in_txn, verify_code_consent_consumed,
     verify_parked_code_consent,
 };
+#[cfg(oneiron_test_support)]
+pub(crate) use self::resume::code_consent_run_origin_digest_for_test;
 pub use self::resume::{
     CodeConsentParkedRun, CodeConsentRunEndpoint, CodeConsentRunOrigin, CodeConsentRunPeer,
 };
