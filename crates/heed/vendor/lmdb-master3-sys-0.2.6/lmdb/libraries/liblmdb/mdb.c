@@ -7137,13 +7137,15 @@ retry:
 					goto found;
 				}
 			}
-			el[x].mref++;
 			if (env->me_encfunc || env->me_sumfunc) {
 				rc = mdb_rpage_encsum(env, &id3, rem, numpgs);
 				if (rc)
 					goto fail;
 				el[x].muse = id3.muse;
 			}
+			/* ONEIRON FORK (fetch rc): take the env ref only for a page that passed its
+			 * check. A failed check adds no txn entry, so no txn end would release it. */
+			el[x].mref++;
 			pthread_mutex_unlock(&env->me_rpmutex);
 			goto found;
 		}
