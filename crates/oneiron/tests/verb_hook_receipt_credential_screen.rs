@@ -27,6 +27,12 @@
 //! - (c) `fact_hook_receipt_visibility_still_follows_its_trigger_row`: green
 //!   on main and on the head (owner broad keeps 1, stranger keeps 0; the
 //!   fact trigger stays a row, plus binding/CODE/run rows on the head).
+//! - (d) `a_verb_hook_receipt_reaches_only_the_actor_that_made_the_call`
+//!   (review round 1 of #9535): a call made as another PERSON; the owner's
+//!   broad credential reads the binding and CODE but did not make the call,
+//!   so it gets none of its receipts (a receipt can carry the call's own
+//!   words in `note`). Green on main (the invocation withholds), red at
+//!   49fff85d (2 of 2), green on the head.
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use std::collections::BTreeSet;
@@ -282,11 +288,16 @@ impl Fixture {
     /// One call of `VERB` as the owner, through its pre and post chains; the
     /// post chain records the two Continue receipts. Answers the invocation.
     fn run_verb_call(&self) -> InvocationId {
+        self.run_verb_call_as(self.owner)
+    }
+
+    /// One call of `VERB` as `actor`, as `run_verb_call`.
+    fn run_verb_call_as(&self, actor: EntityId) -> InvocationId {
         let invocation = InvocationId::mint();
         let call = VerbCall {
             verb: VERB.to_owned(),
             invocation,
-            actor: self.owner,
+            actor,
             class: HookActorClass::Human,
             scope: None,
             board_epoch: None,
@@ -569,5 +580,59 @@ fn fact_hook_receipt_visibility_still_follows_its_trigger_row() {
     assert!(
         stranger_got.is_empty(),
         "LEAK: a credential that cannot read the fact trigger keeps no fact-hook receipt, got {stranger_got:?}"
+    );
+}
+
+#[test]
+fn a_verb_hook_receipt_reaches_only_the_actor_that_made_the_call() {
+    let fixture = Fixture::new();
+    fixture.put_verb_pack();
+    let caller = EntityId::now();
+    fixture
+        .vault
+        .put_entity(
+            &caller,
+            ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"the person who makes the call",
+        )
+        .expect("FIXTURE: put the calling person");
+    let invocation = fixture.run_verb_call_as(caller);
+    let kept = fixture.hook_runs(invocation);
+    assert_eq!(
+        kept.len(),
+        2,
+        "FIXTURE: the post chain records two Hook receipts for the call: {kept:?}"
+    );
+    let caller_hex = caller.to_hex();
+    for receipt in &kept {
+        assert_eq!(
+            receipt.on_behalf_of.as_deref(),
+            Some(caller_hex.as_str()),
+            "FIXTURE: a verb-hook receipt names the actor that made the call: {receipt:?}"
+        );
+    }
+    // The owner's broad credential reads the binding, CODE and the runs'
+    // (empty) read rows, as in case (a), but it did not make this call.
+    let proof = credential(&fixture, fixture.owner, BTreeSet::new());
+    let reader = fixture
+        .vault
+        .memory(fixture.owner, EdgeActorClass::Human)
+        .with_read_proof(&proof);
+    let page = reader
+        .receipts_page(PAGE_LIMIT, &["hook".to_owned()], None)
+        .expect("FIXTURE: the credential-bound kinds [hook] page reads");
+    let want = invocation.to_hex();
+    let got: Vec<_> = page
+        .receipts
+        .iter()
+        .filter(|receipt| {
+            receipt.fields.get("invocation").map(String::as_str) == Some(want.as_str())
+        })
+        .collect();
+    assert!(
+        got.is_empty(),
+        "LEAK: a credential that did not make the call reads its verb-hook receipts, got {got:?}"
     );
 }

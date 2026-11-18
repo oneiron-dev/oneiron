@@ -162,12 +162,9 @@ pub(crate) fn referenced_rows(
     vault: &Vault,
     receipt: &ReceiptRecord,
 ) -> Result<Option<Vec<EntityId>>> {
-    // A verb hook's trigger is its call's invocation id, not a row: its
-    // `fields` carry `verb` and its `invocation` equals `trigger_ref`
+    // A verb hook's trigger is its call's invocation id, not a row
     // (HOOKS-04). A fact hook's trigger is its entity and stays a row.
-    let verb_hook_trigger = receipt.receipt_kind == ReceiptKind::Hook
-        && receipt.fields.contains_key("verb")
-        && receipt.fields.get("invocation") == receipt.trigger_ref.as_ref();
+    let verb_hook_trigger = is_verb_hook_receipt(receipt);
     let mut rows: Vec<EntityId> = receipt
         .trigger_ref
         .as_deref()
@@ -215,6 +212,15 @@ pub(crate) fn referenced_rows(
         rows.extend(read);
     }
     Ok(Some(rows))
+}
+
+/// Whether `receipt` is a verb hook's: a Hook receipt whose `fields` carry
+/// `verb` and whose `invocation` equals its `trigger_ref`, the call's
+/// invocation id. A fact hook's receipt carries no `verb`.
+pub(crate) fn is_verb_hook_receipt(receipt: &ReceiptRecord) -> bool {
+    receipt.receipt_kind == ReceiptKind::Hook
+        && receipt.fields.contains_key("verb")
+        && receipt.fields.get("invocation") == receipt.trigger_ref.as_ref()
 }
 
 /// The rows a served-form receipt names: the ASSET it served and the
