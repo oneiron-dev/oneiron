@@ -96,6 +96,12 @@ pub fn write_project_goal(
     Ok(())
 }
 
+/// The id of the vault's last committed write transaction, so a test can
+/// show that a refused door committed nothing.
+pub fn last_committed_txn_id(vault: &Vault) -> usize {
+    vault.store.env.info().last_txn_id
+}
+
 /// Writes a minimal human-authored agent definition, as the owner's own
 /// agent; its id.
 ///
