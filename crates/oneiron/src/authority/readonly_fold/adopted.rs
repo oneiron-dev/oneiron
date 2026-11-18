@@ -71,7 +71,7 @@ pub(super) fn fold_adopted_in_txn(
     // them but with a root request's wait unresolved, since resolving it
     // reads this fold: the fold refuses only for the gaps these rows rest on
     // (FIX [STRANGER-GAP-STALLS-ADOPTED-TAIL-FOLD]).
-    let structure = crate::authority::log_budget::fold_belief_structure_in_txn(store, txn)?;
+    let structure = crate::authority::log_structure::fold_belief_structure_in_txn(store, txn)?;
     let believed: BTreeSet<_> = tail
         .iter()
         .filter(|(_, entry)| structure.believes(entry))

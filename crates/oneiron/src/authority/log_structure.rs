@@ -121,6 +121,35 @@ impl LocalRoots {
     }
 }
 
+/// The structure the store door's view reads (`log_budget::door_view`), over
+/// the same rows, under [`LocalRoots::read_without_request_wait_in_txn`]:
+/// the fold past an adopted image reads which tail rows this install
+/// believes here, since resolving a root request's wait reads that fold (FIX
+/// [STRANGER-GAP-STALLS-ADOPTED-TAIL-FOLD]).
+pub(super) fn fold_belief_structure_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+) -> crate::error::Result<AuthorityStructure> {
+    let evidence = super::checkpoint_adopt::cached_adopted_evidence_in_txn(store, txn)?;
+    let mut entries = Vec::new();
+    for (id, body) in authority_log_rows_in_txn(store, txn)? {
+        if evidence
+            .as_ref()
+            .is_some_and(|evidence| evidence.covers_id(&id))
+        {
+            continue;
+        }
+        entries.push(decode_authority_log_entry_body(&body)?);
+    }
+    let carried = evidence
+        .iter()
+        .flat_map(|evidence| evidence.bodies().values());
+    Ok(authority_structure_under(
+        carried.chain(&entries),
+        LocalRoots::read_without_request_wait_in_txn(store, txn)?,
+    ))
+}
+
 /// A root record its own anchor signed, alone and verifiably: it names its
 /// anchor, as a genesis names its root.
 pub(super) fn self_signed_root(entry: &AuthorityLogEntry) -> Option<[u8; 32]> {
