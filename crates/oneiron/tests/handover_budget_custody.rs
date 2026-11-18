@@ -39,14 +39,18 @@ use oneiron::agent_dispatch::{
     DEFAULT_BASE_LOGICAL_ID, DispatchAgent, SpawnSpend, SpendScopeId, SpendState,
 };
 use oneiron::attempt_queue::{AttemptQueue, RetryAttempt, RetryOutcome};
+use oneiron::authority::{ActSurface, HostSlipIssuer, MachineOwnership, MachineRole};
+use oneiron::consent::AuthenticatedOwner;
 use oneiron::dreamer_runner::{
     CompleteDreamerAttempt, DreamerHomeNodeCandidate, DreamerRunnerStore,
 };
 use oneiron::llm::run_admission::{DeclaredMaximum, LeaseUnit, MaximumShown};
+use oneiron::store::GateDecisionId;
 use oneiron::store::ports::{IdGen, ManualClock};
 use oneiron::sync::bridge::Materializer;
 use oneiron::sync::manager::WindowManager;
 use oneiron::sync::types::WindowKey;
+use oneiron::test_doors::agent_run_handover::agent_run_task_writer;
 use oneiron::test_doors::spend::{agent_run_committed_units, reserve_child_scope};
 use oneiron::test_doors::turn_programs as doors;
 use oneiron::{AttemptId, ErrorKind, HnswConfig, Vault, VaultConfig};
@@ -79,6 +83,35 @@ fn config(clock: &Arc<ManualClock>) -> VaultConfig {
     cfg
 }
 
+/// The host secret both machines root under: one host, one genesis (A's).
+/// B joins by importing A's history, so B's host root reuses A's genesis
+/// instead of minting its own.
+const HOST_SECRET: &[u8] = b"handover budget custody test host";
+
+/// The fixture host issuer, as `agent_run_handover_writer_proof.rs` builds it.
+fn host_issuer() -> HostSlipIssuer {
+    HostSlipIssuer::from_secret(HOST_SECRET).expect("FIXTURE: the fixture host issuer")
+}
+
+/// The vault's owner proof, as `agent_run_handover_writer_proof.rs` builds it.
+fn owner_proof(vault: &Vault) -> AuthenticatedOwner {
+    let person = vault
+        .ensure_embedded_owner_actor()
+        .expect("FIXTURE: the embedded owner actor");
+    vault
+        .authenticate_owner(person, &person.to_hex(), true, GateDecisionId::now())
+        .expect("FIXTURE: the authenticated owner")
+}
+
+/// The vault's genesis-bound id.
+fn vault_genesis(vault: &Vault) -> [u8; 32] {
+    vault
+        .authority_fold()
+        .expect("FIXTURE: the authority fold reads")
+        .vault_id
+        .expect("FIXTURE: the vault has a genesis-bound id")
+}
+
 /// One machine: its vault, its clock, and its live window manager.
 struct Machine {
     vault: Arc<Vault>,
@@ -88,17 +121,131 @@ struct Machine {
 }
 
 impl Machine {
-    /// Opens a machine whose clock has handed out `ids_before_open` ids
-    /// first. A manual clock mints ids from a counter that starts at 1, so
-    /// two machines need distinct offsets: the client id and every row id
-    /// each mints then differ, as two real machines' random ids do.
+    /// Opens the primary machine (A) whose clock has handed out
+    /// `ids_before_open` ids first, on the passing shape of
+    /// `agent_run_handover_writer_proof.rs` `fixture()`: an owned vault whose
+    /// install is profiled as the owner's own machine, with a loaded signer,
+    /// so its run TASKs carry proofs that count. A manual clock mints ids
+    /// from a counter that starts at 1, so two machines need distinct
+    /// offsets: the client id, the machine id and every row id each mints
+    /// then differ, as two real machines' random ids do. The `B_ID_OFFSET`
+    /// stays for that reason.
     fn open(user: &str, ids_before_open: u64) -> Self {
         let clock = ManualClock::new(T0);
         for _ in 0..ids_before_open {
             clock.ulid();
         }
         let dir = tempfile::tempdir().unwrap();
-        let vault = Arc::new(Vault::open(dir.path(), config(&clock)).unwrap());
+        let vault = Arc::new(Vault::open_owned(dir.path(), config(&clock)).unwrap());
+        vault
+            .ensure_embedded_owner_actor()
+            .expect("FIXTURE: the embedded owner actor");
+        let issuer = host_issuer();
+        vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
+        vault
+            .ensure_host_root_slip(&issuer)
+            .expect("FIXTURE: the host root slip");
+        vault
+            .ensure_serving_install_profile(&issuer, MachineRole::Owned(MachineOwnership::Yours))
+            .expect("FIXTURE: this install's serving profile");
+        vault
+            .prepare_install_signing()
+            .expect("FIXTURE: this install's signing keys load");
+        let local = vault
+            .local_machine()
+            .expect("FIXTURE: this install's machine reads")
+            .expect("FIXTURE: this install has a machine once it is profiled");
+        assert!(local.mine, "FIXTURE: the primary machine is mine");
+        let manager = Arc::new(WindowManager::new(
+            Arc::clone(&vault),
+            Arc::new(Materializer::new()),
+            user,
+        ));
+        Self {
+            vault,
+            manager,
+            clock,
+            _dir: dir,
+        }
+    }
+
+    /// Opens a machine joined to `primary`'s vault: it enrols here as the
+    /// owner's own machine on the primary, then takes the primary's signed
+    /// authority history whole, so both share the one genesis (the
+    /// primary's) and count each other's run TASK writer proofs. A fresh
+    /// vault has no genesis, so the history imports whole; the host root
+    /// slip and serving profile after the import reuse that genesis instead
+    /// of minting a new one. The shape is
+    /// `file_custody_merge_after_rewrap.rs` `enroll_second_machine` plus
+    /// `take_history`, on the `agent_run_handover_writer_proof.rs` owned
+    /// vault.
+    fn open_joined(user: &str, ids_before_open: u64, primary: &Machine) -> Self {
+        let clock = ManualClock::new(T0);
+        for _ in 0..ids_before_open {
+            clock.ulid();
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let vault = Arc::new(Vault::open_owned(dir.path(), config(&clock)).unwrap());
+        vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
+        let genesis = vault_genesis(&primary.vault);
+        let key = vault
+            .machine_encryption_key(genesis)
+            .expect("FIXTURE: the joined install's encryption key");
+        let request = vault
+            .machine_enrolment_request(genesis, key)
+            .expect("FIXTURE: the joined install's enrolment request");
+        let owner = owner_proof(&primary.vault);
+        let landing = primary
+            .vault
+            .enroll_machine(
+                &owner,
+                ActSurface::ThisInstall,
+                &request,
+                MachineRole::Owned(MachineOwnership::Yours),
+                None,
+            )
+            .expect("FIXTURE: the primary enrols the joined machine as mine");
+        assert!(
+            landing.held().is_none(),
+            "FIXTURE: the joined machine's enrolment stands"
+        );
+        vault
+            .ensure_embedded_owner_actor()
+            .expect("FIXTURE: the embedded owner actor on the joined vault");
+        let history = primary
+            .vault
+            .export_signed_authority_history()
+            .expect("FIXTURE: the primary's history exports");
+        vault
+            .import_signed_authority_history(&history)
+            .expect("FIXTURE: the joined vault takes the history");
+        let issuer = host_issuer();
+        vault
+            .ensure_host_root_slip(&issuer)
+            .expect("FIXTURE: the joined vault's host root slip reuses the genesis");
+        assert_eq!(
+            vault_genesis(&vault),
+            genesis,
+            "FIXTURE: the joined vault shares the one genesis"
+        );
+        vault
+            .ensure_serving_install_profile(&issuer, MachineRole::Owned(MachineOwnership::Yours))
+            .expect("FIXTURE: the joined install's serving profile stands");
+        vault
+            .prepare_install_signing()
+            .expect("FIXTURE: the joined install's signing keys load");
+        let local = vault
+            .local_machine()
+            .expect("FIXTURE: the joined install's machine reads")
+            .expect("FIXTURE: the joined install has a machine once it is profiled");
+        assert_eq!(
+            local.id, request.machine,
+            "FIXTURE: the joined install is the enrolled machine"
+        );
+        assert!(
+            local.mine,
+            "FIXTURE: the joined machine is mine on its own vault"
+        );
         let manager = Arc::new(WindowManager::new(
             Arc::clone(&vault),
             Arc::new(Materializer::new()),
@@ -166,11 +313,12 @@ fn reload_window(machine: &Machine) {
     machine.manager.open_window(&key).unwrap();
 }
 
-/// Opens the two machines with distinct node ids and elects B the MACRO home
-/// on both, so B takes an expired run at expiry with no grace.
+/// Opens the two machines sharing the one genesis (B joined to A) with
+/// distinct node ids and elects B the MACRO home on both, so B takes an
+/// expired run at expiry with no grace.
 fn machines() -> (Machine, Machine) {
     let a = Machine::open("machine-a", 0);
-    let b = Machine::open("machine-b", B_ID_OFFSET);
+    let b = Machine::open_joined("machine-b", B_ID_OFFSET, &a);
     let node_a = doors::node_id(&a.vault).unwrap();
     let node_b = doors::node_id(&b.vault).unwrap();
     assert_ne!(node_a, node_b, "the two machines mint distinct node ids");
@@ -261,8 +409,9 @@ fn dispatch_run(a: &Machine, funding: Funding, spent_on_a: u64) -> AttemptId {
 
 /// A releases its run lease as a closing process does, which stamps A's
 /// share on the run TASK. The TASK then rides the shared window to B, whose
-/// clock moves past the released lease.
-fn release_to_b(a: &Machine, b: &Machine) {
+/// clock moves past the released lease. `x` is the run A dispatched: B must
+/// count the TASK A wrote, or the take re-creates nothing.
+fn release_to_b(a: &Machine, b: &Machine, x: AttemptId) {
     // A closing process releases the one lease it holds; 0 would mean no run
     // TASK was minted for the dispatch.
     assert_eq!(a.vault.release_agent_run_leases().unwrap(), 1);
@@ -270,13 +419,29 @@ fn release_to_b(a: &Machine, b: &Machine) {
     let doc_b = b.doc();
     exchange(&doc_a, &doc_b);
     b.clock.set(T0 + 2);
+    let machine_a = a
+        .vault
+        .local_machine()
+        .expect("FIXTURE: A's machine reads")
+        .expect("FIXTURE: A has a machine")
+        .id;
+    assert_eq!(
+        agent_run_task_writer(&a.vault, x).expect("FIXTURE: A's TASK writer reads"),
+        Some(machine_a),
+        "FIXTURE: A's TASK carries A's proof"
+    );
+    assert_eq!(
+        agent_run_task_writer(&b.vault, x).expect("FIXTURE: B's TASK writer reads"),
+        Some(machine_a),
+        "FIXTURE: B counts a TASK A wrote"
+    );
 }
 
 /// On A: dispatches one agent run X as a hard carve of 60 under root scope R
 /// (cap 100), spends `spent_on_a` of it, and releases it to B. Answers X.
 fn dispatched_run(a: &Machine, b: &Machine, spent_on_a: u64) -> AttemptId {
     let x = dispatch_run(a, Funding::Carve, spent_on_a);
-    release_to_b(a, b);
+    release_to_b(a, b, x);
     x
 }
 
@@ -337,7 +502,7 @@ fn taker_leaves_out_what_open_children_hold() {
     let x_row = dispatcher.read_spend_scope(&x_scope).unwrap().unwrap();
     assert_eq!(x_row.spent_units, 20);
     assert_eq!(x_row.held_units, 25);
-    release_to_b(&a, &b);
+    release_to_b(&a, &b, x);
     let reap = b
         .vault
         .reap_agent_run_leases(&|_: &AgentDefinition| true)
@@ -360,7 +525,7 @@ fn taker_leaves_out_what_open_children_hold() {
 /// A's own try never ran, so it is still queued on A. Answers X.
 fn pinned_run_back_from_b(a: &Machine, b: &Machine, spent_on_b: u64) -> AttemptId {
     let x = dispatch_run(a, Funding::Pinned, 20);
-    release_to_b(a, b);
+    release_to_b(a, b, x);
     let reap = b
         .vault
         .reap_agent_run_leases(&|_: &AgentDefinition| true)
@@ -437,7 +602,7 @@ fn kept_queued_try_waits_when_the_launch_is_spent() {
 fn take_back_counts_the_takers_earlier_spend() {
     let (a, b) = machines();
     let x = dispatch_run(&a, Funding::Pinned, 20);
-    release_to_b(&a, &b);
+    release_to_b(&a, &b, x);
     let reap = b
         .vault
         .reap_agent_run_leases(&|_: &AgentDefinition| true)
@@ -1048,7 +1213,7 @@ fn take_back_keeps_a_foreign_child_hold_out_of_the_room() {
 #[test]
 fn child_on_a_machine_that_lost_the_run_is_charged_what_it_spent() {
     let (a, b) = machines();
-    let c = Machine::open("machine-c", 2 * B_ID_OFFSET);
+    let c = Machine::open_joined("machine-c", 2 * B_ID_OFFSET, &a);
     let node_b = doors::node_id(&b.vault).unwrap();
     assert_ne!(doors::node_id(&c.vault).unwrap(), node_b);
     elect(&[&c], node_b);
