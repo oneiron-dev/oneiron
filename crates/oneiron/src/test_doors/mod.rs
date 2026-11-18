@@ -77,6 +77,7 @@ pub mod consolidation;
 pub mod contact_family_heads;
 pub mod conversation_membership_index;
 pub mod conversation_training_fold;
+pub mod coreference_pact;
 pub mod credit_decay_fit;
 pub mod curator_finding;
 pub mod custody_numbered_input;

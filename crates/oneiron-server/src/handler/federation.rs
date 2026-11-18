@@ -117,20 +117,27 @@ pub(super) async fn handle_selector_fetch(
         server.vault.as_ref(),
         prepared.selector.grant_id,
     );
-    let filtered = filtered_window_doc_for_peer(
-        server.vault.as_ref(),
-        &doc,
-        key,
-        selector_grant_scope(),
-        &prepared.selector,
-        state.peer_machine(server.vault()),
-    )
-    .map_err(map_selector_filter_err)?;
+    // It also leaves only while each coreference link the filter lets it
+    // carry is still shared into its pact.
+    let (filtered, disclosure) = oneiron::sync::recording_coreference_disclosure(|| {
+        filtered_window_doc_for_peer(
+            server.vault.as_ref(),
+            &doc,
+            key,
+            selector_grant_scope(),
+            &prepared.selector,
+            state.peer_machine(server.vault()),
+        )
+    });
+    let filtered = filtered.map_err(map_selector_filter_err)?;
     let delta = filtered
         .export(ExportMode::all_updates())
         .map_err(|e| ProtocolError::ExportFailed(e.to_string()))?;
     let update = window_sync_frame(key, window_sub_tags::UPDATE, &delta)?;
-    for frame in state.selector_answers.queue(basis, vec![update]) {
+    for frame in state
+        .selector_answers
+        .queue(basis.disclosing(disclosure), vec![update])
+    {
         direct_tx
             .send(frame)
             .map_err(|_| ProtocolError::Persistence("selector response channel closed".into()))?;
