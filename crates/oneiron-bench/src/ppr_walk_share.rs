@@ -10,15 +10,14 @@ use std::time::{Duration, Instant};
 use oneiron::access_grant::{
     AccessGrant, AccessGrantCapability, AccessGrantScope, AccessGrantStatus,
 };
-use oneiron::memory::{
-    Memory, MemoryResult, RecallEffort, RecallRequest, RecallRerank, RecallRerankHost,
-    RerankDocument, RerankEgress, RerankScores, WitnessAuthor, WitnessMessage, WitnessTurn,
-};
-use oneiron::task_verb::sdk::{RecallDoor, recall_at_door};
+use oneiron::memory::{Effort, Memory, RecallScope, WitnessAuthor, WitnessMessage, WitnessTurn};
+use oneiron::off_record::{OffRecordBackendClass, OffRecordSession};
+use oneiron::rerank::{RerankCandidate, Reranker};
+use oneiron::retrieval_depth::RecallExecution;
 use oneiron::test_support::{bind_host_owner, provision_engine_machines, test_host_issuer};
 use oneiron::{
-    BudgetExhaustionPolicy, BudgetGuard, BudgetLease, EdgeActorClass, EdgeKind, EntityId,
-    TimeRange, Vault, VaultConfig, WriteActor,
+    BudgetExhaustionPolicy, BudgetGuard, EdgeActorClass, EdgeKind, EntityId, TimeRange, Vault,
+    VaultConfig, WriteActor,
 };
 use rand::{Rng, SeedableRng, rngs::StdRng};
 use serde::Serialize;
@@ -266,30 +265,21 @@ impl tracing::Subscriber for WalkTimer {
     }
 }
 
-/// A [`RecallRerankHost`] scoring each block in order, highest first, with no model latency: the
+/// A [`Reranker`] scoring each block in order, highest first, with no model latency: the
 /// measured walk share is an upper bound for a recall with a real reranker.
-struct StubReranker {
-    lease: BudgetLease,
-}
+struct StubReranker;
 
-impl RecallRerankHost for StubReranker {
-    fn lease(&self) -> &BudgetLease {
-        &self.lease
+impl Reranker for StubReranker {
+    fn id(&self) -> &str {
+        "bench/stub-reranker@v1"
     }
 
-    fn score(
+    fn rerank(
         &self,
         _query: &str,
-        documents: &[RerankDocument<'_>],
-        _egress: &RerankEgress<'_>,
-        _answer_at: Option<Instant>,
-        _cancel: Option<oneiron::llm::WorkCancel>,
-    ) -> MemoryResult<RerankScores> {
-        Ok(RerankScores {
-            scores: (0..documents.len()).map(|rank| -(rank as f32)).collect(),
-            model: "bench/stub-reranker@v1".to_owned(),
-            served_model: None,
-        })
+        candidates: &[RerankCandidate<'_>],
+    ) -> oneiron::Result<Vec<f32>> {
+        Ok((0..candidates.len()).map(|rank| -(rank as f32)).collect())
     }
 }
 
@@ -403,9 +393,15 @@ struct CallRow {
     error: Option<String>,
 }
 
-/// One High recall through the reranked door, timed wall-clock. A recall error is returned as a
-/// string, never raised: the run goes on.
-fn timed_recall(memory: &Memory<'_>, query: &str) -> (usize, Option<String>, u64) {
+/// One High recall in the bench's off-record session, timed wall-clock: the in-session recall
+/// (`Memory::recall_in_session_with_execution`, one pass of the retrieval pipeline through pack
+/// assembly) with the stub reranker. A recall error is returned as a string, never raised: the
+/// run goes on.
+fn timed_recall(
+    memory: &Memory<'_>,
+    session: &OffRecordSession<'_>,
+    query: &str,
+) -> (usize, Option<String>, u64) {
     let guard = BudgetGuard::new(
         "ppr-walk-share",
         10_000_000,
@@ -415,23 +411,20 @@ fn timed_recall(memory: &Memory<'_>, query: &str) -> (usize, Option<String>, u64
         Ok(admission) => admission.lease,
         Err(denied) => return (0, Some(format!("budget admission refused: {denied:?}")), 0),
     };
-    let host = StubReranker { lease };
+    let execution = RecallExecution {
+        reranker: Some(&StubReranker),
+        ..RecallExecution::default()
+    };
     let started = Instant::now();
-    let outcome = recall_at_door(
-        memory,
-        RecallRequest {
-            query: query.to_owned(),
-            effort: Some(RecallEffort::High),
-            limit: Some(10),
-            ..RecallRequest::default()
-        },
-        |_| None,
-        &RecallDoor {
-            hyde: None,
-            arrived: Instant::now(),
-            on_cut: None,
-            rerank: RecallRerank::Host(&host),
-        },
+    let outcome = memory.recall_in_session_with_execution(
+        session,
+        query,
+        Effort::High,
+        &RecallScope::default(),
+        10,
+        None,
+        Some(&lease),
+        &execution,
     );
     let wall_us = started.elapsed().as_micros().min(u128::from(u64::MAX)) as u64;
     match outcome {
@@ -467,6 +460,15 @@ fn run_with(
     // A permit alone reads no message: a message with no space is the owner's, and one in a
     // space needs a MessagesRead grant on it (the fleet bench's own setup, fleet/workload.rs).
     let space = gen_id(&mut rng);
+    // A message naming a space is refused unless the space is a live RELATIONSHIP
+    // (gate/witness_message.rs).
+    vault.put_entity(
+        &space,
+        oneiron::registry::ENTITY_TYPE_RELATIONSHIP,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"ppr-walk-share space",
+    )?;
     vault.create_access_grant(
         &gen_id(&mut rng),
         &AccessGrant {
@@ -487,12 +489,17 @@ fn run_with(
         ("owner", vault.memory(owner, EdgeActorClass::Human)),
         ("agent", vault.memory(agent, EdgeActorClass::Agent)),
     ];
+    // The ruling's recall is the in-session one (memory/recall/admission.rs
+    // recall_in_session): one session for the run, both readers recall in it.
+    let session = vault
+        .off_record_session_vault()
+        .enter("ppr-walk-share", OffRecordBackendClass::Local)?;
     let mut rows = Vec::new();
     for (case, query) in queries.iter().enumerate() {
         for (reader, memory) in &readers {
             for rep in 0..=settings.repetitions {
                 timer.take();
-                let (results, error, wall_us) = timed_recall(memory, query);
+                let (results, error, wall_us) = timed_recall(memory, &session, query);
                 let totals = timer.take();
                 if rep == 0 {
                     continue;
@@ -573,7 +580,7 @@ fn summary(rows: &[CallRow], settings: &Settings) -> serde_json::Value {
                 "requested_edges": settings.records.saturating_mul(settings.edges_per_record),
                 "seed": settings.seed,
             },
-            "note": "stub reranker (no model latency): the share is an upper bound for a recall with a real reranker. A paid High recall_at_door runs the retrieval pipeline twice per call (capture and scored passes); recall_in_session runs one pass of the same pipeline (memory/recall/admission.rs:164), so compare the share, not per-call times or walk counts. requested_edges counts edge writes; repeated pairs upsert",
+            "note": "stub reranker (no model latency): the share is an upper bound for a recall with a real reranker. Each timed call is one High recall_in_session_with_execution in an off-record session (one pass of the retrieval pipeline through pack assembly). requested_edges counts edge writes; repeated pairs upsert",
         }
     })
 }
