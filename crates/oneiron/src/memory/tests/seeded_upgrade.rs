@@ -88,7 +88,9 @@ fn correction(
     first: &str,
     second: &str,
 ) -> (EntityId, EntityId) {
-    let facade = facade_for(vault, put_person(vault, 0x81));
+    let writer = put_person(vault, 0x81);
+    grant_reads(vault, writer);
+    let facade = facade_for(vault, writer);
     let subject = put_person(vault, 0x82);
     let first = facade
         .claim_upsert(&claim_input(
@@ -114,7 +116,9 @@ fn residence_correction(vault: &crate::Vault) -> (EntityId, EntityId) {
 
 /// Proposes `value` on `predicate` through the facade as an inference.
 fn inferred(vault: &crate::Vault, seed: u8, predicate: &str, value: &str) -> EntityId {
-    let facade = facade_for(vault, put_person(vault, seed));
+    let writer = put_person(vault, seed);
+    grant_reads(vault, writer);
+    let facade = facade_for(vault, writer);
     let receipt = facade
         .claim_upsert(&claim_input(
             predicate,

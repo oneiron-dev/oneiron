@@ -713,6 +713,10 @@ fn code_run_memory_search_routes_through_dispatcher() -> Result<()> {
 fn code_run_public_put_claim_trap_stamps_host_fields() -> Result<()> {
     let (_dir, vault) = open_test_vault();
     let actor = seed_person(&vault, 0x64);
+    crate::conversation_dag::fixtures::grant_reads(
+        &vault,
+        WriteActor::new(actor, EdgeActorClass::Agent),
+    );
     let subject = seed_person(&vault, 0xB4);
     let claim = EntityId::from_bytes([0xC4; 16]).expect("claim id");
     let candidate = ClaimCandidate::new(
@@ -1009,6 +1013,10 @@ fn code_run_full_access_write_traps_route_per_op_through_gate_and_receipts() -> 
 fn code_run_edge_and_supersede_traps_force_generated_source_into_g2() -> Result<()> {
     let (_dir, vault) = open_test_vault();
     let actor = seed_person(&vault, 0xAB);
+    crate::conversation_dag::fixtures::grant_reads(
+        &vault,
+        WriteActor::new(actor, EdgeActorClass::Agent),
+    );
     let dispatcher = HostSelfDispatcher::new(
         &vault,
         WriteActor::new(actor, EdgeActorClass::Agent),
@@ -1153,6 +1161,10 @@ fn code_run_write_gate_denial_persists_decision() -> Result<()> {
 fn code_run_stale_supersede_fails_loudly() -> Result<()> {
     let (_dir, vault) = open_test_vault();
     let actor = seed_first_party_actor(&vault);
+    crate::conversation_dag::fixtures::grant_reads(
+        &vault,
+        WriteActor::new(actor, EdgeActorClass::Agent),
+    );
     install_self_memory_allow_policy(&vault, actor)?;
     let subject = seed_person(&vault, 0x34);
     let old = EntityId::from_bytes([0x31; 16]).expect("old claim id");
@@ -2350,6 +2362,14 @@ fn code_run_claim_doors_preserve_owned_keyed_revisions() -> Result<()> {
     let proof = crate::test_util::embedded_owner_proof(&vault);
     let actor = seed_first_party_actor(&vault);
     let owner = seed_person(&vault, 0xB7);
+    crate::conversation_dag::fixtures::grant_reads(
+        &vault,
+        WriteActor::new(owner, EdgeActorClass::Agent),
+    );
+    crate::conversation_dag::fixtures::grant_reads(
+        &vault,
+        WriteActor::new(actor, EdgeActorClass::Agent),
+    );
     // Admit the owner's setup through the real gate before testing another actor.
     install_self_memory_allow_policy(&vault, owner)?;
     let memory = vault.memory(owner, EdgeActorClass::Agent);
