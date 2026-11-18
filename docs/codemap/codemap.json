@@ -5313,7 +5313,7 @@
      "path": "src/authority/machine_answers.rs",
      "purpose": "The owner's machine answers as one install writes them (mesh PR1b): he enrols, re-marks and removes a…",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "enum": 1,
       "fn": 5
      }
@@ -5369,7 +5369,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/authority/machine_profile/apply.rs",
@@ -5820,7 +5820,7 @@
      "path": "src/authority/owner_proof.rs",
      "purpose": "An owner act's proof (row CARRIER-OWNER-PROOF; the lead's rulings 15 Nov 12:1x and 13:2x, FIX…",
      "surface": {
-      "crate-vis": 14,
+      "crate-vis": 15,
       "fn": 2
      }
     },
@@ -8109,7 +8109,7 @@
      "path": "src/batch/claim_candidate_apply.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 9
      }
     },
     {
@@ -19005,7 +19005,7 @@
      "purpose": "Encoding and decoding of durable code-run replay records",
      "surface": {
       "const": 6,
-      "crate-vis": 7,
+      "crate-vis": 8,
       "fn": 2,
       "re-export": 1
      }
@@ -19038,7 +19038,7 @@
      "path": "src/code_run/codec/pending_step.rs",
      "purpose": "The pinned MessagePack codec of a code run's pending step (FIX 7703): its keys, its encoding and decoding…",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -19178,7 +19178,7 @@
      "path": "src/code_run/consent_wait/mod.rs",
      "purpose": "Bound code consent waits (DOOR-079 1a, toward CODE-RUNTIME-03)",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "re-export": 6
      }
     },
@@ -19221,7 +19221,7 @@
      "path": "src/code_run/consent_wait/resume.rs",
      "purpose": "The MCP caller a code run parked on a code consent wait was admitted for, kept with the wait, and the parked…",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 2,
       "re-export": 1,
       "struct": 1
@@ -19428,7 +19428,7 @@
      "path": "src/code_run/dispatcher/agent_verb.rs",
      "purpose": "Code mode's verb-table calls: the run's write origin and the receipt a write keeps",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "fn": 1,
       "re-export": 1
      }
@@ -19450,7 +19450,7 @@
      "path": "src/code_run/dispatcher/agent_verb/consent.rs",
      "purpose": "Code mode's code consent call site, and the durable wait a held `connector.call` or a held browser act parks…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -19563,7 +19563,7 @@
      "path": "src/code_run/dispatcher/emission.rs",
      "purpose": "Code-emission admission and the deterministic admission record the free lane cites",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -19636,7 +19636,7 @@
      "path": "src/code_run/dispatcher/leader.rs",
      "purpose": "Host entry points for the CEO starter on a leased, task-bound leader",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "fn": 9,
       "struct": 2
      }
@@ -19661,7 +19661,7 @@
      "path": "src/code_run/dispatcher/mod.rs",
      "purpose": "State and export seam for the host-bound first-party dispatcher",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 17,
       "re-export": 6,
       "struct": 1,
       "type": 1
@@ -19674,7 +19674,7 @@
      "path": "src/code_run/dispatcher/program_step.rs",
      "purpose": "A turn program's code run (DOOR-141 PR2): the program's own leased try, lent to the one callable SKILL its…",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 16
      }
     },
     {
@@ -19739,7 +19739,7 @@
      "path": "src/code_run/dispatcher/repo_sources.rs",
      "purpose": "The attribution a run's proposal records (FIX 6867, G1 PR2b; CALL \"FIX 6867 review policy and provenance\")…",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 1,
       "struct": 1
      }
@@ -19805,13 +19805,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/code_run/dispatcher/team_submit.rs",
      "purpose": "`self.team.submit` (OF-540): a team's leader submits one pinned output of its team for the owner's…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -19967,7 +19967,7 @@
      "purpose": "A live agent run's attachment to the one credential that may act for it (OF-181)",
      "surface": {
       "const": 2,
-      "crate-vis": 1,
+      "crate-vis": 3,
       "fn": 10,
       "struct": 2
      }
@@ -19979,7 +19979,7 @@
      "path": "src/code_run/mod.rs",
      "purpose": "Host-side skeleton for first-party `self.*` code-mode calls",
      "surface": {
-      "crate-vis": 68,
+      "crate-vis": 72,
       "mod": 8,
       "re-export": 39
      }
@@ -20269,7 +20269,7 @@
      "path": "src/code_run/replay_capsule.rs",
      "purpose": "Step replay capsules (FIX 3028, ARCH-0037 #lineage-credit, ARCH-0053): the exact model input of a canonical…",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "fn": 8,
       "re-export": 2,
       "struct": 1
@@ -30734,6 +30734,32 @@
      "surface": {
       "crate-vis": 2
      }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "DisplayEditAccepted",
+      "DisplayEditProposal",
+      "DisplayEditTarget"
+     ],
+     "path": "src/display_edits/mod.rs",
+     "purpose": "Display-edit proposals (FIX [SECRETS-LABEL-PURPOSE-VERBS], [DEVICE-DISPLAY-NAME]: \"an agent may file it as…",
+     "surface": {
+      "const": 3,
+      "crate-vis": 6,
+      "enum": 1,
+      "fn": 3,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/display_edits/tables.rs",
+     "purpose": "The side table `display_edits` keeps: each row declares one, and the crate's build script places it in…",
+     "surface": {}
     },
     {
      "bucket": "L",
@@ -50155,7 +50181,7 @@
      "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
      "surface": {
       "crate-vis": 29,
-      "mod": 223,
+      "mod": 225,
       "re-export": 106
      }
     },
@@ -53115,6 +53141,46 @@
      "surface": {
       "re-export": 1
      }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "MachineNameCell"
+     ],
+     "path": "src/machine_names/exchange.rs",
+     "purpose": "The machine-name cells the owner's machines exchange through their residence home (FIX…",
+     "surface": {
+      "crate-vis": 7,
+      "enum": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "MachineListing",
+      "MachineNameSource",
+      "MachineOwnerNameSet"
+     ],
+     "path": "src/machine_names/mod.rs",
+     "purpose": "The names the owner's machine list shows (FIX [DEVICE-DISPLAY-NAME]; Engine TASK SECRETS-VIEW-ROWS, Mon 16…",
+     "surface": {
+      "const": 1,
+      "crate-vis": 5,
+      "enum": 1,
+      "fn": 2,
+      "re-export": 1,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/machine_names/tables.rs",
+     "purpose": "The side table `machine_names` keeps: each row declares one, and the crate's build script places it in…",
+     "surface": {}
     },
     {
      "bucket": "m",
@@ -73405,13 +73471,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/secret_custody/handle_labels.rs",
      "purpose": "An owner's display label on a secret handle (L04 s43 FIX 12541, engine part)",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 8,
       "fn": 3,
       "re-export": 2
      }
@@ -73423,6 +73489,7 @@
      "path": "src/secret_custody/handle_purpose.rs",
      "purpose": "An owner's purpose answer is authored content, not a label or a grant",
      "surface": {
+      "crate-vis": 1,
       "fn": 2,
       "re-export": 1
      }
@@ -84067,7 +84134,7 @@
      "path": "src/store/secret_handle_labels.rs",
      "purpose": "The owner-set labels on custody handles: one stored label per custody record, with the Gate receipt of the…",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "re-export": 1
      }
     },
@@ -85885,7 +85952,7 @@
      "path": "src/sync/client/residence.rs",
      "purpose": "Bounded on-demand home reads on an independent short-lived authenticated socket",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 16,
       "re-export": 6
      }
     },
@@ -86178,6 +86245,16 @@
      "notable": [],
      "path": "src/sync/client/residence/machine_history/freshness.rs",
      "purpose": "Freshness for local pins whose history is no longer owed",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/client/residence/machine_names.rs",
+     "purpose": "This machine's machine-name cells to its residence home, and the home's to it, once each steady pass (FIX…",
      "surface": {
       "crate-vis": 1
      }
@@ -88067,7 +88144,7 @@
       "const": 2,
       "crate-vis": 25,
       "fn": 10,
-      "re-export": 31
+      "re-export": 32
      }
     },
     {
@@ -88530,6 +88607,16 @@
       "enum": 1,
       "fn": 3,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/residence/machine_names.rs",
+     "purpose": "`residence.machine_names.exchange` at the home (FIX [DEVICE-DISPLAY-NAME]; Engine RULING…",
+     "surface": {
+      "fn": 1
      }
     },
     {
@@ -94161,6 +94248,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/test_doors/fingerprint_keep_code_run_digests.rs",
+     "purpose": "K-proof door for code-run digests that existing rows, ids and keys hold",
+     "surface": {
+      "fn": 12
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/test_doors/fingerprint_keep_codec_digests.rs",
      "purpose": "Door for `tests/fingerprint_keep_codec_digests.rs` (PLAN-UC-04 stage 6.1c): a calendar connector literal's…",
      "surface": {
@@ -94863,6 +94960,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/test_doors/machine_names.rs",
+     "purpose": "A door for `tests/machine_names_exchange.rs`: a machine's half of its steady-pass exchange of machine-name…",
+     "surface": {
+      "fn": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -95026,7 +95133,7 @@
      "purpose": "Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD)",
      "surface": {
       "fn": 1,
-      "mod": 313,
+      "mod": 315,
       "re-export": 1
      }
     },
@@ -99024,6 +99131,25 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "DisplayEditAcceptReply",
+      "DisplayEditAnswerRequest",
+      "DisplayEditDeclineReply",
+      "DisplayEditItem",
+      "DisplayEditListReply",
+      "DisplayEditProposeRequest"
+     ],
+     "path": "src/verbs/display_edits.rs",
+     "purpose": "Display-edit proposals as typed rows (FIX [SECRETS-LABEL-PURPOSE-VERBS], [DEVICE-DISPLAY-NAME]; Engine…",
+     "surface": {
+      "fn": 4,
+      "re-export": 1,
+      "struct": 6
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -99573,6 +99699,22 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "MachineListItem",
+      "MachineListReply",
+      "MachineNameSetReply",
+      "MachineNameSetRequest"
+     ],
+     "path": "src/verbs/machine_names.rs",
+     "purpose": "The owner's machine list and his name for each machine as typed rows (FIX [DEVICE-DISPLAY-NAME])…",
+     "surface": {
+      "fn": 2,
+      "struct": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "BlobContent",
       "Bm25Search",
       "EditNoteRequest"
@@ -99617,7 +99759,7 @@
       "crate-vis": 3,
       "fn": 9,
       "mod": 1,
-      "re-export": 147,
+      "re-export": 149,
       "struct": 9
      }
     },
@@ -107165,6 +107307,17 @@
      }
     },
     {
+     "bucket": "L",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/fingerprint_keep_code_run_digests.rs",
+     "purpose": "K-proof for code-run legacy digests at cc184ff09aea: existing stored, keyed and compared identities keep…",
+     "surface": {
+      "crate-vis": 31,
+      "fn": 4
+     }
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -107937,6 +108090,14 @@
      "notable": [],
      "path": "tests/hosted_node_pairing.rs",
      "purpose": "L10-16 PR 1: the owner's link for a hosted node (plan `lanes/post-untangle/plans/PLAN-L10-16.md`, Design 3)",
+     "surface": {}
+    },
+    {
+     "bucket": "L",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/hosted_refold_self_host_root.rs",
+     "purpose": "A self-host root keeps proving for the owner when its vault's log is folded under the Hosted posture (row…",
      "surface": {}
     },
     {
@@ -109433,6 +109594,14 @@
      "notable": [],
      "path": "tests/machine_link_stored_row.rs",
      "purpose": "L10-16 PR 1, stored change: keep (M-1)",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/machine_names_exchange.rs",
+     "purpose": "MACHINE-NAMES-CARRIER = B (Engine RULING Mon 16 Nov 03:13; FIX [DEVICE-DISPLAY-NAME]): the owner's name for…",
      "surface": {}
     },
     {
@@ -113737,6 +113906,13 @@
      "layout": "dir",
      "purpose": "Foreign-agent dispatch: the connector shapes, the egress seam, and the terminal exhaust capture for agents…"
     },
+    "display_edits": {
+     "files": 2,
+     "impl_vault": true,
+     "largest_src_bucket": "m",
+     "layout": "dir",
+     "purpose": "Display-edit proposals (FIX [SECRETS-LABEL-PURPOSE-VERBS], [DEVICE-DISPLAY-NAME]: \"an agent may file it as…"
+    },
     "drafter": {
      "files": 15,
      "impl_vault": true,
@@ -114156,6 +114332,13 @@
      "largest_src_bucket": "s",
      "layout": "file",
      "purpose": "Machine destinations and folded read-location values"
+    },
+    "machine_names": {
+     "files": 3,
+     "impl_vault": true,
+     "largest_src_bucket": "m",
+     "layout": "dir",
+     "purpose": "The names the owner's machine list shows (FIX [DEVICE-DISPLAY-NAME]; Engine TASK SECRETS-VIEW-ROWS, Mon 16…"
     },
     "mail_pack": {
      "files": 46,
@@ -114704,7 +114887,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 429,
+     "files": 431,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -114760,7 +114943,7 @@
      "purpose": "`TimeRange`, temporal expressions/parsing, granularity/anchor enums"
     },
     "test_doors": {
-     "files": 319,
+     "files": 321,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -114872,7 +115055,7 @@
      "purpose": "Core's view of the verb table (untangle slice 5.0a, S5-2 = A, S50A-3 = A): the per-verb behaviour core's…"
     },
     "verbs": {
-     "files": 162,
+     "files": 164,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -114937,8 +115120,8 @@
    },
    "over_bar": 302,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 8140,
-   "test_files": 1891
+   "source_files": 8151,
+   "test_files": 1894
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -129647,6 +129830,14 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/purposes/code_run.rs",
+     "purpose": "Legacy code-run digests that existing rows, ids and keys hold",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/purposes/dreamer.rs",
      "purpose": "Purposes of the Dreamer (`crates/oneiron/src/dreamer_consolidation`, `crates/oneiron/src/dreamer_promotion`…",
      "surface": {}
@@ -129997,7 +130188,7 @@
      "purpose": "The K door: a digest that main already stores or sends keeps its exact bytes"
     },
     "purposes": {
-     "files": 51,
+     "files": 52,
      "impl_vault": false,
      "largest_src_bucket": "s",
      "layout": "dir",
@@ -130013,7 +130204,7 @@
    },
    "over_bar": 0,
    "purpose": "One fingerprint rule for engine digests (fable pass 22; PLAN-UC-04 stage 0)",
-   "source_files": 54,
+   "source_files": 55,
    "test_files": 1
   },
   "oneiron-gen": {
@@ -134146,7 +134337,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/facade/tests.rs",
@@ -155619,6 +155810,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/facade/display_edit_doors.rs",
+     "purpose": "The owner's answers to his agents' display-edit proposals, as facade rows (FIX…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/facade/drafter_doors.rs",
      "purpose": "The drafter host doors (FIX 12569): the owner's `vault.drafters.list`, `.status`, `.policy.set` and…",
      "surface": {
@@ -155972,7 +156173,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 211
+      "crate-vis": 213
      }
     },
     {
@@ -156281,6 +156482,16 @@
      "notable": [],
      "path": "src/api/facade/live_voice_settlement.rs",
      "purpose": "Observes an already admitted connector call; never resends or answers it",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/machine_name_doors.rs",
+     "purpose": "The owner's machine list and his name for each machine, as facade rows (FIX [DEVICE-DISPLAY-NAME])…",
      "surface": {
       "crate-vis": 2
      }
@@ -159311,6 +159522,16 @@
      "notable": [],
      "path": "src/api/owner_routes/disclosure_routes/offers.rs",
      "purpose": "The owner's open-offer list, using the singular offer's frozen view",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/owner_routes/display_edit_routes.rs",
+     "purpose": "`/v1/owner/display-edits`: the owner's answers to his agents' display-edit proposals (FIX…",
      "surface": {
       "crate-vis": 1
      }
@@ -165624,7 +165845,7 @@
      "path": "src/handler/admitted_windows.rs",
      "purpose": "A federation socket's admitted window copies (FIX 12118): the filtered copy of each window it fetched, with…",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -166582,6 +166803,16 @@
      "purpose": "`residence.machine-history` (FIX 3820): a target's machine-claim history, a page at a time, for a machine…",
      "surface": {
       "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/livequery/residence/machine_names.rs",
+     "purpose": "`residence.machine_names.exchange`: this home as the meeting point of its owner's machines' machine-name…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -172028,7 +172259,7 @@
      "path": "src/selector_release.rs",
      "purpose": "A selector answer leaves a socket only while what it was made under still stands (SELECTOR-RELEASE-POINT =…",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
      }
     },
     {
@@ -175111,6 +175342,14 @@
      "surface": {}
     },
     {
+     "bucket": "L",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/display_edit_doors.rs",
+     "purpose": "Display-edit proposals at their served doors (FIX [SECRETS-LABEL-PURPOSE-VERBS], [DEVICE-DISPLAY-NAME]…",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -175826,6 +176065,22 @@
      "notable": [],
      "path": "tests/machine_history_page_controls.rs",
      "purpose": "A machine-history page judges every history control (L5-02 PR 5, RULING SECREAD-HOME-MACHINE-HISTORY = A)…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/machine_name_doors.rs",
+     "purpose": "The owner's machine list and his name for each machine at their served doors (FIX [DEVICE-DISPLAY-NAME])…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/machine_reported_name_settings.rs",
+     "purpose": "The settings file's machine-reported name and model reach the vault config",
      "surface": {}
     },
     {
@@ -177248,7 +177503,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 822,
+     "files": 825,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -177577,7 +177832,7 @@
      "purpose": "Opt-in scheduled Linear mirror over an authenticated host-owned bridge"
     },
     "livequery": {
-     "files": 48,
+     "files": 49,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -177845,8 +178100,8 @@
    },
    "over_bar": 70,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 2022,
-   "test_files": 488
+   "source_files": 2026,
+   "test_files": 491
   },
   "oneiron-setting-contract": {
    "files": [
@@ -187487,6 +187742,14 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/lmdb_open_damaged_file.rs",
+     "purpose": "FIX row LMDB-MASTER3-UPSTREAM-FIXES-AUDIT (upstream ITS#9291 and its `ONEIRON FORK (LMDB audit)` hunks): an…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/lmdb_page_split.rs",
      "purpose": "FIX row TRAP-REGISTER-WAIT-PAGE-FULL: a put that splits a leaf of rows whose key and data are both odd-sized…",
      "surface": {}
@@ -187497,6 +187760,14 @@
      "notable": [],
      "path": "tests/lmdb_sealed_overflow.rs",
      "purpose": "FIX row LMDB-MASTER3-UPSTREAM-FIXES-AUDIT (upstream ITS#10519): a sealed environment reads back every value…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/lmdb_sealed_page_buffers.rs",
+     "purpose": "FIX row LMDB-MASTER3-UPSTREAM-FIXES-AUDIT (upstream ITS#10520): a sealed environment frees the page buffers…",
      "surface": {}
     },
     {
@@ -189192,7 +189463,7 @@
    "over_bar": 1,
    "purpose": "The store layer of the oneiron engine",
    "source_files": 653,
-   "test_files": 26
+   "test_files": 28
   },
   "oneiron-testkit": {
    "files": [
