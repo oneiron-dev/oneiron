@@ -636,6 +636,21 @@ pub(in crate::sync::selector) struct MemberAccess<'v> {
     homed_here: bool,
 }
 
+impl MemberAccess<'_> {
+    /// What a selector answer's release compares this access by (FIX
+    /// SELECTOR-RELEASE-RECHECK): the reach the member reads relationship
+    /// labels with, `None` for an Owner's member, and whether it is homed
+    /// here.
+    pub(in crate::sync::selector) fn release_reach(
+        &self,
+    ) -> (Option<crate::access_grant::AccessContextSnapshot>, bool) {
+        (
+            self.labels.as_ref().map(|labels| labels.snapshot().clone()),
+            self.homed_here,
+        )
+    }
+}
+
 /// [`MemberAccess`] for `grant`'s member. An owner check that fails gates,
 /// and an own-agent check that fails binds the member to the home.
 pub(in crate::sync::selector) fn member_access<'v>(
