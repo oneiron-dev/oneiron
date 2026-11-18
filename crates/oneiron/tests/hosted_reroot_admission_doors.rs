@@ -397,3 +397,56 @@ fn the_hosts_own_reroot_still_imports() {
         "the host's old root is retired on the replica"
     );
 }
+
+/// REVIEW-9487 round 2: the ReRoot writer takes a move the fold already
+/// counts, applied again, as an exact retry, as the admission doors take its
+/// counted hash. A self-host vault reopened as Hosted moves its unstamped
+/// root to a stamped one; the old root that signed the move then carries no
+/// live stamp, so the hosted refusal would meet the retry first. Red at
+/// `opus-wayback/recovery-root-door-review2-retry-red` (this test on
+/// 7e8b42df7bf1): the retry is refused.
+#[test]
+fn a_counted_reroot_applied_again_is_an_exact_retry() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    {
+        let vault = Vault::open(dir.path(), VaultConfig::device()).expect("the self-host vault");
+        vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
+        let issuer = oneiron::test_support::provision_engine_machines(&vault);
+        vault
+            .ensure_serving_install_profile(&issuer, MachineRole::Unanswered)
+            .expect("this install's machine profile");
+    }
+    let mut config = VaultConfig::device();
+    config.privacy.posture = HostingPrivacyPosture::Hosted;
+    let vault = Vault::open(dir.path(), config).expect("the vault reopened as hosted");
+    vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
+    let next = HostSlipIssuer::from_seed(&[NEXT_HOST_ROOT_SEED; HOST_ISSUER_SEED_BYTES])
+        .expect("the host's next root");
+    let next_root = next.public_key();
+    vault
+        .re_root_host(&oneiron::test_support::test_host_issuer(), &next)
+        .expect("the host root moves to a stamped root");
+    let history = vault
+        .export_signed_authority_history()
+        .expect("the signed history");
+    let moved = history
+        .iter()
+        .map(|row| decode_authority_log_entry_body(row).expect("a row"))
+        .find(|row| {
+            matches!(&row.op, AuthorityOp::ReRoot { new_device } if new_device.key == next_root)
+        })
+        .expect("the move is stored");
+
+    vault
+        .apply_signed_re_root(&moved)
+        .expect("the counted move applies again as an exact retry");
+    assert_eq!(
+        vault
+            .export_signed_authority_history()
+            .expect("the signed history")
+            .len(),
+        history.len(),
+        "the retry writes no row"
+    );
+    assert!(live(&vault, &next_root), "the stamped root is still live");
+}
