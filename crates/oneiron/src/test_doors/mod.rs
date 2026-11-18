@@ -86,6 +86,7 @@ pub mod data_key_custody_head;
 pub mod data_key_preset_switch;
 pub mod data_key_sealed_vault;
 pub mod data_key_stale_unlock;
+pub mod delete_guard_race;
 pub mod derivation_floor;
 pub mod derivation_position;
 pub mod derive;
@@ -316,6 +317,7 @@ pub mod sync_parted_row_binding;
 pub mod sync_whole_row_binding;
 pub mod task_ask_role_routing;
 pub mod task_refusal_output;
+pub mod tombstone_replay;
 #[cfg(feature = "sync")]
 pub mod training_corpus;
 pub mod tray_answered_removal;

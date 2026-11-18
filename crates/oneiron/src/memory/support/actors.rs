@@ -96,6 +96,28 @@ pub(crate) fn verify_owner_actor_binding_in_txn(
     txn: &heed::RoTxn<'_>,
     actor: EntityId,
 ) -> MemoryResult<()> {
+    verify_owner_binding_in_txn(vault, txn, actor, OwnerRow::Live)
+}
+
+/// Which state of the owner's own PERSON row the owner predicate asks for.
+#[derive(Clone, Copy)]
+enum OwnerRow {
+    /// A live PERSON: a deleted owner's binding authorizes nothing (H149,
+    /// L9-52 (b)).
+    Live,
+    /// The owner's delete of their own PERSON, re-proved after this delete's
+    /// own scrub: the row's deletion is the delete itself, so the active
+    /// binding answers, and the owner census with that PERSON taken as live.
+    /// The gate's first evaluation, before any scrub, asked for a live row.
+    DeletingItself,
+}
+
+fn verify_owner_binding_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    actor: EntityId,
+    row: OwnerRow,
+) -> MemoryResult<()> {
     // The shared view, not a copy of the fold: a host action's read key runs
     // this once per candidate row (FIX 2222).
     let fold = vault.authority_view_readonly_in_txn(txn).map_err(|err| {
@@ -164,8 +186,22 @@ pub(crate) fn verify_owner_actor_binding_in_txn(
             ],
         ));
     }
-    if crate::authority::actor_binding_is_active(&fold, &actor, "human") {
-        if crate::policy_model::is_live_vault_owner_in_txn(vault, txn, &actor)? {
+    let bound = match row {
+        OwnerRow::Live => {
+            crate::authority::actor_binding_is_live_in(&vault.store, txn, &fold, &actor, "human")?
+        }
+        OwnerRow::DeletingItself => {
+            crate::authority::actor_binding_is_active(&fold, &actor, "human")
+        }
+    };
+    if bound {
+        let owner = match row {
+            OwnerRow::Live => crate::policy_model::is_live_vault_owner_in_txn(vault, txn, &actor)?,
+            OwnerRow::DeletingItself => {
+                vault.is_vault_owner_deleting_own_person_in_txn(txn, &actor)?
+            }
+        };
+        if owner {
             return Ok(());
         }
         return Err(MemoryError::new(
@@ -177,6 +213,19 @@ pub(crate) fn verify_owner_actor_binding_in_txn(
             &[
                 "The vault's live owner census decides who owns it: the embedded owner of a personal vault, the live Owner-role members of a shared one.",
                 "An Admin deletes in scope through the role delete door; an Admin, Deputy or Delegate holds no owner verb.",
+            ],
+        ));
+    }
+    if crate::authority::actor_binding_is_active(&fold, &actor, "human") {
+        return Err(MemoryError::new(
+            MEMORY_CODE_OWNER_BINDING_REQUIRED,
+            format!(
+                "owner {} is not a live person: a deleted owner's binding authorizes nothing",
+                actor.to_hex()
+            ),
+            &[
+                "A deleted owner is not brought back; no one acts as this owner until an owner binding is made again.",
+                "Another live owner of this vault still acts as its owner.",
             ],
         ));
     }
@@ -281,6 +330,24 @@ pub(crate) fn verify_deletion_authority_in_txn(
         ));
     }
     verify_owner_actor_binding_in_txn(vault, txn, actor)
+}
+
+/// [`verify_deletion_authority_in_txn`] for an owner deleting their own
+/// PERSON, as its writes re-prove it: after this delete's own scrub commits,
+/// the actor's row is that delete's shell, so the active owner binding and
+/// the owner census with that PERSON taken as live answer
+/// (`OwnerRow::DeletingItself`). Every other check is the same.
+pub(crate) fn verify_own_person_deletion_authority_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    actor: EntityId,
+    actor_class: EdgeActorClass,
+) -> MemoryResult<()> {
+    if actor_class != EdgeActorClass::Human {
+        return verify_deletion_authority_in_txn(vault, txn, actor, actor_class);
+    }
+    verify_actor_binding_in_txn(vault, txn, actor, actor_class)?;
+    verify_owner_binding_in_txn(vault, txn, actor, OwnerRow::DeletingItself)
 }
 
 fn verify_actor_entity_type(
