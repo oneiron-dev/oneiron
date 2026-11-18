@@ -67,21 +67,21 @@ pub(crate) fn sign_side_entry_with_owner_proof(
     parents: BTreeSet<AuthorityEntryHash>,
     op: AuthorityOp,
     now: u64,
-    proof: Option<&dyn CheckpointRootSigner>,
+    proof: Option<&super::owner_proof::OwnerProofSigner<'_>>,
 ) -> Result<AuthorityLogEntry> {
     let Some(proof) = proof else {
         return sign_side_entry(fold, signing, seq, parents, op, now);
     };
     let signer = AuthorityKey::Ed25519(signing.verifying_key().to_bytes());
     let mut entry = unsigned_side_entry(fold, signer, seq, parents, op, now)?;
-    let proof_key = proof.root();
+    let proof_key = proof.key();
     entry.cosigns.push(AuthoritySignature {
         suite: proof_key.suite(),
         public_key: proof_key,
         signature: vec![0; 64],
     });
     let transcript = authority_transcript(&entry)?;
-    let proved = proof.sign_owner_proof(&transcript)?;
+    let proved = proof.sign(fold, &transcript)?;
     if let Some(cosign) = entry.cosigns.first_mut() {
         cosign.signature = proved;
     }

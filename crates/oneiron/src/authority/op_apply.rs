@@ -684,19 +684,20 @@ pub(super) fn merge_pact_states(
 /// starts its own custody line (his enrolled key, FIX 5896), and his machine
 /// answers stand through any carrier whatever its custody (#2982). A key the
 /// host admits alone stays the host's (DEC-0005 #will-sweep-kept: the
-/// operator alone acts as nobody). So a key the host attests as its root and
-/// a key marked for the cloud are the host's, and so is every key such a key
-/// admitted, directly or through others (`key_admitters`), whatever the
-/// successor's own labels say.
+/// operator alone acts as nobody). So a key stamped for the cloud
+/// (`ROLE_CLOUD` or `CloudCustodial`, the stamp every Hosted root carries:
+/// `HostSlipIssuer::root_device`) is the host's, and so is every key such a
+/// key admitted, directly or through others (`key_admitters`), whatever the
+/// successor's own labels say. The host-root attestation alone marks no key:
+/// a self-host root carries it too, and stays the owner's key when its log
+/// is folded under the Hosted posture (Engine ANSWER
+/// HOSTED-REFOLD-SELF-HOST-ROOT-CUSTODY = A).
 pub(super) fn upsert_device(
     state: &mut FoldState,
     device: &DeviceAuthority,
     admitted_by: Option<&AuthorityKey>,
 ) {
-    if device.attestation.kind == super::slip_vault::HOST_ROOT_ATTESTATION
-        || device.roles & ROLE_CLOUD != 0
-        || device.tier == AuthorityTier::CloudCustodial
-    {
+    if device.roles & ROLE_CLOUD != 0 || device.tier == AuthorityTier::CloudCustodial {
         state.host_custody_keys.insert(device.key.clone());
     }
     if let Some(admitter) = admitted_by {

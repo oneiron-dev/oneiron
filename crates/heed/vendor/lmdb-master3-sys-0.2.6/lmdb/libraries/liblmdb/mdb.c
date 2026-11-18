@@ -1670,6 +1670,10 @@ struct MDB_env {
 	mdb_size_t	me_mapsize;		/**< size of the data memory map */
 	MDB_OFF_T	me_size;		/**< current file size */
 	pgno_t		me_maxpg;		/**< me_mapsize / me_psize */
+	/** ONEIRON FORK (page bound): whole pages in the data file at the last
+	 *	length read. It only lags the file, see #mdb_page_in_file().
+	 */
+	volatile pgno_t	me_file_pages;
 	MDB_dbx		*me_dbxs;		/**< array of static DB info */
 	uint16_t	*me_dbflags;	/**< array of flags from MDB_db.md_flags */
 	unsigned int	*me_dbiseqs;	/**< array of dbi sequence numbers */
@@ -4860,6 +4864,12 @@ mdb_env_write_meta(MDB_txn *txn)
 				rc = ErrCode();
 				goto fail;
 			}
+#if defined(__APPLE__)
+			if (MDB_FDATASYNC(env->me_fd)) {
+				rc = ErrCode();
+				goto fail;
+			}
+#endif
 		}
 		goto done;
 	}
@@ -4919,6 +4929,25 @@ fail:
 		env->me_flags |= MDB_FATAL_ERROR;
 		return rc;
 	}
+#if defined(__APPLE__)
+	if (mfd == env->me_mfd && MDB_FDATASYNC(env->me_mfd)) {
+		rc = ErrCode();
+		/* ONEIRON FORK (LMDB audit): a failed sync is a failed meta write.
+		 * Put the old meta back in the page cache and mark the env fatal,
+		 * as the pwrite failure above does. If the old meta cannot be put
+		 * back whole, the commit is indeterminate (a reopen may see it):
+		 * answer MDB_PANIC instead of the sync's error.
+		 */
+		meta.mm_last_pg = metab.mm_last_pg;
+		meta.mm_txnid = metab.mm_txnid;
+		do {
+			r2 = pwrite(env->me_fd, ptr, len, off);
+		} while (r2 < 0 && ErrCode() == EINTR);
+		if (r2 != len)
+			rc = MDB_PANIC;
+		goto fail;
+	}
+#endif
 	/* MIPS has cache coherency issues, this is a no-op everywhere else */
 	CACHEFLUSH(env->me_map + off, len, DCACHE);
 done:
@@ -5496,6 +5525,40 @@ mdb_env_open2(MDB_env *env, int prev)
 		if (env->me_mapsize == DEFAULT_MAPSIZE)
 			env->me_mapsize = 0;
 	}
+
+	/* Verify that root pages are actually inside the file */
+	{
+		mdb_size_t fsize = 0;
+		/* ONEIRON FORK (LMDB audit): refuse a page size that
+		 * mdb_env_set_pagesize would refuse, before dividing by it.
+		 */
+		if (env->me_psize < 256 || env->me_psize > MAX_PAGESIZE)
+			return MDB_INVALID;
+		if (mdb_fsize(env->me_fd, &fsize) == MDB_SUCCESS && fsize) {
+			MDB_dbi dbi;
+			pgno_t maxpgno = fsize / env->me_psize;
+			pgno_t sum = NUM_METAS;
+			env->me_file_pages = maxpgno;	/* ONEIRON FORK (page bound) */
+			for (dbi = FREE_DBI; dbi <= MAIN_DBI; dbi++) {
+				MDB_db *db = &meta.mm_dbs[dbi];
+				if (db->md_root != P_INVALID) {
+					/* ONEIRON FORK (LMDB audit): maxpgno counts whole
+					 * pages, so a root at maxpgno is past the end too.
+					 */
+					if (db->md_root >= maxpgno)
+						return MDB_PAGE_NOTFOUND;
+					sum += db->md_branch_pages;
+					sum += db->md_leaf_pages;
+					sum += db->md_overflow_pages;
+				}
+			}
+			/* Slack sanity check as sum ignores pages from 2nd meta. */
+			/* (2nd meta may be corrupted; thus do not rely on it.)  */
+			if (sum > maxpgno)
+				return MDB_CORRUPTED;
+		}
+	}
+
 	/* Was a mapsize configured? */
 	if (!env->me_mapsize) {
 		env->me_mapsize = meta.mm_mapsize;
@@ -6373,8 +6436,10 @@ mdb_env_close_active(MDB_env *env, int excl)
 	if (env->me_rpages) {
 		MDB_ID3L el = env->me_rpages;
 		unsigned int x;
-		for (x=1; x<=el[0].mid; x++)
+		for (x=1; x<=el[0].mid; x++) {
 			munmap(el[x].mptr, el[x].mcnt * env->me_psize);
+			free(el[x].menc);
+		}
 		free(el);
 	}
 	}
@@ -7061,8 +7126,11 @@ retry:
 					id3.mid = pg0;
 					if (env->me_encfunc || env->me_sumfunc) {
 						rc = mdb_rpage_encsum(env, &id3, rem, numpgs);
-						if (rc)
+						if (rc) {
+							free(id3.menc);
+							munmap(id3.mptr, len);	/* ONEIRON FORK (LMDB audit): no cache holds this map */
 							goto fail;
+						}
 						el[x].muse = id3.muse;
 					}
 					pthread_mutex_unlock(&env->me_rpmutex);
@@ -7129,8 +7197,11 @@ fail:
 		}
 		if (env->me_encfunc || env->me_sumfunc) {
 			rc = mdb_rpage_encsum(env, &id3, rem, numpgs);
-			if (rc)
+			if (rc) {
+				free(id3.menc);
+				munmap(id3.mptr, len);	/* ONEIRON FORK (LMDB audit): no cache holds this map */
 				goto fail;
+			}
 		}
 		mdb_mid3l_insert(el, &id3);
 		pthread_mutex_unlock(&env->me_rpmutex);
@@ -7278,6 +7349,37 @@ static int mdb_page_chk_checksum(MDB_env *env, MDB_page *mp, size_t size)
 }
 #endif
 
+/** ONEIRON FORK (page bound): is [pgno, pgno + numpgs) inside the data file?
+ * A page past the end of a cut file would kill the process with SIGBUS
+ * when it is read through the map. Without #MDB_WRITEMAP the data file
+ * never shrinks, so #MDB_env.me_file_pages only lags the true length:
+ * a miss reads the length again before it refuses. Free pages past the
+ * end (see #MDB_meta.mm_last_pg) are never read through the map.
+ * The range test subtracts, so a corrupt run count cannot wrap past it,
+ * and a count of 0 checks the page itself.
+ * @return 0, or #MDB_CORRUPTED when the pages lie past the end.
+ */
+static int
+mdb_page_in_file(MDB_env *env, pgno_t pgno, pgno_t numpgs)
+{
+	mdb_size_t fsize = 0;
+	pgno_t pages = env->me_file_pages;
+
+	if (!numpgs)
+		numpgs = 1;
+	if (numpgs <= pages && pgno <= pages - numpgs)
+		return MDB_SUCCESS;
+	/* No length (a failed stat, a raw partition): read as before. */
+	if (mdb_fsize(env->me_fd, &fsize) != MDB_SUCCESS || !fsize)
+		return MDB_SUCCESS;
+	pages = fsize / env->me_psize;
+	env->me_file_pages = pages;
+	if (numpgs <= pages && pgno <= pages - numpgs)
+		return MDB_SUCCESS;
+	DPRINTF(("page %"Yu" past the end of the data file", pgno));
+	return MDB_CORRUPTED;
+}
+
 /** Find the address of the page corresponding to a given page number.
  * Set #MDB_TXN_ERROR on failure.
  * @param[in] mc the cursor accessing the page.
@@ -7337,6 +7439,18 @@ mdb_page_get(MDB_cursor *mc, pgno_t pgno,
 	}
 
 mapped:
+	/* ONEIRON FORK (page bound): refuse a page the file does not hold. */
+	if (!(txn->mt_env->me_flags & MDB_WRITEMAP)) {
+#if MDB_RPAGE_CACHE
+		int rc = mdb_page_in_file(txn->mt_env, pgno, (pgno_t)numpgs);
+#else
+		int rc = mdb_page_in_file(txn->mt_env, pgno, 1);
+#endif
+		if (rc) {
+			txn->mt_flags |= MDB_TXN_ERROR;
+			return rc;
+		}
+	}
 #if MDB_RPAGE_CACHE
 	if (MDB_REMAPPING(txn->mt_env->me_flags)) {
 		int rc = mdb_rpage_get(txn, pgno, numpgs, &p);

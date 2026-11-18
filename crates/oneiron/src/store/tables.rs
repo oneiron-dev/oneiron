@@ -567,12 +567,6 @@ crate::side_table::side_tables! {
     /// rate). Key: u8 (OversightKind tag: 0/1/2).
     HEALER_OVERSIGHT_RECEIPT: VaultMeta b"healer:oversight:v1:" Named
         [restore: content] [family: unclassified] [tier: canonical];
-    /// A retirement deadline a door started (a secret lease's expiry, a voice print's retention
-    /// deadline, a critical confirm's window), kept for a vault that is not running to know when to
-    /// wake. Key: the sweep's tag byte, the deadline (u64 BE), then an id16 per note, so a sweep's
-    /// earliest deadline is its first row and two notes of one deadline are two rows. Value: empty.
-    HOUSEKEEPING_WAKE: VaultMeta b"housekeeping:wake:v1:" Raw
-        [restore: live] [family: unclassified] [tier: canonical];
     /// Empty-marker index from a normalized identity hint (name/alias/handle) hashed per entity-kind
     /// to the entity id it names, for lookup-before-mint resolution. Key: u8 + hash32 + id16.
     INGEST_IDENTITY_HINT: VaultMeta b"identity-hint:v1:" Raw
@@ -949,8 +943,10 @@ crate::side_table::side_tables! {
     SECRET_FOUND_KEY_DUE: VaultMeta b"secret_found_key_due:v1:" Named
         [restore: live] [family: unclassified] [tier: canonical];
     /// A custody handle's owner-set display label and its Gate receipt. The custody name stays the
-    /// identity; this label changes presentation only and holds no value. Key: id16 (custody record id).
-    SECRET_HANDLE_LABEL: VaultMeta b"secret_handle:label:v1:" Named Custody
+    /// identity; this label changes presentation only. Admitted by the side-row wall, as the
+    /// purpose is: every agent's handle card shows it (SECRET-HANDLE-LABEL-UNWALLED). Key: id16
+    /// (custody record id).
+    SECRET_HANDLE_LABEL: VaultMeta b"secret_handle:label:v1:" Named Authored [accepts: crate::store::secret_handle_labels::accepts_masked]
         [restore: live] [family: unclassified] [tier: canonical];
     /// Owner-authored purpose, admitted by the side-row wall. Key: custody id16.
     SECRET_HANDLE_PURPOSE: VaultMeta b"secret_handle:purpose:v1:" Named Authored [accepts: crate::store::secret_handle_purpose::accepts_masked]

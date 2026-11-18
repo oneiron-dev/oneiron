@@ -22,6 +22,7 @@ mod discover;
 mod home_handoff;
 mod kit_fetch;
 mod machine_history;
+mod machine_names;
 mod own_device_grants;
 mod pad_custody;
 mod policy;
@@ -116,6 +117,7 @@ pub use kit_fetch::{
 pub use machine_history::{
     MACHINE_HISTORY_PAGE_ROWS, MachineHistoryCursor, MachineHistoryPage, machine_history_page,
 };
+pub use machine_names::machine_names_residence_exchange;
 pub use own_device_grants::{
     OWN_DEVICE_GRANTS_PAGE_MAX, OwnDeviceGrantAdmission, OwnDeviceGrantState,
     admit_own_device_grants, own_device_grant_refs, own_device_grant_states, own_device_grants_for,
