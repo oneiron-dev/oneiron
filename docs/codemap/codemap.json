@@ -42925,6 +42925,7 @@
      "path": "src/feedback/conversation_training.rs",
      "purpose": "\"Learn from my conversations\" (FIX 4489, FIX 5502 owner rulings, OF-420): the one check real conversation…",
      "surface": {
+      "crate-vis": 1,
       "enum": 2,
       "fn": 1,
       "re-export": 6,
@@ -43118,6 +43119,7 @@
      "path": "src/feedback/conversation_training/release.rs",
      "purpose": "The offer pass and its release gate (OF-420 A2, A3; D1; FIX 5502; TRAINING-LINK = C)",
      "surface": {
+      "crate-vis": 1,
       "fn": 2,
       "struct": 1
      }
@@ -43258,7 +43260,7 @@
      "path": "src/feedback/mod.rs",
      "purpose": "Engine feedback channel: bundle wire contract, consent, dispatch, export",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "mod": 1,
       "re-export": 10
      }
@@ -49117,7 +49119,7 @@
      "purpose": "The member side of an inquiry (federation.md #inquiry, #inquiry-checkin; ARCH-0082 #inquiry; Engine ruling…",
      "surface": {
       "const": 1,
-      "crate-vis": 3,
+      "crate-vis": 4,
       "enum": 2,
       "fn": 3,
       "struct": 1,
@@ -49131,7 +49133,7 @@
      "path": "src/inquiry/mod.rs",
      "purpose": "Inquiry: a company vault asks a member's vault (federation.md #inquiry, ARCH-0082 #inquiry; owner…",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "re-export": 8
      }
     },
@@ -82533,7 +82535,7 @@
      "path": "src/store/key_custody/mod.rs",
      "purpose": "Typed key custody (KS-1): one storage and lifecycle service for the independent, erasable secrets a vault…",
      "surface": {
-      "crate-vis": 42,
+      "crate-vis": 43,
       "mod": 1,
       "re-export": 2
      }
@@ -82636,7 +82638,7 @@
      "path": "src/store/key_custody/publication_policy.rs",
      "purpose": "The publication policy each custody head is sealed under (KS-5, FIX 7191): which worlds' pads a member's…",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -83025,7 +83027,7 @@
      "path": "src/store/mod.rs",
      "purpose": "LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the…",
      "surface": {
-      "crate-vis": 170,
+      "crate-vis": 171,
       "mod": 69,
       "re-export": 89
      }
@@ -94099,6 +94101,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/test_doors/fingerprint_keep_custody_policy_digest.rs",
+     "purpose": "Door for `tests/fingerprint_keep_custody_policy_digest.rs` (PLAN-UC-04 stage 6.3f): the custody journal's…",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/test_doors/fingerprint_keep_dreamer.rs",
      "purpose": "The agent-health trend replay hash, for the K-proof of PLAN-UC-04 stage 3.2…",
      "surface": {
@@ -94195,6 +94207,16 @@
       "enum": 1,
       "fn": 4,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/test_doors/fingerprint_keep_release_inquiry_digests.rs",
+     "purpose": "Door for `tests/fingerprint_keep_release_inquiry_digests.rs` (PLAN-UC-04 stage 6.2d): a publisher training…",
+     "surface": {
+      "fn": 2
      }
     },
     {
@@ -94854,7 +94876,7 @@
      "purpose": "Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD)",
      "surface": {
       "fn": 1,
-      "mod": 296,
+      "mod": 298,
       "re-export": 1
      }
     },
@@ -106933,6 +106955,16 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/fingerprint_keep_custody_policy_digest.rs",
+     "purpose": "K-proof (oracle) for PLAN-UC-04 stage 6.3f: the custody journal's publication policy digest keeps its bytes",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/fingerprint_keep_dreamer.rs",
      "purpose": "K-proof (oracle) for PLAN-UC-04 stage 3.2: the agent-health trend replay hash keeps its bytes",
      "surface": {
@@ -107038,6 +107070,16 @@
      "purpose": "K-proof (oracle) for PLAN-UC-04 stage 1.3: the outbound intent id keeps its bytes",
      "surface": {
       "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/fingerprint_keep_release_inquiry_digests.rs",
+     "purpose": "K-proof (oracle) for PLAN-UC-04 stage 6.2d: a publisher training offer's world settings digest and an…",
+     "surface": {
+      "crate-vis": 7
      }
     },
     {
@@ -114388,7 +114430,7 @@
      "purpose": "`TimeRange`, temporal expressions/parsing, granularity/anchor enums"
     },
     "test_doors": {
-     "files": 302,
+     "files": 304,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -114565,8 +114607,8 @@
    },
    "over_bar": 300,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 8119,
-   "test_files": 1875
+   "source_files": 8121,
+   "test_files": 1877
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -129274,8 +129316,24 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/purposes/feedback.rs",
+     "purpose": "Purposes of feedback (`crates/oneiron/src/feedback`)",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/purposes/git_wire.rs",
      "purpose": "Purposes of the git wire (`oneiron-store`'s `git_wire` and `crates/oneiron/src/git_wire`)",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/purposes/inquiry.rs",
+     "purpose": "Purposes of inquiries (`crates/oneiron/src/inquiry`)",
      "surface": {}
     },
     {
@@ -129528,7 +129586,7 @@
      "purpose": "The K door: a digest that main already stores or sends keeps its exact bytes"
     },
     "purposes": {
-     "files": 41,
+     "files": 43,
      "impl_vault": false,
      "largest_src_bucket": "s",
      "layout": "dir",
@@ -129544,7 +129602,7 @@
    },
    "over_bar": 0,
    "purpose": "One fingerprint rule for engine digests (fable pass 22; PLAN-UC-04 stage 0)",
-   "source_files": 44,
+   "source_files": 46,
    "test_files": 1
   },
   "oneiron-gen": {
