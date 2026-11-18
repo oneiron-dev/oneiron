@@ -1,10 +1,12 @@
 use super::*;
 
+use crate::agent_dispatch::{AgentDispatchOutcome, AgentDispatcher};
 use crate::attempt_queue::{
     AttemptQueue, ClaimAttempt, ClaimOutcome, CompleteAttempt, CompleteOutcome, EnqueueAttempt,
     EnqueueOutcome, ManifestEntry, ManifestKind,
 };
 use crate::config::VaultConfig;
+use crate::dreamer_runner::DREAMER_RUNNER_ATTEMPT_KIND;
 use crate::receipt::attempt_pack_receipt_id;
 use crate::registry::ENTITY_TYPE_PERSON;
 use crate::skill::SkillLifecycle;
@@ -110,18 +112,15 @@ fn stamped_receipt_for_as_model(
     model: Option<&str>,
 ) -> String {
     let queue = AttemptQueue::new(vault);
-    let EnqueueOutcome::Enqueued(attempt) = queue
-        .enqueue(EnqueueAttempt {
-            kind: "sk05.attempt".to_owned(),
-            payload: Vec::new(),
-            dedupe_key: None,
-            run_id: None,
-            now: 10,
-        })
-        .expect("enqueue")
+    let dispatcher = AgentDispatcher::new(vault);
+    let now = vault.now_recorded_at();
+    let AgentDispatchOutcome::Dispatched(dispatched) = dispatcher
+        .dispatch_default_base(None, None, None, now)
+        .expect("enqueue typed agent dispatch")
     else {
-        panic!("a fresh dedupe-free enqueue is never Existing");
+        panic!("a fresh dedupe-free dispatch is never Existing");
     };
+    let attempt = dispatched.attempt;
     if let Some(actor) = actor {
         vault
             .bind_actor_attempt(attempt.id, &actor)
@@ -130,21 +129,22 @@ fn stamped_receipt_for_as_model(
     queue
         .append_manifest_entry(
             attempt.id,
-            ManifestEntry::new(ManifestKind::Skill, skill_id, version, 11),
+            ManifestEntry::new(ManifestKind::Skill, skill_id, version, now),
         )
         .expect("manifest append");
     let ClaimOutcome::Claimed(leased) = queue
         .claim_kind(
-            "sk05.attempt",
+            DREAMER_RUNNER_ATTEMPT_KIND,
             ClaimAttempt {
                 lease_owner: "sk05-worker".to_owned(),
-                now: 12,
+                now: vault.now_recorded_at(),
             },
         )
         .expect("claim")
     else {
         panic!("the enqueued attempt is claimable");
     };
+    assert_eq!(leased.id, attempt.id);
     queue
         .set_executor_model(
             attempt.id,
@@ -158,18 +158,13 @@ fn stamped_receipt_for_as_model(
             id: attempt.id,
             lease_owner: "sk05-worker".to_owned(),
             attempt_count: leased.attempt_count,
-            now: 13,
+            now: vault.now_recorded_at(),
         })
         .expect("complete")
     else {
         panic!("a leased attempt completes exactly once");
     };
-    let receipt_id = attempt_pack_receipt_id(&attempt.id);
-    if model.is_none() {
-        crate::receipt::make_attempt_receipt_legacy_for_tests(vault, &receipt_id)
-            .expect("emulate older receipt without executor stamp");
-    }
-    receipt_id
+    attempt_pack_receipt_id(&attempt.id)
 }
 
 /// Records one routed outcome and returns the judgments the pass minted.

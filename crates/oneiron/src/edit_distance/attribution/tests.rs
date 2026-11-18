@@ -656,36 +656,37 @@ fn terminal_attempt(
     skill_id: &str,
     failed: bool,
 ) -> Result<String> {
+    use crate::agent_dispatch::{AgentDispatchOutcome, AgentDispatcher};
     use crate::attempt_queue::{
-        AttemptQueue, ClaimAttempt, ClaimOutcome, CompleteAttempt, EnqueueAttempt, EnqueueOutcome,
-        FailAttempt, ManifestEntry, ManifestKind,
+        AttemptQueue, ClaimAttempt, ClaimOutcome, CompleteAttempt, FailAttempt, ManifestEntry,
+        ManifestKind,
     };
+    use crate::dreamer_runner::DREAMER_RUNNER_ATTEMPT_KIND;
     let queue = AttemptQueue::new(vault);
-    let EnqueueOutcome::Enqueued(row) = queue.enqueue(EnqueueAttempt {
-        kind: "ed03.amended".to_owned(),
-        payload: Vec::new(),
-        dedupe_key: None,
-        run_id: None,
-        now: 10,
-    })?
+    let dispatcher = AgentDispatcher::new(vault);
+    let now = vault.now_recorded_at();
+    let AgentDispatchOutcome::Dispatched(dispatched) =
+        dispatcher.dispatch_default_base(None, None, None, now)?
     else {
         panic!("a fresh attempt enqueues")
     };
+    let row = dispatched.attempt;
     vault.bind_actor_attempt(row.id, &actor)?;
     queue.append_manifest_entry(
         row.id,
-        ManifestEntry::new(ManifestKind::Skill, skill_id, "1.0.0", 11),
+        ManifestEntry::new(ManifestKind::Skill, skill_id, "1.0.0", now),
     )?;
     let ClaimOutcome::Claimed(leased) = queue.claim_kind(
-        "ed03.amended",
+        DREAMER_RUNNER_ATTEMPT_KIND,
         ClaimAttempt {
             lease_owner: "host".to_owned(),
-            now: 12,
+            now: vault.now_recorded_at(),
         },
     )?
     else {
         panic!("the attempt leases")
     };
+    assert_eq!(leased.id, row.id);
     queue.set_executor_model(row.id, "host", leased.attempt_count, MODEL)?;
     if failed {
         queue.fail(FailAttempt {
@@ -693,14 +694,14 @@ fn terminal_attempt(
             lease_owner: "host".to_owned(),
             attempt_count: leased.attempt_count,
             reason: "failed check".to_owned(),
-            now: 13,
+            now: vault.now_recorded_at(),
         })?;
     } else {
         queue.complete(CompleteAttempt {
             id: row.id,
             lease_owner: "host".to_owned(),
             attempt_count: leased.attempt_count,
-            now: 13,
+            now: vault.now_recorded_at(),
         })?;
     }
     Ok(crate::receipt::attempt_pack_receipt_id(&row.id))

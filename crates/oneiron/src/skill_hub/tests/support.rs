@@ -200,25 +200,23 @@ impl HeldOutReplayNotes for FixtureReplay {
 }
 /// Real terminal attempt receipts, attributed through the production reliability door.
 pub(crate) fn reserve(vault: &Vault, skill: &EntityId, skill_id: &str) {
+    use crate::agent_dispatch::{AgentDispatchOutcome, AgentDispatcher};
     use crate::attempt_queue::{
-        AttemptQueue, ClaimAttempt, ClaimOutcome, CompleteAttempt, CompleteOutcome, EnqueueAttempt,
-        EnqueueOutcome, ManifestEntry, ManifestKind,
+        AttemptQueue, ClaimAttempt, ClaimOutcome, CompleteAttempt, CompleteOutcome, ManifestEntry,
+        ManifestKind,
     };
+    use crate::dreamer_runner::DREAMER_RUNNER_ATTEMPT_KIND;
     let queue = AttemptQueue::new(vault);
-    for index in 0..200 {
-        let now = 100 + index * 10;
-        let EnqueueOutcome::Enqueued(attempt) = queue
-            .enqueue(EnqueueAttempt {
-                kind: "hub.fixture".to_owned(),
-                payload: vec![],
-                dedupe_key: None,
-                run_id: None,
-                now,
-            })
-            .expect("enqueue")
+    let dispatcher = AgentDispatcher::new(vault);
+    for _ in 0..200 {
+        let now = vault.now_recorded_at();
+        let AgentDispatchOutcome::Dispatched(dispatched) = dispatcher
+            .dispatch_default_base(None, None, None, now)
+            .expect("enqueue typed agent dispatch")
         else {
-            panic!("fresh attempt");
+            panic!("fresh agent dispatch");
         };
+        let attempt = dispatched.attempt;
         queue
             .append_manifest_entry(
                 attempt.id,
@@ -226,14 +224,18 @@ pub(crate) fn reserve(vault: &Vault, skill: &EntityId, skill_id: &str) {
             )
             .expect("manifest");
         let ClaimOutcome::Claimed(leased) = queue
-            .claim(ClaimAttempt {
-                lease_owner: "fixture".to_owned(),
-                now: now + 1,
-            })
+            .claim_kind(
+                DREAMER_RUNNER_ATTEMPT_KIND,
+                ClaimAttempt {
+                    lease_owner: "fixture".to_owned(),
+                    now: vault.now_recorded_at(),
+                },
+            )
             .expect("claim")
         else {
             panic!("claimable attempt");
         };
+        assert_eq!(leased.id, attempt.id);
         queue
             .set_executor_model(
                 attempt.id,
@@ -248,14 +250,19 @@ pub(crate) fn reserve(vault: &Vault, skill: &EntityId, skill_id: &str) {
                     id: attempt.id,
                     lease_owner: "fixture".to_owned(),
                     attempt_count: leased.attempt_count,
-                    now: now + 2
+                    now: vault.now_recorded_at(),
                 })
                 .expect("complete"),
             CompleteOutcome::Completed(_)
         ));
         let receipt = crate::receipt::attempt_pack_receipt_id(&attempt.id);
-        crate::skill_reliability::record_skill_contributing_win(vault, skill, &receipt, now + 3)
-            .expect("attribute");
+        crate::skill_reliability::record_skill_contributing_win(
+            vault,
+            skill,
+            &receipt,
+            vault.now_recorded_at(),
+        )
+        .expect("attribute");
         if !crate::skill_optimize::held_out_receipts(vault, skill)
             .expect("reserve")
             .is_empty()

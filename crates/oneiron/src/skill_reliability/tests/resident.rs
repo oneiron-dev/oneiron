@@ -7,27 +7,26 @@ fn stamped_resident_receipt(
     skill: &EntityId,
 ) -> Result<String> {
     let queue = AttemptQueue::new(vault);
-    let EnqueueOutcome::Enqueued(row) = queue.enqueue(EnqueueAttempt {
-        kind: "resident.rank".into(),
-        payload: Vec::new(),
-        dedupe_key: None,
-        run_id: None,
-        now: 10,
-    })?
+    let dispatcher = AgentDispatcher::new(vault);
+    let now = vault.now_recorded_at();
+    let AgentDispatchOutcome::Dispatched(dispatched) =
+        dispatcher.dispatch_default_base(None, None, None, now)?
     else {
         panic!("new attempt")
     };
+    let row = dispatched.attempt;
 
     let ClaimOutcome::Claimed(leased) = queue.claim_kind(
-        "resident.rank",
+        DREAMER_RUNNER_ATTEMPT_KIND,
         ClaimAttempt {
             lease_owner: "resident-rank".into(),
-            now: 12,
+            now: vault.now_recorded_at(),
         },
     )?
     else {
         panic!("claim")
     };
+    assert_eq!(leased.id, row.id);
     vault.load_resident_skill_pack(
         row.id,
         resident,
@@ -35,14 +34,14 @@ fn stamped_resident_receipt(
         "resident-rank",
         leased.attempt_count,
         "fixture/model@1",
-        11,
+        now,
     )?;
     queue.fail(crate::attempt_queue::FailAttempt {
         id: row.id,
         lease_owner: "resident-rank".into(),
         attempt_count: leased.attempt_count,
         reason: "failed".into(),
-        now: 13,
+        now: vault.now_recorded_at(),
     })?;
     Ok(attempt_pack_receipt_id(&row.id))
 }
