@@ -83,10 +83,6 @@ impl KitConfirmation {
 /// `run_root_request_as`).
 pub(super) const ACTIVATION_OWNER_ONLY: &str =
     "a kit's activation is the owner's to confirm; no Grant action names it";
-/// The kit's authority key R is on the roster but revoked: the kit is spent.
-/// The owner issues a new kit. Nothing was written.
-const REVOKED_AUTHORITY_KEY: &str = "the kit's authority key was revoked; issue a new kit, then \
-                                     confirm it; nothing was written";
 
 /// A root activated on this install.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -424,7 +420,13 @@ impl Vault {
     )> {
         self.precheck_root_door(owner, |txn, fold| {
             let me = crate::identity::read_machine_id_in_txn(self, txn)?;
-            carried_marks(fold, prepared, carry, me).map(drop)
+            carried_marks(fold, prepared, carry, me)?;
+            // Another owner's R refuses before any mint (REVIEW-9488 round 2 P1 3).
+            let vault_id = fold.vault_id.ok_or_else(invalid_authority)?;
+            let key = RecoveryAuthoritySigner::from_seed(prepared.seed(), &vault_id)?;
+            let actor = owner.revalidate_as_vault_owner_in_txn(self, txn)?;
+            self.recovery_authority_enrols_in_txn(txn, fold, actor, &key.authority_key())
+                .map(drop)
         })?;
         let predecessor = self.load_activation_predecessor(owner)?;
         let (secret, request) = self.own_request()?;
@@ -491,11 +493,7 @@ impl Vault {
         let vault_id = mid.vault_id.ok_or_else(invalid_authority)?;
         let authority_signer = RecoveryAuthoritySigner::from_seed(seed, &vault_id)?;
         let r_key = authority_signer.authority_key();
-        let enrol = match mid.roster.get(&r_key) {
-            Some(device) if !device.revoked => false,
-            Some(_) => return Err(authority_refused(REVOKED_AUTHORITY_KEY)),
-            None => true,
-        };
+        let enrol = self.recovery_authority_enrols_in_txn(txn, &mid, actor, &r_key)?;
         // R enrols before the earlier R keys go: the enrolment's carrier,
         // this install, may stand on an approval only an earlier R gave,
         // which goes stale at that R's revocation once older than the
@@ -523,13 +521,12 @@ impl Vault {
         // their revocation, so a kit change unpairs no machine
         // (WAYBACK-R-REVOCATION-STALES-R-APPROVALS = A). Then R binds the
         // owner on a self-hosted vault when a revoked R held their binding,
-        // as its enrolment would after the revocation.
+        // as its enrolment would after the revocation, an R enrolled before
+        // this act too (REVIEW-9488 round 2 P1 4).
         let carry =
             self.revoke_earlier_recovery_authority_keys_in_txn(txn, actor, &r_key, predecessor)?;
         self.carry_recovery_authority_approvals_in_txn(txn, carry, &authority_signer)?;
-        if enrol {
-            self.bind_owner_to_recovery_authority_key_in_txn(txn, actor, r_key, predecessor)?;
-        }
+        self.bind_owner_to_recovery_authority_key_in_txn(txn, actor, r_key, predecessor)?;
         let report = self.repin_finish_in_txn(txn, &door, start)?.report;
         let authority_seed = RecoveryAuthoritySeed::from_guarded(
             RecoveryAuthoritySigner::authority_seed(seed, &vault_id),

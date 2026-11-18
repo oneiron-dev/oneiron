@@ -89,6 +89,18 @@ fn rests_on(entry: &AuthorityLogEntry, revoked: impl Fn(&AuthorityKey) -> bool) 
 const NO_PREDECESSOR: &str = "this device's owner key is not enrolled; enrol it, then confirm \
                                the kit; nothing was written";
 
+/// The kit's authority key R is on the roster but revoked: the kit is spent.
+/// The owner issues a new kit. Nothing was written.
+const REVOKED_AUTHORITY_KEY: &str = "the kit's authority key was revoked; issue a new kit, then \
+                                     confirm it; nothing was written";
+
+/// The kit's authority key R is on the roster, but no live enrolment of kind
+/// [`EnrolledOwnerKeyKind::RecoveryAuthority`] names the activating owner:
+/// another owner's R is never reused as this owner's kit (REVIEW-9488 round 2
+/// P1 3). Authority; nothing was written.
+const KIT_ROOT_KEY_NOT_THE_OWNERS: &str = "this kit's root authority key is enrolled, but not as \
+                                           your recovery key; nothing was written";
+
 /// R's enrolment input for `machine` and `actor` (the revalidated owner): the
 /// one body [`Vault::enrol_recovery_authority_key_as`] and
 /// [`Vault::enrol_recovery_authority_key_in_txn`] share, so there are not two
@@ -396,6 +408,47 @@ impl Vault {
         }))
     }
 
+    /// Whether a kit activation enrols `key`, its R, for `actor`, the
+    /// revalidated owner: yes when `fold`'s roster lacks it; no when a live
+    /// enrolment of kind `RecoveryAuthority` names `actor` for it, so the
+    /// activation confirms that one. Refused when the roster revoked it, and
+    /// when it is any other roster key, another owner's R included: that R
+    /// would stand for this owner's kit, and a later kit of theirs would not
+    /// revoke it (REVIEW-9488 round 2 P1 3).
+    ///
+    /// # Errors
+    /// [`REVOKED_AUTHORITY_KEY`], [`KIT_ROOT_KEY_NOT_THE_OWNERS`]; the
+    /// enrolled-key read's.
+    pub(crate) fn recovery_authority_enrols_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        fold: &AuthorityFold,
+        actor: EntityId,
+        key: &AuthorityKey,
+    ) -> Result<bool> {
+        match fold.roster.get(key) {
+            None => return Ok(true),
+            Some(device) if device.revoked => {
+                return Err(authority_refused(REVOKED_AUTHORITY_KEY));
+            }
+            Some(_) => {}
+        }
+        let owners = self
+            .enrolled_owner_keys_in_txn(txn)?
+            .into_iter()
+            .any(|enrolled| {
+                enrolled.live
+                    && enrolled.owner == actor
+                    && enrolled.kind == EnrolledOwnerKeyKind::RecoveryAuthority
+                    && AuthorityKey::Ed25519(enrolled.public_key) == *key
+            });
+        if owners {
+            Ok(false)
+        } else {
+            Err(authority_refused(KIT_ROOT_KEY_NOT_THE_OWNERS))
+        }
+    }
+
     /// Revokes, in a kit activation's write transaction, every live owner
     /// key of kind `RecoveryAuthority` that `actor` enrolled other than
     /// `kept`, the activated kit's R (WAYBACK-SECOND-KIT-OLD-ROOT-KEY = A,
@@ -530,10 +583,12 @@ impl Vault {
             .filter(|(_, device)| device.revoked)
             .map(|(key, _)| key)
             .collect();
-        // Each machine's roster head, and the accepted chain's head when it
-        // is another revision (a custodial revision above an owner-held one
-        // leaves the accepted chain at the owner-held one): the stale-roster
-        // window expires either once the R it rests on is revoked.
+        // Each machine's roster head and the accepted chain's head (a
+        // custodial revision above an owner-held one leaves the accepted
+        // chain at the owner-held one), each with its own support: the
+        // stale-roster window expires either once the R it rests on is
+        // revoked, and renews the accepted chain's only by a mark that chain
+        // accepts (REVIEW-9488 round 2 P1 5).
         let mut machines: std::collections::BTreeMap<_, Vec<_>> = fold
             .machines
             .iter()
@@ -542,18 +597,15 @@ impl Vault {
                 if head.profile.revision == u64::MAX {
                     return None;
                 }
-                let trusted = folded
-                    .roster_trusted
-                    .as_ref()
-                    .filter(|trusted| trusted.entry != head.entry);
-                let heads: Vec<_> = std::iter::once(head)
-                    .chain(trusted)
-                    .filter(|head| {
+                let heads: Vec<_> = [(Some(head), false), (folded.roster_trusted.as_ref(), true)]
+                    .into_iter()
+                    .filter_map(|(head, trusted)| Some((head?, trusted)))
+                    .filter(|(head, _)| {
                         head.is_live()
                             && head.profile.act.is_none()
                             && !fold.anchor_entries.contains(&head.entry)
                     })
-                    .map(|head| (&head.profile, CarrySupport::default()))
+                    .map(|(head, trusted)| (&head.profile, trusted, CarrySupport::default()))
                     .collect();
                 (!heads.is_empty()).then_some((*machine, heads))
             })
@@ -591,11 +643,18 @@ impl Vault {
                 continue;
             }
             let anchor = fold.anchor_entries.contains(hash);
-            let support = match &entry.op {
+            // The accepted chain's head counts only a mark that chain
+            // accepts, as the stale-roster window renews it, never a
+            // custodial copy of its profile (`stale_roster.rs`).
+            let accepted = fold.accepted_roster_marks.contains(hash);
+            let supports: Vec<&mut CarrySupport> = match &entry.op {
                 AuthorityOp::MachineProfile(profile) if !anchor => machines
                     .get_mut(&profile.machine)
-                    .and_then(|heads| heads.iter_mut().find(|(head, _)| *head == profile))
-                    .map(|(_, support)| support),
+                    .into_iter()
+                    .flatten()
+                    .filter(|(head, trusted, _)| *head == profile && (accepted || !*trusted))
+                    .map(|(_, _, support)| support)
+                    .collect(),
                 AuthorityOp::BindActor {
                     authority_key,
                     actor_ref,
@@ -613,21 +672,20 @@ impl Vault {
                             && binding.actor_class == *actor_class
                             && binding.epoch == *epoch =>
                     {
-                        Some(support)
+                        vec![support]
                     }
-                    _ => None,
+                    _ => Vec::new(),
                 },
-                _ => None,
+                _ => Vec::new(),
             };
-            let Some(support) = support else {
-                continue;
-            };
-            if anchor {
-                support.independent = true;
-            } else if !rests_on(entry, |key| revoked_before.contains(key)) {
-                support.open = true;
-                if !rests_on(entry, |key| revoking.contains(key)) {
+            for support in supports {
+                if anchor {
                     support.independent = true;
+                } else if !rests_on(entry, |key| revoked_before.contains(key)) {
+                    support.open = true;
+                    if !rests_on(entry, |key| revoking.contains(key)) {
+                        support.independent = true;
+                    }
                 }
             }
         }
@@ -652,8 +710,8 @@ impl Vault {
                     heads
                         .into_iter()
                         .rev()
-                        .find(|(_, support)| support.carried())
-                        .map(|(profile, _)| profile.clone())
+                        .find(|(_, _, support)| support.carried())
+                        .map(|(profile, _, _)| profile.clone())
                 })
                 .collect(),
             rebinds,

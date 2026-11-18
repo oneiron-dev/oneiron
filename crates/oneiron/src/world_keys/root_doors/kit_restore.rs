@@ -54,12 +54,50 @@ impl Vault {
         Ok(restore)
     }
 
+    /// A sealed bundle's kit restore once its base windows landed: `pads`
+    /// land, `owed` reconciles the restore epochs that owe one, and the world
+    /// keys restore as [`Self::restore_world_keys`] restores them, in one
+    /// write transaction whose R check ([`Self::restore_world_keys_in_txn`])
+    /// is the restore's last: no pad lands unless the kit's R is live then
+    /// (REVIEW-9488 round 2 P1 2). `prepared` is [`Self::restore_prep`]'s,
+    /// taken before the windows. Answers the pads stored and the restore.
+    #[cfg(feature = "sync")]
+    pub(crate) fn restore_kit_pads_and_world_keys(
+        &self,
+        owner: &AuthenticatedOwner,
+        seed: &RecoveryRootSeed,
+        confirm: Option<KitConfirmation>,
+        prepared: &(MachineSecret, MachineEnrolmentRequest),
+        pads: &crate::world_keys::OpenedKeyPads,
+        owed: impl FnOnce(&mut heed::RwTxn<'_>),
+    ) -> Result<(usize, RootRestore)> {
+        let (secret, request) = prepared;
+        let (stored, (restore, usable)) = self.with_write_txn(|txn| {
+            // The door's refusals first, on this writer's fold, which no
+            // other writer moves before it commits: a pad put can reach
+            // custody outside this transaction.
+            owner.revalidate_as_vault_owner_in_txn(self, txn)?;
+            let fold = self.authority_view_readonly_in_txn(txn)?;
+            self.kit_seed_gate_in_txn(txn, &fold, seed, confirm)?;
+            self.kit_root_authority_signer(&fold, seed)?;
+            let stored = self.restore_key_pads_in_txn(txn, pads)?;
+            owed(txn);
+            let keys =
+                self.restore_world_keys_in_txn(txn, owner, secret, request, seed, confirm)?;
+            Ok((stored, keys))
+        })?;
+        for key in usable {
+            self.ring_world_key(key);
+        }
+        Ok((stored, restore))
+    }
+
     /// A restore's checks before its transaction: the seed door's, and the
     /// kit's root authority key R live on the roster
     /// ([`Self::kit_root_authority_signer`]), both in one read snapshot
     /// before this install's machine identity is minted; then its own
     /// request and secret.
-    pub(in crate::world_keys) fn restore_prep(
+    pub(crate) fn restore_prep(
         &self,
         owner: &AuthenticatedOwner,
         seed: &RecoveryRootSeed,
