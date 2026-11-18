@@ -40,6 +40,12 @@ pub struct PairingLink {
     /// Whom the slip this link pairs may message (FIX 3899): the reach the
     /// owner fixed on the link, `vault` when he named none.
     pub comm: super::CommReach,
+    /// The default read Grant this link minted for a named agent's PERSON,
+    /// when it minted one (AGENT-PAIR-DEFAULT-GRANT): a caller that fails
+    /// after the link takes it back beside the slip, so no failed mint keeps
+    /// a Grant. In-process only, never on the wire.
+    #[serde(skip)]
+    pub default_grant_ref: Option<crate::EntityId>,
 }
 /// What an owner-delivered link says of the checkpoint pin the link keeps: the
 /// link's fresh single-use challenge and the pin's digest.
@@ -168,7 +174,6 @@ fn pairing_act_kind(ownership: Option<MachineOwnership>) -> OwnerActKind {
 /// aloud or typed from a screen.
 const CODE_ALPHABET: &[u8; 32] = b"0123456789ABCDEFGHJKMNPQRSTVWXYZ";
 const CODE_LEN: usize = 8;
-const CODE_TTL_SECS: u64 = 60 * 60;
 const CODE_HASH_CONTEXT: &str = "oneiron/pairing-code/v1/hash";
 
 mod code;

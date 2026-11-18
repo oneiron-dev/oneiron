@@ -377,6 +377,10 @@ impl ModelRuntime {
                             rung.prompt.clone(),
                             rerank,
                         )
+                    })
+                    .map(|served| LadderRung {
+                        hours: rung.hours.clone(),
+                        ..served
                     });
                 match served {
                     Some(served) => rungs.push(served),
@@ -429,7 +433,11 @@ impl ModelRuntime {
                 Arc::clone(&rests),
                 scope,
             ) {
-                let seat = seat.with_on_device_view(native_rungs, &rests, scope);
+                let seat = seat.with_on_device_view(
+                    with_configured_hours(native_rungs, ladder),
+                    &rests,
+                    scope,
+                );
                 router.insert(seat.model.clone(), seat.locality, Arc::clone(&seat.ladder));
                 if let Some(view) = &seat.on_device {
                     router.insert_on_device(seat.model.clone(), Arc::clone(view));
@@ -526,18 +534,21 @@ impl ModelRuntime {
         self.rests.questions()
     }
 
-    /// The owner's answer to quota question `id`; a top-up or pay-as-you-go
-    /// puts its offer back in rotation now, and `use_fallback` sends its
-    /// calls to `fallback`, one of the question's fallbacks, while it is
-    /// parked. `false` when no such question is open, it offers no such
-    /// choice, or it offers no such fallback.
+    /// The answer to quota question `id`, given by `answerer` (the owner,
+    /// or an agent his key lets give it), which the question's answer row
+    /// keeps; a top-up or pay-as-you-go puts its offer back in rotation now,
+    /// and `use_fallback` sends its calls to `fallback`, one of the
+    /// question's fallbacks, while it is parked. `false` when no such
+    /// question is open, it offers no such choice, or it offers no such
+    /// fallback.
     pub fn answer_quota(
         &self,
         id: &str,
         choice: QuotaChoice,
         fallback: Option<&str>,
+        answerer: QuotaAnswerer,
     ) -> oneiron::Result<bool> {
-        self.rests.answer(id, choice, fallback)
+        self.rests.answer(id, choice, fallback, answerer)
     }
 
     /// The seat for `role`, when at least one of its rungs can serve.
@@ -642,4 +653,18 @@ impl ModelRuntime {
         status.prepared_tails = worker_host::prepared_tail_status();
         status
     }
+}
+
+/// `rungs`, each with the daily hours its configured rung keeps
+/// (UNBUILT-14), found by its place in the configured `ladder`.
+fn with_configured_hours(
+    mut rungs: Vec<LadderRung>,
+    ladder: &[crate::config::models::Rung],
+) -> Vec<LadderRung> {
+    for rung in &mut rungs {
+        rung.hours = ladder
+            .get(rung.position)
+            .and_then(|configured| configured.hours.clone());
+    }
+    rungs
 }

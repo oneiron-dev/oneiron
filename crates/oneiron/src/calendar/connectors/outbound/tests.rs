@@ -8,6 +8,7 @@ use crate::calendar::test_support::{
     CalendarEventFixture, open_calendar_vault_with_machine_identity as open_calendar_vault,
 };
 use crate::calendar::{index_passport_uid, live_passport_for, live_passports_for_event};
+use crate::setting::{SetSetting, SetSettingOutcome, SettingCaller};
 use std::cell::RefCell;
 
 const NOW: u64 = 1_800_000_000;
@@ -89,19 +90,40 @@ fn seat_config() -> CalendarConnectorSeatConfig {
 /// The installed seat's operation (FIX 12531/12496, 11b8ba72a77: the write
 /// and sync doors take the authenticated operation, not the seat): the
 /// vault's embedded owner installs the suite's seat, and the test reuses
-/// that registration. Reinstalling the same seat is idempotent.
+/// that registration. Reinstalling the same seat is idempotent. The seat is the
+/// `calendar.connector_seat` setting, one item per seat ref (#8937 replaced
+/// the configure door).
 fn operation(vault: &Vault) -> CalendarConnectorOperation {
     let owner = crate::test_util::embedded_owner_proof(vault);
     let memory = vault.memory(owner.actor(), crate::EdgeActorClass::Human);
-    let registration = door::configure(
+    let installed = vault
+        .set_setting(
+            SettingCaller::Owner(&owner),
+            SetSetting {
+                item: Some(seat_config().seat_ref),
+                ..SetSetting::vault_value(
+                    "calendar.connector_seat",
+                    serde_json::json!({
+                        "config": seat_config(),
+                        "endpoint": "https://caldav.work.test/",
+                    }),
+                )
+            },
+        )
+        .expect("install connector seat");
+    assert!(
+        matches!(installed, SetSettingOutcome::Applied { .. }),
+        "the owner's install applies: {installed:?}"
+    );
+    let registration = door::get(
         &memory,
         &owner,
-        &door::CalendarConnectorConfigureRequest {
-            config: seat_config(),
-            endpoint: "https://caldav.work.test/".to_owned(),
+        &door::CalendarConnectorRequest {
+            seat_ref: seat_config().seat_ref,
         },
     )
-    .expect("install connector seat");
+    .expect("read the installed seat")
+    .expect("the seat is installed");
     CalendarConnectorOperation::new(vault, owner, registration).expect("seat operation")
 }
 
@@ -379,7 +401,7 @@ fn remote_applied_resume_uses_stored_snapshot_after_a_newer_local_edit() {
         expected_etag: row.expected_etag.clone(),
         uid: uid.clone(),
         sequence: row.sequence,
-        ics: render_owner_vevent(&vault, &event, &uid, row.sequence, NOW)
+        ics: render_owner_vevent(&vault, &event, &uid, row.sequence, NOW, None, None)
             .unwrap()
             .ics,
     };
@@ -559,6 +581,7 @@ fn a_push_under_a_pending_passport_uid_never_moves_the_uid_index() {
             direction: CalendarPassportDirection::TwoWay,
             last_seen_at: NOW,
             presence: CalendarPassportPresence::Live,
+            cancelled_since: None,
         }),
         1.0,
         crate::ClaimApprovalStatus::Proposed,

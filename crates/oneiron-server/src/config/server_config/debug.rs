@@ -49,6 +49,7 @@ impl fmt::Debug for SyncServerConfig {
             .field("runtime", &self.runtime)
             .field("skills", &self.skills)
             .field("line", &self.line)
+            .field("mail", &self.mail)
             .field("channel_endpoints", &self.channel_endpoints)
             .field("apns", &self.apns)
             .field("linear", &self.linear)
@@ -60,6 +61,7 @@ impl fmt::Debug for SyncServerConfig {
                 &self.release_payment_credentials_unfenced,
             )
             .field("hosted_private_origins", &self.hosted_private_origins)
+            .field("hosted_private_networks", &self.hosted_private_networks)
             .finish()
     }
 }
@@ -138,9 +140,11 @@ impl fmt::Debug for ServeConfig {
             .field("connectors", &self.connectors)
             .field("embedding", &self.embedding)
             .field("line", &self.line)
+            .field("mail", &self.mail)
             .field("channel_endpoints", &self.channel_endpoints)
             .field("apns", &self.apns)
             .field("linear", &self.linear)
+            .field("phonetic_embedder", &self.phonetic_embedder)
             .field("privacy_posture", &self.privacy_posture)
             .field(
                 "hosted_kms_key_ref",

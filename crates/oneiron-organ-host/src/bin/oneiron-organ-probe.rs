@@ -681,6 +681,80 @@ mod rogue {
     }
 }
 
+/// An organ for the host's filesystem fence checks (`--open-paths`), whose
+/// one verb, `probe.open {paths: [{path, write}]}`, opens each path, for
+/// writing (made where it is missing) where `write`, else for reading, and
+/// closes it at once, reading and writing nothing. It answers, path by
+/// path, `0` where the open succeeded, else the errno that refused it.
+#[cfg(unix)]
+mod opener {
+    use oneiron_organ_protocol::{
+        Answer, CallContext, ErrorCode, Organ, OrganError, OrganIdentity, Value, VerbSpec,
+    };
+
+    pub(super) struct Opener;
+
+    const OPEN: &str = "probe.open";
+
+    impl Organ for Opener {
+        fn identity(&self) -> OrganIdentity {
+            OrganIdentity {
+                name: "probe".into(),
+                version: env!("CARGO_PKG_VERSION").into(),
+            }
+        }
+
+        fn verbs(&self) -> Vec<VerbSpec> {
+            vec![VerbSpec {
+                name: OPEN.into(),
+                schema: 1,
+                kinds: Vec::new(),
+            }]
+        }
+
+        fn call(&self, call: &CallContext<'_>) -> Result<Answer, OrganError> {
+            if call.verb != OPEN {
+                return Err(OrganError::new(ErrorCode::UnknownVerb, call.verb));
+            }
+            let paths = field(&call.args, "paths")
+                .and_then(Value::as_array)
+                .ok_or_else(|| OrganError::new(ErrorCode::BadRequest, "probe.open takes paths"))?;
+            let opened = paths
+                .iter()
+                .map(|entry| {
+                    let path = field(entry, "path")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default();
+                    let write = field(entry, "write")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false);
+                    let errno = match std::fs::OpenOptions::new()
+                        .read(!write)
+                        .write(write)
+                        .create(write)
+                        .open(path)
+                    {
+                        Ok(_) => 0,
+                        Err(err) => err.raw_os_error().unwrap_or(-1),
+                    };
+                    Value::from(errno)
+                })
+                .collect::<Vec<_>>();
+            Ok(Answer {
+                report: Value::Array(opened),
+                ..Answer::default()
+            })
+        }
+    }
+
+    fn field<'a>(map: &'a Value, key: &str) -> Option<&'a Value> {
+        map.as_map()?
+            .iter()
+            .find(|(k, _)| k.as_str() == Some(key))
+            .map(|(_, value)| value)
+    }
+}
+
 #[cfg(unix)]
 fn main() -> std::process::ExitCode {
     match std::env::args().nth(1).as_deref() {
@@ -727,6 +801,7 @@ fn main() -> std::process::ExitCode {
             rogue::ask_then_nap();
             std::process::ExitCode::SUCCESS
         }
+        Some("--open-paths") => oneiron_organ_protocol::serve(opener::Opener),
         _ => oneiron_organ_protocol::serve(probe::Probe),
     }
 }

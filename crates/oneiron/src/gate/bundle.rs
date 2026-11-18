@@ -11,6 +11,7 @@ use crate::claim::{
     SessionClaimBundleClaim, decode_claim_body, encode_claim_body,
 };
 use crate::consent::AuthenticatedOwner;
+use crate::dreamer_runner::maintenance::digest::PROACTIVITY_POLICY_REQUEST_PREDICATE;
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -43,11 +44,19 @@ use super::resolution::{
 };
 use crate::error::GateError;
 
+// An agent's review and settlement of a bundle beside the owner's (C29).
+mod agent_settle;
 // One proposed claim settled by its id (DOOR-115), with these members' mechanics.
 mod claim_settle;
 mod decision_context;
 // The Coach's proposals waiting in the tray, for the healer's residue read (OF-418 L4).
 mod pending_heal;
+
+pub use agent_settle::{
+    GateConsentBundleMemberView, GateConsentBundleResolution, GateConsentBundleResolveRequest,
+    GateConsentBundleReview, GateConsentBundleReviewRequest, resolve_gate_consent_bundle_as_agent,
+    review_gate_consent_bundle_as_agent,
+};
 
 /// Gate `content_kind` of the ONE durable receipt a bundle resolution appends.
 pub const GATE_BUNDLE_CONTENT_KIND: &str = "consent_bundle";
@@ -78,6 +87,28 @@ pub(crate) fn append_reviewed_run_decision_in_txn(
 ) -> Result<()> {
     record.context = decision_context::bundle(vault, wtxn, run, members);
     decision_context::append(vault, wtxn, record, members)
+}
+
+/// Who settles a Dreamer consent bundle.
+#[derive(Clone, Copy)]
+enum BundleSettler<'a> {
+    /// The owner, under the proof a host minted from the request.
+    Owner(&'a AuthenticatedOwner),
+    /// An agent the owner's `gate.consent_bundle.delegate_resolution` row
+    /// admits, under its live Grant listing the verb (restriction census
+    /// C29), as its handle writes: with the run attempt its host bound, so
+    /// each member replay meets its live delegation chain at the gate.
+    Agent(WriteActor),
+}
+
+impl BundleSettler<'_> {
+    /// The class every member replay and the unit's ledger row write as.
+    const fn actor_class(self) -> EdgeActorClass {
+        match self {
+            Self::Owner(_) => EdgeActorClass::Human,
+            Self::Agent(_) => EdgeActorClass::Agent,
+        }
+    }
 }
 
 impl Vault {
@@ -347,18 +378,55 @@ impl Vault {
         action: GateConsentBundleAction,
         now: u64,
     ) -> Result<GateConsentBundleReceipt> {
+        self.settle_gate_consent_bundle(
+            BundleSettler::Owner(owner),
+            expected_bundle_id,
+            dreamer_run_id,
+            action,
+            now,
+            |_| Ok(None),
+        )
+    }
+
+    /// The settlement [`Vault::resolve_gate_consent_bundle`] makes, by
+    /// `settler`, after `admit` admits it in the same writer and names the
+    /// Grant an agent settles under (`None` for the owner). Only an owner's
+    /// proof answers a member's obligation, applies a proactivity policy
+    /// request and counts as a Coach heal's review; an agent does none of
+    /// these, and its member replays and the unit's ledger row are its own.
+    ///
+    /// # Errors
+    /// `admit`'s refusals, and those of [`Vault::resolve_gate_consent_bundle`].
+    fn settle_gate_consent_bundle<E: From<Error>>(
+        &self,
+        settler: BundleSettler<'_>,
+        expected_bundle_id: [u8; 32],
+        dreamer_run_id: &str,
+        action: GateConsentBundleAction,
+        now: u64,
+        admit: impl FnOnce(&mut heed::RwTxn<'_>) -> std::result::Result<Option<EntityId>, E>,
+    ) -> std::result::Result<GateConsentBundleReceipt, E> {
         require_gate_consent_bundle_run_id(dreamer_run_id)?;
-        let (receipt, recorded_decisions) = self.with_write_txn_grouped(|wtxn| {
-            // The proof is rechecked where the decision commits: an owner
-            // whose person, credential or ownership went away while the call
-            // waited for the writer decides nothing.
-            let actor = owner.revalidate_in_txn(self, &*wtxn)?;
-            // An owner-tier proof answers each member's obligation, for the
-            // revision its row showed; a narrower one answers none.
-            let owner_answer = owner.owner_answer_in_txn(self, &*wtxn)?;
+        let (receipt, recorded_decisions) = self.try_with_write_txn_grouped::<_, _, E>(|wtxn| {
+            let grant = admit(&mut *wtxn)?;
+            let (actor, owner_answer) = match settler {
+                BundleSettler::Owner(owner) => (
+                    // The proof is rechecked where the decision commits: an
+                    // owner whose person, credential or ownership went away
+                    // while the call waited for the writer decides nothing.
+                    owner.revalidate_in_txn(self, &*wtxn)?,
+                    // An owner-tier proof answers each member's obligation,
+                    // for the revision its row showed; a narrower one answers
+                    // none.
+                    owner.owner_answer_in_txn(self, &*wtxn)?,
+                ),
+                // An agent's answer is never the owner's: every member's
+                // obligation stays open for the owner.
+                BundleSettler::Agent(agent) => (agent.entity_ref(), None),
+            };
             let members = gate_consent_bundle_members_in_txn(&self.store, &*wtxn, dreamer_run_id)?;
             if members.is_empty() {
-                return Err(Error::EntityNotFound);
+                return Err(Error::EntityNotFound.into());
             }
             let bundle_id = gate_consent_bundle_id(dreamer_run_id, &members);
             if bundle_id != expected_bundle_id {
@@ -366,11 +434,15 @@ impl Vault {
                 // the group's, and the group is never empty here.
                 return Err(Error::Gate(GateError::GateConsentStale {
                     claim_id: members[0].member.claim_id,
-                }));
+                })
+                .into());
             }
 
             let policy = resolve_policy_manifest(&self.store, &*wtxn)?;
-            let actor = WriteActor::new(actor, EdgeActorClass::Human);
+            let actor = match settler {
+                BundleSettler::Agent(agent) => agent,
+                BundleSettler::Owner(_) => WriteActor::new(actor, settler.actor_class()),
+            };
             let bundle_ref = gate_consent_bundle_ref(&bundle_id);
             let (member_outcome, member_reason) = match action {
                 GateConsentBundleAction::Approve => {
@@ -398,7 +470,7 @@ impl Vault {
                 if diff_handle != entry.member.diff_handle
                     || read_frontier_hash != entry.member.read_frontier_hash
                 {
-                    return Err(Error::Gate(GateError::GateConsentStale { claim_id: id }));
+                    return Err(Error::Gate(GateError::GateConsentStale { claim_id: id }).into());
                 }
 
                 let mut resolved = body.clone();
@@ -444,6 +516,7 @@ impl Vault {
                     GateConsentBundleAction::Approve => &resolved,
                     GateConsentBundleAction::Decline => &body,
                 };
+                let replay_decisions = recorded_decisions.len();
                 replay_gate_consent_bundle_member(
                     self,
                     wtxn,
@@ -453,8 +526,38 @@ impl Vault {
                     actor,
                     &mut recorded_decisions,
                 )?;
-                if action == GateConsentBundleAction::Approve {
-                    self.confirm_bundled_proactivity_policy_in_txn(wtxn, owner, id, &body)?;
+                // An agent's approval lands the members as its own writes
+                // (C29): a hold on its own actor or delegation-chain ceiling
+                // stands, and is never redeemed through the consent override,
+                // which is the owner's. Its decline replays the reviewed
+                // Proposed body, which redeems nothing.
+                if matches!(settler, BundleSettler::Agent(_))
+                    && action == GateConsentBundleAction::Approve
+                    && let Some(ceiling) = recorded_decisions[replay_decisions..]
+                        .iter()
+                        .map(RecordedClaimGateDecision::ceiling_reason_codes)
+                        .find(|codes| !codes.is_empty())
+                {
+                    return Err(Error::Gate(GateError::GateWriteRejected {
+                        outcome: "pending",
+                        reason_codes: ceiling,
+                    })
+                    .into());
+                }
+                match settler {
+                    BundleSettler::Owner(owner) if action == GateConsentBundleAction::Approve => {
+                        self.confirm_bundled_proactivity_policy_in_txn(wtxn, owner, id, &body)?;
+                    }
+                    // The agent's door refuses such a bundle before it settles.
+                    BundleSettler::Agent(_)
+                        if body.predicate == PROACTIVITY_POLICY_REQUEST_PREDICATE =>
+                    {
+                        return Err(Error::InvariantViolation(
+                            "an agent's bundle settlement reached a proactivity policy request",
+                        )
+                        .into());
+                    }
+                    BundleSettler::Owner(_) | BundleSettler::Agent(_) => {}
                 }
                 if machine {
                     let approve = action == GateConsentBundleAction::Approve;
@@ -505,17 +608,20 @@ impl Vault {
                     )?
                     .is_none()
                 {
-                    return Err(Error::CorruptedIndex("gate consent bundle member"));
+                    return Err(Error::CorruptedIndex("gate consent bundle member").into());
                 }
-                // An answer to a Coach heal counts as its review (OF-418).
-                crate::dreamer_runner::maintenance::coach_heal::record_owner_review_in_txn(
-                    self,
-                    wtxn,
-                    id,
-                    &body,
-                    entry.member.created_at,
-                    now,
-                )?;
+                // An owner's answer to a Coach heal counts as its review
+                // (OF-418); an agent's reached no person.
+                if let BundleSettler::Owner(_) = settler {
+                    crate::dreamer_runner::maintenance::coach_heal::record_owner_review_in_txn(
+                        self,
+                        wtxn,
+                        id,
+                        &body,
+                        entry.member.created_at,
+                        now,
+                    )?;
+                }
 
                 frontier.update(entry.member.read_frontier_hash);
                 member_claim_ids.push(id);
@@ -584,7 +690,7 @@ impl Vault {
             if action == GateConsentBundleAction::Approve {
                 self.owe_settled_claim_vads_in_txn(wtxn, &member_claim_ids)?;
             }
-            // The bundle's own row records the owner's one answer for every
+            // The bundle's own row records the settler's one answer for every
             // member: `approved` or `rejected`, as each member's row (UC-03
             // D1 = A; its reason `gate.bundle.approved` / `declined` keeps
             // the word). `valid_gate_receipt_reason` admits only the
@@ -599,6 +705,8 @@ impl Vault {
                 bundle_id.to_vec(),
                 PolicyBasis::frontier(frontier.finalize().into()),
             );
+            // An agent's settlement names the Grant that admitted it.
+            receipt.grant_ref = grant.map(|grant| grant.to_hex());
             receipt.context =
                 decision_context::bundle(self, wtxn, dreamer_run_id, &member_claim_ids);
             let record = self.store.mint_gate_receipt_in_txn(wtxn, receipt)?;

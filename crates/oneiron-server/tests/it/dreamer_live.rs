@@ -595,6 +595,7 @@ fn witness(vault: &Vault, person: EntityId, conversation: EntityId, text: &str) 
             }],
             occurred_at: vault.now_recorded_at() + 1,
             thread_audience: None,
+            project: None,
             assertions: Default::default(),
         })
         .unwrap();

@@ -15,6 +15,7 @@ mod items;
 mod paid;
 mod presentation;
 mod render_budget;
+mod replay;
 mod scope_honesty;
 mod selection;
 mod speculative;
@@ -677,6 +678,9 @@ impl Memory<'_> {
             }
             if !execution.phonetic_codes.is_empty() {
                 builder = builder.search_phonetic(execution.phonetic_codes);
+            }
+            if !execution.phonetic_mentions.is_empty() {
+                builder = builder.search_phonetic_mentions(execution.phonetic_mentions);
             }
             if effective.requires_rerank()
                 && let Some(reranker) = execution.reranker

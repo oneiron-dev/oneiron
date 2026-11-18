@@ -52,6 +52,7 @@ fn install_refuses_credential_coordinates_before_advisory_egress_and_sends_only_
         }
     }
     let (_dir, vault) = open_test_vault_with(embedding_test_config());
+    let owner = crate::test_util::embedded_owner_proof(&vault);
     let mut package = package("4.17.21");
     package.files.push(HubFile::new(
         "SKILL.md",
@@ -91,6 +92,7 @@ Keep this instruction local.
     ] {
         let error = vault
             .install_skill_with_advisories(
+                &owner,
                 &reference,
                 &package,
                 &[coordinate],
@@ -108,6 +110,7 @@ Keep this instruction local.
         assert!(vault.skill_scan_verdicts_for_content_hash(hash)?.is_empty());
     }
     let installed = vault.install_skill_with_advisories(
+        &owner,
         &reference,
         &package,
         &inventory,

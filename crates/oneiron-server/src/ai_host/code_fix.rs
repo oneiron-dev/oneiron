@@ -441,7 +441,10 @@ impl<'a> HostModels<'a> {
     /// the model's raw rung (FIX 18546). A kept request with no rung is
     /// admitted on the chat role. `None` when that model or prompt is not
     /// served now, or the call fails: the replay then rebuilds the call.
+    /// The call carries the rows the kept request was read from, as its
+    /// capsule names them (FIX 7104), or `None`, unknown.
     fn send_exact(&self, exact: &ExactReplayRequest) -> Option<String> {
+        let run = self.run.sourced(exact.source_rows.clone());
         let mut request = exact.request.clone();
         // Its answer is compared with the kept call's: it runs alone on an
         // own server that batches (INF 1). The kept request stays as it was.
@@ -465,7 +468,7 @@ impl<'a> HostModels<'a> {
                 let prompt = rung.binding.prompt.as_deref();
                 let wait = ladder.exact_replay_wait();
                 self.handle.block_on(replay.generate_exact_within(
-                    &self.run,
+                    &run,
                     request,
                     None,
                     prompt,
@@ -479,7 +482,7 @@ impl<'a> HostModels<'a> {
                     .admit_seat_bound(self.vault, CHAT_ROLE, request)
                     .ok()?;
                 self.handle
-                    .block_on(call.ladder.generate_exact(&self.run, call.request, None))
+                    .block_on(call.ladder.generate_exact(&run, call.request, None))
             }
         };
         match sent {

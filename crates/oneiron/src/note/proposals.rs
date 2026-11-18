@@ -6,6 +6,12 @@ use super::documents::{
 };
 use super::side_keys::HexPair;
 use super::sync_rows::SYNC_DS_E;
+use crate::batch::export::archive_side_install::{
+    ArchivedSideRowOutcome, decode_archived_row, install_archived_row,
+};
+use crate::batch::export::{
+    ArchiveRetainedSideRow, OwnerArchiveRestorePermit, RetainedSideHeldBackReason,
+};
 use crate::edge::EdgeActorClass;
 use crate::error::Result;
 use crate::memory::MemoryResult;
@@ -383,14 +389,10 @@ pub(super) fn purge_stored_history(
     Ok(())
 }
 
-/// One resolver for both direct edits and proposal routing. Whether an edit
-/// lands or waits is the Grant's answer for this actor and this NOTE, never
-/// the writer's authorship (DEC-0006 #10, ARCH-0032 #forks-proposals). The
-/// owner lands everywhere in his own vault; owner authority comes from the
-/// authority log, not merely from an asserted actor class. Anyone else, the
-/// NOTE's author included, lands only under an automatic grant and
-/// otherwise proposes.
-pub(super) fn grant_allows(
+/// The owner lands everywhere in his own vault; owner authority comes from
+/// the authority log, not merely from an asserted actor class. Anyone else,
+/// the NOTE's author included, lands here only under an automatic grant.
+fn owner_or_automatic_grant(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     note: EntityId,
@@ -402,6 +404,72 @@ pub(super) fn grant_allows(
         return Ok(true);
     }
     automatic_edit_grant(vault, txn, note, actor)
+}
+
+/// One resolver for both direct edits and proposal routing. Whether an edit
+/// lands or waits is the Grant's answer for this actor and this NOTE, never
+/// the writer's authorship (DEC-0006 #10, ARCH-0032 #forks-proposals): the
+/// owner's or an automatic grant's ([`owner_or_automatic_grant`]), and in a
+/// shared vault a member's, which lands exactly as its live federation grant
+/// allows the content write, whatever its class
+/// ([`shared_member_grant_allows`]). Anyone else, the NOTE's author
+/// included, proposes.
+pub(super) fn grant_allows(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    note: EntityId,
+    actor: WriteActor,
+) -> Result<bool> {
+    if owner_or_automatic_grant(vault, txn, note, actor)? {
+        return Ok(true);
+    }
+    shared_member_grant_allows(vault, txn, note, actor)
+}
+
+/// Whether `actor` decides (merges, switches or rejects) a waiting fork of
+/// `note` that `opener` opened. Its own fork it decides as it lands its own
+/// edit ([`grant_allows`]). Another writer's fork is decided by the owner or
+/// an automatic `note.edit` grant holder: a shared-vault member's content
+/// write grant lands that member's own edits (RULING
+/// MEMBER-GRANT-AGENT-LANDS = A) and gives it no say over another writer's
+/// proposal, which no ruling grants.
+pub(super) fn fork_decision_allows(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    note: EntityId,
+    opener: NoteActor,
+    actor: WriteActor,
+) -> Result<bool> {
+    if opener.is(actor.entity_ref()) {
+        return grant_allows(vault, txn, note, actor);
+    }
+    owner_or_automatic_grant(vault, txn, note, actor)
+}
+
+/// True when this is a shared vault and `actor`'s live federation grant
+/// admits the content write of `note`: the shared NOTE write gate's answer
+/// (ARCH-0043 #shared-vault-authority: a Member works "exactly as its scopes
+/// allow"; RULING MEMBER-SYNC-WRITES = A). The grant decides whatever the
+/// writer's class (RULING MEMBER-GRANT-AGENT-LANDS = A, DEC-0006 #10). A
+/// personal vault has no roster and the gate admits every writer there, so
+/// it is never asked. Only the gate's refusal answers false; a store fault,
+/// or a write concurrent with a revocation, stays an error.
+fn shared_member_grant_allows(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    note: EntityId,
+    actor: WriteActor,
+) -> Result<bool> {
+    if vault.shared_vault_creation_in_txn(txn)?.is_none() {
+        return Ok(false);
+    }
+    match vault.authorize_shared_note_write_in_txn(txn, note, &actor) {
+        Ok(()) => Ok(true),
+        Err(crate::error::Error::Claim(crate::error::ClaimError::ActorLacksClaimAuthority {
+            ..
+        })) => Ok(false),
+        Err(other) => Err(other),
+    }
 }
 
 /// Who answers whether a NOTE edit lands. Every agent-facing door asks the
@@ -427,7 +495,8 @@ pub(crate) enum NoteEditLanding<'a> {
     },
 }
 
-/// Whether `actor`'s edit of `note` lands now, through `landing`.
+/// Whether `actor`'s edit of `note` lands now, through `landing`: the
+/// Grant's answer, or the door's own proof ([`landing_proves`]).
 pub(super) fn edit_lands(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -435,9 +504,20 @@ pub(super) fn edit_lands(
     actor: WriteActor,
     landing: NoteEditLanding<'_>,
 ) -> Result<bool> {
-    if grant_allows(vault, txn, note, actor)? {
-        return Ok(true);
-    }
+    Ok(grant_allows(vault, txn, note, actor)? || landing_proves(vault, txn, note, actor, landing)?)
+}
+
+/// Whether the proof `landing` holds lands `actor`'s edit of `note` with no
+/// Grant: its live session pad, or a changed file of a folder the owner
+/// attached, under the owner's live proof. [`NoteEditLanding::Grant`] proves
+/// nothing.
+pub(super) fn landing_proves(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    note: EntityId,
+    actor: WriteActor,
+    landing: NoteEditLanding<'_>,
+) -> Result<bool> {
     match landing {
         NoteEditLanding::Grant => Ok(false),
         NoteEditLanding::SessionPad { session, run } => {
@@ -580,7 +660,7 @@ impl Vault {
                     .get(&self.store, txn, &id)?
                     .ok_or_else(|| invalid("missing proposal record"))?;
                 for fork in &mut bundle.waiting {
-                    if !grant_allows(self, txn, fork.note, actor)? {
+                    if !fork_decision_allows(self, txn, fork.note, fork.actor, actor)? {
                         return Err(invalid("no grant to accept this fork").into());
                     }
                     // A merge or switch moves a sealed NOTE's text; a reject
@@ -843,4 +923,64 @@ fn recovered_merge(base: &str, proposed: &str, current: &str) -> Result<String> 
         .chain(&right)
         .chain(&base[right_end..])
         .collect())
+}
+
+/// The holdback reason for one decoded landing receipt, or `None` when its identity holds and its
+/// NOTE was not hard-deleted.
+fn archived_note_receipt_holdback_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    key: &EntityId,
+    receipt: &NoteLandingReceipt,
+) -> Result<Option<RetainedSideHeldBackReason>> {
+    if receipt.id != *key {
+        return Ok(Some(RetainedSideHeldBackReason::InvalidValue));
+    }
+    if vault.local_hard_delete_marker_exists_in_txn(txn, &receipt.note)? {
+        return Ok(Some(RetainedSideHeldBackReason::MissingLiveEntity));
+    }
+    Ok(None)
+}
+
+/// Lands one archived `NOTE_RECEIPT` envelope: the receipt identity must hold and its NOTE must not
+/// be hard-deleted before install via the shared collision rule. Fork, head, and bundle companions
+/// are never required.
+///
+/// # Errors
+/// Storage faults; validation stays in the returned outcome.
+fn land_archived_note_row_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    permit: &OwnerArchiveRestorePermit,
+    row: &ArchiveRetainedSideRow,
+) -> Result<ArchivedSideRowOutcome> {
+    let (key, receipt) = match decode_archived_row(&NOTE_RECEIPT, row) {
+        Ok(decoded) => decoded,
+        Err(reason) => return Ok(ArchivedSideRowOutcome::HeldBack(reason)),
+    };
+    if let Some(reason) = archived_note_receipt_holdback_in_txn(vault, &*txn, &key, &receipt)? {
+        return Ok(ArchivedSideRowOutcome::HeldBack(reason));
+    }
+    install_archived_row(&NOTE_RECEIPT, vault, txn, permit, &key, row)
+}
+
+impl Vault {
+    /// Lands the owner's archived `NOTE_RECEIPT` envelopes in input order, one outcome per row: an
+    /// absent receipt installs, an identical receipt is unchanged, and a different receipt stays
+    /// live. Never moves heads, decides forks, or notifies.
+    ///
+    /// # Errors
+    /// Storage faults; validation stays in the returned outcomes.
+    pub(crate) fn land_archived_note_rows_in_txn(
+        vault: &Vault,
+        txn: &mut heed::RwTxn<'_>,
+        permit: &OwnerArchiveRestorePermit,
+        rows: &[ArchiveRetainedSideRow],
+    ) -> Result<Vec<ArchivedSideRowOutcome>> {
+        let mut outcomes = Vec::with_capacity(rows.len());
+        for row in rows {
+            outcomes.push(land_archived_note_row_in_txn(vault, txn, permit, row)?);
+        }
+        Ok(outcomes)
+    }
 }

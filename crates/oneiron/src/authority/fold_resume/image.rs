@@ -43,6 +43,7 @@ impl ImageFold {
             revoke_facts,
             retired_keys,
             closed_handoffs,
+            closed_conflicts: _,
             unsettled,
             counted_ancestor_pairs,
             issues,
@@ -103,12 +104,15 @@ impl ImageFold {
             .iter()
             .filter_map(|hash| {
                 let past = entry_ancestors.get(hash)?;
-                let counted = past.iter().filter(|row| !uncounted.contains(*row)).count();
+                let counted = past
+                    .iter_unordered()
+                    .filter(|row| !uncounted.contains(*row))
+                    .count();
                 Some((*hash, (past.len() as u64, counted as u64)))
             })
             .collect();
         let safety = crate::authority::checkpoint_image::CheckpointSafety {
-            pairs: entry_ancestors.values().map(|past| past.len() as u64).sum(),
+            pairs: entry_ancestors.pairs(),
             counted_pairs: counted_ancestor_pairs,
             frontier_ancestry,
             issuers,

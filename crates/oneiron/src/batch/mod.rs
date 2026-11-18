@@ -21,6 +21,7 @@ mod facet_validation;
 mod gate_mode;
 mod gate_staging;
 use oneiron_store::batch::leader_chat_admission;
+mod lexical_hint_index;
 mod lexical_query_hints;
 mod ops_derived_copies;
 mod ops_pipeline;
@@ -84,13 +85,14 @@ pub(crate) use self::claim_materialization::{
     ClaimMaterialization, SuccessionWriter, apply_owner_bound_claim_puts,
     apply_owner_bound_claim_puts_with_transitions, authenticated_claim_author_in_txn,
 };
-#[cfg(test)]
+#[cfg(any(test, oneiron_test_support))]
 pub(crate) use self::deindex::deindex_entity_for_test;
 pub(crate) use self::deindex::{
     deindex_entity, deindex_entity_with_machine_history, deindex_lexical_query_hints_for_target,
     delete_door_protected, drop_seeded_actor_row, stage_cascade_tombstone_in_txn,
 };
 pub(crate) use self::facet_validation::{validate_facet_of_edge, validate_replayed_facet_of_edge};
+pub(crate) use self::lexical_hint_index::reindex_lexical_query_hint;
 pub(crate) use self::lexical_query_hints::reject_family_owned_candidate;
 pub(crate) use self::lexical_query_hints::validate_staged_raw_put;
 #[cfg(test)]
@@ -113,7 +115,8 @@ pub(crate) use self::phonetic_apply::{
 };
 use self::prepared_index::PreparedIndexWork;
 pub(crate) use self::put_apply::{
-    delete_entity_index_rows, put_target_admitted_in, stage_entity_index_rows,
+    delete_entity_index_rows, projected_head_target_admitted_in, put_target_admitted_in,
+    stage_entity_index_rows,
 };
 pub use self::short_id::short_id_content_hash;
 pub(crate) use self::short_id::{
@@ -137,9 +140,11 @@ use self::child_of_overlay::*;
 use self::claim_candidate_apply::*;
 use self::deindex::*;
 use self::edge_apply::*;
+use self::lexical_hint_index::*;
 #[cfg(test)]
 pub(crate) use self::lexical_query_hints::lexical_query_hint_claim_ids_for_target;
 use self::lexical_query_hints::*;
+pub(crate) use self::ops_pipeline::apply_ops_session_projecting_restages;
 use self::ops_pipeline::*;
 pub(crate) use self::phonetic_apply::apply_phonetic;
 use self::put_apply::*;

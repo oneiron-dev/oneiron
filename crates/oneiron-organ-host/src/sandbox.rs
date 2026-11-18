@@ -27,6 +27,16 @@
 //! unfenced; a host with no fence refuses third-party organs
 //! (`Unavailable::ThirdPartyUnconfined`, [`filesystem_confined`]).
 //!
+//! On a Linux host with that fence a first-party organ starts inside it
+//! too (FIX [FIRST-PARTY-ORGAN-PROC-REACH]), with no scratch dir: it reads
+//! what a third-party organ reads and writes only the null device and its
+//! spec's write dirs. Unfenced it ran as the engine's uid and could open
+//! the engine's `/proc/<pid>/environ` and descriptors, its OOM score, and
+//! the vault's files. As for a third-party organ, a fence that does not
+//! apply fails its start. On a host with no Landlock, and on macOS, a
+//! first-party organ starts unfenced, as reviewed code on the protections
+//! that are built (ARCH-0075).
+//!
 //! A first-party organ's data and file-size limits start at its memory
 //! grant and grow with what its own buffers are granted (`memory.grow`):
 //! their soft limits move, under no hard one (FIX 6194). On Linux the host
@@ -82,8 +92,8 @@ struct Plan {
     status: Option<i32>,
     /// The `cgroup.procs` of the organ's cell, which the child joins first.
     join: Option<std::ffi::CString>,
-    /// A third-party organ's Landlock ruleset, which the child restricts
-    /// itself to before exec (FIX 7885).
+    /// The organ's Landlock ruleset, where it has one (`landlock::fence`),
+    /// which the child restricts itself to before exec.
     #[cfg(target_os = "linux")]
     landlock: Option<std::os::fd::OwnedFd>,
     /// The organ's syscall allow-list, which the child installs after
@@ -111,9 +121,9 @@ pub(crate) struct Confined {
 /// organ gets its scratch dir here, before its fence is built around it.
 ///
 /// # Errors
-/// A third-party organ on a platform with no fence; or its scratch dir or
-/// its filesystem fence could not be made, or the pipe the child reports
-/// its isolation on; the error names which.
+/// A third-party organ on a platform with no fence; or a third-party
+/// organ's scratch dir, any organ's filesystem fence, or the pipe the child
+/// reports its isolation on could not be made; the error names which.
 pub(crate) fn command(spec: &OrganSpec, socket: RawFd) -> io::Result<(Command, Confined)> {
     let first_party = spec.tier == OrganTier::FirstParty;
     #[cfg(not(any(target_os = "linux", target_os = "macos")))]
@@ -148,10 +158,7 @@ fn confine(
     #[cfg(target_os = "linux")]
     let status = Some(io::pipe()?);
     #[cfg(target_os = "linux")]
-    let landlock = scratch
-        .as_ref()
-        .map(|scratch| landlock::ruleset(spec, scratch.path()))
-        .transpose()?;
+    let landlock = landlock::fence(spec, scratch.as_ref().map(Scratch::path))?;
     #[cfg(target_os = "linux")]
     let syscalls = syscall_filter::SyscallFilter::for_organ(spec)?;
     // A trace run records the organ's calls in place of filtering them.
@@ -239,9 +246,11 @@ fn argv(spec: &OrganSpec, scratch: Option<&Scratch>) -> (PathBuf, Vec<OsString>)
     (spec.program.clone(), spec.args.clone())
 }
 
-/// Whether this host can fence a third-party organ's filesystem (FIX
-/// 7885): Landlock ABI 3 or later on Linux, Seatbelt's `sandbox-exec` on
-/// macOS. Where it cannot, the host refuses third-party organs.
+/// Whether this host can fence an organ's filesystem (FIX 7885): Landlock
+/// ABI 3 or later on Linux, Seatbelt's `sandbox-exec` on macOS. Where it
+/// cannot, the host refuses third-party organs. On Linux it also decides
+/// whether a first-party organ starts fenced (FIX
+/// [FIRST-PARTY-ORGAN-PROC-REACH]).
 #[must_use]
 pub fn filesystem_confined() -> bool {
     static CONFINED: OnceLock<bool> = OnceLock::new();
@@ -296,8 +305,8 @@ impl Plan {
         if unsafe { libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) } != 0 {
             return Err(io::Error::last_os_error());
         }
-        // A third-party organ's filesystem fence: an error fails the start,
-        // so the organ never runs unfenced (FIX 7885).
+        // The organ's filesystem fence: an error fails the start, so an
+        // organ whose fence was built never runs unfenced.
         if let Some(ruleset) = &self.landlock {
             oneiron_container::landlock_restrict(std::os::fd::AsFd::as_fd(ruleset))?;
         }

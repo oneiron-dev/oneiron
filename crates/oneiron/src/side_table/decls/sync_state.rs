@@ -90,6 +90,27 @@ side_tables! {
     /// refused or failed; local only, never synced. Key: hex16 (open time, ms) hex32 (minted id).
     SYNC_MESH_PATH_RECEIPT: SyncState b"mp:" Named
         [restore: live] [family: unclassified] [tier: canonical];
+    /// A prediction's set body the home pushed for one machine, home-local and never synced:
+    /// only that machine fetches it, by digest, over its connection. Value: the canonical
+    /// `PredictedResidenceSet` body. Key: hex32 (machine) hex64 (digest).
+    SYNC_RESIDENCE_PREDICTED_BODY: SyncState b"pb:" Raw
+        [restore: content] [family: unclassified] [tier: canonical];
+    /// Recorded-clock seconds (u64be) of this machine's last `residence.predict` ask, written
+    /// before the ask goes out. Key: none (one row).
+    SYNC_RESIDENCE_PREDICTED_ASKED: SyncState b"pr:a" Raw
+        [restore: content] [family: unclassified] [tier: canonical];
+    /// An entity document prediction this machine subscribed here; the predicted pass drops it
+    /// once the adopted set names it no longer and no `qd:e:` row waits. Value: empty. Key:
+    /// hex32 (entity id).
+    SYNC_RESIDENCE_PREDICTED_DOCUMENT: SyncState b"pr:e:" Raw
+        [restore: content] [family: unclassified] [tier: canonical];
+    /// The canonical body of the predicted set this machine adopted. Key: none (one row).
+    SYNC_RESIDENCE_PREDICTED_TARGET: SyncState b"pr:t" Raw
+        [restore: content] [family: unclassified] [tier: canonical];
+    /// A window prediction this machine fetched here; the predicted pass demotes it once the
+    /// adopted set names it no longer. Value: empty. Key: window key.
+    SYNC_RESIDENCE_PREDICTED_WINDOW: SyncState b"pr:w:" Raw
+        [restore: content] [family: unclassified] [tier: canonical];
     /// Digest of the project-depth birth contribution this vault minted locally. Key: hex32
     /// (contribution id).
     PROJECT_DEPTH_LOCAL_BIRTH: SyncState b"project:birth:local:" Raw
@@ -229,6 +250,12 @@ side_tables! {
     /// cache for pruning. Key: hex32 (entity id).
     SYNC_RESIDENCE_ITEM_TOUCH: SyncState b"rt:e:" Raw
         [restore: content] [family: unclassified] [tier: canonical];
+    /// The home's touch log of one proved machine, home-local and never synced: the seeds of
+    /// that machine's prediction (ARCH-0023b #predicted-residence). Value: recorded-clock
+    /// seconds (u64be) of the machine's last touch of the entity. Key: hex32 (machine) hex32
+    /// (entity).
+    SYNC_RESIDENCE_MACHINE_TOUCH: SyncState b"rt:m:" Raw
+        [restore: content] [family: unclassified] [tier: canonical];
     /// Deferred SpawnedBy anchor, keyed by window, session and turn. Key: yyyy-mm ":" hex32 ":" hex32.
     DEFERRED_SPAWNED_BY: SyncState b"sa:w:" Raw
         [restore: content] [family: unclassified] [tier: canonical];
@@ -322,8 +349,10 @@ side_tables! {
         [restore: content] [family: structure] [tier: canonical];
     /// The serve health check past a threshold (OF-520): one check per crossing subject, and
     /// how far the check has read each kind of kept crossing. Key: "check:" string (the
-    /// subject) | "cursor:" string (the crossing kind, and a limits row's key). An own-rate
-    /// subject ends in its actor, and that actor's erase takes the check.
+    /// subject) | "cursor:" string (the crossing kind, and a limits row's key) | "erased:"
+    /// string (an erased actor's hashed hex, a presence mark). An own-rate or spend subject
+    /// ends in its actor, and that actor's erase takes the check; a wire subject names no
+    /// actor, and that erase scrubs the actor out of its lists and a limit subject's owners.
     WIRE_HEALTH_CHECK: SyncState b"wire:health:v1:" Named
         [restore: content] [family: unclassified] [tier: canonical]
         => crate::own_rate::erase_health_check_actor_in_txn;
