@@ -27,7 +27,9 @@
 //! pass ([`JobSpec::once_per_pass`]) and the tighter direction of a cadence key
 //! ([`more_often_is_tighter`]). Stage 5b-4 adds a run of only some jobs' due rows, which a host
 //! loop that serves its own job sooner than the housekeeping tick makes, and which runs nothing
-//! while a housekeeping pass holds the runner.
+//! while a housekeeping pass holds the runner. Stage 5b-3 adds a job only some nodes run
+//! ([`JobSpec::runs_here`]): the watcher ticks and the timer turn programs, which only the node
+//! that releases the vault's ticks runs.
 
 mod arm;
 mod jobs;
@@ -165,6 +167,12 @@ pub struct JobSpec {
     /// sweep with no cursor of its own may find the same items again, and the pass reports one
     /// run of each.
     pub once_per_pass: bool,
+    /// Whether this node runs its rows, read once per job code per pass: [`any_node`] for a job
+    /// every node runs. A node that does not run it steps over its rows, which stay due there
+    /// and never wake it; the node that runs them, the vault's elected home for a job only the
+    /// home runs, runs each when it is due, and once, late, at its first pass after an election
+    /// that names it. A read that fails runs none of its rows in that pass.
+    pub runs_here: fn(&crate::Vault, &heed::RoTxn<'_>) -> Result<bool>,
     /// One run. It keeps within the pass's deadline and answers how far it got.
     pub run: fn(&crate::Vault, &Armed, &JobPass<'_>) -> Result<JobResult>,
 }
@@ -179,6 +187,12 @@ impl JobSpec {
                 .map_or(RETRY_CAP_SECS, |cadence| cadence.min(RETRY_CAP_SECS))
         })
     }
+}
+
+/// [`JobSpec::runs_here`] for a job every node runs: it reads nothing.
+#[allow(clippy::unnecessary_wraps)]
+pub(crate) fn any_node(_vault: &crate::Vault, _txn: &heed::RoTxn<'_>) -> Result<bool> {
+    Ok(true)
 }
 
 impl std::fmt::Debug for JobSpec {

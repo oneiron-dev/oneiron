@@ -56,6 +56,7 @@ macro_rules! deadline_jobs {
             wakes_host: $wakes,
             at_open: false,
             once_per_pass: true,
+            runs_here: crate::schedule::any_node,
             run: run_deadline_job,
         };
     )*};
@@ -106,6 +107,7 @@ macro_rules! sweep_jobs {
             wakes_host: false,
             at_open: $at_open,
             once_per_pass: true,
+            runs_here: crate::schedule::any_node,
             run: run_sweep_job,
         };
     )*};
