@@ -10874,7 +10874,7 @@
      "path": "src/blob_artifact/mod.rs",
      "purpose": "ARTL-1 (OF-368 D1): versioned blob artifact store for foreign binary (office) files",
      "surface": {
-      "crate-vis": 24,
+      "crate-vis": 25,
       "mod": 2,
       "re-export": 20
      }
@@ -11006,7 +11006,7 @@
      "purpose": "Blob version chain: version record codec and the Vault version-chain API",
      "surface": {
       "const": 1,
-      "crate-vis": 29,
+      "crate-vis": 30,
       "enum": 1,
       "fn": 11,
       "re-export": 1,
@@ -48042,6 +48042,7 @@
      "path": "src/ingest/bulk_review.rs",
      "purpose": "One import-time human act for the exact set of imported claim candidates",
      "surface": {
+      "crate-vis": 1,
       "fn": 4,
       "struct": 3
      }
@@ -48344,7 +48345,7 @@
      "path": "src/ingest/history/ledger.rs",
      "purpose": "The history import ledger: one row per imported source message, keyed by the source and the message's native…",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 15
      }
     },
     {
@@ -48379,7 +48380,7 @@
      "purpose": "The owner's own history, imported (ARCH-0027): ChatGPT and Claude.ai exports, the on-device Claude Code and…",
      "surface": {
       "const": 3,
-      "crate-vis": 5,
+      "crate-vis": 6,
       "enum": 3,
       "fn": 5,
       "mod": 1,
@@ -48906,7 +48907,7 @@
      "path": "src/ingest/mod.rs",
      "purpose": "Ingest source registry and source-local normalization",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 12,
       "mod": 5,
       "re-export": 18
      }
@@ -59098,7 +59099,7 @@
      "path": "src/note.rs",
      "purpose": "Attributed NOTE records with built-in, plugin and registered PACK kinds",
      "surface": {
-      "crate-vis": 68,
+      "crate-vis": 69,
       "re-export": 22
      }
     },
@@ -59554,7 +59555,7 @@
      "purpose": "A folder of linked markdown notes, imported as one batch the owner approves or declines whole (ARCH-0027…",
      "surface": {
       "const": 1,
-      "crate-vis": 5,
+      "crate-vis": 6,
       "enum": 1,
       "fn": 9,
       "struct": 5
@@ -94198,6 +94199,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/test_doors/fingerprint_keep_import_digests.rs",
+     "purpose": "Door for `tests/fingerprint_keep_import_digests.rs` (PLAN-UC-04 stage 6.2b): a claim import batch's and a…",
+     "surface": {
+      "fn": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/test_doors/fingerprint_keep_index_keys.rs",
      "purpose": "Door for `tests/fingerprint_keep_index_keys.rs` (PLAN-UC-04 stage 5): the keys local vault tables are…",
      "surface": {
@@ -94887,7 +94898,7 @@
      "purpose": "Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD)",
      "surface": {
       "fn": 1,
-      "mod": 299,
+      "mod": 300,
       "re-export": 1
      }
     },
@@ -107069,6 +107080,16 @@
      "bucket": "m",
      "kind": "test",
      "notable": [],
+     "path": "tests/fingerprint_keep_import_digests.rs",
+     "purpose": "K-proof (oracle) for PLAN-UC-04 stage 6.2b: four import digests keep their bytes",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
      "path": "tests/fingerprint_keep_index_keys.rs",
      "purpose": "K-proof (oracle) for PLAN-UC-04 stage 5a: the keys local vault tables are indexed and deduplicated by keep…",
      "surface": {
@@ -114454,7 +114475,7 @@
      "purpose": "`TimeRange`, temporal expressions/parsing, granularity/anchor enums"
     },
     "test_doors": {
-     "files": 305,
+     "files": 306,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -114631,8 +114652,8 @@
    },
    "over_bar": 300,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 8122,
-   "test_files": 1878
+   "source_files": 8123,
+   "test_files": 1879
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -129364,6 +129385,14 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/purposes/ingest.rs",
+     "purpose": "Purposes of imports into the vault: claims from a registered source, and chat history",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/purposes/inquiry.rs",
      "purpose": "Purposes of inquiries (`crates/oneiron/src/inquiry`)",
      "surface": {}
@@ -129410,6 +129439,14 @@
       "const": 2,
       "fn": 1
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/purposes/note.rs",
+     "purpose": "Purposes of notes",
+     "surface": {}
     },
     {
      "bucket": "s",
@@ -129618,7 +129655,7 @@
      "purpose": "The K door: a digest that main already stores or sends keeps its exact bytes"
     },
     "purposes": {
-     "files": 44,
+     "files": 46,
      "impl_vault": false,
      "largest_src_bucket": "s",
      "layout": "dir",
@@ -129634,7 +129671,7 @@
    },
    "over_bar": 0,
    "purpose": "One fingerprint rule for engine digests (fable pass 22; PLAN-UC-04 stage 0)",
-   "source_files": 47,
+   "source_files": 49,
    "test_files": 1
   },
   "oneiron-gen": {
