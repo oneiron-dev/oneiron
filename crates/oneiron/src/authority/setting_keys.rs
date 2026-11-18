@@ -1,5 +1,5 @@
-//! The authority's owner Setting keys (DESIGN 15-setting-primitive): rows the setting catalogue
-//! reads from this file.
+//! The authority module's owner Setting keys (DESIGN 15-setting-primitive): rows the setting
+//! catalogue reads from this file.
 //!
 //! Each key holds a lifetime the code fixed before (restriction census wave 1; owner 16 Nov
 //! 00:44: "we apply the optional freedom with good defaults everywhere"). Its default is that
@@ -10,9 +10,15 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use super::SUPPORT_GRANT_MAX_TTL_SECS;
 use super::step_up::STEP_UP_CHALLENGE_TTL_SECS;
 use crate::error::{Error, Result};
 use crate::setting::{Kind, SettingValue, lower_is_tighter};
+
+/// One day: the cap until the owner sets another.
+fn one_day() -> u64 {
+    SUPPORT_GRANT_MAX_TTL_SECS
+}
 
 /// A lifetime in whole seconds, at least one: a lifetime of zero ends before anything can use it.
 #[derive(
@@ -89,6 +95,16 @@ fn pairing_code_default() -> PairingCodeSecs {
 }
 
 crate::setting::setting_keys! {
+    /// The longest support grant the owner can mint, in seconds (OF-606). The mint door reads
+    /// it in its own writer and refuses a longer ask; a grant minted under it keeps its
+    /// lifetime when the cap is lowered later. One day until the owner sets another; a value
+    /// under one second reads as one second, and a row that does not decode reads as one day.
+    /// A longer cap is the looser value, so only the owner raises it; an agent's raise waits
+    /// on the owner's answer.
+    pub(crate) SUPPORT_GRANT_MAX_TTL: u64 = "support.grant.max_ttl_secs" {
+        kind: Kind::new(one_day).strictest(one_day).tighter(lower_is_tighter::<u64>),
+    };
+
     /// How long a step-up ceremony stays open, in seconds: a passkey challenge, and an
     /// authenticator app's enrolment, must be answered within it, or the ceremony starts again.
     /// Five minutes by default, WebAuthn's own default ceremony timeout. Each challenge still

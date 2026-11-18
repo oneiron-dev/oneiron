@@ -3,16 +3,25 @@
 
 pub const MAX_DBS: u32 = 32;
 
-/// v37 (FIX HOSTED-REROOT-FOLD-RULE): stored authority-log rows keep their
+/// v38 (FIX HOSTED-REROOT-FOLD-RULE): stored authority-log rows keep their
 /// bytes and change meaning. A `ReRoot` signed by a key without the host's
 /// stamp (`ROLE_CLOUD` or tier `CloudCustodial`) no longer counts while the
 /// roster holds a live owner key with that stamp, a hosted vault's live host
 /// root, so such a move the vault already holds (a recovery kit's, imported
 /// or signed here) is refused, the host root stays live, and every row above
 /// the move is refused with it. The host's own move and every self-hosted
-/// vault fold as before. The authority fold schema moves 44 -> 45 with it.
+/// vault fold as before. The authority fold schema moves 46 -> 47 with it.
 /// No old-meaning reader or migration is provided (the lead's M-1
 /// stored-change rule, path "loud").
+///
+/// v37 (row OWNER-ANCHOR-ROOT-RECOVERY, FIX OWNER-ANCHOR-NO-ROOT-RECOVERY): the
+/// authority fold schema moves 44 -> 45, and a stored checkpoint image
+/// written before it no longer decodes. The fold names a roster with no live
+/// root key (`NoRootKey`), and it counts a root appointment that the pinned
+/// root's anchor signed: the appointment's line folds as its own ancestry's
+/// fold did. Stored authority-log rows keep their bytes. No old-meaning
+/// reader or migration is provided (the lead's M-1 stored-change rule, path
+/// "loud").
 ///
 /// v36 (row WEB-PASSKEY-OWNER-KEY, owner passkeys): stored authority-log rows
 /// keep their bytes and meaning. The authority fold gains each enrolled
@@ -214,7 +223,7 @@ pub const MAX_DBS: u32 = 32;
 /// `RECEIPT_FAMILY_INDEX_VERSION` requires bumping this version too.
 /// v27 hashes full run/group identifiers in their v2 secondary-index keys.
 /// v26 is reserved for the separately landing attempt-record v4 format.
-pub const STORAGE_ABI_VERSION: u16 = 37;
+pub const STORAGE_ABI_VERSION: u16 = 38;
 
 pub const STORAGE_SCHEMA_VERSION: u16 = 1;
 

@@ -1,6 +1,7 @@
 use super::*;
 use crate::connector_key::{ConnectorDispatchTelemetry, ConnectorKeyRecord, EffectorBudget};
 use crate::test_util::{embedding_test_config, entity, open_test_vault_with};
+use serde_json::Value as Json;
 #[test]
 fn subscriptions_roundtrip_revoke_and_wake_only_matching_non_depleted_keys() -> Result<()> {
     let (_dir, vault) = open_test_vault_with(embedding_test_config());

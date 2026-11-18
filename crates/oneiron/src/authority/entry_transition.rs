@@ -78,6 +78,27 @@ pub(super) fn fold_entry_state(
     if entry.validate_shape().is_err() || verify_entry_signatures(entry).is_err() {
         return EntryFold::Invalid(AuthorityFoldIssue::InvalidEntry(hash));
     }
+    // A counted root appointment's line folds as its proof fold folded it,
+    // and the appointment as its recovered world (OWNER-ANCHOR-ROOT-RECOVERY,
+    // E1, E3): before any floor (E5) or parent state, so a refused witness
+    // parent never holds it back. Every other appointment is refused here,
+    // the same way on every install, and carries its verdict.
+    if let Some(recovered) = context
+        .appointments
+        .and_then(|judgement| judgement.recovered.entry_fold(&hash))
+    {
+        return recovered;
+    }
+    if matches!(entry.op, AuthorityOp::RootAppointment(_)) {
+        let verdict = context
+            .appointments
+            .and_then(|judgement| judgement.verdicts.get(&hash).copied())
+            .unwrap_or(AppointmentVerdict::Unjudged);
+        return EntryFold::Invalid(AuthorityFoldIssue::AppointmentRefused {
+            entry: hash,
+            verdict,
+        });
+    }
     // Slips are the client credential in every posture. Retired device-key
     // operations survive only as verified pre-handoff ancestry: a later
     // client enrollment or rotation gains no authority.
@@ -692,6 +713,17 @@ pub(super) fn fold_entry_state(
             | AuthorityOp::RebindActor { .. }
             | AuthorityOp::RevokeActor { .. }
     ) {
+        if !super::owner_proof::human_bind_proved(
+            &state,
+            &entry.op,
+            &participants,
+            context.consent_arm,
+        ) {
+            return EntryFold::Invalid(AuthorityFoldIssue::ActorBindingRejected {
+                entry: hash,
+                reason: ActorBindingRejection::OwnerProofRequired,
+            });
+        }
         if let Err(reason) = apply_actor_binding(&mut state, &entry.op, hash, context.consent_arm) {
             return EntryFold::Invalid(AuthorityFoldIssue::ActorBindingRejected {
                 entry: hash,
@@ -812,5 +844,8 @@ fn op_reuses_existing_device_key(state: &FoldState, op: &AuthorityOp) -> bool {
         | AuthorityOp::CustodyPermitPiece(_)
         | AuthorityOp::FrontierJoin(_)
         | AuthorityOp::MembershipExecution(_) => false,
+        // An appointment's successor is judged fresh over its whole ancestry
+        // (`root_appointment_judge`, V1).
+        AuthorityOp::RootAppointment(_) => false,
     }
 }

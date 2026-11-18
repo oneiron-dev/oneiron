@@ -22,7 +22,10 @@ fn speak(
         .rooms_speak(&WitnessTurn {
             conversation_ref: room.to_hex(),
             turn_ref: Some(id.to_hex()),
+            thread_audience: None,
+            project: None,
             occurred_at: at,
+            assertions: Default::default(),
             messages: vec![WitnessMessage {
                 id: Some(EntityId::now().to_hex()),
                 author: if class == EdgeActorClass::Human {
@@ -32,9 +35,11 @@ fn speak(
                 },
                 message_type: "text".into(),
                 content: text.into(),
+                parts: None,
                 metadata,
                 is_visible: true,
                 order: 0,
+                quote: None,
             }],
         })
         .unwrap();

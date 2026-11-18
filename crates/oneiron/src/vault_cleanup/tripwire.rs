@@ -160,10 +160,38 @@ pub(crate) fn zero_live_members_in_txn(
 /// A PERSON needs positive mint-time provenance AND no live claims.
 /// ONE live claim of ANY source disqualifies even an extraction-minted row.
 fn person_is_claimless(vault: &Vault, rtxn: &heed::RoTxn<'_>, person: &EntityId) -> Result<bool> {
-    Ok(
-        person_provenance::is_extraction_minted_person_in_txn(vault, rtxn, person)?
-            && !has_live_claim(vault, rtxn, person)?,
-    )
+    person_mint_unclaimed_in_txn(vault, rtxn, person, &std::collections::BTreeSet::new())
+}
+
+/// Whether the PERSON `person` is an extraction mint with no live claim
+/// about it but those `taken_back` names, read in `rtxn`: the cleanup's own
+/// rule (`person_is_claimless`), with nothing set aside, and a derivation
+/// batch's revert's, with the claims that same revert took back first set
+/// aside. Either archives only such a row.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn person_mint_unclaimed_in_txn(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    person: &EntityId,
+    taken_back: &std::collections::BTreeSet<EntityId>,
+) -> Result<bool> {
+    if !person_provenance::is_extraction_minted_person_in_txn(vault, rtxn, person)? {
+        return Ok(false);
+    }
+    for claim in vault.claims_for_subject_in_txn(rtxn, person)? {
+        if !taken_back.contains(&claim)
+            && matches!(
+                live_entity_row_in_txn(&vault.store, rtxn, &claim)?,
+                LiveEntityRow::Live { .. }
+            )
+        {
+            return Ok(false);
+        }
+    }
+    Ok(true)
 }
 
 /// A SUMMARY is a candidate exactly when nothing points at it and it points

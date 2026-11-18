@@ -296,6 +296,21 @@ impl Vault {
         ask::saved_producers(self, invocation)
     }
 
+    /// The args a hook's ask saved under `call`'s invocation in `storage`,
+    /// when the saved call is `call`'s own, for its host to rebuild its retry
+    /// from (FIX CHAT-WITNESS-ASK-RESUME-ARGS-DRIFT; [`ask::saved_args`]).
+    ///
+    /// # Errors
+    ///
+    /// Reading the saved call.
+    pub(crate) fn verb_hook_saved_args(
+        &self,
+        storage: VerbHookStorage<'_>,
+        call: &VerbCall,
+    ) -> Result<Option<Value>> {
+        ask::saved_args(self, storage, call)
+    }
+
     /// Runs the pre chain of `call` over `args`: the matching pre-hooks in
     /// priority order, each outcome validated. `Err(stop)` when a hook
     /// skipped or asked, or a blocking one failed safe. At hook depth 1 it

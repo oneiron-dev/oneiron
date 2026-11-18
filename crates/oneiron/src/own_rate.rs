@@ -3,6 +3,7 @@
 //! typed check. A check never refuses, holds or narrows the act that crossed.
 use crate::{EntityId, Result, Vault};
 use oneiron_contracts::cursor_text::parse_hex_cursor;
+use oneiron_contracts::fingerprint::ContentHash;
 
 use crate::store::own_rate_rows::{CHECKS, check_kept, checks_in_order_after};
 pub(crate) use crate::store::own_rate_rows::{
@@ -159,9 +160,8 @@ pub fn health_check_subject(kind: OwnRateKind, actor: &str) -> String {
 /// half of its hex's hash, as the wire crossed set's subject is a hash, so
 /// the mark itself names no one.
 fn health_erased_key(actor: &str) -> String {
-    let mut hasher = blake3::Hasher::new();
-    hasher.update(actor.as_bytes());
-    format!("{HEALTH_ERASED_ACTOR}{}", &hasher.finalize().to_hex()[..32])
+    let hash = ContentHash::of(actor.as_bytes());
+    format!("{HEALTH_ERASED_ACTOR}{}", &hash.to_hex()[..32])
 }
 
 /// What the host's health check asks an own-rate crossing with (ARCH-0044

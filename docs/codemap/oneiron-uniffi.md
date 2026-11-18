@@ -44,7 +44,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/codec/wire_json.rs` | src | s | — | — | Consuming output conversion for an opaque JSON leaf |
 | `src/contract.rs` | src | s | 1 fn · 2 const | — | The crate-private verb export macro |
 | `src/dto.rs` | src | L | 55 struct · 14 enum | AdmitImportedClaimInput, BlobArtifactInput, BlobVersionAppendOutcome, BlobVersionView, CitedMessage, ClaimInput, ClaimListFilter, ClaimView +61 | The typed UniFFI records of the SDK surface |
-| `src/embedded_engine.rs` | src | m | 6 struct · 1 trait · 13 fn | AppHostCallbacks, EmbeddedEngine, EngineConnection, EngineHeader, EngineLimits, EngineReply, EngineRequest | The embedded engine (OF-237): the full server `oneiron serve` runs, inside the app's own process, over the… |
+| `src/embedded_engine.rs` | src | m | 6 struct · 1 trait · 14 fn | AppHostCallbacks, EmbeddedEngine, EngineConnection, EngineHeader, EngineLimits, EngineReply, EngineRequest | The embedded engine (OF-237): the full server `oneiron serve` runs, inside the app's own process, over the… |
 | `src/error.rs` | src | s | 1 enum | OneironError | The single exported error type for the UniFFI head-contract surface |
 | `src/host_root.rs` | src | s | 1 struct · 2 fn | HostRootProfile | `Oneiron.open_with_host_root` (FIX 4730): `Oneiron.open`, then this install's own machine profile from the… |
 | `src/lib.rs` | src | m | 1 struct · 13 fn · 1 const · 8 re-export | Oneiron | The UniFFI binding of the Oneiron SDK: the shared Rust client, language-bound |

@@ -434,8 +434,19 @@ impl crate::Vault {
                 "delegate parent pact is inactive".into(),
             ));
         }
-        let mut grant =
-            super::FederationGrant::attenuated_delegate(&parent, member_ref, now, expires_at)?;
+        // The owner's cap on a Delegate's lifetime, read in the minting writer; never under a
+        // second.
+        let max_ttl_secs = super::setting_keys::DELEGATE_MAX_TTL
+            .read_in_txn(self, txn, &[], None)?
+            .value
+            .max(1);
+        let mut grant = super::FederationGrant::attenuated_delegate_within(
+            &parent,
+            member_ref,
+            now,
+            expires_at,
+            max_ttl_secs,
+        )?;
         grant.authority_scope = parent
             .authority_scope
             .meet(&self.grant_default_scope_in_txn(txn, Role::Delegate, vault_id, member_ref)?);
@@ -489,8 +500,6 @@ impl crate::Vault {
     }
 }
 
-// FIX [LIBTEST-QUARANTINE-FEDERATION-GRANT-POLICY-TESTS]: the lib test target's type check fails here (1 errors: E0061 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 #[path = "grant_policy/tests.rs"]
 mod tests;
