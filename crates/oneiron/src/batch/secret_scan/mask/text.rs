@@ -11,6 +11,7 @@ use super::side_row::bare_handle;
 use super::text_log::TextSpans;
 use super::{HANDLE_OPEN, Masker, secret_spans};
 use crate::error::Result;
+use crate::store::known_value_index::KnownValues;
 
 /// Each text a tracked pass masked, by the BLAKE3 of the text as given:
 /// every replacement it made there, in order, as the span it replaced and
@@ -30,17 +31,7 @@ impl Masker {
     /// each handle went.
     pub(super) fn mask_text(&mut self, text: &str) -> Result<Option<String>> {
         let spans = self.text_spans(text);
-        let mut known = spans.known;
-        // A handle in a stored row names its record and holds no value: a
-        // known value that merely spells part of it (`secret`) stays out.
-        if self.reads_held {
-            let handles = handle_spans(text);
-            known.retain(|(span, _)| {
-                !handles
-                    .iter()
-                    .any(|handle| handle.start < span.end && span.start < handle.end)
-            });
-        }
+        let known = spans.known;
         let mut hits: Vec<(Range<usize>, TextHit)> = spans
             .shapes
             .into_iter()
@@ -108,20 +99,16 @@ impl Masker {
         Ok(Some(out))
     }
 
-    /// Each non-kept known value in `text`, with its record's handle, and
-    /// each span the door's text rules place: taken from the plan's log when
-    /// this pass reads the text the plan read at this place (speed), else
-    /// found and, by a plan, logged.
+    /// Each non-kept known value in `text` outside the handles it holds,
+    /// with its record's handle, and each span the door's text rules place:
+    /// taken from the plan's log when this pass reads the text the plan read
+    /// at this place (speed), else found and, by a plan, logged.
     fn text_spans(&mut self, text: &str) -> TextSpans {
         if let Some(spans) = self.text_log.take(text.as_bytes()) {
             return spans;
         }
         let known = match &self.known {
-            Some(known) => known
-                .spans_except(text.as_bytes(), |value| self.is_kept(value))
-                .into_iter()
-                .map(|hit| (hit.span, hit.handle.to_owned()))
-                .collect(),
+            Some(known) => known_outside_handles(known, text, |value| self.is_kept(value)),
             None => Vec::new(),
         };
         // The switch is off: no shape span is discovered (FIX 8644). A text
@@ -137,7 +124,37 @@ impl Masker {
     }
 }
 
-/// The spans of `text` a mask on write placed a handle in: each
+/// Each non-kept known value in `text`, with its record's handle, read in
+/// each stretch between the handles `text` holds and never across or
+/// inside one (FIX REPLAY-COMPARE-KNOWN-OTHER-CALLERS): a handle names its
+/// record and holds no value, so a known value that spells part of it
+/// (`secret`), or that a handle's closing bracket opens (`]!~!`), is not in
+/// the text, and the value that follows the handle is still found. A mask
+/// of a row it already masked so places nothing new (an authored row
+/// admitted, then put), and a stored row is read as its write read it.
+fn known_outside_handles(
+    known: &KnownValues,
+    text: &str,
+    keep: impl Fn(&[u8]) -> bool,
+) -> Vec<(Range<usize>, String)> {
+    let bytes = text.as_bytes();
+    let mut found = Vec::new();
+    let mut from = 0;
+    let end = text.len()..text.len();
+    for handle in handle_spans(text).into_iter().chain(std::iter::once(end)) {
+        let stretch = &bytes[from..handle.start];
+        found.extend(known.spans_except(stretch, &keep).into_iter().map(|hit| {
+            (
+                from + hit.span.start..from + hit.span.end,
+                hit.handle.to_owned(),
+            )
+        }));
+        from = handle.end;
+    }
+    found
+}
+
+/// The spans of `text` a mask on write placed a handle in, in order: each
 /// `[secret sc12]`, and the whole text when it is a bare `sc12`.
 fn handle_spans(text: &str) -> Vec<Range<usize>> {
     if bare_handle(text) {
