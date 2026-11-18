@@ -106,7 +106,8 @@ fn remember(
                 scope_facet_id: facet.to_hex(),
                 scope_relationship_id: ClaimRelationships::All(AllRelationships::All),
                 scope_project_id: anchor.to_owned(),
-            },
+            }
+            .into(),
             sensitivity: None,
             evidence_turn_refs: Vec::new(),
             valid_from: None,

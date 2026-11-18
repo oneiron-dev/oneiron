@@ -283,6 +283,7 @@ async fn imported_update_vv_and_content_survive_server_recreation_without_commit
             .persist_imported_update(
                 &key,
                 &update,
+                &oneiron::sync::window::UpdateInserts::default(),
                 &oneiron::sync::selector::RepoSyncLandings::default(),
                 None,
             )
@@ -747,5 +748,170 @@ async fn revoke_refuses_on_non_binary_lease_entry() {
             Some(ValueOrContainer::Value(LoroValue::I64(7)))
         ),
         "the corrupt lease entry must not be mutated by revoke"
+    );
+}
+
+// ─── Two writers of d:root: this server and a device link's client ──────────
+//
+// FIX DEVICE-LINK-ROOT-PERSIST-DROPS-SERVER-ROOT-OPS. A device's server runs
+// beside its link to home: the link's client holds a root doc of its own over
+// the same vault and window manager, and persists each root it imports.
+
+/// A link client over `server`'s vault and window manager, as a device link
+/// builds one, with its event channel. It loads the stored root as it is now.
+fn link_client(
+    server: &SyncServer,
+) -> (
+    oneiron::sync::client::SyncClient,
+    tokio::sync::mpsc::UnboundedReceiver<oneiron::sync::client::SyncEvent>,
+) {
+    oneiron::sync::client::SyncClient::new(
+        Arc::clone(&server.reassert_manager),
+        oneiron::sync::client::SyncClientConfig {
+            residence_mode: oneiron::sync::client::SyncResidenceMode::All,
+            ..Default::default()
+        },
+    )
+    .unwrap()
+}
+
+/// The root as `d:root` holds it, in a doc of its own.
+fn stored_root(vault: &oneiron::Vault) -> LoroDoc {
+    oneiron::sync::server_state::load_root_from_state(vault)
+        .unwrap()
+        .expect("a root is stored")
+}
+
+/// A root frame from the home: its whole root.
+fn home_root_frame(home_root: &LoroDoc) -> Vec<u8> {
+    let mut frame = vec![oneiron::sync::transport::TAG_SYNC_UPDATE];
+    frame.extend_from_slice(&home_root.export(ExportMode::Snapshot).unwrap());
+    frame
+}
+
+/// A lease's status in its `ls:` row, the one a replay door reads.
+fn mirrored_lease_status(vault: &oneiron::Vault, vault_id: u64, client: u64) -> LeaseStatus {
+    let row = vault
+        .sync_state_get(&lease::lease_key(vault_id, client))
+        .unwrap()
+        .expect("the lease has its ls: row");
+    lease::decode_lease_record(&row).unwrap().status
+}
+
+/// A lease's status in the registry of the root `d:root` holds.
+fn stored_root_lease_status(vault: &oneiron::Vault, vault_id: u64, client: u64) -> LeaseStatus {
+    let entry = deep_map_bytes(
+        &stored_root(vault),
+        ROOT_LEASES_MAP,
+        &lease::lease_registry_key(vault_id, client),
+    )
+    .expect("the stored root holds the lease");
+    lease::decode_lease_record(&entry).unwrap().status
+}
+
+#[tokio::test]
+async fn lease_revoke_survives_a_root_persist_of_the_device_link() {
+    let (_dir, vault) = test_vault();
+    let server = SyncServer::new(vault.clone(), SyncServerConfig::default()).unwrap();
+    let client = 17;
+    seed_historical_lease(&server, 10, client, [42; 32], LeaseStatus::Active);
+
+    // The link opens: its client's doc reads the lease as active.
+    let (mut link, _events) = link_client(&server);
+    // The home's own doc holds the root this device has stored.
+    let home = stored_root(&vault);
+
+    // This server revokes the lease after the link opened.
+    assert!(
+        server
+            .revoke_lease_for_vault(10, client)
+            .await
+            .unwrap()
+            .is_some()
+    );
+    assert_eq!(
+        mirrored_lease_status(&vault, 10, client),
+        LeaseStatus::Revoked
+    );
+
+    // The home names a window; the link imports that root and persists.
+    oneiron::sync::schema::add_window_to_root(&home, &WindowKey::new("2026-03"));
+    link.handle_server_message(&home_root_frame(&home)).unwrap();
+    assert!(
+        read_window_list(&stored_root(&vault))
+            .iter()
+            .any(|key| key.as_str() == "2026-03"),
+        "the link persisted the home's root"
+    );
+
+    assert_eq!(
+        mirrored_lease_status(&vault, 10, client),
+        LeaseStatus::Revoked,
+        "the link's root persist put a revoked lease back to active in ls:"
+    );
+    assert_eq!(
+        stored_root_lease_status(&vault, 10, client),
+        LeaseStatus::Revoked,
+        "the link's root persist dropped this server's revoke from d:root"
+    );
+}
+
+#[tokio::test]
+async fn lease_write_keeps_a_revoke_the_device_link_persisted() {
+    let (_dir, vault) = test_vault();
+    let server = SyncServer::new(vault.clone(), SyncServerConfig::default()).unwrap();
+    let (revoked_here, revoked_at_home) = (17, 18);
+    seed_historical_lease(&server, 10, revoked_here, [42; 32], LeaseStatus::Active);
+    seed_historical_lease(&server, 10, revoked_at_home, [43; 32], LeaseStatus::Active);
+
+    let (mut link, _events) = link_client(&server);
+    // The home's own doc holds the root this device has stored.
+    let home = stored_root(&vault);
+
+    // The home revokes one lease; the link imports that root and persists.
+    // This server's doc does not hold the revoke.
+    let record = LeaseRecord {
+        vault_id: 10,
+        status: LeaseStatus::Revoked,
+        pubkey: [43; 32],
+        granted_at: 1,
+        renewed_at: 2,
+        expires_at: u64::MAX,
+    };
+    home.get_map(ROOT_LEASES_MAP)
+        .insert(
+            &lease::lease_registry_key(10, revoked_at_home),
+            lease::encode_lease_record(&record).as_slice(),
+        )
+        .unwrap();
+    home.commit();
+    link.handle_server_message(&home_root_frame(&home)).unwrap();
+    assert_eq!(
+        mirrored_lease_status(&vault, 10, revoked_at_home),
+        LeaseStatus::Revoked
+    );
+
+    // This server's own lease write then commits: its root put and mirror.
+    assert!(
+        server
+            .revoke_lease_for_vault(10, revoked_here)
+            .await
+            .unwrap()
+            .is_some()
+    );
+
+    assert_eq!(
+        mirrored_lease_status(&vault, 10, revoked_at_home),
+        LeaseStatus::Revoked,
+        "this server's lease write put the lease its home revoked back to active in ls:"
+    );
+    assert_eq!(
+        stored_root_lease_status(&vault, 10, revoked_at_home),
+        LeaseStatus::Revoked,
+        "this server's root put dropped the revoke its link had persisted"
+    );
+    assert_eq!(
+        mirrored_lease_status(&vault, 10, revoked_here),
+        LeaseStatus::Revoked
     );
 }

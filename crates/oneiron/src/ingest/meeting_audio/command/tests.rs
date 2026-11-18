@@ -3,6 +3,86 @@
 use super::*;
 
 use std::process::Command;
+use std::sync::Arc;
+
+use crate::EntityId;
+use crate::llm::media::{AiOperation, MediaCaps};
+use crate::llm::run_admission::{
+    BudgetLine, KeyCustody, LeaseUnit, MemoryReceipts, OfferBinding, OfferRoute, Payer,
+    RunAdmission, RunDeclaration, WireSeat, offer_id, offer_place,
+};
+use crate::llm::{
+    CallClass, CallEnvelope, CallPurpose, ModelId, ModelLocality, ModelTierRef, ResponseFormat,
+    TierPrecedence,
+};
+
+/// The host's on-device rungs for the fixture route: one [`WireSeat`] per
+/// physical model, built as production builds them in `meeting_transcript`.
+/// The ASR rung serves the routed model; no unit ever runs in these tests.
+fn fixture_seats(asr_model_id: &str) -> MeetingAudioSeats {
+    let run = RunAdmission::new(
+        format!("meeting-audio-test:{}", EntityId::now().to_hex()),
+        RunDeclaration::undeclared(BudgetLine {
+            limit_units: 1_000_000,
+            reserve_units: 10_000,
+            unit: LeaseUnit::tokens(),
+        }),
+        None,
+        Arc::new(MemoryReceipts::default()),
+    );
+    let seat = |model_id: &str, operation: AiOperation| {
+        let model = ModelId::new(model_id).expect("fixture model id");
+        let route = OfferRoute::new("meeting-audio-fixture", "loopback").expect("fixture route");
+        let offer = OfferBinding {
+            offer: offer_id(
+                &model,
+                &offer_place(ModelLocality::OnDevice, route.origin()),
+            ),
+            model,
+            route,
+            locality: ModelLocality::OnDevice,
+            payer: Payer::Local,
+            credential_binding: None,
+            catalog_revision: None,
+            custody: KeyCustody::Keyless,
+            rates: vec![],
+            payer_person: None,
+        };
+        let envelope = CallEnvelope {
+            scope: Default::default(),
+            purpose: CallPurpose::Voice,
+            class: CallClass::BestEffort,
+            tier: TierPrecedence::for_purpose(&CallPurpose::Voice, ModelTierRef("global".into())),
+            response_format: ResponseFormat::Text,
+            locality: ModelLocality::OnDevice,
+            host_keyless: false,
+            host_paid: false,
+            seat_effort: None,
+        };
+        WireSeat::new(
+            run.clone(),
+            offer,
+            envelope,
+            MediaCaps::for_operation(operation),
+        )
+    };
+    MeetingAudioSeats {
+        vad: seat("local/silero-vad@fixture-revision", AiOperation::Transcribe),
+        diarization: seat(
+            "pyannote/speaker-diarization-community-1@fixture-revision",
+            AiOperation::Transcribe,
+        ),
+        asr: seat(
+            &format!("{asr_model_id}@fixture-revision"),
+            AiOperation::Transcribe,
+        ),
+        alignment: vec![seat(
+            "Qwen/Qwen3-ForcedAligner-0.6B@fixture-revision",
+            AiOperation::Transcribe,
+        )],
+        cleanup: seat("local/cleanup@fixture-revision", AiOperation::Text),
+    }
+}
 
 fn frame(ok: bool, request_id: &str, body: &[u8]) -> Vec<u8> {
     let mut data = serde_json::to_vec(&json!({
@@ -61,7 +141,6 @@ fn runtime_profile_reaches_the_real_bridge_without_loading_models() {
         ffmpeg: python,
         workspace: workspace.clone(),
         model_snapshot: workspace,
-        stage_timeout: std::time::Duration::from_secs(30),
     };
     let route = AsrRoute {
         role: super::super::AsrRole::Asr,
@@ -69,7 +148,8 @@ fn runtime_profile_reaches_the_real_bridge_without_loading_models() {
         tier: ProcessingTier::Local,
         route_receipt_ref: "fixture:configuration-not-authorization".into(),
     };
-    let mut host = CommandMeetingAudioHost::new(config, route)
+    let seats = fixture_seats(&route.model_id);
+    let mut host = CommandMeetingAudioHost::new(config, route, seats)
         .unwrap()
         .with_runtime_profile(profile.clone(), digest.clone())
         .unwrap();

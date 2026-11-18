@@ -153,7 +153,7 @@ pub(in crate::sync) enum RefusalRetry {
     Terminal,
     /// A later pass may admit them: the quota window rolls over, the pack kind is installed
     /// (`pack_sync::pack_rejection_keeps_retry_marker`), or the owner raises the authority log's
-    /// signer bound (H72, rule 5).
+    /// signer bound (H72, rule 5) or its fold memory floor past the owner's reserve.
     Retry,
     /// Admission waits on another replicated row this vault has not seen yet.
     DependencyPending,
@@ -481,6 +481,22 @@ fn admit(
         }
     }
     if !delete_protected && deleted_here(ctx, wtxn, &id) {
+        // A late re-put of a row hard-deleted here is refused, but its insert
+        // is now in this window's history, which only a compaction drops: the
+        // window owes the erasure sweep one, run on its next pass (ARCH-0038
+        // #housekeeping-sla-open, census L6-05). A soft delete keeps its bytes
+        // for its restore window, so it owes none. A marker that cannot be
+        // read owes one: a compaction too many costs one cut.
+        if vault
+            .local_hard_delete_marker_exists_in_txn(wtxn, &id)
+            .unwrap_or(true)
+        {
+            crate::deletion::owed_window_compaction::owe_window_compaction_in_txn(
+                vault,
+                wtxn,
+                &crate::window_key::WindowKey::new(ctx.window_key),
+            )?;
+        }
         crate::task_authority::note_suppressed_fact_in_txn(
             &vault.store,
             wtxn,
@@ -508,9 +524,12 @@ fn admit(
     }
     // A world-access grant or default stands only on the node that wrote it (RULING
     // L2-53-CEILING): an older peer's row is dropped, and the rest of its window lands. So is a
-    // peer's row of any kind under the id of a grant or default stored here.
+    // peer's row of any kind under the id of a grant or default stored here, and a peer's MACHINE
+    // claim history row whose target is one: it would index the grant as machine history, and the
+    // read predicate would quarantine it.
     if (header.entity_type == crate::registry::ENTITY_TYPE_CLAIM
-        && crate::sync::local_claims::world_access_claim(data))
+        && (crate::sync::local_claims::world_access_claim(data)
+            || crate::sync::local_claims::targets_world_access_claim_in(vault, wtxn, data)?))
         || crate::sync::local_claims::holds_world_access_claim_in(vault, wtxn, &id)?
     {
         return Ok(EntityStep::Skip);
@@ -671,7 +690,13 @@ fn admit(
                     "an embedding setup row is not at its fixed time",
                 ));
             }
-            crate::embed::install_replicated_embedding_setup_in_txn(&vault.store, wtxn, &id, data)?;
+            crate::embed::install_replicated_embedding_setup_in_txn(
+                &vault.store,
+                vault.privacy_posture(),
+                wtxn,
+                &id,
+                data,
+            )?;
             None
         }
         _ => None,
@@ -690,6 +715,10 @@ fn admit(
         CarriedClaim::Redacted => return Ok(EntityStep::Materialized(id)),
     };
     let data = crate::workspace_roster::carried_audience_edit_in_txn(vault, wtxn, &id, blob, data)?;
+    // ROOM-PINS-LWW-MERGE: a room body lands with its pin records merged with
+    // the ones held here, record by record.
+    let data =
+        super::room_pins::carried_room_pins_in_txn(vault, wtxn, ctx.window_key, &id, blob, data)?;
     // FIX 3554: a Switch's moved MESSAGE pointer lands with its document's head.
     if crate::entity_doc::moved_pointer_row_in_txn(vault, wtxn, &id, blob)? {
         return Ok(EntityStep::Skip);

@@ -70,6 +70,7 @@ pub use self::process_host::ProcessHost;
 pub use crate::commands::{OpenedServedVault, open_served_vault};
 use crate::config::ServeConfig;
 use crate::web_client::DeploymentPosition;
+pub use oneiron::sync::FetchConditions;
 
 /// The peer every in-process request carries. The app is this process, so
 /// its callers are on this device (DEC-0005), as a loopback peer is.
@@ -248,6 +249,7 @@ async fn serve_prepared<A: AppHost>(
             device_sync.stop().await;
         }
         mesh_server.stop_shared_envs().await;
+        mesh_server.stop_connector_stdio().await;
         if let Some(mesh) = mesh {
             mesh.stop().await;
         }
@@ -325,6 +327,7 @@ async fn serve_prepared<A: AppHost>(
         device_sync.stop().await;
     }
     mesh_server.stop_shared_envs().await;
+    mesh_server.stop_connector_stdio().await;
     if let Some(mesh) = mesh {
         mesh.stop().await;
     }

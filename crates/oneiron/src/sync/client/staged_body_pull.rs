@@ -598,7 +598,7 @@ async fn pump_staged_body_source(
         .map_err(|error| error.to_string())?;
     source
         .transport_credential
-        .sign_upgrade(vault, vault.store.clock.wall_now(), &mut request)
+        .sign_upgrade(vault, None, vault.store.clock.wall_now(), &mut request)
         .map_err(str::to_owned)?;
     let (socket, _) = tokio::time::timeout(
         STAGED_BODY_SOURCE_CONNECT,

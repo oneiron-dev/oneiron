@@ -74,6 +74,9 @@ pub(crate) use self::dispatch::code_mode_line;
 // The integration tests' door to a draft's solved-run span (FIX 10508).
 #[cfg(oneiron_test_support)]
 pub(crate) use self::solved_runs::draft_checked_span;
+// The integration tests' door to a run call's admitted lane (FIX-LIST 25102).
+#[cfg(oneiron_test_support)]
+pub(crate) use self::dispatch::admit_run_call_for_test;
 
 use self::dispatch::*;
 use self::field_writer::RunFieldWriter;
@@ -114,9 +117,7 @@ use oneiron::memory::{HostWriteOrigin, Memory};
 use oneiron::retrieval_depth::RetrievalDeadline;
 use oneiron::runtime_hooks::InvocationId;
 use oneiron::secret_custody::RunSecretSeat;
-use oneiron::task_verb::sdk::{
-    AgentVerb, AiVerdict, AiVerdictRequest, AiVerdictReversibility, RunVerb,
-};
+use oneiron::task_verb::sdk::{AgentVerb, AiVerdict, AiVerdictRequest, RunVerb};
 use oneiron_browser::{
     Admitted, BrowserDriver, BrowserEngine, BrowserError, BrowserGuest, BrowserRequestHandler,
     BrowserSession, DesktopGuest, DesktopSession, EFFECT_CLASSES, FiledWorkflow, FreshGuest,
@@ -241,6 +242,9 @@ impl Drop for RunDesktop {
 trait RunGuestSession: BrowserDriver {
     fn abandoned(&self) -> bool;
     fn manifest(&self) -> &SessionManifest;
+    /// Stores the guest's pressure as its container shows it now into the
+    /// manifest (FIX 8013).
+    fn record_pressure(&mut self);
 }
 
 impl RunGuestSession for BrowserSession {
@@ -251,6 +255,10 @@ impl RunGuestSession for BrowserSession {
     fn manifest(&self) -> &SessionManifest {
         Self::manifest(self)
     }
+
+    fn record_pressure(&mut self) {
+        Self::record_pressure(self);
+    }
 }
 
 impl RunGuestSession for DesktopSession {
@@ -260,6 +268,10 @@ impl RunGuestSession for DesktopSession {
 
     fn manifest(&self) -> &SessionManifest {
         Self::manifest(self)
+    }
+
+    fn record_pressure(&mut self) {
+        Self::record_pressure(self);
     }
 }
 

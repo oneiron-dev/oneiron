@@ -11,7 +11,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | path | kind | bucket | pub surface | notable types | purpose |
 |---|---|---|---|---|---|
-| `src/answer.rs` | src | s | 6 struct · 2 enum · 2 fn | BrowserAnswer, DesktopAnswer, SessionFenceProof, SessionManifest, SessionSeccomp, TakeoverRecord, WindowSwitch, WindowSwitchCause | What the run's door adds to a guest's answer (CUA-001): the record of a person's takeover that ended, and… |
+| `src/answer.rs` | src | s | 6 struct · 3 enum · 2 fn | BrowserAnswer, DesktopAnswer, SessionFenceProof, SessionGuestPressure, SessionManifest, SessionSeccomp, TakeoverRecord, WindowSwitch +1 | What the run's door adds to a guest's answer (CUA-001): the record of a person's takeover that ended, and… |
 | `src/capture.rs` | src | s | 13 crate-vis | — | Repeat screenshots (AB-004) |
 | `src/cdp.rs` | src | m | 16 crate-vis | — | The Chrome DevTools Protocol over Chromium's `--remote-debugging-pipe`: JSON messages, each ended by a NUL… |
 | `src/cdp/deep.rs` | src | s | 3 crate-vis | — | A CDP message nested past serde_json's recursion limit (FIX 6963): a `DOM.getDocument` at `depth: -1` of a… |
@@ -32,7 +32,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/desktop/point.rs` | src | s | 1 crate-vis | — | A click at a point of a held screenshot (OF-523; FIX 5740, FIX 5741) |
 | `src/desktop/press_holds.rs` | src | s | 5 fn · 3 crate-vis | — | The act a desktop press held, kept for the host to bind (FIX 11499), and the one press an owner's answer… |
 | `src/desktop/reads.rs` | src | m | 12 crate-vis | — | — |
-| `src/desktop/session.rs` | src | m | 2 struct · 2 enum · 19 fn | AbandonedTakeover, DesktopGuest, PersonInput, Takeover | — |
+| `src/desktop/session.rs` | src | m | 2 struct · 2 enum · 20 fn | AbandonedTakeover, DesktopGuest, PersonInput, Takeover | — |
 | `src/desktop/tree.rs` | src | m | 1 crate-vis | — | — |
 | `src/desktop/verbs.rs` | src | m | — | — | — |
 | `src/driver.rs` | src | m | 14 crate-vis | — | The CDP driver: one page in a browser guest, read as an outline and acted on by ref |
@@ -88,7 +88,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/session/fresh.rs` | src | s | 1 trait · 1 fn · 1 crate-vis | FreshGuest | The fresh guest a proposal's replay runs on (CUA E1): admission's second check runs on a browser of its own… |
 | `src/session/guest.rs` | src | s | 1 struct · 1 trait · 2 crate-vis | BrowserGuestStarter, StartedGuest | A session's engine guest (FIX 6680, BROWSER-SPLIT PR3): the browser guest, its lease and manifest, and the… |
 | `src/session/held.rs` | src | s | 1 struct · 1 enum · 6 fn · 2 crate-vis | HeldPress, PressNeed | The act a press held, kept for the host to bind (FIX 10423), and the one press an owner's answer arms for it |
-| `src/session/lifecycle.rs` | src | m | 23 fn · 9 crate-vis | — | — |
+| `src/session/lifecycle.rs` | src | m | 24 fn · 9 crate-vis | — | — |
 | `src/session/press.rs` | src | s | 1 trait · 3 fn · 11 crate-vis | PressGrants | The press each effect class's sends run under (FIX 4613, 4615, 8009) |
 | `src/session/request.rs` | src | s | 2 fn · 2 crate-vis | — | The session's side of the host's custody of its requests (FIX 7122, `crate::request`): the destination… |
 | `src/session/site.rs` | src | s | 1 fn · 8 crate-vis | — | The session's site skills (CUA E10, `crate::site`): the host's loader, the last open's matches waiting for… |
@@ -100,3 +100,5 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/stop.rs` | src | m | 3 struct · 4 enum · 3 fn · 1 const · 9 crate-vis | AskUpReason, BatchStopCause, CheckReceipt, ClockScope, FailedStepReceipt, StrictDenial, StrictDenied | Why a batch stopped (CUA E2): one typed cause per stop, beside the stable refusal code a program already… |
 | `src/switch.rs` | src | s | 6 struct · 5 enum | EngineSwitchRecord, SnapshotBounds, StoragePhase, SwitchCarried, SwitchComponent, SwitchEngineInput, SwitchEngineOutput, SwitchLoss +3 | An engine switch (FIX 6680, BROWSER-SPLIT PR3, PR3b): the model moves the run's browser to the other engine… |
 | `src/verbs.rs` | src | m | 26 struct · 4 enum · 7 fn | ClickInput, CropInput, EffectReceipt, ExpectInput, ExpectOutput, FindInput, FindOutput, HotkeyInput +22 | — |
+| `tests/answer_manifest_guest_pressure.rs` | test | s | — | — | A browser or desktop answer's typed manifest keeps the guest's pressure (FIX… |
+| `tests/guest_pressure_answer.rs` | test | m | — | — | A browser or desktop guest's pids-limit hits reach its session's manifest (FIX 8013 follow-up… |

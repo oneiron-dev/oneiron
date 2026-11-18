@@ -135,7 +135,7 @@ async fn serve_with_handles(
     // process attests the owner on each route: a request with no credential
     // is anonymous. The Linear mirror checks this declaration, not a secret.
     server_config.ingress = crate::config::IngressAuth::Supervisor;
-    server_config.hosted_private_origins = managed.hosted_private_origins.clone();
+    managed.carry_hosted_egress(&mut server_config);
     // The host root signs with this vault's own independent issuer seed,
     // kept in this install's keystore slot under the supervisor's key
     // directory (FIX-LIST 3018): never the delivered DEK, which escrow
@@ -351,6 +351,9 @@ async fn serve_with_handles(
         managed.hypnos_socket.clone(),
         &credentials,
     )?);
+    // The recovery box's kit-only hold rides the ledger's socket and spawn
+    // identity; the recovery preset switch is its only caller.
+    sync_server.configure_recovery_box_hold(ledger.recovery_box_hold())?;
     // The native preview socket has only exact held-lease origins. No flag
     // means no registration caller or listener, preserving standalone hosts.
     let previews = managed
@@ -414,7 +417,8 @@ async fn serve_with_handles(
     );
     // Fact hooks (ARCH-0080) and the settled verb-ask drain on their runner,
     // unless `--no-hooks`: each pass admitted like a served write. The sandbox
-    // loads before ready, as plain serve loads it, so no verb waits on it.
+    // loads before ready, so no verb waits on it; plain serve builds it off
+    // its gated startup instead (FIX 25667).
     let (hooks_stop, hooks_stopped) = watch::channel(false);
     #[cfg(feature = "code-sandbox-wasmtime")]
     let fact_hooks = if config.hooks {
@@ -562,6 +566,13 @@ async fn serve_with_handles(
     handles.connector_sends = Some(sync_server.spawn_connector_send_worker(admitted()));
     // Checked built-in channels, under the same admission (OF-519).
     handles.builtin_host = Some(crate::builtin_host::spawn(&sync_server, admitted()));
+    // Booking deposits' due captures, voids and refunds go to Stripe, under
+    // the same admission (BK-DEPOSITS; Sol money review M3): the booking
+    // routes a managed vault serves take deposits, so it settles them too.
+    handles.deposit_settlement = Some(crate::booking_deposit::settle::spawn_deposit_settlement(
+        Arc::clone(&sync_server),
+        admitted(),
+    ));
     // Hosted imports staged in the vault's data folder, under the same
     // admission (ARCH-0027 #hosted-import): a restart takes each job up
     // where it stopped.
@@ -779,6 +790,10 @@ async fn serve_with_handles(
     // `quiescent: true` is a claim about a gate that nothing reaches. Each
     // socket upgraded on it or the mesh sees the shutdown, and is waited
     // for with the calls it admitted before any worker stops (FIX 4757).
+    // The event-loop watchdog (L8-11): a hung or recovering vault takes no
+    // new work, and `Ping` tells the supervisor. It runs until serve returns.
+    let _process_watchdog = sync_server
+        .start_process_watchdog(crate::process_readiness::ProcessHealthSettings::managed());
     let (app, upgrades) = crate::embedded::upgrade_lifetime(
         build_managed_app(Arc::clone(&sync_server), Arc::clone(&state)).layer(cors),
         shutdown.0.subscribe(),

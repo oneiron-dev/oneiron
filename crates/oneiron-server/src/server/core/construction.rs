@@ -176,7 +176,7 @@ impl SyncServer {
         // with it the outbound sink holding the sender) drops with this server.
         spawn_local_change_producer(&reassert_manager, &broadcast_tx);
 
-        let wire_telemetry = crate::wire_telemetry::WireTelemetry::new(vault.clone());
+        let wire_telemetry = Arc::new(crate::wire_telemetry::WireTelemetry::new(vault.clone()));
         live_rows(&vault, &config.limits, wire_telemetry.limit_questions());
         payment_credential_release(&vault, config.release_payment_credentials_unfenced);
         let retained = Arc::new(crate::byte_line::ByteLine::new(
@@ -216,15 +216,24 @@ impl SyncServer {
         // V2-R3: a lock of this vault waits for this process's snapshot
         // release before its key drops; an erase drops its sessions.
         crate::models::install_snapshot_runtime(&vault);
+        // A model install on this process reads this vault's owner's
+        // licence choice (models.install.allow_noncommercial_licences).
+        crate::model_artifacts::licence::bind_licence_vault(&vault);
         // FIX 14976: this vault's drafter bindings are served on this
         // process's own managed worker, where it launches one for this vault.
         crate::models::install_drafter_serving(&vault);
         // F1-6: this vault's guests run on the isolating backends this build
-        // carries, installed on the vault, not named by a process global. A
-        // vault an earlier server of this process installed keeps its set.
+        // carries, installed on the vault, not named by a process global, and
+        // on the vendor sandboxes this server serves (L8-43). A vault an
+        // earlier server of this process installed keeps its set.
         let _ = vault.install_sandbox_backends(Arc::new(
-            oneiron_agent_runtime::code_sandbox::CompiledSandboxBackends,
+            crate::sandbox_vendor::ServedSandboxBackends::new(&vault),
         ));
+        // Fix list row 17645: the mail pack's blocking network checks (an
+        // IMAP reply with files asks its submission server the size it
+        // takes) run on this server's blocking hop, under its `[mail]`
+        // settings.
+        crate::api::install_mail_host(&vault, &config.mail);
         // Provider media replies are booked on their own line (FIX 8615),
         // this vault's, as its mesh bytes are (FIX 9321, FIX 9323).
         let model_budgets = crate::models::ModelHostBudgets::new(
@@ -378,12 +387,14 @@ impl SyncServer {
             renderer_scratch: Default::default(),
             wire_telemetry,
             mesh_pressure: crate::wire_telemetry::PoolPressure::mesh(),
+            process_readiness: Default::default(),
             invocation_claims: crate::invocation_claims::InvocationClaimStore::new(vault.clone()),
             vault,
             root_doc,
             ephemeral_store,
             message_scopes,
             broadcast_tx,
+            broadcast_sessions: Default::default(),
             next_conn_id: AtomicU32::new(1),
             lease_registrar: Mutex::new(()),
             reassert_manager,
@@ -402,6 +413,7 @@ impl SyncServer {
             query_checks: super::read_shape::QueryChecks::default(),
             config,
             managed_issuer: None,
+            recovery_box_hold: std::sync::OnceLock::new(),
             host_root_issuer: issuer,
             policy_doors: Default::default(),
             account_keys: None,
@@ -415,8 +427,10 @@ impl SyncServer {
             model_budgets,
             cloud_registration,
             connector_elicitations: Arc::default(),
+            connector_stdio: Arc::default(),
             browser_guest: None,
             browser_readiness: Default::default(),
+            runner_fence: std::sync::OnceLock::new(),
             desktop_guest: None,
             artifact_backend: None,
             desktop_seats: Arc::default(),
@@ -431,6 +445,7 @@ impl SyncServer {
             model_setup_runtime: std::sync::OnceLock::new(),
             gpu_pool: std::sync::OnceLock::new(),
             llm: None,
+            embedding_line: None,
             decision_read: None,
             decision_reads,
             decisions,
@@ -451,6 +466,7 @@ impl SyncServer {
             hyde_host: Arc::new(crate::server::recall_hyde::HydeHost::new(hyde_queue_wait)),
             extraction_egress: None,
             tagger_egress: None,
+            phonetic_embedder: None,
             owner_host: None,
             feedback: None,
             feedback_triage: crate::config::FeedbackTriageConfig::default(),
@@ -459,6 +475,7 @@ impl SyncServer {
             api_addr: None,
             artifact_socket: false,
             booking_calls: Default::default(),
+            booking_deposit_stripe_base: crate::booking_deposit::stripe::STRIPE_API_BASE.to_owned(),
             booking_turn_lines: Default::default(),
             #[cfg(test)]
             booking_test_now_secs: None,
