@@ -10,15 +10,18 @@ use crate::EntityId;
 use crate::llm::BudgetSettlement;
 use crate::llm::run_admission::{CallOutcome, RunDenied, RunPermit};
 
-/// The live chunks' permits, one per job. Dropped, it hands every permit off
+/// The live chunks' permits, each under its job and the idempotency key of
+/// the chunk it pays. A job can hold two for a moment: a chunk whose end has
+/// written its settlement keeps its permit until that end settles it, while a
+/// resume already holds the next chunk's. Dropped, it hands every permit off
 /// as [`CallOutcome::Kept`]: a host shutdown never charges a running job's
 /// reservation as a failed call.
 #[derive(Default)]
 pub struct GpuJobPermits {
-    live: Mutex<HashMap<EntityId, HeldPermit>>,
+    live: Mutex<HashMap<EntityId, Vec<HeldPermit>>>,
 }
 
-/// One job's permit and the idempotency key of the chunk it pays.
+/// One chunk's permit and the idempotency key of that chunk.
 struct HeldPermit {
     chunk_key: String,
     permit: RunPermit,
@@ -38,52 +41,72 @@ impl GpuJobPermits {
         Self::default()
     }
 
-    /// The jobs whose chunk permit this host holds.
+    /// The jobs for whose chunks this host holds a permit.
     #[must_use]
     pub fn jobs(&self) -> Vec<EntityId> {
         self.lock().keys().copied().collect()
     }
 
+    /// Whether this host holds a permit for one of the job's chunks.
     #[must_use]
     pub fn holds(&self, job: &EntityId) -> bool {
         self.lock().contains_key(job)
     }
 
+    /// Whether this host holds the permit of the job's chunk under
+    /// `chunk_key`.
+    pub(super) fn holds_chunk(&self, job: &EntityId, chunk_key: &str) -> bool {
+        self.lock()
+            .get(job)
+            .is_some_and(|held| held.iter().any(|held| held.chunk_key == chunk_key))
+    }
+
     /// Hands every permit off without a charge, for a host about to stop.
-    /// Returns each job with its settlement.
+    /// Returns each job with the settlement of each of its permits.
     pub fn hand_off_all(&self) -> Vec<(EntityId, Result<BudgetSettlement, RunDenied>)> {
         let permits: Vec<_> = self.lock().drain().collect();
         permits
             .into_iter()
-            .map(|(job, held)| (job, held.permit.settle(CallOutcome::Kept)))
+            .flat_map(|(job, held)| {
+                held.into_iter()
+                    .map(move |held| (job, held.permit.settle(CallOutcome::Kept)))
+            })
             .collect()
     }
 
-    /// Holds `permit` for the job's chunk under `chunk_key`.
+    /// Holds `permit` for the job's chunk under `chunk_key`. Another chunk's
+    /// permit stays held: it settles at that chunk's own end. A permit held
+    /// again for the same chunk replaces the first without charging it.
     pub(super) fn hold(&self, job: EntityId, chunk_key: String, permit: RunPermit) {
-        let previous = self.lock().insert(job, HeldPermit { chunk_key, permit });
+        let previous = {
+            let mut live = self.lock();
+            let held = live.entry(job).or_default();
+            let previous = held
+                .iter()
+                .position(|held| held.chunk_key == chunk_key)
+                .map(|at| held.remove(at));
+            held.push(HeldPermit { chunk_key, permit });
+            previous
+        };
         if let Some(previous) = previous {
-            // One chunk runs at a time; a second permit for the job replaces
-            // the first without charging it.
             let _ = previous.permit.settle(CallOutcome::Kept);
         }
     }
 
-    pub(super) fn take(&self, job: &EntityId) -> Option<RunPermit> {
-        self.lock().remove(job).map(|held| held.permit)
-    }
-
-    /// The job's permit, taken only when it pays the chunk under
-    /// `chunk_key`: a later chunk's permit stays held.
+    /// The permit of the job's chunk under `chunk_key`: another chunk's
+    /// permit stays held.
     pub(super) fn take_for_chunk(&self, job: &EntityId, chunk_key: &str) -> Option<RunPermit> {
         let mut live = self.lock();
-        if live.get(job)?.chunk_key != chunk_key {
-            return None;
+        let held = live.get_mut(job)?;
+        let at = held.iter().position(|held| held.chunk_key == chunk_key)?;
+        let taken = held.remove(at);
+        if held.is_empty() {
+            live.remove(job);
         }
-        live.remove(job).map(|held| held.permit)
+        Some(taken.permit)
     }
 
-    fn lock(&self) -> std::sync::MutexGuard<'_, HashMap<EntityId, HeldPermit>> {
+    fn lock(&self) -> std::sync::MutexGuard<'_, HashMap<EntityId, Vec<HeldPermit>>> {
         self.live
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
