@@ -102,6 +102,25 @@ pub fn last_committed_txn_id(vault: &Vault) -> usize {
     vault.store.env.info().last_txn_id
 }
 
+/// Commits the read fence a hard delete's publication writes for `id`, with
+/// no purge after it: the state a published hard delete holds until its
+/// purge lands.
+///
+/// # Errors
+///
+/// The vault's.
+pub fn fence_row_for_hard_delete(vault: &Vault, id: EntityId) -> Result<()> {
+    let mut wtxn = vault.store.env.write_txn()?;
+    crate::deletion::ROW_DELETION_FENCE.put(
+        &vault.store,
+        &mut wtxn,
+        &crate::side_table::HexId(id),
+        &Vec::new(),
+    )?;
+    wtxn.commit()?;
+    Ok(())
+}
+
 /// Writes a minimal human-authored agent definition, as the owner's own
 /// agent; its id.
 ///
