@@ -1,6 +1,8 @@
 use super::release::{RowRelease, released_for_other_vault};
 use super::*;
 use crate::claim::history_projection::MachineHistoryReadCache;
+use crate::disclosure::DisclosureBand;
+use crate::federation::SensitivityCeiling;
 use crate::workspace_roster::project::extra_room_redaction;
 
 /// `withhold` names the worlds kept off the machine the export serves. Every
@@ -649,10 +651,15 @@ pub(in crate::sync::selector) struct MemberAccess<'v> {
     labels: Option<crate::access_grant::AccessContext<'v>>,
     /// Whether the member is homed in this vault (DEC-0006 `#home-clearance`;
     /// RULING SECREAD-HOME-SELECTOR-EXPORT = A): an Owner's member, or one of
-    /// the vault's own agents. Any other member reads no stamped claim:
+    /// the vault's own agents. Other members withhold stamped claims unless
+    /// their Connect grant admits the band through `connect_ceiling`:
     /// stamped company content "was never saved in the member's vault"
     /// (ARCH-0043 `#leaving-a-company`).
     homed_here: bool,
+    /// ANSWER FED-CONNECT-STAMPED-HOME = A (Engine 19 Nov 05:05): a Connect
+    /// grant is the owner's own disclosure of one world to one peer vault,
+    /// bounded by the band ceiling the owner picked. Other grants give none.
+    connect_ceiling: Option<SensitivityCeiling>,
 }
 
 impl MemberAccess<'_> {
@@ -684,6 +691,7 @@ pub(in crate::sync::selector) fn member_access<'v>(
         return Ok(MemberAccess {
             labels: None,
             homed_here: true,
+            connect_ceiling: None,
         });
     }
     let labels = crate::access_grant::AccessContext::load(vault, rtxn, Some(grant.member_ref))?;
@@ -696,14 +704,20 @@ pub(in crate::sync::selector) fn member_access<'v>(
     Ok(MemberAccess {
         labels: Some(labels),
         homed_here,
+        connect_ceiling: matches!(
+            grant.scope,
+            crate::federation::FederationGrantScope::Connect { .. }
+        )
+        .then_some(grant.authority_scope.sensitivity),
     })
 }
 
 /// Whether the selector's member reads the row `raw` of `id`: a member homed
-/// elsewhere reads no stamped claim ([`stamped_claim`]), and a gated member
-/// reads a row only at the relationship gate (FIX
-/// SELECTOR-RELATIONSHIP-LABELS). An Owner's member reads every row. A CLAIM
-/// body that does not decode is withheld, as the causal check withholds it.
+/// elsewhere reads a stamped claim ([`stamped_band`]) only under a Connect
+/// grant and only up to that grant's ceiling, and a gated member reads a row
+/// only at the relationship gate (FIX SELECTOR-RELATIONSHIP-LABELS). An
+/// Owner's member reads every row. A CLAIM body that does not decode is
+/// withheld, as the causal check withholds it.
 pub(in crate::sync::selector) fn member_reads_row(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
@@ -711,8 +725,17 @@ pub(in crate::sync::selector) fn member_reads_row(
     id: &EntityId,
     raw: &[u8],
 ) -> Result<bool> {
-    if !member.homed_here && stamped_claim(raw) {
-        return Ok(false);
+    if !member.homed_here {
+        let admitted = match stamped_band(raw) {
+            Some(None) => true,
+            Some(Some(band)) => member
+                .connect_ceiling
+                .is_some_and(|ceiling| ceiling.permits(band.sensitivity())),
+            None => false,
+        };
+        if !admitted {
+            return Ok(false);
+        }
     }
     member_reads_labels(vault, rtxn, member.labels.as_ref(), id, raw)
 }
@@ -741,18 +764,21 @@ fn member_reads_labels(
     }
 }
 
-/// Whether `raw` is a CLAIM whose scope carries a stamp other than public, as
-/// the scoped read judges it ([`crate::disclosure::scope_home_band`]). A CLAIM
-/// body that does not decode reads as stamped: the home check fails closed.
-fn stamped_claim(raw: &[u8]) -> bool {
+/// The stamp of `raw` as the scoped read judges it
+/// ([`crate::disclosure::scope_home_band`]): `Some(None)` for a row that is
+/// not a CLAIM or a CLAIM stamped public or not at all, `Some(Some(band))`
+/// for a stamped CLAIM (an ambiguous stamp reads `Restricted`), and `None`
+/// for a CLAIM body that does not decode, which the home check withholds:
+/// it fails closed.
+fn stamped_band(raw: &[u8]) -> Option<Option<DisclosureBand>> {
     if EntityMetadataHeader::parse(raw)
         .is_none_or(|header| header.entity_type != crate::registry::ENTITY_TYPE_CLAIM)
     {
-        return false;
+        return Some(None);
     }
     raw.get(ENTITY_METADATA_HEADER_LEN..)
         .and_then(|body| crate::claim::decode_claim_body(body, true).ok())
-        .is_none_or(|body| crate::disclosure::scope_home_band(body.scope.as_ref()).is_some())
+        .map(|body| crate::disclosure::scope_home_band(body.scope.as_ref()))
 }
 
 /// Whether the selector's member reads, at the member gate
