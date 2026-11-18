@@ -414,6 +414,14 @@ fn slip_reaches_verb(credential: &crate::authority::VerifiedSlip, verb: &str) ->
 }
 
 impl AuthenticatedOwner {
+    /// The owner key this install holds that proved this owner
+    /// ([`Vault::authenticate_owner_device`]), or `None` for a proof no owner
+    /// key made: a door that revokes owner keys never revokes the one its
+    /// own act stands on.
+    pub(crate) const fn proving_owner_key(&self) -> Option<&crate::authority::AuthorityKey> {
+        self.owner_key.as_ref()
+    }
+
     /// The slip this proof is bound to, for a persisted delegation that
     /// rechecks it at redemption (a Slack install): its slip id, or `None`
     /// for a proof bound to no credential.

@@ -13,6 +13,8 @@ mod page;
 
 pub(super) use page::{DecodedRow, PageVerdict, decode_page, page_root};
 
+mod re_root_staging;
+
 pub(super) fn history_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -290,6 +292,16 @@ impl Vault {
     /// of a vault that stored a stranger's row before #1449 imports without
     /// them.
     pub fn import_signed_authority_history(&self, blobs: &[Vec<u8>]) -> Result<Vec<EntityId>> {
+        self.import_signed_authority_history_judged(blobs, |_| Ok(()), |_| Ok(()))
+    }
+
+    /// The import with `prelude` first in its write txn and `judge` on the fold it would commit.
+    pub(crate) fn import_signed_authority_history_judged(
+        &self,
+        blobs: &[Vec<u8>],
+        prelude: impl FnOnce(&mut heed::RwTxn<'_>) -> Result<()>,
+        judge: impl FnOnce(&AuthorityFold) -> Result<()>,
+    ) -> Result<Vec<EntityId>> {
         let mut decoded = Vec::with_capacity(blobs.len());
         for bytes in blobs {
             let entry = decode_authority_log_entry_body(bytes)?;
@@ -297,6 +309,7 @@ impl Vault {
         }
         let watch = crate::federation::StaleSweepWatch::begin(self);
         let mut txn = self.store.env.write_txn()?;
+        prelude(&mut txn)?;
         let carried: BTreeMap<_, _> = decoded
             .iter()
             .map(|(hash, _, entry)| (*hash, entry.clone()))
@@ -337,7 +350,6 @@ impl Vault {
         history_root(&merged, prefix)?.ok_or_else(invalid_authority)?;
         let now = crate::unix_seconds_now();
         let mut ids = Vec::new();
-        let mut ops = Vec::new();
         // The store door judges each row against the rows already staged
         // (H72), so stage each after its parents, its consent and its
         // signer's lower sequences, whatever order the caller gave.
@@ -347,12 +359,13 @@ impl Vault {
             .map(|(_, (_, entry))| entry)
             .chain(carried_structure(evidence.as_deref(), &resident));
         let own_roots = super::log_structure::LocalRoots::read_in_txn(&self.store, &txn)?;
-        for (hash, bytes, _) in
-            super::import_order::import_order(stored, &resident, own_roots, decoded)
-        {
+        let ordered = super::import_order::import_order(stored, &resident, own_roots, decoded);
+        let mut rows = Vec::with_capacity(ordered.len());
+        for (hash, bytes, entry) in ordered {
             let id = authority_log_entity_id_from_hash(&hash)?;
             ids.push(id);
-            ops.push(BatchOp::Put {
+            let re_root = super::recovery::arriving_re_root(&entry, hash, resident.contains(&hash));
+            let op = BatchOp::Put {
                 id,
                 entity_type: ENTITY_TYPE_AUTHORITY_LOG,
                 occurred: TimeRange {
@@ -365,20 +378,12 @@ impl Vault {
                 allow_maintenance: true,
                 allow_reserved_predicate: false,
                 hub_sync_imported: false,
-            });
+            };
+            rows.push((op, re_root));
         }
-        apply_ops_beside_authority_rows(
-            &self.store,
-            &self.config,
-            &self.analyzer,
-            &mut txn,
-            ops,
-            self.text_index_trusted
-                .load(std::sync::atomic::Ordering::Acquire),
-            false,
-            true,
-            &|| Ok(staged_rows.clone()),
-        )?;
+        self.stage_authority_rows_judging_re_roots_in_txn(&mut txn, rows, &|| {
+            Ok(staged_rows.clone())
+        })?;
         // Read-side fold checks local sidecars as well as the signed chain.
         let fold = self.authority_fold_readonly_in_txn(&txn)?;
         if judge_merged {
@@ -387,6 +392,7 @@ impl Vault {
         if fold.vault_root_is_conflicted() {
             return Err(invalid_authority());
         }
+        judge(&fold)?;
         #[cfg(feature = "sync")]
         self.mark_pending_mirrors_in_txn(&mut txn, &ids.iter().copied().collect())?;
         txn.commit()?;
@@ -480,15 +486,16 @@ impl Vault {
         if before.vault_id.is_none() || entry.vault_id != before.vault_id {
             return Err(invalid_authority());
         }
-        // A move covers every main-log head this write starts from (FIX
-        // 11993 R1): a head has no resident child, so only the move or one
-        // of its joins can name it. A row that landed after the move was
-        // signed would otherwise fold invalid beside it; such a move is
-        // signed again over the frontier as it now stands. Applying the
-        // same move again is the one exception.
-        if !before.valid_entries.contains(&hash)
-            && !before.append_heads.iter().all(|head| under.contains(head))
-        {
+        // A move the fold already counts, applied again, is an exact retry:
+        // it meets neither the hosted refusal (as at the admission doors,
+        // REVIEW-9487 round 2) nor the frontier rule. A new move covers every
+        // main-log head this write starts from (FIX 11993 R1), or is signed
+        // again over the frontier as it now stands.
+        let counted = before.valid_entries.contains(&hash);
+        if !counted {
+            super::recovery::refuse_re_root_of_a_serving_host(&before, entry.signer_key())?;
+        }
+        if !counted && !before.append_heads.iter().all(|head| under.contains(head)) {
             return Err(Error::Record(RecordError::InvalidAuthorityLogBody(
                 "re-root does not cover the current frontier; sign it again",
             )));
@@ -523,7 +530,7 @@ impl Vault {
     /// Marks authority `rows` this write stages for the vault's loaded
     /// windows, in the write (FIX 11993, as FIX 11821 does for an import), so
     /// a crash before the announcement still mirrors them.
-    fn mark_authority_rows_in_txn(
+    pub(super) fn mark_authority_rows_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         rows: &BTreeSet<EntityId>,

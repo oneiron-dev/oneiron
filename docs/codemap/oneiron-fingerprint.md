@@ -25,6 +25,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/purposes/claim.rs` | src | s | — | — | Purposes of claims (`crates/oneiron/src/claim`) |
 | `src/purposes/cluster.rs` | src | s | — | — | Purposes of claim clustering (`oneiron::cluster`, `crates/oneiron/src/memory/claim_cluster.rs`) |
 | `src/purposes/code_run.rs` | src | s | — | — | Legacy code-run digests that existing rows, ids and keys hold |
+| `src/purposes/connector.rs` | src | s | — | — | Purposes of connectors (`crates/oneiron/src/connector_key`, `ingest::connector_*`, `outbound_consent`… |
 | `src/purposes/dreamer.rs` | src | s | — | — | Purposes of the Dreamer (`crates/oneiron/src/dreamer_consolidation`, `crates/oneiron/src/dreamer_promotion`… |
 | `src/purposes/dreamer_consolidation.rs` | src | s | — | — | Legacy dreamer-consolidation digests stored or compared by existing records |
 | `src/purposes/dreamer_runner.rs` | src | s | — | — | Legacy dreamer-runner digests stored or compared by existing records |
@@ -39,9 +40,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/purposes/mail_pack.rs` | src | s | — | — | Purposes of the mail pack (`crates/oneiron/src/mail_pack`) |
 | `src/purposes/memory.rs` | src | s | — | — | Purposes of memory (`crates/oneiron/src/memory`) |
 | `src/purposes/mod.rs` | src | s | 1 fn · 2 const | — | The purpose registry: every [`Purpose`] and every [`LegacyPurpose`] the engine uses, one file per engine area |
-| `src/purposes/note.rs` | src | s | — | — | Purposes of notes |
+| `src/purposes/note.rs` | src | s | — | — | Purposes of notes (`crates/oneiron/src/note`) |
 | `src/purposes/origin.rs` | src | s | — | — | Purposes of the git origin (`crates/oneiron/src/origin`) |
 | `src/purposes/outbound_intent_ledger.rs` | src | s | — | — | Purposes of the outbound intent ledger (`crates/oneiron/src/outbound_intent_ledger`) |
+| `src/purposes/phone_line.rs` | src | s | — | — | Purposes of the phone line (`crates/oneiron/src/phone_line`) |
 | `src/purposes/plugin.rs` | src | s | — | — | Purposes of plugin sections (`crates/oneiron/src/context_board/plugin`) and the Dreamer's plugin suggestions… |
 | `src/purposes/policy_model.rs` | src | s | — | — | Purposes of the policy model (`oneiron-records`' `policy_model` and `crates/oneiron/src/policy_model`) |
 | `src/purposes/repo_mutation.rs` | src | s | — | — | Purposes of repository mutations (`crates/oneiron/src/repo_mutation`) |
