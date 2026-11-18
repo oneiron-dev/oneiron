@@ -45,9 +45,9 @@ use oneiron::authority::{
     DeviceOwnerKeyVouch, GenesisRecoveryStep, HOST_ISSUER_SEED_BYTES, HostSlipIssuer,
     MACHINE_ENCRYPTION_KEY_LEN, MACHINE_ENCRYPTION_SUITE_HYBRID_V1, MachineAnswerLanding,
     MachineDeviceClass, MachineEncryptionKey, MachineEnrolmentRequest, MachineOwnership,
-    MachineProfile, MachineRole, OwnerAct, OwnerActKind, OwnerKeyVouchRequest, PairingLink,
-    PairingPrincipal, ROLE_ADMIN, ROLE_AGENT, ROLE_CLOUD, ROLE_OWNER, authority_entry_hash,
-    authority_transcript, fold_authority_log_for_posture, genesis_vault_id,
+    MachineProfile, MachineRevision, MachineRole, OwnerAct, OwnerActKind, OwnerKeyVouchRequest,
+    PairingLink, PairingPrincipal, ROLE_ADMIN, ROLE_AGENT, ROLE_CLOUD, ROLE_OWNER,
+    authority_entry_hash, authority_transcript, fold_authority_log_for_posture, genesis_vault_id,
     machine_profile_proof_transcript, pairing_binding_transcript_pinned,
 };
 use oneiron::consent::AuthenticatedOwner;
@@ -1064,7 +1064,7 @@ fn a_hosted_install_vouches_for_no_key_with_the_self_host_root_it_holds() {
             .expect("the authority fold")
             .machine(machine)
             .and_then(|folded| folded.roster.as_ref())
-            .is_some_and(|revision| revision.is_live()),
+            .is_some_and(MachineRevision::is_live),
         "guard: reopened under the Hosted posture, this install has a live profile to carry the owner's acts"
     );
     hosted.hold_checkpoint_root_signer(Arc::new(oneiron::test_support::test_host_issuer()));
