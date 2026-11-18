@@ -281,9 +281,10 @@ pub(super) fn witnessed(
 /// ([`super::owner_proof::gives_owner_proof`]): the recovery credential that
 /// opened the image proves nobody's will, so a key of his says it. The act's
 /// owner is live there ([`super::owner_act::owner_live_at`]), and the
-/// enrolment is one `state` holds for the act's target, and the signer's
-/// sequence is above the one `state` holds for it. An enrolment an entry
-/// joined already keeps that entry; the act then changes nothing.
+/// enrolment is one `state` holds for the act's target under the act's
+/// owner, of a machine no chain or held enrolment there removes, and the
+/// signer's sequence is above the one `state` holds for it. An enrolment an
+/// entry joined already keeps that entry; the act then changes nothing.
 pub(super) fn apply_owner_join(
     state: &mut FoldState,
     entry: &AuthorityLogEntry,
@@ -299,11 +300,29 @@ pub(super) fn apply_owner_join(
     {
         return Err(AuthorityFoldIssue::NonMonotonicSeq(hash));
     }
+    let target = record.act.target;
+    // The enrolment is held for the act's target and names the act's owner:
+    // a join under another owner id never admits his machine (REVIEW-9510
+    // round 2 P1 :305).
     let held = state
         .restored_enrolments
         .get(&record.enrolment)
-        .is_some_and(|enrolment| enrolment.machine == record.act.target);
+        .is_some_and(|enrolment| {
+            enrolment.machine == target && enrolment.chain.head.profile.owner == record.act.owner
+        });
+    // A removal is terminal: once the parents hold one of the target, on a
+    // chain that stands or one still held, no join brings it back
+    // (REVIEW-9510 round 2 P1 :312).
+    let removed = state
+        .machines
+        .get(&target)
+        .is_some_and(|chains| chains.values().any(|chain| chain.head.removed))
+        || state
+            .restored_enrolments
+            .values()
+            .any(|enrolment| enrolment.machine == target && enrolment.chain.head.removed);
     if !held
+        || removed
         || !super::owner_proof::gives_owner_proof(state, entry.signer_key())
         || !super::owner_act::owner_live_at(state, record.act.owner)
     {
