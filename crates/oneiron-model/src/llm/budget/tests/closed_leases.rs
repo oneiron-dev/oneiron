@@ -209,3 +209,32 @@ fn a_lease_observation_reads_a_closed_lease_through_its_handle() {
         })
     );
 }
+
+/// A meter whose lease sequence is spent issues no second lease under the
+/// last id: closing one would remove the other's record (review P1 of
+/// #9388). The refusal comes before any reservation is planned.
+#[test]
+fn a_spent_lease_sequence_issues_no_second_lease_under_one_id() {
+    let mut checkpoint =
+        serde_json::to_value(guard().checkpoint().expect("checkpoint")).expect("checkpoint json");
+    checkpoint["next_lease_seq"] = serde_json::json!(u64::MAX - 1);
+    let guard =
+        BudgetGuard::from_checkpoint(serde_json::from_value(checkpoint).expect("checkpoint"))
+            .expect("restore");
+    let last = guard.admit_local().expect("the last lease id").lease;
+    assert_eq!(
+        guard.admit_local().map(|_| ()),
+        Err(BudgetDenied::AdmissionDenied)
+    );
+    assert_eq!(
+        guard.admit_reserve_bound(6, call()).map(|_| ()),
+        Err(BudgetDenied::AdmissionDenied)
+    );
+    assert_eq!(guard.read().reserved_units, 0);
+    guard.settle_usage(&last, 1).expect("settle the last lease");
+    assert_eq!(guard.lease_open(&last), Some(false));
+    guard
+        .settle_usage(&last, 1)
+        .expect("a repeated settlement changes nothing");
+    assert_eq!(guard.lock_state().leases.len(), 0);
+}
