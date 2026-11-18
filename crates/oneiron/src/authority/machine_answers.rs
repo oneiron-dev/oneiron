@@ -142,6 +142,12 @@ fn answer_parent_bound(named: usize) -> Error {
 /// chain once; a later answer changes its role through
 /// [`Vault::set_machine_role`] and its class through
 /// [`class_revision_profile`], and nothing that joins replaces its key.
+///
+/// A machine born of a restore whose enrolment the fold holds unjoined (row
+/// RESTORED-COPIES-ENROL-EACH-OTHER) joins on that held chain: the fold lays
+/// it under a carried answer, so the answer is numbered above every held
+/// revision, and it must name the same machine and encryption keys and
+/// origin, or it refuses and nothing is written (REVIEW-9509/9510 P1).
 fn joining_profile(
     fold: &AuthorityFold,
     owner: EntityId,
@@ -156,6 +162,21 @@ fn joining_profile(
     {
         return Err(invalid_authority());
     }
+    let held = fold
+        .restored_enrolments()
+        .values()
+        .filter(|held| held.machine == request.machine && held.joined_by.is_none())
+        .map(|held| &held.profile);
+    let mut revision = 1;
+    for held in held {
+        if held.machine_key != request.machine_key
+            || held.encryption_key != request.encryption_key
+            || held.restored_from != request.restored_from
+        {
+            return Err(invalid_authority());
+        }
+        revision = revision.max(held.revision.saturating_add(1));
+    }
     Ok(MachineProfile {
         machine: request.machine,
         owner,
@@ -163,7 +184,7 @@ fn joining_profile(
         device_class: request.device_class,
         encryption_key: request.encryption_key.clone(),
         role,
-        revision: 1,
+        revision,
         machine_proof: request.machine_proof,
         seen_world_edits: std::collections::BTreeSet::new(),
         carrier: None,

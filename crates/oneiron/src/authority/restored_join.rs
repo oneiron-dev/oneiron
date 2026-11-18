@@ -67,6 +67,9 @@ pub struct RestoredEnrolmentStanding {
     /// The entry that joined it; `None` while it waits for a joined
     /// machine's entry (or the owner's act) to join it.
     pub joined_by: Option<AuthorityEntryHash>,
+    /// The held revision itself: its keys, role and number, which a joined
+    /// machine's answer for the machine revises and must keep.
+    pub profile: MachineProfile,
 }
 
 /// Every enrolment `state` holds, as the fold shows it.
@@ -84,6 +87,7 @@ pub(super) fn listed(state: &FoldState) -> BTreeMap<AuthorityEntryHash, Restored
                     .restored_from
                     .unwrap_or_default(),
                 joined_by: enrolment.joined_by,
+                profile: enrolment.chain.head.profile.clone(),
             };
             (*hash, standing)
         })
@@ -160,6 +164,12 @@ pub(super) fn origin_differs(state: &FoldState, profile: &MachineProfile) -> boo
 /// carried by a live machine, so its entry joins them: [`witnessed`]) then
 /// stands on them. An act-free one is held: its chain and key claims go into
 /// `restored_enrolments` under its entry, and nothing of the machine stands.
+///
+/// A machine that has not joined never carries an answer for itself: no
+/// chain of it stands on the parents, so the carrier rule refuses it there,
+/// and the held chains this lays under a carried revision must not make it a
+/// carrier of its own (REVIEW-9509/9510 P1). The carrier rule reads only the
+/// carrier's own chains, so for any other carrier the verdict is the parents'.
 pub(super) fn fold_revision(
     state: &mut FoldState,
     profile: &MachineProfile,
@@ -170,6 +180,9 @@ pub(super) fn fold_revision(
     let machine = profile.machine;
     if joined(state, machine) {
         return fold(state);
+    }
+    if carried && profile.carrier == Some(machine) {
+        return Err(AuthorityFoldIssue::MissingAuthorityConsent(hash));
     }
     let waiting = waiting(state, machine);
     if waiting.is_empty() && (carried || profile.restored_from.is_none()) {
