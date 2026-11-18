@@ -151,6 +151,10 @@ impl Machine {
         vault
             .prepare_install_signing()
             .expect("FIXTURE: this install's signing keys load");
+        // The host root cosigns the owner's machine answers here, so a peer
+        // enrolled as the owner's own machine stands instead of being held
+        // (as `carried_pin_awaits_owner.rs` `host()` does).
+        vault.hold_checkpoint_root_signer(Arc::new(issuer));
         let local = vault
             .local_machine()
             .expect("FIXTURE: this install's machine reads")
