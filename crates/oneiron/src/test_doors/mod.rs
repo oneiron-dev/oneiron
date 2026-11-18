@@ -259,6 +259,7 @@ pub mod room_facet_set;
 pub mod room_fact_marks;
 pub mod room_turn_backfill;
 pub mod root_appointment;
+pub mod root_recovery;
 pub mod roster_slot_reservation;
 pub mod run_changes;
 pub mod run_hold;

@@ -33,6 +33,9 @@ use crate::{EntityId, TimeRange, Vault};
 
 use super::*;
 
+mod revoke_device;
+pub(crate) use revoke_device::EntrySigner;
+
 /// An owner signing key is the owner's to enrol: no Grant action names it,
 /// so an agent's act never enrols one. Authority; nothing was written.
 pub(super) const OWNER_ONLY: &str =
@@ -444,8 +447,74 @@ impl Vault {
         S: FnMut(&[u8]) -> Result<Vec<u8>>,
     {
         let mut txn = self.store.env.write_txn()?;
-        let (mut entry, carrier_key) = self.unsigned_owner_key_enroll_in_txn(
+        let landed = self.write_owner_key_enroll_in_txn(
             &mut txn,
+            authority,
+            holder,
+            device,
+            predecessor,
+            &mut sign_predecessor,
+            confirming,
+        )?;
+        txn.commit()?;
+        Ok(landed)
+    }
+
+    /// [`Self::enrol_owner_signing_key_as`] in the caller's write
+    /// transaction, which commits it or not: the recovery root's door
+    /// enrols the new key and revokes the lost ones in one (pass 27 R4).
+    ///
+    /// # Errors
+    /// As [`Self::enrol_owner_signing_key_as`].
+    pub(super) fn enrol_owner_signing_key_in_txn<S>(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        authority: &ActAuthority,
+        input: OwnerKeyEnrollment,
+        predecessor: AuthorityKey,
+        sign_predecessor: &mut S,
+    ) -> Result<OwnerKeyEnrollmentReceipt>
+    where
+        S: FnMut(&[u8]) -> Result<Vec<u8>>,
+    {
+        let device = enrolled_device(input.public_key, input.proof);
+        let (entry, machine) = self.write_owner_key_enroll_in_txn(
+            txn,
+            authority,
+            Some(input.machine),
+            device,
+            predecessor,
+            sign_predecessor,
+            false,
+        )?;
+        Ok(OwnerKeyEnrollmentReceipt {
+            entry,
+            machine,
+            public_key: input.public_key,
+        })
+    }
+
+    /// [`Self::write_owner_key_enroll_as`] in the caller's write
+    /// transaction, which commits it or not.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the enrollment's act, holder, device, predecessor, signer and confirming vouch"
+    )]
+    fn write_owner_key_enroll_in_txn<S>(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        authority: &ActAuthority,
+        holder: Option<EntityId>,
+        device: DeviceAuthority,
+        predecessor: AuthorityKey,
+        sign_predecessor: &mut S,
+        confirming: bool,
+    ) -> Result<(AuthorityEntryHash, EntityId)>
+    where
+        S: FnMut(&[u8]) -> Result<Vec<u8>>,
+    {
+        let (mut entry, carrier_key) = self.unsigned_owner_key_enroll_in_txn(
+            txn,
             authority,
             holder,
             device,
@@ -458,17 +527,10 @@ impl Vault {
         let (owner, key) = (enroll.act.owner, enroll.device.key.clone());
         let transcript = authority_transcript(&entry)?;
         entry.signer.signature = sign_predecessor(&transcript)?;
-        let (hash, machine) = self.land_owner_key_enroll_in_txn(&mut txn, entry, &carrier_key)?;
+        let (hash, machine) = self.land_owner_key_enroll_in_txn(txn, entry, &carrier_key)?;
         if !confirming {
-            self.bind_owner_to_enrolled_key_in_txn(
-                &mut txn,
-                owner,
-                key,
-                predecessor,
-                &mut sign_predecessor,
-            )?;
+            self.bind_owner_to_enrolled_key_in_txn(txn, owner, key, predecessor, sign_predecessor)?;
         }
-        txn.commit()?;
         Ok((hash, machine))
     }
 
@@ -1446,16 +1508,11 @@ impl Vault {
                 Some(proof)
             };
             for revoked_key in keys {
-                let op = AuthorityOp::RevokeDevice { revoked_key };
-                match &proof {
-                    Some(proof) => self.append_slip_op_with_owner_proof_in_txn(
-                        txn,
-                        issuer,
-                        op,
-                        proof.as_ref(),
-                    )?,
-                    None => self.append_slip_op_in_txn(txn, issuer, op)?,
-                }
+                let signer = match &proof {
+                    Some(proof) => EntrySigner::HostWithOwnerProof(issuer, proof.as_ref()),
+                    None => EntrySigner::Host(issuer),
+                };
+                self.append_revoke_device_in_txn(txn, signer, revoked_key)?;
             }
         }
         let fold = self.authority_view_readonly_in_txn(txn)?;
