@@ -29,7 +29,7 @@ fn queued_turns(vault: &Vault, scope: DreamerConsolidationScope) -> BTreeSet<Ent
         .flat_map(|payload| {
             decode_partition_payload(&payload.input)
                 .expect("partition")
-                .1
+                .turn_ids()
         })
         .collect()
 }
@@ -81,20 +81,41 @@ fn assert_drift_is_replanned(session_close: bool) {
         let target = seed_turn(&vault, &conversation, "user", original, 900);
         let filler = seed_turn(&vault, &conversation, "user", "ok", 901);
         vault
-            .set_prefilter_config(length_policy(before))
+            .set_setting(
+                crate::setting::SettingCaller::Owner(&crate::test_util::embedded_owner_proof(
+                    &vault,
+                )),
+                crate::setting::SetSetting::vault_value(
+                    "dreamer.prefilter",
+                    serde_json::to_value(length_policy(before)).expect("prefilter setting value"),
+                ),
+            )
             .expect("policy");
-        let session = minted(vault.mint_session(1_000).expect("mint"));
-        let wake = meso_wake(&vault);
+        let actor = EntityId::now();
+        let key = vault.local_session_key(actor).expect("session key");
+        let session = minted(vault.mint_session(key, 1_000).expect("mint"));
+        let wake = meso_wake(&vault, session);
         assert_eq!(planned_turn_ids(&wake.plans).contains(&target), was_kept);
         let watermark = read_watermark(&vault, MESO).expect("watermark");
         let dirty = scan_dirty_turns(&vault, MESO, &watermark, usize::MAX).expect("scan");
         vault
-            .set_prefilter_config(length_policy(after))
+            .set_setting(
+                crate::setting::SettingCaller::Owner(&crate::test_util::embedded_owner_proof(
+                    &vault,
+                )),
+                crate::setting::SetSetting::vault_value(
+                    "dreamer.prefilter",
+                    serde_json::to_value(length_policy(after)).expect("prefilter setting value"),
+                ),
+            )
             .expect("policy drift");
         if let Some(text) = replacement {
             replace_body(&vault, &target, rmpv::Value::from(text));
         }
-        assert_eq!(meso_wake(&vault).planned_turn_ids, wake.planned_turn_ids);
+        assert_eq!(
+            meso_wake(&vault, session).planned_turn_ids,
+            wake.planned_turn_ids
+        );
         if session_close {
             vault
                 .end_session_with_wake(&session, SessionClosePredicate::Explicit, 2_000, &wake)
@@ -166,10 +187,20 @@ fn corrupt_planned_turns_abort_public_enqueue_and_fence_session_progress() {
         seed_turn(&vault, &conversation, "user", &"detail ".repeat(40), 900);
         let broken = seed_turn(&vault, &conversation, "user", "ok", 901);
         vault
-            .set_prefilter_config(length_policy(0.5))
+            .set_setting(
+                crate::setting::SettingCaller::Owner(&crate::test_util::embedded_owner_proof(
+                    &vault,
+                )),
+                crate::setting::SetSetting::vault_value(
+                    "dreamer.prefilter",
+                    serde_json::to_value(length_policy(0.5)).expect("prefilter setting value"),
+                ),
+            )
             .expect("lossy");
-        let session = minted(vault.mint_session(1_000).expect("mint"));
-        let wake = meso_wake(&vault);
+        let actor = EntityId::now();
+        let key = vault.local_session_key(actor).expect("session key");
+        let session = minted(vault.mint_session(key, 1_000).expect("mint"));
+        let wake = meso_wake(&vault, session);
         let watermark = read_watermark(&vault, MESO).expect("watermark");
         let turns = scan_dirty_turns(&vault, MESO, &watermark, usize::MAX).expect("scan");
         vault
@@ -217,7 +248,13 @@ fn receipt_failure_rolls_back_session_close_attempts_and_watermark() {
     let watermark = read_watermark(&vault, MESO).expect("watermark");
     let turns = scan_dirty_turns(&vault, MESO, &watermark, usize::MAX).expect("scan");
     vault
-        .set_prefilter_config(length_policy(0.5))
+        .set_setting(
+            crate::setting::SettingCaller::Owner(&crate::test_util::embedded_owner_proof(&vault)),
+            crate::setting::SetSetting::vault_value(
+                "dreamer.prefilter",
+                serde_json::to_value(length_policy(0.5)).expect("prefilter setting value"),
+            ),
+        )
         .expect("lossy");
     enqueue_partition_attempts(&vault, MESO, &turns, &watermark, "old", 100).expect("skip");
     let receipts = extraction_receipts(&vault);
@@ -239,10 +276,18 @@ fn receipt_failure_rolls_back_session_close_attempts_and_watermark() {
         })
         .expect("dangling membership fixture");
     vault
-        .set_prefilter_config(length_policy(0.0))
+        .set_setting(
+            crate::setting::SettingCaller::Owner(&crate::test_util::embedded_owner_proof(&vault)),
+            crate::setting::SetSetting::vault_value(
+                "dreamer.prefilter",
+                serde_json::to_value(length_policy(0.0)).expect("prefilter setting value"),
+            ),
+        )
         .expect("rescue");
-    let session = minted(vault.mint_session(1_000).expect("mint"));
-    let wake = meso_wake(&vault);
+    let actor = EntityId::now();
+    let key = vault.local_session_key(actor).expect("session key");
+    let session = minted(vault.mint_session(key, 1_000).expect("mint"));
+    let wake = meso_wake(&vault, session);
     assert!(!wake.plans.is_empty());
     assert!(matches!(
         vault.end_session_with_wake(&session, SessionClosePredicate::Explicit, 2_000, &wake),
@@ -250,7 +295,7 @@ fn receipt_failure_rolls_back_session_close_attempts_and_watermark() {
     ));
     assert_eq!(
         vault
-            .open_session()
+            .open_session(key)
             .expect("open session")
             .map(|open| open.session),
         Some(session)
@@ -273,7 +318,13 @@ fn checkpoint_preserves_prefilter_receipts_and_rescan_membership() {
     let watermark = read_watermark(&vault, MESO).expect("watermark");
     let turns = scan_dirty_turns(&vault, MESO, &watermark, usize::MAX).expect("scan");
     vault
-        .set_prefilter_config(length_policy(0.5))
+        .set_setting(
+            crate::setting::SettingCaller::Owner(&crate::test_util::embedded_owner_proof(&vault)),
+            crate::setting::SetSetting::vault_value(
+                "dreamer.prefilter",
+                serde_json::to_value(length_policy(0.5)).expect("prefilter setting value"),
+            ),
+        )
         .expect("lossy policy");
     enqueue_partition_attempts(&vault, MESO, &turns, &watermark, "original", 100)
         .expect("screened round");
@@ -281,8 +332,10 @@ fn checkpoint_preserves_prefilter_receipts_and_rescan_membership() {
     assert_eq!(before.len(), 3, "two skip receipts and their round");
     let image = dir.path().join("checkpoint");
     vault.snapshot_checkpoint(&image, 110).expect("checkpoint");
+    let key = vault.checkpoint_key().expect("checkpoint key");
     let (restored, _) = Vault::restore_checkpoint(
         &image,
+        &key,
         &copies.path().join("restored"),
         VaultConfig::device(),
         RestoreReason::Restore,
@@ -294,7 +347,15 @@ fn checkpoint_preserves_prefilter_receipts_and_rescan_membership() {
     // Restored membership must still retire just the overlapping decision,
     // not retain its old skip or discard the unrescanned turn's audit.
     restored
-        .set_prefilter_config(length_policy(0.0))
+        .set_setting(
+            crate::setting::SettingCaller::Owner(&crate::test_util::embedded_owner_proof(
+                &restored,
+            )),
+            crate::setting::SetSetting::vault_value(
+                "dreamer.prefilter",
+                serde_json::to_value(length_policy(0.0)).expect("prefilter setting value"),
+            ),
+        )
         .expect("rescue policy");
     enqueue_partition_attempts(&restored, MESO, &turns[..1], &watermark, "rescan", 200)
         .expect("rescan after restore");

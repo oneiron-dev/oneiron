@@ -3,13 +3,15 @@
 //! a touch predicts its linked windows, a withheld world moves no score, an unchanged prediction
 //! pushes nothing, a machine off the predicted level is refused, a prediction keeps to the
 //! owner's budget, and a key the machine no longer stands on gets neither a prediction nor a set
-//! body (REVIEW-7955).
+//! body (REVIEW-7955). An entity document a touch reaches predicts beside the windows, and the
+//! owner's document budget binds it (PREDICTED-DOC-BRANCH-NO-FIXTURE).
 //!
 //! Needs the doors:
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test predicted_residence_home`.
 #![cfg(oneiron_test_support)]
 
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use oneiron::authority::{
@@ -17,14 +19,15 @@ use oneiron::authority::{
     ReadLocation, ResidenceAct, WorldPrivacy,
 };
 use oneiron::consent::AuthenticatedOwner;
-use oneiron::registry::ENTITY_TYPE_PERSON;
+use oneiron::entity_doc::{DocAuthorization, TextField};
+use oneiron::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_PERSON};
 use oneiron::store::GateDecisionId;
 use oneiron::sync::WindowKey;
 use oneiron::sync::residence::{PredictedResidenceAnswer, ResidenceDirectiveState};
 use oneiron::test_doors::predicted_residence::predict_residence_withholding;
 use oneiron::{
-    ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject, EdgeKind,
-    EntityId, TimeRange, Vault, VaultConfig,
+    ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
+    EdgeActorClass, EdgeKind, EntityId, TimeRange, Vault, VaultConfig, WriteActor,
 };
 
 /// The secret of the fixture host's slip issuer.
@@ -163,6 +166,41 @@ fn claim_in(
     vault
         .put_claim(id, &body, occurred, learned_at)
         .expect("seed claim");
+}
+
+/// One ASSET whose text the owner moved onto the document plane, learned at `learned_at`: an
+/// entity-document head holder, planted through the public migration door as
+/// `entity_doc_capture_retained_versions` plants one.
+fn document_holder(fixture: &Fixture, learned_at: u64) -> EntityId {
+    let id = EntityId::now();
+    let occurred = TimeRange {
+        start: learned_at,
+        end: learned_at,
+    };
+    fixture
+        .vault
+        .put_entity(
+            &id,
+            ENTITY_TYPE_ASSET,
+            occurred,
+            learned_at,
+            format!("harbor document {}", id.to_hex()).as_bytes(),
+        )
+        .expect("text asset");
+    let person = fixture
+        .vault
+        .ensure_embedded_owner_actor()
+        .expect("embedded owner");
+    fixture
+        .vault
+        .migrate_entity_text(
+            &id,
+            &TextField::Utf8Body,
+            WriteActor::new(person, EdgeActorClass::Human),
+            &DocAuthorization::Owner(&fixture.owner),
+        )
+        .expect("the owner moves the asset's text to its document");
+    id
 }
 
 /// One link from `source` to `target` for the prediction walk to follow.
@@ -504,6 +542,92 @@ fn a_prediction_keeps_to_the_owner_budget() {
         document_count,
         "the act counts its documents"
     );
+}
+
+#[test]
+fn the_home_predicts_a_linked_entity_document() {
+    let fixture = Fixture::open();
+    let a = EntityId::now();
+    claim_in(
+        &fixture.vault,
+        &a,
+        person_in(&fixture.vault, LEARNED_AT_A),
+        Some(fixture.world),
+        LEARNED_AT_A,
+    );
+    let document = document_holder(&fixture, LEARNED_AT_B);
+    link(&fixture.vault, &a, &document);
+    predict_level(&fixture, 32, 128);
+    fixture
+        .vault
+        .record_machine_touch(fixture.machine, a)
+        .expect("the touch lands");
+
+    assert!(
+        matches!(predict(&fixture), PredictedResidenceAnswer::Pushed(_)),
+        "a first prediction pushes"
+    );
+    let predictions = predictions_of(&fixture);
+    assert_eq!(predictions.len(), 1, "exactly one prediction");
+    let (_, digest, _, document_count) = predicted_act(&predictions[0]);
+    let set = predicted_set_of(&fixture, &digest);
+    assert_eq!(
+        set.documents,
+        BTreeSet::from([document]),
+        "the linked asset's entity document predicts, and the touched claim holds none"
+    );
+    assert_eq!(document_count, 1, "the act counts its document");
+    assert!(
+        set.windows
+            .contains(window_of(LEARNED_AT_A, fixture.world).as_str()),
+        "the touched claim's window still predicts: {:?}",
+        set.windows
+    );
+}
+
+#[test]
+fn a_prediction_keeps_documents_to_the_owner_budget() {
+    let fixture = Fixture::open();
+    let a = EntityId::now();
+    claim_in(
+        &fixture.vault,
+        &a,
+        person_in(&fixture.vault, LEARNED_AT_A),
+        Some(fixture.world),
+        LEARNED_AT_A,
+    );
+    let first = document_holder(&fixture, LEARNED_AT_B);
+    let second = document_holder(&fixture, LEARNED_AT_B);
+    link(&fixture.vault, &a, &first);
+    link(&fixture.vault, &a, &second);
+    predict_level(&fixture, 32, 1);
+    fixture
+        .vault
+        .record_machine_touch(fixture.machine, a)
+        .expect("the touch lands");
+
+    assert!(matches!(
+        predict(&fixture),
+        PredictedResidenceAnswer::Pushed(_)
+    ));
+    let predictions = predictions_of(&fixture);
+    assert_eq!(predictions.len(), 1, "exactly one prediction");
+    let (_, digest, _, document_count) = predicted_act(&predictions[0]);
+    let set = predicted_set_of(&fixture, &digest);
+    assert_eq!(
+        set.documents.len(),
+        1,
+        "one document under a budget of one: {:?}",
+        set.documents
+    );
+    assert!(
+        set.documents
+            .iter()
+            .all(|document| *document == first || *document == second),
+        "the kept document is one of the linked assets: {:?}",
+        set.documents
+    );
+    assert_eq!(document_count, 1, "the act counts its document");
 }
 
 #[test]

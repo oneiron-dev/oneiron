@@ -539,7 +539,10 @@ pub struct ServeArgs {
     pub artifact_domains: Option<Vec<String>>,
 
     /// The subdomain label (a DNS label) this server's vault answers to
-    /// under every artifact domain.
+    /// under every artifact domain. A plain serve that names its vault also
+    /// answers on `*.localhost`, with no `--artifact-domains`:
+    /// `<name>.localhost` and `<app>--<name>.localhost` on the artifact port.
+    /// The bare `localhost` keeps `/a/`, so `localhost` names no vault.
     #[arg(long = "artifact-vault-name")]
     pub artifact_vault_name: Option<String>,
 

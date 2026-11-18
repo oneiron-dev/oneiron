@@ -25,6 +25,7 @@ use crate::{Result, Vault};
 pub(super) use recovery::GrantedClose;
 
 #[doc(hidden)]
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
 use oneiron_records::dreamer_consolidation::root_evidence::bridge::{DEDUPE_DOMAIN};
 #[doc(hidden)]
 pub(in crate::dreamer_consolidation) use oneiron_records::dreamer_consolidation::root_evidence::bridge::{ATTEMPT};
@@ -460,12 +461,20 @@ fn binding_identity(
     *hasher.finalize().as_bytes()
 }
 
-fn judgement_hash(
+pub(super) fn judgement_hash(
     judgement: &crate::memory::consolidation_frontier::ConsolidationJudgement,
 ) -> Result<[u8; 32]> {
     let encoded = serde_json::to_vec(judgement)
         .map_err(|_| invalid_consolidation("child judgement does not encode"))?;
-    Ok(*blake3::hash(&encoded).as_bytes())
+    Ok(judgement_digest(&encoded))
+}
+
+/// A child judgement's JSON bytes, with no tag written
+/// (`purposes::dreamer_consolidation::CHILD_JUDGEMENT`).
+fn judgement_digest(encoded: &[u8]) -> [u8; 32] {
+    LegacyDigest::new(purposes::dreamer_consolidation::CHILD_JUDGEMENT)
+        .raw(encoded)
+        .finish()
 }
 
 /// The private root binding: one payload's accepted-receipt SUBSET plus the
@@ -710,4 +719,11 @@ impl RootBinding {
         }
         fresh_pins_match_after_closes(vault, live, recorded, txn, &key, &self.pins, closed)
     }
+}
+
+/// [`judgement_digest`] for the K door
+/// (`test_doors::fingerprint_keep_dreamer_consolidation_digests`). Not API.
+#[cfg(oneiron_test_support)]
+pub(crate) fn judgement_digest_for_test(encoded: &[u8]) -> [u8; 32] {
+    judgement_digest(encoded)
 }

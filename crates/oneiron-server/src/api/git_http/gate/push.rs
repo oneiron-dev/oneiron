@@ -80,6 +80,47 @@ pub(in crate::api::git_http) async fn preflight(
     caller: Option<&GitPushCaller>,
     push_selection: Option<(RepoPortableId, EntityId)>,
 ) -> Option<Response> {
+    match decide(server, repo, request, caller, push_selection).await {
+        PushDecision::Admitted | PushDecision::Undecided => None,
+        PushDecision::Refused(refusal) => Some(refusal),
+    }
+}
+
+/// The push decision for an answer only an admitted pusher may read (the
+/// writer's door a former origin redirects to, RA7): `Ok` when the gate
+/// admits `request`; otherwise the typed refusal, or `None` when the
+/// decision failed for another reason (a repository that does not resolve,
+/// a store fault).
+pub(in crate::api::git_http) async fn admitted(
+    server: &Arc<SyncServer>,
+    repo: &str,
+    request: &smart_http::ServeRequest,
+    caller: Option<&GitPushCaller>,
+    push_selection: Option<(RepoPortableId, EntityId)>,
+) -> Result<(), Option<Response>> {
+    match decide(server, repo, request, caller, push_selection).await {
+        PushDecision::Admitted => Ok(()),
+        PushDecision::Refused(refusal) => Err(Some(refusal)),
+        PushDecision::Undecided => Err(None),
+    }
+}
+
+/// What the engine's push decision answered for one request.
+enum PushDecision {
+    Admitted,
+    /// No arm admits the push: the typed refusal.
+    Refused(Response),
+    /// The decision failed for another reason; the exchange decides again.
+    Undecided,
+}
+
+async fn decide(
+    server: &Arc<SyncServer>,
+    repo: &str,
+    request: &smart_http::ServeRequest,
+    caller: Option<&GitPushCaller>,
+    push_selection: Option<(RepoPortableId, EntityId)>,
+) -> PushDecision {
     let vault = Arc::clone(server.vault());
     let (repo, request, caller) = (repo.to_owned(), request.clone(), caller.cloned());
     let decided = tokio::task::spawn_blocking(move || {
@@ -87,11 +128,12 @@ pub(in crate::api::git_http) async fn preflight(
     })
     .await;
     match decided {
+        Ok(Ok(())) => PushDecision::Admitted,
         Ok(Err(oneiron::Error::Code(oneiron::error::CodeError::GitPushCapabilityRequired {
             repo,
             reason,
-        }))) => Some(capability_refused(&repo, &reason)),
-        _ => None,
+        }))) => PushDecision::Refused(capability_refused(&repo, &reason)),
+        _ => PushDecision::Undecided,
     }
 }
 

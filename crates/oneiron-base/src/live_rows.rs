@@ -10,7 +10,7 @@
 //!
 //! A wait that begins when nobody waited crosses the row, and the row asks
 //! the host's "is everything okay" question once for that crossing
-//! ([`Vault::set_live_row_crossing`]). Every opener waits before it takes any
+//! (`Vault::set_live_row_crossing`). Every opener waits before it takes any
 //! transaction, lock or lease, so a waiter holds nothing another needs.
 
 use std::collections::{HashMap, VecDeque};
@@ -40,7 +40,7 @@ impl LiveRow {
 }
 
 /// The rows and the wait deadline in force for one vault. A host sets them
-/// from its manifest ([`Vault::set_live_rows`]).
+/// from its manifest (`Vault::set_live_rows`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct LiveRows {
     /// Message streams open at once before the next waits.
