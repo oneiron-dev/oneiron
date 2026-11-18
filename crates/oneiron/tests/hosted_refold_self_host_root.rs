@@ -36,12 +36,13 @@ use oneiron::authority::{
     AuthoritySignature, AuthorityTier, AuthorityVaultId, DeviceAuthority, GenesisRecoveryStep,
     HOST_ISSUER_SEED_BYTES, HostSlipIssuer, MACHINE_ENCRYPTION_KEY_LEN,
     MACHINE_ENCRYPTION_SUITE_HYBRID_V1, MachineDeviceClass, MachineEncryptionKey, MachineOwnership,
-    MachineProfile, MachineRole, OwnerAct, OwnerActKind, ROLE_ADMIN, ROLE_CLOUD, ROLE_OWNER,
-    authority_entry_hash, authority_transcript, fold_authority_log_for_posture, genesis_vault_id,
-    machine_profile_proof_transcript,
+    MachineProfile, MachineRole, OwnerAct, OwnerActKind, ROLE_ADMIN, ROLE_AGENT, ROLE_CLOUD,
+    ROLE_OWNER, authority_entry_hash, authority_transcript, fold_authority_log_for_posture,
+    genesis_vault_id, machine_profile_proof_transcript,
 };
 use oneiron::test_doors::home_pick_fold::home_pick_in_force;
 use oneiron::test_doors::label_writers::embedded_owner;
+use oneiron::test_doors::root_appointment;
 use oneiron::{EntityId, HostingPrivacyPosture, Vault, VaultConfig};
 use oneiron_authority::authority::{
     HomeNodePick, OWNER_KEY_ENROLLMENT_SEEN, OWNER_KEY_POSSESSION_KIND, OwnerKeyEnroll,
@@ -583,9 +584,13 @@ fn a_stamped_root_proves_nothing_on_a_hosted_fold() {
 }
 
 /// Passes on main too: a root move under the Hosted posture hands the
-/// self-host vault to a stamped root, which then acts as nobody: it binds no
-/// person alone, and neither does a key it enrols. The self-host root's own
-/// bind before the move still counts.
+/// self-host vault to a stamped root, which then acts as nobody: it and the
+/// key it enrols are in the host's custody, and neither binds a person
+/// alone. The self-host root's own bind before the move still counts. After
+/// the handoff the fold keeps only an agent-only `EnrollDevice` (an owner or
+/// admin one is a retired device op), so the key it enrols is an agent's;
+/// the stamped root's rejected bind is no parent of it, since a rejected
+/// row's children wait for good.
 #[test]
 fn a_stamped_re_root_of_a_self_host_log_takes_the_new_root_into_host_custody() {
     let mut log = HostedFold::self_host_log();
@@ -612,17 +617,10 @@ fn a_stamped_re_root_of_a_self_host_log_takes_the_new_root_into_host_custody() {
         &root,
         &[],
     );
-    let stamped_bind = log.append(
-        1,
-        re_root,
-        human_bind(key_of(&stamped), owner(), 2),
-        &stamped,
-        &[],
-    );
     let admitted = signing(ADMITTED_SEED);
     let enrolment = log.append(
-        2,
-        stamped_bind,
+        1,
+        re_root,
         AuthorityOp::EnrollDevice {
             device: DeviceAuthority {
                 key: key_of(&admitted),
@@ -632,9 +630,16 @@ fn a_stamped_re_root_of_a_self_host_log_takes_the_new_root_into_host_custody() {
                     evidence: vec![1, 2, 3],
                 },
                 tier: AuthorityTier::Software,
-                roles: ROLE_OWNER | ROLE_ADMIN,
+                roles: ROLE_AGENT,
             },
         },
+        &stamped,
+        &[],
+    );
+    let stamped_bind = log.append(
+        2,
+        enrolment,
+        human_bind(key_of(&stamped), owner(), 2),
         &stamped,
         &[],
     );
@@ -657,14 +662,23 @@ fn a_stamped_re_root_of_a_self_host_log_takes_the_new_root_into_host_custody() {
         fold.issues
     );
     assert!(
-        !binds_active(&fold, &key_of(&stamped), owner()),
-        "the stamped root alone binds no person: {:?}",
-        fold.actor_bindings
+        fold.valid_entries.contains(&enrolment),
+        "the stamped root enrols an agent key: {:?}",
+        fold.issues
     );
     assert!(
-        fold.valid_entries.contains(&enrolment),
-        "the stamped root enrols a device: {:?}",
-        fold.issues
+        root_appointment::in_host_custody(&fold, &key_of(&stamped)),
+        "the stamped root is in the host's custody"
+    );
+    assert!(
+        root_appointment::in_host_custody(&fold, &key_of(&admitted)),
+        "a key the stamped root admitted is in the host's custody"
+    );
+    assert!(
+        !fold.valid_entries.contains(&stamped_bind)
+            && !binds_active(&fold, &key_of(&stamped), owner()),
+        "the stamped root alone binds no person: {:?}",
+        fold.actor_bindings
     );
     assert!(
         !fold.valid_entries.contains(&admitted_bind)
