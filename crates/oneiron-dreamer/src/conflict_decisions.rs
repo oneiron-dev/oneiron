@@ -41,9 +41,10 @@ pub struct Input<'a> {
 pub struct ResolutionInput<'a> {
     /// Borrows the set's component operands and their observations.
     pub input: Input<'a>,
-    /// Borrows the set whose member positions select this conflict. The
-    /// positions name the operands above, so they ascend. A route's own set
-    /// names positions of the whole request in ready order:
+    /// Borrows the set whose member positions select this conflict. The set
+    /// is local to the operands above: its members are positions in them, in
+    /// the operands' own order, so they ascend. A route's own set names
+    /// positions of the whole request in ready order:
     /// `extraction_decisions::run` makes it local to its component first.
     pub set: &'a JudgeSet,
 }

@@ -201,9 +201,10 @@ fn across(input: ResolutionInput<'_>) -> Result<bool, Error> {
 /// its member positions and its prior pins.
 ///
 /// The engine nominates over a pack's operands in the order given, so the
-/// member list it rebuilds always ascends. A member list that does not is a
+/// member list it rebuilds always ascends and names no position twice. A
+/// member list that does not is not local to the operands: in practice a
 /// route's own set, which names positions of the whole request in the
-/// selection's ready order; the engine would refuse it, so it is refused here.
+/// selection's ready order. The engine would refuse it, so it is refused here.
 fn resolution_pack(
     input: ResolutionInput<'_>,
     read: ExtractionRead,
@@ -242,7 +243,7 @@ fn resolution_pack(
 /// # Errors
 ///
 /// Rejects unserved members or priors, page entries outside the selected set
-/// and a set that is not local to the operands (its members do not ascend).
+/// and a set whose members do not ascend, which is not local to the operands.
 pub fn resolution(
     input: ResolutionInput<'_>,
     page: Option<&Page<usize>>,
