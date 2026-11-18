@@ -32,8 +32,8 @@ const REVISION_HASH_LEN: usize = 32;
 
 /// The first try of the retry lineage whose attempt minted the PERSON,
 /// recorded with the mint. Key: id16 (PERSON id).
-pub(super) const EXTRACTION_PERSON_LINEAGE: SideTable<EntityId, AttemptId, Named> =
-    SideTable::new(&side_table::VAULT_CLEANUP_EXTRACTION_PERSON_LINEAGE);
+pub(super) const EXTRACTION_LINEAGE: SideTable<EntityId, AttemptId, Named> =
+    SideTable::new(&side_table::VAULT_CLEANUP_EXTRACTION_LINEAGE);
 
 impl Vault {
     /// Mints an extraction-produced PERSON and records its source atomically.
@@ -128,7 +128,7 @@ impl Vault {
         )? {
             return Ok(false);
         }
-        EXTRACTION_PERSON_LINEAGE.put(&self.store, wtxn, id, &lineage)?;
+        EXTRACTION_LINEAGE.put(&self.store, wtxn, id, &lineage)?;
         Ok(true)
     }
 }
@@ -141,7 +141,7 @@ pub(super) fn clear_mint_evidence_in_txn(
     id: &EntityId,
 ) -> Result<()> {
     EXTRACTION_PERSON.delete(&vault.store, txn, id)?;
-    EXTRACTION_PERSON_LINEAGE.delete(&vault.store, txn, id)?;
+    EXTRACTION_LINEAGE.delete(&vault.store, txn, id)?;
     Ok(())
 }
 
@@ -158,10 +158,10 @@ pub(super) fn minting_lineage_pending_in_txn(
     rtxn: &heed::RoTxn<'_>,
     person: &EntityId,
 ) -> Result<bool> {
-    let Some(stored) = EXTRACTION_PERSON_LINEAGE.get_bytes(&vault.store, rtxn, person)? else {
+    let Some(stored) = EXTRACTION_LINEAGE.get_bytes(&vault.store, rtxn, person)? else {
         return Ok(false);
     };
-    let Ok(first) = EXTRACTION_PERSON_LINEAGE.decode_value(&stored) else {
+    let Ok(first) = EXTRACTION_LINEAGE.decode_value(&stored) else {
         return Ok(true);
     };
     AttemptQueue::new(vault).retry_lineage_pending_in_txn(rtxn, first)

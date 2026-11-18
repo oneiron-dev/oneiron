@@ -28,7 +28,7 @@ use rmpv::Value;
 use super::attempt_retention::erase_task_index_in_txn;
 use super::entity_rows::{self, Listing};
 use super::marks::{self, CleanupMark, Revision};
-use super::person_provenance::{EXTRACTION_PERSON, EXTRACTION_PERSON_LINEAGE};
+use super::person_provenance::{EXTRACTION_LINEAGE, EXTRACTION_PERSON};
 use super::run_record::{KEY_REVERT, KEY_SNAPSHOT};
 use super::run_snapshot::{KEY_AFTER, KEY_BEFORE, KEY_ENTRIES, KEY_REVISION};
 use super::{
@@ -156,7 +156,7 @@ enum Slot {
 pub(crate) fn erase_in_txn(store: &Store, txn: &mut heed::RwTxn<'_>, id: &EntityId) -> Result<()> {
     marks::delete_in_txn(store, txn, id.as_bytes())?;
     EXTRACTION_PERSON.delete(store, txn, id)?;
-    EXTRACTION_PERSON_LINEAGE.delete(store, txn, id)?;
+    EXTRACTION_LINEAGE.delete(store, txn, id)?;
     erase_task_index_in_txn(store, txn, id)?;
     let named = id.as_bytes();
     let mut unreadable = Unreadable::default();
