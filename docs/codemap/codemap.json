@@ -73121,7 +73121,7 @@
      "path": "src/secret_custody/control/input.rs",
      "purpose": "The protected input of an active custody change (WILL L04 row 04): what a register, rotate or bind hands its…",
      "surface": {
-      "crate-vis": 36,
+      "crate-vis": 38,
       "re-export": 2
      }
     },
@@ -73209,7 +73209,7 @@
      "path": "src/secret_custody/control/input/witness.rs",
      "purpose": "A relayed custody input's witness in numbered parts (FIX 8088)",
      "surface": {
-      "crate-vis": 23
+      "crate-vis": 24
      }
     },
     {
@@ -73502,7 +73502,7 @@
      "path": "src/secret_custody/mod.rs",
      "purpose": "ARCH-0069 secret custody — SECRET-01 (ONE-1919): custody classes, the custody record that is the secret…",
      "surface": {
-      "crate-vis": 34,
+      "crate-vis": 35,
       "re-export": 21
      }
     },
@@ -94191,6 +94191,16 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/test_doors/fingerprint_keep_synced_keys.rs",
+     "purpose": "Door for `tests/fingerprint_keep_synced_keys.rs` (PLAN-UC-04 stage 5): the keys peers recompute (a split…",
+     "surface": {
+      "fn": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "Audience",
       "MessageSlice",
@@ -94805,7 +94815,7 @@
      "purpose": "Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD)",
      "surface": {
       "fn": 1,
-      "mod": 293,
+      "mod": 294,
       "re-export": 1
      }
     },
@@ -101617,7 +101627,7 @@
      "path": "src/workspace_roster/mod.rs",
      "purpose": "Workspace roster preset + member onboarding (ONEIRON-ARCH-0065)",
      "surface": {
-      "crate-vis": 49,
+      "crate-vis": 50,
       "mod": 1,
       "re-export": 30
      }
@@ -103121,7 +103131,7 @@
      "path": "src/workspace_roster/workplace_join.rs",
      "purpose": "Workplace actors join rooms through the OF-531 consents (OF-417 slice 2)",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -106993,6 +107003,16 @@
      "surface": {
       "crate-vis": 21,
       "fn": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/fingerprint_keep_synced_keys.rs",
+     "purpose": "K-proof (oracle) for PLAN-UC-04 stage 5b: the index keys peers recompute keep their bytes",
+     "surface": {
+      "crate-vis": 6
      }
     },
     {
@@ -114295,7 +114315,7 @@
      "purpose": "`TimeRange`, temporal expressions/parsing, granularity/anchor enums"
     },
     "test_doors": {
-     "files": 299,
+     "files": 300,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -114472,8 +114492,8 @@
    },
    "over_bar": 299,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 8115,
-   "test_files": 1872
+   "source_files": 8116,
+   "test_files": 1873
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -129375,6 +129395,14 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/purposes/workspace_roster.rs",
+     "purpose": "Purposes of the workspace roster (`crates/oneiron/src/workspace_roster`)",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "CanonicalBytesError"
      ],
@@ -129403,7 +129431,7 @@
      "purpose": "The K door: a digest that main already stores or sends keeps its exact bytes"
     },
     "purposes": {
-     "files": 37,
+     "files": 38,
      "impl_vault": false,
      "largest_src_bucket": "s",
      "layout": "dir",
@@ -129419,7 +129447,7 @@
    },
    "over_bar": 0,
    "purpose": "One fingerprint rule for engine digests (fable pass 22; PLAN-UC-04 stage 0)",
-   "source_files": 40,
+   "source_files": 41,
    "test_files": 1
   },
   "oneiron-gen": {
@@ -175522,6 +175550,14 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/recall_host_root_read.rs",
+     "purpose": "The owner's host-root recall reads on a self-hosted vault ([RECALL-HOST-ROOT-READ-REFUSED], FIX-LIST row…",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -177125,7 +177161,7 @@
    "over_bar": 70,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 2016,
-   "test_files": 483
+   "test_files": 484
   },
   "oneiron-setting-contract": {
    "files": [
