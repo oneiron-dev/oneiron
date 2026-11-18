@@ -197,11 +197,26 @@ fn across(input: ResolutionInput<'_>) -> Result<bool, Error> {
     Ok(across)
 }
 
+/// Builds the pack every read of one judge set starts from: its operands,
+/// its member positions and its prior pins.
+///
+/// The engine nominates over a pack's operands in the order given, so the
+/// member list it rebuilds always ascends and names no position twice. A
+/// member list that does not is not local to the operands: in practice a
+/// route's own set, which names positions of the whole request in the
+/// selection's ready order. The engine would refuse it, so it is refused here.
 fn resolution_pack(
     input: ResolutionInput<'_>,
     read: ExtractionRead,
     part: ExtractionPart,
 ) -> Result<ExtractionPack, Error> {
+    let members = &input.set.candidate_indexes;
+    if members.windows(2).any(|pair| pair[0] >= pair[1]) {
+        return Err(Error::Part(
+            "set members must ascend in the operands: pass the set's component in ready order"
+                .into(),
+        ));
+    }
     let mut built = pack(input.input, read, part);
     built.set_members = Some(input.set.candidate_indexes.clone());
     for position in &input.set.candidate_indexes {
@@ -227,7 +242,8 @@ fn resolution_pack(
 ///
 /// # Errors
 ///
-/// Rejects unserved members or priors and page entries outside the selected set.
+/// Rejects unserved members or priors, page entries outside the selected set
+/// and a set whose members do not ascend, which is not local to the operands.
 pub fn resolution(
     input: ResolutionInput<'_>,
     page: Option<&Page<usize>>,

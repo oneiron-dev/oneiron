@@ -450,6 +450,8 @@ pub use owner_key_move_confirm::{
     OWNER_KEY_MOVE_NOT_SYNCED, OWNER_KEY_MOVE_PLAN_STALE, OWNER_KEY_MOVE_SIGNER_NOT_EXECUTORS,
     OwnerKeyMovePlan, OwnerKeyMoveSigner, sign_owner_key_move,
 };
+#[cfg(oneiron_test_support)]
+pub(crate) use owner_key_vouch::require_holding_machine;
 pub use owner_key_vouch::{
     DeviceOwnerKeyVouch, OWNER_KEY_VOUCH_LABEL_MAX, OWNER_KEY_VOUCH_TEXT_PREFIX,
     OwnerKeyVouchRequest,
