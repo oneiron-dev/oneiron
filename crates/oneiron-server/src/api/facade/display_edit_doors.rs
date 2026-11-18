@@ -2,6 +2,8 @@
 //! (FIX [SECRETS-LABEL-PURPOSE-VERBS], [DEVICE-DISPLAY-NAME]; Engine RULING
 //! DISPLAY-EDIT-PROPOSAL-SCOPE = A): `vault.display_edits.list`, `.accept`
 //! and `.decline`, under the owner's proof. An accept runs his own door.
+//! Each reads the server's vault, the one the owner door's memory handle
+//! wraps (`Memory::vault` is crate-private to oneiron).
 
 use std::sync::Arc;
 
@@ -21,9 +23,13 @@ pub(crate) async fn vault_display_edits_list(
     auth: &CoreAuth,
     _input: EmptyRequest,
 ) -> Listed<DisplayEditListReply> {
-    as_owner(server, auth, "vault.display_edits.list", |memory, owner| {
-        oneiron::task_verb::sdk::list_display_edits_as(memory.vault(), owner)
-    })
+    let vault = Arc::clone(server.vault());
+    as_owner(
+        server,
+        auth,
+        "vault.display_edits.list",
+        move |_memory, owner| oneiron::task_verb::sdk::list_display_edits_as(&vault, owner),
+    )
     .await
 }
 
@@ -34,13 +40,12 @@ pub(crate) async fn vault_display_edits_accept(
     auth: &CoreAuth,
     input: DisplayEditAnswerRequest,
 ) -> Listed<DisplayEditAcceptReply> {
+    let vault = Arc::clone(server.vault());
     as_owner(
         server,
         auth,
         "vault.display_edits.accept",
-        move |memory, owner| {
-            oneiron::task_verb::sdk::accept_display_edit_as(memory.vault(), owner, input)
-        },
+        move |_memory, owner| oneiron::task_verb::sdk::accept_display_edit_as(&vault, owner, input),
     )
     .await
 }
@@ -52,12 +57,13 @@ pub(crate) async fn vault_display_edits_decline(
     auth: &CoreAuth,
     input: DisplayEditAnswerRequest,
 ) -> Listed<DisplayEditDeclineReply> {
+    let vault = Arc::clone(server.vault());
     as_owner(
         server,
         auth,
         "vault.display_edits.decline",
-        move |memory, owner| {
-            oneiron::task_verb::sdk::decline_display_edit_as(memory.vault(), owner, input)
+        move |_memory, owner| {
+            oneiron::task_verb::sdk::decline_display_edit_as(&vault, owner, input)
         },
     )
     .await
