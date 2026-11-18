@@ -9,15 +9,20 @@
 //! upload is then refused, as `calendar_complete_upload_system_guard` shows)
 //! or after the upload's last write.
 //!
+//! The owner's archive restore can install a seat too, through the key's
+//! change hook in the restore's own writer, so it takes the same turn before
+//! that writer opens (REVIEW-9493 round 1 P1).
+//!
 //! The fixture screener runs inside the upload's admission: it lets a second
-//! thread install the seat and waits [`INSTALL_WAIT`] for that install to
-//! commit.
+//! thread install the seat (by a set, or by restoring an archive that holds
+//! it) and waits for that install to commit.
 //!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test calendar_seat_install_waits_for_upload`.
 #![cfg(oneiron_test_support)]
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
+use std::io::Cursor;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex};
@@ -49,6 +54,10 @@ SUMMARY:Planning\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
 /// How long the screener waits for the install to commit inside the upload's
 /// admission. An install that takes no turn commits in milliseconds.
 const INSTALL_WAIT: Duration = Duration::from_secs(2);
+/// How long the screener waits for an owner's whole-vault restore to commit
+/// inside the upload's admission. A restore that takes no turn commits well
+/// within it.
+const RESTORE_WAIT: Duration = Duration::from_secs(20);
 
 struct Fixture {
     _dir: tempfile::TempDir,
@@ -157,12 +166,25 @@ impl Fixture {
 }
 
 /// A screener that, on its first call, lets the install thread go and waits
-/// [`INSTALL_WAIT`] for its install to commit; every body screens clear.
+/// `wait` for its install to commit; every body screens clear.
 struct InstallingScreener {
     go: Mutex<Option<Sender<()>>>,
     installed: Mutex<Receiver<()>>,
+    wait: Duration,
     calls: AtomicUsize,
     installed_inside_admission: AtomicBool,
+}
+
+impl InstallingScreener {
+    fn new(go: Sender<()>, installed: Receiver<()>, wait: Duration) -> Self {
+        Self {
+            go: Mutex::new(Some(go)),
+            installed: Mutex::new(installed),
+            wait,
+            calls: AtomicUsize::new(0),
+            installed_inside_admission: AtomicBool::new(false),
+        }
+    }
 }
 
 impl CalendarBodyScreener for InstallingScreener {
@@ -175,7 +197,7 @@ impl CalendarBodyScreener for InstallingScreener {
                 .installed
                 .lock()
                 .expect("installed")
-                .recv_timeout(INSTALL_WAIT)
+                .recv_timeout(self.wait)
                 .is_ok();
             self.installed_inside_admission
                 .store(committed, Ordering::SeqCst);
@@ -191,12 +213,7 @@ fn a_seat_install_during_a_complete_upload_lands_after_its_last_write() {
 
     let (go, go_wait) = channel::<()>();
     let (installed, installed_wait) = channel::<()>();
-    let screener = InstallingScreener {
-        go: Mutex::new(Some(go)),
-        installed: Mutex::new(installed_wait),
-        calls: AtomicUsize::new(0),
-        installed_inside_admission: AtomicBool::new(false),
-    };
+    let screener = InstallingScreener::new(go, installed_wait, INSTALL_WAIT);
     // The upload checks "shared" for an installed source, finds none, and
     // screens its one event inside its admission.
     let (uploaded, install) = std::thread::scope(|scope| {
@@ -233,5 +250,72 @@ fn a_seat_install_during_a_complete_upload_lands_after_its_last_write() {
             "a later upload sees the seat on its system: {error}"
         ),
         Ok(()) => panic!("a later upload on the seat's system is refused"),
+    }
+}
+
+#[test]
+fn a_seat_restore_during_a_complete_upload_lands_after_its_last_write() {
+    let source = Fixture::open();
+    match source.install_seat("work", "shared") {
+        Ok(SetSettingOutcome::Applied { .. }) => {}
+        other => panic!("the source vault installs its seat: {other:?}"),
+    }
+    let archive = source
+        .vault
+        .export_whole_vault(true)
+        .expect("the source's whole-vault export")
+        .bytes()
+        .to_vec();
+    // The destination's engine seeds take another wall-clock second than the
+    // source's, as in `archive_import_retained_side_rows.rs`.
+    std::thread::sleep(Duration::from_millis(1100));
+    let fx = Fixture::open();
+    fx.screen_on();
+
+    let (go, go_wait) = channel::<()>();
+    let (restored, restored_wait) = channel::<()>();
+    let screener = InstallingScreener::new(go, restored_wait, RESTORE_WAIT);
+    // The upload checks "shared" for an installed source, finds none, and
+    // screens its one event inside its admission; the archive's seat on
+    // "shared" is absent here, so the owner's restore installs it.
+    let (uploaded, restore) = std::thread::scope(|scope| {
+        let owner = &fx;
+        let archive = &archive;
+        let restore = scope.spawn(move || {
+            go_wait.recv().ok()?; // the screener never ran; the upload's asserts say why
+            let outcome = owner
+                .vault
+                .import_whole_vault_archive_from_as_owner(Cursor::new(archive), &owner.proof)
+                .map(|_| ())
+                .map_err(|error| error.to_string());
+            let _ = restored.send(());
+            Some(outcome)
+        });
+        let uploaded = fx.upload("shared", Some(&screener as &dyn CalendarBodyScreener));
+        // An upload that never screened lets the restore thread end.
+        drop(screener.go.lock().expect("go").take());
+        (uploaded, restore.join().expect("the restore thread"))
+    });
+
+    assert!(
+        screener.calls.load(Ordering::SeqCst) > 0,
+        "the upload screened its event inside its admission"
+    );
+    assert!(
+        !screener.installed_inside_admission.load(Ordering::SeqCst),
+        "the owner's restore waited for the upload's admission: it committed the archive's \
+         seat while the upload's screener ran inside it, after the upload's check of its system"
+    );
+    uploaded.expect("the upload applies: no source held its system when it checked");
+    match restore {
+        Some(Ok(())) => {}
+        other => panic!("the owner's restore commits once the upload's admission ended: {other:?}"),
+    }
+    match fx.upload("shared", None) {
+        Err(error) => assert!(
+            error.contains(HELD),
+            "a later upload sees the restored seat on its system: {error}"
+        ),
+        Ok(()) => panic!("a later upload on the restored seat's system is refused"),
     }
 }
