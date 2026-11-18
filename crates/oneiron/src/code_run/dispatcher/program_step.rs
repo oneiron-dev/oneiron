@@ -26,6 +26,7 @@ use crate::error::{Error, Result};
 use crate::memory::{HostWriteOrigin, MEMORY_CODE_FORBIDDEN};
 use crate::runtime_hooks::InvocationId;
 use crate::task_verb::sdk::{AgentVerb, RunVerb};
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
 
 use super::{ExecutorCallSite, HostSelfDispatcher};
 
@@ -52,8 +53,6 @@ fn narrows_position(scope: &oneiron_authority::federation::Scope) -> bool {
         || scope.bands != whole.bands
         || scope.sensitivity != whole.sensitivity
 }
-
-const PROGRAM_CALL_DOMAIN: &[u8] = b"oneiron:dreamer:turn-program-write-call:v1";
 
 /// The refusal a program's run gets for any callable but its pinned one.
 const SKILLS_CALL_UNPINNED: &str = "skills_call_unpinned";
@@ -233,12 +232,7 @@ impl<'a> HostSelfDispatcher<'a> {
         };
         let input = serde_json::to_vec(&call.input)
             .map_err(|_| Error::InvalidClaimBody("a program write's call does not encode"))?;
-        let call_digest = *blake3::Hasher::new()
-            .update(PROGRAM_CALL_DOMAIN)
-            .update(call.verb.as_str().as_bytes())
-            .update(&input)
-            .finalize()
-            .as_bytes();
+        let call_digest = program_call_digest(call.verb.as_str(), &input);
         Ok(Some(ProgramWrite {
             attempt: program.lease.attempt,
             lease_owner: program.lease.owner.clone(),
@@ -393,11 +387,36 @@ fn answer_digest(receipt: &CodeRunReplayRecord) -> Option<[u8; 32]> {
     let row = receipt.bridge_calls.first()?;
     let mut bytes = Vec::new();
     rmpv::encode::write_value(&mut bytes, &row.outcome).ok()?;
-    Some(
-        *blake3::Hasher::new()
-            .update(PROGRAM_CALL_DOMAIN)
-            .update(&bytes)
-            .finalize()
-            .as_bytes(),
-    )
+    Some(program_answer_digest(&bytes))
+}
+
+/// A program write's call digest over its verb and its call input's JSON
+/// (`purposes::code_run::PROGRAM_CALL`).
+fn program_call_digest(verb: &str, input: &[u8]) -> [u8; 32] {
+    LegacyDigest::new(purposes::code_run::PROGRAM_CALL)
+        .raw(verb.as_bytes())
+        .raw(input)
+        .finish()
+}
+
+/// A program write's answer digest over its receipt's first outcome as
+/// MessagePack (`purposes::code_run::PROGRAM_CALL`).
+fn program_answer_digest(outcome: &[u8]) -> [u8; 32] {
+    LegacyDigest::new(purposes::code_run::PROGRAM_CALL)
+        .raw(outcome)
+        .finish()
+}
+
+/// [`program_call_digest`] for the K door
+/// (`test_doors::fingerprint_keep_code_run_digests`). Not API.
+#[cfg(oneiron_test_support)]
+pub(crate) fn program_call_digest_for_test(verb: &str, input: &[u8]) -> [u8; 32] {
+    program_call_digest(verb, input)
+}
+
+/// [`program_answer_digest`] for the K door
+/// (`test_doors::fingerprint_keep_code_run_digests`). Not API.
+#[cfg(oneiron_test_support)]
+pub(crate) fn program_answer_digest_for_test(outcome: &[u8]) -> [u8; 32] {
+    program_answer_digest(outcome)
 }
