@@ -25,7 +25,9 @@
 //! and the run it answers, one job alone, what a pass lends its runs and what they report back,
 //! and a due time pulled forward inside a write. Stage 5a-2 adds a job kind that starts once a
 //! pass ([`JobSpec::once_per_pass`]) and the tighter direction of a cadence key
-//! ([`more_often_is_tighter`]).
+//! ([`more_often_is_tighter`]). Stage 5b-4 adds a run of only some jobs' due rows, which a host
+//! loop that serves its own job sooner than the housekeeping tick makes, and which runs nothing
+//! while a housekeeping pass holds the runner.
 
 mod arm;
 mod jobs;
