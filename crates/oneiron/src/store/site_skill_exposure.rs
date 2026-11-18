@@ -7,6 +7,7 @@
 //! and reads them through its re-exports; the row's side-table declaration
 //! names its erase hook.
 
+use oneiron_contracts::fingerprint::ContentHash;
 use serde::{Deserialize, Serialize};
 
 use crate::Vault;
@@ -53,7 +54,7 @@ impl SiteSkillExposure {
             seq,
             skill,
             revision: revision.to_owned(),
-            content_hash: *blake3::hash(knowledge.as_bytes()).as_bytes(),
+            content_hash: *ContentHash::of(knowledge.as_bytes()).as_bytes(),
             at,
         })
     }

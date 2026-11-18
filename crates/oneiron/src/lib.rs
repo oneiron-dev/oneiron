@@ -20,6 +20,7 @@ pub use oneiron_store::config;
 pub mod deletion;
 /// The derivation transaction (untangle 6.7, primitive C).
 pub mod derive;
+pub mod display_edits;
 pub(crate) mod engine_store_hooks;
 pub mod edge {
     //! Edge kinds, layouts, value codec, strict edge-record parsing, `EdgeInfo`:
@@ -51,6 +52,7 @@ pub mod idle_fold;
 pub mod limit_ask;
 pub mod machine_capacity;
 pub mod machine_destination;
+pub mod machine_names;
 pub(crate) use oneiron_base::limits;
 pub mod maintain;
 pub(crate) use oneiron_base::msgpack_shape;

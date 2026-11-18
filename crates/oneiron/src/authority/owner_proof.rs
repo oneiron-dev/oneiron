@@ -68,7 +68,13 @@ pub(super) fn owner_proof_key(
 /// Whether `key` is a key `state` trusts as the owner's: live on the roster
 /// with `ROLE_OWNER`, and not in the host's custody on a hosted fold. A
 /// revoked or retired key, an admin-only key and a managed host's custodial
-/// root prove nothing.
+/// root prove nothing. Custody is read from the log's cloud stamp alone
+/// ([`in_host_custody`]: the key, or a key that admitted it, is stamped
+/// `ROLE_CLOUD` or `CloudCustodial`), so every fold reads it alike: a
+/// self-host root keeps proving for the owner when its log is folded under
+/// the Hosted posture, on a Hosted reopen, an import into a hosted vault, a
+/// restore onto a managed node or a hosted peer of a linked vault (Engine
+/// ANSWER HOSTED-REFOLD-SELF-HOST-ROOT-CUSTODY = A).
 fn proves_for_the_owner(state: &FoldState, key: &AuthorityKey) -> bool {
     roster_has_live_owner(&state.roster, key) && !(state.hosted && in_host_custody(state, key))
 }
@@ -89,7 +95,7 @@ fn proves_for_the_owner(state: &FoldState, key: &AuthorityKey) -> bool {
 /// as the owner's through a carrier, the act its own signature may not make,
 /// and a vault whose only Ed25519 owner keys are such keys asks for no proof,
 /// as a passkey-only vault does.
-fn gives_owner_proof(state: &FoldState, key: &AuthorityKey) -> bool {
+pub(super) fn gives_owner_proof(state: &FoldState, key: &AuthorityKey) -> bool {
     matches!(key, AuthorityKey::Ed25519(_))
         && proves_for_the_owner(state, key)
         && !state.passkey_limited(key)
@@ -248,8 +254,8 @@ pub(super) fn asking_owner_choices(state: &FoldState) -> BTreeSet<AuthorityEntry
 
 /// Whether a bind or rebind in `state` has the owner's proof where the fold
 /// asks for it: on a hosted fold, one of the row's `participants` (its signer
-/// and cosigners) is an owner key no cloud key holds
-/// ([`owner_key_outside_cloud_custody`]). A managed host's root acts as
+/// and cosigners) proves for the owner ([`proves_for_the_owner`]), an owner
+/// key no cloud key holds. A managed host's root acts as
 /// nobody inside a customer's vault, and being the trust root never makes
 /// the operator a person there (owner ruling 2026-10-18, "A + support"; rows
 /// OLD-PARENTS-OWNER-BINDING-REVOKE and OLD-PARENTS-OWNER-BINDING-CONFLICT).
@@ -320,37 +326,7 @@ pub(super) fn human_bind_proved(
     !touches_a_person
         || participants
             .iter()
-            .any(|key| !state.passkey_limited(key) && owner_key_outside_cloud_custody(state, key))
-}
-
-/// Whether `key` is a live owner key on `state`'s roster that no cloud key
-/// holds: neither it nor any key that admitted it, directly or through
-/// others (`key_admitters`), is stamped `ROLE_CLOUD` or `CloudCustodial`.
-/// A managed host's root carries that stamp in the log
-/// (`HostSlipIssuer::root_device`), so every fold reads it alike, under any
-/// posture. Host custody ([`proves_for_the_owner`]) also takes a self-host
-/// root, by its host-root attestation, as the host's on a hosted fold. Read
-/// that way, a self-hosted vault opened as Hosted (`Vault::open` with a
-/// Hosted config) or imported into a hosted vault would lose the bind of the
-/// transaction that rooted it, and with it every row after.
-fn owner_key_outside_cloud_custody(state: &FoldState, key: &AuthorityKey) -> bool {
-    if !roster_has_live_owner(&state.roster, key) {
-        return false;
-    }
-    let mut seen = BTreeSet::new();
-    let mut pending = vec![key];
-    while let Some(next) = pending.pop() {
-        if !seen.insert(next) {
-            continue;
-        }
-        if state.roster.get(next).is_some_and(|device| {
-            device.roles & ROLE_CLOUD != 0 || device.tier == AuthorityTier::CloudCustodial
-        }) {
-            return false;
-        }
-        pending.extend(state.key_admitters.get(next).into_iter().flatten());
-    }
-    true
+            .any(|key| !state.passkey_limited(key) && proves_for_the_owner(state, key))
 }
 
 impl AuthorityFold {
@@ -367,6 +343,25 @@ impl AuthorityFold {
         roster_has_live_owner(&self.roster, key)
             && !(hosted && self.in_host_custody(key))
             && !self.passkey_limited_keys.contains(key)
+    }
+
+    /// Whether an install may offer `signer`, a root signer it holds, as the
+    /// owner's proof: this fold trusts its key as the owner's
+    /// ([`Self::proves_owner_acts`]), and under the Hosted posture it is no
+    /// host root ([`CheckpointRootSigner::is_host_root`]). The fold keeps
+    /// what a self-host root proved when its log is folded as hosted; a
+    /// hosted install that holds that root, as after a move of the vault
+    /// onto a managed host, never acts for the owner with it (Engine ANSWER
+    /// HOSTED-REFOLD-SELF-HOST-ROOT-CUSTODY = A). A root move under the
+    /// Hosted posture hands the vault to a stamped root, which proves
+    /// nothing.
+    #[must_use]
+    pub(crate) fn offers_owner_proof(
+        &self,
+        signer: &dyn CheckpointRootSigner,
+        hosted: bool,
+    ) -> bool {
+        !(hosted && signer.is_host_root()) && self.proves_owner_acts(&signer.root(), hosted)
     }
 
     /// A choice door's answer about `act`, the choice it appended in its
@@ -466,17 +461,20 @@ impl OwnerProofSigner<'_> {
 
 impl crate::Vault {
     /// The owner key this install can prove an owner act with on `fold`: the
-    /// first root signer this handle holds whose key the fold trusts as the
-    /// owner's ([`AuthorityFold::proves_owner_acts`]) under this vault's
-    /// posture and that proves at this moment
+    /// first root signer this handle holds that it may offer as the owner's
+    /// proof ([`AuthorityFold::offers_owner_proof`], built on
+    /// [`AuthorityFold::proves_owner_acts`], the rule of
+    /// `Vault::owner_proof_signer`: never a host root under the Hosted
+    /// posture) under this vault's posture and that proves at this moment
     /// ([`CheckpointRootSigner::proves_now`]). The list is in the order of
     /// each signer's latest hold, so where an install holds two keys that
     /// both prove (a self-host server's host root and its owner signing
     /// key), which one signs is not fixed: the fold takes either. A
     /// self-host server holds its host root, a device its enrolled owner
     /// signing key ([`crate::Vault::hold_checkpoint_root_signer`]); a managed
-    /// host's custodial root proves nothing, and an install that holds
-    /// neither carries its acts unproven.
+    /// host's custodial root proves nothing, no host root is offered under
+    /// the Hosted posture, and an install that holds neither carries its
+    /// acts unproven.
     ///
     /// A key that does not prove now is passed over as if it were not held:
     /// an owner signing key the roster no longer lists live, one whose seed
@@ -492,7 +490,7 @@ impl crate::Vault {
         self.held_checkpoint_root_signers()
             .into_iter()
             .find(|signer| {
-                fold.proves_owner_acts(&signer.root(), hosted) && signer.proves_now(self, fold)
+                fold.offers_owner_proof(signer.as_ref(), hosted) && signer.proves_now(self, fold)
             })
             .map(|signer| OwnerProofSigner {
                 vault: self,

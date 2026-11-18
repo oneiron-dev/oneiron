@@ -1438,8 +1438,10 @@ impl Vault {
     ///
     /// A revoke of an owner key counts only with an owner key's proof (row
     /// HOSTED-ROOT-REVOKES-OWNER-KEY; the lead, 15 Nov 20:41: "never only the
-    /// custodial root"). A self-host root proves for the owner itself. Where
-    /// `issuer` does not (a managed host's custodial root), each
+    /// custodial root"). A self-host server's root proves for the owner
+    /// itself. Where `issuer` does not (a managed host's custodial root;
+    /// under the Hosted posture no host root this install holds is offered,
+    /// [`AuthorityFold::offers_owner_proof`]), each
     /// `RevokeDevice` carries the cosign of an owner key this install holds
     /// ([`Vault::owner_proof_signer`]), and a proof key among the revoked
     /// ends last, after it proved the others. That key is the install's,
@@ -1471,7 +1473,10 @@ impl Vault {
             let fold = self.authority_view_readonly_in_txn(txn)?;
             super::slip_vault::require_host(&fold, issuer)?;
             let hosted = self.privacy_posture() == crate::HostingPrivacyPosture::Hosted;
-            let proof = if fold.proves_owner_acts(&root, hosted) {
+            // Under the Hosted posture no host root this install holds is
+            // offered as the owner's proof, a self-host root a move carried
+            // here included (HOSTED-REFOLD-SELF-HOST-ROOT-CUSTODY = A).
+            let proof = if fold.offers_owner_proof(issuer, hosted) {
                 None
             } else {
                 let proof = self.owner_proof_signer(&fold).ok_or(Error::Record(
