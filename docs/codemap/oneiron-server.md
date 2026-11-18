@@ -224,11 +224,12 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/booking/offerability.rs` | src | s | 1 crate-vis | — | — |
 | `src/api/booking/page_token.rs` | src | s | 6 crate-vis | — | — |
 | `src/api/booking/public.rs` | src | m | 8 crate-vis | — | Anonymous, published-capability-only booking transport |
-| `src/api/booking/public_availability.rs` | src | s | 8 crate-vis | — | Query-bound slot cache |
+| `src/api/booking/public_availability.rs` | src | s | 9 crate-vis | — | Query-bound slot cache |
 | `src/api/booking/public_availability_tests.rs` | test | m | — | — | — |
 | `src/api/booking/public_deposit_tests.rs` | test | L | — | — | BK-DEPOSITS PR 3: a deposit event type through the real public router and the signed Stripe webhook, against… |
+| `src/api/booking/public_duration_tests.rs` | test | s | — | — | BK-VARIABLE-DURATION through the real public router: one link carries the event type's allowed lengths, the… |
 | `src/api/booking/public_fixture.rs` | src | m | 36 crate-vis | — | Shared fixtures for tests that enter the real public router |
-| `src/api/booking/public_grant_view_tests.rs` | test | s | — | — | ARCH-0062 #grant-view (owner ruling BOOKING-GRANT-VIEW = A, 2026-10-20; Engine ruling L3-10, 2026-11-13): an… |
+| `src/api/booking/public_grant_view_tests.rs` | test | m | — | — | ARCH-0062 #grant-view (owner ruling BOOKING-GRANT-VIEW = A, 2026-10-20; Engine ruling L3-10, 2026-11-13): an… |
 | `src/api/booking/public_lifecycle_tests.rs` | test | L | — | — | — |
 | `src/api/booking/public_tests.rs` | test | L | — | — | — |
 | `src/api/booking/quarantine_restore.rs` | src | s | 2 crate-vis | — | `POST /v1/owner/booking/quarantine/{claim_ref}/restore`: the owner's restore of a quarantined confirm (FIX… |
@@ -2448,6 +2449,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/secret_list_doors.rs` | test | m | — | — | The owner's list of every secret in custody at its served doors (FIX [SECRETS-OWNER-LIST-READ]… |
 | `tests/selector_home_clearance_ws.rs` | test | m | — | — | A served selector fetch carries no stamped claim to a member homed elsewhere (L5-02 PR 4, RULING… |
 | `tests/selector_release_recheck.rs` | test | L | — | — | Socket regressions for SELECTOR-RELEASE-POINT = B: a selector answer is judged again where it leaves, so one… |
+| `tests/self_actor_bounded_credential.rs` | test | m | — | — | `self.actor` answers a bounded credential (leg A1, E2E HOOKS-03 cause 1) |
 | `tests/self_browser_doors.rs` | test | m | — | — | An agent drives a browser only through its own attached live run, and each browser door refuses everyone… |
 | `tests/self_desktop_doors.rs` | test | s | — | — | No `self.desktop.*` verb has an HTTP facade door: a caller outside a run's code mode cannot drive the… |
 | `tests/self_off_record_doors.rs` | test | L | — | — | Promise tests for the doors of a session-bound code run (ruling L4-23 = A: each test proves a promise at its… |

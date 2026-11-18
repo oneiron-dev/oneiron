@@ -65,6 +65,7 @@ fn install_page_and_config(vault: &Vault, page: EntityId, event_type: &EventType
             }],
             flex_with_ordinary: false,
             flex_windows: Vec::new(),
+            allowed_durations_min: Vec::new(),
         },
     };
     let mut body = ClaimBody::new(
