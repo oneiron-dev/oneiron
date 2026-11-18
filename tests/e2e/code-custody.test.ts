@@ -572,7 +572,7 @@ async function codeCustody06Transfer<T>(context: string, run: () => Promise<T>):
 
 // CODE-CUSTODY-06 — Large blob fidelity and scoped deletion should work.
 // Promise: a >16 MiB blob round-trips byte-exact through two same-byte artifact owners and LFS basic batch/PUT/verify/download; erasing owner A keeps owner B and LFS bytes exact; a read-scoped actor is refused with receipts; a revoked capability slip's next use is refused; another vault discloses nothing.
-// Doors: vault.artifacts.put/append/read, vault.records.erase_preview/confirm, vault.code.origin.register, vault.code.origin.mirror.get, vault.agents.create, self.actor, vault.get, vault.receipts.get, LFS batch/upload/download/verify routes, POST /v1/core/slips/revoke, engine.restart().
+// Doors: vault.artifacts.put/append/read, vault.owner_confirm.preview, vault.records.erase_confirm, vault.code.origin.register, vault.code.origin.mirror.get, vault.agents.create, self.actor, vault.get, vault.receipts.get, LFS batch/upload/download/verify routes, POST /v1/core/slips/revoke, engine.restart().
 // Budget: nightly-tier, 300 s flow cap via suite.test; full-size requests remain capped at 25 s.
 // Stays unproved: the mirror half (build-required asset publication, mirror clone/smudge with the original disconnected, mirror_check run): no public door classifies repo paths build-required and no HTTPS mirror fixture is provided (see report).
 suite.test(test, "CODE-CUSTODY-06", "Large blob fidelity and scoped deletion should work", async () => {
@@ -799,18 +799,25 @@ suite.test(test, "CODE-CUSTODY-06", "Large blob fidelity and scoped deletion sho
     if (!peerEntry.error) throw new Error("Peer vault disclosed foreign bytes");
     expect(peerEntry.error.code).toBe(404);
     expect(peerEntry.error.message).toBe("object is not stored in this vault");
-    const preview = await codeCustody06ExpectedSuccess("owner A erase preview vault.records.erase_preview", () =>
-      engine.client.call("vault.records.erase_preview", { record: putA.id_hex }));
+    const ownerPreview = await codeCustody06ExpectedSuccess("owner A erase preview vault.owner_confirm.preview", () =>
+      engine.client.call("vault.owner_confirm.preview", {
+        verb: "vault.records.erase_confirm", input: { record: putA.id_hex },
+      }));
+    // What the shared owner preview shows a record erase taking (verbs/record_erase.rs RecordErasePreview).
+    const preview = ownerPreview.takes as {
+      record: string; lfs_chunks: unknown[]; same_bytes: string[];
+      held_bytes: { content_hash: string; other_holders: string[] }[];
+    };
     expect(preview.record).toBe(putA.id_hex);
     expect(preview.lfs_chunks).toEqual([]);
     expect(preview.same_bytes).toContain(putB.id_hex);
     const held = preview.held_bytes.find((row) => row.other_holders.includes(putB.id_hex));
     if (!held) throw new Error("Erase preview names no surviving holder");
     expect(held.content_hash).toMatch(/^[a-f0-9]{64}$/);
-    expect(preview.preview_digest).toMatch(/^[a-f0-9]{64}$/);
+    expect(ownerPreview.confirm).toMatch(/^[a-f0-9]{64}$/);
     const confirmed = await codeCustody06ExpectedSuccess("owner A erase vault.records.erase_confirm", () =>
       engine.client.call("vault.records.erase_confirm", {
-        record: putA.id_hex, preview_digest: preview.preview_digest, also_same_bytes: false,
+        record: putA.id_hex, confirm: ownerPreview.confirm, also_same_bytes: false,
       }));
     if (!("first" in confirmed)) throw new Error("Erase confirm did not settle");
     expect(confirmed.first.existed).toBe(true);

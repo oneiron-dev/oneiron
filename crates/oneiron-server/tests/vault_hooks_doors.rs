@@ -529,7 +529,7 @@ fn cancel_sets_the_decision_aside_and_keeps_the_body() {
         let bindings = fixture.vault.pack_hook_bindings().expect("list bindings");
         let row = bindings
             .iter()
-            .find(|(id, _)| **id == binding)
+            .find(|(id, _)| *id == binding)
             .map(|(_, row)| row)
             .expect("the binding stands");
         let kept_before = fixture
@@ -587,7 +587,7 @@ fn cancel_sets_the_decision_aside_and_keeps_the_body() {
         let bindings = fixture.vault.pack_hook_bindings().expect("list bindings");
         let row = bindings
             .iter()
-            .find(|(id, _)| **id == binding)
+            .find(|(id, _)| *id == binding)
             .map(|(_, row)| row)
             .expect("the binding still stands");
         let kept_after = fixture
