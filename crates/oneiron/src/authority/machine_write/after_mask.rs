@@ -20,8 +20,9 @@ use crate::write_envelope::{ClaimCandidate, MachineWriteSignature, WriteEnvelope
 /// proof to verify over the pre-mask body and the signer the host retained
 /// for the actor to hold the proof's key; otherwise the envelope is left as
 /// it is, and admission decides as before. A bogus proof is never renewed
-/// into a valid one here. `facet` is the facet the pre-mask body names; apply
-/// stores the post-mask body there too.
+/// into a valid one here. `facet` is the facet the pre-mask body names; the
+/// renewed proof signs the body apply stores
+/// (`batch::claim_candidate_apply::claim_body_after_mask`).
 pub(crate) fn resign_machine_claim_after_mask_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
@@ -72,9 +73,12 @@ pub(crate) fn resign_machine_claim_after_mask_in_txn(
     if public_key != proof.public_key {
         return Ok(());
     }
-    // Stored at the facet the pre-mask body names, as apply stores it.
-    let mut body = candidate.clone().into_claim_body(envelope, facet)?;
-    body.scope_facet = facet;
+    // The body apply stores.
+    let body = crate::batch::claim_candidate_apply::claim_body_after_mask(
+        candidate.clone(),
+        &pre_body,
+        envelope,
+    )?;
     let signature = sign(&machine_claim_transcript(&vault_id, id, &body)?)?;
     if signature != proof.signature {
         *envelope = envelope

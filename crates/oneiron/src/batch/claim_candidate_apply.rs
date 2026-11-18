@@ -88,15 +88,13 @@ pub(super) fn apply_claim_candidate(
     // the old proof verifies over the pre-mask bytes. Every other envelope
     // reaches admission byte for byte.
     let mut resigned = envelope.clone();
-    let mut pre_mask_facet = None;
+    let mut offered = None;
     if let Some(pre) = &pre_mask {
-        // The mask writes handles over secrets and never moves the facet a
-        // candidate names: one whose facet selector it rewrote in the opaque
-        // scope is stored at the facet the selector named, the one the
-        // preflight judged and its walk over the batch noted
-        // (PREFLIGHT-SAME-BATCH-BIRTH-FACET).
+        // The mask writes handles over secrets and never moves the claim:
+        // [`claim_body_after_mask`] stores it at the facet and project the
+        // candidate named as offered, the ones the preflight judged and its
+        // walk over the batch noted (PREFLIGHT-SAME-BATCH-BIRTH-FACET).
         let pre_body = pre.clone().into_claim_body(envelope, default_facet)?;
-        pre_mask_facet = Some(pre_body.scope_facet);
         crate::authority::resign_machine_claim_after_mask_in_txn(
             store,
             wtxn,
@@ -117,12 +115,13 @@ pub(super) fn apply_claim_candidate(
                     Error::InvariantViolation("a claim diff handle is not 32 bytes")
                 })?);
         }
+        offered = Some(pre_body);
     }
     let envelope = &resigned;
-    let mut body = candidate.into_claim_body(envelope, default_facet)?;
-    if let Some(facet) = pre_mask_facet {
-        body.scope_facet = facet;
-    }
+    let body = match &offered {
+        Some(offered) => claim_body_after_mask(candidate, offered, envelope)?,
+        None => candidate.into_claim_body(envelope, default_facet)?,
+    };
     crate::claim::world_access::admit_world_access_write(
         store,
         wtxn,
@@ -298,6 +297,70 @@ pub(super) fn apply_claim_candidate(
         cleared_pending_embedding: applied_put.cleared_pending_embedding,
         pending_embedding_token: applied_put.pending_embedding_token,
     })
+}
+
+/// The body stored for a candidate the write door's secret mask rewrote, read
+/// against `offered`, the body of that candidate as its writer offered it. The
+/// mask writes handles over secrets and never moves the claim: the stored body
+/// keeps the facet and project `offered` names. A facet or project selector in
+/// the opaque scope whose id the mask rewrote leaves the scope, because the
+/// handle in its place names no id and the body decoder refuses it. A selector
+/// the decoder refuses as offered (no id, or a second of its kind) stays, so
+/// that write is refused as before (PREFLIGHT-SAME-BATCH-BIRTH-FACET). The
+/// MACHINE proof renewal after the mask signs this same body.
+pub(crate) fn claim_body_after_mask(
+    candidate: ClaimCandidate,
+    offered: &crate::write_envelope::claim_body::ClaimBody,
+    envelope: &crate::write_envelope::WriteEnvelope,
+) -> Result<crate::write_envelope::claim_body::ClaimBody> {
+    #[derive(Clone, Copy, PartialEq)]
+    enum Selector {
+        Facet,
+        Project,
+    }
+    fn selector(key: &rmpv::Value) -> Option<Selector> {
+        match key.as_str() {
+            Some("facet" | "facet_ref" | "facetRef") => Some(Selector::Facet),
+            Some("scopeProjectId") => Some(Selector::Project),
+            _ => None,
+        }
+    }
+    fn names_id(value: &rmpv::Value) -> bool {
+        match value {
+            rmpv::Value::Binary(bytes) => <[u8; 16]>::try_from(bytes.as_slice())
+                .is_ok_and(|bytes| EntityId::from_bytes(bytes).is_ok()),
+            _ => value
+                .as_str()
+                .is_some_and(|text| EntityId::from_hex(text).is_ok()),
+        }
+    }
+    let mut body = candidate.into_claim_body(envelope, offered.scope_facet)?;
+    body.scope_facet = offered.scope_facet;
+    body.scope_project = offered.scope_project;
+    if let (Some(rmpv::Value::Map(entries)), Some(rmpv::Value::Map(offered_entries))) =
+        (body.scope.as_mut(), offered.scope.as_ref())
+        && entries.len() == offered_entries.len()
+    {
+        let single = |kind: Selector| {
+            offered_entries
+                .iter()
+                .filter(|(key, _)| selector(key) == Some(kind))
+                .count()
+                == 1
+        };
+        let rewritten: Vec<bool> = entries
+            .iter()
+            .zip(offered_entries)
+            .map(|((_, value), (key, offered_value))| {
+                selector(key).is_some_and(&single)
+                    && value != offered_value
+                    && names_id(offered_value)
+            })
+            .collect();
+        let mut rewritten = rewritten.into_iter();
+        entries.retain(|_| !rewritten.next().unwrap_or(false));
+    }
+    Ok(body)
 }
 
 /// The exact birth facet kept by both the final materializer and signer.

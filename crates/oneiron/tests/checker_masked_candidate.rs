@@ -745,7 +745,7 @@ fn a_held_reput_of_a_claim_born_through_a_masked_facet_selector_parks_at_that_fa
         .commit();
     assert!(
         committed.is_ok(),
-        "FAILBEFORE PREFLIGHT-SAME-BATCH-BIRTH-FACET: the held re-put of a birth whose facet selector the mask rewrote failed its replay match instead of parking: {committed:?}"
+        "FAILBEFORE PREFLIGHT-SAME-BATCH-BIRTH-FACET: a birth whose facet selector the mask rewrote, or the held re-put of it, failed instead of parking: {committed:?}"
     );
     let stored = parked_review_bound_to_stored_body(&vault, &id, CHECKER_UNAVAILABLE)?;
     assert_eq!(stored.value, Value::from(REPUT_VALUE));
