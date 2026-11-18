@@ -51,12 +51,14 @@ mod context;
 mod covered_floors;
 mod result_parents;
 mod settle;
+mod tail_gaps;
 
 pub(crate) use result_parents::proven_residence_result_parents_in_txn;
 
 use context::image_stands_here;
 use covered_floors::{CoveredFloors, NoVouchPast};
 use settle::{SettledTail, settle_tail};
+use tail_gaps::{parent_gaps, refusing_gaps};
 
 /// The fold past an adopted image.
 pub(super) enum AdoptedTailFold {
@@ -123,43 +125,17 @@ pub(super) fn fold_adopted_checkpoint_tail(
         .collect();
     // What a fetch of the rows themselves closes: a parent neither covered
     // nor held, and a named hash neither held nor a kept frontier state.
-    let required_gaps = log
+    let required_gaps: Vec<_> = log
         .required
         .iter()
         .filter(|hash| !log.held_covered.contains(*hash))
         .filter(|hash| !image.keeps_state(hash))
         .filter(|hash| !tail.contains_key(*hash))
-        .copied();
-    // Only the gaps the believed rows rest on refuse the fold. The tail rows
-    // above any other gap drop out of what the fold settles: invalid, as the
-    // stored log's fold holds the rows above a gap (FIX
-    // [STRANGER-GAP-STALLS-ADOPTED-TAIL-FOLD]). No believed row rests on a
-    // dropped row, since its walk would have reached that row's gap.
-    let (gaps, tail) = match log.believed {
-        None => {
-            let gaps: BTreeSet<_> = parent_gaps(image, &tail)
-                .into_iter()
-                .chain(required_gaps)
-                .collect();
-            (gaps, tail)
-        }
-        Some(believed) => {
-            let gaps: BTreeSet<_> = believed_tail_gaps(image, &tail, believed)
-                .into_iter()
-                .chain(required_gaps)
-                .collect();
-            let unbelieved: BTreeSet<_> = parent_gaps(image, &tail)
-                .difference(&gaps)
-                .copied()
-                .collect();
-            let dropped = rows_above_gaps(&tail, &unbelieved);
-            let tail: BTreeMap<_, _> = tail
-                .into_iter()
-                .filter(|(hash, _)| !dropped.contains(hash))
-                .collect();
-            (gaps, tail)
-        }
-    };
+        .copied()
+        .collect();
+    // Only the gaps the believed rows rest on refuse the fold; the tail rows
+    // above any other gap drop out of what it settles ([`refusing_gaps`]).
+    let (gaps, tail) = refusing_gaps(image, tail, log.believed, required_gaps);
     // What only the whole history closes: every covered row not held here.
     let whole = || AdoptedTailFold::NeedHistory(whole_history(adopted, &gaps, log.held_covered));
     let confirms = if image_stands_here(image, log) {
@@ -424,72 +400,6 @@ const AUTHORITY_HISTORY_UNKNOWN_DEPENDENCIES: UnknownDependencies =
 enum UnknownDependencies {
     /// Every covered row not held here.
     WholeHistory,
-}
-
-/// The parents the tail rows name that the image does not cover and the tail
-/// does not hold.
-fn parent_gaps(
-    image: &AuthorityCheckpointV2,
-    tail: &BTreeMap<AuthorityEntryHash, &AuthorityLogEntry>,
-) -> BTreeSet<AuthorityEntryHash> {
-    tail.values()
-        .flat_map(|entry| entry.parent_hashes.iter())
-        .filter(|parent| !image.rows.contains_key(*parent) && !tail.contains_key(*parent))
-        .copied()
-        .collect()
-}
-
-/// The gaps the `believed` tail rows rest on: walking down from their
-/// parents through tail rows, whoever signed them, every hash the image does
-/// not cover and the tail does not hold. A believed row rests on every row
-/// below it, so a gap under a stranger's row that a believed row names still
-/// counts (FIX [STRANGER-GAP-STALLS-ADOPTED-TAIL-FOLD]).
-fn believed_tail_gaps(
-    image: &AuthorityCheckpointV2,
-    tail: &BTreeMap<AuthorityEntryHash, &AuthorityLogEntry>,
-    believed: &BTreeSet<AuthorityEntryHash>,
-) -> BTreeSet<AuthorityEntryHash> {
-    let mut below: Vec<AuthorityEntryHash> = believed
-        .iter()
-        .filter_map(|hash| tail.get(hash))
-        .flat_map(|entry| entry.parent_hashes.iter().copied())
-        .collect();
-    let mut walked = BTreeSet::new();
-    let mut gaps = BTreeSet::new();
-    while let Some(hash) = below.pop() {
-        if !walked.insert(hash) {
-            continue;
-        }
-        if let Some(entry) = tail.get(&hash) {
-            below.extend(entry.parent_hashes.iter().copied());
-        } else if !image.rows.contains_key(&hash) {
-            gaps.insert(hash);
-        }
-    }
-    gaps
-}
-
-/// The tail rows that rest, through tail rows, on one of `gaps`.
-fn rows_above_gaps(
-    tail: &BTreeMap<AuthorityEntryHash, &AuthorityLogEntry>,
-    gaps: &BTreeSet<AuthorityEntryHash>,
-) -> BTreeSet<AuthorityEntryHash> {
-    let mut children: BTreeMap<AuthorityEntryHash, Vec<AuthorityEntryHash>> = BTreeMap::new();
-    for (hash, entry) in tail {
-        for parent in &entry.parent_hashes {
-            children.entry(*parent).or_default().push(*hash);
-        }
-    }
-    let mut above = BTreeSet::new();
-    let mut stack: Vec<AuthorityEntryHash> = gaps.iter().copied().collect();
-    while let Some(hash) = stack.pop() {
-        for child in children.get(&hash).into_iter().flatten() {
-            if above.insert(*child) {
-                stack.push(*child);
-            }
-        }
-    }
-    above
 }
 
 /// The request only the whole history closes: `gaps`, and every covered row
