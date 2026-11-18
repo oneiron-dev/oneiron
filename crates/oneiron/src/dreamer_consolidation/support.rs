@@ -12,9 +12,6 @@ use oneiron_contracts::msgpack;
 /// Domain for phase-2 candidate-bucket hashes (pinned, design D6). v2 added
 /// the project axis to the bucket key.
 pub const DREAMER_BUCKET_HASH_DOMAIN: &[u8] = b"oneiron:dreamer-bucket:v2";
-/// Domain for the phase-1 partition hash: the v1 bucket domain, unchanged
-/// (DESIGN-PIN A2). Partition hashes key stored cursors and queue rows.
-pub const DREAMER_PARTITION_HASH_DOMAIN: &[u8] = b"oneiron:dreamer-bucket:v1";
 /// Domain for reflection gap hashes (pinned, design D6).
 pub const DREAMER_GAP_HASH_DOMAIN: &[u8] = b"oneiron:dreamer-gap:v1";
 pub use crate::store::consolidation_evidence::DREAMER_EVIDENCE_HASH_DOMAIN;
@@ -49,10 +46,6 @@ pub const TURN_BODY_FACET_REF_KEY: &str = "facet_ref";
 /// The owner moves it with `dreamer.consolidation.meso_round_turn_cap`
 /// (`watermark::setting_keys`); this is that key's default.
 pub const DEFAULT_MESO_ROUND_TURN_CAP: usize = 500;
-/// Domain for the advisory partition-round hash — the exact-batch component of
-/// a consolidation attempt's dedupe key (pinned; distinct from the phase-1/2
-/// bucket domain so a round hash can never collide with a partition hash).
-pub(super) const DREAMER_PARTITION_ROUND_HASH_DOMAIN: &[u8] = b"oneiron:dreamer-partition-round:v1";
 
 /// Seconds-only watermark rows (`{schema_version, last_learned_at}`): decoded
 /// as the complete-second boundary `last_turn_id = None`, never re-encoded.
