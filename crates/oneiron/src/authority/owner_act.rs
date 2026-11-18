@@ -49,9 +49,11 @@ use super::*;
 ///
 /// `pin` only adds a veto: a head the reader believes
 /// ([`FoldedMachine::standing_heads`]) that says removed refuses. A shared
-/// judge, the fold's included, passes `None`, so it reads the roster's head
-/// alone; a door passes its install's pin (`fold.pinned_root`), so it signs
-/// nothing its own install would not count. Admission stays the roster's
+/// judge, the fold's validity included, passes `None`, so it reads the
+/// roster's head alone; a door passes its install's pin (`fold.pinned_root`),
+/// so it signs nothing its own install would not count, and the fold's
+/// install view passes it too, so this install never reads an act at full
+/// strength that its pinned anchor's removal raced. Admission stays the roster's
 /// (Fable design pass 29, 3.2: "a chain is read only by a reader that
 /// believes its admitter"; FIX FOREIGN-ANCHOR-CHAIN-COUNTS-IN-EVERY-CHAIN-PREDICATES).
 pub(crate) fn owner_act_signer_admits(
