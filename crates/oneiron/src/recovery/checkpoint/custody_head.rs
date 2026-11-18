@@ -590,7 +590,7 @@ impl Vault {
         };
         let (mut made, forked, mut vault, mut report) = Self::restore_image(
             image,
-            checkpoint_id,
+            checkpoint_id.clone(),
             bodies,
             destination,
             config,
