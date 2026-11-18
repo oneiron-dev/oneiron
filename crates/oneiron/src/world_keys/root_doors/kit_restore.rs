@@ -185,17 +185,31 @@ impl Vault {
         // the anchoring and the roster row below then read it as any machine.
         let key = authority.authority_key();
         let sign = |transcript: &[u8]| authority.sign_authority_transcript(transcript);
-        self.join_restored_install_by_key_in_txn(txn, (&key, &sign), actor, request)?;
+        let joined =
+            self.join_restored_install_by_key_in_txn(txn, (&key, &sign), actor, request)?;
         let now = self.authority_view_readonly_in_txn(txn)?;
-        let already = now
-            .machine(request.machine)
-            .and_then(|folded| {
-                folded.trusted_under(&crate::authority::MachineAdmitter::Anchor(root.anchor_key))
-            })
-            .is_some_and(|trusted| {
-                trusted.profile.machine_key == request.machine_key
-                    && trusted.profile.encryption_key == request.encryption_key
-            });
+        let folded = now.machine(request.machine);
+        let keys_fit = |profile: &crate::authority::MachineProfile| {
+            profile.machine_key == request.machine_key
+                && profile.encryption_key == request.encryption_key
+        };
+        // A copy R just joined stands on R's roster row alone, whose
+        // approval a newer kit can expire on another install before it
+        // sees the join: it gets the anchor's own mark, as a fresh install
+        // does, unless that anchor's chain already marks it live under
+        // these keys (REVIEW-9534 P1).
+        let already = if joined {
+            folded
+                .and_then(|folded| folded.anchored.get(&root.anchor_key))
+                .is_some_and(|mark| mark.says_yours() && keys_fit(&mark.profile))
+        } else {
+            folded
+                .and_then(|folded| {
+                    folded
+                        .trusted_under(&crate::authority::MachineAdmitter::Anchor(root.anchor_key))
+                })
+                .is_some_and(|trusted| keys_fit(trusted.profile))
+        };
         let mark = if already {
             None
         } else {
