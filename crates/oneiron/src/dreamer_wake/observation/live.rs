@@ -99,8 +99,8 @@ pub(super) fn active_wake_sample(active_wake: &ActiveWake) -> WakeLiveState {
     for call in &running {
         calls.push(WakeLiveCall {
             call: call.call,
-            lease_id: call.lease_id.clone(),
-            lease: call.guard.lease_observation(&call.lease_id),
+            lease_id: call.lease.id().to_owned(),
+            lease: call.guard.lease_observation(&call.lease),
         });
     }
     WakeLiveState {
@@ -145,7 +145,7 @@ impl<'a> StepCalls<'a> {
         else {
             return;
         };
-        let reserved_units = match guard.lease_observation(lease.id()) {
+        let reserved_units = match guard.lease_observation(lease) {
             Some(BudgetLeaseState::Open { reserve_units, .. }) => reserve_units,
             Some(BudgetLeaseState::Settled { .. }) | Some(BudgetLeaseState::Aborted) | None => 0,
         };
@@ -262,7 +262,7 @@ impl Drop for ObservedCall<'_> {
         if !bound.armed || std::thread::panicking() {
             return;
         }
-        let (state, used_units) = match bound.live.guard.lease_observation(&bound.live.lease_id) {
+        let (state, used_units) = match bound.live.guard.lease_observation(&bound.live.lease) {
             Some(BudgetLeaseState::Settled { used_units }) => {
                 (WakeCallState::Settled, Some(used_units))
             }

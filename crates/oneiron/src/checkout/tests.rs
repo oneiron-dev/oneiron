@@ -1079,9 +1079,11 @@ fn a_restore_never_revives_a_checkout_ticket_shortened_since() {
     let mut blueprint = EnvBlueprint::new(repo.clone(), EnvBlueprintStages::default());
     blueprints.put(&blueprint).unwrap();
     live.snapshot_checkpoint(&image, t).unwrap();
+    let key = live.checkpoint_key().unwrap();
     let restore = |name: &str, at: u64| {
         let (restored, _) = Vault::restore_checkpoint_keeping_authority(
             &image,
+            &key,
             &backups.path().join(name),
             live.config.clone(),
             &live,

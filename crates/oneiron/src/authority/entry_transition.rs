@@ -36,6 +36,33 @@ thread_local! {
         const { std::cell::RefCell::new(None) };
 }
 
+/// Whether `entry` sits below its sequence floor in `context`: the highest
+/// sequence among its signer's rows in its scope that do not descend from it
+/// (`rows_floor`).
+pub(super) fn below_its_floor(
+    entry: &AuthorityLogEntry,
+    hash: AuthorityEntryHash,
+    context: FoldContext<'_>,
+) -> bool {
+    context
+        .sequence_floors
+        .and_then(|floors| floors.get(&hash))
+        .is_some_and(|floor| entry.seq < *floor)
+}
+
+/// Whether a counted `entry` shows its signer forked its sequence: it sits
+/// below its floor (`below_its_floor`) and grants, so it is no roster row,
+/// restriction or row that only takes away (`floor_refuses`). It counts in
+/// full; the fold records the fork as `AuthorityFoldIssue::SequenceFork`
+/// (Engine RULING SEQ-FLOOR-SHAPE-S = B, 16 Nov 02:37).
+pub(super) fn forks_its_sequence(
+    entry: &AuthorityLogEntry,
+    hash: AuthorityEntryHash,
+    context: FoldContext<'_>,
+) -> bool {
+    floor_refuses(&entry.op) && below_its_floor(entry, hash, context)
+}
+
 pub(super) fn fold_entry_state(
     entry: &AuthorityLogEntry,
     hash: AuthorityEntryHash,
@@ -51,36 +78,64 @@ pub(super) fn fold_entry_state(
     if entry.validate_shape().is_err() || verify_entry_signatures(entry).is_err() {
         return EntryFold::Invalid(AuthorityFoldIssue::InvalidEntry(hash));
     }
+    // A counted root appointment's line folds as its proof fold folded it,
+    // and the appointment as its recovered world (OWNER-ANCHOR-ROOT-RECOVERY,
+    // E1, E3): before any floor (E5) or parent state, so a refused witness
+    // parent never holds it back. Every other appointment is refused here,
+    // the same way on every install, and carries its verdict.
+    if let Some(recovered) = context
+        .appointments
+        .and_then(|judgement| judgement.recovered.entry_fold(&hash))
+    {
+        return recovered;
+    }
+    if matches!(entry.op, AuthorityOp::RootAppointment(_)) {
+        let verdict = context
+            .appointments
+            .and_then(|judgement| judgement.verdicts.get(&hash).copied())
+            .unwrap_or(AppointmentVerdict::Unjudged);
+        return EntryFold::Invalid(AuthorityFoldIssue::AppointmentRefused {
+            entry: hash,
+            verdict,
+        });
+    }
     // Slips are the client credential in every posture. Retired device-key
     // operations survive only as verified pre-handoff ancestry: a later
     // client enrollment or rotation gains no authority.
     if entry_is_retired(entry, hash, context) {
         return EntryFold::Invalid(AuthorityFoldIssue::InvalidEntry(hash));
     }
-
-    // A strictly older observed sequence is rollback. Equal-sequence siblings
-    // have separate hashes and fold under their own ancestry, not a fork alarm.
-    // A restriction still lands (Astra #1430): a machine revision and a world
-    // edit keep their restrictive effect when a later row of their signer
-    // arrived first, as restriction only. A machine removal so stays terminal
-    // on every replica and in the log, where a later edit finds it among its
-    // parents (Sol P2 round 3, F3), but acknowledges nothing here (Astra
-    // #1430b). A row a handoff or a removal vouches for is never refused, and
-    // still lands restriction only, as does every row the fold with no vouch
-    // holds back or only the vouch admits (`install_fold::NoVouch`). No floor
-    // refuses a roster row, which vouches for its own signer's rows below it
-    // that a floor refuses (`changes_roster`, `floor_refuses`); its signer's
-    // own order binds it below.
-    let past_floor = context
-        .sequence_floors
-        .and_then(|floors| floors.get(&hash))
-        .is_some_and(|floor| entry.seq < *floor);
-    let vouched = context
-        .floor_vouched
-        .is_some_and(|vouched| vouched.contains(&hash));
-    if past_floor && !vouched && floor_refuses(&entry.op) {
-        return EntryFold::Invalid(AuthorityFoldIssue::NonMonotonicSeq(hash));
+    // An enrolment of an owner's key outside the line of the enrolment that
+    // made it the owner's (row CARRIER-PROOF-OLD-PARENTS, OLDPARENTS-ENROL-DODGE
+    // = A): the roster merge would otherwise narrow the key on every branch.
+    if context.refuses_off_the_line_enrolment(&hash) {
+        return EntryFold::Invalid(AuthorityFoldIssue::InvalidEntry(hash));
     }
+
+    // A row below its floor, the highest sequence among its signer's rows
+    // in its scope that do not descend from it (`rows_floor`), forks its
+    // signer's sequence, whatever order its rows arrived in. Such a row
+    // counts in full and the fold records the fork
+    // (`AuthorityFoldIssue::SequenceFork`, `forks_its_sequence`): refusing it
+    // would refuse every later row on it, its signer's revocation included
+    // (Engine RULING SEQ-FLOOR-SHAPE-S = B, 16 Nov 02:37). A world key record
+    // counts so too: refusing it would refuse every later record of its world
+    // that names it, so one row a removed machine's key signs on an old parent
+    // could take the world's key from every install (Astra
+    // anchorsec-seq-floor-s T5; Engine RULING SEQ-FLOOR-S-WORLD-KEY-FLOOR = A,
+    // 16 Nov 03:39). No row is refused for its floor. Equal-sequence
+    // siblings have separate hashes and fold under their own ancestry, not a
+    // fork alarm. A row that only takes away is never floored
+    // (`only_takes_away`). A restriction lands restriction only (Astra
+    // #1430): a machine revision and a world edit keep their restrictive
+    // effect below a later row of their signer that does not descend from
+    // them. A machine removal so stays terminal on every replica and in the
+    // log, where a later edit finds it among its parents (Sol P2 round 3,
+    // F3), but acknowledges nothing here (Astra #1430b). So does every row the
+    // fold with no vouch holds back (`install_fold::NoVouch`). No floor
+    // touches a roster row (`changes_roster`); its signer's own order binds
+    // it below.
+    let past_floor = below_its_floor(entry, hash, context);
     let restriction_only = lands_restriction_only(&entry.op)
         && (past_floor
             || context
@@ -113,6 +168,10 @@ pub(super) fn fold_entry_state(
     {
         if *entry.signer_key() != device.key || entry.seq != 0 {
             return EntryFold::Invalid(AuthorityFoldIssue::SignerNotInAncestry(hash));
+        }
+        // No passkey is enrolled before genesis, so none signs it.
+        if !super::owner_key_enrollment::passkey_signatures_in_context(None, entry) {
+            return EntryFold::Invalid(AuthorityFoldIssue::InvalidEntry(hash));
         }
         let Ok(vault_id) = genesis_vault_id(entry) else {
             return EntryFold::Invalid(AuthorityFoldIssue::InvalidEntry(hash));
@@ -164,6 +223,9 @@ pub(super) fn fold_entry_state(
             hosted: context.hosted,
             actor_rows: BTreeSet::new(),
             residence_directives: BTreeMap::new(),
+            passkey_contexts: BTreeMap::new(),
+            passkey_vouched_keys: BTreeSet::new(),
+            passkey_vouch_confirmations: BTreeSet::new(),
         };
         upsert_device(&mut state, device, None);
         state.seqs.insert(device.key.clone(), 0);
@@ -192,6 +254,15 @@ pub(super) fn fold_entry_state(
 
     if entry.vault_id != Some(state.vault_id) {
         return EntryFold::Invalid(AuthorityFoldIssue::WrongVault(hash));
+    }
+    // A passkey signs only where its enrollment's assertion was made (row
+    // WEB-PASSKEY-OWNER-KEY; Sol xhigh F2): a sibling origin under the same
+    // RP id gets no owner signature.
+    if !super::owner_key_enrollment::passkey_signatures_in_context(
+        Some(&state.passkey_contexts),
+        entry,
+    ) {
+        return EntryFold::Invalid(AuthorityFoldIssue::InvalidEntry(hash));
     }
     // A frontier join stands for its parents' merge, signed by the key that
     // signs the act it leads to (FIX 7908): only its signer's sequence moves.
@@ -247,6 +318,7 @@ pub(super) fn fold_entry_state(
             hash,
             (context.pin, context.machine_standing),
             restriction_only,
+            context.needs_owner_proof_off_the_line(&hash),
         ) {
             return EntryFold::Invalid(issue);
         }
@@ -262,6 +334,7 @@ pub(super) fn fold_entry_state(
             hash,
             (context.pin, context.machine_standing),
             restriction_only,
+            context.needs_owner_proof_off_the_line(&hash),
         ) {
             return EntryFold::Invalid(issue);
         }
@@ -278,6 +351,7 @@ pub(super) fn fold_entry_state(
             hash,
             (context.pin, context.machine_standing),
             restriction_only,
+            context.needs_owner_proof_off_the_line(&hash),
         ) {
             return EntryFold::Invalid(issue);
         }
@@ -294,6 +368,7 @@ pub(super) fn fold_entry_state(
             hash,
             (context.pin, context.machine_standing),
             restriction_only,
+            context.needs_owner_proof_off_the_line(&hash),
         ) {
             return EntryFold::Invalid(issue);
         }
@@ -310,6 +385,7 @@ pub(super) fn fold_entry_state(
             hash,
             (context.pin, context.machine_standing),
             restriction_only,
+            context.needs_owner_proof_off_the_line(&hash),
         ) {
             return EntryFold::Invalid(issue);
         }
@@ -326,6 +402,7 @@ pub(super) fn fold_entry_state(
             hash,
             (context.pin, context.machine_standing),
             restriction_only,
+            context.needs_owner_proof_off_the_line(&hash),
         ) {
             return EntryFold::Invalid(issue);
         }
@@ -372,6 +449,7 @@ pub(super) fn fold_entry_state(
             hash,
             (context.pin, context.machine_standing),
             restriction_only,
+            context.needs_owner_proof_off_the_line(&hash),
         ) {
             return EntryFold::Invalid(issue);
         }
@@ -407,6 +485,7 @@ pub(super) fn fold_entry_state(
             hash,
             (context.pin, context.machine_standing),
             restriction_only,
+            context.needs_owner_proof_off_the_line(&hash),
         ) {
             return EntryFold::Invalid(issue);
         }
@@ -479,12 +558,22 @@ pub(super) fn fold_entry_state(
     // root signs it and his act's carrier cosigns it (FIX 4920), so its own
     // judge reads the roster before the generic participant rule.
     if let AuthorityOp::OwnerKeyEnroll(enroll) = &entry.op {
-        if let Err(issue) = super::owner_key_enrollment::judge_owner_key_enroll(
+        use super::owner_key_enrollment::OwnerKeyEnrollReading;
+        match super::owner_key_enrollment::judge_owner_key_enroll(
             &state, entry, enroll, hash, context,
         ) {
-            return EntryFold::Invalid(issue);
+            Err(issue) => return EntryFold::Invalid(issue),
+            Ok(OwnerKeyEnrollReading::Enrolment) => {
+                apply_op(&mut state, &entry.op, hash, entry.signer_key());
+                super::owner_key_enrollment::remember_passkey_context(&mut state, enroll);
+                super::owner_key_enrollment::remember_passkey_vouch(&mut state, entry, enroll);
+            }
+            Ok(OwnerKeyEnrollReading::Confirmation) => {
+                state
+                    .passkey_vouch_confirmations
+                    .insert(enroll.device.key.clone());
+            }
         }
-        apply_op(&mut state, &entry.op, hash, entry.signer_key());
         state.seqs.insert(entry.signer_key().clone(), entry.seq);
         return EntryFold::Ready(state);
     }
@@ -530,6 +619,33 @@ pub(super) fn fold_entry_state(
         let old_root = &state.roster[&signer];
         if old_root.roles & ROLE_OWNER == 0
             || new_device.roles & !(old_root.roles | ROLE_CLOUD) != 0
+        {
+            return EntryFold::Invalid(AuthorityFoldIssue::MissingAuthorityConsent(hash));
+        }
+    }
+
+    // A passkey signs from a page its host serves, and WebAuthn shows no act
+    // text: a passkey, and a key only a passkey vouched for until a
+    // non-passkey, owner-held key vouches for it too, neither re-root (nor
+    // rotate) nor enrol a device nor revoke another owner key (nor a key the
+    // parents do not hold, which a sibling branch may enrol as one), and lend
+    // no consent to one as a cosign (lead ruling WEBPASSKEY-BLIND-SIGNATURE =
+    // B; Engine ruling WEBPASSKEY-PASSKEY-OWN-REVOKE = B; Sol xhigh stack
+    // review F1, F2; Astra stack review finding 1), nor the owner key's proof
+    // a revoke of an owner key needs (row HOSTED-ROOT-REVOKES-OWNER-KEY;
+    // REVIEW2 #8451 P2-1): the rest must give both.
+    let barred =
+        super::owner_key_enrollment::passkey_barred_participants(&state, &entry.op, &participants);
+    if barred.contains(&signer) {
+        return EntryFold::Invalid(AuthorityFoldIssue::MissingAuthorityConsent(hash));
+    }
+    if !barred.is_empty() {
+        let counted = participants
+            .difference(&barred)
+            .cloned()
+            .collect::<BTreeSet<_>>();
+        if !has_authority_consent(&state, &counted, context)
+            || !super::owner_proof::owner_key_revoke_proved(&state, &entry.op, &counted)
         {
             return EntryFold::Invalid(AuthorityFoldIssue::MissingAuthorityConsent(hash));
         }
@@ -603,6 +719,17 @@ pub(super) fn fold_entry_state(
             | AuthorityOp::RebindActor { .. }
             | AuthorityOp::RevokeActor { .. }
     ) {
+        if !super::owner_proof::human_bind_proved(
+            &state,
+            &entry.op,
+            &participants,
+            context.consent_arm,
+        ) {
+            return EntryFold::Invalid(AuthorityFoldIssue::ActorBindingRejected {
+                entry: hash,
+                reason: ActorBindingRejection::OwnerProofRequired,
+            });
+        }
         if let Err(reason) = apply_actor_binding(&mut state, &entry.op, hash, context.consent_arm) {
             return EntryFold::Invalid(AuthorityFoldIssue::ActorBindingRejected {
                 entry: hash,
@@ -723,5 +850,8 @@ fn op_reuses_existing_device_key(state: &FoldState, op: &AuthorityOp) -> bool {
         | AuthorityOp::CustodyPermitPiece(_)
         | AuthorityOp::FrontierJoin(_)
         | AuthorityOp::MembershipExecution(_) => false,
+        // An appointment's successor is judged fresh over its whole ancestry
+        // (`root_appointment_judge`, V1).
+        AuthorityOp::RootAppointment(_) => false,
     }
 }

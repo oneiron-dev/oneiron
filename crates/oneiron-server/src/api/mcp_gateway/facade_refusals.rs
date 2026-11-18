@@ -10,9 +10,16 @@ use super::tasks_response::{MCP_HOST_ACTION_REFUSED, MCP_OWNER_BINDING_REQUIRED,
 pub(crate) fn mcp_facade_error(mut error: oneiron::MemoryError) -> McpGatewayError {
     let reason_codes = std::mem::take(&mut error.reason_codes);
     let room_join_hold = error.room_join_hold.take();
+    let pending = error.pending.take();
+    // L9-61: a reap pause names its capacity bound and the self-host route
+    // here as on every door that serves it.
+    let reap_pause = (error.code == crate::managed::WRITES_FROZEN_TAG)
+        .then(|| Box::new(crate::managed::REAP_PAUSE_BOUND));
     McpGatewayError {
         reason_codes,
         room_join_hold,
+        pending,
+        reap_pause,
         ..mcp_facade_refusal(error)
     }
 }
@@ -102,6 +109,11 @@ fn mcp_refusal_row(code: &str) -> (i64, Option<&'static str>) {
         // refusal, never an argument error, and keeps its name, so an agent
         // reads it as `error.data.error_code`, not prose.
         oneiron::memory::MEMORY_CODE_IDENTITY_UNSETTLED => (-32020, Some("identity_unsettled")),
+        // A one-way act's call carried no confirm, or not the caller's live
+        // preview of this call: a typed refusal, never an argument error.
+        oneiron::memory::MEMORY_CODE_OWNER_CONFIRM_REQUIRED => {
+            (-32020, Some("owner_confirm_required"))
+        }
         // FIX 2222: one stable kind for the typed host refusal, whichever
         // door reported it.
         oneiron::memory::MEMORY_CODE_HOST_ACTION_REFUSED => (-32020, Some(MCP_HOST_ACTION_REFUSED)),
@@ -119,6 +131,10 @@ fn mcp_refusal_row(code: &str) -> (i64, Option<&'static str>) {
         // FIX 10011: an owner model pin no offered seat serves.
         oneiron_contracts::memory::MEMORY_CODE_MODEL_PIN_UNAVAILABLE => {
             (-32020, Some("model_pin_unavailable"))
+        }
+        // L3-39: a memory fork names a revision this machine holds no bytes of.
+        oneiron_contracts::memory::MEMORY_CODE_HISTORY_NOT_HELD => {
+            (-32020, Some("history_not_held"))
         }
         // FIX 8753: a call its budget window paced waits in its caller's
         // line; the agent reads the name and `resets_at`, not the sentence.

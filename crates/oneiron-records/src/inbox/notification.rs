@@ -47,6 +47,13 @@ pub enum NotificationKind {
     /// event id and `source.detail` who asked, which consent it was, and
     /// the agent and Grant that logged it.
     VoiceRecognitionWithdrawn,
+    /// An agent logged a counterparty's spoken voice-recognition consent on a
+    /// call, under its Grant that lets it log that consent
+    /// (VOICE-CONSENT-LOG-WHO = A): told to each live owner. It enrols no
+    /// print. `source.result` names the consent's event id and
+    /// `source.detail` who agreed, for which purposes, and the agent and
+    /// Grant that logged it.
+    VoiceRecognitionConsented,
     /// The vault's Owner or an Admin walked into a private thread, reading
     /// from now on (FIX 6381, 6466): told to the thread's members alone.
     /// `source.result` names the thread's root and `source.detail` the op.

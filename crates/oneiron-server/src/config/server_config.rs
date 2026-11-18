@@ -15,13 +15,13 @@ use super::limits::LimitsConfig;
 use super::line::LineConfig;
 use super::linear::LinearConfig;
 use super::lookup::LEGACY_DEFAULT_VAULT_PATH;
+use super::mail::MailConfig;
 use super::oneironer::OneironerConfig;
 use super::recall::RecallConfig;
 use super::self_heal::SelfHealConfig;
 use super::skills::SkillsConfig;
 use super::trusted_proxy::TrustedProxy;
 use crate::runtime::RuntimeConfig;
-use crate::usage::UsageMode;
 
 /// The default inbound WebSocket frame bound (Engine 10:44 for parked L14):
 /// the sync protocol's frame floor as base64 carries it, plus a window pad
@@ -34,8 +34,19 @@ const DEFAULT_MAX_FRAME_SIZE: usize =
         + 3
         + oneiron::sync::transport::MAX_WINDOW_KEY_LEN;
 
+/// The `*.localhost` host a local vault answers on.
+mod artifact_localhost;
+
 /// The two configs' redacting `Debug`.
 mod debug;
+
+/// The vault inputs an embedded binding resolved over its config file.
+mod embedded_holder;
+
+/// The methods of `SyncServerConfig`.
+mod sync_server_methods;
+
+pub use embedded_holder::EmbeddedHolderOverrides;
 
 /// Oneiron sync server configuration.
 ///
@@ -170,6 +181,10 @@ pub struct SyncServerConfig {
     /// `[line]`: the plan of the LINE Official Account the built-in LINE
     /// pack serves, and the pushes it includes each month.
     pub line: LineConfig,
+    /// `[mail]`: the host operator's mail settings each served vault's mail
+    /// pack reads (fix list row 17645); the defaults unless the file names
+    /// others.
+    pub mail: MailConfig,
     /// `[channel_endpoints]`: where the served sinks reach each provider's
     /// API; the public APIs unless the file names others.
     pub channel_endpoints: ChannelEndpointsConfig,
@@ -211,6 +226,12 @@ pub struct SyncServerConfig {
     /// `--hosted-private-origin` in managed boot alone (FIX 7657); empty
     /// everywhere else, and no config file, settings file or environment sets it.
     pub hosted_private_origins: std::collections::BTreeSet<oneiron::web_fetch::HostedPrivateOrigin>,
+    /// The private networks a managed node's egress guard admits, from
+    /// `--hosted-private-network` in managed boot alone
+    /// (HOSTED-EGRESS-OPERATOR-SETTING); empty everywhere else, and no config
+    /// file, settings file or environment sets it.
+    pub hosted_private_networks:
+        std::collections::BTreeSet<oneiron::web_fetch::HostedPrivateNetwork>,
 }
 
 /// Who authenticates the requests a server takes, as its serve entry
@@ -270,6 +291,7 @@ impl Default for SyncServerConfig {
             runtime: RuntimeConfig::default(),
             skills: SkillsConfig::default(),
             line: LineConfig::default(),
+            mail: MailConfig::default(),
             channel_endpoints: ChannelEndpointsConfig::default(),
             apns: ApnsConfig::default(),
             linear: None,
@@ -279,50 +301,7 @@ impl Default for SyncServerConfig {
             trusted_organ_builds: std::collections::BTreeSet::new(),
             release_payment_credentials_unfenced: false,
             hosted_private_origins: std::collections::BTreeSet::new(),
-        }
-    }
-}
-
-impl SyncServerConfig {
-    /// Usage debit mode, derived from the runtime mode.
-    pub fn runtime_usage_mode(&self) -> UsageMode {
-        self.runtime.mode.usage_mode()
-    }
-
-    pub fn validate(&self) -> Result<(), oneiron::Error> {
-        super::self_heal::validate_agent_failure_healer(self.agent_failure_healer.as_ref())?;
-        if self.ephemeral_timeout_ms <= 0 {
-            return Err(oneiron::Error::sync_protocol(
-                oneiron::SyncProtocolValidation::InvalidConfig {
-                    field: oneiron::SyncConfigField::EphemeralTimeoutMs,
-                },
-            ));
-        }
-        if self.max_ephemeral_snapshot_bytes == 0 {
-            return Err(oneiron::Error::sync_protocol(
-                oneiron::SyncProtocolValidation::InvalidConfig {
-                    field: oneiron::SyncConfigField::MaxEphemeralSnapshotBytes,
-                },
-            ));
-        }
-        Ok(())
-    }
-}
-
-/// The explicit vault inputs an embedded binding resolved over its config file.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct EmbeddedHolderOverrides {
-    pub vault_path: PathBuf,
-    pub dimensions: Option<usize>,
-}
-
-impl EmbeddedHolderOverrides {
-    pub(crate) fn serve_args(&self, config: Option<PathBuf>) -> super::ServeArgs {
-        super::ServeArgs {
-            config,
-            vault_path: Some(self.vault_path.clone()),
-            dimensions: self.dimensions,
-            ..Default::default()
+            hosted_private_networks: std::collections::BTreeSet::new(),
         }
     }
 }
@@ -463,6 +442,9 @@ pub struct ServeConfig {
     /// The `[line]` section: the LINE Official Account's plan, a free
     /// account unless the config file names one.
     pub line: LineConfig,
+    /// The `[mail]` section: the host operator's mail settings, the
+    /// defaults unless the config file names others.
+    pub mail: MailConfig,
     /// The `[channel_endpoints]` section: the provider APIs the served sinks
     /// reach, the public ones unless the config file names others.
     pub channel_endpoints: ChannelEndpointsConfig,
@@ -509,6 +491,14 @@ pub struct ServeConfig {
     /// it for the owner to approve; it is never read off the operating
     /// system. A computer unless the file says otherwise.
     pub device_class: oneiron::authority::MachineDeviceClass,
+    /// `machine_reported_name`: the name this install reports for itself in
+    /// the owner's machine list, as the host declares it; display only, never
+    /// read off the operating system; FIX [DEVICE-DISPLAY-NAME].
+    pub machine_reported_name: Option<String>,
+    /// `machine_reported_model`: the model this install reports for itself,
+    /// as the host declares it; display only, never read off the operating
+    /// system; FIX [DEVICE-DISPLAY-NAME].
+    pub machine_reported_model: Option<String>,
     /// `--esign-delivery-outbox-dir`, argv only: where the e-sign delivery
     /// outbox hands authorized mail to the host's sender (OF-415). Unset, no
     /// outbox worker runs.
@@ -612,6 +602,7 @@ impl Default for ServeConfig {
             gpu_jobs: super::GpuJobsSettings::default(),
             embedding: None,
             line: server.line,
+            mail: server.mail,
             channel_endpoints: server.channel_endpoints.clone(),
             apns: server.apns.clone(),
             linear: None,
@@ -627,6 +618,8 @@ impl Default for ServeConfig {
             maximum_tier: false,
             off_record_dump_suppression: true,
             device_class: vault.machine_device_class,
+            machine_reported_name: vault.machine_reported_name.clone(),
+            machine_reported_model: vault.machine_reported_model.clone(),
             esign_delivery_outbox_dir: None,
             publisher_training_outbox_dir: None,
             publisher_training_self_host_shipper: false,
@@ -686,6 +679,7 @@ impl ServeConfig {
             runtime: self.runtime.clone(),
             skills: self.skills.clone(),
             line: self.line,
+            mail: self.mail,
             channel_endpoints: self.channel_endpoints.clone(),
             apns: self.apns.clone(),
             linear: self.linear.clone(),
@@ -696,8 +690,10 @@ impl ServeConfig {
             agent_failure_healer: self.self_heal.agent_failure_healer.clone(),
             trusted_organ_builds: self.trusted_organ_builds.clone(),
             release_payment_credentials_unfenced: self.release_payment_credentials_unfenced,
-            // Managed boot alone sets it (FIX 7657).
+            // Managed boot alone sets these (FIX 7657,
+            // HOSTED-EGRESS-OPERATOR-SETTING).
             hosted_private_origins: std::collections::BTreeSet::new(),
+            hosted_private_networks: std::collections::BTreeSet::new(),
         };
         if let Err(error) = crate::oauth_relay::warm_if_configured(&sync) {
             tracing::warn!(
@@ -741,6 +737,8 @@ impl ServeConfig {
         // #archive-precheck).
         config.storage_cap_bytes = self.import.storage_cap_bytes;
         config.machine_device_class = self.device_class;
+        config.machine_reported_name = self.machine_reported_name.clone();
+        config.machine_reported_model = self.machine_reported_model.clone();
         config.limits = self.limits.engine.clone();
         config.call_mode_deadline = std::time::Duration::from_millis(self.recall.call_deadline_ms);
         // Retrieval-run capture stays off unless this server's owner turns it

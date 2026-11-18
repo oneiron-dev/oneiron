@@ -44,7 +44,7 @@ fn local_world_id(byte: u8) -> LocalWorldId {
 }
 
 fn entity_blob(entity_type: u8, body: &[u8]) -> Vec<u8> {
-    crate::test_util::entity_record(entity_type, TimeRange { start: 1, end: 1 }, 1, body)
+    crate::test_util::entity_record(entity_type, TimeRange { start: 1, end: 1 }, 1, 0, body)
 }
 
 fn authority_genesis_entry(seed: u8) -> AuthorityLogEntry {
@@ -2323,6 +2323,7 @@ fn a_stamp_whose_row_the_write_door_refused_never_places_a_later_row() {
             ENTITY_TYPE_EVENT,
             TimeRange { start: 2, end: 1 },
             1,
+            0,
             b"refused",
         );
         let frame = create_window_doc("federation-peer", &window_key);
@@ -5768,6 +5769,7 @@ fn selector_never_exports_a_custody_row() {
                 name: format!("selector-custody-{device_only}"),
                 class: CustodyClass::CustodyPortable,
                 device_only,
+                model_reveal_allowed: true,
                 value_bytes: b"selector-custody-canary".to_vec(),
                 status: SecretCustodyStatus::Active,
                 registered_at: 1,
@@ -5953,7 +5955,8 @@ fn federation_addressing_copy_requires_stamped_source_and_exact_edge_bytes() {
     let mut input = crate::conversation_dag::fixtures::input(conv, None, true, actor);
     input.address = crate::conversation_dag::AddressMode::Direct;
     input.recipients = vec![recipient];
-    let record = source.append_dag_record(&input).unwrap().id;
+    let writer = source.memory(actor.entity_ref(), actor.actor_class());
+    let record = source.append_dag_record(&writer, &input).unwrap().id;
     let key = WindowKey::from_timestamp(input.learned_at);
     let source_doc = create_window_doc("source", &key);
     crate::sync::window::reverse_rematerialize(&source, &source_doc, &key).unwrap();
@@ -6152,6 +6155,7 @@ fn an_epoch_summary_leaves_only_with_every_record_it_was_written_from() -> crate
         encode_epoch_summary_body(&EpochSummaryBody {
             v: EPOCH_SUMMARY_BODY_VERSION,
             session: entity_id(0x66).to_hex(),
+            conversation: None,
             epoch,
             turn_start: epoch * 3,
             turn_end: epoch * 3 + 2,
@@ -6271,6 +6275,7 @@ fn an_epoch_summary_stays_where_its_world_or_a_source_stays() -> crate::Result<(
         encode_epoch_summary_body(&EpochSummaryBody {
             v: EPOCH_SUMMARY_BODY_VERSION,
             session: entity_id(0x6c).to_hex(),
+            conversation: None,
             epoch,
             turn_start: epoch * 3,
             turn_end: epoch * 3 + 2,
@@ -6688,8 +6693,10 @@ fn a_deletion_records_the_worlds_it_withdrew_an_epoch_summary_for() -> crate::Re
     let backups = crate::test_support::restore_tempdir();
     let image = backups.path().join("image");
     vault.snapshot_checkpoint(&image, 100)?;
+    let key = vault.checkpoint_key()?;
     let (restored, _) = Vault::restore_checkpoint_keeping_authority(
         &image,
+        &key,
         &backups.path().join("restored"),
         vault.config.clone(),
         &vault,
@@ -7677,6 +7684,7 @@ fn epoch_summary_bytes(epoch: u64, text: &str) -> crate::Result<Vec<u8>> {
     encode_epoch_summary_body(&EpochSummaryBody {
         v: EPOCH_SUMMARY_BODY_VERSION,
         session: entity_id(0x7e).to_hex(),
+        conversation: None,
         epoch,
         turn_start: epoch * 3,
         turn_end: epoch * 3 + 2,

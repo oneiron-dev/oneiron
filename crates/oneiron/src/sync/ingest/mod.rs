@@ -16,6 +16,7 @@ mod peer_import;
 // FIX 3656: a guest's carried birth placements, landed beside their rows.
 mod placement;
 mod promotion;
+mod room_pins;
 mod task_pairs;
 mod tombstone;
 
@@ -53,3 +54,6 @@ pub(in crate::sync) use self::task_pairs::{TaskComponents, ingest_rows_in_savepo
 pub(in crate::sync) use self::tombstone::{
     TombstoneStep, classify_tombstone, classify_tombstone_in_txn,
 };
+
+#[cfg(oneiron_test_support)]
+pub(crate) use self::peer_import::asset_digest_for_test;
