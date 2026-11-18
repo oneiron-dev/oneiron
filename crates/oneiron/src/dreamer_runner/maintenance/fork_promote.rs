@@ -634,3 +634,6 @@ fn by_path(files: &[HubFile]) -> BTreeMap<&str, &[u8]> {
 fn refused(reason: &'static str) -> Error {
     Error::Artifact(ArtifactError::InvalidSkillBody(reason))
 }
+
+#[cfg(oneiron_test_support)]
+pub(crate) use self::project_upkeep::evidence_digest_for_test;
