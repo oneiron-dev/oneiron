@@ -200,9 +200,10 @@ pub(crate) fn authority_history_request_in_txn(
 /// gate's view of this snapshot believes: their parents and, walking down
 /// through every held row they reach, its parents; the checkpoint cover, the
 /// resumed hashes and `required` count either way. A vault that adopted a
-/// checkpoint image answers the fold's own request past the image: the gaps
-/// the believed tail rows rest on, and under [`NamingRows::Every`] the gaps
-/// only non-believed rows reach too, which the fold reads past (FIX
+/// checkpoint image answers the fold's own request past the image, which
+/// names only the gaps the believed tail rows rest on; under
+/// [`NamingRows::Every`] it also names every other parent the stored tail
+/// names, which the fold reads past (FIX
 /// [STRANGER-GAP-STALLS-ADOPTED-TAIL-FOLD]).
 fn held_history_request_in_txn(
     store: &Store,
@@ -211,9 +212,14 @@ fn held_history_request_in_txn(
     required: &BTreeSet<AuthorityEntryHash>,
     naming: NamingRows,
 ) -> Result<AuthorityHistoryRequest> {
-    if let Some(request) =
-        super::readonly_fold::adopted_history_request_in_txn(store, posture, txn, required, naming)?
+    if let Some(mut request) =
+        super::readonly_fold::adopted_history_request_in_txn(store, posture, txn, required)?
     {
+        if naming == NamingRows::Every {
+            request
+                .missing
+                .extend(adopted_every_tail_gaps_in_txn(store, txn, required)?);
+        }
         return Ok(request);
     }
     let believed = match naming {
@@ -268,6 +274,53 @@ fn held_history_request_in_txn(
         checkpoint,
         missing: named,
     })
+}
+
+/// What the [`NamingRows::Every`] request names past an adopted image: each
+/// parent a stored row past the image names that the image does not cover and
+/// this vault does not hold, and each `required` hash neither held nor a kept
+/// frontier state, as the adopted fold counted every gap before it counted
+/// only the believed rows' (FIX [STRANGER-GAP-STALLS-ADOPTED-TAIL-FOLD]).
+/// Nothing on a vault with no adoption.
+fn adopted_every_tail_gaps_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    required: &BTreeSet<AuthorityEntryHash>,
+) -> Result<BTreeSet<AuthorityEntryHash>> {
+    let Some(adopted) =
+        super::checkpoint_adopt::cached_adopted_authority_checkpoint_in_txn(store, txn)?
+    else {
+        return Ok(BTreeSet::new());
+    };
+    let image = adopted.image();
+    let covered: BTreeSet<_> = image.covered.iter().copied().collect();
+    // Split as the fold splits: a covered row stored here is held, any other
+    // stored row is tail.
+    let mut held_covered = BTreeSet::new();
+    let mut tail = BTreeSet::new();
+    let mut parents = BTreeSet::new();
+    for (_, body) in super::readonly_fold::authority_log_rows_in_txn(store, txn)? {
+        let entry = decode_authority_log_entry_body(&body)?;
+        let hash = authority_entry_hash(&entry)?;
+        if covered.contains(&hash) || image.rows.contains_key(&hash) {
+            held_covered.insert(hash);
+        } else {
+            tail.insert(hash);
+            parents.extend(entry.parent_hashes.iter().copied());
+        }
+    }
+    Ok(parents
+        .into_iter()
+        .filter(|parent| !image.rows.contains_key(parent))
+        .chain(
+            required
+                .iter()
+                .filter(|hash| !held_covered.contains(*hash))
+                .filter(|hash| !image.keeps_state(hash))
+                .copied(),
+        )
+        .filter(|hash| !tail.contains(hash))
+        .collect())
 }
 
 /// [`Vault::authority_history_coverage`] on the caller's snapshot: a held

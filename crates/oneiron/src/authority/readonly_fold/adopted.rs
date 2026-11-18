@@ -2,7 +2,6 @@
 //! [`fold_adopted_in_txn`].
 
 use super::*;
-use crate::authority::history_coverage::NamingRows;
 
 /// The fold on a vault that adopted `adopted` (OF-469): its stored rows are
 /// the covered rows it still holds, never tail and never read again, and the
@@ -122,20 +121,15 @@ pub(super) fn fold_adopted_in_txn(
 
 /// What the fold on a vault that adopted a checkpoint image needs and this
 /// vault does not hold (OF-469), through the fold's own preflight, so a
-/// delivery fetches exactly what the fold asks for: nothing the fold needs
-/// when the fold answers. A hash the image covers is never left out for being
-/// attested when the fold needs its row. Under [`NamingRows::Every`] the
-/// request also names the gaps only rows this install does not believe reach,
-/// which the fold reads past, so delivery fetches every parent the stored
-/// tail names, as before (FIX [STRANGER-GAP-STALLS-ADOPTED-TAIL-FOLD]). None
-/// on a vault with no adoption, and where every covered row is held: the
-/// stored log's own request stands there.
+/// delivery fetches exactly what the fold asks for: nothing when the fold
+/// answers. A hash the image covers is never left out for being attested
+/// when the fold needs its row. None on a vault with no adoption, and where
+/// every covered row is held: the stored log's own request stands there.
 pub(in crate::authority) fn adopted_history_request_in_txn(
     store: &Store,
     posture: HostingPrivacyPosture,
     txn: &heed::RoTxn<'_>,
     required: &BTreeSet<AuthorityEntryHash>,
-    naming: NamingRows,
 ) -> Result<Option<AuthorityHistoryRequest>> {
     let Some(adopted) =
         crate::authority::checkpoint_adopt::cached_adopted_authority_checkpoint_in_txn(store, txn)?
@@ -143,67 +137,23 @@ pub(in crate::authority) fn adopted_history_request_in_txn(
         return Ok(None);
     };
     let key = authority_cache_key(store, posture, txn)?;
-    let mut request = match fold_adopted_in_txn(
-        store,
-        posture,
-        txn,
-        key,
-        adopted.as_ref(),
-        required,
-        &BTreeMap::new(),
-    )? {
-        Some(AuthorityTailFold::NeedHistory(request)) => request,
-        Some(AuthorityTailFold::Complete { .. }) => AuthorityHistoryRequest {
-            vault_id: Some(adopted.image().vault_id),
-            checkpoint: Some(adopted.id()),
-            missing: BTreeSet::new(),
+    Ok(
+        match fold_adopted_in_txn(
+            store,
+            posture,
+            txn,
+            key,
+            adopted.as_ref(),
+            required,
+            &BTreeMap::new(),
+        )? {
+            Some(AuthorityTailFold::NeedHistory(request)) => Some(request),
+            Some(AuthorityTailFold::Complete { .. }) => Some(AuthorityHistoryRequest {
+                vault_id: Some(adopted.image().vault_id),
+                checkpoint: Some(adopted.id()),
+                missing: BTreeSet::new(),
+            }),
+            None => None,
         },
-        None => return Ok(None),
-    };
-    if naming == NamingRows::Every {
-        let gaps = every_tail_gaps_in_txn(store, txn, adopted.as_ref(), required)?;
-        request.missing.extend(gaps);
-    }
-    Ok(Some(request))
-}
-
-/// What the [`NamingRows::Every`] request names past the adopted image: each
-/// parent a stored row past the image names that the image does not cover and
-/// this vault does not hold, and each `required` hash neither held nor a kept
-/// frontier state, as the fold counted every gap before the believed rule.
-fn every_tail_gaps_in_txn(
-    store: &Store,
-    txn: &heed::RoTxn<'_>,
-    adopted: &VerifiedAuthorityCheckpoint,
-    required: &BTreeSet<AuthorityEntryHash>,
-) -> Result<BTreeSet<AuthorityEntryHash>> {
-    let image = adopted.image();
-    let covered: BTreeSet<_> = image.covered.iter().copied().collect();
-    // Split as the fold splits: a covered row stored here is held, any other
-    // stored row is tail.
-    let mut held_covered = BTreeSet::new();
-    let mut tail = BTreeSet::new();
-    let mut parents = BTreeSet::new();
-    for (_, body) in authority_log_rows_in_txn(store, txn)? {
-        let entry = decode_stored_authority_log_body(&body)?;
-        let hash = authority_entry_hash(&entry)?;
-        if covered.contains(&hash) || image.rows.contains_key(&hash) {
-            held_covered.insert(hash);
-        } else {
-            tail.insert(hash);
-            parents.extend(entry.parent_hashes.iter().copied());
-        }
-    }
-    Ok(parents
-        .into_iter()
-        .filter(|parent| !image.rows.contains_key(parent))
-        .chain(
-            required
-                .iter()
-                .filter(|hash| !held_covered.contains(*hash))
-                .filter(|hash| !image.keeps_state(hash))
-                .copied(),
-        )
-        .filter(|hash| !tail.contains(hash))
-        .collect())
+    )
 }
