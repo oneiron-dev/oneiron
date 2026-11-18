@@ -281,14 +281,24 @@ pub(super) fn witnessed(
 /// ([`super::owner_proof::gives_owner_proof`]): the recovery credential that
 /// opened the image proves nobody's will, so a key of his says it. The act's
 /// owner is live there ([`super::owner_act::owner_live_at`]), and the
-/// enrolment is one `state` holds for the act's target. An enrolment an
-/// entry joined already keeps that entry; the act then changes nothing.
+/// enrolment is one `state` holds for the act's target, and the signer's
+/// sequence is above the one `state` holds for it. An enrolment an entry
+/// joined already keeps that entry; the act then changes nothing.
 pub(super) fn apply_owner_join(
     state: &mut FoldState,
     entry: &AuthorityLogEntry,
     record: &RestoredMachineJoin,
     hash: AuthorityEntryHash,
 ) -> std::result::Result<(), AuthorityFoldIssue> {
+    // The signer's sequence moves forward here as everywhere: a join never
+    // rewinds it below what its parents hold (REVIEW-9510/9511 P1).
+    if state
+        .seqs
+        .get(entry.signer_key())
+        .is_some_and(|prior| entry.seq <= *prior)
+    {
+        return Err(AuthorityFoldIssue::NonMonotonicSeq(hash));
+    }
     let held = state
         .restored_enrolments
         .get(&record.enrolment)
