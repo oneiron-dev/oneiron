@@ -21,7 +21,9 @@ target are: `test`, `oneiron_test_support`, `any(test, oneiron_test_support)`,
 `all(oneiron_test_support, feature = "sync")`. A predicate that a feature or
 the target alone can make true, such as
 `any(test, feature = "test-support", oneiron_test_support)`, is not test-only:
-`--all-features` is the release build (ARCH-0019), so that code ships. A
+`--all-features` is the release build (ARCH-0019), so that code ships. An
+atom used twice takes one value in a build, so
+`all(any(oneiron_test_support, unix), not(unix))` is test-only too. A
 predicate this scanner does not parse is not test-only either (fail toward
 counting).
 
@@ -57,9 +59,11 @@ Non-test file: three rules, unioned.
    only through `#[cfg(test)] mod tests_regressions;` — counted as production
    merely because an unrelated `memory/recall.rs` also exists; every mount
    this port resolves carries a full path, so its veto compares exact target
-   paths instead. Unresolvable `#[path]` syntax here still keeps every
-   mount's target file scanned (fail toward counting, never toward silently
-   excluding).
+   paths instead. A `#[path]` attribute is read with whitespace anywhere in
+   it. A production mount whose `#[path]` this port cannot read (`path = ..`
+   inside `cfg_attr(..)`, two `path =`, an escaped or absolute literal) may
+   name any file, so it turns this rule off for the whole tree and stderr
+   names the mount (fail toward counting, never toward silently excluding).
 3. A file whose own leading inner attributes hold a test-only cfg
    (`#![cfg(oneiron_test_support)]` at the top of
    `test_doors/fingerprint_keep_*_digests.rs`). Such a file compiles to
@@ -68,7 +72,8 @@ Non-test file: three rules, unioned.
 
 2b. Additionally, inside a file that is NOT excluded by (1), (2) or (3), every
    inline `mod <any name> { .. }` gated by a test-only cfg (attribute and
-   BODY) is masked out (replaced
+   BODY), outer `#[cfg(..)]` or one of the module's own leading inner
+   attributes (`mod x { #![cfg(test)] .. }`), is masked out (replaced
    with spaces, newlines kept so line numbers stay accurate) before the call
    pattern is matched. A production file's `#[cfg(test)] mod tests { .. }`
    fixture body must not inflate a production count; `keyspace_census.py`
@@ -93,6 +98,7 @@ exits 1, never a silent 0.
 """
 
 import os
+import posixpath
 import re
 import sys
 
@@ -116,6 +122,11 @@ _IDENT_CHARS = frozenset(
 )
 _MOD_RE = re.compile(r"\bmod\b")
 _CFG_ATTRIBUTE_RE = re.compile(r"#\s*\[\s*cfg\s*\(")
+_CFG_BODY_RE = re.compile(r"\s*cfg\s*\((.*)\)\s*", re.S)
+_INNER_ATTRIBUTE_RE = re.compile(r"\s*#\s*!\s*\[")
+_PATH_ATTRIBUTE_RE = re.compile(r"#\s*\[\s*path\b")
+# `path =` as an attribute key, in whitespace-free text.
+_PATH_KEY_RE = re.compile(r"(?<![A-Za-z0-9_])path=")
 # The cfg names only a test build sets: cargo's unit-test build sets `test`,
 # and only the integration-test command passes `--cfg oneiron_test_support`.
 TEST_ONLY_CFG_NAMES = frozenset(("test", "oneiron_test_support"))
@@ -261,74 +272,146 @@ class _CfgSyntax(Exception):
     """A `cfg` predicate this scanner does not parse."""
 
 
+# Above this many distinct atoms (besides the test-only names) the evaluator
+# does not try every assignment of them: a predicate the first, per-atom pass
+# leaves undecided is then undecided (fail toward counting).
+CFG_ATOM_LIMIT = 12
+
+
 def cfg_value_without_test_names(predicate):
     """Value of a `cfg(..)` predicate in a build that sets no name in
     TEST_ONLY_CFG_NAMES: `False` when it is false in every such build, `True`
     when it is true in every such build, `None` when a feature or the target
-    decides. Whitespace is ignored, and a `key = "value"` atom's literal may be
-    blanked (`strip_comments_and_literals` blanks it). Text that does not
-    parse is `None`, so whatever it gates stays counted."""
-    text = "".join(predicate.split())
+    decides.
+
+    The test-only names are false. Every other atom may be true or false, and
+    an atom that occurs twice takes ONE value in a build: the predicate is
+    evaluated under every assignment of its atoms, so
+    `all(any(oneiron_test_support, unix), not(unix))` is false. Two atoms are
+    the same when their text is: a bare name, or `key = "value"` with its
+    literal. A `key = value` atom whose literal is blanked
+    (`strip_comments_and_literals` blanks it) is a new atom at each use,
+    because two blanked literals may differ. Whitespace between tokens is
+    ignored. Text that does not parse, or a predicate the per-atom pass leaves
+    undecided that names more than CFG_ATOM_LIMIT atoms, is `None`, so
+    whatever it gates stays counted."""
+    atoms = {}
     try:
-        value, end = _cfg_predicate(text, 0)
+        tree, end = _cfg_predicate(predicate, 0, atoms)
     except _CfgSyntax:
         return None
-    return value if end == len(text) else None
+    if end != len(predicate):
+        return None
+    value = _cfg_value_per_atom(tree)
+    if value is not None or len(atoms) > CFG_ATOM_LIMIT:
+        return value
+    values = set()
+    for assignment in range(1 << len(atoms)):
+        values.add(_cfg_value_under(tree, assignment))
+        if len(values) == 2:
+            return None
+    return values.pop()
 
 
-def _cfg_predicate(text, i):
-    """Parse one predicate at `i`: `(value, index after it)`."""
+def _skip_space(text, i):
+    while i < len(text) and text[i].isspace():
+        i += 1
+    return i
+
+
+def _cfg_predicate(text, i, atoms):
+    """Parse one predicate at `i`, whitespace before it allowed: `(node,
+    index after it and the whitespace that follows it)`. A node is
+    `("const", bool)`, `("atom", bit)`, `("not", node)`, or `("all" | "any",
+    [node, ..])`. `atoms` maps each atom's text to its bit."""
+    i = _skip_space(text, i)
     start = i
     while i < len(text) and is_ident_byte(text[i]):
         i += 1
     name = text[start:i]
     if not name:
         raise _CfgSyntax
+    i = _skip_space(text, i)
     if text.startswith("=", i):
-        i += 1
+        i = _skip_space(text, i + 1)
         if text.startswith('"', i):
-            close = text.find('"', i + 1)
-            if close == -1:
+            close = i + 1
+            while close < len(text) and text[close] != '"':
+                close += 2 if text[close] == "\\" else 1
+            if close >= len(text):
                 raise _CfgSyntax
+            key = name + "=" + text[i : close + 1]
             i = close + 1
-        return None, i
+        else:
+            key = object()  # a blanked literal: a new atom
+        return ("atom", atoms.setdefault(key, len(atoms))), _skip_space(text, i)
     if not text.startswith("(", i):
-        return (False if name in TEST_ONLY_CFG_NAMES else None), i
+        if name in TEST_ONLY_CFG_NAMES:
+            return ("const", False), i
+        return ("atom", atoms.setdefault(name, len(atoms))), i
     if name not in ("all", "any", "not"):
         raise _CfgSyntax
     i += 1
-    values = []
-    while not text.startswith(")", i):
-        value, i = _cfg_predicate(text, i)
-        values.append(value)
+    children = []
+    while True:
+        i = _skip_space(text, i)
+        if text.startswith(")", i):
+            break
+        child, i = _cfg_predicate(text, i, atoms)
+        children.append(child)
         if text.startswith(",", i):
             i += 1
         elif not text.startswith(")", i):
             raise _CfgSyntax
-    i += 1
+    i = _skip_space(text, i + 1)
     if name == "not":
-        if len(values) != 1:
+        if len(children) != 1:
             raise _CfgSyntax
-        return (None if values[0] is None else not values[0]), i
-    if name == "all":
+        return ("not", children[0]), i
+    return (name, children), i
+
+
+def _cfg_value_per_atom(node):
+    """Three-valued value with every atom unknown (`None`). A `True` or
+    `False` here holds under every assignment of the atoms."""
+    kind, arg = node
+    if kind == "const":
+        return arg
+    if kind == "atom":
+        return None
+    if kind == "not":
+        value = _cfg_value_per_atom(arg)
+        return None if value is None else not value
+    values = [_cfg_value_per_atom(child) for child in arg]
+    if kind == "all":
         if False in values:
-            return False, i
-        return (True if all(v is True for v in values) else None), i
+            return False
+        return True if all(v is True for v in values) else None
     if True in values:
-        return True, i
-    return (False if all(v is False for v in values) else None), i
+        return True
+    return False if all(v is False for v in values) else None
+
+
+def _cfg_value_under(node, assignment):
+    """Value with atom `bit` set to bit `bit` of `assignment`."""
+    kind, arg = node
+    if kind == "const":
+        return arg
+    if kind == "atom":
+        return bool(assignment >> arg & 1)
+    if kind == "not":
+        return not _cfg_value_under(arg, assignment)
+    if kind == "all":
+        return all(_cfg_value_under(child, assignment) for child in arg)
+    return any(_cfg_value_under(child, assignment) for child in arg)
 
 
 def is_test_only_cfg(attribute_body):
     """`attribute_body`: the text inside `#[..]` or `#![..]`. True for a
     `cfg(<predicate>)` whose predicate is false in every build that sets no
     test-only cfg name."""
-    body = "".join(attribute_body.split())
-    return (
-        body.startswith("cfg(")
-        and body.endswith(")")
-        and cfg_value_without_test_names(body[4:-1]) is False
-    )
+    match = _CFG_BODY_RE.fullmatch(attribute_body)
+    return match is not None and cfg_value_without_test_names(match.group(1)) is False
 
 
 def attribute_close(text, open_bracket):
@@ -382,23 +465,27 @@ def attributes_gate_test_only(compact):
     return gated
 
 
+def inner_attributes_gate_test_only(clean, pos):
+    """True when the run of inner attributes `#![..]` that starts at `pos`
+    (whitespace around and inside the `#![` allowed) holds a test-only cfg.
+    The run ends at the first text that is not an inner attribute."""
+    while True:
+        match = _INNER_ATTRIBUTE_RE.match(clean, pos)
+        if match is None:
+            return False
+        close = attribute_close(clean, match.end() - 1)
+        if close is None:
+            return False
+        if is_test_only_cfg(clean[match.end() : close]):
+            return True
+        pos = close + 1
+
+
 def file_gated_test_only(clean):
     """True when the stripped file's leading inner attributes hold a
     test-only cfg (`#![cfg(oneiron_test_support)]`): the whole file then
     compiles only in a test build, whatever mounts it."""
-    n = len(clean)
-    pos = 0
-    while True:
-        while pos < n and clean[pos].isspace():
-            pos += 1
-        if not clean.startswith("#![", pos):
-            return False
-        close = attribute_close(clean, pos + 2)
-        if close is None:
-            return False
-        if is_test_only_cfg(clean[pos + 3 : close]):
-            return True
-        pos = close + 1
+    return inner_attributes_gate_test_only(clean, 0)
 
 
 # --- inline `mod x { .. }` / test-only `#[cfg(..)] mod x { .. }` structure -
@@ -452,7 +539,8 @@ def matching_brace_end(text, open_idx):
 
 
 def inline_module_blocks(clean):
-    """Every inline `mod <ident> { .. }` block: `(start, end, name)`."""
+    """Every inline `mod <ident> { .. }` block: `(start, end, name,
+    open_brace_index)`."""
     blocks = []
     for m in _MOD_RE.finditer(clean):
         header = inline_module_header(clean, m.start())
@@ -462,30 +550,32 @@ def inline_module_blocks(clean):
         end = matching_brace_end(clean, open_idx)
         if end is None:
             continue
-        blocks.append((m.start(), end, name))
+        blocks.append((m.start(), end, name, open_idx))
     return blocks
 
 
 def inline_module_chain(blocks, at):
     enclosing = sorted((b for b in blocks if b[0] <= at < b[1]), key=lambda b: b[0])
-    return [name for _, _, name in enclosing]
+    return [block[2] for block in enclosing]
 
 
 def test_only_module_ranges(source):
     """Byte ranges of every inline `mod <ident> { .. }` gated by a test-only
-    cfg, from that `#[cfg(..)]` attribute to the module's closing brace
-    (other attributes between the two allowed)."""
+    cfg: an outer `#[cfg(..)]` (the range runs from that attribute to the
+    module's closing brace, other attributes between the two allowed), or one
+    of the module's own leading inner attributes (`mod x { #![cfg(test)] ..
+    }`, the range runs from `mod` to the closing brace). Ranges may nest."""
     ranges = []
     search_start = 0
     while True:
         match = _CFG_ATTRIBUTE_RE.search(source, search_start)
         if match is None:
-            return ranges
+            break
         cfg_start = match.start()
         open_bracket = source.index("[", cfg_start)
         close = attribute_close(source, open_bracket)
         if close is None:
-            return ranges
+            break
         search_start = close + 1
         if not is_test_only_cfg(source[open_bracket + 1 : close]):
             continue
@@ -495,9 +585,13 @@ def test_only_module_ranges(source):
         _, open_idx = header
         end = matching_brace_end(source, open_idx)
         if end is None:
-            return ranges
+            break
         ranges.append((cfg_start, end))
         search_start = end
+    for start, end, _, open_idx in inline_module_blocks(source):
+        if inner_attributes_gate_test_only(source, open_idx + 1):
+            ranges.append((start, end))
+    return ranges
 
 
 def mask_test_only_modules(source):
@@ -541,12 +635,17 @@ def mount_base(parent, chain, path_attr):
 
 
 class ExternalMount:
-    __slots__ = ("parent", "targets", "test_only")
+    """A `mod <ident>;` in `parent` at `line`. `targets`: the files it may
+    name, relative to ROOT, or None for a `#[path]` this scanner cannot
+    read (it may name any file)."""
 
-    def __init__(self, parent, targets, test_only):
+    __slots__ = ("parent", "targets", "test_only", "line")
+
+    def __init__(self, parent, targets, test_only, line):
         self.parent = parent
         self.targets = targets
         self.test_only = test_only
+        self.line = line
 
 
 def external_mounts(sources):
@@ -554,9 +653,8 @@ def external_mounts(sources):
     file_gated)`: every `mod <ident>;` (plain or `#[path = "..."]`)
     declaration outside comments/literals, in source order, and the set of
     files whose leading inner attributes hold a test-only cfg (rule 3; found
-    here so each file is stripped once). A `#[path]` mount whose literal is
-    not a simple relative `a/b.rs`-shaped string is kept with an empty target
-    list (never resolved, never hides a file)."""
+    here so each file is stripped once). A `#[path]` mount whose attribute
+    this scanner cannot read is kept with `targets` None."""
     mounts = []
     file_gated = set()
     for parent, raw in sources:
@@ -598,64 +696,66 @@ def external_mounts(sources):
                     depth -= 1
             simple_nesting = depth == len(chain)
 
-            if "path=" not in compact:
+            test_only = inside_test_module or (
+                simple_nesting and attributes_gate_test_only(compact)
+            )
+            line = clean.count("\n", 0, start) + 1
+            if _PATH_KEY_RE.search(compact) is None:
                 base = mount_base(parent, chain, False)
                 targets = [
                     t
                     for t in (f"{base}/{name}.rs" if base else f"{name}.rs",
                               f"{base}/{name}/mod.rs" if base else f"{name}/mod.rs")
                 ]
-                mounts.append(
-                    ExternalMount(
-                        parent=parent,
-                        targets=targets,
-                        test_only=inside_test_module
-                        or (simple_nesting and attributes_gate_test_only(compact)),
-                    )
-                )
+                mounts.append(ExternalMount(parent, targets, test_only, line))
                 continue
 
-            path_marker = prefix.find("#[path")
-            if path_marker == -1:
-                # `path=` came from something this scanner doesn't model (not
-                # a `#[path = ".."]` attribute right before this `mod`); skip
-                # this one declaration rather than guess. It stays reachable
-                # only under its own file's normal rules.
-                continue
-            path_start = prefix_start + path_marker + len("#[path")
-            bracket_rel = clean[path_start:start].find("]")
-            if bracket_rel == -1:
-                continue
-            literal_src = raw[path_start : path_start + bracket_rel].strip()
-            if not literal_src.startswith("="):
-                continue
-            value = literal_src[1:].strip()
-            if len(value) < 2 or value[0] != '"' or value[-1] != '"':
-                continue
-            literal = value[1:-1]
-            if "\\" in literal or '"' in literal or compact.count("path=") != 1:
-                continue
-            components = literal.split("/")
-            simple = literal not in ("", ".", "..") and all(
-                part not in ("", ".", "..") for part in components
-            )
-            target_base = mount_base(parent, chain, True)
-            targets = (
-                [f"{target_base}/{literal}" if target_base else literal]
-                if simple
-                else []
-            )
-            mounts.append(
-                ExternalMount(
-                    parent=parent,
-                    targets=targets,
-                    # A test-only cfg beside the `#[path]` attribute gates
-                    # this mount exactly as it gates a plain `mod x;`.
-                    test_only=inside_test_module
-                    or (simple_nesting and attributes_gate_test_only(compact)),
-                )
-            )
+            # A test-only cfg beside the `#[path]` attribute gates this mount
+            # exactly as it gates a plain `mod x;`.
+            literal = path_attribute_literal(raw, clean, prefix_start, start, compact)
+            targets = None if literal is None else path_attribute_targets(parent, chain, literal)
+            mounts.append(ExternalMount(parent, targets, test_only, line))
     return mounts, file_gated
+
+
+def path_attribute_literal(raw, clean, prefix_start, start, compact):
+    """The string of the one `#[path = ".."]` attribute between `prefix_start`
+    and the `mod` keyword at `start` (whitespace anywhere in the attribute
+    allowed), or None when this scanner cannot read it: no attribute of that
+    shape (`path = ..` inside `cfg_attr(..)`), more than one `path =`, or a
+    value that is not a plain string without escapes or a raw string."""
+    if len(_PATH_KEY_RE.findall(compact)) != 1:
+        return None
+    matches = list(_PATH_ATTRIBUTE_RE.finditer(clean, prefix_start, start))
+    if len(matches) != 1:
+        return None
+    path_start = matches[0].end()
+    bracket_rel = clean[path_start:start].find("]")
+    if bracket_rel == -1:
+        return None
+    # The stripping keeps every offset, so the raw text holds the literal.
+    literal_src = raw[path_start : path_start + bracket_rel].strip()
+    if not literal_src.startswith("="):
+        return None
+    value = literal_src[1:].strip()
+    plain = re.fullmatch(r'"([^"\\]*)"', value)
+    if plain is not None:
+        return plain.group(1)
+    raw_string = re.fullmatch(r'r(#*)"(.*)"\1', value, re.S)
+    return None if raw_string is None else raw_string.group(2)
+
+
+def path_attribute_targets(parent, chain, literal):
+    """The file a `#[path = "<literal>"]` mount in `parent`, inside the inline
+    modules `chain`, names, relative to ROOT: `[target]`; `[]` when the
+    path leaves ROOT (no scanned file); None for an empty or absolute path."""
+    if not literal or literal.startswith("/"):
+        return None
+    base = mount_base(parent, chain, True)
+    full = posixpath.normpath(posixpath.join(ROOT, base, literal))
+    if not full.startswith(ROOT + "/"):
+        return []
+    return [full[len(ROOT) + 1 :]]
 
 
 def test_only_external_files(sources):
@@ -681,7 +781,7 @@ def test_only_external_files(sources):
         before = len(tests)
         for mount in mounts:
             if mount.test_only or mount.parent in tests or test_only_by_path(mount.parent):
-                for target in mount.targets:
+                for target in mount.targets or ():
                     if target in sources:
                         tests.add(target)
         if len(tests) == before:
@@ -693,19 +793,35 @@ def test_only_external_files(sources):
     # together with its ungated children. The walk stops at files gated by
     # their own inner cfg and at files the path rule excludes.
     production = set()
+
+    def mounted_by_production(mount):
+        parent = mount.parent
+        return (
+            not mount.test_only
+            and (parent not in tests or parent in production)
+            and parent not in file_gated
+            and not test_only_by_path(parent)
+        )
+
     while True:
         before = len(production)
         for mount in mounts:
-            parent = mount.parent
-            if (
-                not mount.test_only
-                and (parent not in tests or parent in production)
-                and parent not in file_gated
-                and not test_only_by_path(parent)
-            ):
-                production.update(mount.targets)
+            if mounted_by_production(mount):
+                production.update(mount.targets or ())
         if len(production) == before:
             break
+
+    # A production mount whose `#[path]` this scanner cannot read may name
+    # any file, so no file is left out through a mount (fail toward counting).
+    for mount in mounts:
+        if mount.targets is None and mounted_by_production(mount):
+            print(
+                f"RATCHET-WARNING: raw_write_census cannot read the #[path] of the "
+                f"production mount at {ROOT}/{mount.parent}:{mount.line}; only files "
+                f"gated by their own inner cfg are left out",
+                file=sys.stderr,
+            )
+            return set(file_gated)
     return (tests - production) | file_gated
 
 
