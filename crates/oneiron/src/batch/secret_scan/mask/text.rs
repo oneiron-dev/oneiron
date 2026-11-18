@@ -7,6 +7,7 @@
 use std::collections::HashMap;
 use std::ops::Range;
 
+use super::side_row::bare_handle;
 use super::text_log::TextSpans;
 use super::{HANDLE_OPEN, Masker, secret_spans};
 use crate::error::Result;
@@ -29,7 +30,17 @@ impl Masker {
     /// each handle went.
     pub(super) fn mask_text(&mut self, text: &str) -> Result<Option<String>> {
         let spans = self.text_spans(text);
-        let known = spans.known;
+        let mut known = spans.known;
+        // A handle in a stored row names its record and holds no value: a
+        // known value that merely spells part of it (`secret`) stays out.
+        if self.reads_held {
+            let handles = handle_spans(text);
+            known.retain(|(span, _)| {
+                !handles
+                    .iter()
+                    .any(|handle| handle.start < span.end && span.start < handle.end)
+            });
+        }
         let mut hits: Vec<(Range<usize>, TextHit)> = spans
             .shapes
             .into_iter()
@@ -124,6 +135,27 @@ impl Masker {
         self.text_log.record(text.as_bytes(), &spans);
         spans
     }
+}
+
+/// The spans of `text` a mask on write placed a handle in: each
+/// `[secret sc12]`, and the whole text when it is a bare `sc12`.
+fn handle_spans(text: &str) -> Vec<Range<usize>> {
+    if bare_handle(text) {
+        return vec![0..text.len()];
+    }
+    let mut spans = Vec::new();
+    let mut at = 0;
+    while let Some(open) = text[at..].find(HANDLE_OPEN).map(|found| at + found) {
+        let body = open + HANDLE_OPEN.len();
+        at = match text[body..].find(']') {
+            Some(len) if bare_handle(&text[body..body + len]) => {
+                spans.push(open..body + len + 1);
+                body + len + 1
+            }
+            _ => body,
+        };
+    }
+    spans
 }
 
 /// `span` widened to UTF-8 char boundaries: its start down, its end up

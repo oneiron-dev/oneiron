@@ -26,8 +26,10 @@ use oneiron::browser_library::{Filing, file_workflow};
 use oneiron::dreamer_runner::{
     DreamerRunnerStore, EnqueueDreamerAttempt, EnqueueDreamerAttemptOutcome,
 };
+use oneiron::policy_model::SecretScanMode;
 use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::run_tree::{RunAsk, RunAskQuestion};
+use oneiron::store::GateDecisionId;
 use oneiron::{AttemptQueue, EntityId, RunTreeAdapter, TimeRange, Vault, VaultConfig};
 use oneiron_browser::{
     BatchStep, BrowserEngine, ExpectInput, ReplayGuest, WorkflowProgram, WorkflowProof,
@@ -169,6 +171,43 @@ fn an_ask_opened_again_with_another_passphrase_custody_holds_refuses() -> TestRe
         Err(oneiron::Error::InvalidConfig(reason)) if reason == "ask handle reused" => Ok(()),
         other => Err(format!(
             "an ask with another held passphrase under the same handle refuses, got {other:?}"
+        )
+        .into()),
+    }
+}
+
+/// Custody holds a value, `secret`, that spells part of the handle the wall
+/// placed in the ask's words (`[secret sc12]`). The handle names its record
+/// and holds no value, so the held row is never read inside it, and the
+/// identical ask opened again is its held ask, as on main.
+#[test]
+fn an_ask_opened_again_while_custody_holds_a_word_of_its_handle_is_its_held_ask() -> TestResult {
+    let (_directory, vault) = vault()?;
+    vault.register_test_secret("handle word", b"secret", Vec::new(), 1)?;
+    reopened_ask_is_held_ask(ask_opened_twice(&vault, HELD_PASSPHRASE)?)
+}
+
+/// With the owner's switch off the wall seeks no shape (FIX 8644), so an ask
+/// whose words hold a key a shape rule reads keeps it as written. An ask with
+/// another key of that shape, opened under the same handle, is another ask:
+/// it refuses, as on main. The held row is read for the values custody holds
+/// alone, never for a shape, so the two keys never read as one stand-in.
+#[test]
+fn an_ask_held_with_the_switch_off_opened_again_with_another_shaped_key_refuses() -> TestResult {
+    let (_directory, vault) = vault()?;
+    let owner = vault.ensure_embedded_owner_actor()?;
+    let owner = vault.authenticate_owner(owner, &owner.to_hex(), true, GateDecisionId::now())?;
+    vault.set_secret_scan_mode(&owner, SecretScanMode::Off, 1)?;
+    let [first, second] = ask_opened_with(
+        &vault,
+        ["AKIA1234567890123456", "AKIA1234567890123457"],
+        |_| Ok(()),
+    )?;
+    first.map_err(|error| format!("the ask did not open: {error:?}"))?;
+    match second {
+        Err(oneiron::Error::InvalidConfig(reason)) if reason == "ask handle reused" => Ok(()),
+        other => Err(format!(
+            "an ask with another key held as written under the same handle refuses, got {other:?}"
         )
         .into()),
     }
