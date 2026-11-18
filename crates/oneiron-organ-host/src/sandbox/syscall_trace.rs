@@ -3,10 +3,11 @@
 //! `ONEIRON_SYSCALL_TRACE` naming a file, every organ this process starts
 //! runs under a recording filter in place of its allow-list: a call
 //! [`super::syscall_filter`] denies still kills it, and every other call
-//! waits at the filter until this process's recorder answers it. The
-//! recorder appends `SYSCALL <organ> <number>` to the file the first time it
-//! sees an organ make a call, and lets the call go on
-//! (`SECCOMP_USER_NOTIF_FLAG_CONTINUE`). The organs' allow-lists are traced
+//! waits at the filter until this process's recorder answers it. Each
+//! start's recorder appends `SYSCALL <organ> <number>` to the file the first
+//! time it sees that start's processes make a call, and lets the call go on
+//! (`SECCOMP_USER_NOTIF_FLAG_CONTINUE`); a line repeats once per start, so a
+//! reader takes the lines unique. The organs' allow-lists are traced
 //! this way on the fleet, through each organ's own suites: the calls of the
 //! exec, the loader and the runtime start are in the trace, since the child
 //! installs the filter before it execs.
@@ -24,7 +25,6 @@ use std::io::{self, Write};
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, OnceLock, PoisonError};
 
 /// The environment variable that makes this process a trace run: the file
 /// its organs' calls are appended to.
@@ -97,9 +97,11 @@ fn received_listener(stream: &UnixStream) -> io::Result<OwnedFd> {
 }
 
 /// Answers every call of the organ's processes on `listener` with
-/// "continue", noting each, until no process under the filter is left.
+/// "continue", noting each call number the first time it comes, until no
+/// process under the filter is left.
 fn record(organ: &str, file: &Path, listener: &OwnedFd) {
     let fd = listener.as_raw_fd();
+    let mut seen = HashSet::new();
     loop {
         let mut ready = libc::pollfd {
             fd,
@@ -124,7 +126,9 @@ fn record(organ: &str, file: &Path, listener: &OwnedFd) {
             // The caller died before its call was read, or a signal came.
             continue;
         }
-        note(organ, file, call.data.nr);
+        if seen.insert(call.data.nr) {
+            note(organ, file, call.data.nr);
+        }
         let answer = libc::seccomp_notif_resp {
             id: call.id,
             val: 0,
@@ -139,17 +143,10 @@ fn record(organ: &str, file: &Path, listener: &OwnedFd) {
     }
 }
 
-/// Appends `SYSCALL <organ> <number>` to `file` the first time this
-/// process sees `organ` make call `number`.
+/// Appends `SYSCALL <organ> <number>` to `file` in one write, so the lines
+/// of recorders that run at once never interleave.
 fn note(organ: &str, file: &Path, number: libc::c_int) {
-    static SEEN: OnceLock<Mutex<HashSet<(String, libc::c_int)>>> = OnceLock::new();
-    let mut seen = SEEN
-        .get_or_init(Mutex::default)
-        .lock()
-        .unwrap_or_else(PoisonError::into_inner);
-    if seen.insert((organ.to_owned(), number))
-        && let Ok(mut out) = OpenOptions::new().create(true).append(true).open(file)
-    {
-        let _ = writeln!(out, "SYSCALL {organ} {number}");
+    if let Ok(mut out) = OpenOptions::new().create(true).append(true).open(file) {
+        let _ = out.write_all(format!("SYSCALL {organ} {number}\n").as_bytes());
     }
 }
