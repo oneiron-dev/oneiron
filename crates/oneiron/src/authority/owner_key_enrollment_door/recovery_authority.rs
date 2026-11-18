@@ -697,7 +697,8 @@ impl Vault {
         let actor = owner.revalidate_as_vault_owner_in_txn(self, &txn)?;
         let enrolled = self.enrolled_owner_keys_in_txn(&txn)?;
         let fold = self.authority_view_readonly_in_txn(&txn)?;
-        let owners = |key: &&EnrolledOwnerKey| key.live && key.owner == actor;
+        let _ = actor;
+        let owners = |key: &&EnrolledOwnerKey| key.live;
         let owner_devices = enrolled
             .iter()
             .filter(owners)
@@ -707,15 +708,13 @@ impl Vault {
             .iter()
             .filter(owners)
             .any(|key| key.kind == EnrolledOwnerKeyKind::RecoveryAuthority);
-        let passkeys = self
-            .live_owner_keys_enrolled_for_in_txn(&txn, actor)?
+        let passkeys = fold
+            .roster
             .iter()
-            .filter(|key| {
+            .filter(|(key, device)| {
                 matches!(key, AuthorityKey::P256(_))
-                    && fold
-                        .roster
-                        .get(key)
-                        .is_some_and(|device| device.roles & ROLE_OWNER != 0)
+                    && !device.revoked
+                    && device.roles & ROLE_OWNER != 0
             })
             .count() as u32;
         Ok(WaysBack {
