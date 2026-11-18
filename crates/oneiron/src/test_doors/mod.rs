@@ -5,6 +5,7 @@
 //! build reaches them. Hidden; never API.
 
 pub mod access_request_seed;
+pub mod action_replay_custody;
 pub mod action_mode_pass;
 pub mod advisory_rate_window;
 pub mod agent_authoring;
@@ -156,6 +157,7 @@ pub mod guest_turn_counterparty;
 pub mod held_answer_confirm;
 pub mod held_program;
 pub mod history_import_rows;
+pub mod holder_slip_revoke;
 #[cfg(feature = "sync")]
 pub mod home_handoff_retire;
 pub mod home_pick_fold;
@@ -224,6 +226,7 @@ pub mod own_device_grant;
 pub mod own_device_message_replay;
 pub mod owner_device_answer;
 pub mod owner_key_enrolment_read;
+pub mod owner_key_line;
 pub mod owner_key_release;
 pub mod owner_person_row_damage;
 pub mod pack_encode_work;

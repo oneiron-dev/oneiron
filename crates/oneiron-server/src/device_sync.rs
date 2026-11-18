@@ -77,12 +77,18 @@ mod renewal;
 #[cfg(feature = "mesh")]
 mod route;
 #[cfg(feature = "mesh")]
+mod selector;
+#[cfg(feature = "mesh")]
 mod url;
 use dial::Dial;
 use enrolment::EnrolmentSource;
 pub(crate) use enrolment::{Enrolled, EnrolmentFiles, enrol, enrolment_vault_id, home_bind, join};
 pub(crate) use freeze::ReapFreeze;
 use host::Host;
+#[cfg(feature = "mesh")]
+use selector::residence_selector;
+#[cfg(feature = "mesh")]
+use url::direct;
 
 /// The running connection to the home.
 #[cfg_attr(not(feature = "mesh"), allow(dead_code))]
@@ -726,50 +732,6 @@ fn declare_candidacy(
             "device sync left the MACRO home as it stood: the election failed"
         );
     }
-    Ok(())
-}
-
-/// What residence reads select: the own-device member grant the paired
-/// credential names (`grant_ref`, provisioned at the home), for the
-/// credential's holder, over every world that grant admits. `None` when the
-/// credential names no grant.
-#[cfg(feature = "mesh")]
-fn residence_selector(token: &str) -> anyhow::Result<Option<oneiron::sync::SyncSelector>> {
-    let slip = oneiron::authority::CapabilitySlip::from_token(token)?;
-    let claims = &slip.claims;
-    let Some(grant) = claims.grant_ref.as_deref() else {
-        return Ok(None);
-    };
-    let grant = oneiron::EntityId::from_hex(grant)
-        .map_err(|_| anyhow::anyhow!("the paired credential's grant_ref is not an entity id"))?;
-    let holder = oneiron::EntityId::from_hex(&claims.holder_ref)
-        .map_err(|_| anyhow::anyhow!("the paired credential's holder is not an actor"))?;
-    Ok(Some(oneiron::sync::SyncSelector::new(
-        grant,
-        holder,
-        oneiron::sync::SyncSelectorWorld::All,
-        Vec::new(),
-        Vec::new(),
-    )))
-}
-
-/// A home dialed at its URL, off the mesh: `wss`, or `ws` to a loopback
-/// host, as the NOTE session binds only over TLS or on this machine.
-#[cfg(feature = "mesh")]
-fn direct(url: &str) -> anyhow::Result<()> {
-    let uri: axum::http::Uri = url
-        .parse()
-        .map_err(|_| anyhow::anyhow!("home_url is not a URL"))?;
-    let loopback = uri.host().is_some_and(|host| {
-        host.trim_matches(['[', ']'])
-            .parse::<std::net::IpAddr>()
-            .is_ok_and(|ip| ip.is_loopback())
-    });
-    anyhow::ensure!(
-        uri.scheme_str() == Some("wss") || loopback,
-        "the home has no paired mesh address here, and off the mesh its home_url must be \
-         wss:// (or ws:// to a loopback host)"
-    );
     Ok(())
 }
 
