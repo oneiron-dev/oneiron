@@ -122,6 +122,7 @@ fn a_workspace_whose_house_is_a_seeded_agent_onboards_its_first_member() -> Resu
             display_name: "yuki".to_owned(),
         }),
         delegated_mailbox: None,
+        personal_vault: None,
         occurred_at: now,
     };
 

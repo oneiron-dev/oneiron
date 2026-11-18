@@ -253,8 +253,54 @@ pub struct MemberOnboardingIntent {
     pub companion: CompanionChoice,
     /// Optional delegated mailbox.
     pub delegated_mailbox: Option<DelegatedMailboxOnboarding>,
+    /// The member's personal vault, linked on her roster row, when the host
+    /// passes one in.
+    pub personal_vault: Option<PersonalVaultLink>,
     /// Event time stamped into every record this onboarding writes.
     pub occurred_at: u64,
+}
+
+/// The member's personal vault, linked on her roster row (ARCH-0063:359
+/// [INB-07]: "An Eiri user who already owns a personal vault brings it:
+/// member onboarding links it; minting is the employee-without-Eiri case";
+/// Engine RULING INB-07-VAULT-LINK = A).
+///
+/// The engine mints no vault and holds no account: the host passes the
+/// vault in, a minted one after it provisioned it under the org account.
+/// The link confers nothing: no read, no grant, no route. The seat's
+/// inquiry route to the vault opens through [`Vault::open_inquiry_route`]
+/// on that vault's own Active Connect pact and slip, and ends with the
+/// seat. An offboarding answers the link as the vault handed over.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PersonalVaultLink {
+    /// The vault's durable id: its genesis hash.
+    pub vault: crate::authority::AuthorityVaultId,
+    /// The member's own vault, or the one minted for her.
+    pub origin: PersonalVaultOrigin,
+}
+
+impl PersonalVaultLink {
+    /// The link as the wire spells it.
+    #[must_use]
+    pub fn view(&self) -> PersonalVaultLinkView {
+        PersonalVaultLinkView {
+            vault: crate::entity_id::bytes_to_hex_lower(&self.vault),
+            origin: self.origin,
+        }
+    }
+
+    /// The link `view` spells.
+    ///
+    /// # Errors
+    /// [`Error::InvalidClaimBody`] when the vault id is not 32 bytes of hex.
+    pub fn from_view(view: &PersonalVaultLinkView) -> Result<Self> {
+        let vault = crate::deletion::parse_hex::<32>(&view.vault)
+            .ok_or_else(|| invalid("personal_vault vault must be 32 bytes of hex"))?;
+        Ok(Self {
+            vault,
+            origin: view.origin,
+        })
+    }
 }
 
 impl MemberOnboardingIntent {
@@ -283,6 +329,12 @@ impl MemberOnboardingIntent {
             if mailbox.autonomy.actor_ref != self.actor_ref {
                 return Err(invalid("mailbox autonomy must name the member actor"));
             }
+        }
+        if self
+            .personal_vault
+            .is_some_and(|link| link.vault == [0; 32])
+        {
+            return Err(invalid("personal_vault must name a nonzero vault id"));
         }
         self.validate_minted_ids()
     }

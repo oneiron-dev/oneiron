@@ -26,8 +26,57 @@ pub struct MemberOnboardingOutcome {
     pub work_companion_suggested: bool,
     /// The delegated mailbox identity, when one was bound.
     pub delegated_identity_ref: Option<EntityId>,
+    /// The member's personal vault this onboarding linked on her roster
+    /// row, when the host passed one in.
+    pub personal_vault: Option<PersonalVaultLinkView>,
     /// Time the journal first reached [`MemberOnboardingStep::Complete`].
     pub completed_at: u64,
+}
+
+/// Where a member's linked personal vault came from (ARCH-0063:359
+/// [INB-07]; Engine RULING INB-07-VAULT-LINK = A). The engine mints no vault
+/// and holds no account: the host passes either kind in.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum PersonalVaultOrigin {
+    /// The member's own vault, which she brings (an Eiri user's).
+    Brought,
+    /// The vault the host minted for her under the org account.
+    Minted,
+}
+
+impl PersonalVaultOrigin {
+    /// Pinned wire spelling.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Brought => "brought",
+            Self::Minted => "minted",
+        }
+    }
+
+    /// The origin `text` spells, if any.
+    #[must_use]
+    pub fn parse(text: &str) -> Option<Self> {
+        match text {
+            "brought" => Some(Self::Brought),
+            "minted" => Some(Self::Minted),
+            _ => None,
+        }
+    }
+}
+
+/// A member's linked personal vault on the wire: the vault's durable id
+/// (its genesis hash) as 64 lowercase hex, and where it came from.
+#[derive(
+    Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
+#[serde(deny_unknown_fields)]
+pub struct PersonalVaultLinkView {
+    pub vault: String,
+    pub origin: PersonalVaultOrigin,
 }
 
 /// What a roster row is in the workplace.

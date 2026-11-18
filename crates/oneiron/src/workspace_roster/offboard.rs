@@ -40,6 +40,12 @@
 //!   room keeps its history.
 //! * The leaver's open member asks are declined and the check-ins they
 //!   asked let go; check-ins waiting on them are left to the ladder.
+//! * The member's personal vault, when her roster row links one, is
+//!   handed over (ARCH-0063:359 "A matching offboarding verb hands the vault
+//!   over"; RULING INB-07-VAULT-LINK = A): the link goes with the row, the
+//!   seat's inquiry route to the vault ends with the seat, and the outcome
+//!   names the vault and its origin for the host, which moves a minted one
+//!   out of the org account.
 //! * The roster row and the onboarding reservations go; a journal row
 //!   answers a replay of the same offboarding id.
 
@@ -165,6 +171,12 @@ pub struct MemberOffboardingOutcome {
     /// send can use it.
     pub custody_left_for_owner: Option<String>,
     pub rooms_left: Vec<OffboardedRoomLeave>,
+    /// The member's personal vault her roster row linked, handed over
+    /// (ARCH-0063:359 [INB-07]): it is hers, the company keeps no route to
+    /// it (the seat's inquiry route ends with the seat) and never reads it.
+    /// A `minted` one leaves the org account through the host, which owns
+    /// the account and the billing. `None` when the row linked none.
+    pub personal_vault: Option<PersonalVaultLinkView>,
     /// The leaver's open member asks, declined.
     pub member_asks_declined: Vec<String>,
     /// The open check-ins the leaver's person or actors asked, let go.
@@ -201,6 +213,7 @@ impl MemberOffboardingOutcome {
             custody_revoked: None,
             custody_left_for_owner: None,
             rooms_left: Vec::new(),
+            personal_vault: None,
             member_asks_declined: Vec::new(),
             check_ins_let_go: Vec::new(),
             check_ins_waiting_on_leaver: Vec::new(),
@@ -410,8 +423,14 @@ impl Vault {
                 outcome.made_by.push(made);
             }
         }
-        outcome.access_grants_revoked =
-            revoke_leaver_access_grants_in_txn(self, txn, &actors, born_grant, now)?;
+        outcome.access_grants_revoked = revoke_leaver_access_grants_in_txn(
+            self,
+            txn,
+            &actors,
+            born_grant,
+            WriteActor::new(offboarder, EdgeActorClass::Human),
+            now,
+        )?;
         // "Revoke the actor" (ARCH-0063:152): a slip the actor holds would
         // still read under its owner-minted agent Grants, which judge the
         // Grant and its pact, not the definition switched off above.
@@ -507,8 +526,9 @@ impl Vault {
         outcome.check_ins_let_go = let_go;
         outcome.check_ins_waiting_on_leaver = waiting_on_leaver;
 
-        // The roster row and the onboarding reservation go; the journal
-        // answers a replay.
+        // The roster row and the onboarding reservation go, and the
+        // personal-vault link with the row; the journal answers a replay.
+        outcome.personal_vault = row.personal_vault.as_ref().map(PersonalVaultLink::view);
         MEMBER.delete(&self.store, txn, &key)?;
         MEMBER_INTENT.delete(
             &self.store,
@@ -526,6 +546,7 @@ impl Vault {
                 offboarding_id: intent.offboarding_id.clone(),
                 intent_digest: *digest,
                 completed_at: now,
+                personal_vault: row.personal_vault,
             },
         )?;
 
@@ -593,11 +614,11 @@ fn replay(
             "offboarding_id was already used with different inputs",
         ));
     }
-    Ok(MemberOffboardingOutcome::new(
-        intent,
-        done.completed_at,
-        true,
-    ))
+    let mut outcome = MemberOffboardingOutcome::new(intent, done.completed_at, true);
+    // The vault the first call handed over: the host may have lost that
+    // answer before it moved the vault.
+    outcome.personal_vault = done.personal_vault.as_ref().map(PersonalVaultLink::view);
+    Ok(outcome)
 }
 
 /// A member leaves on their own through `vault.members.leave`; an
@@ -657,12 +678,15 @@ fn custody_live_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>, name: &str) -> Resu
 
 /// Revokes every live access grant one of `actors` holds, and the
 /// companion-profile grant `born_grant` minted for a born companion: the
-/// revoked ids.
+/// revoked ids. A share one of them holds is revoked through the share
+/// door's own writer, as `offboarder`'s revoke, so its admission records the
+/// revoke too; the generic revoker refuses a share.
 fn revoke_leaver_access_grants_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     actors: &[EntityId],
     born_grant: Option<EntityId>,
+    offboarder: WriteActor,
     now: u64,
 ) -> Result<Vec<EntityId>> {
     let mut ids = Vec::new();
@@ -691,13 +715,18 @@ fn revoke_leaver_access_grants_in_txn(
         if grant.status == crate::access_grant::AccessGrantStatus::Active
             && (actors.contains(&grant.principal_ref) || born_grant == Some(id))
         {
-            doomed.push(id);
+            let share = crate::share::is_share_grant_in_txn(vault, txn, &id, &grant)?;
+            doomed.push((id, share));
         }
     }
-    for id in &doomed {
-        vault.revoke_admitted_access_grant_in_txn(txn, id, now, |_| Ok(()))?;
+    for (id, share) in &doomed {
+        if *share {
+            vault.revoke_admitted_share_in_txn(txn, id, offboarder, now)?;
+        } else {
+            vault.revoke_admitted_access_grant_in_txn(txn, id, now, |_| Ok(()))?;
+        }
     }
-    Ok(doomed)
+    Ok(doomed.into_iter().map(|(id, _)| id).collect())
 }
 
 /// Ends the membership of each of `leavers` in every live room they stand

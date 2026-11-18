@@ -255,15 +255,25 @@ pub(crate) fn reserve_brief_delete(
     Ok(())
 }
 
+/// Whether the grant `id` is a share: a shared brief, or any grant the
+/// share door admitted. Only the share door writes one.
+pub(crate) fn is_share_grant_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    grant: &AccessGrant,
+) -> Result<bool> {
+    Ok(matches!(grant.scope, AccessGrantScope::SharedBrief { .. })
+        || ADMISSIONS.contains(&vault.store, txn, id)?)
+}
+
 pub(crate) fn check_generic_grant_write(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     id: &EntityId,
     grant: &AccessGrant,
 ) -> Result<()> {
-    if matches!(grant.scope, AccessGrantScope::SharedBrief { .. })
-        || ADMISSIONS.contains(&vault.store, txn, id)?
-    {
+    if is_share_grant_in_txn(vault, txn, id, grant)? {
         return Err(Error::Record(RecordError::InvalidAccessGrantBody(
             "shared briefs require the share door",
         )));

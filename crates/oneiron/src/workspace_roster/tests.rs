@@ -232,6 +232,7 @@ fn intent(vault: &Vault, workspace_ref: &str, venture_name: &str) -> MemberOnboa
         },
         companion: CompanionChoice::Work(companion_birth()),
         delegated_mailbox: None,
+        personal_vault: None,
         occurred_at: AT,
     }
 }
