@@ -177,6 +177,33 @@ impl WindowManager {
         self.wake_live_mirror();
     }
 
+    /// Hands the mirror thread every row `window`'s pending-mirror markers
+    /// name, as rows no local write edited: a forward pass may have landed a
+    /// carried room body merged with the pin records held here
+    /// (ROOM-PINS-LWW-MERGE), and its marker is the only trace of it. The
+    /// thread's pass judges each row ([`Owed::rows_in`]). Opening a window
+    /// starts the thread ([`Self::drive_pending_mirrors`]); before that the
+    /// rows wait for its first wake.
+    pub(super) fn wake_for_owed_rows(&self, window: &WindowKey) {
+        let rows = match Owed::read(&self.vault, window) {
+            Ok(owed) => owed.named_rows(),
+            Err(error) => {
+                tracing::warn!(window = %window, %error, "pending mirrors not read after a forward pass");
+                return;
+            }
+        };
+        if rows.is_empty() {
+            return;
+        }
+        self.live_mirror
+            .pending
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .rows
+            .extend(rows);
+        self.live_mirror.wake.notify_one();
+    }
+
     /// Wakes the mirror thread, and starts it on first use.
     fn wake_live_mirror(self: &Arc<Self>) {
         self.live_mirror.wake.notify_one();
@@ -268,9 +295,10 @@ impl WindowManager {
 
     /// Mirrors `rows`, `edited` ones over the carrier the doc holds, into
     /// `doc`, the live window `key`, with what its pending-mirror markers owe
-    /// it (FIX 7957, FIX 9599): their rows as edited ones, and the removal of
-    /// their edges. The markers retire once all of it is written: Observer A
-    /// persisted each bridge commit's update inside the commit.
+    /// it (FIX 7957, FIX 9599): their rows as edited ones ([`Owed::rows_in`],
+    /// judged under the materializer lock this pass holds), and the removal
+    /// of their edges. The markers retire once all of it is written:
+    /// Observer A persisted each bridge commit's update inside the commit.
     fn mirror_into_window(
         &self,
         key: &WindowKey,
@@ -282,14 +310,16 @@ impl WindowManager {
             tracing::warn!(window = %key, %error, "pending mirrors not read for the live window");
             Owed::default()
         });
-        let rows = owed.rows_with(rows);
+        let owing = owed.rows_in(doc);
+        let rows: BTreeSet<EntityId> = rows.union(&owing).copied().collect();
+        let edited: BTreeSet<EntityId> = edited.union(&owing).copied().collect();
         if !rows.is_empty() {
             match super::super::window::reverse_rematerialize_rows(
                 &self.vault,
                 doc,
                 key,
                 &rows,
-                &owed.rows_with(edited),
+                &edited,
             ) {
                 Ok(0) => {}
                 Ok(mirrored) => {
@@ -458,6 +488,7 @@ impl WindowManager {
         ) {
             tracing::warn!(window = %window, %error, "setup rows not retried after a move ended");
         }
+        self.wake_for_owed_rows(&window);
     }
 
     /// Drains `window`'s remat markers once: each row it holds back on a
@@ -469,6 +500,7 @@ impl WindowManager {
             &self.materializer,
             window,
         )?;
+        self.wake_for_owed_rows(window);
         Ok(())
     }
 }

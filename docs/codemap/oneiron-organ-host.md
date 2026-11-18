@@ -12,7 +12,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | path | kind | bucket | pub surface | notable types | purpose |
 |---|---|---|---|---|---|
 | `src/asks.rs` | src | m | 11 crate-vis | — | Protocol 1.1 asks, the engine side: who answers, and what the receipt records |
-| `src/bin/oneiron-organ-probe.rs` | src | m | 11 crate-vis | — | A diagnostics organ for the host's own checks: the runtime's built-in verbs (`organ.touch`, `organ.echo`)… |
+| `src/bin/oneiron-organ-probe.rs` | src | m | 12 crate-vis | — | A diagnostics organ for the host's own checks: the runtime's built-in verbs (`organ.touch`, `organ.echo`)… |
 | `src/budget.rs` | src | m | 1 struct · 1 fn · 35 crate-vis | BudgetConfig | One admission budget for every organ: threads, memory, in-flight calls |
 | `src/clock.rs` | src | s | 11 crate-vis | — | A call's time, which stops while the call waits for budget room (Engine ruling, 10-20; FIX 6196, 8020) |
 | `src/error.rs` | src | s | 2 enum | HostError, Unavailable | What can go wrong on the engine side of an organ call |
@@ -70,4 +70,5 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/image_edit_max_ops.rs` | test | s | — | — | Restriction wave 13: the image edit op count is an owner key |
 | `tests/mesh_ask_carried.rs` | test | m | — | — | An organ's mesh ask and its answer past the transport's 1 MiB message (FIX 8023): a big ask is offered from… |
 | `tests/organ_fence.rs` | test | s | — | — | OF-060 F4: the engine never depends on an organ, and an organ never depends on the engine (ARCH-0075 section… |
+| `tests/organ_first_party_fence.rs` | test | s | — | — | A first-party organ starts inside the filesystem fence where the host has one (FIX… |
 | `tests/organ_syscall_filter.rs` | test | s | — | — | The organ's syscall filter (census L4-09, ARCH-0075 "Syscalls"): an organ that calls ptrace dies by the… |

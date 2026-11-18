@@ -6,6 +6,7 @@ use std::collections::BTreeMap;
 use std::io::{Read, Seek};
 
 use heed::{RoTxn, RwTxn};
+use oneiron_contracts::fingerprint::{ContentHash, LegacyDigest, purposes};
 use oneiron_records::batch::export::archive_side_tables::byte_values;
 use serde::{Deserialize, Serialize};
 
@@ -73,25 +74,21 @@ mod bytes {
     }
 }
 
-/// The domain of [`retained_side_row_key`].
-const RETAINED_SIDE_ROW_DOMAIN: &[u8] = b"oneiron.archive.retained_side_row.v1";
-
-/// The physical key of one retained row: BLAKE3 over the domain and the length-framed logical
-/// identity (the source table name bytes, the source key bytes, the 32-byte value hash), each
-/// part as a u64 little-endian length followed by its bytes. `source_live` is no part of it.
+/// The physical key of one retained row: BLAKE3 over the domain
+/// (`purposes::archive::RETAINED_SIDE_ROW_KEY`) and the length-framed logical identity (the
+/// source table name bytes, the source key bytes, the 32-byte value hash), each part as a u64
+/// little-endian length followed by its bytes. `source_live` is no part of it.
 pub(crate) fn retained_side_row_key(row: &ArchiveRetainedSideRow) -> [u8; 32] {
-    let value_hash = blake3::hash(&row.source_value);
-    let mut hasher = blake3::Hasher::new();
-    hasher.update(RETAINED_SIDE_ROW_DOMAIN);
+    let value_hash = ContentHash::of(&row.source_value);
+    let mut digest = LegacyDigest::new(purposes::archive::RETAINED_SIDE_ROW_KEY);
     for part in [
         row.source_table.as_bytes(),
         row.source_key.as_slice(),
         value_hash.as_bytes().as_slice(),
     ] {
-        hasher.update(&(part.len() as u64).to_le_bytes());
-        hasher.update(part);
+        digest.len_u64_le(part.len()).raw(part);
     }
-    *hasher.finalize().as_bytes()
+    digest.finish()
 }
 
 /// The inert retained rows, keyed by [`retained_side_row_key`].
@@ -134,7 +131,7 @@ pub(crate) fn retained_envelope_source_table(value: &[u8]) -> Option<String> {
         .map(|envelope| envelope.source_table)
 }
 
-/// Every retained row this export carries, in physical key order: the live rows of the 95
+/// Every retained row this export carries, in physical key order: the live rows of the
 /// retained source tables read raw and marked `source_live`, unioned with the inert envelopes
 /// already stored, deduplicated by [`retained_side_row_key`] with the live row kept. Collected
 /// into memory like the 41-family writer.
@@ -292,11 +289,14 @@ fn opaque_withholds_credential(bytes: &[u8]) -> bool {
 
 /// Installs the owner's supported source tables and otherwise keeps envelopes inert in the
 /// import transaction; actor and actorless doors retain only, with the original inert counts.
+/// On the owner door, each source-live HOOKS_GRANT tuple kept as a retained row is recorded
+/// under `restore_receipt_hex` (32 hex) for the restore group's accept to install.
 pub(crate) fn install_or_retain_side_rows_in_txn<R: Read + Seek>(
     vault: &crate::Vault,
     wtxn: &mut RwTxn<'_>,
     archive: &IndexedArchive<'_, R>,
     permit: Option<&super::OwnerArchiveRestorePermit>,
+    restore_receipt_hex: Option<&str>,
     refresh: &mut super::archive_side_install::ArchivedSideRowRefresh,
 ) -> Result<RetainedSideImportSummary> {
     use super::archive_side_install::{
@@ -343,6 +343,16 @@ pub(crate) fn install_or_retain_side_rows_in_txn<R: Read + Seek>(
             groups.entry(group).or_default().push((typed, envelope));
         } else {
             retain_envelope_in_txn(vault, wtxn, &typed, &envelope, count)?;
+            // The owner's accept of this restore's inbox group lands the archived owner
+            // grant the tuple carries (OPUS-MAP-5B2): record its retained key now. Only
+            // this table, only a stored tuple, only on the owner door.
+            if envelope.source_live
+                && envelope.source_table == crate::side_table::HOOKS_GRANT.name
+                && permit.is_some()
+                && let Some(receipt_hex) = restore_receipt_hex
+            {
+                super::record_deferred_hook_grant_in_txn(vault, wtxn, receipt_hex, typed)?;
+            }
         }
         after = Some(key);
     }
@@ -401,6 +411,27 @@ pub(crate) fn install_or_retain_side_rows_in_txn<R: Read + Seek>(
         }
     }
     Ok(summary)
+}
+
+/// One stored retained row by its 32-byte physical key, for the deferred hook-grant landing
+/// the restore group's accept runs.
+pub(crate) fn retained_side_row_in_txn(
+    vault: &crate::Vault,
+    txn: &heed::RoTxn<'_>,
+    key: &[u8; 32],
+) -> Result<Option<ArchiveRetainedSideRow>> {
+    RETAINED_SIDE_ROWS.get(vault, txn, key)
+}
+
+/// Deletes one stored retained row by its 32-byte physical key: the deferred hook-grant
+/// landing drops the retained copy of a row it installs, as the import does.
+pub(crate) fn delete_retained_side_row_in_txn(
+    vault: &crate::Vault,
+    txn: &mut heed::RwTxn<'_>,
+    key: &[u8; 32],
+) -> Result<()> {
+    RETAINED_SIDE_ROWS.delete(vault, txn, key)?;
+    Ok(())
 }
 
 /// Keeps one envelope as an inert copy (no `source_live`) with SIDE-1's physical collision rules

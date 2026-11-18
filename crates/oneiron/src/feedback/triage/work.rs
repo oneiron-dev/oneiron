@@ -18,13 +18,10 @@ use serde::{Deserialize, Serialize};
 
 use super::FeedbackTriageOutput;
 use crate::{EntityId, Error, Result};
+use oneiron_contracts::fingerprint::{LegacyDigest, LegacyPurpose, purposes};
 
-/// The domain a part's digest is taken under.
-const PART_DOMAIN: &[u8] = b"oneiron:feedback-triage:part:v1";
 /// The domain a synthesis node's digest is taken under.
 const SYNTHESIS_DOMAIN: &[u8] = b"oneiron:feedback-triage:synthesis:v1";
-/// The domain the whole item text's digest is taken under.
-const ITEM_DOMAIN: &[u8] = b"oneiron:feedback-triage:item:v1";
 
 /// One revision's part and synthesis graph, kept on its handoff row.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -170,11 +167,19 @@ fn invalid_plan() -> Error {
     Error::InvalidConfig("invalid feedback triage work plan".into())
 }
 
-fn digest(domain: &[u8], bytes: &[u8]) -> String {
-    let mut hasher = blake3::Hasher::new();
-    hasher.update(domain);
-    hasher.update(bytes);
-    hasher.finalize().to_hex().to_string()
+/// The lowercase hex of BLAKE3 over `purpose`'s tag and then `bytes`, with no
+/// length between them: a part's (`purposes::feedback::TRIAGE_PART`) or the
+/// whole item text's (`purposes::feedback::TRIAGE_ITEM`). The work graph on
+/// the handoff row holds them and each answer is checked against them, so
+/// they keep their bytes (K, PLAN-UC-04 stage 6).
+fn digest(purpose: LegacyPurpose, bytes: &[u8]) -> String {
+    oneiron_hex::encode(&LegacyDigest::new(purpose).raw(bytes).finish())
+}
+
+/// A triage digest of `bytes` under `purpose`.
+#[cfg(oneiron_test_support)]
+pub(crate) fn triage_digest_for_test(purpose: LegacyPurpose, bytes: &[u8]) -> String {
+    digest(purpose, bytes)
 }
 
 /// `span` of `text`; `None` off its character boundaries or past its end.
@@ -220,7 +225,7 @@ fn part(
         level: 0,
         span: Some(span),
         inputs: Vec::new(),
-        digest: digest(PART_DOMAIN, piece.as_bytes()),
+        digest: digest(purposes::feedback::TRIAGE_PART, piece.as_bytes()),
         attempt: None,
         answer: None,
     })
@@ -272,14 +277,14 @@ pub(super) fn span_text<'t>(
     node: &FeedbackTriageWorkNode,
     text: &'t str,
 ) -> Result<&'t str> {
-    if digest(ITEM_DOMAIN, text.as_bytes()) != work.item_digest {
+    if digest(purposes::feedback::TRIAGE_ITEM, text.as_bytes()) != work.item_digest {
         return Err(Error::CorruptedIndex("feedback triage item digest"));
     }
     let piece = node
         .span
         .and_then(|span| slice(text, span))
         .ok_or(Error::CorruptedIndex("feedback triage part span"))?;
-    if digest(PART_DOMAIN, piece.as_bytes()) != node.digest {
+    if digest(purposes::feedback::TRIAGE_PART, piece.as_bytes()) != node.digest {
         return Err(Error::CorruptedIndex("feedback triage part digest"));
     }
     Ok(piece)
@@ -336,7 +341,7 @@ fn generation(
     Ok(FeedbackTriageWork {
         generation: number,
         pin,
-        item_digest: digest(ITEM_DOMAIN, text.as_bytes()),
+        item_digest: digest(purposes::feedback::TRIAGE_ITEM, text.as_bytes()),
         item_bytes,
         nodes,
         retired,
