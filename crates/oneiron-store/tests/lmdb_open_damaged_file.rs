@@ -28,7 +28,9 @@
 //! answered `MDB_BAD_TXN` and a count answered the record's count with success. Each now answers
 //! the fetch's own error. A main tree emptied under the open handle (another process dropped the
 //! only named database) answers `MDB_BAD_DBI`, as a main tree that lacks the name does; upstream
-//! took it for an empty database.
+//! took it for an empty database. A sealed page that fails its check in a chunk the page cache
+//! already holds no longer leaves that chunk held for the environment's life, so the chunk's
+//! other pages are checked again on later reads; upstream answered an altered page's old bytes.
 //!
 //! `cargo test --locked -p oneiron-store --test lmdb_open_damaged_file` (default features, as
 //! `lmdb_page_split.rs`).
@@ -354,7 +356,12 @@ fn cut_the_named_leaf(data_file: &Path, page_size: u64) -> std::io::Result<()> {
 
 /// Flips one byte in the middle of the named database's leaf, inside the sealed page's body.
 fn flip_a_byte_of_the_named_leaf(data_file: &Path, page_size: u64) -> std::io::Result<()> {
-    let at = NAMED_LEAF_PAGE * page_size + page_size / 2;
+    flip_a_byte_of_page(data_file, NAMED_LEAF_PAGE, page_size)
+}
+
+/// Flips one byte in the middle of page `page`, inside a sealed page's body.
+fn flip_a_byte_of_page(data_file: &Path, page: u64, page_size: u64) -> std::io::Result<()> {
+    let at = page * page_size + page_size / 2;
     let mut file = OpenOptions::new().read(true).write(true).open(data_file)?;
     let mut byte = [0_u8; 1];
     file.seek(SeekFrom::Start(at))?;
@@ -577,5 +584,112 @@ fn a_count_in_a_later_transaction_of_a_named_database_the_emptied_main_tree_lost
     drop(rtxn);
     env.prepare_for_closing().wait();
     assert_later_call_bad_dbi(answer, "a count");
+    Ok(())
+}
+
+/// The chunk test's database whose value fills the rest of the first chunk.
+const FILLER: &str = "filler";
+/// The chunk test's database whose leaf follows the damaged named leaf in the second chunk.
+const INTACT: &str = "intact";
+/// Pages per chunk of a sealed environment's page cache (`MDB_RPAGE_CHUNK`).
+const CHUNK_PAGES: u64 = 16;
+/// The filler's value: 11 pages' bytes, whose overflow run (with the page header and the sealed
+/// page's authentication area) takes 12 pages, 4 to 15.
+const FILLER_VALUE_PAGES: usize = 11;
+/// Two meta pages, the main leaf (2), the filler's leaf (3) and run (4-15), the named leaf (16,
+/// the second chunk's first page) and the intact leaf (17).
+const CHUNK_FILE_PAGES: u64 = 18;
+
+/// In one transaction of a fresh sealed environment, puts the filler's value, the named
+/// database's one row and the intact database's one row, in that order, then closes the
+/// environment and returns its page size. The pages are taken in the same order: the main leaf
+/// (2, with the first record), the filler's leaf (3) and run (4-15), the named leaf (16) and the
+/// intact leaf (17). The main leaf sits in the first chunk, both one-row leaves in the second.
+fn write_two_leaves_into_the_second_chunk_and_close(dir: &Path) -> Result<u64, Box<dyn Error>> {
+    let env = open_sealed_env(dir)?;
+    let page_size = u64::from(env.page_size()?);
+    let filler_value = named_value(FILLER_VALUE_PAGES * usize::try_from(page_size)?);
+    let mut wtxn = env.write_txn()?;
+    let filler: Rows = env.create_database(&mut wtxn, Some(FILLER))?;
+    filler.put(&mut wtxn, NAMED_KEY, &filler_value)?;
+    let rows: Rows = env.create_database(&mut wtxn, Some(NAMED))?;
+    rows.put(&mut wtxn, NAMED_KEY, &named_value(LEAF_ROW_LEN))?;
+    let intact: Rows = env.create_database(&mut wtxn, Some(INTACT))?;
+    intact.put(&mut wtxn, NAMED_KEY, &named_value(LEAF_ROW_LEN))?;
+    wtxn.commit()?;
+    env.prepare_for_closing().wait();
+    let written_len = std::fs::metadata(dir.join("data.mdb"))?.len();
+    assert_eq!(
+        written_len,
+        CHUNK_FILE_PAGES * page_size,
+        "two meta pages, the main leaf, the filler's leaf and run, the named and the intact leaf"
+    );
+    Ok(page_size)
+}
+
+/// Reads the intact database's one row in a transaction of its own.
+fn read_the_intact_row(env: &Env, intact: Rows) -> heed::Result<Option<Vec<u8>>> {
+    let rtxn = env.read_txn()?;
+    let got = intact
+        .get(&rtxn, NAMED_KEY)
+        .map(|got| got.map(<[u8]>::to_vec));
+    drop(rtxn);
+    got
+}
+
+/// Review round 2 of PR 9507. A sealed environment caches its decrypted chunks for every
+/// transaction, and a chunk's pages are checked again once no transaction holds it. A root fetch
+/// whose page failed its check on a chunk the cache already held took the chunk's reference with
+/// no transaction entry to release it, so the chunk stayed held for the environment's life and
+/// its pages were never checked again: a page altered after that read answered its old value.
+#[test]
+fn a_failed_seal_check_on_a_cached_chunk_leaves_its_other_pages_checked_on_later_reads()
+-> Result<(), Box<dyn Error>> {
+    let dir = tempfile::tempdir()?;
+    let page_size = write_two_leaves_into_the_second_chunk_and_close(dir.path())?;
+    let data_file = dir.path().join("data.mdb");
+    flip_a_byte_of_page(&data_file, CHUNK_PAGES, page_size)?;
+    let env = open_sealed_env(dir.path())?;
+    let rtxn = env.read_txn()?;
+    let rows: Rows = env
+        .open_database(&rtxn, Some(NAMED))?
+        .ok_or("the named database's record is in the main leaf, which the damage spared")?;
+    let intact: Rows = env
+        .open_database(&rtxn, Some(INTACT))?
+        .ok_or("the intact database's record is in the main leaf, which the damage spared")?;
+    rtxn.commit()?;
+    // Caches the second chunk: the intact leaf passes its check.
+    let first = read_the_intact_row(&env, intact);
+    // The damaged leaf's root fetch finds the second chunk cached and fails its check there.
+    let rtxn = env.read_txn()?;
+    let damaged = rows.get(&rtxn, NAMED_KEY).map(|got| got.map(<[u8]>::len));
+    drop(rtxn);
+    let second = read_the_intact_row(&env, intact);
+    // No transaction is live, so the next read of the intact leaf checks it again.
+    flip_a_byte_of_page(&data_file, CHUNK_PAGES + 1, page_size)?;
+    let altered = read_the_intact_row(&env, intact);
+    env.prepare_for_closing().wait();
+    let value = named_value(LEAF_ROW_LEN);
+    assert!(
+        matches!(&first, Ok(Some(got)) if *got == value),
+        "the intact row's first read answered {first:?}"
+    );
+    assert!(
+        damaged.is_err(),
+        "the damaged leaf's read answered {damaged:?}"
+    );
+    assert!(
+        matches!(&second, Ok(Some(got)) if *got == value),
+        "the intact row's read after the failed check answered {second:?}"
+    );
+    let code = match &altered {
+        Err(heed::Error::Io(error)) => error.raw_os_error(),
+        _ => None,
+    };
+    assert!(
+        code == Some(MDB_CRYPTO_FAIL),
+        "the read of the altered intact leaf answered {altered:?}, not MDB_CRYPTO_FAIL (the \
+         failed check left its chunk held, so the leaf was not checked again)"
+    );
     Ok(())
 }
