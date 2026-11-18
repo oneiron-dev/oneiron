@@ -434,7 +434,7 @@ pub(super) fn run_feed_poll(
     };
     // An installed feed is read again under the turn: its owner may have uninstalled it while
     // the fetch was out, and then this poll writes nothing. An uninstall's write takes the turn
-    // too (feed_door::ics_feed_write_turn), so none lands from here to this poll's last write.
+    // too (ADMISSION_WRITE_TURN), so none lands from here to this poll's last write.
     if installed_owner.is_some() {
         let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
         if !super::feed_door::installed_in_txn(vault, &txn, config)? {

@@ -279,7 +279,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/home_handoff_custody/seal.rs` | src | s | 3 fn · 4 const | — | The erasable handoff key's envelopes (FIX 8875): content sealed under the key itself, and the key's transit… |
 | `src/host_issuer_seed.rs` | src | s | 2 const | — | Independent host-issuer seed format and derivation label |
 | `src/housekeeping_report.rs` | src | m | 4 struct · 2 enum · 6 fn | HardEraseWork, HousekeepingReport, SecretLiftWork, SweepOutcome, SweepReport, SweepWork | What a housekeeping pass reports: one row per sweep, and the counts each sweep run reports |
-| `src/housekeeping_schedule.rs` | src | m | 3 struct · 3 enum · 8 fn · 4 const | Deadline, HostOnlyReason, HousekeepingBudget, HousekeepingHandle, HousekeepingSweep, Runner | Housekeeping sweep identifiers, cadence policy, and pass budget values |
+| `src/housekeeping_schedule.rs` | src | s | 3 struct · 3 enum · 8 fn · 4 const | Deadline, HostOnlyReason, HousekeepingBudget, HousekeepingHandle, HousekeepingSweep, Runner | Housekeeping sweep identifiers, cadence policy, and pass budget values |
 | `src/human_task.rs` | src | s | 1 mod | — | Store-layer modules of core `human_task`; core re-exports each one at its old path |
 | `src/human_task/storage.rs` | src | s | 14 fn · 15 const | — | vault_meta key codecs and msgpack rows for the follow-up cursor, wait binding and signal marker |
 | `src/identity_hints.rs` | src | s | 1 fn | — | Per-kind declared identity fields (human-facing identity hints) |
@@ -674,8 +674,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/fingerprint_keep_vault_import_receipt.rs` | test | s | 2 fn · 2 const | — | K-proof (oracle) for PLAN-UC-04 stage 6.3c: the foreign vault import receipt id keeps its bytes |
 | `tests/gate_engine_part_names.rs` | test | s | — | — | `GateEnginePart`'s names, one line per row, generated from `scripts/ratchet/hand_name_tables.py --names… |
 | `tests/gate_receipt_outcome_tokens.rs` | test | s | — | — | UC-03 PR 0: `GateReceiptOutcome`, the closed outcome a Gate receipt records (DESIGN fable/21 §2) |
+| `tests/lmdb_open_damaged_file.rs` | test | m | — | — | FIX rows LMDB-MASTER3-UPSTREAM-FIXES-AUDIT (upstream ITS#9291 and its `ONEIRON FORK (LMDB audit)` hunks) and… |
 | `tests/lmdb_page_split.rs` | test | s | — | — | FIX row TRAP-REGISTER-WAIT-PAGE-FULL: a put that splits a leaf of rows whose key and data are both odd-sized… |
 | `tests/lmdb_sealed_overflow.rs` | test | s | — | — | FIX row LMDB-MASTER3-UPSTREAM-FIXES-AUDIT (upstream ITS#10519): a sealed environment reads back every value… |
+| `tests/lmdb_sealed_page_buffers.rs` | test | s | — | — | FIX row LMDB-MASTER3-UPSTREAM-FIXES-AUDIT (upstream ITS#10520): a sealed environment frees the page buffers… |
 | `tests/msgpack_store_rows.rs` | test | s | — | — | PLAN-UC-08 PR 2; a lookup that took the first of two equal keys now refuses (or, for `map_value`, reads the… |
 | `tests/phonetic_han_codes.rs` | test | s | — | — | L10-08 (CROSS-ARCH-0013 `#ladder` rung 1, G2P → IPA → NPD): a Han name and a kana name with a company-form… |
 | `tests/phonetic_ipa.rs` | test | s | — | — | L10-08 (CROSS-ARCH-0013 `#ladder` rung 1, G2P → IPA → NPD): the readings of a name and the Normalized… |

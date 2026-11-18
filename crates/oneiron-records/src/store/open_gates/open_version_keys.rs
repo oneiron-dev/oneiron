@@ -3,7 +3,7 @@
 
 pub const MAX_DBS: u32 = 32;
 
-/// v38 (row RESTORED-COPIES-ENROL-EACH-OTHER; RULING RESTORED-COPIES-JOIN-SCOPE
+/// v39 (row RESTORED-COPIES-ENROL-EACH-OTHER; RULING RESTORED-COPIES-JOIN-SCOPE
 /// = A): a restore that drops its image's machine identity on a vault the
 /// owner roots, and an archived vault's activation, write the install-local
 /// row `m:restored_from`, and the install's machine profiles name that image
@@ -13,7 +13,7 @@ pub const MAX_DBS: u32 = 32;
 /// Stored authority-log rows keep their bytes and their meaning: a profile
 /// without the key reads as a machine that never restored, as before. A
 /// stored checkpoint image written before it no longer decodes (the
-/// authority fold schema moves 47 -> 48 with it). No old-meaning reader or
+/// authority fold schema moves 49 -> 50 with it). No old-meaning reader or
 /// migration is provided (the lead's M-1 stored-change rule, path "loud").
 ///
 /// v37 (row OWNER-ANCHOR-ROOT-RECOVERY, FIX OWNER-ANCHOR-NO-ROOT-RECOVERY): the
@@ -225,7 +225,7 @@ pub const MAX_DBS: u32 = 32;
 /// `RECEIPT_FAMILY_INDEX_VERSION` requires bumping this version too.
 /// v27 hashes full run/group identifiers in their v2 secondary-index keys.
 /// v26 is reserved for the separately landing attempt-record v4 format.
-pub const STORAGE_ABI_VERSION: u16 = 38;
+pub const STORAGE_ABI_VERSION: u16 = 39;
 
 pub const STORAGE_SCHEMA_VERSION: u16 = 1;
 

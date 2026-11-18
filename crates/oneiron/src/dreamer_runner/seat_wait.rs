@@ -4,14 +4,22 @@
 //! A seat is one login or subscription, named by [`ModelSeatId`]. A refusal moves the seat's row
 //! to [`ModelSeatAvailability::Unavailable`] at a new generation and parks the try typed on that
 //! generation; the seat's available write answers one generation and wakes every park of the seat
-//! it covers, in its own write. The reset a refusal reported is carried on the row and indexed
-//! by time, so the sweep releases what is due; the reset alone wakes nothing.
+//! it covers, in its own write. The reset a refusal reported is carried on the row and arms one
+//! row of [`SEAT_RESET_JOB`] about the seat at that time (DESIGN 15-setting-primitive, stage
+//! 5b), so the schedule's runner releases each seat whose reset is due; the reset alone wakes
+//! nothing.
 
 use crate::Vault;
 use crate::attempt_queue::{AttemptId, AttemptQueue};
 use crate::entity_id::bytes_to_hex_lower;
 use crate::error::{ArtifactError, Error, Result};
+use crate::llm::model_pack::AccessSnapshot;
+use crate::schedule::{
+    ArmBy, Armed, JobOutcome, JobPass, JobResult, JobSpec, Late, RETRY_FIRST_SECS, Ran, Trigger,
+    When,
+};
 use crate::side_table::{self, Named, SideTable};
+use crate::store::housekeeping_schedule::HousekeepingBudget;
 
 use super::{
     DreamerParkWait, DreamerParkedAttemptRecord, DreamerRunnerStore, DreamerTryLease, ModelSeatId,
@@ -21,12 +29,27 @@ use super::{
 /// One seat's durable state, keyed by the seat id.
 const SEAT_STATE: SideTable<ModelSeatId, ModelSeatState, Named> =
     SideTable::new(&side_table::MODEL_SEAT_STATE);
-/// Seats with a reported reset, keyed by (reset, seat), so the sweep reads what is due.
-const SEAT_RESET_DUE: SideTable<(u64, ModelSeatId), (), Named> =
-    SideTable::new(&side_table::MODEL_SEAT_RESET_DUE);
 /// Seat parks by (seat, attempt), so one available write wakes every park of its seat.
 const SEAT_WAITS: SideTable<(ModelSeatId, AttemptId), (), Named> =
     SideTable::new(&side_table::MODEL_SEAT_WAITS);
+
+/// Each unavailable seat's reported reset: a one-time row about the seat, armed at the reset of
+/// its latest refusal. A run writes the seat available at that generation, which wakes its
+/// parks, in one write; the seat's available write disarms it.
+pub(crate) static SEAT_RESET_JOB: JobSpec = JobSpec {
+    code: "dreamer_runner.seat_reset",
+    when: When::PerArming,
+    arm_by: ArmBy::Engine,
+    late: Late::Run,
+    retry_first_secs: RETRY_FIRST_SECS,
+    retry_cap_secs: None,
+    wakes_host: false,
+    at_open: false,
+    once_per_pass: true,
+    runs_here: crate::schedule::any_node,
+    drive: crate::schedule::Drive::Runner,
+    run: run_seat_reset,
+};
 
 #[doc(hidden)]
 pub use oneiron_records::dreamer_runner::seat_wait::{
@@ -85,8 +108,9 @@ fn is_seat_refusal(error: &Error) -> bool {
 
 impl Vault {
     /// Records a refusal on `seat`: the row moves to Unavailable at generation + 1 (1 for a new
-    /// row), its reset becomes this refusal's, and the due entry moves with it. Returns the new
-    /// generation, which the refusal's park names.
+    /// row), its reset becomes this refusal's, and the seat's reset row is armed at it (disarmed
+    /// when the refusal reports none). Returns the new generation, which the refusal's park
+    /// names.
     pub(crate) fn refuse_model_seat_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
@@ -102,14 +126,18 @@ impl Vault {
                 .ok_or(Error::ArithmeticOverflow("model seat generation"))?,
             None => 1,
         };
-        if let Some(previous) = &previous
-            && previous.reset_at_s != reset_at_s
-            && let Some(due) = previous.reset_at_s
-        {
-            SEAT_RESET_DUE.delete(&self.store, wtxn, &(due, seat))?;
-        }
-        if let Some(due) = reset_at_s {
-            SEAT_RESET_DUE.put(&self.store, wtxn, &(due, seat), &())?;
+        match reset_at_s {
+            // Arming the same reset again leaves the row as it is.
+            Some(at) => crate::schedule::arm_in_txn(
+                &self.store,
+                wtxn,
+                &SEAT_RESET_JOB,
+                Some(seat),
+                Trigger::At { at },
+            )?,
+            None => {
+                crate::schedule::disarm_in_txn(&self.store, wtxn, SEAT_RESET_JOB.code, Some(seat))?;
+            }
         }
         SEAT_STATE.put(
             &self.store,
@@ -165,7 +193,7 @@ impl Vault {
     }
 
     /// [`Self::record_model_seat_available`] in the caller's write: the row goes Available at the
-    /// answered generation, its due entry goes, and every park of the seat that generation covers
+    /// answered generation, its reset row goes, and every park of the seat that generation covers
     /// resumes under its own park owner with its notices resolved. A missing row, an Available
     /// row, another generation, or an unreached reset refuses with nothing written.
     pub(crate) fn record_model_seat_available_in_txn(
@@ -219,8 +247,8 @@ impl Vault {
                 source: ModelSeatSource::from(source),
             },
         )?;
-        if let Some(due) = row.reset_at_s {
-            SEAT_RESET_DUE.delete(&self.store, wtxn, &(due, seat))?;
+        if row.reset_at_s.is_some() {
+            crate::schedule::disarm_in_txn(&self.store, wtxn, SEAT_RESET_JOB.code, Some(seat))?;
         }
         self.wake_seat_parks_in_txn(wtxn, seat, answers_generation, now)
     }
@@ -304,83 +332,130 @@ impl Vault {
         Ok(resumed)
     }
 
-    /// Releases every seat whose reported reset the recorded now has reached: one seat-available
-    /// write per due seat, in one write. Returns the seats it released. With nothing due it opens
-    /// no write: the watcher sweeps on every attempt commit.
+    /// The next reported seat reset, if any seat waits on one: the earliest armed row of
+    /// [`SEAT_RESET_JOB`].
+    pub fn next_model_seat_reset_due(&self) -> Result<Option<u64>> {
+        let rtxn = self.store.env.read_txn()?;
+        Ok(crate::schedule::deadlines_in_txn(
+            &self.store,
+            &rtxn,
+            SEAT_RESET_JOB.code,
+            u64::MAX,
+            usize::MAX,
+        )?
+        .into_iter()
+        .map(|(_, at)| at)
+        .min())
+    }
+
+    /// Runs the due rows of [`SEAT_RESET_JOB`] now, ahead of the housekeeping pass: the
+    /// model-seat watcher's door, so a seat's parks wake about a second after its reset rather
+    /// than at the next tick. Each run writes its seat available at its reset, which wakes the
+    /// parks it covers, in one write. Returns the seats its runs released. While a housekeeping
+    /// pass holds the runner it runs nothing and returns none: that pass runs the due rows.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors reading or writing the schedule or a seat's row; a run's own failure backs
+    /// off on its row.
     pub fn release_due_model_seats(&self) -> Result<Vec<ModelSeatId>> {
-        let now = self.store.clock.now_recorded_at();
-        if self
-            .next_model_seat_reset_due()?
-            .is_none_or(|due_at| due_at > now)
-        {
+        let deadline = HousekeepingBudget::unbounded().deadline();
+        let access = AccessSnapshot::new();
+        let pass = JobPass {
+            deadline: &deadline,
+            access: &access,
+        };
+        let Some(report) = self.run_due_of(&[&SEAT_RESET_JOB], &pass)? else {
             return Ok(Vec::new());
-        }
-        let (released, resumed) =
-            self.with_write_txn_grouped(|wtxn| self.release_due_model_seats_in_txn(wtxn))?;
-        if !released.is_empty() {
-            self.store.notify_attempt_observers();
-        }
-        if resumed {
-            // The deadline lane arms the woken tries at once.
-            self.store.notify_proactivity_changes();
+        };
+        let mut released = Vec::new();
+        for run in report.runs {
+            if run.outcome != JobOutcome::Done {
+                continue;
+            }
+            let Some(seat) = run.subject.as_deref() else {
+                continue;
+            };
+            let seat = ModelSeatId::from_hex(seat)?;
+            let reset_passed = self.model_seat_state(seat)?.is_some_and(|state| {
+                state.availability == ModelSeatAvailability::Available
+                    && state.source == ModelSeatSource::ResetPassed
+            });
+            if reset_passed {
+                released.push(seat);
+            }
         }
         Ok(released)
     }
+}
 
-    /// [`Self::release_due_model_seats`] in the caller's write. Returns the seats it released and
-    /// whether any try woke. A due entry with no row, an Available row, or a reset the last refusal
-    /// moved is stale and goes; a seat its own write refuses is left for its own write.
-    fn release_due_model_seats_in_txn(
-        &self,
-        wtxn: &mut heed::RwTxn<'_>,
-    ) -> Result<(Vec<ModelSeatId>, bool)> {
-        let now = self.store.clock.now_recorded_at();
-        // Materialize the scan before writing: each release deletes its due entry.
-        let due: Vec<(u64, ModelSeatId)> = SEAT_RESET_DUE
-            .scan_keys(&self.store, wtxn, &[])?
-            .into_iter()
-            .filter(|(due_at, _)| oneiron_store::expiry::is_due(now, *due_at))
-            .collect();
-        let mut released = Vec::new();
-        let mut resumed_any = false;
-        for (due_at, seat) in due {
-            let row = self.model_seat_state_in_txn(wtxn, seat)?;
-            let Some(row) = row.filter(|row| {
-                matches!(row.availability, ModelSeatAvailability::Unavailable)
-                    && row.reset_at_s == Some(due_at)
-            }) else {
-                SEAT_RESET_DUE.delete(&self.store, wtxn, &(due_at, seat))?;
-                continue;
-            };
-            match self.record_model_seat_available_in_txn(
-                wtxn,
-                seat,
-                row.generation,
-                ModelSeatAvailableSource::ResetPassed,
-            ) {
-                Ok(woken) => {
-                    resumed_any |= !woken.is_empty();
-                    released.push(seat);
-                }
-                Err(error) if is_seat_refusal(&error) => {
-                    tracing::warn!(
-                        seat = %seat.to_hex(),
-                        generation = row.generation,
-                        "a due seat's own write refused it; left for its own write"
-                    );
-                }
-                Err(error) => return Err(error),
-            }
+/// What one run of [`SEAT_RESET_JOB`] decided about its seat.
+enum SeatResetRun {
+    /// The seat went Available; it woke a try when the flag is set.
+    Released { woke: bool },
+    /// The seat has no row, is available, or reports no reset: the row goes.
+    Stale,
+    /// Not due yet, or the seat's own write refused it: left for then.
+    Later(u64),
+}
+
+/// Releases the seat `armed` is about once its reported reset has passed: one seat-available
+/// write at the seat's current generation, which wakes the parks it covers, in one write. A seat
+/// its own write refuses is left for its own write, as the sweep before it left it.
+fn run_seat_reset(vault: &Vault, armed: &Armed, _pass: &JobPass<'_>) -> Result<JobResult> {
+    let Some(seat) = armed.subject else {
+        return Ok(JobResult::of(Ran::Done));
+    };
+    let outcome = vault.with_write_txn_grouped(|wtxn| {
+        let now = vault.store.clock.now_recorded_at();
+        let Some(row) = vault
+            .model_seat_state_in_txn(wtxn, seat)?
+            .filter(|row| matches!(row.availability, ModelSeatAvailability::Unavailable))
+        else {
+            return Ok(SeatResetRun::Stale);
+        };
+        let Some(reset) = row.reset_at_s else {
+            return Ok(SeatResetRun::Stale);
+        };
+        if reset > now {
+            return Ok(SeatResetRun::Later(reset));
         }
-        Ok((released, resumed_any))
-    }
-
-    /// The next reported seat reset, if any seat waits on one.
-    pub fn next_model_seat_reset_due(&self) -> Result<Option<u64>> {
-        let rtxn = self.store.env.read_txn()?;
-        let mut due = SEAT_RESET_DUE.iter_from(&self.store, &rtxn, &[])?;
-        Ok(due.next().transpose()?.map(|((due_at, _), _)| due_at))
-    }
+        match vault.record_model_seat_available_in_txn(
+            wtxn,
+            seat,
+            row.generation,
+            ModelSeatAvailableSource::ResetPassed,
+        ) {
+            Ok(woken) => Ok(SeatResetRun::Released {
+                woke: !woken.is_empty(),
+            }),
+            Err(error) if is_seat_refusal(&error) => {
+                tracing::warn!(
+                    seat = %seat.to_hex(),
+                    generation = row.generation,
+                    "a due seat's own write refused it; left for its own write"
+                );
+                Ok(SeatResetRun::Later(reset))
+            }
+            Err(error) => Err(error),
+        }
+    })?;
+    let due_by = match outcome {
+        SeatResetRun::Released { woke } => {
+            vault.store.notify_attempt_observers();
+            if woke {
+                // The deadline lane arms the woken tries at once.
+                vault.store.notify_proactivity_changes();
+            }
+            None
+        }
+        SeatResetRun::Stale => None,
+        SeatResetRun::Later(at) => Some(at),
+    };
+    Ok(JobResult {
+        due_by,
+        ..JobResult::of(Ran::Done)
+    })
 }
 
 impl DreamerRunnerStore<'_> {
