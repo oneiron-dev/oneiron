@@ -26,6 +26,7 @@ pub use self::remote_task_input::{
     ParkedInput, RemoteTaskAnswer, RemoteTaskFormQuestion, RemoteTaskInputChoice,
     RemoteTaskInputPhase, RemoteTaskInputView,
 };
+pub(crate) use self::remote_task_poll::REMOTE_TASK_POLL_JOB;
 pub use self::remote_task_poll::{
     DueRemoteTask, MIN_REMOTE_TASK_POLL_MS, RemoteTaskCredential, RemoteTaskEnd, RemoteTaskPoll,
     RemoteTaskSessionEnd,

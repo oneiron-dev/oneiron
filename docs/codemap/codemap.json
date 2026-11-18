@@ -8109,7 +8109,7 @@
      "path": "src/batch/claim_candidate_apply.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 9
      }
     },
     {
@@ -19005,7 +19005,7 @@
      "purpose": "Encoding and decoding of durable code-run replay records",
      "surface": {
       "const": 6,
-      "crate-vis": 7,
+      "crate-vis": 8,
       "fn": 2,
       "re-export": 1
      }
@@ -19038,7 +19038,7 @@
      "path": "src/code_run/codec/pending_step.rs",
      "purpose": "The pinned MessagePack codec of a code run's pending step (FIX 7703): its keys, its encoding and decoding…",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -19178,7 +19178,7 @@
      "path": "src/code_run/consent_wait/mod.rs",
      "purpose": "Bound code consent waits (DOOR-079 1a, toward CODE-RUNTIME-03)",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "re-export": 6
      }
     },
@@ -19221,7 +19221,7 @@
      "path": "src/code_run/consent_wait/resume.rs",
      "purpose": "The MCP caller a code run parked on a code consent wait was admitted for, kept with the wait, and the parked…",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 2,
       "re-export": 1,
       "struct": 1
@@ -19428,7 +19428,7 @@
      "path": "src/code_run/dispatcher/agent_verb.rs",
      "purpose": "Code mode's verb-table calls: the run's write origin and the receipt a write keeps",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "fn": 1,
       "re-export": 1
      }
@@ -19450,7 +19450,7 @@
      "path": "src/code_run/dispatcher/agent_verb/consent.rs",
      "purpose": "Code mode's code consent call site, and the durable wait a held `connector.call` or a held browser act parks…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -19563,7 +19563,7 @@
      "path": "src/code_run/dispatcher/emission.rs",
      "purpose": "Code-emission admission and the deterministic admission record the free lane cites",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -19636,7 +19636,7 @@
      "path": "src/code_run/dispatcher/leader.rs",
      "purpose": "Host entry points for the CEO starter on a leased, task-bound leader",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "fn": 9,
       "struct": 2
      }
@@ -19661,7 +19661,7 @@
      "path": "src/code_run/dispatcher/mod.rs",
      "purpose": "State and export seam for the host-bound first-party dispatcher",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 17,
       "re-export": 6,
       "struct": 1,
       "type": 1
@@ -19674,7 +19674,7 @@
      "path": "src/code_run/dispatcher/program_step.rs",
      "purpose": "A turn program's code run (DOOR-141 PR2): the program's own leased try, lent to the one callable SKILL its…",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 16
      }
     },
     {
@@ -19739,7 +19739,7 @@
      "path": "src/code_run/dispatcher/repo_sources.rs",
      "purpose": "The attribution a run's proposal records (FIX 6867, G1 PR2b; CALL \"FIX 6867 review policy and provenance\")…",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 1,
       "struct": 1
      }
@@ -19805,13 +19805,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/code_run/dispatcher/team_submit.rs",
      "purpose": "`self.team.submit` (OF-540): a team's leader submits one pinned output of its team for the owner's…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -19967,7 +19967,7 @@
      "purpose": "A live agent run's attachment to the one credential that may act for it (OF-181)",
      "surface": {
       "const": 2,
-      "crate-vis": 1,
+      "crate-vis": 3,
       "fn": 10,
       "struct": 2
      }
@@ -19979,7 +19979,7 @@
      "path": "src/code_run/mod.rs",
      "purpose": "Host-side skeleton for first-party `self.*` code-mode calls",
      "surface": {
-      "crate-vis": 68,
+      "crate-vis": 72,
       "mod": 8,
       "re-export": 39
      }
@@ -20269,7 +20269,7 @@
      "path": "src/code_run/replay_capsule.rs",
      "purpose": "Step replay capsules (FIX 3028, ARCH-0037 #lineage-credit, ARCH-0053): the exact model input of a canonical…",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "fn": 8,
       "re-export": 2,
       "struct": 1
@@ -84134,7 +84134,7 @@
      "path": "src/store/secret_handle_labels.rs",
      "purpose": "The owner-set labels on custody handles: one stored label per custody record, with the Gate receipt of the…",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "re-export": 1
      }
     },
@@ -93418,7 +93418,7 @@
      "purpose": "The owner's proof, the Coach and a project goal, for integration tests (untangle 6.6: the Coach's…",
      "surface": {
       "const": 2,
-      "fn": 4
+      "fn": 7
      }
     },
     {
@@ -94242,6 +94242,16 @@
      "purpose": "Door for `tests/fingerprint_keep_booking_dreamer_digests.rs` (PLAN-UC-04 stage 6.2c): the emergency…",
      "surface": {
       "fn": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/test_doors/fingerprint_keep_code_run_digests.rs",
+     "purpose": "K-proof door for code-run digests that existing rows, ids and keys hold",
+     "surface": {
+      "fn": 12
      }
     },
     {
@@ -95123,7 +95133,7 @@
      "purpose": "Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD)",
      "surface": {
       "fn": 1,
-      "mod": 314,
+      "mod": 315,
       "re-export": 1
      }
     },
@@ -102020,7 +102030,7 @@
      "path": "src/workspace_roster/mod.rs",
      "purpose": "Workspace roster preset + member onboarding (ONEIRON-ARCH-0065)",
      "surface": {
-      "crate-vis": 50,
+      "crate-vis": 51,
       "mod": 1,
       "re-export": 30
      }
@@ -102089,7 +102099,7 @@
      "path": "src/workspace_roster/project/deletion.rs",
      "purpose": "Delete the derived home room at the common entity deindex door",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 3
      }
     },
     {
@@ -102396,7 +102406,7 @@
      "purpose": "Project responsibility records and their derived home-room membership",
      "surface": {
       "const": 1,
-      "crate-vis": 54,
+      "crate-vis": 55,
       "enum": 2,
       "fn": 20,
       "re-export": 20,
@@ -107294,6 +107304,17 @@
      "purpose": "K-proof (oracle) for the check-in effect digests of P2.5's delete and security-control doors: each keeps its…",
      "surface": {
       "fn": 5
+     }
+    },
+    {
+     "bucket": "L",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/fingerprint_keep_code_run_digests.rs",
+     "purpose": "K-proof for code-run legacy digests at cc184ff09aea: existing stored, keyed and compared identities keep…",
+     "surface": {
+      "crate-vis": 31,
+      "fn": 4
      }
     },
     {
@@ -114922,7 +114943,7 @@
      "purpose": "`TimeRange`, temporal expressions/parsing, granularity/anchor enums"
     },
     "test_doors": {
-     "files": 320,
+     "files": 321,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -115099,8 +115120,8 @@
    },
    "over_bar": 302,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 8150,
-   "test_files": 1893
+   "source_files": 8151,
+   "test_files": 1894
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -129809,6 +129830,14 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/purposes/code_run.rs",
+     "purpose": "Legacy code-run digests that existing rows, ids and keys hold",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/purposes/dreamer.rs",
      "purpose": "Purposes of the Dreamer (`crates/oneiron/src/dreamer_consolidation`, `crates/oneiron/src/dreamer_promotion`…",
      "surface": {}
@@ -130159,7 +130188,7 @@
      "purpose": "The K door: a digest that main already stores or sends keeps its exact bytes"
     },
     "purposes": {
-     "files": 51,
+     "files": 52,
      "impl_vault": false,
      "largest_src_bucket": "s",
      "layout": "dir",
@@ -130175,7 +130204,7 @@
    },
    "over_bar": 0,
    "purpose": "One fingerprint rule for engine digests (fable pass 22; PLAN-UC-04 stage 0)",
-   "source_files": 54,
+   "source_files": 55,
    "test_files": 1
   },
   "oneiron-gen": {
@@ -187710,11 +187739,11 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "tests/lmdb_open_damaged_file.rs",
-     "purpose": "FIX row LMDB-MASTER3-UPSTREAM-FIXES-AUDIT (upstream ITS#9291 and its `ONEIRON FORK (LMDB audit)` hunks): an…",
+     "purpose": "FIX rows LMDB-MASTER3-UPSTREAM-FIXES-AUDIT (upstream ITS#9291 and its `ONEIRON FORK (LMDB audit)` hunks) and…",
      "surface": {}
     },
     {

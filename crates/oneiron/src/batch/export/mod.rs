@@ -27,6 +27,8 @@ pub(crate) use archive_read::{
 };
 pub use archive_retained_side_rows::ArchiveRetainedSideRow;
 #[cfg(oneiron_test_support)]
+pub(crate) use archive_side_tables::PortableSideTable;
+#[cfg(oneiron_test_support)]
 pub(crate) use archive_side_tables::archive_side_family_table_names;
 pub use archive_side_tables::{
     ArchiveLfsObject, ArchiveSideFamily, ArchiveSideKeyPart, ArchiveSideRow, ArchiveSideTree,

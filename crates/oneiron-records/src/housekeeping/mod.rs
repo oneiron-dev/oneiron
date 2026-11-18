@@ -8,5 +8,3 @@ pub use oneiron_store::housekeeping_report::SweepWork;
 pub use oneiron_store::housekeeping_schedule::HostOnlyReason;
 pub use oneiron_store::housekeeping_schedule::HousekeepingBudget;
 pub use oneiron_store::housekeeping_schedule::HousekeepingSweep;
-
-pub mod schedule;
