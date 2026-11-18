@@ -7,10 +7,11 @@
 //! first use: the home's window filtered by that selector for the socket's
 //! peer ([`rebuild`]). No copy is built but through its selector.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::Arc;
 
 use loro::LoroDoc;
+use oneiron::EntityId;
 use oneiron::authority::PeerMachine;
 use oneiron::sync::{SyncSelector, WindowKey, WindowManager, filtered_window_doc_for_peer};
 
@@ -85,6 +86,14 @@ impl AdmittedWindows {
                 admitted.copy = None;
             }
         }
+    }
+
+    /// Each grant this socket's fetched windows were admitted under, once.
+    pub(super) fn grants(&self) -> BTreeSet<EntityId> {
+        self.windows
+            .values()
+            .map(|admitted| admitted.selector.grant_id)
+            .collect()
     }
 
     /// Each admitted window whose selector `admits`, as a read sees it.

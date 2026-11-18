@@ -5,7 +5,8 @@
 //!
 //! An `assert_distinct` op asserts through the live `entity.distinct_from`
 //! CLAIM of its pair when there already is one, so the pair's CLAIM may sit
-//! in a world: here the owner's own CLAIM in W. The op writes a type-74
+//! in a world: here a CLAIM proposed in W, which the owner's assertion
+//! promotes in place, so it keeps its world. The op writes a type-74
 //! AssertDistinct ledger event that names the pair and that CLAIM, signed by
 //! an admission disposition, and FIX DISTINCT-EVENT-DEFAULT-PROJECT-STAMP
 //! stamps both rows at the CLAIM's world. A door that judges a row by its
@@ -155,35 +156,53 @@ fn a_distinct_event_over_a_claim_of_a_kept_world_stays_on_this_machine() {
         .put_entity(&world, ENTITY_TYPE_WORLD, at(1), 1, b"world")
         .expect("put the world");
 
-    // The owner's own distinct fact between two people, in W.
+    // A distinct fact between two people, proposed in W. The raw claim door
+    // holds an Approved row of this critical predicate at the gate's floor
+    // (no owner proof reaches it: gate.pending.criticality_floor), so the
+    // CLAIM lands Proposed, with the source an owner's assertion carries.
     let pair = distinct_pair_key(person(&vault, "Ada"), person(&vault, "Ada"));
     let mut body = ClaimBody::new(
         PREDICATE_ENTITY_DISTINCT_FROM,
         ClaimSubject::Entity(pair.0),
         distinct_claim_value(pair),
         1.0,
-        ClaimApprovalStatus::Approved,
+        ClaimApprovalStatus::Proposed,
         ClaimLifecycleStatus::Active,
     )
     .expect("a distinct claim");
+    body.source = Some(ClaimSource::UserStated);
     body.world = Some(world);
     let kept_claim = EntityId::now();
     vault
         .put_claim(&kept_claim, &body, at(1), 1)
-        .expect("put the distinct claim in W");
+        .expect("propose the distinct claim in W");
     assert_eq!(
         vault.record_world(&kept_claim).expect("world read"),
         Some(Some(world)),
         "FIXTURE: the pair's CLAIM sits in W"
     );
 
-    // Asserting the pair goes through that CLAIM; another pair's assertion
-    // mints its CLAIM in base reality.
+    // The owner's assertion of the pair promotes that CLAIM in place; another
+    // pair's assertion mints its CLAIM in base reality.
     let kept_event = assert_distinct(&vault, pair.0, pair.1);
     assert_eq!(
         asserted_claim(&vault, kept_event),
         kept_claim,
         "FIXTURE: the assertion names the pair's CLAIM in W"
+    );
+    assert_eq!(
+        vault
+            .get_claim(&kept_claim)
+            .expect("claim read")
+            .expect("FIXTURE: the pair's CLAIM is stored")
+            .approval,
+        ClaimApprovalStatus::Auto,
+        "FIXTURE: the owner's assertion promotes the proposed CLAIM"
+    );
+    assert_eq!(
+        vault.record_world(&kept_claim).expect("world read"),
+        Some(Some(world)),
+        "FIXTURE: the promoted CLAIM still sits in W"
     );
     let open_event = assert_distinct(&vault, person(&vault, "Bo"), person(&vault, "Bo"));
     let open_claim = asserted_claim(&vault, open_event);

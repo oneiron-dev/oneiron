@@ -141,6 +141,7 @@ mod owner_choice;
 mod owner_delegate;
 mod owner_key_enrollment;
 mod owner_key_enrollment_door;
+mod owner_key_line;
 mod owner_key_move_confirm;
 mod owner_key_vouch;
 mod owner_project_slip;
@@ -451,6 +452,8 @@ pub use owner_key_move_confirm::{
     OWNER_KEY_MOVE_NOT_SYNCED, OWNER_KEY_MOVE_PLAN_STALE, OWNER_KEY_MOVE_SIGNER_NOT_EXECUTORS,
     OwnerKeyMovePlan, OwnerKeyMoveSigner, sign_owner_key_move,
 };
+#[cfg(oneiron_test_support)]
+pub(crate) use owner_key_vouch::require_holding_machine;
 pub use owner_key_vouch::{
     DeviceOwnerKeyVouch, OWNER_KEY_VOUCH_LABEL_MAX, OWNER_KEY_VOUCH_TEXT_PREFIX,
     OwnerKeyVouchRequest,
@@ -558,6 +561,8 @@ pub(crate) use log_budget::{
     end_owner_reserve_work_hold, past_owner_reserve_in_txn, signer_has_standing,
 };
 pub(crate) use log_structure::carried_rows_never_applied_in_txn;
+#[cfg(oneiron_test_support)]
+pub(crate) use owner_key_line::tail_reaches_old_parents_past_rows_for_test;
 pub(crate) use owner_work::{RootBasisCheck, check_root_basis};
 pub use owner_work_diagnostics::{OWNER_WORK_NO_VOUCH_DIAGNOSTIC_ONLY, OwnerWorkNoVouchDiagnostic};
 #[cfg(oneiron_test_support)]

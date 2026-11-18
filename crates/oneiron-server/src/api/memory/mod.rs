@@ -368,13 +368,15 @@ pub(crate) async fn core_memory_verb(
             // and no deferred closure (ARCH-0040: a destructive supersede
             // defers closure until approval), so on this route they are the
             // owner's (LEGACY-MEMORY-VERB-RETRACT-SUPERSEDE-UNGUARDED).
-            if !memory_owner_door(&server, &auth, host_action.is_some()) {
+            let Some(owner) = memory_owner_proof(&server, &auth, host_action.is_some())? else {
                 return Err(non_owner_supersede_refusal().into());
-            }
+            };
             let at = req.at.unwrap_or_else(unix_seconds_now);
+            #[cfg(oneiron_test_support)]
+            crate::test_doors::memory_owner_commit::run_before_owner_commit(&server.vault);
             server
                 .vault
-                .supersede_claim(&new_id, &old_id, at)
+                .supersede_claim_as_owner(&owner, &new_id, &old_id, at)
                 .map_err(|error| {
                     tracing::error!(
                         kind = ?error.kind(),
@@ -402,7 +404,7 @@ pub(crate) async fn core_memory_verb(
             // Anyone but the owner retracts as `vault.claims.retract` does: on
             // its own resolved actor, its own claim only, at the vault's time
             // (LEGACY-MEMORY-VERB-RETRACT-SUPERSEDE-UNGUARDED).
-            if !memory_owner_door(&server, &auth, host_action.is_some()) {
+            let Some(owner) = memory_owner_proof(&server, &auth, host_action.is_some())? else {
                 if req.at.is_some() {
                     return Err(ApiError::bad_request(
                         "at is the vault owner's to set; this retract is recorded at the vault's time",
@@ -431,9 +433,11 @@ pub(crate) async fn core_memory_verb(
                         receipt_ref: Some(receipt.receipt_ref),
                     }),
                 }));
-            }
+            };
             let at = req.at.unwrap_or_else(unix_seconds_now);
-            server.vault.retract_claim(&id, at).map_err(|error| {
+            #[cfg(oneiron_test_support)]
+            crate::test_doors::memory_owner_commit::run_before_owner_commit(&server.vault);
+            server.vault.retract_claim_as_owner(&owner, &id, at).map_err(|error| {
                 tracing::error!(kind = ?error.kind(), id = %id.to_hex(), "core memory retract failed");
                 core_engine_error("core memory retract failed", error)
             })?;
@@ -831,12 +835,26 @@ fn core_memory_caller(
     }
 }
 
-/// Whether a memory verb takes the vault owner's path: a self-hosted root or
-/// the dev mode (`host_action`), or the owner's own slip
+/// The vault owner's proof when a memory verb takes the owner's path, or
+/// `None` for anyone else: a self-hosted root or the dev mode
+/// (`host_action`), whose proof carries that action, or the owner's own slip
 /// ([`crate::api::owner_routes::owner`]). A full-vault slip someone else
-/// holds is not the owner's (OWNER-GRADE-IS-NOT-OWNERSHIP).
-fn memory_owner_door(server: &SyncServer, auth: &CoreAuth, host_action: bool) -> bool {
-    host_action || crate::api::owner_routes::owner(auth, server).is_ok()
+/// holds is not the owner's (OWNER-GRADE-IS-NOT-OWNERSHIP). A host action
+/// whose owner no longer authenticates gets the owner door's refusal. The
+/// lifecycle door checks the proof again in the writer that commits the act,
+/// so a credential revoked, or an owner removed, while the request waits on
+/// that writer commits nothing (FIX
+/// MEMORY-VERB-OWNER-PROOF-NOT-REVALIDATED-AT-COMMIT).
+fn memory_owner_proof(
+    server: &SyncServer,
+    auth: &CoreAuth,
+    host_action: bool,
+) -> Result<Option<oneiron::consent::AuthenticatedOwner>, ApiError> {
+    let owner = crate::api::owner_routes::owner(auth, server);
+    if host_action {
+        return owner.map(Some);
+    }
+    Ok(owner.ok())
 }
 
 /// `supersede` by a caller that is not the vault owner.

@@ -21,8 +21,9 @@ fn revoke_refused() -> Error {
 }
 
 /// Whether `actor` may stop every share, issued by it or not: a human whose authority-log owner
-/// binding is live, on a vault root that is not conflicted. [`Vault::revoke_share`] admits
-/// anyone else only on a share it issued.
+/// binding is live, on a vault root that is not conflicted. A binding whose PERSON is deleted
+/// authorizes nothing (H149; L9-52 (b)). [`Vault::revoke_share`] admits anyone else only on a
+/// share it issued.
 pub(crate) fn owner_revokes_every_share_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -31,7 +32,13 @@ pub(crate) fn owner_revokes_every_share_in_txn(
     let fold = vault.authority_fold_readonly_in_txn(txn)?;
     Ok(actor.actor_class() == EdgeActorClass::Human
         && !fold.vault_root_is_conflicted()
-        && crate::authority::actor_binding_is_active(&fold, &actor.entity_ref(), "human"))
+        && crate::authority::actor_binding_is_live_in(
+            &vault.store,
+            txn,
+            &fold,
+            &actor.entity_ref(),
+            "human",
+        )?)
 }
 
 impl Vault {
