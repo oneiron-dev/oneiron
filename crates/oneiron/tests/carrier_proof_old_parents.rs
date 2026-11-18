@@ -34,10 +34,12 @@ use oneiron::{EntityId, HostingPrivacyPosture};
 use oneiron_authority::authority::{
     AuthorityConfirmAction, AuthorityConfirmKind, CheckpointPolicySet, CheckpointRootChoice,
     ConversationTrainingSet, ConversationTrainingVaultSet, DeviceSuccession, HomeNodePick,
-    OWNER_KEY_ENROLLMENT_SEEN, OWNER_KEY_POSSESSION_KIND, OriginCut, OwnerKeyEnroll, PolicySetting,
-    PolicySettingSet, checkpoint_policy_target, conversation_training_vault_target,
-    device_succession_target, home_pick_target, machine_answer_revision, origin_cut_target,
-    owner_key_enrollment_challenge, owner_key_enrollment_target, roster_has_live_owner,
+    OWNER_KEY_ENROLLMENT_SEEN, OWNER_KEY_POSSESSION_KIND, OWNER_PASSKEY_POSSESSION_KIND, OriginCut,
+    OwnerKeyEnroll, PolicySetting, PolicySettingSet, checkpoint_policy_target,
+    conversation_training_vault_target, device_succession_target, home_pick_target,
+    machine_answer_revision, origin_cut_target, owner_key_enrollment_challenge,
+    owner_key_enrollment_target, owner_passkey_possession_evidence, roster_has_live_owner,
+    webauthn_assertion_envelope, webauthn_challenge,
 };
 
 const ROOT_SEED: u8 = 61;
@@ -1605,6 +1607,269 @@ fn a_rotation_onto_an_owner_key_on_old_parents_does_not_end_it() {
     assert!(
         !fold.valid_entries.contains(&first) && !fold.valid_entries.contains(&second),
         "neither forked handoff installs: {:?}",
+        fold.issues
+    );
+}
+
+/// The owner's passkey of tests 21 and 22, as a platform authenticator holds
+/// it: a software P-256 key, and its credential id (`rawId`).
+const PASSKEY_SCALAR: [u8; 32] = [0x5A; 32];
+const PASSKEY_CREDENTIAL_ID: &[u8] = b"passkey-credential-0001";
+
+/// The passkey's assertion over `message`, in its envelope, as a browser's
+/// `navigator.credentials.get` returns it at the vault's origin with the
+/// person verified: authenticator data (RP id hash, user present and
+/// verified, a zero sign count), the client data JSON naming
+/// [`webauthn_challenge`] of `message`, and the DER signature over the one
+/// and SHA-256 of the other.
+fn passkey_assertion(passkey: &p256::ecdsa::SigningKey, message: &[u8]) -> Vec<u8> {
+    use base64::Engine as _;
+    use sha2::Digest as _;
+    let mut authenticator_data = sha2::Sha256::digest(b"oneiron.test").to_vec();
+    authenticator_data.push(0x05);
+    authenticator_data.extend_from_slice(&[0; 4]);
+    let client_data_json = format!(
+        r#"{{"type":"webauthn.get","challenge":"{}","origin":"https://oneiron.test","crossOrigin":false}}"#,
+        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(webauthn_challenge(message))
+    )
+    .into_bytes();
+    let mut signed = authenticator_data.clone();
+    signed.extend_from_slice(&sha2::Sha256::digest(&client_data_json));
+    let signature: p256::ecdsa::Signature = p256::ecdsa::signature::Signer::sign(passkey, &signed);
+    webauthn_assertion_envelope(
+        &authenticator_data,
+        &client_data_json,
+        signature.to_der().as_bytes(),
+    )
+    .expect("an envelope")
+}
+
+impl OldParents {
+    /// The root enrols the owner's passkey on the last row, carried by M:
+    /// the root signs, M cosigns, and the passkey's assertion over the
+    /// enrolment challenge proves possession, as the web's passkey door
+    /// writes it. Returns the entry's hash and the passkey's roster key
+    /// (compressed SEC1).
+    fn enrol_passkey_owner_key(&mut self) -> (AuthorityEntryHash, AuthorityKey) {
+        let parent = hash(self.rows.last().expect("a parent row"));
+        self.enrol_passkey_owner_key_on(parent, self.machine)
+    }
+
+    /// [`OldParents::enrol_passkey_owner_key`] on `parent`, with `holder` as
+    /// the machine the enrolment names (for a passkey, the carrier that
+    /// served its ceremony); the carrier stays M (its install key cosigns).
+    fn enrol_passkey_owner_key_on(
+        &mut self,
+        parent: AuthorityEntryHash,
+        holder: EntityId,
+    ) -> (AuthorityEntryHash, AuthorityKey) {
+        let passkey = p256::ecdsa::SigningKey::from_slice(&PASSKEY_SCALAR).expect("a P-256 scalar");
+        let public_key = passkey
+            .verifying_key()
+            .to_encoded_point(true)
+            .as_bytes()
+            .to_vec();
+        let vault_id = self.vault_id();
+        let target = owner_key_enrollment_target(&vault_id, &public_key).expect("the target");
+        let challenge = owner_key_enrollment_challenge(&vault_id, holder, &public_key, owner())
+            .expect("the challenge");
+        let evidence = owner_passkey_possession_evidence(
+            PASSKEY_CREDENTIAL_ID,
+            &passkey_assertion(&passkey, &challenge),
+        )
+        .expect("the possession evidence");
+        let key = AuthorityKey::P256(public_key);
+        let op = AuthorityOp::OwnerKeyEnroll(OwnerKeyEnroll {
+            act: OwnerAct::by_owner(
+                owner(),
+                OwnerActKind::OwnerKeyEnrollment,
+                target,
+                ActSurface::ThisInstall,
+                OWNER_KEY_ENROLLMENT_SEEN,
+            ),
+            machine: holder,
+            carrier: self.machine,
+            device: DeviceAuthority {
+                key: key.clone(),
+                transport_key_binding: [0; 32],
+                attestation: AuthorityAttestation {
+                    kind: OWNER_PASSKEY_POSSESSION_KIND.to_owned(),
+                    evidence,
+                },
+                tier: AuthorityTier::Software,
+                roles: ROLE_OWNER,
+            },
+        });
+        self.root_seq += 1;
+        let seq = self.root_seq;
+        let row = signed(
+            Some(vault_id),
+            seq,
+            vec![parent],
+            op,
+            &self.root,
+            &[&self.node],
+        );
+        let entry = hash(&row);
+        self.rows.push(row);
+        (entry, key)
+    }
+}
+
+/// Test 21 of the row, for row PASSKEY-OWNER-KEY-DRAWS-NO-LINE (REVIEW2 #8502
+/// P2-1): test 19 with the owner's passkey as the owner key. A passkey is
+/// the owner's key (CARRIER-HOSTED-WEB-ACTS = C), though the fold takes no
+/// proof from it (CARRIER-ASKS-ON-PASSKEY-ONLY-VAULT = A), so its enrolment
+/// draws the line that refuses another enrolment of its key outside it
+/// (OLDPARENTS-ENROL-DODGE = A). From P, E enrols passkey K (carrier M); the
+/// root enrols K as an agent key on P (D) and revokes K on D (R), which
+/// waits with D. Main: no line, so D and R count, and a web-only owner's one
+/// key is revoked.
+#[test]
+fn a_revoke_above_an_agent_copy_of_a_passkey_owner_key_does_not_end_it() {
+    let mut vault = OldParents::new();
+    let before = hash(&vault.rows[1]);
+    let (enrolment, key) = vault.enrol_passkey_owner_key();
+    let agent_enrolment = vault.root_enrols_agent_key(before, key.clone());
+    let revoke = vault.push_root_row(
+        vec![agent_enrolment],
+        AuthorityOp::RevokeDevice {
+            revoked_key: key.clone(),
+        },
+    );
+    let fold = vault.fold();
+    assert!(
+        fold.valid_entries.contains(&enrolment),
+        "passkey enrolment counts: {:?}",
+        fold.issues
+    );
+    assert!(
+        !fold.valid_entries.contains(&agent_enrolment) && !fold.valid_entries.contains(&revoke),
+        "the agent copy of the passkey is refused and the revoke above it waits: {:?}",
+        fold.issues
+    );
+    assert!(
+        live_owner(&fold, &key),
+        "a revoke above the refused copy never ends the passkey: {key:?}"
+    );
+}
+
+/// Test 22 of the row, for row PASSKEY-OWNER-KEY-DRAWS-NO-LINE: the
+/// passkey's line asks for no proof (CARRIER-ASKS-ON-PASSKEY-ONLY-VAULT = A).
+/// From P, E enrols passkey K (carrier M), and M carries the owner's home
+/// pick on P. No key of the vault gives the owner's proof, so the pick lands
+/// and waits for nothing, on main and with the fix.
+#[test]
+fn an_old_parents_home_pick_lands_on_a_passkey_only_vault() {
+    let mut vault = OldParents::new();
+    let (vault_id, machine) = (vault.vault_id(), vault.machine);
+    let before = hash(&vault.rows[1]);
+    let (enrolment, key) = vault.enrol_passkey_owner_key();
+    let carried = vault.carry(vec![before], home_pick_op(vault_id, machine, PICKED_NODE));
+    let fold = vault.fold();
+    assert_enrolment_counted(&fold, &enrolment, &key);
+    assert!(
+        fold.valid_entries.contains(&carried) && !waits(&fold, &carried),
+        "the pick counts and waits for no proof: {:?}",
+        fold.issues
+    );
+    assert!(
+        in_force_home_pick(&fold),
+        "the pick is in force: {:?}",
+        fold.issues
+    );
+}
+
+impl OldParents {
+    /// M carries the owner's removal of machine `victim` (install key
+    /// `victim_key`, registered by `registered`) on that registration, under
+    /// its own install key with no cosign: its first primary-signed row.
+    fn carry_removal(
+        &mut self,
+        victim_key: &SigningKey,
+        victim: EntityId,
+        registered: AuthorityEntryHash,
+    ) -> AuthorityEntryHash {
+        let removal_act = OwnerAct::by_owner(
+            owner(),
+            OwnerActKind::MachineRemoval,
+            victim,
+            ActSurface::ThisInstall,
+            machine_answer_revision([registered]),
+        );
+        let profile = node_profile(
+            self.vault_id(),
+            victim,
+            victim_key,
+            MachineRole::Removed,
+            2,
+            Some((self.machine, removal_act)),
+        );
+        self.carry(vec![registered], AuthorityOp::MachineProfile(profile))
+    }
+}
+
+/// Test 23 of the row, for row PASSKEY-OWNER-KEY-DRAWS-NO-LINE (blind review
+/// round 1 of #9495, P1): a passkey's line refuses no second enrolment of
+/// the passkey, which a later line can let fold. On X's registration P, E1
+/// enrols passkey K (holder X) and E2 enrols proving key K2 on E1; M carries
+/// a removal R of X on P, and E3 enrols K again (holder X) on R. The first
+/// fold refuses E3 (R removed X) and takes E1 before E2 (fewer ancestors);
+/// E2's line then holds R, so X stays live and E3 counts. The reviewed head:
+/// E1's line refused E3, which no fold had taken, for good. Main: E1 draws
+/// no line, so E3 counts.
+#[test]
+fn a_passkey_line_lets_a_second_enrolment_of_the_passkey_fold() {
+    let mut vault = OldParents::new();
+    let (victim_key, victim, registered) = vault.register_second_machine();
+    let machine = vault.machine;
+    let (first, key) = vault.enrol_passkey_owner_key_on(registered, victim);
+    let proving_signing = signing(OWNER_KEY_SEED_2);
+    let proving = vault.enrol_owner_key_on(first, &proving_signing, machine);
+    let proving_key = key_of(&proving_signing);
+    let removal = vault.carry_removal(&victim_key, victim, registered);
+    let (second, _) = vault.enrol_passkey_owner_key_on(removal, victim);
+    let fold = vault.fold();
+    assert_enrolment_counted(&fold, &first, &key);
+    assert_enrolment_counted(&fold, &proving, &proving_key);
+    assert!(
+        is_held(&fold, victim, &removal),
+        "the removal outside the proving line is held: {:?}",
+        fold.issues
+    );
+    assert!(
+        fold.valid_entries.contains(&second),
+        "the second enrolment of the passkey counts once its holder stays live: {:?}",
+        fold.issues
+    );
+}
+
+/// Test 24 of the row (blind review round 1 of #9495, P1): the same for a
+/// device's key, whose first enrolment's own line holds the removal. On X's
+/// registration P, E1 enrols K (holder X); M carries a removal R of X on P,
+/// and E3 enrols K again (holder X) on R. The first fold refuses E3 (R
+/// removed X) and takes E1; E1's line holds R, so X stays live and E3
+/// counts. Main and the reviewed head: E1's line refused E3, which no fold
+/// had taken, for good.
+#[test]
+fn an_owner_key_line_lets_a_second_enrolment_of_its_key_fold() {
+    let mut vault = OldParents::new();
+    let (victim_key, victim, registered) = vault.register_second_machine();
+    let owner_signing = signing(OWNER_KEY_SEED);
+    let key = key_of(&owner_signing);
+    let first = vault.enrol_owner_key_on(registered, &owner_signing, victim);
+    let removal = vault.carry_removal(&victim_key, victim, registered);
+    let second = vault.enrol_owner_key_on(removal, &owner_signing, victim);
+    let fold = vault.fold();
+    assert_enrolment_counted(&fold, &first, &key);
+    assert!(
+        is_held(&fold, victim, &removal),
+        "the removal outside the first line is held: {:?}",
+        fold.issues
+    );
+    assert!(
+        fold.valid_entries.contains(&second),
+        "the second enrolment of the key counts once its holder stays live: {:?}",
         fold.issues
     );
 }
