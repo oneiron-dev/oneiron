@@ -4,7 +4,9 @@
 //! judgement of one retained row; and for
 //! `tests/archive_import_owner_installs_side_receipts.rs`: a rotation receipt
 //! body as an earlier writer stored it; and a sealed Gate decision naming an
-//! actor, for the retained-row actor erase.
+//! actor, for the retained-row actor erase; and for
+//! `tests/fingerprint_keep_archive_retained_side_row.rs`: the physical key of
+//! one retained tuple.
 
 use crate::batch::export::archive_retained_side_rows::{
     retained_side_row_key, retained_side_row_withholds_credential,
@@ -182,4 +184,20 @@ pub fn archive_side_disposition_names() -> Vec<(&'static str, &'static str)> {
             .map(|(name, _)| (*name, "other_section")),
     );
     names
+}
+
+/// The physical key the archive files one retained tuple under, for
+/// `tests/fingerprint_keep_archive_retained_side_row.rs`.
+#[must_use]
+pub fn retained_side_row_physical_key(
+    source_table: &str,
+    source_key: &[u8],
+    source_value: &[u8],
+) -> [u8; 32] {
+    retained_side_row_key(&ArchiveRetainedSideRow {
+        source_table: source_table.to_owned(),
+        source_key: source_key.to_vec(),
+        source_value: source_value.to_vec(),
+        source_live: true,
+    })
 }

@@ -24,6 +24,7 @@ mod reply_job;
 pub mod report_signature;
 mod retry_audit;
 mod retry_edge;
+pub(crate) use self::retry_edge::kept_send_backoff_until;
 mod schedule_contract;
 pub use schedule_contract::BRIDGE_OUTBOUND_ATTEMPT_KIND;
 mod send_lookup;

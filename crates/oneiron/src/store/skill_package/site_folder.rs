@@ -19,9 +19,9 @@ use super::HubFile;
 use crate::entity_id::bytes_to_hex_lower;
 
 /// The file that makes a folder a site skill.
-const SITE_FILE: &str = "site.json";
+pub(crate) const SITE_FILE: &str = "site.json";
 /// The directory a folder's seed programs sit in, one level deep.
-const PROGRAMS_DIR: &str = "programs/";
+pub(crate) const PROGRAMS_DIR: &str = "programs/";
 const PROGRAM_SUFFIX: &str = ".json";
 /// The `site.json` keys that pass through as knowledge.
 const KNOWLEDGE_KEYS: [&str; 2] = ["traps", "programs"];

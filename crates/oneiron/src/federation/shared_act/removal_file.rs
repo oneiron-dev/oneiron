@@ -18,6 +18,8 @@
 
 use std::io::{Read, Seek, SeekFrom};
 
+use oneiron_contracts::fingerprint::ContentHasher;
+
 use super::ArchiveRow;
 use crate::error::{Error, Result};
 use crate::provenance::body::BodyRef;
@@ -87,7 +89,7 @@ pub(crate) fn removal_archive_owner(row: ArchiveRow) -> Result<EntityId> {
 /// is written rather than read again.
 struct HashingWriter<W> {
     inner: W,
-    hasher: blake3::Hasher,
+    hasher: ContentHasher,
 }
 
 impl<W: std::io::Write> std::io::Write for HashingWriter<W> {
@@ -105,10 +107,10 @@ impl<W: std::io::Write> std::io::Write for HashingWriter<W> {
 /// BLAKE3 and length of everything `source` holds, read from its start.
 fn measure(source: &mut (impl Read + Seek)) -> Result<([u8; 32], u64)> {
     source.seek(SeekFrom::Start(0))?;
-    let mut hasher = blake3::Hasher::new();
+    let mut hasher = ContentHasher::new();
     let len = std::io::copy(source, &mut hasher)?;
     source.seek(SeekFrom::Start(0))?;
-    Ok((*hasher.finalize().as_bytes(), len))
+    Ok((hasher.finish().into_bytes(), len))
 }
 
 /// Everything `source` holds, from its start, copied into `spool` and hashed
@@ -126,7 +128,7 @@ pub(super) fn spool_hashed(
     source.seek(SeekFrom::Start(0))?;
     let mut writer = HashingWriter {
         inner: std::io::BufWriter::new(spool),
-        hasher: blake3::Hasher::new(),
+        hasher: ContentHasher::new(),
     };
     std::io::copy(source, &mut writer)?;
     let HashingWriter { inner, hasher } = writer;
@@ -135,7 +137,7 @@ pub(super) fn spool_hashed(
         .map_err(std::io::IntoInnerError::into_error)?;
     spool.seek(SeekFrom::Start(0))?;
     source.seek(SeekFrom::Start(0))?;
-    Ok((spool, hasher.finalize().to_hex().to_string()))
+    Ok((spool, hasher.finish().to_hex()))
 }
 
 #[cfg(unix)]
@@ -242,14 +244,14 @@ impl Vault {
         let mut reader = self.open_removal_archive_in_txn(txn, row, file)?;
         let mut spool = HashingWriter {
             inner: std::io::BufWriter::new(self.archive_spool_file()?),
-            hasher: blake3::Hasher::new(),
+            hasher: ContentHasher::new(),
         };
         let len = std::io::copy(&mut reader, &mut spool)?;
         let HashingWriter { inner, hasher } = spool;
         let mut spool = inner
             .into_inner()
             .map_err(std::io::IntoInnerError::into_error)?;
-        if len != file.body.bytes || hasher.finalize().as_bytes() != &file.body.blake3 {
+        if len != file.body.bytes || hasher.finish().as_bytes() != &file.body.blake3 {
             return Err(Error::CorruptedIndex("removal archive digest"));
         }
         spool.seek(SeekFrom::Start(0))?;

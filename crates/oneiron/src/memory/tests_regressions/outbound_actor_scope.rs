@@ -20,6 +20,7 @@ fn actor_scope_draft(idempotency_key: &str, occurred_at: u64) -> OutboundDraftIn
         trigger_ref: "session:actor-scope".to_owned(),
         job_ref: None,
         occurred_at: Some(occurred_at),
+        mention: None,
     }
 }
 

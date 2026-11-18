@@ -162,8 +162,9 @@ impl Vault {
 
     /// Run the installed exact script in the configured foreign code-mode VM,
     /// on the isolating backend this vault's installed backends carry for the
-    /// Foreign tier. No configured isolating backend means a refusal, not an
-    /// in-process run.
+    /// Foreign tier under the vault's sandbox provider switch (L8-43): ours,
+    /// or the vendor the owner named. No configured isolating backend means a
+    /// refusal, not an in-process run.
     pub fn run_script_pack(
         self: &Arc<Self>,
         request: PackScriptRun<'_>,
@@ -180,6 +181,7 @@ impl Vault {
         let run_id = EntityId::now();
         let mut backend = crate::code_sandbox::microvm::select_backend_for_tier(
             &*self.runtime().sandbox_backends(),
+            self.sandbox_provider()?,
             SandboxGuestTier::Foreign,
         )?
         .ok_or_else(|| invalid("foreign tier selected no isolation"))?;
@@ -252,9 +254,10 @@ impl Vault {
             now,
             type_feedback,
         } = request;
-        if !matches!(backend.name(), "firecracker" | "landlock-container")
-            || receipt.pack_name != name
-        {
+        // Ours or the switched vendor's (L8-43): never the dev reference.
+        let isolating = matches!(backend.name(), "firecracker" | "landlock-container")
+            || crate::code_sandbox::SandboxVendor::from_backend_name(backend.name()).is_some();
+        if !isolating || receipt.pack_name != name {
             return Err(invalid(
                 "foreign pack requires isolating code-mode backend and installed source",
             ));
@@ -611,7 +614,5 @@ impl CredentialResolver for PackCredentialResolver {
     }
 }
 
-// FIX [LIBTEST-QUARANTINE-SKILL-HUB-PACK-CATALOG-SCRIPT-RUNTIME-TESTS]: the lib test target's type check fails here (10 errors: E0061 x10); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;
