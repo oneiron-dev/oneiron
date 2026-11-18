@@ -249,6 +249,7 @@ impl Vault {
     /// made, or one whose machine stands in the vault: the restore anchors
     /// it and puts it on the roster as any install. The join stands only
     /// when the fold reads the machine live under this install's keys.
+    /// Returns whether it joined this install.
     ///
     /// # Errors
     /// [`crate::error::RecordError::AuthorityRefused`] when R gives no
@@ -261,10 +262,10 @@ impl Vault {
         (signer, sign): (&AuthorityKey, &dyn Fn(&[u8]) -> Result<Vec<u8>>),
         owner: EntityId,
         request: &MachineEnrolmentRequest,
-    ) -> Result<()> {
+    ) -> Result<bool> {
         let fold = self.authority_view_readonly_in_txn(txn)?;
         if request.restored_from.is_none() || fold.machine(request.machine).is_some() {
-            return Ok(());
+            return Ok(false);
         }
         if !self.key_proves_owner_word(&fold, signer) {
             return Err(authority_refused(KEY_PROVES_NO_JOIN));
@@ -289,7 +290,7 @@ impl Vault {
         if !joined {
             return Err(authority_refused(JOIN_NOT_COUNTED));
         }
-        Ok(())
+        Ok(true)
     }
 
     /// [`Self::join_restored_install_by_key_in_txn`]'s refusal, read before
