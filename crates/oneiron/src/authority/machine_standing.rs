@@ -6,8 +6,9 @@
 //! Validity is pin-free: an owner act is judged on its carrier's roster
 //! chain alone, the same on every install, before and after the owner
 //! anchor ([`StandingView::Under`]). The settings this install reads are
-//! judged with this install's floors, holds and staleness
-//! ([`StandingView::Install`]), which only narrow. A chain held here admits
+//! judged with this install's floors, holds and staleness, and with the
+//! removals of the anchor it pins ([`StandingView::Install`]), which only
+//! narrow. A chain held here admits
 //! nothing and acknowledges nothing, but its restriction still lands (the
 //! Engine's held-chain ruling on the P2 port). A chain stale here is not live
 //! either, and never vetoes.
@@ -188,6 +189,8 @@ type Views = BTreeMap<(EntityId, Kind), Option<Rc<FoldedMachine>>>;
 pub(super) struct Standing<'s> {
     state: &'s FoldState,
     claims: ClaimIndex<'s>,
+    /// The pin this install counts here, if any.
+    pin: Option<PinnedRoot>,
     local: MachineAdmitter,
     counted: InstallCounted<'s>,
     views: RefCell<Views>,
@@ -201,19 +204,21 @@ impl<'s> Standing<'s> {
         pin: Option<&PinnedRoot>,
         counted: InstallCounted<'s>,
     ) -> Self {
-        let local = pin
+        let pin = pin
             .filter(|pin| {
                 state
                     .root_anchors
                     .get(&pin.anchor_key)
                     .is_some_and(|ids| ids.contains(&pin.id))
             })
-            .map_or(MachineAdmitter::Roster, |pin| {
-                MachineAdmitter::Anchor(pin.anchor_key)
-            });
+            .copied();
+        let local = pin.map_or(MachineAdmitter::Roster, |pin| {
+            MachineAdmitter::Anchor(pin.anchor_key)
+        });
         Self {
             state,
             claims: ClaimIndex::new(state),
+            pin,
             local,
             counted,
             views: RefCell::default(),
@@ -285,9 +290,11 @@ impl<'s> Standing<'s> {
     /// The chains whose live head names `id` under `signer`, in any role,
     /// each with its mark: an owner act's signing chains (a world edit, a
     /// grant travel choice; FIX 2998, mesh contract §3). Only the roster's
-    /// chain admits a carrier ([`super::owner_act_signer_admits`]), so only
-    /// its mark is one: an anchor's chain, a stranger's among them, gives the
-    /// removal race no reason to refuse an act.
+    /// chain admits a carrier ([`super::owner_act_signer_admits`]), so its
+    /// mark is the one every view reads. The chain of the anchor this
+    /// install pins is marked too, for the install view's race alone
+    /// ([`Self::marks_read`]); any other anchor's chain, a stranger's among
+    /// them, gives the removal race no reason to refuse an act.
     pub(super) fn live_signing_chains(
         &self,
         id: EntityId,
@@ -299,7 +306,7 @@ impl<'s> Standing<'s> {
         folded
             .chains()
             .filter(|(admitter, chain)| {
-                *admitter == MachineAdmitter::Roster
+                (*admitter == MachineAdmitter::Roster || *admitter == self.local)
                     && chain.is_live()
                     && *signer == AuthorityKey::Ed25519(chain.profile.machine_key)
             })
@@ -340,10 +347,12 @@ impl<'s> Standing<'s> {
     }
 
     /// [`super::owner_act_signer_admits`] for `id` and `key` under `view`:
-    /// pin-free in the roster view, with this install's holds and staleness
-    /// in the install view. Both views pass no pin: the pinned anchor's veto
-    /// is the doors' (`fold.pinned_root`), and the fold asks the roster's
-    /// head alone, as it did before the pin was a parameter.
+    /// pin-free in a roster view, so validity reads the roster's head alone
+    /// on every install. The install view reads this install's holds and
+    /// staleness and passes the pin it counts, as the doors pass
+    /// `fold.pinned_root`: a removal in the pinned anchor's chain vetoes the
+    /// carrier here, which only narrows what this install reads (review
+    /// #9496 P1).
     pub(super) fn admits_owner_act_signer(
         &self,
         id: EntityId,
@@ -351,19 +360,26 @@ impl<'s> Standing<'s> {
         view: StandingView,
     ) -> bool {
         let (_, kind) = self.admitter_kind(view);
-        super::owner_act_signer_admits(
-            self.view(id, kind).as_deref(),
-            &self.state.roster,
-            key,
-            None,
-        )
+        let pin = match kind {
+            Kind::Roster => None,
+            Kind::Install => self.pin.as_ref(),
+        };
+        super::owner_act_signer_admits(self.view(id, kind).as_deref(), &self.state.roster, key, pin)
+    }
+
+    /// Whether the race under a view of `kind` reads `admitter`'s mark: a
+    /// roster view reads the roster's alone; the install view reads the
+    /// pinned anchor's too, whose removal vetoes the carrier there.
+    fn marks_read(&self, kind: Kind, admitter: &MachineAdmitter) -> bool {
+        *admitter == MachineAdmitter::Roster || (kind == Kind::Install && *admitter == self.local)
     }
 
     /// The removal race for an owner act under `view` (FIX 2998, mesh
     /// contract §4), a world edit and a grant travel choice alike. It passes
     /// while the act's carrier is still admitted there under the key that
-    /// signed it. Otherwise each chain that admitted it at the act's parents
-    /// (`marks`) and no longer does is a reason, and there must be one: its
+    /// signed it. Otherwise each chain the view reads that admitted it at the
+    /// act's parents (`marks`, [`Self::marks_read`]) and no longer does is a
+    /// reason, and there must be one: its
     /// head must be neither conflicted, held, stale nor unsettled, and every
     /// revision of the chain outside its mark's past that no longer names
     /// the key live (a removal, a new key) must have seen the act and,
@@ -389,7 +405,10 @@ impl<'s> Standing<'s> {
             return false;
         };
         let mut reasons = false;
-        for (admitter, mark) in marks {
+        for (admitter, mark) in marks
+            .iter()
+            .filter(|(admitter, _)| self.marks_read(kind, admitter))
+        {
             let Some(head) = folded.chain(admitter) else {
                 return false;
             };

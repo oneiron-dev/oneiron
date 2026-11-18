@@ -96,7 +96,8 @@ use serde::Serialize;
 /// FOREIGN-ANCHOR-ADMIT-SIDE); every other shared judge reads the roster's chain alone too (an
 /// owner key's enrolled machine, a residence result's signer, a one-machine pick, the
 /// names-the-key gates; Fable pass 29 K3), and a one-machine pick needs a live roster head in
-/// any role, not "yours".
+/// any role, not "yours". This install's own view still reads the removal of the anchor it pins:
+/// an act that removal did not see only narrows here (review #9496 P1).
 pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 49;
 
 /// The domain every encoded image starts with.
