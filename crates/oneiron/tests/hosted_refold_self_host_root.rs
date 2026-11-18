@@ -18,6 +18,14 @@
 //! root acts as nobody inside a customer's vault). An install under the
 //! Hosted posture never offers a host root it holds as the owner's proof.
 //!
+//! That writer rule holds on every path that signs for the owner with a held
+//! root (the review of #9474, round 1): the vouch for another device's owner
+//! key, the pairing bootstrap arm, and the carry of a root-signed answer
+//! under a root move. A hosted install pairs a "yours" machine through its
+//! carrier, where the answer waits for an owner key's proof; it vouches no
+//! key with a self-host root it holds; and its root move to a stamped root
+//! lands without signing an owner's answer under that root.
+//!
 //! Pure folds over hand-signed rows (the scaffold of
 //! `hosted_root_human_bind.rs` and `carrier_owner_proof.rs`), and vaults
 //! opened as a server opens them.
@@ -31,19 +39,25 @@ use std::sync::Arc;
 
 use ed25519_dalek::{Signer, SigningKey};
 use oneiron::authority::{
-    AUTHORITY_LOG_SCHEMA_VERSION, ActSurface, ActorBindingStatus, AuthorityAttestation,
-    AuthorityEntryHash, AuthorityFold, AuthorityKey, AuthorityLogEntry, AuthorityOp,
-    AuthoritySignature, AuthorityTier, AuthorityVaultId, DeviceAuthority, GenesisRecoveryStep,
-    HOST_ISSUER_SEED_BYTES, HostSlipIssuer, MACHINE_ENCRYPTION_KEY_LEN,
-    MACHINE_ENCRYPTION_SUITE_HYBRID_V1, MachineDeviceClass, MachineEncryptionKey, MachineOwnership,
-    MachineProfile, MachineRole, OwnerAct, OwnerActKind, ROLE_ADMIN, ROLE_AGENT, ROLE_CLOUD,
-    ROLE_OWNER, authority_entry_hash, authority_transcript, fold_authority_log_for_posture,
-    genesis_vault_id, machine_profile_proof_transcript,
+    AUTHORITY_LOG_SCHEMA_VERSION, ActAuthority, ActSurface, ActorBindingStatus,
+    AuthorityAttestation, AuthorityEntryHash, AuthorityFold, AuthorityKey, AuthorityLogEntry,
+    AuthorityOp, AuthoritySignature, AuthorityTier, AuthorityVaultId, DeviceAuthority,
+    DeviceOwnerKeyVouch, GenesisRecoveryStep, HOST_ISSUER_SEED_BYTES, HostSlipIssuer,
+    MACHINE_ENCRYPTION_KEY_LEN, MACHINE_ENCRYPTION_SUITE_HYBRID_V1, MachineAnswerLanding,
+    MachineDeviceClass, MachineEncryptionKey, MachineEnrolmentRequest, MachineOwnership,
+    MachineProfile, MachineRole, OwnerAct, OwnerActKind, OwnerKeyVouchRequest, PairingLink,
+    PairingPrincipal, ROLE_ADMIN, ROLE_AGENT, ROLE_CLOUD, ROLE_OWNER, authority_entry_hash,
+    authority_transcript, fold_authority_log_for_posture, genesis_vault_id,
+    machine_profile_proof_transcript, pairing_binding_transcript_pinned,
 };
+use oneiron::consent::AuthenticatedOwner;
+use oneiron::error::RecordError;
+use oneiron::federation::Scope;
+use oneiron::store::GateDecisionId;
 use oneiron::test_doors::home_pick_fold::home_pick_in_force;
 use oneiron::test_doors::label_writers::embedded_owner;
 use oneiron::test_doors::root_appointment;
-use oneiron::{EntityId, HostingPrivacyPosture, Vault, VaultConfig};
+use oneiron::{EntityId, Error, HostingPrivacyPosture, Vault, VaultConfig};
 use oneiron_authority::authority::{
     HomeNodePick, OWNER_KEY_ENROLLMENT_SEEN, OWNER_KEY_POSSESSION_KIND, OwnerKeyEnroll,
     home_pick_target, machine_answer_revision, owner_key_enrollment_challenge,
@@ -61,6 +75,8 @@ const STAMPED_ROOT_SEED: u8 = 104;
 const ADMITTED_SEED: u8 = 105;
 /// The seed of the host issuer a root move of a served vault hands it to.
 const NEXT_ISSUER_SEED: u8 = 0x5B;
+/// The seed of a joining machine's pairing connection key.
+const PAIRING_SEED: u8 = 106;
 /// The node the owner's home pick names.
 const PICKED_NODE: u64 = 7;
 /// The actor class of a person's binding.
@@ -839,5 +855,241 @@ fn a_hosted_re_root_of_a_reopened_self_host_vault_stamps_the_new_root() {
     assert!(
         !offers_owner_proof(&hosted, next),
         "the stamped root proves nothing for the owner"
+    );
+}
+
+/// A machine pairing link the owner makes on `vault`, answering "yours".
+fn yours_link(vault: &Vault, issuer: &HostSlipIssuer) -> PairingLink {
+    let (_, owner) = embedded_owner(vault).expect("authenticated embedded owner");
+    vault
+        .issue_machine_pairing_link(
+            issuer,
+            &owner,
+            ActSurface::ThisInstall,
+            Scope::top(),
+            3600,
+            PairingPrincipal::default(),
+            MachineOwnership::Yours,
+        )
+        .expect("the owner makes a machine pairing link")
+}
+
+/// A fresh machine's own install and its enrolment request for `vault`'s
+/// vault.
+fn joining_install(vault: &Vault) -> (tempfile::TempDir, Vault, MachineEnrolmentRequest) {
+    let vault_id = vault
+        .authority_vault_id()
+        .expect("the vault's fold")
+        .expect("a rooted vault");
+    let dir = tempfile::tempdir().expect("vault directory");
+    let install = open_served(dir.path(), HostingPrivacyPosture::SelfHostLocal);
+    let key = install
+        .machine_encryption_key(vault_id)
+        .expect("the joining machine's encryption key");
+    let request = install
+        .machine_enrolment_request(vault_id, key)
+        .expect("the joining machine's enrolment request");
+    (dir, install, request)
+}
+
+/// `vault` redeems `link` for `request`, under a throwaway pairing
+/// connection key.
+fn redeem_yours(
+    vault: &Vault,
+    issuer: &HostSlipIssuer,
+    link: &PairingLink,
+    request: &MachineEnrolmentRequest,
+) -> oneiron::Result<MachineAnswerLanding> {
+    let connection = signing(PAIRING_SEED);
+    let binding_key = connection.verifying_key().to_bytes();
+    let holder = request.machine.to_hex();
+    let transcript =
+        pairing_binding_transcript_pinned(&link.code, &binding_key, &holder, link.pin.as_ref())
+            .expect("the binding transcript");
+    let binding = connection.sign(&transcript).to_bytes();
+    vault
+        .redeem_machine_pairing_link(issuer, &link.code, &holder, binding_key, &binding, request)
+        .map(|(_, landing)| landing)
+}
+
+/// Whether `vault`'s fold holds `machine` as the owner's.
+fn machine_is_mine(vault: &Vault, machine: EntityId) -> bool {
+    vault
+        .authority_fold()
+        .expect("the authority fold")
+        .machine(machine)
+        .is_some_and(|folded| folded.is_mine(None))
+}
+
+/// The review of #9474, round 1, P1 on the pairing bootstrap arm (red at
+/// e5e73e1874, where the arm signs the answer under the self-host root and
+/// the machine stands): reopened under the Hosted posture, an install whose
+/// own profile is still unanswered pairs a machine the owner answered
+/// "yours" through its carrier. It holds no key it may offer as his proof,
+/// so the answer lands held and the machine is not his yet.
+#[test]
+fn a_hosted_install_pairs_a_yours_machine_through_its_carrier_not_the_self_host_root() {
+    let (dir, vault, _) = rooted_served(HostingPrivacyPosture::SelfHostLocal);
+    drop(vault);
+    let hosted = open_served(dir.path(), HostingPrivacyPosture::Hosted);
+    let issuer = oneiron::test_support::test_host_issuer();
+    let link = yours_link(&hosted, &issuer);
+    let (_joining_dir, _joining, request) = joining_install(&hosted);
+    let landing = redeem_yours(&hosted, &issuer, &link, &request)
+        .expect("the redemption is stored, the answer carried");
+    assert!(
+        landing.held().is_some(),
+        "the owner's answer waits for an owner key's proof: {landing:?}"
+    );
+    assert!(
+        !machine_is_mine(&hosted, request.machine),
+        "the self-host root's signature makes no machine the owner's on a hosted install"
+    );
+}
+
+/// The joining machine's own install of `vault`'s vault, which the owner
+/// answered "yours" on `vault` (carried by its serving install, proved by
+/// the root it holds), with the vault's authority history taken.
+fn yours_device(vault: &Vault, owner: &AuthenticatedOwner) -> (tempfile::TempDir, Vault) {
+    let (dir, device, request) = joining_install(vault);
+    let landing = vault
+        .enroll_machine(
+            owner,
+            ActSurface::ThisInstall,
+            &request,
+            MachineRole::Owned(MachineOwnership::Yours),
+            None,
+        )
+        .expect("the owner enrols the new device as his");
+    assert!(
+        matches!(landing, MachineAnswerLanding::Stands(_)),
+        "guard: the new device is a live machine of the vault: {landing:?}"
+    );
+    device
+        .ensure_embedded_owner_actor()
+        .expect("the owner on the new device");
+    device
+        .import_signed_authority_history(
+            &vault
+                .export_signed_authority_history()
+                .expect("the vault's history"),
+        )
+        .expect("the new device takes the history");
+    (dir, device)
+}
+
+/// The vouch request `device` makes for its own new owner key.
+fn vouch_request(device: &Vault) -> OwnerKeyVouchRequest {
+    let person = device
+        .ensure_embedded_owner_actor()
+        .expect("the owner on the new device");
+    let proof = device
+        .authenticate_owner(person, &person.to_hex(), true, GateDecisionId::now())
+        .expect("an owner proof on the new device");
+    match device
+        .device_owner_key_vouch_request(
+            &ActAuthority::Owner(proof, ActSurface::ThisInstall),
+            "Laptop",
+        )
+        .expect("the new device makes its key's request")
+    {
+        DeviceOwnerKeyVouch::Request(request) => request,
+        DeviceOwnerKeyVouch::Enrolled(receipt) => {
+            panic!("the new device's key is not enrolled yet: {receipt:?}")
+        }
+    }
+}
+
+/// The review of #9474, round 1, P1 on the vouch writer (red at
+/// e5e73e1874, where the vouch lands under the self-host root): reopened
+/// under the Hosted posture and holding the self-host root as its only root
+/// signer, the install vouches no key into the owner. The fold still trusts
+/// that root as the owner's, but a hosted install never offers a host root
+/// as his proof, so the vouch asks for an owner key and writes nothing.
+#[test]
+fn a_hosted_install_vouches_for_no_key_with_the_self_host_root_it_holds() {
+    let (dir, vault, issuer) = rooted_served(HostingPrivacyPosture::SelfHostLocal);
+    vault.hold_checkpoint_root_signer(Arc::new(issuer));
+    let (_, owner) = embedded_owner(&vault).expect("authenticated embedded owner");
+    let (_device_dir, device) = yours_device(&vault, &owner);
+    let request = vouch_request(&device);
+    drop(vault);
+    let hosted = open_served(dir.path(), HostingPrivacyPosture::Hosted);
+    hosted.hold_checkpoint_root_signer(Arc::new(oneiron::test_support::test_host_issuer()));
+    let (_, owner) = embedded_owner(&hosted).expect("authenticated embedded owner");
+    let rows = hosted
+        .export_signed_authority_history()
+        .expect("the hosted install's history")
+        .len();
+    let refused = hosted
+        .enrol_vouched_owner_signing_key(
+            &ActAuthority::Owner(owner, ActSurface::ThisInstall),
+            &request,
+        )
+        .expect_err("the self-host root vouches for nothing on a hosted install");
+    assert!(
+        matches!(refused, Error::Record(RecordError::OwnerKeyRequired)),
+        "the refusal asks for an owner key: {refused:?}"
+    );
+    assert!(
+        !hosted
+            .authority_fold()
+            .expect("the authority fold")
+            .roster
+            .contains_key(&AuthorityKey::Ed25519(request.public_key)),
+        "the key is not enrolled"
+    );
+    assert_eq!(
+        hosted
+            .export_signed_authority_history()
+            .expect("the hosted install's history")
+            .len(),
+        rows,
+        "nothing was written"
+    );
+}
+
+/// The review of #9474, round 1, P1 on the re-root carry (red at
+/// e5e73e1874, where the move signs the answer again under the stamped
+/// root, the fold refuses that revision and the whole move rolls back): a
+/// machine the self-host root answered "yours" on the bootstrap arm stays
+/// the owner's when the vault is reopened under the Hosted posture, and a
+/// root move there lands. The stamped successor answers for nobody, so it
+/// signs no revision that says the machine is the owner's.
+#[test]
+fn a_hosted_re_root_lands_over_a_machine_the_self_host_root_answered_yours() {
+    let (dir, vault, issuer) = rooted_served(HostingPrivacyPosture::SelfHostLocal);
+    let link = yours_link(&vault, &issuer);
+    let (_joining_dir, _joining, request) = joining_install(&vault);
+    let landing = redeem_yours(&vault, &issuer, &link, &request)
+        .expect("the self-host install pairs the machine");
+    assert!(
+        landing.held().is_none(),
+        "guard: the self-host root's answer stands: {landing:?}"
+    );
+    drop(vault);
+    let hosted = open_served(dir.path(), HostingPrivacyPosture::Hosted);
+    assert!(
+        machine_is_mine(&hosted, request.machine),
+        "guard: reopened under the Hosted posture, the machine is still the owner's"
+    );
+    let next = HostSlipIssuer::from_seed(&[NEXT_ISSUER_SEED; HOST_ISSUER_SEED_BYTES])
+        .expect("the next host issuer");
+    let next_root = next.public_key();
+    hosted
+        .re_root_host(&oneiron::test_support::test_host_issuer(), &next)
+        .expect("the host root moves");
+    assert!(
+        stamped_for_the_cloud(&hosted, &next_root),
+        "the new root carries the cloud stamp"
+    );
+    assert!(
+        hosted
+            .authority_fold()
+            .expect("the authority fold")
+            .machine(request.machine)
+            .and_then(|folded| folded.roster.as_ref())
+            .is_none_or(|revision| revision.signer != next_root),
+        "the stamped root signs no revision that says the machine is the owner's"
     );
 }
