@@ -29,16 +29,18 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
+use super::ask_guard::AskedParty;
+use super::ask_intent;
 use super::ask_record::{self, AskGroup};
 use super::ask_types::{
     TaskAskDecision, TaskAskDefault, TaskAskEvidenceReason, TaskAskOption, TaskAskOptionId,
     TaskAskQuestion, TaskAskResult, TaskAskSettlementReason, TaskAskSource, TaskAskSpec,
     TaskAskTarget, TaskAskWord,
 };
-use super::training_offer_ask::{canonical_digest, canonical_id, single_str};
+use super::training_offer_ask::single_str;
 use super::{ConsultPayloadRef, TaskAssignee};
 use crate::consent::AuthenticatedOwner;
-use crate::error::{Error, GateError, Result};
+use crate::error::{Error, Result};
 use crate::memory::{
     MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult, WitnessAuthor, WitnessMessage,
     WitnessTurn,
@@ -155,44 +157,34 @@ const ASKS: SideTable<SwapAskKey, Vec<SwapAskRoute>, Named> =
 const GROUPS: SideTable<EntityId, SwapAskKey, Named> =
     SideTable::new(&side_table::TASK_TRAINING_SWAP_ASK_GROUP);
 
-fn owner_not_authenticated(reason: &'static str) -> Error {
-    Error::Gate(GateError::ConsentOwnerNotAuthenticated(reason))
-}
-
 /// Whether `intent_key` is a training swap ask's. The prefix admits nothing
 /// by itself: a routed ask is one its group index names.
 pub(crate) fn is_training_swap_ask_intent(intent_key: &str) -> bool {
     intent_key.starts_with(INTENT_PREFIX)
 }
 
-fn intent_key(key: &SwapAskKey, turn: &EntityId) -> String {
+pub(crate) fn intent_key(key: &SwapAskKey, turn: &EntityId) -> String {
     let (run, owner, digest) = key;
-    format!(
-        "{INTENT_PREFIX}{}/{digest}/{}/{}",
-        run.to_hex(),
-        owner.to_hex(),
-        turn.to_hex()
+    ask_intent::join(
+        INTENT_PREFIX,
+        &[
+            run.to_hex().as_str(),
+            digest.as_str(),
+            owner.to_hex().as_str(),
+            turn.to_hex().as_str(),
+        ],
     )
 }
 
 /// The swap question a training swap ask's intent key names, read whole and
 /// in canonical form; `None` for any other key.
 pub(crate) fn training_swap_ask_key(intent_key: &str) -> Option<SwapQuestionKey> {
-    let mut parts = intent_key.strip_prefix(INTENT_PREFIX)?.split('/');
-    let (Some(run), Some(digest), Some(owner), Some(turn), None) = (
-        parts.next(),
-        parts.next(),
-        parts.next(),
-        parts.next(),
-        parts.next(),
-    ) else {
-        return None;
-    };
+    let [run, digest, owner, turn] = ask_intent::split::<4>(intent_key, INTENT_PREFIX)?;
     Some((
-        canonical_id(run)?,
-        canonical_id(owner)?,
-        canonical_digest(digest)?,
-        canonical_id(turn)?,
+        ask_intent::id(run)?,
+        ask_intent::id(owner)?,
+        ask_intent::digest(digest)?,
+        ask_intent::id(turn)?,
     ))
 }
 
@@ -206,10 +198,10 @@ pub(crate) fn swap_question_key(metadata: &rmpv::Value) -> Option<SwapQuestionKe
         return None;
     }
     Some((
-        canonical_id(single_str(entries, META_RUN)?)?,
-        canonical_id(single_str(entries, META_OWNER)?)?,
-        canonical_digest(single_str(entries, META_DIGEST)?)?,
-        canonical_id(single_str(entries, META_TURN)?)?,
+        ask_intent::id(single_str(entries, META_RUN)?)?,
+        ask_intent::id(single_str(entries, META_OWNER)?)?,
+        ask_intent::digest(single_str(entries, META_DIGEST)?)?,
+        ask_intent::id(single_str(entries, META_TURN)?)?,
     ))
 }
 
@@ -613,6 +605,7 @@ fn issue_one(
             conversation_ref: route.conversation.to_hex(),
             turn_ref: Some(route.turn.to_hex()),
             thread_audience: None,
+            project: None,
             messages: vec![WitnessMessage {
                 id: Some(route.message.to_hex()),
                 author: WitnessAuthor::Companion,
@@ -729,92 +722,38 @@ fn routed_in(
     Ok(Some((key, route)))
 }
 
-/// Refuses a word on a training swap ask unless it is the asked owner's own
-/// act on a question that still waits; any other ask passes untouched. Runs
-/// in shared word admission, before the word is recorded.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "one admission check over the word, its writer and the owner proof"
-)]
-pub(super) fn guard_word(
+/// Who a training swap ask asks: the owner its reservation names; `None`
+/// for every other ask ([`super::ask_guard`]).
+pub(super) fn asked_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     id: EntityId,
     group: &AskGroup,
-    source: TaskAskSource,
-    actor: EntityId,
+) -> Result<Option<AskedParty>> {
+    Ok(routed_in(vault, txn, id, group)?.map(|(_, route)| AskedParty::Owner(route.owner)))
+}
+
+/// [`asked_in`], once `word` names one option the ask offered while the run
+/// still waits at the expectation this generation froze; any other word is
+/// refused. Shared word admission then asks the asked owner's own proof of
+/// it ([`super::ask_guard`]).
+pub(super) fn offered_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+    group: &AskGroup,
     word: &TaskAskWord,
-    owner: Option<&AuthenticatedOwner>,
-) -> Result<()> {
+) -> Result<Option<AskedParty>> {
     let Some((base, route)) = routed_in(vault, txn, id, group)? else {
-        return Ok(());
+        return Ok(None);
     };
-    // The owner's own tap, never a word given for them or a soft confirm.
-    if word.companion_for.is_some() || word.inform_for.is_some() || word.confirmation.is_some() {
-        return Err(ask_record::invalid());
-    }
-    // A definitive answer names one option the ask offered, while the run
-    // still waits at the expectation this generation froze.
     let question = (base.0, base.1, base.2.clone(), route.turn);
     if word.option.as_ref().and_then(offered_answer).is_none()
         || pending_in(vault, txn, &question)?.is_none()
     {
         return Err(ask_record::invalid());
     }
-    // Only the admission node settles the ask, so a word anywhere else
-    // could never settle under the proof that admitted it.
-    if !ask_record::owns_revision(vault, txn, id, group)? {
-        return Err(owner_not_authenticated(
-            "a training swap answer is given on the node that admitted the ask",
-        ));
-    }
-    let Some(owner) = owner else {
-        return Err(owner_not_authenticated(
-            "a training swap answer needs the owner's own authenticated word",
-        ));
-    };
-    let proven = owner.revalidate_in_txn(vault, txn)?;
-    if source != TaskAskSource::Human || proven != actor || proven != route.owner {
-        return Err(owner_not_authenticated(
-            "a training swap answer is the asked owner's own word",
-        ));
-    }
-    Ok(())
-}
-
-/// Whether settlement may cut the ask `id` for `reason` with `decision`
-/// under `owner`. A training swap ask's first word settles the run only
-/// under the live proof of the owner it asked; without that proof the ask
-/// stays open, and only its deadline or staleness closes it, on the hold
-/// default.
-pub(super) fn may_cut(
-    vault: &Vault,
-    txn: &heed::RoTxn<'_>,
-    id: EntityId,
-    group: &AskGroup,
-    reason: TaskAskSettlementReason,
-    decision: &TaskAskDecision,
-    owner: Option<&AuthenticatedOwner>,
-) -> Result<bool> {
-    if matches!(
-        reason,
-        TaskAskSettlementReason::Deadline | TaskAskSettlementReason::Stale
-    ) {
-        return Ok(true);
-    }
-    let Some((_, route)) = routed_in(vault, txn, id, group)? else {
-        return Ok(true);
-    };
-    let TaskAskDecision::First(answer) = decision else {
-        return Ok(true);
-    };
-    match owner {
-        Some(owner) => {
-            let proven = owner.revalidate_in_txn(vault, txn)?;
-            Ok(proven == answer.actor_ref && proven == route.owner)
-        }
-        None => Ok(false),
-    }
+    Ok(Some(AskedParty::Owner(route.owner)))
 }
 
 /// Settles the run from the word `result` selected, in the ask's settling

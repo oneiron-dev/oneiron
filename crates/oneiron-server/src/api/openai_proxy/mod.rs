@@ -39,10 +39,11 @@ use oneiron::{
     LlmMessageRole, LlmRequest, ModelId, ModelTierRef, ResponseFormat, TierPrecedence,
 };
 
-pub(super) use self::choices::TIMEOUT_CODE;
+pub(super) use self::choices::{CallerClock, TIMEOUT_CODE};
 use self::exchange::Exchange;
 pub(super) use self::receipt::PROXY_CALL_VERB;
 use self::receipt::{ProxyCaller, ProxyRequest};
+pub(super) use self::wire::typed_upstream_error;
 use self::wire::{error, invalid};
 use super::McpCallContext;
 use crate::auth::{CoreScope, Locality};
@@ -56,9 +57,6 @@ use oneiron::task_verb::sdk::{
 /// The predicate an exchange is proposed under (Engine ruling on OF-445,
 /// 10-17): the newest user text and the settled answer, one claim.
 const EXCHANGE_PREDICATE: &str = "integration.exchange";
-
-/// The most recalled items one call injects.
-const RECALL_LIMIT: usize = 8;
 
 /// What heads the injected block. The rows are the vault's, not the
 /// caller's, and they reach the model as data.
@@ -165,6 +163,15 @@ async fn complete_as(
     let mut request = model_request(server, &chat)?;
     let (ladder, run) =
         super::llm::admit_proxied(server, &mut request).map_err(|refused| *refused)?;
+    // A caller verified in an off-record session that keeps no model-call
+    // record names no rows on its runs: neither the answer's nor its
+    // recall's reranker's receipts name the recalled rows' worlds (census
+    // L5-25; Astra unbuilt-bp1b-p02 delta).
+    let off_record = server.vault().model_call_keeps_no_record_for(
+        actor.off_record_session.as_deref(),
+        super::call_receipt::mcp_session_principal(actor.auth.as_ref(), actor.actor_ref),
+    );
+    let run = if off_record { run.off_record() } else { run };
     // The recalled rows go to the model and its answer back to the caller:
     // they are read for both, on this device only when both are.
     let reads_for =
@@ -174,7 +181,16 @@ async fn complete_as(
     let recalled = if admission.recall_asks {
         None
     } else {
-        recall(server, &actor, &reads_for, query.clone(), clock, listed).await?
+        recall(
+            server,
+            &actor,
+            &reads_for,
+            query.clone(),
+            clock,
+            off_record,
+            listed,
+        )
+        .await?
     };
     let injected = recalled.is_some();
     // The pack's rows plus the rows it is derived from without naming them,
@@ -408,24 +424,32 @@ fn model_request(
 /// The connector's recall for `query`, read for `reads_for`, as one
 /// user-role data block; `None` when nothing came back. Lists in `served`
 /// the pack's rows plus the rows it is derived from without naming them.
+/// An `off_record` recall's reranker names no rows on its runs.
 async fn recall(
     server: &Arc<SyncServer>,
     actor: &McpCallContext,
     reads_for: &ReadDestination,
     query: String,
     clock: choices::CallerClock,
+    off_record: bool,
     served: &mut Vec<EntityId>,
 ) -> Result<Option<LlmMessage>, Response> {
-    let proof = actor
-        .auth
-        .as_ref()
-        .and_then(crate::auth::CoreAuth::verified_slip)
-        .cloned();
     let input = RecallRequest {
         query,
         effort: Some(RecallEffort::Call),
         scope: None,
-        limit: Some(RECALL_LIMIT),
+        // The most recalled items one call injects: the owner's
+        // `proxy.openai.recall_limit` (8 unless set).
+        limit: Some(
+            oneiron::connector_key::openai_proxy_recall_limit(&server.vault).map_err(|failed| {
+                error(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "api_error",
+                    "recall_failed",
+                    failed.to_string(),
+                )
+            })?,
+        ),
         format: Some("md".to_owned()),
         token_budget: None,
         reader_agent_ref: None,
@@ -435,6 +459,7 @@ async fn recall(
         query_affect: None,
         telemetry: None,
         filter: None,
+        operation_id: None,
     };
     // Home references carry no local row to judge for an onward model or
     // caller. Keep that path local-only until it carries destination proof.
@@ -447,11 +472,12 @@ async fn recall(
         .recall_home_listing(
             actor.actor_ref,
             actor.actor_class,
-            proof,
+            actor.auth.as_ref(),
             reads_for,
             None,
             input,
             home,
+            off_record,
         )
         .await;
     served.extend(listed.iter().copied());

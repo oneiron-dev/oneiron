@@ -9,7 +9,10 @@ impl ScopedRead<'_> {
     /// read's claim-status contract; each as a personal ceiling's peer
     /// (`room_peer`) when `room_peer`. Each peer's own row admission is its
     /// own B, else its own A under its own live Grants (FIX 7462), held for
-    /// this serving txn beside `authority`'s and never another's.
+    /// this serving txn beside `authority`'s and never another's. Over a
+    /// room stretch each peer reads the same view, under the same room, as
+    /// that peer itself (ROOM-PACK-MEMBER-BIND): a row the stretch staged
+    /// reads to a peer only as it reads to that peer's own pack there.
     pub(super) fn peers_read_raw_in(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -20,10 +23,19 @@ impl ScopedRead<'_> {
         authority: &HeldAuthority,
     ) -> Result<bool> {
         for peer in peers {
-            let mut peer = self
-                .vault
-                .scoped_read(peer.clone())
-                .with_claim_status(self.claim_status);
+            let mut peer = match (self.session_view, self.stretch) {
+                (Some(view), Some(stretch)) => {
+                    // A peer the room's roster names by no id reads no row.
+                    let Ok(member) = EntityId::from_hex(peer.actor_ref()) else {
+                        return Ok(false);
+                    };
+                    let mut read = self.vault.scoped_read_in_session(peer.clone(), view);
+                    read.stretch = Some(stretch.for_member(member));
+                    read
+                }
+                _ => self.vault.scoped_read(peer.clone()),
+            }
+            .with_claim_status(self.claim_status);
             peer.room_peer = room_peer;
             // A member read as the owner must still be the owner in this
             // snapshot; one whose standing lapsed keeps the row out.

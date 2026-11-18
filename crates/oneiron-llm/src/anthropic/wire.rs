@@ -6,7 +6,7 @@ use oneiron::llm::{REASONING_BUDGET_PARAM, ReasoningEffort, limit};
 use oneiron::{
     ContentPart, FatalLlmError, FinishReason, ImageContent, LlmError, LlmInputUsage, LlmMessage,
     LlmMessageRole, LlmOutputUsage, LlmRequest, LlmResponse, LlmResult, LlmToolSpec, LlmUsage,
-    ResponseFormat, RetryableLlmError,
+    ResponseFormat, RetryableLlmError, provider_finish_reason,
 };
 use serde_json::{Map as JsonMap, Value as JsonValue, json};
 
@@ -437,9 +437,7 @@ pub(super) fn anthropic_finish_reason(reason: &str) -> FinishReason {
         "max_tokens" => FinishReason::Length,
         "tool_use" => FinishReason::ToolCalls,
         "refusal" | "content_filter" => FinishReason::ContentFiltered,
-        other => FinishReason::Other {
-            name: other.to_owned(),
-        },
+        other => provider_finish_reason(other),
     }
 }
 

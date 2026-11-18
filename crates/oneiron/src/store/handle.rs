@@ -63,6 +63,7 @@ pub struct RawDatabases {
 /// every write transaction refuses, so neither its rows nor the key custody
 /// it shares with its replacement change through any handle on it.
 pub struct StoreEnv {
+    id: u64,
     env: Env,
     sealed: std::sync::atomic::AtomicBool,
     mark_check: OnceLock<MarkCheck>,
@@ -80,7 +81,9 @@ pub(in crate::store) struct MarkCheck {
 
 impl StoreEnv {
     pub(in crate::store) fn new(env: Env) -> Self {
+        static NEXT_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         Self {
+            id: NEXT_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
             env,
             sealed: std::sync::atomic::AtomicBool::new(false),
             mark_check: OnceLock::new(),
@@ -155,6 +158,13 @@ impl StoreEnv {
     pub(in crate::store) fn unseal(&self) {
         self.sealed
             .store(false, std::sync::atomic::Ordering::Release);
+    }
+
+    /// A number no other environment opened in this process shares. A write
+    /// names it as it raises the thread's write depth, so a door that waits
+    /// for this environment's writer knows whether the thread holds it.
+    pub(crate) fn id(&self) -> u64 {
+        self.id
     }
 }
 
@@ -284,6 +294,9 @@ pub struct StoreCore {
     /// What the authority store doors read of one committed generation.
     pub(crate) authority_door_view:
         Mutex<Option<(u64, std::sync::Arc<crate::authority::AuthorityDoorView>)>>,
+    /// The row the authority door last held at the owner's reserve, for the
+    /// reserve's typed check (Astra owner-reserve r2 F4). Never persisted.
+    pub(crate) authority_owner_reserve_hold: Mutex<Option<crate::authority::OwnerReserveHold>>,
     /// The adopted checkpoint image, verified once per stored rows, with its
     /// carried bodies decoded once (FIX 2987/3006/3415/3449). Keyed by the
     /// exact stored rows, never by generation; dies with the handle.
@@ -346,6 +359,9 @@ pub struct StoreCore {
     /// Scan checks raised since the vault's last write, which keeps them
     /// ([`crate::scan_check`]).
     pub(crate) pending_scan_checks: crate::store::PendingScanChecks,
+    /// Records served to external readers since the vault's last write,
+    /// which keeps them ([`crate::claim::PendingReadExposure`], L8-65).
+    pub(crate) pending_read_exposure: crate::claim::PendingReadExposure,
     /// The engine's `[limits]` rows on this vault: what they are set to,
     /// fixed at open, and the port a crossing asks through
     /// ([`crate::Vault::set_limit_ask`]).
@@ -369,6 +385,11 @@ pub struct StoreCore {
     /// worker, none until one attaches (FIX 14976,
     /// [`crate::Vault::attach_drafter_serving`]). Never persisted.
     pub(crate) drafter_serving: RwLock<Option<Arc<dyn crate::drafter::DrafterServingRuntime>>>,
+    /// The host operator's mail settings on this vault and the runner its
+    /// blocking mail work runs on, the defaults and none until a host
+    /// installs them (fix list row 17645, [`crate::Vault::install_mail_host`]).
+    /// Never persisted.
+    pub(crate) mail_host: crate::mail_pack::MailHostSlot,
     /// The pool code-mode result bodies held in memory draw on: this
     /// vault's own until the host installs the process's
     /// ([`crate::Vault::set_result_memory`]).
@@ -417,6 +438,10 @@ pub struct StoreCore {
     /// Committed consent answers wake this vault's connector-call settler.
     /// Content-free and in memory only; the durable answer is re-read.
     pub(crate) consent_answers: tokio::sync::Notify,
+    /// A committed per-request Coach host job wakes the host's Coach worker
+    /// beside its tick. Content-free and in memory only; the worker re-reads
+    /// its queue.
+    pub(crate) coach_host_requests: std::sync::Arc<tokio::sync::Notify>,
     /// The committed-notification signal live queries wake on (FIX 3084).
     pub(crate) notification_updates: tokio::sync::watch::Sender<u64>,
     /// Content-free, per-vault: bumped after each commit that revoked a
@@ -745,6 +770,7 @@ macro_rules! manifest_dbs {
             fn key_custody(&self) -> &crate::store::key_custody::KeyCustody { &self.base.core.key_custody }
             fn gate_custody_archived(&self) -> bool { self.base.core.gate_custody_archived() }
             fn is_union(&self) -> bool { self.room.is_some() }
+            fn room_base(&self) -> Option<&Store> { self.room.is_some().then_some(self.base) }
             fn manifest_memo(&self) -> &crate::gate::ManifestDecodeMemo {
                 &self.base.core.manifest_memo
             }
@@ -791,6 +817,13 @@ macro_rules! manifest_dbs {
             /// alone. A cache keyed and validated by base versions cannot
             /// answer for such a read: overlay writes bump none of them.
             fn is_union(&self) -> bool;
+            /// The base store a room's view composes over, `None` for a
+            /// target that is no room's view. The side-row wall decides a
+            /// room's rows with its custody, which a room only reads and
+            /// never mints through (FIX 2329).
+            fn room_base(&self) -> Option<&Store> {
+                None
+            }
             /// The vault's memo of policy manifest decodes.
             fn manifest_memo(&self) -> &crate::gate::ManifestDecodeMemo;
         }
@@ -822,6 +855,7 @@ macro_rules! manifest_dbs {
             fn key_custody(&self) -> &crate::store::key_custody::KeyCustody { &self.core.key_custody }
             fn gate_custody_archived(&self) -> bool { self.core.gate_custody_archived() }
             fn is_union(&self) -> bool { true }
+            fn room_base(&self) -> Option<&Store> { Some(self.base) }
             fn manifest_memo(&self) -> &crate::gate::ManifestDecodeMemo {
                 &self.core.manifest_memo
             }

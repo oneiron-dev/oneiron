@@ -83,10 +83,11 @@ impl Vault {
         // segment can still be displayed as an offer, with verification false.
         let owner_voice_print_verified =
             self.voice_owner_print_verified(voice_session_ref, segment_id, owner_actor)?;
-        let expires_at = self
-            .now_recorded_at()
-            .checked_add(OFFER_LIFETIME_SECONDS)
-            .ok_or(Error::ArithmeticOverflow("voice offer expiry"))?;
+        let expires_at = oneiron_store::expiry::expires_at_checked(
+            self.now_recorded_at(),
+            OFFER_LIFETIME_SECONDS,
+        )
+        .ok_or(Error::ArithmeticOverflow("voice offer expiry"))?;
         let mut random = [0_u8; 32];
         OsRng.fill_bytes(&mut random);
         let grant_offer_nonce = bytes_to_hex_lower(&random);
@@ -133,7 +134,7 @@ impl Vault {
                 if row.version != 1 {
                     return Err(invalid_offer());
                 }
-                if row.expires_at <= now {
+                if oneiron_store::expiry::is_expired(now, row.expires_at) {
                     expired.push(key.to_vec());
                 }
             }
@@ -172,7 +173,7 @@ impl Vault {
                 || row.owner_actor != actor.to_hex()
                 || row.principal_ref != principal_ref
                 || row.bound_digest != bound.digest().to_hex()
-                || row.expires_at <= self.now_recorded_at()
+                || oneiron_store::expiry::is_expired(self.now_recorded_at(), row.expires_at)
             {
                 return Err(invalid_offer());
             }
@@ -214,8 +215,6 @@ pub(crate) fn erase_voice_offer_actor_in_txn(
     Ok(())
 }
 
-// FIX [LIBTEST-QUARANTINE-GENUI-VOICE-OFFER-TESTS]: the lib test target's type check fails here (2 errors: E0599 x2); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -305,7 +304,7 @@ mod tests {
             ConsentSurface::Dashboard,
         )?;
         assert_eq!(
-            receipt.grant_ref().as_deref(),
+            crate::consent::consent_receipt_grant_ref(&receipt).as_deref(),
             Some(offer.bound_digest.as_str())
         );
         assert_eq!(
@@ -454,7 +453,10 @@ mod tests {
             ConsentSurface::Dashboard,
         )?;
         let grant_ref = bound.digest().to_hex();
-        assert_eq!(receipt.grant_ref().as_deref(), Some(grant_ref.as_str()));
+        assert_eq!(
+            crate::consent::consent_receipt_grant_ref(&receipt).as_deref(),
+            Some(grant_ref.as_str())
+        );
         assert!(
             vault
                 .confirm_voice_grant_offer(

@@ -47,16 +47,17 @@ fn cooperative_deletion_terminal_pact_gate_and_cutoff() -> crate::error::Result<
         );
         vault.put_authority_log_entry(&terminal, time, 1)?;
         let signed = sign(1)?;
-        let bytes = encode_signed_cooperative_deletion_request(&signed)?;
+        assert_eq!(signed.len(), 1);
+        let bytes = encode_signed_cooperative_deletion_request(&signed[0])?;
         assert_eq!(
             decode_and_verify_cooperative_deletion_request(
                 &bytes,
                 &authority_key_from_ed(&fixture.owner)
             )?,
-            signed.body
+            signed[0].body.clone()
         );
-        assert_eq!(signed.body.requester_vault_id, fixture.vault_id);
-        assert_eq!(signed.body.peer_vault_id, fixture.peer_vault_id);
+        assert_eq!(signed[0].body.requester_vault_id, fixture.vault_id);
+        assert_eq!(signed[0].body.peer_vault_id, fixture.peer_vault_id);
         assert!(sign(2).is_err());
     }
     Ok(())

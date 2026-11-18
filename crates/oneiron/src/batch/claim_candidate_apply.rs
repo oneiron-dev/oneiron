@@ -31,7 +31,7 @@ pub(super) fn apply_claim_candidate(
         envelope,
         occurred,
         learned_at,
-        decision,
+        mut decision,
         consent,
         indexing,
         write_policy,
@@ -96,9 +96,27 @@ pub(super) fn apply_claim_candidate(
             &mut resigned,
             default_facet,
         )?;
+        // A receipt this candidate's preflight recorded names the body before
+        // the mask wrote its handles, under the envelope it was offered with:
+        // the gate reads that receipt against this body's diff
+        // (CHECKER-PREVIEW-READS-UNMASKED-CANDIDATE).
+        if decision.preflight.is_some() {
+            let pre_body = pre.clone().into_claim_body(envelope, default_facet)?;
+            let (diff, _) = crate::gate::claim_consent_binding_parts(store, wtxn, &pre_body)?;
+            decision.pre_mask_diff =
+                Some(<[u8; 32]>::try_from(diff.as_slice()).map_err(|_| {
+                    Error::InvariantViolation("a claim diff handle is not 32 bytes")
+                })?);
+        }
     }
     let envelope = &resigned;
     let body = candidate.into_claim_body(envelope, default_facet)?;
+    crate::claim::world_access::admit_world_access_write(
+        store,
+        wtxn,
+        Some(actor.entity_ref()),
+        &body,
+    )?;
     // The ClaimOf weight the claim is born with: a signed initial-weight
     // entry, else the default. Both machine-history fold entry points seed
     // from this same value.

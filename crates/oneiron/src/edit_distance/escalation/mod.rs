@@ -59,6 +59,7 @@
 //! ruling covered — and [`StandingPolicy::covers_ask`] is the one place that
 //! comparison happens, so ES-07 consults a decision rather than re-deriving it.
 
+pub(crate) mod archive_restore;
 mod explicit;
 mod ledger;
 mod policy;
@@ -88,8 +89,6 @@ pub use self::types::{
     StandingPolicyStatus,
 };
 
-// FIX [LIBTEST-QUARANTINE-EDIT-DISTANCE-ESCALATION-TESTS]: the lib test target's type check fails here (4 errors: E0061 x4); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;
 

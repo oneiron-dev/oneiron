@@ -96,15 +96,12 @@ impl WireInputs {
             .and_then(|dir| file.strip_prefix(dir))
             .and_then(|file| file.strip_prefix('/'))
             .unwrap_or(file);
-        let module: Vec<String> = Path::new(file)
-            .parent()
-            .map(|parent| {
-                parent
-                    .iter()
-                    .map(|part| part.to_string_lossy().into_owned())
-                    .collect()
-            })
-            .unwrap_or_default();
+        let module: Vec<String> = Path::new(file).parent().map_or_default(|parent| {
+            parent
+                .iter()
+                .map(|part| part.to_string_lossy().into_owned())
+                .collect()
+        });
         let segments: Vec<String> = path.split("::").map(str::to_owned).collect();
         let Some(Found::Item(item)) = self
             .index

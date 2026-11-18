@@ -18,6 +18,7 @@
 //! [`ASSET_BODY_REFS_MAP`]: crate::sync::schema::ASSET_BODY_REFS_MAP
 
 use loro::LoroDoc;
+use oneiron_contracts::fingerprint::ContentHash;
 
 use crate::Vault;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
@@ -165,7 +166,7 @@ impl AssetBodyRef {
     /// reference's, an ASSET's metadata header, then exactly the manifest
     /// the reference names.
     pub(crate) fn binds(&self, carrier: &[u8]) -> bool {
-        *blake3::hash(carrier).as_bytes() == self.carrier_blake3
+        *ContentHash::of(carrier).as_bytes() == self.carrier_blake3
             && EntityMetadataHeader::parse(carrier)
                 .is_some_and(|header| header.entity_type == ENTITY_TYPE_ASSET)
             && carrier

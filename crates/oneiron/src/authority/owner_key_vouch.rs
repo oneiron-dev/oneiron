@@ -53,7 +53,7 @@ pub const OWNER_KEY_VOUCH_TEXT_PREFIX: &str = "oneiron-owner-key-vouch-v1.";
 pub const OWNER_KEY_VOUCH_LABEL_MAX: usize = 64;
 /// The longest request in bytes. Its six fields take at most 360; nothing
 /// longer is decoded.
-pub const OWNER_KEY_VOUCH_REQUEST_MAX_BYTES: usize = 512;
+const OWNER_KEY_VOUCH_REQUEST_MAX_BYTES: usize = 512;
 /// The longest text form a request has: its bytes at the bound, in base64.
 const REQUEST_TEXT_MAX: usize = OWNER_KEY_VOUCH_REQUEST_MAX_BYTES.div_ceil(3) * 4;
 /// What the request's bytes may hold before they are decoded: one flat map
@@ -185,7 +185,7 @@ impl OwnerKeyVouchRequest {
     }
 
     /// Reads [`Self::to_bytes`] back: at most
-    /// [`OWNER_KEY_VOUCH_REQUEST_MAX_BYTES`] bytes of one flat map, checked
+    /// `OWNER_KEY_VOUCH_REQUEST_MAX_BYTES` bytes of one flat map, checked
     /// before anything is decoded; exactly the six keys in their order, a
     /// 32-byte vault id and key, a machine id, two proofs of
     /// [`OWNER_KEY_POSSESSION_PROOF_LEN`] bytes, a label within its rules,

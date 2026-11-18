@@ -108,6 +108,7 @@ mod files;
 mod grant;
 mod grant_doors;
 mod grant_redeem;
+pub(crate) mod setting_keys;
 mod storage;
 mod types;
 mod verification;
@@ -116,6 +117,8 @@ pub(crate) use self::admission::reveal_tier_admission;
 pub use self::admission::tier_admission;
 pub(crate) use self::codec::decode_local_registration_body;
 pub use self::delivery::{NoSecretHostDelivery, SecretHostDelivery};
+#[cfg(unix)]
+pub(crate) use self::files::written;
 pub(crate) use self::grant::erase_secret_grant_actor_in_txn;
 pub use self::grant::{
     SECRET_GRANT_DEFAULT_TTL_SECS, SECRET_GRANT_MAX_TTL_SECS, SECRET_GRANT_RENEW_HANDOVER,
@@ -131,6 +134,8 @@ pub(crate) use self::storage::{
     stamp_reveal_lease_in_txn, stamp_use_lease_in_txn, teardown_local_registration_in_txn,
     write_secret_lease_in_txn,
 };
+#[cfg(unix)]
+pub(crate) use self::types::FileIdentity;
 pub(crate) use self::types::VaultInstant;
 pub use self::types::{
     DoorInjectionReceipt, LocalRegistration, SECRET_LEASE_KEY_PREFIX,
@@ -147,8 +152,6 @@ use self::files::path_swap_hook;
 use self::storage::{receipt_fault_hook, registration_fault_hook};
 
 pub(crate) mod tables;
-// FIX [LIBTEST-QUARANTINE-SECRET-LEASE-TESTS]: the lib test target's type check fails here (2 errors: E0063 x2); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;
 

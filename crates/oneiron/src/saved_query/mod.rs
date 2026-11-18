@@ -64,14 +64,13 @@ mod memo_lifetime;
 mod memory_watch;
 mod pack_drift;
 mod receipts;
+pub(crate) mod setting_keys;
 mod storage;
 mod support;
 mod sweep;
 mod value_fingerprint;
 
 pub(crate) mod tables;
-// FIX [LIBTEST-QUARANTINE-SAVED-QUERY-TESTS]: the lib test target's type check fails here (14 errors: E0063 x6, E0308 x6, E0061 x2); port it, then drop this gate
-#[cfg(any())]
 /// Private-encoding unit tests: memo-key canonicalization, malformed-row
 /// rejection, and the pure predicates the evaluator composes. Public
 /// behavior lives in `tests/saved_query_oracle.rs`.
@@ -106,13 +105,18 @@ pub use self::lifecycle::{
 };
 pub(crate) use self::lifecycle::{load_saved_query, load_saved_query_in_txn};
 pub(crate) use self::membership::membership_events_in_txn;
+#[cfg(oneiron_test_support)]
+pub(crate) use self::membership::plan_content_digest;
 pub use self::membership::{
     MembershipCause, MembershipCommitOutcome, MembershipEvent, MembershipTransition,
     MembershipWritePlan, commit_membership_plan, derived_member_value, membership_events,
     next_membership_epoch,
 };
 pub(crate) use self::memo_lifetime::{erase_memos_for_source_in_txn, memo_carriage, memo_owners};
-pub use self::memory_watch::{MemoryWatch, memory_watch, memory_watches, set_memory_watch};
+pub use self::memory_watch::{
+    MemoryWatch, agent_may_watch, memory_watch, memory_watches, set_memory_watch,
+    set_memory_watch_as_agent,
+};
 pub use self::pack_drift::{
     PackDrift, PackDriftRepair, PackDriftResolution, PackMigrationMap, PackPredicateRewrite,
     pack_drift_repairs, put_pack_migration_map, repair_pack_drift,

@@ -16,6 +16,7 @@ pub(crate) use reader_jobs::erase_reader_caller_actor_in_txn;
 mod records;
 mod replay_bodies;
 mod replay_capsule;
+pub(crate) mod replay_rows;
 mod response_erase;
 mod response_owners;
 mod routing;
@@ -115,7 +116,7 @@ pub(crate) use self::spawn_erase::erase_spawn_targets_in_txn;
 #[cfg(test)]
 pub(super) use self::speech_identity::canonical_speech_conversation_id;
 pub(in crate::code_run) use self::speech_identity::derived_executor_id;
-#[cfg(test)]
+#[cfg(any(test, oneiron_test_support))]
 pub(crate) use self::speech_identity::executor_speech_message_id;
 #[cfg(test)]
 pub(super) use self::speech_identity::executor_speech_turn_id;

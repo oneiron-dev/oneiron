@@ -2,7 +2,8 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::entity_id::EntityId;
-use crate::side_table::{self, HexId, Raw, SideKey, SideTable};
+use crate::side_table::{self, HexId, Raw, SideTable};
+use oneiron_store::side_table::key::WindowEntityHexKey;
 
 /// CROSS-ARCH-0002a / ARCH-0038 delete reason.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -320,41 +321,17 @@ pub(crate) fn pending_tombstone_key(window_label: &str, id: &EntityId) -> String
 /// through; `pub(crate)` because `recovery/` also reads this deletion-owned
 /// marker while reconstructing a canonical snapshot. Other readers go through
 /// the window deletion-row port, or the sync layer's own binding of the same
-/// declaration.
-pub(crate) const PENDING_TOMBSTONE: SideTable<PendingTombstoneKey, Vec<u8>, Raw> =
+/// declaration. Key after the `pt:` prefix: the window label, `:`, then the
+/// entity's 32 lower-case hex characters.
+pub(crate) const PENDING_TOMBSTONE: SideTable<WindowEntityHexKey, Vec<u8>, Raw> =
     SideTable::new(&side_table::DELETION_PENDING_TOMBSTONE);
 
-/// Key after the `pt:` prefix: the window label, `:`, then the entity's 32
-/// lower-case hex characters. The hex id is fixed width, so it decodes
-/// correctly from the tail even if a window label were to contain `:`.
-pub(crate) struct PendingTombstoneKey {
-    pub(crate) window: String,
-    pub(crate) id: EntityId,
-}
-
-impl SideKey for PendingTombstoneKey {
-    fn encode_into(&self, out: &mut Vec<u8>) {
-        out.extend_from_slice(self.window.as_bytes());
-        out.push(b':');
-        out.extend_from_slice(self.id.to_hex().as_bytes());
-    }
-
-    fn decode_key(bytes: &[u8]) -> Option<Self> {
-        let split = bytes.len().checked_sub(32)?;
-        let (head, hex) = bytes.split_at(split);
-        let window = head.strip_suffix(b":")?;
-        Some(Self {
-            window: String::from_utf8(window.to_vec()).ok()?,
-            id: EntityId::from_lower_hex(std::str::from_utf8(hex).ok()?).ok()?,
-        })
-    }
-}
-
-/// The window label and entity a [`PendingTombstoneKey`] reads from the bytes after its
+/// The window label and entity a [`PENDING_TOMBSTONE`] key reads from the bytes after its
 /// table prefix, or `None` where it refuses them (`test_doors::side_key_hex_case`).
 #[cfg(oneiron_test_support)]
 pub(crate) fn decode_pending_tombstone_key_for_test(bytes: &[u8]) -> Option<(String, EntityId)> {
-    PendingTombstoneKey::decode_key(bytes).map(|key| (key.window, key.id))
+    <WindowEntityHexKey as crate::side_table::SideKey>::decode_key(bytes)
+        .map(|key| (key.window, key.id))
 }
 
 // ─── Local hard-delete marker (`dt:`) — durable local delete truth ──────────
@@ -405,6 +382,40 @@ pub(crate) fn stage_engine_row_hard_erasure_in_txn(
     )
 }
 
+/// Marks, in the batch writer about to tear it, the hard delete of an actor
+/// row by its stored type alone: a PERSON or MACHINE stored at `id`, live or
+/// as a deleted shell, takes its permanent `dt:` marker, as every other hard
+/// delete leaves one (a batch delete tears the row: a hard delete,
+/// ARCH-0038). A capability slip it holds then stops standing, and the id is
+/// not born again here (RULING DELETED-SLIP-BATCH-DELETE = A). Any other
+/// kind, or no row, is left as before. An AGENT_DEF takes no marker: its id
+/// pin outlives the delete and says it (H215), so a definition reborn within
+/// its pin stands again. Nothing is staged for sync: a batch delete
+/// propagates no row's delete.
+pub(crate) fn mark_torn_actor_row_in_txn(
+    store: &crate::store::Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+) -> crate::error::Result<()> {
+    let actor =
+        crate::ports::EntityStoreRead::port_entity_record(store, &*wtxn, id)?.is_some_and(|row| {
+            matches!(
+                row.entity_type,
+                crate::registry::ENTITY_TYPE_PERSON | crate::registry::ENTITY_TYPE_MACHINE
+            )
+        });
+    let marker = HexId(*id);
+    if !actor || HARD_DELETE_MARKER.contains(store, wtxn, &marker)? {
+        return Ok(());
+    }
+    let value = TombstoneValueV2 {
+        reason: TombstoneReason::UserHardDelete,
+        deleted_at: crate::ports::recorded_at_in_txn(store, wtxn)?,
+        request_id: *id.as_bytes(),
+    };
+    HARD_DELETE_MARKER.put(store, wtxn, &marker, &value.encode().to_vec())
+}
+
 /// [`stage_engine_row_hard_erasure_in_txn`] in the window labelled `window`.
 /// A world's key pads go this way when the world is erased (fix 7), each in
 /// its world's window of the month it was learned; the erase door publishes
@@ -421,7 +432,7 @@ pub(crate) fn stage_engine_row_hard_erasure_at_in_txn(
     if !HARD_DELETE_MARKER.contains(store, wtxn, &marker)? {
         HARD_DELETE_MARKER.put(store, wtxn, &marker, &value.encode().to_vec())?;
     }
-    let key = PendingTombstoneKey { window, id: *id };
+    let key = WindowEntityHexKey { window, id: *id };
     PENDING_TOMBSTONE.put(store, wtxn, &key, &value.encode().to_vec())
 }
 
