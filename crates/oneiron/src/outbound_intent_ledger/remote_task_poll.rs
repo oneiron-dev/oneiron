@@ -71,7 +71,7 @@ pub(crate) static REMOTE_TASK_POLL_JOB: JobSpec = JobSpec {
     wakes_host: true,
     at_open: false,
     once_per_pass: true,
-    runs_here: crate::schedule::any_node,
+    runs_here: |_vault, _txn| Ok(true),
     drive: Drive::Host,
     run: crate::schedule::host_takes_its_rows,
 };

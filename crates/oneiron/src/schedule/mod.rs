@@ -172,11 +172,11 @@ pub struct JobSpec {
     /// sweep with no cursor of its own may find the same items again, and the pass reports one
     /// run of each.
     pub once_per_pass: bool,
-    /// Whether this node runs its rows, read once per job code per pass: [`any_node`] for a job
-    /// every node runs. A node that does not run it steps over its rows, which stay due there
-    /// and never wake it; the node that runs them, the vault's elected home for a job only the
-    /// home runs, runs each when it is due, and once, late, at its first pass after an election
-    /// that names it. A read that fails runs none of its rows in that pass.
+    /// Whether this node runs its rows, read once per job code per pass: a job every node runs
+    /// answers `Ok(true)` and reads nothing. A node that does not run it steps over its rows,
+    /// which stay due there and never wake it; the node that runs them, the vault's elected home
+    /// for a job only the home runs, runs each when it is due, and once, late, at its first pass
+    /// after an election that names it. A read that fails runs none of its rows in that pass.
     pub runs_here: fn(&crate::Vault, &heed::RoTxn<'_>) -> Result<bool>,
     /// Who runs its due rows: the runner, or its host ([`Drive::Host`]).
     pub drive: Drive,
@@ -227,12 +227,6 @@ pub(crate) fn host_takes_its_rows(
     Err(crate::error::Error::InvariantViolation(
         "the runner never runs a job its host drives",
     ))
-}
-
-/// [`JobSpec::runs_here`] for a job every node runs: it reads nothing.
-#[allow(clippy::unnecessary_wraps)]
-pub(crate) fn any_node(_vault: &crate::Vault, _txn: &heed::RoTxn<'_>) -> Result<bool> {
-    Ok(true)
 }
 
 impl std::fmt::Debug for JobSpec {

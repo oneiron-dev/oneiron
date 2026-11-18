@@ -180,7 +180,10 @@ pub(super) fn origin_differs(state: &FoldState, profile: &MachineProfile) -> boo
 /// that disagree on the image a machine was born of leave it conflicted,
 /// whatever their revision numbers (REVIEW-9509 round 2 P1).
 pub(super) fn origins_disagree(
-    revisions: &BTreeMap<AuthorityEntryHash, std::sync::Arc<super::machine_standing::Revision>>,
+    revisions: &oneiron_persistent_collections::PersistentMap<
+        AuthorityEntryHash,
+        std::sync::Arc<super::machine_standing::Revision>,
+    >,
 ) -> bool {
     let mut origins = revisions
         .values()
@@ -245,7 +248,7 @@ pub(super) fn fold_revision(
         let (theirs, others): (BTreeSet<_>, BTreeSet<_>) = std::mem::take(named)
             .into_iter()
             .partition(|claim| claim.machine == machine);
-        *named = others;
+        *named = others.into();
         claims = theirs;
         if named.is_empty() {
             state.machine_keys.remove(&profile.machine_key);

@@ -22,13 +22,15 @@
 //!   where the row stands.
 //!
 //! The row is the extraction mint's: `Generated`, and while it stays empty
-//! the cleanup's to archive. A batch revert archives it by that same rule.
+//! the cleanup's to archive, once no try of the lineage that minted it is
+//! pending. A batch revert archives it while it stays empty, whatever its
+//! run's state.
 
 use std::collections::BTreeSet;
 
 use super::batch::DerivedPerson;
 use super::commit::{ItemContext, ItemOutcome, allowance_receipt_in_txn, refusal_receipt_in_txn};
-use crate::claim::{ClaimSource, ScopedRead};
+use crate::claim::ScopedRead;
 use crate::dreamer_consolidation::{
     TurnText, has_name_span, normalize_name_span, origin_in_txn, speaker_admissible_in_txn,
 };
@@ -37,7 +39,6 @@ use crate::error::{Error, Result};
 use crate::gate::{DeriveCapability, derive_verdict_in_txn};
 use crate::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_TURN};
 use crate::snapshot_read::source_version_in_txn;
-use crate::temporal::TimeRange;
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 use crate::{EntityId, Vault};
 
@@ -143,18 +144,9 @@ pub(super) fn stage_in_txn(
         drop(savepoint);
         return refuse(vault, txn, context, Some(id), PERSON_ID_TAKEN);
     }
-    let at = TimeRange {
-        start: context.now,
-        end: context.now,
-    };
-    if !vault.put_extraction_minted_person_in_txn(
-        &mut savepoint,
-        &id,
-        ClaimSource::Generated,
-        at,
-        context.now,
-        &body,
-    )? {
+    // The mint records the lineage its id is derived from: the cleanup spares
+    // the PERSON while a try of that lineage is pending.
+    if !vault.put_attempt_minted_person_in_txn(&mut savepoint, &id, context.now, &body, origin)? {
         drop(savepoint);
         return refuse(vault, txn, context, Some(id), PERSON_ID_TAKEN);
     }

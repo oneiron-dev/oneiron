@@ -286,6 +286,7 @@ struct FileServeConfig {
     device_sync: Option<super::DeviceSyncConfig>,
     shared_env: Option<Vec<super::SharedEnvConfig>>,
     connectors: Option<std::collections::BTreeMap<String, super::ConnectorHostConfig>>,
+    gpu_jobs: Option<super::gpu_jobs::GpuJobsFile>,
     embedding: Option<super::EmbeddingConfig>,
     line: Option<super::LineConfig>,
     mail: Option<super::MailConfig>,
@@ -366,6 +367,7 @@ impl From<FileServeConfig> for PartialServeConfig {
             device_sync: value.device_sync,
             shared_env: value.shared_env,
             connectors: value.connectors,
+            gpu_jobs: value.gpu_jobs,
             embedding: value.embedding,
             line: value.line,
             mail: value.mail,
@@ -463,6 +465,8 @@ struct PartialServeConfig {
     shared_env: Option<Vec<super::SharedEnvConfig>>,
     /// `[connectors.<name>]` is file-only, as `[native_mail]` is.
     connectors: Option<std::collections::BTreeMap<String, super::ConnectorHostConfig>>,
+    /// `[gpu_jobs]` is file-only, as `[connectors.<name>]` is.
+    gpu_jobs: Option<super::gpu_jobs::GpuJobsFile>,
     /// `[embedding]` is file-only, as `[models]` is.
     embedding: Option<super::EmbeddingConfig>,
     /// `[line]` is file-only, as `[browser]` is.
@@ -576,6 +580,7 @@ impl fmt::Debug for PartialServeConfig {
             .field("device_sync", &self.device_sync)
             .field("shared_env", &self.shared_env)
             .field("connectors", &self.connectors)
+            .field("gpu_jobs", &self.gpu_jobs)
             .field("embedding", &self.embedding)
             .field("line", &self.line)
             .field("mail", &self.mail)
@@ -689,6 +694,7 @@ impl From<&ServeArgs> for PartialServeConfig {
             device_sync: None,
             shared_env: None,
             connectors: None,
+            gpu_jobs: None,
             embedding: None,
             line: None,
             mail: None,

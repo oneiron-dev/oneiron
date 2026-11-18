@@ -20,6 +20,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
+use oneiron_persistent_collections::PersistentMap;
+
 use crate::entity_id::EntityId;
 
 use super::apply::{refused_revision, roster_chain};
@@ -342,7 +344,10 @@ pub(in crate::authority) fn effective_chains<'a>(
 /// (FIX 4610: two concurrent marks of one anchor as two answers do).
 pub(in crate::authority) fn say_so_contested(
     head: &MachineRevision,
-    revisions: &BTreeMap<AuthorityEntryHash, Arc<crate::authority::machine_standing::Revision>>,
+    revisions: &PersistentMap<
+        AuthorityEntryHash,
+        Arc<crate::authority::machine_standing::Revision>,
+    >,
 ) -> bool {
     if head.say_so.is_none() {
         return false;

@@ -744,7 +744,9 @@ impl FoldBase {
                 head: tail.tip,
                 frontier,
                 merged,
-                revocations: final_merged?.actor_revocation_hashes,
+                revocations: crate::authority::fold_state::to_btree_set_map(
+                    &final_merged?.actor_revocation_hashes,
+                ),
                 settlement: Arc::clone(settlement),
                 issuers: once.issuers.clone(),
                 uncounted: tail.uncounted,
