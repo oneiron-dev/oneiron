@@ -870,6 +870,22 @@ impl Vault {
         Ok(KnownSnapshot { known, snapshot })
     }
 
+    /// The values custody knows now, as one matcher its caller holds once the
+    /// custody read guard is released (FIX REPLAY-COMPARE-KNOWN-MATCHER):
+    /// built from one snapshot taken under the guard, as
+    /// [`Self::with_known_values`] builds it, for a replay's compare that
+    /// reads it once and drops it. `None` when custody knows no value. Call
+    /// it outside any write transaction.
+    ///
+    /// # Errors
+    /// The custody snapshot's, or the index's read.
+    pub(crate) fn known_values_now(&self) -> Result<Option<Arc<KnownValues>>> {
+        let snapshot = self.store.custody_snapshot()?;
+        let known = self.known_values_in_snapshot(&snapshot)?;
+        drop(snapshot);
+        Ok(known.map(Arc::new))
+    }
+
     /// The matcher of the history `txn` holds, a snapshot taken under the
     /// custody read guard: each holder with a handle, as a pass reads them.
     fn known_values_in_snapshot(&self, txn: &RoTxn<'_>) -> Result<Option<KnownValues>> {

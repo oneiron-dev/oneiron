@@ -28,7 +28,6 @@ pub(crate) use self::lift_history::{
     enqueue_known_remark_in_txn, enqueue_lift_in_txn, propose_sync_text_in_txn,
     propose_typed_body_at_in_txn, run_lift_pass, typed_body_at_proposal_due_in_txn,
 };
-pub(super) use self::mask::MaskedFiles;
 pub(crate) use self::mask::admit::{
     Lifted, Part, admit_parts_in_txn, admit_stream_text_in_txn, plan_parts_in_txn,
     predict_masked_body, predict_masked_text, scan_content_in_txn, scan_document_in_txn,
@@ -53,12 +52,14 @@ pub(crate) use self::mask::retained_repo::{
 pub(crate) use self::mask::side_row::admit_typed_with_rule;
 pub(crate) use self::mask::side_row::{
     SidePart, TextReplacements, admit_side_parts, admit_side_row, admit_tracked_side_parts,
-    admit_typed, admitted_from, from_named_tree, named_tree, origin as side_row_origin,
+    admit_typed, admitted_from, admitted_from_known, from_named_tree, named_tree,
+    origin as side_row_origin,
 };
 pub(crate) use self::mask::spool::{
     AdmissionCustody, BodySpool, SPOOL_HEAD_BYTES, SpoolAdmission, admit_spool_in_txn,
 };
 pub(crate) use self::mask::stream_known::{KnownStreamFinder, StreamKnown};
+pub(super) use self::mask::{MaskedClaimBodies, MaskedFiles};
 pub(crate) use self::mask::{
     file_mints_in_txn, move_mask_origin_in_txn, rebind_mask_origin_in_txn, side_row::admission_form,
 };
