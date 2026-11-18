@@ -45,7 +45,7 @@ pub(crate) static CHECK_IN_DUE_JOB: JobSpec = JobSpec {
     wakes_host: true,
     at_open: false,
     once_per_pass: true,
-    runs_here: crate::schedule::any_node,
+    runs_here: |_vault, _txn| Ok(true),
     drive: crate::schedule::Drive::Runner,
     run: run_check_in_due,
 };

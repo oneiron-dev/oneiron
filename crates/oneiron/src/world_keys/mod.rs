@@ -87,6 +87,7 @@ pub use self::kit::{
 pub use self::machine::{existing_machine_secret, machine_encryption_key, machine_secret};
 pub(crate) use self::machine::{keystore_error, slot_seed};
 pub use self::owner_signing::OwnerRootSigner;
+pub(crate) use self::owner_signing::OwnerSigningSlot;
 pub use self::owner_work::{
     BundleHomeWarning, CapsuleRead, DeviceSyncStart, EnsureDiagnostics, EnsureView,
     ExecutorObservation, LatestRead, OwnerWorkCancelNote, OwnerWorkCancelState,
@@ -145,7 +146,8 @@ pub use self::page_seal::{
 };
 pub use self::repin::{NarrowedWorld, RepinReport, Withheld};
 pub use self::root::{
-    RecoveryAuthoritySigner, RecoveryRoot, RecoveryRootId, RecoveryRootSeed, SeedOrigin,
+    RecoveryAuthoritySeed, RecoveryAuthoritySigner, RecoveryRoot, RecoveryRootId, RecoveryRootSeed,
+    SeedOrigin,
 };
 pub use self::root_doors::{ActivatedRoot, AnchoredMachine, KitConfirmation, RootRestore};
 pub use self::root_issue::PreparedRoot;

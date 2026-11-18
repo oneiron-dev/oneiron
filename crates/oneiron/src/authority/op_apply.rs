@@ -254,7 +254,7 @@ pub(super) fn apply_actor_binding(
             observed_revocations: state
                 .actor_revocation_hashes
                 .get(authority_key)
-                .cloned()
+                .map(|hashes| hashes.to_btree_set())
                 .unwrap_or_default(),
             actor_ref: *actor_ref,
             actor_class: actor_class.clone(),
