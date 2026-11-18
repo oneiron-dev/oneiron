@@ -107,6 +107,12 @@ pub(super) fn fold_entry_state(
     if entry_is_retired(entry, hash, context) {
         return EntryFold::Invalid(AuthorityFoldIssue::InvalidEntry(hash));
     }
+    // An enrolment of an owner's key outside the line of the enrolment that
+    // made it the owner's (row CARRIER-PROOF-OLD-PARENTS, OLDPARENTS-ENROL-DODGE
+    // = A): the roster merge would otherwise narrow the key on every branch.
+    if context.refuses_off_the_line_enrolment(&hash) {
+        return EntryFold::Invalid(AuthorityFoldIssue::InvalidEntry(hash));
+    }
 
     // A row below its floor, the highest sequence among its signer's rows
     // in its scope that do not descend from it (`rows_floor`), forks its
@@ -314,6 +320,7 @@ pub(super) fn fold_entry_state(
             hash,
             (context.pin, context.machine_standing),
             restriction_only,
+            context.needs_owner_proof_off_the_line(&hash),
         ) {
             return EntryFold::Invalid(issue);
         }
@@ -329,6 +336,7 @@ pub(super) fn fold_entry_state(
             hash,
             (context.pin, context.machine_standing),
             restriction_only,
+            context.needs_owner_proof_off_the_line(&hash),
         ) {
             return EntryFold::Invalid(issue);
         }
@@ -345,6 +353,7 @@ pub(super) fn fold_entry_state(
             hash,
             (context.pin, context.machine_standing),
             restriction_only,
+            context.needs_owner_proof_off_the_line(&hash),
         ) {
             return EntryFold::Invalid(issue);
         }
@@ -361,6 +370,7 @@ pub(super) fn fold_entry_state(
             hash,
             (context.pin, context.machine_standing),
             restriction_only,
+            context.needs_owner_proof_off_the_line(&hash),
         ) {
             return EntryFold::Invalid(issue);
         }
@@ -377,6 +387,7 @@ pub(super) fn fold_entry_state(
             hash,
             (context.pin, context.machine_standing),
             restriction_only,
+            context.needs_owner_proof_off_the_line(&hash),
         ) {
             return EntryFold::Invalid(issue);
         }
@@ -393,6 +404,7 @@ pub(super) fn fold_entry_state(
             hash,
             (context.pin, context.machine_standing),
             restriction_only,
+            context.needs_owner_proof_off_the_line(&hash),
         ) {
             return EntryFold::Invalid(issue);
         }
@@ -439,6 +451,7 @@ pub(super) fn fold_entry_state(
             hash,
             (context.pin, context.machine_standing),
             restriction_only,
+            context.needs_owner_proof_off_the_line(&hash),
         ) {
             return EntryFold::Invalid(issue);
         }
@@ -474,6 +487,7 @@ pub(super) fn fold_entry_state(
             hash,
             (context.pin, context.machine_standing),
             restriction_only,
+            context.needs_owner_proof_off_the_line(&hash),
         ) {
             return EntryFold::Invalid(issue);
         }

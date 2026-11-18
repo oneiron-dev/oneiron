@@ -28,7 +28,18 @@ impl Vault {
     /// returns [`ClaimError::EngineIdentitiesNotProvisioned`] and writes
     /// nothing.
     ///
+    /// This door carries no actor and no owner proof, so it never lifts a
+    /// restriction. A weakening or a stale mark of a claim that restricts
+    /// someone's access (a delivery window, an opt-out, a held campaign
+    /// member, ...: [`crate::federation::claim_removal_widens_in`]) takes it
+    /// out of its readers' fold, which is a live vault owner's act. Unless
+    /// its class is critical, it is refused with
+    /// [`ClaimError::ActorLacksClaimAuthority`] and writes nothing. The owner
+    /// demotes it through `vault.claims.demote` on the owner's own handle. A
+    /// decay only moves the claim's weight and lands as before.
+    ///
     /// [`ClaimError::EngineIdentitiesNotProvisioned`]: crate::error::ClaimError::EngineIdentitiesNotProvisioned
+    /// [`ClaimError::ActorLacksClaimAuthority`]: crate::error::ClaimError::ActorLacksClaimAuthority
     pub fn apply_claim_demotion(
         &self,
         claim_id: &EntityId,
@@ -88,6 +99,21 @@ impl Vault {
                 outcome: "pending",
                 reason_codes: vec![crate::gate::GateReasonCode::PendingCriticalityFloor.as_str()],
             }));
+        }
+        // A critical target parked above for the owner's Clear. A noncritical
+        // one that restricts someone is refused here, under the rule the
+        // Memory door and delete apply (the Engine's RULING
+        // RESTRICTION-FIX-SCOPE = A; FIX [RESTRICTION-CLOSE-BY-NATIVE-DEMOTION]).
+        if !matches!(action, ClaimDemotionAction::Decay { .. })
+            && crate::federation::claim_removal_widens_in(self, &wtxn, &body)?
+        {
+            return Err(Error::Claim(
+                crate::error::ClaimError::ActorLacksClaimAuthority {
+                    reason: "a native weakening or stale mark of a claim that restricts \
+                             someone's access is refused: lifting a restriction is a live \
+                             vault owner's act, through vault.claims.demote",
+                },
+            ));
         }
         let next = self.apply_claim_demotion_in_txn(&mut wtxn, claim_id, action, now)?;
         wtxn.commit()?;

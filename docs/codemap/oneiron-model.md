@@ -20,15 +20,16 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/llm/backend_identity.rs` | src | s | 1 struct · 2 fn | LlamaAlias | The answering house llama.cpp process's launch alias (FIX 7895, 6567 PR1b): which incarnation answered a… |
 | `src/llm/budget/checkpoint.rs` | src | s | 1 struct · 3 fn | BudgetCheckpoint | Settled state of one budget meter across a workflow hook wait |
 | `src/llm/budget/dispatch.rs` | src | m | 1 struct · 1 enum · 15 fn · 1 const | DispatchBinding, DispatchRefused | Bound admissions and the one-use dispatch check: a lease that records what it was granted for, and is… |
-| `src/llm/budget/guard.rs` | src | m | 1 struct · 18 fn · 1 crate-vis | BudgetGuard | Guard handle: admission, abort, reads, and settlement entry points |
+| `src/llm/budget/guard.rs` | src | s | 1 struct · 18 fn · 1 crate-vis | BudgetGuard | Guard handle: admission, abort, reads, and settlement entry points |
 | `src/llm/budget/ladders.rs` | src | s | 5 crate-vis | — | Threshold ladder emission for the budget meter |
-| `src/llm/budget/ledger.rs` | src | s | 10 crate-vis | — | Lease and tally bookkeeping: reservations, charging, and metering math |
-| `src/llm/budget/mod.rs` | src | s | 6 re-export | — | Budget admission and settlement surface |
+| `src/llm/budget/ledger.rs` | src | s | 21 crate-vis | — | Lease and tally bookkeeping: reservations, charging, and metering math |
+| `src/llm/budget/mod.rs` | src | s | 6 re-export · 1 crate-vis | — | Budget admission and settlement surface |
 | `src/llm/budget/policy.rs` | src | s | 2 struct · 1 enum · 9 fn · 1 crate-vis | BudgetPolicyRow, BudgetPolicySelector, BudgetPolicyTable | Resolved manifest policy table for one budget meter |
 | `src/llm/budget/settlement.rs` | src | s | 2 fn · 1 crate-vis | — | Budget lease settlement |
-| `src/llm/budget/state.rs` | src | m | 23 crate-vis | — | Budget meter core: reserve planning and admission |
+| `src/llm/budget/state.rs` | src | m | 24 crate-vis | — | Budget meter core: reserve planning and admission |
 | `src/llm/budget/templates.rs` | src | s | 1 struct · 9 const | BudgetPromptTemplate | Budget ladder prompt templates and their registry |
 | `src/llm/budget/tests.rs` | test | s | — | — | — |
+| `src/llm/budget/tests/closed_leases.rs` | test | s | — | — | FIX BUDGET-LINE-LEASE-TABLE-UNBOUNDED: a meter keeps a record for its open leases only, while every handle… |
 | `src/llm/budget/tests/dispatch.rs` | test | s | — | — | — |
 | `src/llm/budget/tests/per_call.rs` | test | s | — | — | — |
 | `src/llm/budget/types.rs` | src | s | 5 struct · 4 enum · 5 fn · 1 const | BudgetAdmission, BudgetExhaustionPolicy, BudgetLadderEvent, BudgetLeaseState, BudgetRead, BudgetSettlement, BudgetSignalDeliveryChannel, BudgetSteeringSignal +1 | Public budget DTOs and the exhaustion policy |

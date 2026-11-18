@@ -253,6 +253,7 @@ fn an_unreadable_plan_does_not_stop_a_hard_erase() {
     let seed = serde_json::to_vec(&AddOwnerPlan {
         v: 1,
         owner: owner.to_hex(),
+        house_workspace: None,
     })
     .expect("a plan the start door accepts");
     let empty = vault
@@ -324,6 +325,7 @@ fn an_unreadable_plan_that_escapes_the_persons_hex_holds_the_marker() {
     let seed = serde_json::to_vec(&AddOwnerPlan {
         v: 1,
         owner: owner.to_hex(),
+        house_workspace: None,
     })
     .expect("a plan the start door accepts");
     let act = vault

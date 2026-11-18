@@ -19,25 +19,38 @@
 //! not compile, as neither door nor the request exists. Green at the head.
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test owner_key_vouch`.
+//!
+//! REVIEW2 #8796 P3-1: an agent's act is refused at both doors before
+//! anything is readied, and a machine with a removed chain is refused
+//! although another chain of it is live and the owner's. Red on the mutation
+//! branch that drops those two checks, green at the head.
 #![cfg(oneiron_test_support)]
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use std::collections::BTreeSet;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use oneiron::authority::{
     ActAuthority, ActSurface, AuthorityEntryHash, AuthorityKey, AuthorityLogEntry,
     CheckpointRootSigner, DeviceOwnerKeyVouch, HostSlipIssuer, MachineAnswerLanding,
-    MachineOwnership, MachineRole, OWNER_KEY_VOUCH_LABEL_MAX, OwnerKeyVouchRequest, ROLE_OWNER,
-    authority_entry_hash, decode_authority_log_entry_body,
+    MachineOwnership, MachineRole, OWNER_KEY_VOUCH_LABEL_MAX, OwnerActKind, OwnerKeyVouchRequest,
+    ROLE_OWNER, authority_entry_hash, decode_authority_log_entry_body,
 };
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::error::RecordError;
-use oneiron::federation::{FederationGrantRole, InitialSharedMember};
+use oneiron::federation::{FederationGrantRole, InitialSharedMember, Scope, ScopeAxis};
 use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::store::GateDecisionId;
 use oneiron::test_doors::label_writers::embedded_owner;
+use oneiron::test_doors::owner_key_vouch_holding_machine::require_holding_machine_beside_anchor_chain;
+use oneiron::verbs::{AgentGrantMintRequest, mint_agent_grant_as};
 use oneiron::{EntityId, Error, HostingPrivacyPosture, TimeRange, Vault, VaultConfig};
+use oneiron_keystore::{
+    AuthBoundSecretStore, DeviceKeystore, KeystoreAssurance, KeystoreLocality, KeystoreSlot,
+    MemoryKeystore, SealedBytesStore,
+};
+use zeroize::Zeroizing;
 
 /// The co-Owner fixture's shared vault id.
 const SHARED: u64 = 27;
@@ -162,9 +175,19 @@ fn new_device(owner: &OwnerDevice) -> NewDevice {
 
 /// [`new_device`], the owner device answering the new machine as `role`.
 fn new_device_as(owner: &OwnerDevice, role: MachineRole) -> NewDevice {
+    new_device_on(owner, role, Arc::new(MemoryKeystore::default()))
+}
+
+/// [`new_device_as`], the new device's install keeping its slots in
+/// `keystore`.
+fn new_device_on(
+    owner: &OwnerDevice,
+    role: MachineRole,
+    keystore: Arc<dyn DeviceKeystore>,
+) -> NewDevice {
     let dir = tempfile::tempdir().expect("vault directory");
     let vault = Vault::open(dir.path(), hosted_config()).expect("the new device's install");
-    vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
+    vault.install_device_keystore(keystore);
     let key = vault
         .machine_encryption_key(owner.vault_id)
         .expect("the new device's encryption key");
@@ -225,6 +248,97 @@ impl NewDevice {
     fn request(&self) -> OwnerKeyVouchRequest {
         request_on(&self.vault, &owner_act(&self.proof()))
     }
+}
+
+/// A memory keystore that counts every slot read and write, so a test can
+/// show that a door read and made no slot.
+#[derive(Default)]
+struct CountedKeystore {
+    slots: MemoryKeystore,
+    touched: AtomicUsize,
+}
+
+impl CountedKeystore {
+    /// The slot reads and writes so far.
+    fn touched(&self) -> usize {
+        self.touched.load(Ordering::SeqCst)
+    }
+
+    fn touch(&self) {
+        self.touched.fetch_add(1, Ordering::SeqCst);
+    }
+}
+
+impl DeviceKeystore for CountedKeystore {
+    fn get(&self, slot: &KeystoreSlot) -> oneiron_keystore::Result<Option<Zeroizing<[u8; 32]>>> {
+        self.touch();
+        self.slots.get(slot)
+    }
+
+    fn create(&self, slot: &KeystoreSlot, secret: &[u8; 32]) -> oneiron_keystore::Result<()> {
+        self.touch();
+        self.slots.create(slot, secret)
+    }
+
+    fn delete(&self, slot: &KeystoreSlot) -> oneiron_keystore::Result<()> {
+        self.touch();
+        self.slots.delete(slot)
+    }
+
+    fn replace(&self, slot: &KeystoreSlot, secret: &[u8; 32]) -> oneiron_keystore::Result<bool> {
+        self.touch();
+        self.slots.replace(slot, secret)
+    }
+
+    fn locality(&self) -> KeystoreLocality {
+        self.slots.locality()
+    }
+
+    fn assurance(&self) -> KeystoreAssurance {
+        self.slots.assurance()
+    }
+
+    fn sealed_bytes(&self) -> Option<&dyn SealedBytesStore> {
+        self.slots.sealed_bytes()
+    }
+
+    fn auth_bound_secret(&self) -> Option<&dyn AuthBoundSecretStore> {
+        self.slots.auth_bound_secret()
+    }
+}
+
+/// An agent's act on `vault`: a named agent whose live Grant from `owner`
+/// names the free-time policy act, one of the acts an agent's Grant may name.
+fn agent_act(vault: &Vault, owner: &AuthenticatedOwner) -> ActAuthority {
+    let agent = vault
+        .ensure_agent_principal("owner-key-vouch-agent")
+        .expect("a named agent");
+    let mut authority_scope = Scope::top();
+    authority_scope.verbs = ScopeAxis::Some(BTreeSet::from([
+        "read".to_owned(),
+        "free_time_policy_set".to_owned(),
+    ]));
+    let minted = mint_agent_grant_as(
+        vault,
+        owner,
+        ActSurface::ThisInstall,
+        AgentGrantMintRequest {
+            agent,
+            authority_scope,
+            expires_at: None,
+            repo_bounds: None,
+            verb_classes: BTreeSet::new(),
+            wallet_ref: None,
+            working_view_bounds: None,
+        },
+    )
+    .expect("the owner grants the agent the act");
+    assert!(minted.grant.confers, "guard: the agent's Grant is live");
+    ActAuthority::Agent(
+        vault
+            .granted_act(agent, minted.grant.grant_ref, OwnerActKind::FreeTimePolicy)
+            .expect("the agent's Grant names the act"),
+    )
 }
 
 /// The owner key on one device signs another device's new key in: the
@@ -628,5 +742,86 @@ fn the_new_devices_door_refuses_a_label_over_its_bound() {
             Error::Record(RecordError::InvalidAuthorityLogBody(_))
         ),
         "{refused:?}"
+    );
+}
+
+/// An agent's act is refused at both doors before anything is readied
+/// (REVIEW2 #8796 P3-1 a): the new device's request door reads and makes no
+/// keystore slot for it, and the owner device's vouch writes nothing. Both
+/// doors refuse an agent's act by its kind before they read its Grant, so
+/// the act the owner device's Grant names is an agent's act at both.
+#[test]
+fn an_agents_act_is_refused_at_both_doors_before_anything_is_readied() {
+    let owner = owner_device(true);
+    let keystore = Arc::new(CountedKeystore::default());
+    let device = new_device_on(
+        &owner,
+        MachineRole::Owned(MachineOwnership::Yours),
+        keystore.clone(),
+    );
+    let agent = agent_act(&owner.vault, &owner.proof);
+
+    let touched = keystore.touched();
+    let refused = device
+        .vault
+        .device_owner_key_vouch_request(&agent, "Laptop")
+        .expect_err("an agent asks for no owner key");
+    assert!(
+        matches!(refused, Error::Record(RecordError::AuthorityRefused(_))),
+        "an authority refusal: {refused:?}"
+    );
+    assert_eq!(
+        keystore.touched(),
+        touched,
+        "the request door read and made no slot for the agent"
+    );
+    let request = device.request();
+    assert!(
+        keystore.touched() > touched,
+        "guard: the owner's own ask reads and makes the slot"
+    );
+
+    let rows = owner.history().len();
+    let refused = owner
+        .vault
+        .enrol_vouched_owner_signing_key(&agent, &request)
+        .expect_err("an agent vouches for no owner key");
+    assert!(
+        matches!(refused, Error::Record(RecordError::AuthorityRefused(_))),
+        "an authority refusal: {refused:?}"
+    );
+    assert!(
+        !owner.roster_lists(request.public_key),
+        "the key is not enrolled"
+    );
+    assert_eq!(owner.history().len(), rows, "nothing was written");
+    owner
+        .vouch(&request)
+        .expect("guard: the owner's own act vouches for the same request");
+}
+
+/// A machine with a removed chain makes no owner key, although another
+/// chain of it is live and the owner's (REVIEW2 #8796 P3-1 b): on the owner
+/// device's fold shaped so the new device's machine has an anchor's chain
+/// beside its roster chain, both live and `Owned(Yours)`, the vouch door's
+/// holding-machine check admits the request; once the roster chain is
+/// removed it refuses the request, although the anchor's chain still says
+/// "yours".
+#[test]
+fn a_machine_with_a_removed_chain_is_refused_beside_a_live_owned_chain() {
+    let owner = owner_device(true);
+    let device = new_device(&owner);
+    let request = device.request();
+    let anchor = [7; 32];
+    require_holding_machine_beside_anchor_chain(&owner.vault, &request, anchor, false)
+        .expect("guard: two live chains the owner answered as theirs admit the machine");
+    let refused = require_holding_machine_beside_anchor_chain(&owner.vault, &request, anchor, true)
+        .expect_err("a removed chain refuses the machine");
+    assert!(
+        matches!(
+            refused,
+            Error::Record(RecordError::InvalidAuthorityLogBody(_))
+        ),
+        "no live chain of a machine with a removed chain verifies its proof: {refused:?}"
     );
 }

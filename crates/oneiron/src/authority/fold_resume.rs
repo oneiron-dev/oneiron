@@ -618,6 +618,7 @@ impl FoldBase {
             pre_handoff_entries: Some(&no_handoff_line),
             memory_floor_bytes,
             pin: inputs.pin.as_ref(),
+            owner_key_lines: None,
             appointments: None,
         };
         // The new rows: main rows one chain off the head, and world key
