@@ -12,11 +12,15 @@
 //! Now each compare reads the offered input in the form the wall planned the
 //! row, first without and then with the values base custody holds, as the
 //! replay compare does (`admitted_from_known`), and still reads an input's
-//! object keys in any order.
+//! object keys in any order. With those values, each reads as its record's
+//! handle on both sides, so a passphrase another custody record holds still
+//! changed the write (FIX REPLAY-COMPARE-KNOWN-OTHER-CALLERS).
 //!
 //! Red on the base (#9500's head 1507c44a73d): the three held-value tests
 //! fail at their meet asserts, after their FIXTURE asserts; the two guards
-//! pass.
+//! and the other-held-passphrase test pass. That test fails where the known
+//! arm read every value custody holds as one stand-in (this PR's tip before
+//! its last fix), and the others pass there.
 //!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test write_receipt_held_input`.
@@ -37,6 +41,8 @@ type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 /// Passphrases no shape rule reads as a secret. Custody holds the first.
 const HELD_PASSPHRASE: &str = "winter orchard notebook lantern";
 const UNHELD_PASSPHRASE: &str = "summer harbour pencil compass";
+/// A passphrase a second custody record holds.
+const OTHER_HELD_PASSPHRASE: &str = "autumn meadow candle ribbon";
 
 /// A token a shape rule places, whether custody holds it or not.
 const SHAPED_TOKEN: &str = "ghp_0123456789abcdefghijklmnopqrstuvwxyz";
@@ -49,6 +55,12 @@ fn vault() -> TestResult<(tempfile::TempDir, Vault)> {
     vault.register_test_secret(
         "orchard passphrase",
         HELD_PASSPHRASE.as_bytes(),
+        Vec::new(),
+        1,
+    )?;
+    vault.register_test_secret(
+        "meadow passphrase",
+        OTHER_HELD_PASSPHRASE.as_bytes(),
         Vec::new(),
         1,
     )?;
@@ -181,6 +193,36 @@ fn a_resumed_write_holding_another_passphrase_does_not_meet_its_receipt() -> Tes
     assert!(
         !meet.close_meets,
         "a changed write is refused when its step closes: {meet:?}"
+    );
+    Ok(())
+}
+
+/// A resumed write that holds a passphrase another custody record holds,
+/// where its receipt held the first one's handle, changed the write: both
+/// compares refuse it, as for a passphrase no custody holds, and never read
+/// the two records' values as one.
+#[test]
+fn a_resumed_write_holding_another_held_passphrase_does_not_meet_its_receipt() -> TestResult {
+    let (_directory, vault) = vault()?;
+
+    let meet = resumed_write_meets_its_stored_receipt(
+        &vault,
+        &task_holding(HELD_PASSPHRASE),
+        &task_holding(OTHER_HELD_PASSPHRASE),
+    )?;
+
+    assert!(
+        !meet.kept_input.contains(HELD_PASSPHRASE),
+        "FIXTURE: the wall placed the held passphrase as a handle in the receipt: {meet:?}"
+    );
+    assert!(
+        !meet.write_meets,
+        "a write with another held passphrase is refused when it is answered from its receipt: \
+         {meet:?}"
+    );
+    assert!(
+        !meet.close_meets,
+        "a write with another held passphrase is refused when its step closes: {meet:?}"
     );
     Ok(())
 }
