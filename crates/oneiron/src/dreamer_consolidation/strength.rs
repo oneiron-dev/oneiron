@@ -165,6 +165,47 @@ pub(crate) fn strength_policy_pin_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>) -
     Ok(hash.finalize().to_hex().to_string())
 }
 
+/// Lands one archived DREAMER_CONSOLIDATION_STRENGTH_POLICY row live: a validated policy
+/// installs through the archive seam, anything else is held back.
+fn land_archived_strength_policy_row_in_txn(
+    vault: &crate::Vault,
+    txn: &mut heed::RwTxn<'_>,
+    permit: &crate::batch::export::OwnerArchiveRestorePermit,
+    row: &crate::batch::export::ArchiveRetainedSideRow,
+) -> crate::Result<crate::batch::export::archive_side_install::ArchivedSideRowOutcome> {
+    use crate::batch::export::RetainedSideHeldBackReason;
+    use crate::batch::export::archive_side_install::{
+        ArchivedSideRowOutcome, decode_archived_row, install_archived_row,
+    };
+    let (key, value) = match decode_archived_row(&POLICY, row) {
+        Ok(decoded) => decoded,
+        Err(reason) => return Ok(ArchivedSideRowOutcome::HeldBack(reason)),
+    };
+    if value.validate().is_err() {
+        return Ok(ArchivedSideRowOutcome::HeldBack(
+            RetainedSideHeldBackReason::InvalidValue,
+        ));
+    }
+    install_archived_row(&POLICY, vault, txn, permit, &key, row)
+}
+
+/// Lands archived DREAMER_CONSOLIDATION_STRENGTH_POLICY rows live, one outcome per input row in
+/// input order.
+pub(crate) fn land_archived_dreamer_consolidation_rows_in_txn(
+    vault: &crate::Vault,
+    txn: &mut heed::RwTxn<'_>,
+    permit: &crate::batch::export::OwnerArchiveRestorePermit,
+    rows: &[crate::batch::export::ArchiveRetainedSideRow],
+) -> crate::Result<Vec<crate::batch::export::archive_side_install::ArchivedSideRowOutcome>> {
+    let mut outcomes = Vec::with_capacity(rows.len());
+    for row in rows {
+        outcomes.push(land_archived_strength_policy_row_in_txn(
+            vault, txn, permit, row,
+        )?);
+    }
+    Ok(outcomes)
+}
+
 /// The claim id and its stored observations, or no pin when no row stands.
 pub(crate) fn observation_pin_in_txn(
     vault: &Vault,
@@ -181,6 +222,29 @@ pub(crate) fn observation_pin_in_txn(
     hash.update(claim.as_bytes());
     hash.update(&encoded);
     Ok(Some(hash.finalize().to_hex().to_string()))
+}
+
+/// The prefix of a sitting-bound TURN's diversity key, which keeps it apart
+/// from a bare speaker key. Rows stored before FIX 395 keep their bare keys
+/// and read as before.
+const SITTING_DIVERSITY_PREFIX: &str = "session:";
+
+/// The independence key of one TURN of evidence, spoken by `speaker`, for
+/// the diversity signal (FIX 395, RULING FIX395-DIVERSITY-KEY = C): one key
+/// per (sitting, speaker) pair when its witness recorded the sitting it
+/// joined (DREAM-008), so a fact the owner repeats in three sittings counts
+/// three times and two speakers in one sitting count apart. A TURN that
+/// joined no sitting keeps its normalized speaker alone. Selection and the
+/// stored observation both count by this key.
+pub(super) fn turn_diversity_key(speaker: &str, sitting: Option<&EntityId>) -> String {
+    let speaker = speaker.trim().to_lowercase();
+    match sitting {
+        Some(session) => format!(
+            "{SITTING_DIVERSITY_PREFIX}{}|speaker:{speaker}",
+            session.to_hex()
+        ),
+        None => speaker,
+    }
 }
 
 /// Called only after the promotion/attachment gate and its evidence fence.
@@ -231,9 +295,11 @@ pub(crate) fn record_verified_in_txn(
         let diversity = if is_claim {
             Some(source.to_hex())
         } else {
+            let sitting =
+                crate::compaction::turn_session_membership_in_txn(&vault.store, txn, &source)?;
             decode_turn_body(&raw[ENTITY_METADATA_HEADER_LEN..])
                 .speaker
-                .map(|speaker| speaker.trim().to_lowercase())
+                .map(|speaker| turn_diversity_key(&speaker, sitting.as_ref()))
         };
         observations.sources.push(StrengthSource {
             source,

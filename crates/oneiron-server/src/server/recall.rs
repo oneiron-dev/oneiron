@@ -23,7 +23,7 @@
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
-use oneiron::authority::VerifiedSlip;
+use oneiron::authority::{HostActionAuthority, VerifiedSlip};
 use oneiron::claim::CallerLocality;
 use oneiron::embed::InputKind;
 use oneiron::host_memory::MemoryLease;
@@ -40,6 +40,7 @@ use oneiron::{EdgeActorClass, EntityId};
 
 use super::core::SyncServer;
 use crate::api::{DecodedMediaQuery, MediaSeed};
+use crate::auth::CoreAuth;
 use crate::embedder::EmbedQueryRefusal;
 
 /// Whether a light recall (call mode included) embeds a request's `media`
@@ -100,7 +101,7 @@ impl SyncServer {
         request_memory.materialized(0, input.query.capacity() as u64);
         let detail = recall_effort_name(input.effort);
         let effort = input.effort.map_or(Effort::Medium, RecallEffort::level);
-        let rerank = self.door_rerank(effort, actor, class)?;
+        let rerank = self.door_rerank(effort, actor, class, false)?;
         let media = self.recall_media(&input)?;
         let mut query_memory = self.memory.empty_lease();
         let embed = self.recall_embed_media(input.effort, media, payer, &mut query_memory);
@@ -307,10 +308,11 @@ impl SyncServer {
         }
     }
 
-    /// [`Self::recall`] for `actor` under the slip it presented, toward
-    /// where its connection sits, on the blocking pool. When the request
-    /// names a room turn, every read recall makes runs inside that room
-    /// (ARCH-0067 §8).
+    /// [`Self::recall`] for `actor` as `auth` reads — a host credential
+    /// under the host action the one resolver names, any other caller under
+    /// the slip it presented — toward where its connection sits, on the
+    /// blocking pool. When the request names a room turn, every read recall
+    /// makes runs inside that room (ARCH-0067 §8).
     ///
     /// A request with a deadline answers by it whatever the blocking work is
     /// doing: past it, the door returns the last pack recall published (before
@@ -329,7 +331,7 @@ impl SyncServer {
         self: &Arc<Self>,
         actor: EntityId,
         class: EdgeActorClass,
-        proof: Option<VerifiedSlip>,
+        auth: Option<&CoreAuth>,
         destination: impl Into<ReadDestination>,
         room: Option<EntityId>,
         input: RecallRequest,
@@ -337,11 +339,12 @@ impl SyncServer {
         self.recall_home_listing(
             actor,
             class,
-            proof,
+            auth,
             destination,
             room,
             input,
             HomeRecallCaller::none(),
+            false,
         )
         .await
     }
@@ -355,7 +358,9 @@ impl SyncServer {
     /// from the local items, which stay as ranked. A pack cut at its
     /// deadline or a refused recall asks nothing; a home out of reach, or a
     /// recall the home cannot answer, leaves the pack local-only and
-    /// `partial`.
+    /// `partial`. An `off_record` recall serves a caller whose off-record
+    /// session keeps no model-call record: its reranker's runs name no rows
+    /// (census L5-25).
     #[expect(
         clippy::too_many_arguments,
         reason = "the recall door's parameters plus the caller it asks the home for"
@@ -364,13 +369,20 @@ impl SyncServer {
         self: &Arc<Self>,
         actor: EntityId,
         class: EdgeActorClass,
-        proof: Option<VerifiedSlip>,
+        auth: Option<&CoreAuth>,
         destination: impl Into<ReadDestination>,
         room: Option<EntityId>,
         input: RecallRequest,
         home: HomeRecallCaller,
+        off_record: bool,
     ) -> (MemoryResult<MemoryPack>, Vec<EntityId>) {
         let destination: ReadDestination = destination.into();
+        // Whose reads these are: a host credential's host action, resolved
+        // as `credential_memory` resolves it, else the slip it presented.
+        let proof = auth.and_then(CoreAuth::verified_slip).cloned();
+        let action = auth
+            .and_then(|auth| crate::api::host_action::host_action_of(&self.vault, auth))
+            .and_then(Result::ok);
         let input = RecallRequestInput::new(input, self.memory.empty_lease());
         let detail = recall_effort_name(input.request.effort);
         let producers = Arc::new(ProducerRows::default());
@@ -382,7 +394,7 @@ impl SyncServer {
                 input.request.deadline_ms,
                 self.vault.call_mode_deadline(),
             )?;
-            let rerank = self.door_rerank(effort, actor, class)?;
+            let rerank = self.door_rerank(effort, actor, class, off_record)?;
             let media = self.recall_media(&input.request)?;
             // Bind the ask last so it drops before its query-storage lease.
             let (mut ask_memory, ask) = (
@@ -402,7 +414,7 @@ impl SyncServer {
                 let (_request_memory, input) = input.into_parts();
                 let _job = job;
                 let publish = move |pack| publish.put(pack);
-                let memory = reader(&server.vault, actor, class, proof.as_ref())
+                let memory = reader(&server.vault, actor, class, action.as_ref(), proof.as_ref())
                     .for_destination(&destination)
                     .listing_producers(&listing);
                 let hyde = server.hyde_host.expander(
@@ -491,13 +503,13 @@ impl SyncServer {
         &self,
         actor: EntityId,
         class: EdgeActorClass,
-        proof: Option<VerifiedSlip>,
+        auth: Option<&CoreAuth>,
         locality: CallerLocality,
         input: RecallRequest,
     ) -> (MemoryResult<MemoryPack>, Vec<EntityId>) {
         let producers = Arc::new(ProducerRows::default());
         let pack =
-            self.recall_at_sync_door_listing(actor, class, proof, locality, input, &producers);
+            self.recall_at_sync_door_listing(actor, class, auth, locality, input, &producers);
         (pack, producers.take())
     }
 
@@ -507,11 +519,15 @@ impl SyncServer {
         &self,
         actor: EntityId,
         class: EdgeActorClass,
-        proof: Option<VerifiedSlip>,
+        auth: Option<&CoreAuth>,
         locality: CallerLocality,
         input: RecallRequest,
         producers: &Arc<ProducerRows>,
     ) -> MemoryResult<MemoryPack> {
+        let proof = auth.and_then(CoreAuth::verified_slip).cloned();
+        let action = auth
+            .and_then(|auth| crate::api::host_action::host_action_of(&self.vault, auth))
+            .and_then(Result::ok);
         let arrived = Instant::now();
         let (effort, budget) = oneiron::memory::resolve_recall_dial(
             input.effort,
@@ -521,7 +537,7 @@ impl SyncServer {
         // A recall naming media takes the embedding door, which answers it.
         let Some(budget) = budget.filter(|_| effort == Effort::Light && input.media.is_none())
         else {
-            let memory = reader(&self.vault, actor, class, proof.as_ref())
+            let memory = reader(&self.vault, actor, class, action.as_ref(), proof.as_ref())
                 .at(locality)
                 .listing_producers(producers);
             return blocking(|| self.recall(&memory, actor, class, input, None));
@@ -545,7 +561,7 @@ impl SyncServer {
                     rerank: oneiron::memory::RecallRerank::Required,
                     hyde: None,
                 };
-                let memory = reader(&vault, actor, class, proof.as_ref())
+                let memory = reader(&vault, actor, class, action.as_ref(), proof.as_ref())
                     .at(locality)
                     .listing_producers(&listing);
                 // Light effort embeds no query (ARCH-0044 S6).
@@ -649,14 +665,26 @@ fn media_refusal(error: crate::error::ApiError) -> MemoryError {
     )
 }
 
-/// `actor`'s memory facade, reading under the slip it presented.
+/// `actor`'s memory facade: a host credential reads under the host action
+/// the one resolver named for it, as `credential_memory` binds it, and any
+/// other caller reads under the slip it presented.
 fn reader<'a>(
     vault: &'a oneiron::Vault,
     actor: EntityId,
     class: EdgeActorClass,
+    action: Option<&HostActionAuthority>,
     proof: Option<&VerifiedSlip>,
 ) -> Memory<'a> {
     let memory = vault.memory(actor, class);
+    let memory = match action {
+        Some(action) => match memory.with_host_action_authority(action) {
+            Ok(bound) => return bound,
+            // Another actor's handle (an MCP call's actor): the
+            // credential's own proof binds it, as for any other caller.
+            Err(_) => vault.memory(actor, class),
+        },
+        None => memory,
+    };
     match proof {
         Some(proof) => memory.with_read_proof(proof),
         None => memory,

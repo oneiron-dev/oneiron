@@ -22,6 +22,7 @@ use super::join_receipt::JoinReceiptRef;
 use crate::error::{ClaimError, Error, Result};
 use crate::registry::{ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_PERSON};
 use crate::{EntityId, Vault, WriteActor};
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
 
 /// Why a workplace filing is made: the purpose its intent key names.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -47,18 +48,37 @@ impl Purpose {
 /// The filing's idempotency key: its purpose, then a digest of the purpose,
 /// room and subject, all printable bytes as OF-531 asks. The same
 /// filing replays its join; the decision is re-proved live on every use.
+/// Join receipts replicate it to the house's other machines, so it keeps its
+/// bytes (K, PLAN-UC-04 stage 5): the digest's first 16 bytes as 32 hex digits.
 fn intent_key(purpose: Purpose, room: EntityId, subject: &JoinSubject) -> String {
-    let mut hasher = blake3::Hasher::new();
-    hasher.update(b"oneiron.workplace.join.v1");
-    hasher.update(purpose.as_str().as_bytes());
-    hasher.update(room.as_bytes());
-    hasher.update(&[match subject {
-        JoinSubject::Person(_) => 1,
-        JoinSubject::Agent(_) => 2,
-    }]);
-    hasher.update(subject.id().as_bytes());
-    let digest = hasher.finalize().to_hex();
-    format!("{}:{}", purpose.as_str(), &digest[..32])
+    let digest = LegacyDigest::new(purposes::workspace_roster::WORKPLACE_JOIN_INTENT_KEY)
+        .raw(purpose.as_str().as_bytes())
+        .raw(room.as_bytes())
+        .raw(&[match subject {
+            JoinSubject::Person(_) => 1,
+            JoinSubject::Agent(_) => 2,
+        }])
+        .raw(subject.id().as_bytes())
+        .finish();
+    format!(
+        "{}:{}",
+        purpose.as_str(),
+        oneiron_hex::encode(&digest[..16])
+    )
+}
+
+/// The intent key of the purpose whose text is `purpose`; `None` for a text no
+/// purpose has.
+#[cfg(oneiron_test_support)]
+pub(crate) fn workplace_join_intent_key_for_test(
+    purpose: &str,
+    room: EntityId,
+    subject: &JoinSubject,
+) -> Option<String> {
+    let purpose = [Purpose::House, Purpose::Companion, Purpose::Member]
+        .into_iter()
+        .find(|known| known.as_str() == purpose)?;
+    Some(intent_key(purpose, room, subject))
 }
 
 /// The live Ready join `subject` stands on in `room` itself, re-proved now;

@@ -275,11 +275,16 @@ fn federated_admission_allows_and_restamps_imported_claim() -> Result<()> {
     let remote_body = public_stamped(source_trust_claim(ClaimSource::ToolOutput));
     let update = federated_claim_update(&id, &remote_body)?;
     let key = WindowKey::new("2026-03");
-    let admitted =
-        admit_federated_window_update(&vault, &key, &update, FederationAdmissionRole::Member)?;
+    let admitted = admit_federated_window_update(
+        &vault,
+        &key,
+        &update,
+        FederationAdmissionRole::Member,
+        None,
+    )?;
 
     let doc = create_window_doc("receiver", &key);
-    import_doc(&doc, &admitted)?;
+    import_doc(&doc, &admitted[0].1)?;
     let blob = map_get_bytes(&doc.get_map("entities"), &id.to_hex()).ok_or(Error::InvalidKey)?;
     let body = decode_claim_body(&blob[ENTITY_METADATA_HEADER_LEN..], false)?;
     assert_eq!(body.source, Some(ClaimSource::Imported));
@@ -299,8 +304,9 @@ fn federated_admission_denies_preapproved_untrusted_import() -> Result<()> {
     let update = federated_claim_update(&id, &remote_body)?;
     let key = WindowKey::new("2026-03");
 
-    let err = admit_federated_window_update(&vault, &key, &update, FederationAdmissionRole::Member)
-        .expect_err("preapproved federated claims still need local imported trust");
+    let err =
+        admit_federated_window_update(&vault, &key, &update, FederationAdmissionRole::Member, None)
+            .expect_err("preapproved federated claims still need local imported trust");
     assert_gate_rejected(err, "pending", &["gate.pending.source_trust"]);
     assert!(vault.get_raw(&id)?.is_none());
     Ok(())
@@ -317,8 +323,9 @@ fn federated_admission_denial_does_not_regress_own_device_replay() -> Result<()>
     let remote_body = source_trust_claim(ClaimSource::ToolOutput);
     let update = federated_claim_update(&id, &remote_body)?;
     let key = WindowKey::new("2026-03");
-    let err = admit_federated_window_update(&vault, &key, &update, FederationAdmissionRole::Member)
-        .expect_err("federated path must enforce local imported trust floor");
+    let err =
+        admit_federated_window_update(&vault, &key, &update, FederationAdmissionRole::Member, None)
+            .expect_err("federated path must enforce local imported trust floor");
     assert_gate_rejected(err, "pending", &["gate.pending.source_trust"]);
 
     let replay_id = test_id(0x8E);
@@ -330,6 +337,7 @@ fn federated_admission_denial_does_not_regress_own_device_replay() -> Result<()>
             crate::registry::ENTITY_TYPE_CLAIM,
             test_time(5),
             5,
+            None,
             &replay_data,
         )
         .commit()?;
@@ -356,6 +364,7 @@ fn gate_chokepoint_replicated_claim_stays_trust_blind() -> Result<()> {
             crate::registry::ENTITY_TYPE_CLAIM,
             test_time(5),
             5,
+            None,
             &claim,
         )
         .commit()?;
@@ -376,13 +385,27 @@ fn replicated_policy_manifest_is_restrict_only_on_both_batch_doors() -> Result<(
     let batch_id = test_id(0x82);
     vault
         .batch()
-        .put_replicated(&batch_id, ENTITY_TYPE_POLICY_MANIFEST, occurred, 1, &data)
+        .put_replicated(
+            &batch_id,
+            ENTITY_TYPE_POLICY_MANIFEST,
+            occurred,
+            1,
+            None,
+            &data,
+        )
         .commit()?;
     let txn_id = test_id(0x83);
     vault.with_write_txn(|wtxn| {
         vault
             .batch_in()
-            .put_replicated(&txn_id, ENTITY_TYPE_POLICY_MANIFEST, occurred, 1, &data)
+            .put_replicated(
+                &txn_id,
+                ENTITY_TYPE_POLICY_MANIFEST,
+                occurred,
+                1,
+                None,
+                &data,
+            )
             .apply(wtxn)
     })?;
     assert!(vault.get_raw(&batch_id)?.is_some());
@@ -416,14 +439,21 @@ fn replicated_access_grant_is_rejected_and_cannot_mint_local_grant() -> Result<(
     let person = test_id(0x91);
     let persona = test_id(0x92);
     let data = crate::access_grant::encode_access_grant_body(
-        &crate::AccessGrant::companion_profile_read(principal, person, persona, 1),
+        &crate::AccessGrant::companion_profile_read(principal, person, Some(persona), 1),
     )?;
     let occurred = test_time(1);
 
     let batch_id = test_id(0x93);
     let err = vault
         .batch()
-        .put_replicated(&batch_id, ENTITY_TYPE_ACCESS_GRANT, occurred, 1, &data)
+        .put_replicated(
+            &batch_id,
+            ENTITY_TYPE_ACCESS_GRANT,
+            occurred,
+            1,
+            None,
+            &data,
+        )
         .commit()
         .expect_err("replicated access grants must be rejected");
     assert!(
@@ -432,7 +462,7 @@ fn replicated_access_grant_is_rejected_and_cannot_mint_local_grant() -> Result<(
     );
     assert!(vault.get_raw(&batch_id)?.is_none());
     assert_eq!(
-        vault.companion_profile_access_grant(&principal, &person, &persona)?,
+        vault.companion_profile_access_grant(&principal, &person, Some(&persona))?,
         None
     );
 
@@ -441,7 +471,7 @@ fn replicated_access_grant_is_rejected_and_cannot_mint_local_grant() -> Result<(
         .with_write_txn(|wtxn| {
             vault
                 .batch_in()
-                .put_replicated(&txn_id, ENTITY_TYPE_ACCESS_GRANT, occurred, 1, &data)
+                .put_replicated(&txn_id, ENTITY_TYPE_ACCESS_GRANT, occurred, 1, None, &data)
                 .apply(wtxn)
         })
         .expect_err("txn replicated access grants must be rejected");
@@ -451,7 +481,7 @@ fn replicated_access_grant_is_rejected_and_cannot_mint_local_grant() -> Result<(
     );
     assert!(vault.get_raw(&txn_id)?.is_none());
     assert_eq!(
-        vault.companion_profile_access_grant(&principal, &person, &persona)?,
+        vault.companion_profile_access_grant(&principal, &person, Some(&persona))?,
         None
     );
 
@@ -549,7 +579,7 @@ fn forward_rematerialize_quarantines_replicated_access_grant() -> Result<()> {
     let person = test_id(0x96);
     let persona = test_id(0x97);
     let data = crate::access_grant::encode_access_grant_body(
-        &crate::AccessGrant::companion_profile_read(principal, person, persona, 1),
+        &crate::AccessGrant::companion_profile_read(principal, person, Some(persona), 1),
     )?;
     let id = test_id(0x98);
     let window_key = WindowKey::new("2026-03");
@@ -563,7 +593,7 @@ fn forward_rematerialize_quarantines_replicated_access_grant() -> Result<()> {
     assert_eq!(materialized, 0);
     assert!(vault.get_raw(&id)?.is_none());
     assert_eq!(
-        vault.companion_profile_access_grant(&principal, &person, &persona)?,
+        vault.companion_profile_access_grant(&principal, &person, Some(&persona))?,
         None
     );
     let records = quarantined_records(&vault)?;

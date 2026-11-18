@@ -8021,6 +8021,7 @@ dependencies = [
  "oneiron-crypto",
  "oneiron-delivery-vocabulary",
  "oneiron-docedit",
+ "oneiron-esign-render",
  "oneiron-guest",
  "oneiron-hex",
  "oneiron-keystore",
@@ -8032,6 +8033,7 @@ dependencies = [
  "oneiron-retrieval",
  "oneiron-run-budget",
  "oneiron-sandbox-contract",
+ "oneiron-schedule-contract",
  "oneiron-sdk-build",
  "oneiron-setting-contract",
  "oneiron-skill-attribution",
@@ -8153,6 +8155,7 @@ dependencies = [
  "schemars 0.8.22",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "zeroize",
 ]
 
@@ -8183,12 +8186,14 @@ dependencies = [
  "criterion",
  "ed25519-dalek 2.2.0",
  "futures-util",
+ "half",
  "loro",
  "oneiron",
  "oneiron-hex",
  "oneiron-llm",
  "oneiron-organ-protocol",
  "oneiron-remote",
+ "oneiron-ruler",
  "oneiron-server",
  "parking_lot",
  "rand 0.8.8",
@@ -8439,11 +8444,20 @@ dependencies = [
  "oneiron-dreamer",
  "oneiron-llm",
  "oneiron-remote",
+ "oneiron-testkit",
  "rmpv",
  "serde_json",
  "tempfile",
  "tokio",
  "tracing",
+]
+
+[[package]]
+name = "oneiron-esign-render"
+version = "0.1.0"
+dependencies = [
+ "encoding_rs",
+ "lopdf",
 ]
 
 [[package]]
@@ -8713,6 +8727,7 @@ dependencies = [
  "rmpv",
  "rsa",
  "serde",
+ "sha1",
  "sha2 0.10.9",
  "tempfile",
  "thiserror 2.0.20",
@@ -8789,6 +8804,7 @@ dependencies = [
  "oneiron-policy-vocabulary",
  "oneiron-retrieval",
  "oneiron-run-budget",
+ "oneiron-setting-contract",
  "oneiron-skill-attribution",
  "oneiron-store",
  "oneiron-vault-contract",
@@ -8881,6 +8897,14 @@ name = "oneiron-sandbox-contract"
 version = "0.1.0"
 
 [[package]]
+name = "oneiron-schedule-contract"
+version = "0.1.0"
+dependencies = [
+ "schemars 0.8.22",
+ "serde",
+]
+
+[[package]]
 name = "oneiron-sdk-build"
 version = "0.1.0"
 dependencies = [
@@ -8905,12 +8929,12 @@ dependencies = [
  "cms",
  "const-oid 0.9.6",
  "der 0.7.10",
- "encoding_rs",
  "flate2",
  "futures-util",
  "ipnet",
  "lopdf",
  "oneiron",
+ "oneiron-esign-render",
  "oneiron-hex",
  "oneiron-keystore",
  "oneiron-organ-host",
@@ -9154,6 +9178,7 @@ dependencies = [
  "libc",
  "oneiron-fingerprint",
  "oneiron-hex",
+ "oneiron-spawn",
  "serde",
  "serde_json",
  "subtle",
@@ -9169,7 +9194,6 @@ dependencies = [
  "base64 0.22.1",
  "blake3",
  "ed25519-dalek 2.2.0",
- "encoding_rs",
  "half",
  "heed",
  "image",
@@ -9184,6 +9208,7 @@ dependencies = [
  "oneiron-crypto",
  "oneiron-delivery-vocabulary",
  "oneiron-docedit",
+ "oneiron-esign-render",
  "oneiron-hex",
  "oneiron-lens-wire",
  "oneiron-linkedin-policy",
@@ -9224,6 +9249,7 @@ dependencies = [
  "oneiron-base",
  "oneiron-contracts",
  "oneiron-model",
+ "oneiron-setting-contract",
  "oneiron-store",
  "schemars 0.8.22",
  "serde",
@@ -10187,8 +10213,6 @@ dependencies = [
 [[package]]
 name = "pkix-path-builder"
 version = "0.3.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "16a5a90f17f74b968ff011c3c9b51a8b5692467abc7552d35c4311592f76ffec"
 dependencies = [
  "der 0.7.10",
  "pkix-path",

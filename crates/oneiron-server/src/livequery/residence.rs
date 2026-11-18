@@ -19,7 +19,9 @@ mod pad_custody;
 mod pad_objects;
 mod pad_refill;
 mod pages;
+mod predict;
 mod search;
+mod secret_same_value;
 mod work;
 pub(crate) use work::{ResidenceWorkCall, ResidenceWorkState};
 
@@ -29,15 +31,14 @@ use oneiron::authority::{Destination, PeerMachine};
 use oneiron::claim::CallerLocality;
 use oneiron::sync::residence::{
     AuthorityAppendPart, AuthorityAppendProgress, AuthorityAppendStage, BundlePartRead, IndexPage,
-    RESIDENCE_PAGE_REPLY_BYTES, ResidenceAdmission, SealedBundleEntry, SealedBundleObject,
-    SealedBundleStage, WindowIndexEntry, ask_sealed_bundle_turn, authority_append_part_for,
-    authority_append_progress_for, authority_checkpoint_part_for, authority_entry_part_for,
-    authority_range_for, authority_tail_for, authority_wanted, home_search_candidates,
-    index_selection_revision, promotion_snapshot_with, replace_sealed_bundle_pads,
-    sealed_bundle_index, sealed_bundle_part, sealed_digest_from_hex, sealed_digest_hex,
-    sealed_generation_from_hex, sealed_generation_hex, selected_item_blob_with,
-    split_authority_page, stage_sealed_bundle_part, window_index_page,
-    window_index_projection_with,
+    OWN_DEVICE_GRANTS_PAGE_MAX, OwnDeviceGrantState, RESIDENCE_PAGE_REPLY_BYTES,
+    ResidenceAdmission, SealedBundleEntry, SealedBundleObject, SealedBundleStage, WindowIndexEntry,
+    ask_sealed_bundle_turn, authority_append_part_for, authority_append_progress_for,
+    authority_checkpoint_part_for, authority_entry_part_for, authority_range_for,
+    authority_tail_for, authority_wanted, index_selection_revision, own_device_grants_for,
+    promotion_snapshot_with, replace_sealed_bundle_pads, sealed_bundle_index, sealed_bundle_part,
+    sealed_digest_from_hex, sealed_digest_hex, sealed_generation_from_hex, sealed_generation_hex,
+    selected_item_blob_with, split_authority_page, window_index_page, window_index_projection_with,
 };
 use oneiron::sync::residence_operation_budgets::ResidenceOperationBudgets;
 use oneiron::sync::schema::read_window_list;
@@ -414,6 +415,14 @@ struct AuthorityAppendRequest {
     entries: Vec<String>,
 }
 
+/// The own-device grants a machine's live slips name, each a 32-hex entity
+/// id, at most [`OWN_DEVICE_GRANTS_PAGE_MAX`] in one ask (FIX 23747).
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AuthorityGrantsRequest {
+    grants: Vec<String>,
+}
+
 /// A part of an authority entry a page named by reference (FIX 8246): the
 /// entry's hash in base64 and the byte offset the part starts at.
 #[derive(Deserialize)]
@@ -461,6 +470,8 @@ pub(super) fn run(
             "residence.touch.part" => touch_part(server, auth, peer, request.params, touch_stage),
             "residence.promote" => promote(server, auth, peer, request.params),
             "residence.window.vv" => window_vv(server, auth, peer, request.params),
+            "residence.predict" => predict::predict(server, auth, peer, request.params),
+            "residence.predicted_set" => predict::predicted_set(server, auth, peer, request.params),
             "residence.search" => search(
                 server,
                 auth,
@@ -501,6 +512,7 @@ pub(super) fn run(
             "residence.authority.entry" => authority_entry(server, peer, request.params),
             "residence.authority.range" => authority_range(server, peer, request.params),
             "residence.authority.checkpoint" => authority_checkpoint(server, peer, request.params),
+            "residence.authority.grants" => authority_grants(server, peer, request.params),
             "residence.authority.checkpoint.roots" => {
                 checkpoint_roots::roots(server, peer, request.params)
             }
@@ -509,6 +521,9 @@ pub(super) fn run(
             }
             "residence.authority.checkpoint.countersign" => {
                 checkpoint_roots::countersign(server, peer, request.params)
+            }
+            "residence.secret_same_value.exchange" => {
+                secret_same_value::exchange(server, auth, peer, request.params)
             }
             "residence.machine-history" => {
                 machine_history::machine_history(server, auth, peer, request.params)

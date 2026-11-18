@@ -357,6 +357,9 @@ impl SyncServer {
 
         async {
             let _guard = self.lease_registrar.lock().await;
+            // Under a device link, the root persisted below keeps what the
+            // link persisted (SERVE-DEVICE-PEER-STALE-ROOT).
+            self.merge_link_root();
             let vv_before = self.root_doc.oplog_vv();
             let frontiers_before = self.root_doc.state_frontiers();
             let leases = self.root_doc.get_map(ROOT_LEASES_MAP);

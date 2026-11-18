@@ -24,7 +24,7 @@ fn two_peers_across_a_reopen_attribute_and_replay_exactly() {
     let mut opened = ProposalTextArtifact::open(&vault, "hello world", &human, None).expect("open");
     register_peer_actor(&vault, opened.peer_id(), &human).expect("register human peer");
     opened
-        .edit_as(&human, |text| insert_at(text, 5, ","))
+        .edit_as(&vault, &human, |text| insert_at(text, 5, ","))
         .expect("human edit");
     let snapshot = opened.export_snapshot().expect("snapshot");
 
@@ -33,21 +33,33 @@ fn two_peers_across_a_reopen_attribute_and_replay_exactly() {
     assert_ne!(resumed.peer_id(), opened.peer_id(), "reopen is a new peer");
     register_peer_actor(&vault, resumed.peer_id(), &agent).expect("register agent peer");
     resumed
-        .edit_as(&agent, |text| insert_at(text, text.len_unicode(), "!"))
+        .edit_as(&vault, &agent, |text| {
+            insert_at(text, text.len_unicode(), "!")
+        })
         .expect("agent edit");
 
     let record = resumed.finalize(&vault).expect("finalize");
-    assert_eq!(record.proposed_text, "hello world");
-    assert_eq!(record.final_text, "hello, world!");
+    let retained = crate::edit_distance::retained_proposal(&vault, record.artifact_ref)
+        .expect("read retained")
+        .expect("finalize retained the document");
+    assert_eq!(
+        retained.proposed_text().into_text().as_deref(),
+        Some("hello world")
+    );
+    assert_eq!(
+        retained.final_text().into_text().as_deref(),
+        Some("hello, world!")
+    );
 
     let attributed = record
         .ops_by_actor
         .iter()
         .map(|(attribution, span)| {
+            let (before, after) = retained.change_texts(span);
             (
                 *attribution,
-                span.before_text.clone(),
-                span.after_text.clone(),
+                before.into_text().unwrap(),
+                after.into_text().unwrap(),
             )
         })
         .collect::<Vec<_>>();
@@ -85,12 +97,14 @@ fn an_unregistered_stamped_actor_falls_back_to_the_peer_registration() {
     let mut artifact = ProposalTextArtifact::open(&vault, "draft", &human, None).expect("open");
     register_peer_actor(&vault, artifact.peer_id(), &human).expect("register");
     artifact
-        .edit_as(&agent, |text| {
+        .edit_as(&vault, &agent, |text| {
             insert_at(text, text.len_unicode(), " reviewed")
         })
         .expect("agent edit");
     artifact
-        .edit_as(&human, |text| insert_at(text, text.len_unicode(), "."))
+        .edit_as(&vault, &human, |text| {
+            insert_at(text, text.len_unicode(), ".")
+        })
         .expect("human edit");
 
     assert!(artifact.finalize(&vault).is_err());
@@ -110,7 +124,7 @@ fn a_stamp_naming_another_peers_actor_is_not_honored() {
     register_peer_actor(&vault, artifact.peer_id() ^ 0xffff, &remote).expect("register remote");
 
     artifact
-        .edit_as(&remote, |text| insert_at(text, 0, "forged "))
+        .edit_as(&vault, &remote, |text| insert_at(text, 0, "forged "))
         .expect("edit stamped as the remote actor");
 
     assert!(artifact.finalize(&vault).is_err());
@@ -129,7 +143,7 @@ fn an_unregistered_peer_falls_back_to_the_device_peer() {
     let mut artifact =
         ProposalTextArtifact::from_snapshot(&opened.export_snapshot().unwrap()).unwrap();
     artifact
-        .edit_as(&human, |text| insert_at(text, 1, "y"))
+        .edit_as(&vault, &human, |text| insert_at(text, 1, "y"))
         .expect("edit");
 
     // Attribution still falls back to the device peer, but that fallback is
@@ -183,12 +197,21 @@ fn the_open_commit_never_merges_with_the_first_edit() {
 
     let mut artifact = ProposalTextArtifact::open(&vault, "seed", &human, None).expect("open");
     artifact
-        .edit_as(&human, |text| insert_at(text, 4, "ling"))
+        .edit_as(&vault, &human, |text| insert_at(text, 4, "ling"))
         .expect("same-actor edit");
 
     let record = artifact.finalize(&vault).expect("finalize");
-    assert_eq!(record.proposed_text, "seed");
-    assert_eq!(record.final_text, "seedling");
+    let retained = crate::edit_distance::retained_proposal(&vault, record.artifact_ref)
+        .expect("read retained")
+        .expect("finalize retained the document");
+    assert_eq!(
+        retained.proposed_text().into_text().as_deref(),
+        Some("seed")
+    );
+    assert_eq!(
+        retained.final_text().into_text().as_deref(),
+        Some("seedling")
+    );
     assert_eq!(
         record.ops_by_actor.len(),
         1,
@@ -208,7 +231,7 @@ fn a_failed_edit_still_lands_under_its_own_actor() {
     let mut artifact =
         ProposalTextArtifact::from_snapshot(&birth.export_snapshot().unwrap()).unwrap();
     register_peer_actor(&vault, artifact.peer_id(), &agent).unwrap();
-    let failed = artifact.edit_as(&agent, |text| {
+    let failed = artifact.edit_as(&vault, &agent, |text| {
         insert_at(text, 0, "A")?;
         Err(Error::InvariantViolation("fixture failure"))
     });
@@ -217,13 +240,18 @@ fn a_failed_edit_still_lands_under_its_own_actor() {
         ProposalTextArtifact::from_snapshot(&artifact.export_snapshot().unwrap()).unwrap();
     register_peer_actor(&vault, resumed.peer_id(), &human).unwrap();
     resumed
-        .edit_as(&human, |text| insert_at(text, text.len_unicode(), "!"))
+        .edit_as(&vault, &human, |text| {
+            insert_at(text, text.len_unicode(), "!")
+        })
         .unwrap();
     let record = resumed.finalize(&vault).unwrap();
+    let retained = crate::edit_distance::retained_proposal(&vault, record.artifact_ref)
+        .expect("read retained")
+        .expect("finalize retained the document");
     let spans = record
         .ops_by_actor
         .iter()
-        .map(|(actor, span)| (*actor, span.after_text.clone()))
+        .map(|(actor, span)| (*actor, retained.change_texts(span).1.into_text().unwrap()))
         .collect::<Vec<_>>();
     assert_eq!(
         spans,
@@ -232,7 +260,7 @@ fn a_failed_edit_still_lands_under_its_own_actor() {
             (OpAttribution::Stamped(human), "Abase!".into())
         ]
     );
-    assert_eq!(record.final_text, "Abase!");
+    assert_eq!(retained.final_text().into_text().as_deref(), Some("Abase!"));
 }
 
 /// A later opening is retained without shifting the birth window or losing
@@ -252,13 +280,14 @@ fn a_second_open_marker_preserves_the_birth_window_and_all_attributed_ops() {
         .get_text(TEXT_CONTAINER)
         .insert(4, " hidden")
         .expect("peer insert");
-    peer_doc.commit_with(CommitOptions::new().commit_msg(&stamp(StampKind::Open, &human)));
+    let human_stamp = crate::provenance::actor_stamp(&vault, human).unwrap();
+    peer_doc.commit_with(CommitOptions::new().commit_msg(&stamp(StampKind::Open, human_stamp)));
 
     let mut forged =
         ProposalTextArtifact::from_snapshot(&export_snapshot(&peer_doc).expect("export"))
             .expect("reopen forged");
     forged
-        .edit_as(&human, |text| {
+        .edit_as(&vault, &human, |text| {
             insert_at(text, text.len_unicode(), " visible")
         })
         .expect("later edit");
@@ -278,16 +307,34 @@ fn an_authenticated_second_open_keeps_the_earliest_window_base() {
     let mut artifact = ProposalTextArtifact::open(&vault, "seed", &human, None).unwrap();
     let birth_base = artifact.window_base().unwrap();
     artifact
-        .edit_as(&human, |text| insert_at(text, text.len_unicode(), " first"))
+        .edit_as(&vault, &human, |text| {
+            insert_at(text, text.len_unicode(), " first")
+        })
         .unwrap();
     insert_at(&artifact.doc.doc.get_text(TEXT_CONTAINER), 10, " second").unwrap();
     artifact
-        .commit_receipted(StampKind::Open, &human, None)
+        .commit_receipted(
+            StampKind::Open,
+            (
+                &human,
+                crate::provenance::actor_stamp(&vault, human).unwrap(),
+            ),
+            None,
+        )
         .unwrap();
     assert_eq!(artifact.window_base().unwrap(), birth_base);
     let record = artifact.finalize(&vault).unwrap();
-    assert_eq!(record.proposed_text, "seed");
-    assert_eq!(record.final_text, "seed first second");
+    let retained = crate::edit_distance::retained_proposal(&vault, record.artifact_ref)
+        .expect("read retained")
+        .expect("finalize retained the document");
+    assert_eq!(
+        retained.proposed_text().into_text().as_deref(),
+        Some("seed")
+    );
+    assert_eq!(
+        retained.final_text().into_text().as_deref(),
+        Some("seed first second")
+    );
     assert_eq!(record.ops_by_actor.len(), 2);
     assert!(
         record
@@ -348,7 +395,18 @@ fn made_by_two_commits_fold_and_birth_round_trips() {
         artifact.doc.birth().entity,
         artifact.artifact_ref().entity_id().to_hex()
     );
-    assert_eq!(artifact.doc.birth().actor, actor.entity_ref().to_hex());
+    // The read snapshot closes before the next edit opens its own.
+    let birth_txn = vault.store.env.read_txn().unwrap();
+    assert_eq!(
+        artifact
+            .doc
+            .birth()
+            .resolved_in(&vault.store, &birth_txn)
+            .unwrap()
+            .actor,
+        crate::entity_doc::DocActor::Actor(actor.entity_ref())
+    );
+    drop(birth_txn);
     assert_eq!(
         artifact.doc.birth().at,
         birth_provenance.commits[0].made_by.at
@@ -359,7 +417,7 @@ fn made_by_two_commits_fold_and_birth_round_trips() {
     );
     register_peer_actor(&vault, artifact.peer_id(), &actor).unwrap();
     artifact
-        .edit_as(&actor, |text| {
+        .edit_as(&vault, &actor, |text| {
             insert_at(text, text.len_unicode(), " second")
         })
         .unwrap();
