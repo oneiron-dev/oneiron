@@ -1240,3 +1240,91 @@ fn a_host_cancel_resent_as_a_newer_version_after_the_start_keeps_its_first_sight
         }
     );
 }
+
+/// Review round 2 of #9233: a cancellation that names no DTSTART leaves the
+/// booking's EVENT at its booked slot, so the host's cancel before the start
+/// refunds in full.
+#[test]
+fn a_host_cancel_naming_no_start_refunds_against_the_booked_start() {
+    let fixture = Fixture::open();
+    let seat = Seat::install(&fixture.vault, HOST_SEAT_SYSTEM);
+    let booked = captured_booking(&fixture, "pi_undated_cancel", 9);
+    let wrote = seat.write(&fixture.vault, booked.calendar.event_ref, NOW + 55);
+    pull_seat(
+        &seat,
+        &fixture,
+        &wrote,
+        slot_at(9).start,
+        0,
+        false,
+        NOW + 60,
+    )
+    .expect("the seat's first pull");
+    // At 08:02 the host's calendar carries the cancellation as SEQUENCE 1,
+    // with no DTSTART or DTEND.
+    seat.pull(
+        &fixture.vault,
+        &[SeatChange::undated_cancel(&wrote, 1)],
+        NOW + 120,
+    )
+    .expect("the cancellation's pull");
+    assert_eq!(
+        fixture.state_of("pi_undated_cancel"),
+        DepositState::RefundDue {
+            amount_minor: 4_000
+        },
+        "a host cancel before the start refunds whatever times it names"
+    );
+}
+
+/// Review round 2 of #9233: the repair of a stopped refund reads the same
+/// booked start. The undated cancellation's passport commits at 08:02 and
+/// the pull stops before its refund; the same version read after the start
+/// refunds from that first sighting.
+#[cfg(oneiron_test_support)]
+#[test]
+fn a_host_cancel_naming_no_start_repaired_after_the_start_refunds() {
+    let fixture = Fixture::open();
+    let seat = Seat::install(&fixture.vault, HOST_SEAT_SYSTEM);
+    let booked = captured_booking(&fixture, "pi_undated_repaired", 9);
+    let wrote = seat.write(&fixture.vault, booked.calendar.event_ref, NOW + 55);
+    pull_seat(
+        &seat,
+        &fixture,
+        &wrote,
+        slot_at(9).start,
+        0,
+        false,
+        NOW + 60,
+    )
+    .expect("the seat's first pull");
+    oneiron::test_doors::host_cancel_refund::stop_before_next_host_cancel_refund();
+    assert!(
+        seat.pull(
+            &fixture.vault,
+            &[SeatChange::undated_cancel(&wrote, 1)],
+            NOW + 120,
+        )
+        .is_err(),
+        "the door stops the pull"
+    );
+    assert_eq!(
+        fixture.state_of("pi_undated_repaired"),
+        DepositState::Captured {
+            amount_minor: 4_000
+        }
+    );
+    seat.pull(
+        &fixture.vault,
+        &[SeatChange::undated_cancel(&wrote, 1)],
+        slot_at(9).start + 60,
+    )
+    .expect("the repair pull");
+    assert_eq!(
+        fixture.state_of("pi_undated_repaired"),
+        DepositState::RefundDue {
+            amount_minor: 4_000
+        },
+        "a cancellation first seen before the start keeps its full refund"
+    );
+}
