@@ -436,20 +436,28 @@ SIGBUS: plain and sealed environments alike, since `mdb_rpage_get` maps a
 sealed environment's chunks from the same file. Upstream's head `ba47717cc877`
 has no such check. The fork (`ONEIRON FORK (page bound)`) adds one:
 
-- `mdb_page_get` (`:7437-7449`), at `mapped:`, so for the plain map, for
+- `mdb_page_get` (`:7441-7453`), at `mapped:`, so for the plain map, for
   `mdb_rpage_get`, and for a parent's spilled page: unless the environment
   uses `MDB_WRITEMAP` (oneiron never does; sealed environments refuse it), it
-  asks `mdb_page_in_file` (`:7352-7377`) whether
+  asks `mdb_page_in_file` (`:7352-7381`) whether
   `[pgno, pgno + numpgs)` lies inside the data file. A page past the end
   answers `MDB_CORRUPTED` and marks the transaction failed (`MDB_TXN_ERROR`),
-  as the `mt_next_pgno` check above it does.
+  as the `mt_next_pgno` check above it does. The range test subtracts
+  (`pgno <= pages - numpgs`), so a corrupt overflow count cannot wrap past
+  it, and a count of 0 checks the page itself.
+- It checks each page lookup. A pointer that an earlier lookup returned is
+  not checked again; the file does not shrink, so it stays inside it. The
+  meta pages are read with `pread` at open, which refuses a short file.
 - `MDB_env.me_file_pages` (`:1673-1676`) caches the file's whole pages. The
   open sets it from ITS#9291's length read (`:5541`); a miss reads the length
   again (`mdb_fsize`) before it refuses. Without `MDB_WRITEMAP` the data file
   never shrinks while it is open, and every cached value comes from a real
   length read, so the cache can lag the file (one more `fstat`) but never
-  exceed it. A failed length read or a zero length (a raw partition) reads the
-  page as before.
+  exceed it. Only something outside LMDB's rules can shrink an open file (a
+  `MDB_WRITEMAP` handle on the same file, which LMDB forbids, or an outside
+  truncate); the cache then runs high and the read goes ahead as it did
+  before the fork. A failed length read or a zero length (a raw partition)
+  reads the page as before.
 - It refuses no whole file: pages a write transaction spills or flushes are
   written before they are read back through the map, and the free pages past
   the end that upstream's `mm_last_pg` comment allows ("the file may be
@@ -468,11 +476,11 @@ row back on both. Regression tests: four more in
 `crates/oneiron-store/tests/lmdb_open_damaged_file.rs` (a named database's
 leaf and an overflow run's last page cut off, plain and sealed).
 
-`mdb.c` is now 12,459 lines, SHA-256
-`7adba3bacddb122136d344b0d458dfadba5bf6797d5f49ed812d5864cb79f37c`. Line
+`mdb.c` is now 12,463 lines, SHA-256
+`ad402eff08862df1d77abd3e9ba6bd9d4d54b6efbc97b59c9af43b4e817cd985`. Line
 numbers in this section cite this copy. Against the copy the section above
 cites, lines after `:1672` moved down by 4, after `:5536` by 5, after `:7346`
-by 32 and after `:7405` by 44.
+by 36 and after `:7405` by 48.
 
 **Re-vendoring:** re-apply the four `ONEIRON FORK (page bound)` hunks, or take
 an upstream mdb.master3 that refuses a page past the end of the data file on
