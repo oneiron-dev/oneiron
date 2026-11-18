@@ -37,7 +37,7 @@ use std::ops::Bound;
 use super::kernel::hex_lower;
 use crate::Vault;
 use crate::authority::{
-    AuthorityCheckpointRow, AuthorityFold, VerifiedAuthorityCheckpoint,
+    AuthorityCheckpointRow, AuthorityFold, RestoredJoinEnrolment, VerifiedAuthorityCheckpoint,
     cached_adopted_authority_checkpoint_in_txn,
 };
 use crate::consent::AuthenticatedOwner;
@@ -418,7 +418,10 @@ fn classify(op: &AuthorityOp) -> (AuthorityAuditEventKind, &'static str, OpField
             Other,
             "restored_machine_join",
             OpFields {
-                detail: Some(hex_lower(&join.enrolment)),
+                detail: match &join.enrolment {
+                    RestoredJoinEnrolment::Held(enrolment) => Some(hex_lower(enrolment)),
+                    RestoredJoinEnrolment::Inline(_) => Some("inline enrolment".to_owned()),
+                },
                 subject_ref: Some(join.act.target.to_hex()),
                 ..OpFields::default()
             },
