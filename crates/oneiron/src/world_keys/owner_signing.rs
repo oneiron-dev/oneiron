@@ -752,6 +752,9 @@ impl OwnerSigningSlot {
     /// forgotten (`slot_owner_signer`'s rule; ruling
     /// ANCHOR-SUCCESSOR-ON-PIN-DEVICE = A): there a seed in the slot is no
     /// key, and one that still waits to go under the PIN is not dropped.
+    /// The appointment holds the device PIN's step from before its writer to
+    /// the commit ([`Vault::appoint_owner_root`]), so no PIN of this process
+    /// is set between this check and the commit.
     ///
     /// # Errors
     /// The keystore's own refusal; the slot's rule, as
