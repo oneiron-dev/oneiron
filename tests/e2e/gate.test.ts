@@ -466,7 +466,7 @@ suite.pendingDoor(test, "GATE-05",
 // No bypass covers erase: an agent never erases or asks to erase; an owner still
 // uses the separate manual preview/confirm. Another Owner's objection window is
 // never skipped; inspect its pending state/deadline rather than waiting days.
-// Current records.erase_preview/erase_confirm are real, but create no bypass.
+// Current owner_confirm.preview and records.erase_confirm are real, but create no bypass.
 type Gate06Catastrophe = "WidenOwnAuthority" | "KeyRecovery"
   | "VaultWideDestruction" | "SecurityControlDisable" | "MassSecretExport";
 type Gate06BypassBound = {

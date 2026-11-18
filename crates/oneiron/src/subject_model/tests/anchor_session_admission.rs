@@ -23,11 +23,13 @@ fn put_entry(scope: JournalScope, id: EntityId, kind: u8, data: Vec<u8>) -> Jour
             entity_type: kind,
             occurred,
             learned_at: 100,
+            row_version: None,
             data,
             allow_maintenance: false,
             allow_reserved_predicate: true,
             hub_sync_imported: false,
         },
+        source_run: None,
     }
 }
 

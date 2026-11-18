@@ -1291,7 +1291,11 @@ Operations:
   `hold_token`, `selected_slot`, and a server-capped `expires_at`. There is no TTL field: a longer
   hold requires a server-issued checkout lease, not a caller's ask. The vault's owner alone may add
   `cap_override_reason` (1-4096 bytes) to hold a day a meeting cap filled; the reason is recorded on
-  the booking, and any other caller gets a 400. `confirm` takes `hold_token`,
+  the booking, and any other caller gets a 400. An event type whose card shows a `deposit` also takes
+  `deposit_terms`, the card's `deposit` as the visitor read it: a hold without them, or with terms
+  the owner has since changed, is refused (`booking_deposit_terms_required`,
+  `booking_deposit_terms_changed`) before any payment is created, and the hold returns `deposit`,
+  the checkout the visitor pays in. `confirm` takes `hold_token`,
   `booker_email`, `intake`, `session_ref`, `idempotency_key`, and returns separate
   `reschedule_token` and `cancel_token`. When the slot went to someone else the answer is
   `stage: slot_taken` with the oracle's nearest `alternatives`.

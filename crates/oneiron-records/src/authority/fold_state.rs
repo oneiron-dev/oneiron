@@ -68,6 +68,64 @@ pub enum AuthorityFoldIssue {
     /// signer forked its sequence. The entry counts in full; this is the
     /// fork's record, not a verdict on it (Engine RULING SEQ-FLOOR-SHAPE-S).
     SequenceFork(AuthorityEntryHash),
+    /// A root appointment this install does not count (row
+    /// OWNER-ANCHOR-ROOT-RECOVERY): it is refused here, with its
+    /// descendants, and keeps no fold state.
+    AppointmentRefused {
+        /// The refused appointment.
+        entry: AuthorityEntryHash,
+        /// Its verdict, the same on every install that judges it.
+        verdict: AppointmentVerdict,
+    },
+    /// The anchor of this install's pinned root is burned: one of its
+    /// appointments is void, or two valid ones stand beside each other. It
+    /// appoints no more; the owner re-issues the kit.
+    AnchorBurned {
+        /// The burned anchor's Ed25519 key.
+        anchor: [u8; 32],
+    },
+    /// The folded roster holds no live root key (`ROLE_OWNER`): a handoff
+    /// conflict, a cycle of revocations, a settled handoff to a key without
+    /// `ROLE_OWNER`, or a revocation of the last one. No roster row settles
+    /// it; the pinned root's anchor appoints a successor
+    /// (OWNER-ANCHOR-ROOT-RECOVERY).
+    NoRootKey,
+}
+
+/// Why a root appointment is void. A void appointment burns its anchor.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+)]
+pub enum AppointmentVoidReason {
+    /// Its ancestry holds no owner root of its id that its anchor signed and
+    /// the anchor fold took, or folds into another vault (V2).
+    NoOwnerRoot,
+    /// Its sequence is not above its anchor's own rows in its ancestry (V2).
+    SequenceNotAdvanced,
+    /// Its ancestry, folded canonically, still holds a live root key (V3).
+    RootedAncestry,
+    /// Its anchor is burned in its ancestry, or at an earlier appointment of
+    /// this install's log (V4).
+    AnchorBurned,
+}
+
+/// A root appointment's verdict on this install.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+)]
+pub enum AppointmentVerdict {
+    /// Not judged: this install pins no root of the appointing anchor.
+    Unjudged,
+    /// Its ancestry is incomplete here, or its proof fold passed the fold's
+    /// memory floor. It is judged again when that changes.
+    Pending,
+    /// A row of its ancestry names the successor key (V1). It burns its
+    /// anchor, as a void one does.
+    SuccessorNotFresh,
+    /// V2, V3 or V4 failed. It burns its anchor.
+    Void(AppointmentVoidReason),
+    /// V1 to V4 hold.
+    Valid,
 }
 
 /// Why the fold refused an actor-binding op.
@@ -83,6 +141,9 @@ pub enum ActorBindingRejection {
     KeyNotInRoster,
     /// A `"human"`-class bind whose key lacks owner/admin consent capability.
     OwnerCapabilityRequired,
+    /// A `"human"`-class bind or rebind on a hosted fold that no owner key
+    /// signs or cosigns: a managed host's root alone binds no person.
+    OwnerProofRequired,
 }
 
 /// One folded `{signing_key_id, actor_ref, actor_class, epoch, status}` tuple.

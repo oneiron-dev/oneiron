@@ -31,6 +31,7 @@ fn outbound_passport_value(
         direction: CalendarPassportDirection::Outbound,
         last_seen_at: recorded_at,
         presence: CalendarPassportPresence::Live,
+        cancelled_since: None,
     }
 }
 

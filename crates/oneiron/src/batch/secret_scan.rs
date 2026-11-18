@@ -37,6 +37,7 @@ pub(crate) use self::mask::carrier::{
     CarrierText, LiftedKeys, carrier_origin, carrier_text_placeable, carrier_texts_hit_in_txn,
     mark_carrier_text_in_txn, mark_carrier_texts_in_txn, mask_spanning_json, mask_unplaced_json,
 };
+pub(crate) use self::mask::claim_value_plan::plan_masked_claim_value_in_txn;
 #[cfg(oneiron_test_support)]
 pub(crate) use self::mask::mark_text_value_in_txn;
 pub(super) use self::mask::mask_batch_ops;
@@ -124,7 +125,7 @@ const REASON_MESSAGEPACK_TOO_DEEP: &str = "gate.secret_scan.messagepack_depth_ov
 pub use oneiron_verb_wire::batch::secret_scan::SecretScanMode;
 
 /// The owner's switch row. Key: ().
-const SECRET_SCAN_MODE: SideTable<(), SecretScanMode, Named> =
+pub(crate) const SECRET_SCAN_MODE: SideTable<(), SecretScanMode, Named> =
     SideTable::new(&side_table::OWNER_POLICY_SECRET_SCAN_MODE);
 
 /// The switch as the write door reads it. An absent row reads as on, and so

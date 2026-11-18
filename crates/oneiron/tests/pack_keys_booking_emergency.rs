@@ -141,6 +141,7 @@ fn base_config(
         booking_window_secs,
         daily_cap: None,
         weekly_cap: None,
+        deposit: None,
         routing: RoutingMode::Either,
         hosts: vec![HostAvailabilityConfig {
             host_ref: owner,
@@ -207,6 +208,7 @@ impl SlotOracle for Offered {
                 host_refs: vec![self.host.to_hex()],
                 host_zones: vec!["UTC".to_owned()],
             }],
+            full_days: Vec::new(),
         })
     }
 }
@@ -340,6 +342,7 @@ impl Fixture {
                 constraint: None,
                 lease: HoldLeaseSpec::Ordinary,
                 idempotency_key: None,
+                cap_override: None,
             }),
             slot,
             NOW,
