@@ -17,11 +17,7 @@ use crate::entity_id::bytes_to_hex_lower;
 use crate::skill::SkillContentHash;
 use crate::skill_hub::HubFile;
 use crate::{EntityId, Error, Result};
-
-/// The domain a site-skill candidate's fingerprint is hashed in. It must
-/// differ from E8's [`CANDIDATE_DOMAIN`](crate::dreamer_runner::maintenance::browser_candidate::CANDIDATE_DOMAIN):
-/// the two facets never share a seen marker.
-const SITE_SKILL_DISTILL_DOMAIN: &[u8] = b"oneiron:coach-site-skill-distill:v1";
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
 
 /// The version of this distill, in each candidate's fingerprint and finding.
 const SITE_SKILL_DISTILL_VERSION: u32 = 1;
@@ -732,17 +728,21 @@ fn fingerprint(
     ]))
 }
 
-/// BLAKE3 over `parts` in [`SITE_SKILL_DISTILL_DOMAIN`], each part
-/// length-delimited.
+/// BLAKE3 over `parts` under `purposes::dreamer::SITE_SKILL_DISTILL` (its tag
+/// first), each part as its u64 big-endian length and its bytes. The seen
+/// marker is keyed by it, so it keeps its bytes (K, PLAN-UC-04 stage 6).
 fn digest(parts: &[&[u8]]) -> [u8; 32] {
-    let mut hasher = blake3::Hasher::new();
-    hasher.update(SITE_SKILL_DISTILL_DOMAIN);
+    let mut fingerprint = LegacyDigest::new(purposes::dreamer::SITE_SKILL_DISTILL);
     for part in parts {
-        let len = u64::try_from(part.len()).unwrap_or(u64::MAX);
-        hasher.update(&len.to_be_bytes());
-        hasher.update(part);
+        fingerprint.len_u64_be(part.len()).raw(part);
     }
-    *hasher.finalize().as_bytes()
+    fingerprint.finish()
+}
+
+/// A site-skill candidate's fingerprint over `parts`.
+#[cfg(oneiron_test_support)]
+pub(crate) fn site_skill_digest_for_test(parts: &[&[u8]]) -> [u8; 32] {
+    digest(parts)
 }
 
 /// The wire shape of `site.json`: exactly origins, routes, programs and

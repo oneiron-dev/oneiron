@@ -205,21 +205,6 @@ impl ConstraintObject {
         }
         Ok(())
     }
-
-    /// Canonical JSON bytes. Validation runs first, so a non-canonical object
-    /// can never produce bytes: field order is the declaration order and every
-    /// vector is proven strictly ascending.
-    pub fn canonical_bytes(&self) -> Result<Vec<u8>, BookingError> {
-        self.validate()?;
-        serde_json::to_vec(self).map_err(|error| {
-            BookingError::InvalidConstraint(format!("constraint serialization failed: {error}"))
-        })
-    }
-
-    /// BLAKE3 over [`Self::canonical_bytes`].
-    pub fn canonical_hash(&self) -> Result<[u8; 32], BookingError> {
-        Ok(*blake3::hash(&self.canonical_bytes()?).as_bytes())
-    }
 }
 
 /// What one bounded parse pass concluded. `OffTopic` is a terminal disposition:

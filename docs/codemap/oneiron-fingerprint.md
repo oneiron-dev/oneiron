@@ -29,12 +29,14 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/purposes/engine_executor.rs` | src | s | — | — | Purposes of the engine executor (`crates/oneiron/src/engine_executor`) |
 | `src/purposes/feedback.rs` | src | s | — | — | Purposes of feedback (`crates/oneiron/src/feedback`) |
 | `src/purposes/git_wire.rs` | src | s | — | — | Purposes of the git wire (`oneiron-store`'s `git_wire` and `crates/oneiron/src/git_wire`) |
+| `src/purposes/ingest.rs` | src | s | — | — | Purposes of imports into the vault: claims from a registered source, and chat history |
 | `src/purposes/inquiry.rs` | src | s | — | — | Purposes of inquiries (`crates/oneiron/src/inquiry`) |
 | `src/purposes/key_custody.rs` | src | s | — | — | Purposes of key custody (`crates/oneiron/src/store/key_custody`, with its store half in `oneiron-store`) |
 | `src/purposes/learning.rs` | src | s | — | — | Purposes of the learning loop (`crates/oneiron/src/edit_distance`, `skill_attribution`) |
 | `src/purposes/mail_pack.rs` | src | s | — | — | Purposes of the mail pack (`crates/oneiron/src/mail_pack`) |
 | `src/purposes/memory.rs` | src | s | — | — | Purposes of memory (`crates/oneiron/src/memory`) |
 | `src/purposes/mod.rs` | src | s | 1 fn · 2 const | — | The purpose registry: every [`Purpose`] and every [`LegacyPurpose`] the engine uses, one file per engine area |
+| `src/purposes/note.rs` | src | s | — | — | Purposes of notes |
 | `src/purposes/origin.rs` | src | s | — | — | Purposes of the git origin (`crates/oneiron/src/origin`) |
 | `src/purposes/outbound_intent_ledger.rs` | src | s | — | — | Purposes of the outbound intent ledger (`crates/oneiron/src/outbound_intent_ledger`) |
 | `src/purposes/plugin.rs` | src | s | — | — | Purposes of plugin sections (`crates/oneiron/src/context_board/plugin`) and the Dreamer's plugin suggestions… |
