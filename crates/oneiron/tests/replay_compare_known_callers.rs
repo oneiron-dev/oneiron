@@ -13,6 +13,10 @@
 //! with it opened under the same handle still refuses, and the program with
 //! it filed again takes its own id. A row that holds a passphrase as written,
 //! admitted before custody held it, meets its call once custody does.
+//! Custody decides once it knows a value, so two shaped keys two records
+//! hold stay two requests, and a known value is read in the stretches
+//! between the handles a row holds, never across or inside one (round 2
+//! of #9500's review).
 //!
 //! `cargo test --locked -p oneiron --all-features --test
 //! replay_compare_known_callers`.
@@ -44,6 +48,9 @@ const UNHELD_PASSPHRASE: &str = "summer harbour pencil compass";
 const OTHER_HELD_PASSPHRASE: &str = "autumn meadow candle ribbon";
 /// A passphrase custody takes only after a row holds it as written.
 const LATER_PASSPHRASE: &str = "spring valley mirror basket";
+/// Two keys of one shape a shape rule reads as a secret.
+const FIRST_SHAPED_KEY: &str = "AKIA1234567890123456";
+const SECOND_SHAPED_KEY: &str = "AKIA1234567890123457";
 
 const RUN: &str = "known-callers-run";
 const LEASE: &str = "known-callers-worker";
@@ -213,6 +220,65 @@ fn an_ask_held_with_the_switch_off_opened_again_with_another_shaped_key_refuses(
     }
 }
 
+/// Two keys of one shape, each held by its own custody record: an ask whose
+/// words hold the first holds that record's handle. The ask with the second,
+/// opened under the same handle, is another ask and refuses. Custody decides
+/// once it knows a value: the held handle and the offered key are never
+/// first read as the plan's one stand-in, which at 3e6f08a answered the
+/// second ask with the first.
+#[test]
+fn an_ask_opened_again_with_another_shaped_key_custody_holds_refuses() -> TestResult {
+    let (_directory, vault) = vault()?;
+    register_shaped_keys(&vault)?;
+    let [first, second] =
+        ask_opened_with(&vault, [FIRST_SHAPED_KEY, SECOND_SHAPED_KEY], |_| Ok(()))?;
+    first.map_err(|error| format!("the ask did not open: {error:?}"))?;
+    match second {
+        Err(oneiron::Error::InvalidConfig(reason)) if reason == "ask handle reused" => Ok(()),
+        other => Err(format!(
+            "an ask with another shaped key custody holds under the same handle refuses, got {other:?}"
+        )
+        .into()),
+    }
+}
+
+/// Guard: the identical ask with a shaped key custody holds, opened again,
+/// is its held ask on 3e6f08a and head.
+#[test]
+fn an_ask_opened_again_with_a_shaped_key_custody_holds_is_its_held_ask() -> TestResult {
+    let (_directory, vault) = vault()?;
+    register_shaped_keys(&vault)?;
+    reopened_ask_is_held_ask(ask_opened_twice(&vault, FIRST_SHAPED_KEY)?)
+}
+
+fn register_shaped_keys(vault: &Vault) -> TestResult {
+    vault.register_test_secret("first key", FIRST_SHAPED_KEY.as_bytes(), Vec::new(), 1)?;
+    vault.register_test_secret("second key", SECOND_SHAPED_KEY.as_bytes(), Vec::new(), 1)?;
+    Ok(())
+}
+
+/// An ask's words hold a passphrase custody holds with `!~!` right after it,
+/// so the row holds `[secret scN]!~!`. Custody then takes `!~!` and `]!~!`
+/// as two records. The held row is read for known values in the stretch
+/// after the handle, never across it, so `!~!` takes its record's handle
+/// there as it does in the offer, and the identical ask opened again is its
+/// held ask. At 3e6f08a `]!~!`, opened by the handle's bracket, took the
+/// place and was dropped, `!~!` stayed as written, and the ask refused.
+#[test]
+fn an_ask_held_before_custody_took_a_value_right_after_its_handle_is_its_held_ask() -> TestResult {
+    let (_directory, vault) = vault()?;
+    let words = format!("{HELD_PASSPHRASE}!~!");
+    reopened_ask_is_held_ask(ask_opened_with(
+        &vault,
+        [words.as_str(), words.as_str()],
+        |vault| {
+            vault.register_test_secret("bang tilde", b"!~!", Vec::new(), 3)?;
+            vault.register_test_secret("bracket bang tilde", b"]!~!", Vec::new(), 3)?;
+            Ok(())
+        },
+    )?)
+}
+
 /// A row admitted while custody held one passphrase of its words and not the
 /// other holds the first as its handle and the second as written. Once
 /// custody holds the second too, the identical ask opened again meets that
@@ -338,6 +404,25 @@ fn a_program_filed_with_another_passphrase_custody_holds_takes_its_own_id() -> T
     assert_ne!(
         second, first,
         "a program with another held passphrase is filed as its own program"
+    );
+    Ok(())
+}
+
+/// Custody holds `secret sc`, and a program's subgoal holds it, so the filing
+/// admits the program (`[secret scN]roll`) and its put admits that row again.
+/// A mask never reads a handle for a known value, so the second admission
+/// places nothing and the site holds `[secret scN]roll`: the identical
+/// program filed again is its filed program. At 3e6f08a the put stored
+/// `[[secret scN]N]roll` and the identical filing took a second id.
+#[test]
+fn a_program_filed_again_while_custody_holds_a_word_of_its_handle_is_its_filed_program()
+-> TestResult {
+    let (_directory, vault) = vault()?;
+    vault.register_test_secret("handle words", b"secret sc", Vec::new(), 1)?;
+    let [first, second] = program_filed_twice(&vault, "the secret scroll")?;
+    assert_eq!(
+        second, first,
+        "the identical program filed again is the program its site holds"
     );
     Ok(())
 }
