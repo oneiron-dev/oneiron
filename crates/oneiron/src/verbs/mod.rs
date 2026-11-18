@@ -21,6 +21,7 @@ mod can;
 mod catalog_fragment;
 mod check_in;
 mod claim_refinement;
+mod code_run_resume_divergence;
 mod comm_widen;
 mod connect_proposal;
 mod connector;
@@ -380,6 +381,7 @@ pub use self::catalog_fragment::{
 };
 pub use self::check_in::*;
 pub use self::claim_refinement::*;
+pub use self::code_run_resume_divergence::*;
 pub use self::comm_widen::*;
 pub use self::connect_proposal::*;
 pub use self::connector::*;

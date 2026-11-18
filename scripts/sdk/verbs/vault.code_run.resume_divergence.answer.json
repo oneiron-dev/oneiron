@@ -1,0 +1,17 @@
+{
+  "name": "vault.code_run.resume_divergence.answer",
+  "description": "The owner answers the ask on a resumed pending step whose re-entered program changed an effect step: re-fire the changed effect steps once, or leave them.",
+  "input": "crate::task_verb::sdk::ResumeDivergenceAnswer",
+  "output": "crate::task_verb::sdk::ResumeDivergenceAnswered",
+  "call": "crate::task_verb::sdk::answer_code_run_resume_divergence_as(memory.vault(), &memory.embedded_owner(\"vault.code_run.resume_divergence.answer\")?, input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "act_class": "unstated",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

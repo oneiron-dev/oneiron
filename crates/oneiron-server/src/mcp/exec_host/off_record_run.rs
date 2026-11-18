@@ -404,6 +404,11 @@ fn run_in_off_record_session(
             EngineExecutorError::Engine(refusal) if is_session_act_refusal(&refusal) => {
                 McpCodeExecutionError::Refused(Box::new(oneiron::MemoryError::from(refusal)))
             }
+            // A resumed step's program changed an effect step (L8-23): the
+            // entry holds with the walk's report line.
+            EngineExecutorError::ResumeDivergence(report) => {
+                McpCodeExecutionError::ResumeDivergence(report.to_string())
+            }
             error => McpCodeExecutionError::Run(error.to_string()),
         })
 }
