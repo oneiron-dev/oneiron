@@ -92,10 +92,27 @@ fn restore_live_in_txn(
     actor: EntityId,
 ) -> Result<()> {
     let doc = load(vault, txn, note)?;
+    if restore_document_in_txn(vault, txn, &doc, text_form, value, actor)? {
+        persist_authoritative(vault, txn, &doc)?;
+    }
+    Ok(())
+}
+
+/// The value back in the body and title of `doc` where they hold
+/// `text_form`, as an edit stamped by `actor`. Returns whether either held
+/// it; the caller stores `doc`.
+fn restore_document_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    doc: &NoteDocument,
+    text_form: &str,
+    value: &[u8],
+    actor: EntityId,
+) -> Result<bool> {
     let body = Some(doc.view()?.markdown).filter(|text| text.contains(text_form));
     let title = doc.title()?.filter(|text| text.contains(text_form));
     if body.is_none() && title.is_none() {
-        return Ok(());
+        return Ok(false);
     }
     let value = as_text(value)?;
     // The commit names the ruling person's stamp token (FIX 10930).
@@ -108,7 +125,7 @@ fn restore_live_in_txn(
         doc.set_title(&title.replace(text_form, value), stamp)?;
     }
     record_authorship(
-        &doc,
+        doc,
         &NoteAuthorship {
             operation: vault.new_entity_id()?,
             actor: NoteActor::Actor(stamp.token),
@@ -118,22 +135,18 @@ fn restore_live_in_txn(
         },
         stamp,
     )?;
-    persist_authoritative(vault, txn, &doc)
+    Ok(true)
 }
 
 /// The value back in each pending fork of `note` that holds `text_form`:
 /// its stored proposal and the texts a merge lands from
 /// (`NoteFork::recovery_merge`). A value carrier, which `store_doc` keeps
 /// for a masked fork (no pins, no authorship), is rebuilt with the value. A
-/// declared rewrite that keeps its operations takes the value in its body,
-/// since a switch lands its document whole (REVIEW-7904 F2): one commit
-/// stamped by `actor` and no authorship entry, so the fork's own operations
-/// still edit its text alone and add its own entry alone, as its upload to
-/// the NOTE's authority must (`fork_upload`; REVIEW-7904 second commit F2).
-/// Its title stays as the fork opened with it. A merge fork that keeps its
-/// operations stays as it is: a merge imports them into the NOTE, whose own
-/// edit by the ruling already holds the value. A decided fork stays as it
-/// was decided.
+/// declared rewrite that keeps its operations takes the value as an edit by
+/// `actor`, since a switch lands its document whole (REVIEW-7904 F2). A
+/// merge fork that keeps its operations stays as it is: a merge imports
+/// them into the NOTE, whose own edit by the ruling already holds the
+/// value. A decided fork stays as it was decided.
 fn restore_pending_forks_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -168,10 +181,10 @@ fn restore_pending_forks_in_txn(
             let bytes = snapshot(&proposal_value(note, &text, &metadata)?)?;
             NOTE_PROPOSAL_DOC.put(&vault.store, txn, &key, &bytes)?;
             restored = true;
-        } else if fork.rewrite && view.markdown.contains(text_form) {
-            let writer = WriteActor::new(actor, EdgeActorClass::Human);
-            let stamp = crate::provenance::actor_stamp_in_txn(vault, txn, writer)?;
-            carrier.restore_body(&view.markdown.replace(text_form, as_text(value)?), stamp)?;
+        } else if held
+            && fork.rewrite
+            && restore_document_in_txn(vault, txn, &carrier, text_form, value, actor)?
+        {
             // Stored as `store_doc` stores a fork that keeps its operations.
             record_token_uses_in_txn(vault, txn, note, &carrier.doc, None)?;
             NOTE_PROPOSAL_DOC.put(&vault.store, txn, &key, &snapshot(&carrier.doc)?)?;
