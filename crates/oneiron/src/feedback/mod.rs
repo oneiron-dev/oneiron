@@ -116,6 +116,9 @@ mod redaction;
 mod report;
 mod triage;
 
+#[cfg(oneiron_test_support)]
+pub(crate) use self::triage::triage_digest_for_test;
+
 pub use self::bundle::{
     FEEDBACK_APPROVE_ONCE_ACTION, FEEDBACK_BUNDLE_ENCODING, FEEDBACK_BUNDLE_ENCODING_V2,
     FEEDBACK_BUNDLE_KEYS, FEEDBACK_EMBEDDING_MODEL_MAX_BYTES, FEEDBACK_ENGINE_VERSION_MAX_BYTES,
@@ -132,6 +135,8 @@ pub use self::consent::{
     feedback_approval_component_id, feedback_approval_disclosure, feedback_content_ref,
     feedback_logical_send_ref, prepare_feedback_preview, validate_feedback_approval,
 };
+#[cfg(oneiron_test_support)]
+pub(crate) use self::conversation_training::training_policy_digest_for_test;
 pub use self::conversation_training::{
     ANONYMOUS_PAGE, AnonymousApplied, AnonymousFilesSeen, AnonymousReceiptView, AnonymousRefusal,
     AnonymousStatusWork, AnonymousUploadWork, AnonymousWithdrawalWork, ConversationSource,
@@ -164,11 +169,12 @@ pub use self::report::{
     ReportDeliveryOutcome, ReportDeliveryPass, ReportDeliveryRecord, ReportDeliveryRetryRequest,
     ReportDeliveryRun, ReportDeliveryRunRequest, ReportDeliveryStatus, ReportDeliveryStatusRequest,
     ReportDisclosure, ReportDisclosureBasis, ReportDisclosureChoice, ReportFrozenSend,
-    ReportFrozenSignature, ReportIssue, ReportKind, ReportPublisherBinding,
+    ReportFrozenSignature, ReportIssue, ReportIssueOrigin, ReportKind, ReportPublisherBinding,
     ReportPublisherBindingRequest, ReportPublisherEndpoint, ReportPublisherMetadata, ReportReceipt,
     ReportRequest, ReportReview, ReportRoute, ReportRoutedPayload, ReportSignature,
     ReportSignatureTransport, ReportSignatureTransportRequest, ReportStatus, ReportTextSendBinding,
 };
+pub(crate) use self::report::{ReportRestoreOutcome, restorable_archived_report};
 pub use self::triage::{
     COACH_FEEDBACK_SWEEP_FACET, COACH_FEEDBACK_TRIAGE_FACET, COACH_FEEDBACK_TRIAGE_PARK_OWNER,
     COACH_FEEDBACK_TRIAGE_PART_FACET, COACH_FEEDBACK_TRIAGE_SYNTHESIS_FACET,

@@ -23,8 +23,9 @@
 //! labels as a reference and not as a name, takes its antecedent's link, so a pronoun
 //! that happens to spell someone's name is never linked to them. A
 //! coreferent name the key misses takes its antecedent's link and never
-//! mints; one whose own name keys elsewhere keeps its own and is merge
-//! evidence. The mood lands on the turn. The save writes no claim, no edge
+//! mints, unless it is a role phrase whose antecedent names another
+//! speaker's role person; one whose own name keys elsewhere keeps its own
+//! and is merge evidence. The mood lands on the turn. The save writes no claim, no edge
 //! and no merge.
 //!
 //! A span's antecedent may sit outside the turn's spans. A context link
@@ -47,8 +48,8 @@ use super::output::{check_output, context_text};
 use super::provisional::{self, ProvisionalEntity};
 use super::role;
 use super::tags::{
-    DerivationEnvelope, MentionLink, MentionReference, MergeEvidence, TaggedMention, TurnTags,
-    readable_in_txn, replace_in_txn, tag_set_in_txn,
+    DerivationEnvelope, MentionLink, MentionReference, MergeEvidence, TaggedMention,
+    TaggedRelation, TurnTags, readable_in_txn, replace_in_txn, tag_set_in_txn,
 };
 use super::vector;
 use crate::attempt_queue::AttemptQueue;
@@ -258,7 +259,7 @@ pub(super) fn save_with_hint_read_in_txn(
                 let link = linker.hinted(
                     txn,
                     link,
-                    text,
+                    (text, &messages[span.message]),
                     message_text,
                     span.start,
                     span.end,
@@ -270,11 +271,22 @@ pub(super) fn save_with_hint_read_in_txn(
             // antecedent's link.
             (Some(inherited), None) => inherited.clone(),
             (Some(inherited), Some(kind)) => {
-                let hits = linker.candidates(txn, kind, text)?;
+                let possessor =
+                    role::possessor_in_txn(vault, txn, kind, text, &messages[span.message])?;
+                let hits = linker.candidates(txn, kind, text, possessor)?;
                 if hits.is_empty() {
                     // A name the key misses takes its antecedent's link and
-                    // never mints a twin of it.
-                    if inherited.kind() == Some(kind) {
+                    // never mints a twin of it; a role phrase never takes
+                    // another possessor's provisional person (FIX
+                    // LINKER-ROLE-PROVISIONAL-PER-SPEAKER).
+                    if inherited.kind() == Some(kind)
+                        && !provisional::names_other_possessor_in_txn(
+                            &vault.store,
+                            txn,
+                            inherited.entities(),
+                            possessor,
+                        )?
+                    {
                         inherited.clone()
                     } else {
                         let link =
@@ -303,7 +315,7 @@ pub(super) fn save_with_hint_read_in_txn(
                     let link = linker.hinted(
                         txn,
                         link,
-                        text,
+                        (text, &messages[span.message]),
                         message_text,
                         span.start,
                         span.end,
@@ -335,12 +347,26 @@ pub(super) fn save_with_hint_read_in_txn(
         }
         None => (None, false),
     };
+    // One mention per span, in span order: a relation's span indices name
+    // the same mentions.
+    let relations = output.relations.as_ref().map(|relations| {
+        relations
+            .iter()
+            .map(|relation| TaggedRelation {
+                head: relation.head,
+                tail: relation.tail,
+                label: relation.label.clone(),
+                confidence: relation.confidence,
+            })
+            .collect()
+    });
     let mut tags = TurnTags {
         turn,
         envelope,
         messages,
         mentions,
         merge_evidence,
+        relations,
         mood,
         mood_carried,
         mood_parts: output.mood_parts.clone(),
@@ -591,9 +617,16 @@ impl<'v> Linker<'v> {
     /// The key's candidates for a mention: the canonical heads of the
     /// vault's live entities of `kind` whose hints match it, archived ones
     /// included (ARCH-0055 §10, resolution sees the archive), and the
-    /// provisional entities of `kind` with its name; each in a world the
-    /// turn is in.
-    fn candidates(&self, txn: &heed::RoTxn<'_>, kind: u8, mention: &str) -> Result<Vec<EntityId>> {
+    /// provisional entities of `kind` with its name and the mention's
+    /// `possessor` ([`role::possessor_in_txn`]: a role phrase finds only its
+    /// own speaker's); each in a world the turn is in.
+    fn candidates(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        kind: u8,
+        mention: &str,
+        possessor: Option<EntityId>,
+    ) -> Result<Vec<EntityId>> {
         let mut found = BTreeSet::new();
         for hit in self.vault.lookup_identity_key_in_txn(txn, kind, mention)? {
             for head in self.vault.resolve_entity_in_txn(txn, &hit)? {
@@ -604,7 +637,9 @@ impl<'v> Linker<'v> {
                 }
             }
         }
-        for id in provisional::lookup_in_txn(&self.vault.store, txn, kind, mention)? {
+        for id in
+            provisional::lookup_possessed_in_txn(&self.vault.store, txn, kind, mention, possessor)?
+        {
             let origin =
                 provisional::get_in_txn(&self.vault.store, txn, &id)?.map(|entity| entity.origin);
             if let Some(origin) = origin
@@ -617,14 +652,14 @@ impl<'v> Linker<'v> {
     }
 
     /// `link` narrowed to the one candidate a saved identity hint picks for
-    /// the mention `name` at `start..end` of `text`, as the nightly re-check
-    /// would settle it; `link` itself when it names fewer than two or no
-    /// hint picks one.
+    /// the mention `name`, said in `message`, at `start..end` of `text`, as
+    /// the nightly re-check would settle it; `link` itself when it names
+    /// fewer than two or no hint picks one.
     fn hinted(
         &self,
         txn: &heed::RoTxn<'_>,
         link: MentionLink,
-        name: &str,
+        (name, message): (&str, &EntityId),
         text: &str,
         start: usize,
         end: usize,
@@ -636,15 +671,29 @@ impl<'v> Linker<'v> {
         if entities.len() < 2 {
             return Ok(link);
         }
+        let possessor = role::possessor_in_txn(self.vault, txn, *kind, name, message)?;
         let hinted = match hint_read {
             HintRead::Internal => {
                 crate::dreamer_runner::maintenance::identity::hinted_mention_in_txn(
-                    self.vault, txn, *kind, name, text, start, end, entities,
+                    self.vault,
+                    txn,
+                    (*kind, name, possessor),
+                    text,
+                    start,
+                    end,
+                    entities,
                 )?
             }
             HintRead::Caller(read) => {
                 crate::dreamer_runner::maintenance::identity::hinted_mention_scoped_in_txn(
-                    self.vault, txn, read, *kind, name, text, start, end, entities,
+                    self.vault,
+                    txn,
+                    read,
+                    (*kind, name, possessor),
+                    text,
+                    start,
+                    end,
+                    entities,
                 )?
             }
         };
@@ -867,7 +916,8 @@ impl<'v> Linker<'v> {
         message: &EntityId,
         hint_read: HintRead<'_, '_>,
     ) -> Result<MentionLink> {
-        let mut entities = self.candidates(txn, kind, mention)?;
+        let possessor = role::possessor_in_txn(self.vault, txn, kind, mention, message)?;
+        let mut entities = self.candidates(txn, kind, mention, possessor)?;
         let unsure_role = match self.role_link(txn, kind, mention, message, hint_read, &entities)? {
             RoleRung::Link(link) => return Ok(link),
             RoleRung::Unsure => true,
@@ -896,6 +946,7 @@ impl<'v> Linker<'v> {
                 origin: self.turn,
                 facet: self.facet,
                 minted_at: self.now,
+                possessor,
             },
         )?;
         self.minted += 1;

@@ -29,6 +29,20 @@ pub enum EsignEvent {
     FieldSaved {
         signature: SignatureRow,
     },
+    /// The signer reviewed what they sign (UETA section 10; ARCH-0064 :235,
+    /// :241): the frozen items and their own field values at that moment.
+    /// Complete needs a review that still stands; the recipient's next
+    /// FieldSaved voids it. Chains stored before this event fold as before.
+    Reviewed {
+        recipient: String,
+        /// Frozen item ids and versions reviewed, as `Signed` binds them.
+        items: Vec<EsignItem>,
+        /// The recipient's own field values when they reviewed, by field id.
+        values: BTreeMap<String, FieldValue>,
+        /// Who reviewed, as a sign act names it: a person's Complete stands
+        /// only on a person's review (a link bearer or a verified person).
+        authentication_method: EsignAuthenticationMethod,
+    },
     Signed {
         recipient: String,
         next: Option<String>,
@@ -49,6 +63,12 @@ pub enum EsignEvent {
     Reminded {
         recipient: String,
         rung: u32,
+    },
+    /// The pending document's signing window moved to `expires_at`, and
+    /// with it every recipient window not yet finished (ARCH-0064 SGN-09).
+    /// A link's own cap never moves ([`super::capability::extend_links_in`]).
+    Extended {
+        expires_at: u64,
     },
     /// Authored only after native verification succeeds for every sealed item.
     Sealed {
@@ -71,11 +91,13 @@ impl EsignEvent {
             Self::Viewed { .. } => "esign.viewed",
             Self::AccessVerified { .. } => "esign.access_verified",
             Self::FieldSaved { .. } => "esign.field",
+            Self::Reviewed { .. } => "esign.reviewed",
             Self::Signed { .. } => "esign.signed",
             Self::Declined { .. } => "esign.declined",
             Self::Voided { .. } => "esign.voided",
             Self::Expired { .. } => "esign.expired",
             Self::Reminded { .. } => "esign.reminded",
+            Self::Extended { .. } => "esign.extended",
             Self::Sealed {
                 rejected: false, ..
             } => "esign.completed",
@@ -108,6 +130,16 @@ pub struct EsignState {
     pub reminders: BTreeSet<(String, u32)>,
     pub(super) sent_at: Option<u64>,
     pub(super) reminder_at: BTreeMap<String, u64>,
+    /// Each recipient's standing review, until their next saved field.
+    pub(super) reviews: BTreeMap<String, EsignReview>,
+}
+
+/// What one recipient's [`EsignEvent::Reviewed`] bound.
+#[derive(Debug, Clone, PartialEq)]
+pub(super) struct EsignReview {
+    pub(super) items: Vec<EsignItem>,
+    pub(super) values: BTreeMap<String, FieldValue>,
+    pub(super) authentication_method: EsignAuthenticationMethod,
 }
 
 /// A draft refuses only what it cannot be: no count or size cap on its items,

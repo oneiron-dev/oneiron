@@ -63,6 +63,29 @@ answered, walk the person through these steps.
 3. Turn on the import queue so the hooks' hand-over lands: `queue = true` under
    `[import]` in the config `serve` reads. Then start `oneiron serve` again.
 4. Start a new session. Its context opens with the line naming the vault.
+5. Optional: keep the vault running between sessions and after login with a
+   user service (a systemd user unit on Linux, a launchd agent on macOS). If
+   it says the vault is running now, stop that `oneiron serve` first, so the
+   service is the vault's one writer. Give it the same `--config` and
+   `--settings-file` as the hooks when they use others.
+
+   ```bash
+   oneiron user-service install
+   ```
+
+   `oneiron user-service remove` stops the service and deletes its unit.
+6. Optional, for a hosted vault: sign in to it from this machine. The command
+   opens the vault's sign-in page in a browser on this machine; allow the
+   request in the Oneiron inbox when its match code is the same. A session
+   then binds the hosted vault when none is pinned and no local vault is
+   running.
+
+   ```bash
+   oneiron hosted login --origin https://vault.example.com
+   ```
+
+   Use the hosted vault's own origin. `oneiron hosted logout` signs out and
+   revokes the sign-in.
 
 Setup details, the vault each session binds, and what lands:
 `docs/ops/claude-code-hooks.md` and `docs/ops/connect-an-agent.md` in the

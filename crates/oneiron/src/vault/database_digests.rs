@@ -10,12 +10,12 @@ impl Vault {
     /// one snapshot: BLAKE3 over every row, each written as key length, key,
     /// value length, value (lengths little-endian u64), rows in byte order.
     ///
-    /// The digest is of what the writes stored. Two row families carry bytes
+    /// The digest is of what the writes stored. Some row families carry bytes
     /// that are not a function of the writes, and are masked the way the
     /// engine's own row-dump comparison masks them before they are hashed:
-    /// the wall-clock and random-peer stamps of entity-revision rows in
-    /// `vault_meta`, and the wall-clock queue time of embed jobs in
-    /// `sync_queue`.
+    /// the wall-clock and random-peer stamps of entity-revision rows and the
+    /// memory timeline writer's transaction id in `vault_meta`, and the
+    /// wall-clock queue time of embed jobs in `sync_queue`.
     ///
     /// `vault_meta`'s rows under `job:` are job state beside the job tables
     /// (the attempt run index, the tagging trace history), not content: its
@@ -139,8 +139,8 @@ pub(crate) fn mask_embed_job_stamps(rows: &mut [(Vec<u8>, Vec<u8>)]) {
     }
 }
 
-/// Masks the two `vault_meta` row families whose bytes differ between two
-/// opens given the same writes:
+/// Masks the `vault_meta` row families whose bytes differ between two opens
+/// given the same writes:
 ///
 /// - the entity-revision state row stamps `changed_at_ms` from the wall
 ///   clock, not the store clock;
@@ -148,7 +148,10 @@ pub(crate) fn mask_embed_job_stamps(rows: &mut [(Vec<u8>, Vec<u8>)]) {
 ///   id is random per document. The document, the frontiers retained from
 ///   it, and the frontier references hashed from those (in the frontier and
 ///   identity keys, the state row's `live`/`indexed` and the memory
-///   timeline's values) all carry it.
+///   timeline's values) all carry it;
+/// - the memory timeline's writer row names the physical write transaction
+///   that took the head's sequence, and commits that change no content (job
+///   state) move that id.
 ///
 /// What stays: which entity holds a document, how many frontiers it retains,
 /// which entity each identity row names, whether its live revision is the
@@ -160,6 +163,7 @@ pub(crate) fn mask_unrepeatable_stamps(rows: &mut [(Vec<u8>, Vec<u8>)]) -> Resul
     const IDENTITY: &[u8] = b"entity_revision:identity:";
     const STATE: &[u8] = b"entity_revision:state:";
     const TIMELINE: &[u8] = b"entity_revision:timeline:";
+    const TIMELINE_WRITER: &[u8] = b"entity_revision:timeline_writer";
     const MASK: &[u8] = b"<loro>";
     const ID_LEN: usize = crate::entity_id::ENTITY_ID_LEN;
     for (key, value) in rows.iter_mut() {
@@ -174,6 +178,8 @@ pub(crate) fn mask_unrepeatable_stamps(rows: &mut [(Vec<u8>, Vec<u8>)]) -> Resul
             key.extend_from_slice(MASK);
         } else if key.starts_with(TIMELINE) {
             *value = MASK.to_vec();
+        } else if key.as_slice() == TIMELINE_WRITER && value.len() == 16 {
+            value[..8].fill(0);
         } else if key.starts_with(STATE) {
             let corrupt = || Error::CorruptedIndex("entity revision state");
             let mut state =

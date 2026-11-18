@@ -137,6 +137,12 @@ pub enum EsignOutboundVerb {
     SendForSignature,
     Remind,
     Void,
+    /// Moves a pending document's signing window to `expires_at` (ARCH-0064
+    /// SGN-09; RULING ESIGN-WINDOW-EXTEND-AUTHORITY = A). It mints, moves
+    /// and revokes no link cap and tells no recipient.
+    Extend {
+        expires_at: u64,
+    },
 }
 impl EsignOutboundVerb {
     pub fn as_str(self) -> &'static str {
@@ -144,7 +150,14 @@ impl EsignOutboundVerb {
             Self::SendForSignature => "send_for_signature",
             Self::Remind => "remind",
             Self::Void => "void",
+            Self::Extend { .. } => "extend",
         }
+    }
+    /// Whether the act's deliveries carry signing links, so its owner's
+    /// admitted press is recorded for them to cite: a send or a reminder,
+    /// never a void or an extension.
+    pub fn mints_links(self) -> bool {
+        matches!(self, Self::SendForSignature | Self::Remind)
     }
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -205,6 +218,21 @@ impl From<crate::Error> for NotApplied {
         }
     }
 }
+/// The immutable binding (`esign-command:<sha256>`) of `command` over
+/// `document` as it stands and `reminder`: what an e-sign act's approval
+/// names, computed by its dispatch and again by its writer.
+fn command_binding(
+    command: &EsignOutboundCommand,
+    document: &EsignDocument,
+    reminder: &Option<(String, u32)>,
+) -> Result<String> {
+    let bytes = serde_json::to_vec(&(command, document, reminder))
+        .map_err(|_| invalid("command encoding"))?;
+    Ok(format!(
+        "esign-command:{}",
+        crate::entity_id::bytes_to_hex_lower(&Sha256::digest(&bytes))
+    ))
+}
 impl OutboundExecutionSink for EsignSink<'_> {
     fn execute(&mut self, request: &OutboundExecutionRequest<'_>) -> OutboundExecutionOutcome {
         let act = |txn: &mut heed::RwTxn<'_>| -> std::result::Result<EntityId, NotApplied> {
@@ -234,7 +262,7 @@ impl OutboundExecutionSink for EsignSink<'_> {
                         decision_ref: owner.decision_id().to_hex(),
                     })
                 }
-                None if self.command.verb != EsignOutboundVerb::Void => admitted_owner_press_in(
+                None if self.command.verb.mints_links() => admitted_owner_press_in(
                     self.vault,
                     txn,
                     request,
@@ -265,6 +293,12 @@ impl OutboundExecutionSink for EsignSink<'_> {
             } else {
                 state_in(self.vault, txn, id)?
             };
+            // The act lands only on the document its binding named, the
+            // value its approval names: a draft placed again between the
+            // binding and this writer (`vault.esign.fields.place`) refuses it.
+            if command_binding(self.command, &state.document, &self.reminder)? != binding {
+                return Err(NotApplied::Refused);
+            }
             if state.document.recipients.len() != self.command.recipient_count {
                 return Err(NotApplied::Refused);
             }
@@ -382,6 +416,20 @@ impl OutboundExecutionSink for EsignSink<'_> {
 
                     return Ok(id);
                 }
+                EsignOutboundVerb::Extend { expires_at } => {
+                    state = append(
+                        self.vault,
+                        txn,
+                        id,
+                        EsignEvent::Extended { expires_at },
+                        self.actor.clone(),
+                        self.now,
+                    )?;
+                    super::capability::extend_links_in(self.vault, txn, id, &state, self.now)?;
+                    DISPATCH_MARKER.put(&self.vault.store, txn, &marker, &recorded)?;
+
+                    return Ok(id);
+                }
             };
             let transition = if self.command.verb == EsignOutboundVerb::SendForSignature {
                 "invite"
@@ -435,10 +483,10 @@ impl OutboundExecutionSink for EsignSink<'_> {
                 OutboundExecutionOutcome::delivered_to_channel(format!("esign:{}", id.to_hex()))
                     .with_receipt_field(
                         "delivery_health",
-                        if self.command.verb == EsignOutboundVerb::Void {
-                            "local_terminal"
-                        } else {
-                            "enqueued"
+                        match self.command.verb {
+                            EsignOutboundVerb::Void => "local_terminal",
+                            EsignOutboundVerb::Extend { .. } => "local_window",
+                            _ => "enqueued",
                         },
                     )
             }
@@ -575,12 +623,7 @@ impl Vault {
         if state.document.recipients.len() != command.recipient_count {
             return Err(invalid("recipient count changed").into());
         }
-        let bytes = serde_json::to_vec(&(command, &state.document, reminder))
-            .map_err(|_| invalid("command encoding"))?;
-        Ok(format!(
-            "esign-command:{}",
-            crate::entity_id::bytes_to_hex_lower(&Sha256::digest(&bytes))
-        ))
+        Ok(command_binding(command, &state.document, reminder)?)
     }
     fn dispatch_esign_inner(
         &self,
@@ -593,6 +636,9 @@ impl Vault {
     ) -> std::result::Result<OutboundDispatchResult, OutboundDispatchError> {
         request.intent.content_ref =
             Some(self.esign_command_binding(&request, command, &reminder)?);
+        // A test's write between the binding and the act's writer.
+        #[cfg(oneiron_test_support)]
+        crate::test_doors::esign_send_binding::after_command_binding(self);
         let actor = EsignAuditActor {
             actor: request.intent.actor.clone(),
             ip,

@@ -31,6 +31,10 @@ pub struct RunTreeWireNode {
     /// when absent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_id: Option<String>,
+    /// The model id and revision the attempt's executor ran; elided when no
+    /// run stamped one. Its seat and role are not on the wire.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub executor_model: Option<String>,
     pub status: RunTreeStatus,
     /// The artifact version this attempt's durable output lives in; elided
     /// when absent.

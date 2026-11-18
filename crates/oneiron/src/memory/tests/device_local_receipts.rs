@@ -46,6 +46,7 @@ fn gated_claim(
         grant_ref: None,
         diff_handle: vec![0xA5],
         read_frontier_hash: [0xB6; 32],
+        context: Default::default(),
         redacted_at: None,
     };
     let pending = PendingGateConsentRecord {
@@ -57,6 +58,8 @@ fn gated_claim(
         read_frontier_hash: [0xB6; 32],
         reason_codes: vec!["gate.pending.review".to_owned()],
         dreamer_run_id: None,
+        predicate: Some(body.predicate.clone()),
+        expires_at: None,
     };
     vault
         .with_write_txn_grouped(|wtxn| {
@@ -123,18 +126,20 @@ fn a_caller_off_this_device_reads_no_receipt_or_consent_of_a_device_local_claim(
                 Some(&in_world),
                 locality,
                 10,
+                None,
             )
             .unwrap();
-            assert_eq!(receipts.len(), seen, "{locality:?}");
+            assert_eq!(receipts.rows.len(), seen, "{locality:?}");
             let pending = crate::sync::bridge::scoped_subscription_pending(
                 &vault,
                 &actor,
                 Some(&in_world),
                 locality,
                 10,
+                None,
             )
             .unwrap();
-            assert_eq!(pending.len(), seen, "{locality:?}");
+            assert_eq!(pending.rows.len(), seen, "{locality:?}");
         }
     }
 }

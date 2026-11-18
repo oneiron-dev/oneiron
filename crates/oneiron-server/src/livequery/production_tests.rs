@@ -55,6 +55,15 @@ fn server_with_config(
             )
             .unwrap();
     }
+    vault
+        .put_entity(
+            &EntityId::from_hex(SPACE).unwrap(),
+            oneiron::registry::ENTITY_TYPE_RELATIONSHIP,
+            oneiron::temporal::TimeRange { start: AT, end: AT },
+            AT,
+            b"fixture relationship",
+        )
+        .unwrap();
     let actor = EntityId::from_hex(ACTOR).unwrap();
     vault
         .install_read_permit_for_test(WriteActor::new(actor, EdgeActorClass::Human))
@@ -160,6 +169,7 @@ pub(super) fn witness(server: &SyncServer, text: &str) -> WitnessReceipt {
             occurred_at: AT,
             assertions: Default::default(),
             thread_audience: None,
+            project: None,
         })
         .unwrap()
 }
@@ -251,6 +261,11 @@ async fn verified_actor_classes_are_mapped_exactly_and_missing_class_is_forbidde
             "Reconnect with a differently scoped slip to act as another actor.",
         ])
     );
+    // A socket's subscriptions, membership and projection refuse the same
+    // slip with the facade's own words (T0I-ACTOR-CLASS-SUGGESTION-TWO-TEXTS).
+    let socket_refusal = error_body(bound_actor_class(&auth).unwrap_err());
+    assert_eq!(socket_refusal["message"], reply["error"]["message"]);
+    assert_eq!(socket_refusal["suggestions"], reply["error"]["suggestions"]);
     let payload_actor = rpc(
         &server,
         &auth,
@@ -267,6 +282,9 @@ async fn verified_actor_classes_are_mapped_exactly_and_missing_class_is_forbidde
         reply["error"]["message"],
         "facade routes bind writes to an authenticated principal"
     );
+    let socket_refusal = error_body(bound_reader(&owner).unwrap_err());
+    assert_eq!(socket_refusal["message"], reply["error"]["message"]);
+    assert_eq!(socket_refusal["suggestions"], reply["error"]["suggestions"]);
     let (issuer, _) =
         crate::test_credentials::rooting_host_issuer(server.vault(), SECRET.as_bytes());
     let template = server.vault().ensure_host_root_slip(&issuer).unwrap();
@@ -1909,7 +1927,7 @@ fn owner_feed_fixture() -> (
         oneiron::registry::TypeByteFamily::Productivity,
     )
     .unwrap();
-    let actor = EntityId::from_hex(ACTOR).unwrap();
+    let actor = server.vault().ensure_embedded_owner_actor().unwrap();
     let anchor = EntityId::now();
     let body = oneiron::ClaimBody::new(
         "profile.name",
@@ -1930,7 +1948,10 @@ fn owner_feed_fixture() -> (
         )
         .unwrap();
     crate::test_credentials::bind_owner(server.vault(), SECRET, actor);
-    let owner_recipe = format!("principal_ref={ACTOR};actor_class=human;jti=watch-owner");
+    let owner_recipe = format!(
+        "principal_ref={};actor_class=human;jti=watch-owner",
+        actor.to_hex()
+    );
     let owner = crate::test_credentials::authenticate(&server, &owner_recipe);
     assert!(owner.is_owner_grade());
     (_dir, server, actor, anchor, owner)
@@ -2270,6 +2291,7 @@ async fn erasing_a_folded_message_refreshes_the_live_recall_of_its_turn() {
                 occurred_at: AT,
                 assertions: Default::default(),
                 thread_audience: None,
+                project: None,
             })
             .unwrap();
         let id_of = |short_id: &str| {

@@ -327,14 +327,41 @@ fn shed_failure_leaves_admission_residency() -> Result<()> {
         assert!(!probes(&vault)?[0].is_empty());
         match (prior, shed(&vault)?) {
             (Some(prior), ShedOutcome::AlreadySlim { residue, .. }) => {
-                assert_eq!(residue.step.intent_id, prior.step.intent_id);
-                assert_eq!(residue.step.attempt_id, prior.step.attempt_id);
-                assert_eq!(residue.step.call_seq, prior.step.call_seq);
+                let JournaledResumeStep::OutboundIntent {
+                    intent_id,
+                    attempt_id,
+                    call_seq,
+                    ..
+                } = residue.step
+                else {
+                    panic!("expected outbound intent step, got {:?}", residue.step);
+                };
+                let JournaledResumeStep::OutboundIntent {
+                    intent_id: prior_intent,
+                    attempt_id: prior_attempt,
+                    call_seq: prior_seq,
+                    ..
+                } = prior.step
+                else {
+                    panic!("expected outbound intent step, got {:?}", prior.step);
+                };
+                assert_eq!(intent_id, prior_intent);
+                assert_eq!(attempt_id, prior_attempt);
+                assert_eq!(call_seq, prior_seq);
             }
             (None, ShedOutcome::Entered { residue, .. }) => {
-                assert_eq!(residue.step.intent_id, record.id);
-                assert_eq!(residue.step.attempt_id, record.attempt_id);
-                assert_eq!(residue.step.call_seq, record.call_seq);
+                let JournaledResumeStep::OutboundIntent {
+                    intent_id,
+                    attempt_id,
+                    call_seq,
+                    ..
+                } = residue.step
+                else {
+                    panic!("expected outbound intent step, got {:?}", residue.step);
+                };
+                assert_eq!(intent_id, record.id);
+                assert_eq!(attempt_id, record.attempt_id);
+                assert_eq!(call_seq, record.call_seq);
             }
             _ => panic!("unexpected admission outcome after repair"),
         }
@@ -476,14 +503,41 @@ fn malformed_ledger_selection_preserves_residency() -> Result<()> {
         })?;
         match (prior, shed(&vault)?) {
             (Some(prior), ShedOutcome::AlreadySlim { residue, .. }) => {
-                assert_eq!(residue.step.intent_id, prior.step.intent_id);
-                assert_eq!(residue.step.attempt_id, prior.step.attempt_id);
-                assert_eq!(residue.step.call_seq, prior.step.call_seq);
+                let JournaledResumeStep::OutboundIntent {
+                    intent_id,
+                    attempt_id,
+                    call_seq,
+                    ..
+                } = residue.step
+                else {
+                    panic!("expected outbound intent step, got {:?}", residue.step);
+                };
+                let JournaledResumeStep::OutboundIntent {
+                    intent_id: prior_intent,
+                    attempt_id: prior_attempt,
+                    call_seq: prior_seq,
+                    ..
+                } = prior.step
+                else {
+                    panic!("expected outbound intent step, got {:?}", prior.step);
+                };
+                assert_eq!(intent_id, prior_intent);
+                assert_eq!(attempt_id, prior_attempt);
+                assert_eq!(call_seq, prior_seq);
             }
             (None, ShedOutcome::Entered { residue, .. }) => {
-                assert_eq!(residue.step.intent_id, record.id);
-                assert_eq!(residue.step.attempt_id, record.attempt_id);
-                assert_eq!(residue.step.call_seq, record.call_seq);
+                let JournaledResumeStep::OutboundIntent {
+                    intent_id,
+                    attempt_id,
+                    call_seq,
+                    ..
+                } = residue.step
+                else {
+                    panic!("expected outbound intent step, got {:?}", residue.step);
+                };
+                assert_eq!(intent_id, record.id);
+                assert_eq!(attempt_id, record.attempt_id);
+                assert_eq!(call_seq, record.call_seq);
             }
             _ => panic!("unexpected admission outcome after ledger repair"),
         }
@@ -502,7 +556,10 @@ fn journaled_step_survives_shed_rehydrate_no_duplicate_send() {
             self.calls += 1;
             let before = rows(self.vault, &self.vault.store.vault_meta).unwrap();
             let (residue, _) = entered(self.vault);
-            assert_eq!(Some(&residue.step.intent_id), call.intent_id());
+            let JournaledResumeStep::OutboundIntent { intent_id, .. } = residue.step else {
+                panic!("expected outbound intent step, got {:?}", residue.step);
+            };
+            assert_eq!(Some(&intent_id), call.intent_id());
             self.vault.resume_from_slim_on_inbound().unwrap();
             assert_eq!(
                 before,
