@@ -45,8 +45,8 @@ pub(crate) use admission::ensure_ics_import_actor;
 mod consent;
 pub(in crate::calendar) use admission::{
     ConnectorAdmissionSource, ConnectorScreen, admit_connector_event, connector_event_ref,
-    delete_connector_resource, preflight_connector_feed, sweep_connector_resource,
-    sweep_connector_uids,
+    delete_connector_resource, preflight_connector_feed, repeat_connector_host_cancel_refund,
+    sweep_connector_resource, sweep_connector_uids,
 };
 pub(crate) use calendar_source::{
     CalendarSourceChange, apply_calendar_source_change, apply_calendar_source_feed,
@@ -57,7 +57,7 @@ mod fetch;
 mod poll;
 pub(in crate::calendar) mod property_claims;
 mod turn;
-pub(in crate::calendar) use turn::admission_turn;
+pub(in crate::calendar) use turn::{AdmissionTurn, admission_turn};
 
 // Moved bodies still spell `super::ics`, `super::passport`, and
 // `super::safeguard` (their `super` used to be `calendar`); these aliases keep

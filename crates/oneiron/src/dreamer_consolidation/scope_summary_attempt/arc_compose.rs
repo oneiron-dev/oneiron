@@ -34,6 +34,7 @@ use crate::llm::call_as_step_checked;
 use crate::model_step_context::{DurableStepContext, StepOutcome};
 use crate::model_step_error::DurableStepError;
 use crate::scope_summary::{ArcPendingCause, ComposedSummary, ScopeSummaryPlan};
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
 use oneiron_model::llm::LlmResponse;
 use std::collections::BTreeSet;
 use std::ops::ControlFlow;
@@ -79,7 +80,7 @@ impl<E> ScopeSummaryExecutor<'_, E> {
         let schema = arc_schema();
         let params = serde_json::to_vec(&(instruction, self.model.as_str(), &schema, ARC_DOMAIN))
             .map_err(|_| invalid_consolidation("summary policy did not encode"))?;
-        let params_hash = *blake3::hash(&params).as_bytes();
+        let params_hash = arc_composition_params_hash(&params);
         let memo = plan.composition_memo(evidence, &params_hash)?;
         // The same composition already stands: no call, no second SUMMARY.
         match ctx.vault.reuse_composed_scope_summary(
@@ -387,4 +388,20 @@ fn arc_input(plan: &ScopeSummaryPlan, view: &ArcView, opened: &str) -> Result<St
         "opened": opened,
     }))
     .map_err(|_| invalid_consolidation("summary input encoding"))
+}
+
+/// An Arc composed in one call: its params JSON (instruction, model,
+/// schema, `ARC_DOMAIN`), with no tag written
+/// (`purposes::dreamer_consolidation::ARC_COMPOSITION_PARAMS`).
+fn arc_composition_params_hash(params: &[u8]) -> [u8; 32] {
+    LegacyDigest::new(purposes::dreamer_consolidation::ARC_COMPOSITION_PARAMS)
+        .raw(params)
+        .finish()
+}
+
+/// [`arc_composition_params_hash`] for the K door
+/// (`test_doors::fingerprint_keep_dreamer_consolidation_digests`). Not API.
+#[cfg(oneiron_test_support)]
+pub(crate) fn arc_composition_params_hash_for_test(params: &[u8]) -> [u8; 32] {
+    arc_composition_params_hash(params)
 }

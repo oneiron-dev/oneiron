@@ -5,6 +5,7 @@ pub use oneiron_store::key_custody::protocol::drain::*;
 
 use super::{AckPosition, CustodyPosition, DeletionEvidence, TargetId, TargetSpec, hex};
 use crate::error::Result;
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
 
 /// The owner's begun drain of one member: what the member's ack must name.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -23,25 +24,28 @@ pub struct DrainTicket {
 pub use oneiron_verb_wire::store::key_custody::protocol::drain::DrainAck;
 
 /// The drain operation of member `target` out of set revision `revision`
-/// at `position`.
+/// at `position` (`purposes::store::CUSTODY_DRAIN_OPERATION`).
 #[must_use]
 pub fn drain_operation_id(
     target: &TargetId,
     revision: u64,
     position: &CustodyPosition,
 ) -> [u8; 32] {
-    let mut material = position.to_bytes().to_vec();
-    material.extend_from_slice(&revision.to_be_bytes());
-    material.extend_from_slice(target.as_str().as_bytes());
-    blake3::derive_key(OPERATION_CONTEXT, &material)
+    LegacyDigest::new(purposes::store::CUSTODY_DRAIN_OPERATION)
+        .raw(&position.to_bytes())
+        .raw(&revision.to_be_bytes())
+        .raw(target.as_str().as_bytes())
+        .finish()
 }
 
-/// Whose lineage a drain empties: its vault and namespace.
+/// Whose lineage a drain empties: its vault and namespace
+/// (`purposes::store::CUSTODY_DRAIN_ORIGIN`).
 #[must_use]
 pub fn drain_origin(position: &CustodyPosition) -> [u8; 32] {
-    let mut material = position.vault.as_bytes().to_vec();
-    material.extend_from_slice(position.namespace.as_bytes());
-    blake3::derive_key(ORIGIN_CONTEXT, &material)
+    LegacyDigest::new(purposes::store::CUSTODY_DRAIN_ORIGIN)
+        .raw(position.vault.as_bytes())
+        .raw(position.namespace.as_bytes())
+        .finish()
 }
 
 impl DrainTicket {

@@ -15,13 +15,13 @@ use super::limits::LimitsConfig;
 use super::line::LineConfig;
 use super::linear::LinearConfig;
 use super::lookup::LEGACY_DEFAULT_VAULT_PATH;
+use super::mail::MailConfig;
 use super::oneironer::OneironerConfig;
 use super::recall::RecallConfig;
 use super::self_heal::SelfHealConfig;
 use super::skills::SkillsConfig;
 use super::trusted_proxy::TrustedProxy;
 use crate::runtime::RuntimeConfig;
-use crate::usage::UsageMode;
 
 /// The default inbound WebSocket frame bound (Engine 10:44 for parked L14):
 /// the sync protocol's frame floor as base64 carries it, plus a window pad
@@ -34,8 +34,19 @@ const DEFAULT_MAX_FRAME_SIZE: usize =
         + 3
         + oneiron::sync::transport::MAX_WINDOW_KEY_LEN;
 
+/// The `*.localhost` host a local vault answers on.
+mod artifact_localhost;
+
 /// The two configs' redacting `Debug`.
 mod debug;
+
+/// The vault inputs an embedded binding resolved over its config file.
+mod embedded_holder;
+
+/// The methods of `SyncServerConfig`.
+mod sync_server_methods;
+
+pub use embedded_holder::EmbeddedHolderOverrides;
 
 /// Oneiron sync server configuration.
 ///
@@ -167,6 +178,10 @@ pub struct SyncServerConfig {
     /// `[line]`: the plan of the LINE Official Account the built-in LINE
     /// pack serves, and the pushes it includes each month.
     pub line: LineConfig,
+    /// `[mail]`: the host operator's mail settings each served vault's mail
+    /// pack reads (fix list row 17645); the defaults unless the file names
+    /// others.
+    pub mail: MailConfig,
     /// `[channel_endpoints]`: where the served sinks reach each provider's
     /// API; the public APIs unless the file names others.
     pub channel_endpoints: ChannelEndpointsConfig,
@@ -272,6 +287,7 @@ impl Default for SyncServerConfig {
             runtime: RuntimeConfig::default(),
             skills: SkillsConfig::default(),
             line: LineConfig::default(),
+            mail: MailConfig::default(),
             channel_endpoints: ChannelEndpointsConfig::default(),
             apns: ApnsConfig::default(),
             linear: None,
@@ -282,50 +298,6 @@ impl Default for SyncServerConfig {
             release_payment_credentials_unfenced: false,
             hosted_private_origins: std::collections::BTreeSet::new(),
             hosted_private_networks: std::collections::BTreeSet::new(),
-        }
-    }
-}
-
-impl SyncServerConfig {
-    /// Usage debit mode, derived from the runtime mode.
-    pub fn runtime_usage_mode(&self) -> UsageMode {
-        self.runtime.mode.usage_mode()
-    }
-
-    pub fn validate(&self) -> Result<(), oneiron::Error> {
-        super::self_heal::validate_agent_failure_healer(self.agent_failure_healer.as_ref())?;
-        if self.ephemeral_timeout_ms <= 0 {
-            return Err(oneiron::Error::sync_protocol(
-                oneiron::SyncProtocolValidation::InvalidConfig {
-                    field: oneiron::SyncConfigField::EphemeralTimeoutMs,
-                },
-            ));
-        }
-        if self.max_ephemeral_snapshot_bytes == 0 {
-            return Err(oneiron::Error::sync_protocol(
-                oneiron::SyncProtocolValidation::InvalidConfig {
-                    field: oneiron::SyncConfigField::MaxEphemeralSnapshotBytes,
-                },
-            ));
-        }
-        Ok(())
-    }
-}
-
-/// The explicit vault inputs an embedded binding resolved over its config file.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct EmbeddedHolderOverrides {
-    pub vault_path: PathBuf,
-    pub dimensions: Option<usize>,
-}
-
-impl EmbeddedHolderOverrides {
-    pub(crate) fn serve_args(&self, config: Option<PathBuf>) -> super::ServeArgs {
-        super::ServeArgs {
-            config,
-            vault_path: Some(self.vault_path.clone()),
-            dimensions: self.dimensions,
-            ..Default::default()
         }
     }
 }
@@ -463,6 +435,9 @@ pub struct ServeConfig {
     /// The `[line]` section: the LINE Official Account's plan, a free
     /// account unless the config file names one.
     pub line: LineConfig,
+    /// The `[mail]` section: the host operator's mail settings, the
+    /// defaults unless the config file names others.
+    pub mail: MailConfig,
     /// The `[channel_endpoints]` section: the provider APIs the served sinks
     /// reach, the public ones unless the config file names others.
     pub channel_endpoints: ChannelEndpointsConfig,
@@ -611,6 +586,7 @@ impl Default for ServeConfig {
             connectors: std::collections::BTreeMap::new(),
             embedding: None,
             line: server.line,
+            mail: server.mail,
             channel_endpoints: server.channel_endpoints.clone(),
             apns: server.apns.clone(),
             linear: None,
@@ -684,6 +660,7 @@ impl ServeConfig {
             runtime: self.runtime.clone(),
             skills: self.skills.clone(),
             line: self.line,
+            mail: self.mail,
             channel_endpoints: self.channel_endpoints.clone(),
             apns: self.apns.clone(),
             linear: self.linear.clone(),

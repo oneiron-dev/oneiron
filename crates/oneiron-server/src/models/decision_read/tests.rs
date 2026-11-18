@@ -102,24 +102,34 @@ async fn serve(fake: Arc<Fake>) -> String {
 fn package(dir: &std::path::Path, tokens: usize) {
     let package = dir.join("package");
     std::fs::create_dir_all(&package).unwrap();
-    std::fs::write(
-        package.join("read.txt"),
+    write_referenced_file(
+        &package.join("read.txt"),
         "{state.head}\n(1) {question} (2) {paired} (3) {person}\n{labels}\n{state.dynamic}<|im_end|>\nJoint label:",
-    )
-    .unwrap();
+    );
     let verbalizers: Vec<String> = LETTERS
         .chars()
         .take(tokens)
         .map(|letter| format!("\"{letter}\""))
         .collect();
-    std::fs::write(
-        package.join("recipe.toml"),
+    write_referenced_file(
+        &package.join("recipe.toml"),
         format!(
             "format = 1\ntemplate = \"read.txt\"\nrow = \"{{token}}: {{label}}; more thinking {{think}}\"\nrow_person = \"{{token}}: {{label}}; more thinking {{think}}; ask a person {{person}}\"\nyes = \"yes\"\nno = \"no\"\ntokens = [{}]\neos = \"<|im_end|>\"\nn_probs = 16384\nn_probs_full = 262144\n[probe]\npaired = \"Think?\"\nperson = \"Person?\"\n",
             verbalizers.join(", ")
         ),
-    )
-    .unwrap();
+    );
+}
+
+/// Writes a file the recipe refers to with mode 0644. Serve reads such a
+/// file only once no other user can write it, so a bare write would take its
+/// mode from the host's umask (FIX SIDE-FILE-TESTS-UMASK-DEPENDENT).
+fn write_referenced_file(path: &std::path::Path, text: impl AsRef<[u8]>) {
+    std::fs::write(path, text).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o644)).unwrap();
+    }
 }
 
 /// `[models]` reading with `dir`'s package, its path relative to `dir`.

@@ -11,6 +11,9 @@ impl From<Error> for MemoryError {
         if let Error::CheckInPending(check_in) = &err {
             return Self {
                 reason_codes: vec![format!("{CHECK_IN_PENDING_REASON_PREFIX}{check_in}")],
+                pending: Some(Box::new(MemoryPending::CheckIn {
+                    check_in: check_in.clone(),
+                })),
                 ..Self::new(
                     MEMORY_CODE_CHECK_IN_PENDING,
                     err.to_string(),
@@ -165,6 +168,15 @@ impl From<Error> for MemoryError {
                 MEMORY_CODE_NOT_FOUND,
                 message,
                 &["Verify the identifier and retry."],
+            ),
+            // The row stands and the reader may read it now; this machine
+            // holds no bytes of the revision the frontier names (L3-39).
+            ErrorKind::HistoryNotHeld => Self::new(
+                MEMORY_CODE_HISTORY_NOT_HELD,
+                message,
+                &[
+                    "Read the row at the live head, or read this frontier where the row's history is held.",
+                ],
             ),
             // FORBIDDEN like the gate family beside it, but with its OWN
             // remedies: the generic arm points at pending consents and at
@@ -437,6 +449,16 @@ impl From<Error> for MemoryError {
                     &["Do what the message names: retry, or re-enter or reissue that credential."],
                 )
             }
+            // The owner's sandbox switch names a vendor this host cannot
+            // serve (L8-43): the vault's setting or custody must change, never
+            // the request's shape.
+            ErrorKind::SandboxVendorUnavailable => Self::new(
+                MEMORY_CODE_INVALID_STATE,
+                message,
+                &[
+                    "Store the owner's key for that vendor in custody, or switch vault.settings.sandbox_provider back to ours.",
+                ],
+            ),
             // A foreign guest's proposal spool met the host's disk floor
             // (FIX 7650): the host's storage, never the request's shape.
             ErrorKind::SandboxProposalDiskFloor => Self::new(

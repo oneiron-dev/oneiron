@@ -40,6 +40,7 @@ use std::collections::BTreeSet;
 use heed::RoTxn;
 use loro::event::MapDelta;
 use loro::{CommitOptions, LoroDoc, LoroMap, LoroValue, ValueOrContainer};
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
 
 use super::bridge::BRIDGE_ORIGIN;
 use super::loro_support::{map_contains_binary, map_delete, map_get_bytes, map_insert_bytes};
@@ -57,9 +58,6 @@ pub(crate) const OFFICE_PROPOSALS_MAP: &str = "office_proposals";
 /// The largest proposal a window carries: one carrier part (a call; canon is
 /// silent). A larger one stays on its machine, logged.
 const MAX_PROPOSAL_BYTES: usize = super::carrier_parts::PART_BYTES;
-
-/// The context a divergence's digest is derived in.
-const DIVERGENCE_CONTEXT: &str = "oneiron.office_proposals.divergence.v1";
 
 fn refused(reason: &'static str) -> Error {
     Error::InvalidConfig(format!("office proposal refused: {reason}"))
@@ -332,14 +330,19 @@ fn divergence_digest(
         .map(|held| encode(&held))
         .transpose()?
         .unwrap_or_default();
-    let mut copies = [held.as_slice(), bytes];
+    Ok(divergence_of(&held, bytes))
+}
+
+/// The quarantine identity of two proposal copies (K, PLAN-UC-04 stage 7).
+fn divergence_of(held: &[u8], carried: &[u8]) -> [u8; 32] {
+    let mut copies = [held, carried];
     copies.sort_unstable();
-    let mut hasher = blake3::Hasher::new_derive_key(DIVERGENCE_CONTEXT);
+    let mut hasher = LegacyDigest::new(purposes::sync::OFFICE_PROPOSAL_DIVERGENCE);
     for copy in copies {
-        hasher.update(&u64::try_from(copy.len()).unwrap_or(u64::MAX).to_le_bytes());
-        hasher.update(copy);
+        hasher.len_u64_le(copy.len());
+        hasher.raw(copy);
     }
-    Ok(*hasher.finalize().as_bytes())
+    hasher.finish()
 }
 
 /// Drops from `doc` each proposal of an artifact this vault removed or the
@@ -396,4 +399,9 @@ pub(crate) fn scrub_office_proposals(
     }
     doc.commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
     Ok(true)
+}
+
+#[cfg(oneiron_test_support)]
+pub(crate) fn divergence_of_for_test(held: &[u8], carried: &[u8]) -> [u8; 32] {
+    divergence_of(held, carried)
 }

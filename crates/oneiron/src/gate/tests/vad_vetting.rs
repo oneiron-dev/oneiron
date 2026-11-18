@@ -218,6 +218,7 @@ mod vad_vetting_tests {
                     ENTITY_TYPE_PERSON,
                     test_time(3),
                     3,
+                    0,
                     b"corrupt annotation",
                 );
                 vault

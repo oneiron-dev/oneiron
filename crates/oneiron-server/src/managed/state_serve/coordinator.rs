@@ -417,7 +417,8 @@ async fn serve_with_handles(
     );
     // Fact hooks (ARCH-0080) and the settled verb-ask drain on their runner,
     // unless `--no-hooks`: each pass admitted like a served write. The sandbox
-    // loads before ready, as plain serve loads it, so no verb waits on it.
+    // loads before ready, so no verb waits on it; plain serve builds it off
+    // its gated startup instead (FIX 25667).
     let (hooks_stop, hooks_stopped) = watch::channel(false);
     #[cfg(feature = "code-sandbox-wasmtime")]
     let fact_hooks = if config.hooks {
@@ -565,6 +566,13 @@ async fn serve_with_handles(
     handles.connector_sends = Some(sync_server.spawn_connector_send_worker(admitted()));
     // Checked built-in channels, under the same admission (OF-519).
     handles.builtin_host = Some(crate::builtin_host::spawn(&sync_server, admitted()));
+    // Booking deposits' due captures, voids and refunds go to Stripe, under
+    // the same admission (BK-DEPOSITS; Sol money review M3): the booking
+    // routes a managed vault serves take deposits, so it settles them too.
+    handles.deposit_settlement = Some(crate::booking_deposit::settle::spawn_deposit_settlement(
+        Arc::clone(&sync_server),
+        admitted(),
+    ));
     // Hosted imports staged in the vault's data folder, under the same
     // admission (ARCH-0027 #hosted-import): a restart takes each job up
     // where it stopped.
@@ -801,6 +809,7 @@ async fn serve_with_handles(
         ),
         &app,
         config.limits.connections(),
+        crate::handler::mesh::MeshRouteSet::Full,
     )
     .await?;
     // A vault that is a device of another home dials it, on that mesh when

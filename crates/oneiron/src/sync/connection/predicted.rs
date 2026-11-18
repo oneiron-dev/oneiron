@@ -94,14 +94,21 @@ async fn unless_home_offline(
 }
 
 impl SyncConnection {
-    /// Runs the predicted level's upkeep each time it wakes: one pass under the host's
-    /// admission, a pause waited out (FIX 12036), errors reported as [`SyncEvent::Error`].
+    /// Runs the predicted level's upkeep each time it wakes, or the app shell's report on the
+    /// open vault changes: one pass under the host's admission, a pause waited out (FIX
+    /// 12036), errors reported as [`SyncEvent::Error`].
     pub(super) async fn run_predicted_residence(
         &self,
         events: mpsc::UnboundedSender<SyncEvent>,
     ) -> std::convert::Infallible {
+        let mut reported = self.manager.vault().watch_fetch_conditions();
         loop {
-            self.predicted_wake.notified().await;
+            // The report's sender lives as long as the vault, which this connection holds; a
+            // closed watch only leaves the wake.
+            tokio::select! {
+                () = self.predicted_wake.notified() => {}
+                Ok(()) = reported.changed() => {}
+            }
             let _round = self.admit_round().await;
             if let Err(error) = self.run_predicted_pass().await {
                 let _ = events.send(SyncEvent::Error(format!(

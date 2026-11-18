@@ -62,7 +62,7 @@ fn on_device_continuation_racing_abort_never_gets_transiently_denied() {
 
         let abort_guard = Arc::clone(&guard);
         let abort_start = Arc::clone(&start);
-        let lease = metered.lease.clone();
+        let lease = metered.lease;
         let abort = thread::spawn(move || {
             abort_start.wait();
             abort_guard.abort(&lease)

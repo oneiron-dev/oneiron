@@ -1,6 +1,7 @@
 //! T5 (Astra anchorsec-seq-floor-s): one row a removed machine's key signs on an old parent must not take its world's key from every install.
 //! The removed install mints the world's first key, the standing install wraps the same key, the owner removes the minter, then the minter's key signs a fork on an old parent that floors its mint.
 //! Red 23e0a2679c03 refuses the floored mint as NonMonotonicSeq and loses the key; green 00dfd0c99ed3 counts the mint and records SequenceFork.
+//! FIX [SEQ-FLOOR-S-ADOPTED-FORK-NEEDS-HISTORY] and [ADOPTED-FOLD-GATE-TEST]: a cold install that adopted an image of every row but the fork folds the fork past it, and its answer is the whole fold's.
 //!
 //! Run: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test world_key_survives_signer_fork`.
 
@@ -10,12 +11,14 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use oneiron::authority::{
-    ActSurface, AuthorityFoldIssue, AuthorityLogEntry, AuthorityOp, MachineOwnership, MachineRole,
-    ReadLocation, WorldPrivacy, authority_entry_hash, decode_authority_log_entry_body,
+    ActSurface, AuthorityEntryHash, AuthorityFoldIssue, AuthorityLogEntry, AuthorityOp,
+    MachineOwnership, MachineRole, ReadLocation, WorldKeyWrapsRecord, WorldPrivacy,
+    authority_entry_hash, decode_authority_log_entry_body,
 };
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::registry::ENTITY_TYPE_WORLD;
 use oneiron::store::GateDecisionId;
+use oneiron::test_doors::authority_adopted_fold::fold_past_prefix_image;
 use oneiron::test_doors::world_key_record_signature::sign_world_key_record_as_install;
 use oneiron::{EntityId, TimeRange, Vault, VaultConfig};
 
@@ -131,13 +134,25 @@ fn stored_rows(vault: &Vault) -> Vec<AuthorityLogEntry> {
         .collect()
 }
 
-/// T5: the removed install (A) mints the world's first key (X, E for its settings), the
+/// The log both tests read, as the standing install holds it, and what they name in it.
+struct SignerFork {
+    _host: Host,
+    _removed_install: MachineInstall,
+    standing_install: MachineInstall,
+    world: EntityId,
+    standing_machine: EntityId,
+    first_key_record: WorldKeyWrapsRecord,
+    first_key_hash: AuthorityEntryHash,
+    second_hash: AuthorityEntryHash,
+    fork_hash: AuthorityEntryHash,
+}
+
+/// The removed install (A) mints the world's first key (X, E for its settings), the
 /// standing install (B) writes its own record of the same key (Z, naming X), the owner
-/// removes A (R), then A's key signs a fork on A's admission (Y, at X's sequence plus one,
+/// removes A (R), then A's key signs a fork on A's admission (Y, one above every row A signed,
 /// copying X so its settings revision mismatches its old parents and it lands as a valid
-/// no-op). B must still hold the key as current and open it.
-#[test]
-fn a_world_key_survives_its_signers_fork_after_removal() {
+/// no-op). B holds every row.
+fn signer_fork_after_removal() -> SignerFork {
     let host = rooted_host();
     let world = EntityId::now();
     host.vault
@@ -182,8 +197,6 @@ fn a_world_key_survives_its_signers_fork_after_removal() {
         AuthorityOp::WorldKeyWraps(record) => record.clone(),
         _ => unreachable!("the first key entry wraps a key"),
     };
-    let first_key_id = first_key_record.key;
-    let first_key_seq = first_key_entry.seq;
     let first_key_hash = authority_entry_hash(&first_key_entry).expect("hash the first key record");
     let admission_removed = rows_minting
         .iter()
@@ -258,11 +271,19 @@ fn a_world_key_survives_its_signers_fork_after_removal() {
     sync_authority(&host.vault, &standing_install.vault);
     sync_authority(&host.vault, &removed_install.vault);
 
+    // Above every row the removed key signed (its rewrap of the key to B, X2, among them), so
+    // the fork floors each of its covered key records and no record above vouches for one.
+    let removed_top_seq = stored_rows(&standing_install.vault)
+        .iter()
+        .filter(|entry| entry.signer_key() == first_key_entry.signer_key())
+        .map(|entry| entry.seq)
+        .max()
+        .expect("the removed key signed the first key record");
     let fork_parents = BTreeSet::from([admission_removed_hash]);
     let fork_entry = sign_world_key_record_as_install(
         &removed_install.vault,
         first_key_record.clone(),
-        first_key_seq + 1,
+        removed_top_seq + 1,
         fork_parents,
     )
     .expect("the removed key signs a fork on its admission");
@@ -270,7 +291,33 @@ fn a_world_key_survives_its_signers_fork_after_removal() {
         .vault
         .put_authority_log_entry(&fork_entry, AT, 1)
         .expect("the standing install stores the fork");
+    let fork_hash = authority_entry_hash(&fork_entry).expect("hash the fork");
+    SignerFork {
+        _host: host,
+        _removed_install: removed_install,
+        standing_install,
+        world,
+        standing_machine,
+        first_key_record,
+        first_key_hash,
+        second_hash,
+        fork_hash,
+    }
+}
 
+/// T5: B must still hold the key as current after A's fork, and open it.
+#[test]
+fn a_world_key_survives_its_signers_fork_after_removal() {
+    let SignerFork {
+        standing_install,
+        world,
+        standing_machine,
+        first_key_record,
+        first_key_hash,
+        second_hash,
+        ..
+    } = signer_fork_after_removal();
+    let first_key_id = first_key_record.key;
     let fold = standing_install
         .vault
         .authority_fold()
@@ -307,5 +354,71 @@ fn a_world_key_survives_its_signers_fork_after_removal() {
         *opened.id(),
         first_key_id,
         "T5: the standing install's world key is still the first key after the fork"
+    );
+}
+
+/// FIX [SEQ-FLOOR-S-ADOPTED-FORK-NEEDS-HISTORY] (Astra r4 F1 on #8449) and
+/// [ADOPTED-FOLD-GATE-TEST]: a cold install that adopted an image of every row B holds but
+/// the fork (P, E, X, Z, R), and holds none of them, folds the fork (Y) past the image. Y
+/// floors X, a covered granting row, which only adds X's SequenceFork; the fold past the
+/// image must answer, and answer what B's own fold of the whole log answers, live and as a
+/// later image keeps it. Red on main: the fold past the image asks for the covered rows.
+#[test]
+fn a_cold_adopted_install_folds_its_signers_fork_past_the_image() {
+    let fork = signer_fork_after_removal();
+    let covered: BTreeSet<AuthorityEntryHash> = stored_rows(&fork.standing_install.vault)
+        .iter()
+        .map(|entry| authority_entry_hash(entry).expect("hash a stored row"))
+        .filter(|hash| *hash != fork.fork_hash)
+        .collect();
+    let folded = fold_past_prefix_image(&fork.standing_install.vault, &covered)
+        .expect("the standing install folds past an image of every row but the fork");
+    assert!(
+        folded
+            .whole
+            .current_world_key(fork.world)
+            .is_some_and(|key| key.id == fork.first_key_record.key),
+        "the whole fold holds the first key as current, as T5 asserts; issues {:?}",
+        folded.whole.issues
+    );
+    let adopted = folded.adopted.unwrap_or_else(|missing| {
+        panic!(
+            "[SEQ-FLOOR-S-ADOPTED-FORK-NEEDS-HISTORY]: the fold past the image must answer the \
+             fork on a covered granting row, not ask for {} covered rows",
+            missing.len()
+        )
+    });
+    assert_eq!(
+        adopted.current_world_key(fork.world),
+        folded.whole.current_world_key(fork.world),
+        "the fold past the image holds the whole fold's current key"
+    );
+    assert_eq!(
+        adopted.valid_entries, folded.whole.valid_entries,
+        "the fold past the image counts the whole fold's rows"
+    );
+    assert_eq!(
+        adopted.issues, folded.whole.issues,
+        "the fold past the image records the whole fold's issues, the mint's SequenceFork in \
+         the whole fold's order"
+    );
+    assert!(
+        adopted == folded.whole,
+        "the fold past the image is the whole fold"
+    );
+    let captured = folded.captured.unwrap_or_else(|missing| {
+        panic!(
+            "[SEQ-FLOOR-S-ADOPTED-FORK-NEEDS-HISTORY]: the capture past the image must answer \
+             the fork on a covered granting row, not ask for {} covered rows",
+            missing.len()
+        )
+    });
+    assert_eq!(
+        captured.safety_issues, folded.whole_captured.safety_issues,
+        "a later image keeps the whole image's safety issues"
+    );
+    assert!(
+        captured.fold == folded.whole_captured.fold,
+        "a later image keeps the whole image's once fold"
     );
 }
