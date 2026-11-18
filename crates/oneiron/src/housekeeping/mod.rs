@@ -370,17 +370,14 @@ fn ran(run: &JobRun) -> Option<SweepOutcome> {
 /// machine carried that no longer rides from it is retracted before the
 /// admission, and the pass ends by writing the latest row this machine knows
 /// for each carried wake into its live windows (FIX
-/// TURNPROGRAM-LATE-WITHHOLD-DOUBLE-DECIDE). A machine that is the home no
-/// more first drops the copies it took from a window while it was (FIX
-/// TURNPROGRAM-HOME-CHANGE-CARRIED-COPY-DOUBLE-DECIDE). A failure is logged by
-/// the admission and waits for the next pass.
+/// TURNPROGRAM-LATE-WITHHOLD-DOUBLE-DECIDE). A failure is logged by the
+/// admission and waits for the next pass.
 #[cfg(feature = "sync")]
 fn admit_carried_turn_program_wakes(vault: &Vault, deadline: &Deadline) {
     if deadline.stopped() {
         return;
     }
     vault.merge_carried_turn_program_wakes();
-    vault.drop_imported_turn_program_wakes_off_home();
     vault.retract_unridden_turn_program_wakes();
     vault.admit_owed_turn_programs(vault.now_recorded_at());
     vault.refresh_turn_program_wake_answers_in_live_windows();

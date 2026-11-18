@@ -8,10 +8,12 @@
 //! deciding it yet. Then the home changes: no home is elected, the recorder
 //! is, or a third machine is. The former home must not decide the copy it
 //! took: the wake is the recorder's, and the machine the election names now
-//! decides it. The former home drops the copy on its next pass.
+//! decides it. The former home keeps the copy, undecided, until that
+//! decision reaches it and clears the copy.
 //!
 //! A wake the former home recorded itself stays its own, and a machine
-//! elected the home again takes the recorder's wake again.
+//! elected the home again decides the copy it kept, with or without its
+//! window loaded.
 //!
 //! The tests count decisions: admission rows, queued or refused. Whether the
 //! program then runs is the admission's own judgment and out of scope here,
@@ -19,7 +21,7 @@
 //!
 //! Run: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test turn_program_former_home_imported_wake`.
-#![cfg(all(feature = "sync", oneiron_test_support))]
+#![cfg(all(feature = "sync", feature = "test-support", oneiron_test_support))]
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use std::sync::Arc;
@@ -191,9 +193,10 @@ const TURN: [u8; 16] = [0x61; 16];
 const CONVERSATION: [u8; 16] = [0x62; 16];
 
 /// On `recorder`: a TURN that owes a program its agent armed under its slip.
-/// The row the arming pins stands on every machine of `machines`. It is no
-/// callable SKILL, so an admission refuses the wake, which decides it all
-/// the same. Answers the TURN and the registration.
+/// The row the arming pins stands on every machine of `machines`, so a home
+/// can take the wake. The TURN has no conversation here, so an admission
+/// refuses the wake, which decides it all the same. Answers the TURN and the
+/// registration.
 fn record_wake(recorder: &Machine, machines: &[&Machine]) -> (EntityId, EntityId) {
     let (agent, slip, instrument) = agent_slip(recorder);
     let turn = EntityId::from_bytes(TURN).unwrap();
@@ -271,9 +274,9 @@ fn home_takes_the_carried_wake(machines: &[&Machine], home: &Machine, recorder: 
     }
 }
 
-/// Case 4: the election names no home any more. The former home drops the
-/// copy it took and decides nothing; the recorder decides its wake where it
-/// was recorded. One decision, on the recorder.
+/// Case 4: the election names no home any more. The former home decides
+/// nothing; the recorder decides its wake where it was recorded, and that
+/// decision clears the former home's copy. One decision, on the recorder.
 #[test]
 fn a_former_home_decides_no_copy_once_no_home_is_elected() {
     let home = Machine::open("machine-home");
@@ -293,10 +296,6 @@ fn a_former_home_decides_no_copy_once_no_home_is_elected() {
         0,
         "a former home decided the copy of a wake it took from the window, once no home was elected"
     );
-    assert!(
-        !home.owes(turn, registration),
-        "a former home kept the copy of a wake it took from the window, once no home was elected"
-    );
     assert_eq!(
         recorder.decisions(turn, registration),
         1,
@@ -304,19 +303,23 @@ fn a_former_home_decides_no_copy_once_no_home_is_elected() {
     );
     assert!(!recorder.owes(turn, registration));
 
-    // The recorder's decision reaches the former home, which keeps it and
-    // decides nothing on a later pass.
+    // The recorder's decision reaches the former home, which keeps it, drops
+    // the copy and decides nothing on a later pass.
     exchange(&doc_home, &doc_recorder);
     home.housekeeping();
     assert!(doors::decision_kept_here(&home.vault, turn, registration).unwrap());
+    assert!(
+        !home.owes(turn, registration),
+        "a former home kept the copy of a wake after its recorder's decision reached it"
+    );
     assert_eq!(home.decisions(turn, registration), 0);
-    assert!(!home.owes(turn, registration));
 }
 
 /// Case 5: the recorder is elected the home. The former home's copy stops
 /// riding from it (its TURN is withheld there), which is when it would decide
-/// the copy by itself. It decides nothing and drops the copy; the recorder,
-/// now the home, decides its own wake. One decision, on the recorder.
+/// the copy by itself. It decides nothing; the recorder, now the home,
+/// decides its own wake, and that decision clears the copy. One decision, on
+/// the recorder.
 #[test]
 fn a_former_home_decides_no_copy_once_the_recorder_is_the_home() {
     let home = Machine::open("machine-home");
@@ -343,10 +346,6 @@ fn a_former_home_decides_no_copy_once_the_recorder_is_the_home() {
         0,
         "a former home decided the copy of a wake it took from the window, after the recorder became the home"
     );
-    assert!(
-        !home.owes(turn, registration),
-        "a former home kept the copy of a wake it took from the window, after the recorder became the home"
-    );
     assert_eq!(
         recorder.decisions(turn, registration),
         1,
@@ -357,13 +356,18 @@ fn a_former_home_decides_no_copy_once_the_recorder_is_the_home() {
     exchange(&doc_home, &doc_recorder);
     home.housekeeping();
     assert!(doors::decision_kept_here(&home.vault, turn, registration).unwrap());
+    assert!(
+        !home.owes(turn, registration),
+        "a former home kept the copy of a wake after the new home's decision reached it"
+    );
     assert_eq!(home.decisions(turn, registration), 0);
 }
 
 /// Case 6: a third machine is elected the home and takes the recorder's wake
 /// from the window. The former home's copy stops riding from it. It decides
-/// nothing and drops the copy; the new home decides the wake, and its
-/// decision consumes the recorder's. One decision, on the new home.
+/// nothing; the new home decides the wake, and its decision consumes the
+/// recorder's wake and clears the former home's copy. One decision, on the
+/// new home.
 #[test]
 fn a_former_home_decides_no_copy_once_a_third_machine_is_the_home() {
     let home = Machine::open("machine-home");
@@ -373,7 +377,7 @@ fn a_former_home_decides_no_copy_once_a_third_machine_is_the_home() {
     let Taken {
         turn,
         registration,
-        doc_home: _,
+        doc_home,
         doc_recorder,
     } = home_takes_the_carried_wake(&machines, &home, &recorder);
 
@@ -399,16 +403,21 @@ fn a_former_home_decides_no_copy_once_a_third_machine_is_the_home() {
         0,
         "a former home decided the copy of a wake it took from the window, after a third machine became the home"
     );
-    assert!(
-        !home.owes(turn, registration),
-        "a former home kept the copy of a wake it took from the window, after a third machine became the home"
-    );
 
-    // The new home's decision consumes the recorder's wake.
+    // The new home's decision consumes the recorder's wake and clears the
+    // former home's copy.
     exchange(&doc_next, &doc_recorder);
     recorder.housekeeping();
     assert_eq!(recorder.decisions(turn, registration), 0);
     assert!(!recorder.owes(turn, registration));
+    exchange(&doc_next, &doc_home);
+    home.housekeeping();
+    assert!(doors::decision_kept_here(&home.vault, turn, registration).unwrap());
+    assert!(
+        !home.owes(turn, registration),
+        "a former home kept the copy of a wake after the new home's decision reached it"
+    );
+    assert_eq!(home.decisions(turn, registration), 0);
     assert_eq!(next.decisions(turn, registration), 1);
 }
 
@@ -435,7 +444,7 @@ fn a_former_home_keeps_a_wake_it_recorded_itself() {
     first.housekeeping();
     assert!(
         first.owes(turn, registration),
-        "a former home dropped a wake it recorded itself"
+        "a former home no longer owes a wake it recorded itself"
     );
     assert_eq!(first.decisions(turn, registration), 0);
 
@@ -453,10 +462,11 @@ fn a_former_home_keeps_a_wake_it_recorded_itself() {
 }
 
 /// A machine that lost the home role and is elected the home again, before
-/// any other machine decided the wake, takes the recorder's wake from the
-/// window again and decides it. One decision, on that machine.
+/// any other machine decided the wake, decides the copy it kept. It needs no
+/// loaded window for that: the window is unloaded there throughout. One
+/// decision, on that machine.
 #[test]
-fn a_machine_elected_the_home_again_takes_the_recorders_wake_again() {
+fn a_machine_elected_the_home_again_decides_the_copy_it_kept() {
     let home = Machine::open("machine-home");
     let recorder = Machine::open("machine-recorder");
     let machines = [&home, &recorder];
@@ -466,24 +476,31 @@ fn a_machine_elected_the_home_again_takes_the_recorders_wake_again() {
         doc_home,
         doc_recorder,
     } = home_takes_the_carried_wake(&machines, &home, &recorder);
+    drop(doc_home);
+    assert!(
+        home.manager.unload_window(&WindowKey::new(WINDOW)).unwrap(),
+        "fixture: the home's window was not loaded"
+    );
 
     // The recorder is elected the home and runs no pass; the former home
-    // runs one.
+    // runs one, and decides nothing.
     elect(&machines, doors::node_id(&recorder.vault).unwrap());
     home.housekeeping();
     assert_eq!(home.decisions(turn, registration), 0);
 
-    // The first home is elected again, and decides the recorder's wake.
+    // The first home is elected again, and decides the wake.
     elect(&machines, doors::node_id(&home.vault).unwrap());
     home.housekeeping();
     assert_eq!(
         home.decisions(turn, registration),
         1,
-        "a machine elected the home again did not decide the wake its recorder still carries"
+        "a machine elected the home again did not decide the wake it had taken from the window"
     );
     assert!(!home.owes(turn, registration));
 
-    // Its decision consumes the recorder's wake.
+    // Its window opens again and carries the decision, which consumes the
+    // recorder's wake.
+    let doc_home = home.doc();
     exchange(&doc_home, &doc_recorder);
     recorder.housekeeping();
     assert_eq!(recorder.decisions(turn, registration), 0);
