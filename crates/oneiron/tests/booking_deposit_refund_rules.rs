@@ -54,6 +54,8 @@ use oneiron::calendar::connectors::{CalendarConnectorError, RemoteWriteReceipt};
 use oneiron::calendar::ingest::{
     IcsFeedFetcher, IcsFeedPollConfig, IcsFetchResponse, run_ics_feed_poll,
 };
+#[cfg(oneiron_test_support)]
+use oneiron::calendar::outcome::{EventOutcome, read_event_outcome};
 use oneiron::calendar::query::CalendarRangeDto;
 use oneiron::channel_identity::{ChannelIdentityBinding, ChannelIdentityState, SelfHeldShape};
 use oneiron::memory::EmergencyInstructionInput;
@@ -1081,9 +1083,10 @@ fn a_tombstone_sent_again_after_an_omission_before_the_start_keeps_the_deposit()
 /// Review round 2 of #9255: the host's tombstone of a passport its own
 /// omission already flipped is still the cancellation first seen then. The
 /// visitor's calendar keeps the booking live, so neither the host's omission
-/// nor its tombstone before the start concludes the cancellation; the
-/// visitor calendar's omission concludes it with no money, and the host's
-/// tombstone sent again after the start refunds from its first arrival.
+/// nor its tombstone before the start concludes the cancellation. The
+/// visitor calendar's omission concludes it, and the host's tombstone on
+/// record then refunds from its first arrival (review round 1 of #9472); the
+/// same tombstone sent again after the start keeps that refund.
 #[test]
 fn a_tombstone_of_a_passport_its_omission_flipped_dates_the_host_cancel() {
     let fixture = Fixture::open();
@@ -1108,7 +1111,7 @@ fn a_tombstone_of_a_passport_its_omission_flipped_dates_the_host_cancel() {
         "the visitor's calendar still shows the booking"
     );
     // At 08:03 the visitor's calendar leaves it out too: the booking reads
-    // cancelled by absence, which moves no money.
+    // cancelled, and the host's tombstone of 08:02 settles the deposit.
     visitor
         .pull(
             &fixture.vault,
@@ -1118,9 +1121,10 @@ fn a_tombstone_of_a_passport_its_omission_flipped_dates_the_host_cancel() {
         .expect("the visitor calendar's omission");
     assert_eq!(
         fixture.state_of("pi_tombstone_after_own_omission"),
-        DepositState::Captured {
+        DepositState::RefundDue {
             amount_minor: 4_000
-        }
+        },
+        "the host's tombstone on record refunds once the cancellation concludes"
     );
     // At 09:01 the host's provider sends the same tombstone again.
     seat_tombstone(&host, &fixture, &booked, slot_at(9).start + 60)
@@ -1326,5 +1330,138 @@ fn a_host_cancel_naming_no_start_repaired_after_the_start_refunds() {
             amount_minor: 4_000
         },
         "a cancellation first seen before the start keeps its full refund"
+    );
+}
+
+/// Review round 1 of #9472: the repair of a stopped host cancel also records
+/// the cancellation. The undated cancellation's passport commits at 08:02
+/// and the pull stops before its refund, its `calendar.status` and its CAL-07
+/// evidence; the same version read after the start writes all three, and
+/// CAL-07 dates the cancellation by that first sighting.
+#[cfg(oneiron_test_support)]
+#[test]
+fn a_host_cancel_repaired_after_the_start_records_its_cancellation_before_the_start() {
+    let fixture = Fixture::open();
+    let seat = Seat::install(&fixture.vault, HOST_SEAT_SYSTEM);
+    let booked = captured_booking(&fixture, "pi_repaired_status", 9);
+    let wrote = seat.write(&fixture.vault, booked.calendar.event_ref, NOW + 55);
+    pull_seat(
+        &seat,
+        &fixture,
+        &wrote,
+        slot_at(9).start,
+        0,
+        false,
+        NOW + 60,
+    )
+    .expect("the seat's first pull");
+    oneiron::test_doors::host_cancel_refund::stop_before_next_host_cancel_refund();
+    assert!(
+        seat.pull(
+            &fixture.vault,
+            &[SeatChange::undated_cancel(&wrote, 1)],
+            NOW + 120,
+        )
+        .is_err(),
+        "the door stops the pull"
+    );
+    seat.pull(
+        &fixture.vault,
+        &[SeatChange::undated_cancel(&wrote, 1)],
+        slot_at(9).start + 60,
+    )
+    .expect("the repair pull");
+    assert_eq!(
+        fixture.state_of("pi_repaired_status"),
+        DepositState::RefundDue {
+            amount_minor: 4_000
+        }
+    );
+    let outcome = read_event_outcome(&fixture.vault, booked.calendar.event_ref)
+        .expect("read the CAL-07 outcome")
+        .expect("the repair records the cancellation's CAL-07 outcome");
+    assert_eq!(outcome.outcome, EventOutcome::CancelledPreStart);
+    assert_eq!(
+        outcome.recorded_at,
+        NOW + 120,
+        "CAL-07 dates the cancellation by its first sighting"
+    );
+}
+
+/// Review round 1 of #9472: a calendar that holds the booking only through
+/// Oneiron's write (an Outbound passport, which is no absence vote) still
+/// dates its tombstone. The visitor's calendar has already left the booking
+/// out; the host's tombstone at 08:02 stops before its refund, and the same
+/// tombstone sent again after the start refunds from its first arrival.
+#[cfg(oneiron_test_support)]
+#[test]
+fn a_tombstone_of_a_calendar_only_written_to_sent_again_after_the_start_refunds() {
+    let fixture = Fixture::open();
+    let booked = captured_booking(&fixture, "pi_outbound_tombstone", 9);
+    let host = Seat::install(&fixture.vault, HOST_SEAT_SYSTEM);
+    host.write(&fixture.vault, booked.calendar.event_ref, NOW + 55);
+    let visitor = Seat::install(&fixture.vault, VISITOR_SEAT_SYSTEM);
+    read_booking_on_seat(&visitor, &fixture, &booked, slot_at(9).start, NOW + 56);
+    visitor
+        .pull(
+            &fixture.vault,
+            &[SeatChange::omitted(&booked.calendar.uid)],
+            NOW + 60,
+        )
+        .expect("the visitor calendar's omission");
+    oneiron::test_doors::host_cancel_refund::stop_before_next_host_cancel_refund();
+    assert!(
+        seat_tombstone(&host, &fixture, &booked, NOW + 120).is_err(),
+        "the door stops the pull"
+    );
+    assert_eq!(
+        fixture.state_of("pi_outbound_tombstone"),
+        DepositState::Captured {
+            amount_minor: 4_000
+        }
+    );
+    seat_tombstone(&host, &fixture, &booked, slot_at(9).start + 60)
+        .expect("the tombstone sent again");
+    assert_eq!(
+        fixture.state_of("pi_outbound_tombstone"),
+        DepositState::RefundDue {
+            amount_minor: 4_000
+        },
+        "a tombstone first seen before the start keeps its full refund"
+    );
+}
+
+/// Review round 1 of #9472: the host's tombstone before the start waits on
+/// the visitor's calendar, which still shows the booking; when that calendar
+/// leaves the booking out, the cancellation concludes and the tombstone on
+/// record refunds, with no second tombstone.
+#[test]
+fn a_host_tombstone_on_record_refunds_when_another_calendar_concludes_the_cancel() {
+    let fixture = Fixture::open();
+    let booked = captured_booking(&fixture, "pi_tombstone_then_omission", 9);
+    let host = host_seat_reading_and_written(&fixture, &booked, slot_at(9).start, NOW + 54);
+    let visitor = Seat::install(&fixture.vault, VISITOR_SEAT_SYSTEM);
+    read_booking_on_seat(&visitor, &fixture, &booked, slot_at(9).start, NOW + 56);
+    seat_tombstone(&host, &fixture, &booked, NOW + 120).expect("the host's tombstone");
+    assert_eq!(
+        fixture.state_of("pi_tombstone_then_omission"),
+        DepositState::Captured {
+            amount_minor: 4_000
+        },
+        "the visitor's calendar still shows the booking"
+    );
+    visitor
+        .pull(
+            &fixture.vault,
+            &[SeatChange::omitted(&booked.calendar.uid)],
+            NOW + 180,
+        )
+        .expect("the visitor calendar's omission");
+    assert_eq!(
+        fixture.state_of("pi_tombstone_then_omission"),
+        DepositState::RefundDue {
+            amount_minor: 4_000
+        },
+        "the host's tombstone on record refunds once the cancellation concludes"
     );
 }
