@@ -196,6 +196,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/perf/sessions.rs` | src | m | 8 crate-vis | — | ONE-1579 axis 3: the concurrent-session curve against ONE vault |
 | `src/perf/trust.rs` | src | m | 14 crate-vis | — | ONE-1961 trust classes for publication evidence |
 | `src/perf/wake.rs` | src | s | 1 crate-vis | — | ONE-1579 axis 2: process spawn-to-ready wake latency |
+| `src/ppr_walk_share.rs` | src | m | 1 crate-vis | — | `ppr-walk-share` — share of High recall wall time in the narrowed PPR walks (UNBUILT3-06) |
 | `src/retrieval_trace_export.rs` | src | m | 4 crate-vis | — | — |
 | `src/retrieval_turn_corpus.rs` | src | m | 1 crate-vis | — | Offline replay of finalized, turn-indexed retrieval runs |
 | `src/scorecard/campaign.rs` | src | s | 8 crate-vis | — | The campaign file behind `scorecard compare` and the sealed run |
