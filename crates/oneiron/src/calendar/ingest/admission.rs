@@ -319,16 +319,29 @@ impl PollAdmission<'_> {
     /// revised invite is queued. The echo of the slot the booking already
     /// sits at writes nothing, and a pending emergency delivery holds the
     /// move back. [`FeedMoveOutcome::NotBooking`] when the EVENT carries no
-    /// live booking, or when the VEVENT is a cancellation, which stays the
-    /// imported-cancel outcome: the caller then rewrites the EVENT as any
-    /// other.
+    /// live booking: the caller then rewrites the EVENT as any other.
+    ///
+    /// A cancellation moves nothing and stays the imported-cancel outcome. A
+    /// booking's EVENT keeps its booked slot through it
+    /// ([`FeedMoveOutcome::Unchanged`]): the deposit's start rule and CAL-07
+    /// measure the cancellation against that slot, and a cancellation that
+    /// names no DTSTART would otherwise rewrite it to the undated sentinel
+    /// (review round 2 of #9233). Any other EVENT is rewritten as before.
     fn move_booking(
         &self,
         event_ref: EntityId,
         event: &ParsedVEvent,
     ) -> Result<FeedMoveOutcome, CalendarError> {
         if event.cancelled {
-            return Ok(FeedMoveOutcome::NotBooking);
+            let is_booking = crate::booking::lifecycle::is_booking_event(self.vault, &event_ref)
+                .map_err(|error| CalendarError::IcsIngest {
+                    reason: error.to_string(),
+                })?;
+            return Ok(if is_booking {
+                FeedMoveOutcome::Unchanged
+            } else {
+                FeedMoveOutcome::NotBooking
+            });
         }
         let slot = match (event.starts_at_utc, event.ends_at_utc) {
             (Some(start), Some(end)) => Some(TimeRange { start, end }),
