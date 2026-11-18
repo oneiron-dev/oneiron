@@ -316,7 +316,7 @@ impl Vault {
             return Ok((current, report));
         };
         #[cfg(oneiron_test_support)]
-        crate::test_doors::gpu_job::pass_end_commit_gate(&job.id);
+        crate::test_doors::gpu_job::pass_end_commit_gate(permits, &job.id);
         // Settled after the write, so a settled chunk is never admitted again;
         // only this chunk's permit: a resume may already hold the next one's.
         if let Some(permit) = permits.take_for_chunk(&job.id, &key) {

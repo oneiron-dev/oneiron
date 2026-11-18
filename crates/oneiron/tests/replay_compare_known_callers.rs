@@ -16,7 +16,8 @@
 //! Custody decides once it knows a value, so two shaped keys two records
 //! hold stay two requests, and a known value is read in the stretches
 //! between the handles a row holds, never across or inside one (round 2
-//! of #9500's review).
+//! of #9500's review). Where custody knows no value, a held row meets its
+//! call only as written (round 2 of #9503's review).
 //!
 //! `cargo test --locked -p oneiron --all-features --test
 //! replay_compare_known_callers`.
@@ -74,6 +75,15 @@ fn vault() -> TestResult<(tempfile::TempDir, Vault)> {
         Vec::new(),
         1,
     )?;
+    Ok((directory, vault))
+}
+
+/// A vault whose custody holds no value.
+fn bare_vault() -> TestResult<(tempfile::TempDir, Vault)> {
+    let directory = tempfile::tempdir()?;
+    let vault = Vault::open(directory.path(), VaultConfig::device())?;
+    vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::new()));
+    vault.prepare_install_signing()?;
     Ok((directory, vault))
 }
 
@@ -300,6 +310,32 @@ fn an_ask_held_before_custody_took_one_of_its_passphrases_is_its_held_ask() -> T
             Ok(())
         },
     )?)
+}
+
+/// In a vault whose custody holds no value, an ask whose words spell a
+/// handle no record has keeps it as written. The ask opened again under the
+/// same handle with another such handle is another ask: a custody that
+/// knows no value leaves the two to meet as written, never as the plan's
+/// one stand-in, so it refuses (blind review round 2 of #9503). Red at
+/// #9503's e8dcab0e9fd, which read both handles as the stand-in and
+/// answered with the first ask.
+#[test]
+fn an_ask_holding_an_unnamed_handle_opened_again_with_another_in_a_bare_vault_refuses() -> TestResult
+{
+    let (_directory, vault) = bare_vault()?;
+    let [first, second] = ask_opened_with(
+        &vault,
+        ["example [secret sc80]", "example [secret sc81]"],
+        |_| Ok(()),
+    )?;
+    first.map_err(|error| format!("the ask did not open: {error:?}"))?;
+    match second {
+        Err(oneiron::Error::InvalidConfig(reason)) if reason == "ask handle reused" => Ok(()),
+        other => Err(format!(
+            "an ask with another unnamed handle under the same handle refuses, got {other:?}"
+        )
+        .into()),
+    }
 }
 
 fn program(passphrase: &str) -> WorkflowProgram {

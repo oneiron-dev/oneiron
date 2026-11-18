@@ -48,7 +48,6 @@ pub use channel_endpoints::ChannelEndpointsConfig;
 pub use connectors::{ConnectorHostConfig, ConnectorTransport};
 pub use desktop::DesktopConfig;
 pub use device_sync::DeviceSyncConfig;
-pub use gpu_jobs::{GpuJobsSettings, GpuOfferSettings};
 pub(crate) use diagnostics::{locate_toml_failure, locate_toml_section, parse_toml};
 pub use embedder::{
     EmbedderArgs, EmbedderConfig, EmbedderDevice, EmbedderLocality, EmbedderProvider,
@@ -63,6 +62,7 @@ pub(crate) use feedback::github_issue_source;
 pub use feedback::{
     CLOUD_FEEDBACK_ENDPOINT, FeedbackConfig, FeedbackInboxConfig, FeedbackTriageConfig,
 };
+pub use gpu_jobs::{GpuJobsSettings, GpuOfferSettings};
 pub use import::ImportConfig;
 pub use keystore::{DEFAULT_KEYCHAIN_SERVICE, KeystoreBackend, KeystoreConfig, KeystoreInstall};
 pub use limits::LimitsConfig;

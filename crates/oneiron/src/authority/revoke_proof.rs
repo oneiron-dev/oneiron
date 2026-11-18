@@ -444,28 +444,28 @@ impl RevokeFacts {
     /// effect. The heir a refused or pruned ReRoot names was never root, so
     /// it restricts nothing, however its own branch folds; a restriction the
     /// fold dropped counts only when every ReRoot in its ancestry `settled`.
+    /// One marked pass over the index finds the unsettled ReRoots and root
+    /// appointments below each restriction (row [ROSTER-KEY-LOG-FLOOD], PR 3).
     pub(super) fn forget_unsettled(
         &mut self,
         settled: &BTreeMap<AuthorityEntryHash, FoldState>,
         entries: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
         ancestors: &AncestorIndex,
     ) {
+        let below_unsettled = ancestors.marks(|row| {
+            // A root appointment hands the vault over as a handoff does: one
+            // this install does not count proves nothing beneath it.
+            !settled.contains_key(row)
+                && entries.get(row).is_some_and(|entry| {
+                    matches!(
+                        entry.op,
+                        AuthorityOp::ReRoot { .. } | AuthorityOp::RootAppointment(_)
+                    )
+                })
+        });
         self.by_hash.retain(|hash, _| {
             settled.contains_key(hash)
-                || ancestors.get(hash).is_some_and(|line| {
-                    line.iter_unordered().all(|ancestor| {
-                        settled.contains_key(ancestor)
-                            || !entries.get(ancestor).is_some_and(|row| {
-                                // A root appointment hands the vault over as a
-                                // handoff does: one this install does not count
-                                // proves nothing beneath it.
-                                matches!(
-                                    row.op,
-                                    AuthorityOp::ReRoot { .. } | AuthorityOp::RootAppointment(_)
-                                )
-                            })
-                    })
-                })
+                || (ancestors.get(hash).is_some() && !below_unsettled.in_ancestry(hash))
         });
     }
 }

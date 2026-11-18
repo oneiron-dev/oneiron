@@ -756,24 +756,23 @@ impl Vault {
         self.append_hashed_slip_op_in_txn(txn, issuer, op)
             .map(|_| ())
     }
-    /// [`Self::append_slip_op_in_txn`] with an owner key's proof beside the
-    /// host root's signature (row HOSTED-ROOT-REVOKES-OWNER-KEY): `proof`
-    /// cosigns the entry ([`next_entry_with_owner_proof`]). The fold must
-    /// count it, as for any slip op. A proof key that stopped since it was
-    /// picked signs nothing, and the append fails with its refusal
-    /// ([`OwnerProofSigner::sign`]).
-    pub(super) fn append_slip_op_with_owner_proof_in_txn(
+    /// [`Self::append_hashed_slip_op_in_txn`] with an owner key's proof
+    /// beside the host root's signature (row HOSTED-ROOT-REVOKES-OWNER-KEY):
+    /// `proof` cosigns the entry ([`next_entry_with_owner_proof`]). The fold
+    /// must count it, as for any slip op; answers the entry's hash. A proof
+    /// key that stopped since it was picked signs nothing, and the append
+    /// fails with its refusal ([`OwnerProofSigner::sign`]).
+    pub(super) fn append_hashed_slip_op_with_owner_proof_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         issuer: &HostSlipIssuer,
         op: AuthorityOp,
         proof: &OwnerProofSigner<'_>,
-    ) -> Result<()> {
+    ) -> Result<AuthorityEntryHash> {
         self.prepare_hashed_slip_op_in_txn(txn, issuer, op, Some(proof))?
             .apply(self, txn)
-            .map(|_| ())
     }
-    fn append_hashed_slip_op_in_txn(
+    pub(super) fn append_hashed_slip_op_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         issuer: &HostSlipIssuer,

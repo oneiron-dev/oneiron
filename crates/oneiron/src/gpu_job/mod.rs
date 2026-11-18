@@ -43,6 +43,7 @@ pub use connector::{
 };
 pub use offer::{GPU_QUOTE_VALID_MS, GpuJobQuote, GpuJobRequest, GpuOffer, PriceShape};
 pub use permits::GpuJobPermits;
+pub use start::GpuJobStart;
 pub use wire::{
     GpuJobAllowRequest, GpuJobAllowanceView, GpuJobList, GpuJobListRequest, GpuJobQuoteRequest,
     GpuJobQuoteTerms, GpuJobRef, GpuJobStartRequest, GpuJobStatus, GpuJobStopView,
