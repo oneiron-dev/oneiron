@@ -874,7 +874,7 @@ fn whole_vault_provenance_restore_replays_history_with_local_model_binding_and_p
         ClaimApprovalStatus::Proposed,
         ClaimLifecycleStatus::Active,
     )?;
-    crate::test_util::stamp_vault_default_facet(source, &mut body);
+    crate::test_util::stamp_vault_default_facet(&source, &mut body);
     source.put_claim(&dependent, &body, range(), 789)?;
     let chained = crate::EntityId::now();
     let chained_edge = EdgeRef::new(dependent, EdgeKind::EmployedBy, to);

@@ -205,6 +205,7 @@ fn a_run_in_the_room_reports_no_pending_vector_for_a_row_the_room_holds() -> Res
             learned_at: 10,
             row_version: None,
             data: claim_body_bytes(
+                &vault,
                 ClaimApprovalStatus::Auto,
                 ClaimLifecycleStatus::Active,
                 false,
@@ -1635,7 +1636,7 @@ fn a_scoped_search_in_the_room_keeps_a_base_row_past_a_room_row_its_worlds_refus
             ENTITY_TYPE_CLAIM,
             TimeRange { start: 1, end: 1 },
             1,
-            &active_claim_body(vault, None),
+            &active_claim_body(&vault, None),
         )
         .vector(&base_claim, &[0.8, 0.6, 0.0, 0.0])
         .commit()?;
@@ -1663,7 +1664,7 @@ fn a_scoped_search_in_the_room_keeps_a_base_row_past_a_room_row_its_worlds_refus
                 occurred: TimeRange { start: 10, end: 10 },
                 learned_at: 10,
                 row_version: None,
-                data: active_claim_body(vault, Some(world)),
+                data: active_claim_body(&vault, Some(world)),
                 allow_maintenance: false,
                 allow_reserved_predicate: false,
                 hub_sync_imported: false,

@@ -525,7 +525,7 @@ fn fork_hash_matches_unchanged_parent_with_selected_knowledge() -> Result<()> {
         ClaimLifecycleStatus::Active,
     )
     .unwrap();
-    crate::test_util::stamp_vault_default_facet(vault, &mut body);
+    crate::test_util::stamp_vault_default_facet(&vault, &mut body);
     vault.put_claim(&claim, &body, time(), 130)?;
     let before = vault.export_whole_vault(false)?;
     let before = vault.read_whole_vault_archive(before.bytes())?;

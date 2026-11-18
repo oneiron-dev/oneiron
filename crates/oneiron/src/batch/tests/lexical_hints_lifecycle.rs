@@ -433,7 +433,7 @@ fn raw_lexical_hint_put_rejects_non_lh_prefixed_id() -> Result<()> {
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,
     )?;
-    crate::test_util::stamp_vault_default_facet(vault, &mut body);
+    crate::test_util::stamp_vault_default_facet(&vault, &mut body);
     body.stale = true;
     let data = crate::claim::encode_claim_body(&body)?;
 
