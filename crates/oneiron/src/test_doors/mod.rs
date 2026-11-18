@@ -155,6 +155,7 @@ pub mod guest_turn_counterparty;
 pub mod held_answer_confirm;
 pub mod held_program;
 pub mod history_import_rows;
+pub mod holder_slip_revoke;
 #[cfg(feature = "sync")]
 pub mod home_handoff_retire;
 pub mod home_pick_fold;
