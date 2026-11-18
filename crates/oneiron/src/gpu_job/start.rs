@@ -80,7 +80,7 @@ impl Vault {
         // Every refusal of the caller or the maximum comes before the
         // reservation.
         let (_, shown) = {
-            let txn = self.store.env.read_txn()?;
+            let txn = self.store.env.read_txn().map_err(crate::Error::from)?;
             self.gpu_job_starter_in_txn(&txn, actor, current.as_ref(), quote, resume, now_ms)??
         };
         next_chunk(current, offer, quote, resume, shown, now_ms)?;
