@@ -89,7 +89,8 @@ pub use self::read::{
 };
 pub use self::rebind::{TurnProgramRebindReceipt, TurnProgramRebindRequest, rebind_turn_program};
 pub use self::release::{
-    ProgramHoldReleaseAction, ProgramHoldReleaseView, ReleaseTurnProgramHoldRequest,
+    PROGRAM_HOLD_RELEASE_VERB, ProgramHoldReleaseAction, ProgramHoldReleaseView,
+    ReleaseTurnProgramHoldRequest, release_turn_program_hold_as_delegate,
     release_turn_program_hold_as_owner,
 };
 pub(crate) use self::resume::ProgramHold;

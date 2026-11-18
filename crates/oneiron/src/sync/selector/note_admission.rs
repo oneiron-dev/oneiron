@@ -33,7 +33,13 @@ pub(crate) fn admit_note_in_txn(
         && (admission.grant.role != FederationGrantRole::Owner
             || fold.vault_id.is_none()
             || fold.vault_root_is_conflicted()
-            || !crate::authority::actor_binding_is_active(fold, &actor, "human"))
+            || !crate::authority::actor_binding_is_live_in(
+                &vault.store,
+                txn,
+                fold,
+                &actor,
+                "human",
+            )?)
     {
         // The embedded unrooted host fallback is not remote owner authority.
         return Err(denied());

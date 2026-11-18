@@ -43,6 +43,7 @@ fn published_page(vault: &Vault) -> BookingPagePublication {
         event_types: vec![EventTypeCard {
             key: EventTypeKey("intro-call".to_owned()),
             title: "Fixture event".to_owned(),
+            deposit: None,
             duration_min: u32::from(DEFAULT_INTRO_DURATION_MIN),
             description: "Fixture description".to_owned(),
         }],
@@ -50,6 +51,7 @@ fn published_page(vault: &Vault) -> BookingPagePublication {
             enabled: false,
             placeholder: String::new(),
         },
+        constraint_front: None,
         theme: ThemeTokens(serde_json::json!({"owner-data": [null, 7]})),
         landing: crate::booking::BookingLandingContent::default(),
         initial_availability: PublicBookingAvailability {
@@ -58,6 +60,7 @@ fn published_page(vault: &Vault) -> BookingPagePublication {
             window_secs: 3_600,
             visitor_tz: "UTC".to_owned(),
         },
+        sponsor: None,
     };
     // Force the legitimate publication ahead of the configuration in the
     // validator's sorted scan. Random claim IDs can hide the original bug.
@@ -80,6 +83,7 @@ fn published_page(vault: &Vault) -> BookingPagePublication {
             occurred_at: None,
             learned_at: None,
             salience: None,
+            confidence_details: None,
         })
         .expect("normal owner publication write");
     assert_eq!(receipt.approval, "auto");
@@ -237,6 +241,7 @@ fn malformed_true_event_configuration_still_denies_rule_activation_and_amendment
                     crate::registry::ENTITY_TYPE_CLAIM,
                     TimeRange { start: 1, end: 1 },
                     1,
+                    0,
                     &encoded,
                 );
                 vault

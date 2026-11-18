@@ -12,6 +12,8 @@
 
 use std::collections::BTreeSet;
 
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
+
 use crate::claim::ClaimSource;
 
 /// Punctuation that only formats a token: trimmed from its edges. A sign,
@@ -47,6 +49,7 @@ pub(crate) fn statements(text: &str, class: Option<ClaimSource>) -> BTreeSet<[u8
     out
 }
 
+/// Stored Arc success material keeps its bytes (K, PLAN-UC-04 stage 7).
 fn statement(sentence: &str, class: Option<ClaimSource>) -> Option<[u8; 32]> {
     let tokens: Vec<String> = sentence
         .split_whitespace()
@@ -58,12 +61,11 @@ fn statement(sentence: &str, class: Option<ClaimSource>) -> Option<[u8; 32]> {
         return None;
     }
     let class = class.map_or("", ClaimSource::as_str);
-    let mut hash = blake3::Hasher::new();
-    hash.update(b"oneiron:dreamer-projector:statement:v3");
-    hash.update(&(class.len() as u64).to_be_bytes());
-    hash.update(class.as_bytes());
-    hash.update(tokens.join(" ").as_bytes());
-    Some(*hash.finalize().as_bytes())
+    let mut hash = LegacyDigest::new(purposes::dreamer_wake::STATEMENT);
+    hash.len_u64_be(class.len());
+    hash.raw(class.as_bytes());
+    hash.raw(tokens.join(" ").as_bytes());
+    Some(hash.finish())
 }
 
 /// A token without its formatting punctuation. A token with a digit keeps
@@ -84,4 +86,9 @@ fn trim_token(token: &str) -> &str {
         rest = after;
     }
     rest
+}
+
+#[cfg(oneiron_test_support)]
+pub(crate) fn statement_for_test(sentence: &str, class: Option<ClaimSource>) -> Option<[u8; 32]> {
+    statement(sentence, class)
 }

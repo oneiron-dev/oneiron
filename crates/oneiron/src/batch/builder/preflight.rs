@@ -193,9 +193,14 @@ pub(super) fn preflight_gate_decisions_in_txn(
                 internal_lexical_query_hint,
                 ..
             } if !*internal_lexical_query_hint => {
-                let body = (**candidate)
-                    .clone()
-                    .into_claim_body(envelope, default_facet)?;
+                // The facet the apply stores this candidate at: a re-put keeps
+                // the birth facet of the claim it rewrites, a birth takes the
+                // vault default. The receipt then names the body the apply
+                // judges (PREFLIGHT-FACET-REPUT-REPLAY-MISMATCH).
+                let facet = crate::batch::claim_candidate_apply::claim_candidate_birth_facet(
+                    store, &*wtxn, id,
+                )?;
+                let body = (**candidate).clone().into_claim_body(envelope, facet)?;
                 let pending_prompt = pending_prompt_for(births, id);
                 let result = crate::gate::check_claim_policy_for_write_with_record(
                     store,

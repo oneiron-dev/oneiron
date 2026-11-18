@@ -315,7 +315,14 @@ fn replicated_overwrite_changed_body_drops_loser_text_postings_before_idle() -> 
     vault.with_write_txn(|wtxn| {
         vault
             .batch_in()
-            .put_replicated(&id, 1, test_time_range(2, 2), 2, b"payload-from-winner")
+            .put_replicated(
+                &id,
+                1,
+                test_time_range(2, 2),
+                2,
+                None,
+                b"payload-from-winner",
+            )
             .apply(wtxn)
     })?;
 
@@ -423,7 +430,7 @@ fn replicated_overwrite_same_body_bytes_keeps_text_postings() -> Result<()> {
     // forward_rematerialize replay door (`BatchBuilder::put_replicated`).
     vault
         .batch()
-        .put_replicated(&id, 1, test_time_range(5, 7), 9, b"stable-payload")
+        .put_replicated(&id, 1, test_time_range(5, 7), 9, None, b"stable-payload")
         .commit()?;
 
     assert_eq!(

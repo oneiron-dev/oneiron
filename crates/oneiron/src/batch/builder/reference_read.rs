@@ -197,7 +197,11 @@ fn gated_claims(store: &Store, txn: &RoTxn<'_>, ops: &[BatchOp]) -> Result<Vec<G
                 internal_lexical_query_hint,
                 ..
             } if !*internal_lexical_query_hint => {
-                let facet = facet_in(store, txn, &mut default_facet)?;
+                // At the facet the apply stores it at, as the preflight
+                // derives it (PREFLIGHT-FACET-REPUT-REPLAY-MISMATCH).
+                let facet = crate::batch::claim_candidate_apply::claim_candidate_birth_facet(
+                    store, txn, id,
+                )?;
                 claims.push(GatedClaim {
                     id: *id,
                     body: (**candidate).clone().into_claim_body(envelope, facet)?,

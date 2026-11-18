@@ -13,6 +13,7 @@ use crate::sync::quarantine::{self, QuarantineContainer};
 use crate::sync::types::WindowKey;
 #[cfg(feature = "sync")]
 use loro::{ExportMode, LoroDoc};
+use oneiron_contracts::fingerprint::ContentHash;
 
 /// Copies the federated edges map, rejecting reserved-kind edge keys:
 /// `merged_into` / `split_into` writes are the identity-topology door's
@@ -461,7 +462,7 @@ impl HeldStamp {
         digest: Option<[u8; 32]>,
     ) -> Result<Vec<Self>> {
         let bound = match digest {
-            Some(digest) => *blake3::hash(record).as_bytes() == digest,
+            Some(digest) => *ContentHash::of(record).as_bytes() == digest,
             None => record.is_empty(),
         };
         Self::from_record(record)

@@ -70,6 +70,14 @@ crate::side_table::side_tables! {
     /// twice. Key: id16.
     COACH_PERSON_CHANGED_READ: VaultMeta b"coach:person_changed_read:v1:" Raw
         [restore: content] [family: unclassified] [tier: canonical];
+    /// The last nightly retrieval tune's slow-loop status (census L1-18): the review it queued,
+    /// or why it queued none, and the newest run the latest review was queued through. Key: ().
+    COACH_RETRIEVAL_SLOW_LOOP: VaultMeta b"coach:retrieval_slow_loop:v1" Named
+        [restore: content] [family: unclassified] [tier: canonical];
+    /// One slow retrieval loop review's receipt (census L1-18): the proposal, the skill version
+    /// and hub commit it read, and what the engine did with it. Key: id16 (the review attempt).
+    COACH_RETRIEVAL_TUNING_RECEIPT: VaultMeta b"coach:retrieval_tuning_receipt:v1:" Named
+        [restore: content] [family: unclassified] [tier: canonical];
     /// A hash of the turns the Coach's room upkeep last declared a room's summary from, so an
     /// unchanged room is not declared again. Key: id16 of the room.
     COACH_ROOM_UPKEEP_DECLARED: VaultMeta b"coach:room_upkeep_declared:v1:" Raw
