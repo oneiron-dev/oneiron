@@ -2387,6 +2387,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/process_readiness.rs` | test | m | — | — | L8-11 (runtime `#provider-health`, decision `scour:S25`; figures A): a process's readiness follows its event… |
 | `tests/promoted_write_destination_at_commit.rs` | test | m | — | — | A promoted window's write is judged for its destination in the committing transaction: a world privacy… |
 | `tests/question_head_host.rs` | test | m | — | — | The host's question heads (FIX 23586, 23587; FIX 3864) |
+| `tests/recall_host_root_read.rs` | test | m | — | — | The owner's host-root recall reads on a self-hosted vault ([RECALL-HOST-ROOT-READ-REFUSED], FIX-LIST row… |
 | `tests/recovery_box_hold_client.rs` | test | s | — | — | The recovery box's kit-only hold caller (Fable pass 27 R7; Engine RULING WAYBACK-BOX-HOLD-RELAY = A, 16 Nov… |
 | `tests/replay_owner_fallback.rs` | test | s | — | — | An exact replay of a call the owner's quota fallback answered (FIX-LIST… |
 | `tests/rerank_pair_template_price.rs` | test | m | — | — | L9-14 (ARCH-0004 `#rerank-door-open`): a paid recall's rerank call is priced before it leaves at its words… |
