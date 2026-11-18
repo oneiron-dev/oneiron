@@ -514,7 +514,9 @@ fn an_accepted_label_holding_a_value_custody_holds_shows_its_handle_on_the_card(
     run_on_engine_stack("display-edit-label-known-value", || async {
         let served = served().await;
         let value = format!("display_edit_{}", EntityId::now().to_hex());
-        let holder = served.register_value("display-edit-held-value", &value).await;
+        let holder = served
+            .register_value("display-edit-held-value", &value)
+            .await;
         let handle = served.register(NAME).await;
         let id = served
             .proposed(json!({
