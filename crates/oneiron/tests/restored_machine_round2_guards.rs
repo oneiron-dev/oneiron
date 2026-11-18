@@ -15,6 +15,10 @@
 //!   conflicted, whatever their revision numbers. Before, the higher
 //!   revision won clean and the restore mark was gone (REVIEW-9509 round 2,
 //!   machine_profile/merge.rs:25).
+//! - A restore --join the door refuses after its preflight commits nothing,
+//!   not even the authority clock reading. Before, its first read was
+//!   `authority_fold`, which commits the clock floor before the writer's own
+//!   refusals (REVIEW-9524 P1, restored_join_door.rs:126).
 //!
 //! Run: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test restored_machine_round2_guards`.
 
@@ -34,7 +38,7 @@ use oneiron::consent::AuthenticatedOwner;
 use oneiron::federation::Scope;
 use oneiron::store::GateDecisionId;
 use oneiron::test_doors::restored_enrolment::{
-    file_restored_enrolment, file_restored_enrolment_in_role,
+    authority_clock_floor, file_restored_enrolment, file_restored_enrolment_in_role,
 };
 use oneiron::test_support::test_host_issuer;
 use oneiron::{EntityId, Vault, VaultConfig};
@@ -379,5 +383,39 @@ fn branches_naming_different_origins_leave_the_machine_conflicted() {
          whatever their revisions (head revision {}, origin {:?})",
         merged.profile.revision,
         merged.profile.restored_from
+    );
+}
+
+#[test]
+fn a_refused_join_commits_no_clock_reading() {
+    let host = rooted_host(MachineRole::Unanswered, true);
+    let backups = oneiron::test_support::restore_tempdir();
+    let copy = restored_copy(&host, backups.path(), "c");
+    // The host holds the copy's enrolment as a "yours" answer, so an
+    // unanswered join of it is not this install's ask: the writer refuses
+    // it after the preflight passed.
+    file_restored_enrolment_in_role(&host.vault, &host.issuer, host.owner, &copy.request, YOURS)
+        .expect("FIXTURE: the host holds the copy's root-signed yours enrolment");
+    sync_authority(&host.vault, &copy.vault);
+    // The copy's clock observes once, then the wall clock moves past the
+    // floor that stored.
+    copy.vault
+        .authority_fold()
+        .expect("FIXTURE: the copy's fold");
+    std::thread::sleep(std::time::Duration::from_millis(1_500));
+    let before = authority_clock_floor(&copy.vault).expect("FIXTURE: the copy's clock floor");
+    assert!(before.is_some(), "FIXTURE: the copy's clock has a floor");
+
+    let refused =
+        copy.vault
+            .join_restored_install(&host.issuer, &copy.proof, MachineRole::Unanswered);
+    assert!(
+        refused.is_err(),
+        "an enrolment that is not this install's ask refuses the join"
+    );
+    assert_eq!(
+        authority_clock_floor(&copy.vault).expect("the copy's clock floor"),
+        before,
+        "a refused join commits no clock reading"
     );
 }
