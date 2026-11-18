@@ -21,14 +21,24 @@ pub fn file_restored_enrolment(
     owner: EntityId,
     request: &MachineEnrolmentRequest,
 ) -> Result<AuthorityEntryHash> {
+    file_restored_enrolment_in_role(vault, issuer, owner, request, MachineRole::Unanswered)
+}
+
+/// [`file_restored_enrolment`] in `role`: the root signs the enrolment as
+/// the owner's answer in that role, as a self-host root answers "yours" for
+/// its owner. The fold holds it as it holds an unanswered one.
+///
+/// # Errors
+/// As [`file_restored_enrolment`].
+pub fn file_restored_enrolment_in_role(
+    vault: &Vault,
+    issuer: &HostSlipIssuer,
+    owner: EntityId,
+    request: &MachineEnrolmentRequest,
+    role: MachineRole,
+) -> Result<AuthorityEntryHash> {
     let mut txn = vault.store.env.write_txn()?;
-    let enrolment = vault.file_restored_enrolment_in_txn(
-        &mut txn,
-        issuer,
-        owner,
-        request,
-        MachineRole::Unanswered,
-    )?;
+    let enrolment = vault.file_restored_enrolment_in_txn(&mut txn, issuer, owner, request, role)?;
     txn.commit()?;
     Ok(enrolment)
 }
