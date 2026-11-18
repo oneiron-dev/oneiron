@@ -166,6 +166,7 @@ pub(super) fn dispatch_item_effect(
                 message: "emergency effect is not delivered; resume its existing intent".to_owned(),
                 suggestions: vec!["Inspect the outbound receipt before retrying.".to_owned()],
                 successor_short_id: None,
+                extraction_layout: None,
                 gate_denial: if denied {
                     Some(Box::new(crate::memory::MemoryGateDenial {
                         outcome: gate_outcome.cloned().unwrap_or_default(),

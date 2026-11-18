@@ -131,13 +131,10 @@ pub(super) struct StoredStandingPolicy {
     pub(super) superseded: Vec<StoredStandingPolicy>,
 }
 
-pub(super) fn encode_row<T: Serialize>(row: &T, label: &'static str) -> Result<Vec<u8>> {
-    rmp_serde::to_vec_named(row).map_err(|_| Error::InvariantViolation(label))
-}
+pub(super) use crate::edit_distance::stored_row::{decode_row, encode_row};
 
 pub(super) fn escalation_row(raw: &[u8]) -> Result<StoredEscalation> {
-    let row: StoredEscalation =
-        rmp_serde::from_slice(raw).map_err(|_| Error::CorruptedIndex(ESCALATION_ROW_LABEL))?;
+    let row: StoredEscalation = decode_row(raw, ESCALATION_ROW_LABEL)?;
     if row.v == ROW_VERSION {
         Ok(row)
     } else {
@@ -146,8 +143,7 @@ pub(super) fn escalation_row(raw: &[u8]) -> Result<StoredEscalation> {
 }
 
 pub(super) fn standing_policy_row(raw: &[u8]) -> Result<StoredStandingPolicy> {
-    let row: StoredStandingPolicy =
-        rmp_serde::from_slice(raw).map_err(|_| Error::CorruptedIndex(STANDING_POLICY_ROW_LABEL))?;
+    let row: StoredStandingPolicy = decode_row(raw, STANDING_POLICY_ROW_LABEL)?;
     if row.v == ROW_VERSION {
         Ok(row)
     } else {

@@ -9,9 +9,12 @@ use crate::{
     error::{Error, RecordError, Result},
 };
 use std::collections::{BTreeMap, BTreeSet};
+use std::ops::ControlFlow;
 use std::sync::{Arc, Mutex, PoisonError};
 
 mod adopted;
+#[cfg(oneiron_test_support)]
+pub(crate) mod adopted_door;
 mod arriving;
 mod held_rows;
 mod row_receipts;
@@ -1055,6 +1058,24 @@ pub(super) fn authority_log_rows_in_txn(
         .into_iter()
         .map(|id| Ok((id, authority_log_body_in_txn(store, txn, &id)?)))
         .collect()
+}
+
+/// Hands the signed body of each AUTHORITY_LOG row to `visit`, in id order
+/// and one row read at a time, until `visit` answers `Break`; `None` when it
+/// saw every row. For a reader that looks for one row:
+/// [`authority_log_rows_in_txn`] holds every body before its caller sees the
+/// first.
+pub(super) fn find_in_authority_log_rows_in_txn<T>(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    mut visit: impl FnMut(&[u8]) -> Result<ControlFlow<T>>,
+) -> Result<Option<T>> {
+    for id in authority_log_ids_in_txn(store, txn)? {
+        if let ControlFlow::Break(found) = visit(&authority_log_body_in_txn(store, txn, &id)?)? {
+            return Ok(Some(found));
+        }
+    }
+    Ok(None)
 }
 
 /// The store ids of the AUTHORITY_LOG rows, in id order, read from the type

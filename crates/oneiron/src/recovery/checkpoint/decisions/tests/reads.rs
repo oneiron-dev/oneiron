@@ -96,7 +96,7 @@ pub(super) fn relationship_reads() -> Result<Case> {
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
     )?;
-    fact.rel = Some(relationship);
+    fact.rel = Some(crate::claim::RelationshipSet::from([relationship]));
     vault.put_claim(&entity(0xC3), &fact, TimeRange { start: 1, end: 1 }, 1)?;
     Case::after_backup(
         "relationship reads",
@@ -270,6 +270,7 @@ fn a_restore_never_hands_a_rebound_claim_back_to_a_verified_slip() -> Result<()>
     let restore = |name: &str| {
         Vault::restore_checkpoint_keeping_authority(
             &image,
+            &vault.checkpoint_key()?,
             &backups.path().join(name),
             vault.config.clone(),
             &vault,
@@ -341,6 +342,7 @@ fn a_restore_never_hands_a_rebound_claim_back_to_a_paired_reader() -> Result<()>
     assert_eq!(read_value(&vault, reader, fact.0)?, None);
     let error = Vault::restore_checkpoint_keeping_authority(
         &image,
+        &vault.checkpoint_key()?,
         &backups.path().join("rebound"),
         vault.config.clone(),
         &vault,

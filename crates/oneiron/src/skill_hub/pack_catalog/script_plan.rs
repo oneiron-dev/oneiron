@@ -164,8 +164,10 @@ impl ScriptOutputContract {
     }
 }
 
-/// Protocol conformance uses the same output contract as the pack plan.
-#[cfg(all(test, feature = "microvm-firecracker", target_os = "linux"))]
+/// Protocol conformance uses the same output contract as the pack plan. Its one
+/// caller is the door `test_doors::code_sandbox_conformance`, for the guest
+/// protocol test in oneiron-agent-runtime.
+#[cfg(oneiron_test_support)]
 pub(crate) fn script_output_bytes(write: &SandboxProposalWrite) -> Result<Vec<u8>> {
     ScriptOutputContract::new(oneiron_sandbox_contract::MAX_FILE_BYTES)?.bytes(write)
 }
