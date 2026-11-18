@@ -222,6 +222,7 @@ pub mod own_device_grant;
 pub mod own_device_message_replay;
 pub mod owner_device_answer;
 pub mod owner_key_enrolment_read;
+pub mod owner_key_line;
 pub mod owner_key_release;
 pub mod owner_person_row_damage;
 pub mod pack_encode_work;
