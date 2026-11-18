@@ -47,25 +47,23 @@
 //! own machine key needs no PIN.
 
 mod owner_key;
+mod presence_backend;
+mod secret_seal;
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError, TryLockError};
 use std::time::Duration;
 
-use getrandom::SysRng;
-use oneiron_crypto::{
-    Argon2Cost, Envelope, Kek, OpenKey, OpenPolicy, Passphrase, Purpose, SealKey, SealParams,
-    SuiteId, WrapType, seal, seal_with_aad,
-};
+use oneiron_crypto::Passphrase;
 use oneiron_keystore::{
-    AuthBoundError, DeviceKeystore, KeystoreError, KeystoreSlot, PresenceCapability, PresenceClock,
-    PresenceError, PresenceGate, PresenceWindow, SCREEN_LOCK_POLL_MS, SealedBytesName,
-    SealedBytesStore, SystemPresenceClock, UserPresence,
+    DeviceKeystore, KeystoreError, KeystoreSlot, PresenceCapability, PresenceClock, PresenceError,
+    PresenceGate, PresenceWindow, SCREEN_LOCK_POLL_MS, SealedBytesName, SealedBytesStore,
+    SystemPresenceClock,
 };
 use zeroize::Zeroizing;
 
 pub use self::owner_key::OwnerKeyRest;
-use super::{derive_guarded, keystore_error, refused};
+use super::{keystore_error, refused};
 use crate::error::{DevicePinRefusal, Error, Result, SecretError};
 use crate::recovery::PassphraseCost;
 
@@ -77,18 +75,6 @@ pub const DEVICE_PIN_MIN_CHARS: u32 = 12;
 /// counts wrong tries, and anywhere the owner chose a short PIN for this
 /// device.
 pub const DEVICE_PIN_SHORT_MIN_CHARS: u32 = 6;
-
-const AEAD: SuiteId = SuiteId::XCHACHA20POLY1305_V1;
-const DEVICE_PIN_EPOCH: u64 = 1;
-
-/// The context the hardware's auth value is derived under from the PIN.
-const AUTH_VALUE_CONTEXT: &str = "oneiron/device-pin-auth-value/v1";
-
-// The ids the device PIN key's envelope is bound to. The key belongs to the
-// device and to no vault, so they are constants.
-const PIN_KEY_SCOPE: &[u8] = b"oneiron/this-device";
-const PIN_KEY_RECIPIENT: &[u8] = b"oneiron/device-pin";
-const PIN_KEY_ID: &[u8] = b"oneiron/device-pin-key/v1";
 
 /// What the mark of a forgotten PIN holds. It is no secret: that it rests is
 /// the fact.
@@ -543,114 +529,6 @@ impl DevicePin {
     }
 }
 
-impl DevicePinBackend {
-    fn held_key(&self) -> MutexGuard<'_, HeldPinKey> {
-        self.held.lock().unwrap_or_else(PoisonError::into_inner)
-    }
-
-    /// Makes the key a typed PIN opened the one a use reads: the gate took
-    /// that PIN's window. It does nothing where that window ended since,
-    /// which wiped the key.
-    fn admit_checked_key(&self) {
-        let mut held = self.held_key();
-        if let Some(key) = held.checked.take() {
-            held.open = Some(key);
-        }
-    }
-
-    /// Wipes the key a typed PIN opened, where the gate took no window for
-    /// that PIN.
-    fn drop_checked_key(&self) {
-        self.held_key().checked = None;
-    }
-
-    /// The device PIN key, opened from its home with `pin`.
-    fn open_pin_key(&self, pin: &[u8]) -> std::result::Result<Zeroizing<[u8; 32]>, PresenceError> {
-        if let Some(hardware) = self.keystore.auth_bound_secret() {
-            let auth = auth_value(pin);
-            return match hardware.open_auth_bound(&auth[..]) {
-                Ok(Some(key)) => Ok(key),
-                Ok(None) => Err(PresenceError::NoPrompt(NO_PIN_SET)),
-                Err(AuthBoundError::WrongAuth) => Err(PresenceError::WrongPin),
-                Err(AuthBoundError::LockedOut { wait_secs }) => {
-                    Err(PresenceError::TooManyTries { wait_secs })
-                }
-                Err(AuthBoundError::Keystore(_)) => {
-                    Err(PresenceError::Platform(PIN_HOME_UNREADABLE, 0))
-                }
-            };
-        }
-        let home = self
-            .keystore
-            .sealed_bytes()
-            .ok_or(PresenceError::NoPrompt(NO_PIN_HOME))?;
-        let sealed = home
-            .get_sealed(&SealedBytesName::DevicePinKey)
-            .map_err(|_| PresenceError::Platform(PIN_HOME_UNREADABLE, 0))?
-            .ok_or(PresenceError::NoPrompt(NO_PIN_SET))?;
-        // An envelope that does not open is a wrong PIN: the two are not
-        // told apart.
-        open_pin_key_envelope(&sealed, pin).ok_or(PresenceError::WrongPin)
-    }
-
-    /// Puts `key` to rest under `pin`, in place of any key there, in one
-    /// step of its home.
-    fn store_pin_key(&self, pin: &[u8], key: &[u8; 32]) -> Result<()> {
-        if let Some(hardware) = self.keystore.auth_bound_secret() {
-            let auth = auth_value(pin);
-            return hardware
-                .put_auth_bound(&auth[..], key)
-                .map_err(keystore_error);
-        }
-        let home = self
-            .keystore
-            .sealed_bytes()
-            .ok_or_else(|| pin_refused(DevicePinRefusal::Unavailable(NO_PIN_HOME)))?;
-        let sealed = seal_pin_key_envelope(key, pin, self.cost)?;
-        home.put_sealed(&SealedBytesName::DevicePinKey, &sealed)
-            .map_err(keystore_error)
-    }
-}
-
-impl UserPresence for DevicePinBackend {
-    fn capability(&self) -> PresenceCapability {
-        if self.keystore.sealed_bytes().is_none() {
-            return PresenceCapability::NoPrompt(NO_PIN_HOME);
-        }
-        match device_pin_is_set(self.keystore.as_ref()) {
-            Ok(set) => PresenceCapability::DevicePin { set },
-            Err(_) => PresenceCapability::NoPrompt(PIN_HOME_UNREADABLE),
-        }
-    }
-
-    /// A device PIN has no prompt to show: the host collects the PIN.
-    fn confirm(&self, _reason: &str) -> std::result::Result<(), PresenceError> {
-        match self.capability() {
-            PresenceCapability::DevicePin { set: true } => Err(PresenceError::PinRequired),
-            PresenceCapability::DevicePin { set: false } => {
-                Err(PresenceError::NoPrompt(NO_PIN_SET))
-            }
-            PresenceCapability::DevicePrompt => Err(PresenceError::NoPrompt(NO_PIN_HOME)),
-            PresenceCapability::NoPrompt(reason) => Err(PresenceError::NoPrompt(reason)),
-        }
-    }
-
-    fn confirm_with_secret(&self, secret: &[u8]) -> std::result::Result<(), PresenceError> {
-        // The key is opened outside its lock: the stretch may take a second.
-        // No use reads it yet: the gate has not taken this PIN's window
-        // ([`DevicePinBackend::admit_checked_key`]).
-        let key = self.open_pin_key(secret)?;
-        self.held_key().checked = Some(key);
-        Ok(())
-    }
-
-    /// Wipes the device PIN key, and one a typed PIN opened that no window
-    /// was taken for. It takes one short lock and never calls the gate.
-    fn window_ended(&self) {
-        *self.held_key() = HeldPinKey::default();
-    }
-}
-
 /// Whether a device PIN key rests in `keystore`: in its hardware where that
 /// counts wrong tries, else in its home for sealed bytes.
 pub(super) fn device_pin_is_set(
@@ -753,145 +631,4 @@ fn check_new_pin(pin: &[u8], min_chars: u32) -> Result<()> {
         return Err(refused("the device PIN is longer than 1024 bytes"));
     }
     Ok(())
-}
-
-/// The auth value the keystore's hardware compares: 32 bytes derived from
-/// the PIN under a context of their own, so the hardware never holds the PIN
-/// itself.
-fn auth_value(pin: &[u8]) -> Zeroizing<[u8; 32]> {
-    derive_guarded(AUTH_VALUE_CONTEXT, &[pin])
-}
-
-/// The device PIN key sealed under `pin` as a passphrase, at `cost`, stepping
-/// down toward the kit's floor while the device cannot give the memory. The
-/// envelope's header records the cost in force.
-fn seal_pin_key_envelope(key: &[u8; 32], pin: &[u8], mut cost: PassphraseCost) -> Result<Vec<u8>> {
-    let passphrase = Passphrase::new(pin)
-        .map_err(|_| refused("the device PIN is not a passphrase an envelope takes"))?;
-    let params = SealParams {
-        suite: AEAD,
-        purpose: Purpose::DevicePinKey,
-        epoch: DEVICE_PIN_EPOCH,
-        key_id: PIN_KEY_ID,
-        recipient: PIN_KEY_RECIPIENT,
-        vault_id: PIN_KEY_SCOPE,
-    };
-    loop {
-        let seal_key = SealKey::Passphrase {
-            passphrase: &passphrase,
-            cost: cost.argon2(),
-        };
-        match seal(&params, seal_key, &key[..], &mut SysRng) {
-            Ok(envelope) => return Ok(envelope.to_bytes()),
-            Err(oneiron_crypto::Error::OutOfMemory)
-                if cost.memory_mib > PassphraseCost::FLOOR.memory_mib =>
-            {
-                cost.memory_mib = (cost.memory_mib / 2).max(PassphraseCost::FLOOR.memory_mib);
-            }
-            Err(_) => return Err(refused("sealing the device PIN key failed")),
-        }
-    }
-}
-
-/// The device PIN key from its passphrase envelope; `None` for a wrong PIN
-/// and for an envelope that does not open. A reader spends at most the
-/// kit's ceiling on one try.
-fn open_pin_key_envelope(sealed: &[u8], pin: &[u8]) -> Option<Zeroizing<[u8; 32]>> {
-    let passphrase = Passphrase::new(pin).ok()?;
-    let envelope = Envelope::parse(sealed).ok()?;
-    let policy = OpenPolicy {
-        purpose: Purpose::DevicePinKey,
-        vault_id: PIN_KEY_SCOPE,
-        recipient: PIN_KEY_RECIPIENT,
-        key_id: PIN_KEY_ID,
-        wraps: &[WrapType::Passphrase],
-        aead_suites: &[AEAD],
-        kem_suites: &[],
-        min_epoch: DEVICE_PIN_EPOCH,
-        argon2_max: PassphraseCost::CEILING.argon2(),
-    };
-    let opened = envelope
-        .open(OpenKey::Passphrase(&passphrase), &policy)
-        .ok()?;
-    secret_bytes(&opened)
-}
-
-/// One slot's secret sealed under the device PIN key, for exactly `slot`
-/// and the public half `public_key`, which the stored envelope shows with no
-/// key.
-fn seal_slot_secret(
-    pin_key: &[u8; 32],
-    slot: &KeystoreSlot,
-    public_key: &[u8; 32],
-    secret: &[u8; 32],
-) -> Result<Vec<u8>> {
-    let kek = Kek::from_bytes_ref(pin_key);
-    let params = SealParams {
-        suite: AEAD,
-        purpose: Purpose::DevicePinSlotSecret,
-        epoch: DEVICE_PIN_EPOCH,
-        key_id: public_key,
-        recipient: &slot.install,
-        vault_id: &slot.vault_id,
-    };
-    let envelope = seal_with_aad(
-        &params,
-        SealKey::SymmetricKek(&kek),
-        &secret[..],
-        slot.name().as_bytes(),
-        &mut SysRng,
-    )
-    .map_err(|_| refused("sealing a slot's secret under the device PIN key failed"))?;
-    Ok(envelope.to_bytes())
-}
-
-/// The secret of `slot` from `sealed`, opened with the device PIN key;
-/// `None` for anything not sealed under that key for exactly `slot` and
-/// `public_key`.
-fn open_slot_secret(
-    pin_key: &[u8; 32],
-    slot: &KeystoreSlot,
-    public_key: &[u8; 32],
-    sealed: &[u8],
-) -> Option<Zeroizing<[u8; 32]>> {
-    let envelope = Envelope::parse(sealed).ok()?;
-    let kek = Kek::from_bytes_ref(pin_key);
-    let policy = OpenPolicy {
-        purpose: Purpose::DevicePinSlotSecret,
-        vault_id: &slot.vault_id,
-        recipient: &slot.install,
-        key_id: public_key,
-        wraps: &[WrapType::SymmetricKek],
-        aead_suites: &[AEAD],
-        kem_suites: &[],
-        min_epoch: DEVICE_PIN_EPOCH,
-        argon2_max: Argon2Cost::RFC9106_SECOND,
-    };
-    let opened = envelope
-        .open_with_aad(OpenKey::SymmetricKek(&kek), &policy, slot.name().as_bytes())
-        .ok()?;
-    secret_bytes(&opened)
-}
-
-/// The public half a sealed slot secret names, read with no key; `None` for
-/// bytes that are no such envelope. It proves nothing until the secret
-/// opens.
-fn sealed_slot_public_key(sealed: &[u8]) -> Option<[u8; 32]> {
-    let envelope = Envelope::parse(sealed).ok()?;
-    let header = envelope.header();
-    if header.purpose != Purpose::DevicePinSlotSecret {
-        return None;
-    }
-    <[u8; 32]>::try_from(header.key_id.as_slice()).ok()
-}
-
-/// `opened` as a 32-byte secret in guarded memory; `None` for any other
-/// length.
-fn secret_bytes(opened: &[u8]) -> Option<Zeroizing<[u8; 32]>> {
-    let mut secret = Zeroizing::new([0u8; 32]);
-    if opened.len() != secret.len() {
-        return None;
-    }
-    secret.copy_from_slice(opened);
-    Some(secret)
 }

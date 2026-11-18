@@ -155,6 +155,6 @@ pub(super) fn folded_conversation_training(
 ) -> FoldedConversationTraining {
     FoldedConversationTraining {
         persons: folded_owner_choices(state, &state.conversation_training, pin, counted),
-        refused: refused_owner_choices(&state.conversation_training).clone(),
+        refused: refused_owner_choices(&state.conversation_training).to_btree_set(),
     }
 }

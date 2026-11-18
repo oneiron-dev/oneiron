@@ -22,7 +22,7 @@ use super::remote::{
 };
 use super::seat::{CalendarConnectorError, CalendarConnectorSeatState};
 
-use crate::batch::secret_scan::{admitted_from, named_tree};
+use crate::batch::secret_scan::{admitted_from_known, named_tree};
 use crate::calendar::CalendarError;
 use crate::calendar::claims::{
     CalendarPassportDirection, CalendarPassportPresence, CalendarPassportValue,
@@ -33,6 +33,7 @@ use crate::calendar::passport::{
     index_passport_uid_in_txn, live_passport_for_in_txn, revise_passport_in_txn,
 };
 use crate::calendar::safeguard::CalendarInboundBody;
+use crate::code_run::CompareKnown;
 use crate::entity_id::EntityId;
 use crate::registry::ENTITY_TYPE_EVENT;
 use crate::side_table::{self, LegacyJson, SideKey, SideTable};
@@ -250,7 +251,7 @@ pub fn write_calendar_event(
 
     let mut prior_instance = None;
     if let Some(mut row) = read_outbox_row(vault, &outbox_id)? {
-        ensure_outbox_matches(&row, seat, transport, event_ref, &uid)?;
+        ensure_outbox_matches(vault, &row, seat, transport, event_ref, &uid)?;
         open_outbox(vault, operation, transport, &uid, &mut row)?;
         prior_instance = row.carrier.as_ref().map(|carrier| carrier.instance);
         match row.state {
@@ -392,6 +393,7 @@ pub fn write_calendar_event(
 }
 
 fn ensure_outbox_matches(
+    vault: &Vault,
     row: &CalendarWriteOutboxRow,
     seat: &CalendarConnectorSeatState,
     transport: &dyn CalendarRemoteTransport,
@@ -401,9 +403,15 @@ fn ensure_outbox_matches(
     // The side-row wall may have masked a secret-shaped span in a string
     // field when the row was stored (FIX 10951): compare each string as the
     // replay compare reads it, so the same secret offered again matches
-    // instead of refusing the resumed write.
+    // instead of refusing the resumed write. The row was stored through the
+    // vault, so a value base custody holds took its handle too: it is read
+    // once a compare without it misses (FIX
+    // REPLAY-COMPARE-KNOWN-OTHER-CALLERS).
+    let base_known = || vault.known_values_now();
+    let known = CompareKnown::new(Some(&base_known));
     let same = |held: &str, offered: &str| -> Result<bool, CalendarConnectorError> {
-        Ok(held == offered || admitted_from(&named_tree(&held)?, &named_tree(&offered)?)?)
+        Ok(held == offered
+            || admitted_from_known(&named_tree(&held)?, &named_tree(&offered)?, || known.get())?)
     };
     if row.action != CalendarWriteAction::Upsert
         || row.event_ref != event_ref

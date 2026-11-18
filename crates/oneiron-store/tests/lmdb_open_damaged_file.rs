@@ -1,7 +1,9 @@
 //! FIX rows LMDB-MASTER3-UPSTREAM-FIXES-AUDIT (upstream ITS#9291 and its `ONEIRON FORK (LMDB
-//! audit)` hunks) and LMDB-TRUNCATED-NAMED-DB-PAGE-SIGBUS (`ONEIRON FORK (page bound)`): an
-//! environment whose data file is damaged refuses to open or answers `MDB_CORRUPTED` on the read
-//! that reaches the damage, and neither faults the process.
+//! audit)` hunks), LMDB-TRUNCATED-NAMED-DB-PAGE-SIGBUS (`ONEIRON FORK (page bound)`) and
+//! LMDB-IGNORED-PAGE-FETCH-RC (`ONEIRON FORK (fetch rc)`): an environment whose data file is
+//! damaged refuses to open or answers the damage's own error (`MDB_CORRUPTED`, or
+//! `MDB_CRYPTO_FAIL` for an altered sealed page) on the call that reaches it, and never faults the
+//! process.
 //!
 //! A data file that lost its last pages (a torn copy, a partial restore) passes every check of
 //! the meta pages. Before upstream ITS#9291 (`crates/heed/PROVENANCE.md`, "Upstream LMDB
@@ -18,6 +20,17 @@
 //! read of a named database's leaf or of an overflow run the cut removed answers `MDB_CORRUPTED`.
 //! Before it, that read faulted the process (SIGBUS), plain and sealed alike: a sealed
 //! environment maps its chunks from the same file.
+//!
+//! The fetch rc fork (`crates/heed/PROVENANCE.md`, "Fetch rc") covers the calls of a later
+//! transaction. Each transaction starts with a named database's record marked stale, and its
+//! first call on the database fetches the root while it sets its cursor up. Upstream dropped that
+//! fetch's error and marked the transaction failed, so a get, a cursor, a put or a delete
+//! answered `MDB_BAD_TXN` and a count answered the record's count with success. Each now answers
+//! the fetch's own error. A main tree emptied under the open handle (another process dropped the
+//! only named database) answers `MDB_BAD_DBI`, as a main tree that lacks the name does; upstream
+//! took it for an empty database. A sealed page that fails its check in a chunk the page cache
+//! already holds no longer leaves that chunk held for the environment's life, so the chunk's
+//! other pages are checked again on later reads; upstream answered an altered page's old bytes.
 //!
 //! `cargo test --locked -p oneiron-store --test lmdb_open_damaged_file` (default features, as
 //! `lmdb_page_split.rs`).
@@ -328,4 +341,355 @@ fn page_size_of(open: fn(&Path) -> heed::Result<Env>) -> Result<u64, Box<dyn Err
     let page_size = u64::from(env.page_size()?);
     env.prepare_for_closing().wait();
     Ok(page_size)
+}
+
+/// LMDB's code for a sealed page that fails its authentication, which heed hands over as a raw
+/// OS error.
+const MDB_CRYPTO_FAIL: i32 = -30777;
+/// The named database's leaf in the page-bound tests' file: the page after the main leaf.
+const NAMED_LEAF_PAGE: u64 = 3;
+
+/// Cuts the named database's leaf, the data file's last page, off.
+fn cut_the_named_leaf(data_file: &Path, page_size: u64) -> std::io::Result<()> {
+    truncate(data_file, NAMED_LEAF_PAGE * page_size)
+}
+
+/// Flips one byte in the middle of the named database's leaf, inside the sealed page's body.
+fn flip_a_byte_of_the_named_leaf(data_file: &Path, page_size: u64) -> std::io::Result<()> {
+    flip_a_byte_of_page(data_file, NAMED_LEAF_PAGE, page_size)
+}
+
+/// Flips one byte in the middle of page `page`, inside a sealed page's body.
+fn flip_a_byte_of_page(data_file: &Path, page: u64, page_size: u64) -> std::io::Result<()> {
+    let at = page * page_size + page_size / 2;
+    let mut file = OpenOptions::new().read(true).write(true).open(data_file)?;
+    let mut byte = [0_u8; 1];
+    file.seek(SeekFrom::Start(at))?;
+    file.read_exact(&mut byte)?;
+    byte[0] ^= 0xff;
+    file.seek(SeekFrom::Start(at))?;
+    file.write_all(&byte)?;
+    file.sync_all()
+}
+
+/// Writes the one named row, damages the named database's leaf with `damage`, reopens the
+/// environment and opens the named database in a read transaction that commits, so the handle
+/// outlives it. The open reads the database's record from the main leaf, which the damage spared,
+/// and never fetches the leaf. Every later transaction starts with that record marked stale
+/// (`DB_STALE`): its first call on the database reads the record again and fetches the
+/// database's root, the damaged leaf. Returns the directory that holds the files, the
+/// environment and the handle.
+fn reopen_with_a_damaged_named_leaf(
+    open: fn(&Path) -> heed::Result<Env>,
+    damage: fn(&Path, u64) -> std::io::Result<()>,
+) -> Result<(tempfile::TempDir, Env, Rows), Box<dyn Error>> {
+    let dir = tempfile::tempdir()?;
+    let (written_len, page_size) =
+        write_one_named_row_and_close(dir.path(), open, &named_value(LEAF_ROW_LEN))?;
+    assert_eq!(
+        written_len,
+        LEAF_FILE_PAGES * page_size,
+        "two meta pages, the main leaf and the named leaf"
+    );
+    damage(&dir.path().join("data.mdb"), page_size)?;
+    let env = open(dir.path())?;
+    let rtxn = env.read_txn()?;
+    let rows: Rows = env
+        .open_database(&rtxn, Some(NAMED))?
+        .ok_or("the named database's record is in the main leaf, which the damage spared")?;
+    rtxn.commit()?;
+    Ok((dir, env, rows))
+}
+
+/// Before the fetch rc fork, the root fetch's error was dropped and the transaction marked
+/// failed, so the call answered `MDB_BAD_TXN` (or, for a count, the record's count with success).
+fn assert_later_call_corrupted<T: std::fmt::Debug>(answer: heed::Result<T>, call: &str) {
+    assert!(
+        matches!(answer, Err(heed::Error::Mdb(MdbError::Corrupted))),
+        "{call} in a later transaction answered {answer:?}, not MDB_CORRUPTED (the root fetch's \
+         own error)"
+    );
+}
+
+#[test]
+fn a_get_in_a_later_transaction_of_a_named_database_whose_leaf_the_cut_lost_answers_corrupted()
+-> Result<(), Box<dyn Error>> {
+    let (_dir, env, rows) = reopen_with_a_damaged_named_leaf(open_env, cut_the_named_leaf)?;
+    let rtxn = env.read_txn()?;
+    let answer = rows.get(&rtxn, NAMED_KEY).map(|got| got.map(<[u8]>::len));
+    drop(rtxn);
+    env.prepare_for_closing().wait();
+    assert_later_call_corrupted(answer, "a get");
+    Ok(())
+}
+
+#[test]
+fn a_cursor_in_a_later_transaction_on_a_named_database_whose_leaf_the_cut_lost_answers_corrupted()
+-> Result<(), Box<dyn Error>> {
+    let (_dir, env, rows) = reopen_with_a_damaged_named_leaf(open_env, cut_the_named_leaf)?;
+    let rtxn = env.read_txn()?;
+    // The cursor opens through `mdb_cursor_open`; its first step is what upstream answered with.
+    let answer = rows
+        .iter(&rtxn)
+        .map(|mut iter| iter.next().map(|row| row.map(|(key, _)| key.len())));
+    drop(rtxn);
+    env.prepare_for_closing().wait();
+    assert_later_call_corrupted(answer, "a cursor open");
+    Ok(())
+}
+
+#[test]
+fn a_count_in_a_later_transaction_of_a_named_database_whose_leaf_the_cut_lost_answers_corrupted()
+-> Result<(), Box<dyn Error>> {
+    let (_dir, env, rows) = reopen_with_a_damaged_named_leaf(open_env, cut_the_named_leaf)?;
+    let rtxn = env.read_txn()?;
+    // `len` reads `mdb_stat`, which counted from the record and left the transaction failed.
+    let answer = rows.len(&rtxn);
+    drop(rtxn);
+    env.prepare_for_closing().wait();
+    assert_later_call_corrupted(answer, "a count");
+    Ok(())
+}
+
+#[test]
+fn a_put_in_a_later_transaction_into_a_named_database_whose_leaf_the_cut_lost_answers_corrupted()
+-> Result<(), Box<dyn Error>> {
+    let (_dir, env, rows) = reopen_with_a_damaged_named_leaf(open_env, cut_the_named_leaf)?;
+    let mut wtxn = env.write_txn()?;
+    let answer = rows.put(&mut wtxn, b"another row", b"another value");
+    wtxn.abort();
+    env.prepare_for_closing().wait();
+    assert_later_call_corrupted(answer, "a put");
+    Ok(())
+}
+
+#[test]
+fn a_delete_in_a_later_transaction_from_a_named_database_whose_leaf_the_cut_lost_answers_corrupted()
+-> Result<(), Box<dyn Error>> {
+    let (_dir, env, rows) = reopen_with_a_damaged_named_leaf(open_env, cut_the_named_leaf)?;
+    let mut wtxn = env.write_txn()?;
+    let answer = rows.delete(&mut wtxn, NAMED_KEY);
+    wtxn.abort();
+    env.prepare_for_closing().wait();
+    assert_later_call_corrupted(answer, "a delete");
+    Ok(())
+}
+
+#[test]
+fn a_sealed_get_in_a_later_transaction_of_an_altered_named_leaf_answers_the_seal_failure()
+-> Result<(), Box<dyn Error>> {
+    let (_dir, env, rows) =
+        reopen_with_a_damaged_named_leaf(open_sealed_env, flip_a_byte_of_the_named_leaf)?;
+    let rtxn = env.read_txn()?;
+    let answer = rows.get(&rtxn, NAMED_KEY).map(|got| got.map(<[u8]>::len));
+    drop(rtxn);
+    env.prepare_for_closing().wait();
+    let code = match &answer {
+        Err(heed::Error::Io(error)) => error.raw_os_error(),
+        _ => None,
+    };
+    assert!(
+        code == Some(MDB_CRYPTO_FAIL),
+        "a sealed get in a later transaction answered {answer:?}, not MDB_CRYPTO_FAIL (the altered \
+         leaf's own error)"
+    );
+    Ok(())
+}
+
+/// Byte offset in a meta page of a 64-bit build of the main tree's record (`mm_dbs[MAIN_DBI]`,
+/// after the 48-byte FREE record at `META_PAGE_SIZE_AT`), plus its `md_pad` and `md_flags`: the
+/// record's `md_depth`. Then come the branch, leaf and overflow page counts, the entry count and
+/// the root, 8 bytes each.
+const META_MAIN_DEPTH_AT: u64 = 102;
+/// `md_depth` through `md_root` of an empty tree: depth 0, no pages, no entries, and the root
+/// `P_INVALID` (all bits set) in its last 8 bytes.
+const EMPTY_TREE_TAIL_LEN: usize = 42;
+
+/// Rewrites the main tree's record in both meta pages as an empty tree, keeping its flags: the
+/// state another process's commit leaves after it dropped the only named database. The next
+/// transaction picks the newer meta page through the map, which shares the file's pages.
+fn empty_the_main_tree_of_both_meta_pages(data_file: &Path, page_size: u64) -> std::io::Result<()> {
+    let mut empty_tree = [0_u8; EMPTY_TREE_TAIL_LEN];
+    empty_tree[EMPTY_TREE_TAIL_LEN - 8..].fill(0xff);
+    let mut file = OpenOptions::new().write(true).open(data_file)?;
+    for meta in 0..META_PAGES {
+        file.seek(SeekFrom::Start(meta * page_size + META_MAIN_DEPTH_AT))?;
+        file.write_all(&empty_tree)?;
+    }
+    file.sync_all()
+}
+
+/// Writes the one named row, reopens the environment and opens the named database in a read
+/// transaction that commits, so the handle outlives it, then empties the main tree in both meta
+/// pages while no transaction is live. The next transaction starts with the database's record
+/// marked stale, and the record lookup finds no main tree at all. Returns the directory that
+/// holds the files, the environment and the handle.
+fn open_a_named_database_then_empty_the_main_tree()
+-> Result<(tempfile::TempDir, Env, Rows), Box<dyn Error>> {
+    let dir = tempfile::tempdir()?;
+    let (_, page_size) =
+        write_one_named_row_and_close(dir.path(), open_env, &named_value(LEAF_ROW_LEN))?;
+    let env = open_env(dir.path())?;
+    let rtxn = env.read_txn()?;
+    let rows: Rows = env
+        .open_database(&rtxn, Some(NAMED))?
+        .ok_or("the main tree holds the named database's record until it is emptied")?;
+    rtxn.commit()?;
+    empty_the_main_tree_of_both_meta_pages(&dir.path().join("data.mdb"), page_size)?;
+    Ok((dir, env, rows))
+}
+
+/// Before review round 1 of PR 9507, `mdb_cursor_init` took the main tree's `MDB_NOTFOUND` for
+/// an empty database: a get answered not found, a cursor walked no rows and a count answered 0.
+fn assert_later_call_bad_dbi<T: std::fmt::Debug>(answer: heed::Result<T>, call: &str) {
+    assert!(
+        matches!(answer, Err(heed::Error::Mdb(MdbError::BadDbi))),
+        "{call} in a later transaction answered {answer:?}, not MDB_BAD_DBI (the main tree holds \
+         no record of the database)"
+    );
+}
+
+#[test]
+fn a_get_in_a_later_transaction_of_a_named_database_the_emptied_main_tree_lost_answers_bad_dbi()
+-> Result<(), Box<dyn Error>> {
+    let (_dir, env, rows) = open_a_named_database_then_empty_the_main_tree()?;
+    let rtxn = env.read_txn()?;
+    let answer = rows.get(&rtxn, NAMED_KEY).map(|got| got.map(<[u8]>::len));
+    drop(rtxn);
+    env.prepare_for_closing().wait();
+    assert_later_call_bad_dbi(answer, "a get");
+    Ok(())
+}
+
+#[test]
+fn a_cursor_in_a_later_transaction_on_a_named_database_the_emptied_main_tree_lost_answers_bad_dbi()
+-> Result<(), Box<dyn Error>> {
+    let (_dir, env, rows) = open_a_named_database_then_empty_the_main_tree()?;
+    let rtxn = env.read_txn()?;
+    let answer = rows
+        .iter(&rtxn)
+        .map(|mut iter| iter.next().map(|row| row.map(|(key, _)| key.len())));
+    drop(rtxn);
+    env.prepare_for_closing().wait();
+    assert_later_call_bad_dbi(answer, "a cursor open");
+    Ok(())
+}
+
+#[test]
+fn a_count_in_a_later_transaction_of_a_named_database_the_emptied_main_tree_lost_answers_bad_dbi()
+-> Result<(), Box<dyn Error>> {
+    let (_dir, env, rows) = open_a_named_database_then_empty_the_main_tree()?;
+    let rtxn = env.read_txn()?;
+    let answer = rows.len(&rtxn);
+    drop(rtxn);
+    env.prepare_for_closing().wait();
+    assert_later_call_bad_dbi(answer, "a count");
+    Ok(())
+}
+
+/// The chunk test's database whose value fills the rest of the first chunk.
+const FILLER: &str = "filler";
+/// The chunk test's database whose leaf follows the damaged named leaf in the second chunk.
+const INTACT: &str = "intact";
+/// Pages per chunk of a sealed environment's page cache (`MDB_RPAGE_CHUNK`).
+const CHUNK_PAGES: u64 = 16;
+/// The filler's value: 11 pages' bytes, whose overflow run (with the page header and the sealed
+/// page's authentication area) takes 12 pages, 4 to 15.
+const FILLER_VALUE_PAGES: usize = 11;
+/// Two meta pages, the main leaf (2), the filler's leaf (3) and run (4-15), the named leaf (16,
+/// the second chunk's first page) and the intact leaf (17).
+const CHUNK_FILE_PAGES: u64 = 18;
+
+/// In one transaction of a fresh sealed environment, puts the filler's value, the named
+/// database's one row and the intact database's one row, in that order, then closes the
+/// environment and returns its page size. The pages are taken in the same order: the main leaf
+/// (2, with the first record), the filler's leaf (3) and run (4-15), the named leaf (16) and the
+/// intact leaf (17). The main leaf sits in the first chunk, both one-row leaves in the second.
+fn write_two_leaves_into_the_second_chunk_and_close(dir: &Path) -> Result<u64, Box<dyn Error>> {
+    let env = open_sealed_env(dir)?;
+    let page_size = u64::from(env.page_size()?);
+    let filler_value = named_value(FILLER_VALUE_PAGES * usize::try_from(page_size)?);
+    let mut wtxn = env.write_txn()?;
+    let filler: Rows = env.create_database(&mut wtxn, Some(FILLER))?;
+    filler.put(&mut wtxn, NAMED_KEY, &filler_value)?;
+    let rows: Rows = env.create_database(&mut wtxn, Some(NAMED))?;
+    rows.put(&mut wtxn, NAMED_KEY, &named_value(LEAF_ROW_LEN))?;
+    let intact: Rows = env.create_database(&mut wtxn, Some(INTACT))?;
+    intact.put(&mut wtxn, NAMED_KEY, &named_value(LEAF_ROW_LEN))?;
+    wtxn.commit()?;
+    env.prepare_for_closing().wait();
+    let written_len = std::fs::metadata(dir.join("data.mdb"))?.len();
+    assert_eq!(
+        written_len,
+        CHUNK_FILE_PAGES * page_size,
+        "two meta pages, the main leaf, the filler's leaf and run, the named and the intact leaf"
+    );
+    Ok(page_size)
+}
+
+/// Reads the intact database's one row in a transaction of its own.
+fn read_the_intact_row(env: &Env, intact: Rows) -> heed::Result<Option<Vec<u8>>> {
+    let rtxn = env.read_txn()?;
+    let got = intact
+        .get(&rtxn, NAMED_KEY)
+        .map(|got| got.map(<[u8]>::to_vec));
+    drop(rtxn);
+    got
+}
+
+/// Review round 2 of PR 9507. A sealed environment caches its decrypted chunks for every
+/// transaction, and a chunk's pages are checked again once no transaction holds it. A root fetch
+/// whose page failed its check on a chunk the cache already held took the chunk's reference with
+/// no transaction entry to release it, so the chunk stayed held for the environment's life and
+/// its pages were never checked again: a page altered after that read answered its old value.
+#[test]
+fn a_failed_seal_check_on_a_cached_chunk_leaves_its_other_pages_checked_on_later_reads()
+-> Result<(), Box<dyn Error>> {
+    let dir = tempfile::tempdir()?;
+    let page_size = write_two_leaves_into_the_second_chunk_and_close(dir.path())?;
+    let data_file = dir.path().join("data.mdb");
+    flip_a_byte_of_page(&data_file, CHUNK_PAGES, page_size)?;
+    let env = open_sealed_env(dir.path())?;
+    let rtxn = env.read_txn()?;
+    let rows: Rows = env
+        .open_database(&rtxn, Some(NAMED))?
+        .ok_or("the named database's record is in the main leaf, which the damage spared")?;
+    let intact: Rows = env
+        .open_database(&rtxn, Some(INTACT))?
+        .ok_or("the intact database's record is in the main leaf, which the damage spared")?;
+    rtxn.commit()?;
+    // Caches the second chunk: the intact leaf passes its check.
+    let first = read_the_intact_row(&env, intact);
+    // The damaged leaf's root fetch finds the second chunk cached and fails its check there.
+    let rtxn = env.read_txn()?;
+    let damaged = rows.get(&rtxn, NAMED_KEY).map(|got| got.map(<[u8]>::len));
+    drop(rtxn);
+    let second = read_the_intact_row(&env, intact);
+    // No transaction is live, so the next read of the intact leaf checks it again.
+    flip_a_byte_of_page(&data_file, CHUNK_PAGES + 1, page_size)?;
+    let altered = read_the_intact_row(&env, intact);
+    env.prepare_for_closing().wait();
+    let value = named_value(LEAF_ROW_LEN);
+    assert!(
+        matches!(&first, Ok(Some(got)) if *got == value),
+        "the intact row's first read answered {first:?}"
+    );
+    assert!(
+        damaged.is_err(),
+        "the damaged leaf's read answered {damaged:?}"
+    );
+    assert!(
+        matches!(&second, Ok(Some(got)) if *got == value),
+        "the intact row's read after the failed check answered {second:?}"
+    );
+    let code = match &altered {
+        Err(heed::Error::Io(error)) => error.raw_os_error(),
+        _ => None,
+    };
+    assert!(
+        code == Some(MDB_CRYPTO_FAIL),
+        "the read of the altered intact leaf answered {altered:?}, not MDB_CRYPTO_FAIL (the \
+         failed check left its chunk held, so the leaf was not checked again)"
+    );
+    Ok(())
 }
