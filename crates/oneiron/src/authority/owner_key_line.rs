@@ -26,7 +26,7 @@
 //!
 //! An owner-key enrolment is an `OwnerKeyEnroll` that stands once the
 //! handoffs settle and whose key the state it leaves trusts as the owner's
-//! ([`super::owner_proof::proves_for_the_owner`]): a device's Ed25519 key,
+//! ([`super::owner_proof::owner_key_draws_a_line`]): a device's Ed25519 key,
 //! one only a passkey vouched for too, or a passkey's P-256 key, which is the
 //! owner's key as well (CARRIER-HOSTED-WEB-ACTS = C), so the merge cannot
 //! narrow any of them away (row PASSKEY-OWNER-KEY-DRAWS-NO-LINE, REVIEW2
@@ -147,7 +147,7 @@ impl OwnerKeyEnrolments {
                     return None;
                 };
                 let key = &enrol.device.key;
-                if !super::owner_proof::proves_for_the_owner(state, key) {
+                if !super::owner_proof::owner_key_draws_a_line(state, key) {
                     return None;
                 }
                 let proving = super::owner_proof::gives_owner_proof(state, key);

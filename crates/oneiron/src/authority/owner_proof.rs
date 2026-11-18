@@ -68,9 +68,8 @@ pub(super) fn owner_proof_key(
 /// Whether `key` is a key `state` trusts as the owner's: live on the roster
 /// with `ROLE_OWNER`, and not in the host's custody on a hosted fold. A
 /// revoked or retired key, an admin-only key and a managed host's custodial
-/// root prove nothing. A key of any suite: an owner-key enrolment's line
-/// reads it ([`super::owner_key_line`]).
-pub(super) fn proves_for_the_owner(state: &FoldState, key: &AuthorityKey) -> bool {
+/// root prove nothing.
+fn proves_for_the_owner(state: &FoldState, key: &AuthorityKey) -> bool {
     roster_has_live_owner(&state.roster, key) && !(state.hosted && in_host_custody(state, key))
 }
 
@@ -94,6 +93,18 @@ pub(super) fn gives_owner_proof(state: &FoldState, key: &AuthorityKey) -> bool {
     matches!(key, AuthorityKey::Ed25519(_))
         && proves_for_the_owner(state, key)
         && !state.passkey_limited(key)
+}
+
+/// Whether an `OwnerKeyEnroll` of `key` draws the owner key's line in the
+/// state it leaves ([`super::owner_key_line`]): `key` is a key `state`
+/// trusts as the owner's ([`proves_for_the_owner`]), of any suite. A
+/// passkey's key, and a key only a passkey vouched for, give no proof
+/// ([`gives_owner_proof`]) but are the owner's keys (CARRIER-HOSTED-WEB-ACTS
+/// = C): the line refuses another enrolment of them as it does of a
+/// device's key, so the roster merge cannot narrow them away (row
+/// PASSKEY-OWNER-KEY-DRAWS-NO-LINE).
+pub(super) fn owner_key_draws_a_line(state: &FoldState, key: &AuthorityKey) -> bool {
+    proves_for_the_owner(state, key)
 }
 
 /// Whether an act a not-mine carrier delivers needs the proof in `state`
