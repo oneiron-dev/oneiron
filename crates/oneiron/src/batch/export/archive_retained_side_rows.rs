@@ -287,27 +287,12 @@ fn opaque_withholds_credential(bytes: &[u8]) -> bool {
     crate::batch::secret_scan::scan_file_content("", bytes).is_some()
 }
 
-/// Installs the owner's supported source tables and otherwise keeps envelopes inert in the
-/// import transaction; actor and actorless doors retain only, with the original inert counts.
-/// On the owner door, each source-live HOOKS_GRANT tuple kept as a retained row is recorded
-/// under `restore_receipt_hex` (32 hex) for the restore group's accept to install.
-pub(crate) fn install_or_retain_side_rows_in_txn<R: Read + Seek>(
-    vault: &crate::Vault,
-    wtxn: &mut RwTxn<'_>,
+/// Visits retained envelopes in archive order, checking their codec and identity once per pass.
+pub(crate) fn visit_retained_side_rows<R: Read + Seek>(
     archive: &IndexedArchive<'_, R>,
-    permit: Option<&super::OwnerArchiveRestorePermit>,
-    restore_receipt_hex: Option<&str>,
-    refresh: &mut super::archive_side_install::ArchivedSideRowRefresh,
-) -> Result<RetainedSideImportSummary> {
-    use super::archive_side_install::{
-        ArchivedSideGroup, ArchivedSideRowOutcome, archived_side_group,
-        land_archived_side_group_in_txn,
-    };
-
+    mut visit: impl FnMut([u8; 32], ArchiveRetainedSideRow) -> Result<()>,
+) -> Result<()> {
     let mut files = |file: &ExportBodyFile| file.read(&archive.files);
-    let mut tables: BTreeMap<String, RetainedSideTableCount> = BTreeMap::new();
-    let mut groups: BTreeMap<ArchivedSideGroup, Vec<([u8; 32], ArchiveRetainedSideRow)>> =
-        BTreeMap::new();
     let mut after: Option<Vec<u8>> = None;
     while let Some((key, value)) = archive.index.next(Tag::Side, &[], after.as_deref())? {
         let row = archive
@@ -329,6 +314,33 @@ pub(crate) fn install_or_retain_side_rows_in_txn<R: Read + Seek>(
                 "retained side row key is not its envelope identity",
             ));
         }
+        visit(typed, envelope)?;
+        after = Some(key);
+    }
+    Ok(())
+}
+
+/// Installs the owner's supported source tables and otherwise keeps envelopes inert in the
+/// import transaction; actor and actorless doors retain only, with the original inert counts.
+/// On the owner door, each source-live HOOKS_GRANT tuple kept as a retained row is recorded
+/// under `restore_receipt_hex` (32 hex) for the restore group's accept to install.
+pub(crate) fn install_or_retain_side_rows_in_txn<R: Read + Seek>(
+    vault: &crate::Vault,
+    wtxn: &mut RwTxn<'_>,
+    archive: &IndexedArchive<'_, R>,
+    permit: Option<&super::OwnerArchiveRestorePermit>,
+    restore_receipt_hex: Option<&str>,
+    refresh: &mut super::archive_side_install::ArchivedSideRowRefresh,
+) -> Result<RetainedSideImportSummary> {
+    use super::archive_side_install::{
+        ArchivedSideGroup, ArchivedSideRowOutcome, archived_side_group,
+        land_archived_side_group_in_txn,
+    };
+
+    let mut tables: BTreeMap<String, RetainedSideTableCount> = BTreeMap::new();
+    let mut groups: BTreeMap<ArchivedSideGroup, Vec<([u8; 32], ArchiveRetainedSideRow)>> =
+        BTreeMap::new();
+    visit_retained_side_rows(archive, |typed, envelope| {
         let count = tables
             .entry(envelope.source_table.clone())
             .or_insert_with(|| RetainedSideTableCount {
@@ -354,8 +366,8 @@ pub(crate) fn install_or_retain_side_rows_in_txn<R: Read + Seek>(
                 super::record_deferred_hook_grant_in_txn(vault, wtxn, receipt_hex, typed)?;
             }
         }
-        after = Some(key);
-    }
+        Ok(())
+    })?;
     if let Some(permit) = permit {
         // The enum declaration order is the fixed owning-group dependency order.
         for (group, staged) in groups {

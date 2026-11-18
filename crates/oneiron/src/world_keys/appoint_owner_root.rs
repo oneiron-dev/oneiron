@@ -27,7 +27,7 @@
 //! re-issues the kit. Every row an old roster key signed outside the
 //! appointment's ancestry stays sealed; the owner does those acts again.
 
-use super::{KitConfirmation, RecoveryRootSeed, refused};
+use super::{DevicePin, KitConfirmation, RecoveryRootSeed, refused};
 use crate::Vault;
 use crate::authority::{
     PinnedRoot, RootAppointmentReceipt, read_pin_row_in_txn, refuse_unneeded_appointment,
@@ -91,6 +91,15 @@ impl Vault {
         })?;
         between();
         let slot = self.device_owner_signing_slot()?;
+        // One step with a first PIN's set, entered before the writer and
+        // held to its commit (row OCS-OWNER-PIN): no PIN of this process is
+        // set between the successor's making and the commit. So the
+        // successor never signs beside a set PIN, and a set neither seals
+        // the seed the successor replaced nor drops the successor's own. The
+        // step is taken first and the writer inside it, as at the enrollment
+        // door; the writer takes no step.
+        let device_pin = self.device_pin();
+        let _step = device_pin.as_deref().map(DevicePin::step);
         self.with_write_txn(|txn| {
             let actor = owner.revalidate_as_vault_owner_in_txn(self, txn)?;
             let fold = self.authority_view_readonly_in_txn(txn)?;
