@@ -36650,7 +36650,7 @@
      "path": "src/dreamer_wake/follower/mod.rs",
      "purpose": "The Dreamer's cheap arm as a follower session over the admitted log (ARCH-0026 #cheap-arm, FIX 7510)",
      "surface": {
-      "crate-vis": 16
+      "crate-vis": 20
      }
     },
     {
@@ -36695,7 +36695,7 @@
      "path": "src/dreamer_wake/mod.rs",
      "purpose": "Dreamer wake-pass driver (ONE-1288, DREAM-001 residual)",
      "surface": {
-      "crate-vis": 29,
+      "crate-vis": 32,
       "mod": 1,
       "re-export": 15
      }
@@ -36721,7 +36721,7 @@
      "path": "src/dreamer_wake/nightly.rs",
      "purpose": "Budgeted interest-queue spending, one thing per entity or topic (OF-498c, see `things`): its world, facet…",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -36741,7 +36741,7 @@
      "path": "src/dreamer_wake/nightly/things.rs",
      "purpose": "One nightly thing per entity or topic (OF-498c, ARCH-0026 Nightly)",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -36761,7 +36761,7 @@
      "path": "src/dreamer_wake/nightly/things/topics.rs",
      "purpose": "A nightly topic (ARCH-0026 Nightly, \"an entity or a topic\"; Engine ruling L2-04-TOPIC): the words of a Name…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -36873,6 +36873,7 @@
      "path": "src/dreamer_wake/program.rs",
      "purpose": "The Dreamer's turn program runtime (DOOR-141 PR2 and PR3b, FIX 4382)",
      "surface": {
+      "crate-vis": 1,
       "fn": 1,
       "struct": 3,
       "trait": 2
@@ -36961,7 +36962,7 @@
      "path": "src/dreamer_wake/recipe_wake.rs",
      "purpose": "The wake policy's recipe lane (ARCH-0026 #wake)",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 3
      }
     },
     {
@@ -36995,7 +36996,7 @@
      "path": "src/dreamer_wake/scheduling.rs",
      "purpose": "The host-facing enqueue doors; the engine owns no timer",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 8,
       "enum": 1,
       "fn": 6
      }
@@ -37025,7 +37026,7 @@
      "path": "src/dreamer_wake/sieve/audit_windows.rs",
      "purpose": "The sieve audit's second population (OF-498f, FIX 486): source windows the cheap rules left unflagged, so…",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "re-export": 1
      }
     },
@@ -37046,7 +37047,7 @@
      "path": "src/dreamer_wake/sieve/chunks.rs",
      "purpose": "A TURN's words as the sieve reads them: one chunk per source row, each with the digest that versions it…",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 13
      }
     },
     {
@@ -37081,7 +37082,7 @@
      "path": "src/dreamer_wake/sieve/mod.rs",
      "purpose": "The continuous sieve (ARCH-0026, the Continuous recipe): the cheap check that tags what is new on the local…",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 16,
       "fn": 2,
       "mod": 1,
       "re-export": 5,
@@ -37097,7 +37098,7 @@
      "path": "src/dreamer_wake/sieve/policy.rs",
      "purpose": "The sieve's policy row: how much one pass reads, how interesting each kind of span is, how sure each rule…",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "fn": 4,
       "re-export": 1,
       "struct": 1
@@ -37110,7 +37111,7 @@
      "path": "src/dreamer_wake/sieve/read.rs",
      "purpose": "One turn's read: a whole read from its rows, a read that goes on where the text bound stopped it, and the…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 6
      }
     },
     {
@@ -37120,7 +37121,7 @@
      "path": "src/dreamer_wake/sieve/recipes.rs",
      "purpose": "Durable model-rung inputs, queue spending and unbiased retained-span samples",
      "surface": {
-      "crate-vis": 26,
+      "crate-vis": 31,
       "fn": 3,
       "re-export": 1
      }
@@ -37152,7 +37153,7 @@
      "path": "src/dreamer_wake/sieve/recipes/typing_batch.rs",
      "purpose": "Typing-only rungs read per TURN (FIX 14711)",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 10
      }
     },
     {
@@ -37216,7 +37217,7 @@
      "path": "src/dreamer_wake/statement_material.rs",
      "purpose": "A text's statement material (ARCH-0026 RD-26): one BLAKE3 digest per sentence with words in it, read the…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -94143,6 +94144,16 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/test_doors/fingerprint_keep_dreamer_wake_digests.rs",
+     "purpose": "K-proof door for the Dreamer wake digests that stored rows and deterministic comparisons already use",
+     "surface": {
+      "fn": 17
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "StepState"
      ],
@@ -94876,7 +94887,7 @@
      "purpose": "Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD)",
      "surface": {
       "fn": 1,
-      "mod": 298,
+      "mod": 299,
       "re-export": 1
      }
     },
@@ -106999,6 +107010,19 @@
      }
     },
     {
+     "bucket": "L",
+     "kind": "test",
+     "notable": [
+      "SievePolicy"
+     ],
+     "path": "tests/fingerprint_keep_dreamer_wake_digests.rs",
+     "purpose": "K-proof for the 17 Dreamer wake legacy recipes at 8dc388b6c4b4: every stored or compared digest keeps main's…",
+     "surface": {
+      "crate-vis": 29,
+      "struct": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -114430,7 +114454,7 @@
      "purpose": "`TimeRange`, temporal expressions/parsing, granularity/anchor enums"
     },
     "test_doors": {
-     "files": 304,
+     "files": 305,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -114607,8 +114631,8 @@
    },
    "over_bar": 300,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 8121,
-   "test_files": 1877
+   "source_files": 8122,
+   "test_files": 1878
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -129308,6 +129332,14 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/purposes/dreamer_wake.rs",
+     "purpose": "Legacy identities of Dreamer wake sessions, queued work and sieve readings",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/purposes/engine_executor.rs",
      "purpose": "Purposes of the engine executor (`crates/oneiron/src/engine_executor`)",
      "surface": {}
@@ -129586,7 +129618,7 @@
      "purpose": "The K door: a digest that main already stores or sends keeps its exact bytes"
     },
     "purposes": {
-     "files": 43,
+     "files": 44,
      "impl_vault": false,
      "largest_src_bucket": "s",
      "layout": "dir",
@@ -129602,7 +129634,7 @@
    },
    "over_bar": 0,
    "purpose": "One fingerprint rule for engine digests (fable pass 22; PLAN-UC-04 stage 0)",
-   "source_files": 46,
+   "source_files": 47,
    "test_files": 1
   },
   "oneiron-gen": {
