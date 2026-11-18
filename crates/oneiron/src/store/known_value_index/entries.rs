@@ -5,6 +5,16 @@ use crate::error::{Error, Result};
 use crate::store::KnownEntry;
 
 impl KnownValues {
+    /// Whether `handle` is the handle of a custody record a value the index
+    /// knows is held by: a compare that keeps it as written reads that
+    /// record's value only (FIX REPLAY-COMPARE-KNOWN-OTHER-CALLERS).
+    pub(crate) fn holds_handle(&self, handle: &str) -> bool {
+        self.buckets
+            .iter()
+            .flat_map(|bucket| &bucket.known)
+            .any(|known| matches!(known.origin, ValueOrigin::Custody(_)) && known.handle == handle)
+    }
+
     pub(super) fn of_entries<'a>(
         master: &'a [u8; 32],
         values: impl IntoIterator<Item = (&'a KnownEntry, ValueOrigin, String)>,

@@ -66,8 +66,9 @@ impl ReplayRequestMatch {
 /// How a replay's compare reads the values base custody holds now (FIX
 /// REPLAY-COMPARE-KNOWN-MATCHER). The side-row wall gives a value custody
 /// holds its record's handle in a row whose scope decides with custody, a
-/// value no shape rule places too, so the call made again is planned with
-/// these values before it is compared with that row.
+/// value no shape rule places too, so the call made again and that row are
+/// both planned with these values before they are compared: each such value
+/// meets only its own record's handle (FIX REPLAY-COMPARE-KNOWN-OTHER-CALLERS).
 pub(crate) type BaseKnownRead<'a> = &'a dyn Fn() -> Result<Option<Arc<KnownValues>>>;
 
 /// One compare's base known values: read through its [`BaseKnownRead`] on
