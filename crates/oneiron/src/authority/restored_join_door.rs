@@ -166,19 +166,25 @@ impl Vault {
         // Only holds under a scope this install counts, the roster's and its
         // pinned anchor's: an unpinned anchor's mark refuses nothing here
         // (REVIEW-9509 round 2 P1).
-        let mut held = fold.counted_waiting_enrolments(request.machine).peekable();
-        let enrolment = if held.peek().is_some() {
-            let mut held: Vec<_> = held.collect();
-            if !held
-                .iter()
-                .all(|(_, held)| held_is_this_ask(&held.profile, &request, actor, role))
-            {
-                return Err(authority_refused(HELD_DIFFERS));
-            }
-            held.sort_by_key(|(hash, _)| **hash);
-            *held[0].0
-        } else {
-            self.file_restored_enrolment_in_txn(&mut txn, issuer, actor, &request, role)?
+        let held: Vec<_> = fold.counted_waiting_enrolments(request.machine).collect();
+        if !held
+            .iter()
+            .all(|(_, held)| held_is_this_ask(&held.profile, &request, actor, role))
+        {
+            return Err(authority_refused(HELD_DIFFERS));
+        }
+        // The join names a roster enrolment: a pinned anchor's mark joins
+        // under its anchor and heads no roster chain, which the join must
+        // (REVIEW-9539 round 2 P1). With none held, the root files one, and
+        // the join names that exact entry.
+        let roster_enrolment = held
+            .iter()
+            .filter(|(_, held)| held.admitter == MachineAdmitter::Roster)
+            .map(|(hash, _)| **hash)
+            .min();
+        let enrolment = match roster_enrolment {
+            Some(enrolment) => enrolment,
+            None => self.file_restored_enrolment_in_txn(&mut txn, issuer, actor, &request, role)?,
         };
         let fold = self.authority_view_readonly_in_txn(&txn)?;
         let target = request.machine;
