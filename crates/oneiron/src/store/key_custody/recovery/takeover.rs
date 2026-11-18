@@ -12,6 +12,8 @@
 //! happened: everything stays, the restore says its destination is
 //! uncertain, and nothing undoes, retries or releases again.
 
+use oneiron_contracts::fingerprint::ContentHash;
+
 use super::{
     AnchorAdvance, AnchorStore, CustodyLanding, CustodyPosition, R, Rejected, anchor_record,
     anchored_position, because,
@@ -29,7 +31,7 @@ pub(crate) struct PreparedTakeover {
 impl PreparedTakeover {
     /// BLAKE3 of the record the advance writes, for the receipt.
     pub(crate) fn digest(&self) -> [u8; 32] {
-        *blake3::hash(&self.record).as_bytes()
+        *ContentHash::of(&self.record).as_bytes()
     }
 }
 
@@ -81,7 +83,7 @@ impl CustodyLanding {
             ));
         }
         Ok(Some(PreparedTakeover {
-            expected: *blake3::hash(read).as_bytes(),
+            expected: *ContentHash::of(read).as_bytes(),
             record: anchor_record(&local, &control),
         }))
     }
