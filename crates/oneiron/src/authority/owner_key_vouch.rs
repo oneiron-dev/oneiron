@@ -534,14 +534,8 @@ fn require_holding_machine(fold: &AuthorityFold, request: &OwnerKeyVouchRequest)
     let pin = fold.pinned_root.as_ref();
     let heads = fold
         .machine(request.machine)
-        .filter(|folded| {
-            folded
-                .roster
-                .as_ref()
-                .is_some_and(|roster| roster.is_live())
-        })
+        .filter(|folded| super::owner_key_enrollment::machine_is_live_here(folded, pin))
         .map(|folded| folded.standing_heads(pin))
-        .filter(|heads| heads.iter().all(|head| !head.removed))
         .ok_or_else(|| not_valid(MACHINE_PROOF_NOT_VALID))?;
     let mut verified = false;
     for head in heads {

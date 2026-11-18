@@ -640,9 +640,18 @@ impl Vault {
         };
         self.put_authority_log_entries_in_txn(txn, &[(entry, at, now)])?;
         let after = self.authority_view_readonly_in_txn(txn)?;
+        // The fold reads the holding machine's roster head alone; this
+        // install also believes its pinned anchor's chain, whose removal of
+        // the machine refuses the write here (#8722 review round 2, P1).
         if !after.valid_entries.contains(&hash)
             || after.install.held_back.contains(&hash)
             || !after.roster.get(&key).is_some_and(|device| !device.revoked)
+            || !after.machines.get(&machine).is_some_and(|folded| {
+                super::owner_key_enrollment::machine_is_live_here(
+                    folded,
+                    after.pinned_root.as_ref(),
+                )
+            })
         {
             return Err(authority_refused(NOT_COUNTED));
         }
@@ -936,10 +945,12 @@ impl Vault {
             .get(predecessor)
             .is_some_and(|root| !root.revoked && root.roles & ROLE_OWNER != 0)
             || entry.seq < next_sequence(&fold, predecessor)?
-            || !fold
-                .machines
-                .get(&enroll.machine)
-                .is_some_and(super::owner_key_enrollment::machine_is_live)
+            || !fold.machines.get(&enroll.machine).is_some_and(|machine| {
+                super::owner_key_enrollment::machine_is_live_here(
+                    machine,
+                    fold.pinned_root.as_ref(),
+                )
+            })
         {
             return Err(not_valid(PREPARED_ENTRY_STALE));
         }

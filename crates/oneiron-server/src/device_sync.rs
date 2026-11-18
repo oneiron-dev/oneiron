@@ -805,9 +805,22 @@ fn standing(
             .iter()
             .any(|chain| chain.profile.role.answered())
     };
+    // A head this install believes that says removed vetoes the machine
+    // before any live head or the enrolment fallback counts, as the carrier
+    // rule reads them (#8722 review round 2, P1).
+    let removed = |machine: &oneiron::authority::FoldedMachine| {
+        machine
+            .standing_heads(pin)
+            .iter()
+            .any(|chain| chain.removed)
+    };
     let local = vault
         .local_machine()?
         .ok_or_else(|| anyhow::anyhow!("this install is not a machine yet"))?;
+    anyhow::ensure!(
+        !local.profile.as_ref().is_some_and(removed),
+        "this machine is not enrolled live in the vault"
+    );
     match local.profile.as_ref().filter(answered) {
         Some(profile) => anyhow::ensure!(
             live(profile),
@@ -819,6 +832,11 @@ fn standing(
         ),
     }
     anyhow::ensure!(local.id != home, "home_machine names this machine");
+    anyhow::ensure!(
+        !fold.machine(home).is_some_and(removed),
+        "home_machine {} is not a live machine",
+        home.to_hex()
+    );
     match fold.machine(home).filter(answered) {
         Some(machine) => anyhow::ensure!(
             live(machine),

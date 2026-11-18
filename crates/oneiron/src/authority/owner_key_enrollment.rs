@@ -323,3 +323,12 @@ pub(super) fn machine_is_live(machine: &FoldedMachine) -> bool {
         .as_ref()
         .is_some_and(MachineRevision::is_live)
 }
+
+/// [`machine_is_live`] as a writer on this install reads it: also no head
+/// the machine stands under here ([`FoldedMachine::standing_heads`], the
+/// pinned anchor's chain too) says removed. The fold passes no pin and reads
+/// the roster's head alone; a door passes its install's pin, so it writes no
+/// enrolment its own install would not count (#8722 review round 2, P1).
+pub(super) fn machine_is_live_here(machine: &FoldedMachine, pin: Option<&PinnedRoot>) -> bool {
+    machine_is_live(machine) && machine.standing_heads(pin).iter().all(|head| !head.removed)
+}
