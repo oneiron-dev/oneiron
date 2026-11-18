@@ -264,7 +264,7 @@ fn seven_units() -> LlmResponse {
 }
 
 #[test]
-fn branch_read_fixture_grants_only_the_named_actor_and_class() {
+fn branch_read_fixture_grants_only_the_named_actor() {
     let fx = fixture();
     let vault = &fx.vault;
     let conversation = seed_actor(vault, 0x72, oneiron::registry::ENTITY_TYPE_SESSION);
@@ -283,7 +283,8 @@ fn branch_read_fixture_grants_only_the_named_actor_and_class() {
     let dreamer = vault.dreamer_authority().unwrap().entity_ref();
     assert!(visible(key(dreamer, "system")));
     assert!(!visible(key(dreamer, "agent")));
-    // The fixture grants a reader with no stock grant, by actor and class.
+    // The fixture grants a reader with no stock grant, by actor alone: its
+    // rows name no class, as the production agent grant's rows name none.
     let reader = seed_actor(vault, 0x73, oneiron::registry::ENTITY_TYPE_PERSON);
     let actor = WriteActor::new(reader, oneiron::EdgeActorClass::Agent);
     assert!(!visible(key(reader, "agent")));
@@ -291,7 +292,7 @@ fn branch_read_fixture_grants_only_the_named_actor_and_class() {
     assert!(vault.install_read_permit_for_test(wrong).is_err());
     vault.install_read_permit_for_test(actor).unwrap();
     assert!(visible(key(reader, "agent")));
-    assert!(!visible(key(reader, "human")));
+    assert!(visible(key(reader, "human")));
     assert!(!visible(
         oneiron::claim::ScopedReadActorKey::with_actor_class("other-reader", "agent").unwrap()
     ));

@@ -537,24 +537,21 @@ pub(crate) fn ocsp_entry_valid<'a>(
 /// response-embedded, then DSS, then anchors — whose key verifies the
 /// response and which every bound issuer leaves authorized. Each match is
 /// tried in turn, so a same-subject shadow filed ahead of the genuine
-/// responder fails only its own try, never the response. `None` when no
-/// match both verifies and stands authorized.
-#[allow(clippy::too_many_arguments)]
+/// responder fails only its own try, never the response. `pools` are the
+/// name-match pools in that order. `None` when no match both verifies and
+/// stands authorized.
 fn ocsp_responder_authority(
     basic: &x509_ocsp::BasicOcspResponse,
     tbs: &[u8],
-    candidates: &[EmbeddedCert],
-    embedded: &[EmbeddedCert],
-    anchors: &[EmbeddedCert],
+    pools: [&[EmbeddedCert]; 3],
     bound: &[(&EmbeddedCert, &EmbeddedCert)],
     at_unix: u64,
     memory: &MemoryLedger,
 ) -> Result<Option<Vec<Result<(), EvidenceRejection>>>, SealMemoryRefusal> {
     let oid = basic.signature_algorithm.oid.as_bytes();
-    for responder in candidates
-        .iter()
-        .chain(embedded.iter())
-        .chain(anchors.iter())
+    for responder in pools
+        .into_iter()
+        .flatten()
         .filter(|c| ocsp_responder_matches(&basic.tbs_response_data.responder_id, &c.cert))
     {
         let Ok(alg) = cms::cert_signature_algorithm(&responder.der) else {
@@ -629,7 +626,12 @@ fn ocsp_basic_valid<'a>(
         bound.push((target, issuer));
     }
     let Some(authority_of) = ocsp_responder_authority(
-        basic, &tbs, candidates, embedded, anchors, &bound, at_unix, memory,
+        basic,
+        &tbs,
+        [candidates, embedded, anchors],
+        &bound,
+        at_unix,
+        memory,
     )?
     else {
         return Ok(Err(EvidenceRejection::Unverifiable));
