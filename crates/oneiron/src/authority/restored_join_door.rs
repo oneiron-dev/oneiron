@@ -189,7 +189,10 @@ impl Vault {
             ActSurface::ThisInstall,
             restored_machine_join_seen(&enrolment),
         );
-        let op = AuthorityOp::RestoredMachineJoin(RestoredMachineJoin { act, enrolment });
+        let op = AuthorityOp::RestoredMachineJoin(RestoredMachineJoin {
+            act,
+            enrolment: RestoredJoinEnrolment::Held(enrolment),
+        });
         let sign: &FoldSign<'_> = &|fold, transcript| proof.sign(fold, transcript);
         self.append_owner_signed_in_txn(&mut txn, &fold, op, (&proof.key(), sign))?;
         let after = self.authority_view_readonly_in_txn(&txn)?;
@@ -240,9 +243,13 @@ impl Vault {
     /// A kit restore's join of this install when a restore made it (Engine
     /// ANSWER KIT-RESTORE-JOINS-RESTORED-COPY = A): `signer`, the kit's root
     /// authority key R held behind `sign`, a live owner key of the roster,
-    /// files this install's enrolment as its own roster row, which the fold
-    /// holds, and joins it by the owner's [`RestoredMachineJoin`], each
-    /// signed by R alone, in the caller's transaction. A kit restore signed
+    /// files this install's enrolment as its own act-free roster revision
+    /// and joins it, in one owner's [`RestoredMachineJoin`] row in its
+    /// inline form, signed by R alone, in the caller's transaction. One R
+    /// row, as main's kit restore puts a machine on the roster in one R row,
+    /// so two kit restores of copies of one image stay equal-sequence
+    /// siblings and neither floors the other (Engine ANSWER
+    /// KIT-JOIN-ONE-R-ROW = A; REVIEW-9534 round 2 P1). A kit restore signed
     /// by R is the owner's proved act RESTORED-COPIES-JOIN-SCOPE = A names,
     /// so the fold takes R's join as it takes any owner key's
     /// ([`super::restored_join`]). Writes nothing for an install no restore
@@ -270,17 +277,18 @@ impl Vault {
         if !self.key_proves_owner_word(&fold, signer) {
             return Err(authority_refused(KEY_PROVES_NO_JOIN));
         }
-        let enrolment =
-            self.file_restored_enrolment_by_key_in_txn(txn, (signer, sign), owner, request)?;
-        let fold = self.authority_view_readonly_in_txn(txn)?;
+        let profile = self.kit_restore_enrolment_profile_in_txn(txn, &fold, owner, request)?;
         let act = OwnerAct::by_owner(
             owner,
             OwnerActKind::RestoredMachineJoin,
             request.machine,
             ActSurface::ThisInstall,
-            restored_machine_join_seen(&enrolment),
+            restored_machine_join_inline_seen(&profile)?,
         );
-        let op = AuthorityOp::RestoredMachineJoin(RestoredMachineJoin { act, enrolment });
+        let op = AuthorityOp::RestoredMachineJoin(RestoredMachineJoin {
+            act,
+            enrolment: RestoredJoinEnrolment::Inline(profile),
+        });
         let by_key: &FoldSign<'_> = &|_, transcript| sign(transcript);
         self.append_owner_signed_in_txn(txn, &fold, op, (signer, by_key))?;
         let joined = self

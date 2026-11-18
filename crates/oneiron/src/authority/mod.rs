@@ -265,7 +265,10 @@ pub use oneiron_authority::authority::{
 };
 // The owner's word that no other machine is left, which joins one machine
 // born of a restore (row RESTORED-COPIES-ENROL-EACH-OTHER).
-pub use oneiron_authority::authority::{RestoredMachineJoin, restored_machine_join_seen};
+pub use oneiron_authority::authority::{
+    RestoredJoinEnrolment, RestoredMachineJoin, restored_machine_join_inline_seen,
+    restored_machine_join_seen,
+};
 pub use root_appointment_door::RootAppointmentReceipt;
 pub(crate) use root_appointment_door::refuse_unneeded_appointment;
 pub use root_appointment_judge::{AppointmentVerdict, AppointmentVoidReason};
