@@ -287,33 +287,34 @@ fn opaque_withholds_credential(bytes: &[u8]) -> bool {
     crate::batch::secret_scan::scan_file_content("", bytes).is_some()
 }
 
-/// Visits each retained side row envelope the archive holds, in key order, once its key is
-/// checked as its envelope identity. Reads the archive alone, so it runs before or inside the
-/// import's writer; a row of another family is passed over before its value is read.
-pub(super) fn visit_retained_envelopes<R: Read + Seek>(
+/// Visits retained envelopes in archive order, checking their codec and identity once per pass.
+pub(crate) fn visit_retained_side_rows<R: Read + Seek>(
     archive: &IndexedArchive<'_, R>,
     mut visit: impl FnMut([u8; 32], ArchiveRetainedSideRow) -> Result<()>,
 ) -> Result<()> {
     let mut files = |file: &ExportBodyFile| file.read(&archive.files);
     let mut after: Option<Vec<u8>> = None;
     while let Some((key, value)) = archive.index.next(Tag::Side, &[], after.as_deref())? {
-        let archived = archive
+        let row = archive
             .spool
-            .parse::<ArchiveSideRow>(Loc::decode(&value)?)?;
-        if archived.family == ArchiveSideFamily::RetainedSideRow {
-            let row = archived.stored(&mut files)?;
-            let envelope = RETAINED_SIDE_ROWS
-                .decode_value(&row.value)
-                .map_err(|_| invalid("retained side row does not decode as its envelope"))?;
-            let typed = <[u8; 32] as SideKey>::decode_key(&row.key)
-                .ok_or_else(|| invalid("retained side row key"))?;
-            if typed != retained_side_row_key(&envelope) {
-                return Err(invalid(
-                    "retained side row key is not its envelope identity",
-                ));
-            }
-            visit(typed, envelope)?;
+            .parse::<ArchiveSideRow>(Loc::decode(&value)?)?
+            .stored(&mut files)?;
+        if row.family != ArchiveSideFamily::RetainedSideRow {
+            after = Some(key);
+            continue;
         }
+        let envelope = RETAINED_SIDE_ROWS
+            .decode_value(&row.value)
+            .map_err(|_| invalid("retained side row does not decode as its envelope"))?;
+        let expected = retained_side_row_key(&envelope);
+        let typed = <[u8; 32] as SideKey>::decode_key(&row.key)
+            .ok_or_else(|| invalid("retained side row key"))?;
+        if typed != expected {
+            return Err(invalid(
+                "retained side row key is not its envelope identity",
+            ));
+        }
+        visit(typed, envelope)?;
         after = Some(key);
     }
     Ok(())
@@ -339,7 +340,7 @@ pub(crate) fn install_or_retain_side_rows_in_txn<R: Read + Seek>(
     let mut tables: BTreeMap<String, RetainedSideTableCount> = BTreeMap::new();
     let mut groups: BTreeMap<ArchivedSideGroup, Vec<([u8; 32], ArchiveRetainedSideRow)>> =
         BTreeMap::new();
-    visit_retained_envelopes(archive, |typed, envelope| {
+    visit_retained_side_rows(archive, |typed, envelope| {
         let count = tables
             .entry(envelope.source_table.clone())
             .or_insert_with(|| RetainedSideTableCount {

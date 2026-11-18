@@ -298,7 +298,7 @@ impl Vault {
         let setting_turns = if owner.is_some() {
             use crate::setting::archive_restore::{take_write_turns, write_turn_of_archived_row};
             let mut turns = Vec::new();
-            super::archive_retained_side_rows::visit_retained_envelopes(&archive, |_, row| {
+            super::archive_retained_side_rows::visit_retained_side_rows(&archive, |_, row| {
                 turns.extend(write_turn_of_archived_row(&row));
                 Ok(())
             })?;
