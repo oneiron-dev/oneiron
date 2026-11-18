@@ -657,7 +657,10 @@ impl<'b> DreamerPass<'b> {
             destination_bound: None,
         };
         let cancel = WakeCancellation::new();
-        let tally = match block_on(driver.run_wake_pass(input, &mut executor, &cancel))
+        crate::golden_day::probe("drive");
+        let driven = block_on(driver.run_wake_pass(input, &mut executor, &cancel));
+        crate::golden_day::probe(&format!("driven {:?}", driven.as_ref().map(Result::is_ok)));
+        let tally = match driven
             .ok_or(DreamerPassError::Stalled)?
         {
             Ok(tally) => tally,
@@ -734,6 +737,7 @@ impl DreamerAttemptExecutor for PassExecutor<'_, '_> {
                 now_ms: ctx.now_ms,
             },
         );
+        crate::golden_day::probe(&format!("execute {attempt_type:?}"));
         let execution = {
             let mut inner = ConsolidationExecutor {
                 backend: self.backend,
@@ -749,6 +753,7 @@ impl DreamerAttemptExecutor for PassExecutor<'_, '_> {
             };
             DreamerAttemptExecutor::execute(&mut inner, attempt, ctx).await
         };
+        crate::golden_day::probe(&format!("executed {:?}", execution.as_ref().map(|_| ())));
         self.attempts.push(DreamerAttemptRun {
             attempt_id,
             attempt_type,

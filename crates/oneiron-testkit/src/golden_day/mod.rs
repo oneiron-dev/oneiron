@@ -242,21 +242,31 @@ pub fn backend() -> ScriptedBackend {
 /// The seed, the open or the owner failed: the day did not run. A step that
 /// refuses is recorded, not returned.
 pub fn run(backend: &ScriptedBackend) -> Result<GoldenDayRun, GoldenDayError> {
+    probe("run");
     let mut day = Day::default();
     let test_vault = TestVault::seeded(SCRIPT, |vault, clock| day.seed(vault, clock))
         .map_err(|error| failed("the seed", error))?;
+    probe("seeded");
     day.bind(&test_vault.temp_dir().display().to_string(), "$TEMP");
     let clock = test_vault.clock();
     let vault = test_vault
         .open_owned()
         .map_err(|error| failed("the open", error))?;
     attach_test_host(&vault).map_err(|error| failed("the test host", error))?;
+    probe("opened");
 
     // 2. The Dreamer reads the turn.
     let pass = crate::dreamer::DreamerPass::new(backend)
         .with_run_id(PASS_RUN_ID)
         .run_turn_wake(&vault, clock);
+    probe(&format!("wake-returned ok={}", pass.is_ok()));
+    if std::env::var_os("GD_PROBE_CHECK").is_some() {
+        backend
+            .check()
+            .map_err(|mismatch| failed("the Dreamer script", mismatch))?;
+    }
     day.record_pass(clock, pass);
+    probe("recorded");
     clock.advance(STEP_SECS);
 
     let owner_id = vault
@@ -361,6 +371,7 @@ pub fn run(backend: &ScriptedBackend) -> Result<GoldenDayRun, GoldenDayError> {
     // 7. The agent reads again.
     day.reads(clock, agent, "agent-after-revoke", claim.as_deref());
 
+    probe("dump");
     // The dump, read as the owner.
     let reader = ReceiptReader::new(&owner_memory);
     let streams = json!({
@@ -368,7 +379,9 @@ pub fn run(backend: &ScriptedBackend) -> Result<GoldenDayRun, GoldenDayError> {
         "family": receipt_stream(&reader, RECEIPT_KINDS),
         "authority_audit": audit_stream(&owner_memory),
     });
+    probe("streamed");
     let provider_seen: Vec<Value> = backend.seen().iter().map(seen_row).collect();
+    probe("run-done");
     Ok(GoldenDayRun {
         raw: json!({
             "steps": day.steps,
@@ -441,7 +454,9 @@ impl Day {
         input: Value,
     ) -> Option<Value> {
         let at = clock.now();
+        probe(&format!("call {step} {verb}"));
         let result = door::invoke(caller, verb, input.clone());
+        probe(&format!("called {step} ok={}", result.is_ok()));
         let answer = self.record(step, verb, caller_name, at, input, result);
         clock.advance(STEP_SECS);
         answer
@@ -687,6 +702,7 @@ fn seen_row(call: &SeenCall) -> Value {
 /// in read order, the page count and the undecodable rows the pages
 /// reported.
 fn receipt_stream(reader: &ReceiptReader<'_, '_>, kinds: &[&str]) -> Value {
+    probe(&format!("receipt-stream kinds={}", kinds.len()));
     let mut rows = Vec::new();
     let mut undecodable = Vec::new();
     let mut after: Option<String> = None;
@@ -716,6 +732,7 @@ fn receipt_stream(reader: &ReceiptReader<'_, '_>, kinds: &[&str]) -> Value {
 /// draws: [`GoldenDayRun::normalise`] sorts them), and each page without its
 /// rows.
 fn audit_stream(owner: &Memory<'_>) -> Value {
+    probe("audit-stream");
     let mut rows = Vec::new();
     let mut pages = Vec::new();
     let mut after: Option<String> = None;
@@ -744,4 +761,11 @@ fn audit_stream(owner: &Memory<'_>) -> Value {
         }
     }
     json!({"rows": rows, "pages": pages, "page_count": MAX_PAGES, "refused": "the cursor did not reach the end"})
+}
+
+/// Scratch probe: one stderr line per step, with the stack address.
+#[inline(never)]
+pub fn probe(what: &str) {
+    let mark = 0_u8;
+    eprintln!("## GD-STEP {what} sp={:p}", std::hint::black_box(&mark));
 }
