@@ -12,6 +12,10 @@
 //! `meeting_follow_up_prompt` key is not a `[models.dreamer.wording]` key
 //! there, so each test fails.
 //!
+//! `a_model_fault_that_keeps_failing_waits_longer_each_time` (FIX
+//! ATTEMPT-WORKER-FLAT-RETRY-BACKOFF, the drafting half) is red on main
+//! before that fix: every retry waits the same `retry_backoff_secs`.
+//!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p
 //! oneiron-server --all-features --features oneiron/test-support --test
 //! meeting_follow_up_drafting`.
@@ -26,7 +30,7 @@ mod fake_llm;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use oneiron::attempt_queue::{AttemptQueue, AttemptRecord, AttemptState};
+use oneiron::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord, AttemptState};
 use oneiron::calendar::follow_up::{
     MEETING_FOLLOW_UP_DRAFT_ATTEMPT_KIND, PREDICATE_MEETING_FOLLOW_UP,
 };
@@ -52,6 +56,11 @@ const INSTRUCTION: &str =
     "Host wording: list the follow-ups the owner promised, in the reply contract.";
 /// How long the worker gets to take up a queued attempt.
 const TAKE_UP: Duration = Duration::from_secs(60);
+/// `models.workflows.retry_backoff_secs` for most hosts here.
+const BACKOFF_SECS: u64 = 1;
+/// `models.workflows.retry_backoff_secs` for the retry-spacing host: long
+/// enough that one wait and two waits differ by whole seconds.
+const SPACED_BACKOFF_SECS: u64 = 3;
 
 struct Fixture {
     vault: Arc<Vault>,
@@ -66,6 +75,15 @@ struct Fixture {
 /// and this install's signing keys loaded (the Dreamer signs the drafts),
 /// and a host started on it whose generative seat is the scripted fake.
 async fn fixture(script: Vec<Reply>, fallback: Option<Reply>) -> Fixture {
+    fixture_with_backoff(script, fallback, BACKOFF_SECS).await
+}
+
+/// [`fixture`], with `backoff_secs` as `models.workflows.retry_backoff_secs`.
+async fn fixture_with_backoff(
+    script: Vec<Reply>,
+    fallback: Option<Reply>,
+    backoff_secs: u64,
+) -> Fixture {
     let model = FakeLlm::start(script, fallback).await;
     let dir = tempfile::tempdir().expect("tempdir");
     let vault =
@@ -76,8 +94,8 @@ async fn fixture(script: Vec<Reply>, fallback: Option<Reply>) -> Fixture {
         .prepare_install_signing()
         .expect("load this install's signing keys");
     let owner = vault.ensure_embedded_owner_actor().expect("the owner");
-    let models =
-        ModelsConfig::from_toml(&models_text(&model.base_url), None).expect("models config");
+    let models = ModelsConfig::from_toml(&models_text(&model.base_url, backoff_secs), None)
+        .expect("models config");
     let host = AiHost::start(Arc::clone(&vault), Some(&models), true).await;
     Fixture {
         vault,
@@ -88,12 +106,12 @@ async fn fixture(script: Vec<Reply>, fallback: Option<Reply>) -> Fixture {
     }
 }
 
-fn models_text(base_url: &str) -> String {
+fn models_text(base_url: &str, backoff_secs: u64) -> String {
     format!(
         "default = \"local:test-model\"\nextraction_egress = true\n\
          [dreamer]\nenabled = false\n\
          [dreamer.wording]\nmeeting_follow_up_prompt = \"{INSTRUCTION}\"\n\
-         [workflows]\nenabled = false\nretry_backoff_secs = 1\n\
+         [workflows]\nenabled = false\nretry_backoff_secs = {backoff_secs}\n\
          [providers.local]\nkind = \"local-openai-compat\"\nbase_url = \"{base_url}\"\n"
     )
 }
@@ -175,6 +193,13 @@ impl Fixture {
             .collect()
     }
 
+    /// The try that retried `id`, once it exists.
+    fn retry_of(&self, id: AttemptId) -> Option<AttemptRecord> {
+        self.attempts()
+            .into_iter()
+            .find(|attempt| attempt.retry_of == Some(id))
+    }
+
     /// Whether the drafting is done: a completed try and no try left.
     fn drafting_completed(&self) -> bool {
         let attempts = self.attempts();
@@ -220,6 +245,15 @@ fn contract_reply() -> Reply {
         })
         .to_string(),
     )
+}
+
+/// How long a retry waits: its scheduled instant past the instant it was
+/// minted at.
+fn wait_secs(retry: &AttemptRecord) -> u64 {
+    retry
+        .scheduled_at
+        .expect("a retry is scheduled")
+        .saturating_sub(retry.created_at)
 }
 
 async fn eventually(timeout: Duration, mut condition: impl FnMut() -> bool) -> bool {
@@ -336,6 +370,80 @@ fn a_model_fault_is_tried_again_and_the_next_try_drafts() {
             "a fresh try retried it and completed: {attempts:?}"
         );
         assert_eq!(fx.drafts(yuki).len(), 1);
+        fx.host.shutdown().await;
+    });
+}
+
+#[test]
+fn a_model_fault_that_keeps_failing_waits_longer_each_time() {
+    run_on_engine_stack("follow-up-retry-spacing", || async {
+        let fx =
+            fixture_with_backoff(Vec::new(), Some(Reply::Status(500)), SPACED_BACKOFF_SECS).await;
+        fx.name_the_owner("Owen");
+        let yuki = fx.person("Yuki");
+        fx.ingest(TRANSCRIPT);
+
+        let mut first = None;
+        assert!(
+            eventually(TAKE_UP, || {
+                first = fx
+                    .attempts()
+                    .into_iter()
+                    .find(|attempt| attempt.retry_of.is_none());
+                first.is_some()
+            })
+            .await,
+            "the landing queued no drafting; attempts {:?}",
+            fx.attempts()
+        );
+        let first = first.expect("the queued drafting");
+        let mut second = None;
+        assert!(
+            eventually(TAKE_UP, || {
+                second = fx.retry_of(first.id);
+                second.is_some()
+            })
+            .await,
+            "the faulted try was not retried; attempts {:?}",
+            fx.attempts()
+        );
+        let second = second.expect("the first retry");
+        let mut third = None;
+        assert!(
+            eventually(TAKE_UP, || {
+                third = fx.retry_of(second.id);
+                third.is_some()
+            })
+            .await,
+            "the retry was not retried; attempts {:?}",
+            fx.attempts()
+        );
+        let third = third.expect("the second retry");
+        let attempts = fx.attempts();
+        for failed in [first.id, second.id] {
+            let row = attempts
+                .iter()
+                .find(|attempt| attempt.id == failed)
+                .expect("a failed try stays readable");
+            assert_eq!(row.state, AttemptState::Failed, "{attempts:?}");
+            assert_eq!(
+                row.last_error.as_deref(),
+                Some("follow_up_model_call_failed"),
+                "{attempts:?}"
+            );
+        }
+        // The retry's own instant is recorded in the write that mints it,
+        // at most a second after the worker read the clock.
+        assert!(
+            wait_secs(&second) <= SPACED_BACKOFF_SECS,
+            "the first retry waits one backoff: {attempts:?}"
+        );
+        assert!(
+            wait_secs(&third) >= 2 * SPACED_BACKOFF_SECS - 1,
+            "the second retry waits two backoffs, not {} s: {attempts:?}",
+            wait_secs(&third)
+        );
+        assert!(fx.drafts(yuki).is_empty(), "no try drafted");
         fx.host.shutdown().await;
     });
 }

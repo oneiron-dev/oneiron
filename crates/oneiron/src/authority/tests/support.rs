@@ -288,6 +288,8 @@ impl LocalFoldContext {
             pre_handoff_entries: None,
             memory_floor_bytes: DEFAULT_AUTHORITY_LOG_FOLD_MEMORY_FLOOR_BYTES,
             pin: None,
+            owner_key_lines: None,
+            appointments: None,
         }
     }
 }
@@ -361,6 +363,9 @@ pub(super) fn single_owner_state(
         hosted: false,
         actor_rows: BTreeSet::new(),
         residence_directives: BTreeMap::new(),
+        passkey_contexts: BTreeMap::new(),
+        passkey_vouched_keys: BTreeSet::new(),
+        passkey_vouch_confirmations: BTreeSet::new(),
     };
     (owner, owner_key, parent, state)
 }

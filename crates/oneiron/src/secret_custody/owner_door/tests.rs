@@ -588,6 +588,7 @@ fn registering_then_rotating_copies_no_row_that_holds_the_value_unwiped() {
             crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT,
             TimeRange { start: 7, end: 7 },
             7,
+            None,
             &crate::identity_topology::encode_identity_topology_event_body(&proposal)
                 .expect("proposal body"),
         )

@@ -43,6 +43,7 @@ impl ImageFold {
             revoke_facts,
             retired_keys,
             closed_handoffs,
+            closed_conflicts: _,
             unsettled,
             counted_ancestor_pairs,
             issues,

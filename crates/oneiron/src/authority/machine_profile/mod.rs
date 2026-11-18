@@ -493,10 +493,11 @@ impl AuthorityFold {
     }
 
     /// Whether the host holds custody of `key`, as the fold's custody walk
-    /// judged it on the merged history: a key marked as the host's (its
-    /// attested root, a cloud role or tier), or one such a key admitted,
-    /// directly or through others, whatever its own labels say. It reads
-    /// the marks alone, on any posture (FIX 12196).
+    /// judged it on the merged history: a key stamped for the cloud (role or
+    /// tier, as every Hosted root is), or one such a key admitted, directly
+    /// or through others, whatever its own labels say. It reads the marks
+    /// alone, on any posture (FIX 12196); a self-host root is never the
+    /// host's (HOSTED-REFOLD-SELF-HOST-ROOT-CUSTODY = A).
     #[must_use]
     pub(crate) fn in_host_custody(&self, key: &AuthorityKey) -> bool {
         self.host_custody.contains(key)

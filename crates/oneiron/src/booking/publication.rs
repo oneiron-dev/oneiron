@@ -138,6 +138,13 @@ impl BookingPagePublication {
             {
                 return Err("public booking configuration hash must be a BLAKE3 digest");
             }
+            if let Some(defect) = event
+                .deposit
+                .as_ref()
+                .and_then(crate::booking::DepositTerms::defect)
+            {
+                return Err(defect);
+            }
             if event.key.0.trim().is_empty()
                 || event.title.trim().is_empty()
                 || event.duration_min == 0
@@ -370,6 +377,12 @@ fn load_public_booking_page_listed_in_txn(
         {
             return Ok(None);
         }
+        // The deposit a visitor reads on the card is the one confirm will
+        // ask (BK-DEPOSITS): a card whose terms drifted from its
+        // configuration is a stale page, as a drifted duration is.
+        if config.deposit != card.deposit {
+            return Ok(None);
+        }
     }
     Ok(Some((value, rows)))
 }
@@ -383,7 +396,5 @@ pub(crate) use write_index::{
     guard_publication_put, index_publication_in_txn, publication_setting_in_txn,
 };
 
-// FIX [LIBTEST-QUARANTINE-BOOKING-PUBLICATION-TESTS]: the lib test target's type check fails here (6 errors: E0061 x5, E0063 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;

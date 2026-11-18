@@ -116,6 +116,9 @@ mod redaction;
 mod report;
 mod triage;
 
+#[cfg(oneiron_test_support)]
+pub(crate) use self::triage::triage_digest_for_test;
+
 pub use self::bundle::{
     FEEDBACK_APPROVE_ONCE_ACTION, FEEDBACK_BUNDLE_ENCODING, FEEDBACK_BUNDLE_ENCODING_V2,
     FEEDBACK_BUNDLE_KEYS, FEEDBACK_EMBEDDING_MODEL_MAX_BYTES, FEEDBACK_ENGINE_VERSION_MAX_BYTES,
@@ -132,6 +135,8 @@ pub use self::consent::{
     feedback_approval_component_id, feedback_approval_disclosure, feedback_content_ref,
     feedback_logical_send_ref, prepare_feedback_preview, validate_feedback_approval,
 };
+#[cfg(oneiron_test_support)]
+pub(crate) use self::conversation_training::training_policy_digest_for_test;
 pub use self::conversation_training::{
     ANONYMOUS_PAGE, AnonymousApplied, AnonymousFilesSeen, AnonymousReceiptView, AnonymousRefusal,
     AnonymousStatusWork, AnonymousUploadWork, AnonymousWithdrawalWork, ConversationSource,
@@ -158,6 +163,8 @@ pub use self::redaction::{
     FilteredFeedback, FilteredText, TextFilter, TextFilterError, TextFilterIdentity,
     apply_recognised_spans,
 };
+#[cfg(oneiron_test_support)]
+pub(crate) use self::report::packet_content_hash_for_test;
 pub use self::report::{
     COACH_FEEDBACK_DELIVERY_FACET, IssueCategory, REPORT_SIGNATURE_LANE, REPORT_SIGNATURE_SCHEMA,
     REPORT_SIGNATURE_VERB, REPORT_VERB, ReportDeliveryHold, ReportDeliveryKey,

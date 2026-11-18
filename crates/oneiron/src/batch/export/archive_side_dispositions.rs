@@ -13,7 +13,7 @@ pub(crate) enum ArchiveSideDisposition {
     Omitted(ImportOmissionReason),
 }
 
-/// The 116 decided side tables in TSV order, 94 retained and 22 omitted.
+/// The decided side tables in TSV order, each retained or omitted.
 pub(crate) const SIDE_TABLE_DISPOSITIONS: &[(&str, ArchiveSideDisposition)] = &[
     ("ACCESS_GRANT_OWNER_ACT", ArchiveSideDisposition::Retained),
     ("AGENT_DEF_POWER_GRANT", ArchiveSideDisposition::Retained),
@@ -132,10 +132,6 @@ pub(crate) const SIDE_TABLE_DISPOSITIONS: &[(&str, ArchiveSideDisposition)] = &[
         "MAIL_PACK_COMPLIANCE_SETTING",
         ArchiveSideDisposition::Retained,
     ),
-    (
-        "MERGE_QUEUE_REVIEW_POLICY",
-        ArchiveSideDisposition::Retained,
-    ),
     ("MESSAGE_STREAM_POLICY", ArchiveSideDisposition::Retained),
     ("MESSAGE_STREAM_RECEIPT", ArchiveSideDisposition::Retained),
     ("MODEL_OWNER_FALLBACK", ArchiveSideDisposition::Retained),
@@ -214,6 +210,10 @@ pub(crate) const SIDE_TABLE_DISPOSITIONS: &[(&str, ArchiveSideDisposition)] = &[
         ArchiveSideDisposition::Retained,
     ),
     ("SEND_RECEIPT_SUMMARY", ArchiveSideDisposition::Retained),
+    ("SETTING", ArchiveSideDisposition::Retained),
+    ("SETTING_CHANGE", ArchiveSideDisposition::Retained),
+    ("SETTING_CHANGE_NEXT", ArchiveSideDisposition::Retained),
+    ("SETTING_CONTENT", ArchiveSideDisposition::Retained),
     ("SHARED_ACT_POLICY_CHANGE", ArchiveSideDisposition::Retained),
     (
         "SKILL_ATTRIBUTION_AUDIT",

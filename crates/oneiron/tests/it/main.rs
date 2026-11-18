@@ -14,6 +14,7 @@
 mod common;
 
 mod analyzer_asset_policy;
+mod authority;
 mod booking_lifecycle;
 mod booking_solver;
 mod byte_space_v3_conformance;

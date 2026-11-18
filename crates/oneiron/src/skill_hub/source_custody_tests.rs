@@ -119,7 +119,7 @@ fn deleting_carrier_also_erases_the_duplicate_sidecar_without_deleting_holder() 
     assert!(vault.get_skill_record(&holder)?.is_some());
     // A dead carrier cannot be bypassed by reading the source sidecar.
     assert!(source(&vault, &holder)?.is_none());
-    let export = vault.export_whole_vault(crate::context_pack::PackFormat::Json)?;
+    let export = vault.export_whole_vault(false)?;
     assert!(!String::from_utf8_lossy(export.bytes()).contains("SOURCE-CUSTODY-SENTINEL"));
     Ok(())
 }
@@ -147,7 +147,7 @@ fn absent_holder_and_carrier_tombstones_refuse_late_source_on_raw_and_replay_doo
             assert_eq!(
                 vault
                     .batch()
-                    .put_replicated(&carrier, ENTITY_TYPE_ASSET, at(2), 2, &bytes)
+                    .put_replicated(&carrier, ENTITY_TYPE_ASSET, at(2), 2, None, &bytes)
                     .commit()
                     .unwrap_err()
                     .kind(),
@@ -173,6 +173,7 @@ fn pending_source_is_purged_by_holder_tombstone_without_a_skill_header() -> Resu
                 ENTITY_TYPE_ASSET,
                 at(1),
                 1,
+                None,
                 &encode_source_carrier(&holder, &package)?,
             )
             .commit()?;
@@ -200,6 +201,7 @@ fn clean_source_replay_order_survives_separate_commits_and_exports_no_standalone
                         ENTITY_TYPE_ASSET,
                         at(1),
                         1,
+                        None,
                         &encode_source_carrier(&holder, &package)?,
                     )
                     .commit()?;
@@ -211,14 +213,15 @@ fn clean_source_replay_order_survives_separate_commits_and_exports_no_standalone
                         ENTITY_TYPE_SKILL,
                         at(1),
                         1,
+                        None,
                         &encode_skill_record(&package.record)?,
                     )
                     .commit()?;
             }
         }
         assert_eq!(source(&vault, &holder)?.unwrap().files, package.files);
-        let export = vault.export_whole_vault(crate::context_pack::PackFormat::Json)?;
-        let document = vault.read_whole_vault_json(export.bytes())?;
+        let export = vault.export_whole_vault(false)?;
+        let document = vault.read_whole_vault_archive(export.bytes())?;
         assert!(
             !document
                 .entities()
@@ -252,6 +255,7 @@ fn updates_purge_old_source_without_losing_new_source_in_either_arrival_order() 
                         ENTITY_TYPE_ASSET,
                         at(2),
                         2,
+                        None,
                         &encode_source_carrier(&holder, &new)?,
                     )
                     .commit()?;
@@ -263,6 +267,7 @@ fn updates_purge_old_source_without_losing_new_source_in_either_arrival_order() 
                         ENTITY_TYPE_SKILL,
                         at(2),
                         2,
+                        None,
                         &encode_skill_record(&new.record)?,
                     )
                     .commit()?;
@@ -278,6 +283,7 @@ fn updates_purge_old_source_without_losing_new_source_in_either_arrival_order() 
                     ENTITY_TYPE_ASSET,
                     at(3),
                     3,
+                    None,
                     &encode_source_carrier(&holder, &old)?
                 )
                 .commit()
@@ -351,9 +357,9 @@ fn tainted_excluded_and_not_yet_present_holders_cannot_export_through_source_ass
             segment.commit()?;
             session = Some(room);
         }
-        let export = vault.export_whole_vault(crate::context_pack::PackFormat::Json)?;
+        let export = vault.export_whole_vault(false)?;
         assert!(!String::from_utf8_lossy(export.bytes()).contains("SOURCE-CUSTODY-SENTINEL"));
-        let document = vault.read_whole_vault_json(export.bytes())?;
+        let document = vault.read_whole_vault_archive(export.bytes())?;
         assert!(!document.entities().any(|row| row.id == carrier.to_hex()));
         if let Some(room) = session {
             room.close()?;
