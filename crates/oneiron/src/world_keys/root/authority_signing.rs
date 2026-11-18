@@ -2,6 +2,7 @@
 //! grants no authority; the owner must enrol it before loss through OwnerKeyEnroll.
 
 use ed25519_dalek::{Signer, SigningKey};
+use zeroize::Zeroizing;
 
 use super::{RecoveryRootId, RecoveryRootSeed};
 use crate::authority::{
@@ -41,12 +42,40 @@ impl RecoveryAuthoritySigner {
     /// No root activation, enrollment or keystore write happens here.
     pub fn from_seed(seed: &RecoveryRootSeed, vault_id: &AuthorityVaultId) -> Result<Self> {
         let source_root = seed.public(vault_id)?.id;
-        let derived = crate::key_material::derive_guarded(
+        Self::from_released_seed(Self::authority_seed(seed, vault_id), vault_id, source_root)
+    }
+
+    /// The key's own 32-byte seed, derived from the root's seed for
+    /// `vault_id`: what the recovery box keeps (WAYBACK-BOX-AUTHORITY-SEED =
+    /// A), never the root's seed. It stays in guarded memory.
+    pub(crate) fn authority_seed(
+        seed: &RecoveryRootSeed,
+        vault_id: &AuthorityVaultId,
+    ) -> Zeroizing<[u8; 32]> {
+        crate::key_material::derive_guarded(
             RECOVERY_AUTHORITY_CONTEXT,
             &[&seed.bytes[..], &vault_id[..]],
-        );
+        )
+    }
+
+    /// Rebuilds the key from its own seed as the recovery box releases it.
+    /// `source_root` is the public binding the box keeps beside the seed. No
+    /// door trusts it, since the roster names no root for the key: the
+    /// root's door checks the derived key on the roster
+    /// ([`crate::Vault::recover_owner_root`]).
+    ///
+    /// # Errors
+    /// An authority error for an all-zero seed, which no kit derives.
+    pub fn from_released_seed(
+        seed: Zeroizing<[u8; 32]>,
+        vault_id: &AuthorityVaultId,
+        source_root: RecoveryRootId,
+    ) -> Result<Self> {
+        if seed.iter().all(|byte| *byte == 0) {
+            return Err(invalid_authority());
+        }
         Ok(Self {
-            signing: SigningKey::from_bytes(&derived),
+            signing: SigningKey::from_bytes(&seed),
             vault_id: *vault_id,
             source_root,
         })
