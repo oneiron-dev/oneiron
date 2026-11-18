@@ -52,6 +52,40 @@ pub(crate) fn resumed_write_meets_recorded_row(
     Ok(records_call(&row, again))
 }
 
+/// Test door (FIX RECEIPT-RECORDS-CALL-HELD-INPUT): records `first` as the
+/// bridge records a write, stores that row as its receipt through `vault`,
+/// whose side-row wall admits it, and reads it back. Answers whether `again`,
+/// the step's write made again after a resume, meets the stored row by the
+/// compare `kept_write_answer` makes and by the one a step's close makes
+/// (`refuse_a_step_that_dropped_a_write`), and the input text the row kept.
+#[cfg(oneiron_test_support)]
+pub(crate) fn resumed_write_meets_stored_receipt(
+    vault: &crate::Vault,
+    first: &SelfAgentVerbCall,
+    again: &SelfAgentVerbCall,
+) -> Result<(bool, bool, String)> {
+    let mark = never_ran_mark(VERB_HOOK_STOPPED);
+    let run_id = EntityId::now();
+    let mut receipt = CodeRunReplayRecord::new(run_id, CodeRunDeterminism::new(0, [0; 32]));
+    let first = SelfCall::AgentVerb(first.clone());
+    receipt
+        .bridge_calls
+        .push(CodeRunBridgeCall::record(0, &first, &mark, 0, 0)?);
+    vault.put_code_run_replay_record(&receipt)?;
+    let stored = vault
+        .get_code_run_replay_record(&run_id)?
+        .ok_or(Error::InvariantViolation(
+            "the stored receipt did not read back",
+        ))?;
+    let row = stored
+        .bridge_calls
+        .first()
+        .ok_or(Error::InvariantViolation("the stored receipt kept no row"))?;
+    let kept_input = recorded_call(row).map_or_else(String::new, |(_, input)| input.to_owned());
+    let made = CodeRunBridgeCall::record(0, &SelfCall::AgentVerb(again.clone()), &mark, 0, 0)?;
+    Ok((records_call(row, again), meets(&stored, &made), kept_input))
+}
+
 impl HostSelfDispatcher<'_> {
     /// A refused verb is the guest's to handle, like any typed refusal: it
     /// does not halt the run, and the verb's own gate owns its writes.
