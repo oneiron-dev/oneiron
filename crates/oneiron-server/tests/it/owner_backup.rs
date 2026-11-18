@@ -310,3 +310,43 @@ fn restore_join_makes_a_restored_self_host_install_a_machine_of_the_vault() {
     assert_eq!(again["machine"], joined["machine"], "{again}");
     assert_eq!(again["restored_from"], joined["restored_from"], "{again}");
 }
+
+/// REVIEW-9511 round 2 (row RESTORED-COPIES-R2-TESTS): `restore --join` on
+/// a vault no restore made refuses before it provisions this install, so
+/// the refusal mints no machine identity. Before, the command installed the
+/// keystore, which wrote the machine id, and only then refused.
+#[test]
+fn restore_join_refusal_mints_no_machine_identity() {
+    let dir = oneiron::test_support::restore_tempdir();
+    let vault_path = dir.path().join("vault");
+    let config = dir.path().join("oneiron.toml");
+    let keys = dir.path().join("keys");
+    let vault_arg = vault_path.to_str().unwrap();
+    let init = self_host(&config, &keys, &["init", vault_arg, "--embedder", "none"]);
+    assert!(
+        init.status.success(),
+        "init: {}",
+        String::from_utf8_lossy(&init.stderr)
+    );
+    assert!(
+        open(&vault_path)
+            .local_machine()
+            .expect("FIXTURE: the machine")
+            .is_none(),
+        "FIXTURE: init mints no machine identity on a vault no root has reached"
+    );
+
+    let refused = self_host(&config, &keys, &["restore", "--join"]);
+    assert!(
+        !refused.status.success(),
+        "a vault no restore made is refused"
+    );
+    assert!(
+        open(&vault_path)
+            .local_machine()
+            .expect("the machine")
+            .is_none(),
+        "a refused --join mints no machine identity; stderr: {}",
+        String::from_utf8_lossy(&refused.stderr)
+    );
+}
