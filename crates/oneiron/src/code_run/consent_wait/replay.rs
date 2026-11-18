@@ -12,6 +12,8 @@
 //! here asks again, settles again, dispatches the effect again or asks for a
 //! fresh grant: the settled reply is the completed effect's.
 
+use oneiron_contracts::fingerprint::ContentHash;
+
 use crate::Vault;
 use crate::code_run::{CodeRunReplayRecord, WaitKey};
 use crate::consent::{CodeWaitReceiptLinks, ConsentReceipt};
@@ -368,7 +370,7 @@ fn settled_delivery<'r>(
     let settlement = row.settlement.as_ref().ok_or(Error::CorruptedIndex(
         "a code consent wait delivered a reply it never settled",
     ))?;
-    if *blake3::hash(delivered.as_bytes()).as_bytes() != settlement.reply_digest {
+    if *ContentHash::of(delivered.as_bytes()).as_bytes() != settlement.reply_digest {
         return Err(Error::CorruptedIndex(
             "a code consent wait delivered another reply than its settlement",
         ));

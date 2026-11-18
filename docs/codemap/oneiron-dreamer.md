@@ -11,7 +11,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | path | kind | bucket | pub surface | notable types | purpose |
 |---|---|---|---|---|---|
-| `src/conflict_decisions.rs` | src | s | 13 struct · 7 enum · 3 re-export | AnsweredPack, ConflictDecision, Correction, DecisionAnswer, DecisionEntry, EarlierAnswer, Error, ExtractionCorrectionPair +12 | Builds bound extraction verdict packs and reduces their answers as pure policy |
+| `src/conflict_decisions.rs` | src | m | 13 struct · 7 enum · 3 re-export | AnsweredPack, ConflictDecision, Correction, DecisionAnswer, DecisionEntry, EarlierAnswer, Error, ExtractionCorrectionPair +12 | Builds bound extraction verdict packs and reduces their answers as pure policy |
 | `src/conflict_decisions/answers.rs` | src | s | 2 fn · 8 crate-vis | — | Reads ordered verdict entries and maps canonical claims through served facts |
 | `src/conflict_decisions/questions.rs` | src | m | 7 fn · 1 crate-vis | — | Builds canonical pack questions without wording, labels or byte measures |
 | `src/conflict_decisions/steps.rs` | src | s | 2 fn | — | Reduces a successful verdict history to the next pack or a typed result |

@@ -34,8 +34,11 @@ pub use self::types::{
 };
 
 // settlement.rs resolves its `use super::{...}` through these bindings.
-use self::ledger::{LeaseState, apply_usage_for_lease, release_reservations_for_lease};
+use self::ledger::{LeaseOutcome, apply_usage_for_lease, release_reservations_for_lease};
 use super::{BudgetDenied, BudgetLease};
+
+// Every handle of a lease carries the cell its meter fills as the lease closes.
+pub(crate) use self::ledger::ClosedLeaseCell;
 
 #[cfg(test)]
 mod tests;
