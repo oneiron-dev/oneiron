@@ -29,6 +29,7 @@ use crate::scope_summary::{
     ArcManifest, ArcMember, ArcPins, ArcRange, ArcWorkState, MemberKind, ScopeSummaryPlan,
     SummaryLineSpan, check_manifest, owned_by_parts,
 };
+use oneiron_contracts::fingerprint::ContentHash;
 use std::collections::BTreeMap;
 
 /// When the claims do not all fit beside a part, the room the parts leave
@@ -230,7 +231,7 @@ impl Shown {
         MemberText {
             member: ArcMember {
                 kind,
-                pin: *blake3::hash(self.words.as_bytes()).as_bytes(),
+                pin: *ContentHash::of(self.words.as_bytes()).as_bytes(),
                 len: self.words.len() as u64,
             },
             head: self.head,
