@@ -127,7 +127,9 @@ pub(crate) const RESTORED_NOT_JOINED: &str = "this install was restored from a c
 /// RESTORED-COPIES-ENROL-EACH-OTHER).
 enum Landed {
     Answer(MachineAnswerLanding),
-    Restored,
+    /// The held enrolment of a machine born of a restore: the entry just
+    /// written, which the fold holds.
+    Restored(AuthorityEntryHash),
 }
 
 /// The roster's chain holds the machine a roster key would put on it as
@@ -465,11 +467,11 @@ impl Vault {
         }
         let profile = joining_profile(&fold, owner, request, role)?;
         self.ensure_machine_row_in_txn(txn, request.machine)?;
+        // The entry just written, never another held enrolment of the
+        // machine, such as an unpinned anchor's mark that sorts first
+        // (REVIEW-9539 P1).
         match self.append_root_signed_in_txn(txn, issuer, &fold, profile)? {
-            Landed::Restored => self
-                .authority_view_readonly_in_txn(txn)?
-                .unjoined_restored_enrolment(request.machine)
-                .ok_or_else(invalid_authority),
+            Landed::Restored(enrolment) => Ok(enrolment),
             Landed::Answer(_) => Err(invalid_authority()),
         }
     }
@@ -663,7 +665,7 @@ impl Vault {
     ) -> Result<FoldedMachine> {
         match self.append_root_signed_in_txn(txn, issuer, fold, profile)? {
             Landed::Answer(landing) => landing.into_standing().ok_or_else(invalid_authority),
-            Landed::Restored => Err(authority_refused(RESTORED_NOT_JOINED)),
+            Landed::Restored(_) => Err(authority_refused(RESTORED_NOT_JOINED)),
         }
     }
 
@@ -887,7 +889,7 @@ impl Vault {
     ) -> Result<MachineAnswerLanding> {
         match self.land_revision_in_txn(txn, entry, profile, now)? {
             Landed::Answer(landing) => Ok(landing),
-            Landed::Restored => Err(authority_refused(RESTORED_NOT_JOINED)),
+            Landed::Restored(_) => Err(authority_refused(RESTORED_NOT_JOINED)),
         }
     }
 
@@ -933,7 +935,7 @@ impl Vault {
             .get(&answer)
             .is_some_and(|enrolment| enrolment.joined_by.is_none())
         {
-            return Ok(Landed::Restored);
+            return Ok(Landed::Restored(answer));
         }
         Err(invalid_authority())
     }
