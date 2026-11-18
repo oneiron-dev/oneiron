@@ -365,7 +365,8 @@ fn ran(run: &JobRun) -> Option<SweepOutcome> {
 /// On the elected home they arrive with no turn here to drain them, so each
 /// pass merges the carried rows (a wake that came before its arming is taken
 /// once the arming has) and admits every wake owed here. Off the home the
-/// merge does nothing and the admission passes riding wakes by. A wake this
+/// merge does nothing, unless this machine waits for the home's answer to a
+/// wake it retracted, and the admission passes riding wakes by. A wake this
 /// machine carried that no longer rides from it is retracted before the
 /// admission, and the pass ends by writing the latest row this machine knows
 /// for each carried wake into its live windows (FIX

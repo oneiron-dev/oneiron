@@ -398,7 +398,8 @@ pub(super) fn merge_retracted_in_txn(
 
 /// Takes a `Released` row, in the caller's writer. On the machine that
 /// retracted the wake under the same admission, the mark turns `Released`:
-/// its next drain admits the wake. A machine that holds a copy of that wake
+/// its drain admits the wake, once no hold of the wake's own and no deferred
+/// edge of its TURN keeps it. A machine that holds a copy of that wake
 /// it took from a window drops the copy: the recording machine admits the
 /// wake. Any other machine keeps what it holds.
 pub(super) fn merge_released_in_txn(
