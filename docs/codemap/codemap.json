@@ -68820,7 +68820,7 @@
      "path": "src/receipt/off_device.rs",
      "purpose": "A caller off this device and the receipt family (FIX 1119, FIX 1120): the rows each receipt names, by its…",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -113684,6 +113684,14 @@
      "bucket": "m",
      "kind": "test",
      "notable": [],
+     "path": "tests/verb_hook_receipt_credential_screen.rs",
+     "purpose": "A verb hook's receipt is screened by its real rows, not its invocation (HOOKS-04, leg B1)",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
      "path": "tests/verb_self_memory_diary_pinned.rs",
      "purpose": "`self.memory.diary.pinned` through the generated verb dispatch (`oneiron::task_verb::sdk::invoke`), as a…",
      "surface": {}
@@ -115832,7 +115840,7 @@
    "over_bar": 302,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 8186,
-   "test_files": 1924
+   "test_files": 1925
   },
   "oneiron-agent-runtime": {
    "files": [
