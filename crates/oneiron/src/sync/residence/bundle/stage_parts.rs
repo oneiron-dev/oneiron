@@ -8,6 +8,8 @@
 //! part prefix is unused in the writer. Ordinary idle/restart/commit drops read
 //! the header first and delete only its identity's parts, then the header.
 
+use oneiron_contracts::fingerprint::ContentHash;
+
 use super::{
     STAGE_LEN, STAGE_PARTS, STAGES, SealedBundleObject, SealedBundleStage, decode_stage, hex,
     stage_key,
@@ -111,7 +113,7 @@ pub(super) fn retained_stage_whole(
         bytes.extend_from_slice(&part);
     }
     Ok(
-        (bytes.len() as u64 == stage.total && *blake3::hash(&bytes).as_bytes() == stage.digest)
+        (bytes.len() as u64 == stage.total && *ContentHash::of(&bytes).as_bytes() == stage.digest)
             .then_some((stage, bytes)),
     )
 }

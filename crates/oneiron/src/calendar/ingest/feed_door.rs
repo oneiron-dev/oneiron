@@ -8,6 +8,7 @@ use super::{
     IcsFeedCursorSnapshot, IcsFeedFetcher, IcsFeedPollConfig, IcsPollRunState,
     IcsPropertyContinuationPayload, consent, enqueue_ics_feed_poll, ics_feed_cursor_snapshot,
 };
+use crate::calendar::connectors::door::seat_of_system_in_txn;
 use crate::calendar::safeguard::{CALENDAR_SAFEGUARD_CONFIG_KEY, CalendarBodyScreener};
 use crate::calendar::setting_keys::ICS_FEED;
 use crate::consent::AuthenticatedOwner;
@@ -106,16 +107,21 @@ pub(crate) fn registration_in_txn(
 /// configure door had: a system names exactly one complete feed (two feeds sharing a system
 /// would otherwise cancel each other's absent UIDs), so a value row sits at its own system,
 /// once; an installed feed is immutable (a change is refused; a new configuration takes a new
-/// system), and a system an earlier feed polled under is never installed again.
+/// system), and a system an earlier feed polled under is never installed again. Nor is a system
+/// an installed CalDAV seat imports under: each complete poll cancels every event of its
+/// system that the feed body lacks, the seat's events too. Nor is a pack calendar source's
+/// system, whose complete listings sweep it the same way.
 /// Installing a feed starts its poll chain, due at once, in the same write; a chain already
 /// pending for the feed is adopted, never forked. A feed whose import waits on its owner, or
 /// was declined (CAL-02), starts no chain: the owner's approval starts it. Clearing an installed
-/// feed uninstalls it in the same write ([`uninstall_in_txn`]).
+/// feed uninstalls it in the same write ([`uninstall_in_txn`]), which runs under the calendar
+/// admission turn ([`ics_feed_write_turn`]), so it never lands inside a poll's admission.
 ///
 /// # Errors
 ///
 /// `InvalidConfig` for a pin, a row with no system, a value naming another system, a change to
-/// an installed feed, or a system used before; storage errors.
+/// an installed feed, a system used before, a system an installed seat imports under, or a
+/// system with the pack calendar prefix; storage errors.
 pub(crate) fn ics_feed_changed_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -158,6 +164,13 @@ pub(crate) fn ics_feed_changed_in_txn(
             "this system named an earlier feed; use a new system".into(),
         ));
     }
+    if let Some(seat_ref) = seat_of_system_in_txn(vault, txn, &config.system)? {
+        return Err(crate::Error::InvalidConfig(format!(
+            "the CalDAV seat `{seat_ref}` imports under this system, and the feed's complete polls \
+             would cancel its events; use another system"
+        )));
+    }
+    crate::mail_pack::refuse_calendar_source_system(&config.system)?;
     if consent::poll_hold_in_txn(vault, txn, &config)?.is_none() {
         enqueue_ics_feed_poll_in_txn(vault, txn, &config, change.at)?;
     }
@@ -187,6 +200,21 @@ pub(super) fn installed_in_txn(
     config: &IcsFeedPollConfig,
 ) -> crate::Result<bool> {
     Ok(registration_in_txn(vault, txn, &config.system)?.is_some_and(|row| row.config == *config))
+}
+
+/// The turn a `calendar.ics_feed` change takes before its write opens: the calendar admission
+/// turn an installed feed's poll holds from its check that the feed is installed to its
+/// completion row ([`run_installed_poll`]). An uninstall therefore lands before that check (the
+/// poll writes nothing) or after that row (the poll's claims settled under the consent the
+/// uninstall then ends), never between them.
+///
+/// # Errors
+///
+/// `InvalidConfig` when this thread already holds a calendar admission turn.
+pub(crate) fn ics_feed_write_turn(vault: &Vault) -> crate::Result<Box<dyn std::any::Any>> {
+    let turn = super::admission_turn(vault)
+        .map_err(|error| crate::Error::InvalidConfig(error.to_string()))?;
+    Ok(Box::new(turn))
 }
 
 /// Wakes the attempt observers and the job notices once a write that changed a feed's row has
@@ -325,6 +353,10 @@ pub fn run_installed_poll(
         return Err(MemoryError::bad_request(hold));
     }
     let now = vault.now_recorded_at();
+    // The poll's admission turn, held on through the completion row `observe_poll` writes: the
+    // owner's uninstall takes the turn too, so it lands before the poll's installed check or after
+    // that row, never between them.
+    let mut turn = None;
     let outcome = super::poll::run_feed_poll(
         vault,
         fetcher,
@@ -334,6 +366,7 @@ pub fn run_installed_poll(
         now,
         now,
         Some(owner),
+        Some(&mut turn),
     )
     .map_err(|error| MemoryError::bad_request(error.to_string()))?;
     observe_poll(memory, owner, config, poll_ref, outcome)

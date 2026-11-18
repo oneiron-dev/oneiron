@@ -57,7 +57,6 @@ use crate::registry::ENTITY_TYPE_TASK;
 use crate::scan_check::ScanCount;
 use crate::side_table::{self, SideTable};
 use crate::store::EngineScan;
-#[cfg(test)]
 use crate::temporal::TimeRange;
 use crate::write_envelope::task_body::{TaskRole, task_role_from_body_bytes};
 
@@ -1543,7 +1542,5 @@ impl Vault {
 }
 
 pub(crate) mod tables;
-// FIX [LIBTEST-QUARANTINE-TASK-AUTHORITY-TESTS]: the lib test target's type check fails here (2 errors: E0061 x2); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;

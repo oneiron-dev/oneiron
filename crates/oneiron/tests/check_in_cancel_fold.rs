@@ -109,10 +109,7 @@ fn fixture() -> Fixture {
 fn dispatched(outcome: AgentDispatchOutcome) -> AgentDispatchStatus {
     match outcome {
         AgentDispatchOutcome::Dispatched(status) => status,
-        AgentDispatchOutcome::ProposedWiden(_)
-        | AgentDispatchOutcome::WorkflowDispatched(_)
-        | AgentDispatchOutcome::WorkflowExisting(_)
-        | AgentDispatchOutcome::Existing(_) => panic!("a fresh ordinary dispatch"),
+        other => panic!("a fresh ordinary dispatch, not {other:?}"),
     }
 }
 

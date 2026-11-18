@@ -29,11 +29,6 @@ use crate::key_custody::identity::CustodyId;
 use crate::key_custody::identity::CustodyKind;
 use crate::key_custody::identity::CustodySecret;
 
-/// The derive-key context of a compartment's commitment in its head's
-/// control compartment: the canonical encoding of its whole wire.
-pub const COMPARTMENT_DIGEST_CONTEXT: &str = "oneiron/custody-head/compartment-digest/v2";
-/// The derive-key context of a carried compartment's commitment.
-pub const CARRIED_DIGEST_CONTEXT: &str = "oneiron/custody-head/carried-digest/v2";
 /// The derive-key context of a control compartment's root over them all.
 pub const DIGEST_ROOT_CONTEXT: &str = "oneiron/custody-head/digest-root/v3";
 /// The derive-key context of the publication policy's carried-set digest.

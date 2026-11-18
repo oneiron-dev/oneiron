@@ -2,6 +2,7 @@
 //! It only draws durable check requests; the host runs deep checks under its
 //! existing model, Grant and budget doors, then admits their findings.
 
+use super::stewardship::wake_dedupe_key;
 use crate::attempt_queue::AttemptId;
 use crate::dreamer_runner::{
     DreamerAttemptPayload, DreamerRunnerStore, EnqueueDreamerAttemptOutcome,
@@ -28,12 +29,7 @@ impl DreamerRunnerStore<'_> {
                 input: Value::Nil,
                 parent_attempt,
             },
-            wake_key.map(|key| {
-                format!(
-                    "{HONESTY_AUDIT_FACET}:{}",
-                    blake3::hash(key.as_bytes()).to_hex()
-                )
-            }),
+            wake_key.map(|key| wake_dedupe_key(HONESTY_AUDIT_FACET, key)),
             run_id,
             now,
         )

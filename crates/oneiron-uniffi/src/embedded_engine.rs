@@ -41,7 +41,8 @@ use oneiron::MemoryError;
 use oneiron_remote::{InProcessReply, InProcessRequest, InProcessStream, InProcessTransport};
 use oneiron_server::embedded::{
     BlockingConnection, BlockingEngine, EmbeddedReply, EmbeddedRequest, EngineErrorKind,
-    embedded_serve_config, engine_error_kind, engine_memory_error, host_limits, unix_millis,
+    FetchConditions, embedded_serve_config, engine_error_kind, engine_memory_error, host_limits,
+    unix_millis,
 };
 use oneiron_vault_contract::host_adapters::AppHost;
 use zeroize::Zeroizing;
@@ -285,6 +286,18 @@ impl EmbeddedEngine {
     /// engine serves again first, over the same vault.
     pub fn wake(&self) -> Result<(), OneironError> {
         self.engine.wake().map_err(engine_failure)
+    }
+
+    /// What the app shell observes about fetching predictions on this
+    /// machine: whether it is on an unmetered network and on power. A phone at
+    /// the predicted level asks and fetches only while both hold, closed until
+    /// the app reports; the report holds across `stop`, `wake` and every
+    /// reconnect. Report again on each change the network and power monitors
+    /// see.
+    pub fn set_fetch_conditions(&self, unmetered: bool, powered: bool) -> Result<(), OneironError> {
+        self.engine
+            .set_fetch_conditions(FetchConditions { unmetered, powered })
+            .map_err(engine_failure)
     }
 
     /// The app is backgrounding: drain, stop every worker, keep the vault
