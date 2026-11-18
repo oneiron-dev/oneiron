@@ -2,15 +2,21 @@
 //! rows are compared with it. A continuation also asks here whether a
 //! receipt past its cut may have run (FIX 4199).
 
+use std::sync::Arc;
+
+use crate::batch::secret_scan::{admission_form, held_form};
+use crate::code_run::CompareKnown;
 use crate::code_run::payload::{
     agent_verb_call_identity as call_identity, decode_self_dispatch_outcome,
+    self_call_request_value,
 };
 use crate::code_run::replay::{CodeRunBridgeCall, CodeRunReplayGeneration, CodeRunReplayRecord};
 use crate::code_run::storage::derived_executor_id;
 use crate::code_run::types::{
-    SelfAgentVerbCall, SelfDeniedResult, SelfDispatchOutcome, SelfEffect,
+    SelfAgentVerbCall, SelfCall, SelfDeniedResult, SelfDispatchOutcome, SelfEffect,
 };
 use crate::error::{Error, Result};
+use crate::store::known_value_index::KnownValues;
 use crate::task_verb::sdk::AgentVerb;
 use crate::{EntityId, Vault};
 
@@ -74,20 +80,28 @@ impl HostSelfDispatcher<'_> {
     /// meet so (a write left out, one the bridge recorded after halting and
     /// never dispatched, or one whose kept answer stands refused) means the
     /// step would checkpoint without that write, and a later step could make
-    /// it again under a fresh receipt.
+    /// it again under a fresh receipt. A receipt the side-row wall placed a
+    /// value of base custody in is read with base custody's values (FIX
+    /// RECEIPT-RECORDS-CALL-HELD-INPUT).
     pub(crate) fn refuse_a_step_that_dropped_a_write(
         &self,
         run_id: EntityId,
         step_start: u64,
         calls: &[CodeRunBridgeCall],
     ) -> Result<()> {
+        let base_known = || self.base_known_values();
+        let known = CompareKnown::new(Some(&base_known));
         let mut made = calls.iter().filter(is_write);
         let mut ordinal = 0;
         while let Some(receipt) = self
             .storage
             .get_code_run_replay_record(&self.write_receipt_id(run_id, step_start, ordinal)?)?
         {
-            if !made.next().is_some_and(|made| meets(&receipt, made)) {
+            let met = match made.next() {
+                Some(made) => meets(&receipt, made, &known)?,
+                None => false,
+            };
+            if !met {
                 return Err(Error::InvariantViolation(
                     "a resumed step left out a write it already made",
                 ));
@@ -191,13 +205,27 @@ pub(super) fn standing_refusal(receipt: &CodeRunReplayRecord) -> Option<&CodeRun
 /// Whether a write row met its receipt: it is the receipt's call with the
 /// answer the receipt kept, and no refusal of that answer stands. A write a
 /// hook stopped before it ran, or no provider answered, meets its mark
-/// whatever the run made of it.
-pub(super) fn meets(receipt: &CodeRunReplayRecord, made: &CodeRunBridgeCall) -> bool {
-    standing_refusal(receipt).is_none()
-        && receipt.bridge_calls.first().is_some_and(|kept| {
-            row_identity(kept) == row_identity(made)
-                && (never_ran(kept) || answered_as_kept(kept, made))
-        })
+/// whatever the run made of it. The receipt's call is read as the side-row
+/// wall stored it ([`held_input_meets`]).
+///
+/// # Errors
+///
+/// A request the side-row wall cannot read, or the read of base custody's
+/// values.
+pub(super) fn meets(
+    receipt: &CodeRunReplayRecord,
+    made: &CodeRunBridgeCall,
+    known: &CompareKnown<'_>,
+) -> Result<bool> {
+    if standing_refusal(receipt).is_some() {
+        return Ok(false);
+    }
+    let Some(kept) = receipt.bridge_calls.first() else {
+        return Ok(false);
+    };
+    let same_call = row_identity(kept) == row_identity(made)
+        || (made.effect == SelfEffect::AgentVerb && held_input_meets(kept, &made.request, known)?);
+    Ok(same_call && (never_ran(kept) || answered_as_kept(kept, made)))
 }
 
 /// The mark a write's receipt keeps when it never ran: a verb hook stopped it
@@ -261,9 +289,71 @@ pub(super) fn row_identity(row: &CodeRunBridgeCall) -> Option<Vec<u8>> {
 /// Whether a write's receipt row recorded this live call: the row's input,
 /// read back from the JSON text the receipt keeps, has the live input's
 /// identity. A float in the input must read back exactly, so the crate's
-/// serde_json parses with `float_roundtrip` (census L1-06).
-pub(super) fn records_call(row: &CodeRunBridgeCall, call: &SelfAgentVerbCall) -> bool {
-    row_identity(row) == Some(call_identity(call.verb.as_str(), &call.input))
+/// serde_json parses with `float_roundtrip` (census L1-06). The side-row
+/// wall stored the row, so a live input it placed a handle in meets the row
+/// in the wall's planned form ([`held_input_meets`]).
+///
+/// # Errors
+///
+/// A request the side-row wall cannot read, or the read of base custody's
+/// values.
+pub(super) fn records_call(
+    row: &CodeRunBridgeCall,
+    call: &SelfAgentVerbCall,
+    known: &CompareKnown<'_>,
+) -> Result<bool> {
+    if row_identity(row) == Some(call_identity(call.verb.as_str(), &call.input)) {
+        return Ok(true);
+    }
+    let again = self_call_request_value(&SelfCall::AgentVerb(call.clone()))?;
+    held_input_meets(row, &again, known)
+}
+
+/// Whether `kept`, a live write row the side-row wall admitted, holds the
+/// verb call `offered` spells (FIX RECEIPT-RECORDS-CALL-HELD-INPUT). The wall
+/// placed each shaped secret, and each value base custody held, as a handle
+/// in the input text the row keeps, so the two are read as
+/// `admitted_from_known` reads a held row and a raw offer: each handle in
+/// `kept`, and each secret the plan places in `offered`, as the plan's one
+/// stand-in; once that misses, with each value base custody holds now, read
+/// through `known`, as the stand-in in `offered` too. The inputs are then
+/// compared by their identity, so their object keys may come in any order,
+/// as a receipt reads them. A row an erase took the words of, a custody
+/// value row (its input is a digest), and a row holding one value as written
+/// beside the handle of another (FIX-LIST [REPLAY-COMPARE-MIXED-ERA]) meet
+/// only by [`row_identity`].
+fn held_input_meets(
+    kept: &CodeRunBridgeCall,
+    offered: &rmpv::Value,
+    known: &CompareKnown<'_>,
+) -> Result<bool> {
+    let Some((verb, _)) = recorded_call(kept) else {
+        return Ok(false);
+    };
+    if crate::task_verb::sdk::CUSTODY_VALUE_ROWS.contains(&verb) {
+        return Ok(false);
+    }
+    let Some(held) = input_identity(&held_form(&kept.request)) else {
+        return Ok(false);
+    };
+    let offered_meets = |known: Option<Arc<KnownValues>>| -> Result<bool> {
+        Ok(input_identity(&admission_form(offered, known)?).as_ref() == Some(&held))
+    };
+    if offered_meets(None)? {
+        return Ok(true);
+    }
+    Ok(match known.get()? {
+        Some(known) => offered_meets(Some(known))?,
+        None => false,
+    })
+}
+
+/// The identity of the verb call `request` spells, its JSON input read back
+/// from its text. `None` for a request that spells no verb call, or whose
+/// input does not read as JSON.
+fn input_identity(request: &rmpv::Value) -> Option<Vec<u8>> {
+    let (verb, input) = request_call(request)?;
+    Some(call_identity(verb, &serde_json::from_str(input).ok()?))
 }
 
 /// Whether a write row carries the answer its receipt kept: a verb's answer,
@@ -303,7 +393,12 @@ pub(crate) fn recorded_call(row: &CodeRunBridgeCall) -> Option<(&str, &str)> {
     if row.effect != SelfEffect::AgentVerb {
         return None;
     }
-    let rmpv::Value::Map(fields) = &row.request else {
+    request_call(&row.request)
+}
+
+/// The verb name and JSON input a verb call's request spells.
+fn request_call(request: &rmpv::Value) -> Option<(&str, &str)> {
+    let rmpv::Value::Map(fields) = request else {
         return None;
     };
     let field = |name: &str| {

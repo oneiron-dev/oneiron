@@ -49,7 +49,7 @@ pub(crate) fn resumed_write_meets_recorded_row(
         0,
         0,
     )?;
-    Ok(records_call(&row, again))
+    records_call(&row, again, &CompareKnown::new(None))
 }
 
 /// Test door (FIX RECEIPT-RECORDS-CALL-HELD-INPUT): records `first` as the
@@ -83,7 +83,13 @@ pub(crate) fn resumed_write_meets_stored_receipt(
         .ok_or(Error::InvariantViolation("the stored receipt kept no row"))?;
     let kept_input = recorded_call(row).map_or_else(String::new, |(_, input)| input.to_owned());
     let made = CodeRunBridgeCall::record(0, &SelfCall::AgentVerb(again.clone()), &mark, 0, 0)?;
-    Ok((records_call(row, again), meets(&stored, &made), kept_input))
+    let vault_known = || vault.known_values_now();
+    let known = CompareKnown::new(Some(&vault_known));
+    Ok((
+        records_call(row, again, &known)?,
+        meets(&stored, &made, &known)?,
+        kept_input,
+    ))
 }
 
 impl HostSelfDispatcher<'_> {
@@ -404,15 +410,18 @@ impl HostSelfDispatcher<'_> {
         }
         // A receipt an erase took the request words of meets the write by
         // that request's identity alone, and answers with what it kept
-        // (FIX 6534): `response_erased` for an erased answer.
+        // (FIX 6534): `response_erased` for an erased answer. Either reads
+        // the values base custody holds, as the side-row wall stored the
+        // receipt (FIX RECEIPT-RECORDS-CALL-HELD-INPUT).
+        let base_known = || self.base_known_values();
+        let known = CompareKnown::new(Some(&base_known));
         let recorded = if row.request_erased() {
-            let base_known = || self.base_known_values();
             row.request_identity_is(
                 &self_call_request_value(&SelfCall::AgentVerb(call.clone()))?,
-                &CompareKnown::new(Some(&base_known)),
+                &known,
             )?
         } else {
-            records_call(row, &call)
+            records_call(row, &call, &known)?
         };
         if !recorded {
             return Err(Error::InvariantViolation(

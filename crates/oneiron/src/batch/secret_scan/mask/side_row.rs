@@ -709,8 +709,7 @@ pub(crate) fn admitted_from_known(
     if held == raw {
         return Ok(true);
     }
-    let mut held = held.clone();
-    stand_in_handles(&mut held);
+    let held = held_form(held);
     if held == planned_form(raw, None)?.0 {
         return Ok(true);
     }
@@ -718,6 +717,16 @@ pub(crate) fn admitted_from_known(
         Some(known) => held == planned_form(raw, Some(known))?.0,
         None => false,
     })
+}
+
+/// `held`, a value the wall may have masked, in the form
+/// [`admitted_from_known`] reads a held row in: each handle as the plan's one
+/// stand-in, and nothing else changed. A raw offer takes that form through
+/// [`admission_form`].
+pub(crate) fn held_form(held: &Value) -> Value {
+    let mut held = held.clone();
+    stand_in_handles(&mut held);
+    held
 }
 
 /// `value` as the replay plan places it: each secret the plan places, and
