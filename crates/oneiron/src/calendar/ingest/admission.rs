@@ -206,20 +206,25 @@ impl PollAdmission<'_> {
                 let reports = value.system == self.system
                     && only_uids.is_none_or(|uids| uids.contains(value.uid.as_str()))
                     && value.direction.is_inbound_bearing()
-                    && value.presence == CalendarPassportPresence::Live
                     && !present.contains(&(value.uid.as_str(), instance));
-                if !reports {
+                // A provider tombstone is this source's report of the UID
+                // cancelled, first seen now unless an earlier cancelled
+                // version or tombstone already dated it. An omission is no
+                // cancellation evidence and dates nothing, so a tombstone
+                // also dates a passport an omission already flipped absent.
+                let dates_cancel = absence_basis == CalendarStatusBasis::ImportedCancel
+                    && value.cancelled_since.is_none();
+                if !reports || (value.presence == CalendarPassportPresence::Absent && !dates_cancel)
+                {
                     continue;
                 }
                 let mut absent = value.clone();
-                absent.presence = CalendarPassportPresence::Absent;
-                absent.last_seen_at = self.now;
-                // A provider tombstone is this source's report of the UID
-                // cancelled, first seen now unless an earlier cancelled
-                // version already dated it; an omission is no cancellation
-                // evidence and dates nothing.
-                if absence_basis == CalendarStatusBasis::ImportedCancel {
-                    absent.cancelled_since = value.cancelled_since.or(Some(self.now));
+                if value.presence == CalendarPassportPresence::Live {
+                    absent.presence = CalendarPassportPresence::Absent;
+                    absent.last_seen_at = self.now;
+                }
+                if dates_cancel {
+                    absent.cancelled_since = Some(self.now);
                 }
                 // Absence carries no inbound content, so the screen body is
                 // empty — but the admission still crosses the hook and cites
@@ -576,9 +581,10 @@ impl PollAdmission<'_> {
     /// source's own absent written passports ([`names_written_calendar`]) is
     /// its first sighting. Only those count: an absence in another calendar,
     /// one a visitor can write, never dates the host's cancel. An omission
-    /// stamps no `cancelled_since`, since it is no cancellation evidence: a
-    /// tombstone of a passport an omission already flipped, or of an
-    /// Outbound passport, which never flips, is seen now.
+    /// stamps no `cancelled_since`, since it is no cancellation evidence; the
+    /// first tombstone of a passport an omission already flipped stamps it
+    /// then. A tombstone of an Outbound passport, which never flips, is seen
+    /// now.
     fn tombstone_seen_at(&self, event_ref: EntityId) -> Result<u64, CalendarError> {
         Ok(live_passports_for_event(self.vault, &event_ref)?
             .into_iter()
