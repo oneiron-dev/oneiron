@@ -11,7 +11,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | path | kind | bucket | pub surface | notable types | purpose |
 |---|---|---|---|---|---|
-| `src/legacy.rs` | src | s | 2 struct · 2 enum · 9 fn · 1 crate-vis | LegacyDigest, LegacyHash, LegacyPurpose, TagMode | The K door: a digest that main already stores or sends keeps its exact bytes |
+| `src/legacy.rs` | src | s | 2 struct · 2 enum · 10 fn · 1 crate-vis | LegacyDigest, LegacyHash, LegacyPurpose, TagMode | The K door: a digest that main already stores or sends keeps its exact bytes |
 | `src/lib.rs` | src | s | 5 struct · 20 fn · 1 const · 1 mod · 3 re-export · 1 crate-vis | ContentHash, ContentHasher, Fingerprint, Fingerprinter, Purpose | One fingerprint rule for engine digests (fable pass 22; PLAN-UC-04 stage 0) |
 | `src/purposes/agent.rs` | src | s | — | — | Purposes of agent dispatch (`crates/oneiron/src/agent_dispatch`) |
 | `src/purposes/archive.rs` | src | s | — | — | Purposes of the whole-vault archive (`oneiron` `batch::export`) |
@@ -22,6 +22,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/purposes/check_in.rs` | src | s | — | — | Purposes of a person's check-in effects (`oneiron` `check_in::effect`; ARCH-0082 #composing) |
 | `src/purposes/cluster.rs` | src | s | — | — | Purposes of claim clustering (`oneiron::cluster`, `crates/oneiron/src/memory/claim_cluster.rs`) |
 | `src/purposes/dreamer.rs` | src | s | — | — | Purposes of the Dreamer (`crates/oneiron/src/dreamer_consolidation`, `crates/oneiron/src/dreamer_promotion`… |
+| `src/purposes/dreamer_runner.rs` | src | s | — | — | Legacy dreamer-runner digests stored or compared by existing records |
 | `src/purposes/engine_executor.rs` | src | s | — | — | Purposes of the engine executor (`crates/oneiron/src/engine_executor`) |
 | `src/purposes/git_wire.rs` | src | s | — | — | Purposes of the git wire (`oneiron-store`'s `git_wire` and `crates/oneiron/src/git_wire`) |
 | `src/purposes/key_custody.rs` | src | s | — | — | Purposes of key custody (`crates/oneiron/src/store/key_custody`, with its store half in `oneiron-store`) |
