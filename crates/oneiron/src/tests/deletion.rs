@@ -515,6 +515,7 @@ fn delete_missing_id_is_strict_noop_for_every_reason() -> Result<()> {
                 existed: false,
                 receipt_id: None,
                 sweep_key: None,
+                turn_program_details: Vec::new(),
             },
             "{reason:?}: a fully-missing id must report missing()"
         );
@@ -588,7 +589,7 @@ fn headerful_delete_raced_to_nothing_emits_no_receipt_sweep_or_pt() -> Result<()
 
     let outcome = run_raced_delete(&vault, &id, DeleteReason::UserHardDelete, |wtxn| {
         // Erase the FULL delete scope the way a racing hard delete would.
-        crate::batch::deindex_entity(&vault.store, wtxn, &id)?;
+        crate::batch::deindex_entity(&crate::secret_custody::CustodyWrite::of(&vault), wtxn, &id)?;
         Ok(())
     })?;
 
@@ -793,7 +794,7 @@ fn raced_gdpr_delete_against_batch_delete_still_converges() -> Result<()> {
     // holds LMDB's write lock. Its commit then releases tombstone publication
     // followed by GDPR soft-erase and purge, both of which find no local scope.
     let outcome = run_raced_delete_rendezvous(&vault, &id, DeleteReason::GdprDelete, |wtxn| {
-        crate::batch::deindex_entity(&vault.store, wtxn, &id)?;
+        crate::batch::deindex_entity(&crate::secret_custody::CustodyWrite::of(&vault), wtxn, &id)?;
         Ok(())
     })?;
     let dt_marker = sync_state_value(&vault, &format!("dt:{}", id.to_hex()))?
@@ -855,7 +856,7 @@ fn deleting_record_retires_scope_stamp_even_for_same_id_same_bytes() -> Result<(
     // Generic deindex is intentionally used here: unlike hard delete it has no
     // permanent dt: marker, and a same-id same-body put can reveal a stale stamp.
     vault.with_write_txn(|txn| {
-        crate::batch::deindex_entity(&vault.store, txn, &id)?;
+        crate::batch::deindex_entity(&crate::secret_custody::CustodyWrite::of(&vault), txn, &id)?;
         Ok(())
     })?;
     assert!(vault.record_scope(&id)?.is_none());
@@ -864,7 +865,7 @@ fn deleting_record_retires_scope_stamp_even_for_same_id_same_bytes() -> Result<(
     // new stamp and would not exercise this identity-reuse boundary.
     vault
         .batch()
-        .put_replicated(&id, 1, test_time_range(10, 10), 20, raw)
+        .put_replicated(&id, 1, test_time_range(10, 10), 20, None, raw)
         .commit()?;
     assert_eq!(vault.get(&id)?.as_deref(), Some(raw.as_slice()));
     assert!(vault.record_scope(&id)?.is_none());

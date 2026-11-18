@@ -84,3 +84,6 @@ pub use release::{
 };
 pub(crate) use release::{released_item_blob, released_update};
 pub(crate) use rows::InboundRow;
+
+#[cfg(oneiron_test_support)]
+pub(crate) use self::documents::settlement::{approval_token_for_test, revision_hash_for_test};

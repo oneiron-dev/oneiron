@@ -763,6 +763,7 @@ fn terminal_index_rows_repair_matching_close_hooks() -> Result<()> {
                 vault.supersede_commitment(&instance, &parties.envelope, t1)?;
             }
             CommitmentStatus::Open => unreachable!("seed statuses are terminal"),
+            CommitmentStatus::Inert => unreachable!("seed statuses are terminal"),
         }
         assert!(!instance_rows(&vault, &instance)?.is_empty());
         instances.push((series, instance, terminal));

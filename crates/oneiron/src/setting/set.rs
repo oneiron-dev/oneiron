@@ -151,7 +151,8 @@ impl Vault {
     /// Changes one setting row in one write: the catalogue, the side-row wall on the value, the
     /// value's check, the move rule (DESIGN 1.5, stage 6.0) judged live in this write, the change
     /// row with the move's direction, and the key's hook. Once the write commits, an applied
-    /// change runs the key's `after_commit`.
+    /// change runs the key's `after_commit`. A key that names a write turn takes it before the
+    /// write opens and holds it until then.
     ///
     /// The move rule. The key's order gives the move's direction against the rows this write
     /// sees: on a key whose rows meet, a value row below the vault is judged against the row it
@@ -199,6 +200,15 @@ impl Vault {
         caller: SettingCaller<'_>,
         request: SetSetting,
     ) -> Result<SetSettingOutcome> {
+        // Taken before the write opens, never inside it: a holder of the turn may be waiting on
+        // the writer. An unknown key takes none; the write refuses it.
+        let _turn = match spec_named(&request.key)
+            .ok()
+            .and_then(|spec| spec.write_turn)
+        {
+            Some(turn) => Some(turn(self)?),
+            None => None,
+        };
         self.with_write_txn_grouped_after_commit(
             |txn| self.set_setting_in_txn(txn, caller, &request),
             |outcome| {
@@ -795,6 +805,7 @@ fn open_request_in_txn(
         &VerifiedChain::new(&NoAgentVerdict),
         now,
     )?;
+    super::ask::keep_ask_in_txn(vault, txn, &row.id, agent, change.key, change.value)?;
     Ok(SetSettingOutcome::Pending {
         check_in: row.id.to_hex(),
     })
@@ -840,7 +851,7 @@ fn spend_in_txn(
         )));
     }
     consume_pending_check_in_in_txn(vault, txn, id, &effect_digest(change, spend.replaced), now)?;
-    Ok(())
+    super::ask::drop_ask_in_txn(vault, txn, id)
 }
 
 /// Whether the yes in `state` came from someone who could make `spend`'s change themselves, read
