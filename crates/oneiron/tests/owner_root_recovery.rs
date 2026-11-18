@@ -23,6 +23,10 @@
 //! `another_owners_key_is_never_this_owners_lost_key` is red on the mutation
 //! branch that drops the `listed.owner == actor` term in `lost_keys_in_txn`.
 //!
+//! The owner's lost passkey is one of their owner keys (REVIEW-9487 P1 3):
+//! `the_root_key_revokes_the_owners_lost_passkey` is red at #9487's head
+//! 9d3058458733, whose lost-key check read device keys only.
+//!
 //! Red on the anchor top 6166098690ef: the file does not compile there (no
 //! `recover_owner_root`, `RootMaterial`, `RootSuccessor`,
 //! `RecoveryAuthoritySigner::from_released_seed` or the test door
@@ -34,14 +38,15 @@
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
+use base64::Engine as _;
 use ed25519_dalek::{Signer, SigningKey};
 use oneiron::authority::{
     AUTHORITY_LOG_SCHEMA_VERSION, ActAuthority, ActSurface, ActorBindingStatus,
     AuthorityAttestation, AuthorityEntryHash, AuthorityKey, AuthorityLogEntry, AuthorityOp,
     AuthoritySignature, AuthorityTier, DeviceAuthority, HOST_ISSUER_SEED_BYTES, HostSlipIssuer,
-    MachineRole, OwnerKeyEnrollment, ROLE_OWNER, RootMaterial, RootRecovery, RootSuccessor,
-    authority_entry_hash, authority_log_entity_id_from_hash, authority_transcript,
-    decode_authority_log_entry_body, encode_authority_log_entry_body,
+    MachineRole, OwnerKeyEnrollment, OwnerPasskeyEnrollment, ROLE_OWNER, RootMaterial,
+    RootRecovery, RootSuccessor, authority_entry_hash, authority_log_entity_id_from_hash,
+    authority_transcript, decode_authority_log_entry_body, encode_authority_log_entry_body,
 };
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::federation::{FederationGrantRole, InitialSharedMember};
@@ -58,6 +63,9 @@ use oneiron::world_keys::{RecoveryAuthoritySigner, RecoveryRootSeed};
 use oneiron::{
     EdgeActorClass, EntityId, ErrorKind, HostingPrivacyPosture, TimeRange, Vault, VaultConfig,
 };
+use p256::ecdsa::signature::Signer as _;
+use p256::ecdsa::{Signature as P256Signature, SigningKey as P256SigningKey};
+use sha2::{Digest as _, Sha256};
 
 /// The seed of the owner's device key that is lost.
 const LOST_KEY_SEED: u8 = 21;
@@ -910,7 +918,7 @@ fn another_owners_key_is_never_this_owners_lost_key() {
     assert!(
         refused
             .to_string()
-            .contains("a key named as lost is not a live owner signing key"),
+            .contains("a key named as lost is not a live owner"),
         "the lost-key refusal: {refused}"
     );
     assert_eq!(
@@ -933,4 +941,92 @@ fn another_owners_key_is_never_this_owners_lost_key() {
         .expect("guard: the same recovery naming no lost key vouches");
     assert!(fixture.live(&root_key), "the root's key stays live");
     assert!(fixture.live(&co_owners), "the co-Owner's key is still live");
+}
+
+/// The owner's passkey, as a platform authenticator holds it: a software
+/// P-256 key.
+fn passkey() -> P256SigningKey {
+    P256SigningKey::from_slice(&[0x5A; 32]).expect("a P-256 scalar")
+}
+
+/// The passkey's point as `getPublicKey()` hands it: uncompressed SEC1.
+fn passkey_point() -> Vec<u8> {
+    passkey()
+        .verifying_key()
+        .to_encoded_point(false)
+        .as_bytes()
+        .to_vec()
+}
+
+/// The passkey's key as the roster names it: compressed SEC1.
+fn passkey_roster_key() -> AuthorityKey {
+    AuthorityKey::P256(
+        passkey()
+            .verifying_key()
+            .to_encoded_point(true)
+            .as_bytes()
+            .to_vec(),
+    )
+}
+
+/// The passkey's enrolment for `challenge`: what `navigator.credentials.get`
+/// returns at the test origin, user present and verified (authenticator
+/// data, the client data JSON, and the DER signature over the one and
+/// SHA-256 of the other), with the credential and its point.
+fn passkey_enrollment(challenge: &[u8]) -> OwnerPasskeyEnrollment {
+    let mut authenticator_data = Sha256::digest(b"oneiron.test").to_vec();
+    authenticator_data.push(0x05);
+    authenticator_data.extend_from_slice(&[0; 4]);
+    let client_data_json = format!(
+        r#"{{"type":"webauthn.get","challenge":"{}","origin":"https://oneiron.test","crossOrigin":false}}"#,
+        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(challenge)
+    )
+    .into_bytes();
+    let mut signed = authenticator_data.clone();
+    signed.extend_from_slice(&Sha256::digest(&client_data_json));
+    let signature: P256Signature = passkey().sign(&signed);
+    OwnerPasskeyEnrollment {
+        credential_id: b"passkey-credential-0001".to_vec(),
+        public_key: passkey_point(),
+        authenticator_data,
+        client_data_json,
+        signature: signature.to_der().as_bytes().to_vec(),
+    }
+}
+
+/// REVIEW-9487 P1 3: the owner's lost passkey is one of their owner keys.
+/// The root's key revokes it as it revokes a lost device key, in the same
+/// transaction that enrols the new key, and the custodial root stays live.
+#[test]
+fn the_root_key_revokes_the_owners_lost_passkey() {
+    let fixture = fixture(HostingPrivacyPosture::Hosted);
+    let root_key = fixture.enrol_root_key();
+    let challenge = fixture
+        .vault
+        .owner_passkey_enrollment_challenge_as(&fixture.authority(), &passkey_point())
+        .expect("the passkey's enrolment challenge");
+    fixture
+        .vault
+        .enrol_owner_passkey_as_host(
+            &fixture.authority(),
+            &passkey_enrollment(&challenge),
+            &fixture.issuer,
+        )
+        .expect("the owner enrols a passkey");
+    let lost = passkey_roster_key();
+    assert!(
+        fixture.live(&lost),
+        "guard: the owner's passkey is a live owner key"
+    );
+    let new_key = SigningKey::from_bytes(&[NEW_KEY_SEED; 32]);
+
+    let answer = fixture
+        .recover(
+            fixture.kit(),
+            RootSuccessor::Device(fixture.enrollment(&new_key)),
+            std::slice::from_ref(&lost),
+        )
+        .expect("the root's key revokes the owner's lost passkey");
+
+    assert_vouched(&fixture, answer, &root_key, &key_of(&new_key), &lost);
 }
