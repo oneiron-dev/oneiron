@@ -25,6 +25,8 @@ const ROOTS: SideTable<EntityId, Root, Named> =
 pub(super) mod bridge;
 pub(crate) use bridge::erase_source_bridges_in_txn;
 mod work;
+#[cfg(oneiron_test_support)]
+pub(crate) use self::bridge::judgement_digest_for_test;
 pub(crate) use work::{frontier_frozen, pin_frozen};
 
 pub(crate) const ROOT_BRIDGE_ATTEMPT_TYPE: &str = bridge::ATTEMPT;
