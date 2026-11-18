@@ -300,17 +300,18 @@ fn a_rooms_erased_call_made_again_with_the_passphrase_it_held_meets_its_row() ->
 }
 
 /// The agent is gone before the room's run puts its record: the room's put
-/// fence erases the call in its writer. The call made again with the
-/// passphrase it held meets the row; another passphrase custody holds is
-/// another call. Red on the base and at the first fix (3802475905d): the
-/// fence kept the stand-in identity alone, and the other passphrase met.
+/// fence erases the call in its writer, before the wall reads it. The call
+/// made again with the key it held meets the row; another key of the same
+/// shape, one custody holds or one it holds not, is another call. Red on
+/// the base and at the first fix (3802475905d): the fence kept the stand-in
+/// identity alone, where every key of that shape reads as the stand-in.
 #[test]
 fn a_rooms_call_put_after_its_agent_is_gone_meets_only_a_call_naming_its_records() -> TestResult {
     let (_directory, vault) = vault()?;
     let session = vault
         .off_record_session_vault()
         .enter("sess-erased-identity-fence", OffRecordBackendClass::Local)?;
-    let call = store_note_call_in_room(&vault, &session, &words(HELD_PASSPHRASE), true)?;
+    let call = store_note_call_in_room(&vault, &session, &words(FIRST_SHAPED_KEY), true)?;
     assert!(
         room_stored_call_erased(&session, call[1])?,
         "the room's put fence erases the call of a gone agent"
@@ -319,15 +320,14 @@ fn a_rooms_call_put_after_its_agent_is_gone_meets_only_a_call_naming_its_records
         &vault,
         &session,
         call,
-        &words(HELD_PASSPHRASE),
+        &words(FIRST_SHAPED_KEY),
         true
     )?);
-    assert!(!room_stored_call_is(
-        &vault,
-        &session,
-        call,
-        &words(OTHER_HELD_PASSPHRASE),
-        true
-    )?);
+    for other in [SECOND_SHAPED_KEY, UNHELD_SHAPED_KEY] {
+        assert!(
+            !room_stored_call_is(&vault, &session, call, &words(other), true)?,
+            "{other} is another call"
+        );
+    }
     Ok(())
 }
