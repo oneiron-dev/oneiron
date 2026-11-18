@@ -285,7 +285,8 @@ impl ScopedRead<'_> {
             })?;
         self.charge_served(counted);
         Ok(ScopedReadResult {
-            value: self.pills_naming_readable_reactors_in(&rtxn, &admission, value)?,
+            // PROOF RED (scratch, never merged): the reactor-id gate is off.
+            value,
             receipt: admission.receipt,
         })
     }
@@ -329,9 +330,9 @@ impl ScopedRead<'_> {
     ) -> Result<Option<EntityId>> {
         let rtxn = self.grant_read_txn()?;
         let admission = self.reaction_admission_in(&rtxn, disclosure)?;
-        Ok(self
-            .row_admitted_in(&rtxn, &admission, &signal.by)?
-            .then_some(signal.by))
+        // PROOF RED (scratch, never merged): the reactor-id gate is off.
+        let _ = (&rtxn, &admission);
+        Ok(Some(signal.by))
     }
 
     /// `pills` with each pill's `by` cut to the reactors whose PERSON row
@@ -378,9 +379,8 @@ impl ScopedRead<'_> {
         let every_status = self.at_every_claim_status()?;
         let admission = self.reaction_admission_in(&rtxn, None)?;
         let claims = every_status.reaction_admission_in(&rtxn, None)?;
-        let value = if self.row_admitted_in(&rtxn, &admission, &message)?
-            && self.row_admitted_in(&rtxn, &admission, &by)?
-        {
+        // PROOF RED (scratch, never merged): the reactor-id gate is off.
+        let value = if self.row_admitted_in(&rtxn, &admission, &message)? {
             self.vault
                 .reaction_history_in(&rtxn, message, by, glyph, |row| {
                     every_status.row_admitted_in(&rtxn, &claims, &row.id)
