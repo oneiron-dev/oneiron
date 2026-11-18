@@ -119,7 +119,6 @@ pub(crate) const SIDE_TABLE_DISPOSITIONS: &[(&str, ArchiveSideDisposition)] = &[
     ("HOOKS_GRANT", ArchiveSideDisposition::Retained),
     ("HOOKS_RECEIPT", ArchiveSideDisposition::Retained),
     ("HOOKS_REGEN_RECEIPT", ArchiveSideDisposition::Retained),
-    ("HOUSEKEEPING_WAKE", ArchiveSideDisposition::Retained),
     ("HOUSE_LINK_RECEIPT", ArchiveSideDisposition::Retained),
     ("INQUIRY_RECEIPT", ArchiveSideDisposition::Retained),
     ("LEARNING_SETTING", ArchiveSideDisposition::Retained),

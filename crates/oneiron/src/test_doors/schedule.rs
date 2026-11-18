@@ -84,7 +84,7 @@ fn vault_of(vault: &Vault) -> PathBuf {
 /// Every run of a stage 5a-1 test job, by vault and job code, in run order.
 static SEEN: Mutex<BTreeMap<(PathBuf, &'static str), Vec<SeenRun>>> = Mutex::new(BTreeMap::new());
 
-/// The `due_by` the cadence job answers, by vault.
+/// The `due_by` the cadence job and the one-time job answer, by vault.
 static CADENCE_DUE_BY: Mutex<BTreeMap<PathBuf, u64>> = Mutex::new(BTreeMap::new());
 
 /// A deadline the next run of a sweep notes while it runs, by vault and sweep.
@@ -115,7 +115,8 @@ pub fn seen(vault: &Vault, job: &str) -> Vec<SeenRun> {
         .collect()
 }
 
-/// The cadence job in `vault` answers `due_by` from its next run on.
+/// The cadence job and the one-time job (`test.due_by`) in `vault` answer `due_by` from their
+/// next run on.
 pub fn set_cadence_due_by(vault: &Vault, due_by: Option<u64>) {
     let mut due = CADENCE_DUE_BY
         .lock()
@@ -307,6 +308,21 @@ pub static TEST_ONCE: JobSpec = JobSpec {
     at_open: false,
     once_per_pass: true,
     run: run_bounded,
+};
+
+/// A one-time job the engine arms (`Trigger::At`); each run is seen and answers the `due_by`
+/// [`set_cadence_due_by`] set (stage 5b-1).
+pub static TEST_DUE_BY: JobSpec = JobSpec {
+    code: "test.due_by",
+    when: When::PerArming,
+    arm_by: ArmBy::Engine,
+    late: Late::Run,
+    retry_first_secs: RETRY_FIRST_SECS,
+    retry_cap_secs: None,
+    wakes_host: false,
+    at_open: false,
+    once_per_pass: false,
+    run: run_cadence,
 };
 
 /// The next run of `sweep` in `vault` notes a deadline at `at` while it runs, after it listed
@@ -513,7 +529,13 @@ fn run_rearm(vault: &Vault, armed: &Armed, _pass: &JobPass<'_>) -> Result<JobRes
     if count(armed) == 1 {
         let at = armed.due_at.saturating_add(TEST_REARM_AFTER_SECS);
         vault.with_write_txn_grouped(|txn| {
-            crate::schedule::arm_in_txn(vault, txn, &TEST_REARM, armed.subject, Trigger::At { at })
+            crate::schedule::arm_in_txn(
+                &vault.store,
+                txn,
+                &TEST_REARM,
+                armed.subject,
+                Trigger::At { at },
+            )
         })?;
     }
     Ok(JobResult::of(Ran::Done))

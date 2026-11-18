@@ -1,159 +1,83 @@
-//! Wake deadlines: when a retirement sweep next has work, read without a scan.
+//! Wake deadlines: when a retirement sweep next has work.
 //!
 //! A door that starts a retirement deadline notes it here in its own write
 //! transaction: a secret lease's expiry, a voice print's retention deadline, a
-//! critical confirm's window. Rows are keyed by sweep, deadline and a fresh id
-//! per note, so a sweep's earliest deadline is the first row under its tag and
-//! two notes of the same deadline are two rows. The note makes the sweep's
-//! job due by its deadline, and a vault that is not running wakes for it. A
-//! run that covered its rows removes exactly the rows it read before it
-//! started; a row noted since stays for the next run. A deadline that moved or
-//! was settled early leaves a row that costs one run that finds nothing.
+//! critical confirm's window. Each note arms one row of the sweep's deadline
+//! job, a one-time job at the deadline about a fresh id, so two notes of the
+//! same deadline are two rows, and the schedule's due index is the only index
+//! of them (DESIGN 15-setting-primitive, stage 5b). The note also makes the
+//! sweep's job due by its deadline. A run that covered deadlines serves
+//! exactly the rows it listed before it started, and the write that records
+//! the run disarms them; a row noted since stays for the next run. A row whose
+//! time comes before a run covered it runs: it makes the sweep due and waits
+//! for the run that covers it. A deadline that moved or was settled early
+//! leaves a row that costs one run that finds nothing.
 //!
 //! Live-body edits also note the annotation follow sweep as due for the next
-//! running-host pass. That sweep does not wake a stopped vault.
+//! running-host pass. That sweep's deadlines do not wake a stopped vault.
 
-use heed::{RoTxn, RwTxn};
+use heed::RwTxn;
 
-use crate::batch::export::RetainedSideHeldBackReason;
-use crate::batch::export::archive_side_install::{
-    ArchivedSideRowOutcome, decode_archived_row, install_archived_row,
-};
-use crate::batch::export::{ArchiveRetainedSideRow, OwnerArchiveRestorePermit};
+use crate::EntityId;
+use crate::Vault;
 use crate::error::Result;
-use crate::side_table::{self, Raw, SideTable};
+use crate::housekeeping::jobs::{deadline_job, sweep_due_by_in_txn};
+use crate::schedule::Trigger;
 use crate::store::Store;
 use crate::store::housekeeping_schedule::HousekeepingSweep;
-use crate::{EntityId, Vault};
 
-type WakeKey = ([u8; 1], u64, EntityId);
-
-const WAKE: SideTable<WakeKey, (), Raw> = SideTable::new(&side_table::HOUSEKEEPING_WAKE);
-
-/// Rows one covering run removes at most; the rest go with the next run.
+/// Deadlines one covering run serves at most. The rest run as deadlines no run
+/// covered, and each makes the sweep due once more: about one more run per this
+/// many rows.
 const CLEAR_LIMIT: usize = 4096;
 
-/// The sweeps whose noted deadlines wake a stopped vault. The erasure sweep
-/// needs no rows: an obligation waiting is the first `h:` row.
-pub(crate) const WAKE_SWEEPS: [HousekeepingSweep; 4] = [
-    HousekeepingSweep::SecretLeaseExpiry,
-    HousekeepingSweep::CriticalConfirmExpiry,
-    HousekeepingSweep::VoicePrintRetention,
-    HousekeepingSweep::SharedActMaturity,
-];
-
-fn tag(sweep: HousekeepingSweep) -> Option<[u8; 1]> {
-    match sweep {
-        HousekeepingSweep::SecretLeaseExpiry => Some([1]),
-        HousekeepingSweep::CriticalConfirmExpiry => Some([2]),
-        HousekeepingSweep::VoicePrintRetention => Some([3]),
-        HousekeepingSweep::SharedActMaturity => Some([4]),
-        HousekeepingSweep::AnnotationBodyAnchors => Some([5]),
-        _ => None,
-    }
-}
-
 /// Notes that `sweep` has work due at `at`, in the caller's transaction, so
-/// the note commits with the deadline it records, and makes the sweep's job
-/// due by then unless it is backing off (DESIGN 15-setting-primitive, stage
-/// 5a). A sweep without notes notes nothing.
+/// the note commits with the deadline it records: it arms a row of the sweep's
+/// deadline job at `at`, and makes the sweep's job due by then unless it is
+/// backing off. A sweep without deadlines notes nothing.
 pub(crate) fn note_wake_in_txn(
     store: &Store,
     txn: &mut RwTxn<'_>,
     sweep: HousekeepingSweep,
     at: u64,
 ) -> Result<()> {
-    let Some(tag) = tag(sweep) else {
+    let Some(deadline) = deadline_job(sweep) else {
         return Ok(());
     };
-    WAKE.put(store, txn, &(tag, at, store.clock.entity_id()?), &())?;
-    crate::housekeeping::jobs::sweep_due_by_in_txn(store, txn, sweep, at)
+    let id = store.clock.entity_id()?;
+    crate::schedule::arm_in_txn(store, txn, deadline, Some(id), Trigger::At { at })?;
+    sweep_due_by_in_txn(store, txn, sweep, at)
 }
 
-/// The earliest deadline noted for `sweep`.
-pub(crate) fn earliest_in_txn(
-    store: &Store,
-    txn: &RoTxn<'_>,
+/// The deadlines of `sweep` due by `now`, as they stand before a run starting
+/// now: each one's id and time.
+pub(crate) fn due_by(
+    vault: &Vault,
     sweep: HousekeepingSweep,
-) -> Result<Option<u64>> {
-    let Some(tag) = tag(sweep) else {
-        return Ok(None);
-    };
-    let mut rows = WAKE.iter_from(store, txn, &tag)?;
-    Ok(rows.next().transpose()?.map(|((_, at, _), ())| at))
-}
-
-/// The rows of `sweep` due by `now`, as they stand before a run starting now.
-pub(crate) fn due_by(vault: &Vault, sweep: HousekeepingSweep, now: u64) -> Result<Vec<WakeKey>> {
-    let Some(tag) = tag(sweep) else {
+    now: u64,
+) -> Result<Vec<(EntityId, u64)>> {
+    let Some(deadline) = deadline_job(sweep) else {
         return Ok(Vec::new());
     };
     let txn = vault.store.env.read_txn()?;
-    let mut due = Vec::new();
-    for row in WAKE.iter_from(&vault.store, &txn, &tag)? {
-        let (key, ()) = row?;
-        if key.1 > now || due.len() == CLEAR_LIMIT {
-            break;
-        }
-        due.push(key);
-    }
-    Ok(due)
+    crate::schedule::deadlines_in_txn(&vault.store, &txn, deadline.code, now, CLEAR_LIMIT)
 }
 
-/// Removes the rows a covering run read before it started.
-pub(crate) fn clear(vault: &Vault, covered: &[WakeKey]) -> Result<()> {
-    if covered.is_empty() {
-        return Ok(());
-    }
-    let mut txn = vault.store.env.write_txn()?;
-    for key in covered {
-        WAKE.delete(&vault.store, &mut txn, key)?;
-    }
-    txn.commit()?;
-    Ok(())
-}
-
-/// The sweep whose notes carry `tag`.
-fn sweep_of(tag: [u8; 1]) -> Option<HousekeepingSweep> {
-    match tag {
-        [1] => Some(HousekeepingSweep::SecretLeaseExpiry),
-        [2] => Some(HousekeepingSweep::CriticalConfirmExpiry),
-        [3] => Some(HousekeepingSweep::VoicePrintRetention),
-        [4] => Some(HousekeepingSweep::SharedActMaturity),
-        [5] => Some(HousekeepingSweep::AnnotationBodyAnchors),
-        _ => None,
-    }
-}
-
-/// Lands archived wake notes with recognized sweep tags, holding back the rest. A note it
-/// installs makes its sweep's job due by its deadline in the same write, as a live note does.
-pub(crate) fn land_archived_housekeeping_wake_rows_in_txn(
-    vault: &Vault,
-    txn: &mut RwTxn<'_>,
-    permit: &OwnerArchiveRestorePermit,
-    rows: &[ArchiveRetainedSideRow],
-) -> Result<Vec<ArchivedSideRowOutcome>> {
-    let mut outcomes = Vec::with_capacity(rows.len());
-    for row in rows {
-        let outcome = match decode_archived_row(&WAKE, row) {
-            Err(reason) => ArchivedSideRowOutcome::HeldBack(reason),
-            Ok((key, ())) => match sweep_of(key.0) {
-                None => ArchivedSideRowOutcome::HeldBack(RetainedSideHeldBackReason::InvalidValue),
-                Some(sweep) => {
-                    let outcome = install_archived_row(&WAKE, vault, txn, permit, &key, row)?;
-                    if matches!(outcome, ArchivedSideRowOutcome::Installed) {
-                        crate::housekeeping::jobs::sweep_due_by_in_txn(
-                            &vault.store,
-                            txn,
-                            sweep,
-                            key.1,
-                        )?;
-                    }
-                    outcome
-                }
-            },
-        };
-        outcomes.push(outcome);
-    }
-    Ok(outcomes)
+/// The deadlines of `sweep` that a run which ended done served, out of those it
+/// listed before it started: each one due by `covered_until`, the time from
+/// which its walk saw everything, when that is not the run's start. The write
+/// that records the run disarms them.
+pub(crate) fn served(
+    sweep: HousekeepingSweep,
+    listed: Vec<(EntityId, u64)>,
+    covered_until: Option<u64>,
+) -> Vec<(&'static str, EntityId)> {
+    let Some(deadline) = deadline_job(sweep) else {
+        return Vec::new();
+    };
+    listed
+        .into_iter()
+        .filter(|&(_, at)| covered_until.is_none_or(|until| at <= until))
+        .map(|(id, _)| (deadline.code, id))
+        .collect()
 }
