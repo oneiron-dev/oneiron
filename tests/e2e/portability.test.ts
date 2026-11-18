@@ -210,8 +210,8 @@ suite.test(test, "PORTABILITY-06", "Encrypted backup and wrong-key refusal shoul
   redactor.add(key); redactor.add(wrongKey);
   expect(wrongKey === key).toBe(false);
   const credential = "portability-fixture-passkey"; // A label, not secret key material.
+  // A diary receipt_ref is a `put:` write marker, not a gate-ledger receipt: expectDiary reads the entry back.
   const saved = await engine.client.call("self.memory.diary", { content: note });
-  await engine.awaitReceipt(saved.receipt_ref);
   const artifact = await engine.client.call("vault.artifacts.create", {
     name: facts.attachment.name, media_type: facts.attachment.mediaType,
     content_base64: Buffer.from(blob).toString("base64"),
@@ -235,7 +235,8 @@ suite.test(test, "PORTABILITY-06", "Encrypted backup and wrong-key refusal shoul
   // This later, acknowledged write distinguishes refusal from an unnoticed
   // replacement by the older backup. No private storage inspection is needed.
   const later = await engine.client.call("self.memory.diary", { content: facts.owner.afterBackup });
-  await engine.awaitReceipt(later.receipt_ref);
+  expect((await engine.client.call("vault.get", { entity_ref: later.entry_id })).value?.body)
+    .toMatchObject({ markdown: facts.owner.afterBackup });
   await stopForOwnerCli(engine);
   const unlockArgs = ["--unlock", "passkey", "--credential", credential, "--trust", trustFile];
   const refused = await engine.cli.run([
