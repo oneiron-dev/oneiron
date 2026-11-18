@@ -126,10 +126,19 @@ pub type OnCommitted = fn(&Vault);
 
 /// The turn a key's change takes before its write opens, held until the write and its
 /// `after_commit` are done: for a key whose hook must not land while another holder of that turn
-/// runs several writes. [`Vault::set_setting`] takes it; a change made in a caller's own write
-/// (`Vault::set_setting_in_txn`) does not, since waiting for a turn inside a write could wait on
-/// a holder that waits on the writer. Such a key is set through `set_setting` alone.
-pub type WriteTurn = fn(&Vault) -> Result<Box<dyn std::any::Any>>;
+/// runs several writes. [`Vault::set_setting`] takes it, and so does the owner's archive restore,
+/// which can install a row of any key through its hook (`archive_restore::take_write_turns`). A
+/// change made in a caller's own write (`Vault::set_setting_in_txn`) takes none, since waiting
+/// for a turn inside a write could wait on a holder that waits on the writer. Such a key is set
+/// through those two doors alone.
+#[derive(Clone, Copy)]
+pub struct WriteTurn {
+    /// Names the turn. Keys that take one turn name it alike, so a write that can change several
+    /// of them takes it once.
+    pub name: &'static str,
+    /// Waits for, then holds, the turn, until the returned guard drops.
+    pub take: fn(&Vault) -> Result<Box<dyn std::any::Any>>,
+}
 
 /// One catalogue row: everything the engine knows about a key. Data, not code.
 #[derive(Clone, Copy)]

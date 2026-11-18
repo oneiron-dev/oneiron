@@ -13,20 +13,22 @@
 //! seat ref that is never installed twice, a route the manifest in force admits, a feed's poll
 //! chain). An absent row of such a key installs through the hook, as a change with no prior,
 //! inside a savepoint: a refusal rolls the row back and its envelope stays retained. The effect
-//! starts from now and catches nothing up (ARCHIVE-RESTORE-LIVE = B).
+//! starts from now and catches nothing up (ARCHIVE-RESTORE-LIVE = B). The restore takes every
+//! key's write turn before its writer opens ([`take_write_turns`]), so no hooked row lands inside
+//! another holder's run, as no set of that key does.
 //!
 //! The change history installs at absent sequences, and the counter never goes back: it ends at
 //! the highest of the live counter, the archived counter, every landed change's sequence and
 //! every landed row's revision, so a row's revision still only grows and no sequence is handed
 //! out twice.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use oneiron_setting_contract::RowKey;
 
 use super::change::{CHANGE_NEXT, CHANGES, SettingChange};
 use super::read::{CONTENT_ROWS, ROWS, StoredRow, table_of};
-use super::{OnChange, OnCommitted, SettingMode, SettingSpec, spec_named};
+use super::{OnChange, OnCommitted, SettingMode, SettingSpec, WriteTurn, catalogue, spec_named};
 use crate::Vault;
 use crate::batch::export::archive_side_install::{
     ArchivedSideRowOutcome, decode_archived_row, install_archived_row,
@@ -176,6 +178,23 @@ pub(crate) fn land_archived_setting_rows_in_txn(
             ))
         })
         .collect()
+}
+
+/// Takes every write turn the catalogue names, each once and in name order, for the owner's
+/// restore to hold from before its writer opens until the wakes after its commit are done, as
+/// [`Vault::set_setting`] holds one key's: the restore can install an absent row of any key
+/// through its hook, and which rows land is known only inside its writer.
+///
+/// # Errors
+///
+/// A turn's refusal: the calendar admission turn refuses a thread that already holds it.
+pub(crate) fn take_write_turns(vault: &Vault) -> Result<Vec<Box<dyn std::any::Any>>> {
+    let turns: BTreeMap<&str, WriteTurn> = catalogue()
+        .into_iter()
+        .filter_map(|spec| spec.write_turn)
+        .map(|turn| (turn.name, turn))
+        .collect();
+    turns.values().map(|turn| (turn.take)(vault)).collect()
 }
 
 /// Lands the absent rows of keys with a change hook, in key order, and tries the refused ones

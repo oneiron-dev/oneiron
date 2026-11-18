@@ -6,12 +6,10 @@ use serde::{Deserialize, Serialize};
 
 use super::connectors::door::{
     CalendarImipTransportConfig, CalendarSeatSetup, is_seat_ref, seat_setup_changed_in_txn,
-    seat_setup_write_turn, validate_endpoint,
+    validate_endpoint,
 };
-use super::ingest::IcsFeedPollConfig;
-use super::ingest::feed_door::{
-    ics_feed_changed_in_txn, ics_feed_committed, ics_feed_write_turn, is_feed_system,
-};
+use super::ingest::feed_door::{ics_feed_changed_in_txn, ics_feed_committed, is_feed_system};
+use super::ingest::{ADMISSION_WRITE_TURN, IcsFeedPollConfig};
 use crate::error::{Error, Result};
 use crate::setting::{ItemDomain, Kind, SettingValue};
 
@@ -71,7 +69,7 @@ crate::setting::setting_keys! {
         kind: Kind::new(no_seat).strictest(no_seat),
         item: Some(ItemDomain { name: "calendar seat refs", admits: is_seat_ref }),
         on_change: Some(seat_setup_changed_in_txn),
-        write_turn: Some(seat_setup_write_turn),
+        write_turn: Some(ADMISSION_WRITE_TURN),
     };
     /// One ICS feed the owner installed, keyed by its system: the custody name of its URL and its
     /// poll cadence. It grants no import consent. An installed feed never changes: a new
@@ -85,6 +83,6 @@ crate::setting::setting_keys! {
         item: Some(ItemDomain { name: "ICS feed systems", admits: is_feed_system }),
         on_change: Some(ics_feed_changed_in_txn),
         after_commit: Some(ics_feed_committed),
-        write_turn: Some(ics_feed_write_turn),
+        write_turn: Some(ADMISSION_WRITE_TURN),
     };
 }

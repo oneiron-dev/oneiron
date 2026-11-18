@@ -13,8 +13,9 @@
 //! the owner's import and instance move, a queued property continuation, one
 //! connector change, and an outbound connector write's local completion,
 //! which can turn an inbound passport two-way. An ICS feed's or a CalDAV seat's
-//! setting change takes the turn too, before its write opens, so none lands
-//! inside a running admission. The turn is a lock per vault, by canonical
+//! setting change takes the turn too, before its write opens
+//! ([`ADMISSION_WRITE_TURN`]), an owner archive restore's among them, so none
+//! lands inside a running admission. The turn is a lock per vault, by canonical
 //! root, kept for the process's life as the writer-spend locks are. The
 //! serving process is the vault's only writer, so the turn is the whole
 //! boundary.
@@ -31,6 +32,7 @@ use std::path::PathBuf;
 use std::sync::{LazyLock, Mutex, MutexGuard, PoisonError};
 
 use crate::calendar::CalendarError;
+use crate::setting::WriteTurn;
 use crate::vault::Vault;
 
 /// The turn lock of each vault this process ever admitted calendar state into.
@@ -73,4 +75,28 @@ pub(in crate::calendar) fn admission_turn(vault: &Vault) -> Result<AdmissionTurn
     let guard = lock.lock().unwrap_or_else(PoisonError::into_inner);
     HOLDING.with(|holding| holding.set(true));
     Ok(AdmissionTurn { _guard: guard })
+}
+
+/// The calendar admission turn as the write turn of the `calendar.ics_feed` and
+/// `calendar.connector_seat` keys. A feed's uninstall then lands before an
+/// installed poll's check that the feed is installed (the poll writes nothing)
+/// or after its completion row (`feed_door::run_installed_poll`); a feed's or a
+/// seat's install lands before a complete upload's check that no source imports
+/// under its system (the upload is refused) or after the upload's last write
+/// (`door::import_ics_as_owner`), whose sweep would otherwise cancel the
+/// source's first events.
+pub(in crate::calendar) const ADMISSION_WRITE_TURN: WriteTurn = WriteTurn {
+    name: "calendar admission",
+    take: take_admission_write_turn,
+};
+
+/// Waits for, then holds, the turn for [`ADMISSION_WRITE_TURN`].
+///
+/// # Errors
+///
+/// `InvalidConfig` when this thread already holds a calendar admission turn.
+fn take_admission_write_turn(vault: &Vault) -> crate::Result<Box<dyn std::any::Any>> {
+    let turn =
+        admission_turn(vault).map_err(|error| crate::Error::InvalidConfig(error.to_string()))?;
+    Ok(Box::new(turn))
 }
