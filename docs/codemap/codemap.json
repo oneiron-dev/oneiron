@@ -50140,7 +50140,7 @@
      "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
      "surface": {
       "crate-vis": 29,
-      "mod": 222,
+      "mod": 223,
       "re-export": 106
      }
     },
@@ -53070,6 +53070,25 @@
      "purpose": "Common vault/actor helpers plus the scoped-MCP fixture shared by the 1690 and 1691 oracles",
      "surface": {
       "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "MachineCapacity",
+      "MachineCapacityWrite",
+      "MachineMeasurement",
+      "MachinePower"
+     ],
+     "path": "src/machine_capacity.rs",
+     "purpose": "What this install's machine measured itself to hold (CROSS-ARCH-0024 #my-network 05: \"Capacity is measured",
+     "surface": {
+      "const": 2,
+      "crate-vis": 2,
+      "enum": 2,
+      "fn": 5,
+      "struct": 2
      }
     },
     {
@@ -113752,6 +113771,13 @@
      "layout": "dir",
      "purpose": "M8 forward test oracle — authored by the path opener (ONE-1685) for the M8-A / M8-B remainder tickets"
     },
+    "machine_capacity": {
+     "files": 1,
+     "impl_vault": true,
+     "largest_src_bucket": "m",
+     "layout": "file",
+     "purpose": "What this install's machine measured itself to hold (CROSS-ARCH-0024 #my-network 05: \"Capacity is measured"
+    },
     "machine_destination": {
      "files": 1,
      "impl_vault": false,
@@ -114539,7 +114565,7 @@
    },
    "over_bar": 300,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 8118,
+   "source_files": 8119,
    "test_files": 1875
   },
   "oneiron-agent-runtime": {
@@ -123207,7 +123233,7 @@
      "purpose": "The process's physical-memory admission line for host and native work",
      "surface": {
       "enum": 1,
-      "fn": 17,
+      "fn": 18,
       "struct": 2
      }
     },
@@ -165754,7 +165780,7 @@
       "const": 1,
       "crate-vis": 2,
       "fn": 3,
-      "mod": 27,
+      "mod": 28,
       "re-export": 2
      }
     },
@@ -166364,7 +166390,7 @@
      "path": "src/machine.rs",
      "purpose": "What this machine has: cores, memory, descriptors, free disk",
      "surface": {
-      "crate-vis": 17
+      "crate-vis": 19
      }
     },
     {
@@ -166375,6 +166401,17 @@
      "purpose": "Organ-host machine-floor leases",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/machine_capacity.rs",
+     "purpose": "The host's capacity probe (CROSS-ARCH-0024 #my-network 05): serving measures this machine as it starts and…",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 2
      }
     },
     {
@@ -175228,6 +175265,14 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/machine_capacity.rs",
+     "purpose": "UNBUILT-14 PR 3a (CROSS-ARCH-0024 #my-network 01 and 05): this install measures its machine (cores, memory…",
+     "surface": {}
+    },
+    {
      "bucket": "L",
      "kind": "test",
      "notable": [],
@@ -176995,6 +177040,13 @@
      "layout": "file+dir",
      "purpose": "What this machine has: cores, memory, descriptors, free disk"
     },
+    "machine_capacity": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "The host's capacity probe (CROSS-ARCH-0024 #my-network 05): serving measures this machine as it starts and…"
+    },
     "mail_host": {
      "files": 1,
      "impl_vault": false,
@@ -177222,8 +177274,8 @@
    },
    "over_bar": 70,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 2016,
-   "test_files": 484
+   "source_files": 2017,
+   "test_files": 485
   },
   "oneiron-setting-contract": {
    "files": [
@@ -190103,6 +190155,7 @@
      "surface": {
       "enum": 1,
       "fn": 4,
+      "re-export": 1,
       "struct": 2
      }
     },
@@ -190113,7 +190166,8 @@
      "path": "src/lib/host_adapters/desktop/keep_awake/power.rs",
      "purpose": "The power source a PluggedIn wake assertion follows (FIX 9547)",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 5,
+      "fn": 1
      }
     },
     {
