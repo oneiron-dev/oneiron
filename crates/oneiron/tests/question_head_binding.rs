@@ -29,8 +29,8 @@ use oneiron::training_pack::{
     CheckpointUpload, ComputeChoice, DetectorCorpusRef, HeldOutResult, ProbeCase, ProbeMeasurement,
     QUESTION_LABEL_SCHEMA, QUESTION_RENDERER, QuestionExportCheck, QuestionTarget,
     QuestionTrialCase, SourcePin, SplitPolicy, SplitSide, SwapChoice, TrainOutput, TrainRequest,
-    TrainingConnector, TrainingDeclarationPin, TrainingFuture, TrainingPackDraft, TrainingPlan,
-    TrainingRun, TrainingState, TrainingTarget,
+    TrainingConnector, TrainingDeclarationPin, TrainingEvalInput, TrainingFuture,
+    TrainingPackDraft, TrainingPlan, TrainingRun, TrainingRunCaller, TrainingState, TrainingTarget,
 };
 use oneiron::{EdgeActorClass, EntityId, Result, Vault, VaultConfig, WriteActor};
 use serde_json::{Value, json};
@@ -276,33 +276,50 @@ fn prepare_question_run(
     Ok((run, connector))
 }
 
-async fn scored_question_run(
+/// A question run its owner authorized, with the connector and admission
+/// the host dispatches it under.
+fn authorized_question_run(
     vault: &Vault,
     owner: &AuthenticatedOwner,
     held_out_families: usize,
-) -> Result<TrainingRun> {
+) -> Result<(EntityId, PaidConnector, RunAdmission)> {
     let (prepared, connector) = prepare_question_run(vault, owner, held_out_families)?;
     let run = prepared.id;
+    let admission = question_admission(&prepared, &connector);
+    let authorized = vault.authorize_training_pack(
+        owner,
+        &run,
+        &prepared.spec_blake3,
+        TrainingDeclarationPin::of(&admission.declaration())?,
+        6,
+    )?;
+    assert_eq!(authorized.state, TrainingState::Authorized);
+    Ok((run, connector, admission))
+}
+
+/// A fresh admission of `run` on its connector's one-unit quote, as the
+/// host builds it from the run's pinned quote.
+fn question_admission(run: &TrainingRun, connector: &PaidConnector) -> RunAdmission {
     let declaration = RunDeclaration::declared(BudgetLine {
         limit_units: 1,
         reserve_units: 1,
         unit: connector.cost_unit.clone(),
     })
     .with_connector(connector.connector.clone());
-    let admission = RunAdmission::new(
-        prepared.admission_ref(),
-        declaration.clone(),
+    RunAdmission::new(
+        run.admission_ref(),
+        declaration,
         None,
         Arc::new(MemoryReceipts::default()),
-    );
-    let authorized = vault.authorize_training_pack(
-        owner,
-        &run,
-        &prepared.spec_blake3,
-        TrainingDeclarationPin::of(&declaration)?,
-        6,
-    )?;
-    assert_eq!(authorized.state, TrainingState::Authorized);
+    )
+}
+
+async fn scored_question_run(
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    held_out_families: usize,
+) -> Result<TrainingRun> {
+    let (run, connector, admission) = authorized_question_run(vault, owner, held_out_families)?;
     let returned = vault
         .execute_authorized_training_pack(&run, &admission, &connector, &FixtureTrainer)
         .await?;
@@ -800,5 +817,202 @@ async fn binds_on_a_won_trial() -> Result<()> {
         Some(binding.clone())
     );
     assert_eq!(vault.training_run_question_head(&run)?, Some(binding));
+    Ok(())
+}
+
+/// A held-out result for `input` on the returned `run`, as an evaluator
+/// that kept its verifier log reports it.
+fn held_out_result(
+    vault: &Vault,
+    run: &TrainingRun,
+    input: &TrainingEvalInput,
+) -> Result<HeldOutResult> {
+    let log = vault.keep_training_verifier_log_for_run(
+        &run.id,
+        "evaluation.json",
+        b"{\"passed\":true}",
+    )?;
+    Ok(HeldOutResult {
+        exposure: input.exposure.id,
+        checkpoint_blake3: input.checkpoint.content_hash()?,
+        held_out_blake3: *blake3::hash(&input.held_out_jsonl).as_bytes(),
+        harness: input.harness.clone(),
+        cases: run
+            .corpus
+            .rows
+            .iter()
+            .filter(|row| row.side == SplitSide::HeldOut)
+            .count() as u64,
+        metrics: BTreeMap::from([("agreement".to_owned(), 1.0)]),
+        calibration: Some(CalibrationResult {
+            temperature: 1.0,
+            brier_score: 0.0,
+            calibration_error: 0.0,
+        }),
+        verifier_logs: vec![log],
+        passed: true,
+    })
+}
+
+/// LEARN-GRANT = A on the execute path: each writer an execute starts (the
+/// dispatch, a hold, the evaluation claim) admits the execute's caller in its
+/// own snapshot. A caller it does not admit moves nothing; the owner's own
+/// caller dispatches and claims as the Coach does.
+#[test]
+fn an_execute_caller_the_writer_does_not_admit_moves_no_run() -> Result<()> {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("current-thread runtime")
+        .block_on(caller_the_writer_does_not_admit())
+}
+
+async fn caller_the_writer_does_not_admit() -> Result<()> {
+    let dir = tempfile::tempdir().expect("temporary vault");
+    let vault = Vault::open(dir.path(), VaultConfig::default())?;
+    let actor = vault.ensure_embedded_owner_actor().expect("embedded owner");
+    let owner = vault.authenticate_owner(actor, "principal:owner", true, GateDecisionId::now())?;
+    let (run, connector, admission) = authorized_question_run(&vault, &owner, 1)?;
+    // An agent no Grant names: the writers refuse it.
+    let stranger = TrainingRunCaller::new(EntityId::now(), EdgeActorClass::Agent);
+
+    let refused = refusal(
+        vault
+            .execute_authorized_training_pack_for(
+                &run,
+                &admission,
+                &connector,
+                &FixtureTrainer,
+                Some(stranger),
+            )
+            .await,
+    );
+    assert!(refused.contains("execute caller"), "{refused}");
+    let held = refusal(vault.hold_training_run_for(
+        &run,
+        "training.no_connector",
+        "fixture: no trainer adapter",
+        7,
+        Some(&stranger),
+    ));
+    assert!(held.contains("execute caller"), "{held}");
+    let authorized = vault.training_run(&run)?.expect("run");
+    assert_eq!(authorized.state, TrainingState::Authorized);
+    assert!(authorized.dispatch.is_none(), "no dispatch was recorded");
+    assert!(authorized.hold.is_none(), "no hold was written");
+
+    // The owner's own caller dispatches, under a fresh admission: the
+    // refused dispatch's permit never started.
+    let owner_caller = TrainingRunCaller::new(actor, EdgeActorClass::Human);
+    let returned = vault
+        .execute_authorized_training_pack_for(
+            &run,
+            &question_admission(&authorized, &connector),
+            &connector,
+            &FixtureTrainer,
+            Some(owner_caller),
+        )
+        .await?;
+    assert_eq!(returned.state, TrainingState::Returned);
+    let served = vault
+        .eval_cohort_exposure(&returned.corpus.cohort.id)?
+        .candidates;
+    let claim = refusal(vault.claim_training_evaluation(&run, Some(&stranger)));
+    assert!(claim.contains("execute caller"), "{claim}");
+    assert!(
+        vault
+            .training_run(&run)?
+            .expect("run")
+            .eval_exposure
+            .is_none(),
+        "a refused claim attaches no exposure"
+    );
+    assert_eq!(
+        vault
+            .eval_cohort_exposure(&returned.corpus.cohort.id)?
+            .candidates,
+        served,
+        "a refused claim counts no serving"
+    );
+    assert!(
+        vault
+            .claim_training_evaluation(&run, Some(&owner_caller))?
+            .is_some()
+    );
+    Ok(())
+}
+
+/// D3: one evaluation holds a returned run at a time, whoever asks. A second
+/// claim counts no serving and gets none; an evaluator that failed releases
+/// its claim, and the next claim is a new counted serving. Only the claim
+/// the run holds records a result.
+#[test]
+fn a_returned_run_serves_its_held_out_to_one_evaluation_at_a_time() -> Result<()> {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("current-thread runtime")
+        .block_on(one_evaluation_at_a_time())
+}
+
+async fn one_evaluation_at_a_time() -> Result<()> {
+    let dir = tempfile::tempdir().expect("temporary vault");
+    let vault = Vault::open(dir.path(), VaultConfig::default())?;
+    let actor = vault.ensure_embedded_owner_actor().expect("embedded owner");
+    let owner = vault.authenticate_owner(actor, "principal:owner", true, GateDecisionId::now())?;
+    let (run, connector, admission) = authorized_question_run(&vault, &owner, 1)?;
+    let returned = vault
+        .execute_authorized_training_pack(&run, &admission, &connector, &FixtureTrainer)
+        .await?;
+    assert_eq!(returned.state, TrainingState::Returned);
+    let cohort = returned.corpus.cohort.id;
+    let served = vault.eval_cohort_exposure(&cohort)?.candidates;
+
+    let first = vault
+        .claim_training_evaluation(&run, None)?
+        .expect("the first claim holds the run");
+    assert_eq!(vault.eval_cohort_exposure(&cohort)?.candidates, served + 1);
+    assert!(
+        vault.claim_training_evaluation(&run, None)?.is_none(),
+        "a second evaluation waits on the first"
+    );
+    let open = refusal(vault.open_training_held_out(&run));
+    assert!(open.contains("no other evaluation holds"), "{open}");
+    assert_eq!(
+        vault.eval_cohort_exposure(&cohort)?.candidates,
+        served + 1,
+        "a claim another evaluation holds counts no serving"
+    );
+    assert_eq!(
+        vault.training_run(&run)?.expect("run").eval_exposure,
+        Some(first.exposure.clone())
+    );
+
+    // The first evaluator failed: its release lets the next claim serve.
+    vault.release_training_evaluation(&run, &first.exposure.id)?;
+    let second = vault
+        .claim_training_evaluation(&run, None)?
+        .expect("a released run is claimed again");
+    assert_ne!(second.exposure.id, first.exposure.id);
+    assert_eq!(vault.eval_cohort_exposure(&cohort)?.candidates, served + 2);
+    // A late release of the first claim leaves the second in place.
+    vault.release_training_evaluation(&run, &first.exposure.id)?;
+    assert_eq!(
+        vault.training_run(&run)?.expect("run").eval_exposure,
+        Some(second.exposure.clone())
+    );
+
+    let stale = refusal(
+        vault.record_training_evaluation(&run, &held_out_result(&vault, &returned, &first)?),
+    );
+    assert!(stale.contains("exposure"), "{stale}");
+    let scored =
+        vault.record_training_evaluation(&run, &held_out_result(&vault, &returned, &second)?)?;
+    assert_eq!(scored.state, TrainingState::Scored);
+    assert!(
+        vault.claim_training_evaluation(&run, None)?.is_none(),
+        "a scored run serves no further evaluation"
+    );
+    assert_eq!(vault.eval_cohort_exposure(&cohort)?.candidates, served + 2);
     Ok(())
 }

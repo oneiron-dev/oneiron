@@ -37,6 +37,7 @@ mod levels;
 mod media;
 mod planner;
 mod provider;
+mod role_trainers;
 pub mod sessions;
 pub mod snapshots;
 #[cfg(test)]
@@ -66,6 +67,7 @@ pub use provider::{
     OutputLimitField, ProviderConfig, ProviderKind, RequestCodec, RequestCompression,
     ResponseFormatWire, ResponsesSocket, SiwcProvider,
 };
+pub use role_trainers::RoleTrainerSettings;
 pub use training::{TRAINING_SERVICE_UNIT, TrainingConnectorSettings, TrainingSettings};
 pub use voice::VoiceSettings;
 pub use workers::{

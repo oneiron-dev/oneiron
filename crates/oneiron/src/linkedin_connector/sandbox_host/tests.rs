@@ -91,6 +91,7 @@ fn put_cookie(vault: &Vault, seat: &str) {
             name: format!("linkedin:{seat}:cookie"),
             class: CustodyClass::CustodyDeviceBound,
             device_only: true,
+            model_reveal_allowed: false,
             value_bytes: b"opaque cookie".to_vec(),
             status: SecretCustodyStatus::Active,
             registered_at: 1_800_000_000,

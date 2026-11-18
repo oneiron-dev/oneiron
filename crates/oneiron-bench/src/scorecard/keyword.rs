@@ -77,12 +77,9 @@ struct CorpusVault {
     vault: Vault,
     /// The vault id of every staged record.
     ids: BTreeMap<EntityId, String>,
-    /// The temp dir, kept alive while the vault is open; never read.
-    #[allow(
-        dead_code,
-        reason = "the dir must outlive the vault, which only borrows its path"
-    )]
-    dir: tempfile::TempDir,
+    /// The temp dir, kept alive while the vault is open; never read: the dir must
+    /// outlive the vault, which only borrows its path.
+    _dir: tempfile::TempDir,
 }
 
 impl KeywordVaults {
@@ -114,7 +111,14 @@ impl KeywordVaults {
                 ScorecardFailure::Run(format!("pack vault open failed: {error}"))
             })?;
             let ids = ingest(&vault, loaded, corpus, &ordinal_of, false)?;
-            vaults.insert(corpus.corpus_id.clone(), CorpusVault { vault, ids, dir });
+            vaults.insert(
+                corpus.corpus_id.clone(),
+                CorpusVault {
+                    vault,
+                    ids,
+                    _dir: dir,
+                },
+            );
         }
         Ok(Self { vaults })
     }

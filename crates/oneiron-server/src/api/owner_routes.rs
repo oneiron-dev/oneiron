@@ -475,12 +475,17 @@ pub(super) fn owner_error(error: OwnerError) -> ApiError {
             oneiron::ErrorKind::ConsentApproveOnceSpent => {
                 ApiError::invalid_state(Some("already_decided"))
             }
-            // FIX [L6-03-FOUND-KEY-ROUTE-BOUND-500]: an act its target's state
+            // FIX [L6-03-FOUND-KEY-ROUTE-BOUND-500], [DISCLOSURE-CONFIRM-STALE-500],
+            // [OWNER-DISCLOSURE-NARROW-STATE-STRING]: an act its target's state
             // does not admit (a found key already ruled, a place that cannot
-            // take its value back, an erased value) is the refusal a delete
-            // of the found key already answers: 409 `refused` in the engine's
-            // own words. Each reason is a fixed sentence; none carries a value.
-            oneiron::ErrorKind::InvalidConsentBound => {
+            // take its value back, an erased value, a narrowing wider than the
+            // clearance, an inactive contact, a repeated trusted-set contact, a
+            // consent row that failed validation) is a refused owner act: 409
+            // `refused` in the engine's own words. Each reason is a fixed
+            // sentence; none carries a value. The disclosure confirm names the
+            // widen proposal instead (`disclosure_routes::offer_answer_refusal`).
+            oneiron::ErrorKind::InvalidConsentGrantRow
+            | oneiron::ErrorKind::InvalidConsentBound => {
                 owner_error(OwnerError::Refused(error.to_string()))
             }
             oneiron::ErrorKind::SecretRefNotFound => ApiError::not_found("secret", None),
@@ -529,10 +534,19 @@ pub(super) fn owner_error(error: OwnerError) -> ApiError {
 pub(super) async fn blocking<T: Send + 'static>(
     work: impl FnOnce() -> Result<T, OwnerError> + Send + 'static,
 ) -> Result<T, ApiError> {
+    blocking_with(owner_error, work).await
+}
+
+/// [`blocking`] with the route's own refusal map in place of
+/// [`owner_error`], for a route whose engine refusal names its own state.
+pub(super) async fn blocking_with<T: Send + 'static>(
+    refusal: fn(OwnerError) -> ApiError,
+    work: impl FnOnce() -> Result<T, OwnerError> + Send + 'static,
+) -> Result<T, ApiError> {
     super::clock_ingress::run_blocking(work)
         .await
         .map_err(|_| ApiError::internal_server_error("owner action task failed"))?
-        .map_err(owner_error)
+        .map_err(refusal)
 }
 
 /// The status root admin command's answer, at `GET /v1/owner/status` and
