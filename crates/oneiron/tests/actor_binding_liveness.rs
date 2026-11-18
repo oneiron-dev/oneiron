@@ -25,6 +25,14 @@
 //! read and the delete's write phase is refused by that write transaction,
 //! leaving the newly bound PERSON live and bound.
 //!
+//! Round-2 regressions of #7900 (red at the round-2 red pin, which carries the
+//! seam the second one needs): a peer's soft delete of the embedded owner,
+//! replayed before that PERSON reached the vault, leaves no row, only its
+//! `df:` fence and identity marker, and the owner is still no vault owner;
+//! and a headerless delete whose id is put as a live PERSON and bound as the
+//! last owner before it publishes is refused at its soft publication, where
+//! red it published, then purged the newly bound PERSON.
+//!
 //! Red on main: a deleted bound owner still classes VaultOwner in a room and
 //! still holds owner verbs and task verbs, a deleted agent-bound person still
 //! classes VaultAgent, and the last bound owner's PERSON is deleted. Guards
@@ -283,6 +291,97 @@ fn a_hard_deleted_embedded_owner_is_no_owner() {
         f.vault.room_parties(&[f.owner]).expect("parties"),
         vec![RoomParty::Unknown],
         "a hard-deleted embedded owner is no owner"
+    );
+}
+
+/// A peer's soft delete of the embedded owner, replayed into a vault that
+/// never held that PERSON (an unseeded open): the replay writes no row, only
+/// the `df:` fence and the identity marker, so the row reads absent as a
+/// never-written one does. Round-2 P1 of #7900.
+#[cfg(feature = "test-support")]
+#[test]
+fn a_soft_deleted_embedded_owner_whose_person_never_arrived_is_no_owner() {
+    // The embedded owner's id is the same in every embedded vault; a seeded
+    // vault names it.
+    let owner = fixture().owner;
+    let dir = tempfile::tempdir().expect("tempdir");
+    let vault = Vault::open_unseeded_for_test(dir.path(), VaultConfig::device()).expect("vault");
+    assert!(
+        vault.get_raw(&owner).expect("raw read").is_none(),
+        "FIXTURE: the owner's PERSON never reached this vault"
+    );
+    assert_eq!(
+        vault.room_parties(&[owner]).expect("parties"),
+        vec![RoomParty::VaultOwner],
+        "an embedded owner whose row was never written is the vault owner, as before"
+    );
+    let soft = TombstoneValueV2 {
+        reason: TombstoneReason::UserDelete,
+        deleted_at: 1_000,
+        request_id: [0xCD; 16],
+    };
+    oneiron::test_doors::tombstone_replay::replay_tombstone(&vault, &owner, &soft.encode())
+        .expect("a peer's soft delete replays");
+    assert!(
+        vault.get_raw(&owner).expect("raw read").is_none(),
+        "the replay wrote no row"
+    );
+    assert_eq!(
+        vault.room_parties(&[owner]).expect("parties"),
+        vec![RoomParty::Unknown],
+        "a soft-deleted embedded owner with no row here is no owner"
+    );
+}
+
+/// B holds index rows and no entity record, so its delete takes the
+/// headerless leg, which publishes before it purges. In the gap after the
+/// guard phase read no header, B is put as a live PERSON and the sole host
+/// key rebinds to B: the soft publication refuses the last bound owner's
+/// delete. Round-2 P1 of #7900.
+#[test]
+fn a_headerless_delete_refuses_a_person_put_and_bound_before_it_publishes() {
+    let f = fixture();
+    let b = EntityId::now();
+    f.vault
+        .batch()
+        .text(&b, &[("body", "jasmine")])
+        .commit()
+        .expect("FIXTURE: B's index rows with no record");
+    assert!(
+        f.vault.get_raw(&b).expect("raw read").is_none(),
+        "FIXTURE: B has no row, so its delete is headerless"
+    );
+    let refused =
+        oneiron::test_doors::delete_guard_race::delete_entity_across(&f.vault, &b, || {
+            f.vault
+                .put_entity(
+                    &b,
+                    ENTITY_TYPE_PERSON,
+                    TimeRange { start: 1, end: 1 },
+                    1,
+                    b"human",
+                )
+                .expect("B is put as a live person before the publication");
+            bind_host_actor(&f.vault, &f.issuer, b, "human")
+                .expect("the host key rebinds to B before the publication");
+        })
+        .expect_err("the headerless delete of the newly bound last owner");
+    assert!(names_both_ways_out(&refused.to_string()), "{refused:?}");
+    assert!(
+        f.vault.get_raw(&b).expect("raw read").is_some(),
+        "B's row stays"
+    );
+    assert!(
+        !f.vault.is_deleted_shell(&b).expect("shell read"),
+        "B stays live"
+    );
+    assert!(
+        actor_binding_is_active(
+            &f.vault.authority_fold().expect("authority fold"),
+            &b,
+            "human"
+        ),
+        "B stays bound: the rebind committed, the delete did not"
     );
 }
 
