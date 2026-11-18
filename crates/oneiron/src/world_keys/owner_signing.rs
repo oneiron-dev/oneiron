@@ -668,7 +668,7 @@ impl Vault {
         held: Option<&AuthorityFold>,
     ) -> bool {
         let key = AuthorityKey::Ed25519(*public_key);
-        if let Some(fold) = held {
+        if let Some(fold) = held.filter(|_| false) {
             return fold.roster.get(&key).is_some_and(|device| !device.revoked);
         }
         let live = self
