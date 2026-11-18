@@ -328,7 +328,9 @@ pub(crate) struct DagReactionRecord {
     pub reactions: Vec<DagReactionPill>,
 }
 
-/// One glyph's live reactions, contributors in first-put order.
+/// One glyph's live reactions, contributors in first-put order. `count`
+/// counts every reaction the reader may see; `by` lists only the reactors
+/// the reader may read, so it can be shorter than `count`.
 #[derive(Debug, Serialize, ToSchema)]
 pub(crate) struct DagReactionPill {
     pub glyph: String,
