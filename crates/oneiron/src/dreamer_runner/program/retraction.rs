@@ -28,6 +28,14 @@
 //!
 //! A wake recorded while this machine's own view names it the home, or names
 //! no home, is admitted where it was recorded, mark or no mark, as before.
+//!
+//! A copy the home took from a window is the home's alone to admit (FIX
+//! TURNPROGRAM-HOME-CHANGE-CARRIED-COPY-DOUBLE-DECIDE). On a machine that is
+//! the home no more, the copy is admitted by no door and rides under no row,
+//! and that machine's next pass drops it
+//! ([`Vault::drop_imported_turn_program_wakes_off_home`]). The wake stays with
+//! its recording machine, which carries it to the home the election names now,
+//! or admits it itself once it is that home or no home is elected.
 
 use serde::{Deserialize, Serialize};
 
@@ -138,6 +146,20 @@ pub(super) fn mark_imported_in_txn(
     IMPORTED.put(vault, txn, &actor_wake_key(actor, key), &())
 }
 
+/// Whether `wake` is a copy this machine took from a window as the home,
+/// not a wake it recorded.
+pub(super) fn imported_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    wake: &TurnProgramWake,
+) -> Result<bool> {
+    IMPORTED.contains(
+        vault,
+        txn,
+        &actor_wake_key(wake.authority.actor(), wake.key()),
+    )
+}
+
 /// Whether this machine, as the home, released the wake keyed `key` under
 /// `admission`: it takes no `Owed` row of that wake again.
 pub(super) fn released_here_in_txn(
@@ -197,10 +219,10 @@ fn decided_in_txn(
 
 /// What the window may carry for one wake about to ride as owed from here.
 enum Ride {
-    /// Nothing: the wake went, or this machine retracted it.
+    /// Nothing: the wake went, this machine retracted it, or it is a copy
+    /// taken from a window, which its own recording machine carries.
     Never,
-    /// Its `Owed` row: its mark stands, or it is a copy taken from a window,
-    /// which its own recording machine marks.
+    /// Its `Owed` row: its mark stands.
     Owed,
     /// Its `Owed` row, once this mark is written.
     Unmarked(ActorWakeKey, [u8; 32]),
@@ -215,7 +237,7 @@ fn ride_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>, map_key: &str) -> Result<Ri
     };
     let mark = actor_wake_key(wake.authority.actor(), key);
     if IMPORTED.contains(vault, txn, &mark)? {
-        return Ok(Ride::Owed);
+        return Ok(Ride::Never);
     }
     Ok(match CARRIED.get(vault, txn, &mark)? {
         Some(carried) if carried.admission == wake.admission_id() => {
@@ -335,6 +357,54 @@ impl Vault {
             Ok(retracted) => tracing::debug!(retracted, "turn program wakes retracted"),
             Err(error) => {
                 tracing::warn!(%error, "turn program wakes not retracted; they wait for the next pass");
+            }
+        }
+    }
+}
+
+/// Drops, in one writer, each owed wake this machine took from a window as
+/// the home, unless it is the home. Answers how many.
+fn drop_imported_off_home(vault: &Vault) -> Result<usize> {
+    let none = {
+        let txn = vault.store.env.read_txn()?;
+        replica::home_here_in_txn(vault, &txn)? == Some(true)
+            || IMPORTED.scan_keys(vault, &txn, &[])?.is_empty()
+    };
+    if none {
+        return Ok(0);
+    }
+    vault.with_write_txn_grouped(|txn| {
+        if replica::home_here_in_txn(vault, &*txn)? == Some(true) {
+            return Ok(0);
+        }
+        let copies = IMPORTED.scan_keys(vault, &*txn, &[])?;
+        for (actor, turn, registration) in &copies {
+            let key = (*turn, *registration);
+            WAKE.delete(vault, txn, &key)?;
+            super::index::unindex_wake_in_txn(vault, txn, *actor, key)?;
+        }
+        Ok(copies.len())
+    })
+}
+
+impl Vault {
+    /// Drops each owed wake this machine took from a window as the home, once
+    /// it is the home no more: another machine is, or none is elected (FIX
+    /// TURNPROGRAM-HOME-CHANGE-CARRIED-COPY-DOUBLE-DECIDE). The copy goes
+    /// undecided, in one writer. Its recording machine still owes the wake
+    /// and carries it to the home elected now, so a machine elected the home
+    /// again takes it from the window again. A wake this machine recorded
+    /// itself is no copy and stays. Housekeeping runs it on every pass,
+    /// before it admits what is owed. A failure is logged and waits for the
+    /// next pass: a copy is admitted by no door off the home meanwhile.
+    pub(crate) fn drop_imported_turn_program_wakes_off_home(&self) {
+        match drop_imported_off_home(self) {
+            Ok(0) => {}
+            Ok(dropped) => {
+                tracing::debug!(dropped, "turn program wake copies dropped off the home");
+            }
+            Err(error) => {
+                tracing::warn!(%error, "turn program wake copies not dropped off the home; they wait for the next pass");
             }
         }
     }
