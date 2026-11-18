@@ -85,6 +85,8 @@ mod export_act;
 mod export_secret_work;
 mod first_seen_clock;
 #[cfg(oneiron_test_support)]
+pub(crate) mod floor_probe_door;
+#[cfg(oneiron_test_support)]
 pub(crate) mod fold_encoding_door;
 mod fold_engine;
 mod fold_project;
@@ -165,6 +167,7 @@ mod revocation_notice;
 mod revoke_proof;
 mod root_appointment_door;
 mod root_appointment_judge;
+mod root_recovery_door;
 mod rows_floor;
 mod seat_child_slip;
 mod sequence_ancestry;
@@ -262,6 +265,7 @@ pub use oneiron_authority::authority::{
 pub use root_appointment_door::RootAppointmentReceipt;
 pub(crate) use root_appointment_door::refuse_unneeded_appointment;
 pub use root_appointment_judge::{AppointmentVerdict, AppointmentVoidReason};
+pub use root_recovery_door::{RootMaterial, RootRecovery, RootSuccessor};
 // The export secret work body and its sealed result (FIX 4624(b)).
 pub use export_secret_work::{
     ExportSecretSupplement, HolderExportRequest, HolderExportState, HolderExportUnassigned,
@@ -272,9 +276,11 @@ pub use oneiron_authority::authority::{ExportSecretWork, SealedWorkOutput};
 // The heads a root request's revision is over, its witness (FIX 5551).
 pub use oneiron_authority::authority::RootRevisionBasis;
 // The challenge a device's new owner key signs to enrol, and its proof's
-// length (FIX 4920, the seam L04's FIX 4921 calls).
+// length (FIX 4920, the seam L04's FIX 4921 calls); the recovery root's
+// authority key signs its own (pass 27 R4).
 pub use oneiron_authority::authority::{
     OWNER_KEY_POSSESSION_PROOF_LEN, owner_key_enrollment_challenge,
+    recovery_authority_enrollment_challenge,
 };
 // A passkey's assertion as an owner root's signature: its envelope and the
 // challenge it names (row WEB-PASSKEY-OWNER-KEY).
@@ -445,9 +451,11 @@ pub(crate) use owner_delegate::{
     OwnerDelegate, delegate_reads_in_txn, is_owner_delegate_verb, owner_delegate_in_txn,
 };
 pub use owner_delegate::{OwnerOrDelegate, owner_delegate_admits};
+pub(crate) use owner_key_enrollment_door::ActivationPredecessor;
 pub use owner_key_enrollment_door::{
-    EnrolledOwnerKey, EnrolledOwnerPasskey, OwnerKeyEnrollment, OwnerKeyEnrollmentReceipt,
-    OwnerPasskeyEnrollment, OwnerPasskeyEnrollmentReceipt, PreparedOwnerKeyEnrollment,
+    EnrolledOwnerKey, EnrolledOwnerKeyKind, EnrolledOwnerPasskey, OwnerKeyEnrollment,
+    OwnerKeyEnrollmentReceipt, OwnerPasskeyEnrollment, OwnerPasskeyEnrollmentReceipt,
+    PreparedOwnerKeyEnrollment, WaysBack,
 };
 pub use owner_key_move_confirm::{
     OWNER_KEY_MOVE_MEMBER_NOT_CONFIRMED, OWNER_KEY_MOVE_NO_HELD_KEY, OWNER_KEY_MOVE_NOT_PLANNED,
@@ -596,6 +604,7 @@ pub(crate) use readonly_fold::{
     authority_fold_readonly_for_store_in_txn,
 };
 use readonly_fold::{authority_log_rows_in_txn, decode_stored_authority_log_body};
+pub(crate) use recovery::arriving_re_root;
 pub(crate) use retired_signers::{authority_row_resident, door_ancestor_row, stored_authority_row};
 pub(crate) use sequence_observation::record_authority_sequence_observation_in_txn;
 

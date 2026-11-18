@@ -378,6 +378,20 @@ impl Vault {
         authority: &ActAuthority,
         request: &OwnerKeyVouchRequest,
     ) -> Result<OwnerKeyEnrollmentReceipt> {
+        self.enrol_vouched_owner_signing_key_between(authority, request, || {})
+    }
+
+    /// [`Self::enrol_vouched_owner_signing_key`], with `between` run after
+    /// the door's read picked the vouching key and before the enrollment's
+    /// writer: the gap in which another writer can commit first (the test
+    /// door `test_doors::owner_key_vouch_between`). It does not run when the
+    /// read refuses or answers a first enrollment's receipt.
+    pub(crate) fn enrol_vouched_owner_signing_key_between(
+        &self,
+        authority: &ActAuthority,
+        request: &OwnerKeyVouchRequest,
+        between: impl FnOnce(),
+    ) -> Result<OwnerKeyEnrollmentReceipt> {
         let owner = match authority {
             ActAuthority::Owner(owner, _) => owner,
             ActAuthority::Agent(_) => return Err(authority_refused(OWNER_ONLY)),
@@ -416,6 +430,7 @@ impl Vault {
             self.owner_vouch_signer_in_txn(&txn, &fold, actor)?
                 .ok_or(Error::Record(RecordError::OwnerKeyRequired))?
         };
+        between();
         // The caller's owner proof was revalidated in the read above; that
         // read's fold picked the key and signs nothing. The key signs inside
         // the enrollment's writer, through its own check, on the fold each

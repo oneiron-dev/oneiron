@@ -19,6 +19,10 @@ use crate::llm::run_admission::{CallOutcome, RunDenied, RunPermit};
 #[derive(Default)]
 pub struct GpuJobPermits {
     live: Mutex<HashMap<EntityId, Vec<HeldPermit>>>,
+    /// The gates a test set for the next end of a job's chunk
+    /// (`test_doors::gpu_job`). Held per host, so no test shares them.
+    #[cfg(oneiron_test_support)]
+    pub(crate) end_commit_gates: Mutex<Vec<(EntityId, std::sync::Arc<std::sync::Barrier>)>>,
 }
 
 /// One chunk's permit and the idempotency key of that chunk.

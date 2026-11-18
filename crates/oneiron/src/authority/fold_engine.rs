@@ -342,14 +342,27 @@ fn has_re_root_ancestor(
     false
 }
 
+/// The rows a fold judges ([`judged_entries`]), by hash: each passed
+/// `verify_entry_signatures` when it was taken, and none hangs off another
+/// branch's side entry. A row's signatures are a function of its bytes
+/// alone, so a pass over these rows reads that verdict and never verifies
+/// again (`entry_transition::fold_judged_entry_state`). Only
+/// [`judged_entries`] builds one; it reads as the map it holds.
+pub(super) struct JudgedRows(BTreeMap<AuthorityEntryHash, AuthorityLogEntry>);
+
+impl std::ops::Deref for JudgedRows {
+    type Target = BTreeMap<AuthorityEntryHash, AuthorityLogEntry>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
 /// The entries a fold of `entries` judges, by hash: each well signed, none
 /// hanging off another branch's side entry. With the issues found.
-fn judged_entries(
+pub(super) fn judged_entries(
     entries: &[AuthorityLogEntry],
-) -> (
-    BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
-    Vec<AuthorityFoldIssue>,
-) {
+) -> (JudgedRows, Vec<AuthorityFoldIssue>) {
     let mut by_hash = BTreeMap::<AuthorityEntryHash, AuthorityLogEntry>::new();
     let mut issues = Vec::new();
     for entry in entries {
@@ -367,7 +380,7 @@ fn judged_entries(
         by_hash.remove(&hash);
         issues.push(AuthorityFoldIssue::InvalidEntry(hash));
     }
-    (by_hash, issues)
+    (JudgedRows(by_hash), issues)
 }
 
 /// The floors a fold of `entries` under `context` applies: the rows' own
@@ -400,17 +413,13 @@ pub(super) struct OnceFloors {
 
 /// Where a once fold with sequence floors on takes its floors from, given
 /// its well-signed rows, their ancestor index and its context.
-pub(super) type OnceFloorsOf = fn(
-    &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
-    &AncestorIndex,
-    FoldContext<'_>,
-) -> OnceFloors;
+pub(super) type OnceFloorsOf = fn(&JudgedRows, &AncestorIndex, FoldContext<'_>) -> OnceFloors;
 
 /// Each row's floor from the rows (`rows_floor`), never from the order they
 /// arrived in, so every install folds them alike; then causal ancestry
 /// vouches for what it can (`sequence_ancestry`).
 fn rows_once_floors(
-    by_hash: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+    by_hash: &JudgedRows,
     ancestors: &AncestorIndex,
     context: FoldContext<'_>,
 ) -> OnceFloors {
@@ -632,7 +641,7 @@ pub(super) fn fold_authority_log_once_with(
         super::fold_project::Settled {
             merged,
             valid_entries,
-            by_hash: &by_hash,
+            by_hash: &*by_hash,
             revoke_facts: &revoke_facts,
             retired_keys,
             closed_handoffs: retirements.handoffs(),

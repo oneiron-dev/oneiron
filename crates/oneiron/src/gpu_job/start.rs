@@ -3,7 +3,6 @@
 //! cancel. The owner starts under their own proof; an agent starts under its
 //! own Grant within the per-job maximum the owner set beside it (RULING
 //! L10-31-STARTER = B), and resumes or cancels only a job it started.
-use crate::consent::AuthenticatedOwner;
 use crate::llm::run_admission::{
     CallOutcome, CheckpointRef, DeclaredMaximum, JobMaximum, MaximumShown, ResumeOffer,
     ResumeRefused, RunAdmission,
@@ -12,36 +11,36 @@ use crate::{EntityId, Vault};
 
 use super::caller::refused;
 use super::{
-    GPU_JOBS, GpuChunk, GpuConnectorError, GpuEndReason, GpuJob, GpuJobActor, GpuJobAgent,
-    GpuJobConnector, GpuJobError, GpuJobPermits, GpuJobQuote, GpuJobState, GpuJobVerb, GpuOffer,
-    GpuOfferPin, GpuResourceRef, GpuTermination, seconds,
+    GPU_JOBS, GpuChunk, GpuConnectorError, GpuEndReason, GpuJob, GpuJobActor, GpuJobConnector,
+    GpuJobError, GpuJobPermits, GpuJobQuote, GpuJobState, GpuJobVerb, GpuOffer, GpuOfferPin,
+    GpuResourceRef, GpuTermination, seconds,
 };
 
 /// The job a start writes, or why its write refused.
 type Written = Result<GpuJob, GpuJobError>;
 
-impl<'a> From<&'a AuthenticatedOwner> for GpuJobActor<'a> {
-    fn from(owner: &'a AuthenticatedOwner) -> Self {
-        Self::Owner(owner)
-    }
-}
-
-impl<'a> From<&'a GpuJobAgent> for GpuJobActor<'a> {
-    fn from(agent: &'a GpuJobAgent) -> Self {
-        Self::Agent(agent)
-    }
+/// What a start or a resume of a GPU job asks: who presses it, the offer and
+/// the quote it starts on, the offer a stop gave when it resumes from that
+/// stop, and the job's own run ([`GpuJob::admission_ref_of`] of
+/// `quote.job`).
+#[derive(Debug, Clone, Copy)]
+pub struct GpuJobStart<'a> {
+    pub actor: GpuJobActor<'a>,
+    pub offer: &'a GpuOffer,
+    pub quote: &'a GpuJobQuote,
+    pub resume: Option<&'a ResumeOffer>,
+    pub admission: &'a RunAdmission,
 }
 
 impl Vault {
-    /// `actor` starts a job on `quote`, or resumes the stopped job the quote
-    /// names from `resume`, the offer its stop gave. The owner's pressing
-    /// start on the quote is the showing of its maximum (C2 01); an agent's
-    /// start fits the per-job maximum the owner set beside the Grant that
-    /// admits it, and that setting is the showing. The whole quote is
-    /// reserved before anything is written or created; a refusal leaves
-    /// nothing behind. `admission` is the job's own run
-    /// ([`GpuJob::admission_ref_of`] of `quote.job`). The quote a stop's
-    /// notice offers stays good while that stop stands.
+    /// `start.actor` starts a job on `start.quote`, or resumes the stopped
+    /// job the quote names from `start.resume`, the offer its stop gave. The
+    /// owner's pressing start on the quote is the showing of its maximum (C2
+    /// 01); an agent's start fits the per-job maximum the owner set beside the
+    /// Grant that admits it, and that setting is the showing. The whole quote
+    /// is reserved before anything is written or created; a refusal leaves
+    /// nothing behind. The quote a stop's notice offers stays good while that
+    /// stop stands.
     ///
     /// # Errors
     ///
@@ -49,20 +48,20 @@ impl Vault {
     /// again. [`GpuJobError::Denied`] when the reservation does not fit.
     /// [`GpuJobError::Resume`] for a resume its stop does not allow.
     /// [`GpuJobError::Caller`] for an agent past its Grant or its maximum.
-    #[allow(clippy::too_many_arguments)]
-    #[allow(single_use_lifetimes)] // An impl-Trait argument needs its lifetime named.
-    pub fn start_gpu_job<'a>(
+    pub fn start_gpu_job(
         &self,
-        actor: impl Into<GpuJobActor<'a>>,
-        offer: &GpuOffer,
-        quote: &GpuJobQuote,
-        resume: Option<&ResumeOffer>,
-        admission: &RunAdmission,
+        start: GpuJobStart<'_>,
         permits: &GpuJobPermits,
         connector: &dyn GpuJobConnector,
         now_ms: u64,
     ) -> Result<GpuJob, GpuJobError> {
-        let actor = actor.into();
+        let GpuJobStart {
+            actor,
+            offer,
+            quote,
+            resume,
+            admission,
+        } = start;
         if let GpuJobActor::Owner(owner) = actor {
             owner.revalidate(self)?;
         }
@@ -207,16 +206,14 @@ impl Vault {
     ///
     /// [`GpuJobError::Ended`] for a job that already ended;
     /// [`GpuJobError::Caller`] for an agent the act does not admit.
-    #[allow(single_use_lifetimes)] // An impl-Trait argument needs its lifetime named.
-    pub fn cancel_gpu_job<'a>(
+    pub fn cancel_gpu_job(
         &self,
-        actor: impl Into<GpuJobActor<'a>>,
+        actor: GpuJobActor<'_>,
         id: &EntityId,
         permits: &GpuJobPermits,
         connector: &dyn GpuJobConnector,
         now_ms: u64,
     ) -> Result<GpuJob, GpuJobError> {
-        let actor = actor.into();
         if let GpuJobActor::Owner(owner) = actor {
             owner.revalidate(self)?;
         }
