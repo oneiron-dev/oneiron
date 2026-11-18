@@ -199,8 +199,20 @@ pub fn settle_outcome_ask(
 /// never skips for its host's layout: where another account owns a directory
 /// above the temp directory, every restore under it is refused, as it should
 /// be, and the test would fail on that refusal instead of its own check.
+///
+/// The directory itself is owner-only whatever the process umask: tempfile
+/// makes it with the umask's mode, and under umask 000 (the fleet's test
+/// runner) or 002 (a GCE login) it is group or world writable, so every
+/// restore under it would be refused.
 pub fn restore_tempdir() -> tempfile::TempDir {
-    tempfile::tempdir_in(restore_temp_base()).expect("a temporary directory")
+    let directory = tempfile::tempdir_in(restore_temp_base()).expect("a temporary directory");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(directory.path(), std::fs::Permissions::from_mode(0o700))
+            .expect("make the temporary directory owner-only");
+    }
+    directory
 }
 
 #[cfg(unix)]
