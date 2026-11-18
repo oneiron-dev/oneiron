@@ -23,11 +23,15 @@ pub(super) enum DeleteGuard {
 impl Vault {
     /// Refuses deleting the PERSON that holds the vault's last Active owner
     /// binding (the lead's L9-52-OWNER-SELF-DELETE = B, 14 Nov 2026), on
-    /// every delete door: the vault would keep no owner, and no ceremony binds
-    /// one again ("A deleted owner is not brought back"). Another live PERSON
-    /// holding an Active `human` binding lets the delete through, as does a
-    /// row that holds no live owner binding. An unrooted vault binds no one.
-    /// Revisit once an owner recovery ceremony exists.
+    /// every delete door: the vault would keep no owner, and no ceremony
+    /// brings the deleted person back ("A deleted owner is not brought back").
+    /// The kit's recovery (`recover_owner_authority_from_kit`) re-roots the
+    /// vault and binds no person, so it brings no deleted owner back either.
+    /// Another live PERSON holding an Active `human` binding lets the delete
+    /// through (an added Owner gains one with their first owner key,
+    /// `enrol_owner_signing_key_as`), as does a row that holds no live owner
+    /// binding. No door writes a `human` binding on an unrooted, hosted or
+    /// relay vault, so the guard refuses nothing there.
     ///
     /// The guard phase runs this as the early refusal; each linearizing write
     /// transaction re-runs it against its own view, which is the check that

@@ -216,15 +216,17 @@ impl From<Error> for MemoryError {
                 ],
             ),
             // L9-52 (b): the vault would keep no owner. The request is well
-            // formed; the vault's owners, or its end, are what change. The
-            // second hint loses its "not yet available" clause once FIX
-            // OWNER-DELETE-GUARD-RECOVERY lands.
+            // formed; the vault's owners, or its end, are what change. An
+            // added Owner's first owner key enrolment binds them, which is
+            // the second way out (FIX OWNER-DELETE-GUARD-RECOVERY). An Owner
+            // already added only enrols; adding one needs a shared vault, so
+            // an unshared one is shared first.
             ErrorKind::LastBoundOwnerDelete => Self::new(
                 MEMORY_CODE_INVALID_STATE,
                 message,
                 &[
-                    "Erase the vault if ending it is the goal; that is available now.",
-                    "Binding another owner first needs the owner enrollment ceremony, which is not yet available; after it, this person can be deleted.",
+                    "Erase the vault if ending it is the goal.",
+                    "To keep the vault, bind another owner first: have another Owner enrol an owner signing key of their own, which binds them (to add an Owner, share the vault first if it is not shared yet); then this person can be deleted.",
                 ],
             ),
             // FIX 7463a: a world's read setting keeps a row the call reads,
