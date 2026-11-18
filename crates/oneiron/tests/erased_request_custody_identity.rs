@@ -19,6 +19,11 @@
 //! Each case stores one call in an agent's replay record through the wall,
 //! erases it with the agent's replies by the agent's delete, and reads it
 //! against the call made again, as the replay cursor reads an erased row.
+//! A room's run stages its record in the room's overlay, where the delete's
+//! sweep erases it, or the room's put fence erases it when its agent is
+//! gone before the put: each reads base custody in its writer, as the
+//! wall does for a room (FIX 2329). A value in a body the call holds as
+//! bytes is read as the wall reads that body.
 //!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test erased_request_custody_identity`.
@@ -26,8 +31,10 @@
 
 use std::sync::Arc;
 
+use oneiron::off_record::OffRecordBackendClass;
 use oneiron::test_doors::erased_request_identity::{
-    store_note_call, stored_call_erased, stored_call_is,
+    room_stored_call_erased, room_stored_call_is, store_note_body, store_note_call,
+    store_note_call_in_room, stored_body_call_is, stored_call_erased, stored_call_is,
 };
 use oneiron::{EntityId, Vault, VaultConfig};
 
@@ -186,6 +193,141 @@ fn an_erased_call_read_with_no_custody_in_reach_meets_by_its_stand_in() -> TestR
         call,
         &words(SECOND_SHAPED_KEY),
         false
+    )?);
+    Ok(())
+}
+
+/// `{"password":"<value>"}`: a body a call holds as bytes, its value under a
+/// credential name.
+fn password_body(value: &str) -> Vec<u8> {
+    format!(r#"{{"password":"{value}"}}"#).into_bytes()
+}
+
+/// A call holding a body as bytes: the wall read that body and placed the
+/// passphrase's handle under its credential name. The erase reads the body
+/// as the wall does, so the identical call made again meets its row. On the
+/// base, and at the first fix (3802475905d), the erase and the call made
+/// again read the bytes as one text: the row's bare handle never met the
+/// passphrase, and the call drifted.
+#[test]
+fn an_erased_call_holding_a_passphrase_in_a_body_meets_its_call() -> TestResult {
+    let (_directory, vault) = vault()?;
+    let body = password_body(HELD_PASSPHRASE);
+    let [agent, run] = store_note_body(&vault, &body)?;
+    vault.delete_entity(&agent)?;
+    assert!(
+        stored_call_erased(&vault, run)?,
+        "the agent's delete erases the call's request"
+    );
+    assert!(stored_body_call_is(&vault, [agent, run], &body, true)?);
+    Ok(())
+}
+
+/// Guard: another passphrase custody holds in the same body is another
+/// call, on the base and the head.
+#[test]
+fn an_erased_call_holding_another_passphrase_in_a_body_is_another_call() -> TestResult {
+    let (_directory, vault) = vault()?;
+    let [agent, run] = store_note_body(&vault, &password_body(HELD_PASSPHRASE))?;
+    vault.delete_entity(&agent)?;
+    assert!(
+        stored_call_erased(&vault, run)?,
+        "the agent's delete erases the call's request"
+    );
+    assert!(!stored_body_call_is(
+        &vault,
+        [agent, run],
+        &password_body(OTHER_HELD_PASSPHRASE),
+        true
+    )?);
+    Ok(())
+}
+
+/// A room's run stages the call live; the agent's delete then sweeps the
+/// room's overlay and erases it there. Red on the base and at the first fix
+/// (3802475905d): the sweep kept the stand-in identity alone, and another
+/// passphrase custody holds met the row.
+#[test]
+fn a_rooms_erased_call_made_again_with_another_passphrase_custody_holds_is_another_call()
+-> TestResult {
+    let (_directory, vault) = vault()?;
+    let session = vault
+        .off_record_session_vault()
+        .enter("sess-erased-identity-sweep", OffRecordBackendClass::Local)?;
+    let [agent, run] = store_note_call_in_room(&vault, &session, &words(HELD_PASSPHRASE), false)?;
+    assert!(
+        !room_stored_call_erased(&session, run)?,
+        "the room stages the call live before its agent's delete"
+    );
+    vault.delete_entity(&agent)?;
+    assert!(
+        room_stored_call_erased(&session, run)?,
+        "the agent's delete erases the call the room holds"
+    );
+    assert!(!room_stored_call_is(
+        &vault,
+        &session,
+        [agent, run],
+        &words(OTHER_HELD_PASSPHRASE),
+        true
+    )?);
+    Ok(())
+}
+
+/// Guard for the test above: the call made again with the passphrase the
+/// room's erased row held meets it, on the base and the head.
+#[test]
+fn a_rooms_erased_call_made_again_with_the_passphrase_it_held_meets_its_row() -> TestResult {
+    let (_directory, vault) = vault()?;
+    let session = vault.off_record_session_vault().enter(
+        "sess-erased-identity-sweep-guard",
+        OffRecordBackendClass::Local,
+    )?;
+    let [agent, run] = store_note_call_in_room(&vault, &session, &words(HELD_PASSPHRASE), false)?;
+    vault.delete_entity(&agent)?;
+    assert!(
+        room_stored_call_erased(&session, run)?,
+        "the agent's delete erases the call the room holds"
+    );
+    assert!(room_stored_call_is(
+        &vault,
+        &session,
+        [agent, run],
+        &words(HELD_PASSPHRASE),
+        true
+    )?);
+    Ok(())
+}
+
+/// The agent is gone before the room's run puts its record: the room's put
+/// fence erases the call in its writer. The call made again with the
+/// passphrase it held meets the row; another passphrase custody holds is
+/// another call. Red on the base and at the first fix (3802475905d): the
+/// fence kept the stand-in identity alone, and the other passphrase met.
+#[test]
+fn a_rooms_call_put_after_its_agent_is_gone_meets_only_a_call_naming_its_records() -> TestResult {
+    let (_directory, vault) = vault()?;
+    let session = vault
+        .off_record_session_vault()
+        .enter("sess-erased-identity-fence", OffRecordBackendClass::Local)?;
+    let call = store_note_call_in_room(&vault, &session, &words(HELD_PASSPHRASE), true)?;
+    assert!(
+        room_stored_call_erased(&session, call[1])?,
+        "the room's put fence erases the call of a gone agent"
+    );
+    assert!(room_stored_call_is(
+        &vault,
+        &session,
+        call,
+        &words(HELD_PASSPHRASE),
+        true
+    )?);
+    assert!(!room_stored_call_is(
+        &vault,
+        &session,
+        call,
+        &words(OTHER_HELD_PASSPHRASE),
+        true
     )?);
     Ok(())
 }
