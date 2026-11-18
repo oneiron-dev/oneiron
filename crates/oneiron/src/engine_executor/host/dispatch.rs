@@ -235,6 +235,11 @@ impl RecordingJsHost<'_, '_> {
         let card = if let SelfDispatchOutcome::Team(result) = &outcome {
             let mut sink = storage.code_run_output_sink()?;
             write_json(&mut sink, stored)?;
+            // As `store_reply`: a walk the new body ends holds the pass, and
+            // the reply stays inline (L8-23).
+            if self.new_output_holds_walk(&mut sink, shown == Shown::View)? {
+                return Ok(outcome);
+            }
             if shown == Shown::View {
                 // As `store_reply`: a stored body stands for the reply (FIX 3608).
                 self.held_delivery.clear();
@@ -253,10 +258,14 @@ impl RecordingJsHost<'_, '_> {
                 )
             }
         } else if shown == Shown::View {
-            // As `store_reply`: a stored body stands for the reply (FIX 3608).
-            self.held_delivery.clear();
             let mut sink = storage.code_run_output_sink()?;
             write_json(&mut sink, stored)?;
+            // As `store_reply`: a walk the new body ends holds the pass (L8-23).
+            if self.new_output_holds_walk(&mut sink, true)? {
+                return Ok(outcome);
+            }
+            // As `store_reply`: a stored body stands for the reply (FIX 3608).
+            self.held_delivery.clear();
             let rows = self.result_rows();
             let output = self.publish_stored_sourced(
                 storage,

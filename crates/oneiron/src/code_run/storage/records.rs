@@ -289,7 +289,7 @@ impl Vault {
             })
             .transpose()?;
         prepare(wtxn)?;
-        let record = record.over_held(held.as_ref());
+        let record = record.over_held(held.as_ref())?;
         // A record whose replies an erase took stays erased (FIX 5718).
         let record = fence_replay_in_txn(self, wtxn, record)?;
         replay_rows::put(self, wtxn, &record.run_id, &record)?;

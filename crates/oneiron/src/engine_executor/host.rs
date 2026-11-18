@@ -12,6 +12,7 @@ mod receipts;
 mod replay_context;
 mod reply;
 mod results;
+pub(super) mod resume_preflight;
 mod say_result;
 mod skill_delivery;
 #[cfg(oneiron_test_support)]
@@ -476,11 +477,21 @@ impl JsCodeModeHost for RecordingJsHost<'_, '_> {
         let Some(storage) = self.storage else {
             return Ok(None);
         };
+        // A dry walk stores nothing (L8-23): the reply stays inline, as a host
+        // with no result store sends it, and no body commits before the entry
+        // holds with the walk's report.
+        if self.pending_replay_dry() {
+            return Ok(None);
+        }
+        let mut sink = storage.code_run_output_sink()?;
+        write_json(&mut sink, reply)?;
+        // A walk the new body ends holds the pass: the reply stays inline.
+        if self.new_output_holds_walk(&mut sink, false)? {
+            return Ok(None);
+        }
         // A stored card stands for the reply: no skill body it holds reaches
         // the guest (FIX 3608).
         self.held_delivery.clear();
-        let mut sink = storage.code_run_output_sink()?;
-        write_json(&mut sink, reply)?;
         self.bind_stored(storage, sink, None).map(Some)
     }
 

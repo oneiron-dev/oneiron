@@ -589,6 +589,7 @@ impl EngineNativeExecutor<'_> {
             seat_receipt: self.seat.map(|seat| seat.receipt().clone()),
             compaction: self.compaction_report(),
             cache_horizon: self.cache_horizon.clone(),
+            resume_preflight: None,
         }
     }
 }
