@@ -380,7 +380,7 @@ impl Vault {
             ActAuthority::Owner(owner, _) => owner,
             ActAuthority::Agent(_) => return Err(authority_refused(OWNER_ONLY)),
         };
-        let (signer, fold) = {
+        let signer = {
             let txn = self.store.env.read_txn()?;
             let actor = owner.revalidate_as_vault_owner_in_txn(self, &txn)?;
             let fold = self.authority_view_readonly_in_txn(&txn)?;
@@ -411,22 +411,21 @@ impl Vault {
                 drop(txn);
                 return self.first_vouched_receipt(request);
             }
-            let signer = self
-                .owner_vouch_signer_in_txn(&txn, &fold, actor)?
-                .ok_or(Error::Record(RecordError::OwnerKeyRequired))?;
-            (signer, fold)
+            self.owner_vouch_signer_in_txn(&txn, &fold, actor)?
+                .ok_or(Error::Record(RecordError::OwnerKeyRequired))?
         };
-        // The owner's presence is asked here, before the write and outside
-        // it (OPUS-SPLIT-5 PR 4, D5): everything the proof signs is known.
-        // The key signs through its own check, on the fold it was picked on
-        // and with no transaction of its own: the write is open then. A key
-        // that stopped since the pick refuses, and the fold counts the entry
-        // of a key the roster revoked meanwhile for nothing.
-        match self.enrol_owner_signing_key_as(
+        // The caller's owner proof was revalidated in the read above; that
+        // read's fold picked the key and signs nothing. The key signs inside
+        // the enrollment's writer, through its own check, on the fold each
+        // entry is signed on (the writer hands it over) and with no
+        // transaction of its own: the write is open then. A key that stopped
+        // since the pick refuses there: one the roster revoked, one whose
+        // seed left its slot, one under a device PIN whose window ended.
+        match self.enrol_owner_signing_key_on_entry_fold_as(
             authority,
             request.enrollment(),
             signer.root(),
-            |transcript| signer.sign_owner_proof(self, &fold, transcript),
+            |entry_fold, transcript| signer.sign_owner_proof(self, entry_fold, transcript),
         ) {
             // Another answer to the same request enrolled the key after this
             // one read the roster: its receipt answers this one too.
