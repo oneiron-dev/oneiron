@@ -343,9 +343,9 @@ upstream mdb.master3 that contains commit `e27f3d616b7b`.
 FIX row LMDB-MASTER3-UPSTREAM-FIXES-AUDIT. The audit read every mdb.master3
 commit after this copy's base (`10161b20fef8`) up to `ba47717cc877`
 (20 Oct 2026) and took the ones that fix a fault on a path oneiron uses.
-This copy carries each one verbatim, in upstream order, plus two fork hunks
-that close faults the review of these hunks found (upstream's head
-`ba47717cc877` still has both):
+This copy carries each one verbatim, in upstream order, plus fork hunks
+(`ONEIRON FORK (LMDB audit)`) that close faults the review of these hunks
+found (upstream's head `ba47717cc877` still has every one):
 
 - `bd9cd548b02e77fea8e9ba5d03993b1a688ef223` (15 Apr 2026, ITS#10454, "can't
   rely on O_DSYNC on MacOS") and its follow-up
@@ -356,19 +356,29 @@ that close faults the review of these hunks found (upstream's head
   (`MDB_FDATASYNC`, which is `F_FULLFSYNC` there), under `__APPLE__` only. The
   follow-up corrects the WRITEMAP branch, which oneiron never takes (sealed
   environments refuse WRITE_MAP), and is carried so the copy matches upstream.
-  - `ONEIRON FORK (LMDB audit)` (`:4929-4941`): upstream returns a failed sync
-    as a plain error, with the new meta still in the page cache, so the
-    failed commit could show on a later read or reopen. The fork handles it
-    as the failed meta `pwrite` above it: it writes the old meta back and
-    marks the env `MDB_FATAL_ERROR`.
+  - Fork (`:4929-4946`): upstream returns a failed sync as a plain error,
+    with the new meta still in the page cache, so the failed commit could
+    show on a later read or reopen. The fork handles it as the failed meta
+    `pwrite` above it: it writes the old meta back (retrying an interrupted
+    write) and marks the env `MDB_FATAL_ERROR`. If the old meta cannot be
+    written back whole, the commit is indeterminate (a reopen in the same
+    boot may see it), and the call answers `MDB_PANIC` instead of the sync's
+    error.
 - `340f04593e3a05db615b3444fac9f3572ed75e3f` (ITS#9291, "quick sanity check on
-  env open"). `mdb_env_open2` (`:5519-5543`) refuses a data file whose FREE or
+  env open"). `mdb_env_open2` (`:5524-5556`) refuses a data file whose FREE or
   MAIN root lies past its end (`MDB_PAGE_NOTFOUND`) or whose FREE and MAIN
   page counts exceed it (`MDB_CORRUPTED`). Before it, a file truncated to its
   meta pages opened, and the first read of a missing page faulted the process.
   It is upstream's quick check, not a walk of every page: a file cut below a
   named database's page only, with both roots and the counts inside it, still
-  opens.
+  opens (FIX row LMDB-TRUNCATED-NAMED-DB-PAGE-SIGBUS).
+  - Fork (`:5528-5532`): the check divides by the meta's page size, which
+    nothing had checked yet, so a meta page holding 0 faulted the process
+    (SIGFPE). The fork refuses a page size that `mdb_env_set_pagesize` would
+    refuse (under 256 or over `MAX_PAGESIZE`) with `MDB_INVALID`.
+  - Fork (`:5540-5544`): upstream compares a root with `>` against the count
+    of whole pages, so a root that starts exactly at the end of the file
+    passed. The fork compares with `>=`.
 - `c9912dbeaf10afa8a36c07a28d8daf270e7a6566` (10 Jun 2026, ITS#10520, "cleanup
   on crypto errors and exits"). A sealed environment decrypts each page chunk
   into a heap buffer (`menc`) that its page cache keeps until the environment
@@ -376,20 +386,22 @@ that close faults the review of these hunks found (upstream's head
   buffer, and `mdb_rpage_get` frees the buffer of a chunk whose page fails to
   open. Before it, every close leaked one buffer per chunk read (64 KiB on
   4 KiB pages), and every open under a wrong page key leaked one.
-  - `ONEIRON FORK (LMDB audit)` (`:7113`, `:7184`): that failed chunk's
-    mapping was leaked too, since neither page cache holds it. The fork
-    unmaps it next to upstream's `free`.
+  - Fork (`:7126`, `:7197`): that failed chunk's mapping was leaked too,
+    since neither page cache holds it. The fork unmaps it next to
+    upstream's `free`.
 
 `mdb_enckey_clear` and its two calls (FIX 1910) are in other functions and
 unchanged. The page format does not change, and no stored row changes meaning
-(stored change: keep). `mdb.c` is now 12,402 lines, SHA-256
-`1837315bb1ff7a67a6dc8c126cf46885e9badbd3b0efbc5cdf43460e77d93376`. Line
-numbers in this section cite this copy. The FIX 1910 hunks are now at `:6540`
-(`mdb_enckey_clear`), `:6577` (`mdb_env_close`) and `:11692`
+(stored change: keep). `mdb.c` is now 12,415 lines, SHA-256
+`70c41d4acef742617239b29cd6f45b073e0334ce52cd6d6a4655d8ab2629d7f2`. Line
+numbers in this section cite this copy. The FIX 1910 hunks are now at `:6553`
+(`mdb_enckey_clear`), `:6590` (`mdb_env_close`) and `:11705`
 (`mdb_env_set_encrypt`); every vendored line after `:4862` that an older
-section cites has moved by up to 53 lines. Regression tests:
-`crates/oneiron-store/tests/lmdb_open_truncated_file.rs` (ITS#9291: a data
-file truncated to its meta pages refuses to open) and
+section cites has moved by up to 66 lines. Regression tests:
+`crates/oneiron-store/tests/lmdb_open_damaged_file.rs` (ITS#9291 and its
+fork hunks: a data file truncated to its meta pages, one cut so that its FREE
+root starts at the end, and one whose meta pages hold a zero page size each
+refuse to open) and
 `crates/oneiron-store/tests/lmdb_sealed_page_buffers.rs` (ITS#10520 and its
 fork hunk: the C heap stays flat over sealed read-and-close cycles, and the
 heap and the process's mappings stay flat over opens under a wrong page key;
@@ -408,9 +420,9 @@ child-txn mutex init: no observable effect on glibc, macOS or Android, and on
 Windows its nested commit path frees the txn without destroying the new
 mutex, so it would leak one handle per nested commit).
 
-**Re-vendoring:** re-apply these commits and the two `ONEIRON FORK (LMDB
+**Re-vendoring:** re-apply these commits and the five `ONEIRON FORK (LMDB
 audit)` hunks with the hunks above, or take an upstream mdb.master3 that
-contains commit `c9912dbeaf10` and re-check both fork hunks against it.
+contains commit `c9912dbeaf10` and re-check each fork hunk against it.
 
 ## Re-packaging for the Python sdist (ONE-1441)
 
