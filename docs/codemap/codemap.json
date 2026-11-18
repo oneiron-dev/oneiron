@@ -11576,9 +11576,9 @@
      "path": "src/booking/config.rs",
      "purpose": "ONE-1823 [BK-00] booking-page event-type configuration",
      "surface": {
-      "const": 4,
-      "crate-vis": 13,
-      "fn": 6,
+      "const": 5,
+      "crate-vis": 14,
+      "fn": 7,
       "re-export": 1,
       "struct": 5
      }
@@ -11601,7 +11601,7 @@
       "const": 1,
       "crate-vis": 5,
       "enum": 1,
-      "fn": 3,
+      "fn": 4,
       "re-export": 3,
       "struct": 5,
       "trait": 1
@@ -32668,7 +32668,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/dreamer_consolidation/settle/preference_pair.rs",
-     "purpose": "OF-023 (FIX 3079): the Memory door's observed-versus-stated preference markers, which stop asking once their…",
+     "purpose": "OF-023 (FIX 3079): the observed-versus-stated preference markers of the Memory door and of the derive Claim…",
      "surface": {
       "crate-vis": 1
      }
@@ -110797,7 +110797,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "tests/pack_keys_booking.rs",
@@ -154745,7 +154745,7 @@
      "path": "src/api/booking/public_availability.rs",
      "purpose": "Query-bound slot cache",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -154765,6 +154765,14 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/api/booking/public_duration_tests.rs",
+     "purpose": "BK-VARIABLE-DURATION through the real public router: one link carries the event type's allowed lengths, the…",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -154775,7 +154783,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/api/booking/public_grant_view_tests.rs",
@@ -178365,7 +178373,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 826,
+     "files": 827,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -178970,7 +178978,7 @@
    "over_bar": 70,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 2030,
-   "test_files": 492
+   "test_files": 493
   },
   "oneiron-setting-contract": {
    "files": [
