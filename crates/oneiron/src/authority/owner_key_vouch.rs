@@ -519,7 +519,10 @@ fn key_is_the_owners(
 /// profile of the machine verifies; [`RecordError::AuthorityRefused`] for a
 /// machine the owner has not answered as theirs in any live profile whose
 /// install key verifies it.
-fn require_holding_machine(fold: &AuthorityFold, request: &OwnerKeyVouchRequest) -> Result<()> {
+pub(crate) fn require_holding_machine(
+    fold: &AuthorityFold,
+    request: &OwnerKeyVouchRequest,
+) -> Result<()> {
     let transcript = request.machine_transcript()?;
     let proof = ed25519_dalek::Signature::from_slice(&request.machine_proof)
         .map_err(|_| not_valid(MACHINE_PROOF_NOT_VALID))?;

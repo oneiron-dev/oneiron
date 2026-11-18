@@ -26,13 +26,13 @@ use oneiron::workspace_roster::{WorkCompanionPolicy, WorkspaceRosterPreset};
 use oneiron::{EntityId, TimeRange, Vault, VaultConfig};
 
 /// The workspace's shared vault. Not 7, the own-device residence scope's id.
-pub const SHARED: u64 = 43;
-pub const WORKSPACE: &str = "house-owner-role-waits-workspace";
-pub const T0: u64 = 1_800_000_000;
-pub const DAY: u64 = 86_400;
-pub const ADD_OWNER: &str = "add_owner";
+pub(crate) const SHARED: u64 = 43;
+pub(crate) const WORKSPACE: &str = "house-owner-role-waits-workspace";
+pub(crate) const T0: u64 = 1_800_000_000;
+pub(crate) const DAY: u64 = 86_400;
+pub(crate) const ADD_OWNER: &str = "add_owner";
 
-pub fn person(vault: &Vault) -> EntityId {
+pub(crate) fn person(vault: &Vault) -> EntityId {
     let id = EntityId::now();
     vault
         .put_entity(
@@ -46,7 +46,7 @@ pub fn person(vault: &Vault) -> EntityId {
     id
 }
 
-pub fn proof(vault: &Vault, person: EntityId) -> AuthenticatedOwner {
+pub(crate) fn proof(vault: &Vault, person: EntityId) -> AuthenticatedOwner {
     vault
         .authenticate_owner(person, &person.to_hex(), true, GateDecisionId::now())
         .expect("a person proof")
@@ -56,19 +56,19 @@ pub fn proof(vault: &Vault, person: EntityId) -> AuthenticatedOwner {
 /// root signed once, a shared vault with two live Owners (the owner, and a
 /// co-Owner the owner added at once), and a stored workspace whose house is
 /// the seeded `sys.default` agent, not yet seated.
-pub struct Org {
-    pub _dir: tempfile::TempDir,
-    pub clock: Arc<ManualClock>,
-    pub vault: Vault,
-    pub issuer: HostSlipIssuer,
-    pub owner: EntityId,
-    pub owner_proof: AuthenticatedOwner,
-    pub co_owner_proof: AuthenticatedOwner,
-    pub house: EntityId,
+pub(crate) struct Org {
+    pub(crate) _dir: tempfile::TempDir,
+    pub(crate) clock: Arc<ManualClock>,
+    pub(crate) vault: Vault,
+    pub(crate) issuer: HostSlipIssuer,
+    pub(crate) owner: EntityId,
+    pub(crate) owner_proof: AuthenticatedOwner,
+    pub(crate) co_owner_proof: AuthenticatedOwner,
+    pub(crate) house: EntityId,
 }
 
 impl Org {
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         let clock = ManualClock::new(T0);
         let dir = tempfile::tempdir().expect("tempdir");
         let mut config = VaultConfig::device();
@@ -149,7 +149,7 @@ impl Org {
     }
 
     /// The vault's common owner-change wait, in days, set by the owner.
-    pub fn owner_change_wait_days(&self, days: u64) {
+    pub(crate) fn owner_change_wait_days(&self, days: u64) {
         self.vault
             .set_owner_change_wait_days(&self.owner_proof, SHARED, Some(days))
             .expect("the owner sets the owner-change wait");
@@ -157,7 +157,7 @@ impl Org {
 
     /// The `add_owner` policy row, as shipped but with a one-day window an
     /// Owner may object in, approved by both Owners.
-    pub fn add_owner_objection_window(&self) {
+    pub(crate) fn add_owner_objection_window(&self) {
         let row = SharedActPolicy {
             wait_secs: DAY,
             objector_roles: vec![Role::Owner],
@@ -183,7 +183,7 @@ impl Org {
 
     /// The `add_owner` acts the co-Owner was told of that name no person:
     /// the house's seat. The co-Owner's own add was told to the owner only.
-    pub fn house_seat_events(&self) -> Vec<PendingActStarted> {
+    pub(crate) fn house_seat_events(&self) -> Vec<PendingActStarted> {
         self.vault
             .pending_act_started_events(&self.co_owner_proof, SHARED, self.vault.now_recorded_at())
             .expect("the co-Owner reads its started events")
@@ -193,7 +193,7 @@ impl Org {
     }
 
     /// The house link receipts, oldest first.
-    pub fn receipts(&self) -> Vec<ReceiptRecord> {
+    pub(crate) fn receipts(&self) -> Vec<ReceiptRecord> {
         let mut receipts: Vec<ReceiptRecord> = self
             .vault
             .receipts(ReceiptQuery::new(100).with_kind(ReceiptKind::IdentityLifecycle))
@@ -206,7 +206,7 @@ impl Org {
     }
 
     /// The roles the house was bound at, oldest first, each by the owner.
-    pub fn bound_roles(&self) -> Vec<String> {
+    pub(crate) fn bound_roles(&self) -> Vec<String> {
         self.receipts()
             .iter()
             .map(|receipt| {
@@ -219,12 +219,12 @@ impl Org {
     }
 
     /// Moves the store clock past `deadline`.
-    pub fn pass(&self, deadline: u64) {
+    pub(crate) fn pass(&self, deadline: u64) {
         self.clock.set(deadline + 1);
     }
 }
 
-pub fn field<'r>(receipt: &'r ReceiptRecord, name: &str) -> &'r str {
+pub(crate) fn field<'r>(receipt: &'r ReceiptRecord, name: &str) -> &'r str {
     receipt
         .fields
         .get(name)

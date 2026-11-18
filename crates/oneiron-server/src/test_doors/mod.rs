@@ -41,6 +41,7 @@ pub mod mcp_refusal_status;
 pub mod mcp_run_claim_lane;
 pub mod mcp_surface;
 pub mod media_job_spend;
+pub mod memory_owner_commit;
 #[cfg(unix)]
 pub mod merge_queue_checker_pressure;
 pub mod model_licence;
@@ -63,6 +64,7 @@ pub mod resident_pump;
 #[cfg(target_os = "linux")]
 pub mod sandbox_vendor;
 pub mod seal_judge;
+pub mod selector_release;
 pub mod signing_session;
 pub mod siwc_seat;
 pub mod solved_runs;
