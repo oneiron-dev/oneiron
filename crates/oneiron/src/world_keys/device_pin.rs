@@ -138,7 +138,7 @@ pub struct DevicePin {
 }
 
 /// Proof that its holder is inside a device PIN's step ([`DevicePin::step`]).
-pub(in crate::world_keys) struct DevicePinStep<'a> {
+pub(crate) struct DevicePinStep<'a> {
     _held: MutexGuard<'a, ()>,
 }
 
@@ -523,7 +523,7 @@ impl DevicePin {
     /// whole step, and so is each step that puts an owner signing key under
     /// the device PIN key, makes one there, or makes one in a slot while no
     /// PIN is set. A signature is no step: it takes only the key's own lock.
-    pub(in crate::world_keys) fn step(&self) -> DevicePinStep<'_> {
+    pub(crate) fn step(&self) -> DevicePinStep<'_> {
         let held = match self.step.try_lock() {
             Ok(held) => held,
             Err(TryLockError::Poisoned(poisoned)) => poisoned.into_inner(),
