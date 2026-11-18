@@ -33,8 +33,8 @@ use std::sync::Arc;
 use ed25519_dalek::{Signer, SigningKey};
 use oneiron::authority::{
     AUTHORITY_LOG_SCHEMA_VERSION, ActSurface, AuthorityCheckpointUnresolved, AuthorityEntryHash,
-    AuthorityEntryStatus, AuthorityKey, AuthorityLogEntry, AuthorityOp, AuthoritySignature,
-    AuthorityVaultId, HostSlipIssuer, MACHINE_ENCRYPTION_KEY_LEN,
+    AuthorityEntryStatus, AuthorityFoldIssue, AuthorityKey, AuthorityLogEntry, AuthorityOp,
+    AuthoritySignature, AuthorityVaultId, HostSlipIssuer, MACHINE_ENCRYPTION_KEY_LEN,
     MACHINE_ENCRYPTION_SUITE_HYBRID_V1, MachineDeviceClass, MachineEncryptionKey,
     MachineEnrolmentRequest, MachineOwnership, MachineProfile, MachineRole, OwnerRootRecord,
     authority_entry_hash, authority_log_entity_id, authority_transcript,
@@ -535,5 +535,29 @@ fn adopted_whole_request_still_names_strangers_parent() {
     assert!(
         authority_fold_settled(&served.vault).expect("the settled read"),
         "the believed request names nothing, so the adopted vault serves peers"
+    );
+}
+
+/// T4 on T1's setup (#9476 review round 1, P1): the stranger's row C, which
+/// the fold past the adopted image leaves out of what it settles, keeps the
+/// verdict the stored log's fold gives a row whose parent never folds:
+/// `InvalidAncestry(C)` (`fold_schedule`). RED at b5a1e5f4 (the fold names no
+/// issue for C), GREEN with the fix.
+#[test]
+fn adopted_strangers_dropped_row_keeps_its_invalid_ancestry_verdict() {
+    let served = ServedVault::self_host();
+    let (anchor, root_hash) = publish_stranger_root(&served.vault);
+    adopt_own_checkpoint(&served);
+    let (_, delivered) = strangers_gapped_revision(&served, &anchor, root_hash);
+    deliver_via_replicated(&served.vault, &delivered).expect("C lands through replicated ingest");
+    let fold = served
+        .vault
+        .authority_fold()
+        .expect("the fold past the adopted image reads");
+    assert!(
+        fold.issues
+            .contains(&AuthorityFoldIssue::InvalidAncestry(hash(&delivered))),
+        "the fold past the adopted image dropped C's invalid-ancestry verdict: {:?}",
+        fold.issues
     );
 }
