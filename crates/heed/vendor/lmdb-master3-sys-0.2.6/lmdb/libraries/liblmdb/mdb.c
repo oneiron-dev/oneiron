@@ -4930,12 +4930,17 @@ fail:
 		rc = ErrCode();
 		/* ONEIRON FORK (LMDB audit): a failed sync is a failed meta write.
 		 * Put the old meta back in the page cache and mark the env fatal,
-		 * as the pwrite failure above does.
+		 * as the pwrite failure above does. If the old meta cannot be put
+		 * back whole, the commit is indeterminate (a reopen may see it):
+		 * answer MDB_PANIC instead of the sync's error.
 		 */
 		meta.mm_last_pg = metab.mm_last_pg;
 		meta.mm_txnid = metab.mm_txnid;
-		r2 = pwrite(env->me_fd, ptr, len, off);
-		(void)r2;	/* Silence warnings. We don't care about pwrite's return value */
+		do {
+			r2 = pwrite(env->me_fd, ptr, len, off);
+		} while (r2 < 0 && ErrCode() == EINTR);
+		if (r2 != len)
+			rc = MDB_PANIC;
 		goto fail;
 	}
 #endif
@@ -5520,6 +5525,11 @@ mdb_env_open2(MDB_env *env, int prev)
 	/* Verify that root pages are actually inside the file */
 	{
 		mdb_size_t fsize = 0;
+		/* ONEIRON FORK (LMDB audit): refuse a page size that
+		 * mdb_env_set_pagesize would refuse, before dividing by it.
+		 */
+		if (env->me_psize < 256 || env->me_psize > MAX_PAGESIZE)
+			return MDB_INVALID;
 		if (mdb_fsize(env->me_fd, &fsize) == MDB_SUCCESS && fsize) {
 			MDB_dbi dbi;
 			pgno_t maxpgno = fsize / env->me_psize;
@@ -5527,7 +5537,10 @@ mdb_env_open2(MDB_env *env, int prev)
 			for (dbi = FREE_DBI; dbi <= MAIN_DBI; dbi++) {
 				MDB_db *db = &meta.mm_dbs[dbi];
 				if (db->md_root != P_INVALID) {
-					if (db->md_root > maxpgno)
+					/* ONEIRON FORK (LMDB audit): maxpgno counts whole
+					 * pages, so a root at maxpgno is past the end too.
+					 */
+					if (db->md_root >= maxpgno)
 						return MDB_PAGE_NOTFOUND;
 					sum += db->md_branch_pages;
 					sum += db->md_leaf_pages;
