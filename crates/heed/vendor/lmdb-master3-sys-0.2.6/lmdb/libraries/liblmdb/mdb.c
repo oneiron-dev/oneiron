@@ -3362,7 +3362,6 @@ mdb_txn_renew0(MDB_txn *txn)
 #endif
 		txn->mt_child = NULL;
 		txn->mt_rdonly_child_count = 0;
-		pthread_mutex_init(&txn->mt_child_mutex, NULL);
 		txn->mt_loose_pgs = NULL;
 		txn->mt_loose_count = 0;
 		if (env->me_flags & MDB_WRITEMAP) {
@@ -3549,6 +3548,15 @@ mdb_txn_begin(MDB_env *env, MDB_txn *parent, unsigned int flags, MDB_txn **ret)
 				return ENOMEM;
 			}
 			txn->mt_u.dirty_list[0].mid = 0;
+			/* ONEIRON FORK (child mutex): check the init. On Windows it is
+			 * CreateMutex, which can fail; a txn without its mutex would let
+			 * its own nested begins run unlocked. Nothing has seen the txn yet. */
+			if ((rc = pthread_mutex_init(&txn->mt_child_mutex, NULL)) != 0) {
+				mdb_midl_free(txn->mt_free_pgs);
+				free(txn->mt_u.dirty_list);
+				free(txn);
+				return rc;
+			}
 		}
 		txn->mt_txnid = parent->mt_txnid;
 		txn->mt_dirty_room = parent->mt_dirty_room;
@@ -3599,10 +3607,20 @@ renew:
 	}
 	if (rc) {
 		if (txn != env->me_txn0) {
-			/* mt_rpages belongs to parent */
 			if (!F_ISSET(flags, MDB_RDONLY)) {
-				free(txn->mt_u.dirty_list);
+				/* ONEIRON FORK (begin failure): only a nested write txn gets here,
+				 * after mdb_txn_end(MDB_END_FAIL_BEGINCHILD) above, which already
+				 * freed its dirty list and free pages and leaves only the txn.
+				 * ONEIRON FORK (child mutex): destroy the child mutex it got above,
+				 * which that mode does not. On Windows the mutex is a handle. */
+				pthread_mutex_destroy(&txn->mt_child_mutex);
 			}
+#if MDB_RPAGE_CACHE
+			/* ONEIRON FORK (begin failure): a top-level read txn owns the chunk
+			 * table allocated above; a nested txn's belongs to its parent. */
+			else if (!parent && MDB_REMAPPING(env->me_flags))
+				free(txn->mt_rpages);
+#endif
 			free(txn);
 		}
 	} else {
@@ -4494,6 +4512,10 @@ _mdb_txn_commit(MDB_txn *txn, int flag)
 		parent->mt_last_workid = txn->mt_last_workid;
 		parent->mt_child = NULL;
 		mdb_midl_free(((MDB_ntxn *)txn)->mnt_pgstate.mf_pghead);
+		/* ONEIRON FORK (child mutex): this path frees the nested write txn
+		 * without mdb_txn_end, so destroy the child mutex mdb_txn_begin gave it.
+		 * On Windows the mutex is a handle. */
+		pthread_mutex_destroy(&txn->mt_child_mutex);
 		free(txn);
 		return rc;
 	}
@@ -6391,6 +6413,15 @@ mdb_env_open(MDB_env *env, const char *path, unsigned int flags, mdb_mode_t mode
 #endif
 				txn->mt_dbxs = env->me_dbxs;
 				txn->mt_flags = MDB_TXN_FINISHED;
+				/* ONEIRON FORK (child mutex): check the init, as above: me_txn0
+				 * keeps this mutex for the env's life, so the open fails. */
+				if ((rc = pthread_mutex_init(&txn->mt_child_mutex, NULL)) != 0) {
+#if MDB_RPAGE_CACHE
+					free(txn->mt_rpages);
+#endif
+					free(txn);
+					goto leave;
+				}
 				env->me_txn0 = txn;
 			} else {
 				rc = ENOMEM;
@@ -6444,7 +6475,10 @@ mdb_env_close_active(MDB_env *env, int excl)
 	}
 	}
 #endif
-	free(env->me_txn0);
+	if (env->me_txn0) {
+		pthread_mutex_destroy(&env->me_txn0->mt_child_mutex);
+		free(env->me_txn0);
+	}
 	mdb_midl_free(env->me_free_pgs);
 
 	if (env->me_flags & MDB_ENV_TXKEY) {
