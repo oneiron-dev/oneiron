@@ -57,7 +57,7 @@ pub use extraction_observations::{
 };
 #[cfg(oneiron_test_support)]
 pub(crate) use extraction_observations::{
-    pin_of_encoded_facts_for_test, tokens_of_encoded_keys_for_test,
+    observation_key_tokens_for_test, pin_of_encoded_facts_for_test,
 };
 pub use policy_preflight::{
     POLICY_PREFLIGHT_MAX_REFS, PolicyPreflight, PolicyPreflightAct, PolicyPreflightRef,

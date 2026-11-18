@@ -3,11 +3,13 @@
 //! Compiled only under `oneiron_test_support`; never part of the engine API.
 #![cfg(oneiron_test_support)]
 
-/// The identity, topic, value and slice equality tokens, in that order, each over its own
-/// encoded key bytes.
+use crate::dreamer_consolidation::routing::CandidateKeys;
+
+/// The identity, topic, value and slice equality tokens of one native key triple, in that
+/// order, as the observations read computes them; `None` when the keys do not encode.
 #[must_use]
-pub fn equality_tokens(identity: &[u8], topic: &[u8], value: &[u8], slice: &[u8]) -> [String; 4] {
-    crate::snapshot_read::tokens_of_encoded_keys_for_test(identity, topic, value, slice)
+pub fn equality_tokens(keys: &CandidateKeys) -> Option<[String; 4]> {
+    crate::snapshot_read::observation_key_tokens_for_test(keys).ok()
 }
 
 /// An observations read's facts pin, over the encoded request and fact set.

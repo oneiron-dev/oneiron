@@ -39,27 +39,15 @@ pub(super) fn observation_key_tokens(keys: &CandidateKeys) -> MemoryResult<Obser
     .map_err(|error| MemoryError::bad_request(error.to_string()))?;
     let encoded_slice = serde_json::to_vec(&(&subject, &world, &facet, &relationships, &project))
         .map_err(|error| MemoryError::bad_request(error.to_string()))?;
-    Ok(tokens_of_encoded_keys(
-        &encoded_identity,
-        &keys.topic_key,
-        &keys.value_key,
-        &encoded_slice,
-    ))
-}
-
-/// Gives each encoded key the equality token of its own kind.
-fn tokens_of_encoded_keys(
-    identity: &[u8],
-    topic: &[u8],
-    value: &[u8],
-    slice: &[u8],
-) -> ObservationKeyTokens {
-    ObservationKeyTokens {
-        identity: equality_token(purposes::dreamer::EXTRACTION_IDENTITY_TOKEN, identity),
-        topic: equality_token(purposes::dreamer::EXTRACTION_TOPIC_TOKEN, topic),
-        value: equality_token(purposes::dreamer::EXTRACTION_VALUE_TOKEN, value),
-        slice: equality_token(purposes::dreamer::EXTRACTION_SLICE_TOKEN, slice),
-    }
+    Ok(ObservationKeyTokens {
+        identity: equality_token(
+            purposes::dreamer::EXTRACTION_IDENTITY_TOKEN,
+            &encoded_identity,
+        ),
+        topic: equality_token(purposes::dreamer::EXTRACTION_TOPIC_TOKEN, &keys.topic_key),
+        value: equality_token(purposes::dreamer::EXTRACTION_VALUE_TOKEN, &keys.value_key),
+        slice: equality_token(purposes::dreamer::EXTRACTION_SLICE_TOKEN, &encoded_slice),
+    })
 }
 
 /// Hashes native key bytes after one token kind's tag and a NUL separator. Each tag is a
@@ -69,15 +57,10 @@ fn equality_token(purpose: LegacyPurpose, bytes: &[u8]) -> String {
     oneiron_hex::encode(&LegacyDigest::new(purpose).raw(&[0]).raw(bytes).finish())
 }
 
-/// [`tokens_of_encoded_keys`] as the identity, topic, value and slice tokens in that
+/// [`observation_key_tokens`] as the identity, topic, value and slice tokens in that
 /// order, for the K door (`test_doors::fingerprint_keep_extraction_read_digests`). Not API.
 #[cfg(oneiron_test_support)]
-pub(crate) fn tokens_of_encoded_keys_for_test(
-    identity: &[u8],
-    topic: &[u8],
-    value: &[u8],
-    slice: &[u8],
-) -> [String; 4] {
-    let tokens = tokens_of_encoded_keys(identity, topic, value, slice);
-    [tokens.identity, tokens.topic, tokens.value, tokens.slice]
+pub(crate) fn observation_key_tokens_for_test(keys: &CandidateKeys) -> MemoryResult<[String; 4]> {
+    let tokens = observation_key_tokens(keys)?;
+    Ok([tokens.identity, tokens.topic, tokens.value, tokens.slice])
 }

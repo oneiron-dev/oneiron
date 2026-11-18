@@ -16,7 +16,7 @@ pub use types::{
 #[cfg(oneiron_test_support)]
 pub(crate) use self::paging::pin_of_encoded_facts_for_test;
 #[cfg(oneiron_test_support)]
-pub(crate) use self::tokens::tokens_of_encoded_keys_for_test;
+pub(crate) use self::tokens::observation_key_tokens_for_test;
 
 use self::facts::extraction_observation_facts;
 use self::paging::{observation_facts_pin, page_observation_facts};

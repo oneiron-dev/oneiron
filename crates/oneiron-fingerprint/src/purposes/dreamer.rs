@@ -75,8 +75,9 @@ legacy_purposes! {
     /// (`snapshot_read::extraction_observations::tokens`). Plain BLAKE3, the tag first, one
     /// zero byte, then the `serde_json` bytes of the native conflict identity as the array
     /// (subject, predicate, world, facet, relationships, project, topic), each id as hex
-    /// text, with no length. Its lowercase hex is sent with the fact rows of an
-    /// observations page, and the extraction job compares two rows' tokens for equality.
+    /// text, with no length. Its lowercase hex is sent with each candidate, prior and
+    /// replay row of an observations page, and the extraction job compares two rows'
+    /// tokens for equality.
     EXTRACTION_IDENTITY_TOKEN = (Blake3, HashedFirst, "oneiron:extraction:identity-token:v1");
 
     /// An extraction observations read's facts pin
@@ -97,7 +98,8 @@ legacy_purposes! {
 
     /// An extraction observation's same-slice equality token: the recipe of
     /// [`EXTRACTION_IDENTITY_TOKEN`] under its own tag, over the `serde_json` bytes of the
-    /// array (subject, world, facet, relationships, project).
+    /// array (subject, world, facet, relationships, project). Only a candidate row carries
+    /// it.
     EXTRACTION_SLICE_TOKEN = (Blake3, HashedFirst, "oneiron:extraction:slice-token:v1");
 
     /// An extraction observation's question equality token: the recipe of
