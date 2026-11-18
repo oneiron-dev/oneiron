@@ -13,9 +13,19 @@
 //! `UNSTAMPED_CLAIM_SENSITIVITY_BAND`, so it is no control under a private
 //! ceiling.)
 //!
-//! On main `a_connect_grant_carries_a_private_claim_up_to_its_ceiling` fails:
-//! the home withhold drops the private claim from the Connect export. The
-//! other two cases pass on main and on the head.
+//! Cases:
+//! - A Connect grant carries a private claim at its ceiling, but not a
+//!   sensitive claim above it; a non-Connect guest still reads neither.
+//! - A private conversation summary covering a private claim in another
+//!   world is withheld; the same shape covering its own world is carried.
+//! - A causally admitted MACHINE-signed private claim in the granted world
+//!   is withheld, while the plain private claim still rides.
+//!
+//! Traced red/green (not executed): on main `9622dba76276` the private carry
+//! and same-world summary control fail; the cross-world and MACHINE LEAK
+//! assertions pass, but their private-carry FIXTURE assertions fail too.
+//! On `cf45cbc3` both LEAK assertions fail and the other cases pass. With
+//! the review fix all six cases pass.
 //!
 //! Run: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test connect_export_stamped_claims`
 #![cfg(oneiron_test_support)]
@@ -23,14 +33,15 @@
 
 use std::sync::Arc;
 
+use ed25519_dalek::{Signer, SigningKey};
 use loro::{LoroDoc, LoroValue, ValueOrContainer};
-use oneiron::authority::{HostSlipIssuer, PeerMachine};
+use oneiron::authority::{CausalWriteDisposition, HostSlipIssuer, PeerMachine};
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::federation::{
     FederationDirectionScope, FederationGrantRole, FederationGrantScope, Scope, ScopeAxis, ScopeId,
     Sensitivity, SensitivityCeiling,
 };
-use oneiron::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_POLICY_MANIFEST};
+use oneiron::registry::{ENTITY_TYPE_MACHINE, ENTITY_TYPE_PERSON, ENTITY_TYPE_POLICY_MANIFEST};
 use oneiron::store::GateDecisionId;
 use oneiron::sync::bridge::Materializer;
 use oneiron::sync::manager::WindowManager;
@@ -38,11 +49,15 @@ use oneiron::sync::types::WindowKey;
 use oneiron::sync::{
     ConnectExportRequest, SyncClient, SyncSelector, SyncSelectorWorld, filtered_window_doc_for_peer,
 };
+use oneiron::test_doors::disclosure_word_sources::install_shipped_policy_with_ordinary_predicate;
 use oneiron::test_doors::membership::stand_member_grant;
+use oneiron::write_envelope::MachineWriteSignature;
 use oneiron::{
-    ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject, EntityId, TimeRange, Vault,
-    VaultConfig,
+    ClaimApprovalStatus, ClaimBody, ClaimCandidate, ClaimLifecycleStatus, ClaimSource,
+    ClaimSubject, EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig, WriteActor,
+    WriteEnvelope, WriteProvenance,
 };
+use oneiron_store::conversation_summary::conversation_summary_covers;
 use rmpv::Value;
 
 type TestResult<T = ()> = std::result::Result<T, Box<dyn std::error::Error>>;
@@ -93,12 +108,14 @@ fn put_claim(
     subject: EntityId,
     world: Option<EntityId>,
     stamp: u8,
+    predicate: &str,
+    value: Value,
 ) -> TestResult<EntityId> {
     let id = EntityId::now();
     let mut body = ClaimBody::new(
-        "profile.note",
+        predicate,
         ClaimSubject::Entity(subject),
-        Value::from("lighthouse keeper"),
+        value,
         1.0,
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
@@ -109,6 +126,9 @@ fn put_claim(
         Value::from(stamp),
     )]));
     vault.put_claim(&id, &body, at_learned(), LEARNED_AT)?;
+    let stored = vault.get_claim(&id)?.expect("FIXTURE: claim landed");
+    assert_eq!(stored.world, world, "FIXTURE: claim keeps its world");
+    assert_eq!(stored.scope, body.scope, "FIXTURE: claim keeps its stamp");
     Ok(id)
 }
 
@@ -122,10 +142,108 @@ struct Claims {
 fn put_claims(vault: &Vault, world: Option<EntityId>) -> TestResult<Claims> {
     let subject = put_person(vault, "kenji")?;
     Ok(Claims {
-        public: put_claim(vault, subject, world, STAMP_PUBLIC)?,
-        private: put_claim(vault, subject, world, STAMP_PRIVATE)?,
-        sensitive: put_claim(vault, subject, world, STAMP_SENSITIVE)?,
+        public: put_claim(
+            vault,
+            subject,
+            world,
+            STAMP_PUBLIC,
+            "profile.note",
+            "lighthouse keeper".into(),
+        )?,
+        private: put_claim(
+            vault,
+            subject,
+            world,
+            STAMP_PRIVATE,
+            "profile.note",
+            "lighthouse keeper".into(),
+        )?,
+        sensitive: put_claim(
+            vault,
+            subject,
+            world,
+            STAMP_SENSITIVE,
+            "profile.note",
+            "lighthouse keeper".into(),
+        )?,
     })
+}
+
+/// A private summary in `world` with typed coverage of exactly `covered`.
+fn put_summary(vault: &Vault, world: EntityId, covered: EntityId) -> TestResult<EntityId> {
+    let subject = put_person(vault, "kenji")?;
+    let summary = put_claim(
+        vault,
+        subject,
+        Some(world),
+        STAMP_PRIVATE,
+        "conversation.summary",
+        Value::Map(vec![
+            ("text".into(), "lighthouse keeper".into()),
+            (
+                "covers".into(),
+                Value::Array(vec![Value::Binary(covered.as_bytes().to_vec())]),
+            ),
+        ]),
+    )?;
+    let stored = vault.get_claim(&summary)?.expect("FIXTURE: summary landed");
+    assert_eq!(stored.world, Some(world), "FIXTURE: summary belongs to W");
+    assert_eq!(
+        conversation_summary_covers(&stored)?,
+        Some(vec![covered]),
+        "FIXTURE: the stored summary decodes to exactly its covered claim"
+    );
+    Ok(summary)
+}
+
+/// An enrolled MACHINE's real private birth, signed after its world and
+/// sensitivity are set. The candidate writer lands its history too.
+fn put_machine_claim(
+    vault: &Vault,
+    issuer: &HostSlipIssuer,
+    world: EntityId,
+) -> TestResult<EntityId> {
+    let machine = EntityId::now();
+    vault.put_entity(
+        &machine,
+        ENTITY_TYPE_MACHINE,
+        at_learned(),
+        LEARNED_AT,
+        b"machine",
+    )?;
+    let signing = SigningKey::from_bytes(&[0x4d; 32]);
+    vault.enroll_machine_identity(
+        issuer,
+        machine,
+        signing.verifying_key().to_bytes(),
+        [0x54; 32],
+        |transcript| Ok(signing.sign(transcript).to_bytes()),
+    )?;
+    let candidate = ClaimCandidate::new(
+        "profile.note",
+        ClaimSubject::Entity(machine),
+        "lighthouse keeper".into(),
+        1.0,
+    )
+    .with_world(world)
+    .with_scope(Value::Map(vec![(STAMP_KEY.into(), STAMP_PRIVATE.into())]));
+    let envelope = WriteEnvelope::new(
+        WriteActor::new(machine, EdgeActorClass::System),
+        ClaimSource::Observed,
+        WriteProvenance::new("machine output".into())?,
+        ClaimApprovalStatus::Proposed,
+    );
+    let id = EntityId::now();
+    let transcript = vault.machine_claim_transcript(&id, &candidate, &envelope)?;
+    let signed = envelope.with_machine_signature(MachineWriteSignature {
+        public_key: signing.verifying_key().to_bytes(),
+        signature: signing.sign(&transcript).to_bytes(),
+    });
+    vault
+        .batch()
+        .claim_candidate(&id, candidate, &signed, at_learned(), LEARNED_AT)
+        .commit()?;
+    Ok(id)
 }
 
 fn manager(vault: &Arc<Vault>) -> Arc<WindowManager> {
@@ -190,13 +308,32 @@ fn guest_direction(world: EntityId) -> FederationDirectionScope {
 /// whose guest grant reads up to `ceiling`, imported as a Loro document,
 /// with the claims it was cut from.
 fn connect_export(ceiling: Sensitivity) -> TestResult<(LoroDoc, Claims)> {
+    let (doc, claims, ()) = connect_export_with(ceiling, |_, _, _, _, _| Ok(()))?;
+    Ok((doc, claims))
+}
+
+/// Prepares extra rows before opening the window and exporting it.
+fn connect_export_with<T>(
+    ceiling: Sensitivity,
+    prepare: impl FnOnce(
+        &Vault,
+        &AuthenticatedOwner,
+        &HostSlipIssuer,
+        EntityId,
+        &Claims,
+    ) -> TestResult<T>,
+) -> TestResult<(LoroDoc, Claims, T)> {
     let (_source_dir, vault) = open_vault()?;
     let owner = authenticate_owner(&vault)?;
+    // The raw claim door needs an ordinary rule to land a summary. Install
+    // it before raising the Connect ceiling, since this door resets policy.
+    install_shipped_policy_with_ordinary_predicate(&vault, "conversation.summary")?;
     let issuer = HostSlipIssuer::from_secret(b"connect-stamped-claims-source")?;
     vault.ensure_host_root_slip(&issuer)?;
     admit_sensitive_guest_rows(&vault, &owner)?;
     let world = vault.create_world(&owner, "owen", LEARNED_AT)?;
     let claims = put_claims(&vault, Some(world))?;
+    let extra = prepare(&vault, &owner, &issuer, world, &claims)?;
 
     let (_recipient_dir, recipient) = open_vault()?;
     let recipient_owner = authenticate_owner(&recipient)?;
@@ -265,9 +402,120 @@ fn connect_export(ceiling: Sensitivity) -> TestResult<(LoroDoc, Claims)> {
     let doc = LoroDoc::new();
     doc.import(&delivery.body.update)
         .expect("import the exported Loro update");
-    Ok((doc, claims))
+    Ok((doc, claims, extra))
 }
 
+/// Pins the cross-world word-source fence under a private Connect ceiling.
+/// On main 9622dba76276 the LEAK assertion passes, but the private-carry
+/// FIXTURE fails. On cf45cbc3 the LEAK fails; with the review fix both pass.
+#[test]
+fn a_connect_grant_withholds_a_summary_whose_words_come_from_another_world() -> TestResult {
+    let (doc, claims, (summary, covered)) =
+        connect_export_with(Sensitivity::Private, |vault, owner, _, world, _| {
+            let other_world = vault.create_world(owner, "haru", LEARNED_AT)?;
+            assert_ne!(
+                other_world, world,
+                "FIXTURE: B differs from granted world W"
+            );
+            let subject = put_person(vault, "kenji")?;
+            let covered = put_claim(
+                vault,
+                subject,
+                Some(other_world),
+                STAMP_PRIVATE,
+                "profile.note",
+                "lighthouse keeper".into(),
+            )?;
+            Ok((put_summary(vault, world, covered)?, covered))
+        })?;
+    assert!(
+        carries(&doc, claims.private),
+        "FIXTURE: the Connect export carries the plain private claim in W"
+    );
+    assert!(
+        !carries(&doc, covered),
+        "FIXTURE: the claim in ungranted world B is not directly exported"
+    );
+    assert!(
+        !carries(&doc, summary),
+        "LEAK: a summary in W must not carry private words from ungranted world B"
+    );
+    Ok(())
+}
+
+/// Pins the same-world control: a Connect ceiling must still admit a
+/// summary whose private source is selected. On main 9622dba76276 the
+/// private-carry FIXTURE and the final carry assertion fail; on cf45cbc3
+/// and with the review fix both pass.
+#[test]
+fn a_connect_grant_carries_a_summary_whose_words_come_from_its_world() -> TestResult {
+    let (doc, claims, summary) =
+        connect_export_with(Sensitivity::Private, |vault, _, _, world, claims| {
+            put_summary(vault, world, claims.private)
+        })?;
+    assert!(
+        carries(&doc, claims.private),
+        "FIXTURE: the Connect export carries the summary's private source in W"
+    );
+    assert!(
+        carries(&doc, summary),
+        "OVER-REFUSAL: the source fence must not withhold a summary backed by selected private words"
+    );
+    Ok(())
+}
+
+/// Pins the MACHINE-proof withhold at Connect egress, after causal admission.
+/// On main 9622dba76276 the LEAK assertion passes, but the private-carry
+/// FIXTURE fails. On cf45cbc3 the LEAK fails; with the review fix both pass.
+#[test]
+fn a_connect_grant_withholds_a_machine_signed_private_claim() -> TestResult {
+    let (doc, claims, machine_claim) =
+        connect_export_with(Sensitivity::Private, |vault, _, issuer, world, _| {
+            let id = put_machine_claim(vault, issuer, world)?;
+            let body = vault
+                .get_claim(&id)?
+                .expect("FIXTURE: MACHINE claim landed");
+            assert_eq!(
+                body.world,
+                Some(world),
+                "FIXTURE: signed claim belongs to W"
+            );
+            assert_eq!(
+                body.scope,
+                Some(Value::Map(vec![(STAMP_KEY.into(), STAMP_PRIVATE.into())])),
+                "FIXTURE: signed claim is stamped private"
+            );
+            assert!(
+                body.evidence
+                    .as_ref()
+                    .and_then(Value::as_map)
+                    .is_some_and(|fields| {
+                        fields
+                            .iter()
+                            .any(|(key, _)| key.as_str() == Some("machine_signature"))
+                    }),
+                "FIXTURE: the stored claim carries its MACHINE proof"
+            );
+            assert_eq!(
+                vault.claim_write_disposition(&id)?,
+                Some(CausalWriteDisposition::Admitted),
+                "FIXTURE: the signed claim passes the causal predicate, not a forged-proof drop"
+            );
+            Ok(id)
+        })?;
+    assert!(
+        carries(&doc, claims.private),
+        "FIXTURE: the Connect export still carries the plain private claim in W"
+    );
+    assert!(
+        !carries(&doc, machine_claim),
+        "LEAK: a Connect grant must not export a private CLAIM bound by a MACHINE proof"
+    );
+    Ok(())
+}
+
+/// Pins Connect's private ceiling exception: fails on main 9622dba76276,
+/// passes on cf45cbc3 and with the review fix.
 #[test]
 fn a_connect_grant_carries_a_private_claim_up_to_its_ceiling() -> TestResult {
     let (doc, claims) = connect_export(Sensitivity::Private)?;
@@ -282,6 +530,8 @@ fn a_connect_grant_carries_a_private_claim_up_to_its_ceiling() -> TestResult {
     Ok(())
 }
 
+/// Pins the grant's sensitivity ceiling: passes on main 9622dba76276,
+/// cf45cbc3 and with the review fix.
 #[test]
 fn a_connect_grant_withholds_a_sensitive_claim_above_its_ceiling() -> TestResult {
     let (doc, claims) = connect_export(Sensitivity::Private)?;
@@ -296,6 +546,8 @@ fn a_connect_grant_withholds_a_sensitive_claim_above_its_ceiling() -> TestResult
     Ok(())
 }
 
+/// Pins the unchanged non-Connect home withhold: passes on main
+/// 9622dba76276, cf45cbc3 and with the review fix.
 #[test]
 fn a_guest_without_a_connect_grant_still_reads_no_stamped_claim() -> TestResult {
     let (_dir, vault) = open_vault()?;

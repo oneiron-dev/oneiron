@@ -242,7 +242,18 @@ pub(in crate::sync::selector) fn filter_window_doc(
         // other rows' words (a scope SUMMARY, the TURN that copies one, a
         // merge header) reaches the member only when it reads every one of
         // those sources at the same gate, as its scoped read admits it.
-        match member_reads_word_sources(vault, &rtxn, &member_access, &id, blob) {
+        match member_reads_word_sources(vault, &rtxn, &member_access, &id, blob, |source, raw| {
+            source_selected(
+                vault,
+                &rtxn,
+                (source, raw),
+                &grant.authority_scope,
+                selector,
+                scope_position,
+                &facet_scope,
+                &history,
+            )
+        }) {
             Ok(true) => {}
             Ok(false) => return,
             Err(error) => {
@@ -675,6 +686,28 @@ impl MemberAccess<'_> {
             self.homed_here,
         )
     }
+
+    /// Whether this member, not homed here, reads a row stamped `stamp` at
+    /// the home check: a row with no stamp above public, or a stamped CLAIM
+    /// under a Connect grant whose ceiling permits its band. A CLAIM a
+    /// MACHINE proof binds is withheld even then: the peer's guest admission
+    /// withholds it ([`crate::federation::guest_claim_withheld`]), so its
+    /// bytes would leave this vault for nothing.
+    fn reads_stamp_away_from_home(&self, stamp: &HomeStamp) -> bool {
+        match stamp {
+            HomeStamp::Unstamped => true,
+            HomeStamp::Stamped {
+                band,
+                machine_bound,
+            } => {
+                !machine_bound
+                    && self
+                        .connect_ceiling
+                        .is_some_and(|ceiling| ceiling.permits(band.sensitivity()))
+            }
+            HomeStamp::Undecodable => false,
+        }
+    }
 }
 
 /// [`MemberAccess`] for `grant`'s member. An owner check that fails gates,
@@ -713,9 +746,11 @@ pub(in crate::sync::selector) fn member_access<'v>(
 }
 
 /// Whether the selector's member reads the row `raw` of `id`: a member homed
-/// elsewhere reads a stamped claim ([`stamped_band`]) only under a Connect
-/// grant and only up to that grant's ceiling, and a gated member reads a row
-/// only at the relationship gate (FIX SELECTOR-RELATIONSHIP-LABELS). An
+/// elsewhere reads a stamped claim ([`home_stamp`]) only under a Connect
+/// grant, only up to that grant's ceiling and never one a MACHINE proof
+/// binds (`MemberAccess::reads_stamp_away_from_home`), and a gated member
+/// reads a row only at the relationship gate (FIX
+/// SELECTOR-RELATIONSHIP-LABELS). An
 /// Owner's member reads every row. A CLAIM body that does not decode is
 /// withheld, as the causal check withholds it.
 pub(in crate::sync::selector) fn member_reads_row(
@@ -725,17 +760,8 @@ pub(in crate::sync::selector) fn member_reads_row(
     id: &EntityId,
     raw: &[u8],
 ) -> Result<bool> {
-    if !member.homed_here {
-        let admitted = match stamped_band(raw) {
-            Some(None) => true,
-            Some(Some(band)) => member
-                .connect_ceiling
-                .is_some_and(|ceiling| ceiling.permits(band.sensitivity())),
-            None => false,
-        };
-        if !admitted {
-            return Ok(false);
-        }
+    if !member.homed_here && !member.reads_stamp_away_from_home(&home_stamp(raw)) {
+        return Ok(false);
     }
     member_reads_labels(vault, rtxn, member.labels.as_ref(), id, raw)
 }
@@ -764,21 +790,44 @@ fn member_reads_labels(
     }
 }
 
+/// The stamp of a row as the home check reads it.
+enum HomeStamp {
+    /// A row that is not a CLAIM, or a CLAIM stamped public or not at all.
+    Unstamped,
+    /// A CLAIM stamped `band` ([`crate::disclosure::scope_home_band`]; an
+    /// ambiguous stamp reads `Restricted`). `machine_bound` holds when a
+    /// MACHINE proof binds its bytes
+    /// ([`crate::federation::guest_claim_withheld`]).
+    Stamped {
+        band: DisclosureBand,
+        machine_bound: bool,
+    },
+    /// A CLAIM body that does not decode: the home check withholds it, so it
+    /// fails closed.
+    Undecodable,
+}
+
 /// The stamp of `raw` as the scoped read judges it
-/// ([`crate::disclosure::scope_home_band`]): `Some(None)` for a row that is
-/// not a CLAIM or a CLAIM stamped public or not at all, `Some(Some(band))`
-/// for a stamped CLAIM (an ambiguous stamp reads `Restricted`), and `None`
-/// for a CLAIM body that does not decode, which the home check withholds:
-/// it fails closed.
-fn stamped_band(raw: &[u8]) -> Option<Option<DisclosureBand>> {
+/// ([`crate::disclosure::scope_home_band`]).
+fn home_stamp(raw: &[u8]) -> HomeStamp {
     if EntityMetadataHeader::parse(raw)
         .is_none_or(|header| header.entity_type != crate::registry::ENTITY_TYPE_CLAIM)
     {
-        return Some(None);
+        return HomeStamp::Unstamped;
     }
-    raw.get(ENTITY_METADATA_HEADER_LEN..)
+    let Some(body) = raw
+        .get(ENTITY_METADATA_HEADER_LEN..)
         .and_then(|body| crate::claim::decode_claim_body(body, true).ok())
-        .map(|body| crate::disclosure::scope_home_band(body.scope.as_ref()))
+    else {
+        return HomeStamp::Undecodable;
+    };
+    match crate::disclosure::scope_home_band(body.scope.as_ref()) {
+        None => HomeStamp::Unstamped,
+        Some(band) => HomeStamp::Stamped {
+            band,
+            machine_bound: crate::federation::guest_claim_withheld(&body).is_some(),
+        },
+    }
 }
 
 /// Whether the selector's member reads, at the member gate
@@ -793,12 +842,19 @@ fn stamped_band(raw: &[u8]) -> Option<Option<DisclosureBand>> {
 /// here is withheld. Each row is judged once, so a cycle of sources ends. An
 /// Owner's member reads every row: only a member the label gate binds pays
 /// for the walk.
+///
+/// A Connect ceiling admits a band, not a world: a stamped CLAIM source that
+/// a member homed elsewhere reads only through its Connect grant must also
+/// pass `in_scope`, the export's own fence for a source (the grant's and the
+/// selector's worlds and rules), or a row the grant may read would carry the
+/// words of a claim it may not (review of #9526).
 pub(in crate::sync::selector) fn member_reads_word_sources(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
     member: &MemberAccess<'_>,
     id: &EntityId,
     raw: &[u8],
+    mut in_scope: impl FnMut(&EntityId, &[u8]) -> Result<bool>,
 ) -> Result<bool> {
     if member.labels.is_none() {
         return Ok(true);
@@ -814,7 +870,15 @@ pub(in crate::sync::selector) fn member_reads_word_sources(
         let Some(source_raw) = vault.get_raw_in(rtxn, &source)? else {
             return Ok(false);
         };
-        if !member_reads_row(vault, rtxn, member, &source, &source_raw)? {
+        let stamp = (!member.homed_here).then(|| home_stamp(&source_raw));
+        if stamp
+            .as_ref()
+            .is_some_and(|stamp| !member.reads_stamp_away_from_home(stamp))
+            || !member_reads_labels(vault, rtxn, member.labels.as_ref(), &source, &source_raw)?
+        {
+            return Ok(false);
+        }
+        if matches!(stamp, Some(HomeStamp::Stamped { .. })) && !in_scope(&source, &source_raw)? {
             return Ok(false);
         }
         let Some(nested) = word_sources_of(vault, rtxn, &source, &source_raw)? else {
