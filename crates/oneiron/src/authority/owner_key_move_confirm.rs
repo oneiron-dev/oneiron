@@ -273,7 +273,10 @@ impl Vault {
     /// for a plan of another member than `member`
     /// ([`OWNER_KEY_MOVE_MEMBER_NOT_CONFIRMED`]), a plan of another vault,
     /// keys this copy does not show as the plan names them (sync first), or
-    /// when this install holds none of the owner's keys the plan names.
+    /// when this install holds none of the owner's keys the plan names (a
+    /// key that rests under a device PIN counts only inside the window a
+    /// right PIN opened); the signer's refusal, for a key that stopped after
+    /// it was picked.
     pub fn sign_owner_key_move_as(
         &self,
         authority: &ActAuthority,
@@ -306,7 +309,7 @@ impl Vault {
         let signer = self
             .owner_proof_signer(&fold)
             .ok_or_else(|| not_valid(OWNER_KEY_MOVE_NO_HELD_KEY))?;
-        let AuthorityKey::Ed25519(held) = signer.root() else {
+        let AuthorityKey::Ed25519(held) = signer.key() else {
             return Err(not_valid(OWNER_KEY_MOVE_NO_HELD_KEY));
         };
         let own = keys
@@ -316,7 +319,7 @@ impl Vault {
             return Err(not_valid(OWNER_KEY_MOVE_NO_HELD_KEY));
         }
         drop(txn);
-        sign_owner_key_move(plan, held, |transcript| signer.sign_owner_proof(transcript))?
+        sign_owner_key_move(plan, held, |transcript| signer.sign(&fold, transcript))?
             .iter()
             .map(encode_authority_log_entry_body)
             .collect()
