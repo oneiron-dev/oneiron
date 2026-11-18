@@ -11,11 +11,13 @@ use crate::agent_dispatch::{AGENT_RUN_EFFECT_ANSWER_VERB, AGENT_RUN_EFFECT_NOTIF
 use crate::authority::OAUTH_AUTHORIZATION_NOTIFICATION_PRODUCER;
 use crate::claim::{WEAVE_DIGEST_SETTINGS_NOTIFICATION_PRODUCER, WeaveDigestSettingChangeStatus};
 use crate::entity_id::EntityId;
+use crate::federation::NOTIFICATION_PRODUCER_ERASE_PROPOSAL;
 use crate::llm::model_pack::{MODEL_PACK_CHANGE_NOTIFICATION_PRODUCER, MODEL_PACK_REVERT_VERB};
 use crate::memory::Memory;
 use crate::outbound::{UNCERTAIN_SEND_ANSWER_VERB, UNCERTAIN_SEND_NOTIFICATION_PRODUCER};
 use crate::skill_optimize::STOCK_SWITCH_NOTIFICATION_PRODUCER;
 use crate::store::conversation_body::{THREAD_NOTICE_PRODUCER, ThreadJoinRequestsRequest};
+use crate::verbs::OWNER_CONFIRM_PREVIEW_VERB;
 
 /// The owner's answer to a proposed digest settings change.
 const WEAVE_SETTING_ANSWER_VERB: &str = "vault.weave.setting_changes.answer";
@@ -29,6 +31,10 @@ const THREAD_JOIN_APPROVE_VERB: &str = "vault.rooms.thread_join.approve";
 const THREAD_JOIN_DENY_VERB: &str = "vault.rooms.thread_join.deny";
 /// The owner's answer to an outside app's OAuth sign-in request (FIX 4902).
 const OAUTH_AUTHORIZATION_ANSWER_VERB: &str = "vault.oauth.authorization.answer";
+/// The owner's erase of a record: the one-way act the erase ask's tap
+/// previews through [`OWNER_CONFIRM_PREVIEW_VERB`], whose `confirm` this
+/// verb's call then passes back.
+const RECORD_ERASE_CONFIRM_VERB: &str = "vault.records.erase_confirm";
 
 /// One tap a notification offers: the registered verb it calls and that
 /// verb's own input, so a client renders the button the engine describes.
@@ -85,6 +91,9 @@ impl Memory<'_> {
             }
             NotificationKind::Ask if producer == OAUTH_AUTHORIZATION_NOTIFICATION_PRODUCER => {
                 self.oauth_authorization_actions(row)
+            }
+            NotificationKind::Ask if producer == NOTIFICATION_PRODUCER_ERASE_PROPOSAL => {
+                self.erase_proposal_actions(row)
             }
             NotificationKind::Ask if producer == UNCERTAIN_SEND_NOTIFICATION_PRODUCER => {
                 self.uncertain_send_actions(row)
@@ -394,6 +403,41 @@ impl Memory<'_> {
         vec![NotificationAction::new(
             MODEL_PACK_REVERT_VERB,
             serde_json::json!({ "change_ref": change_ref }),
+        )]
+    }
+
+    /// The producer names the record an agent asked to erase in
+    /// `source.result` (a personal vault's erase proposal); the ask is a
+    /// vault owner's. Shown while the record is live: the one-way confirm
+    /// preview of the owner's own erase of it, whose `confirm` that erase
+    /// then takes. An erased record, and
+    /// one that no longer reads, offers none (FIX
+    /// AGENT-ERASE-PROPOSAL-INBOX-TAP).
+    fn erase_proposal_actions(&self, row: &NotificationRow) -> Vec<NotificationAction> {
+        let Some(record) = row
+            .source
+            .result
+            .as_deref()
+            .and_then(|record| EntityId::from_hex(record).ok())
+        else {
+            return Vec::new();
+        };
+        let vault = self.vault();
+        let live = vault
+            .store
+            .env
+            .read_txn()
+            .map_err(crate::error::Error::from)
+            .and_then(|txn| crate::vault::live_entity_row_in_txn(&vault.store, &txn, &record));
+        if !live.is_ok_and(|entity| entity.is_live()) {
+            return Vec::new();
+        }
+        vec![NotificationAction::new(
+            OWNER_CONFIRM_PREVIEW_VERB,
+            serde_json::json!({
+                "verb": RECORD_ERASE_CONFIRM_VERB,
+                "input": { "record": record.to_hex() },
+            }),
         )]
     }
 }

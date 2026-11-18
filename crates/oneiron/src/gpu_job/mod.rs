@@ -89,6 +89,10 @@ pub enum GpuJobError {
     QuoteExpired,
     #[error("this quote already started its job; quote again")]
     QuoteUsed,
+    /// A resume quote names another offer, job type or image than the
+    /// stopped job it resumes.
+    #[error("a resume runs on its job's own offer, job type and image; quote it on them")]
+    ResumeTermsChanged,
     #[error("the admission is not this job's run")]
     AdmissionMismatch,
     #[error("no such GPU job")]
@@ -125,6 +129,7 @@ impl From<GpuJobError> for crate::memory::MemoryError {
             | GpuJobError::QuoteChanged
             | GpuJobError::QuoteExpired
             | GpuJobError::QuoteUsed
+            | GpuJobError::ResumeTermsChanged
             | GpuJobError::AdmissionMismatch
             | GpuJobError::Ended => MEMORY_CODE_INVALID_STATE,
             GpuJobError::Denied(_) => MEMORY_CODE_BUDGET_SPENT,

@@ -10,7 +10,7 @@ use oneiron::llm::routing::DescriptionNotes;
 use oneiron::llm::run_admission::RunAdmission;
 use oneiron::skill_hub::claim_replay_filled_state;
 
-use crate::decision_verdict::{ModelCallCaller, model_call_context};
+use crate::decision_verdict::{ModelCallCaller, model_call_context, run_for_caller};
 use crate::models::native_call_capture::{NativeReadCapture, native_read_failure};
 
 use super::native_capture::{HouseReadObserver, HouseReadRun};
@@ -164,7 +164,8 @@ impl DecisionProvider for HouseRead {
         if let Some(run) = call.run {
             let gate = RunHouseGate {
                 gate: &self.gate,
-                run: run.sourced(Some(call.evidence.to_vec())),
+                // An off-record caller's run names no rows (census L5-25).
+                run: run_for_caller(&self.vault, run.sourced(Some(call.evidence.to_vec()))),
             };
             let observer = HouseReadObserver::new(self, HouseReadRun::Caller(&gate.run));
             return DecisionReadProvider::new(
@@ -186,7 +187,7 @@ impl DecisionProvider for HouseRead {
         if let Some(run) = pack.run {
             let gate = RunHouseGate {
                 gate: &self.gate,
-                run: run.sourced(Some(pack.evidence.to_vec())),
+                run: run_for_caller(&self.vault, run.sourced(Some(pack.evidence.to_vec()))),
             };
             let observer = HouseReadObserver::new(self, HouseReadRun::Caller(&gate.run));
             return DecisionReadProvider::new(
@@ -284,6 +285,8 @@ impl DecisionProvider for SystemOneRung {
                 crate::decision_verdict::rung_payer(),
             )
             .sourced(Some(call.evidence.to_vec()));
+        // An off-record caller's run names no rows (census L5-25).
+        let run = run_for_caller(&self.vault, run);
         let permit = run
             .admit_paid(&self.connector, guard.reserve_units())
             .map_err(|_| failed("refused by the budget"))?;
@@ -305,7 +308,7 @@ impl DecisionProvider for SystemOneRung {
                     request,
                     permit.lease(),
                     call.deadline.decision_time_left(),
-                ) => result.map_err(|error| failed(&format!("the seat failed: {error}"))),
+                ) => result.map_err(|error| seat_failure(&error)),
             }
         });
         let answer = match asked {
@@ -419,6 +422,8 @@ impl DecisionProvider for SystemOneRung {
                 (run, guard.reserve_units())
             }
         };
+        // An off-record caller's run names no rows (census L5-25).
+        let run = run_for_caller(&self.vault, run);
         let permit = run
             .admit_paid(&self.connector, reserve)
             .map_err(|_| failed("refused by the budget"))?;
@@ -432,26 +437,19 @@ impl DecisionProvider for SystemOneRung {
             }
             return Err(failed("admitted after the work time"));
         }
-        let asked = if pack.run.is_some() {
-            self.runtime
-                .block_on(self.seat.ask_pack(
-                    request,
-                    permit.lease(),
-                    pack.deadline.decision_time_left(),
-                ))
-                .map_err(|error| failed(&format!("the seat failed: {error}")))
-        } else {
-            self.runtime.block_on(async {
-                let cancel = pack.deadline.work_cancel();
-                tokio::select! {
-                    biased;
-                    () = cancel.cancelled() => Err(failed("the seat call was cancelled")),
-                    answer = self.seat.ask_pack(
-                        request, permit.lease(), pack.deadline.decision_time_left(),
-                    ) => answer.map_err(|error| failed(&format!("the seat failed: {error}"))),
-                }
-            })
-        };
+        // A pack that carries its caller's run waits on the same cancel as a
+        // hosted pack: a caller whose work is cancelled mid-pack stops waiting
+        // for the seat (SYSTEMONE-PACK-RUN-NO-CANCEL).
+        let asked = self.runtime.block_on(async {
+            let cancel = pack.deadline.work_cancel();
+            tokio::select! {
+                biased;
+                () = cancel.cancelled() => Err(failed("the seat call was cancelled")),
+                answer = self.seat.ask_pack(
+                    request, permit.lease(), pack.deadline.decision_time_left(),
+                ) => answer.map_err(|error| seat_failure(&error)),
+            }
+        });
         let settled = match &asked {
             Ok(answer) => permit.settle(CallOutcome::Answered(&answer.usage)),
             Err(_) => permit.settle(CallOutcome::Failed),
@@ -479,6 +477,21 @@ impl DecisionProvider for SystemOneRung {
     }
 }
 
+/// A seat read whose server stopped at its token cap is the cap, as the house
+/// read's is: the ladder records the rung and steps up past it (Engine ruling
+/// L2-31-ROUTE). Any other seat failure fails the call.
+fn seat_failure(error: &oneiron::LlmError) -> oneiron::Error {
+    if matches!(
+        error,
+        oneiron::LlmError::Fatal(oneiron::FatalLlmError::LabelRead(
+            oneiron::llm::LabelReadFailure::TokenCap
+        ))
+    ) {
+        return oneiron::Error::DecisionReadTokenCap;
+    }
+    oneiron::Error::InvalidConfig(format!("system one: the seat failed: {error}"))
+}
+
 impl SystemOneRung {
     /// [`DecisionProvider::decide`] for a call that carries its caller's run (FIX 10443):
     /// the measurement admits on that run as this rung's paid connector, sourced with
@@ -491,7 +504,8 @@ impl SystemOneRung {
         run: &RunAdmission,
     ) -> oneiron::Result<ProviderDecision> {
         let failed = |what: &str| oneiron::Error::InvalidConfig(format!("system one: {what}"));
-        let run = run.sourced(Some(call.evidence.to_vec()));
+        // An off-record caller's run names no rows (census L5-25).
+        let run = run_for_caller(&self.vault, run.sourced(Some(call.evidence.to_vec())));
         let permit = run
             .admit_paid(&self.connector, run.declaration().budget().reserve_units)
             .map_err(|_| failed("refused by the budget"))?;
@@ -541,7 +555,7 @@ impl SystemOneRung {
         settled.map_err(|_| failed("settlement refused"))?;
         let answer = match asked.result {
             Ok(answer) => answer,
-            Err(error) => return Err(failed(&format!("the seat failed: {error}"))),
+            Err(error) => return Err(seat_failure(&error)),
         };
         let abstained = answer.answer == DecisionAnswer::Abstain;
         Ok(ProviderDecision {

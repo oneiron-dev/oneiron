@@ -42,6 +42,8 @@ pub(crate) struct AppError {
         skip_serializing_if = "Option::is_none"
     )]
     room_join_hold: Option<Box<oneiron::workspace_roster::RoomJoinHold>>,
+    #[serde(default, rename = "pending", skip_serializing_if = "Option::is_none")]
+    pending: Option<Box<oneiron::memory::MemoryPending>>,
 }
 
 impl AppError {
@@ -63,6 +65,7 @@ impl AppError {
             reason_codes: Vec::new(),
             legal_hold: None,
             room_join_hold: None,
+            pending: None,
         }
     }
 
@@ -188,9 +191,11 @@ impl From<ApiError> for AppError {
     fn from(error: ApiError) -> Self {
         let legal_hold = error.legal_hold().cloned().map(Box::new);
         let room_join_hold = error.room_join_hold().cloned().map(Box::new);
+        let pending = error.pending().cloned().map(Box::new);
         Self {
             legal_hold,
             room_join_hold,
+            pending,
             ..Self::new(
                 error.code().as_str(),
                 error.message(),
@@ -220,6 +225,7 @@ impl From<MemoryError> for AppError {
             reason_codes: error.reason_codes,
             legal_hold: error.legal_hold,
             room_join_hold: error.room_join_hold,
+            pending: error.pending,
             ..Self::new(&error.code, error.message, error.suggestions)
         }
     }

@@ -59,6 +59,7 @@ use std::collections::BTreeSet;
 use heed::RoTxn;
 use loro::event::MapDelta;
 use loro::{CommitOptions, LoroDoc, LoroMap, LoroValue, ValueOrContainer};
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
 
 use super::bridge::BRIDGE_ORIGIN;
 use super::carrier_parts::{
@@ -87,9 +88,6 @@ const RECEIPT_KEY_PREFIX: &str = "r/";
 
 /// The key prefix of a fork's row.
 const FORK_KEY_PREFIX: &str = "f/";
-
-/// The context a divergence's digest is derived in.
-const DIVERGENCE_CONTEXT: &str = "oneiron.typed_body_rows.divergence.v1";
 
 fn refused(reason: &'static str) -> Error {
     Error::InvalidConfig(format!("typed body row refused: {reason}"))
@@ -709,12 +707,12 @@ fn fork_divergence_digest(
 fn divergence_digest(held: &[u8], carried: &[u8]) -> [u8; 32] {
     let mut copies = [held, carried];
     copies.sort_unstable();
-    let mut hasher = blake3::Hasher::new_derive_key(DIVERGENCE_CONTEXT);
+    let mut hasher = LegacyDigest::new(purposes::sync::TYPED_BODY_DIVERGENCE);
     for copy in copies {
-        hasher.update(&u64::try_from(copy.len()).unwrap_or(u64::MAX).to_le_bytes());
-        hasher.update(copy);
+        hasher.len_u64_le(copy.len());
+        hasher.raw(copy);
     }
-    *hasher.finalize().as_bytes()
+    hasher.finish()
 }
 
 /// Drops from `doc` each row of a body this vault removed or the window
@@ -797,4 +795,9 @@ pub(crate) fn scrub_typed_body_rows(
     }
     doc.commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
     Ok(true)
+}
+
+#[cfg(oneiron_test_support)]
+pub(crate) fn divergence_digest_for_test(held: &[u8], carried: &[u8]) -> [u8; 32] {
+    divergence_digest(held, carried)
 }

@@ -252,9 +252,10 @@ impl Vault {
             return Ok((job, report));
         };
         let chunk = job.chunk_mut()?;
+        let key = chunk.idempotency_key.clone();
         let resource = match chunk.resource.clone() {
             Some(resource) => Some(resource),
-            None => connector.find(&chunk.idempotency_key)?,
+            None => connector.find(&key)?,
         };
         let billed_secs = match &resource {
             // No resource was ever made: nothing ran and nothing is billed.
@@ -267,7 +268,7 @@ impl Vault {
                 GpuTermination::Confirmed { billed_secs } => Some(billed_secs),
             },
         };
-        let paid = permits.holds(&job.id);
+        let paid = permits.holds_chunk(&job.id, &key);
         let chunk = job.chunk_mut()?;
         chunk.resource = resource;
         let billed_with_overhead =
@@ -310,13 +311,15 @@ impl Vault {
             .map(Some)
         })?;
         let Some(notices) = notices else {
-            let key = job.chunk_mut()?.idempotency_key.clone();
             let current = self.stored_after_lost_step(&job.id, &key, permits)?;
             let report = GpuJobStepReport::of(&current);
             return Ok((current, report));
         };
-        // Settled after the write, so a settled chunk is never admitted again.
-        if let Some(permit) = permits.take(&job.id) {
+        #[cfg(oneiron_test_support)]
+        crate::test_doors::gpu_job::pass_end_commit_gate(&job.id);
+        // Settled after the write, so a settled chunk is never admitted again;
+        // only this chunk's permit: a resume may already hold the next one's.
+        if let Some(permit) = permits.take_for_chunk(&job.id, &key) {
             let _ = permit.settle(CallOutcome::Used(charged_secs));
         }
         let mut report = GpuJobStepReport::of(&job);
@@ -378,15 +381,12 @@ fn take_up_gpu_chunk(
     admission: &RunAdmission,
     permits: &GpuJobPermits,
 ) -> crate::Result<bool> {
-    if permits.holds(&job.id) {
-        return Ok(false);
-    }
     let id = job.id;
     let chunk = job.chunk_mut()?;
-    if chunk.admission_lost {
+    let key = chunk.idempotency_key.clone();
+    if chunk.admission_lost || permits.holds_chunk(&id, &key) {
         return Ok(false);
     }
-    let key = chunk.idempotency_key.clone();
     let binding = PaidConnector {
         unit_cost: chunk.quote.unit_cost,
         cost_unit: chunk.quote.unit.clone(),

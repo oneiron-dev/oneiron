@@ -117,6 +117,12 @@ pub(in crate::api::facade) fn door_admits(
             }
             owner_proof(auth, server, verb).map(drop)
         }
+        // An owner door that also admits the owner's delegate (restriction wave 11): the owner's
+        // proof, or an agent on its own live credential whose Setting key and one live Grant the
+        // engine admits in a read transaction. The door admits again in its own transaction.
+        Proof::OwnerDelegate => {
+            crate::api::facade::owner_binding::owner_delegate_admits(server, auth, verb)
+        }
         // `vault.consent.revoke` (FIX 23149): the owner's proof, or a credential bound to an actor,
         // which the door then admits only on a Grant that actor holds. A caller with neither keeps
         // the owner refusal.
@@ -169,11 +175,11 @@ pub(in crate::api::facade) fn door_admits(
         Proof::VoiceBank => {
             crate::api::facade::voice_bank_doors::voice_bank_admits(server, auth, verb)
         }
-        // The recognition withdrawal (VOICE-WITHDRAW-AGENT-ON-CALL): a person's proof as
-        // `SharedPerson`, or an agent whose own Grant naming the consent-log verb the engine's
-        // withdrawal admits.
-        Proof::RecognitionWithdrawer => {
-            crate::api::facade::voice_recognition_doors::withdrawer_admits(server, auth, verb)
+        // The recognition consent and withdrawal doors (VOICE-CONSENT-LOG-WHO = A,
+        // VOICE-WITHDRAW-AGENT-ON-CALL): a person's proof as `SharedPerson`, or an
+        // agent whose own Grant naming the consent-log verb the engine's recorder admits.
+        Proof::RecognitionRecorder => {
+            crate::api::facade::voice_recognition_doors::recorder_admits(server, auth, verb)
         }
         // The exact publish rows (FIX 6866): the owner, or a bound principal
         // whose one Grant the engine door admits in its own snapshot.
@@ -197,11 +203,6 @@ pub(in crate::api::facade) fn door_admits(
         // Owner, or a bound caller whose view-bound Grant the engine judges.
         Proof::ViewEditor => {
             crate::api::facade::code_view_doors::view_editor_admits(server, auth, verb)
-        }
-        // The vault's review policy rows (FIX 8268): a live Owner, or a bound
-        // principal whose one Grant the engine door admits.
-        Proof::ReviewPolicy => {
-            crate::api::facade::merge_queue_checker_doors::review_policy_admits(server, auth, verb)
         }
         // A member's own TASK-bound workflow run (FIX 5316): a live person on
         // their own slip, bound to it, as the door acts under.
@@ -327,5 +328,10 @@ pub(in crate::api::facade) fn door_admits(
         // A requested eval-authoring pass (LEARNING-06): the owner's own proof or an agent's own Grant
         // naming the verb, as the writer that admits the Coach attempt checks it.
         Proof::EvalAuthoring => crate::api::facade::eval_doors::execute_admits(server, auth),
+        // A requested training run step (ROLE-TRAINING-RUN, LEARN-TRAIN Q4): the owner's own proof or an
+        // agent's own Grant naming the verb, as each read of the run checks it again.
+        Proof::TrainingRunExecutor => {
+            crate::api::facade::training_run_doors::training_run_executor_admits(server, auth)
+        }
     }
 }

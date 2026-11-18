@@ -300,7 +300,13 @@ impl CoachReplay<'_> {
         // when that reproduced it (FIX 1662) and its copy is still kept
         // (FIX 6659), else on the rebuilt call.
         let after = match exact {
-            Some(exact) => self.host.reply_exact(&with_fix(&exact, fix))?,
+            Some(exact) => {
+                // The Coach's own fix is the draft's text, read from the
+                // job's rows; a publisher's is the host's configuration,
+                // which adds no rows.
+                let draft_rows = candidate.coach_own.then(|| self.job.source_rows.as_deref());
+                self.host.reply_exact(&with_fix(&exact, fix, draft_rows))?
+            }
             None => {
                 let instructions = &self.job.source.instructions;
                 let system = [instructions.as_str(), fix.as_str()]
@@ -443,10 +449,22 @@ pub(super) fn request_conversation(request: &LlmRequest) -> Vec<InventedMessage>
 
 /// `exact` with a candidate's `fix` added to the agent's instructions: one
 /// system message after those the request leads with. A blank fix adds
-/// nothing.
-fn with_fix(exact: &ExactReplayRequest, fix: &str) -> ExactReplayRequest {
+/// nothing. A fix the Coach drafted adds the rows it was read from,
+/// `draft_rows` (`Some(None)` when they are unknown), to the request's own
+/// (FIX 7104): either unknown leaves the replay's rows unknown.
+fn with_fix(
+    exact: &ExactReplayRequest,
+    fix: &str,
+    draft_rows: Option<Option<&[EntityId]>>,
+) -> ExactReplayRequest {
     let mut exact = exact.clone();
     if !fix.trim().is_empty() {
+        if let Some(draft_rows) = draft_rows {
+            exact.source_rows = crate::attempt_queue::source_rows::union_source_rows([
+                exact.source_rows.as_deref(),
+                draft_rows,
+            ]);
+        }
         let at = exact
             .request
             .messages

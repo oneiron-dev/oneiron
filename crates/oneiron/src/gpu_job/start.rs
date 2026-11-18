@@ -264,6 +264,16 @@ impl Vault {
         if !matches!(written.state, GpuJobState::Ending { .. }) {
             return Ok(written);
         }
+        // A host that holds no permit for the live chunk (it restarted since
+        // the chunk began) leaves it ending: its next step admits the chunk
+        // again and the new permit pays the end, as for any chunk it takes up.
+        // A chunk whose admission was lost ends now, unpaid, as its step would.
+        let taken_up_by_a_step = written.chunk().is_some_and(|chunk| {
+            !chunk.admission_lost && !permits.holds_chunk(&written.id, &chunk.idempotency_key)
+        });
+        if taken_up_by_a_step {
+            return Ok(written);
+        }
         self.end_gpu_chunk(written, permits, connector, now_ms)
             .map(|(job, _)| job)
     }
@@ -284,7 +294,7 @@ impl Vault {
         let created = match connector.create(&key, &spec) {
             Ok(resource) => Some(resource),
             Err(GpuConnectorError::Refused { reason }) => {
-                if let Some(permit) = permits.take(&job.id) {
+                if let Some(permit) = permits.take_for_chunk(&job.id, &key) {
                     let _ = permit.settle(CallOutcome::Used(0));
                 }
                 return self.hold_gpu_job(job, reason, now_ms);
@@ -483,6 +493,14 @@ fn next_chunk(
         (Some(mut job), Some(resume)) => {
             if job.state != GpuJobState::Stopped {
                 return Err(GpuJobError::Resume(ResumeRefused::NotStopped));
+            }
+            // The resumed chunk runs where the job ran: the host's steps and
+            // the cancel reach the job's resource through its pinned offer.
+            if offer.name != job.offer.name
+                || quote.job_type != job.job_type
+                || quote.image != job.image
+            {
+                return Err(GpuJobError::ResumeTermsChanged);
             }
             let total = DeclaredMaximum {
                 units: job.maximum.used_units().saturating_add(quote.maximum_secs),

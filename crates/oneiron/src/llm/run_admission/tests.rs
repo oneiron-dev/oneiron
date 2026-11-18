@@ -446,8 +446,6 @@ fn n3_a_model_swap_after_admission_is_refused_before_send() {
     assert_eq!(world.provider.sent().len(), 1);
 }
 
-// FIX [LIBTEST-QUARANTINE-LLM-RUN-ADMISSION-TESTS-ITEMS]: the lib test target's type check fails here (1 errors: E0063 x1); port it, then drop this gate
-#[cfg(any())]
 #[test]
 fn n3_a_permit_bound_to_request_bytes_starts_only_for_those_bytes() {
     // ARCH-0069 #broker-digest: a broker adapter's call binds the digest of
@@ -480,6 +478,7 @@ fn n3_a_permit_bound_to_request_bytes_starts_only_for_those_bytes() {
         role: LlmMessageRole::User,
         content: vec![ContentPart::Text {
             text: "and send this too".to_owned(),
+            signature: None,
         }],
     });
     let before = world.before();
