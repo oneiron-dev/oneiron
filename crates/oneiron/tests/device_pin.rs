@@ -1094,6 +1094,59 @@ fn a_host_that_takes_no_pin_never_makes_the_key_beside_a_set_pin() {
     );
 }
 
+/// The new device's request for a vouch is made with the key in the slot
+/// (the request from under the PIN is row
+/// OWNER-KEY-VOUCH-REQUEST-ON-PIN-DEVICE). So a device with a PIN set asks
+/// for none and makes no seed in the clear, and a device that forgot its PIN
+/// is told to set a new one first.
+#[test]
+fn a_vouch_request_is_refused_on_a_device_with_a_pin_set_or_forgotten() {
+    let device = PinDevice::hardware_counted();
+    device
+        .vault
+        .set_device_pin_as(&device.owner(), PIN, false)
+        .expect("the owner sets the PIN");
+    assert!(
+        device
+            .vault
+            .device_owner_key_vouch_request(&device.owner(), "Laptop")
+            .is_err(),
+        "with a PIN set the key rests under the PIN, and the slot's request is refused"
+    );
+    assert!(
+        device
+            .keystore
+            .get(&device.owner_slot())
+            .expect("the slot reads")
+            .is_none(),
+        "no seed was made in the clear"
+    );
+
+    device
+        .vault
+        .forget_device_pin_as(&device.owner())
+        .expect("the owner forgets this device's PIN");
+    assert!(
+        matches!(
+            pin_refusal(
+                device
+                    .vault
+                    .device_owner_key_vouch_request(&device.owner(), "Laptop")
+            ),
+            DevicePinRefusal::NotSet
+        ),
+        "a device that forgot its PIN asks for a vouch only after a new PIN"
+    );
+    assert!(
+        device
+            .keystore
+            .get(&device.owner_slot())
+            .expect("the slot reads")
+            .is_none(),
+        "and no seed was made in its slot"
+    );
+}
+
 #[test]
 fn a_signer_taken_before_the_pin_was_set_signs_nothing_after_it() {
     let device = PinDevice::hardware_counted();
