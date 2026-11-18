@@ -54,7 +54,7 @@
 #![cfg(oneiron_test_support)]
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use base64::Engine as _;
@@ -1006,10 +1006,12 @@ fn an_install_holding_only_a_key_a_passkey_vouched_for_proves_no_owner_act() {
         !listing.can_confirm,
         "the limited key proves no owner act on this install"
     );
-    let confirm =
-        hosted
-            .vault
-            .confirm_held_machine_answers(&hosted.proof, ActSurface::ThisInstall, &[]);
+    let confirm = hosted.vault.confirm_held_machine_answers(
+        &hosted.proof,
+        ActSurface::ThisInstall,
+        &[],
+        &BTreeMap::new(),
+    );
     assert!(
         matches!(
             confirm,

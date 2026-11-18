@@ -940,7 +940,7 @@ impl Vault {
             return Ok(());
         };
         let now = self.now_recorded_at();
-        let bind = next_entry_with_owner_proof(issuer, &fold, op, now, proof.as_ref())?;
+        let bind = next_entry_with_owner_proof(issuer, &fold, op, now, &proof)?;
         let at = TimeRange {
             start: now,
             end: now,

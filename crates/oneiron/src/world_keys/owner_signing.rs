@@ -15,7 +15,9 @@
 //! attestation's: a raw 64-byte Ed25519 signature over `domain || msgpack`.
 //! It signs two things more: the transcript of an owner act this install
 //! carries, as the owner's proof (row CARRIER-OWNER-PROOF), and the
-//! enrollment's proof of possession, made in this module. The seed is read
+//! enrollment's proof of possession, made in this module: for the host
+//! root's enrollment of it here, or for the request another owner device
+//! vouches for ([`Vault::device_owner_key_vouch_request`]). The seed is read
 //! from its home into guarded memory, the key is wiped on drop, and neither
 //! leaves this install.
 //!
@@ -46,7 +48,7 @@
 //! the same rules as a checkpoint statement: a key that signs no statement
 //! now proves nothing now.
 
-use std::sync::Arc;
+use std::sync::{Arc, PoisonError};
 
 use ed25519_dalek::{Signer, SigningKey};
 use oneiron_keystore::{DeviceKeystore, KeystoreSlot, SlotKind};
@@ -57,9 +59,10 @@ use super::device_pin::{
 };
 use crate::authority::{
     ACTOR_CLASS_HUMAN, ActAuthority, AuthorityEntryHash, AuthorityFold, AuthorityKey,
-    AuthorityLogEntry, AuthorityOp, AuthorityVaultId, CheckpointRootSigner, EnrolledOwnerKey,
-    HostSlipIssuer, OwnerKeyEnrollment, OwnerKeyEnrollmentReceipt, RecoveryRootId,
-    authority_refused, authority_transcript, checkpoint_statement_domain, invalid_authority,
+    AuthorityLogEntry, AuthorityOp, AuthorityVaultId, CheckpointRootSigner, DeviceOwnerKeyVouch,
+    EnrolledOwnerKey, HostSlipIssuer, OwnerKeyEnrollment, OwnerKeyEnrollmentReceipt,
+    OwnerKeyVouchRequest, RecoveryRootId, authority_refused, authority_transcript,
+    checkpoint_statement_domain, invalid_authority, label_is_valid, label_not_valid,
     root_appointment_challenge,
 };
 use crate::entity_id::EntityId;
@@ -304,6 +307,21 @@ impl CheckpointRootSigner for OwnerRootSigner {
     }
 }
 
+/// This install's owner signing key as an enrollment finds it: live on the
+/// roster already, or not enrolled yet with its challenge for this machine
+/// and the owner.
+enum DeviceOwnerKey {
+    Live {
+        signer: OwnerRootSigner,
+        receipt: OwnerKeyEnrollmentReceipt,
+    },
+    Unenrolled {
+        signer: OwnerRootSigner,
+        machine: EntityId,
+        challenge: Vec<u8>,
+    },
+}
+
 impl Vault {
     /// This install's owner signing key for this vault, from its
     /// [`SlotKind::OwnerSigning`] keystore slot: the seed is made there from
@@ -322,9 +340,15 @@ impl Vault {
         let machine = self.prepare_install_signing()?;
         let slot = self.owner_signing_slot(machine);
         // One step with a first PIN's set, so that never finds a seed made
-        // beside it.
+        // beside it. The step is taken first and the slot's lock inside it,
+        // at every door that takes both.
         let pin = self.device_pin();
         let _step = pin.as_deref().map(DevicePin::step);
+        let _slot_lock = self
+            .store
+            .owner_signing_slot_lock
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
         slot_owner_signer(&keystore, &slot)
     }
 
@@ -370,6 +394,8 @@ impl Vault {
         authority: &ActAuthority,
         issuer: &HostSlipIssuer,
     ) -> Result<OwnerKeyEnrollmentReceipt> {
+        // The caller is checked first, before this install readies anything.
+        self.owner_key_act_owner(authority)?;
         let keystore = self.device_keystore()?;
         let machine = self.prepare_install_signing()?;
         let slot = self.owner_signing_slot(machine);
@@ -383,33 +409,151 @@ impl Vault {
                 _ => Err(no_device_pin_here()),
             };
         }
-        self.enrol_slot_owner_signing_key(authority, issuer, machine, &keystore, slot)
+        let (signer, receipt) =
+            match self.device_owner_key_for_enrollment(authority, machine, &keystore, slot)? {
+                DeviceOwnerKey::Live { signer, receipt } => (signer, receipt),
+                DeviceOwnerKey::Unenrolled {
+                    signer,
+                    machine,
+                    challenge,
+                } => {
+                    let input = OwnerKeyEnrollment {
+                        machine,
+                        public_key: signer.public_key(),
+                        proof: signer.sign_possession(&challenge),
+                    };
+                    let receipt = self.enrol_owner_signing_key_as_host(authority, input, issuer)?;
+                    (signer, receipt)
+                }
+            };
+        self.hold_checkpoint_root_signer(Arc::new(signer));
+        Ok(receipt)
     }
 
-    /// [`Vault::enrol_device_owner_signing_key`] on a device with no PIN
-    /// set: the key rests in its slot.
-    fn enrol_slot_owner_signing_key(
+    /// The new device's half of an owner key vouching for its key (pass 27
+    /// R2): this install's owner signing key, made in its keystore slot on
+    /// first use, signs its challenge for this install's machine and the
+    /// owner `authority` proves, this install's own key signs the request,
+    /// and the request to hand an owner device comes back
+    /// ([`Vault::enrol_vouched_owner_signing_key`] runs there). It writes no
+    /// authority row and needs no owner key of its own; it makes the key's
+    /// seed, and readying this install's signing identity may run work
+    /// already waiting for it. `label` names this device for the owner to
+    /// recognise. Once a vouch put the key on the roster and this vault took
+    /// that row (sync), it answers the enrollment's receipt and this handle
+    /// holds the key. A key the roster revoked gives its slot to a fresh
+    /// key, whose request comes back.
+    ///
+    /// The request is made with the key that rests in the slot, so a device
+    /// with a PIN set, or one that forgot a PIN, asks for no vouch here: its
+    /// key rests under the PIN, and the slot's rule refuses
+    /// (`slot_owner_signer`). The request made from under the PIN is row
+    /// OWNER-KEY-VOUCH-REQUEST-ON-PIN-DEVICE.
+    ///
+    /// # Errors
+    /// [`crate::error::RecordError::InvalidAuthorityLogBody`] for a label over
+    /// [`crate::authority::OWNER_KEY_VOUCH_LABEL_MAX`] bytes or with a control
+    /// or invisible format character; `KeystoreUnavailable` while the host
+    /// installed no keystore; an agent's act refused, before anything is
+    /// readied; an owner refusal when the proof is no longer the vault's live
+    /// owner. Refused on a device with a PIN set, and
+    /// [`DevicePinRefusal::NotSet`] on a device whose PIN was forgotten and
+    /// that has none now, as [`Vault::device_owner_signing_key`] answers.
+    pub fn device_owner_key_vouch_request(
         &self,
         authority: &ActAuthority,
-        issuer: &HostSlipIssuer,
+        label: &str,
+    ) -> Result<DeviceOwnerKeyVouch> {
+        if !label_is_valid(label) {
+            return Err(label_not_valid());
+        }
+        // The caller is checked first, before this install readies anything.
+        self.owner_key_act_owner(authority)?;
+        let keystore = self.device_keystore()?;
+        let machine = self.prepare_install_signing()?;
+        let slot = self.owner_signing_slot(machine);
+        // The slot's seed is made here, so this is one step with a first
+        // PIN's set, as [`Vault::device_owner_signing_key`] is.
+        let pin = self.device_pin();
+        let _step = pin.as_deref().map(DevicePin::step);
+        match self.device_owner_key_for_enrollment(authority, machine, &keystore, slot)? {
+            DeviceOwnerKey::Live { signer, receipt } => {
+                self.hold_checkpoint_root_signer(Arc::new(signer));
+                Ok(DeviceOwnerKeyVouch::Enrolled(receipt))
+            }
+            DeviceOwnerKey::Unenrolled {
+                signer,
+                machine,
+                challenge,
+            } => {
+                let mut request = OwnerKeyVouchRequest {
+                    vault_id: self.authority_vault_id()?.ok_or_else(invalid_authority)?,
+                    machine,
+                    public_key: signer.public_key(),
+                    proof: signer.sign_possession(&challenge),
+                    machine_proof: Vec::new(),
+                    label: label.to_owned(),
+                };
+                request.machine_proof =
+                    self.install_key_signature(machine, &request.machine_transcript()?)?;
+                Ok(DeviceOwnerKeyVouch::Request(request))
+            }
+        }
+    }
+
+    /// The signature of this install's own key, the install key of
+    /// `machine`, over `transcript`.
+    ///
+    /// # Errors
+    /// [`crate::authority::invalid_authority`] when this install's machine
+    /// is no longer `machine` or holds no install key; the store's own.
+    fn install_key_signature(&self, machine: EntityId, transcript: &[u8]) -> Result<Vec<u8>> {
+        let txn = self.store.env.read_txn()?;
+        if crate::identity::read_machine_id_in_txn(self, &txn)? != Some(machine) {
+            return Err(invalid_authority());
+        }
+        let key = crate::identity::read_machine_signing_key_in_txn(self, &txn)?
+            .ok_or_else(invalid_authority)?;
+        Ok(key.sign(transcript).to_bytes().to_vec())
+    }
+
+    /// This install's owner signing key as an enrollment by `authority`'s
+    /// owner finds it on a device with no PIN set: the key of `slot`, made
+    /// there on first use, live on the roster with its enrollment's receipt,
+    /// or not enrolled yet with its challenge for `machine`. A key the
+    /// roster revoked is never enrolled again: a fresh seed takes its slot.
+    /// The door has checked the caller before this install readied anything
+    /// and holds the device PIN's step, where the host installed one; the
+    /// slot is read, checked and renewed under this vault's
+    /// `owner_signing_slot_lock`, taken inside that step. Refused on a
+    /// device with a PIN set or forgotten (`slot_owner_signer`).
+    fn device_owner_key_for_enrollment(
+        &self,
+        authority: &ActAuthority,
         machine: EntityId,
         keystore: &Arc<dyn DeviceKeystore>,
         slot: KeystoreSlot,
-    ) -> Result<OwnerKeyEnrollmentReceipt> {
+    ) -> Result<DeviceOwnerKey> {
+        let _slot_lock = self
+            .store
+            .owner_signing_slot_lock
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
         let mut signer = slot_owner_signer(keystore, &slot)?;
         // The owner's proof is revalidated before the roster is read.
         let mut challenge =
             self.owner_key_enrollment_challenge_as(authority, machine, &signer.public_key())?;
         match self.listed_owner_key(&signer.public_key())? {
             Some(listed) if listed.live => {
-                self.hold_checkpoint_root_signer(Arc::new(signer));
-                return Ok(OwnerKeyEnrollmentReceipt {
-                    entry: listed.entry,
-                    machine: listed.machine,
-                    public_key: listed.public_key,
+                return Ok(DeviceOwnerKey::Live {
+                    signer,
+                    receipt: OwnerKeyEnrollmentReceipt {
+                        entry: listed.entry,
+                        machine: listed.machine,
+                        public_key: listed.public_key,
+                    },
                 });
             }
-            // A revoked key is never enrolled again: a fresh seed takes its slot.
             Some(_) => {
                 DeviceKeystore::delete(keystore.as_ref(), &slot).map_err(super::keystore_error)?;
                 signer = slot_owner_signer(keystore, &slot)?;
@@ -421,14 +565,11 @@ impl Vault {
             }
             None => {}
         }
-        let input = OwnerKeyEnrollment {
+        Ok(DeviceOwnerKey::Unenrolled {
+            signer,
             machine,
-            public_key: signer.public_key(),
-            proof: signer.sign_possession(&challenge),
-        };
-        let receipt = self.enrol_owner_signing_key_as_host(authority, input, issuer)?;
-        self.hold_checkpoint_root_signer(Arc::new(signer));
-        Ok(receipt)
+            challenge,
+        })
     }
 
     /// The owner enrols the owner signing key of the install that serves
@@ -563,25 +704,31 @@ impl Vault {
     }
 }
 
-/// This install's owner signing key from `slot`, its seed made there on
-/// first use: only on a device that has no PIN and never forgot one. The
-/// rule is asked again once the seed rests. A PIN that a process sharing no
-/// device PIN with this one set meanwhile leaves that seed in the slot,
-/// where it signs nothing.
+/// The rule of a key that rests in a slot: `keystore` has no device PIN and
+/// never forgot one. On a device with a PIN set the key rests under the PIN
+/// and is never handed out; on one whose PIN was forgotten and that has none
+/// now, the next key is made under a new PIN.
+fn slot_keys_allowed(keystore: &dyn DeviceKeystore) -> Result<()> {
+    match slot_seed_bar(keystore).map_err(super::keystore_error)? {
+        None => Ok(()),
+        Some(SlotSeedBar::PinSet) => Err(super::refused(KEPT_UNDER_DEVICE_PIN)),
+        Some(SlotSeedBar::PinForgotten) => Err(pin_refused(DevicePinRefusal::NotSet)),
+    }
+}
+
+/// This install's owner signing key from `slot`, its seed made there from
+/// the OS CSPRNG on first use, the one place an install makes that seed:
+/// only on a device that has no PIN and never forgot one
+/// (`slot_keys_allowed`). The rule is asked again once the seed rests. A
+/// PIN that a process sharing no device PIN with this one set meanwhile
+/// leaves that seed in the slot, where it signs nothing.
 fn slot_owner_signer(
     keystore: &Arc<dyn DeviceKeystore>,
     slot: &KeystoreSlot,
 ) -> Result<OwnerRootSigner> {
-    let slot_keys_allowed = || -> Result<()> {
-        match slot_seed_bar(keystore.as_ref()).map_err(super::keystore_error)? {
-            None => Ok(()),
-            Some(SlotSeedBar::PinSet) => Err(super::refused(KEPT_UNDER_DEVICE_PIN)),
-            Some(SlotSeedBar::PinForgotten) => Err(pin_refused(DevicePinRefusal::NotSet)),
-        }
-    };
-    slot_keys_allowed()?;
+    slot_keys_allowed(keystore.as_ref())?;
     let seed = super::slot_seed(keystore.as_ref(), slot)?;
-    slot_keys_allowed()?;
+    slot_keys_allowed(keystore.as_ref())?;
     Ok(OwnerRootSigner::from_slot(&seed, keystore, slot))
 }
 
@@ -601,15 +748,19 @@ impl OwnerSigningSlot {
     /// another run's appointment committed is refused first, and never drops
     /// the seed of that run's successor, a live root key.
     ///
+    /// Refused, before any seed is dropped, on a device with a PIN set or
+    /// forgotten (`slot_owner_signer`'s rule; ruling
+    /// ANCHOR-SUCCESSOR-ON-PIN-DEVICE = A): there a seed in the slot is no
+    /// key, and one that still waits to go under the PIN is not dropped.
+    ///
     /// # Errors
-    /// The keystore's own refusal.
+    /// The keystore's own refusal; the slot's rule, as
+    /// [`Vault::device_owner_signing_key`] answers it.
     pub(crate) fn fresh_key(&self) -> Result<OwnerRootSigner> {
+        slot_keys_allowed(self.keystore.as_ref())?;
         DeviceKeystore::delete(self.keystore.as_ref(), &self.slot)
             .map_err(super::keystore_error)?;
-        Ok(OwnerRootSigner::from_seed(&*super::slot_seed(
-            self.keystore.as_ref(),
-            &self.slot,
-        )?))
+        slot_owner_signer(&self.keystore, &self.slot)
     }
 }
 

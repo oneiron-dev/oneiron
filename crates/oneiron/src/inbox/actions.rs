@@ -17,6 +17,7 @@ use crate::memory::Memory;
 use crate::outbound::{UNCERTAIN_SEND_ANSWER_VERB, UNCERTAIN_SEND_NOTIFICATION_PRODUCER};
 use crate::skill_optimize::STOCK_SWITCH_NOTIFICATION_PRODUCER;
 use crate::store::conversation_body::{THREAD_NOTICE_PRODUCER, ThreadJoinRequestsRequest};
+use crate::verbs::OWNER_CONFIRM_PREVIEW_VERB;
 
 /// The owner's answer to a proposed digest settings change.
 const WEAVE_SETTING_ANSWER_VERB: &str = "vault.weave.setting_changes.answer";
@@ -30,9 +31,10 @@ const THREAD_JOIN_APPROVE_VERB: &str = "vault.rooms.thread_join.approve";
 const THREAD_JOIN_DENY_VERB: &str = "vault.rooms.thread_join.deny";
 /// The owner's answer to an outside app's OAuth sign-in request (FIX 4902).
 const OAUTH_AUTHORIZATION_ANSWER_VERB: &str = "vault.oauth.authorization.answer";
-/// The owner's preview of the erase an agent proposed; the owner's own
-/// `vault.records.erase_confirm` takes its digest back.
-const RECORD_ERASE_PREVIEW_VERB: &str = "vault.records.erase_preview";
+/// The owner's erase of a record: the one-way act the erase ask's tap
+/// previews through [`OWNER_CONFIRM_PREVIEW_VERB`], whose `confirm` this
+/// verb's call then passes back.
+const RECORD_ERASE_CONFIRM_VERB: &str = "vault.records.erase_confirm";
 
 /// One tap a notification offers: the registered verb it calls and that
 /// verb's own input, so a client renders the button the engine describes.
@@ -360,8 +362,9 @@ impl Memory<'_> {
 
     /// The producer names the record an agent asked to erase in
     /// `source.result` (a personal vault's erase proposal); the ask is a
-    /// vault owner's. Shown while the record is live: its erase preview,
-    /// which the owner's own erase confirm then takes. An erased record, and
+    /// vault owner's. Shown while the record is live: the one-way confirm
+    /// preview of the owner's own erase of it, whose `confirm` that erase
+    /// then takes. An erased record, and
     /// one that no longer reads, offers none (FIX
     /// AGENT-ERASE-PROPOSAL-INBOX-TAP).
     fn erase_proposal_actions(&self, row: &NotificationRow) -> Vec<NotificationAction> {
@@ -384,8 +387,11 @@ impl Memory<'_> {
             return Vec::new();
         }
         vec![NotificationAction::new(
-            RECORD_ERASE_PREVIEW_VERB,
-            serde_json::json!({ "record": record.to_hex() }),
+            OWNER_CONFIRM_PREVIEW_VERB,
+            serde_json::json!({
+                "verb": RECORD_ERASE_CONFIRM_VERB,
+                "input": { "record": record.to_hex() },
+            }),
         )]
     }
 }

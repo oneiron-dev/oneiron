@@ -155,7 +155,7 @@ impl Host {
         let vault = Arc::new(Vault::open(dir.path(), VaultConfig::device()).expect("open vault"));
         vault.install_device_keystore(Arc::new(MemoryKeystore::new()));
         let receipts = Arc::new(MemoryReceipts::default());
-        let sink: Arc<dyn RunReceiptSink> = Arc::clone(&receipts);
+        let sink: Arc<dyn RunReceiptSink> = receipts.clone();
         let mut config = SyncServerConfig {
             auth_secret: Some(secret.to_owned()),
             ..Default::default()
@@ -351,6 +351,7 @@ fn seed_turns(vault: &Vault, actor: EntityId, lines: &[&str]) -> Vec<EntityId> {
                     conversation_ref: conversation.clone(),
                     turn_ref: Some(turn.to_hex()),
                     thread_audience: None,
+                    project: None,
                     messages: vec![WitnessMessage {
                         id: None,
                         author: WitnessAuthor::User,
