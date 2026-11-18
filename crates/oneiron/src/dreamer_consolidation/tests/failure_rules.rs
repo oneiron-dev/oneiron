@@ -133,16 +133,20 @@ fn execute_with_sink(
             ..test_inference_host()
         },
         scope: None,
+        decisions: ConsolidationDecisions::shipped()?,
     };
     block_on_ready(executor.execute(
         admitted,
         &mut WakeAttemptContext {
             vault,
             deadline,
+            cancel: None,
+            device_cancel: None,
             budget_id: "wake",
             now_ms: 21_000,
             prepared_wake: None,
             prepared_attempt: None,
+            spend_meter: None,
         },
     ))
 }
@@ -331,7 +335,10 @@ fn resident_failure_rules_route_fatal_extraction_and_clamp_promotion() -> Result
         }
         assert!(matches!(
             execution?,
-            DreamerAttemptExecution::Completed { completed_units: 0 }
+            DreamerAttemptExecution::Completed {
+                completed_units: 0,
+                ..
+            }
         ));
         // Even a separate manifest effector permit cannot widen the resident
         // consolidation stage row (whose only valid effector bit is false).
@@ -341,12 +348,15 @@ fn resident_failure_rules_route_fatal_extraction_and_clamp_promotion() -> Result
                 role: crate::LlmMessageRole::Assistant,
                 content: vec![crate::ContentPart::Text {
                     text: "fallback".into(),
+                    signature: None,
                 }],
             },
             usage: crate::LlmUsage::zero(),
             finish_reason: crate::FinishReason::Other {
                 name: "fallback:json_rules_v1".into(),
             },
+            reply_assertions: Default::default(),
+            token_scores: None,
         };
         assert_eq!(
             super::super::step_effector_eligible_in_txn(&vault, &txn, "extraction", &fallback,)?,
@@ -603,12 +613,15 @@ fn retracting_the_authoring_claim_takes_its_rules_out_of_force() -> Result<()> {
             role: crate::LlmMessageRole::Assistant,
             content: vec![crate::ContentPart::Text {
                 text: "fallback".into(),
+                signature: None,
             }],
         },
         usage: crate::LlmUsage::zero(),
         finish_reason: crate::FinishReason::Other {
             name: "fallback:json_rules_v1".into(),
         },
+        reply_assertions: Default::default(),
+        token_scores: None,
     };
     let eligible = |vault: &Vault| -> Result<Option<bool>> {
         let txn = vault.store.env.read_txn()?;
@@ -739,7 +752,10 @@ fn a_claim_retracted_during_the_call_leaves_the_reply_to_the_manifest() -> Resul
     );
     assert!(matches!(
         execution,
-        DreamerAttemptExecution::Completed { completed_units: 0 }
+        DreamerAttemptExecution::Completed {
+            completed_units: 0,
+            ..
+        }
     ));
     assert!(
         sink.accepted.is_empty(),

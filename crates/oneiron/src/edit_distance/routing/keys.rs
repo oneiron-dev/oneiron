@@ -5,6 +5,7 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 
 use super::scope::RoutingScopeKey;
+use crate::edit_distance::stored_row::versioned_row_codec;
 use crate::error::{Error, Result};
 use crate::learning::TypeRef;
 use crate::llm::LlmRole;
@@ -245,53 +246,13 @@ pub(super) struct StoredOutcome {
 // Keys + rows
 // ---------------------------------------------------------------------------
 
-pub(super) fn encode_row<T: Serialize>(row: &T, label: &'static str) -> Result<Vec<u8>> {
-    rmp_serde::to_vec_named(row).map_err(|_| Error::InvariantViolation(label))
-}
+pub(super) use crate::edit_distance::stored_row::{decode_row, encode_row};
 
-pub(super) fn decode_row<T: serde::de::DeserializeOwned>(
-    raw: &[u8],
-    label: &'static str,
-) -> Result<T> {
-    rmp_serde::from_slice(raw).map_err(|_| Error::CorruptedIndex(label))
-}
-
-macro_rules! row_codec {
-    ($ty:ty, $label:expr) => {
-        impl RawValue for $ty {
-            fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
-                Ok(encode_row(self, $label)?)
-            }
-
-            fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
-                let row: $ty = decode_row(bytes, $label)?;
-                if row.v != ROW_VERSION {
-                    return Err(CodecError::Value(Error::CorruptedIndex($label)));
-                }
-                Ok(row)
-            }
-        }
-    };
-}
-
-row_codec!(StoredAggregate, AGGREGATE_ROW_LABEL);
-// `StoredExecutor` backs two tables with two distinct pinned error labels
-// (`MEMBER_ROW_LABEL`, `SERVING_MODEL_ROW_LABEL`), so it cannot take the
-// shared macro: `MEMBER`'s value binds the type directly, and
-// `SERVING_MODEL` wraps it in `ServingExecutor` below.
-impl RawValue for StoredExecutor {
-    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
-        Ok(encode_row(self, MEMBER_ROW_LABEL)?)
-    }
-
-    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
-        let row: Self = decode_row(bytes, MEMBER_ROW_LABEL)?;
-        if row.v != ROW_VERSION {
-            return Err(CodecError::Value(Error::CorruptedIndex(MEMBER_ROW_LABEL)));
-        }
-        Ok(row)
-    }
-}
+versioned_row_codec!(StoredAggregate, AGGREGATE_ROW_LABEL, ROW_VERSION);
+// `StoredExecutor` backs `MEMBER` directly through the shared macro;
+// `SERVING_MODEL` wraps it in `ServingExecutor` below, which keeps a hand impl
+// because it carries its own pinned error label.
+versioned_row_codec!(StoredExecutor, MEMBER_ROW_LABEL, ROW_VERSION);
 
 /// [`StoredExecutor`] as stored in [`SERVING_MODEL`] — same shape, its own
 /// pinned error label.
@@ -313,9 +274,9 @@ impl RawValue for ServingExecutor {
     }
 }
 
-row_codec!(StoredRung, RUNG_ROW_LABEL);
+versioned_row_codec!(StoredRung, RUNG_ROW_LABEL, ROW_VERSION);
 
-row_codec!(StoredOutcome, OUTCOME_ROW_LABEL);
+versioned_row_codec!(StoredOutcome, OUTCOME_ROW_LABEL, ROW_VERSION);
 
 /// The bytes after [`AGGREGATE`]'s prefix that scope every executor under
 /// one task class, measurement version and task type — the peer scan's

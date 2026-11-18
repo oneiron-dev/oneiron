@@ -15,12 +15,19 @@
 //! once the recovered delta is persisted. At start the live mirror opens each
 //! window a marker names, so what a stopped process owed reaches peers
 //! without waiting for the window's next use.
+//!
+//! A sync import that lands a row merged with the row held here
+//! (ROOM-PINS-LWW-MERGE) leaves a merged-carrier marker, which names the
+//! carrier the merge read by its content hash: the window owes the stored
+//! row only while it still holds that carrier ([`Owed::rows_in`]). A newer
+//! carrier that came since lands through its own import, merged again, and
+//! the stored row is never written over it.
 
-use std::borrow::Cow;
 use std::collections::BTreeSet;
 
 use heed::{RoTxn, RwTxn};
 use loro::{CommitOptions, LoroDoc};
+use oneiron_contracts::fingerprint::ContentHash;
 
 use crate::Vault;
 use crate::batch::EntityMetadataHeader;
@@ -30,16 +37,32 @@ use crate::error::Result;
 use crate::registry::{ENTITY_TYPE_DIAGNOSTIC, ENTITY_TYPE_SECRET_CUSTODY};
 use crate::side_table::{self, Raw, SideKey, SideTable};
 use crate::sync::bridge::{BRIDGE_ORIGIN, format_edge_key, parse_edge_key};
-use crate::sync::loro_support::{map_contains_binary, map_delete};
+use crate::sync::loro_support::{map_contains_binary, map_delete, map_get_bytes};
 use crate::sync::residence::residence_window_for_blob;
 use crate::sync::types::WindowKey;
 
 /// One marker's key: the window, then what the window owes: a row's
-/// entities-map key (its id in hex) or a removed edge's edges-map key.
+/// entities-map key (its id in hex), a removed edge's edges-map key, or a
+/// merged row's entities-map key and the content hash of the carrier its
+/// merge read, joined by [`MERGED_CARRIER_SEPARATOR`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct OwedKey {
     window: String,
     carrier: String,
+}
+
+/// Joins a merged-carrier marker's row key and carrier hash; neither a row
+/// key nor an edge key holds it.
+const MERGED_CARRIER_SEPARATOR: char = '@';
+
+impl OwedKey {
+    /// The window map key the marker names: a merged-carrier marker's row
+    /// key, every other marker's whole carrier.
+    fn map_key(&self) -> &str {
+        self.carrier
+            .split_once(MERGED_CARRIER_SEPARATOR)
+            .map_or(self.carrier.as_str(), |(row, _)| row)
+    }
 }
 
 impl SideKey for OwedKey {
@@ -104,6 +127,36 @@ impl Vault {
             }
         }
         self.put_pending_mirrors(wtxn, &owed)
+    }
+
+    /// Leaves, in `wtxn`, a merged-carrier marker for the row `id`, whose
+    /// carried copy `blob` a sync import in `window` merged with the row
+    /// held here (ROOM-PINS-LWW-MERGE): the row lands as the merge, which the
+    /// carrier lacks, so `window` owes the merged carrier while it still
+    /// holds `blob` ([`Owed::rows_in`]). The live mirror then writes the
+    /// stored row over it, as it writes a local edit; a sync import's other
+    /// rows leave no marker.
+    pub(crate) fn mark_merged_carrier_in_txn(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        window: &str,
+        id: &EntityId,
+        blob: &[u8],
+    ) -> Result<()> {
+        if !rides_window(blob) || self.store.off_record_sessions.contains_entity(id)? {
+            return Ok(());
+        }
+        self.put_pending_mirrors(
+            wtxn,
+            &[OwedKey {
+                window: window.to_owned(),
+                carrier: format!(
+                    "{}{MERGED_CARRIER_SEPARATOR}{}",
+                    id.to_hex(),
+                    ContentHash::of(blob).to_hex()
+                ),
+            }],
+        )
     }
 
     /// Leaves, in `wtxn`, a pending-mirror marker for each edge in `removed`
@@ -188,6 +241,10 @@ impl Vault {
 pub(in crate::sync) struct Owed {
     /// Rows whose carrier the window owes.
     rows: BTreeSet<EntityId>,
+    /// Rows a sync import merged, each with the content hash (hex) of the
+    /// carrier its merge read: the window owes the row only while it holds
+    /// that carrier.
+    merged: Vec<(EntityId, String)>,
     /// Removed edges: the edges-map key, and the edge it names.
     removed_edges: Vec<(String, (EntityId, EdgeKind, EntityId))>,
     /// Every marker read, with its stamp.
@@ -209,6 +266,10 @@ impl Owed {
                 owed.rows.insert(id);
             } else if let Some(edge) = parse_edge_key(&key.carrier) {
                 owed.removed_edges.push((key.carrier.clone(), edge));
+            } else if let Some((row, hash)) = key.carrier.split_once(MERGED_CARRIER_SEPARATOR)
+                && let Ok(id) = EntityId::from_hex(row)
+            {
+                owed.merged.push((id, hash.to_owned()));
             }
             owed.read.push((key, stamp));
         }
@@ -216,30 +277,48 @@ impl Owed {
     }
 
     /// Mirrors what the markers of `key` owe into `doc`, the window being
-    /// opened, before its forward pass: each owed row replaces the carrier it
-    /// differs from, and each removed edge's key goes. The caller persists
-    /// the recovered delta, then retires the markers ([`Self::retire`]).
+    /// opened, before its forward pass: each owed row ([`Self::rows_in`])
+    /// replaces the carrier it differs from, and each removed edge's key
+    /// goes. The caller persists the recovered delta, then retires the
+    /// markers ([`Self::retire`]).
     pub(super) fn mirror_on_open(vault: &Vault, doc: &LoroDoc, key: &WindowKey) -> Result<Self> {
         let owed = Self::read(vault, key)?;
-        if !owed.rows.is_empty() {
-            crate::sync::window::reverse_rematerialize_rows(
-                vault, doc, key, &owed.rows, &owed.rows,
-            )?;
+        let rows = owed.rows_in(doc);
+        if !rows.is_empty() {
+            crate::sync::window::reverse_rematerialize_rows(vault, doc, key, &rows, &rows)?;
         }
         owed.remove_edges(vault, doc)?;
         Ok(owed)
     }
 
-    /// `rows`, which a commit handed over, with the rows this window owes.
-    pub(super) fn rows_with<'a>(
-        &self,
-        rows: &'a BTreeSet<EntityId>,
-    ) -> Cow<'a, BTreeSet<EntityId>> {
-        if self.rows.is_empty() {
-            Cow::Borrowed(rows)
-        } else {
-            Cow::Owned(rows.union(&self.rows).copied().collect())
+    /// The rows whose carrier `doc` owes: each one a local write changed,
+    /// and each one a sync import merged while `doc` still holds the carrier
+    /// that merge read. A merged row whose carrier changed since is owed
+    /// nothing: the newer carrier lands through its own import, which merges
+    /// it with the stored row again, so the stored row written over it would
+    /// drop what it changed (ROOM-PINS-LWW-MERGE).
+    pub(super) fn rows_in(&self, doc: &LoroDoc) -> BTreeSet<EntityId> {
+        let mut rows = self.rows.clone();
+        if self.merged.is_empty() {
+            return rows;
         }
+        let entities = doc.get_map("entities");
+        for (id, hash) in &self.merged {
+            if map_get_bytes(&entities, &id.to_hex())
+                .is_some_and(|carrier| ContentHash::of(&carrier).to_hex() == *hash)
+            {
+                rows.insert(*id);
+            }
+        }
+        rows
+    }
+
+    /// Every row the markers name, owed or not: what a wake hands the live
+    /// mirror, whose pass judges each one ([`Self::rows_in`]).
+    pub(super) fn named_rows(&self) -> BTreeSet<EntityId> {
+        let mut rows = self.rows.clone();
+        rows.extend(self.merged.iter().map(|(id, _)| *id));
+        rows
     }
 
     /// Deletes from `doc` the key of each removed edge the store still
@@ -287,7 +366,7 @@ impl Owed {
         stays: impl Fn(&str) -> bool,
     ) -> Result<()> {
         for (key, stamp) in &self.read {
-            if !stays(&key.carrier) && PENDING_MIRROR.get(&vault.store, wtxn, key)? == Some(*stamp)
+            if !stays(key.map_key()) && PENDING_MIRROR.get(&vault.store, wtxn, key)? == Some(*stamp)
             {
                 PENDING_MIRROR.delete(&vault.store, wtxn, key)?;
             }
@@ -298,7 +377,12 @@ impl Owed {
 
 /// Whether a local write still owes `window` a row's carrier or an edge's
 /// removal (FIX 14534): until the mirror takes it, the window's persisted
-/// document lacks it, so a copy dropped now would lose it.
+/// document lacks it, so a copy dropped now would lose it. A merged-carrier
+/// marker counts too, owed or not: which it is takes the window's carrier,
+/// which a closed window's caller does not read. A merged row the window
+/// owes holds records only this store has, so a copy dropped now would lose
+/// them; one it no longer owes defers the drop until the window's next open
+/// or the start pass retires the marker.
 ///
 /// # Errors
 /// Store errors.

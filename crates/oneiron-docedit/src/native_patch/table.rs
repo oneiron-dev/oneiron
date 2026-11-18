@@ -1,7 +1,7 @@
 //! Native `a:tbl` tables: creation with merge rectangles, and merge-aware
 //! cell text writes; a cell a merge covers keeps its own text under the
 //! merge, as PowerPoint keeps it.
-use super::workbook::{header, number};
+use super::workbook::header;
 use super::{Frame, Merge, NativeRefusal};
 use crate::deck::Placeholder;
 use crate::design_plan::{Cell, Dataset};

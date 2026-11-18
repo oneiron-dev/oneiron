@@ -52,6 +52,8 @@ mod anchor_text;
 mod body_anchor;
 mod code_units;
 mod codec;
+#[cfg(oneiron_test_support)]
+pub(crate) use codec::annotation_map_get_for_test;
 mod comment_parts;
 mod conversation;
 mod deck_anchor;
@@ -91,8 +93,6 @@ pub use self::model::{
 pub use self::reanchor::replay_locator;
 
 pub(crate) mod tables;
-// FIX [LIBTEST-QUARANTINE-ANCHORED-ANNOTATION-TESTS]: the lib test target's type check fails here (18 errors: E0063 x6, E0061 x6, E0277 x6); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;
 

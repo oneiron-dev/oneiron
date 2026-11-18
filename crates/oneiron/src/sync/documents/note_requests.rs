@@ -126,8 +126,8 @@ impl DocumentRegistry {
             let body = frame.get(1..).ok_or_else(denied)?;
             let request = decode_unsplit_document(body).map_err(|_| denied())?;
             let operation = NoteOperation::decode(request.payload)?;
-            let digest = blake3::hash(&operation.encode()?);
-            if digest.as_bytes() != &receipt.command_hash {
+            let digest = operation.hash()?;
+            if digest != receipt.command_hash {
                 return Err(denied());
             }
             crate::note::ensure_citations_ready(&self.vault.store, txn, id)?;

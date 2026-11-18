@@ -377,6 +377,7 @@ fn authority_peer_burst_is_observed_and_never_rejected() -> Result<()> {
         quota::MaintenanceIngestQuotaConfig {
             max_ops_per_peer_window: 1,
             quota_window_secs: 3_600,
+            max_bytes_per_peer_window: None,
         },
     )?;
     vault.set_authority_observation_policy(crate::authority::AuthorityObservationPolicy {
@@ -1663,12 +1664,12 @@ fn observer_b_does_not_rehydrate_tombstoned_edge_endpoint() {
 fn an_endpoint_the_edge_batch_hydrates_is_a_birth_of_the_bytes_it_wrote() {
     let range = TimeRange { start: 1, end: 1 };
     let event = crate::registry::ENTITY_TYPE_EVENT;
-    let blob = crate::test_util::entity_record(event, range, 1, b"row");
+    let blob = crate::test_util::entity_record(event, range, 1, 0, b"row");
     for (leg, sent) in [
         ("the sender's bytes", blob.clone()),
         (
             "another image",
-            crate::test_util::entity_record(event, range, 1, b"other"),
+            crate::test_util::entity_record(event, range, 1, 0, b"other"),
         ),
     ] {
         let vault = test_vault();
@@ -4050,7 +4051,7 @@ fn identity_topology_ingest_door_replays_diverges_and_validates() {
                 wtxn,
                 &event_id,
                 &header,
-                blob,
+                (blob, "2026-01"),
                 &blob[ENTITY_METADATA_HEADER_LEN..],
                 7,
             )
@@ -4079,7 +4080,7 @@ fn identity_topology_ingest_door_replays_diverges_and_validates() {
                 wtxn,
                 &fact_id,
                 &EntityMetadataHeader::parse(&fact_blob).unwrap(),
-                &fact_blob,
+                (fact_blob.as_slice(), "2026-01"),
                 &fact_body,
                 7,
             )
@@ -4141,7 +4142,7 @@ fn identity_topology_ingest_door_replays_diverges_and_validates() {
                 wtxn,
                 &bad_id,
                 &bad_header,
-                &bad_blob,
+                (bad_blob.as_slice(), "2026-01"),
                 &bad_blob[ENTITY_METADATA_HEADER_LEN..],
                 7,
             )
@@ -4200,6 +4201,7 @@ fn byte_identical_type_76_replay_short_circuits_before_full_reconciliation() {
         quota::MaintenanceIngestQuotaConfig {
             max_ops_per_peer_window: 1,
             quota_window_secs: 3_600,
+            max_bytes_per_peer_window: None,
         },
     )
     .unwrap();
@@ -4248,7 +4250,13 @@ fn byte_identical_type_76_replay_short_circuits_before_full_reconciliation() {
     let ingest = || {
         vault.with_write_txn(|wtxn| {
             ingest_replicated_identity_topology_event_in_txn(
-                &vault, &mut *wtxn, &event_id, &header, &blob, &body, 7,
+                &vault,
+                &mut *wtxn,
+                &event_id,
+                &header,
+                (blob.as_slice(), "2026-01"),
+                &body,
+                7,
             )
         })
     };
@@ -4276,6 +4284,7 @@ fn observer_b_rejects_every_local_impossible_type_76_shape_before_mutation() {
         quota::MaintenanceIngestQuotaConfig {
             max_ops_per_peer_window: 1,
             quota_window_secs: 3_600,
+            max_bytes_per_peer_window: None,
         },
     )
     .unwrap();
@@ -4510,6 +4519,7 @@ fn observer_b_rejects_present_actor_class_mismatch_before_mutation() {
         quota::MaintenanceIngestQuotaConfig {
             max_ops_per_peer_window: 1,
             quota_window_secs: 3_600,
+            max_bytes_per_peer_window: None,
         },
     )
     .unwrap();
@@ -5371,23 +5381,18 @@ fn observer_b_project_depth_authority_dependency_survives_retry_until_bind() -> 
     Ok(())
 }
 
+/// A fresh replica bootstraps the signed default, birth and edit through
+/// Observer B and reads the same depths.
+/// (Owner-authorized birth: a person-authorized birth by a non-owner is no
+/// longer reachable; the door revalidates the writer as the vault owner.)
 #[test]
 fn observer_b_bootstraps_signed_default_birth_and_edit_on_fresh_replica() -> crate::Result<()> {
     use ed25519_dalek::Signer;
     let a = test_vault();
     let root_a = a.root_project()?;
     let leader = EntityId::from_hex(&a.project(root_a)?.unwrap().leader)?;
-    let person = EntityId::now();
-    a.put_entity(
-        &person,
-        crate::registry::ENTITY_TYPE_PERSON,
-        TimeRange { start: 1, end: 1 },
-        1,
-        b"owner",
-    )?;
-    let writer = crate::write_envelope::WriteActor::new(person, EdgeActorClass::Human);
-    crate::subject_model::tests::authorization::root_owner(&a, writer, 0xC1)?;
-    let signing = SigningKey::from_bytes(&[0xC1; 32]);
+    let writer = crate::subject_model::tests::authorization::root_host_owner(&a, 0xC1)?;
+    let signing = crate::subject_model::tests::authorization::host_signing_for_seed(0xC1);
     let key = crate::authority::AuthorityKey::Ed25519(signing.verifying_key().to_bytes());
     a.set_project_creation_depth_default(8, &writer, 2, key, |message| {
         Ok(signing.sign(message).to_bytes().to_vec())
@@ -5397,7 +5402,9 @@ fn observer_b_bootstraps_signed_default_birth_and_edit_on_fresh_replica() -> cra
         &a, id, root_a, leader, &writer, 3, 0xC1,
     )?;
     assert_eq!(a.project(id)?.unwrap().depth, 8);
-    crate::workspace_roster::set_project_depth_signed_for_test(&a, id, 2, &writer, 4, 0xC1)?;
+    crate::subject_model::tests::authorization::set_project_depth_with_host(
+        &a, id, 2, &writer, 4, 0xC1,
+    )?;
     let project_facts = crate::gate::project_depth::contributions_for_test(&a, id)?;
     let default_id = crate::gate::project_depth::seeded_default_carrier()?.0;
     let default_facts = crate::gate::project_depth::contributions_for_test(&a, default_id)?;
@@ -5413,13 +5420,7 @@ fn observer_b_bootstraps_signed_default_birth_and_edit_on_fresh_replica() -> cra
             .unwrap(),
         1,
     )?;
-    b.put_entity(
-        &person,
-        crate::registry::ENTITY_TYPE_PERSON,
-        TimeRange { start: 1, end: 1 },
-        1,
-        b"owner",
-    )?;
+    crate::subject_model::tests::authorization::host_owner_writer(&b)?;
     b.import_signed_authority_history(&a.export_signed_authority_history()?)?;
     let doc = LoroDoc::new();
     let materializer = Arc::new(Materializer::new());
@@ -6158,8 +6159,10 @@ fn a_restore_keeping_authority_takes_the_written_here_marks_from_this_vault() {
     file.extend_from_slice(&body);
     std::fs::write(&image, file).unwrap();
 
+    let key = vault.checkpoint_key().unwrap();
     let (copy, _) = Vault::restore_checkpoint_keeping_authority(
         &image,
+        &key,
         &root.path().join("copy"),
         VaultConfig::device(),
         &vault,
