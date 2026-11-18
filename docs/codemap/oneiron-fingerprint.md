@@ -48,6 +48,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/purposes/runtime_hooks.rs` | src | s | — | — | Purposes of runtime hooks (`crates/oneiron/src/runtime_hooks`) |
 | `src/purposes/saved_query.rs` | src | s | — | — | Purposes of saved queries (`crates/oneiron/src/saved_query` and `oneiron-store`'s `query_memo_codec`) |
 | `src/purposes/secret.rs` | src | s | — | — | Purposes of secret scanning (`crates/oneiron/src/batch/secret_scan`) and secret custody (`secret_custody`) |
+| `src/purposes/self_heal.rs` | src | s | — | — | Legacy self-heal digests that existing rows, keys and findings hold |
 | `src/purposes/setting.rs` | src | s | — | — | Purposes of the Setting primitive (`crates/oneiron/src/setting/`) |
 | `src/purposes/skill.rs` | src | s | — | — | Purposes of a skill's canonical identity (`oneiron-store` `write_envelope::skill_record`) |
 | `src/purposes/skill_attribution.rs` | src | s | — | — | Purposes of skill attribution (`crates/oneiron/src/skill_attribution`) |

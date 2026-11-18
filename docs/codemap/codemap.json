@@ -74532,7 +74532,7 @@
      "path": "src/self_heal/blocked_reports.rs",
      "purpose": "Blocked reports into the Coach's Issues job (ARCH-0066 #report_blocked, OF-418)",
      "surface": {
-      "crate-vis": 16,
+      "crate-vis": 17,
       "fn": 1
      }
     },
@@ -74627,7 +74627,7 @@
      "path": "src/self_heal/consent_depth.rs",
      "purpose": "Whole-tray consent queue depth (ARCH-0066 §4, \"consent-storm queue depth\"; OF-298)",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "fn": 1
      }
     },
@@ -74654,6 +74654,7 @@
      "purpose": "The host's scheduled T2/T3 pass (ARCH-0066 #tiers, OF-418): which telemetry windows a detector has graded…",
      "surface": {
       "const": 1,
+      "crate-vis": 1,
       "fn": 6,
       "struct": 1
      }
@@ -74694,7 +74695,7 @@
      "path": "src/self_heal/distillation.rs",
      "purpose": "Owner-labeled T3 evidence -> T2 policy -> closed-form T1 proof",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "enum": 1,
       "fn": 10,
       "re-export": 1,
@@ -74766,7 +74767,7 @@
      "path": "src/self_heal/healer_host.rs",
      "purpose": "External healer capability, durable propose receipts, and human-only PR release",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "enum": 2,
       "fn": 10,
       "struct": 5
@@ -74797,7 +74798,7 @@
      "path": "src/self_heal/issue_evidence.rs",
      "purpose": "What the Coach observes of its model issues after filing them, and when one resolves (OF-418 L3; ARCH-0066 §6)",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 16
      }
     },
     {
@@ -75013,7 +75014,7 @@
      "path": "src/self_heal/tier1_source.rs",
      "purpose": "Producer-owned, vault-local source proofs over the existing base ledgers",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -75030,7 +75031,7 @@
      "purpose": "Model-graded detection over ARCH-0037 runs",
      "surface": {
       "const": 1,
-      "crate-vis": 8,
+      "crate-vis": 12,
       "enum": 1,
       "fn": 7,
       "struct": 4
@@ -94266,6 +94267,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/test_doors/fingerprint_keep_self_heal_digests.rs",
+     "purpose": "K-proof door for self-heal digests that existing rows, keys and findings hold",
+     "surface": {
+      "fn": 12
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/test_doors/fingerprint_keep_store_digests.rs",
      "purpose": "K-proof door for store digests that existing rows, files and acks hold",
      "surface": {
@@ -94909,7 +94920,7 @@
      "purpose": "Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD)",
      "surface": {
       "fn": 1,
-      "mod": 301,
+      "mod": 302,
       "re-export": 1
      }
     },
@@ -107158,6 +107169,20 @@
      "surface": {}
     },
     {
+     "bucket": "L",
+     "kind": "test",
+     "notable": [
+      "ProposedTier"
+     ],
+     "path": "tests/fingerprint_keep_self_heal_digests.rs",
+     "purpose": "K-proof for self-heal legacy digests at d28afbfe74de: existing stored, keyed and compared identities keep…",
+     "surface": {
+      "crate-vis": 24,
+      "enum": 1,
+      "fn": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -114497,7 +114522,7 @@
      "purpose": "`TimeRange`, temporal expressions/parsing, granularity/anchor enums"
     },
     "test_doors": {
-     "files": 307,
+     "files": 308,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -114674,8 +114699,8 @@
    },
    "over_bar": 300,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 8124,
-   "test_files": 1880
+   "source_files": 8125,
+   "test_files": 1881
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -129562,6 +129587,14 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/purposes/self_heal.rs",
+     "purpose": "Legacy self-heal digests that existing rows, keys and findings hold",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/purposes/setting.rs",
      "purpose": "Purposes of the Setting primitive (`crates/oneiron/src/setting/`)",
      "surface": {}
@@ -129693,7 +129726,7 @@
      "purpose": "The K door: a digest that main already stores or sends keeps its exact bytes"
     },
     "purposes": {
-     "files": 48,
+     "files": 49,
      "impl_vault": false,
      "largest_src_bucket": "s",
      "layout": "dir",
@@ -129709,7 +129742,7 @@
    },
    "over_bar": 0,
    "purpose": "One fingerprint rule for engine digests (fable pass 22; PLAN-UC-04 stage 0)",
-   "source_files": 51,
+   "source_files": 52,
    "test_files": 1
   },
   "oneiron-gen": {
