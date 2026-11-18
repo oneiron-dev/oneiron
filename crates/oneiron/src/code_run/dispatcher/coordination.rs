@@ -708,10 +708,10 @@ impl<'a> HostSelfDispatcher<'a> {
         if let Some(run_id) = run_id
             && let Some(record) = vault.get_code_run_replay_record(&run_id)?
         {
-            let request =
-                super::super::payload::self_call_request_value(&SelfCall::TasksWait(handle))?;
             let base_known = || vault.known_values_now();
             let known = CompareKnown::new(Some(&base_known));
+            let request =
+                super::super::payload::self_call_request_value(&SelfCall::TasksWait(handle))?;
             for call in &record.bridge_calls {
                 // Observed generations are an outcome fact of the dispatched
                 // wait: compare against the effective request (FIX 1442), by
