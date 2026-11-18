@@ -437,48 +437,87 @@ impl Vault {
         name: &str,
     ) -> Result<Option<EntityId>> {
         self.find_structured_skill_entity_in_txn(txn, |entity, record| {
-            if record.skill_id.as_str() != name {
-                return Ok(None);
-            }
-            if !crate::skill::skill_loadable(record)
-                && record.lifecycle_status != crate::skill::SkillLifecycle::Superseded
-            {
-                return Ok(None);
-            }
-            let Some(content_hash) = record.content_hash else {
-                return Ok(None);
-            };
-            let expected = content_hash.to_hex();
-            for (claim_id, body, _) in self.active_claims_for_predicate_in_txn(
-                txn,
-                &entity,
-                PREDICATE_SKILL_HUB_PROVENANCE,
-            )? {
-                let Some(hash_text) = map_value(&body.value, "contentHash").and_then(Value::as_str)
-                else {
-                    continue;
-                };
-                if hash_text != expected {
-                    continue;
-                }
-                let Some(ref_value) = map_value(&body.value, "hubRef") else {
-                    continue;
-                };
-                if !same_hub_alias(&HubRef::from_value(ref_value)?, source) {
-                    continue;
-                }
-                if !crate::gate::claim_consolidation_eligible_in_txn(
-                    &self.store,
-                    txn,
-                    &claim_id,
-                    crate::gate::ConsolidationReader::HubDefaultPresence,
-                )? {
-                    continue;
-                }
-                return Ok(Some(entity));
-            }
-            Ok(None)
+            Ok(self
+                .hub_skill_holder_in_txn(txn, &entity, record, source, name, same_hub_alias)?
+                .then_some(entity))
         })
+    }
+
+    /// Every holder of hub skill `name` but `except`, by the test of
+    /// [`Self::installed_hub_skill_in_txn`] with `source` at any pin
+    /// (`same_hub_ref`), in id order: the fresh imports of one shipped skill
+    /// that restore defaults made, whichever engine's bytes they carry.
+    pub(crate) fn hub_skill_holders_at_any_pin_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        source: &HubRef,
+        name: &str,
+        except: &EntityId,
+    ) -> Result<Vec<EntityId>> {
+        let mut holders = Vec::new();
+        self.find_structured_skill_entity_in_txn(txn, |entity, record| {
+            if entity != *except
+                && self.hub_skill_holder_in_txn(txn, &entity, record, source, name, same_hub_ref)?
+            {
+                holders.push(entity);
+            }
+            Ok(None::<()>)
+        })?;
+        holders.sort_unstable();
+        Ok(holders)
+    }
+
+    /// Whether `record`, at `entity`, holds hub skill `name`: it is loadable
+    /// or a Superseded lineage anchor, and one consolidation-eligible
+    /// provenance claim ties its current bytes to `source` under `same_ref`.
+    fn hub_skill_holder_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        entity: &EntityId,
+        record: &SkillRecord,
+        source: &HubRef,
+        name: &str,
+        same_ref: fn(&HubRef, &HubRef) -> bool,
+    ) -> Result<bool> {
+        if record.skill_id.as_str() != name {
+            return Ok(false);
+        }
+        if !crate::skill::skill_loadable(record)
+            && record.lifecycle_status != crate::skill::SkillLifecycle::Superseded
+        {
+            return Ok(false);
+        }
+        let Some(content_hash) = record.content_hash else {
+            return Ok(false);
+        };
+        let expected = content_hash.to_hex();
+        for (claim_id, body, _) in
+            self.active_claims_for_predicate_in_txn(txn, entity, PREDICATE_SKILL_HUB_PROVENANCE)?
+        {
+            let Some(hash_text) = map_value(&body.value, "contentHash").and_then(Value::as_str)
+            else {
+                continue;
+            };
+            if hash_text != expected {
+                continue;
+            }
+            let Some(ref_value) = map_value(&body.value, "hubRef") else {
+                continue;
+            };
+            if !same_ref(&HubRef::from_value(ref_value)?, source) {
+                continue;
+            }
+            if !crate::gate::claim_consolidation_eligible_in_txn(
+                &self.store,
+                txn,
+                &claim_id,
+                crate::gate::ConsolidationReader::HubDefaultPresence,
+            )? {
+                continue;
+            }
+            return Ok(true);
+        }
+        Ok(false)
     }
 }
 

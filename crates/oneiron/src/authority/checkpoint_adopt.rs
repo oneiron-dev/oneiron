@@ -98,6 +98,29 @@ impl VerifiedAuthorityCheckpoint {
         })
     }
 
+    /// `image` taken as verified with no attestation, under a pin naming its
+    /// own genesis, policy and id: the adopted-fold door's cold install,
+    /// whose fold past the image reads the image and its id alone.
+    #[cfg(oneiron_test_support)]
+    pub(in crate::authority) fn unattested_for_door(image: AuthorityCheckpointV2) -> Result<Self> {
+        let id = checkpoint_image_id(&image.encode()?);
+        let pin = AuthorityCheckpointPin {
+            challenge: [0; 32],
+            vault_id: image.vault_id,
+            genesis: image.genesis,
+            checkpoint: id,
+            policy: image.root_policy.clone(),
+            bindings: Vec::new(),
+        };
+        Ok(Self {
+            id,
+            image,
+            pin,
+            attestations: Vec::new(),
+            roots: BTreeSet::new(),
+        })
+    }
+
     /// The image id, equal to the pin's checkpoint.
     #[must_use]
     pub fn id(&self) -> [u8; 32] {

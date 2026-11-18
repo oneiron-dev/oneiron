@@ -64,7 +64,10 @@ pub(crate) struct GateProvenanceHandles {
     pub(crate) mail_recipients: Vec<crate::outbound::OutboundRecipient>,
     /// FIX 6424: the one send a non-mail approve-once press on this effect
     /// approves, supplied by its canonical producer and hashed into that
-    /// one-shot digest only. Never an authority source; no Grant reads it.
+    /// one-shot digest; a scoped-MCP target is also hashed into the Gate's
+    /// binding of the call's decision (FIX
+    /// [GATE-EFFECT-BINDING-NO-CALL-IDENTITY]). Never an authority source; no
+    /// Grant reads it.
     pub(crate) approval_target: Option<super::effect::ApprovalTarget>,
     pub(crate) dreamer_run_id: Option<String>,
     /// Whether the write is a `vault.derive` commit's (untangle 6.7a): the

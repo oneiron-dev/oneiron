@@ -44,6 +44,7 @@ fn stage_in_room_then(
                 learned_at,
                 occurred,
                 op,
+                source_run: None,
             };
             crate::batch::apply_ops_session(
                 &session.read_view()?,
@@ -66,6 +67,7 @@ fn room_put(id: EntityId) -> BatchOp {
         entity_type: ENTITY_TYPE_TURN,
         occurred: TimeRange { start: 10, end: 10 },
         learned_at: 10,
+        row_version: None,
         data: b"payload".to_vec(),
         allow_maintenance: false,
         allow_reserved_predicate: false,
@@ -201,6 +203,7 @@ fn a_run_in_the_room_reports_no_pending_vector_for_a_row_the_room_holds() -> Res
             entity_type: ENTITY_TYPE_CLAIM,
             occurred: TimeRange { start: 10, end: 10 },
             learned_at: 10,
+            row_version: None,
             data: claim_body_bytes(
                 ClaimApprovalStatus::Auto,
                 ClaimLifecycleStatus::Active,
@@ -565,6 +568,7 @@ fn stage_room_claim(
                 entity_type: ENTITY_TYPE_CLAIM,
                 occurred: TimeRange { start: 10, end: 10 },
                 learned_at: 10,
+                row_version: None,
                 data: active_claim_body(None),
                 allow_maintenance: false,
                 allow_reserved_predicate: false,
@@ -672,6 +676,7 @@ fn a_base_only_credentials_recall_in_the_room_seeds_nothing_by_the_rooms_words()
             ENTITY_TYPE_CLAIM,
             TimeRange { start: 1, end: 1 },
             1,
+            None,
             &crate::claim::encode_claim_body(&body)?,
         )
         .text(&claim, &[("body", "seedbaseword")])
@@ -767,6 +772,7 @@ fn claim_put(claim: EntityId, (occurred, learned_at, body): (TimeRange, u64, Vec
         entity_type: ENTITY_TYPE_CLAIM,
         occurred,
         learned_at,
+        row_version: None,
         data: body,
         allow_maintenance: false,
         allow_reserved_predicate: false,
@@ -876,6 +882,7 @@ fn a_claim_the_room_replaced_is_read_at_the_rooms_revision() -> Result<()> {
             ENTITY_TYPE_CLAIM,
             TimeRange { start: 1, end: 1 },
             1,
+            None,
             &owner_claim_body(owner, "basevalue")?,
         )
         .text(&claim, &[("body", "replacementbaseword")])
@@ -1064,6 +1071,7 @@ fn a_room_hides_a_base_vector_that_lands_while_its_turn_is_open() -> Result<()> 
             ENTITY_TYPE_CLAIM,
             TimeRange { start: 1, end: 1 },
             1,
+            None,
             &owner_claim_body(owner, "basevalue")?,
         )
         .text(&claim, &[("body", "unembeddedbaseword")])
@@ -1329,6 +1337,7 @@ fn base_claim_for_the_room(
             ENTITY_TYPE_CLAIM,
             TimeRange { start: 1, end: 1 },
             1,
+            None,
             &owner_claim_body(owner, value)?,
         )
         .text(&claim, &[("body", word)])
@@ -1653,6 +1662,7 @@ fn a_scoped_search_in_the_room_keeps_a_base_row_past_a_room_row_its_worlds_refus
                 entity_type: ENTITY_TYPE_CLAIM,
                 occurred: TimeRange { start: 10, end: 10 },
                 learned_at: 10,
+                row_version: None,
                 data: active_claim_body(Some(world)),
                 allow_maintenance: false,
                 allow_reserved_predicate: false,
@@ -1691,7 +1701,7 @@ fn a_room_that_puts_a_rows_body_back_keeps_the_index_of_that_body() -> Result<()
     let kept = owner_claim_body(owner, "keptvalue")?;
     vault
         .batch()
-        .put_replicated(&claim, ENTITY_TYPE_CLAIM, occurred, 1, &kept)
+        .put_replicated(&claim, ENTITY_TYPE_CLAIM, occurred, 1, None, &kept)
         .text(&claim, &[("body", "keptbaseword")])
         .vector(&claim, &[1.0, 0.0, 0.0, 0.0])
         .commit()?;
@@ -1746,6 +1756,7 @@ fn a_room_hides_the_text_of_a_row_base_indexed_after_its_totals() -> Result<()> 
                 ENTITY_TYPE_CLAIM,
                 TimeRange { start: 1, end: 1 },
                 1,
+                None,
                 &owner_claim_body(owner, "basevalue")?,
             )
             .text(&id, &[("body", word)])
@@ -1814,6 +1825,7 @@ fn a_room_apply_that_writes_one_row_twice_is_refused() -> Result<()> {
         learned_at: 10,
         occurred: TimeRange { start: 10, end: 10 },
         op,
+        source_run: None,
     };
     let row = entity_id(0xDF);
     for second in [
@@ -1859,6 +1871,7 @@ fn a_room_put_never_retypes_a_base_custody_row() -> Result<()> {
         name: "roomretypeprobe".to_owned(),
         class: crate::secret_custody::CustodyClass::CustodyPortable,
         device_only: false,
+        model_reveal_allowed: false,
         value_bytes: b"placeholdervalue".to_vec(),
         status: crate::secret_custody::SecretCustodyStatus::Active,
         registered_at: 1,

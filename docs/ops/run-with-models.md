@@ -126,7 +126,11 @@ the pin names that one model, so there is no walk. A ladder whose every rung
 keeps hours is refused, so a call outside them always has a rung, as is
 `hours` on a role's single `model`. The hours say when, not where: the rung's
 provider is the owner's own entry, and `leave_device` applies to it as to any
-rung.
+rung. When the rungs without hours are gone at run time, such as one whose
+provider was unavailable when the server started, a call outside the
+remaining rungs' hours ends with the retryable refusal `outside_hours` (HTTP
+503), whose `retry_after` and `resets_at` say when the first of those hours
+opens; a durable model step parks until then.
 
 The local Dreamer model the examples name is the measured recipe for the
 Dreamer's seat: Qwen3.8-27B as EXL3 4 bpw (`turboderp/Qwen3.8-27B-exl3`) with

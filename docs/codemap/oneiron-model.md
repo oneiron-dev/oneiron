@@ -55,9 +55,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/llm/media/request.rs` | src | s | 1 struct · 2 enum · 11 fn | MediaPart, MediaRequest, MediaVoice | Media call requests and voices |
 | `src/llm/media/response.rs` | src | s | 3 struct · 1 enum · 6 fn | MediaCallProgress, MediaJobState, MediaResponse, MediaUsage | Media call answers, usage and job states |
 | `src/llm/media/wav.rs` | src | s | 1 struct · 4 fn | WavClip | RIFF/WAVE clips: the container a voice call's PCM rides in both ways |
-| `src/llm/mod.rs` | src | s | 4 mod · 36 re-export | — | Engine-facing LLM invocation seam |
+| `src/llm/mod.rs` | src | s | 4 mod · 37 re-export | — | Engine-facing LLM invocation seam |
 | `src/llm/model_id.rs` | src | s | 1 struct · 1 enum · 6 fn · 3 crate-vis | ModelId, ModelIdError | Validated provider/name@revision model identifier with segment checks and shared constructors |
-| `src/llm/protocol.rs` | src | m | 9 struct · 8 enum · 10 fn · 3 const | ContentPart, FinishReason, ImageContent, IncompleteReason, LlmCallMetadata, LlmEndpointFlavor, LlmInputUsage, LlmMessage +9 | Wire protocol: requests, responses, messages, content parts, stream events, usage, tool specs, and canonical… |
+| `src/llm/protocol.rs` | src | m | 9 struct · 8 enum · 11 fn · 3 const | ContentPart, FinishReason, ImageContent, IncompleteReason, LlmCallMetadata, LlmEndpointFlavor, LlmInputUsage, LlmMessage +9 | Wire protocol: requests, responses, messages, content parts, stream events, usage, tool specs, and canonical… |
 | `src/llm/protocol/tests.rs` | test | s | — | — | — |
 | `src/llm/provider_usage.rs` | src | s | 1 struct · 3 fn | ProviderTokenMeasurement | Provider-reported token measurements, kept apart from budget charges and the normalized usage counters that… |
 | `src/llm/reply_assertions.rs` | src | s | 2 struct · 3 fn | ReplyAssertionRecord, ReplyAssertions | The typed records one reply cited or created (OF-063, FIX 3416), carried on its terminal |
@@ -70,6 +70,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/llm/subscribers.rs` | src | s | 4 struct · 6 fn | ProgressSnapshot, ProgressSubscriber, VoiceChunkPolicy, VoiceChunker | Pure clock-injected progress and voice stages |
 | `src/model_binding.rs` | src | s | 3 struct · 4 enum · 5 fn · 1 const | CalibratedVerdict, ModelBinding, ModelDisposition, ModelRole, ModelSlot, VerdictBinding, VerdictMode | Model-role bindings and calibrated verdict values |
 | `src/teacher_probe_policy.rs` | src | s | 1 struct · 5 fn · 1 const | TeacherProbePolicy | Resolved extraction-teacher probe policy values |
+| `tests/authored_finish_name_from_provider.rs` | test | s | — | — | A provider finish string must never land in FinishReason::Other under an engine-authored prefix (FIX-LIST… |
 | `tests/budget_park_fence.rs` | test | s | — | — | FIX BUDGET-PARK: parking a workflow's budget fences every handle of the original meter |
 | `tests/budget_unsent_evidence.rs` | test | s | — | — | FIX BUDGET-LEASE: a call's lease, once a physical attempt began under it, can never be marked unsent |
 | `tests/model_register_names.rs` | test | s | — | — | The names of 4 name lists in `oneiron-model`, one line per row, generated from… |
