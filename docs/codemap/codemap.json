@@ -93418,7 +93418,7 @@
      "purpose": "The owner's proof, the Coach and a project goal, for integration tests (untangle 6.6: the Coach's…",
      "surface": {
       "const": 2,
-      "fn": 4
+      "fn": 7
      }
     },
     {
@@ -102030,7 +102030,7 @@
      "path": "src/workspace_roster/mod.rs",
      "purpose": "Workspace roster preset + member onboarding (ONEIRON-ARCH-0065)",
      "surface": {
-      "crate-vis": 50,
+      "crate-vis": 51,
       "mod": 1,
       "re-export": 30
      }
@@ -102099,7 +102099,7 @@
      "path": "src/workspace_roster/project/deletion.rs",
      "purpose": "Delete the derived home room at the common entity deindex door",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 3
      }
     },
     {
@@ -102406,7 +102406,7 @@
      "purpose": "Project responsibility records and their derived home-room membership",
      "surface": {
       "const": 1,
-      "crate-vis": 54,
+      "crate-vis": 55,
       "enum": 2,
       "fn": 20,
       "re-export": 20,
@@ -187739,11 +187739,11 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "tests/lmdb_open_damaged_file.rs",
-     "purpose": "FIX row LMDB-MASTER3-UPSTREAM-FIXES-AUDIT (upstream ITS#9291 and its `ONEIRON FORK (LMDB audit)` hunks): an…",
+     "purpose": "FIX rows LMDB-MASTER3-UPSTREAM-FIXES-AUDIT (upstream ITS#9291 and its `ONEIRON FORK (LMDB audit)` hunks) and…",
      "surface": {}
     },
     {
