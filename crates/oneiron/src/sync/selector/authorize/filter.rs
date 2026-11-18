@@ -847,7 +847,9 @@ fn home_stamp(raw: &[u8]) -> HomeStamp {
 /// a member homed elsewhere reads only through its Connect grant must also
 /// pass `in_scope`, the export's own fence for a source (the grant's and the
 /// selector's worlds and rules), or a row the grant may read would carry the
-/// words of a claim it may not (review of #9526).
+/// words of a claim it may not (review of #9526). Such a source must also
+/// carry no use limit: the export withholds a use-limited row itself, so a
+/// row quoting it must not carry its words either (review round 2 of #9526).
 pub(in crate::sync::selector) fn member_reads_word_sources(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
@@ -878,7 +880,11 @@ pub(in crate::sync::selector) fn member_reads_word_sources(
         {
             return Ok(false);
         }
-        if matches!(stamp, Some(HomeStamp::Stamped { .. })) && !in_scope(&source, &source_raw)? {
+        if matches!(stamp, Some(HomeStamp::Stamped { .. }))
+            && (!in_scope(&source, &source_raw)?
+                || crate::store::legal_hold::use_limit_in_txn(&vault.store, rtxn, &source)?
+                    .is_some())
+        {
             return Ok(false);
         }
         let Some(nested) = word_sources_of(vault, rtxn, &source, &source_raw)? else {
