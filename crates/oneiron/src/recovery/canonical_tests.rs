@@ -364,6 +364,7 @@ fn world_month_canonical_snapshot_round_trips_and_rebuilds() -> Result<()> {
         crate::claim::ClaimLifecycleStatus::Active,
     )
     .unwrap();
+    crate::test_util::stamp_vault_default_facet(&vault, &mut body);
     body.world = Some(world);
     vault.put_claim(&claim, &body, occurred, at)?;
     let window = format!("2026-02@{}", world.to_hex());

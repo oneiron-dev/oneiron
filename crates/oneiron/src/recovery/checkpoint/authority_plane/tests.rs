@@ -529,7 +529,7 @@ fn enroll(live: &Vault, recipient: EntityId) -> EntityId {
     use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject};
     let entry = |key: &str, value: rmpv::Value| (rmpv::Value::from(key), value);
     let reference = || rmpv::Value::from(EntityId::now().to_hex());
-    let member = ClaimBody::new(
+    let mut member = ClaimBody::new(
         crate::campaign::claims::PREDICATE_CAMPAIGN_MEMBER,
         ClaimSubject::Entity(recipient),
         rmpv::Value::Map(vec![
@@ -552,6 +552,7 @@ fn enroll(live: &Vault, recipient: EntityId) -> EntityId {
         ClaimLifecycleStatus::Active,
     )
     .unwrap();
+    crate::test_util::stamp_vault_default_facet(live, &mut member);
     let id = EntityId::now();
     live.put_claim(&id, &member, TimeRange { start: 5, end: 5 }, 5)
         .unwrap();

@@ -93,7 +93,7 @@ fn put_text_with_time(
         .commit()
 }
 
-fn active_claim_body(world: Option<EntityId>) -> Vec<u8> {
+fn active_claim_body(vault: &Vault, world: Option<EntityId>) -> Vec<u8> {
     let mut body = ClaimBody::new(
         "test.prefix_scope",
         crate::claim::ClaimSubject::Entity(entity_id(0x7C)),
@@ -103,6 +103,7 @@ fn active_claim_body(world: Option<EntityId>) -> Vec<u8> {
         crate::claim::ClaimLifecycleStatus::Active,
     )
     .unwrap();
+    crate::test_util::stamp_vault_default_facet(vault, &mut body);
     body.world = world;
     crate::claim::encode_claim_body(&body).expect("encode claim body")
 }
@@ -120,7 +121,7 @@ pub(super) fn put_claim_text(
             ENTITY_TYPE_CLAIM,
             TimeRange { start: 1, end: 1 },
             1,
-            &active_claim_body(world),
+            &active_claim_body(vault, world),
         )
         .text(&id, &[("body", text)])
         .commit()
@@ -256,8 +257,8 @@ struct FacetFixture {
     event_faceted: EntityId,
 }
 
-fn facet_claim_body() -> Vec<u8> {
-    let body = ClaimBody::new(
+fn facet_claim_body(vault: &Vault) -> Vec<u8> {
+    let mut body = ClaimBody::new(
         "facet.scope_test",
         ClaimSubject::Entity(entity_id(0x7C)),
         rmpv::Value::from("v"),
@@ -266,6 +267,7 @@ fn facet_claim_body() -> Vec<u8> {
         ClaimLifecycleStatus::Active,
     )
     .unwrap();
+    crate::test_util::stamp_vault_default_facet(vault, &mut body);
     crate::claim::encode_claim_body(&body).expect("encode claim body")
 }
 
@@ -277,7 +279,7 @@ fn put_claim_with_vector(vault: &Vault, id: EntityId, vector: [f32; 4]) -> Resul
             ENTITY_TYPE_CLAIM,
             TimeRange { start: 1, end: 1 },
             1,
-            &facet_claim_body(),
+            &facet_claim_body(vault),
         )
         .vector(&id, &vector)
         .commit()
@@ -300,6 +302,7 @@ fn put_claim_with_vector_world(
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
     )?;
+    crate::test_util::stamp_vault_default_facet(vault, &mut body);
     body.world = world;
     let encoded = crate::claim::encode_claim_body(&body).expect("encode claim body");
     vault
@@ -360,7 +363,12 @@ fn setup_facet_fixture(vault: &Vault) -> Result<FacetFixture> {
 
 // ── D19 read-path claim status gate (ONE-1111) ─────────────────
 
-fn claim_body_bytes(appr: ClaimApprovalStatus, life: ClaimLifecycleStatus, stale: bool) -> Vec<u8> {
+fn claim_body_bytes(
+    vault: &Vault,
+    appr: ClaimApprovalStatus,
+    life: ClaimLifecycleStatus,
+    stale: bool,
+) -> Vec<u8> {
     let mut body = ClaimBody::new(
         "test.status",
         ClaimSubject::Entity(EntityId::from_bytes([0x7C; 16]).expect("valid id")),
@@ -370,6 +378,7 @@ fn claim_body_bytes(appr: ClaimApprovalStatus, life: ClaimLifecycleStatus, stale
         life,
     )
     .unwrap();
+    crate::test_util::stamp_vault_default_facet(vault, &mut body);
     body.stale = stale;
     crate::claim::encode_claim_body(&body).expect("encode claim body")
 }
@@ -389,7 +398,7 @@ pub(super) fn put_status_claim(
             ENTITY_TYPE_CLAIM,
             TimeRange { start: 1, end: 1 },
             1,
-            &claim_body_bytes(appr, life, stale),
+            &claim_body_bytes(vault, appr, life, stale),
         )
         .text(&id, &[("body", text)])
         .commit()

@@ -569,7 +569,7 @@ fn stage_room_claim(
                 occurred: TimeRange { start: 10, end: 10 },
                 learned_at: 10,
                 row_version: None,
-                data: active_claim_body(None),
+                data: active_claim_body(vault, None),
                 allow_maintenance: false,
                 allow_reserved_predicate: false,
                 hub_sync_imported: false,
@@ -1635,7 +1635,7 @@ fn a_scoped_search_in_the_room_keeps_a_base_row_past_a_room_row_its_worlds_refus
             ENTITY_TYPE_CLAIM,
             TimeRange { start: 1, end: 1 },
             1,
-            &active_claim_body(None),
+            &active_claim_body(vault, None),
         )
         .vector(&base_claim, &[0.8, 0.6, 0.0, 0.0])
         .commit()?;
@@ -1663,7 +1663,7 @@ fn a_scoped_search_in_the_room_keeps_a_base_row_past_a_room_row_its_worlds_refus
                 occurred: TimeRange { start: 10, end: 10 },
                 learned_at: 10,
                 row_version: None,
-                data: active_claim_body(Some(world)),
+                data: active_claim_body(vault, Some(world)),
                 allow_maintenance: false,
                 allow_reserved_predicate: false,
                 hub_sync_imported: false,

@@ -376,6 +376,7 @@ fn followed_world_rejects_foreign_payload_at_update_and_both_bulk_doors() {
             ClaimLifecycleStatus::Active,
         )
         .unwrap();
+        crate::test_util::stamp_vault_default_facet(vault, &mut body);
         body.world = Some(world);
         vault.put_claim(&claim, &body, occurred, at).unwrap();
     }

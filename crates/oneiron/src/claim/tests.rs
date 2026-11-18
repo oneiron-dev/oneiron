@@ -1573,18 +1573,17 @@ fn write_door_validates_calendar_claim_structure() -> Result<()> {
     };
 
     // The canonical shape stores through the public claim door.
-    vault.put_claim(
-        &EntityId::now(),
-        &calendar_body(status_value("confirmed")),
-        TimeRange { start: 2, end: 2 },
-        2,
-    )?;
+    let mut valid = calendar_body(status_value("confirmed"));
+    crate::test_util::stamp_vault_default_facet(&vault, &mut valid);
+    vault.put_claim(&EntityId::now(), &valid, TimeRange { start: 2, end: 2 }, 2)?;
 
     // An invalid closed-set token is rejected at that same door.
+    let mut tentative = calendar_body(status_value("tentative"));
+    crate::test_util::stamp_vault_default_facet(&vault, &mut tentative);
     assert_matches!(
         vault.put_claim(
             &EntityId::now(),
-            &calendar_body(status_value("tentative")),
+            &tentative,
             TimeRange { start: 3, end: 3 },
             3,
         ),
@@ -1592,13 +1591,10 @@ fn write_door_validates_calendar_claim_structure() -> Result<()> {
     );
 
     // So is a wholly wrong value type, proving the branch is not shape-blind.
+    let mut wrong = calendar_body(Value::from("cancelled"));
+    crate::test_util::stamp_vault_default_facet(&vault, &mut wrong);
     assert_matches!(
-        vault.put_claim(
-            &EntityId::now(),
-            &calendar_body(Value::from("cancelled")),
-            TimeRange { start: 4, end: 4 },
-            4,
-        ),
+        vault.put_claim(&EntityId::now(), &wrong, TimeRange { start: 4, end: 4 }, 4,),
         Err(Error::InvalidClaimBody(_))
     );
 

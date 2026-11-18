@@ -342,6 +342,7 @@ fn pinned_claim_does_not_bypass_current_scoped_admission() {
         ClaimLifecycleStatus::Active,
     )
     .unwrap();
+    crate::test_util::stamp_vault_default_facet(&vault, &mut body);
     body.source = Some(ClaimSource::Observed);
     vault
         .put_claim(&claim, &body, TimeRange { start: 1, end: 1 }, 1)

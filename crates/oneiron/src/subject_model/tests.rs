@@ -32,11 +32,13 @@ mod substrate_authorization;
 mod write_doors;
 
 fn put_subject_fixture(vault: &Vault, id: &EntityId, body: &ClaimBody) -> Result<()> {
+    let mut stamped = body.clone();
+    crate::test_util::stamp_vault_default_facet(vault, &mut stamped);
     vault.with_write_txn(|txn| {
         vault.put_reserved_claim_in_txn(
             txn,
             id,
-            body,
+            &stamped,
             TimeRange {
                 start: 100,
                 end: 100,

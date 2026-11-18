@@ -5773,6 +5773,7 @@ fn foreign_and_unknown_world_tombstones_do_not_delete_or_poison_other_projects()
         crate::claim::ClaimLifecycleStatus::Active,
     )
     .unwrap();
+    crate::test_util::stamp_vault_default_facet(&vault, &mut body);
     body.world = Some(world_b);
     vault.put_claim(&existing, &body, occurred, at)?;
     let window = LoadedWindow::new("owner", key, &vault, &materializer);
@@ -5914,6 +5915,7 @@ fn world_export_does_not_pick_up_a_shared_note_from_the_same_month() -> Result<(
         crate::claim::ClaimLifecycleStatus::Active,
     )
     .unwrap();
+    crate::test_util::stamp_vault_default_facet(&source, &mut body);
     body.world = Some(world);
     source.put_claim(&claim, &body, occurred, at)?;
     let world_key = WindowKey::for_world(at, world);

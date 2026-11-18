@@ -672,6 +672,7 @@ mod tests {
                         ClaimLifecycleStatus::Active,
                     )
                     .unwrap();
+                    crate::test_util::stamp_vault_default_facet(vault, &mut body);
                     body.world = Some(world);
                     vault
                         .put_claim(&binding, &body, when, 1)
@@ -689,6 +690,7 @@ mod tests {
                 ClaimLifecycleStatus::Active,
             )
             .unwrap();
+            crate::test_util::stamp_vault_default_facet(vault, &mut body);
             body.rel = Some(crate::claim::RelationshipSet::from([space]));
             vault
                 .put_claim(&shared, &body, when, 1)

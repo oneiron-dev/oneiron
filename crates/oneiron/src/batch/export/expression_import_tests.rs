@@ -155,19 +155,16 @@ fn archive(origins: [ExpressionPreferenceOrigin; 2]) -> Result<Archive> {
     let first = preference(&source, &writer, subject, "ja", origins[0], 10)?;
     let head = preference(&source, &writer, subject, "en-US", origins[1], 20)?;
     let dependent = EntityId::now();
-    source.put_claim(
-        &dependent,
-        &ClaimBody::new(
-            "archive.preference_note",
-            ClaimSubject::Entity(head),
-            "dependent".into(),
-            1.0,
-            ClaimApprovalStatus::Proposed,
-            ClaimLifecycleStatus::Active,
-        )?,
-        at(30),
-        30,
+    let mut body = ClaimBody::new(
+        "archive.preference_note",
+        ClaimSubject::Entity(head),
+        "dependent".into(),
+        1.0,
+        ClaimApprovalStatus::Proposed,
+        ClaimLifecycleStatus::Active,
     )?;
+    crate::test_util::stamp_vault_default_facet(source, &mut body);
+    source.put_claim(&dependent, &body, at(30), 30)?;
     let bytes = source.export_whole_vault(false)?.bytes().to_vec();
     Ok(Archive {
         bytes,

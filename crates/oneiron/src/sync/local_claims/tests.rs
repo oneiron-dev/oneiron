@@ -129,6 +129,7 @@ impl Fixture {
             ClaimApprovalStatus::Proposed,
             ClaimLifecycleStatus::Active,
         )?;
+        crate::test_util::stamp_vault_default_facet(vault, &mut body);
         body.source = Some(ClaimSource::Observed);
         vault.put_claim(&ordinary, &body, occurred, now)?;
         let ordinary_raw = vault.get_raw(&ordinary)?.unwrap();
