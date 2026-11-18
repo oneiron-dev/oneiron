@@ -786,7 +786,7 @@ fn direct(url: &str) -> anyhow::Result<()> {
 /// chain, which any fresh root can write, neither enrols nor keeps a removed
 /// machine live here (FIX FOREIGN-ANCHOR-CHAIN-COUNTS-IN-EVERY-CHAIN-PREDICATES).
 #[cfg(feature = "mesh")]
-fn standing(
+pub(crate) fn standing(
     vault: &oneiron::Vault,
     home: oneiron::EntityId,
     enrolled: bool,
