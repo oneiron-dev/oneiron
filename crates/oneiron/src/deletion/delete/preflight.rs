@@ -13,7 +13,7 @@ use super::super::tombstone::DeleteReason;
 impl Vault {
     /// The delete rail's admission of `id` under `reason` that no legal hold
     /// decides, read in `txn`: an actor, a shared LFS chunk, a room record
-    /// with no room door, an e-sign event, a ruling, a task fact, an
+    /// with no room door, an e-sign event, the root project, a ruling, a task fact, an
     /// audience edit (a privacy erase erases one instead), a goal, a pack
     /// map carrier, a live merge source under a hard purge, a maintenance
     /// kind, and a record a live brief share still names. `gated` is the
@@ -29,6 +29,7 @@ impl Vault {
         crate::origin::lfs::reject_direct_lfs_chunk_delete(&self.store, txn, id)?;
         self.require_room_delete_gate(txn, id, None, false)?;
         crate::blob_artifact::esign::reject_event_delete(&self.store, txn, id)?;
+        crate::workspace_roster::reject_root_project_delete(&self.store, txn, id)?;
         self.store
             .delete_guards
             .reject_ruling_delete(&self.store, txn, id)?;

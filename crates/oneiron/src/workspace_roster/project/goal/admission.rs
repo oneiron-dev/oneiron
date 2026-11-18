@@ -452,8 +452,15 @@ fn retire_goal(
         .delete_edge(&id, crate::edge::EdgeKind::ClaimOf, &project_id)
         .apply(txn)?;
     // An absent or soft-erased project has no pointer left to reconcile, and
-    // is never recreated; the goal's own edge and marker still retire here.
-    if let Some(mut project) = super::super::record::<super::super::ProjectRecord>(
+    // is never recreated; nor is a project this txn hard-purges, whose `dt:`
+    // marker is already written and whose row the tear removes next. The
+    // goal's own edge and marker still retire here.
+    if !crate::ports::TombstoneStoreRead::port_deletion_marked(
+        store,
+        txn,
+        crate::ports::DeletionMarker::HardDelete,
+        &project_id,
+    )? && let Some(mut project) = super::super::record::<super::super::ProjectRecord>(
         store,
         txn,
         project_id,

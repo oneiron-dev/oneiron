@@ -63,6 +63,7 @@ impl Vault {
         }
         {
             let txn = self.store.env.read_txn()?;
+            crate::workspace_roster::reject_root_project_delete(&self.store, &txn, id)?;
             self.store
                 .delete_guards
                 .reject_ruling_delete(&self.store, &txn, id)?;

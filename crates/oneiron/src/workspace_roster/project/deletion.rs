@@ -2,6 +2,23 @@
 use super::*;
 use crate::store::Store;
 
+/// Refuses a delete of the vault's root project, the one structural row
+/// every vault carries (ARCH-0067: the vault itself is the root project).
+/// The delete rail, its preflight and the delete preview call it before any
+/// writer, and the deindex door again, so every door refuses it alike.
+pub(crate) fn reject_root_project_delete(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<()> {
+    if ROOT.get(store, txn, &())? == Some(*id) {
+        return Err(
+            crate::error::RecordError::InvalidProjectBody("cannot delete root project").into(),
+        );
+    }
+    Ok(())
+}
+
 pub(crate) fn deindex_project_room(
     store: &Store,
     txn: &mut heed::RwTxn<'_>,
@@ -17,11 +34,7 @@ pub(crate) fn deindex_project_room(
     if !is_project_type(store, header.entity_type) {
         return Ok((false, false, Vec::new()));
     }
-    if ROOT.get(store, txn, &())? == Some(*id) {
-        return Err(
-            crate::error::RecordError::InvalidProjectBody("cannot delete root project").into(),
-        );
-    }
+    reject_root_project_delete(store, txn, id)?;
     {
         // Each child names its parents as its signed history folds them; a
         // child whose history serves no authority keeps its stored claim.
