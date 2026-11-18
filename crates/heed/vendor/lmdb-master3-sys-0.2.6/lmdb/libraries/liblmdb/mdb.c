@@ -4928,7 +4928,15 @@ fail:
 #if defined(__APPLE__)
 	if (mfd == env->me_mfd && MDB_FDATASYNC(env->me_mfd)) {
 		rc = ErrCode();
-		return rc;
+		/* ONEIRON FORK (LMDB audit): a failed sync is a failed meta write.
+		 * Put the old meta back in the page cache and mark the env fatal,
+		 * as the pwrite failure above does.
+		 */
+		meta.mm_last_pg = metab.mm_last_pg;
+		meta.mm_txnid = metab.mm_txnid;
+		r2 = pwrite(env->me_fd, ptr, len, off);
+		(void)r2;	/* Silence warnings. We don't care about pwrite's return value */
+		goto fail;
 	}
 #endif
 	/* MIPS has cache coherency issues, this is a no-op everywhere else */
@@ -7102,6 +7110,7 @@ retry:
 						rc = mdb_rpage_encsum(env, &id3, rem, numpgs);
 						if (rc) {
 							free(id3.menc);
+							munmap(id3.mptr, len);	/* ONEIRON FORK (LMDB audit): no cache holds this map */
 							goto fail;
 						}
 						el[x].muse = id3.muse;
@@ -7172,6 +7181,7 @@ fail:
 			rc = mdb_rpage_encsum(env, &id3, rem, numpgs);
 			if (rc) {
 				free(id3.menc);
+				munmap(id3.mptr, len);	/* ONEIRON FORK (LMDB audit): no cache holds this map */
 				goto fail;
 			}
 		}
