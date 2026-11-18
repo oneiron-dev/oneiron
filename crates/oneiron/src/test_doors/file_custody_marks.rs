@@ -11,6 +11,8 @@
 //! runs the finisher of staged known-value history retirements, which
 //! housekeeping runs and whose refusal it only logs.
 
+use oneiron_contracts::fingerprint::ContentHash;
+
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::Result;
@@ -26,7 +28,7 @@ use crate::store::file_key_masks::masked_file_in_txn;
 #[doc(hidden)]
 pub fn file_mark_custody(vault: &Vault, bytes: &[u8]) -> Result<Vec<EntityId>> {
     let txn = vault.store.env.read_txn()?;
-    let hash = blake3::hash(bytes);
+    let hash = ContentHash::of(bytes);
     let Some(mark) = masked_file_in_txn(&vault.store, &txn, hash.as_bytes())? else {
         return Ok(Vec::new());
     };
