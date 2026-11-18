@@ -463,7 +463,7 @@ fn witnessed_user_turn_reaches_extraction_and_lands_its_message_evidence() -> Re
         assert!(
             backend
                 .request_text(0)
-                .contains(&format!("[{} user] {SAID}\n", turn.to_hex())),
+                .contains(&format!("[T1 user] {SAID}\n")),
             "the extraction model reads the witnessed words"
         );
         let [claim] = sink.outcome.landed.as_slice() else {
@@ -514,7 +514,7 @@ fn branch_reads_only_the_turns_visible_words_and_cites_them_exactly() -> Result<
     let text = "I met Casey\nand ☕ after";
     assert_eq!(
         branch.transcript(branch.scope(), &[turn])?,
-        format!("[{} assistant] {text}\n", turn.to_hex())
+        format!("[T1 assistant] {text}\n")
     );
     let cup = text.find('☕').expect("multibyte span");
     let range = |end: usize| SwarmEvidenceRef {
@@ -560,7 +560,7 @@ fn branch_reads_only_the_turns_visible_words_and_cites_them_exactly() -> Result<
     let branch = BranchResources::open(&vault, actor, partition, &[turn], AttemptId::now(), None)?;
     assert_eq!(
         branch.transcript(branch.scope(), &[turn])?,
-        format!("[{} assistant] \n", turn.to_hex())
+        "[T1 assistant] \n".to_owned()
     );
     Ok(())
 }
@@ -1207,12 +1207,12 @@ fn only_finalized_stream_text_reaches_the_branch() -> Result<()> {
             byte_range: Some(name_range()),
         }]);
         if ending == "finalize" {
-            assert_eq!(transcript, format!("[{} user] {SAID}\n", turn.to_hex()));
+            assert_eq!(transcript, format!("[T1 user] {SAID}\n"));
             assert_eq!(cited?[0].content_hash, swarm_evidence_content_hash(b"Owen"));
         } else {
             assert_eq!(
                 transcript,
-                format!("[{} user] \n", turn.to_hex()),
+                "[T1 user] \n".to_owned(),
                 "{ending}: audit text is not transcript"
             );
             assert!(cited.is_err(), "{ending}: audit text is not evidence");
@@ -1256,7 +1256,7 @@ fn a_cancelled_continuation_turns_its_final_message_into_audit_text() -> Result<
     let reopened = open()?;
     assert_eq!(
         reopened.transcript(reopened.scope(), &[turn])?,
-        format!("[{} user] \n", turn.to_hex())
+        "[T1 user] \n".to_owned()
     );
     Ok(())
 }
@@ -1349,7 +1349,7 @@ fn a_finalized_continuation_brings_its_consumed_turn_back() -> Result<()> {
     )?;
     assert_eq!(
         branch.transcript(branch.scope(), &[turn])?,
-        format!("[{} user] call me Owen\n", turn.to_hex())
+        "[T1 user] call me Owen\n".to_owned()
     );
     Ok(())
 }
@@ -1430,7 +1430,7 @@ fn stored_rows_join_by_order_then_id_and_a_foreign_bucket_refuses() -> Result<()
     let branch = open()?;
     assert_eq!(
         branch.transcript(branch.scope(), &[turn])?,
-        format!("[{} user] \na\nb\n", turn.to_hex())
+        "[T1 user] \na\nb\n".to_owned()
     );
     let at = |start, end| SwarmEvidenceRef {
         source_id: turn,

@@ -377,9 +377,9 @@ fn extract(fx: &Fixture, value: &str) -> crate::LlmResponse {
 fn correct(fx: &Fixture, value: &str) -> crate::LlmResponse {
     text_response(
         serde_json::json!({"candidates": [{
-            "subject": fx.subject.to_hex(), "predicate": "profile.name", "value": value,
+            "subject": "P1", "predicate": "profile.name", "value": value,
             "corrects": fx.head.to_hex(), "confidence": 0.9,
-            "evidence_refs": [{"source_id": fx.turn.to_hex(), "byte_range": [0, 1]}],
+            "evidence_refs": [{"source": "T1", "quote": "Owen"}],
         }]})
         .to_string(),
     )
@@ -1681,9 +1681,9 @@ fn a_correction_that_names_no_value_writes_nothing() -> Result<()> {
             Some(&fx.scope),
         )?;
         let mut item = serde_json::json!({
-            "subject": fx.subject.to_hex(), "predicate": "profile.name",
+            "subject": "P1", "predicate": "profile.name",
             "corrects": fx.head.to_hex(), "confidence": 0.9,
-            "evidence_refs": [{"source_id": fx.turn.to_hex(), "byte_range": [0, 1]}],
+            "evidence_refs": [{"source": "T1", "quote": "Owen"}],
         });
         if let Some(value) = &value {
             item["value"] = value.clone();
