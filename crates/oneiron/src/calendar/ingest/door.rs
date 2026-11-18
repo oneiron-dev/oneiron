@@ -100,9 +100,8 @@ pub fn import_ics_as_owner(
 /// takes another system, under which its UIDs still attach to the same EVENTs. A system whose
 /// feed was uninstalled is open to an upload, since no poll of that feed runs again. The check
 /// reads the installed sources once, under the upload's admission turn and before its writes. A
-/// feed's install takes that turn too (`feed_door::ics_feed_write_turn`), so none lands while
-/// the upload runs; a seat's install takes none, so a seat the owner installs on the same system
-/// while the upload runs is not seen.
+/// feed's install and a seat's take that turn too (`feed_door::ics_feed_write_turn`,
+/// `connectors::door::seat_setup_write_turn`), so none lands while the upload runs.
 fn refuse_installed_source_system(memory: &Memory<'_>, system: &str) -> MemoryResult<()> {
     crate::mail_pack::refuse_calendar_source_system(system)?;
     let vault = memory.vault();

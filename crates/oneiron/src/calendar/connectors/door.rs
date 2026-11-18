@@ -191,6 +191,21 @@ pub(crate) fn seat_setup_changed_in_txn(
     Ok(())
 }
 
+/// The turn a `calendar.connector_seat` change takes before its write opens: the calendar
+/// admission turn a complete owner upload holds from its check that no seat imports under its
+/// system to its last write (`ingest::door::import_ics_as_owner`). A seat install therefore
+/// lands before that check (the upload is refused) or after the upload's sweep, never between
+/// them, when the sweep would cancel the seat's first events.
+///
+/// # Errors
+///
+/// `InvalidConfig` when this thread already holds a calendar admission turn.
+pub(crate) fn seat_setup_write_turn(vault: &Vault) -> crate::Result<Box<dyn std::any::Any>> {
+    let turn = crate::calendar::ingest::admission_turn(vault)
+        .map_err(|error| crate::Error::InvalidConfig(error.to_string()))?;
+    Ok(Box::new(turn))
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct CalendarConnectorRegistration {
     pub endpoint: String,

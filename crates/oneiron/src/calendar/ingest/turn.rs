@@ -12,10 +12,12 @@
 //! at the vault across its whole diff: the ICS poll once its fetch answered,
 //! the owner's import and instance move, a queued property continuation, one
 //! connector change, and an outbound connector write's local completion,
-//! which can turn an inbound passport two-way. The turn is a lock per vault,
-//! by canonical root, kept for the process's life as the writer-spend locks
-//! are. The serving process is the vault's only writer, so the turn is the
-//! whole boundary.
+//! which can turn an inbound passport two-way. An ICS feed's or a CalDAV seat's
+//! setting change takes the turn too, before its write opens, so none lands
+//! inside a running admission. The turn is a lock per vault, by canonical
+//! root, kept for the process's life as the writer-spend locks are. The
+//! serving process is the vault's only writer, so the turn is the whole
+//! boundary.
 //!
 //! A door entered again on a thread that already holds a turn (a host
 //! screener that runs a poll, say) is refused: passing it through would let
