@@ -27,6 +27,15 @@ struct OpenMarkerParts {
     birth: Option<RowBirth>,
 }
 
+/// Parks `conflict` open for `attempt` as `actor`, in one write under
+/// `fence`, and returns the marker's id. `now_ms` is the wake's clock in
+/// milliseconds; the marker and its birth store Unix seconds, as every claim
+/// row does.
+///
+/// # Errors
+///
+/// A marker that cannot be built ([`open_marker_parts`]), a fence that no
+/// longer holds, the gate's refusal, and storage errors.
 #[expect(
     clippy::too_many_arguments,
     reason = "the conflict, its members and decisions join the writer's fence and clock"
@@ -39,22 +48,24 @@ pub(super) fn park_open_conflict(
     members: &[&VerifiedCandidate],
     decisions: &[super::KeptDecision],
     fence: &super::resources::ConsolidationFence,
-    now: u64,
+    now_ms: u64,
 ) -> Result<EntityId> {
-    let parts = open_marker_parts(actor, attempt, conflict, members, decisions, now)?;
+    // A claim's times are Unix seconds; the wake's clock is milliseconds.
+    let at = now_ms / 1_000;
+    let parts = open_marker_parts(actor, attempt, conflict, members, decisions, at)?;
     let id = parts.id;
     vault.with_write_txn_grouped(|txn| {
         crate::ports::recorded_at_in_txn(&vault.store, txn)?;
         fence.validate_in_txn(vault, txn)?;
-        write_open_marker_in_txn(vault, txn, actor, parts, now)
+        write_open_marker_in_txn(vault, txn, actor, parts, at)
     })?;
     Ok(id)
 }
 
 /// Builds the marker that leaves `conflict` open for `attempt`: its id, its
 /// claim with the members' joined evidence and retained alternatives, its
-/// provenance with the decisions that left it open, and its birth. It reads
-/// and writes no row.
+/// provenance with the decisions that left it open, and its birth, stamped
+/// at `now` (Unix seconds). It reads and writes no row.
 ///
 /// # Errors
 ///
@@ -204,10 +215,10 @@ fn open_marker_parts(
     })
 }
 
-/// Lands `parts` in `txn` as `actor`, at `now`: the marker as a proposal
-/// through the shared write gate, signed as a retained machine claim, with
-/// its birth and its dependencies on the MESSAGE words it cites. The caller
-/// owns the write: its clock, and any fence it holds.
+/// Lands `parts` in `txn` as `actor`, at `now` (Unix seconds): the marker as
+/// a proposal through the shared write gate, signed as a retained machine
+/// claim, with its birth and its dependencies on the MESSAGE words it cites.
+/// The caller owns the write: its clock, and any fence it holds.
 ///
 /// # Errors
 ///
