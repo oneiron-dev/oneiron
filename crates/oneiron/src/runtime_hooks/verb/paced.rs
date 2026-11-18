@@ -96,8 +96,9 @@ const PACED_LINE_RETRY_FIRST_SECS: u64 = 1;
 /// takes the turns that are due and answers when the line next owes work,
 /// so every other write, which only moves a call later or ends it, arms
 /// nothing. The row wakes a stopped vault. Only a process whose host
-/// installed its paced turn runner runs it ([`turns_run_here`]): a CLI or
-/// embedded pass steps over it and never ends a turn.
+/// installed its paced turn runner
+/// ([`Vault::install_paced_verb_turn_runner`]) runs it: a CLI or embedded
+/// pass steps over it and never ends a turn.
 pub(crate) static PACED_VERB_LINE_JOB: JobSpec = JobSpec {
     code: "runtime_hooks.paced_verb_line",
     when: When::PerArming,
@@ -108,21 +109,16 @@ pub(crate) static PACED_VERB_LINE_JOB: JobSpec = JobSpec {
     wakes_host: true,
     at_open: false,
     once_per_pass: true,
-    runs_here: turns_run_here,
+    runs_here: |vault, _txn| {
+        Ok(vault
+            .runtime()
+            .verb_hook_state()
+            .paced_turns_here
+            .load(Ordering::Acquire))
+    },
     drive: crate::schedule::Drive::Runner,
     run: run_paced_verb_line,
 };
-
-/// [`JobSpec::runs_here`] of the line: whether this process's host
-/// installed its paced turn runner ([`Vault::install_paced_verb_turn_runner`]).
-#[allow(clippy::unnecessary_wraps)]
-fn turns_run_here(vault: &Vault, _txn: &heed::RoTxn<'_>) -> Result<bool> {
-    Ok(vault
-        .runtime()
-        .verb_hook_state()
-        .paced_turns_here
-        .load(Ordering::Acquire))
-}
 
 /// One run of the line: the calls past their deadline expire and the turns
 /// that are due run, at most [`PACED_VERB_TURNS_PER_RUN`], and past the

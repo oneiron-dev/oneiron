@@ -14,6 +14,8 @@
 //! custody metadata, and authority comes from host and slip standing.
 use std::collections::{BTreeMap, BTreeSet};
 
+use oneiron_persistent_collections::{PersistentMap, PersistentSet};
+
 use super::*;
 
 pub(super) use super::entry_transition_predicates::{
@@ -69,13 +71,53 @@ pub(super) fn fold_entry_state(
     states: &BTreeMap<AuthorityEntryHash, FoldState>,
     context: FoldContext<'_>,
 ) -> EntryFold {
+    transition_entry(entry, hash, states, context, Signatures::Verify)
+}
+
+/// [`fold_entry_state`] of the row `rows` holds at `hash`, or None when it
+/// holds none. The fold judged that row (`fold_engine::judged_entries`):
+/// its signatures held then and are a function of its bytes alone, so they
+/// are not verified again (row [ROSTER-KEY-LOG-FLOOD], PR 3).
+pub(super) fn fold_judged_entry_state(
+    rows: &JudgedRows,
+    hash: AuthorityEntryHash,
+    states: &BTreeMap<AuthorityEntryHash, FoldState>,
+    context: FoldContext<'_>,
+) -> Option<EntryFold> {
+    let entry = rows.get(&hash)?;
+    Some(transition_entry(
+        entry,
+        hash,
+        states,
+        context,
+        Signatures::Judged,
+    ))
+}
+
+/// Whether a transition verifies its row's signatures, or reads the
+/// verdict the fold took when it judged the row.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Signatures {
+    Verify,
+    Judged,
+}
+
+fn transition_entry(
+    entry: &AuthorityLogEntry,
+    hash: AuthorityEntryHash,
+    states: &BTreeMap<AuthorityEntryHash, FoldState>,
+    context: FoldContext<'_>,
+    signatures: Signatures,
+) -> EntryFold {
     #[cfg(test)]
     TRANSITIONED_FOR_TEST.with(|rows| {
         if let Some(rows) = rows.borrow_mut().as_mut() {
             rows.push(hash);
         }
     });
-    if entry.validate_shape().is_err() || verify_entry_signatures(entry).is_err() {
+    if entry.validate_shape().is_err()
+        || (signatures == Signatures::Verify && verify_entry_signatures(entry).is_err())
+    {
         return EntryFold::Invalid(AuthorityFoldIssue::InvalidEntry(hash));
     }
     // A counted root appointment's line folds as its proof fold folded it,
@@ -179,30 +221,30 @@ pub(super) fn fold_entry_state(
         let mut state = FoldState {
             slips: SlipAuthorityState::default(),
             vault_id,
-            roster: BTreeMap::new(),
+            roster: PersistentMap::new(),
             genesis_recovery_dismissed: recovery.dismissed(),
             recovery_redundancy_established: false,
-            federation_pacts: BTreeMap::new(),
-            federation_confirms: BTreeMap::new(),
-            critical_write_confirms: BTreeMap::new(),
-            consumed_critical_write_confirm_nonces: BTreeSet::new(),
-            critical_write_confirm_nonce_provenance: BTreeMap::new(),
-            conflicted_critical_write_confirms: BTreeSet::new(),
-            federation_grant_bindings: BTreeMap::new(),
-            actor_bindings: BTreeMap::new(),
-            actor_binding_revocations: BTreeMap::new(),
-            actor_revocation_hashes: BTreeMap::new(),
-            seqs: BTreeMap::new(),
-            machines: BTreeMap::new(),
-            machine_keys: BTreeMap::new(),
-            held_machine_answers: BTreeMap::new(),
-            root_anchors: BTreeMap::new(),
-            anchor_entries: BTreeSet::new(),
-            host_custody_keys: BTreeSet::new(),
-            worlds: BTreeMap::new(),
-            refused_world_edits: BTreeSet::new(),
-            grant_travel: BTreeMap::new(),
-            refused_grant_travel: BTreeSet::new(),
+            federation_pacts: PersistentMap::new(),
+            federation_confirms: PersistentMap::new(),
+            critical_write_confirms: PersistentMap::new(),
+            consumed_critical_write_confirm_nonces: PersistentSet::new(),
+            critical_write_confirm_nonce_provenance: PersistentMap::new(),
+            conflicted_critical_write_confirms: PersistentSet::new(),
+            federation_grant_bindings: PersistentMap::new(),
+            actor_bindings: PersistentMap::new(),
+            actor_binding_revocations: PersistentMap::new(),
+            actor_revocation_hashes: PersistentMap::new(),
+            seqs: PersistentMap::new(),
+            machines: PersistentMap::new(),
+            machine_keys: PersistentMap::new(),
+            held_machine_answers: PersistentMap::new(),
+            root_anchors: PersistentMap::new(),
+            anchor_entries: PersistentSet::new(),
+            host_custody_keys: PersistentSet::new(),
+            worlds: PersistentMap::new(),
+            refused_world_edits: PersistentSet::new(),
+            grant_travel: PersistentMap::new(),
+            refused_grant_travel: PersistentSet::new(),
             checkpoint_policy: super::checkpoint_choice::CheckpointChoiceState::default(),
             home_pick: super::home_pick::HomePickChoiceState::default(),
             origin_cut: super::origin_cut::OriginCutChoiceState::default(),
@@ -212,17 +254,17 @@ pub(super) fn fold_entry_state(
             conversation_training_vault:
                 super::conversation_training_vault::ConversationTrainingVaultState::default(),
             policy_settings: super::policy_setting_choice::PolicySettingChoiceState::default(),
-            refused_export_acts: BTreeSet::new(),
-            agent_carried_acts: BTreeMap::new(),
+            refused_export_acts: PersistentSet::new(),
+            agent_carried_acts: PersistentMap::new(),
             home_candidacy: super::home_candidacy::HomeCandidacyState::default(),
             full_copy_mark: super::full_copy_mark::FullCopyMarkState::default(),
             owner_work: super::owner_work::OwnerWorkState::default(),
-            world_keys: BTreeMap::new(),
-            refused_world_keys: BTreeSet::new(),
-            key_admitters: BTreeMap::new(),
+            world_keys: PersistentMap::new(),
+            refused_world_keys: PersistentSet::new(),
+            key_admitters: PersistentMap::new(),
             hosted: context.hosted,
-            actor_rows: BTreeSet::new(),
-            residence_directives: BTreeMap::new(),
+            actor_rows: PersistentSet::new(),
+            residence_directives: PersistentMap::new(),
             passkey_contexts: BTreeMap::new(),
             passkey_vouched_keys: BTreeSet::new(),
             passkey_vouch_confirmations: BTreeSet::new(),
@@ -681,8 +723,7 @@ pub(super) fn fold_entry_state(
             | AuthorityOp::RemovalArchiveConsume { .. }
     ) {
         // A consent cosigner cannot launder an agent primary into a mint issuer.
-        if !roster_has_live_owner(&state.roster, &signer) || state.slips.apply(entry, hash).is_err()
-        {
+        if !state.has_live_owner(&signer) || state.slips.apply(entry, hash).is_err() {
             return EntryFold::Invalid(AuthorityFoldIssue::InvalidEntry(hash));
         }
         state.seqs.insert(signer, entry.seq);

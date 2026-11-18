@@ -17,6 +17,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::rc::Rc;
 use std::sync::Arc;
 
+use oneiron_persistent_collections::{PersistentMap, PersistentSet};
+
 use crate::entity_id::EntityId;
 
 use super::machine_claims::{ClaimIndex, floor_hold, no_hold};
@@ -31,8 +33,9 @@ pub(super) struct Revision {
     /// The "yours" revision this one replaced, if the head it replaced said
     /// "yours".
     replaced_mark: Option<AuthorityEntryHash>,
-    /// The chain's revisions in this one's own past.
-    past: Arc<BTreeSet<AuthorityEntryHash>>,
+    /// The chain's revisions in this one's own past. A revision folded on
+    /// its chain's head shares this set with the head's (ROSTER-KEY-LOG-FLOOD).
+    past: PersistentSet<AuthorityEntryHash>,
     /// It is an owner say-so, an admitted answer or an anchor's mark: a
     /// concurrent one that says otherwise contests the chain's head (FIX
     /// 4610).
@@ -50,7 +53,7 @@ impl Revision {
     }
 
     /// The chain's revisions in this one's own past.
-    pub(super) fn past(&self) -> &BTreeSet<AuthorityEntryHash> {
+    pub(super) fn past(&self) -> &PersistentSet<AuthorityEntryHash> {
         &self.past
     }
 
@@ -74,7 +77,7 @@ impl Revision {
                 && right.owner_held
                 && left.replaced_mark == right.replaced_mark,
             replaced_mark: left.replaced_mark.min(right.replaced_mark),
-            past: Arc::new(left.past.intersection(&right.past).copied().collect()),
+            past: left.past.intersection(&right.past).copied().collect(),
             said: left.said && right.said,
             past_floor: left.past_floor || right.past_floor,
         })
@@ -87,11 +90,11 @@ pub(super) fn with_revision(
     head: &MachineRevision,
     owner_held: bool,
     restriction_only: bool,
-) -> BTreeMap<AuthorityEntryHash, Arc<Revision>> {
+) -> PersistentMap<AuthorityEntryHash, Arc<Revision>> {
     let mut revisions = chain
         .map(|chain| chain.revisions.clone())
         .unwrap_or_default();
-    let past = Arc::new(revisions.keys().copied().collect());
+    let past = chain.map_or_else(PersistentSet::new, revision_hashes);
     revisions.insert(
         head.entry,
         Arc::new(Revision {
@@ -110,17 +113,46 @@ pub(super) fn with_revision(
     revisions
 }
 
-/// Both chains' revisions; two copies of one revision meet.
+/// Every revision `chain` holds, as one set. When the head's own past and
+/// the head name exactly those revisions (a chain that grew one revision at
+/// a time), the set shares the head's past and adds one hash, so a chain of
+/// R revisions holds O(R log R) of pasts, not O(R^2) (ROSTER-KEY-LOG-FLOOD).
+/// Otherwise (a merge brought revisions the head never saw, or a proof's
+/// chain holds fewer) it is built from the keys. Both give the same set.
+fn revision_hashes(chain: &MachineChain) -> PersistentSet<AuthorityEntryHash> {
+    if let Some(head) = chain.revisions.get(&chain.head.entry) {
+        let mut hashes = head.past.clone();
+        hashes.insert(chain.head.entry);
+        if hashes.len() == chain.revisions.len()
+            && hashes.iter().all(|hash| chain.revisions.contains_key(hash))
+        {
+            return hashes;
+        }
+    }
+    chain.revisions.keys().copied().collect()
+}
+
+/// Both chains' revisions; two copies of one revision meet. A revision both
+/// already hold alike is not written again, so the merged map shares the
+/// left one's structure.
 pub(super) fn merge_revisions(
-    left: &BTreeMap<AuthorityEntryHash, Arc<Revision>>,
-    right: &BTreeMap<AuthorityEntryHash, Arc<Revision>>,
-) -> BTreeMap<AuthorityEntryHash, Arc<Revision>> {
+    left: &PersistentMap<AuthorityEntryHash, Arc<Revision>>,
+    right: &PersistentMap<AuthorityEntryHash, Arc<Revision>>,
+) -> PersistentMap<AuthorityEntryHash, Arc<Revision>> {
+    if left.ptr_eq(right) {
+        return left.clone();
+    }
     let mut revisions = left.clone();
     for (hash, revision) in right {
-        revisions
-            .entry(*hash)
-            .and_modify(|held| *held = Revision::meet(held, revision))
-            .or_insert_with(|| Arc::clone(revision));
+        match left.get(hash) {
+            Some(held) if Arc::ptr_eq(held, revision) => {}
+            Some(held) => {
+                revisions.insert(*hash, Revision::meet(held, revision));
+            }
+            None => {
+                revisions.insert(*hash, Arc::clone(revision));
+            }
+        }
     }
     revisions
 }
@@ -145,7 +177,7 @@ pub(super) fn held_revisions(state: &FoldState, out: &mut BTreeSet<AuthorityEntr
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
 pub(super) struct Mark {
     pub(super) entry: AuthorityEntryHash,
-    pub(super) prior: Arc<BTreeSet<AuthorityEntryHash>>,
+    pub(super) prior: PersistentSet<AuthorityEntryHash>,
 }
 
 #[doc(hidden)]
@@ -310,7 +342,7 @@ impl<'s> Standing<'s> {
                     .get(&id)
                     .and_then(|chains| chains.get(&admitter))
                     .and_then(|state| state.revisions.get(&chain.entry))
-                    .map(|revision| Arc::clone(&revision.past))
+                    .map(|revision| revision.past.clone())
                     .unwrap_or_default();
                 (
                     admitter,

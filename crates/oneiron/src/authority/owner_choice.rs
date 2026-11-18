@@ -32,6 +32,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
+use oneiron_persistent_collections::{PersistentMap, PersistentSet};
+
 use crate::entity_id::EntityId;
 
 use super::machine_standing::{InstallCounted, Mark, Standing, StandingView};
@@ -64,8 +66,8 @@ type ChoiceFrontier<P> = WorldFrontier<SignedOwnerChoice<P>>;
 /// waits for the owner's proof (row CARRIER-OWNER-PROOF).
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(super) struct OwnerChoiceState<P> {
-    frontiers: BTreeMap<EntityId, ChoiceFrontier<P>>,
-    refused: BTreeSet<AuthorityEntryHash>,
+    frontiers: PersistentMap<EntityId, ChoiceFrontier<P>>,
+    refused: PersistentSet<AuthorityEntryHash>,
     /// Each target's admitted choices that a carrier that is not the owner's
     /// machine delivered with no owner key's proof, where such a carrier
     /// needs one ([`super::owner_proof::not_mine_carriers_need_proof`]):
@@ -74,22 +76,23 @@ pub(super) struct OwnerChoiceState<P> {
     /// owner device. Each is true once the owner chose for its target since:
     /// a recorded choice that is the owner's own, whose parents held it,
     /// ends its ask.
-    waiting: BTreeMap<EntityId, BTreeMap<AuthorityEntryHash, bool>>,
+    waiting: PersistentMap<EntityId, BTreeMap<AuthorityEntryHash, bool>>,
 }
 
 impl<P> Default for OwnerChoiceState<P> {
     fn default() -> Self {
         Self {
-            frontiers: BTreeMap::new(),
-            refused: BTreeSet::new(),
-            waiting: BTreeMap::new(),
+            frontiers: PersistentMap::new(),
+            refused: PersistentSet::new(),
+            waiting: PersistentMap::new(),
         }
     }
 }
 
 /// Joins two states' choices: a choice superseded on either side is
 /// superseded, two copies of one choice meet, and a waiting choice the owner
-/// answered on either side stays answered.
+/// answered on either side stays answered. A target the merge leaves as it
+/// was is not written.
 pub(super) fn merge_owner_choices<P: Clone + PartialEq>(
     merged: &mut OwnerChoiceState<P>,
     right: &OwnerChoiceState<P>,
@@ -97,10 +100,11 @@ pub(super) fn merge_owner_choices<P: Clone + PartialEq>(
     merge_world_frontiers(&mut merged.frontiers, &right.frontiers);
     merged.refused.extend(right.refused.iter().copied());
     for (target, waiting) in &right.waiting {
-        let merged_waiting = merged.waiting.entry(*target).or_default();
-        for (hash, answered) in waiting {
-            *merged_waiting.entry(*hash).or_default() |= *answered;
-        }
+        merged.waiting.modify_or_default(*target, |merged_waiting| {
+            for (hash, answered) in waiting {
+                *merged_waiting.entry(*hash).or_default() |= *answered;
+            }
+        });
     }
 }
 
@@ -328,7 +332,9 @@ impl<P> OwnerChoiceState<P> {
             .filter(|(_, answered)| !**answered)
             .map(|(hash, _)| *hash)
     }
+}
 
+impl<P: Clone + PartialEq> OwnerChoiceState<P> {
     /// Lands a valid choice: a refused one is kept without effect, a
     /// waiting one is kept for the owner's confirm, and a recorded one
     /// supersedes the live choices of its target; the owner's own also ends
@@ -516,7 +522,7 @@ pub(super) fn folded_owner_choice<P: Clone + PartialEq>(
     counted: InstallCounted<'_>,
 ) -> FoldedOwnerChoice<P> {
     let mut folded = FoldedOwnerChoice {
-        refused: register.refused.clone(),
+        refused: register.refused.to_btree_set(),
         ..FoldedOwnerChoice::default()
     };
     let Some(frontier) = register.frontiers.values().next() else {
@@ -557,7 +563,7 @@ pub(super) fn folded_owner_choices<P: Clone + PartialEq>(
 /// admit, or whose owner was not live, at its parents.
 pub(super) fn refused_owner_choices<P>(
     register: &OwnerChoiceState<P>,
-) -> &BTreeSet<AuthorityEntryHash> {
+) -> &PersistentSet<AuthorityEntryHash> {
     &register.refused
 }
 
