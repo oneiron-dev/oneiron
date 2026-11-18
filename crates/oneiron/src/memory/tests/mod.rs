@@ -52,6 +52,10 @@ use rmpv::Value;
 pub(super) fn open_vault() -> (tempfile::TempDir, crate::Vault) {
     let dir = tempfile::tempdir().expect("tempdir");
     let vault = crate::Vault::open(dir.path(), VaultConfig::default()).expect("open vault");
+    // These facade and regression tests cover memory behavior, not the built-in pack gate.
+    vault
+        .remove_builtin_pack_seed_marker_for_test()
+        .expect("FIXTURE: drop the built-in pack seed marker (OF-519 gate is not under test here)");
     (dir, vault)
 }
 

@@ -40,6 +40,10 @@ impl DescribeArms for Memory<'_> {
 pub(in crate::task_verb) fn open_vault() -> (tempfile::TempDir, Vault) {
     let dir = tempfile::tempdir().expect("tempdir");
     let vault = Vault::open(dir.path(), VaultConfig::default()).expect("open vault");
+    // These tests cover task lifecycle behavior, not the built-in pack gate.
+    vault
+        .remove_builtin_pack_seed_marker_for_test()
+        .expect("FIXTURE: drop the built-in pack seed marker (OF-519 gate is not under test here)");
     (dir, vault)
 }
 
