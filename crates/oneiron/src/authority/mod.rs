@@ -141,6 +141,7 @@ mod owner_choice;
 mod owner_delegate;
 mod owner_key_enrollment;
 mod owner_key_enrollment_door;
+mod owner_key_line;
 mod owner_key_move_confirm;
 mod owner_key_vouch;
 mod owner_project_slip;
@@ -556,6 +557,8 @@ pub(crate) use log_budget::{
     end_owner_reserve_work_hold, past_owner_reserve_in_txn, signer_has_standing,
 };
 pub(crate) use log_structure::carried_rows_never_applied_in_txn;
+#[cfg(oneiron_test_support)]
+pub(crate) use owner_key_line::tail_reaches_old_parents_past_rows_for_test;
 pub(crate) use owner_work::{RootBasisCheck, check_root_basis};
 pub use owner_work_diagnostics::{OWNER_WORK_NO_VOUCH_DIAGNOSTIC_ONLY, OwnerWorkNoVouchDiagnostic};
 #[cfg(oneiron_test_support)]
