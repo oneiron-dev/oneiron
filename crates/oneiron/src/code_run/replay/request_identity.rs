@@ -19,7 +19,7 @@
 //! by its identity alone: a hit answers with the call's own recorded
 //! outcome, and every other call drifts. It is never a wildcard and never
 //! a spawn's miss, so no fresh effect runs in its place. A live request
-//! keeps its full value and its `admitted_from` matching.
+//! keeps its full value and its `admitted_from_known` matching.
 
 use std::sync::Arc;
 
@@ -105,16 +105,9 @@ impl<'a> ErasedRequest<'a> {
     /// that asks something and has its identity in every other field, as
     /// its live row's match did.
     ///
-    /// # Errors
-    ///
-    /// A request the side-row wall cannot read, or one that does not encode.
-    pub(in crate::code_run) fn meets(&self, offered: &Value) -> Result<ReplayRequestMatch> {
-        self.meets_known(offered, &CompareKnown::new(None))
-    }
-
-    /// [`Self::meets`] for a row the side-row wall admitted in a scope that
-    /// decides with custody (FIX REPLAY-COMPARE-KNOWN-MATCHER): `offered`
-    /// meets the identity in either form. Its admission form first, as the
+    /// The side-row wall admitted the row in a scope that decides with
+    /// custody (FIX REPLAY-COMPARE-KNOWN-MATCHER), so `offered` meets the
+    /// identity in either form. Its admission form first, as the
     /// identity of a row erased while it held a value as written (a row
     /// stored before that value entered custody) was taken; then, once that
     /// misses, with each value base custody holds now as the stand-in too,
@@ -187,7 +180,7 @@ impl CodeRunBridgeCall {
     pub(crate) fn request_identity(&self) -> Result<[u8; 32]> {
         match ErasedRequest::of(&self.request) {
             Some(erased) => Ok(erased.identity),
-            None => live_identity(self.effect, &self.request),
+            None => live_identity(self.effect, &self.request, None),
         }
     }
 
@@ -213,39 +206,51 @@ impl CodeRunBridgeCall {
     /// identity alone (FIX 6534): how a row an erase took the words of
     /// meets the call made again, and a live row by the identity it has.
     ///
-    /// It compares with no value base custody holds as the stand-in, unlike
-    /// `replay_request_match` (FIX REPLAY-COMPARE-KNOWN-MATCHER): a value
-    /// whose handle the row holds drifts here, failing closed (FIX-LIST
-    /// [REPLAY-COMPARE-KNOWN-OTHER-CALLERS]).
+    /// As `replay_request_match` does, it reads each value base custody
+    /// holds as the stand-in in `offered` too, through `known` once the
+    /// compare without them misses (FIX REPLAY-COMPARE-KNOWN-OTHER-CALLERS):
+    /// the row took that value's handle.
     ///
     /// # Errors
     ///
-    /// A request the side-row wall cannot read, or one that does not encode.
-    pub(crate) fn request_identity_is(&self, offered: &Value) -> Result<bool> {
-        Ok(match ErasedRequest::of(&self.request) {
-            Some(erased) => erased.meets(offered)?.is_hit(),
-            None => {
-                live_identity(self.effect, &self.request)? == live_identity(self.effect, offered)?
-            }
+    /// A request the side-row wall cannot read, one that does not encode,
+    /// or the read of base custody's values.
+    pub(crate) fn request_identity_is(
+        &self,
+        offered: &Value,
+        known: &CompareKnown<'_>,
+    ) -> Result<bool> {
+        if let Some(erased) = ErasedRequest::of(&self.request) {
+            return Ok(erased.meets_known(offered, known)?.is_hit());
+        }
+        let held = live_identity(self.effect, &self.request, None)?;
+        if held == live_identity(self.effect, offered, None)? {
+            return Ok(true);
+        }
+        Ok(match known.get()? {
+            Some(known) => held == live_identity(self.effect, offered, Some(known))?,
+            None => false,
         })
     }
 
     /// Whether this call dispatched `offered`, a kept or an erased row read
     /// one way (FIX 6534): the very value while its words are kept, and its
-    /// identity once an erase took them.
-    ///
-    /// It compares with no value base custody holds as the stand-in, unlike
-    /// `replay_request_match` (FIX REPLAY-COMPARE-KNOWN-MATCHER): a value
-    /// whose handle the row holds drifts here, failing closed (FIX-LIST
-    /// [REPLAY-COMPARE-KNOWN-OTHER-CALLERS]).
+    /// identity once an erase took them, read with each value base custody
+    /// holds, through `known`, as [`ErasedRequest::meets_known`] reads it
+    /// (FIX REPLAY-COMPARE-KNOWN-OTHER-CALLERS).
     ///
     /// # Errors
     ///
-    /// A request the side-row wall cannot read, or one that does not encode.
-    pub(crate) fn dispatched_request_is(&self, offered: &Value) -> Result<bool> {
+    /// A request the side-row wall cannot read, one that does not encode,
+    /// or the read of base custody's values.
+    pub(crate) fn dispatched_request_is(
+        &self,
+        offered: &Value,
+        known: &CompareKnown<'_>,
+    ) -> Result<bool> {
         let dispatched = self.rewritten_request.as_ref().unwrap_or(&self.request);
         match ErasedRequest::of(dispatched) {
-            Some(erased) => Ok(erased.meets(offered)?.is_hit()),
+            Some(erased) => Ok(erased.meets_known(offered, known)?.is_hit()),
             None => Ok(dispatched == offered),
         }
     }
@@ -315,11 +320,16 @@ fn typed_ask(effect: SelfEffect, request: &Value) -> Option<&Value> {
 
 /// The identity of the live `request` a call of `effect` made: over the
 /// whole request, or, for a spawn whose ask is a typed marker, over every
-/// field but its ask.
-fn live_identity(effect: SelfEffect, request: &Value) -> Result<[u8; 32]> {
+/// field but its ask; with `known`, each value base custody holds read as
+/// the stand-in.
+fn live_identity(
+    effect: SelfEffect,
+    request: &Value,
+    known: Option<Arc<KnownValues>>,
+) -> Result<[u8; 32]> {
     match (typed_ask(effect, request), request) {
-        (Some(_), Value::Map(fields)) => canonical_digest(&without_ask(fields), None),
-        _ => canonical_digest(request, None),
+        (Some(_), Value::Map(fields)) => canonical_digest(&without_ask(fields), known),
+        _ => canonical_digest(request, known),
     }
 }
 
@@ -332,7 +342,7 @@ fn erased_value(effect: SelfEffect, request: &Value) -> Result<Value> {
         (ERASED_REQUEST_KEYS[1], Value::from(RESPONSE_ERASED)),
         (
             ERASED_REQUEST_KEYS[2],
-            Value::Binary(live_identity(effect, request)?.to_vec()),
+            Value::Binary(live_identity(effect, request, None)?.to_vec()),
         ),
     ];
     fields.extend(typed_ask(effect, request).map(|ask| (ERASED_REQUEST_KEYS[3], ask.clone())));

@@ -691,13 +691,8 @@ pub(crate) fn admit_typed_with_rule<T: Serialize + DeserializeOwned>(
 /// Whether `held`, a value the wall may have masked, is what admitting `raw`
 /// stored: a replay that compares a held row with the value offered again.
 /// Each handle on either side reads as the plan's one stand-in, so a secret
-/// the wall lifted matches the same secret offered again. Nothing is minted.
-pub(crate) fn admitted_from(held: &Value, raw: &Value) -> Result<bool> {
-    admitted_from_known(held, raw, || Ok(None))
-}
-
-/// [`admitted_from`] for a row the wall admitted in a scope that decides
-/// with custody (FIX REPLAY-COMPARE-KNOWN-MATCHER): there a value custody
+/// the wall lifted matches the same secret offered again. In a scope that
+/// decides with custody (FIX REPLAY-COMPARE-KNOWN-MATCHER), a value custody
 /// holds took its record's handle, a value no shape rule places too, so
 /// `raw` is planned again with `known`, the values custody holds now, as
 /// the wall planned it. `known` is read only when the plan without it
@@ -741,7 +736,7 @@ fn planned_form(value: &Value, known: Option<Arc<KnownValues>>) -> Result<PlanTr
     Ok(planned)
 }
 
-/// `value` in the one form [`admitted_from`] compares a held row and a raw
+/// `value` in the one form [`admitted_from_known`] compares a held row and a raw
 /// offer in (FIX 6534): each secret the plan places, and each handle, as
 /// the plan's one stand-in. A held row and the raw value it was admitted
 /// from read the same here, so a digest of either is one identity. Nothing

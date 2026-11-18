@@ -74,13 +74,13 @@ pub(crate) type BaseKnownRead<'a> = &'a dyn Fn() -> Result<Option<Arc<KnownValue
 /// the first ask, and only when the compare without them missed, then kept
 /// for the rest of that compare. A compare with no read in reach (a record
 /// read in memory) has none.
-pub(in crate::code_run) struct CompareKnown<'a> {
+pub(crate) struct CompareKnown<'a> {
     read: Option<BaseKnownRead<'a>>,
     held: OnceCell<Option<Arc<KnownValues>>>,
 }
 
 impl<'a> CompareKnown<'a> {
-    pub(in crate::code_run) const fn new(read: Option<BaseKnownRead<'a>>) -> Self {
+    pub(crate) const fn new(read: Option<BaseKnownRead<'a>>) -> Self {
         Self {
             read,
             held: OnceCell::new(),
@@ -92,7 +92,7 @@ impl<'a> CompareKnown<'a> {
     /// # Errors
     ///
     /// The read's own.
-    pub(in crate::code_run) fn get(&self) -> Result<Option<Arc<KnownValues>>> {
+    pub(crate) fn get(&self) -> Result<Option<Arc<KnownValues>>> {
         if let Some(known) = self.held.get() {
             return Ok(known.clone());
         }
