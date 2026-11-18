@@ -227,8 +227,11 @@ impl Vault {
     /// owner key of kind `Device`, live with `ROLE_OWNER`, whose enrolment
     /// names `owner`, that the passkey limits do not hold; else (b) this
     /// install's host root when the fold holds no live host-stamped root,
-    /// that root is live under `require_host`, and no live `human` binding
-    /// gives it to another person ([`host_root_is_the_owners`]); else (c)
+    /// this install is not under the Hosted posture (it never offers a host
+    /// root it holds as the owner's proof, Engine ANSWER
+    /// HOSTED-REFOLD-SELF-HOST-ROOT-CUSTODY = A), that root is live under
+    /// `require_host`, and no live `human` binding gives it to another
+    /// person ([`host_root_is_the_owners`]); else (c)
     /// refused with [`NO_PREDECESSOR`]. A co-owner's key this install holds
     /// never signs another owner's R (REVIEW2 #8798 P2-1, the vouch door's
     /// rule). Makes no keystore or store write: one read snapshot for the
@@ -282,7 +285,10 @@ impl Vault {
                 && device.roles & ROLE_OWNER != 0
                 && (device.roles & ROLE_CLOUD != 0 || device.tier == AuthorityTier::CloudCustodial)
         });
-        if !hosted {
+        // Under the Hosted posture the fold may still trust a self-host root
+        // this install holds (a self-hosted vault reopened as Hosted), but a
+        // hosted install never signs for the owner with it.
+        if !hosted && self.privacy_posture() != crate::HostingPrivacyPosture::Hosted {
             // An install with no host seed (no keystore, no machine
             // identity, an empty slot) holds no host root: that is the
             // refusal below. Any other failure is the read's own error.
