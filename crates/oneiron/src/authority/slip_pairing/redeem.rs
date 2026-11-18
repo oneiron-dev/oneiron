@@ -433,7 +433,11 @@ impl Vault {
     /// unanswered, takes the explicit bootstrap arm instead (C4, a fresh
     /// self-host first install): the host root signs the owner's answer with
     /// no act, as it always has, and the fold judges the root's custody, so a
-    /// hosted root never answers for the owner there. Any other install that
+    /// hosted root never answers for the owner there. Under the Hosted
+    /// posture an owner's answer (`Owned`) never takes that arm
+    /// ([`Vault::host_root_may_sign_role`]), whatever root this install
+    /// holds: the install carries the answer as any profiled one does, and
+    /// with no owner key it lands held. Any other install that
     /// cannot carry refuses, and nothing is written. A machine the roster
     /// already holds, pairing again under its own identity and class with
     /// its machine key's `possession` proof over this redemption's binding
@@ -465,7 +469,10 @@ impl Vault {
         held_machine_possession(&fold, request, possession)?;
         // The never-profiled path first: an unanswered serving install also
         // carries, and it keeps pairing exactly as it did before its profile.
-        if unprofiled_install(&fold, crate::identity::read_machine_id_in_txn(self, txn)?) {
+        // A hosted install's owner answer goes to the carrier instead.
+        if self.host_root_may_sign_role(role)
+            && unprofiled_install(&fold, crate::identity::read_machine_id_in_txn(self, txn)?)
+        {
             return self
                 .enroll_bootstrap_in_txn(txn, issuer, answer.owner, request, role)
                 .map(|machine| (MachineAnswerLanding::Stands(machine), false));

@@ -680,6 +680,13 @@ name = "machine_history_page_controls"
 path = "tests/machine_history_page_controls.rs"
 required-features = ["oneiron/test-support", "oneiron/test-hooks"]
 
+# SELECTOR-RELEASE-POINT = B: a selector answer queued before its grant
+# changes never leaves (socket test through the `selector_release` door).
+[[test]]
+name = "selector_release_recheck"
+path = "tests/selector_release_recheck.rs"
+required-features = ["oneiron/test-support", "oneiron/test-hooks"]
+
 [lints]
 workspace = true
 
