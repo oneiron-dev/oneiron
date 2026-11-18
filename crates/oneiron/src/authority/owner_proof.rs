@@ -68,8 +68,9 @@ pub(super) fn owner_proof_key(
 /// Whether `key` is a key `state` trusts as the owner's: live on the roster
 /// with `ROLE_OWNER`, and not in the host's custody on a hosted fold. A
 /// revoked or retired key, an admin-only key and a managed host's custodial
-/// root prove nothing.
-fn proves_for_the_owner(state: &FoldState, key: &AuthorityKey) -> bool {
+/// root prove nothing. A key of any suite: an owner-key enrolment's line
+/// reads it ([`super::owner_key_line`]).
+pub(super) fn proves_for_the_owner(state: &FoldState, key: &AuthorityKey) -> bool {
     roster_has_live_owner(&state.roster, key) && !(state.hosted && in_host_custody(state, key))
 }
 

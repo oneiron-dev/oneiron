@@ -7,50 +7,62 @@
 //! before the first such key's enrolment is judged where no proving key
 //! exists, and the act would then stand on every branch. So the fold reads
 //! an owner key's enrolment across branches, as a handoff retires its
-//! predecessor across branches. An entry that neither descends from a
-//! proving enrolment nor lies beneath it is outside that enrolment's line,
+//! predecessor across branches. An entry that neither descends from an
+//! owner-key enrolment nor lies beneath it is outside that enrolment's line,
 //! and there:
 //!
-//! - an owner choice or a carried machine answer needs the proof: unproven
-//!   and carried by a carrier that is not the owner's machine, the choice
-//!   waits and the answer is held, as on parents that hold the key;
+//! - outside a proving enrolment's line, an owner choice or a carried
+//!   machine answer needs the proof: unproven and carried by a carrier that
+//!   is not the owner's machine, the choice waits and the answer is held, as
+//!   on parents that hold the key;
 //! - an enrolment of the key that enrolment enrolled (any op, any role, and a
 //!   rotation or a handoff that names it as the successor) is an invalid
 //!   entry, so the roster merge cannot narrow the owner's key away.
-//!   Another proving enrolment of the same key is not refused: its shape is
-//!   fixed and its possession proof names its holder machine, so both
+//!   Another owner-key enrolment of the same key is not refused: its shape
+//!   is fixed and its possession proof names its holder machine, so both
 //!   branches hold the same roster row and the merge keeps it. Refusing
 //!   both would let a host that replays the owner's proof on a sibling row
 //!   end the owner's own enrolment.
 //!
-//! A proving enrolment is an `OwnerKeyEnroll` that stands once the handoffs
-//! settle and whose key gives the owner's proof in the state it leaves
-//! ([`super::owner_proof::gives_owner_proof`]). An enrolment of a key whose
-//! proof the fold does not take is none, as the vault does not ask on its
-//! account (Engine RULING CARRIER-ASKS-ON-PASSKEY-ONLY-VAULT = A, 16 Nov
-//! 01:37). An enrolment a handoff prunes is none either: its line would make
-//! the new root's acts wait where no key could prove them. Each fold of the log finds the
-//! proving enrolments in its settled states and takes the new ones a key at
-//! a time, earliest first: fewest ancestors, then hash ([`ProvingEnrolments`]).
+//! An owner-key enrolment is an `OwnerKeyEnroll` that stands once the
+//! handoffs settle and whose key the state it leaves trusts as the owner's
+//! ([`super::owner_proof::proves_for_the_owner`]): a device's Ed25519 key,
+//! one only a passkey vouched for too, or a passkey's P-256 key, which is the
+//! owner's key as well (CARRIER-HOSTED-WEB-ACTS = C), so the merge cannot
+//! narrow any of them away (row PASSKEY-OWNER-KEY-DRAWS-NO-LINE, REVIEW2
+//! #8502 P2-1). A proving enrolment
+//! is one whose key also gives the owner's proof there
+//! ([`super::owner_proof::gives_owner_proof`]). Only its line makes a row
+//! wait for the proof: the vault does not ask for a proof no key it holds
+//! can give (Engine RULING CARRIER-ASKS-ON-PASSKEY-ONLY-VAULT = A, 16 Nov
+//! 01:37). An enrolment a handoff prunes is neither: its line would make
+//! the new root's acts wait where no key could prove them. Each fold of the
+//! log finds the owner-key enrolments in its settled states and takes the
+//! new ones a key at a time, earliest first: fewest ancestors, then hash
+//! ([`OwnerKeyEnrolments`]). One taken as giving no proof is taken again if
+//! a later fold finds its key gives it.
 //! When one's line changes the lines in force, the log folds again with the
 //! lines of every enrolment taken so far ([`OwnerKeyLines`] in the context).
 //! It folds again, too, when a fold no longer keeps an enrolment taken
 //! before. An owner choice that descends from that enrolment falls with it,
 //! and a world edit's refold ([`super::world_refold`]) brings it back past
 //! it, on the state its parents leave, which lacks the key; there it needs
-//! the owner's proof, as it did on the enrolment's state (blind review F1,
-//! 16 Nov). So for an owner choice a fallen enrolment's line holds only its
-//! ancestry. A carried machine answer that falls with it does not come back.
+//! the owner's proof, as it did on the enrolment's state where the key gives
+//! it (blind review F1, 16 Nov). So for an owner choice a fallen proving
+//! enrolment's line holds only its ancestry; a fallen enrolment whose key
+//! gives no proof asks for none, as it never did. A carried machine answer
+//! that falls with it does not come back.
 //! A line makes a row wait, be held or be refused. That can let another
 //! enrolment fold (a held removal keeps its holder machine live), and it can
 //! end one: where each of two branches enrolled the other's owner key as an
 //! agent's before its own enrolment, each line refuses the other enrolment's
 //! ancestry. Taken together, both would fall and leave lines no key answers;
 //! a key at a time, the earlier one's line refuses the later one's ancestry
-//! before the later one is taken, and the earlier one stands. Proving
-//! enrolments of one key are taken together. The set only grows, and so
-//! does the set of the taken enrolments that fell; the folds end when both
-//! stop: at most two more folds per enrolment in the log.
+//! before the later one is taken, and the earlier one stands. Owner-key
+//! enrolments of one key are taken together. The set only grows, and so do
+//! its subsets of the proving enrolments and of the taken enrolments that
+//! fell; the folds end when all three stop: at most three more folds per
+//! enrolment in the log.
 //! Only the log and its ancestry decide, so every replica judges the same rows
 //! the same way. Two effects follow from the grow-only set. A row an earlier
 //! fold refused, because it did not name a choice that a later fold keeps
@@ -77,23 +89,35 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use super::*;
 
-/// The proving owner-key enrolments the folds of one log have taken so far,
-/// each with the key it enrolled, and those of them a later fold did not
-/// keep. Both only grow.
+/// The owner-key enrolments the folds of one log have taken so far, each
+/// with the key it enrolled and whether that key gives the owner's proof,
+/// and those of them a later fold did not keep. All only grow.
 #[derive(Debug, Default)]
-pub(super) struct ProvingEnrolments {
-    taken: BTreeMap<AuthorityEntryHash, AuthorityKey>,
+pub(super) struct OwnerKeyEnrolments {
+    taken: BTreeMap<AuthorityEntryHash, TakenEnrolment>,
     fallen: BTreeSet<AuthorityEntryHash>,
 }
 
-impl ProvingEnrolments {
+/// One taken owner-key enrolment.
+#[derive(Debug)]
+struct TakenEnrolment {
+    /// The key it enrolled.
+    key: AuthorityKey,
+    /// Whether that key gave the owner's proof in the state the enrolment
+    /// left, in a fold that took it: its line then also makes the owner
+    /// choices and carried machine answers outside it wait for the proof.
+    proving: bool,
+}
+
+impl OwnerKeyEnrolments {
     /// Marks fallen each taken enrolment `settled` (one fold's state after
     /// each entry once its handoffs settled) no longer holds, then takes the
-    /// proving enrolments among `settled` that the folds before it did not,
-    /// a key at a time, earliest first, until the lines in force change. The
-    /// new lines when they changed: the log then folds again with them. None
-    /// when neither a fall nor a new enrolment changed them: the fold that
-    /// gave `settled` used every line it needs.
+    /// owner-key enrolments among `settled` that the folds before it did not
+    /// (or took as giving no proof, where its key gives it now), a key at a
+    /// time, earliest first, until the lines in force change. The new lines
+    /// when they changed: the log then folds again with them. None when
+    /// neither a fall nor a new enrolment changed them: the fold that gave
+    /// `settled` used every line it needs.
     pub(super) fn grow(
         &mut self,
         settled: &BTreeMap<AuthorityEntryHash, FoldState>,
@@ -114,9 +138,8 @@ impl ProvingEnrolments {
                 return lines;
             }
         }
-        let mut found: Vec<(usize, AuthorityEntryHash, &AuthorityKey)> = settled
+        let mut found: Vec<(usize, AuthorityEntryHash, &AuthorityKey, bool)> = settled
             .iter()
-            .filter(|(hash, _)| !self.taken.contains_key(*hash))
             .filter_map(|(hash, state)| {
                 let Some(AuthorityOp::OwnerKeyEnroll(enrol)) =
                     entries.get(hash).map(|entry| &entry.op)
@@ -124,18 +147,33 @@ impl ProvingEnrolments {
                     return None;
                 };
                 let key = &enrol.device.key;
-                super::owner_proof::gives_owner_proof(state, key).then(|| {
-                    let depth = ancestors.get(hash).map_or(0, Ancestors::len);
-                    (depth, *hash, key)
-                })
+                if !super::owner_proof::proves_for_the_owner(state, key) {
+                    return None;
+                }
+                let proving = super::owner_proof::gives_owner_proof(state, key);
+                if self
+                    .taken
+                    .get(hash)
+                    .is_some_and(|taken| taken.proving || !proving)
+                {
+                    return None;
+                }
+                let depth = ancestors.get(hash).map_or(0, Ancestors::len);
+                Some((depth, *hash, key, proving))
             })
             .collect();
-        found.sort_unstable_by_key(|(depth, hash, _)| (*depth, *hash));
-        while let Some(&(_, _, key)) = found.first() {
-            found.retain(|(_, hash, enrolled)| {
+        found.sort_unstable_by_key(|(depth, hash, ..)| (*depth, *hash));
+        while let Some(&(_, _, key, _)) = found.first() {
+            found.retain(|(_, hash, enrolled, proving)| {
                 let same_key = *enrolled == key;
                 if same_key {
-                    self.taken.insert(*hash, key.clone());
+                    self.taken.insert(
+                        *hash,
+                        TakenEnrolment {
+                            key: key.clone(),
+                            proving: *proving,
+                        },
+                    );
                 }
                 !same_key
             });
@@ -163,14 +201,23 @@ impl ProvingEnrolments {
         let outside = |row: &AuthorityEntryHash, enrolment: &AuthorityEntryHash| {
             row != enrolment && !beneath(row, enrolment) && !beneath(enrolment, row)
         };
-        // An owner choice that descends from a fallen enrolment: a refold
-        // brings it back past the enrolment (blind review F1).
-        let past_a_fallen =
-            |row: &AuthorityEntryHash| self.fallen.iter().any(|enrolment| beneath(enrolment, row));
+        let proving = |enrolment: &AuthorityEntryHash| {
+            self.taken.get(enrolment).is_some_and(|taken| taken.proving)
+        };
+        // An owner choice that descends from a fallen proving enrolment: a
+        // refold brings it back past the enrolment (blind review F1).
+        let past_a_fallen = |row: &AuthorityEntryHash| {
+            self.fallen
+                .iter()
+                .any(|enrolment| proving(enrolment) && beneath(enrolment, row))
+        };
         let mut lines = OwnerKeyLines::default();
         for (hash, entry) in entries {
             if needs_proof_off_the_line(&entry.op)
-                && (self.taken.keys().any(|enrolment| outside(hash, enrolment))
+                && (self
+                    .taken
+                    .keys()
+                    .any(|enrolment| proving(enrolment) && outside(hash, enrolment))
                     || (owner_choice_kind(&entry.op) && past_a_fallen(hash)))
             {
                 lines.unproven_outside.insert(*hash);
@@ -180,7 +227,7 @@ impl ProvingEnrolments {
                 && self
                     .taken
                     .iter()
-                    .any(|(enrolment, enrolled)| enrolled == key && outside(hash, enrolment))
+                    .any(|(enrolment, taken)| taken.key == *key && outside(hash, enrolment))
             {
                 lines.refused_enrolments.insert(*hash);
             }
@@ -190,16 +237,16 @@ impl ProvingEnrolments {
     }
 }
 
-/// The entries a fold judges outside a proving owner-key enrolment's line.
+/// The entries a fold judges outside an owner-key enrolment's line.
 #[derive(Debug, Default, PartialEq, Eq)]
 pub(super) struct OwnerKeyLines {
     /// Owner choices and carried machine answers outside some proving
     /// enrolment's line, and owner choices that descend from a fallen one:
     /// each needs the owner's proof.
     unproven_outside: BTreeSet<AuthorityEntryHash>,
-    /// Enrolments, other than a proving one, of a key a proving enrolment
-    /// enrolled (a rotation or a handoff naming it among them), outside that
-    /// enrolment's line: each is an invalid entry.
+    /// Enrolments, other than an owner-key one, of a key an owner-key
+    /// enrolment enrolled (a rotation or a handoff naming it among them),
+    /// outside that enrolment's line: each is an invalid entry.
     refused_enrolments: BTreeSet<AuthorityEntryHash>,
 }
 
