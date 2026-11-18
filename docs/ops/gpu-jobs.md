@@ -53,18 +53,34 @@ every quote refuses and no worker starts.
   warning. The stop writes an add-funds notice. A chunk settles its billed
   time at confirmed termination, never above its quote.
 - **Resume**: `vault.gpu.jobs.start` with `resume: true` on a quote for the
-  stopped job starts the next chunk from its checkpoint, once per stop.
+  stopped job starts the next chunk from its checkpoint, once per stop. The
+  stop prices one more chunk of the job's first maximum; the add-funds notice
+  offers it as its one tap (an inbox action calling `vault.gpu.jobs.start`
+  with that quote), and `status` shows it as `stop.resume_quote`. That quote
+  stays good while the stop stands; the start still checks it against the
+  offer as it stands then, so a changed offer asks for a new quote.
 - **Cancel** (`vault.gpu.jobs.cancel`): the owner ends the job. If the
   provider does not answer, the cancel stands and the worker terminates the
   chunk on its next steps.
+- **Allow** (`vault.gpu.jobs.allow`): the owner sets, beside one agent
+  Grant, the longest run time one job that agent starts may declare over all
+  its chunks (`maximum_secs`; 0 removes it). The Grant must be the one that
+  admits its agent to `vault.gpu.jobs.start` now.
 - **Status and list** (`vault.gpu.jobs.status`, `.list`): run time and spend
   against the maximum, the signals sent, the warning, the checkpoint and the
   stop.
 
 Quote, status and list admit the owner, or an agent whose own Grant names the
-verb. Start and cancel are the owner's own acts for now; the agent start arm
-(STARTER = B, a per-job maximum on the Grant) and the stop notice's one-tap
-resume come in a later PR.
+verb. Start and cancel admit the owner, or an agent whose own Grant names the
+verb (RULING L10-31-STARTER = B), judged again in the act's own write:
+
+- a start passes only when the owner set a maximum beside the Grant that
+  admits the agent to start (one Grant answers alone, the first in id order),
+  and the job's total maximum fits it. The owner's setting is the showing of
+  that maximum (C2 01);
+- a resume or cancel passes only on a job the agent started.
+
+Allow is the owner's own act.
 
 ## Backends
 

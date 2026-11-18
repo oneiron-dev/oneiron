@@ -76,7 +76,7 @@ impl Vault {
                 }
             }
             GpuJobState::Running => {
-                self.observe_gpu_chunk(job, taken_up, permits, connector, now_ms)
+                self.observe_gpu_chunk(job, offer, taken_up, permits, connector, now_ms)
             }
             _ => self
                 .end_gpu_chunk(job, permits, connector, now_ms)
@@ -88,6 +88,7 @@ impl Vault {
     fn observe_gpu_chunk(
         &self,
         mut job: GpuJob,
+        offer: &GpuOffer,
         taken_up: bool,
         permits: &GpuJobPermits,
         connector: &dyn GpuJobConnector,
@@ -153,6 +154,19 @@ impl Vault {
                     match job.maximum.stop_at_maximum() {
                         Ok(stop) => {
                             job.stop = Some(stop);
+                            // The notice's one tap (C2 05): one more chunk of
+                            // the job's first maximum, priced now.
+                            let resume_quote = job.chunks.first().and_then(|first| {
+                                offer
+                                    .quote_for(
+                                        job.id,
+                                        &first.quote.request(),
+                                        first.quote.maximum_secs,
+                                        now_ms,
+                                    )
+                                    .ok()
+                            });
+                            job.resume_quote = resume_quote;
                             job.state = GpuJobState::Ending {
                                 reason: GpuEndReason::AtMaximum,
                             };
@@ -331,7 +345,7 @@ impl Vault {
             owners.into_iter().map(Some).collect()
         };
         let created_at = crate::ports::recorded_at_in_txn(&self.store, txn)?;
-        let chunk = job.chunks.len().saturating_sub(1);
+        let event_prefix = super::notice_event_prefix(&job.id, job.chunks.len().saturating_sub(1));
         let mut ids = Vec::with_capacity(recipients.len());
         for recipient in recipients {
             let to = recipient.map_or_else(|| "all".to_owned(), |id| id.to_hex());
@@ -341,7 +355,7 @@ impl Vault {
                     kind,
                     source: NotificationSource {
                         producer: producer.to_owned(),
-                        event: format!("{}:{chunk}:{to}", job.id.to_hex()),
+                        event: format!("{event_prefix}{to}"),
                         result: Some(job.id.to_hex()),
                         detail: Some(detail.clone()),
                         ..NotificationSource::default()

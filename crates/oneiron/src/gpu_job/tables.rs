@@ -9,4 +9,12 @@ crate::side_table::side_tables! {
         // stopped job again or forgets one that runs at its provider.
         [restore: live] [family: unclassified] [tier: canonical]
         => crate::gpu_job::erase_job_starter_in_txn;
+    /// The per-job maximum the owner set beside one agent Grant for starting GPU jobs (RULING
+    /// L10-31-STARTER = B): the Grant, its agent, the maximum and who set it when. Key: id16
+    /// (Grant).
+    GPU_JOB_ALLOWANCE: VaultMeta b"gpu_job_allow:v1:" Named
+        // Restore class: An owner's setting is live: a restore never widens what an agent may
+        // start again after the owner narrowed or removed it.
+        [restore: live] [family: unclassified] [tier: canonical]
+        => crate::gpu_job::erase_allowance_actor_in_txn;
 }
