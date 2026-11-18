@@ -159,8 +159,7 @@ pub(crate) use self::ledgers::{
 };
 #[cfg(test)]
 pub(crate) use self::ledgers::{
-    make_attempt_receipt_legacy_for_tests, overwrite_attempt_pack_receipt_for_test,
-    put_attempt_pack_receipt_for_test,
+    overwrite_attempt_pack_receipt_for_test, put_attempt_pack_receipt_for_test,
 };
 pub(crate) use self::projection::{COMMITMENT_TRIGGER_PREFIX, commitment_trigger_ref};
 pub(crate) use self::record::{
