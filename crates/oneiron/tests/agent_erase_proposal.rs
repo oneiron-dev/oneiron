@@ -32,9 +32,10 @@
 //! the goal's retirement re-puts the project after its hard-delete marker, and
 //! the put guard refuses that id. The root project is the vault itself
 //! (ARCH-0067) and no delete door takes it: its ask offers no erase preview,
-//! the preview and the delete rail refuse it before any writer, and it stays
-//! with its goal. On main its ask offers the preview, which its erase then
-//! fails behind.
+//! the preview and the delete rail refuse it before any writer commits (a
+//! privacy erase's audience-edit write included), and it stays with its
+//! goal. On main its ask offers the preview, which its erase then fails
+//! behind.
 //!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test agent_erase_proposal`.
@@ -54,7 +55,9 @@ use oneiron::inbox::NotificationKind;
 use oneiron::memory::MEMORY_CODE_FORBIDDEN;
 use oneiron::registry::ENTITY_TYPE_CLAIM;
 use oneiron::task_verb::sdk::invoke;
-use oneiron::test_doors::coach::{define_agent, write_project_goal, write_root_goal};
+use oneiron::test_doors::coach::{
+    define_agent, last_committed_txn_id, write_project_goal, write_root_goal,
+};
 use oneiron::test_doors::derive::grant_core_read_of_kinds;
 use oneiron::test_doors::steward::{open_owner_carrier_vault, owner};
 use oneiron::verbs::{
@@ -509,13 +512,21 @@ fn the_owners_ask_offers_no_erase_of_the_root_project_and_no_door_takes_it() {
     .expect("the preview input");
     preview_owner_confirm(&owner, &fx.owner_proof, input)
         .expect_err("the root project previews no erase");
-    let refused = fx
-        .vault
-        .delete_entity_with_reason(&fx.project, DeleteReason::OwnerErase)
-        .expect_err("the delete rail refuses the root project");
-    assert!(
-        refused.to_string().contains("cannot delete root project"),
-        "the rail refuses it as the root, before any writer: {refused}"
+    let committed = last_committed_txn_id(&fx.vault);
+    for reason in [DeleteReason::OwnerErase, DeleteReason::GdprDelete] {
+        let refused = fx
+            .vault
+            .delete_entity_with_reason(&fx.project, reason)
+            .expect_err("the delete rail refuses the root project");
+        assert!(
+            refused.to_string().contains("cannot delete root project"),
+            "the rail refuses it as the root ({reason:?}): {refused}"
+        );
+    }
+    assert_eq!(
+        last_committed_txn_id(&fx.vault),
+        committed,
+        "before any writer commits, a privacy erase's included"
     );
     assert_eq!(
         fx.vault
