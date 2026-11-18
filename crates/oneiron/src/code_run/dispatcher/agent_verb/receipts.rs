@@ -2,7 +2,7 @@
 //! rows are compared with it. A continuation also asks here whether a
 //! receipt past its cut may have run (FIX 4199).
 
-use crate::batch::secret_scan::{admission_form, held_form, known_admission_form};
+use crate::batch::secret_scan::{admission_form, held_form, known_admission_form, known_held_form};
 use crate::code_run::CompareKnown;
 use crate::code_run::payload::{
     agent_verb_call_identity as call_identity, decode_self_dispatch_outcome,
@@ -311,21 +311,25 @@ pub(super) fn records_call(
 /// placed each shaped secret, as the handle of a record it minted for it,
 /// and each value base custody held, as its record's handle, in the input
 /// text the row keeps. While base custody knows a value, read through
-/// `known`, both are planned with those values: each value custody holds,
-/// and each handle of its record, as that record's handle, and each other
-/// secret and handle as the plan's one stand-in. So a handle the row holds
-/// meets only a value its record holds: a value another record holds, or
-/// another token of a shape the wall places, is another write (FIX
-/// REPLAY-COMPARE-KNOWN-OTHER-CALLERS), and a value the row holds as written
-/// meets it beside the handle of another. The custody history keeps every
-/// value a record held until the record is erased, and an erased record's
-/// handle reads as the stand-in. A custody that knows no value holds no
-/// record a handle names, so then each handle in `kept`, and each secret
-/// the plan places in `offered`, reads as the plan's one stand-in, as
-/// `admitted_from_known` reads a held row and a raw offer. The inputs are
-/// compared by their identity, so their object keys may come in any order,
-/// as a receipt reads them. A row an erase took the words of and a custody
-/// value row (its input is a digest) meet only by [`row_identity`].
+/// `known`, both are read with those values: each value custody holds, and
+/// each handle of its record, as that record's handle, and each other
+/// handle, and each other secret the plan places in `offered`, as the plan's
+/// one stand-in. The row is read for those values alone
+/// ([`known_held_form`]): never for a shape, so a key the wall kept as
+/// written with its switch off stays so, and never inside a handle it
+/// holds. So a handle the row holds meets only a value its record holds: a
+/// value another record holds, or another token of a shape the wall places,
+/// is another write (FIX REPLAY-COMPARE-KNOWN-OTHER-CALLERS), and a value
+/// the row holds as written meets it beside the handle of another. The
+/// custody history keeps every value a record held until the record is
+/// erased, and an erased record's handle reads as the stand-in. A custody
+/// that knows no value holds no record a handle names, so then each handle
+/// in `kept`, and each secret the plan places in `offered`, reads as the
+/// plan's one stand-in, as `admitted_from_known` reads a held row and a raw
+/// offer. The inputs are compared by their identity, so their object keys
+/// may come in any order, as a receipt reads them. A row an erase took the
+/// words of and a custody value row (its input is a digest) meet only by
+/// [`row_identity`].
 fn held_input_meets(
     kept: &CodeRunBridgeCall,
     offered: &rmpv::Value,
@@ -339,7 +343,7 @@ fn held_input_meets(
     }
     let (held, again) = match known.get()? {
         Some(known) => (
-            known_admission_form(&kept.request, &known)?,
+            known_held_form(&kept.request, &known)?,
             known_admission_form(offered, &known)?,
         ),
         None => (held_form(&kept.request), admission_form(offered, None)?),
