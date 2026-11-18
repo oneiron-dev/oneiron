@@ -38,6 +38,15 @@
 //! of #9500's 3ca83fe3f29 (0abff894971); the offered-handle test is red at
 //! dd8a176dcd6 and green from that merge on.
 //!
+//! Blind review round 2 of #9503: a held receipt is read as a template.
+//! Each handle it holds that names a record custody knows meets the same
+//! handle, or one value of that record at any generation whose length lets
+//! the text after it match as written; every other byte meets only itself,
+//! and nothing is masked again. The wall reads text spelled as a handle
+//! that names no record like any other text. The rotated-value test, the
+//! longer-generation test and the handle-spelled passphrase test are red at
+//! e8dcab0e9fd; the rotation guard is green there and here.
+//!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test write_receipt_held_input`.
 #![cfg(all(oneiron_test_support, feature = "test-support"))]
@@ -77,6 +86,10 @@ const OTHER_UNNAMED_HANDLE: &str = "[secret sc908071]";
 const RIVER: &str = "river meadow";
 const ORCHARD: &str = "amber orchard";
 const ORCHARD_TODAY: &str = "amber orchard today";
+/// The value the review's rotation takes.
+const BLUE_HARBOR: &str = "blue harbor";
+/// A passphrase spelled as a handle no custody record has.
+const HANDLE_SPELLED_PASSPHRASE: &str = "[secret sc99999999999999999999]";
 
 fn vault() -> TestResult<(tempfile::TempDir, Vault)> {
     let directory = tempfile::tempdir()?;
@@ -105,6 +118,15 @@ fn bare_vault() -> TestResult<(tempfile::TempDir, Vault)> {
     vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::new()));
     vault.prepare_install_signing()?;
     Ok((directory, vault))
+}
+
+/// The owner rotates the custody record named `name` to `value`.
+fn rotate(vault: &Vault, name: &str, value: &str) -> oneiron::Result<()> {
+    let owner = vault.ensure_embedded_owner_actor()?;
+    let owner = vault.authenticate_owner(owner, &owner.to_hex(), true, GateDecisionId::now())?;
+    vault
+        .rotate_secret_as_owner(&owner, name, value.as_bytes(), 5)
+        .map(drop)
 }
 
 fn task_create(input: serde_json::Value) -> SelfAgentVerbCall {
@@ -490,6 +512,108 @@ fn a_resumed_write_offering_the_handle_its_receipt_holds_meets_its_receipt() -> 
 
     let meet = resumed_write_meets_its_stored_receipt(&vault, &call, &again)?;
 
+    assert_meets(&meet);
+    Ok(())
+}
+
+/// Custody holds `river meadow`, so the receipt of a write holding `river
+/// meadow / blue harbor` keeps `[secret scN] / blue harbor`. The owner then
+/// rotates that record to `blue harbor`. A resumed write holding `river
+/// meadow / river meadow` changed the write: the receipt's text after its
+/// handle meets only itself, never the rotated value, so both compares
+/// refuse it. Red at e8dcab0e9fd, which read the receipt for the record's
+/// values too, so both sides read `[secret scN] / [secret scN]` and met.
+#[test]
+fn a_resumed_write_changed_into_its_record_s_rotated_value_does_not_meet_its_receipt() -> TestResult
+{
+    let (_directory, vault) = vault()?;
+    vault.register_test_secret("river", RIVER.as_bytes(), Vec::new(), 1)?;
+    let first = task_holding(&format!("{RIVER} / {BLUE_HARBOR}"));
+    let again = task_holding(&format!("{RIVER} / {RIVER}"));
+
+    let meet = resumed_write_meets_its_stored_receipt_after(&vault, &first, &again, |vault| {
+        rotate(vault, "river", BLUE_HARBOR)
+    })?;
+
+    assert!(
+        !meet.kept_input.contains(RIVER) && meet.kept_input.contains(&format!("] / {BLUE_HARBOR}")),
+        "FIXTURE: the receipt keeps the handle, then `blue harbor` as written: {meet:?}"
+    );
+    assert_refused(&meet);
+    Ok(())
+}
+
+/// Guard for the test above: after the same rotation, the identical write
+/// meets its receipt, its first value under the record's handle at the
+/// generation it held, and `blue harbor` as written. Green at e8dcab0e9fd
+/// and at this head.
+#[test]
+fn a_resumed_write_meets_its_receipt_after_its_record_rotates_into_its_written_text() -> TestResult
+{
+    let (_directory, vault) = vault()?;
+    vault.register_test_secret("river", RIVER.as_bytes(), Vec::new(), 1)?;
+    let call = task_holding(&format!("{RIVER} / {BLUE_HARBOR}"));
+
+    let meet = resumed_write_meets_its_stored_receipt_after(&vault, &call, &call, |vault| {
+        rotate(vault, "river", BLUE_HARBOR)
+    })?;
+
+    assert!(
+        !meet.kept_input.contains(RIVER) && meet.kept_input.contains(&format!("] / {BLUE_HARBOR}")),
+        "FIXTURE: the receipt keeps the handle, then `blue harbor` as written: {meet:?}"
+    );
+    assert_meets(&meet);
+    Ok(())
+}
+
+/// Custody holds `amber orchard`, so the receipt of a write holding `amber
+/// orchard today` keeps `[secret scN] today`. The owner then rotates that
+/// record to `amber orchard today`. Both generations are the record's, and
+/// its handle meets the one whose length lets ` today` follow as written,
+/// so the identical write meets its receipt. Red at e8dcab0e9fd: the offer
+/// took the longer generation whole, `[secret scN]`, and both compares
+/// refused the identical write.
+#[test]
+fn a_resumed_write_meets_its_receipt_after_its_record_rotates_to_a_longer_value() -> TestResult {
+    let (_directory, vault) = vault()?;
+    vault.register_test_secret("orchard", ORCHARD.as_bytes(), Vec::new(), 1)?;
+    let call = task_holding(ORCHARD_TODAY);
+
+    let meet = resumed_write_meets_its_stored_receipt_after(&vault, &call, &call, |vault| {
+        rotate(vault, "orchard", ORCHARD_TODAY)
+    })?;
+
+    assert!(
+        !meet.kept_input.contains(ORCHARD) && meet.kept_input.contains("] today"),
+        "FIXTURE: the receipt keeps the record's handle before ` today`: {meet:?}"
+    );
+    assert_meets(&meet);
+    Ok(())
+}
+
+/// Custody holds a passphrase spelled as a handle no record has. A write
+/// holding it keeps no plaintext of it in its receipt: the wall reads text
+/// spelled as a handle that names no record like any other text, so the
+/// passphrase takes its own record's handle, and the identical write meets
+/// that receipt. Red at e8dcab0e9fd: the wall read the passphrase as a
+/// handle and the receipt kept it as written.
+#[test]
+fn a_write_holding_a_passphrase_spelled_as_a_handle_keeps_it_out_of_its_receipt() -> TestResult {
+    let (_directory, vault) = vault()?;
+    vault.register_test_secret(
+        "handle-spelled passphrase",
+        HANDLE_SPELLED_PASSPHRASE.as_bytes(),
+        Vec::new(),
+        1,
+    )?;
+    let call = task_holding(HANDLE_SPELLED_PASSPHRASE);
+
+    let meet = resumed_write_meets_its_stored_receipt(&vault, &call, &call)?;
+
+    assert!(
+        !meet.kept_input.contains(HANDLE_SPELLED_PASSPHRASE),
+        "the receipt keeps no plaintext of the passphrase: {meet:?}"
+    );
     assert_meets(&meet);
     Ok(())
 }
