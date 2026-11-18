@@ -5,7 +5,8 @@
 use super::{
     BackupArgs, CustodyAnchorCredentials, Path, RecoverClockArgs, RecoverWindowArgs, RestoreArgs,
     Serialize, ServeConfig, backup_plan, base_vault_config, configured_host_issuer, emit,
-    local_owner, open_stopped_vault, open_vault, resolve_serve_config, rfc3339_secs, vault_key,
+    local_owner, open_stopped_vault, open_stopped_vault_unprofiled, open_vault,
+    resolve_serve_config, rfc3339_secs, vault_config, vault_key,
 };
 use crate::owner::{backup, host_owner};
 
@@ -100,9 +101,11 @@ struct JoinedRestoredInstall {
 /// the handle as `serve` holds it (row CARRIER-OWNER-PROOF), signs the word:
 /// on a self-host vault it is an owner key. Holding the writer lease is the
 /// owner proof of an offline host command, so on any other vault the operator
-/// acts as nobody (FIX 8225). A no-op on an install that already stands.
+/// acts as nobody (FIX 8225). A no-op on an install that already stands. The
+/// vault opens without the serving profile an owner command ensures, so a
+/// refused join writes nothing (REVIEW-9511 P1).
 fn join_restored_install(config: &ServeConfig) -> anyhow::Result<()> {
-    let vault = open_stopped_vault(config, "then run this again")?;
+    let vault = open_stopped_vault_unprofiled(config, vault_config(config), "then run this again")?;
     let owner = host_owner(&vault)?;
     let issuer = configured_host_issuer(config, &vault, false).ok_or_else(|| {
         anyhow::anyhow!(
