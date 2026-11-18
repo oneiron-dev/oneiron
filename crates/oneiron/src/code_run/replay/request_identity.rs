@@ -207,13 +207,16 @@ impl CodeRunBridgeCall {
     /// identity alone (FIX 6534): how a row an erase took the words of
     /// meets the call made again, and a live row by the identity it has.
     ///
-    /// As `replay_request_match` does, once the compare without them
-    /// misses, a live row and `offered` are both read with each value base
-    /// custody holds, through `known`, as its record's handle (FIX
-    /// REPLAY-COMPARE-KNOWN-OTHER-CALLERS): the row took that value's
-    /// handle, and a value another record holds stays another request. The
-    /// row is read for those values alone ([`known_held_form`]). An
-    /// erased row meets `offered` as [`ErasedRequest::meets_known`] reads it.
+    /// As `admitted_from_known` does, a live row that is not `offered` as
+    /// written is read, once base custody knows a value, through `known`,
+    /// with each value custody holds as its record's handle on both sides
+    /// (FIX REPLAY-COMPARE-KNOWN-OTHER-CALLERS): the row took that value's
+    /// handle, and a value another record holds, shaped or not, stays
+    /// another request. The row is read for those values alone
+    /// ([`known_held_form`]). A custody that knows no value compares the
+    /// two by their identity, each handle and each secret the plan places
+    /// as the plan's one stand-in. An erased row meets `offered` as
+    /// [`ErasedRequest::meets_known`] reads it.
     ///
     /// # Errors
     ///
@@ -227,15 +230,18 @@ impl CodeRunBridgeCall {
         if let Some(erased) = ErasedRequest::of(&self.request) {
             return Ok(erased.meets_known(offered, known)?.is_hit());
         }
-        if live_identity(self.effect, &self.request)? == live_identity(self.effect, offered)? {
+        let (held, again) = (
+            identity_part(self.effect, &self.request),
+            identity_part(self.effect, offered),
+        );
+        if held == again {
             return Ok(true);
         }
         Ok(match known.get()? {
-            Some(known) => {
-                known_held_form(&identity_part(self.effect, &self.request), &known)?
-                    == known_admission_form(&identity_part(self.effect, offered), &known)?
+            Some(known) => known_held_form(&held, &known)? == known_admission_form(&again, &known)?,
+            None => {
+                live_identity(self.effect, &self.request)? == live_identity(self.effect, offered)?
             }
-            None => false,
         })
     }
 

@@ -690,20 +690,25 @@ pub(crate) fn admit_typed_with_rule<T: Serialize + DeserializeOwned>(
 
 /// Whether `held`, a value the wall may have masked, is what admitting `raw`
 /// stored: a replay that compares a held row with the value offered again.
-/// Each handle on either side reads as the plan's one stand-in, so a secret
-/// the wall lifted matches the same secret offered again. In a scope that
-/// decides with custody (FIX REPLAY-COMPARE-KNOWN-MATCHER), a value custody
-/// holds took its record's handle, a value no shape rule places too, so
-/// once the plan without it misses, both are read again with `known`, the
-/// values custody holds now: the offer as the plan masks it ([`known_form`])
-/// and the held row for those values alone ([`held_known_plan`]). A value
-/// `known` holds reads as its record's handle on both sides, so it meets
-/// only the handle of the record that holds it, and two values custody
-/// holds apart stay apart (FIX REPLAY-COMPARE-KNOWN-OTHER-CALLERS). A row
-/// admitted before its value entered custody holds that value as written and
-/// meets its call by either plan, also beside the handle of another value.
-/// A value the row holds as written that a shape rule reads stays as
-/// written, so it meets only itself. Nothing is minted.
+/// In a scope that decides with custody (FIX REPLAY-COMPARE-KNOWN-MATCHER),
+/// `known` gives the values custody holds now, and once custody knows a
+/// value it alone decides: the wall gave each value custody held its
+/// record's handle, a value no shape rule places too, and each shaped
+/// secret the handle of a record it minted for it, which custody holds
+/// too. Both are read with those values: the offer as the plan masks it
+/// ([`known_form`]) and the held row for those values alone
+/// ([`held_known_plan`]). A value `known` holds reads as its record's
+/// handle on both sides, so it meets only the handle of the record that
+/// holds it, and two values custody holds apart stay apart, shaped or not
+/// (FIX REPLAY-COMPARE-KNOWN-OTHER-CALLERS): a handle is never first read
+/// as the plan's one stand-in beside another record's value. A row
+/// admitted before its value entered custody holds that value as written
+/// and meets its call, also beside the handle of another value. A value
+/// the row holds as written that a shape rule reads stays as written, so
+/// it meets only itself. A scope that does not decide with custody, or a
+/// custody that knows no value, reads each handle on either side, and each
+/// secret the plan places in `raw`, as the plan's one stand-in, so a secret
+/// the wall lifted meets the same secret offered again. Nothing is minted.
 pub(crate) fn admitted_from_known(
     held: &Value,
     raw: &Value,
@@ -712,14 +717,13 @@ pub(crate) fn admitted_from_known(
     if held == raw {
         return Ok(true);
     }
-    let mut stood = held.clone();
-    stand_in_handles(&mut stood, None);
-    if stood == planned_form(raw, None)?.0 {
-        return Ok(true);
-    }
     Ok(match known()? {
         Some(known) => held_known_plan(held, &known)?.0 == known_form(raw, &known)?.0,
-        None => false,
+        None => {
+            let mut stood = held.clone();
+            stand_in_handles(&mut stood, None);
+            stood == planned_form(raw, None)?.0
+        }
     })
 }
 
@@ -760,7 +764,6 @@ fn held_known_plan(held: &Value, known: &Arc<KnownValues>) -> Result<PlanTree> {
     Masker {
         mints: true,
         known_only: true,
-        reads_held: true,
         at: Some((origin("replay", &[])?, "replay".to_owned())),
         known: Some(Arc::clone(known)),
         ..Masker::default()
