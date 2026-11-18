@@ -55,7 +55,7 @@ pub(super) fn owner_table() -> OwnerTable {
             OwnerRoute {
                 method: "get",
                 path: "/machines",
-                summary: "Every machine of the vault, this install first (FIX DEVICE-DISPLAY-NAME): `machines`, each with its class, role, whether it stands live, its revision (`seen` for an answer or a removal) and the name it is shown by, with `name_source` (`owner`, `reported`, `model` or `class`).",
+                summary: "Every machine of the vault, this install first (FIX DEVICE-DISPLAY-NAME): `machines`, each with its class, role, whether it stands live, its revision (`seen` for an answer or a removal) and the name it is shown by, with `name_source` (`owner_set` for the owner's rename, `owner_confirmed` for the name he confirmed when he signed it his, `reported`, `model` or `class`).",
                 row: Some("vault.machines.list"),
                 shape: None,
             },

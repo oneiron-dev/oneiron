@@ -409,7 +409,7 @@ fn the_owners_name_wins_over_the_report_and_clearing_it_falls_back() {
         assert_eq!(status, StatusCode::OK, "the owner names the machine: {set}");
         assert_eq!(set["machine"]["machine"], served.machine.as_str(), "{set}");
         assert_eq!(set["machine"]["name"], "Office Mac", "trimmed: {set}");
-        assert_eq!(set["machine"]["name_source"], "owner", "{set}");
+        assert_eq!(set["machine"]["name_source"], "owner_set", "{set}");
         assert_eq!(set["machine"]["owner_name"], "Office Mac", "{set}");
         assert!(
             set["receipt"]
@@ -422,7 +422,7 @@ fn the_owners_name_wins_over_the_report_and_clearing_it_falls_back() {
             mine["name"], "Office Mac",
             "the list shows the owner's name: {mine}"
         );
-        assert_eq!(mine["name_source"], "owner", "{mine}");
+        assert_eq!(mine["name_source"], "owner_set", "{mine}");
         assert_eq!(
             mine["reported_name"], REPORTED_NAME,
             "the report stays: {mine}"
