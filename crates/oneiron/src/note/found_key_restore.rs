@@ -29,6 +29,7 @@ use crate::ports::EntityStoreRead;
 use crate::registry::ENTITY_TYPE_NOTE;
 use crate::vault::live_entity_row_in_txn;
 use crate::{Vault, WriteActor};
+use oneiron_contracts::fingerprint::ContentHash;
 
 /// The field a pending fork's body is admitted as (`store_doc`); a NOTE's
 /// own body is `markdown`.
@@ -114,7 +115,7 @@ fn restore_live_in_txn(
             actor: NoteActor::Actor(stamp.token),
             actor_class: EdgeActorClass::Human.gate_actor_class().to_owned(),
             grant: None,
-            command_hash: *blake3::hash(text_form.as_bytes()).as_bytes(),
+            command_hash: ContentHash::of(text_form.as_bytes()).into_bytes(),
         },
         stamp,
     )?;
