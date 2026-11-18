@@ -22,10 +22,13 @@
 //! a live carrier, which only a joined machine is, so it stands as before,
 //! and joins what it finds held of its target first: pairing a restored
 //! install from a joined machine is the door's way in, and the bootstrap
-//! arm refuses one (`machine_answers::RESTORED_NOT_JOINED`), so no door
-//! writes a held enrolment; the hold is what the fold does with one any
-//! writer signs. The owner's own "no other machine is left" act is the
-//! second way in (DESIGN 15e); it lands in a later PR of this row.
+//! arm refuses one (`machine_answers::RESTORED_NOT_JOINED`). The owner's
+//! own word that no other machine is left is the second way in (DESIGN
+//! 15e): one [`RestoredMachineJoin`] row, signed alone by a key the vault
+//! trusts as the owner's ([`apply_owner_join`]), joins the one enrolment it
+//! names. Its door (`Vault::join_restored_install`) files this install's
+//! enrolment and that row in one transaction; it is the only door that
+//! writes a held enrolment.
 //!
 //! A machine's origin is fixed by its first revision: a later revision of it
 //! that names another image, or none, is refused (`origin_differs`), so the
@@ -256,6 +259,35 @@ pub(super) fn witnessed(
         .filter(|(_, enrolment)| enrolment.joined_by.is_none())
         .map(|(hash, _)| *hash)
         .collect()
+}
+
+/// The owner's word that no other machine is left (DESIGN 15e, the second
+/// way in): `record`, which `entry`'s primary signer signs alone, joins the
+/// one enrolment it names, judged on its parents' `state`. The signer is a
+/// key `state` takes as the owner's proof
+/// ([`super::owner_proof::gives_owner_proof`]): the recovery credential that
+/// opened the image proves nobody's will, so a key of his says it. The act's
+/// owner is live there ([`super::owner_act::owner_live_at`]), and the
+/// enrolment is one `state` holds for the act's target. An enrolment an
+/// entry joined already keeps that entry; the act then changes nothing.
+pub(super) fn apply_owner_join(
+    state: &mut FoldState,
+    entry: &AuthorityLogEntry,
+    record: &RestoredMachineJoin,
+    hash: AuthorityEntryHash,
+) -> std::result::Result<(), AuthorityFoldIssue> {
+    let held = state
+        .restored_enrolments
+        .get(&record.enrolment)
+        .is_some_and(|enrolment| enrolment.machine == record.act.target);
+    if !held
+        || !super::owner_proof::gives_owner_proof(state, entry.signer_key())
+        || !super::owner_act::owner_live_at(state, record.act.owner)
+    {
+        return Err(AuthorityFoldIssue::InvalidEntry(hash));
+    }
+    join(state, &[record.enrolment], hash);
+    Ok(())
 }
 
 /// Joins the `witnessed` enrolments in `state`, the state after the entry

@@ -607,6 +607,17 @@ fn fold_merged_entry(
         state.seqs.insert(entry.signer_key().clone(), entry.seq);
         return EntryFold::Ready(state);
     }
+    // The owner's word that no other machine is left joins one held
+    // enrolment of a machine born of a restore; a key of the owner's signs
+    // it alone (row RESTORED-COPIES-ENROL-EACH-OTHER).
+    if let AuthorityOp::RestoredMachineJoin(record) = &entry.op {
+        if let Err(issue) = super::restored_join::apply_owner_join(&mut state, entry, record, hash)
+        {
+            return EntryFold::Invalid(issue);
+        }
+        state.seqs.insert(entry.signer_key().clone(), entry.seq);
+        return EntryFold::Ready(state);
+    }
     let signer = entry.signer_key().clone();
     if let Some(folded) =
         super::anchor_fold::fold_anchor_entry(&mut state, entry, &signer, hash, restriction_only)
@@ -877,7 +888,8 @@ fn op_reuses_existing_device_key(state: &FoldState, op: &AuthorityOp) -> bool {
         | AuthorityOp::ExportSupplementImported(_)
         | AuthorityOp::CustodyPermitPiece(_)
         | AuthorityOp::FrontierJoin(_)
-        | AuthorityOp::MembershipExecution(_) => false,
+        | AuthorityOp::MembershipExecution(_)
+        | AuthorityOp::RestoredMachineJoin(_) => false,
         // An appointment's successor is judged fresh over its whole ancestry
         // (`root_appointment_judge`, V1).
         AuthorityOp::RootAppointment(_) => false,

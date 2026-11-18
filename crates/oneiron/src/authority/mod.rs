@@ -158,6 +158,7 @@ mod readonly_fold;
 mod recover_many;
 mod recovery;
 mod restored_join;
+mod restored_join_door;
 mod retired_signers;
 mod revocation_notice;
 mod revoke_proof;
@@ -257,6 +258,9 @@ pub use oneiron_authority::authority::{
     ROOT_APPOINTMENT_SUCCESSOR_PROOF_KIND, ROOT_APPOINTMENT_SUCCESSOR_ROLES, RootAppointment,
     root_appointment_challenge,
 };
+// The owner's word that no other machine is left, which joins one machine
+// born of a restore (row RESTORED-COPIES-ENROL-EACH-OTHER).
+pub use oneiron_authority::authority::{RestoredMachineJoin, restored_machine_join_seen};
 pub use root_appointment_door::RootAppointmentReceipt;
 pub(crate) use root_appointment_door::refuse_unneeded_appointment;
 pub use root_appointment_judge::{AppointmentVerdict, AppointmentVoidReason};

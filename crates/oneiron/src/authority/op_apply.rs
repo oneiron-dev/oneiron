@@ -101,8 +101,8 @@ pub(super) fn apply_op(
         // `fold_entry_state`'s machine-profile, anchor, world-privacy,
         // grant-travel, owner-choice, home-candidacy, full-copy-mark,
         // agent-grant-act, policy-setting, export-act, owner-work (a custody
-        // permit piece among them), membership-execution and world-key arms
-        // return before reaching here.
+        // permit piece among them), membership-execution, world-key and
+        // restored-machine-join arms return before reaching here.
         AuthorityOp::MachineProfile(_)
         | AuthorityOp::OwnerRoot(_)
         | AuthorityOp::WorldPrivacy(_)
@@ -125,7 +125,8 @@ pub(super) fn apply_op(
         | AuthorityOp::CustodyPermitPiece(_)
         | AuthorityOp::WorldKeyWraps(_)
         | AuthorityOp::FrontierJoin(_)
-        | AuthorityOp::MembershipExecution(_) => {}
+        | AuthorityOp::MembershipExecution(_)
+        | AuthorityOp::RestoredMachineJoin(_) => {}
         // Only a counted root appointment applies, onto its proof fold's merge
         // (`root_appointment_judge::Recovered`; the fold refuses every other
         // one before any op applies): every roster key is revoked and the

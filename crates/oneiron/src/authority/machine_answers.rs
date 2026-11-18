@@ -114,9 +114,12 @@ pub(super) fn no_carrier() -> Error {
 /// A machine born of a restore is not a machine of the vault until a joined
 /// machine joins it (row RESTORED-COPIES-ENROL-EACH-OTHER): the bootstrap arm
 /// never enrols it, and the fold holds a root-signed enrolment of it until an
-/// entry signed by a joined machine of the vault descends from it.
+/// entry signed by a joined machine of the vault descends from it, or the
+/// owner's word that no other machine is left names it
+/// (`Vault::join_restored_install`).
 pub(crate) const RESTORED_NOT_JOINED: &str = "this install was restored from a checkpoint and has \
-     not joined the vault: a machine of the vault that has joined must pair it";
+     not joined the vault: a machine of the vault that has joined must pair it, or, when no other \
+     machine is left, the owner joins it here with an owner key";
 
 /// What the fold did with one landed machine revision: an owner's answer as
 /// it landed, or a restored machine's enrolment, held until it joins (row
@@ -385,13 +388,14 @@ impl Vault {
         self.append_machine_profile_in_txn(txn, issuer, &fold, profile)
     }
 
-    /// A root-signed enrolment of an install born of a restore, which no
-    /// door writes (row RESTORED-COPIES-ENROL-EACH-OTHER): the fold holds it
-    /// until an entry signed by a joined machine descends from it. Returns
-    /// that enrolment's entry for the caller to commit. Refuses a request no
-    /// restore made, and one the fold did not hold. The test door that
-    /// proves the fold's hold and join writes it.
-    #[cfg(oneiron_test_support)]
+    /// A root-signed enrolment of an install born of a restore (row
+    /// RESTORED-COPIES-ENROL-EACH-OTHER): the fold holds it until an entry
+    /// signed by a joined machine descends from it, or the owner's word
+    /// names it. Returns that enrolment's entry for the caller to commit.
+    /// Refuses a request no restore made, and one the fold did not hold.
+    /// Only the owner's join door (`Vault::join_restored_install`) writes
+    /// one, beside that word, and the test door that proves the fold's hold
+    /// and join.
     pub(crate) fn file_restored_enrolment_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
