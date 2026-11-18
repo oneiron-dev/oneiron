@@ -51,6 +51,7 @@ pub mod idle_fold;
 pub mod limit_ask;
 pub mod machine_capacity;
 pub mod machine_destination;
+pub mod machine_names;
 pub(crate) use oneiron_base::limits;
 pub mod maintain;
 pub(crate) use oneiron_base::msgpack_shape;
