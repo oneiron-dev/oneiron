@@ -540,8 +540,8 @@ struct Masker {
     known_only: bool,
     /// A compare of a held row with its offer: only the values of the
     /// records the row's handles name are read, by their handles (FIX
-    /// RECEIPT-RECORDS-CALL-HELD-INPUT). `None` reads every value `known`
-    /// holds.
+    /// RECEIPT-RECORDS-CALL-HELD-INPUT), and only their handles name a
+    /// record in a text. `None` reads every value `known` holds.
     records: Option<BTreeSet<String>>,
     /// The door's scan read each text this pass reads now by the same text
     /// rules and found no shape: none is sought again (speed).

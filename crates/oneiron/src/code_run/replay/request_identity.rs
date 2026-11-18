@@ -31,6 +31,10 @@
 //! no custody read is in reach, the row reads by its stand-in identity, as a
 //! row erased before does. No value is kept, and no fingerprint of one: the
 //! digest holds handles and the shape rules' stand-in where values stood.
+//! Both identities and the records sit in the one `identity` member, so the
+//! erased form names no word a fenced put's wall did not already read there
+//! (blind review round 1 of #9528): each record is a bare handle, which the
+//! wall reads as the handle of a record custody knows and leaves as it is.
 
 use std::borrow::Cow;
 use std::collections::BTreeSet;
@@ -58,11 +62,6 @@ const REQUEST_IDENTITY_DOMAIN: &[u8] = b"oneiron:code-run:bridge-request-identit
 /// The domain of an erased request's custody identity digest.
 const CUSTODY_IDENTITY_DOMAIN: &[u8] = b"oneiron:code-run:bridge-request-custody-identity:v1";
 
-/// The key of an erased request's custody identity, the last of its keys,
-/// and the keys of that identity, in order.
-const CUSTODY_KEY: &str = "custody";
-const CUSTODY_KEYS: [&str; 2] = ["identity", "records"];
-
 /// The keys of an erased request, in order. `ask` is a spawn's alone and
 /// `verb` a verb call's.
 const ERASED_REQUEST_KEYS: [&str; 5] = ["state", "cause", "identity", "ask", VERB_KEY];
@@ -76,7 +75,7 @@ const INPUT_KEY: &str = "input";
 
 /// One erased request as a row stores it: the identity it keeps, the typed
 /// ask of a spawn whose ask was one, a verb call's catalog verb, and the
-/// custody identity an erase that read custody kept.
+/// custody identity an erase that read custody kept beside its identity.
 #[derive(Debug, Clone, Copy)]
 pub(in crate::code_run) struct ErasedRequest<'a> {
     identity: [u8; 32],
@@ -101,18 +100,9 @@ impl<'a> ErasedRequest<'a> {
         let Value::Map(fields) = request else {
             return None;
         };
-        let [state, cause, identity, rest @ ..] = fields.as_slice() else {
-            return None;
-        };
-        let (rest, custody) = match rest.split_last() {
-            Some((last, before)) if last.0.as_str() == Some(CUSTODY_KEY) => {
-                (before, Some(CustodyIdentity::of(&last.1)?))
-            }
-            _ => (rest, None),
-        };
-        let kept = match rest {
-            [] => None,
-            [kept] => Some(kept),
+        let (state, cause, identity, kept) = match fields.as_slice() {
+            [state, cause, identity] => (state, cause, identity, None),
+            [state, cause, identity, kept] => (state, cause, identity, Some(kept)),
             _ => return None,
         };
         if keyed(state, ERASED_REQUEST_KEYS[0])?.as_str() != Some(ERASED_STATE)
@@ -120,8 +110,15 @@ impl<'a> ErasedRequest<'a> {
         {
             return None;
         }
-        let Value::Binary(identity) = keyed(identity, ERASED_REQUEST_KEYS[2])? else {
-            return None;
+        let (identity, custody) = match keyed(identity, ERASED_REQUEST_KEYS[2])? {
+            Value::Binary(identity) => (identity, None),
+            Value::Array(parts) => match parts.as_slice() {
+                [Value::Binary(identity), custody, records @ ..] => {
+                    (identity, Some(CustodyIdentity::of(custody, records)?))
+                }
+                _ => return None,
+            },
+            _ => return None,
         };
         let (ask, verb) = match kept.map(|entry| {
             (
@@ -207,19 +204,12 @@ impl<'a> ErasedRequest<'a> {
 }
 
 impl<'a> CustodyIdentity<'a> {
-    /// `value` read as a custody identity, in its one spelling: its digest,
-    /// and at least one record, each a text, in ascending order.
-    fn of(value: &'a Value) -> Option<Self> {
-        let Value::Map(fields) = value else {
-            return None;
-        };
-        let [identity, records] = fields.as_slice() else {
-            return None;
-        };
-        let Value::Binary(identity) = keyed(identity, CUSTODY_KEYS[0])? else {
-            return None;
-        };
-        let Value::Array(records) = keyed(records, CUSTODY_KEYS[1])? else {
+    /// `identity` and `records`, the parts of an erased request's identity
+    /// past its stand-in identity, read as a custody identity, in its one
+    /// spelling: its digest, then at least one record, each a text, in
+    /// ascending order.
+    fn of(identity: &'a Value, records: &'a [Value]) -> Option<Self> {
+        let Value::Binary(identity) = identity else {
             return None;
         };
         let names = records
@@ -462,37 +452,39 @@ fn identity_part(effect: SelfEffect, request: &Value) -> Cow<'_, Value> {
 }
 
 /// The erased form of the live `request` a call of `effect` made: its
-/// identity, a spawn's typed ask or a verb call's catalog verb beside it,
-/// and last its custody identity, read through `custody`, when it names a
-/// record base custody knows.
+/// identity, and a spawn's typed ask or a verb call's catalog verb beside
+/// it. The identity is the stand-in identity alone, or, when the request
+/// names a record base custody knows, read through `custody`, the stand-in
+/// identity, the custody identity and the records, in one array.
 fn erased_value(effect: SelfEffect, request: &Value, custody: &CompareKnown<'_>) -> Result<Value> {
+    let stand_in = Value::Binary(live_identity(effect, request)?.to_vec());
+    let identity = match custody_identity(effect, request, custody)? {
+        Some(parts) => Value::Array(std::iter::once(stand_in).chain(parts).collect()),
+        None => stand_in,
+    };
     let mut fields = vec![
         (ERASED_REQUEST_KEYS[0], Value::from(ERASED_STATE)),
         (ERASED_REQUEST_KEYS[1], Value::from(RESPONSE_ERASED)),
-        (
-            ERASED_REQUEST_KEYS[2],
-            Value::Binary(live_identity(effect, request)?.to_vec()),
-        ),
+        (ERASED_REQUEST_KEYS[2], identity),
     ];
     fields.extend(typed_ask(effect, request).map(|ask| (ERASED_REQUEST_KEYS[3], ask.clone())));
     fields.extend(
         catalog_verb(effect, request).map(|verb| (ERASED_REQUEST_KEYS[4], Value::from(verb))),
     );
-    fields.extend(custody_identity(effect, request, custody)?.map(|kept| (CUSTODY_KEY, kept)));
     Ok(request_map(fields))
 }
 
 /// The custody identity the erased form of the live `request` a call of
-/// `effect` made keeps (FIX ERASED-IDENTITY-ONE-STAND-IN): the records its
-/// [`identity_part`] names once read with the values base custody holds,
-/// through `custody`, by their handles, and the digest of that part read
-/// for their values. `None` with no custody read in reach, or when it names
-/// no record custody knows.
+/// `effect` made keeps (FIX ERASED-IDENTITY-ONE-STAND-IN): the digest of its
+/// [`identity_part`] read for the values of the records that part names
+/// once read with the values base custody holds, through `custody`, then
+/// those records, by their bare handles. `None` with no custody read in
+/// reach, or when it names no record custody knows.
 fn custody_identity(
     effect: SelfEffect,
     request: &Value,
     custody: &CompareKnown<'_>,
-) -> Result<Option<Value>> {
+) -> Result<Option<Vec<Value>>> {
     let Some(known) = custody.get()? else {
         return Ok(None);
     };
@@ -502,13 +494,11 @@ fn custody_identity(
         return Ok(None);
     }
     let identity = custody_digest(&part, &known, &records)?;
-    Ok(Some(request_map(vec![
-        (CUSTODY_KEYS[0], Value::Binary(identity.to_vec())),
-        (
-            CUSTODY_KEYS[1],
-            Value::Array(records.into_iter().map(Value::from).collect()),
-        ),
-    ])))
+    Ok(Some(
+        std::iter::once(Value::Binary(identity.to_vec()))
+            .chain(records.into_iter().map(Value::from))
+            .collect(),
+    ))
 }
 
 /// The BLAKE3 digest of `request`'s canonical MessagePack, read in its

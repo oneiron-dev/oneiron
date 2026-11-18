@@ -108,13 +108,23 @@ impl Masker {
         if let Some(spans) = self.text_log.take(text.as_bytes()) {
             return spans;
         }
+        // A read for given records knows their handles alone (blind review
+        // round 1 of #9528): a handle custody took after those records were
+        // named stays text, as it was when they were named.
+        let names = |handle: &str| match &self.records {
+            Some(records) => records.contains(handle),
+            None => self
+                .known
+                .as_ref()
+                .is_some_and(|known| known.holds_handle(handle)),
+        };
         let known = match &self.known {
             Some(known) => known_outside_handles(
                 known,
                 self.records.as_ref(),
                 text,
                 |value| self.is_kept(value),
-                |handle| known.holds_handle(handle) || self.placed_handle(handle),
+                |handle| names(handle) || self.placed_handle(handle),
             ),
             None => Vec::new(),
         };
@@ -150,7 +160,8 @@ impl Masker {
 /// handle that names no record is read like any other text (blind review
 /// round 2 of #9503): a known value spelled `[secret sc99]` takes its own
 /// record's handle and is never kept as written. With `records`, only those
-/// records' values are read ([`known_spans`]).
+/// records' values are read ([`known_spans`]), and `names` takes only their
+/// handles.
 fn known_outside_handles(
     known: &KnownValues,
     records: Option<&BTreeSet<String>>,
