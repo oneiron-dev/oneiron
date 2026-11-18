@@ -15,9 +15,24 @@
 //! - One catch-up rule ([`Trigger::next_due`]): a late schedule runs once, then goes on from now.
 //! - One backoff ([`retry_after`]).
 //! - Verbs: `vault.schedules.list`, `.arm`, `.disarm`, `.run`.
+//! - A job whose cadence is a Setting key ([`When::Setting`]) is armed by the engine from the
+//!   key's value in force, and re-armed in the write that changes the key
+//!   ([`rearm_on_change`]).
 //!
 //! Stage 0.2 lands the primitive unused: no engine job is in the registry yet, and the sweeps
-//! keep their own schedule beside it.
+//! keep their own schedule beside it. Stage 5a-1 adds what the sweeps need to move onto it:
+//! engine arming inside a write, the cadence key, a run that left items, an engine "run now"
+//! and the run it answers, one job alone, what a pass lends its runs and what they report back,
+//! and a due time pulled forward inside a write. Stage 5a-2 adds a job kind that starts once a
+//! pass ([`JobSpec::once_per_pass`]) and the tighter direction of a cadence key
+//! ([`more_often_is_tighter`]). Stage 5b-4 adds a run of only some jobs' due rows, which a host
+//! loop that serves its own job sooner than the housekeeping tick makes, and which runs nothing
+//! while a housekeeping pass holds the runner. Stage 5b-3 adds a job only some nodes run
+//! ([`JobSpec::runs_here`]): the watcher ticks and the timer turn programs, which only the node
+//! that releases the vault's ticks runs. Stage 5c-2 adds a row armed due by a time at the latest
+//! ([`arm_at_latest_in_txn`]): one row for a line of work, due at its earliest item; and a job its
+//! host drives ([`Drive::Host`]): the remote task polls, whose network calls never run under the
+//! runner, and whose due rows the host reads ([`due_at_in_txn`]).
 
 mod arm;
 mod jobs;
@@ -30,19 +45,25 @@ pub use oneiron_schedule_contract::{
 };
 
 pub use self::arm::ScheduleView;
-#[cfg(oneiron_test_support)]
-pub(crate) use self::arm::put_due_entry_for_test;
 pub(crate) use self::arm::{
-    ScheduleCaller, erase_schedule_actor_in_txn, erase_schedule_subject_in_txn,
-    rebuild_schedule_due_in_txn,
+    ScheduleCaller, arm_at_latest_in_txn, arm_in_txn, arm_setting_jobs, deadlines_in_txn,
+    disarm_in_txn, due_at_in_txn, due_by_in_txn, erase_schedule_actor_in_txn,
+    erase_schedule_subject_in_txn, finished_at_in_txn, rearm_on_change,
+    rebuild_schedule_due_in_txn, request_runs,
 };
-pub(crate) use self::jobs::job_named;
+#[cfg(oneiron_test_support)]
+pub(crate) use self::arm::{plant_start_marker_in_txn, put_due_entry_for_test};
+pub(crate) use self::jobs::{job_named, jobs};
 pub use self::run::{JobOutcome, JobRun, ScheduleRunReport};
 pub use self::zones::EngineZones;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::federation::EngineControlClass;
+use crate::llm::model_pack::AccessSnapshot;
+use crate::setting::Setting;
+use crate::store::housekeeping_report::SweepWork;
 use crate::store::housekeeping_schedule::Deadline;
+use serde::{Deserialize, Serialize};
 
 /// Who may arm a job.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -65,10 +86,75 @@ pub enum Late {
     Lapse { after_secs: u64 },
 }
 
+/// Where a job's trigger comes from.
+#[derive(Clone, Copy)]
+pub enum When {
+    /// The value in force of this cadence key, at the vault: the engine arms the job from it
+    /// ([`arm_setting_jobs`]) and re-arms it in the write that changes the key, whose
+    /// `on_change` is [`rearm_on_change`]. Only an engine job has one.
+    Setting(&'static Setting<Trigger>),
+    /// Each arming names its own trigger: a deadline, an actor's timer.
+    PerArming,
+}
+
+impl std::fmt::Debug for When {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Setting(key) => formatter
+                .debug_tuple("Setting")
+                .field(&key.spec.name)
+                .finish(),
+            Self::PerArming => formatter.write_str("PerArming"),
+        }
+    }
+}
+
+/// What a pass lends its runs.
+#[derive(Debug, Clone, Copy)]
+pub struct JobPass<'a> {
+    /// When the pass stops starting work; a run keeps within it.
+    pub deadline: &'a Deadline,
+    /// What the host's model offers hold; empty when the host lends none.
+    pub access: &'a AccessSnapshot,
+}
+
+/// What one run answers.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct JobResult {
+    pub ran: Ran,
+    /// For a run that ended done: due again no later than this, but never sooner than its first
+    /// retry after the run's end. A repeating job keeps its trigger and is due at the earlier of
+    /// this and its next occurrence (work it saw coming before then). A one-time job
+    /// ([`Trigger::At`]) stays armed, due then (work it is still owed); with no `due_by` it is
+    /// done and its row goes. Ignored for a run that did not end done.
+    pub due_by: Option<u64>,
+    /// A housekeeping sweep's account of its work, for the housekeeping report.
+    pub sweep_work: Option<SweepWork>,
+    /// The one-time rows a run that ended done served, each by its job's code and subject: the
+    /// write that records the run disarms them, so the run and what it covered commit together.
+    /// Ignored for a run that did not end done.
+    pub served: Vec<(&'static str, EntityId)>,
+}
+
+impl JobResult {
+    /// A run that answers `ran` and nothing else.
+    #[must_use]
+    pub const fn of(ran: Ran) -> Self {
+        Self {
+            ran,
+            due_by: None,
+            sweep_work: None,
+            served: Vec::new(),
+        }
+    }
+}
+
 /// One kind of job. Declared once, in code, beside its handler.
 pub struct JobSpec {
     /// Dotted lowercase ASCII, unique in the registry.
     pub code: &'static str,
+    /// Where its trigger comes from.
+    pub when: When,
     pub arm_by: ArmBy,
     pub late: Late,
     /// The first retry after a failure.
@@ -77,8 +163,26 @@ pub struct JobSpec {
     pub retry_cap_secs: Option<u64>,
     /// Whether a stopped vault is started for it.
     pub wakes_host: bool,
-    /// One run. It keeps within `deadline` and answers how far it got.
-    pub run: fn(&crate::Vault, &Armed, &Deadline) -> Result<Ran>,
+    /// Whether it also runs at the first pass of every handle, whatever its schedule says: work
+    /// a stopped process left durable must not wait a whole cadence after a restart. The host's
+    /// pass asks for it ([`request_runs`]).
+    pub at_open: bool,
+    /// Whether it starts at most once in a pass: a run that stopped at its bound goes on at the
+    /// next pass, not again in this one. The engine's sweeps take it, as they always ran: a
+    /// sweep with no cursor of its own may find the same items again, and the pass reports one
+    /// run of each.
+    pub once_per_pass: bool,
+    /// Whether this node runs its rows, read once per job code per pass: [`any_node`] for a job
+    /// every node runs. A node that does not run it steps over its rows, which stay due there
+    /// and never wake it; the node that runs them, the vault's elected home for a job only the
+    /// home runs, runs each when it is due, and once, late, at its first pass after an election
+    /// that names it. A read that fails runs none of its rows in that pass.
+    pub runs_here: fn(&crate::Vault, &heed::RoTxn<'_>) -> Result<bool>,
+    /// Who runs its due rows: the runner, or its host ([`Drive::Host`]).
+    pub drive: Drive,
+    /// One run. It keeps within the pass's deadline and answers how far it got. A job its host
+    /// drives has none: [`host_takes_its_rows`].
+    pub run: fn(&crate::Vault, &Armed, &JobPass<'_>) -> Result<JobResult>,
 }
 
 impl JobSpec {
@@ -93,12 +197,84 @@ impl JobSpec {
     }
 }
 
+/// Who runs a job's due rows.
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum Drive {
+    /// The schedule's runner, in a housekeeping pass or a host loop's door.
+    #[default]
+    Runner,
+    /// Its host, on its own loop: the host takes the job's due rows itself, and the runner never
+    /// runs one, so no work of it runs under the runner. Its rows wake a stopped vault as any
+    /// other's do; nothing records a run on them, so a row's last finish stays 0, and no "run
+    /// now" is asked of one. The runner's fields (late, retry, once a pass) do not apply.
+    Host,
+}
+
+/// [`JobSpec::run`] of a job its host drives ([`Drive::Host`]): the runner never starts a run of
+/// one, so this only refuses.
+///
+/// # Errors
+///
+/// Always `InvariantViolation`.
+pub(crate) fn host_takes_its_rows(
+    _vault: &crate::Vault,
+    _armed: &Armed,
+    _pass: &JobPass<'_>,
+) -> Result<JobResult> {
+    Err(crate::error::Error::InvariantViolation(
+        "the runner never runs a job its host drives",
+    ))
+}
+
+/// [`JobSpec::runs_here`] for a job every node runs: it reads nothing.
+#[allow(clippy::unnecessary_wraps)]
+pub(crate) fn any_node(_vault: &crate::Vault, _txn: &heed::RoTxn<'_>) -> Result<bool> {
+    Ok(true)
+}
+
 impl std::fmt::Debug for JobSpec {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
             .debug_struct("JobSpec")
             .field("code", &self.code)
             .finish_non_exhaustive()
+    }
+}
+
+/// The tighter direction of a cadence key ([`crate::setting::Kind::tighter`]): `a` is at least
+/// as tight as `b` when it runs at least as often and starts no later. Only two intervals
+/// compare: `a`'s is no longer than `b`'s, and `a`'s first time is no later than `b`'s
+/// ([`starts_no_later`]), so a holder cannot put a sweep off by a far first time. Any other pair
+/// is as tight only when equal, so a holder's wall-clock or one-time cadence stays inside the
+/// owner's row.
+#[must_use]
+pub(crate) fn more_often_is_tighter(a: &Trigger, b: &Trigger) -> bool {
+    match (a, b) {
+        (
+            Trigger::Every {
+                secs: a_secs,
+                first_at: a_first,
+            },
+            Trigger::Every {
+                secs: b_secs,
+                first_at: b_first,
+            },
+        ) => a_secs <= b_secs && starts_no_later(*a_first, *b_first),
+        _ => a == b,
+    }
+}
+
+/// Whether an interval's first time `a` comes no later than `b`. An absent first time is the
+/// arming's now, the earliest; a set one never counts as no later than an absent one, since the
+/// order compares values without a clock.
+fn starts_no_later(a: Option<u64>, b: Option<u64>) -> bool {
+    match (a, b) {
+        (None, _) => true,
+        (Some(_), None) => false,
+        (Some(a), Some(b)) => a <= b,
     }
 }
 
@@ -115,4 +291,7 @@ pub struct Armed {
     pub cursor: Option<Vec<u8>>,
     /// The actor that armed it; `None` for the owner and the engine.
     pub armed_by: Option<EntityId>,
+    /// Whether this run answers a "run now": one was asked for before it started, or before an
+    /// earlier run of the same work that did not run to its end.
+    pub requested: bool,
 }
