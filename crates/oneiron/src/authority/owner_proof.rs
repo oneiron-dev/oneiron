@@ -320,7 +320,7 @@ pub(super) fn human_bind_proved(
     !touches_a_person
         || participants
             .iter()
-            .any(|key| !state.passkey_limited(key) && owner_key_outside_cloud_custody(state, key))
+            .any(|key| owner_key_outside_cloud_custody(state, key))
 }
 
 /// Whether `key` is a live owner key on `state`'s roster that no cloud key
