@@ -210,6 +210,7 @@ impl Vault {
             &mut txn,
             authority,
             input,
+            EnrolledOwnerKeyKind::Device,
             root_key.clone(),
             &mut sign_enrolment,
         )?;
