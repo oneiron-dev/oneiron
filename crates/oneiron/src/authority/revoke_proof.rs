@@ -423,7 +423,7 @@ impl RevokeFacts {
         &mut self,
         lines: Option<&super::owner_key_line::OwnerKeyLines>,
         entries: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
-        ancestors: &BTreeMap<AuthorityEntryHash, BTreeSet<AuthorityEntryHash>>,
+        ancestors: &AncestorIndex,
     ) {
         let Some(lines) = lines else {
             return;

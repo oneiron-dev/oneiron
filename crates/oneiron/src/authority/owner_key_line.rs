@@ -98,7 +98,7 @@ impl ProvingEnrolments {
         &mut self,
         settled: &BTreeMap<AuthorityEntryHash, FoldState>,
         entries: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
-        ancestors: &BTreeMap<AuthorityEntryHash, BTreeSet<AuthorityEntryHash>>,
+        ancestors: &AncestorIndex,
         in_force: Option<&OwnerKeyLines>,
     ) -> Option<OwnerKeyLines> {
         let fell: Vec<AuthorityEntryHash> = self
@@ -125,7 +125,7 @@ impl ProvingEnrolments {
                 };
                 let key = &enrol.device.key;
                 super::owner_proof::gives_owner_proof(state, key).then(|| {
-                    let depth = ancestors.get(hash).map_or(0, BTreeSet::len);
+                    let depth = ancestors.get(hash).map_or(0, Ancestors::len);
                     (depth, *hash, key)
                 })
             })
@@ -152,7 +152,7 @@ impl ProvingEnrolments {
     fn lines(
         &self,
         entries: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
-        ancestors: &BTreeMap<AuthorityEntryHash, BTreeSet<AuthorityEntryHash>>,
+        ancestors: &AncestorIndex,
     ) -> Option<OwnerKeyLines> {
         if self.taken.is_empty() {
             return None;
@@ -220,7 +220,7 @@ impl OwnerKeyLines {
     pub(super) fn refuses_an_enrolment_of(
         &self,
         key: &AuthorityKey,
-        branch: &BTreeSet<AuthorityEntryHash>,
+        branch: Ancestors<'_>,
         entries: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
     ) -> bool {
         self.refused_enrolments.iter().any(|hash| {
