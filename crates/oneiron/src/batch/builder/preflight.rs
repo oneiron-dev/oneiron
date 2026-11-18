@@ -81,7 +81,7 @@ pub(super) fn preflight_gate_decisions_in_txn(
     }
     let policy = crate::gate::resolve_policy_manifest(store, &*wtxn)?;
     let default_facet = crate::claim::default_facet_in(store, &*wtxn)?;
-    let mut birth_facets = crate::batch::claim_candidate_apply::BatchBirthFacets::default();
+    let mut birth_facets = crate::batch::claim_candidate_apply::BatchBirthFacets::new(ops);
     for op in ops {
         // The gap-decay op gates ONE decision per selected instance rather
         // than one per op, so it runs its own loop and never collapses the
@@ -194,10 +194,11 @@ pub(super) fn preflight_gate_decisions_in_txn(
                 internal_lexical_query_hint,
                 ..
             } if !*internal_lexical_query_hint => {
-                // The facet the apply stores this candidate at: a re-put keeps
+                // The facet the apply builds this candidate at: a re-put keeps
                 // the birth facet of the claim it rewrites, a birth takes the
-                // vault default, both after this batch's earlier ops. The
-                // receipt then names the body the apply judges
+                // vault default unless the candidate stamps its own, both
+                // after this batch's earlier ops. The receipt then names the
+                // body the apply judges
                 // (PREFLIGHT-FACET-REPUT-REPLAY-MISMATCH,
                 // PREFLIGHT-SAME-BATCH-BIRTH-FACET).
                 let facet = birth_facets.birth_facet(store, &*wtxn, id)?;

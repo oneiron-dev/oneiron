@@ -171,7 +171,7 @@ pub(in crate::batch) fn check_staged_references(
 fn gated_claims(store: &Store, txn: &RoTxn<'_>, ops: &[BatchOp]) -> Result<Vec<GatedClaim>> {
     let mut claims = Vec::new();
     let mut default_facet = None;
-    let mut birth_facets = crate::batch::claim_candidate_apply::BatchBirthFacets::default();
+    let mut birth_facets = crate::batch::claim_candidate_apply::BatchBirthFacets::new(ops);
     for op in ops {
         match op {
             BatchOp::Put {

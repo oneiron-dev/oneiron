@@ -1,6 +1,6 @@
 use super::*;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use heed::RwTxn;
 
@@ -326,15 +326,49 @@ pub(crate) fn claim_candidate_birth_facet(
 /// births stamps the facet a later candidate of that id is stored at, and a
 /// delete leaves the id to the vault default. The pre-batch state shows
 /// neither. A write over a stored claim keeps its birth facet (apply refuses
-/// one that names another, `FacetStampImmutable`), so only births and
-/// deletes change the answer.
-#[derive(Default)]
+/// one that names another, `FacetStampImmutable`).
+///
+/// Only an id's own CLAIM births (raw put or candidate) and deletes are
+/// noted. Other writers of a birth facet are not: a birth of another entity
+/// type at the id, a FacetOf edge op, a lexical-hint or delete-cascade
+/// teardown, a gap-decay lapse birth. A later candidate of such an id is
+/// still judged over the pre-batch answer and, held, fails closed at the
+/// replay match, as before.
 pub(crate) struct BatchBirthFacets {
+    /// Ids two or more of the batch's ops write: only a later op on the same
+    /// id reads what an earlier one noted, so no other op is decoded again.
+    repeated: HashSet<EntityId>,
     /// Each id an earlier op wrote: `Some(facet)` born at it, `None` deleted.
     written: HashMap<EntityId, Option<EntityId>>,
 }
 
+/// The id `op` writes a CLAIM row at, or deletes.
+fn claim_write_id(op: &BatchOp) -> Option<&EntityId> {
+    match op {
+        BatchOp::Put {
+            id, entity_type, ..
+        } if *entity_type == crate::registry::ENTITY_TYPE_CLAIM => Some(id),
+        BatchOp::ClaimCandidate { id, .. } | BatchOp::Delete { id } => Some(id),
+        _ => None,
+    }
+}
+
 impl BatchBirthFacets {
+    /// The walk state for `ops`, before the first of them.
+    pub(crate) fn new(ops: &[BatchOp]) -> Self {
+        let mut once = HashSet::new();
+        let mut repeated = HashSet::new();
+        for id in ops.iter().filter_map(claim_write_id) {
+            if !once.insert(*id) {
+                repeated.insert(*id);
+            }
+        }
+        Self {
+            repeated,
+            written: HashMap::new(),
+        }
+    }
+
     /// The facet a candidate for `id` is stored at once the ops noted so far
     /// have applied.
     pub(crate) fn birth_facet(
@@ -359,6 +393,9 @@ impl BatchBirthFacets {
         txn: &heed::RoTxn<'_>,
         op: &BatchOp,
     ) -> Result<()> {
+        if !claim_write_id(op).is_some_and(|id| self.repeated.contains(id)) {
+            return Ok(());
+        }
         let (id, facet) = match op {
             BatchOp::Put {
                 id,
