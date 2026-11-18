@@ -30,7 +30,7 @@ use super::support::{
 };
 use super::types::{SelfAgentSpawnResult, SelfDispatchOutcome, SelfEffect};
 use crate::attempt_queue::AttemptId;
-use crate::batch::secret_scan::admitted_from_known;
+use crate::batch::secret_scan::{admitted_from_known, admitted_from_plan};
 use crate::store::known_value_index::KnownValues;
 use crate::team::SpawnErasure;
 use crate::{EntityId, Result};
@@ -66,9 +66,10 @@ impl ReplayRequestMatch {
 /// How a replay's compare reads the values base custody holds now (FIX
 /// REPLAY-COMPARE-KNOWN-MATCHER). The side-row wall gives a value custody
 /// holds its record's handle in a row whose scope decides with custody, a
-/// value no shape rule places too, so the call made again and that row are
-/// both planned with these values before they are compared: each such value
-/// meets only its own record's handle (FIX REPLAY-COMPARE-KNOWN-OTHER-CALLERS).
+/// value no shape rule places too, so that row is read against the call
+/// made again with these values, as a template: each handle it holds meets
+/// only a value of its own record, and every other byte only itself (FIX
+/// REPLAY-COMPARE-KNOWN-OTHER-CALLERS, FIX RECEIPT-RECORDS-CALL-HELD-INPUT).
 pub(crate) type BaseKnownRead<'a> = &'a dyn Fn() -> Result<Option<Arc<KnownValues>>>;
 
 /// One compare's base known values: read through its [`BaseKnownRead`] on
@@ -103,6 +104,23 @@ impl<'a> CompareKnown<'a> {
         };
         Ok(self.held.get_or_init(|| known).clone())
     }
+
+    /// Whether `held`, a live row the side-row wall stored, is what
+    /// admitting `offered` stored: with the values base custody holds where
+    /// a read is in reach ([`admitted_from_known`]), so a custody that knows
+    /// no value leaves the two to meet as written; with no read in reach,
+    /// each handle and each secret the plan places as the plan's one
+    /// stand-in ([`admitted_from_plan`]).
+    ///
+    /// # Errors
+    ///
+    /// A value the wall cannot read, or the read's own.
+    pub(crate) fn admits(&self, held: &Value, offered: &Value) -> Result<bool> {
+        match self.read {
+            Some(_) => admitted_from_known(held, offered, || self.get()),
+            None => admitted_from_plan(held, offered),
+        }
+    }
 }
 
 /// `stored`, the request a row of `effect` recorded, against `offered`, the
@@ -127,7 +145,7 @@ pub(super) fn replay_request_match(
     if let Some(erased) = ErasedRequest::of(stored) {
         return erased.meets_known(offered, &known);
     }
-    if stored == offered || admitted_from_known(stored, offered, || known.get())? {
+    if stored == offered || known.admits(stored, offered)? {
         return Ok(ReplayRequestMatch::Hit);
     }
     if effect == SelfEffect::AgentsSpawn {
@@ -154,7 +172,7 @@ fn spawn_match(
     let (Some(stored), Some(offered)) = (without_intent(stored), without_intent(offered)) else {
         return Ok(ReplayRequestMatch::Drift);
     };
-    let missed = stored == offered || admitted_from_known(&stored, &offered, || known.get())?;
+    let missed = stored == offered || known.admits(&stored, &offered)?;
     Ok(if missed {
         ReplayRequestMatch::SpawnMiss
     } else {
@@ -193,7 +211,7 @@ fn erased_hit(stored: &Value, offered: &Value, known: &CompareKnown<'_>) -> Resu
         return Ok(false);
     }
     let (stored, offered) = (without_ask(stored), without_ask(offered));
-    Ok(stored == offered || admitted_from_known(&stored, &offered, || known.get())?)
+    Ok(stored == offered || known.admits(&stored, &offered)?)
 }
 
 /// The content-free marker of an undispatched spawn barrier: no call ran,
@@ -218,7 +236,7 @@ fn barrier_hit(stored: &Value, offered: &Value, known: &CompareKnown<'_>) -> Res
         return Ok(false);
     }
     let (stored, offered) = (without_ask(stored), without_ask(offered));
-    Ok(stored == offered || admitted_from_known(&stored, &offered, || known.get())?)
+    Ok(stored == offered || known.admits(&stored, &offered)?)
 }
 
 /// The ask a spawn request's fields hold, when they hold the key.
