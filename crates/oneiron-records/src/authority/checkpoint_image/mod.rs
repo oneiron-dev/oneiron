@@ -91,7 +91,11 @@ use serde::Serialize;
 /// proving for the owner when its log is folded as hosted (row
 /// HOSTED-REOPEN-REJUDGES-SELF-HOST-ROOT); a custodial carry takes an act-free owner's answer
 /// whose signer the roster no longer holds on as unanswered.
-pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 48;
+/// 49: an enrolment of the owner's passkey (P-256), and of an Ed25519 owner key only a passkey
+/// vouched for, draws the line too: an enrolment of its key outside that line is refused, and a
+/// revocation proved through one ends nothing; only a proving enrolment's line makes a row wait
+/// for the owner's proof (row PASSKEY-OWNER-KEY-DRAWS-NO-LINE).
+pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 49;
 
 /// The domain every encoded image starts with.
 pub const AUTHORITY_CHECKPOINT_V2_DOMAIN: &[u8] = b"oneiron/authority/checkpoint/v2";

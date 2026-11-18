@@ -1,4 +1,5 @@
 //! Host-root bootstrap and atomic authority-log capability issuance.
+use super::owner_proof::OwnerProofSigner;
 use super::*;
 use crate::Vault;
 use crate::error::Result;
@@ -758,13 +759,15 @@ impl Vault {
     /// [`Self::append_hashed_slip_op_in_txn`] with an owner key's proof
     /// beside the host root's signature (row HOSTED-ROOT-REVOKES-OWNER-KEY):
     /// `proof` cosigns the entry ([`next_entry_with_owner_proof`]). The fold
-    /// must count it, as for any slip op; answers the entry's hash.
+    /// must count it, as for any slip op; answers the entry's hash. A proof
+    /// key that stopped since it was picked signs nothing, and the append
+    /// fails with its refusal ([`OwnerProofSigner::sign`]).
     pub(super) fn append_hashed_slip_op_with_owner_proof_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         issuer: &HostSlipIssuer,
         op: AuthorityOp,
-        proof: &dyn CheckpointRootSigner,
+        proof: &OwnerProofSigner<'_>,
     ) -> Result<AuthorityEntryHash> {
         self.prepare_hashed_slip_op_in_txn(txn, issuer, op, Some(proof))?
             .apply(self, txn)
@@ -785,7 +788,7 @@ impl Vault {
         txn: &mut heed::RwTxn<'_>,
         issuer: &HostSlipIssuer,
         op: AuthorityOp,
-        proof: Option<&dyn CheckpointRootSigner>,
+        proof: Option<&OwnerProofSigner<'_>>,
     ) -> Result<PreparedHashedSlipOp> {
         let fold = self.authority_view_readonly_in_txn(txn)?;
         require_host(&fold, issuer)?;
@@ -817,21 +820,23 @@ impl Vault {
 /// signature (row HOSTED-ROOT-REVOKES-OWNER-KEY): the proof key's slot is in
 /// the entry before either key signs, so both sign the one transcript, in
 /// the order of [`super::world_key_support::sign_side_entry_with_owner_proof`].
+/// The proof key signs on `fold`, the view the entry is built on: a key that
+/// no longer proves there (row OCS-OWNER-PIN) refuses, and no entry is made.
 pub(super) fn next_entry_with_owner_proof(
     issuer: &HostSlipIssuer,
     fold: &AuthorityFold,
     op: AuthorityOp,
     now: u64,
-    proof: &dyn CheckpointRootSigner,
+    proof: &OwnerProofSigner<'_>,
 ) -> Result<AuthorityLogEntry> {
     let mut entry = next_entry(issuer, fold, op, now)?;
-    let proof_key = proof.root();
+    let proof_key = proof.key();
     entry.cosigns.push(AuthoritySignature {
         suite: proof_key.suite(),
         public_key: proof_key,
         signature: vec![0; 64],
     });
-    let proved = proof.sign_owner_proof(&authority_transcript(&entry)?)?;
+    let proved = proof.sign(fold, &authority_transcript(&entry)?)?;
     if let Some(cosign) = entry.cosigns.last_mut() {
         cosign.signature = proved;
     }
@@ -934,7 +939,7 @@ impl Vault {
             return Ok(());
         };
         let now = self.now_recorded_at();
-        let bind = next_entry_with_owner_proof(issuer, &fold, op, now, proof.as_ref())?;
+        let bind = next_entry_with_owner_proof(issuer, &fold, op, now, &proof)?;
         let at = TimeRange {
             start: now,
             end: now,
