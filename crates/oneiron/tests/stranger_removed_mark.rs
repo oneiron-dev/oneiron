@@ -28,11 +28,11 @@ use std::sync::Arc;
 
 use ed25519_dalek::{Signer, SigningKey};
 use oneiron::authority::{
-    AUTHORITY_LOG_SCHEMA_VERSION, ActAuthority, ActSurface, AuthorityEntryHash, AuthorityKey,
-    AuthorityLogEntry, AuthorityOp, AuthoritySignature, AuthorityVaultId, HostSlipIssuer,
-    MACHINE_ENCRYPTION_KEY_LEN, MACHINE_ENCRYPTION_SUITE_HYBRID_V1, MachineDeviceClass,
-    MachineEncryptionKey, MachineEnrolmentRequest, MachineOwnership, MachineProfile, MachineRole,
-    OwnerRootRecord, authority_entry_hash, authority_log_entity_id, authority_transcript,
+    AUTHORITY_LOG_SCHEMA_VERSION, ActSurface, AuthorityEntryHash, AuthorityKey, AuthorityLogEntry,
+    AuthorityOp, AuthoritySignature, AuthorityVaultId, MACHINE_ENCRYPTION_KEY_LEN,
+    MACHINE_ENCRYPTION_SUITE_HYBRID_V1, MachineDeviceClass, MachineEncryptionKey,
+    MachineEnrolmentRequest, MachineOwnership, MachineProfile, MachineRole, OwnerRootRecord,
+    authority_entry_hash, authority_log_entity_id, authority_transcript,
     encode_authority_log_entry_body, machine_profile_proof_transcript,
 };
 use oneiron::consent::AuthenticatedOwner;
@@ -101,12 +101,10 @@ fn stranger_owner() -> EntityId {
 }
 
 /// A self-host vault as its own server starts one: this install serving and
-/// profiled under the host root, the owner bound and authenticated, and this
-/// install's owner signing key enrolled. It pins no root, so a machine stands
-/// under the roster's head alone.
+/// profiled under the host root, and the owner bound and authenticated. It
+/// pins no root, so a machine stands under the roster's head alone.
 struct ServedVault {
     vault: Vault,
-    issuer: HostSlipIssuer,
     owner: AuthenticatedOwner,
     _dir: tempfile::TempDir,
 }
@@ -128,20 +126,11 @@ impl ServedVault {
         let owner = vault
             .authenticate_owner(person, &person.to_hex(), true, GateDecisionId::now())
             .expect("the owner's proof");
-        let served = Self {
+        Self {
             vault,
-            issuer,
             owner,
             _dir: dir,
-        };
-        served
-            .vault
-            .enrol_device_owner_signing_key(
-                &ActAuthority::Owner(served.owner.clone(), ActSurface::ThisInstall),
-                &served.issuer,
-            )
-            .expect("the owner enrols this install's owner signing key");
-        served
+        }
     }
 
     fn vault_id(&self) -> AuthorityVaultId {
