@@ -2,6 +2,7 @@
 //! Builds a deterministic linked corpus, then times the `ppr_search_walk`/`ppr_expand_walk` spans.
 
 use std::collections::HashMap;
+use std::io::Write as _;
 use std::process::ExitCode;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -332,6 +333,7 @@ fn build_corpus(
             conversation_ref: gen_id(rng).to_hex(),
             turn_ref: Some(gen_id(rng).to_hex()),
             thread_audience: None,
+            project: None,
             messages: vec![WitnessMessage {
                 id: Some(gen_id(rng).to_hex()),
                 author: WitnessAuthor::User,
@@ -582,21 +584,24 @@ pub(crate) fn run(args: &[String]) -> ExitCode {
     let settings = match parse_args(args) {
         Ok(settings) => settings,
         Err(WalkShareError::Help) => {
-            println!("{USAGE}");
+            let _ = writeln!(std::io::stdout().lock(), "{USAGE}");
             return ExitCode::SUCCESS;
         }
         Err(error @ WalkShareError::Argument(_)) => {
-            eprintln!("ppr-walk-share: {error}\n{USAGE}");
+            let _ = writeln!(std::io::stderr().lock(), "ppr-walk-share: {error}\n{USAGE}");
             return ExitCode::from(2);
         }
         Err(error) => {
-            eprintln!("ppr-walk-share: {error}");
+            let _ = writeln!(std::io::stderr().lock(), "ppr-walk-share: {error}");
             return ExitCode::FAILURE;
         }
     };
     let timer = WalkTimer::new();
     if let Err(error) = tracing::subscriber::set_global_default(timer.clone()) {
-        eprintln!("ppr-walk-share: cannot install the walk timer: {error:?}");
+        let _ = writeln!(
+            std::io::stderr().lock(),
+            "ppr-walk-share: cannot install the walk timer: {error:?}"
+        );
         return ExitCode::FAILURE;
     }
     let outcome = match &settings.out {
@@ -607,11 +612,15 @@ pub(crate) fn run(args: &[String]) -> ExitCode {
     };
     match outcome {
         Ok(rows) => {
-            eprintln!("ppr-walk-share: {} timed recalls", rows.len());
+            let _ = writeln!(
+                std::io::stderr().lock(),
+                "ppr-walk-share: {} timed recalls",
+                rows.len()
+            );
             ExitCode::SUCCESS
         }
         Err(error) => {
-            eprintln!("ppr-walk-share: {error}");
+            let _ = writeln!(std::io::stderr().lock(), "ppr-walk-share: {error}");
             ExitCode::FAILURE
         }
     }
