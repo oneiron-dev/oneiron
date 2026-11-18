@@ -23,6 +23,7 @@ use oneiron::authority::{
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::store::GateDecisionId;
 use oneiron::test_doors::restored_enrolment::file_restored_enrolment;
+use oneiron::test_support::test_host_issuer;
 use oneiron::{EntityId, Vault, VaultConfig};
 
 const YOURS: MachineRole = MachineRole::Owned(MachineOwnership::Yours);
@@ -48,6 +49,9 @@ fn rooted_host() -> Host {
         .expect("the host install profile");
     let owner = vault.ensure_embedded_owner_actor().expect("the owner");
     oneiron::test_support::bind_host_owner(&vault, &issuer, owner).expect("the owner binding");
+    // The host holds the vault's root as its owner key, as a serving host
+    // does, so its "yours" answers are proved (row CARRIER-OWNER-PROOF).
+    vault.hold_checkpoint_root_signer(Arc::new(test_host_issuer()));
     let proof = vault
         .authenticate_owner(owner, &owner.to_hex(), true, GateDecisionId::now())
         .expect("an owner proof");
@@ -98,6 +102,9 @@ fn copies_of_one_image(host: &Host, backups: &Path, names: &[&str]) -> Vec<Copy>
             )
             .expect("FIXTURE: a copy of the image");
             vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
+            // Each copy holds the root seed it was restored with, as the
+            // owner key that proves his "yours" answers once it has joined.
+            vault.hold_checkpoint_root_signer(Arc::new(test_host_issuer()));
             let owner = vault
                 .ensure_embedded_owner_actor()
                 .expect("FIXTURE: the owner on the copy");
@@ -122,7 +129,8 @@ fn copies_of_one_image(host: &Host, backups: &Path, names: &[&str]) -> Vec<Copy>
 /// A fresh install asking to join `vault_id`: never restored.
 fn fresh_install(vault_id: [u8; 32]) -> (tempfile::TempDir, MachineEnrolmentRequest) {
     let dir = tempfile::tempdir().expect("tempdir");
-    let install = Vault::open(dir.path(), VaultConfig::default()).expect("FIXTURE: a fresh install");
+    let install =
+        Vault::open(dir.path(), VaultConfig::default()).expect("FIXTURE: a fresh install");
     install.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
     let key = install
         .machine_encryption_key(vault_id)
@@ -194,7 +202,13 @@ fn two_copies_of_one_image_never_join_each_other() {
 
     // A joined machine pairs one copy; that copy, joined, carries for the other.
     host.vault
-        .enroll_machine(&host.proof, ActSurface::ThisInstall, &a.request, YOURS, None)
+        .enroll_machine(
+            &host.proof,
+            ActSurface::ThisInstall,
+            &a.request,
+            YOURS,
+            None,
+        )
         .expect("the host, a joined machine, pairs copy a");
     assert!(stands(&host.vault, a.request.machine), "copy a joined");
     sync_authority(&host.vault, &a.vault);
@@ -205,7 +219,10 @@ fn two_copies_of_one_image_never_join_each_other() {
     a.vault
         .enroll_machine(&a.proof, ActSurface::ThisInstall, &b.request, YOURS, None)
         .expect("copy a, joined, pairs copy b");
-    assert!(stands(&a.vault, b.request.machine), "copy b joined through a");
+    assert!(
+        stands(&a.vault, b.request.machine),
+        "copy b joined through a"
+    );
 }
 
 #[test]
@@ -263,7 +280,10 @@ fn a_root_signed_enrolment_joins_only_through_a_joined_machines_entry() {
 
     // Copy a reads the join, and stands as any machine does.
     sync_authority(&host.vault, &a.vault);
-    assert!(stands(&a.vault, a.request.machine), "copy a reads itself joined");
+    assert!(
+        stands(&a.vault, a.request.machine),
+        "copy a reads itself joined"
+    );
     a.vault
         .ensure_serving_install_profile(&host.issuer, MachineRole::Unanswered)
         .expect("a joined copy's profile stands");
