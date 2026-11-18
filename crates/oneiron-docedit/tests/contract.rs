@@ -1,6 +1,11 @@
-// Contract handler runs, envelope refusals and schema-shape pins cover the public
-// boundary used by a hosted caller outside this repository. No existing test
-// exercises that boundary. FIX [DOCEDIT-CONTRACT-RUN-BY-NO-TEST]
+// The contract a hosted caller outside this repository uses, which no other
+// test here calls: one run of each op through `execute_json`, the envelope's
+// refusals, and the shape of the discovery document and of the generated call
+// and reply schemas, pinned to the schema number. The pin does not hold the
+// grammar behind a field the schema types as any JSON (the DOCX and deck
+// transactions, the deck report and marks), nor the bytes of an input.
+// FIX [DOCEDIT-CONTRACT-RUN-BY-NO-TEST]
+// From a checkout of the whole repository (the Office fixtures are under scripts/office):
 // cargo test --locked -p oneiron-docedit --all-features --test contract
 
 use std::cell::RefCell;
@@ -33,6 +38,10 @@ const OP_NAMES: [&str; 14] = [
     "pptx.comments.inspect",
 ];
 const REVISION_DATE: &str = "2026-10-01T00:00:00Z";
+const WORDPROCESSING_ML: &str = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+const SPREADSHEET_ML: &str = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
+const PRESENTATION_ML: &str = "http://schemas.openxmlformats.org/presentationml/2006/main";
+const DRAWING_ML: &str = "http://schemas.openxmlformats.org/drawingml/2006/main";
 /// The one paragraph of [`document`].
 const PARAGRAPH: &str = "This is a test now foo bar baz";
 
@@ -98,10 +107,7 @@ fn package_limits() -> Value {
 }
 
 fn call_text(name: &str, args: Value) -> String {
-    assert!(
-        OP_NAMES.contains(&name),
-        "add a run for op {name} to OP_NAMES"
-    );
+    assert!(OP_NAMES.contains(&name), "{name} is not in OP_NAMES");
     let text = json!({"schema": CONTRACT_SCHEMA, "op": name, "args": args}).to_string();
     let call: Call =
         serde_json::from_str(&text).unwrap_or_else(|error| panic!("parse {name} call: {error}"));
@@ -167,13 +173,36 @@ fn assert_error(result: Result<Done, ContractError>, code: ErrorCode) {
     let error = result.expect_err("call must refuse");
     assert_eq!(error.code, code, "{error}");
     assert!(
-        error.detail.len() <= MAX_DETAIL_BYTES,
-        "detail is too long: {error}"
+        (1..=MAX_DETAIL_BYTES).contains(&error.detail.len()),
+        "the detail is empty or too long: {error:?}"
     );
 }
 
+fn xml_part(bytes: &[u8], name: &str) -> String {
+    String::from_utf8(zip_part(bytes, name)).unwrap_or_else(|error| panic!("part {name}: {error}"))
+}
+
+/// The DOCX holds `text` as one tracked insertion under the test's author and
+/// revision date.
+fn assert_tracked_insertion(bytes: &[u8], text: &str) {
+    let xml = xml_part(bytes, "word/document.xml");
+    let tree = roxmltree::Document::parse(&xml).expect("document XML");
+    let inserted = tree.descendants().any(|node| {
+        node.has_tag_name((WORDPROCESSING_ML, "ins"))
+            && node.attribute((WORDPROCESSING_ML, "author")) == Some("Editor")
+            && node.attribute((WORDPROCESSING_ML, "date")) == Some(REVISION_DATE)
+            && node
+                .descendants()
+                .filter(|child| child.has_tag_name((WORDPROCESSING_ML, "t")))
+                .map(|child| child.text().unwrap_or_default())
+                .collect::<String>()
+                == text
+    });
+    assert!(inserted, "no tracked insertion of {text:?}: {xml}");
+}
+
 #[test]
-fn described_ops_have_runs() {
+fn described_ops_are_the_names_run_here() {
     let description = contract::describe();
     for name in OP_NAMES {
         assert!(
@@ -184,7 +213,7 @@ fn described_ops_have_runs() {
     for op in &description.ops {
         assert!(
             OP_NAMES.contains(&op.name.as_str()),
-            "add a run for op {} to OP_NAMES",
+            "describe names an op with no run here: {}",
             op.name
         );
     }
@@ -196,6 +225,7 @@ fn contract_describe() {
     let done = run("contract.describe", Value::Null, &[]);
     match &done.reply {
         Reply::Described(description) => {
+            assert_eq!(description, &contract::describe());
             assert_eq!(description.schema, CONTRACT_SCHEMA);
             assert_eq!(description.ops.len(), 14);
             let recalc = description
@@ -219,7 +249,8 @@ fn contract_describe() {
 fn docx_read() {
     let bytes = document();
     let blocks = read_document(&bytes);
-    assert!(blocks.iter().any(|block| block.text == PARAGRAPH));
+    let texts: Vec<_> = blocks.iter().map(|block| block.text.as_str()).collect();
+    assert_eq!(texts, [PARAGRAPH]);
 }
 
 #[test]
@@ -254,6 +285,7 @@ fn docx_revise() {
             .iter()
             .any(|block| block.text.contains("PARAGRAPH-AS-REVISED"))
     );
+    assert_tracked_insertion(changed, "PARAGRAPH-AS-REVISED");
 }
 
 #[test]
@@ -276,6 +308,15 @@ fn docx_validate() {
     assert_error(
         contract::execute_json(text.as_bytes(), &[b"not a package"], Ports::default()),
         ErrorCode::InvalidDocument,
+    );
+    // A transaction, when given, is checked against the writer's grammar.
+    let text = call_text(
+        "docx.validate",
+        json!({"document": 0, "limits": docx_limits(), "transaction": {"ops": "none"}}),
+    );
+    assert_error(
+        contract::execute_json(text.as_bytes(), &[&bytes], Ports::default()),
+        ErrorCode::BadRequest,
     );
 }
 
@@ -305,17 +346,14 @@ fn docx_project() {
             .iter()
             .any(|block| block.text.contains("PARAGRAPH-AS-CHANGED"))
     );
+    assert_tracked_insertion(changed, "PARAGRAPH-AS-CHANGED");
 }
 
 #[test]
 fn xlsx_read() {
-    let bytes = workbook();
-    assert_workbook_cell(
-        &read_workbook(&bytes),
-        6,
-        XlsxValue::Number(5.0),
-        Some("ABS(5)"),
-    );
+    let book = read_workbook(&workbook());
+    assert_workbook_cell(&book, 6, XlsxValue::Number(5.0), Some("ABS(5)"));
+    assert_workbook_cell(&book, 26, XlsxValue::Number(3333.0), Some("1111+2222"));
 }
 
 #[test]
@@ -334,12 +372,9 @@ fn xlsx_project() {
         reply => panic!("expected XlsxProjected: {reply:?}"),
     }
     let changed = output(&done, "workbook", contract::XLSX_MEDIA_TYPE);
-    assert_workbook_cell(
-        &read_workbook(changed),
-        1,
-        XlsxValue::Text("Projected cell".to_owned()),
-        None,
-    );
+    let book = read_workbook(changed);
+    assert_workbook_cell(&book, 1, XlsxValue::Text("Projected cell".to_owned()), None);
+    assert_workbook_cell(&book, 6, XlsxValue::Number(5.0), Some("ABS(5)"));
 }
 
 #[test]
@@ -361,45 +396,52 @@ fn xlsx_mark_full_calc() {
         XlsxValue::Number(5.0),
         Some("ABS(5)"),
     );
-    let xml = String::from_utf8(zip_part(changed, "xl/workbook.xml")).expect("workbook XML text");
+    let xml = xml_part(changed, "xl/workbook.xml");
     let tree = roxmltree::Document::parse(&xml).expect("workbook XML");
-    let calc = tree
+    let settings: Vec<_> = tree
         .descendants()
-        .find(|node| {
-            node.has_tag_name((
-                "http://schemas.openxmlformats.org/spreadsheetml/2006/main",
-                "calcPr",
-            ))
-        })
-        .expect("calculation settings");
+        .filter(|node| node.has_tag_name((SPREADSHEET_ML, "calcPr")))
+        .collect();
+    let [calc] = settings.as_slice() else {
+        panic!("expected one calcPr: {settings:?}");
+    };
     assert_eq!(calc.attribute("fullCalcOnLoad"), Some("1"));
 }
 
 #[derive(Debug, PartialEq, Eq)]
 struct RecalcRequest {
     workbook: Vec<u8>,
+    /// Archive, part and expanded bytes.
+    limits: (usize, usize, usize),
     clock: RecalcClockArgs,
+    location: Option<contract::DocumentLocationArgs>,
 }
 
 struct FixedRecalc {
     requests: RefCell<Vec<RecalcRequest>>,
-    bytes: Vec<u8>,
+    answer: Result<Vec<u8>, ContractError>,
 }
 
 impl RecalcPort for FixedRecalc {
     fn recalculate(
         &self,
         workbook: &[u8],
-        _limits: Limits,
+        limits: Limits,
         clock: &RecalcClockArgs,
-        _location: Option<&contract::DocumentLocationArgs>,
+        location: Option<&contract::DocumentLocationArgs>,
     ) -> Result<Recalculated, ContractError> {
         self.requests.borrow_mut().push(RecalcRequest {
             workbook: workbook.to_vec(),
+            limits: (
+                limits.archive_bytes,
+                limits.part_bytes,
+                limits.expanded_bytes,
+            ),
             clock: *clock,
+            location: location.cloned(),
         });
         Ok(Recalculated {
-            bytes: self.bytes.clone(),
+            bytes: self.answer.clone()?,
             engine: "fixed-recalc".to_owned(),
             version: "1.2.3".to_owned(),
             formula_count: 7,
@@ -409,7 +451,8 @@ impl RecalcPort for FixedRecalc {
 
 fn recalc_args() -> Value {
     json!({"workbook": 0, "limits": package_limits(),
-        "clock": {"now_ms": 1_700_000_000_000_i64, "utc_offset_minutes": 60, "seed": 23}})
+        "clock": {"now_ms": 1_700_000_000_000_i64, "utc_offset_minutes": 60, "seed": 23},
+        "location": {"directory": "/Reports/", "file_name": "Fixture.xlsx"}})
 }
 
 #[test]
@@ -421,7 +464,7 @@ fn xlsx_recalc() {
     );
     let port = FixedRecalc {
         requests: RefCell::new(Vec::new()),
-        bytes: returned.clone(),
+        answer: Ok(returned.clone()),
     };
     let text = call_text("xlsx.recalc", recalc_args());
     let done = contract::execute_json(
@@ -457,13 +500,42 @@ fn xlsx_recalc() {
         *port.requests.borrow(),
         vec![RecalcRequest {
             workbook: bytes,
+            limits: (33_554_432, 16_777_216, 67_108_864),
             clock: RecalcClockArgs {
                 now_ms: 1_700_000_000_000,
                 utc_offset_minutes: 60,
                 seed: 23
-            }
+            },
+            location: Some(contract::DocumentLocationArgs {
+                directory: "/Reports/".to_owned(),
+                file_name: "Fixture.xlsx".to_owned(),
+            }),
         }]
     );
+}
+
+#[test]
+fn xlsx_recalc_answers_the_ports_refusal() {
+    let bytes = workbook();
+    let refusal = ContractError::new(
+        ErrorCode::NeedsFallback,
+        "the fixed port refuses this workbook",
+    );
+    let port = FixedRecalc {
+        requests: RefCell::new(Vec::new()),
+        answer: Err(refusal.clone()),
+    };
+    let text = call_text("xlsx.recalc", recalc_args());
+    let error = contract::execute_json(
+        text.as_bytes(),
+        &[&bytes],
+        Ports {
+            recalc: Some(&port),
+            ..Ports::default()
+        },
+    )
+    .expect_err("the port refused");
+    assert_eq!(error, refusal);
 }
 
 #[test]
@@ -503,11 +575,14 @@ fn deck_read() {
     let deck = read_deck(&bytes);
     assert_eq!(deck.slides.len(), 1);
     assert_eq!(deck.slides[0].sld_id, 256);
-    assert!(
-        deck.slides[0]
-            .shapes
-            .iter()
-            .any(|shape| shape.paragraphs == ["ONE-2531 clean oracle fixture"])
+    assert_eq!(deck.slides[0].part, "ppt/slides/slide1.xml");
+    assert!(deck.slides[0].shapes.iter().any(|shape| {
+        shape.id == Some(2) && shape.paragraphs == ["ONE-2531 clean oracle fixture"]
+    }));
+    // A transaction's `marks` seed: the largest slide id and shape id there.
+    assert_eq!(
+        deck.marks,
+        json!({"slide": 256, "shapes": {"ppt/slides/slide1.xml": 2}})
     );
 }
 
@@ -523,11 +598,17 @@ fn deck_transaction() {
         }),
         &[&bytes],
     );
+    let changed = output(&done, "deck", contract::PPTX_MEDIA_TYPE);
     match &done.reply {
-        Reply::DeckTransaction { report } => assert_eq!(report["steps"][0]["verb"], "add_shape"),
+        Reply::DeckTransaction { report } => {
+            assert_eq!(report["steps"][0]["verb"], "add_shape");
+            assert_eq!(
+                report["candidate"],
+                blake3::hash(changed).to_hex().to_string()
+            );
+        }
         reply => panic!("expected DeckTransaction: {reply:?}"),
     }
-    let changed = output(&done, "deck", contract::PPTX_MEDIA_TYPE);
     let deck = read_deck(changed);
     let marker = deck.slides[0]
         .shapes
@@ -536,6 +617,21 @@ fn deck_transaction() {
         .expect("added shape");
     assert_eq!(marker.top_left, Some((500_000, 600_000)));
     assert_eq!(marker.extent, Some((300_000, 200_000)));
+    let xml = xml_part(changed, "ppt/slides/slide1.xml");
+    let tree = roxmltree::Document::parse(&xml).expect("slide XML");
+    let shape = tree
+        .descendants()
+        .filter(|node| node.has_tag_name((PRESENTATION_ML, "sp")))
+        .find(|shape| {
+            shape.descendants().any(|node| {
+                node.has_tag_name((PRESENTATION_ML, "cNvPr"))
+                    && node.attribute("name") == Some("Contract marker")
+            })
+        })
+        .expect("the added shape's XML");
+    assert!(shape.descendants().any(|node| {
+        node.has_tag_name((DRAWING_ML, "prstGeom")) && node.attribute("prst") == Some("rect")
+    }));
 }
 
 #[test]
@@ -555,12 +651,14 @@ fn pptx_comments_inspect() {
             assert_eq!(slides.len(), 1);
             assert_eq!(slides[0].sld_id, 256);
             assert_eq!(slides[0].part, "ppt/slides/slide1.xml");
+            assert_eq!(slides[0].creation_id, None, "an inspection mints no id");
             assert!(slides[0].shapes.iter().any(|shape| shape.shape_id == 2));
             assert!(signature_parts.is_empty());
             assert!(unknown_anchor_threads.is_empty());
         }
         reply => panic!("expected PptxCommentsInspected: {reply:?}"),
     }
+    assert!(done.outputs.is_empty());
 }
 
 #[test]
@@ -585,28 +683,36 @@ fn deck_create() {
     assert_eq!(created.slides.len(), 1);
     assert_eq!(created.slides[0].page, "main");
     let deck = read_deck(changed);
-    assert!(
-        deck.slides
-            .iter()
-            .flat_map(|slide| &slide.shapes)
-            .flat_map(|shape| &shape.paragraphs)
-            .any(|text| text.contains("Fourth-quarter"))
-    );
+    let paragraphs: Vec<_> = deck
+        .slides
+        .iter()
+        .flat_map(|slide| &slide.shapes)
+        .flat_map(|shape| &shape.paragraphs)
+        .collect();
+    for block in [
+        "Fourth-quarter",
+        "Spending stayed within the approved limit.",
+    ] {
+        assert!(
+            paragraphs.iter().any(|text| text.contains(block)),
+            "the deck lacks the brief's block {block:?}: {paragraphs:?}"
+        );
+    }
 }
 
 #[test]
 fn pptx_comments() {
     let bytes = office_file("fixtures/clean.pptx");
     let thread_id = "5a0e1c3b-7d2f-4e8a-9b61-0c4d3e2f1a10";
-    let done = run(
-        "pptx.comments",
-        json!({"deck": 0, "seed": 7, "limits": comment_limits(),
+    let args = |seed: u64, slide_creation_ids: Value| {
+        json!({"deck": 0, "seed": seed, "limits": comment_limits(),
+            "slide_creation_ids": slide_creation_ids,
             "edits": [{"author": {"guid": "5a0e1c3b-7d2f-4e8a-9b61-0c4d3e2f1a11", "name": "Editor"},
                 "thread_id": thread_id, "comment_id": thread_id, "at": 1_700_000_000_000_u64,
                 "action": {"add": {"target": {"slide": 1}, "text": "Contract comment"}}}]
-        }),
-        &[&bytes],
-    );
+        })
+    };
+    let done = run("pptx.comments", args(7, Value::Null), &[&bytes]);
     let (minted, comment_part) = match &done.reply {
         Reply::PptxComments {
             slide_creation_ids,
@@ -640,11 +746,21 @@ fn pptx_comments() {
         }
         reply => panic!("expected PptxCommentsInspected: {reply:?}"),
     }
-    let xml = String::from_utf8(zip_part(changed, comment_part)).expect("comment XML text");
+    let xml = xml_part(changed, comment_part);
     let tree = roxmltree::Document::parse(&xml).expect("comment XML");
     assert!(
         tree.descendants()
             .any(|node| node.is_text() && node.text() == Some("Contract comment"))
+    );
+    // The minted id, replayed under another seed, writes the same bytes again.
+    let replayed = run(
+        "pptx.comments",
+        args(8, json!([{"slide": 1, "creation_id": minted}])),
+        &[&bytes],
+    );
+    assert!(
+        replayed.outputs == done.outputs,
+        "a replay of the minted slide creation id wrote other bytes"
     );
 }
 
@@ -658,7 +774,14 @@ fn invalid_json_is_bad_request() {
 
 #[test]
 fn missing_numeric_schema_is_bad_request() {
-    for value in [json!({}), json!({"schema": "5"}), json!({"schema": null})] {
+    for value in [
+        json!([]),
+        json!({}),
+        json!({"schema": "5"}),
+        json!({"schema": null}),
+        json!({"schema": -1}),
+        json!({"schema": 5.5}),
+    ] {
         assert_error(
             contract::execute_json(value.to_string().as_bytes(), &[], Ports::default()),
             ErrorCode::BadRequest,
@@ -668,7 +791,8 @@ fn missing_numeric_schema_is_bad_request() {
 
 #[test]
 fn other_json_schemas_refuse_before_reading_op() {
-    for schema in [CONTRACT_SCHEMA - 1, CONTRACT_SCHEMA + 1] {
+    let served = u64::from(CONTRACT_SCHEMA);
+    for schema in [served - 1, served + 1, u64::from(u32::MAX) + 1] {
         let text = json!({"schema": schema, "op": "unknown.op", "args": {}}).to_string();
         assert_error(
             contract::execute_json(text.as_bytes(), &[], Ports::default()),
@@ -685,6 +809,30 @@ fn unknown_op_is_bad_request() {
         contract::execute_json(text.as_bytes(), &[], Ports::default()),
         ErrorCode::BadRequest,
     );
+}
+
+#[test]
+fn a_call_the_op_table_cannot_read_is_bad_request() {
+    let bytes = workbook();
+    let limits = package_limits();
+    for call in [
+        json!({"schema": CONTRACT_SCHEMA}),
+        json!({"schema": CONTRACT_SCHEMA, "op": null}),
+        json!({"schema": CONTRACT_SCHEMA, "op": "contract.describe", "args": "unexpected"}),
+        json!({"schema": CONTRACT_SCHEMA, "op": "xlsx.read"}),
+        json!({"schema": CONTRACT_SCHEMA, "op": "xlsx.read", "args": null}),
+        json!({"schema": CONTRACT_SCHEMA, "op": "xlsx.read", "args": {"limits": limits}}),
+        json!({"schema": CONTRACT_SCHEMA, "op": "xlsx.read",
+            "args": {"workbook": -1, "limits": limits}}),
+        json!({"schema": CONTRACT_SCHEMA, "op": "xlsx.read",
+            "args": {"workbook": u64::from(u32::MAX) + 1, "limits": limits}}),
+        json!({"schema": CONTRACT_SCHEMA, "op": "xlsx.read",
+            "args": {"workbook": 0, "limits": limits, "extra": true}}),
+    ] {
+        let result =
+            contract::execute_json(call.to_string().as_bytes(), &[&bytes], Ports::default());
+        assert_error(result, ErrorCode::BadRequest);
+    }
 }
 
 #[test]
@@ -727,7 +875,10 @@ fn other_typed_schema_is_unsupported() {
 /// Compact JSON with object keys sorted by ascending bytes at every depth.
 /// String-valued `description` and `summary` members are omitted as prose;
 /// properties with those names stay because their values under `properties`
-/// are objects, not strings. Scalars use serde_json's own representation.
+/// are objects, not strings. The rule reads no schema keyword, so it would
+/// also omit such a member inside a `default`, `const` or `enum` value; the
+/// three pinned values hold none. Arrays keep their order. Scalars use
+/// serde_json's own representation.
 fn shape_text(value: &Value) -> String {
     match value {
         Value::Object(object) => {
@@ -799,7 +950,7 @@ fn contract_shape_is_pinned_to_schema() {
     }
     let reason = if CONTRACT_SCHEMA == PINNED_SCHEMA {
         format!(
-            "The contract's shape changed under schema {CONTRACT_SCHEMA}; an op's args, reply or table row changed. Give the contract a new schema number (docs/ops/documents-api-handoff.md), then pin the new rows here."
+            "The contract's shape text differs under schema {CONTRACT_SCHEMA}. If an op's args, its reply or a row of the op table changed, give the contract a new schema number (docs/ops/documents-api-handoff.md) and pin its rows here. If only the schema's spelling changed (a schemars upgrade, a renamed Rust type), pin the new rows under the same number."
         )
     } else {
         format!("CONTRACT_SCHEMA is now {CONTRACT_SCHEMA}; pin its rows and PINNED_SCHEMA here.")
