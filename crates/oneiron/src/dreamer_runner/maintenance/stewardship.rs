@@ -38,6 +38,7 @@ use crate::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject, EntityId,
     Result, Vault, WriteActor,
 };
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
 use rmpv::Value;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
@@ -411,12 +412,7 @@ impl DreamerRunnerStore<'_> {
                 input: Value::Nil,
                 parent_attempt,
             },
-            wake_key.map(|key| {
-                format!(
-                    "{STEWARDSHIP_FACET}:{}",
-                    blake3::hash(key.as_bytes()).to_hex()
-                )
-            }),
+            wake_key.map(|key| wake_dedupe_key(STEWARDSHIP_FACET, key)),
             run_id,
             now,
         )?;
@@ -799,4 +795,18 @@ fn draft_request(
         },
         revision,
     }))
+}
+
+/// A maintenance queue's dedupe key for a wake key: `facet`, then the hex of
+/// the wake key's digest. The stewardship, policy-author and honesty-audit
+/// queues each pass their own facet (K, PLAN-UC-04 stage 7).
+pub(super) fn wake_dedupe_key(facet: &str, key: &str) -> String {
+    let mut digest = LegacyDigest::new(purposes::dreamer_runner::MAINTENANCE_WAKE_KEY);
+    digest.raw(key.as_bytes());
+    format!("{facet}:{}", oneiron_hex::encode(&digest.finish()))
+}
+
+#[cfg(oneiron_test_support)]
+pub(crate) fn wake_dedupe_key_for_test(facet: &str, key: &str) -> String {
+    wake_dedupe_key(facet, key)
 }
