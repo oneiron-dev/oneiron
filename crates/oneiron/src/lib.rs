@@ -49,6 +49,7 @@ pub mod housekeeping;
 pub(crate) mod identity;
 pub mod idle_fold;
 pub mod limit_ask;
+pub mod machine_capacity;
 pub mod machine_destination;
 pub(crate) use oneiron_base::limits;
 pub mod maintain;
