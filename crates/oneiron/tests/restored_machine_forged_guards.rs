@@ -45,8 +45,8 @@ use ed25519_dalek::{Signer, SigningKey};
 use oneiron::authority::{
     ActSurface, AuthorityEntryHash, AuthorityOp, HostSlipIssuer, MACHINE_ENCRYPTION_KEY_LEN,
     MACHINE_ENCRYPTION_SUITE_HYBRID_V1, MachineEncryptionKey, MachineEnrolmentRequest,
-    MachineOwnership, MachineProfile, MachineRole, OwnerAct, OwnerActKind, RestoredMachineJoin,
-    restored_machine_join_seen, restored_machine_profile_proof_transcript,
+    MachineOwnership, MachineProfile, MachineRole, OwnerAct, OwnerActKind, RestoredJoinEnrolment,
+    RestoredMachineJoin, restored_machine_join_seen, restored_machine_profile_proof_transcript,
 };
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::store::GateDecisionId;
@@ -377,7 +377,10 @@ fn owner_join(
     put_signed_row(
         &host.vault,
         RowSigner::OwnerProof,
-        AuthorityOp::RestoredMachineJoin(RestoredMachineJoin { act, enrolment }),
+        AuthorityOp::RestoredMachineJoin(RestoredMachineJoin {
+            act,
+            enrolment: RestoredJoinEnrolment::Held(enrolment),
+        }),
         None,
         parents,
     )
