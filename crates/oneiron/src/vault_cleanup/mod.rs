@@ -51,9 +51,10 @@
 //! replaced revisions, and missing or unreadable evidence are never candidates.
 //!
 //! An attempt mints a PERSON before the claims about it land, in a separate
-//! write. A mint an attempt makes therefore also records the first try of
-//! that attempt's retry lineage, and the PERSON is no candidate while a try
-//! of that lineage is pending (FIX
+//! write. A mint an attempt makes goes through
+//! `Vault::put_attempt_minted_person_in_txn`, which also records the first
+//! try of that attempt's retry lineage, and the PERSON is no candidate while
+//! a try of that lineage is pending (FIX
 //! CLEANUP-ARCHIVES-MINTED-PERSON-BETWEEN-TRIES).
 //!
 //! # Posture: automatic from birth, propose-first by the owner's choice

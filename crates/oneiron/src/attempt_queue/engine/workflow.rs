@@ -157,10 +157,12 @@ impl AttemptQueue<'_> {
     /// Whether a try of the retry lineage that began at `first` is pending:
     /// `first` itself, or a try that retries it, directly or through other
     /// tries, a landing successor included. Every retry of each try is
-    /// followed, so a try with two retries is read on both sides. A try whose
-    /// row is gone, or is the erased marker of a retired row, is not pending,
-    /// and its retries are still followed. Like [`Self::newest_retry_in_txn`]
-    /// it releases nothing and asks through the `attempt_retry_tip_rows` row.
+    /// followed, so a try with two retries is read on both sides. When the
+    /// row of `first` is gone, or is the erased marker of a retired row,
+    /// `first` is not pending and its retries are still followed. A later try
+    /// in that state is passed over, and so are the tries that retry it. Like
+    /// [`Self::newest_retry_in_txn`] it releases nothing and asks through the
+    /// `attempt_retry_tip_rows` row.
     pub(crate) fn retry_lineage_pending_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
