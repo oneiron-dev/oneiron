@@ -476,16 +476,16 @@ impl Vault {
         if before.vault_id.is_none() || entry.vault_id != before.vault_id {
             return Err(invalid_authority());
         }
-        super::recovery::refuse_re_root_of_a_serving_host(&before, entry.signer_key())?;
-        // A move covers every main-log head this write starts from (FIX
-        // 11993 R1): a head has no resident child, so only the move or one
-        // of its joins can name it. A row that landed after the move was
-        // signed would otherwise fold invalid beside it; such a move is
-        // signed again over the frontier as it now stands. Applying the
-        // same move again is the one exception.
-        if !before.valid_entries.contains(&hash)
-            && !before.append_heads.iter().all(|head| under.contains(head))
-        {
+        // A move the fold already counts, applied again, is an exact retry:
+        // it meets neither the hosted refusal (as at the admission doors,
+        // REVIEW-9487 round 2) nor the frontier rule. A new move covers every
+        // main-log head this write starts from (FIX 11993 R1), or is signed
+        // again over the frontier as it now stands.
+        let counted = before.valid_entries.contains(&hash);
+        if !counted {
+            super::recovery::refuse_re_root_of_a_serving_host(&before, entry.signer_key())?;
+        }
+        if !counted && !before.append_heads.iter().all(|head| under.contains(head)) {
             return Err(Error::Record(RecordError::InvalidAuthorityLogBody(
                 "re-root does not cover the current frontier; sign it again",
             )));
