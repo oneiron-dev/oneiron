@@ -16,7 +16,9 @@
 //! Extraction children group the queued turns by the known entities they name,
 //! and the nightly plan groups the rest by the unknown names they share
 //! (`dreamer_wake::nightly`'s topics). JointIE and typed supersede or merge
-//! questions are separate jobs.
+//! questions are separate jobs: a slice the tagger's saved relations cover
+//! is extracted from them (`relation_extraction`), and its subjects bind
+//! through this listing as a model's do.
 //!
 //! The listing is whole (Rule 5, FIX 7580): every entity the passage names,
 //! a nightly child's thing first, and every head about each that the branch
@@ -38,8 +40,8 @@ use super::resources::{document_version, standing};
 use super::value_projection::rmpv_to_json;
 use crate::attempt_queue::AttemptId;
 use crate::claim::{
-    PREDICATE_CONFLICT_OPEN, PREDICATE_CONFLICT_RESOLVED, ScopedRead, claim_sensitivity_band,
-    decode_claim_body, is_reserved_predicate,
+    PREDICATE_CONFLICT_OPEN, PREDICATE_CONFLICT_RESOLVED, ScopedRead, claim_evidence_admissible,
+    claim_sensitivity_band, decode_claim_body, is_reserved_predicate,
 };
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_ORG, ENTITY_TYPE_PERSON, ENTITY_TYPE_PLACE};
 use crate::settings::ReadDestination;
@@ -79,9 +81,13 @@ const PINS: SideTable<ListingPin, Pins, LegacyJson> =
 /// Whose listing one pin keeps: an extraction attempt's, or one NOTE's
 /// within a NOTE review attempt, which lists each NOTE apart (FIX 7578). A
 /// NOTE's pin keys under its attempt, so the attempt's unpin drops it too.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+///
+/// Its key: the attempt's id, then the NOTE's when it names one, so an
+/// attempt's own pin keeps the key it always had.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, SideKey)]
 pub(super) struct ListingPin {
     attempt: AttemptId,
+    #[side_key(rest)]
     note: Option<EntityId>,
 }
 
@@ -103,27 +109,13 @@ impl ListingPin {
     }
 }
 
-/// The attempt's id, then the NOTE's when it names one: an attempt's own
-/// pin keeps the key it always had.
-impl SideKey for ListingPin {
-    fn encode_into(&self, out: &mut Vec<u8>) {
-        out.extend_from_slice(self.attempt.as_bytes());
-        if let Some(note) = self.note {
-            out.extend_from_slice(note.as_bytes());
-        }
-    }
-
-    fn decode_key(bytes: &[u8]) -> Option<Self> {
-        let (attempt, note) = bytes.split_at_checked(16)?;
-        let note = match note {
-            [] => None,
-            note => Some(EntityId::from_bytes(note.try_into().ok()?).ok()?),
-        };
-        Some(Self {
-            attempt: AttemptId::from_bytes(attempt).ok()?,
-            note,
-        })
-    }
+/// One [`ListingPin`] for `test_doors::side_key_pins`.
+#[cfg(oneiron_test_support)]
+pub(crate) fn listing_pin_key_pin_for_test(
+    attempt: AttemptId,
+    note: Option<EntityId>,
+) -> crate::test_doors::side_key_pins::Pin {
+    crate::test_doors::side_key_pins::Pin::of(&ListingPin { attempt, note })
 }
 
 /// The whole listing one branch shows its extraction model, in pages, and
@@ -164,6 +156,9 @@ struct KnownClaim {
     rel: crate::claim::RelationshipScope,
     /// The stored question key as JSON, when the claim carries one.
     topic_key: Option<String>,
+    /// Whether verification may take the head as evidence: a generated head
+    /// never corroborates (GATE-11), so the listing marks it uncitable.
+    citable: bool,
 }
 
 impl Neighbourhood {
@@ -700,6 +695,7 @@ fn listable(
                 .find(|(key, _)| key.as_str() == Some("topic_key"))
                 .map(|(_, topic)| rmpv_to_json(topic).to_string())
         }),
+        citable: claim_evidence_admissible(&prior.body),
     })
 }
 

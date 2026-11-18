@@ -356,6 +356,7 @@ fn fixture_config() -> EventTypeConfig {
         booking_window_secs: 7 * 24 * 3_600,
         daily_cap: None,
         weekly_cap: None,
+        deposit: None,
         routing: RoutingMode::Either,
         hosts: vec![HostAvailabilityConfig {
             host_ref: test_id(HOST_SEED),
@@ -392,6 +393,7 @@ fn book(fixture: &Fixture, session_key: SessionKey, slot: TimeRange) -> ConfirmR
                 constraint: None,
                 lease: HoldLeaseSpec::Ordinary,
                 idempotency_key: None,
+                cap_override: None,
             }),
             NOW,
         )

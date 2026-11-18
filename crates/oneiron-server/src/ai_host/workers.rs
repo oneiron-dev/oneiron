@@ -7,10 +7,12 @@ use super::*;
 /// A served host whose Dreamer does not run declares that it cannot take
 /// MACRO work now (FIX 4898), so no other machine elects it for MACRO; its
 /// own election still claims a vault no node has claimed, for its standing
-/// questions. A device of another home (`device`) declares through its
-/// `[device_sync]` section instead.
+/// questions. It marks its own copy full all the same
+/// (HOME-ELECTION-NEEDS-FULL-COPY). A device of another home (`device`)
+/// declares through its `[device_sync]` section instead.
 pub(super) fn served_without_dreamer(vault: &Vault, device: bool) {
     if !device {
+        crate::home_candidacy::declare_home_full_copy(vault);
         crate::home_candidacy::declare(vault, true, false, false);
     }
 }

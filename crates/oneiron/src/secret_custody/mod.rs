@@ -70,7 +70,13 @@ mod carrier_marks;
 mod cloud_registration;
 mod codec;
 mod control;
+#[cfg(oneiron_test_support)]
+pub(crate) use self::control::input::{
+    custody_input_part_key_for_test, custody_witness_part_key_for_test,
+};
 mod doors;
+mod duplicate_merge;
+pub(crate) use self::duplicate_merge::custody_merged_in_txn;
 mod floor;
 mod found_keys;
 pub(crate) use self::found_keys::{HANDLE_TEXT_OPEN, unmask_value};
@@ -82,16 +88,26 @@ mod known_values;
 mod leaf_delivery;
 mod masked_files;
 mod owner_door;
+mod owner_list;
 mod payment_credential;
 mod pending_restore;
 mod reveal;
 pub(crate) use self::reveal::run_person_prints_in_txn;
 mod run_bound;
+mod same_value;
+pub use self::same_value::SameValueStatement;
+#[cfg(oneiron_test_support)]
+pub(crate) use self::same_value::{
+    same_value_statement_held_in_txn, same_value_statement_signed_by,
+};
+pub(crate) mod setting_keys;
 mod sighted_file;
 mod storage_seal;
 mod transition;
 mod types;
 mod use_handle;
+#[cfg(oneiron_test_support)]
+pub(crate) use self::control::input::custody_witness_digest_for_test;
 
 /// MessagePack keys the custody floor reads out of POLICY_MANIFEST bodies.
 mod floor_keys {
@@ -125,6 +141,17 @@ pub use self::control::{
     CustodyCandidate, CustodyDelivery, CustodyKeptHere, CustodyManifestCheck, CustodyPlan,
     SealedCustodyChange, SecretCustodyView, SecretCustodyWork, SecretRevoked, SecretRotated,
 };
+#[cfg(all(oneiron_test_support, feature = "sync"))]
+pub(crate) use self::control::{
+    KeptNumberedOpen, drop_kept_numbered_part_for_test, keep_numbered_input_for_test,
+    open_kept_numbered_for_test,
+};
+#[cfg(oneiron_test_support)]
+pub(crate) use self::control::{
+    frame_envelope_count_for_test, open_numbered_as_holder_for_test,
+    seal_numbered_register_for_test, tamper_drop_first_envelope_for_test,
+    tamper_rewrite_envelope_count_for_test, tamper_swap_first_two_envelopes_for_test,
+};
 pub(crate) use self::doors::{
     CustodyWrite, SecretCustodyAdmission, message_part_original_matches_in_txn,
     put_secret_custody_in_txn, read_secret_custody_admission_in_txn, read_secret_custody_in_txn,
@@ -157,6 +184,10 @@ pub(crate) use self::handle_labels::{
 };
 pub use self::known_values::KNOWN_VALUE_MIN_BYTES;
 pub(crate) use self::known_values::{KnownSource, KnownSweep, KnownValues, known_index_scope};
+pub use self::owner_list::{
+    SecretCustodyHolder, SecretCustodyList, SecretCustodyListItem, SecretCustodyListRecord,
+    SecretCustodyOrigin, SecretDisplayNameSource,
+};
 pub(crate) use self::payment_credential::refuse_withheld_payment_credential_in_txn;
 pub use self::payment_credential::{PaymentCredentialRelease, SecretPaymentMarkSet};
 // FIX 7402: live carrier key delivery, the L02 halves of L03's sync frame.
@@ -242,8 +273,6 @@ pub(crate) use self::use_handle::{
 pub use oneiron_authority::authority::{CustodyRegisterCheck, CustodyUncheckedReason};
 
 pub(crate) mod tables;
-// FIX [LIBTEST-QUARANTINE-SECRET-CUSTODY-TESTS]: the lib test target's type check fails here (5 errors: E0061 x4, E0063 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;
 

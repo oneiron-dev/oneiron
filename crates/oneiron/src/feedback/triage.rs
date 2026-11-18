@@ -50,6 +50,9 @@ mod target;
 mod work;
 mod work_store;
 
+#[cfg(oneiron_test_support)]
+pub(crate) use self::work::triage_digest_for_test;
+
 pub(crate) use self::erased::{
     erase_handoff_actor_in_txn, erase_handoff_as_in_txn, erase_handoff_in_txn, refuse_erased_in_txn,
 };

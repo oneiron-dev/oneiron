@@ -23,7 +23,14 @@ fn a_replicated_critical_claim_waits_for_a_clear_on_the_device_it_reaches() -> R
     };
     vault_b
         .batch()
-        .put_replicated(&claim, ENTITY_TYPE_CLAIM, occurred, header.learned_at, data)
+        .put_replicated(
+            &claim,
+            ENTITY_TYPE_CLAIM,
+            occurred,
+            header.learned_at,
+            None,
+            data,
+        )
         .commit()?;
 
     assert!(
@@ -60,7 +67,14 @@ fn a_replicated_critical_claim_waits_for_a_clear_on_the_device_it_reaches() -> R
     // Positive control: an exact replay does not reopen B's settled revision.
     vault_b
         .batch()
-        .put_replicated(&claim, ENTITY_TYPE_CLAIM, occurred, header.learned_at, data)
+        .put_replicated(
+            &claim,
+            ENTITY_TYPE_CLAIM,
+            occurred,
+            header.learned_at,
+            None,
+            data,
+        )
         .commit()?;
     assert!(
         vault_b
@@ -126,6 +140,7 @@ fn a_replicated_revision_over_an_ordinary_review_waits_for_a_clear() -> Result<(
             ENTITY_TYPE_CLAIM,
             occurred,
             learned_at,
+            None,
             &crate::claim::encode_claim_body(&earlier)?,
         )
         .commit()?;
@@ -139,7 +154,7 @@ fn a_replicated_revision_over_an_ordinary_review_waits_for_a_clear() -> Result<(
 
     vault_b
         .batch()
-        .put_replicated(&claim, ENTITY_TYPE_CLAIM, occurred, learned_at, &data)
+        .put_replicated(&claim, ENTITY_TYPE_CLAIM, occurred, learned_at, None, &data)
         .commit()?;
     assert!(
         vault_b.consolidate_claim_vad_now(&claim, 10).is_err(),
@@ -192,7 +207,7 @@ fn a_peers_next_revision_lands_unchanged_and_waits_for_its_own_clear() -> Result
     let (occurred, learned_at, data) = committed_parts(&vault_a, &claim)?;
     vault_b
         .batch()
-        .put_replicated(&claim, ENTITY_TYPE_CLAIM, occurred, learned_at, &data)
+        .put_replicated(&claim, ENTITY_TYPE_CLAIM, occurred, learned_at, None, &data)
         .commit()?;
     let first = pending_row(&vault_b, &claim)?;
     let mut changed = stored_claim_body(&vault_a, &claim)?;
@@ -204,6 +219,7 @@ fn a_peers_next_revision_lands_unchanged_and_waits_for_its_own_clear() -> Result
             ENTITY_TYPE_CLAIM,
             occurred,
             learned_at,
+            None,
             &crate::claim::encode_claim_body(&changed)?,
         )
         .commit()?;
@@ -258,6 +274,7 @@ fn an_overwritten_local_confirm_is_never_read_as_settled() -> Result<()> {
             ENTITY_TYPE_CLAIM,
             occurred,
             learned_at,
+            None,
             &crate::claim::encode_claim_body(&changed)?,
         )
         .commit()?;
@@ -341,6 +358,7 @@ fn a_replicated_comm_claim_waits_unless_it_only_restricts() -> Result<()> {
                 ENTITY_TYPE_CLAIM,
                 test_time(3),
                 3,
+                None,
                 &crate::claim::encode_claim_body(&body)?,
             )
             .commit()?;
@@ -374,7 +392,7 @@ fn a_peers_proposed_revision_stays_held_until_the_owner_answers() -> Result<()> 
     let (occurred, learned_at, data) = committed_parts(&vault_a, &claim)?;
     vault_b
         .batch()
-        .put_replicated(&claim, ENTITY_TYPE_CLAIM, occurred, learned_at, &data)
+        .put_replicated(&claim, ENTITY_TYPE_CLAIM, occurred, learned_at, None, &data)
         .commit()?;
     let mut proposed = stored_claim_body(&vault_a, &claim)?;
     proposed.approval = ClaimApprovalStatus::Proposed;
@@ -385,6 +403,7 @@ fn a_peers_proposed_revision_stays_held_until_the_owner_answers() -> Result<()> 
             ENTITY_TYPE_CLAIM,
             occurred,
             learned_at + 1,
+            None,
             &crate::claim::encode_claim_body(&proposed)?,
         )
         .commit()?;
@@ -419,13 +438,9 @@ fn a_replica_hold_stays_listed_past_the_confirm_window() -> Result<()> {
     let start = crate::unix_seconds_now();
     let clock = crate::ports::ManualClock::new(start);
     let tmp_b = tempfile::tempdir().expect("temp dir");
-    let vault_b = crate::Vault::open(
-        tmp_b.path(),
-        crate::config::VaultConfig {
-            store_clock: clock.bundle(),
-            ..crate::config::VaultConfig::default()
-        },
-    )?;
+    let mut vault_config = crate::config::VaultConfig::device();
+    vault_config.store_clock = clock.bundle();
+    let vault_b = crate::Vault::open(tmp_b.path(), vault_config)?;
     super::support::clear_policy_manifests_for_test(&vault_b);
     critical_policy_on(&vault_b)?;
     let claim = test_id(0x93);
@@ -433,7 +448,7 @@ fn a_replica_hold_stays_listed_past_the_confirm_window() -> Result<()> {
     let (occurred, learned_at, data) = committed_parts(&vault_a, &claim)?;
     vault_b
         .batch()
-        .put_replicated(&claim, ENTITY_TYPE_CLAIM, occurred, learned_at, &data)
+        .put_replicated(&claim, ENTITY_TYPE_CLAIM, occurred, learned_at, None, &data)
         .commit()?;
     let hold = pending_row(&vault_b, &claim)?;
 
@@ -483,6 +498,7 @@ fn a_peers_changed_revision_over_a_review_gets_a_settleable_item() -> Result<()>
             ENTITY_TYPE_CLAIM,
             occurred,
             learned_at + 10,
+            None,
             &crate::claim::encode_claim_body(&changed)?,
         )
         .commit()?;

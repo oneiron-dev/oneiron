@@ -82,6 +82,27 @@ impl Agent {
         })
     }
 
+    /// The caller on `slip`, held by `key`: the lives bench's in-process
+    /// store mints the vault owner such a slip.
+    pub(super) fn holder(
+        http: &reqwest::blocking::Client,
+        base: &str,
+        slip: CapabilitySlip,
+        key: SigningKey,
+    ) -> Result<Self, String> {
+        Ok(Self {
+            http: http.clone(),
+            base: base.to_owned(),
+            bearer: format!(
+                "Bearer {}",
+                slip.to_token().map_err(|e| format!("slip: {e}"))?
+            ),
+            slip,
+            key,
+            skew: 0,
+        })
+    }
+
     /// The offset to add to the wall clock so holder proofs land in the middle
     /// of the server's 60 s replay window.
     ///
@@ -94,7 +115,7 @@ impl Agent {
         let mut accepted = |skew: i64| -> Result<bool, String> {
             self.skew = skew;
             let body = json!({"query": "clock", "effort": "light", "limit": 1});
-            match self.post("vault.recall", &body).1 {
+            match self.post_explained("vault.recall", &body).1 {
                 Ok(_) => Ok(true),
                 Err(error) if error.starts_with("401") => Ok(false),
                 Err(error) => Err(format!("clock probe: {error}")),
@@ -127,8 +148,18 @@ impl Agent {
     }
 
     /// POSTs `body` to a facade verb; the time covers the round trip only,
-    /// not the holder proof made before it.
+    /// not the holder proof made before it. A refusal reads `<status> <code>`.
     pub(super) fn post(&self, verb: &str, body: &Value) -> (f64, Result<Value, String>) {
+        self.call(verb, body, false)
+    }
+
+    /// [`Self::post`] whose refusal also carries the reply's message, for a
+    /// call whose refusal ends the run, so the run says why.
+    fn post_explained(&self, verb: &str, body: &Value) -> (f64, Result<Value, String>) {
+        self.call(verb, body, true)
+    }
+
+    fn call(&self, verb: &str, body: &Value, explain: bool) -> (f64, Result<Value, String>) {
         let wall = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map_or(0, |d| d.as_secs());
@@ -158,16 +189,26 @@ impl Agent {
             if status.is_success() {
                 serde_json::from_str(&text).map_err(|_| "json".to_owned())
             } else {
-                let code = serde_json::from_str::<Value>(&text)
-                    .ok()
-                    .and_then(|v| {
-                        v["code"]
-                            .as_str()
-                            .or_else(|| v["error"]["code"].as_str())
-                            .map(str::to_owned)
-                    })
-                    .unwrap_or_default();
-                Err(format!("{} {code}", status.as_u16()).trim().to_owned())
+                let reply = serde_json::from_str::<Value>(&text).unwrap_or_default();
+                let field = |name: &str| {
+                    reply[name]
+                        .as_str()
+                        .or_else(|| reply["error"][name].as_str())
+                        .unwrap_or_default()
+                        .to_owned()
+                };
+                let refused = format!("{} {}", status.as_u16(), field("code"))
+                    .trim()
+                    .to_owned();
+                let message = field("message");
+                Err(if explain && !message.is_empty() {
+                    format!(
+                        "{refused}: {}",
+                        message.chars().take(400).collect::<String>()
+                    )
+                } else {
+                    refused
+                })
             }
         });
         (started.elapsed().as_secs_f64() * 1000.0, result)

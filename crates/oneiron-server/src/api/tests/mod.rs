@@ -2,6 +2,7 @@ use super::*;
 
 mod agent_definition_doors;
 mod ai_chat;
+mod ai_chat_self_compaction;
 mod depth_quality;
 mod memory_reason_repairs;
 use axum::body::{Body, to_bytes};
@@ -28,10 +29,13 @@ mod asset_forms;
 mod billing_usage;
 mod board_host_events;
 mod board_stream_publisher;
+mod chat_retrieval_turn;
+mod chat_witness_ask_resume;
 mod companion;
 mod context_board_history;
 mod context_board_standing;
 mod context_pack_disclosure;
+mod context_pack_phonetic_vector;
 mod context_pack_v4;
 mod contract_snapshots;
 mod conversation_dag;
@@ -42,6 +46,7 @@ mod credential_reads;
 mod device_local_reads;
 mod facet_read;
 mod feedback_inbox;
+mod mcp_body_budget;
 mod mcp_booking_publication;
 #[cfg(feature = "code-sandbox-wasmtime")]
 mod mcp_code_admission;
@@ -64,6 +69,7 @@ mod retrieval_bounds;
 mod retrieval_bounds_rows;
 mod retrieval_depth_quality;
 mod retrieval_shaping;
+mod room_structure_doors;
 mod run_gate;
 mod run_tree;
 mod search_deadline;
@@ -73,6 +79,7 @@ mod support_mcp_credentials;
 use support_mcp_credentials::*;
 mod surface_events;
 mod surface_routes;
+mod turn_action_retrieval_turn;
 mod vad_and_error_mapping;
 use support_contract::*;
 use support_mcp::*;
@@ -758,6 +765,7 @@ pub(super) fn witness_vad_message_fixture(
             occurred_at,
             assertions: Default::default(),
             thread_audience: None,
+            project: None,
         })
         .expect("witness fixture turn");
 }

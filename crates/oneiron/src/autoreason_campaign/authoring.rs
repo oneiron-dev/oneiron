@@ -22,7 +22,8 @@ use super::beam_promotion::{
     AuthoringStrategyPin, PromotionReceipt, SealedRefereeMeasurement, measure_once,
 };
 use super::research::{
-    CandidateRef, ResearchBindRequest, ResearchTarget, bind_research, research_nodes,
+    CandidateRef, ResearchBindRequest, ResearchBinding, ResearchTarget, bind_research_with,
+    research_nodes,
 };
 use super::{CampaignComparisonReport, CampaignConfig};
 use crate::agent_dispatch::TeamRunStamp;
@@ -54,7 +55,7 @@ const TOURNAMENT_CURSOR: SideTable<([u8; 16], [u8; 16]), TournamentLineageCursor
 const MAX_REF_BYTES: usize = 256;
 
 /// The exact revision of the strategy skill the campaign runs.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ClaimAuthoringSkillPin {
     pub skill: EntityId,
@@ -205,8 +206,8 @@ fn check_strategy_skill(vault: &Vault, pin: &ClaimAuthoringSkillPin) -> Result<(
 /// skill's exact revision and to the config's content pin.
 /// # Errors
 /// A strategy skill that is not the active admitted Workflow revision, an
-/// invalid config, any [`bind_research`] refusal, an already-bound root, or
-/// storage errors.
+/// invalid config, any [`super::research::bind_research`] refusal, an
+/// already-bound root, or storage errors.
 pub fn bind_claim_authoring_campaign(
     vault: &Vault,
     root: AttemptId,
@@ -217,40 +218,79 @@ pub fn bind_claim_authoring_campaign(
     share: Option<String>,
     at: u64,
 ) -> Result<AuthoringCampaign> {
-    check_strategy_skill(vault, &skill)?;
-    let strategy = AuthoringStrategyPin::from_campaign(config).map_err(campaign_error)?;
-    bind_research(
-        vault,
-        ResearchBindRequest {
-            root,
-            config: config.as_general().map_err(campaign_error)?,
-            target: ResearchTarget::Config {
-                subject: format!("claim-authoring:{}@{}", skill.skill.to_hex(), skill.version),
-            },
-            holder,
-            confirmation: None,
-            share,
-            incumbent,
-            prior_ladder: Vec::new(),
-            execution: None,
-        },
-        at,
-    )?;
-    let campaign = AuthoringCampaign {
+    let bind = ClaimAuthoringBind {
         root,
-        skill,
         config: config.clone(),
+        skill,
+        incumbent,
+        holder,
+        share,
+    };
+    bind_claim_authoring_campaign_admitted(vault, bind, at, |_| Ok::<(), Error>(()))
+        .map(|(campaign, _)| campaign)
+}
+
+/// What one claim-authoring bind names: the root, its fixed OF-366 config,
+/// the strategy skill revision and the incumbent the root node records.
+#[derive(Debug, Clone)]
+pub(crate) struct ClaimAuthoringBind {
+    pub(crate) root: AttemptId,
+    pub(crate) config: CampaignConfig,
+    pub(crate) skill: ClaimAuthoringSkillPin,
+    pub(crate) incumbent: CandidateRef,
+    pub(crate) holder: Option<String>,
+    pub(crate) share: Option<String>,
+}
+
+/// [`bind_claim_authoring_campaign`], with `admit` run in the bind's own
+/// write transaction before anything is written (`vault.research.bind_authoring`
+/// rechecks its caller there). The general binding, its root node and the
+/// claim-authoring row commit in that one write, or none does. Returns the
+/// campaign and the general binding it was bound under.
+/// # Errors
+/// `admit`'s refusal, and every refusal of [`bind_claim_authoring_campaign`].
+pub(crate) fn bind_claim_authoring_campaign_admitted<E: From<Error>>(
+    vault: &Vault,
+    bind: ClaimAuthoringBind,
+    at: u64,
+    admit: impl FnOnce(&heed::RoTxn<'_>) -> std::result::Result<(), E>,
+) -> std::result::Result<(AuthoringCampaign, ResearchBinding), E> {
+    check_strategy_skill(vault, &bind.skill)?;
+    let strategy = AuthoringStrategyPin::from_campaign(&bind.config).map_err(campaign_error)?;
+    let request = ResearchBindRequest {
+        root: bind.root,
+        config: bind.config.as_general().map_err(campaign_error)?,
+        target: ResearchTarget::Config {
+            subject: format!(
+                "claim-authoring:{}@{}",
+                bind.skill.skill.to_hex(),
+                bind.skill.version
+            ),
+        },
+        holder: bind.holder,
+        confirmation: None,
+        share: bind.share,
+        incumbent: bind.incumbent,
+        prior_ladder: Vec::new(),
+        execution: None,
+    };
+    let campaign = AuthoringCampaign {
+        root: bind.root,
+        skill: bind.skill,
+        config: bind.config,
         strategy,
         promotion: None,
         bound_at: at,
     };
-    vault.with_write_txn_grouped(|txn| {
-        if AUTHORING.contains(&vault.store, txn, root.as_bytes())? {
-            return Err(invalid("a claim-authoring campaign binds once"));
+    let binding = bind_research_with(vault, request, at, |txn| -> std::result::Result<(), E> {
+        admit(txn)?;
+        if AUTHORING.contains(&vault.store, txn, campaign.root.as_bytes())? {
+            return Err(invalid("a claim-authoring campaign binds once").into());
         }
-        AUTHORING.put(&vault.store, txn, root.as_bytes(), &campaign)?;
-        Ok(campaign)
-    })
+        AUTHORING.put(&vault.store, txn, campaign.root.as_bytes(), &campaign)?;
+        Ok(())
+    })?;
+    Ok((campaign, binding))
 }
 
 /// The claim-authoring campaign bound to a root, if any.

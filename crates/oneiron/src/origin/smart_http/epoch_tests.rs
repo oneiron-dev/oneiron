@@ -1,5 +1,6 @@
 //! Epoch-bound receive-pack admission, landing and crash recovery.
 
+use super::protected_ref_confirm::ProtectedRefPasses;
 use super::tests::{
     CapturingSink, advertise, advertised_refs, git, ref_update, served_repo, temp_vault,
 };
@@ -54,7 +55,13 @@ fn epoch_intent(
         quarantine_path: None,
     };
     vault
-        .record_receive_pack_intent(&unpinned_repo_ref(root), &stamp, &door)
+        .record_receive_pack_intent(
+            &unpinned_repo_ref(root),
+            &stamp,
+            &door,
+            None,
+            &ProtectedRefPasses::default(),
+        )
         .expect("intent");
     stamp.operation_id()
 }
@@ -322,7 +329,7 @@ fn epoch_cutover_drains_crashed_old_admission_and_cannot_reauthorize_its_source(
         required_objects: row.required_objects,
         required_lfs_oids: row.required_lfs_oids,
         provenance_claim_id: row.provenance_claim_id,
-        actor_id: row.actor_id,
+        actor_id: row.actor_id.id().expect("an unerased publication actor"),
         occurred: row.occurred,
         learned_at: crate::unix_seconds_now(),
     };
