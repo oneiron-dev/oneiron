@@ -10,12 +10,17 @@ use super::super::tombstone::DeleteReason;
 use super::{DeleteEntityOutcome, PendingConfirmedErase};
 use crate::error::RegistryError;
 
-/// What the delete guards decided: the headerful leg's header, or an outcome
-/// that ends the delete before any writer opens.
+/// What the delete guards decided: the headerful leg's header, the
+/// headerless leg, or an outcome that ends the delete before any writer
+/// opens.
 pub(super) enum DeleteGuard {
     Proceed {
         requested_at: u64,
         header: EntityMetadataHeader,
+    },
+    /// The id has no header: the headerless leg deletes its residue.
+    Headerless {
+        requested_at: u64,
     },
     Done(DeleteEntityOutcome),
 }
@@ -76,7 +81,7 @@ impl Vault {
     }
 
     /// Refuses a protected, held or unsafe delete before any tombstone can be
-    /// published; a headerless id runs the headerless leg instead.
+    /// published; a headerless id is handed to the headerless leg instead.
     pub(super) fn delete_guard_phase(
         &self,
         id: &EntityId,
@@ -166,9 +171,7 @@ impl Vault {
         }
         let requested_at = self.store.clock.now_recorded_at();
         let Some(header) = self.read_entity_header(id)? else {
-            return self
-                .delete_entity_without_header(id, reason, requested_at, gate.as_ref(), due)
-                .map(DeleteGuard::Done);
+            return Ok(DeleteGuard::Headerless { requested_at });
         };
         if crate::batch::delete_door_protected(header.entity_type)
             || crate::store::project_kind::is_project_revision_type(&self.store, header.entity_type)

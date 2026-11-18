@@ -6,9 +6,11 @@
 use crate::{EntityId, Result, Vault};
 
 /// [`Vault::delete_entity`] with `between` run after the guard phase's read
-/// snapshot and before the plan's first write. No writer is held at the gap,
-/// so `between` may commit (the test's signed `RebindActor`); the delete's
-/// write transactions then run against the changed bindings.
+/// snapshot and before the plan's first write, or, for an id the guard phase
+/// read no header for, before the headerless leg's scope probe and tombstone
+/// publication. No writer is held at the gap, so `between` may commit (the
+/// test's signed `RebindActor`); the delete's write transactions then run
+/// against the changed bindings.
 ///
 /// # Errors
 ///

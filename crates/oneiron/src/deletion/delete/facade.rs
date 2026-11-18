@@ -391,10 +391,11 @@ impl Vault {
     }
 
     /// [`Self::delete_entity_with_reason_impl`] with `between` run after the
-    /// guard phase's read snapshot and before the plan's first write. No
-    /// writer is held at the gap, so `between` may commit (a binding change
-    /// the write transactions below must then see). Production passes an
-    /// empty step; the `test_doors` race door passes the test's.
+    /// guard phase's read snapshot and before the plan's first write, or the
+    /// headerless leg's scope probe. No writer is held at the gap, so
+    /// `between` may commit (a binding change the write transactions below
+    /// must then see). Production passes an empty step; the `test_doors` race
+    /// door passes the test's.
     fn delete_entity_with_reason_impl_across(
         &self,
         id: &EntityId,
@@ -408,6 +409,15 @@ impl Vault {
         between();
         let (requested_at, header) = match guard {
             DeleteGuard::Done(outcome) => return Ok(outcome),
+            DeleteGuard::Headerless { requested_at } => {
+                return self.delete_entity_without_header(
+                    id,
+                    reason,
+                    requested_at,
+                    gate.as_ref(),
+                    due,
+                );
+            }
             DeleteGuard::Proceed {
                 requested_at,
                 header,
