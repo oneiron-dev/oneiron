@@ -419,7 +419,9 @@ MAIN_DBI, new error codes, the DUPSORT page-counter fixes (ITS#9388, #10642,
 growth (ITS#7772: space use only, no fault), and ITS#10518 (`741c1e8c899d`,
 child-txn mutex init: no observable effect on glibc, macOS or Android, and on
 Windows its nested commit path frees the txn without destroying the new
-mutex, so it would leak one handle per nested commit).
+mutex, so it would leak one handle per nested commit; taken later with fork
+hunks that close those paths: "Child mutex and transaction begin failure"
+below).
 
 **Re-vendoring:** re-apply these commits and the five `ONEIRON FORK (LMDB
 audit)` hunks with the hunks above, or take an upstream mdb.master3 that
@@ -577,6 +579,105 @@ after `:10644` by 20, after `:11124` by 22, after `:12017` by 24 and after
 prototype's `int`), or take an upstream mdb.master3 whose `mdb_cursor_init`
 returns the stale root fetch's error and whose
 `mdb_rpage_get` takes a cached chunk's reference only after the page's check.
+
+## Child mutex and transaction begin failure
+
+FIX rows LMDB-WINDOWS-WRITE-TXN-MUTEX-HANDLE (found by review round 2 of
+#9485) and LMDB-TXN-BEGIN-FAILURE-WRONG-FREE (found by this change's own C
+check).
+
+**Child mutex.** ITS#10395 (in our base) gave each write transaction a mutex,
+`mt_child_mutex`, that guards its list of nested transactions. On Windows
+`pthread_mutex_init` is `CreateMutex` and `pthread_mutex_destroy` is
+`CloseHandle` (`:377-378`), so each init makes a new handle. Our base ran the
+init in `mdb_txn_renew0` at every top-level write transaction, on the one
+preallocated `me_txn0`, and never destroyed it: each write transaction leaked
+one handle. A nested write transaction never got one, and a nested abort
+closed the handle it never had. Upstream ITS#10518 (`741c1e8c899d`, taken
+verbatim) runs the init once at environment open (`:6416-6424`), with a
+destroy at close (`:6478-6481`), and once per nested write transaction
+(`mdb_txn_begin`, `:3551-3559`), destroyed when `mdb_txn_end` frees it
+(`:3799-3802`). Two exits free a nested write transaction without
+`mdb_txn_end`'s free, and upstream leaks one handle at each: the nested commit
+(`_mdb_txn_commit`, `:4515-4518`) and a nested begin that fails after the init
+(`:3610-3616`). The fork (`ONEIRON FORK (child mutex)`) destroys the mutex at
+both. oneiron commits a nested write transaction on every group commit, so
+upstream's change alone would leak more than our base did. On glibc, macOS and
+Android a default mutex holds no resource, so nothing changes there.
+
+Upstream also ignores both inits' results (found by this change's review). On
+Windows `CreateMutex` can fail and leave no handle. The environment then
+opened anyway, and `me_txn0` kept no mutex for the environment's life, so every
+nested begin and end under a top-level write transaction locked nothing (the
+lock call fails and its result is ignored); a nested write transaction without
+its mutex did the same for its own nested transactions. The fork checks both
+inits. A failed init at open fails `mdb_env_open` with the init's error, after
+freeing the new transaction and its chunk table, before they become `me_txn0`
+(`:6418-6424`). A failed init in `mdb_txn_begin` returns the error after
+freeing the nested transaction's dirty list, its free page list and the
+transaction, before its parent lists it (`:3554-3559`).
+
+**Transaction begin failure.** Upstream ITS#10342 (`2b77f6ffc24a`, May 2025, in
+our base) changed `mdb_txn_begin`'s failure exit (`:3608-3625`) from freeing
+the transaction's chunk table (`mt_rpages`) to freeing its dirty list (later
+limited to write transactions). Both halves were wrong:
+
+- The only write transaction that reaches that exit is a nested one, after
+  `mdb_txn_end(MDB_END_FAIL_BEGINCHILD)` (`:3601`), which has already freed its
+  dirty list (`:3759`). The second free is a double free, on any nested begin
+  that fails: `ENOMEM` while copying the free list or backing up the parent's
+  cursors.
+- A top-level read transaction in a sealed environment (`MDB_REMAP_CHUNKS`)
+  owns the 128 KiB chunk table allocated at `:3512-3522`. A failed
+  `mdb_txn_renew0` returns before `mdb_txn_end` or after
+  `mdb_txn_end(MDB_END_FAIL_BEGIN)` (`:3417`), and neither frees it, so each read
+  begin that failed leaked one: `MDB_READERS_FULL`, `MDB_BAD_RSLOT`,
+  `MDB_PANIC` after a fatal error, `MDB_MAP_RESIZED`.
+
+The fork (`ONEIRON FORK (begin failure)`) drops the second free of the dirty
+list and frees a top-level read transaction's chunk table; a nested
+transaction's table is its parent's. Upstream head `ba47717cc877` has all
+three faults.
+
+Regression test `crates/oneiron-store/tests/lmdb_sealed_failed_read_begin.rs`
+(Linux with glibc): a sealed environment with one reader slot, held by one
+read transaction, then 64 read begins that fail with `MDB_READERS_FULL`; the
+C heap must stay flat (one 128 KiB table per begin before the fork). The other
+two faults show in no Rust test: the handle exists only on Windows, which has
+no CI here, and a failed nested begin needs a failed allocation. A C build of
+this `mdb.c` that counts the child mutex calls as Windows handles (an init
+over a live handle is a leak, a destroy of a dead one a bad close) and fails
+the cursor backup allocation on demand gave, for 20 write transactions, 20
+nested commits, 5 nested aborts and 3 doubly nested commits: our base leaked
+49 handles, closed 5 it never had and made 12 lock calls on a handle that did
+not exist; ITS#10518 alone leaked 26; the fork none. Two failed nested begins
+crash our base and ITS#10518 alone (the double free) and pass with the fork,
+also under AddressSanitizer and LeakSanitizer. 200 failed sealed read begins
+grew the C heap by 135,170 bytes each before the fork and by 528 bytes in all
+with it. With one child mutex init failed as a failed `CreateMutex` would (no
+handle), our base and ITS#10518 alone go on as if it had worked: ITS#10518
+opens the environment and then makes 8 lock calls on the missing handle over
+two nested commits; after a failed init in a nested begin, that nested
+transaction's own nested commit makes 4. With the fork the open and the
+nested begin return `ENOMEM`, the same directory opens again, later nested
+commits work, and LeakSanitizer finds no leak on either exit (it does find one
+when a free of the new nested exit is removed).
+
+The page format does not change, and no stored row changes meaning (stored
+change: keep).
+
+`mdb.c` is now 12,530 lines, SHA-256
+`fde95cbc187f0578ed1c2164181be317e4f6a133816ba6b8725154bd3ab494b3`. Line
+numbers in this section cite this copy. Against the copy the section above
+cites, line `:3365` is gone, lines `:3366-3551` moved up by 1, lines
+`:3552-3601` moved down by 8, and lines after `:3605` moved down by 18, after
+`:4496` by 22, after `:6393` by 31 and after `:6447` by 34.
+
+**Re-vendoring:** re-apply ITS#10518 and the four hunks marked `ONEIRON FORK
+(child mutex)` or `ONEIRON FORK (begin failure)`, or take an upstream
+mdb.master3 that checks both child mutex inits, destroys the child mutex on
+the nested commit and on a failed nested begin, and whose failed begin frees
+only a top-level read transaction's chunk table.
 
 ## Re-packaging for the Python sdist (ONE-1441)
 

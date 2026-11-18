@@ -167,6 +167,7 @@ fn page(vault: &Vault, page_seed: u8, host_seed: u8) {
         }],
         flex_with_ordinary: false,
         flex_windows: Vec::new(),
+        allowed_durations_min: Vec::new(),
     };
     let body = ClaimBody::new(
         BOOKING_EVENT_TYPE_PREDICATE,
