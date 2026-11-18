@@ -99,7 +99,7 @@ fn spawn(scaffold: &Scaffold, vault: &Vault, mask: u8, depth: u8) -> Result<Proj
         ..Scope::default()
     };
     let mut body = child_body(vault, parent, child, leader, leader, scope.clone())?;
-    body.depth_remaining = depth;
+    body.depth_remaining = u64::from(depth);
     let proof = sign_with(vault, child, &mut body, Some(leader), None, None)?;
     vault.spawn_subproject(parent, child, leader, scope, proof, 90)
 }
@@ -324,13 +324,13 @@ fn seal_exit(scaffold: &Scaffold) -> Result<()> {
     claims.holder_ref = "host".into();
     let slip = vault.mint_capability_slip(&issuer, claims)?;
     // The door commits only a seal that installs as B's settled head.
+    let signer = crate::workspace_roster::OwnerProjectSigner::new(&issuer, slip)?;
     vault.seal_project(
         &super::history_cycles::owner(&vault)?,
+        &signer,
         b,
         authority,
         *b0,
-        slip.to_token()?,
-        |challenge| issuer.binding_proof(&slip, challenge),
     )?;
     assert_eq!(
         scaffold.public(&vault)?,

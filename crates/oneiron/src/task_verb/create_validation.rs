@@ -420,6 +420,7 @@ pub(super) fn consult_refusal(code: &str, message: &str, suggestion: &str) -> Me
         message: message.to_owned(),
         suggestions: vec![suggestion.to_owned()],
         successor_short_id: None,
+        extraction_layout: None,
         gate_denial: None,
         read_receipt: None,
         policy_denial: None,

@@ -1,5 +1,7 @@
 //! The POLICY_MANIFEST row that names who may settle a held code effect.
 
+use oneiron_contracts::fingerprint::ContentHash;
+
 use super::manifest_authenticity::PolicyRowOrigin;
 use crate::EntityId;
 
@@ -41,7 +43,7 @@ impl CodeConsentSettlementFold {
         };
         let source = CodeConsentSettlementSource {
             manifest_ref: manifest.to_hex(),
-            body_hash: *blake3::hash(body).as_bytes(),
+            body_hash: *ContentHash::of(body).as_bytes(),
             version: row.version,
             origin: source_origin,
         };

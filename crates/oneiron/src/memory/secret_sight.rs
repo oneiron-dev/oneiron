@@ -10,6 +10,18 @@ use crate::secret_custody::{RevealAsker, SecretSight};
 use crate::task_verb::task_create_origin_in_txn;
 use crate::typed_body::LiftedSources;
 
+/// One pinned version's outgoing copy and its two digests
+/// ([`Memory::export_blob_artifact_pinned_copy`]).
+pub(crate) struct PinnedArtifactCopy {
+    /// The export: the exact copy's bytes, and the name and type the
+    /// version was appended with.
+    pub(crate) export: crate::blob_artifact::ArtifactExport,
+    /// BLAKE3 of the stored version, as its record names it.
+    pub(crate) stored_blake3: [u8; 32],
+    /// BLAKE3 of the exact copy in `export`.
+    pub(crate) copy_blake3: [u8; 32],
+}
+
 impl Memory<'_> {
     /// The request's real Owner proof for queue-check exhaust, when the host
     /// bound the owner's own direct request (`with_owner_authorship`).
@@ -29,6 +41,39 @@ impl Memory<'_> {
         why: Option<&str>,
     ) -> MemoryResult<Option<crate::blob_artifact::ArtifactExport>> {
         self.export_blob_artifact_sighted_with_owner(artifact, version, why, None)
+    }
+
+    /// One pinned version's outgoing copy (fix list row 17645): exactly
+    /// `version`, never the head, exported as [`Self::artifacts_export`]
+    /// serves this caller with no `why`, so its secret, repo,
+    /// protected-version and DOCX-author gates are the export's own and
+    /// nothing is revealed, beside the stored version's BLAKE3 its record
+    /// names and the BLAKE3 of the exact copy. A send's approval is never
+    /// reveal authority: no `why` rides here. `None` when the caller does
+    /// not read that version.
+    pub(crate) fn export_blob_artifact_pinned_copy(
+        &self,
+        artifact: &EntityId,
+        version: u64,
+    ) -> MemoryResult<Option<PinnedArtifactCopy>> {
+        let Some(export) = self.export_blob_artifact_sighted_with_owner(
+            artifact,
+            Some(version),
+            None,
+            self.queue_check_request_owner(),
+        )?
+        else {
+            return Ok(None);
+        };
+        if export.version != version {
+            return Err(Error::ConcurrentWrite("the artifact version changed").into());
+        }
+        let copy_blake3 = *blake3::hash(&export.bytes).as_bytes();
+        Ok(Some(PinnedArtifactCopy {
+            stored_blake3: export.content_hash,
+            copy_blake3,
+            export,
+        }))
     }
 
     pub(crate) fn export_blob_artifact_sighted_as_owner(

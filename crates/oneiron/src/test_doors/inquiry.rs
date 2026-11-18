@@ -98,6 +98,26 @@ pub fn cancel_task(vault: &Vault, task: EntityId, actor: EntityId) -> Result<()>
     })
 }
 
+/// [`cancel_task`] in a raw write transaction outside the write door, as a
+/// writer outside a post-commit scope commits: no post-commit work runs
+/// after it. A held answer whose task ends this way is left to the
+/// holder's backstops, each touch and each housekeeping pass.
+///
+/// # Errors
+///
+/// Storage errors.
+pub fn cancel_task_outside_write_door(
+    vault: &Vault,
+    task: EntityId,
+    actor: EntityId,
+) -> Result<()> {
+    let mut txn = vault.store.env.write_txn()?;
+    let now = crate::ports::recorded_at_in_txn(&vault.store, &mut txn)?;
+    crate::context_board::cancel_task_in_txn(vault, &mut txn, task, actor, now)?;
+    txn.commit()?;
+    Ok(())
+}
+
 /// How many task-held inquiry answers `vault` holds now. Unlike
 /// `Vault::held_inquiry_answer`, it drops none first, so a test sees what a
 /// housekeeping pass dropped.

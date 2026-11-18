@@ -299,7 +299,7 @@ fn known_calendar_bodies_reject_malformed_originless_and_conflicting_replays() {
             let result = if replay {
                 vault
                     .batch()
-                    .put_replicated(&event, ENTITY_TYPE_EVENT, time(), 2, &body)
+                    .put_replicated(&event, ENTITY_TYPE_EVENT, time(), 2, None, &body)
                     .commit()
             } else {
                 vault.put_entity(&event, ENTITY_TYPE_EVENT, time(), 2, &body)
@@ -319,12 +319,12 @@ fn known_calendar_bodies_reject_malformed_originless_and_conflicting_replays() {
     let incoming = EntityId::now();
     vault
         .batch()
-        .put_replicated(&incoming, ENTITY_TYPE_EVENT, time(), 2, &original)
+        .put_replicated(&incoming, ENTITY_TYPE_EVENT, time(), 2, None, &original)
         .commit()
         .unwrap();
     vault
         .batch()
-        .put_replicated(&event, ENTITY_TYPE_EVENT, time(), 2, &original)
+        .put_replicated(&event, ENTITY_TYPE_EVENT, time(), 2, None, &original)
         .commit()
         .unwrap();
     assert_eq!(vault.get(&incoming).unwrap().unwrap(), original);
@@ -442,7 +442,7 @@ fn late_origin_binding_preserves_source_invalidation_without_hiding_native_event
         let body = pending.encode().unwrap();
         vault
             .batch()
-            .put_replicated(&event, ENTITY_TYPE_EVENT, time(), 1, &body)
+            .put_replicated(&event, ENTITY_TYPE_EVENT, time(), 1, None, &body)
             .commit()
             .unwrap();
         vault

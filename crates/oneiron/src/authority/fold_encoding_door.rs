@@ -58,6 +58,7 @@ pub fn state_encodings(entries: &[AuthorityLogEntry]) -> StateEncodings {
         pre_handoff_entries: Some(&NO_HANDOFFS),
         memory_floor_bytes: u64::MAX,
         pin: None,
+        appointments: None,
     };
     let states = super::fold_schedule::fold_entry_states(&by_hash, context, &mut issues);
     let mut merged: Option<FoldState> = None;

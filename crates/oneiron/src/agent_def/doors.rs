@@ -643,6 +643,28 @@ impl Vault {
         learned_at: u64,
     ) -> Result<AgentDefinition> {
         owner.revalidate_as_vault_owner_in_txn(self, txn)?;
+        self.write_agent_ceiling_at_version_in_txn(txn, id, expected_version, ceiling, learned_at)
+    }
+
+    /// [`Self::patch_agent_ceiling_at_version_in_txn`] past its proof: the
+    /// fence on `expected_version`, the clone that changes only the ceiling
+    /// and the version, the update check, the id pin's move and the write.
+    /// It rechecks no proof, so its callers are the owner's door above,
+    /// after its recheck, and the Dreamer's action-mode auto-apply, under the
+    /// owner's `dreamer.action_mode.auto_apply_patch` and the owner's own
+    /// policy, read in the same write (C22).
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::patch_agent_ceiling_at_version_in_txn`], but for the proof.
+    pub(crate) fn write_agent_ceiling_at_version_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        id: &EntityId,
+        expected_version: &str,
+        ceiling: super::types::AgentCeiling,
+        learned_at: u64,
+    ) -> Result<AgentDefinition> {
         let existing = self.read_agent_definition_in_txn(txn, id)?;
         if expected_version != existing.version {
             return Err(Error::ConcurrentWrite("agent definition revision changed"));

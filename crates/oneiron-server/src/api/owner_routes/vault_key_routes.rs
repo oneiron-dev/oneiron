@@ -18,6 +18,8 @@
 //! come from, which this route does not issue: `oneiron recovery-kit
 //! issue-vault-key --any-two-pieces` does, and here the engine refuses it.
 
+pub(super) mod data_key_generation_routes;
+
 use std::fmt;
 use std::sync::Arc;
 
@@ -183,6 +185,9 @@ pub(super) fn owner_table() -> OwnerTable {
             put(set_recovery_preset),
         ),
     ]
+    .into_iter()
+    .chain(data_key_generation_routes::owner_table())
+    .collect()
 }
 
 /// `GET /v1/owner/vault-key`: whether the vault has a data key, whether this
