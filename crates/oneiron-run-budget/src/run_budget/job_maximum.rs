@@ -186,6 +186,20 @@ impl JobMaximum {
         self.stopped
     }
 
+    /// Whether the host confirmed the 95 percent warning reached the
+    /// customer in this chunk.
+    #[must_use]
+    pub fn warning_delivered(&self) -> bool {
+        self.warning_delivered
+    }
+
+    /// The checkpoint that counts for the stop: one taken after the warning
+    /// reached the customer, or the one a stopped job resumes from.
+    #[must_use]
+    pub fn counted_checkpoint(&self) -> Option<&CheckpointRef> {
+        self.checkpoint.as_ref()
+    }
+
     /// Records the job's usage so far and returns what it crossed, in this
     /// order: a checkpoint percent, the customer's warning, the maximum.
     pub fn record_usage(&mut self, used_units: u64) -> Vec<JobSignal> {
