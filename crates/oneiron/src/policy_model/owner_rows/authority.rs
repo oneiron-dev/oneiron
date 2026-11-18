@@ -298,6 +298,26 @@ impl Vault {
         is_live_vault_owner_in_txn(self, &txn, person)
     }
 
+    /// [`is_live_vault_owner_in_txn`] for `owner`'s delete of their own
+    /// PERSON, as that delete's writes re-prove it after its own scrub
+    /// committed: the census takes `owner`'s PERSON as live, since its
+    /// deletion is the delete being proved, and reads every other PERSON as
+    /// it stands. An owner another Owner made an Admin since the delete's
+    /// first proof is no owner here.
+    pub(crate) fn is_vault_owner_deleting_own_person_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        owner: &EntityId,
+    ) -> Result<bool> {
+        let owners = owners_with(&self.store, self.privacy_posture(), txn, &mut |id| {
+            if id == owner {
+                return Ok(true);
+            }
+            crate::consent::person_is_live_in_txn(self, txn, id)
+        })?;
+        Ok(owners.contains(owner))
+    }
+
     /// Whether `holder` is a recorded owner of this vault and a live vault
     /// owner now, read inside the caller's transaction: the embedded owner
     /// actor, or an Owner a conferring grant names in a shared vault, whose
