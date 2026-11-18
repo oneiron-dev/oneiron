@@ -275,9 +275,11 @@ pub use oneiron_authority::authority::{ExportSecretWork, SealedWorkOutput};
 // The heads a root request's revision is over, its witness (FIX 5551).
 pub use oneiron_authority::authority::RootRevisionBasis;
 // The challenge a device's new owner key signs to enrol, and its proof's
-// length (FIX 4920, the seam L04's FIX 4921 calls).
+// length (FIX 4920, the seam L04's FIX 4921 calls); the recovery root's
+// authority key signs its own (pass 27 R4).
 pub use oneiron_authority::authority::{
     OWNER_KEY_POSSESSION_PROOF_LEN, owner_key_enrollment_challenge,
+    recovery_authority_enrollment_challenge,
 };
 // A passkey's assertion as an owner root's signature: its envelope and the
 // challenge it names (row WEB-PASSKEY-OWNER-KEY).
@@ -447,9 +449,11 @@ pub(crate) use owner_delegate::{
     OwnerDelegate, delegate_reads_in_txn, is_owner_delegate_verb, owner_delegate_in_txn,
 };
 pub use owner_delegate::{OwnerOrDelegate, owner_delegate_admits};
+pub(crate) use owner_key_enrollment_door::ActivationPredecessor;
 pub use owner_key_enrollment_door::{
-    EnrolledOwnerKey, EnrolledOwnerPasskey, OwnerKeyEnrollment, OwnerKeyEnrollmentReceipt,
-    OwnerPasskeyEnrollment, OwnerPasskeyEnrollmentReceipt, PreparedOwnerKeyEnrollment,
+    EnrolledOwnerKey, EnrolledOwnerKeyKind, EnrolledOwnerPasskey, OwnerKeyEnrollment,
+    OwnerKeyEnrollmentReceipt, OwnerPasskeyEnrollment, OwnerPasskeyEnrollmentReceipt,
+    PreparedOwnerKeyEnrollment, WaysBack,
 };
 pub use owner_key_move_confirm::{
     OWNER_KEY_MOVE_MEMBER_NOT_CONFIRMED, OWNER_KEY_MOVE_NO_HELD_KEY, OWNER_KEY_MOVE_NOT_PLANNED,

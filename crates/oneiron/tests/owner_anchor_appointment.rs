@@ -230,6 +230,9 @@ fn owned_on(keystore: Arc<dyn DeviceKeystore>) -> Owned {
         )
         .expect("the owner enrols an owner key");
     let owner = proof(&vault, person);
+    vault
+        .enrol_device_owner_signing_key(&authority, &issuer)
+        .expect("this install holds a predecessor for the activation");
     let prepared = vault.prepare_owner_root(&owner).expect("a kit root");
     let seed = restored(vault_id, prepared.seed());
     let root = vault
