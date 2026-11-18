@@ -660,9 +660,18 @@ fn fold_merged_entry(
     }
     // The owner's word that no other machine is left joins one held
     // enrolment of a machine born of a restore; a key of the owner's signs
-    // it alone (row RESTORED-COPIES-ENROL-EACH-OTHER).
+    // it alone (row RESTORED-COPIES-ENROL-EACH-OTHER). An inline enrolment
+    // is that key's own act-free roster revision, filed under this entry as
+    // a roster row's is and held, then joined (KIT-JOIN-ONE-R-ROW = A).
     if let AuthorityOp::RestoredMachineJoin(record) = &entry.op {
-        if let Err(issue) = super::restored_join::apply_owner_join(&mut state, entry, record, hash)
+        let signer = entry.signer_key().clone();
+        let file_inline = |state: &mut FoldState, profile: &MachineProfile| {
+            super::restored_join::fold_revision(state, profile, hash, false, |state, _| {
+                apply_machine_profile(state, &signer, profile, hash, context, false)
+            })
+        };
+        if let Err(issue) =
+            super::restored_join::apply_owner_join(&mut state, entry, record, hash, file_inline)
         {
             return EntryFold::Invalid(issue);
         }
