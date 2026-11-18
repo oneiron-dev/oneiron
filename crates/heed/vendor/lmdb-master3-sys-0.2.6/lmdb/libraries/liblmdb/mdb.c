@@ -3599,10 +3599,20 @@ renew:
 	}
 	if (rc) {
 		if (txn != env->me_txn0) {
-			/* mt_rpages belongs to parent */
 			if (!F_ISSET(flags, MDB_RDONLY)) {
-				free(txn->mt_u.dirty_list);
+				/* ONEIRON FORK (begin failure): only a nested write txn gets here,
+				 * after mdb_txn_end(MDB_END_FAIL_BEGINCHILD) above, which already
+				 * freed its dirty list and free pages and leaves only the txn.
+				 * ONEIRON FORK (child mutex): destroy the child mutex it got above,
+				 * which that mode does not. On Windows the mutex is a handle. */
+				pthread_mutex_destroy(&txn->mt_child_mutex);
 			}
+#if MDB_RPAGE_CACHE
+			/* ONEIRON FORK (begin failure): a top-level read txn owns the chunk
+			 * table allocated above; a nested txn's belongs to its parent. */
+			else if (!parent && MDB_REMAPPING(env->me_flags))
+				free(txn->mt_rpages);
+#endif
 			free(txn);
 		}
 	} else {
@@ -4494,6 +4504,10 @@ _mdb_txn_commit(MDB_txn *txn, int flag)
 		parent->mt_last_workid = txn->mt_last_workid;
 		parent->mt_child = NULL;
 		mdb_midl_free(((MDB_ntxn *)txn)->mnt_pgstate.mf_pghead);
+		/* ONEIRON FORK (child mutex): this path frees the nested write txn
+		 * without mdb_txn_end, so destroy the child mutex mdb_txn_begin gave it.
+		 * On Windows the mutex is a handle. */
+		pthread_mutex_destroy(&txn->mt_child_mutex);
 		free(txn);
 		return rc;
 	}
