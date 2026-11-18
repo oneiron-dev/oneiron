@@ -1,6 +1,6 @@
 //! Read-only extraction children attenuated from one prepared branch.
 use super::*;
-use crate::claim::RelationshipRead;
+use crate::dreamer_consolidation::branch::QueuedBranch;
 use crate::dreamer_consolidation::call_labels::{CallLabelMap, LabelKind};
 
 pub(in crate::dreamer_consolidation) struct ExtractionSlice {
@@ -24,6 +24,19 @@ pub(in crate::dreamer_consolidation) struct ExtractionSlice {
     pub(in crate::dreamer_consolidation) sources: Vec<EntityId>,
 }
 
+/// Maps each queued TURN to its part line, so native slices and the
+/// bound step group by the same line.
+///
+/// A nightly thing's parts share a line where their exposure agrees,
+/// and any other part is a line of its own.
+pub(super) fn branch_turn_lines(branch: &QueuedBranch) -> BTreeMap<EntityId, u32> {
+    branch
+        .parts
+        .iter()
+        .flat_map(|part| part.turns.iter().map(move |turn| (*turn, part.line)))
+        .collect()
+}
+
 impl BranchResources<'_> {
     /// Group by slice line (FIX 8724) and co-mentioned known entities, then
     /// chunk each group. Every TURN appears in one chunk, and every child sees
@@ -45,11 +58,7 @@ impl BranchResources<'_> {
         type Group = Vec<(EntityId, TurnBodyFacts)>;
         let mut groups = BTreeMap::<(u32, Vec<EntityId>), Group>::new();
         let lines: BTreeMap<EntityId, u32> = match &self.origin {
-            ResourceOrigin::Branch(branch) => branch
-                .parts
-                .iter()
-                .flat_map(|part| part.turns.iter().map(move |turn| (*turn, part.line)))
-                .collect(),
+            ResourceOrigin::Branch(branch) => branch_turn_lines(branch),
             ResourceOrigin::Root(_) => self.turns.keys().map(|turn| (*turn, 0)).collect(),
         };
         let mut serial_width = self.priors.values().any(serial_width_prior);
@@ -57,27 +66,26 @@ impl BranchResources<'_> {
             let facts = self.turn(self.scope(), id)?;
             serial_width |= facts.imported;
             let (_, body) = self.source(self.scope(), id)?;
-            let mentioned = self.known.mentioned(&body, facts.text.as_deref());
             let line = lines.get(id).copied().unwrap_or_default();
-            groups
-                .entry((line, mentioned))
-                .or_default()
-                .push((*id, facts));
+            let key = crate::dreamer_consolidation::extraction_step::slice_group_key(
+                &self.known,
+                line,
+                &body,
+                facts.text.as_deref(),
+            );
+            groups.entry(key).or_default().push((*id, facts));
         }
         // The material the wake's admitted `host.wake` hooks added leads
         // every slice's input (FIX 10665): context for the call, never a
         // turn, so no label names it and nothing cites it. The material does
         // not say which hook added it, so a slice that carries any is
         // low-trust, kept off a thing agent's clean loan.
-        let mut material = String::new();
-        for text in self.prepared_wake.map_or(
-            &[][..],
-            crate::dreamer_consolidation::PreparedWake::hook_material,
-        ) {
-            material.push_str("[host material] ");
-            material.push_str(text);
-            material.push('\n');
-        }
+        let material = crate::dreamer_consolidation::extraction_step::render_host_material(
+            self.prepared_wake.map_or(
+                &[][..],
+                crate::dreamer_consolidation::PreparedWake::hook_material,
+            ),
+        );
         let mut slices = Vec::new();
         for ((_, entities), group) in groups {
             let known = self.known.slice(&entities);
@@ -97,56 +105,30 @@ impl BranchResources<'_> {
             }
             for chunk in group.chunks(turns_per_child) {
                 let ids: BTreeSet<_> = chunk.iter().map(|(id, _)| *id).collect();
-                let parents: BTreeSet<_> = ids.iter().filter_map(|id| self.turns.get(id)).collect();
-                let mut scope = self.request_scope();
-                // Keep its own conversations and the buckets, but remove every
-                // sibling TURN, every other part's conversation, MESSAGE and
-                // prior head from this child's capabilities.
-                for (id, source) in &self.sources {
-                    if (self.turns.contains_key(id) && !ids.contains(id))
-                        || (self.is_part_parent(id) && !parents.contains(id))
-                        || (self.priors.contains_key(id) && !known.shows(*id))
-                    {
-                        scope.readable.remove(&source.resource);
-                        scope.writable.remove(&source.resource);
-                    }
-                }
-                let kept_memberships: BTreeSet<_> = known
-                    .membership_versions()
-                    .map(|(_, version)| version.clone())
-                    .collect();
-                for (_, version) in self.known.membership_versions() {
-                    if !kept_memberships.contains(version) {
-                        scope.readable.remove(version);
-                        scope.writable.remove(version);
-                    }
-                }
-                let kept_messages: BTreeSet<_> = ids
+                let parents: BTreeSet<EntityId> = ids
                     .iter()
-                    .filter_map(|id| self.texts.get(id))
-                    .flat_map(TurnText::versions)
-                    .map(|(_, version)| version.clone())
+                    .filter_map(|id| self.turns.get(id))
+                    .copied()
                     .collect();
-                for version in self
-                    .texts
-                    .values()
-                    .flat_map(TurnText::versions)
-                    .map(|(_, version)| version)
-                {
-                    if !kept_messages.contains(version) {
-                        scope.readable.remove(version);
-                        scope.writable.remove(version);
-                    }
-                }
-                // An unbound branch's words still carry their MESSAGEs'
-                // labels: the chunk binds to the relationships every labelled
-                // word shares (the empty set when they share none), so a
-                // candidate that names no relationship inherits the strictest
-                // label and never `all`, and one that names a relationship
-                // stays inside it (S63E-RULED, lead 9 Nov 19:0x).
-                if scope.relationship.is_none() {
-                    scope.relationship = self.word_bound(&ids)?;
-                }
+                let base = self.request_scope();
+                let is_parent = |id: &EntityId| self.is_part_parent(id);
+                let shows = |id: EntityId| known.shows(id);
+                let inputs = super::extraction_scope::ExtractionScopeInputs {
+                    sources: &self.sources,
+                    turns: &self.turns,
+                    priors: &self.priors,
+                    texts: &self.texts,
+                    cited: &ids,
+                    cited_parents: &parents,
+                    is_part_parent: &is_parent,
+                    shows_prior: &shows,
+                    kept_listing: Some(&known),
+                    whole_listing: &self.known,
+                };
+                let scope =
+                    super::extraction_scope::attenuate_extraction_scope(&base, &inputs, || {
+                        self.word_bound(&ids)
+                    })?;
                 // The relationships a candidate may hold within: the bound
                 // one, or none listed for words that carry no label.
                 let rels: Vec<EntityId> = scope.relationship.iter().flatten().copied().collect();
@@ -238,36 +220,7 @@ impl BranchResources<'_> {
     fn word_bound(&self, turns: &BTreeSet<EntityId>) -> Result<Option<BTreeSet<EntityId>>> {
         let vault = self.read.vault();
         let txn = vault.store.env.read_txn()?;
-        let mut bound: Option<BTreeSet<EntityId>> = None;
-        // The MESSAGEs whose words the transcript shows, not every pinned
-        // child: a hidden or unfinished one is read by no call, so its label
-        // binds nothing (review round 1 of #6903).
-        let messages = turns
-            .iter()
-            .filter_map(|id| self.texts.get(id))
-            .flat_map(TurnText::projection);
-        for message in messages {
-            let Some(raw) = vault.get_raw_in(&txn, &message)? else {
-                continue;
-            };
-            let label: BTreeSet<EntityId> =
-                match crate::claim::relationship_read(&vault.store, &txn, &message, &raw) {
-                    Ok(RelationshipRead::Gated { private: true, .. }) | Err(_) => BTreeSet::new(),
-                    Ok(RelationshipRead::Gated {
-                        space: Some(space), ..
-                    }) => space.into_iter().collect(),
-                    Ok(
-                        RelationshipRead::Gated { space: None, .. } | RelationshipRead::Decided(_),
-                    ) => {
-                        continue;
-                    }
-                };
-            bound = Some(match bound {
-                None => label,
-                Some(held) => held.intersection(&label).copied().collect(),
-            });
-        }
-        Ok(bound)
+        super::extraction_scope::word_bound_in_txn(vault, &txn, &self.texts, turns)
     }
 }
 

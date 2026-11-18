@@ -134,7 +134,9 @@ fn event_config() -> EventTypeConfig {
                 .collect(),
             preferred_hours: Vec::new(),
         }],
+        flex_with_ordinary: false,
         flex_windows: Vec::new(),
+        deposit: None,
     }
 }
 
@@ -177,6 +179,7 @@ fn publication(owner_display: &str) -> BookingPagePublication {
         event_types: vec![EventTypeCard {
             key: EventTypeKey(EVENT_TYPE.to_owned()),
             title: "Door event".to_owned(),
+            deposit: None,
             duration_min: 30,
             description: "Door description".to_owned(),
         }],

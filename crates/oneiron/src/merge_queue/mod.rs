@@ -32,6 +32,7 @@ mod received_enqueue;
 mod review_policy;
 mod reviewed;
 mod run;
+pub(crate) mod setting_keys;
 mod source;
 mod source_materialize;
 mod source_types;
@@ -44,8 +45,6 @@ mod tested_export;
 mod tested_received;
 mod tested_store;
 mod tested_types;
-// FIX [LIBTEST-QUARANTINE-MERGE-QUEUE-TESTS]: the lib test target's type check fails here (4 errors: E0063 x2, E0308 x2); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;
 mod types;
@@ -94,8 +93,8 @@ pub(crate) use composition::LineComposition;
 // The vault's opt-in review policy (FIX 8268).
 pub(crate) use review_policy::{
     ActiveQueueReviewPolicy, DEFAULT_QUEUE_REVIEW_CRITICS, DEFAULT_QUEUE_REVIEW_VOTES,
-    QueueReviewRequirement, StoredQueueReviewPolicy, erase_review_policy_actor_in_txn,
-    queue_review_requirement_in_txn, review_policy_unreadable_hold,
+    QueueReviewRequirement, StoredQueueReviewPolicy, queue_review_requirement_in_txn,
+    review_policy_unreadable_hold,
 };
 pub use review_policy::{
     QueueReviewDefault, QueueReviewPolicy, QueueReviewThresholds, REVIEW_POLICY_DEFAULT,
@@ -155,5 +154,4 @@ impl<'a> MergeQueue<'a> {
 // tables (FIX 2680), named by their declarations.
 pub(crate) use self::check_store::merge_queue_check_config_accepts_masked;
 pub(crate) use self::check_store::merge_queue_check_work_accepts_masked;
-pub(crate) use self::review_policy::merge_queue_review_policy_accepts_masked;
 pub(crate) use self::storage::merge_queue_batch_accepts_masked;

@@ -14,7 +14,7 @@ use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
 use crate::temporal::TimeRange;
 use crate::vault::Vault;
-use crate::write_envelope::WriteActor;
+use crate::write_envelope::{ClaimCandidate, WriteActor, WriteEnvelope, WriteProvenance};
 use oneiron_contracts::affect::Vad;
 
 mod consolidated;
@@ -103,7 +103,7 @@ pub fn put_coreference_link(
     occurred: TimeRange,
     learned_at: u64,
 ) -> Result<EntityId> {
-    let (claim_id, ops) = coreference_link_ops(
+    let (claim_id, _, ops) = coreference_link_ops(
         vault,
         actor,
         local_person,
@@ -112,7 +112,7 @@ pub fn put_coreference_link(
         occurred,
         learned_at,
     )?;
-    apply_coreference_ops(vault, None, ops)?;
+    apply_coreference_ops(vault, ops)?;
     Ok(claim_id)
 }
 
@@ -128,7 +128,7 @@ pub(crate) fn put_coreference_link_as_owner(
     occurred: TimeRange,
     learned_at: u64,
 ) -> Result<EntityId> {
-    let (claim_id, ops) = coreference_link_ops(
+    let (claim_id, body, ops) = coreference_link_ops(
         vault,
         &owner_actor(vault, owner)?,
         local_person,
@@ -137,7 +137,14 @@ pub(crate) fn put_coreference_link_as_owner(
         occurred,
         learned_at,
     )?;
-    apply_coreference_ops(vault, Some(owner), ops)?;
+    apply_coreference_ops_as_owner(
+        vault,
+        owner,
+        claim_id,
+        &body,
+        ops,
+        "federation.put_coreference_link",
+    )?;
     Ok(claim_id)
 }
 
@@ -149,8 +156,8 @@ fn owner_actor(vault: &Vault, owner: &AuthenticatedOwner) -> Result<WriteActor> 
     ))
 }
 
-/// The status claim id and the ops of [`put_coreference_link`], after its
-/// actor and endpoint checks.
+/// The status claim id, its body, and the ops of [`put_coreference_link`],
+/// after its actor and endpoint checks.
 fn coreference_link_ops(
     vault: &Vault,
     actor: &WriteActor,
@@ -159,7 +166,7 @@ fn coreference_link_ops(
     status: CoreferenceStatus,
     occurred: TimeRange,
     learned_at: u64,
-) -> Result<(EntityId, Vec<BatchOp>)> {
+) -> Result<(EntityId, ClaimBody, Vec<BatchOp>)> {
     require_coreference_actor(vault, actor)?;
     if !vault.entity_exists(&local_person)? || !vault.entity_exists(&other_person)? {
         return Err(Error::EntityNotFound);
@@ -188,7 +195,7 @@ fn coreference_link_ops(
         occurred,
         learned_at,
     )?);
-    Ok((claim_id, ops))
+    Ok((claim_id, body, ops))
 }
 
 /// Consents to sharing an existing coreference link into ONE pact.
@@ -214,7 +221,7 @@ pub fn coreference_share_consent(
     occurred: TimeRange,
     learned_at: u64,
 ) -> Result<EntityId> {
-    let (claim_id, ops) = coreference_share_ops(
+    let (claim_id, _, ops) = coreference_share_ops(
         vault,
         actor,
         local_person,
@@ -223,7 +230,7 @@ pub fn coreference_share_consent(
         occurred,
         learned_at,
     )?;
-    apply_coreference_ops(vault, None, ops)?;
+    apply_coreference_ops(vault, ops)?;
     Ok(claim_id)
 }
 
@@ -238,7 +245,7 @@ pub(crate) fn coreference_share_consent_as_owner(
     occurred: TimeRange,
     learned_at: u64,
 ) -> Result<EntityId> {
-    let (claim_id, ops) = coreference_share_ops(
+    let (claim_id, body, ops) = coreference_share_ops(
         vault,
         &owner_actor(vault, owner)?,
         local_person,
@@ -247,12 +254,19 @@ pub(crate) fn coreference_share_consent_as_owner(
         occurred,
         learned_at,
     )?;
-    apply_coreference_ops(vault, Some(owner), ops)?;
+    apply_coreference_ops_as_owner(
+        vault,
+        owner,
+        claim_id,
+        &body,
+        ops,
+        "federation.coreference_share_consent",
+    )?;
     Ok(claim_id)
 }
 
-/// The consent claim id and the ops of [`coreference_share_consent`], after
-/// its actor, link and endpoint checks.
+/// The consent claim id, its body, and the ops of [`coreference_share_consent`],
+/// after its actor, link and endpoint checks.
 fn coreference_share_ops(
     vault: &Vault,
     actor: &WriteActor,
@@ -261,7 +275,7 @@ fn coreference_share_ops(
     pact_id: &[u8; COREFERENCE_PACT_ID_LEN],
     occurred: TimeRange,
     learned_at: u64,
-) -> Result<(EntityId, Vec<BatchOp>)> {
+) -> Result<(EntityId, ClaimBody, Vec<BatchOp>)> {
     require_coreference_actor(vault, actor)?;
     let (source, target) = coreference_link_orientation(vault, local_person, other_person)?
         .ok_or(Error::EdgeNotFound)?;
@@ -279,7 +293,7 @@ fn coreference_share_ops(
         ClaimApprovalStatus::Approved,
     )?;
     let ops = coreference_claim_ops(claim_id, source, &body, occurred, learned_at)?;
-    Ok((claim_id, ops))
+    Ok((claim_id, body, ops))
 }
 
 /// Removes both orientations of a coreference link and retracts its live
@@ -574,18 +588,9 @@ fn coreference_claim_ops(
     ])
 }
 
-/// Applies `ops` in one writer. An owner door's `owner` is revalidated
-/// first in that writer (FIX 5950), as unlink does; a trusted native caller
-/// passes `None`.
-fn apply_coreference_ops(
-    vault: &Vault,
-    owner: Option<&AuthenticatedOwner>,
-    ops: Vec<BatchOp>,
-) -> Result<()> {
+/// Applies `ops` in one writer for a trusted native caller.
+fn apply_coreference_ops(vault: &Vault, ops: Vec<BatchOp>) -> Result<()> {
     vault.with_write_txn_grouped(|wtxn| {
-        if let Some(owner) = owner {
-            owner.revalidate_in_txn(vault, wtxn)?;
-        }
         crate::batch::apply_ops(
             &vault.store,
             &vault.config,
@@ -597,6 +602,91 @@ fn apply_coreference_ops(
                 .load(std::sync::atomic::Ordering::Acquire),
             false,
             true,
+        )
+    })
+}
+
+/// Applies an owner door's `ops` in one writer, the claim's raw put rewritten
+/// as the owner's own candidate: `owner` is revalidated in that writer (FIX
+/// 5950), as unlink does, and the candidate carries the owner's envelope and
+/// proof, as `federation::bind_member_person` does, so an `Approved` status or
+/// consent lands past the criticality floor instead of pending on it. The
+/// candidate keeps the body's scope stamps and sits where the put sat — before
+/// the `claim_of` edge, which the candidate arm would otherwise reconcile away
+/// for an edge subject. A narrowed or delegated credential carries no proof and
+/// is gated as any other `Approved` write.
+fn apply_coreference_ops_as_owner(
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    claim_id: EntityId,
+    body: &ClaimBody,
+    ops: Vec<BatchOp>,
+    op_name: &'static str,
+) -> Result<()> {
+    vault.with_write_txn_grouped(|wtxn| {
+        let actor = WriteActor::new(
+            owner.revalidate_in_txn(vault, wtxn)?,
+            crate::edge::EdgeActorClass::Human,
+        );
+        let proof = owner.owner_answer_in_txn(vault, wtxn)?;
+        let envelope = WriteEnvelope::new(
+            actor,
+            ClaimSource::UserStated,
+            WriteProvenance::new(Value::Map(vec![
+                (Value::from("op"), Value::from(op_name)),
+                (
+                    Value::from("authentication"),
+                    Value::from(format!("{:?}", owner.decision_id())),
+                ),
+            ]))?,
+            body.approval,
+        );
+        let candidate = ClaimCandidate::new(
+            body.predicate.clone(),
+            body.subject,
+            body.value.clone(),
+            body.confidence,
+        )
+        .with_scope_stamps(body.scope_facet, body.scope_project);
+        let mut mapped = Vec::with_capacity(ops.len());
+        let mut replaced = false;
+        for op in ops {
+            match op {
+                BatchOp::Put {
+                    id,
+                    entity_type: crate::registry::ENTITY_TYPE_CLAIM,
+                    occurred,
+                    learned_at,
+                    ..
+                } if id == claim_id => {
+                    replaced = true;
+                    mapped.push(BatchOp::ClaimCandidate {
+                        id,
+                        candidate: Box::new(candidate.clone()),
+                        envelope: envelope.clone(),
+                        occurred,
+                        learned_at,
+                        internal_lexical_query_hint: false,
+                    });
+                }
+                other => mapped.push(other),
+            }
+        }
+        if !replaced {
+            return Err(Error::InvariantViolation(
+                "a coreference owner write carries its claim put",
+            ));
+        }
+        crate::batch::apply_ops_with_gate_mode(
+            &vault.store,
+            &vault.config,
+            &vault.analyzer,
+            wtxn,
+            mapped,
+            vault
+                .text_index_trusted
+                .load(std::sync::atomic::Ordering::Acquire),
+            crate::batch::ApplyOpsGateMode::new(false, true).with_owner_authored(proof),
         )
     })
 }

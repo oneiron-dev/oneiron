@@ -60,8 +60,8 @@ use oneiron::registry::{ENTITY_TYPE_ORG, ENTITY_TYPE_PERSON};
 use oneiron::store::GateDecisionId;
 use oneiron::task_verb::sdk::invoke;
 use oneiron::verbs::{
-    RecordEraseConfirmRequest, RecordEraseOutcome, RecordEraseRequest, confirm_record_erase,
-    preview_record_erase,
+    OwnerConfirmPreviewRequest, RecordEraseConfirmRequest, RecordEraseOutcome,
+    confirm_record_erase, preview_owner_confirm,
 };
 use oneiron::workspace_roster::{
     ProjectRecord, ThreadAudienceAddRequest, ThreadAudienceHistory, ThreadAudienceReceipt,
@@ -259,6 +259,7 @@ impl Flow {
                 }],
                 occurred_at: self.vault.now_recorded_at(),
                 assertions: Default::default(),
+                project: None,
             })
             .expect("the owner speaks");
     }
@@ -317,20 +318,32 @@ impl Flow {
         )
     }
 
-    /// The owner previews the erase of `record`, then confirms it on their
-    /// own proof, naming `check_in_ref`.
+    /// The owner previews the erase of `record` through the shared owner
+    /// confirm (L8-49), then confirms it on their own proof, naming
+    /// `check_in_ref`: the call passes back the confirm its preview returned.
     fn erase(&self, record: EntityId, check_in_ref: &str) -> MemoryResult<RecordEraseOutcome> {
         let memory = self.person(self.owner);
-        let preview = preview_record_erase(&memory, RecordEraseRequest { record })
-            .expect("the owner previews the erase");
+        let input = RecordEraseConfirmRequest {
+            record,
+            confirm: None,
+            also_same_bytes: false,
+            check_in_ref: Some(check_in_ref.to_owned()),
+        };
+        let preview = preview_owner_confirm(
+            &memory,
+            &self.owner_proof,
+            OwnerConfirmPreviewRequest {
+                verb: ERASE.to_owned(),
+                input: serde_json::to_value(&input).expect("the erase input encodes"),
+            },
+        )
+        .expect("the owner previews the erase");
         confirm_record_erase(
             &memory,
             &self.owner_proof,
             RecordEraseConfirmRequest {
-                record,
-                preview_digest: preview.preview_digest,
-                also_same_bytes: false,
-                check_in_ref: Some(check_in_ref.to_owned()),
+                confirm: Some(preview.confirm),
+                ..input
             },
         )
     }

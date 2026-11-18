@@ -43,8 +43,6 @@ mod served_form;
 mod session;
 mod share_doors;
 
-// FIX [LIBTEST-QUARANTINE-RECEIPT-TESTS]: the lib test target's type check fails here (12 errors: E0063 x7, E0061 x4, E0308 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;
 
@@ -153,7 +151,7 @@ pub(crate) use self::kernel::{
     FIELD_TARGET_CLASS, MAX_RECEIPT_QUERY_SCAN, hex_lower, retain_newest_receipt,
 };
 pub(crate) use self::ledgers::durable_send_receipts_lenient;
-#[cfg(test)]
+#[cfg(any(test, oneiron_test_support))]
 pub(crate) use self::ledgers::persist_send_receipt;
 pub(crate) use self::ledgers::{
     SendReceiptOutcome, attempt_calling_principal_in_txn, delivered_send_receipt_for_task,
@@ -253,3 +251,6 @@ pub(crate) use archive_source::{receipt_archive_holder, receipt_archive_matches_
 pub(crate) use self::direct_dispatch::outbound_direct_receipt_accepts_masked;
 pub(crate) use self::dispatch_observation::dispatch_observation_accepts_masked;
 pub(crate) use self::pack_attribution::attempt_pack_attribution_accepts_masked;
+
+#[cfg(oneiron_test_support)]
+pub(crate) use self::dispatch_observation::dispatch_observation_key_pin_for_test;
