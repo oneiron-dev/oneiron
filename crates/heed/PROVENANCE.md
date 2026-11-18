@@ -486,6 +486,66 @@ by 36 and after `:7405` by 48.
 an upstream mdb.master3 that refuses a page past the end of the data file on
 every read through the map.
 
+## Fetch rc: a stale named database's root fetch keeps its error
+
+FIX row LMDB-IGNORED-PAGE-FETCH-RC (found by the design read of the page bound
+above). Every transaction starts with each named database's record marked
+stale (`DB_STALE`, `mdb_txn_renew0` `:3405`). The first call that sets a cursor
+up on such a database (`mdb_cursor_init`, `:9670-9698`) reads the record again
+from the main tree and fetches the database's root (`mdb_page_search` with
+`MDB_PS_ROOTONLY`). Upstream, and its head `ba47717cc877`, drops that call's
+rc. A failed page fetch marks the transaction failed (`MDB_TXN_ERROR`), so the
+caller's next call answered `MDB_BAD_TXN`, and the fetch's own error was lost:
+`MDB_CORRUPTED` from the page bound, `MDB_CRYPTO_FAIL` for a sealed page that
+fails its authentication, `MDB_PAGE_NOTFOUND`. `mdb_cursor_open`,
+`mdb_cursor_renew` and `mdb_stat` even answered success on the failed
+transaction; `mdb_stat` then counted from the record, or answered zeros when
+the main tree's page was the one that failed. The first transaction that
+opens a database reads its record in `mdb_dbi_open` and is not stale, so only
+later transactions were affected: in oneiron, every read after the vault's
+open. The fork (`ONEIRON FORK (fetch rc)`):
+
+- `mdb_cursor_init` returns that rc, with `MDB_NOTFOUND` (an empty tree) as
+  success. The calls that set a cursor up on a user database check it:
+  `mdb_get` (`:7818-7820`), `mdb_cursor_open` (`:9719-9724`; a failed init
+  holds no page reference, so the cursor is freed before it is linked),
+  `mdb_cursor_renew` (`:9752`), `mdb_del0` (`:10658-10660`), `mdb_put`
+  (`:11140-11142`) and `mdb_stat` (`:12035-12037`). The calls on `FREE_DBI`
+  and `MAIN_DBI` never see a stale record (`mdb_txn_renew0` marks only user
+  databases) and are unchanged.
+- The other errors that call can return (`MDB_BAD_DBI`, `MDB_INCOMPATIBLE`, a
+  `MDB_NOTFOUND` from the main tree) leave the record stale, and upstream's
+  next call computed them again. The fork answers them on the first call.
+- `mdb_drop0` (`:12097-12107`, `MDB_REMAP_CHUNKS` environments only) takes an
+  extra reference on each of the cursor's pages for its copy `mx` and dropped
+  each `MDB_PAGE_GET` rc. A failed fetch would leave `mx`'s slot holding the
+  cursor's pointer with no reference of its own, and `done:` would then unref
+  one too many. The fork stops at the first failure, and `done:` unrefs only
+  the pages taken. No trigger was found: each fetch is a page the cursor
+  already holds, so it hits the transaction's chunk table in `mdb_rpage_get`
+  and passes the page bound's cached count. It is a guard, with no test.
+
+The page format does not change, and no stored row changes meaning (stored
+change: keep): only the error a call answers on a damaged file changes.
+Regression tests: six more in
+`crates/oneiron-store/tests/lmdb_open_damaged_file.rs`, each in a transaction
+after the one that opened the database: a get, a cursor, a count, a put and a
+delete on a named database whose leaf the cut removed answer `MDB_CORRUPTED`,
+and a sealed get of an altered leaf answers `MDB_CRYPTO_FAIL`. Upstream's code
+answers `MDB_BAD_TXN` to five of them and the record's count to the count.
+
+`mdb.c` is now 12,492 lines, SHA-256
+`f4e3546b0ec918dea4bfc37f047d2435ffc2afc6e2d36f7750ea7e5d9f2f9d6b`. Line
+numbers in this section cite this copy. Against the copy the section above
+cites, lines after `:7819` moved down by 1, after `:9662` by 7, after `:9686`
+by 9, after `:9687` by 10, after `:9709` by 15, after `:9738` by 14, after
+`:10644` by 16, after `:11124` by 18, after `:12017` by 20 and after `:12078`
+by 29.
+
+**Re-vendoring:** re-apply the eight `ONEIRON FORK (fetch rc)` hunks (and the
+prototype's `int`), or take an upstream mdb.master3 whose `mdb_cursor_init`
+returns the stale root fetch's error.
+
 ## Re-packaging for the Python sdist (ONE-1441)
 
 The workspace dependency also declares this vendor as a path dependency so
