@@ -123,6 +123,7 @@ pub mod fingerprint_keep_custody_policy_digest;
 pub mod fingerprint_keep_dreamer;
 pub mod fingerprint_keep_dreamer_consolidation_digests;
 pub mod fingerprint_keep_dreamer_runner_digests;
+pub mod fingerprint_keep_dreamer_wake_digests;
 pub mod fingerprint_keep_executor_cohort_credit;
 pub mod fingerprint_keep_git_wire;
 pub mod fingerprint_keep_hook_digests;

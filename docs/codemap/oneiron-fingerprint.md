@@ -25,8 +25,11 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/purposes/dreamer.rs` | src | s | — | — | Purposes of the Dreamer (`crates/oneiron/src/dreamer_consolidation`, `crates/oneiron/src/dreamer_promotion`… |
 | `src/purposes/dreamer_consolidation.rs` | src | s | — | — | Legacy dreamer-consolidation digests stored or compared by existing records |
 | `src/purposes/dreamer_runner.rs` | src | s | — | — | Legacy dreamer-runner digests stored or compared by existing records |
+| `src/purposes/dreamer_wake.rs` | src | s | — | — | Legacy identities of Dreamer wake sessions, queued work and sieve readings |
 | `src/purposes/engine_executor.rs` | src | s | — | — | Purposes of the engine executor (`crates/oneiron/src/engine_executor`) |
+| `src/purposes/feedback.rs` | src | s | — | — | Purposes of feedback (`crates/oneiron/src/feedback`) |
 | `src/purposes/git_wire.rs` | src | s | — | — | Purposes of the git wire (`oneiron-store`'s `git_wire` and `crates/oneiron/src/git_wire`) |
+| `src/purposes/inquiry.rs` | src | s | — | — | Purposes of inquiries (`crates/oneiron/src/inquiry`) |
 | `src/purposes/key_custody.rs` | src | s | — | — | Purposes of key custody (`crates/oneiron/src/store/key_custody`, with its store half in `oneiron-store`) |
 | `src/purposes/learning.rs` | src | s | — | — | Purposes of the learning loop (`crates/oneiron/src/edit_distance`, `skill_attribution`) |
 | `src/purposes/mail_pack.rs` | src | s | — | — | Purposes of the mail pack (`crates/oneiron/src/mail_pack`) |

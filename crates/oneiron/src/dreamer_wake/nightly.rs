@@ -339,3 +339,6 @@ pub(crate) fn planned_thing_lines_in_txn(
         })
         .collect())
 }
+
+#[cfg(oneiron_test_support)]
+pub(crate) use self::things::topic_of_for_test;
