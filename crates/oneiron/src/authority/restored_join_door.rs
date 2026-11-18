@@ -61,11 +61,13 @@ const HELD_DIFFERS: &str = "the vault holds an enrolment of this install's machi
 /// A kit restore of an install born of a restore that has not joined,
 /// whose kit's root authority key R this vault does not take as the owner's
 /// proof (a key the host holds, on a hosted install): R's word joins no
-/// restored install. Nothing was written.
+/// restored install. The words say nothing of what was written, as the
+/// kit restore's other refusals (the sealed bundle's restore gives them
+/// after its history's import committed; REVIEW-9517 round 2 P1).
 const KEY_PROVES_NO_JOIN: &str = "this install was restored from a checkpoint and has not joined \
                                   the vault, and this recovery kit's root key does not prove the \
                                   owner's word here, so the kit cannot join it; pair this install \
-                                  from a machine of the vault; nothing was written";
+                                  from a machine of the vault";
 
 /// An owner key's signature over an entry's transcript, made on the fold
 /// the entry is signed on.
