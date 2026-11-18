@@ -214,9 +214,10 @@ impl CodeRunBridgeCall {
     /// REPLAY-COMPARE-KNOWN-OTHER-CALLERS, FIX
     /// RECEIPT-RECORDS-CALL-HELD-INPUT): the row took that value's handle,
     /// and a value another record holds, shaped or not, stays another
-    /// request. A custody that knows no value compares the two by their
-    /// identity, each handle and each secret the plan places as the plan's
-    /// one stand-in. An erased row meets `offered` as
+    /// request. A custody that knows no value holds no record a handle
+    /// names, so the two meet only as written: never by a digest that reads
+    /// two shaped tokens, or two keys the row kept as written with the
+    /// switch off, as one stand-in. An erased row meets `offered` as
     /// [`ErasedRequest::meets_known`] reads it.
     ///
     /// # Errors
@@ -242,9 +243,7 @@ impl CodeRunBridgeCall {
             Some(known) => {
                 held_record_forms(&held, &again, &known)?.is_some_and(|(held, again)| held == again)
             }
-            None => {
-                live_identity(self.effect, &self.request)? == live_identity(self.effect, offered)?
-            }
+            None => false,
         })
     }
 
