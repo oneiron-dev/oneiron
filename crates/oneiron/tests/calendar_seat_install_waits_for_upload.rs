@@ -11,7 +11,10 @@
 //!
 //! The owner's archive restore can install a seat too, through the key's
 //! change hook in the restore's own writer, so it takes the same turn before
-//! that writer opens (REVIEW-9493 round 1 P1).
+//! that writer opens (REVIEW-9493 round 1 P1). It takes only the turns of the
+//! keys its archive holds rows of: a restore of an archive with no feed and no
+//! seat takes none, so one run inside another vault's admission (by a host
+//! screener) still commits (REVIEW-9493 round 2 P1).
 //!
 //! The fixture screener runs inside the upload's admission: it lets a second
 //! thread install the seat (by a set, or by restoring an archive that holds
@@ -206,6 +209,34 @@ impl CalendarBodyScreener for InstallingScreener {
     }
 }
 
+/// A screener that, on its first call, runs the owner's restore of `archive`
+/// into the `destination` vault on its own thread, inside the upload's
+/// admission, and keeps the outcome; every body screens clear.
+struct RestoringScreener<'a> {
+    destination: &'a Fixture,
+    archive: &'a [u8],
+    restored: Mutex<Option<Result<(), String>>>,
+}
+
+impl CalendarBodyScreener for RestoringScreener<'_> {
+    fn screen(&self, _body: &CalendarInboundBody) -> oneiron::Result<CalendarScreenVerdict> {
+        let mut restored = self.restored.lock().expect("restored");
+        if restored.is_none() {
+            *restored = Some(
+                self.destination
+                    .vault
+                    .import_whole_vault_archive_from_as_owner(
+                        Cursor::new(self.archive),
+                        &self.destination.proof,
+                    )
+                    .map(|_| ())
+                    .map_err(|error| error.to_string()),
+            );
+        }
+        Ok(CalendarScreenVerdict::Clear)
+    }
+}
+
 #[test]
 fn a_seat_install_during_a_complete_upload_lands_after_its_last_write() {
     let fx = Fixture::open();
@@ -317,5 +348,41 @@ fn a_seat_restore_during_a_complete_upload_lands_after_its_last_write() {
             "a later upload sees the restored seat on its system: {error}"
         ),
         Ok(()) => panic!("a later upload on the restored seat's system is refused"),
+    }
+}
+
+#[test]
+fn an_owner_restore_with_no_calendar_source_commits_inside_another_vaults_upload() {
+    // The source holds no feed and no seat, so its archive holds no row of a
+    // key with a write turn.
+    let source = Fixture::open();
+    let archive = source
+        .vault
+        .export_whole_vault(true)
+        .expect("the source's whole-vault export")
+        .bytes()
+        .to_vec();
+    // The destination's engine seeds take another wall-clock second than the
+    // source's, as in `archive_import_retained_side_rows.rs`.
+    std::thread::sleep(Duration::from_millis(1100));
+    let destination = Fixture::open();
+    let fx = Fixture::open();
+    fx.screen_on();
+
+    let screener = RestoringScreener {
+        destination: &destination,
+        archive: &archive,
+        restored: Mutex::new(None),
+    };
+    // The upload holds its vault's admission turn on this thread while its
+    // screener restores the archive into the destination.
+    fx.upload("shared", Some(&screener as &dyn CalendarBodyScreener))
+        .expect("the upload applies");
+    match screener.restored.into_inner().expect("restored") {
+        Some(Ok(())) => {}
+        other => panic!(
+            "the owner's restore of an archive with no feed and no seat waits on no admission \
+             and commits inside another vault's upload: {other:?}"
+        ),
     }
 }
