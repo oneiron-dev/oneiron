@@ -454,9 +454,6 @@ impl ScopedRead<'_> {
             raw.extend_from_slice(&body);
         }
         let mut raw = self.redact_extra_room_key_in_txn(txn, raw)?;
-        // A reaction claim names its reactor only to a reader who may read
-        // them (FIX REACTION-CLAIM-VALUE-REACTOR-ID).
-        raw = self.redact_reaction_row_in(txn, raw)?;
         // A room's shared pins never leave in its served body: a reader gets
         // them only through the room's admitted projection (ROOM-SCOPED-PINS).
         if raw.first() == Some(&crate::registry::ENTITY_TYPE_CONVERSATION)
