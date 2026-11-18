@@ -535,6 +535,10 @@ struct Masker {
     mints: bool,
     /// The switch is off: place known values only, mint nothing (FIX 8644).
     known_only: bool,
+    /// The pass reads a row a mask on write stored: a handle it placed there
+    /// is never read for a known value, as it holds none (FIX
+    /// REPLAY-COMPARE-KNOWN-OTHER-CALLERS).
+    reads_held: bool,
     /// The door's scan read each text this pass reads now by the same text
     /// rules and found no shape: none is sought again (speed).
     shapes_read: bool,

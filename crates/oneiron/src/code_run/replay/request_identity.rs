@@ -33,7 +33,7 @@ use super::super::support::{invalid_code_run_replay, request_map};
 use super::super::types::SelfEffect;
 use super::CodeRunBridgeCall;
 use crate::Result;
-use crate::batch::secret_scan::{admission_form, known_admission_form};
+use crate::batch::secret_scan::{admission_form, known_admission_form, known_held_form};
 use crate::code_run::RESPONSE_ERASED;
 use crate::store::known_value_index::KnownValues;
 use crate::task_verb::sdk::AgentVerb;
@@ -211,7 +211,8 @@ impl CodeRunBridgeCall {
     /// misses, a live row and `offered` are both read with each value base
     /// custody holds, through `known`, as its record's handle (FIX
     /// REPLAY-COMPARE-KNOWN-OTHER-CALLERS): the row took that value's
-    /// handle, and a value another record holds stays another request. An
+    /// handle, and a value another record holds stays another request. The
+    /// row is read for those values alone ([`known_held_form`]). An
     /// erased row meets `offered` as [`ErasedRequest::meets_known`] reads it.
     ///
     /// # Errors
@@ -231,7 +232,7 @@ impl CodeRunBridgeCall {
         }
         Ok(match known.get()? {
             Some(known) => {
-                known_admission_form(&identity_part(self.effect, &self.request), &known)?
+                known_held_form(&identity_part(self.effect, &self.request), &known)?
                     == known_admission_form(&identity_part(self.effect, offered), &known)?
             }
             None => false,
