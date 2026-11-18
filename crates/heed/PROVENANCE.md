@@ -491,7 +491,7 @@ every read through the map.
 FIX row LMDB-IGNORED-PAGE-FETCH-RC (found by the design read of the page bound
 above). Every transaction starts with each named database's record marked
 stale (`DB_STALE`, `mdb_txn_renew0` `:3405`). The first call that sets a cursor
-up on such a database (`mdb_cursor_init`, `:9670-9698`) reads the record again
+up on such a database (`mdb_cursor_init`, `:9671-9700`) reads the record again
 from the main tree and fetches the database's root (`mdb_page_search` with
 `MDB_PS_ROOTONLY`). Upstream, and its head `ba47717cc877`, drops that call's
 rc. A failed page fetch marks the transaction failed (`MDB_TXN_ERROR`), so the
@@ -505,18 +505,27 @@ opens a database reads its record in `mdb_dbi_open` and is not stale, so only
 later transactions were affected: in oneiron, every read after the vault's
 open. The fork (`ONEIRON FORK (fetch rc)`):
 
-- `mdb_cursor_init` returns that rc, with `MDB_NOTFOUND` (an empty tree) as
-  success. The calls that set a cursor up on a user database check it:
-  `mdb_get` (`:7818-7820`), `mdb_cursor_open` (`:9719-9724`; a failed init
-  holds no page reference, so the cursor is freed before it is linked),
-  `mdb_cursor_renew` (`:9752`), `mdb_del0` (`:10658-10660`), `mdb_put`
-  (`:11140-11142`) and `mdb_stat` (`:12035-12037`). The calls on `FREE_DBI`
+- `mdb_cursor_init` returns that rc, with `MDB_NOTFOUND` from the database's
+  own empty tree as success. The calls that set a cursor up on a user
+  database check it: `mdb_get` (`:7818-7820`), `mdb_cursor_open`
+  (`:9721-9726`; a failed init holds no page reference, so the cursor is
+  freed before it is linked), `mdb_cursor_renew` (`:9754`), `mdb_del0`
+  (`:10660-10662`), `mdb_put` (`:11142-11144`) and `mdb_stat`
+  (`:12037-12039`). The calls on `FREE_DBI`
   and `MAIN_DBI` never see a stale record (`mdb_txn_renew0` marks only user
   databases) and are unchanged.
-- The other errors that call can return (`MDB_BAD_DBI`, `MDB_INCOMPATIBLE`, a
-  `MDB_NOTFOUND` from the main tree) leave the record stale, and upstream's
-  next call computed them again. The fork answers them on the first call.
-- `mdb_drop0` (`:12097-12107`, `MDB_REMAP_CHUNKS` environments only) takes an
+- The other errors that call can return (`MDB_BAD_DBI`, `MDB_INCOMPATIBLE`)
+  leave the record stale, and upstream's next call computed them again. The
+  fork answers them on the first call.
+- A `MDB_NOTFOUND` from the main tree also leaves the record stale
+  (`:7608-7610`): the main tree is empty, so the database is gone, as when
+  another process dropped it and no other key was left. Upstream took it for
+  an empty database: a get answered `MDB_NOTFOUND`, a cursor walked no rows,
+  and a count answered the transaction's copy of the record (zeros in a read
+  transaction). `mdb_cursor_init` tells the two apart by the stale flag
+  (`:9695-9696`) and answers `MDB_BAD_DBI`, as the record lookup does when the
+  main tree lacks the name (`:7617-7618`). Found by review round 1 of #9507.
+- `mdb_drop0` (`:12099-12109`, `MDB_REMAP_CHUNKS` environments only) takes an
   extra reference on each of the cursor's pages for its copy `mx` and dropped
   each `MDB_PAGE_GET` rc. A failed fetch would leave `mx`'s slot holding the
   cursor's pointer with no reference of its own, and `done:` would then unref
@@ -527,20 +536,23 @@ open. The fork (`ONEIRON FORK (fetch rc)`):
 
 The page format does not change, and no stored row changes meaning (stored
 change: keep): only the error a call answers on a damaged file changes.
-Regression tests: six more in
+Regression tests: nine more in
 `crates/oneiron-store/tests/lmdb_open_damaged_file.rs`, each in a transaction
 after the one that opened the database: a get, a cursor, a count, a put and a
 delete on a named database whose leaf the cut removed answer `MDB_CORRUPTED`,
 and a sealed get of an altered leaf answers `MDB_CRYPTO_FAIL`. Upstream's code
-answers `MDB_BAD_TXN` to five of them and the record's count to the count.
+answers `MDB_BAD_TXN` to five of them and the record's count to the count. A
+get, a cursor and a count on a named database whose main tree was emptied
+under the open handle answer `MDB_BAD_DBI`; upstream's code answers not
+found, no rows and a count of 0.
 
-`mdb.c` is now 12,492 lines, SHA-256
-`f4e3546b0ec918dea4bfc37f047d2435ffc2afc6e2d36f7750ea7e5d9f2f9d6b`. Line
+`mdb.c` is now 12,494 lines, SHA-256
+`f928bd1eda0e9ae6754cfa4d2ae76d20847b32729b660707626060c311d13221`. Line
 numbers in this section cite this copy. Against the copy the section above
-cites, lines after `:7819` moved down by 1, after `:9662` by 7, after `:9686`
-by 9, after `:9687` by 10, after `:9709` by 15, after `:9738` by 14, after
-`:10644` by 16, after `:11124` by 18, after `:12017` by 20 and after `:12078`
-by 29.
+cites, lines after `:7819` moved down by 1, after `:9662` by 8, after `:9686`
+by 11, after `:9687` by 12, after `:9709` by 17, after `:9738` by 16, after
+`:10644` by 18, after `:11124` by 20, after `:12017` by 22 and after `:12078`
+by 31.
 
 **Re-vendoring:** re-apply the eight `ONEIRON FORK (fetch rc)` hunks (and the
 prototype's `int`), or take an upstream mdb.master3 whose `mdb_cursor_init`

@@ -9661,7 +9661,8 @@ mdb_xcursor_init2(MDB_cursor *mc, MDB_xcursor *src_mx, int new_dupdata)
 
 /** Initialize a cursor for a given transaction and database.
  * ONEIRON FORK (fetch rc): returns the rc of a stale named DB's root
- * fetch, where #MDB_NOTFOUND (an empty tree) is success. Upstream drops
+ * fetch: #MDB_NOTFOUND is success for an empty named tree, and
+ * #MDB_BAD_DBI for an empty main tree (the DB is gone). Upstream drops
  * it: a failed fetch flags the txn, so the caller's next call answers
  * #MDB_BAD_TXN instead of the fetch's own error.
  * @return 0 on success, non-zero on failure.
@@ -9691,8 +9692,9 @@ mdb_cursor_init(MDB_cursor *mc, MDB_txn *txn, MDB_dbi dbi, MDB_xcursor *mx)
 	}
 	if (*mc->mc_dbflag & DB_STALE) {
 		int rc = mdb_page_search(mc, NULL, MDB_PS_ROOTONLY);
-		if (rc != MDB_NOTFOUND)
-			return rc;
+		if (rc == MDB_NOTFOUND)	/* empty: the named tree, or the main one if still stale */
+			return (*mc->mc_dbflag & DB_STALE) ? MDB_BAD_DBI : MDB_SUCCESS;
+		return rc;
 	}
 	return MDB_SUCCESS;
 }
