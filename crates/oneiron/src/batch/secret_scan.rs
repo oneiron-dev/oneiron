@@ -50,6 +50,7 @@ pub(crate) use self::mask::retained_repo::{
     mark_retained_repo_blob_in_txn, plan_retained_repo_blob,
 };
 pub(crate) use self::mask::side_row::admit_typed_with_rule;
+pub(crate) use self::mask::side_row::known_admission_form;
 pub(crate) use self::mask::side_row::{
     SidePart, TextReplacements, admit_side_parts, admit_side_row, admit_tracked_side_parts,
     admit_typed, admitted_from_known, from_named_tree, held_form, named_tree,

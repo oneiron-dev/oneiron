@@ -21,6 +21,7 @@
 //! a spawn's miss, so no fresh effect runs in its place. A live request
 //! keeps its full value and its `admitted_from_known` matching.
 
+use std::borrow::Cow;
 use std::sync::Arc;
 
 use rmpv::Value;
@@ -32,7 +33,7 @@ use super::super::support::{invalid_code_run_replay, request_map};
 use super::super::types::SelfEffect;
 use super::CodeRunBridgeCall;
 use crate::Result;
-use crate::batch::secret_scan::admission_form;
+use crate::batch::secret_scan::{admission_form, known_admission_form};
 use crate::code_run::RESPONSE_ERASED;
 use crate::store::known_value_index::KnownValues;
 use crate::task_verb::sdk::AgentVerb;
@@ -180,7 +181,7 @@ impl CodeRunBridgeCall {
     pub(crate) fn request_identity(&self) -> Result<[u8; 32]> {
         match ErasedRequest::of(&self.request) {
             Some(erased) => Ok(erased.identity),
-            None => live_identity(self.effect, &self.request, None),
+            None => live_identity(self.effect, &self.request),
         }
     }
 
@@ -206,10 +207,12 @@ impl CodeRunBridgeCall {
     /// identity alone (FIX 6534): how a row an erase took the words of
     /// meets the call made again, and a live row by the identity it has.
     ///
-    /// As `replay_request_match` does, it reads each value base custody
-    /// holds as the stand-in in `offered` too, through `known` once the
-    /// compare without them misses (FIX REPLAY-COMPARE-KNOWN-OTHER-CALLERS):
-    /// the row took that value's handle.
+    /// As `replay_request_match` does, once the compare without them
+    /// misses, a live row and `offered` are both read with each value base
+    /// custody holds, through `known`, as its record's handle (FIX
+    /// REPLAY-COMPARE-KNOWN-OTHER-CALLERS): the row took that value's
+    /// handle, and a value another record holds stays another request. An
+    /// erased row meets `offered` as [`ErasedRequest::meets_known`] reads it.
     ///
     /// # Errors
     ///
@@ -223,12 +226,14 @@ impl CodeRunBridgeCall {
         if let Some(erased) = ErasedRequest::of(&self.request) {
             return Ok(erased.meets_known(offered, known)?.is_hit());
         }
-        let held = live_identity(self.effect, &self.request, None)?;
-        if held == live_identity(self.effect, offered, None)? {
+        if live_identity(self.effect, &self.request)? == live_identity(self.effect, offered)? {
             return Ok(true);
         }
         Ok(match known.get()? {
-            Some(known) => held == live_identity(self.effect, offered, Some(known))?,
+            Some(known) => {
+                known_admission_form(&identity_part(self.effect, &self.request), &known)?
+                    == known_admission_form(&identity_part(self.effect, offered), &known)?
+            }
             None => false,
         })
     }
@@ -318,18 +323,19 @@ fn typed_ask(effect: SelfEffect, request: &Value) -> Option<&Value> {
     ask_of(fields).filter(|ask| effect == SelfEffect::AgentsSpawn && typed(ask))
 }
 
-/// The identity of the live `request` a call of `effect` made: over the
-/// whole request, or, for a spawn whose ask is a typed marker, over every
-/// field but its ask; with `known`, each value base custody holds read as
-/// the stand-in.
-fn live_identity(
-    effect: SelfEffect,
-    request: &Value,
-    known: Option<Arc<KnownValues>>,
-) -> Result<[u8; 32]> {
+/// The identity of the live `request` a call of `effect` made: over its
+/// [`identity_part`].
+fn live_identity(effect: SelfEffect, request: &Value) -> Result<[u8; 32]> {
+    canonical_digest(&identity_part(effect, request), None)
+}
+
+/// What the identity of the live `request` a call of `effect` made reads:
+/// the whole request, or, for a spawn whose ask is a typed marker, every
+/// field but its ask.
+fn identity_part(effect: SelfEffect, request: &Value) -> Cow<'_, Value> {
     match (typed_ask(effect, request), request) {
-        (Some(_), Value::Map(fields)) => canonical_digest(&without_ask(fields), known),
-        _ => canonical_digest(request, known),
+        (Some(_), Value::Map(fields)) => Cow::Owned(without_ask(fields)),
+        _ => Cow::Borrowed(request),
     }
 }
 
@@ -342,7 +348,7 @@ fn erased_value(effect: SelfEffect, request: &Value) -> Result<Value> {
         (ERASED_REQUEST_KEYS[1], Value::from(RESPONSE_ERASED)),
         (
             ERASED_REQUEST_KEYS[2],
-            Value::Binary(live_identity(effect, request, None)?.to_vec()),
+            Value::Binary(live_identity(effect, request)?.to_vec()),
         ),
     ];
     fields.extend(typed_ask(effect, request).map(|ask| (ERASED_REQUEST_KEYS[3], ask.clone())));
