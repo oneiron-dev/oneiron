@@ -46,6 +46,9 @@ impl std::fmt::Debug for GpuJobHost {
 
 impl GpuJobHost {
     /// Registers `connector` as the backend `name`, replacing any before it.
+    /// Only the test door registers one until a backend ships (C6 02,
+    /// GPU-LAUNCH-BACKENDS); that backend's PR drops the gate.
+    #[cfg(oneiron_test_support)]
     pub(crate) fn register_backend(&self, name: &str, connector: Arc<dyn GpuJobConnector>) {
         self.backends
             .write()
