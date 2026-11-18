@@ -182,6 +182,7 @@ pub static TEST_COUNT: JobSpec = JobSpec {
     at_open: false,
     once_per_pass: false,
     runs_here: crate::schedule::any_node,
+    drive: crate::schedule::Drive::Runner,
     run: run_count,
 };
 
@@ -197,6 +198,7 @@ pub static TEST_FAIL: JobSpec = JobSpec {
     at_open: false,
     once_per_pass: false,
     runs_here: crate::schedule::any_node,
+    drive: crate::schedule::Drive::Runner,
     run: run_fail,
 };
 
@@ -212,6 +214,7 @@ pub static TEST_PAGED: JobSpec = JobSpec {
     at_open: false,
     once_per_pass: false,
     runs_here: crate::schedule::any_node,
+    drive: crate::schedule::Drive::Runner,
     run: run_paged,
 };
 
@@ -227,6 +230,7 @@ pub static TEST_ENGINE: JobSpec = JobSpec {
     at_open: false,
     once_per_pass: false,
     runs_here: crate::schedule::any_node,
+    drive: crate::schedule::Drive::Runner,
     run: run_count,
 };
 
@@ -242,6 +246,7 @@ pub static TEST_LAPSE: JobSpec = JobSpec {
     at_open: false,
     once_per_pass: false,
     runs_here: crate::schedule::any_node,
+    drive: crate::schedule::Drive::Runner,
     run: run_count,
 };
 
@@ -257,6 +262,7 @@ pub static TEST_CADENCE: JobSpec = JobSpec {
     at_open: false,
     once_per_pass: false,
     runs_here: crate::schedule::any_node,
+    drive: crate::schedule::Drive::Runner,
     run: run_cadence,
 };
 
@@ -272,6 +278,7 @@ pub static TEST_ITEMS: JobSpec = JobSpec {
     at_open: false,
     once_per_pass: false,
     runs_here: crate::schedule::any_node,
+    drive: crate::schedule::Drive::Runner,
     run: run_items,
 };
 
@@ -287,6 +294,7 @@ pub static TEST_OPEN: JobSpec = JobSpec {
     at_open: true,
     once_per_pass: false,
     runs_here: crate::schedule::any_node,
+    drive: crate::schedule::Drive::Runner,
     run: run_seen,
 };
 
@@ -302,6 +310,7 @@ pub static TEST_ANSWER: JobSpec = JobSpec {
     at_open: false,
     once_per_pass: false,
     runs_here: crate::schedule::any_node,
+    drive: crate::schedule::Drive::Runner,
     run: run_answer,
 };
 
@@ -317,6 +326,7 @@ pub static TEST_ONCE: JobSpec = JobSpec {
     at_open: false,
     once_per_pass: true,
     runs_here: crate::schedule::any_node,
+    drive: crate::schedule::Drive::Runner,
     run: run_bounded,
 };
 
@@ -333,6 +343,7 @@ pub static TEST_DUE_BY: JobSpec = JobSpec {
     at_open: false,
     once_per_pass: false,
     runs_here: crate::schedule::any_node,
+    drive: crate::schedule::Drive::Runner,
     run: run_cadence,
 };
 
@@ -373,6 +384,7 @@ pub static TEST_REARM: JobSpec = JobSpec {
     at_open: false,
     once_per_pass: false,
     runs_here: crate::schedule::any_node,
+    drive: crate::schedule::Drive::Runner,
     run: run_rearm,
 };
 
@@ -567,6 +579,7 @@ pub static TEST_FAIL_ONCE: JobSpec = JobSpec {
     at_open: false,
     once_per_pass: false,
     runs_here: crate::schedule::any_node,
+    drive: crate::schedule::Drive::Runner,
     run: run_fail_once,
 };
 
@@ -598,6 +611,7 @@ pub static TEST_WITHDRAWN: JobSpec = JobSpec {
     at_open: false,
     once_per_pass: false,
     runs_here: crate::schedule::any_node,
+    drive: crate::schedule::Drive::Runner,
     run: run_fail,
 };
 
@@ -646,4 +660,190 @@ pub fn while_a_pass_holds_the_runner<T>(vault: &Vault, act: impl FnOnce() -> T) 
 pub fn task_tick_waiting(vault: &Vault, task: EntityId) -> Result<Option<u64>> {
     let txn = vault.store.env.read_txn()?;
     crate::runtime_hooks::task_tick_waiting_in_txn(vault, &txn, task)
+}
+
+/// The paced verb line's job code (stage 5c-2).
+pub const PACED_VERB_LINE: &str = "runtime_hooks.paced_verb_line";
+
+/// Holds a call by `actor` in the paced line with no witness, its window opening at
+/// `next_eligible_at` and its deadline at `deadline`, through the hold's own write of the row and
+/// its line arming; answers its key. Its turn ends refused.
+///
+/// # Errors
+///
+/// Storage errors.
+pub fn plant_paced_verb_call(
+    vault: &Vault,
+    actor: EntityId,
+    next_eligible_at: u64,
+    deadline: u64,
+) -> Result<[u8; 16]> {
+    vault.plant_paced_verb_call(actor, next_eligible_at, deadline)
+}
+
+/// Whether the planted paced call `key` still waits in the line: held, not ended.
+///
+/// # Errors
+///
+/// Storage errors.
+pub fn paced_verb_call_waits(vault: &Vault, key: [u8; 16]) -> Result<bool> {
+    vault.paced_verb_call_waits(key)
+}
+
+/// A call the next run of the paced verb line holds while it runs, by vault: its actor, the
+/// opening of its window and its deadline.
+static PLANTED_PACED_HOLDS: Mutex<BTreeMap<PathBuf, (EntityId, u64, u64)>> =
+    Mutex::new(BTreeMap::new());
+
+/// The next run of the paced verb line in `vault` holds a call by `actor` once it took its
+/// turns and before it answers, its window opening at `next_eligible_at` and its deadline at
+/// `deadline`, through the hold's own write: a hold that lands during a line run (stage 5c-2).
+pub fn hold_during_next_line_run(
+    vault: &Vault,
+    actor: EntityId,
+    next_eligible_at: u64,
+    deadline: u64,
+) {
+    PLANTED_PACED_HOLDS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .insert(vault_of(vault), (actor, next_eligible_at, deadline));
+}
+
+/// The hook the paced verb line's run calls once it took its turns: it holds the call
+/// [`hold_during_next_line_run`] planted for this run, if any.
+///
+/// # Errors
+///
+/// As the hold.
+pub(crate) fn hold_planted_paced_call(vault: &Vault) -> Result<()> {
+    let planted = PLANTED_PACED_HOLDS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .remove(&vault_of(vault));
+    match planted {
+        Some((actor, next_eligible_at, deadline)) => vault
+            .plant_paced_verb_call(actor, next_eligible_at, deadline)
+            .map(drop),
+        None => Ok(()),
+    }
+}
+
+/// The engine disarms `job` about `subject`, as its own doors do: `false` when it was not armed.
+///
+/// # Errors
+///
+/// As the disarming.
+pub fn disarm_as_engine(vault: &Vault, job: &str, subject: Option<EntityId>) -> Result<bool> {
+    vault.disarm_schedule(None, job, subject)
+}
+
+/// The remote task poll job's code (stage 5c-2).
+pub const REMOTE_TASK_POLL: &str = "outbound_intent_ledger.remote_task_poll";
+
+/// Defers one Pending `email`/`send` row as a remote task its provider took, its handle keeping
+/// how to poll it (a route credential, no session), through the ledger's own deferral write,
+/// which schedules its first poll; `attempt` tells one test's rows apart, and `poll_after_secs`
+/// is the provider's hint. Answers its intent id.
+///
+/// # Panics
+///
+/// When the row cannot be written or deferred.
+#[must_use]
+pub fn defer_pollable_remote_task(
+    vault: &Vault,
+    attempt: u8,
+    poll_after_secs: Option<u64>,
+) -> [u8; 32] {
+    use crate::outbound_intent_ledger::{
+        BudgetChargeMarker, BudgetClass, IntentLedgerRecord, OutboundCallRequest,
+        RemoteTaskCredential, RemoteTaskHandle, RemoteTaskPoll, defer_record, force_sync,
+        insert_pending_in_txn,
+    };
+    let now_ms = vault.now_recorded_at().saturating_mul(1_000);
+    let request = OutboundCallRequest::new(
+        crate::attempt_queue::AttemptId::from_bytes(&[attempt; 16]).expect("attempt id"),
+        1,
+        "email",
+        "send",
+        vec![attempt; 8],
+        now_ms,
+    );
+    let marker = BudgetChargeMarker {
+        key_ref: None,
+        budget_class: BudgetClass::Operation,
+        matched_rows: Vec::new(),
+        sends_debit: 0,
+        accounted_at_ms: now_ms,
+    };
+    let record = IntentLedgerRecord::pending(request, false, marker).expect("pending row");
+    let mut wtxn = vault.store.env.write_txn().expect("write transaction");
+    insert_pending_in_txn(vault, &mut wtxn, &record).expect("insert the pending row");
+    wtxn.commit().expect("commit the pending row");
+    force_sync(vault).expect("sync the pending row");
+    let handle = RemoteTaskHandle {
+        id: format!("task-{attempt}"),
+        poll_after_secs,
+        poll: Some(RemoteTaskPoll {
+            session: None,
+            protocol: "2025-11-25".to_owned(),
+            credential: RemoteTaskCredential::Route,
+            form_elicitation: false,
+        }),
+    };
+    defer_record(vault, record.id, handle, now_ms).expect("defer the row");
+    record.id
+}
+
+/// The intent ids of the Deferred sends whose tasks are due a poll now, as the served host reads
+/// them, at most 32.
+///
+/// # Panics
+///
+/// When the due list cannot be read.
+#[must_use]
+pub fn remote_tasks_due_now(vault: &Vault) -> Vec<[u8; 32]> {
+    vault
+        .remote_tasks_due(32)
+        .expect("the due remote tasks")
+        .into_iter()
+        .map(|task| task.intent)
+        .collect()
+}
+
+/// A poll that found `intent`'s task still running, as the served host records it now.
+///
+/// # Panics
+///
+/// When it cannot be recorded.
+pub fn remote_task_polled_now(vault: &Vault, intent: &[u8; 32], poll_after_ms: Option<u64>) {
+    vault
+        .remote_task_polled(intent, poll_after_ms, "working")
+        .expect("record the poll");
+}
+
+/// Makes the polls of `intents` due now, as the host does for a task whose parked question the
+/// owner answered.
+///
+/// # Panics
+///
+/// When it cannot be written.
+pub fn remote_task_polls_due_now(vault: &Vault, intents: &[[u8; 32]]) {
+    vault
+        .remote_task_polls_due_at(intents)
+        .expect("make the polls due");
+}
+
+/// Settles `intent` by a poll that found its task ended unconfirmed.
+///
+/// # Panics
+///
+/// When it cannot be settled.
+pub fn settle_remote_task_unconfirmed(vault: &Vault, intent: &[u8; 32]) {
+    vault
+        .settle_polled_remote_task(
+            intent,
+            crate::outbound_intent_ledger::RemoteTaskEnd::Unconfirmed,
+        )
+        .expect("settle the task");
 }

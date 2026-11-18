@@ -195,14 +195,15 @@ impl Vault {
     /// When a vault that is not running must next run a pass, or `None` when
     /// it owes no retirement: the erasure sweep's due time while an obligation
     /// waits, and a left env's owed body collection (FIX 2413), and the
-    /// earliest deadline of the retained peer work (FIX 11183), and a paced
-    /// verb call's window or deadline (FIX 8753), and the first day to come
+    /// earliest deadline of the retained peer work (FIX 11183), and the first day to come
     /// on which the model pack retirement pass owes work, a notice mark with
     /// no notice recorded or a retirement-day move (FIX 22059), and the
     /// first due armed job that wakes its host and runs on this node. Among those jobs is each
     /// open pending check-in, due at its next transition (ROLES-CHECKIN P2.3), each waiting
     /// watcher tick and each actor's next timer turn program, due then on the node that releases
-    /// ticks (FIX 22180; stage 5b-3), and each deadline a door noted for a secret
+    /// ticks (FIX 22180; stage 5b-3), each held send's release (stage 5c-2), the paced verb
+    /// line's next window or deadline (FIX 8753), due then on the process whose host runs its
+    /// turns (stage 5c-2), and each deadline a door noted for a secret
     /// lease, a voice print, a critical confirm or a shared act's window (DESIGN
     /// 15-setting-primitive, stage 5b): due at the deadline, and after a pass
     /// that found the sweep backing off or its walk begun before the deadline,
@@ -220,11 +221,6 @@ impl Vault {
             owed.push((HousekeepingSweep::GateDecisionRetention, at));
         }
         sync_work::push_retained_work_due_at(self, &mut owed)?;
-        // A paced verb call's window opening or deadline (FIX 8753): the
-        // host's settler runs its turn once the vault is up again.
-        if let Some(at) = self.paced_verb_wake_at()? {
-            owed.push((HousekeepingSweep::GateDecisionRetention, at));
-        }
         // A model pack's notice mark or retirement day (FIX 22059): the pass
         // records the move and sends the notices on the day itself.
         if let Some(at) = self.model_pack_retirement_wake_at()? {
@@ -278,6 +274,8 @@ impl Vault {
             if !passes.first_pass_done {
                 // The requests are durable: a pass the budget cuts short leaves them for the next.
                 crate::schedule::arm_setting_jobs(self, is_cadence_job)?;
+                // The paced line, from the calls the vault holds (stage 5c-2).
+                self.arm_paced_verb_line()?;
                 crate::schedule::request_runs(self, |spec| spec.at_open)?;
                 passes.first_pass_done = true;
             }

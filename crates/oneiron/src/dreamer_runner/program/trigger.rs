@@ -39,6 +39,7 @@ pub(crate) static PROGRAM_TIMER_JOB: JobSpec = JobSpec {
     at_open: false,
     once_per_pass: true,
     runs_here: crate::runtime_hooks::releases_ticks_here,
+    drive: crate::schedule::Drive::Runner,
     run: run_program_timer,
 };
 /// Each idle or feed program, keyed by its occurrence kind's tag, then the actor and the
