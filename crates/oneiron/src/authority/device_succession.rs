@@ -250,7 +250,7 @@ impl Vault {
                 successor: machine,
             }),
             now,
-            self.owner_proof_signer(fold).as_deref(),
+            self.owner_proof_signer(fold).as_ref(),
         )?;
         let hash = authority_entry_hash(&entry)?;
         let at = TimeRange {
