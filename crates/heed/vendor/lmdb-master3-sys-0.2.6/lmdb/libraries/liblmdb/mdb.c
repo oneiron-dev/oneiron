@@ -3548,7 +3548,15 @@ mdb_txn_begin(MDB_env *env, MDB_txn *parent, unsigned int flags, MDB_txn **ret)
 				return ENOMEM;
 			}
 			txn->mt_u.dirty_list[0].mid = 0;
-			pthread_mutex_init(&txn->mt_child_mutex, NULL);
+			/* ONEIRON FORK (child mutex): check the init. On Windows it is
+			 * CreateMutex, which can fail; a txn without its mutex would let
+			 * its own nested begins run unlocked. Nothing has seen the txn yet. */
+			if ((rc = pthread_mutex_init(&txn->mt_child_mutex, NULL)) != 0) {
+				mdb_midl_free(txn->mt_free_pgs);
+				free(txn->mt_u.dirty_list);
+				free(txn);
+				return rc;
+			}
 		}
 		txn->mt_txnid = parent->mt_txnid;
 		txn->mt_dirty_room = parent->mt_dirty_room;
@@ -6405,7 +6413,15 @@ mdb_env_open(MDB_env *env, const char *path, unsigned int flags, mdb_mode_t mode
 #endif
 				txn->mt_dbxs = env->me_dbxs;
 				txn->mt_flags = MDB_TXN_FINISHED;
-				pthread_mutex_init(&txn->mt_child_mutex, NULL);
+				/* ONEIRON FORK (child mutex): check the init, as above: me_txn0
+				 * keeps this mutex for the env's life, so the open fails. */
+				if ((rc = pthread_mutex_init(&txn->mt_child_mutex, NULL)) != 0) {
+#if MDB_RPAGE_CACHE
+					free(txn->mt_rpages);
+#endif
+					free(txn);
+					goto leave;
+				}
 				env->me_txn0 = txn;
 			} else {
 				rc = ENOMEM;
