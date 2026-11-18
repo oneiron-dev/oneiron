@@ -36,7 +36,7 @@ use super::replay_capsule::actor_gone_in_store;
 use super::replay_rows;
 use super::response_owners::{ResponseOwner, mark_response_erased_in_txn, response_owner_in_txn};
 use super::wait_delivery::canonical_store;
-use crate::code_run::CodeRunReplayRecord;
+use crate::code_run::{CodeRunReplayRecord, CompareKnown};
 use crate::session_overlay::{OverlayKeyspace, SessionOverlay, SnapshotMergeRow};
 use crate::side_table::{Erased, RoutedDbs, SideKey};
 use crate::store::executor_wait_delivery::{DELIVERIES, HOLDERS, WaitHolder};
@@ -79,7 +79,9 @@ pub(super) fn fence_overlay_replay_in_txn<'r>(
         || stamped.map_or(record.run_id, |(run, _)| run),
         |owner| owner.run,
     );
-    erase_replies(record.to_mut())?;
+    // A room's overlay reads no base custody here: each request keeps its
+    // stand-in identity alone (FIX ERASED-IDENTITY-ONE-STAND-IN).
+    erase_replies(record.to_mut(), &CompareKnown::new(None))?;
     mark_response_erased_in_txn(dbs, txn, record.run_id, run)?;
     Ok(record)
 }

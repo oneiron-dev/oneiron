@@ -34,6 +34,8 @@ mod batch_door;
 mod body;
 pub(super) mod carrier;
 mod changed_scan;
+// An erased request's custody identity (FIX ERASED-IDENTITY-ONE-STAND-IN).
+pub(super) mod custody_form;
 // The claim value a checker reads before the door masks it.
 pub(super) mod claim_value_plan;
 // An escaped key's span (FIX 1369).

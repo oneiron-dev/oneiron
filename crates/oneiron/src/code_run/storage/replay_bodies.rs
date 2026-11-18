@@ -28,12 +28,15 @@ use crate::code_run::payload::{
     self_dispatch_outcome_value,
 };
 use crate::code_run::wait_rows::keep_erased_answer_rows;
-use crate::code_run::{CodeRunReplayRecord, SelfDispatchOutcome, SelfFailedResult};
+use crate::code_run::{
+    BaseKnownRead, CodeRunReplayRecord, CompareKnown, SelfDispatchOutcome, SelfFailedResult,
+};
 use crate::engine_executor::holds_reply_content;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::side_table::{ErasedForm, SideTableDbs};
-use crate::store::{ResponseCarriage, ResponseScan};
+use crate::store::known_value_index::KnownValues;
+use crate::store::{ResponseCarriage, ResponseScan, Store};
 use crate::task_verb::TaskAskStatus;
 
 /// The error a call whose outcome an erase took replays with.
@@ -60,7 +63,7 @@ pub(crate) fn replay_carriage(value: &[u8]) -> ResponseScan {
         return ResponseScan::NotResponse;
     }
     for call in &mut record.bridge_calls {
-        if call.erase_request().is_err() {
+        if call.erase_request(&CompareKnown::new(None)).is_err() {
             return ResponseScan::opaque_row();
         }
         let rows = match decode_self_dispatch_outcome(&call.outcome) {
@@ -150,7 +153,10 @@ pub(crate) fn replay_owners(
 /// ([`holds_reply_content`]) previews as erased. Every call's request words
 /// go with them, a hook's rewrite too (FIX 6534): a request the run built
 /// from an earlier reply holds its words. Each keeps its text-free
-/// identity ([`crate::code_run::CodeRunBridgeCall::erase_request`]). What
+/// identity ([`crate::code_run::CodeRunBridgeCall::erase_request`]), and,
+/// read with the values base custody holds through `custody`, the custody
+/// identity of each that names a record custody knows (FIX
+/// ERASED-IDENTITY-ONE-STAND-IN; [`erase_replies_in_writer`]). What
 /// the run did stays whole: every call's seq, effect, request identity,
 /// times, action digest and receipt, every output's path, handle, digest,
 /// counts and completeness, its checkpoints (so its generation), its names
@@ -163,7 +169,10 @@ pub(crate) fn replay_owners(
 ///
 /// An outcome that does not encode, or a request the side-row wall cannot
 /// read.
-pub(crate) fn erase_replies(record: &mut CodeRunReplayRecord) -> Result<()> {
+pub(crate) fn erase_replies(
+    record: &mut CodeRunReplayRecord,
+    custody: &CompareKnown<'_>,
+) -> Result<()> {
     let retained_calls: std::collections::BTreeSet<usize> = record
         .bridge_calls
         .iter()
@@ -177,7 +186,7 @@ pub(crate) fn erase_replies(record: &mut CodeRunReplayRecord) -> Result<()> {
         .map(|(index, _)| index)
         .collect();
     for (index, call) in record.bridge_calls.iter_mut().enumerate() {
-        call.erase_request()?;
+        call.erase_request(custody)?;
         if retained_calls.contains(&index) {
             continue;
         }
@@ -216,12 +225,30 @@ pub(crate) fn erase_replies(record: &mut CodeRunReplayRecord) -> Result<()> {
     Ok(())
 }
 
+/// [`erase_replies`] in the writer `wtxn`, read with the values custody
+/// holds there (FIX ERASED-IDENTITY-ONE-STAND-IN): each request it erases
+/// keeps the custody records it names and its custody identity.
+///
+/// # Errors
+///
+/// As [`erase_replies`]'s, and the read of custody's values.
+pub(crate) fn erase_replies_in_writer(
+    store: &Store,
+    wtxn: &heed::RwTxn<'_>,
+    record: &mut CodeRunReplayRecord,
+) -> Result<()> {
+    let read: BaseKnownRead<'_> = &|| KnownValues::shared_in_writer(store, wtxn);
+    erase_replies(record, &CompareKnown::new(Some(read)))
+}
+
 /// A replay record's erased form is [`erase_replies`]'s (FIX 5718): the
 /// actor scrub writes it past the side-row wall, so no wall ever fails an
-/// erase.
+/// erase. No custody read is in reach here, so a request erased here first
+/// keeps its stand-in identity alone; the actor scrub erases in its writer
+/// first ([`erase_replies_in_writer`]), and erasing again changes nothing.
 impl ErasedForm for CodeRunReplayRecord {
     fn into_erased(mut self) -> Result<Self> {
-        erase_replies(&mut self)?;
+        erase_replies(&mut self, &CompareKnown::new(None))?;
         Ok(self)
     }
 }
