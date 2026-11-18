@@ -680,25 +680,6 @@ pub(super) fn block_on<F: Future>(future: F) -> F::Output {
         .block_on(future)
 }
 
-pub(super) fn noop_waker() -> Waker {
-    unsafe fn clone(_: *const ()) -> RawWaker {
-        raw_waker()
-    }
-    unsafe fn wake(_: *const ()) {}
-    unsafe fn wake_by_ref(_: *const ()) {}
-    unsafe fn drop(_: *const ()) {}
-
-    fn raw_waker() -> RawWaker {
-        RawWaker::new(
-            std::ptr::null(),
-            &RawWakerVTable::new(clone, wake, wake_by_ref, drop),
-        )
-    }
-
-    // SAFETY: the noop waker never dereferences the null data pointer.
-    unsafe { Waker::from_raw(raw_waker()) }
-}
-
 pub(super) fn gate_receipts(vault: &Vault) -> Result<Vec<crate::receipt::ReceiptRecord>> {
     vault.receipts(ReceiptQuery::new(10).with_kind(ReceiptKind::Gate))
 }
