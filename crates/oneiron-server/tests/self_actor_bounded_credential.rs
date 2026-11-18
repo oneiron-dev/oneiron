@@ -8,7 +8,11 @@
 //!   verbs `read` + `write`) reaches `self.actor` and learns its own actor
 //!   ref; red on main (403 `record-scope`), green after the lane fix;
 //! - a credential with a channel caveat is still refused (403), on main and
-//!   after the fix.
+//!   after the fix;
+//! - over MCP (`/mcp/tool-first`, `tools/call self.actor`) the same
+//!   channel-bound credential is refused too (-32020): refused on main
+//!   (`unrestricted`), answered at ab00ee9c (the filtered MCP gate), refused
+//!   after the review fix (review round 1 of #9533).
 //!
 //! Fixture modeled on `crates/oneiron-server/tests/vault_support_grants_doors.rs`
 //! (support mint + facade `post` with a holder-signed binding); channel mint
@@ -48,6 +52,8 @@ use tower::ServiceExt;
 
 const MINT: &str = "vault.support_grants.mint";
 const SELF_ACTOR: &str = "self.actor";
+const MCP_PATH: &str = "/mcp/tool-first";
+const MCP_PROTOCOL_VERSION: &str = "2026-07-28";
 
 /// One credential a test holds: its slip, its holder key and its token.
 struct Holder {
@@ -199,6 +205,38 @@ impl Served {
         (
             status,
             serde_json::from_slice(&bytes).unwrap_or(Value::Null),
+        )
+    }
+
+    /// One JSON-RPC request from `caller` to the tool-first MCP endpoint,
+    /// with a fresh holder binding: the HTTP status and the reply.
+    async fn mcp(&self, caller: Caller<'_>, id: u64, method: &str, params: Value) -> (u16, Value) {
+        let request = Request::builder()
+            .method(Method::POST)
+            .uri(MCP_PATH)
+            .header("authorization", format!("Bearer {}", self.token(caller)))
+            .header("x-oneiron-binding", self.binding(caller))
+            .header("mcp-protocol-version", MCP_PROTOCOL_VERSION)
+            .header("content-type", "application/json")
+            .body(Body::from(
+                json!({ "jsonrpc": "2.0", "id": id, "method": method, "params": params })
+                    .to_string(),
+            ))
+            .expect("MCP request");
+        let response = self
+            .app
+            .clone()
+            .oneshot(request)
+            .await
+            .expect("MCP response");
+        let status = response.status().as_u16();
+        let bytes = to_bytes(response.into_body(), 16 * 1024 * 1024)
+            .await
+            .expect("MCP response body");
+        (
+            status,
+            serde_json::from_slice(&bytes)
+                .unwrap_or_else(|_| Value::String(String::from_utf8_lossy(&bytes).into_owned())),
         )
     }
 
@@ -364,6 +402,86 @@ fn a_channel_caveat_is_still_refused_at_self_actor() {
             error_code(&body),
             Some("FORBIDDEN"),
             "a channel-bound credential is refused: {body}"
+        );
+    });
+}
+
+/// Over MCP too, a channel caveat is refused at `self.actor`, as its HTTP
+/// admission refuses it (review round 1 of #9533). On main the
+/// `unrestricted` MCP gate refuses it; at ab00ee9c the filtered gate admits
+/// the call and answers the actor refs (LEAK); after the review fix the
+/// gate refuses it with -32020.
+#[test]
+fn a_channel_caveat_is_refused_at_self_actor_over_mcp() {
+    run_on_engine_stack("self-actor-channel-mcp", || async {
+        let served = served().await;
+        let scope = bounded_scope(
+            ScopeId(EntityId::now()),
+            ScopeId(EntityId::now()),
+            ScopeId(EntityId::now()),
+            &["read", "write"],
+        );
+        let bound = served.channel_holder(0xC4, 0xC3, &scope);
+        assert!(
+            !bound.slip.claims.channels.is_empty(),
+            "FIXTURE: the slip carries a channel caveat"
+        );
+        let caller = Caller::Support(&bound);
+
+        let (status, reply) = served
+            .mcp(
+                caller,
+                1,
+                "initialize",
+                json!({
+                    "protocolVersion": MCP_PROTOCOL_VERSION,
+                    "capabilities": {},
+                    "clientInfo": { "name": "self-actor-channel-mcp", "version": "1" },
+                }),
+            )
+            .await;
+        assert_eq!(
+            status, 200,
+            "FIXTURE: the channel-bound slip initializes: {reply}"
+        );
+        assert!(
+            reply.get("error").is_none(),
+            "FIXTURE: the gateway registers the channel-bound slip: {reply}"
+        );
+        let (status, listed) = served.mcp(caller, 2, "tools/list", json!({})).await;
+        assert_eq!(status, 200, "FIXTURE: tools/list answers: {listed}");
+        let version = listed["result"]["tools"]
+            .as_array()
+            .and_then(|tools| tools.iter().find(|tool| tool["name"] == SELF_ACTOR))
+            .map(|tool| tool["inputSchema"]["properties"]["schema_version"]["const"].clone())
+            .expect("FIXTURE: the tool-first endpoint lists self.actor");
+
+        let (_, answer) = served
+            .mcp(
+                caller,
+                3,
+                "tools/call",
+                json!({
+                    "name": SELF_ACTOR,
+                    "arguments": {
+                        "schema_version": version,
+                        "consent": {
+                            "policy_ref": "policy:agent-session",
+                            "purpose": "learn our own actor ref",
+                        },
+                        "arguments": {},
+                    },
+                }),
+            )
+            .await;
+        assert!(
+            answer.get("result").is_none(),
+            "LEAK: a channel-bound credential reads self.actor over MCP: {answer}"
+        );
+        assert_eq!(
+            answer["error"]["data"]["error_code"].as_str(),
+            Some("mcp_scope_unprojectable"),
+            "the gate refuses the channel caveat: {answer}"
         );
     });
 }
