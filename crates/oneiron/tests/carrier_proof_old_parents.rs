@@ -1651,6 +1651,18 @@ impl OldParents {
     /// writes it. Returns the entry's hash and the passkey's roster key
     /// (compressed SEC1).
     fn enrol_passkey_owner_key(&mut self) -> (AuthorityEntryHash, AuthorityKey) {
+        let parent = hash(self.rows.last().expect("a parent row"));
+        self.enrol_passkey_owner_key_on(parent, self.machine)
+    }
+
+    /// [`OldParents::enrol_passkey_owner_key`] on `parent`, with `holder` as
+    /// the machine the enrolment names (for a passkey, the carrier that
+    /// served its ceremony); the carrier stays M (its install key cosigns).
+    fn enrol_passkey_owner_key_on(
+        &mut self,
+        parent: AuthorityEntryHash,
+        holder: EntityId,
+    ) -> (AuthorityEntryHash, AuthorityKey) {
         let passkey = p256::ecdsa::SigningKey::from_slice(&PASSKEY_SCALAR).expect("a P-256 scalar");
         let public_key = passkey
             .verifying_key()
@@ -1659,9 +1671,8 @@ impl OldParents {
             .to_vec();
         let vault_id = self.vault_id();
         let target = owner_key_enrollment_target(&vault_id, &public_key).expect("the target");
-        let challenge =
-            owner_key_enrollment_challenge(&vault_id, self.machine, &public_key, owner())
-                .expect("the challenge");
+        let challenge = owner_key_enrollment_challenge(&vault_id, holder, &public_key, owner())
+            .expect("the challenge");
         let evidence = owner_passkey_possession_evidence(
             PASSKEY_CREDENTIAL_ID,
             &passkey_assertion(&passkey, &challenge),
@@ -1676,7 +1687,7 @@ impl OldParents {
                 ActSurface::ThisInstall,
                 OWNER_KEY_ENROLLMENT_SEEN,
             ),
-            machine: self.machine,
+            machine: holder,
             carrier: self.machine,
             device: DeviceAuthority {
                 key: key.clone(),
@@ -1691,7 +1702,6 @@ impl OldParents {
         });
         self.root_seq += 1;
         let seq = self.root_seq;
-        let parent = hash(self.rows.last().expect("a parent row"));
         let row = signed(
             Some(vault_id),
             seq,
@@ -1766,6 +1776,100 @@ fn an_old_parents_home_pick_lands_on_a_passkey_only_vault() {
     assert!(
         in_force_home_pick(&fold),
         "the pick is in force: {:?}",
+        fold.issues
+    );
+}
+
+impl OldParents {
+    /// M carries the owner's removal of machine `victim` (install key
+    /// `victim_key`, registered by `registered`) on that registration, under
+    /// its own install key with no cosign: its first primary-signed row.
+    fn carry_removal(
+        &mut self,
+        victim_key: &SigningKey,
+        victim: EntityId,
+        registered: AuthorityEntryHash,
+    ) -> AuthorityEntryHash {
+        let removal_act = OwnerAct::by_owner(
+            owner(),
+            OwnerActKind::MachineRemoval,
+            victim,
+            ActSurface::ThisInstall,
+            machine_answer_revision([registered]),
+        );
+        let profile = node_profile(
+            self.vault_id(),
+            victim,
+            victim_key,
+            MachineRole::Removed,
+            2,
+            Some((self.machine, removal_act)),
+        );
+        self.carry(vec![registered], AuthorityOp::MachineProfile(profile))
+    }
+}
+
+/// Test 23 of the row, for row PASSKEY-OWNER-KEY-DRAWS-NO-LINE (blind review
+/// round 1 of #9495, P1): a passkey's line refuses no second enrolment of
+/// the passkey, which a later line can let fold. On X's registration P, E1
+/// enrols passkey K (holder X) and E2 enrols proving key K2 on E1; M carries
+/// a removal R of X on P, and E3 enrols K again (holder X) on R. The first
+/// fold refuses E3 (R removed X) and takes E1 before E2 (fewer ancestors);
+/// E2's line then holds R, so X stays live and E3 counts. The reviewed head:
+/// E1's line refused E3, which no fold had taken, for good. Main: E1 draws
+/// no line, so E3 counts.
+#[test]
+fn a_passkey_line_lets_a_second_enrolment_of_the_passkey_fold() {
+    let mut vault = OldParents::new();
+    let (victim_key, victim, registered) = vault.register_second_machine();
+    let machine = vault.machine;
+    let (first, key) = vault.enrol_passkey_owner_key_on(registered, victim);
+    let proving_signing = signing(OWNER_KEY_SEED_2);
+    let proving = vault.enrol_owner_key_on(first, &proving_signing, machine);
+    let proving_key = key_of(&proving_signing);
+    let removal = vault.carry_removal(&victim_key, victim, registered);
+    let (second, _) = vault.enrol_passkey_owner_key_on(removal, victim);
+    let fold = vault.fold();
+    assert_enrolment_counted(&fold, &first, &key);
+    assert_enrolment_counted(&fold, &proving, &proving_key);
+    assert!(
+        is_held(&fold, victim, &removal),
+        "the removal outside the proving line is held: {:?}",
+        fold.issues
+    );
+    assert!(
+        fold.valid_entries.contains(&second),
+        "the second enrolment of the passkey counts once its holder stays live: {:?}",
+        fold.issues
+    );
+}
+
+/// Test 24 of the row (blind review round 1 of #9495, P1): the same for a
+/// device's key, whose first enrolment's own line holds the removal. On X's
+/// registration P, E1 enrols K (holder X); M carries a removal R of X on P,
+/// and E3 enrols K again (holder X) on R. The first fold refuses E3 (R
+/// removed X) and takes E1; E1's line holds R, so X stays live and E3
+/// counts. Main and the reviewed head: E1's line refused E3, which no fold
+/// had taken, for good.
+#[test]
+fn an_owner_key_line_lets_a_second_enrolment_of_its_key_fold() {
+    let mut vault = OldParents::new();
+    let (victim_key, victim, registered) = vault.register_second_machine();
+    let owner_signing = signing(OWNER_KEY_SEED);
+    let key = key_of(&owner_signing);
+    let first = vault.enrol_owner_key_on(registered, &owner_signing, victim);
+    let removal = vault.carry_removal(&victim_key, victim, registered);
+    let second = vault.enrol_owner_key_on(removal, &owner_signing, victim);
+    let fold = vault.fold();
+    assert_enrolment_counted(&fold, &first, &key);
+    assert!(
+        is_held(&fold, victim, &removal),
+        "the removal outside the first line is held: {:?}",
+        fold.issues
+    );
+    assert!(
+        fold.valid_entries.contains(&second),
+        "the second enrolment of the key counts once its holder stays live: {:?}",
         fold.issues
     );
 }
