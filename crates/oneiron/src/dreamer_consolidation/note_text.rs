@@ -14,9 +14,8 @@ use std::ops::Range;
 
 use crate::note::ExtractionDefault;
 use crate::{EntityId, Result, Vault};
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
 use oneiron_model::llm::ScopeResource;
-
-const FINGERPRINT_DOMAIN: &[u8] = b"oneiron:dreamer-note-text:v1";
 
 /// One NOTE's admitted text, the stored version it was read at, and a
 /// fingerprint of the projection that moves with the text and with the
@@ -70,18 +69,31 @@ pub(super) fn note_text_in(
     if text.trim().is_empty() {
         return Ok(None);
     }
-    let mut hash = blake3::Hasher::new();
-    hash.update(FINGERPRINT_DOMAIN);
-    hash.update(&(mode.len() as u64).to_be_bytes());
-    hash.update(mode.as_bytes());
-    hash.update(&(text.len() as u64).to_be_bytes());
-    hash.update(text.as_bytes());
+    let fingerprint = note_text_fingerprint(mode, &text);
     Ok(Some(NoteText {
         markdown: decoded.markdown,
         text,
         sealed_pad,
         keep,
         version: super::resources::document_version(*id, body),
-        fingerprint: *hash.finalize().as_bytes(),
+        fingerprint,
     }))
+}
+
+/// A NOTE's text fingerprint (`purposes::dreamer_consolidation::NOTE_TEXT`):
+/// the read mode, then the text, each after its u64-BE byte length.
+fn note_text_fingerprint(mode: &str, text: &str) -> [u8; 32] {
+    LegacyDigest::new(purposes::dreamer_consolidation::NOTE_TEXT)
+        .len_u64_be(mode.len())
+        .raw(mode.as_bytes())
+        .len_u64_be(text.len())
+        .raw(text.as_bytes())
+        .finish()
+}
+
+/// [`note_text_fingerprint`] for the K door
+/// (`test_doors::fingerprint_keep_dreamer_consolidation_digests`). Not API.
+#[cfg(oneiron_test_support)]
+pub(crate) fn note_text_fingerprint_for_test(mode: &str, text: &str) -> [u8; 32] {
+    note_text_fingerprint(mode, text)
 }

@@ -15,35 +15,12 @@ use core::assert_matches;
 use rmpv::Value;
 
 fn test_config() -> VaultConfig {
-    VaultConfig {
-        failure_signals: Default::default(),
-        store_clock: crate::ports::StoreClock::default(),
-        ppr_vad_alpha: crate::config::PPR_VAD_ALPHA_DEFAULT,
-        ppr_community: crate::config::PprCommunityConfig::default(),
-        retrieval_telemetry_capture: false,
-        map_size: 16 * 1024 * 1024,
-        dimensions: 4,
-        fast_dims: None,
-        embedding_model: None,
-        embedding_transform: None,
-        vector_evidence: crate::config::VectorEvidenceFloors::default(),
-        call_mode_deadline: crate::memory::DEFAULT_CALL_MODE_DEADLINE,
-        tagging: None,
-        max_readers: 16,
-        hnsw: HnswConfig {
-            m_max_0: 64,
-            ef_construction: 200,
-            ef_search: 128,
-        },
-        text_analyzer: crate::config::TextAnalyzerConfig::default(),
-        dict_search_paths: Vec::new(),
-        assistant_display_names: Vec::new(),
-        skip_text_index_manifest_check: false,
-        off_record_enabled: true,
-        off_record_overlay_budget_bytes: crate::config::DEFAULT_OFF_RECORD_OVERLAY_BUDGET_BYTES,
-        limits: crate::limit_ask::EngineLimits::default(),
-        privacy: crate::config::VaultPrivacyConfig::default(),
-    }
+    let mut config = VaultConfig::device();
+    config.map_size = 16 * 1024 * 1024;
+    config.dimensions = 4;
+    config.max_readers = 16;
+    config.hnsw = HnswConfig::default();
+    config
 }
 
 fn test_time_range(start: u64, end: u64) -> TimeRange {
@@ -91,12 +68,14 @@ fn seed_raw_claim_bytes(vault: &Vault, id: &EntityId, data: &[u8]) -> Result<()>
         occurred_start: 1,
         occurred_end: 1,
         learned_at: 2,
+        row_version: 0,
     };
     let mut payload = Vec::with_capacity(crate::batch::ENTITY_METADATA_HEADER_LEN + data.len());
     payload.push(header.entity_type);
     payload.extend_from_slice(&header.occurred_start.to_be_bytes());
     payload.extend_from_slice(&header.occurred_end.to_be_bytes());
     payload.extend_from_slice(&header.learned_at.to_be_bytes());
+    payload.extend_from_slice(&header.row_version.to_be_bytes());
     payload.extend_from_slice(data);
 
     let mut wtxn = vault.store.env.write_txn()?;
@@ -991,13 +970,9 @@ fn analysis_read_from_other_fields_is_refused() -> Result<()> {
 /// A vault with room for documents at the per-document text ceiling.
 fn open_ceiling_vault() -> Result<(tempfile::TempDir, Vault)> {
     let temp_dir = tempfile::tempdir()?;
-    let vault = Vault::open(
-        temp_dir.path(),
-        VaultConfig {
-            map_size: 64 * 1024 * 1024,
-            ..test_config()
-        },
-    )?;
+    let mut config = test_config();
+    config.map_size = 64 * 1024 * 1024;
+    let vault = Vault::open(temp_dir.path(), config)?;
     Ok((temp_dir, vault))
 }
 
@@ -1122,24 +1097,32 @@ fn the_same_words_index_the_same_in_one_field_or_many() -> Result<()> {
     Ok(())
 }
 
-/// Bug repro (H6) and done-means: the engine's query door reads a query's first
-/// `MAX_QUERY_TEXT_BYTES`, the facade's ceiling, and never tokenizes the rest; a cut that
-/// falls inside a character keeps the whole characters before it.
+/// Done-means (FIX55, #4909): the engine's query door tokenizes the whole query. The 8 KiB
+/// read cut this test pinned for H6 is retired, so a matching term past 8 KiB still finds its
+/// document, and a long multi-byte query is served with no character-boundary clip.
 #[test]
-fn a_query_is_read_to_the_query_ceiling() -> Result<()> {
+fn a_query_is_read_whole_past_the_retired_ceiling() -> Result<()> {
     let temp_dir = tempfile::tempdir()?;
     let vault = Vault::open(temp_dir.path(), test_config())?;
     let id = EntityId::now();
     put_text_doc(&vault, &id, "lantern")?;
     // The engine query door's 8 KiB text ceiling (oneiron-base MAX_QUERY_BYTES), retired by
     // d396e233532 (FIX55, #4909: serve the full shared query text).
-    let limit = 8 * 1024;
-    let within = format!("{} lantern", text_of_len("x", limit - " lantern".len()));
-    assert_eq!(within.len(), limit);
+    let retired_ceiling = 8 * 1024;
+    let within = format!(
+        "{} lantern",
+        text_of_len("x", retired_ceiling - " lantern".len())
+    );
+    assert_eq!(within.len(), retired_ceiling);
     assert!(contains_id(&vault.search_text(&within, 10)?, &id));
-    let past = format!("{} lantern", text_of_len("x", limit));
-    assert!(vault.search_text(&past, 10)?.is_empty());
-    assert!(vault.search_text(&"\u{3042}".repeat(limit), 10)?.is_empty());
+    let past = format!("{} lantern", text_of_len("x", retired_ceiling));
+    assert!(past.len() > retired_ceiling);
+    assert!(contains_id(&vault.search_text(&past, 10)?, &id));
+    assert!(
+        vault
+            .search_text(&"\u{3042}".repeat(retired_ceiling), 10)?
+            .is_empty()
+    );
     Ok(())
 }
 
@@ -1183,7 +1166,7 @@ fn decode_rejects_empty_rows() {
     ));
 }
 
-/// ABI v4 forward record layout, literal bytes: `term_len_u16_le |
+/// ABI v4 forward record layout, literal bytes: `term_len_u64_le |
 /// term_bytes | field_id_u16_be` — and nothing else. An
 /// implementation still writing the dead v1 `tf` u32 FAILS here.
 #[test]
@@ -1191,7 +1174,7 @@ fn forward_record_layout_drops_tf() -> Result<()> {
     let mut m: BTreeMap<String, BTreeMap<u16, u32>> = BTreeMap::new();
     m.entry("ab".into()).or_default().insert(3, 7);
     let bytes = encode_forward(&m)?;
-    assert_eq!(bytes, vec![2, 0, b'a', b'b', 0, 3]);
+    assert_eq!(bytes, vec![2, 0, 0, 0, 0, 0, 0, 0, b'a', b'b', 0, 3]);
 
     let back = decode_forward(&bytes)?;
     assert_eq!(back.len(), 1);

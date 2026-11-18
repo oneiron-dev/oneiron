@@ -15,7 +15,7 @@ mod keep_awake;
 mod sleep_watch;
 
 pub use hosts::{ActivatedListener, DesktopHost, LaunchdHost, SecretSource, SystemdHost};
-pub use keep_awake::{AwakeGuard, AwakePolicy, KeepAwake};
+pub use keep_awake::{AwakeGuard, AwakePolicy, KeepAwake, on_mains_power};
 #[cfg(target_os = "linux")]
 pub use sleep_watch::prepare_for_sleep_line;
 pub use sleep_watch::{SleepHooks, SleepWatch};

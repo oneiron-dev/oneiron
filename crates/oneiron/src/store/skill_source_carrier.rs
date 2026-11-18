@@ -5,17 +5,15 @@ use crate::error::Result;
 use crate::store::skill_package::HubPackage;
 use crate::store::skill_package::codec::{decode_hub_package, encode_hub_package, invalid};
 use crate::write_envelope::skill_record::SkillContentHash;
-use sha2::{Digest, Sha256};
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
 
 const MAGIC: &[u8] = b"oneiron.hub-source.v1\0";
-const DOMAIN: &[u8] = b"oneiron.hub-source.asset.v1\0";
 
 pub(crate) fn source_carrier_id(holder: &EntityId, hash: &SkillContentHash) -> Result<EntityId> {
-    let digest = Sha256::new()
-        .chain_update(DOMAIN)
-        .chain_update(holder.as_bytes())
-        .chain_update(hash.as_bytes())
-        .finalize();
+    let digest = LegacyDigest::new(purposes::store::SKILL_SOURCE_CARRIER)
+        .raw(holder.as_bytes())
+        .raw(hash.as_bytes())
+        .finish();
     EntityId::from_bytes(
         digest[..16]
             .try_into()
