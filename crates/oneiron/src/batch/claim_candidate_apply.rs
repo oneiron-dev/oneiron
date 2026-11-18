@@ -88,7 +88,15 @@ pub(super) fn apply_claim_candidate(
     // the old proof verifies over the pre-mask bytes. Every other envelope
     // reaches admission byte for byte.
     let mut resigned = envelope.clone();
+    let mut pre_mask_facet = None;
     if let Some(pre) = &pre_mask {
+        // The mask writes handles over secrets and never moves the facet a
+        // candidate names: one whose facet selector it rewrote in the opaque
+        // scope is stored at the facet the selector named, the one the
+        // preflight judged and its walk over the batch noted
+        // (PREFLIGHT-SAME-BATCH-BIRTH-FACET).
+        let pre_body = pre.clone().into_claim_body(envelope, default_facet)?;
+        pre_mask_facet = Some(pre_body.scope_facet);
         crate::authority::resign_machine_claim_after_mask_in_txn(
             store,
             wtxn,
@@ -96,14 +104,13 @@ pub(super) fn apply_claim_candidate(
             pre,
             &candidate,
             &mut resigned,
-            default_facet,
+            pre_body.scope_facet,
         )?;
         // A receipt this candidate's preflight recorded names the body before
         // the mask wrote its handles, under the envelope it was offered with:
         // the gate reads that receipt against this body's diff
         // (CHECKER-PREVIEW-READS-UNMASKED-CANDIDATE).
         if decision.preflight.is_some() {
-            let pre_body = pre.clone().into_claim_body(envelope, default_facet)?;
             let (diff, _) = crate::gate::claim_consent_binding_parts(store, wtxn, &pre_body)?;
             decision.pre_mask_diff =
                 Some(<[u8; 32]>::try_from(diff.as_slice()).map_err(|_| {
@@ -112,7 +119,10 @@ pub(super) fn apply_claim_candidate(
         }
     }
     let envelope = &resigned;
-    let body = candidate.into_claim_body(envelope, default_facet)?;
+    let mut body = candidate.into_claim_body(envelope, default_facet)?;
+    if let Some(facet) = pre_mask_facet {
+        body.scope_facet = facet;
+    }
     crate::claim::world_access::admit_world_access_write(
         store,
         wtxn,
@@ -386,7 +396,9 @@ impl BatchBirthFacets {
 
     /// Notes what `op` does to the birth facet of the id it writes; call it
     /// after the read for `op` itself. A body apply cannot decode aborts the
-    /// batch at that op, so no later op reads it and it is not noted.
+    /// batch at that op, so no later op reads it and it is not noted. The op
+    /// is read as offered: apply stores a candidate the mask rewrites at the
+    /// facet it named before the mask.
     pub(crate) fn note(
         &mut self,
         store: &Store,
