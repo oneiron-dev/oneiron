@@ -4,7 +4,7 @@ use crate::receipt::{ReceiptKind, ReceiptRecord};
 fn vault() -> (tempfile::TempDir, Vault) {
     let d = tempfile::tempdir().unwrap();
     let v = Vault::open(d.path(), crate::VaultConfig::device()).unwrap();
-    vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
+    v.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
     (d, v)
 }
 fn receipt(outcome: &str, kind: &str) -> ReceiptRecord {
