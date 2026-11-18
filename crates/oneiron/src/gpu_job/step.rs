@@ -301,6 +301,8 @@ impl Vault {
             let report = GpuJobStepReport::of(&current);
             return Ok((current, report));
         };
+        #[cfg(oneiron_test_support)]
+        crate::test_doors::gpu_job::pass_end_commit_gate(&job.id);
         // Settled after the write, so a settled chunk is never admitted again.
         if let Some(permit) = permits.take(&job.id) {
             let _ = permit.settle(CallOutcome::Used(charged_secs));

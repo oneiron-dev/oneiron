@@ -924,3 +924,206 @@ fn an_erase_during_a_step_keeps_the_starter_erased() {
         "a step that read the job before the erase never puts its starter back"
     );
 }
+
+/// A resume continues the stopped job where it ran: a quote that names
+/// another offer, job type or image is refused before anything is reserved or
+/// created, and the job's own terms still resume (review round 2 of #8063 and
+/// #8064: the resumed job kept the first offer's routing, so the host's
+/// status reads and the cancel went to that offer's backend while the new
+/// resource ran on the other).
+#[test]
+fn a_resume_quote_for_another_offer_job_type_or_image_is_refused_before_anything_is_reserved() {
+    let rig = rig();
+    let (job, _first, _receipts, _) = rig.run_to_stop();
+    let resume = job.stop.as_ref().expect("stopped").resume.clone();
+    let creates = rig.gpu.called("create");
+    let other = GpuOffer {
+        name: "a100-fixture".to_owned(),
+        class: "a100".to_owned(),
+        provider: "other-cloud".to_owned(),
+        ..offer(2)
+    };
+    let mut other_image = request(Some(100));
+    other_image.image = "registry.example.com/other@sha256:11".to_owned();
+    let mut other_type = request(Some(100));
+    other_type.job_type = "inference".to_owned();
+    let quote_on = |offer: &GpuOffer, request: &GpuJobRequest| {
+        offer
+            .quote(request, Some(job.id), DEFAULT_MAXIMUM_SECS, NOW)
+            .expect("quote")
+    };
+    let cases = [
+        (
+            "another offer",
+            &other,
+            quote_on(&other, &request(Some(100))),
+        ),
+        (
+            "another image",
+            &rig.offer,
+            quote_on(&rig.offer, &other_image),
+        ),
+        (
+            "another job type",
+            &rig.offer,
+            quote_on(&rig.offer, &other_type),
+        ),
+    ];
+    for (case, offer, quote) in cases {
+        let (admission, _receipts) = admission(&job.id, quote.units);
+        let refused = rig.vault.start_gpu_job(
+            &rig.owner,
+            offer,
+            &quote,
+            Some(&resume),
+            &admission,
+            &rig.permits,
+            &rig.gpu,
+            NOW,
+        );
+        assert!(
+            refused
+                .as_ref()
+                .is_err_and(|error| error.to_string().contains("resume")),
+            "{case}: {refused:?}"
+        );
+        assert_eq!(
+            admission.read().remaining_units,
+            quote.units,
+            "{case}: nothing is reserved"
+        );
+    }
+    assert_eq!(rig.gpu.called("create"), creates, "nothing is created");
+    let stored = rig.job(&job.id);
+    assert_eq!(stored.state, GpuJobState::Stopped);
+    assert_eq!(stored.chunks.len(), 1);
+
+    let quote = rig.quote(100, Some(job.id), NOW);
+    let (admission, _receipts) = admission(&job.id, quote.units);
+    let resumed = rig
+        .vault
+        .start_gpu_job(
+            &rig.owner,
+            &rig.offer,
+            &quote,
+            Some(&resume),
+            &admission,
+            &rig.permits,
+            &rig.gpu,
+            NOW,
+        )
+        .expect("the job's own terms resume");
+    assert_eq!(resumed.chunks.len(), 2);
+}
+
+/// A cancel on a host that holds no permit for the live chunk (it restarted
+/// since the chunk began) leaves the chunk ending; the host's next step
+/// admits the chunk again, terminates it and settles its billed time on the
+/// new permit, so the cancel never skips the bill (review round 2 of #8063).
+#[test]
+fn a_cancel_after_a_restart_is_ended_and_paid_by_the_step_that_takes_the_chunk_up() {
+    let rig = rig();
+    let quote = rig.quote(100, None, NOW);
+    let (first, first_receipts) = admission(&quote.job, quote.units);
+    let job = rig.start(&quote, &first);
+    rig.step_at(&job.id, &first, 30, None);
+    let _ = rig.permits.hand_off_all();
+    rig.gpu
+        .terminates(GpuTermination::Confirmed { billed_secs: 30 });
+
+    let cancelled = rig
+        .vault
+        .cancel_gpu_job(&rig.owner, &job.id, &rig.permits, &rig.gpu, NOW)
+        .expect("cancel");
+    let (second, second_receipts) = admission(&job.id, quote.units);
+    rig.step(&job.id, &second);
+
+    let ended = rig.job(&job.id);
+    assert_eq!(
+        ended.state,
+        GpuJobState::Ended {
+            reason: GpuEndReason::Cancelled
+        }
+    );
+    assert_eq!(
+        ended.chunk().and_then(|chunk| chunk.settled_units),
+        Some(100),
+        "(30 + 20) seconds at 2"
+    );
+    assert_eq!(
+        settled(&second_receipts),
+        vec![100],
+        "the new permit pays the end"
+    );
+    assert_eq!(settled(&first_receipts).iter().sum::<u64>(), 0);
+    assert_eq!(rig.gpu.called("terminate"), 1);
+    assert_eq!(
+        cancelled.state,
+        GpuJobState::Ending {
+            reason: GpuEndReason::Cancelled
+        },
+        "the cancel leaves the chunk to the step that takes it up"
+    );
+}
+
+/// The step that ends a chunk at its maximum settles that chunk's permit after
+/// its write. A resume that starts the next chunk in between holds its own
+/// permit beside it: the first chunk pays its own end, and the second chunk's
+/// permit stays held for its own (review round 2 of #8063 and #8064: the
+/// resume's permit replaced the first chunk's, which settled for nothing, and
+/// the step then charged the first chunk's time to the second's permit).
+#[cfg(oneiron_test_support)]
+#[test]
+fn a_resume_between_a_stop_and_its_settlement_leaves_each_chunk_its_own_permit() {
+    let rig = rig();
+    let quote = rig.quote(100, None, NOW);
+    let (first, first_receipts) = admission(&quote.job, quote.units);
+    let job = rig.start(&quote, &first);
+    for (used, checkpoint) in [(50, None), (80, None), (95, None), (97, Some("ck-1"))] {
+        rig.step_at(&job.id, &first, used, checkpoint);
+    }
+    rig.gpu.terminates(GpuTermination::Pending);
+    rig.step_at(&job.id, &first, 100, Some("ck-1"));
+    rig.gpu
+        .terminates(GpuTermination::Confirmed { billed_secs: 100 });
+    let gate = Arc::new(Barrier::new(2));
+    oneiron::test_doors::gpu_job::gate_next_end_commit(job.id, Arc::clone(&gate));
+    let (second, second_receipts) = admission(&job.id, quote.units);
+    std::thread::scope(|scope| {
+        let worker = scope.spawn(|| rig.step(&job.id, &first));
+        // The step's write committed the stop; its permit is not settled yet.
+        gate.wait();
+        let stopped = rig.job(&job.id);
+        assert_eq!(stopped.state, GpuJobState::Stopped);
+        let resume = stopped.stop.as_ref().expect("stopped").resume.clone();
+        let next = rig.quote(100, Some(job.id), NOW);
+        rig.vault
+            .start_gpu_job(
+                &rig.owner,
+                &rig.offer,
+                &next,
+                Some(&resume),
+                &second,
+                &rig.permits,
+                &rig.gpu,
+                NOW,
+            )
+            .expect("resume");
+        gate.wait();
+        worker.join().expect("step thread");
+    });
+    assert_eq!(
+        settled(&first_receipts),
+        vec![240],
+        "(100 + 20) seconds at 2: the first chunk pays its own end"
+    );
+    assert_eq!(
+        settled(&second_receipts).iter().sum::<u64>(),
+        0,
+        "the second chunk's permit is charged nothing yet"
+    );
+    assert!(
+        rig.permits.holds(&job.id),
+        "the second chunk's permit stays held"
+    );
+}
