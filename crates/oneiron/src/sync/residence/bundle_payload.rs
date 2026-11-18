@@ -418,9 +418,11 @@ impl WindowManager {
         }
         // R is judged again, and this install's identity minted, before any
         // window lands; then before each window, and last in the transaction
-        // that lands the pads and the world keys: no write outlives a kit
-        // a revocation retired after the history's import (REVIEW-9488 round
-        // 2 P1 2).
+        // that lands the pads and the world keys, so no pad, world key, pin
+        // or roster row outlives a kit a revocation retired after the
+        // history's import (REVIEW-9488 round 2 P1 2). Each base window still
+        // commits in its own writers: one may land under an R revoked after
+        // its check (FIX KIT-RESTORE-BASE-WINDOWS-OUTSIDE-R-WRITER).
         let prepared = vault.restore_prep(owner, seed, confirm)?;
         let kit_root_live = || -> Result<()> {
             let txn = vault.store.env.read_txn()?;

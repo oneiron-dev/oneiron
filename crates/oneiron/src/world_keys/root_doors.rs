@@ -441,6 +441,7 @@ impl Vault {
     /// (WAYBACK-SECOND-KIT-OLD-ROOT-KEY = A). `authority` carries the true
     /// act surface for R's row; `predecessor` was loaded before the write
     /// txn opened and signs both.
+    #[expect(clippy::too_many_arguments)]
     pub(super) fn activate_owner_root_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
