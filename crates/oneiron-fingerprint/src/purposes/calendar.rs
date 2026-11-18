@@ -1,3 +1,4 @@
+//! Purposes of the calendar (`crates/oneiron/src/calendar`).
 //! Purposes of calendar ingest (`oneiron` `calendar::ingest`).
 //!
 //! An installed ICS feed's standing import consent (`calendar/ingest/consent.rs`, CAL-02)
@@ -9,6 +10,11 @@
 purposes! {}
 
 legacy_purposes! {
+    /// The digest of a calendar connector literal (`calendar::connectors::literal::digest`):
+    /// plain BLAKE3 of the value's JSON encoding, no tag. A seat's literal scope and an
+    /// outbox row's or a remote cursor's digest are sealed in the connector's custody
+    /// envelope, and opening it refuses an envelope whose digests differ from the row's now.
+    CONNECTOR_LITERAL = (Blake3, NotHashed, "oneiron.calendar.connector_literal.v1");
     /// An installed ICS feed's configuration digest (`consent::config_digest`). BLAKE3 of
     /// the feed's `IcsFeedPollConfig` as `serde_json` bytes, with no tag and no length;
     /// written as 64 lowercase hex digits. Stored in each ICS feed consent record.
