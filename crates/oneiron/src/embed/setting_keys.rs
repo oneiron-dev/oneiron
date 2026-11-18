@@ -67,6 +67,6 @@ crate::setting::setting_keys! {
     pub(crate) POD_HOURS_WAIT: PodHoursWait = "embed.pod_hours_wait" {
         kind: Kind::new(backfill_only)
             .strictest(everything)
-            .tighter(PodHoursWait::holds_at_least_as_much),
+            .custom(PodHoursWait::holds_at_least_as_much),
     };
 }

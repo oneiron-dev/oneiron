@@ -51,6 +51,8 @@ pub use hosted_verbs::{
 pub use land::HistoryImportReport;
 pub(crate) use ledger::erase_message_in_txn;
 #[cfg(oneiron_test_support)]
+pub(crate) use ledger::history_message_hashes_for_test;
+#[cfg(oneiron_test_support)]
 pub(crate) use ledger::landed_rows_in;
 pub use members::HistoryMemberAddress;
 pub use plan::{HistoryDryRun, HistoryLedgerSnapshot};

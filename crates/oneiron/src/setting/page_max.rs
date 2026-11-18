@@ -11,7 +11,7 @@ use super::{Setting, SettingValue};
 use crate::Vault;
 
 /// The most rows one page of a list serves. Zero is refused: a list whose maximum is zero would
-/// serve no row to any ask. A larger value is the looser one ([`super::lower_is_tighter`]).
+/// serve no row to any ask. A larger value is the looser one ([`super::Kind::lower`]).
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema,
 )]

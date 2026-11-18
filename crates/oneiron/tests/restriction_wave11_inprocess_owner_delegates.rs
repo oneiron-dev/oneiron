@@ -230,6 +230,7 @@ fn owner_turns_on(fixture: &Fixture, key: &str, item: Option<&str>, agent: Entit
             why: None,
             check_in_ref: None,
             weight_runs: None,
+            surface: None,
         }],
         false,
     )

@@ -2,7 +2,7 @@
 //! reads from this file.
 
 use crate::check_in::ActClass;
-use crate::setting::{Kind, ScopeKind, lower_is_tighter};
+use crate::setting::{Kind, ScopeKind};
 
 /// Off: only the owner plans a wave or reads its status.
 fn owner_plans() -> bool {
@@ -21,7 +21,7 @@ crate::setting::setting_keys! {
     pub AI_WAVES_AGENT_MAY_PLAN: bool = "ai.waves.agent_may_plan" {
         kind: Kind::new(owner_plans)
             .strictest(owner_plans)
-            .tighter(lower_is_tighter::<bool>),
+            .lower(),
         scopes: &[ScopeKind::Vault, ScopeKind::Agent],
         act: ActClass::GrantWiden,
     };

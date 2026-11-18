@@ -303,8 +303,9 @@ impl<T: SettingValue> Setting<T> {
 
     /// Whether the row that decides [`Self::read_in_txn`] with no item is the owner's: a pin, or
     /// a value row the owner set, the engine wrote, or an agent wrote spending a check-in the
-    /// owner approved (`StoredRow::by_owner`). The default, a learned fit, an unreadable row,
-    /// and a row a holder or a subject set are not.
+    /// owner approved (`StoredRow::by_owner`), or a row a move carried, which the engine wrote.
+    /// The default, a learned fit, a meet, an unreadable row, and a row a holder or a subject set
+    /// are not.
     ///
     /// # Errors
     ///
@@ -320,7 +321,13 @@ impl<T: SettingValue> Setting<T> {
         let (scope, mode) = match source {
             SettingSource::Pin(scope) => (scope, SettingMode::Pin),
             SettingSource::Row(scope) => (scope, SettingMode::Value),
-            SettingSource::Fit(_) | SettingSource::Default | SettingSource::Unreadable(_) => {
+            // A carried row is the engine's, so it counts as the owner's (`setting::carry`).
+            SettingSource::Carried(scope) => (scope, SettingMode::Carried),
+            // A meet of several rows: no one row decides it, so none is the owner's own.
+            SettingSource::Fit(_)
+            | SettingSource::Met
+            | SettingSource::Default
+            | SettingSource::Unreadable(_) => {
                 return Ok(false);
             }
         };

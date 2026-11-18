@@ -51,6 +51,11 @@ use crate::store::EngineScan;
 use crate::temporal::TimeRange;
 use crate::write_envelope::WriteActor;
 
+mod owner_seat;
+pub(crate) use owner_seat::{
+    require_owner_seat_skips_no_wait_in_txn, seat_house_owner_by_act_in_txn,
+};
+
 const RECEIPT_VERSION: u8 = 1;
 
 /// One house link receipt. Key: id16 (house) + id16 (receipt, time ordered).
@@ -529,6 +534,11 @@ impl Vault {
     /// (`SharedVaultChange::HouseRoleChanged`). The house
     /// already at `role` is left as it is, with no receipt. No stored preset
     /// is `EntityNotFound`.
+    ///
+    /// An Owner seat over the shared vault that an `add_owner` act would
+    /// hold (an owner-change wait or objection window the vault set) is
+    /// refused: [`Vault::propose_house_owner_role`] starts that act (FIX
+    /// HOUSE-OWNER-ROLE-VIA-ADD-OWNER).
     pub fn set_house_role(
         &self,
         actor: &AuthenticatedOwner,
@@ -539,6 +549,7 @@ impl Vault {
             let actor = actor.revalidate_person_in_txn(self, txn)?;
             let preset = stored_preset_in_txn(self, txn, workspace_ref)?;
             let now = crate::ports::recorded_at_in_txn(&self.store, txn)?;
+            require_owner_seat_skips_no_wait_in_txn(self, txn, &preset, role, actor, now)?;
             if link_house_in_txn(self, txn, &preset, role, actor, now)? {
                 self.record_admin_act_in_txn(
                     txn,

@@ -102,7 +102,7 @@ crate::setting::setting_keys! {
     /// A longer cap is the looser value, so only the owner raises it; an agent's raise waits
     /// on the owner's answer.
     pub(crate) SUPPORT_GRANT_MAX_TTL: u64 = "support.grant.max_ttl_secs" {
-        kind: Kind::new(one_day).strictest(one_day).tighter(lower_is_tighter::<u64>),
+        kind: Kind::new(one_day).strictest(one_day).lower(),
     };
 
     /// How long a step-up ceremony stays open, in seconds: a passkey challenge, and an

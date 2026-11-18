@@ -2,7 +2,7 @@
 //! catalogue reads from this file.
 
 use super::MAX_RESULTS_CAP;
-use crate::setting::{Kind, PageMax, lower_is_tighter};
+use crate::setting::{Kind, PageMax};
 
 /// 10 results: a search's maximum before it became a key.
 fn search_max_results_default() -> PageMax {
@@ -21,6 +21,6 @@ crate::setting::setting_keys! {
     pub(crate) SEARCH_MAX_RESULTS: PageMax = "connectors.web.search_max_results" {
         kind: Kind::new(search_max_results_default)
             .strictest(search_max_results_default)
-            .tighter(lower_is_tighter::<PageMax>),
+            .lower(),
     };
 }

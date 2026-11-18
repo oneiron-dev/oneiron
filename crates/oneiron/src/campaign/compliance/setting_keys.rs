@@ -71,7 +71,7 @@ crate::setting::setting_keys! {
     pub(crate) CAMPAIGN_COMPLIANCE_AGENT_MAY_DECIDE: bool = "campaign.compliance.agent_may_decide" {
         kind: Kind::new(owner_decides)
             .strictest(owner_decides)
-            .tighter(crate::setting::lower_is_tighter::<bool>),
+            .lower(),
         scopes: &[crate::setting::ScopeKind::Vault, crate::setting::ScopeKind::Agent],
         act: crate::check_in::ActClass::GrantWiden,
     };
