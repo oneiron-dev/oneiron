@@ -22,6 +22,7 @@ mod discover;
 mod home_handoff;
 mod kit_fetch;
 mod machine_history;
+mod own_device_grants;
 mod pad_custody;
 mod policy;
 mod predict;
@@ -114,6 +115,10 @@ pub use kit_fetch::{
 };
 pub use machine_history::{
     MACHINE_HISTORY_PAGE_ROWS, MachineHistoryCursor, MachineHistoryPage, machine_history_page,
+};
+pub use own_device_grants::{
+    OWN_DEVICE_GRANTS_PAGE_MAX, OwnDeviceGrantAdmission, OwnDeviceGrantState,
+    admit_own_device_grants, own_device_grant_refs, own_device_grant_states, own_device_grants_for,
 };
 pub use pad_custody::{
     PAD_FETCH_PAGE_KEYS, WorldPadCapsule, WorldPadFetch, WorldPadPage, WorldPadSelection,
@@ -751,3 +756,6 @@ pub(crate) mod promotion_hook {
         }
     }
 }
+
+#[cfg(oneiron_test_support)]
+pub(crate) use self::search::search_page_revision_for_test;

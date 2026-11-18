@@ -72,6 +72,8 @@ mod resident_for_human;
 mod resident_health;
 pub(crate) mod resources;
 mod retained_conflict;
+#[cfg(oneiron_test_support)]
+pub(crate) use retained_conflict::retained_field_for_test;
 mod retained_keep;
 mod revert;
 pub(crate) mod reviewed;
@@ -137,6 +139,8 @@ pub(crate) use resident_dream::{resident_dream_input, resident_dream_progress_in
 pub use resident_for_human::run_free_time_for_human;
 #[cfg(oneiron_test_support)]
 pub(crate) use resources::extraction_routing_door;
+#[cfg(oneiron_test_support)]
+pub(crate) use resources::open_conflict_door;
 pub use resources::{NightlyLinkGrantRequest, ScopedConsolidationWrite, mint_nightly_link_grant};
 pub use retained_conflict::RetainedAlternative;
 pub(crate) use retained_keep::SettlementApplied;
@@ -255,6 +259,20 @@ pub(crate) fn side_door_turn_text_for_test(
 ) -> crate::Result<TurnText> {
     turn_text::read_turn_text(vault, turn)
 }
+
+/// The stored and compared digests' seams for the K door
+/// (`test_doors::fingerprint_keep_dreamer_consolidation_digests`). Not API.
+#[cfg(oneiron_test_support)]
+pub(crate) use self::{
+    call_labels::labels_digest_for_test,
+    follower_attempt::{cache_identity_digest_for_test, route_digest_for_test},
+    note_text::note_text_fingerprint_for_test,
+    scope_summary_attempt::{
+        arc_composition_params_hash_for_test, arc_parts_params_hash_for_test,
+        session_pages_params_hash_for_test,
+    },
+    turn_text::attribution_hash_for_test,
+};
 
 /// The writer's re-check of a side door's TURN record, read as the Dreamer in
 /// a fresh snapshot, for the integration regression doors (X01). Not API.

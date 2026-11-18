@@ -49,7 +49,7 @@ pub(crate) fn settle_run_note_in_txn(
             "a proposal's opener never settles it",
         ));
     }
-    if !super::proposals::grant_allows(vault, txn, note, actor)? {
+    if !super::proposals::fork_decision_allows(vault, txn, note, record.actor, actor)? {
         return Err(MemoryError::bad_request(
             "no grant to settle this NOTE fork",
         ));

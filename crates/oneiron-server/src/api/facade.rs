@@ -158,6 +158,7 @@ mod live_run_doors;
 mod live_voice_doors;
 mod live_voice_settlement;
 mod mail_pack_doors;
+pub(crate) use mail_pack_doors::install_mail_host;
 mod merge_queue_checker_doors;
 mod merge_queue_doors;
 mod mesh_doors;
@@ -178,6 +179,7 @@ mod outbound_call_erase_doors;
 pub(crate) mod outbox_diverged_doors;
 mod output;
 pub(super) mod owner_binding;
+mod owner_confirm_doors;
 mod pack_preview_doors;
 mod persona_doors;
 mod plan_doc_doors;
@@ -270,6 +272,7 @@ mod web_connector_doors;
 mod web_fetch_doors;
 mod widen_proposal_doors;
 mod wire_health_doors;
+mod world_vectors_doors;
 
 pub(crate) use admission_doors::{
     admission_observer, call_verb, carrying_admission_observer, tracker_observer, tracks_admission,

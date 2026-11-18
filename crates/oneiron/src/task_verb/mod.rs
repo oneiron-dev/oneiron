@@ -89,6 +89,8 @@ mod office_origin;
 pub(crate) use office_origin::office_fork_origin_in_txn;
 mod owner_index;
 mod policy_change_followup;
+#[cfg(oneiron_test_support)]
+pub(crate) use self::policy_change_followup::policy_change_followup_index_key_for_test;
 mod presence_diagnostics;
 mod presence_jobs;
 mod presence_pages;
@@ -132,6 +134,8 @@ mod verb_kind;
 mod watch_task;
 pub(crate) use watch_task::{settle_watch_task_in_txn, tick_due_at_in_txn};
 mod wave_port;
+#[cfg(oneiron_test_support)]
+pub(crate) use self::wave_port::{wave_plan_index_key_for_test, wave_plan_statement_key_for_test};
 mod wire_decode;
 pub(crate) use contribution_pair::{
     CONTRIBUTION_PAIR_QUESTION_TYPE, ask_contribution_pair, coach_owner_conversation_in,
@@ -489,7 +493,7 @@ pub(crate) use ask_record::{
     ask_notice_at_in, attendee_entry_id, guard_ask_fact_put, read_attendee_entry_in,
 };
 pub(crate) use ask_settlement::{
-    AskStanding, ask_settlement_in, ask_standing_in, settle_ask_if_due,
+    AskStanding, ask_settlement_id, ask_settlement_in, ask_standing_in, settle_ask_if_due,
 };
 pub(crate) use fact_link_wake::{scoped_to_sources, wake_linked_facts_in_txn};
 pub(crate) use lifecycle_facade::deliver_task_result_in_txn;

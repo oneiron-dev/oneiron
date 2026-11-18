@@ -246,6 +246,113 @@ pub(super) fn asking_owner_choices(state: &FoldState) -> BTreeSet<AuthorityEntry
         .collect()
 }
 
+/// Whether a bind or rebind in `state` has the owner's proof where the fold
+/// asks for it: on a hosted fold, one of the row's `participants` (its signer
+/// and cosigners) is an owner key no cloud key holds
+/// ([`owner_key_outside_cloud_custody`]). A managed host's root acts as
+/// nobody inside a customer's vault, and being the trust root never makes
+/// the operator a person there (owner ruling 2026-10-18, "A + support"; rows
+/// OLD-PARENTS-OWNER-BINDING-REVOKE and OLD-PARENTS-OWNER-BINDING-CONFLICT).
+/// So its signature alone binds no person. A binding it made alone would let
+/// it end the owner's standing on every replica (`owner_live_at` takes an
+/// owner every binding of whom is revoked or conflicted as removed), by
+/// revoking that binding, on parents from before an owner key's enrolment
+/// too, or by a conflicting sibling bind. No writer binds a person on a
+/// hosted vault, so its owner is unbound and trusted on the carrier's word;
+/// the owner binds from a device of their own.
+///
+/// The gate asks for a `human` bind or rebind, and for a bind or rebind, of
+/// whatever class, of a key that could hold a person's binding: a key whose
+/// binding, live or revoked, is `human`, or a live roster key the fold's
+/// `consent_arm` takes, the arm a `human` bind of the key must pass
+/// (`apply_actor_binding`). On a hosted fold that is every owner or admin
+/// key, the custodial root's own key and an owner key no cloud key holds
+/// among them. Else the root alone could turn the owner's binding into an
+/// agent's, replace a revoked one and so undo the owner's removal (an owner
+/// no binding names reads as live), or bind such a key as another actor's at
+/// the owner's epoch on parents that bind no person, which the merge with
+/// the owner's own bind of that key marks conflicted, and
+/// [`super::owner_act::owner_live_at`] reads that as the owner removed
+/// (blind review of #9137, round 1 P1: the owner's key; round 2 P1: the
+/// root's key, bound as the owner's with an owner key's proof). A key no
+/// person's binding can name, such as a machine's `ROLE_AGENT` key, binds
+/// on the root's word. A self-host or relay fold and every other op pass: a
+/// self-host root is the owner's own key, and those folds take no cloud
+/// key's consent. A revoke never asks (ONE-REVOKE-DURABILITY), so the root
+/// alone can still end a binding an owner key made (row
+/// HOSTED-OWNER-BIND-ROOT-REVOKE).
+///
+/// A passkey-limited key ([`FoldState::passkey_limited`]) gives no proof
+/// here, as it gives none to a carried answer or to a revoke of an owner
+/// key: such a key authorizes no actor binding from any signature position
+/// (lead ruling WEBPASSKEY-BLIND-SIGNATURE = B), and every rule that reads a
+/// participant as the owner's proof leaves it out (REVIEW2 #8451 P2-1). Else
+/// the host, which serves the page a passkey signs on, binds a person with
+/// its root and the cosign of a key it had the passkey vouch for blind.
+pub(super) fn human_bind_proved(
+    state: &FoldState,
+    op: &AuthorityOp,
+    participants: &BTreeSet<AuthorityKey>,
+    consent_arm: fn(&FoldedDevice) -> bool,
+) -> bool {
+    let (AuthorityOp::BindActor {
+        authority_key,
+        actor_class,
+        ..
+    }
+    | AuthorityOp::RebindActor {
+        authority_key,
+        actor_class,
+        ..
+    }) = op
+    else {
+        return true;
+    };
+    if !state.hosted {
+        return true;
+    }
+    let touches_a_person = actor_class == ACTOR_CLASS_HUMAN
+        || state
+            .actor_bindings
+            .get(authority_key)
+            .is_some_and(|binding| binding.actor_class == ACTOR_CLASS_HUMAN)
+        || state.roster.get(authority_key).is_some_and(consent_arm);
+    !touches_a_person
+        || participants
+            .iter()
+            .any(|key| !state.passkey_limited(key) && owner_key_outside_cloud_custody(state, key))
+}
+
+/// Whether `key` is a live owner key on `state`'s roster that no cloud key
+/// holds: neither it nor any key that admitted it, directly or through
+/// others (`key_admitters`), is stamped `ROLE_CLOUD` or `CloudCustodial`.
+/// A managed host's root carries that stamp in the log
+/// (`HostSlipIssuer::root_device`), so every fold reads it alike, under any
+/// posture. Host custody ([`proves_for_the_owner`]) also takes a self-host
+/// root, by its host-root attestation, as the host's on a hosted fold. Read
+/// that way, a self-hosted vault opened as Hosted (`Vault::open` with a
+/// Hosted config) or imported into a hosted vault would lose the bind of the
+/// transaction that rooted it, and with it every row after.
+fn owner_key_outside_cloud_custody(state: &FoldState, key: &AuthorityKey) -> bool {
+    if !roster_has_live_owner(&state.roster, key) {
+        return false;
+    }
+    let mut seen = BTreeSet::new();
+    let mut pending = vec![key];
+    while let Some(next) = pending.pop() {
+        if !seen.insert(next) {
+            continue;
+        }
+        if state.roster.get(next).is_some_and(|device| {
+            device.roles & ROLE_CLOUD != 0 || device.tier == AuthorityTier::CloudCustodial
+        }) {
+            return false;
+        }
+        pending.extend(state.key_admitters.get(next).into_iter().flatten());
+    }
+    true
+}
+
 impl AuthorityFold {
     /// Whether `key` is a key whose cosign this fold takes as the owner's
     /// proof: live on the roster with `ROLE_OWNER`, outside the host's

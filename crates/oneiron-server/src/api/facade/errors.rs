@@ -114,6 +114,11 @@ impl From<MemoryError> for FacadeApiError {
             // OF-123: the person the effect names is not settled yet; the
             // same request succeeds once `self.identity.settle` settles it.
             oneiron::memory::MEMORY_CODE_IDENTITY_UNSETTLED => StatusCode::CONFLICT,
+            // A one-way act's call carried no confirm, or not the caller's
+            // live preview of this call: the owner previews it first.
+            oneiron::memory::MEMORY_CODE_OWNER_CONFIRM_REQUIRED => {
+                StatusCode::PRECONDITION_REQUIRED
+            }
             // FIX 7463a: the owner's world read setting keeps a row the call
             // reads from where its answer goes, or its placement cannot be
             // verified. The row's state refuses, named, never a row not found.
@@ -143,6 +148,9 @@ impl From<MemoryError> for FacadeApiError {
             // FIX 10011: the owner's model pin stands and no offered seat
             // serves it. The owner's setting refuses it, as `error_map` does.
             oneiron_contracts::memory::MEMORY_CODE_MODEL_PIN_UNAVAILABLE => StatusCode::CONFLICT,
+            // L3-39: this machine holds no bytes of the revision a memory
+            // fork names; the row stands, so the state refuses, not the call.
+            oneiron_contracts::memory::MEMORY_CODE_HISTORY_NOT_HELD => StatusCode::CONFLICT,
             // FIX 8189: an OpenAI proxy call the caller's own deadline cut,
             // as its raw door answers it.
             crate::api::openai_proxy::TIMEOUT_CODE => StatusCode::GATEWAY_TIMEOUT,

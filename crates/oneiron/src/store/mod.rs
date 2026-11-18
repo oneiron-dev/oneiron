@@ -358,6 +358,8 @@ mod inference_snapshot_custody;
 pub(crate) mod install_identity;
 mod invocation_claims;
 mod key_custody;
+#[cfg(oneiron_test_support)]
+pub(crate) use self::key_custody::custody_head_digest_for_test;
 mod key_encoding;
 mod known_history;
 pub(crate) mod legal_hold;
@@ -496,6 +498,8 @@ pub(crate) use key_custody::ForkedCustodyDir;
 pub use key_custody::custody_container_path;
 #[cfg(oneiron_test_support)]
 pub(crate) use key_custody::custody_entry_reads_for_test;
+#[cfg(oneiron_test_support)]
+pub(crate) use key_custody::custody_policy_digest_for_test;
 #[cfg(oneiron_test_support)]
 pub(crate) use key_custody::drain_ack_digest_for_test;
 pub use key_custody::protocol as custody_protocol;
@@ -663,6 +667,8 @@ pub(crate) use oneiron_store::record_references;
 pub(crate) mod scan_count;
 pub(crate) mod skill_resident;
 pub(crate) mod tables;
+#[cfg(oneiron_test_support)]
+mod test_support_rows;
 
 pub(crate) use oneiron_store::host_issuer_seed;
 pub(crate) use oneiron_store::principal_record;

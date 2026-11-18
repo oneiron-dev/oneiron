@@ -877,24 +877,93 @@ impl Vault {
     /// Binds `person` at `class` under the host root. The host key holds one
     /// live binding, and a self-hosted root binds the embedded owner, so a
     /// fixture that names another actor rebinds the key to it.
+    ///
+    /// On a hosted vault a `human` bind writes nothing: the custodial root
+    /// alone binds no person there (owner ruling 2026-10-18; row
+    /// OLD-PARENTS-OWNER-BINDING-REVOKE), and the fold takes an owner no row
+    /// binds as live on the carrier's word. A test that needs the owner's
+    /// binding there binds with an owner key's proof
+    /// (`bind_host_owner_with_owner_key_for_test`).
     pub(crate) fn bind_host_actor_for_test(
         &self,
         issuer: &HostSlipIssuer,
         person: crate::EntityId,
         class: &str,
     ) -> Result<()> {
+        if self.privacy_posture() == crate::HostingPrivacyPosture::Hosted
+            && class == ACTOR_CLASS_HUMAN
+        {
+            return Ok(());
+        }
         let fold = self.authority_fold()?;
+        let Some(op) = Self::host_bind_op_for_test(&fold, issuer, person, class) else {
+            return Ok(());
+        };
+        let now = self.now_recorded_at();
+        let bind = next_entry(issuer, &fold, op, now)?;
+        let at = TimeRange {
+            start: now,
+            end: now,
+        };
+        self.put_authority_log_entries(&[(bind, at, now)])?;
+        Ok(())
+    }
+
+    /// Binds `person` as the human owner under the host root with an owner
+    /// key's proof, as the owner binds from a device of their own: `owner`
+    /// enrols this install's owner signing key
+    /// ([`Self::enrol_device_owner_signing_key`]), and that key cosigns the
+    /// host root's bind. A hosted fold counts a `human` bind only with such a
+    /// proof, and a door that needs the owner's binding there, such as
+    /// [`Self::recover_cloud_account`], reads this one.
+    #[cfg(any(test, oneiron_test_support))]
+    pub(crate) fn bind_host_owner_with_owner_key_for_test(
+        &self,
+        owner: &crate::consent::AuthenticatedOwner,
+        issuer: &HostSlipIssuer,
+        person: crate::EntityId,
+    ) -> Result<()> {
+        self.enrol_device_owner_signing_key(
+            &ActAuthority::Owner(owner.clone(), ActSurface::ThisInstall),
+            issuer,
+        )?;
+        let fold = self.authority_fold()?;
+        let proof = self
+            .owner_proof_signer(&fold)
+            .ok_or_else(invalid_authority)?;
+        let Some(op) = Self::host_bind_op_for_test(&fold, issuer, person, ACTOR_CLASS_HUMAN) else {
+            return Ok(());
+        };
+        let now = self.now_recorded_at();
+        let bind = next_entry_with_owner_proof(issuer, &fold, op, now, proof.as_ref())?;
+        let at = TimeRange {
+            start: now,
+            end: now,
+        };
+        self.put_authority_log_entries(&[(bind, at, now)])?;
+        Ok(())
+    }
+
+    /// The op that binds the host key to `person` at `class` on `fold`: a
+    /// rebind while the key holds an active binding, else a bind. `None`
+    /// when that binding is already active.
+    fn host_bind_op_for_test(
+        fold: &AuthorityFold,
+        issuer: &HostSlipIssuer,
+        person: crate::EntityId,
+        class: &str,
+    ) -> Option<AuthorityOp> {
         let held = fold.actor_bindings.get(&issuer.public_key());
         if held.is_some_and(|binding| {
             binding.status == ActorBindingStatus::Active
                 && binding.actor_ref == person
                 && binding.actor_class == class
         }) {
-            return Ok(());
+            return None;
         }
         let epoch = held.map_or(1, |binding| binding.epoch + 1);
         let (authority_key, actor_ref, actor_class) = (issuer.public_key(), person, class.into());
-        let op = match held {
+        Some(match held {
             Some(binding) if binding.status == ActorBindingStatus::Active => {
                 AuthorityOp::RebindActor {
                     authority_key,
@@ -909,15 +978,7 @@ impl Vault {
                 actor_class,
                 epoch,
             },
-        };
-        let now = self.now_recorded_at();
-        let bind = next_entry(issuer, &fold, op, now)?;
-        let at = TimeRange {
-            start: now,
-            end: now,
-        };
-        self.put_authority_log_entries(&[(bind, at, now)])?;
-        Ok(())
+        })
     }
 
     /// Signs `op` under the host root on this vault's heads and returns the

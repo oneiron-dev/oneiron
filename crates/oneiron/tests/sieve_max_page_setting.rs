@@ -47,6 +47,7 @@ fn queued_vault() -> Result<(tempfile::TempDir, Vault), Box<dyn std::error::Erro
             conversation_ref: EntityId::now().to_hex(),
             turn_ref: Some(EntityId::now().to_hex()),
             thread_audience: None,
+            project: None,
             occurred_at: at,
             messages: vec![
                 message(EntityId::now(), FIRST, 0),

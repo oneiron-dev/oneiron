@@ -1,6 +1,7 @@
 //! OF-379 proposal routing, driven by validated policy-manifest rows.
 use std::collections::{BTreeMap, BTreeSet};
 
+use oneiron_contracts::msgpack::Entries;
 use rmpv::Value;
 
 use super::target::{CompilationTarget, CompilationTargetValidation};
@@ -77,17 +78,12 @@ pub(crate) struct CompilationPolicy {
     holders: BTreeMap<EntityId, Row>,
 }
 
+/// A repeated key reads as absent.
 fn field<'a>(map: &'a [(Value, Value)], key: &str) -> Option<&'a Value> {
-    let mut matches = map.iter().filter(|(name, _)| name.as_str() == Some(key));
-    let value = &matches.next()?.1;
-    matches.next().is_none().then_some(value)
+    Entries::new(map).get(key).ok().flatten()
 }
 fn known(map: &[(Value, Value)], keys: &[&str]) -> bool {
-    let mut seen = BTreeSet::new();
-    map.iter().all(|(key, _)| {
-        key.as_str()
-            .is_some_and(|key| keys.contains(&key) && seen.insert(key))
-    })
+    Entries::new(map).exact_keys(&[], keys).is_ok()
 }
 fn text(map: &[(Value, Value)], key: &str) -> Option<String> {
     let text = field(map, key)?.as_str()?;

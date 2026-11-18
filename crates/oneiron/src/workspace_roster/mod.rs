@@ -50,8 +50,6 @@
 //! contracts and writes only its own `vault_meta` prefixes plus the entities
 //! the intent explicitly names.
 
-use std::io::Cursor;
-
 use rmpv::Value;
 
 use crate::Vault;
@@ -86,6 +84,8 @@ use crate::temporal::TimeRange;
 use crate::write_envelope::WriteActor;
 
 mod codec;
+#[cfg(oneiron_test_support)]
+pub(crate) use codec::roster_required_for_test;
 mod companion_bind;
 mod house_link;
 mod intent;
@@ -102,6 +102,7 @@ use companion_bind::*;
 use steps::*;
 
 pub(crate) use self::codec::companion_principal_in_txn;
+pub(crate) use self::house_link::seat_house_owner_by_act_in_txn;
 pub use self::house_link::{DEFAULT_HOUSE_ROLE, parse_house_role};
 pub(crate) use self::house_link::{
     erase_house_link_actor_in_txn, house_link_receipts, house_role_lines_in_txn,
@@ -330,6 +331,8 @@ mod join_receipt;
 mod room_leave;
 pub(crate) mod tables;
 mod workplace_join;
+#[cfg(oneiron_test_support)]
+pub(crate) use self::workplace_join::workplace_join_intent_key_for_test;
 pub use join_consent::{
     AdmissionBasis, AdmissionConsent, ConsentDenial, ConsentNeed, ConsentPart, ConsentSet,
     ConsentState, JoinDecision, JoinRefusal, JoinRequest, JoinSubject, MembershipConsent,
