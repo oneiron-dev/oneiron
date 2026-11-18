@@ -223,3 +223,6 @@ fn same_inputs(first: Option<&str>, second: Option<&str>) -> bool {
 // The lift sweep's typed acceptance for this module's authored side
 // tables (FIX 2680), named by their declarations.
 pub(crate) use self::call_evidence::call_receipt_accepts_masked;
+
+#[cfg(oneiron_test_support)]
+pub(crate) use self::{ask::ask_dedupe_key_for_test, outcomes::review_state_of_for_test};
