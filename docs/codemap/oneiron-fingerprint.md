@@ -22,6 +22,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/purposes/check_in.rs` | src | s | — | — | Purposes of a person's check-in effects (`oneiron` `check_in::effect`; ARCH-0082 #composing) |
 | `src/purposes/cluster.rs` | src | s | — | — | Purposes of claim clustering (`oneiron::cluster`, `crates/oneiron/src/memory/claim_cluster.rs`) |
 | `src/purposes/dreamer.rs` | src | s | — | — | Purposes of the Dreamer (`crates/oneiron/src/dreamer_consolidation`, `crates/oneiron/src/dreamer_promotion`… |
+| `src/purposes/dreamer_consolidation.rs` | src | s | — | — | Legacy dreamer-consolidation digests stored or compared by existing records |
 | `src/purposes/dreamer_runner.rs` | src | s | — | — | Legacy dreamer-runner digests stored or compared by existing records |
 | `src/purposes/engine_executor.rs` | src | s | — | — | Purposes of the engine executor (`crates/oneiron/src/engine_executor`) |
 | `src/purposes/git_wire.rs` | src | s | — | — | Purposes of the git wire (`oneiron-store`'s `git_wire` and `crates/oneiron/src/git_wire`) |

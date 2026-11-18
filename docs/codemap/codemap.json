@@ -31005,7 +31005,7 @@
      "path": "src/dreamer_consolidation/call_labels.rs",
      "purpose": "Call-local labels (FIX 7506, ARCH-0026 row 1): what one model call shows in place of every id",
      "surface": {
-      "crate-vis": 21
+      "crate-vis": 22
      }
     },
     {
@@ -31415,7 +31415,7 @@
      "path": "src/dreamer_consolidation/follower_attempt/mod.rs",
      "purpose": "The follower's attempt (FIX 7510): one queued per session, on the extraction role's route and the wake's…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -31425,7 +31425,7 @@
      "path": "src/dreamer_consolidation/follower_attempt/output.rs",
      "purpose": "The follower's reply and receipts (FIX 7510): a suffix's batch readings read back through its call's labels…",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -31435,7 +31435,7 @@
      "path": "src/dreamer_consolidation/follower_attempt/request.rs",
      "purpose": "The follower's requests (FIX 7510): a suffix's call over the retained prefix, and a keyframe's fold call",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -31489,13 +31489,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/dreamer_consolidation/mod.rs",
      "purpose": "Dreamer consolidation algorithm + reflection gap scan (ONE-1289, DREAM-002; DESIGN-PIN-20260710 Part A)",
      "surface": {
-      "crate-vis": 48,
+      "crate-vis": 49,
       "mod": 5,
       "re-export": 27
      }
@@ -31648,7 +31648,7 @@
      "path": "src/dreamer_consolidation/note_text.rs",
      "purpose": "The text of one NOTE as the Dreamer may read it (ARCH-0032 stage 2), in the caller's transaction: one…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -31692,7 +31692,7 @@
      "path": "src/dreamer_consolidation/partition.rs",
      "purpose": "Partition planning: cuts dirty turns into consolidation partitions",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 16,
       "fn": 6,
       "re-export": 1,
       "struct": 3
@@ -32176,7 +32176,7 @@
      "path": "src/dreamer_consolidation/root_evidence.rs",
      "purpose": "Root-owned reference pins",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
      }
     },
     {
@@ -32186,7 +32186,7 @@
      "path": "src/dreamer_consolidation/root_evidence/bridge.rs",
      "purpose": "Durable typed child proposals and their live root write fence",
      "surface": {
-      "crate-vis": 17
+      "crate-vis": 19
      }
     },
     {
@@ -32244,18 +32244,18 @@
      "path": "src/dreamer_consolidation/scope_summary_attempt.rs",
      "purpose": "The Dreamer writes a declared scope summary's body (ARCH-0006a)",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "struct": 1
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/dreamer_consolidation/scope_summary_attempt/arc_children.rs",
      "purpose": "An Arc composed in parts (FIX 7509 PR3, SUMMARY-SOURCE = A): its input does not fit one call on its model…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -32285,7 +32285,7 @@
      "path": "src/dreamer_consolidation/scope_summary_attempt/arc_compose.rs",
      "purpose": "An Arc's composition (FIX 7509 P8, SUMMARY-SOURCE = A)",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -32405,7 +32405,7 @@
      "path": "src/dreamer_consolidation/scope_summary_attempt/chunks.rs",
      "purpose": "A sitting too big for one call on its model (FIX 7509 P7b, Rule 5)",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -32651,8 +32651,8 @@
      "path": "src/dreamer_consolidation/support.rs",
      "purpose": "Consolidation constants, hash domains and shared codec helpers",
      "surface": {
-      "const": 10,
-      "crate-vis": 31,
+      "const": 9,
+      "crate-vis": 30,
       "re-export": 2
      }
     },
@@ -32888,7 +32888,7 @@
      "path": "src/dreamer_consolidation/turn_text.rs",
      "purpose": "The read-only text of one TURN as a consolidation branch sees it",
      "surface": {
-      "crate-vis": 30
+      "crate-vis": 31
      }
     },
     {
@@ -32898,7 +32898,7 @@
      "path": "src/dreamer_consolidation/turn_text/attribution.rs",
      "purpose": "Who a projected MESSAGE's words are attributed to (FIX 15412): the `AuthoredBy` binding its author bucket…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -50140,7 +50140,7 @@
      "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
      "surface": {
       "crate-vis": 29,
-      "mod": 222,
+      "mod": 223,
       "re-export": 106
      }
     },
@@ -53070,6 +53070,25 @@
      "purpose": "Common vault/actor helpers plus the scoped-MCP fixture shared by the 1690 and 1691 oracles",
      "surface": {
       "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "MachineCapacity",
+      "MachineCapacityWrite",
+      "MachineMeasurement",
+      "MachinePower"
+     ],
+     "path": "src/machine_capacity.rs",
+     "purpose": "What this install's machine measured itself to hold (CROSS-ARCH-0024 #my-network 05: \"Capacity is measured",
+     "surface": {
+      "const": 2,
+      "crate-vis": 2,
+      "enum": 2,
+      "fn": 5,
+      "struct": 2
      }
     },
     {
@@ -94089,6 +94108,16 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/test_doors/fingerprint_keep_dreamer_consolidation_digests.rs",
+     "purpose": "K-proof door for dreamer-consolidation digests that existing records store or compare",
+     "surface": {
+      "fn": 11
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "UpkeepTeam"
      ],
@@ -94825,7 +94854,7 @@
      "purpose": "Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD)",
      "surface": {
       "fn": 1,
-      "mod": 295,
+      "mod": 296,
       "re-export": 1
      }
     },
@@ -106911,6 +106940,21 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [
+      "ConsolidationPartitionKey"
+     ],
+     "path": "tests/fingerprint_keep_dreamer_consolidation_digests.rs",
+     "purpose": "K-proof for dreamer-consolidation legacy digests at 13a57d8b3026: existing stored, sent and compared…",
+     "surface": {
+      "const": 1,
+      "crate-vis": 23,
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
      "bucket": "L",
      "kind": "test",
      "notable": [],
@@ -113727,6 +113771,13 @@
      "layout": "dir",
      "purpose": "M8 forward test oracle — authored by the path opener (ONE-1685) for the M8-A / M8-B remainder tickets"
     },
+    "machine_capacity": {
+     "files": 1,
+     "impl_vault": true,
+     "largest_src_bucket": "m",
+     "layout": "file",
+     "purpose": "What this install's machine measured itself to hold (CROSS-ARCH-0024 #my-network 05: \"Capacity is measured"
+    },
     "machine_destination": {
      "files": 1,
      "impl_vault": false,
@@ -114337,7 +114388,7 @@
      "purpose": "`TimeRange`, temporal expressions/parsing, granularity/anchor enums"
     },
     "test_doors": {
-     "files": 301,
+     "files": 302,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -114512,10 +114563,10 @@
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     }
    },
-   "over_bar": 299,
+   "over_bar": 300,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 8117,
-   "test_files": 1874
+   "source_files": 8119,
+   "test_files": 1875
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -123182,7 +123233,7 @@
      "purpose": "The process's physical-memory admission line for host and native work",
      "surface": {
       "enum": 1,
-      "fn": 17,
+      "fn": 18,
       "struct": 2
      }
     },
@@ -129191,6 +129242,14 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/purposes/dreamer_consolidation.rs",
+     "purpose": "Legacy dreamer-consolidation digests stored or compared by existing records",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/purposes/dreamer_runner.rs",
      "purpose": "Legacy dreamer-runner digests stored or compared by existing records",
      "surface": {}
@@ -129461,7 +129520,7 @@
      "purpose": "The K door: a digest that main already stores or sends keeps its exact bytes"
     },
     "purposes": {
-     "files": 39,
+     "files": 40,
      "impl_vault": false,
      "largest_src_bucket": "s",
      "layout": "dir",
@@ -129477,7 +129536,7 @@
    },
    "over_bar": 0,
    "purpose": "One fingerprint rule for engine digests (fable pass 22; PLAN-UC-04 stage 0)",
-   "source_files": 42,
+   "source_files": 43,
    "test_files": 1
   },
   "oneiron-gen": {
@@ -165721,7 +165780,7 @@
       "const": 1,
       "crate-vis": 2,
       "fn": 3,
-      "mod": 27,
+      "mod": 28,
       "re-export": 2
      }
     },
@@ -166331,7 +166390,7 @@
      "path": "src/machine.rs",
      "purpose": "What this machine has: cores, memory, descriptors, free disk",
      "surface": {
-      "crate-vis": 17
+      "crate-vis": 19
      }
     },
     {
@@ -166342,6 +166401,17 @@
      "purpose": "Organ-host machine-floor leases",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/machine_capacity.rs",
+     "purpose": "The host's capacity probe (CROSS-ARCH-0024 #my-network 05): serving measures this machine as it starts and…",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 2
      }
     },
     {
@@ -175195,6 +175265,14 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/machine_capacity.rs",
+     "purpose": "UNBUILT-14 PR 3a (CROSS-ARCH-0024 #my-network 01 and 05): this install measures its machine (cores, memory…",
+     "surface": {}
+    },
+    {
      "bucket": "L",
      "kind": "test",
      "notable": [],
@@ -176962,6 +177040,13 @@
      "layout": "file+dir",
      "purpose": "What this machine has: cores, memory, descriptors, free disk"
     },
+    "machine_capacity": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "The host's capacity probe (CROSS-ARCH-0024 #my-network 05): serving measures this machine as it starts and…"
+    },
     "mail_host": {
      "files": 1,
      "impl_vault": false,
@@ -177189,8 +177274,8 @@
    },
    "over_bar": 70,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 2016,
-   "test_files": 484
+   "source_files": 2017,
+   "test_files": 485
   },
   "oneiron-setting-contract": {
    "files": [
@@ -190070,6 +190155,7 @@
      "surface": {
       "enum": 1,
       "fn": 4,
+      "re-export": 1,
       "struct": 2
      }
     },
@@ -190080,7 +190166,8 @@
      "path": "src/lib/host_adapters/desktop/keep_awake/power.rs",
      "purpose": "The power source a PluggedIn wake assertion follows (FIX 9547)",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 5,
+      "fn": 1
      }
     },
     {

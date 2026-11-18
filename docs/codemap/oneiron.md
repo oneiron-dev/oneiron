@@ -2637,7 +2637,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/dreamer_consolidation/attempt_reads.rs` | src | s | 2 crate-vis | — | The rows a Dreamer attempt's inputs were read from, as its own readers report them on its read set (FIX… |
 | `src/dreamer_consolidation/branch.rs` | src | s | 2 struct · 1 trait · 16 crate-vis | BranchTurn, ConsolidationBranchPlan, ConversationPart | One consolidation branch (FIX 7524): a nightly thing's turns across every conversation it appears in… |
 | `src/dreamer_consolidation/branch_scope.rs` | src | m | 4 fn · 8 crate-vis | — | Durable branch restriction alongside a partition payload, not a partition or consolidation identity axis |
-| `src/dreamer_consolidation/call_labels.rs` | src | m | 21 crate-vis | — | Call-local labels (FIX 7506, ARCH-0026 row 1): what one model call shows in place of every id |
+| `src/dreamer_consolidation/call_labels.rs` | src | m | 22 crate-vis | — | Call-local labels (FIX 7506, ARCH-0026 row 1): what one model call shows in place of every id |
 | `src/dreamer_consolidation/call_labels/decision_rungs.rs` | src | s | 3 crate-vis | — | The host ladder's model rungs through one call's labels (FIX 7506 P2) |
 | `src/dreamer_consolidation/call_labels/relationships.rs` | src | s | 3 crate-vis | — | The relationships an extraction call lists (FIX 7575) |
 | `src/dreamer_consolidation/call_labels/subject.rs` | src | s | 1 crate-vis | — | A claim subject as a call names it, by that call's labels |
@@ -2675,14 +2675,14 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/dreamer_consolidation/extraction_step.rs` | src | m | 7 crate-vis | — | One bound generative extraction step over served TURN spans |
 | `src/dreamer_consolidation/extraction_step/reply.rs` | src | m | 2 crate-vis | — | Checks and decodes a bound reply through the native wire and quote binder |
 | `src/dreamer_consolidation/failure_rules.rs` | src | m | 1 fn · 13 crate-vis | — | Resident-owned v1 failure rules for the two Dreamer consolidation call sites |
-| `src/dreamer_consolidation/follower_attempt/mod.rs` | src | m | 1 crate-vis | — | The follower's attempt (FIX 7510): one queued per session, on the extraction role's route and the wake's… |
-| `src/dreamer_consolidation/follower_attempt/output.rs` | src | s | 4 crate-vis | — | The follower's reply and receipts (FIX 7510): a suffix's batch readings read back through its call's labels… |
-| `src/dreamer_consolidation/follower_attempt/request.rs` | src | s | 5 crate-vis | — | The follower's requests (FIX 7510): a suffix's call over the retained prefix, and a keyframe's fold call |
+| `src/dreamer_consolidation/follower_attempt/mod.rs` | src | m | 2 crate-vis | — | The follower's attempt (FIX 7510): one queued per session, on the extraction role's route and the wake's… |
+| `src/dreamer_consolidation/follower_attempt/output.rs` | src | s | 5 crate-vis | — | The follower's reply and receipts (FIX 7510): a suffix's batch readings read back through its call's labels… |
+| `src/dreamer_consolidation/follower_attempt/request.rs` | src | s | 6 crate-vis | — | The follower's requests (FIX 7510): a suffix's call over the retained prefix, and a keyframe's fold call |
 | `src/dreamer_consolidation/gap.rs` | src | m | 2 struct · 2 enum · 4 fn · 9 crate-vis | GapQueueDelta, ReflectionGap, ReflectionGapKind, ReflectionGapScan | Reflection gaps: missed follow-ups, open threads, unacted intents, contradictions |
 | `src/dreamer_consolidation/gap/intent.rs` | src | m | 1 fn · 2 crate-vis | — | The owner's stated intent (FIX 8949; ARCH-0040, ARCH-0026) |
 | `src/dreamer_consolidation/judge_context.rs` | src | s | 2 crate-vis | — | Deterministic single-value resolution over an explicitly admitted prior |
 | `src/dreamer_consolidation/kept_ask.rs` | src | s | 1 re-export · 2 crate-vis | — | The ask a kept decision went up as, kept actor-free (FIX 4591) |
-| `src/dreamer_consolidation/mod.rs` | src | s | 5 mod · 27 re-export · 48 crate-vis | — | Dreamer consolidation algorithm + reflection gap scan (ONE-1289, DREAM-002; DESIGN-PIN-20260710 Part A) |
+| `src/dreamer_consolidation/mod.rs` | src | m | 5 mod · 27 re-export · 49 crate-vis | — | Dreamer consolidation algorithm + reflection gap scan (ONE-1289, DREAM-002; DESIGN-PIN-20260710 Part A) |
 | `src/dreamer_consolidation/neighbourhood.rs` | src | m | 20 crate-vis | — | The known entities an extraction pass sees beside its transcript (map gap 7, the slice a correction needs to… |
 | `src/dreamer_consolidation/neighbourhood/memberships.rs` | src | s | 5 crate-vis | — | Relationship units named by a listed PERSON's admitted membership claims |
 | `src/dreamer_consolidation/neighbourhood/pages.rs` | src | s | 5 crate-vis | — | A child's listing in stable pages (Rule 5, FIX 7580) |
@@ -2697,11 +2697,11 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/dreamer_consolidation/note_parts.rs` | src | s | 1 crate-vis | — | A Dreamer-written text past the NOTE body bound, as the ordered parts it lands in: the split an imported… |
 | `src/dreamer_consolidation/note_review.rs` | src | m | 2 crate-vis | — | ARCH-0032 stage 2 (OF-073): the Dreamer reviews NOTEs |
 | `src/dreamer_consolidation/note_review/candidates.rs` | src | s | 3 crate-vis | — | One NOTE review reply's candidates (OF-073), read through the review call's own labels (FIX 7506): a subject… |
-| `src/dreamer_consolidation/note_text.rs` | src | s | 2 crate-vis | — | The text of one NOTE as the Dreamer may read it (ARCH-0032 stage 2), in the caller's transaction: one… |
+| `src/dreamer_consolidation/note_text.rs` | src | s | 3 crate-vis | — | The text of one NOTE as the Dreamer may read it (ARCH-0032 stage 2), in the caller's transaction: one… |
 | `src/dreamer_consolidation/note_topics.rs` | src | m | 7 crate-vis | — | The stage-2 topic summary trigger (ARCH-0032 write gate, OF-073 / FIX 907) |
 | `src/dreamer_consolidation/open_conflict.rs` | src | s | 1 crate-vis | — | A judge outage is an open question, persisted through the shared write gate |
 | `src/dreamer_consolidation/parallel.rs` | src | m | 6 crate-vis | — | Read-only neighbourhood fan-out, followed by one parent-owned merge |
-| `src/dreamer_consolidation/partition.rs` | src | m | 3 struct · 6 fn · 1 re-export · 15 crate-vis | ConsolidationCursor, ConsolidationPartitionKey, ConsolidationPartitionPlan | Partition planning: cuts dirty turns into consolidation partitions |
+| `src/dreamer_consolidation/partition.rs` | src | m | 3 struct · 6 fn · 1 re-export · 16 crate-vis | ConsolidationCursor, ConsolidationPartitionKey, ConsolidationPartitionPlan | Partition planning: cuts dirty turns into consolidation partitions |
 | `src/dreamer_consolidation/partition/payload.rs` | src | m | 1 struct · 1 fn · 7 crate-vis | PartitionThing | The consolidation payload codec (FIX 7524): a branch's world and facet, the thing a nightly child is cut… |
 | `src/dreamer_consolidation/persistence.rs` | src | s | 1 fn · 5 crate-vis | — | Persistent contradiction markers and prior-head context for consolidation |
 | `src/dreamer_consolidation/person_about.rs` | src | L | 1 struct · 2 fn · 1 const · 10 crate-vis | PersonAboutExecutor | PEOPLE `about` (owner ruling, ARCH-0067): one line per person per sensitivity band, each written by the… |
@@ -2743,17 +2743,17 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/dreamer_consolidation/revert.rs` | src | m | 4 struct · 1 enum · 1 fn · 4 crate-vis | DreamerChange, DreamerChangeKind, DreamerChanges, DreamerRevertReceipt, RevertedDreamerChange | The owner's revert of any one Dreamer change (OF-023, owner ruling 10-18: "autoapply + revert rather than… |
 | `src/dreamer_consolidation/reviewed.rs` | src | s | 4 crate-vis | — | Claims the owner's review already holds or decided, which a later pass meets again: this attempt's own… |
 | `src/dreamer_consolidation/roles.rs` | src | s | 3 struct · 7 fn · 4 const · 5 crate-vis | RoleBackend, RoleBackends, RoleCall | The Dreamer's model roles, and the backend each one calls out on |
-| `src/dreamer_consolidation/root_evidence.rs` | src | m | 9 crate-vis | — | Root-owned reference pins |
-| `src/dreamer_consolidation/root_evidence/bridge.rs` | src | m | 17 crate-vis | — | Durable typed child proposals and their live root write fence |
+| `src/dreamer_consolidation/root_evidence.rs` | src | m | 10 crate-vis | — | Root-owned reference pins |
+| `src/dreamer_consolidation/root_evidence/bridge.rs` | src | m | 19 crate-vis | — | Durable typed child proposals and their live root write fence |
 | `src/dreamer_consolidation/root_evidence/bridge/recovery.rs` | src | s | 9 crate-vis | — | Native grant proofs select retained source revisions, never copied bodies |
 | `src/dreamer_consolidation/root_evidence/work.rs` | src | s | 2 crate-vis | — | A root's pins and frontiers as fair work (FIX 8698): every bucket, reference and child is taken, however… |
 | `src/dreamer_consolidation/routing.rs` | src | s | 1 struct · 4 fn · 1 type · 1 re-export · 4 crate-vis | CandidateKeys | Three consolidation lanes: free keyed equality, scoped conflicts, cosine nominations |
 | `src/dreamer_consolidation/running_buckets.rs` | src | s | 3 crate-vis | — | The buckets a MACRO run holds once its preparation narrowed it (FIX 7729) |
-| `src/dreamer_consolidation/scope_summary_attempt.rs` | src | L | 1 struct · 6 crate-vis | ScopeSummaryExecutor | The Dreamer writes a declared scope summary's body (ARCH-0006a) |
-| `src/dreamer_consolidation/scope_summary_attempt/arc_children.rs` | src | m | 3 crate-vis | — | An Arc composed in parts (FIX 7509 PR3, SUMMARY-SOURCE = A): its input does not fit one call on its model… |
+| `src/dreamer_consolidation/scope_summary_attempt.rs` | src | L | 1 struct · 7 crate-vis | ScopeSummaryExecutor | The Dreamer writes a declared scope summary's body (ARCH-0006a) |
+| `src/dreamer_consolidation/scope_summary_attempt/arc_children.rs` | src | L | 4 crate-vis | — | An Arc composed in parts (FIX 7509 PR3, SUMMARY-SOURCE = A): its input does not fit one call on its model… |
 | `src/dreamer_consolidation/scope_summary_attempt/arc_chunks.rs` | src | m | 14 crate-vis | — | An Arc's sources as members and parts (FIX 7509 PR3, Rule 5): each member's words as its calls show them… |
 | `src/dreamer_consolidation/scope_summary_attempt/arc_claims.rs` | src | s | 3 crate-vis | — | The claims an Arc's call reads (FIX 7509 P8): for every subject the Arc's TURNs name (their `mentions` and… |
-| `src/dreamer_consolidation/scope_summary_attempt/arc_compose.rs` | src | m | 3 crate-vis | — | An Arc's composition (FIX 7509 P8, SUMMARY-SOURCE = A) |
+| `src/dreamer_consolidation/scope_summary_attempt/arc_compose.rs` | src | m | 4 crate-vis | — | An Arc's composition (FIX 7509 P8, SUMMARY-SOURCE = A) |
 | `src/dreamer_consolidation/scope_summary_attempt/arc_evidence.rs` | src | s | 3 crate-vis | — | An Arc's evidence (FIX 7509 P8, SUMMARY-SOURCE = A), read in one snapshot: its sittings' summary lines, each… |
 | `src/dreamer_consolidation/scope_summary_attempt/arc_open_apply.rs` | src | s | 1 crate-vis | — | Applies advisory openings only when the next original call still fits whole |
 | `src/dreamer_consolidation/scope_summary_attempt/arc_open_backend.rs` | src | s | 1 crate-vis | — | Observes whether one advisory durable generation actually called its backend |
@@ -2765,7 +2765,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/dreamer_consolidation/scope_summary_attempt/arc_review.rs` | src | m | 18 crate-vis | — | The calls of an Arc composed in parts (FIX 7509 PR3): one input shape for all of them, so one frame counts… |
 | `src/dreamer_consolidation/scope_summary_attempt/arc_synopsis.rs` | src | s | 2 crate-vis | — | The Arc's optional synopsis (FIX 8290, Engine 02:3x): once its parts' lines are assembled, one more call… |
 | `src/dreamer_consolidation/scope_summary_attempt/arc_turns.rs` | src | s | 4 crate-vis | — | The turns an Arc's reply names to open (FIX 7509 P8): when a line and the claims disagree, the model names… |
-| `src/dreamer_consolidation/scope_summary_attempt/chunks.rs` | src | m | 1 crate-vis | — | A sitting too big for one call on its model (FIX 7509 P7b, Rule 5) |
+| `src/dreamer_consolidation/scope_summary_attempt/chunks.rs` | src | m | 2 crate-vis | — | A sitting too big for one call on its model (FIX 7509 P7b, Rule 5) |
 | `src/dreamer_consolidation/scope_summary_attempt/durable_labels.rs` | src | s | 4 crate-vis | — | Summary text in durable names (FIX 10359), as a nightly narrative's is (FIX 7576) |
 | `src/dreamer_consolidation/scope_summary_attempt/host.rs` | src | s | 3 fn | — | — |
 | `src/dreamer_consolidation/scope_summary_attempt/output.rs` | src | s | 8 crate-vis | — | A sitting's summary reply (FIX 7509): lines, each citing the TURNs it came from by the call-local `T` labels… |
@@ -2785,7 +2785,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/dreamer_consolidation/stage_log.rs` | src | s | 14 crate-vis | — | The one line a consolidation partition attempt logs when it ends (L07 DREAM-OBSERVE): the wall ms of each… |
 | `src/dreamer_consolidation/step_charge.rs` | src | m | 2 struct · 5 fn · 20 crate-vis | SpentObservation, StepChargeTally | Attempt-local step spend due to the shared wake ledger after memo replay |
 | `src/dreamer_consolidation/strength.rs` | src | m | 2 struct · 5 fn · 14 crate-vis | ConsolidationStrengthPolicy, ConsolidationStrengthSnapshot | Consolidation strength observations and an archive-only lifecycle (OF-216) |
-| `src/dreamer_consolidation/support.rs` | src | s | 10 const · 2 re-export · 31 crate-vis | — | Consolidation constants, hash domains and shared codec helpers |
+| `src/dreamer_consolidation/support.rs` | src | s | 9 const · 2 re-export · 30 crate-vis | — | Consolidation constants, hash domains and shared codec helpers |
 | `src/dreamer_consolidation/tables.rs` | src | s | — | — | The side tables `dreamer_consolidation` keeps (core split slice 1): each row declares one, and the crate's… |
 | `src/dreamer_consolidation/task_realize.rs` | src | m | 1 struct · 1 fn · 1 const · 2 crate-vis | TaskRealizeModel | A Dreamer-lane TASK's realization: the one row `tasks.create` queues for a TASK routed to the Dreamer |
 | `src/dreamer_consolidation/task_realize/landing.rs` | src | s | 2 crate-vis | — | A realization's answer and its row's result in one write (FIX 1334) |
@@ -2809,8 +2809,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/dreamer_consolidation/thing_agent/input.rs` | src | s | 7 crate-vis | — | The owned, framed inputs a thing's agent is lent (FIX 7508): each of the branch's clean extraction slices… |
 | `src/dreamer_consolidation/thing_agent/proposals.rs` | src | s | 9 crate-vis | — | The engine's own record of a thing's agent (FIX 7508): the host parent run of each lease generation, the… |
 | `src/dreamer_consolidation/thing_agent/serve.rs` | src | m | 3 crate-vis | — | The thing pass (FIX 7508): a thing branch's agent, launched, served and collected inside its parent's wake… |
-| `src/dreamer_consolidation/turn_text.rs` | src | L | 30 crate-vis | — | The read-only text of one TURN as a consolidation branch sees it |
-| `src/dreamer_consolidation/turn_text/attribution.rs` | src | s | 2 crate-vis | — | Who a projected MESSAGE's words are attributed to (FIX 15412): the `AuthoredBy` binding its author bucket… |
+| `src/dreamer_consolidation/turn_text.rs` | src | L | 31 crate-vis | — | The read-only text of one TURN as a consolidation branch sees it |
+| `src/dreamer_consolidation/turn_text/attribution.rs` | src | s | 3 crate-vis | — | Who a projected MESSAGE's words are attributed to (FIX 15412): the `AuthoredBy` binding its author bucket… |
 | `src/dreamer_consolidation/turn_text/compaction_span.rs` | src | s | 5 crate-vis | — | `conversation_check_evidence` (FIX 4465 D): the Dreamer's read of the span a conversation's self-written… |
 | `src/dreamer_consolidation/turn_text/projection.rs` | src | s | 2 crate-vis | — | The exact projection a consolidation branch read of one witnessed TURN (FIX 5755), and a retained citation… |
 | `src/dreamer_consolidation/value_projection.rs` | src | s | 2 crate-vis | — | Data projection between extraction/merge JSON and claim MessagePack values |
@@ -4267,7 +4267,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/lens/tests/support.rs` | test | m | 52 crate-vis | — | Shared fixtures and helpers for the lens behaviour tests |
 | `src/lens/tests/surface_dispatch.rs` | test | s | — | — | Client interactions remain frame-bound plans behind the existing write gate |
 | `src/lens/tests/versioning.rs` | test | s | — | — | Envelope-versioning and behavior-fingerprint tests: version stamps, canonical fingerprints, and diffs |
-| `src/lib.rs` | src | m | 222 mod · 106 re-export · 29 crate-vis | — | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces |
+| `src/lib.rs` | src | m | 223 mod · 106 re-export · 29 crate-vis | — | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces |
 | `src/limit_ask.rs` | src | s | 4 fn · 1 re-export · 2 crate-vis | — | The engine's `[limits]` rows and their question port, defined in `oneiron-contracts` |
 | `src/linear_sync/approval.rs` | src | m | 2 struct · 2 enum · 4 fn · 5 crate-vis | LinearEffectAdmission, LinearEffectHold, LinearEffectRole, LinearRoleApproval | FIX 6424 part 2a (Engine 10-20 21:0x rulings 1, 2 and 8): the owner's approve-once asks on one Linear mirror… |
 | `src/linear_sync/codec.rs` | src | s | 2 fn · 3 crate-vis | — | Stable link keys, operation/event digests, field hashes |
@@ -4505,6 +4505,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/m8_forward_oracle/mod.rs` | src | s | — | — | M8 forward test oracle — authored by the path opener (ONE-1685) for the M8-A / M8-B remainder tickets |
 | `src/m8_forward_oracle/r1691_ledger.rs` | src | s | — | — | ONE-1691 RT-11: intent-ledger exactly-once/crash-recovery oracles, ledger transports, and drive_* helpers |
 | `src/m8_forward_oracle/shared.rs` | src | s | 4 crate-vis | — | Common vault/actor helpers plus the scoped-MCP fixture shared by the 1690 and 1691 oracles |
+| `src/machine_capacity.rs` | src | m | 2 struct · 2 enum · 5 fn · 2 const · 2 crate-vis | MachineCapacity, MachineCapacityWrite, MachineMeasurement, MachinePower | What this install's machine measured itself to hold (CROSS-ARCH-0024 #my-network 05: "Capacity is measured |
 | `src/machine_destination.rs` | src | s | 1 re-export | — | Machine destinations and folded read-location values |
 | `src/mail_pack/attachments.rs` | src | m | 1 fn · 1 re-export · 4 crate-vis | — | Attachments on open (FIX 12559; MAIL-GOOGLE = A): a message's attachments land described, never fetched; a… |
 | `src/mail_pack/caldav_calendar.rs` | src | L | 1 struct · 1 fn · 1 const | HttpCalDavCalendarWire | The CalDAV wire of the pack's calendar sources (fix list row 16307; MAIL-PROVIDERS = A): one calendar… |
@@ -8083,6 +8084,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/test_doors/fingerprint_keep_codec_digests.rs` | src | s | 1 fn | — | Door for `tests/fingerprint_keep_codec_digests.rs` (PLAN-UC-04 stage 6.1c): a calendar connector literal's… |
 | `src/test_doors/fingerprint_keep_custody_digests.rs` | src | s | 3 fn | — | Door for `tests/fingerprint_keep_custody_digests.rs` (PLAN-UC-04 stage 6.1b): a custody input witness's… |
 | `src/test_doors/fingerprint_keep_dreamer.rs` | src | s | 1 fn | — | The agent-health trend replay hash, for the K-proof of PLAN-UC-04 stage 3.2… |
+| `src/test_doors/fingerprint_keep_dreamer_consolidation_digests.rs` | src | s | 11 fn | — | K-proof door for dreamer-consolidation digests that existing records store or compare |
 | `src/test_doors/fingerprint_keep_dreamer_runner_digests.rs` | src | s | 1 struct · 13 fn | UpkeepTeam | K-proof door for dreamer-runner digests that existing records store or compare |
 | `src/test_doors/fingerprint_keep_executor_cohort_credit.rs` | src | s | 1 struct · 5 fn | StepState | Door for `tests/fingerprint_keep_executor_cohort_credit.rs` (PLAN-UC-04 3.4b): the two executor digests and… |
 | `src/test_doors/fingerprint_keep_git_wire.rs` | src | s | 4 fn | — | Door for `tests/fingerprint_keep_git_wire.rs` (PLAN-UC-04 3.3): the two git-wire digests the engine computes… |
@@ -8149,7 +8151,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/test_doors/mesh_machine_endpoint_index.rs` | src | s | 1 enum · 5 fn | IndexedEndpoint | Doors for `tests/mesh_machine_endpoint_index.rs` (census L3-28B): the endpoint lookup as the MACHINE… |
 | `src/test_doors/meso_extraction_width.rs` | src | m | 1 struct · 1 enum · 1 fn | ExtractionWidth, PriorScenario | Door for `tests/dreamer_meso_width.rs` (FIX 21927 P2): measure the extraction calls in flight during one… |
 | `src/test_doors/microsoft_token.rs` | src | s | 1 struct · 6 fn · 1 crate-vis | ExchangedMicrosoftGrant | Door for `tests/microsoft365_oauth.rs` and `tests/microsoft365_refresh_write_back.rs`… |
-| `src/test_doors/mod.rs` | src | m | 1 fn · 295 mod · 1 re-export | — | Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD) |
+| `src/test_doors/mod.rs` | src | m | 1 fn · 296 mod · 1 re-export | — | Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD) |
 | `src/test_doors/model_binding_proposer.rs` | src | m | 1 struct · 2 fn · 1 const | TrialFixture | Fixture for the `model_binding_proposer_grant` server test: one completed held-out trial offer for a role… |
 | `src/test_doors/model_call_turn_link.rs` | src | s | 1 fn | — | Doors for `oneiron-server/tests/chat_model_call_turn_link.rs` (UNBUILT3-41, FIX [TURN-MODEL-LINK]): the… |
 | `src/test_doors/model_step_submission_codec.rs` | src | s | 1 fn | — | Doors for `tests/model_step_submission_codec.rs` (STEP-CORRECTION-HEALTH-PARK): a model step's submission… |
@@ -9272,6 +9274,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/fingerprint_keep_codec_digests.rs` | test | m | 3 fn · 1 const · 3 crate-vis | — | K-proof (oracle) for PLAN-UC-04 stage 6.1c: four codec digests keep their bytes |
 | `tests/fingerprint_keep_custody_digests.rs` | test | s | 2 const · 5 crate-vis | — | K-proof (oracle) for PLAN-UC-04 stage 6.1b: three custody digest helpers keep their bytes |
 | `tests/fingerprint_keep_dreamer.rs` | test | s | 5 crate-vis | — | K-proof (oracle) for PLAN-UC-04 stage 3.2: the agent-health trend replay hash keeps its bytes |
+| `tests/fingerprint_keep_dreamer_consolidation_digests.rs` | test | m | 1 struct · 1 fn · 1 const · 23 crate-vis | ConsolidationPartitionKey | K-proof for dreamer-consolidation legacy digests at 13a57d8b3026: existing stored, sent and compared… |
 | `tests/fingerprint_keep_dreamer_runner_digests.rs` | test | L | 1 fn · 5 const · 29 crate-vis | — | K-proof for dreamer-runner legacy digests at b1897bd53d07: existing stored and compared identities keep… |
 | `tests/fingerprint_keep_executor_cohort_credit.rs` | test | m | 1 const · 11 crate-vis | — | K-proof (oracle) for PLAN-UC-04 stage 3.4b: the executor's config and step checkpoint hashes, the claim… |
 | `tests/fingerprint_keep_git_wire.rs` | test | L | 6 fn · 1 const · 18 crate-vis | — | K-proof (oracle) for PLAN-UC-04 stage 3.3: the seven git-wire digests keep their bytes |
