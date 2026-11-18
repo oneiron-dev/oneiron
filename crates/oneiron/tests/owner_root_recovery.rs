@@ -1034,3 +1034,47 @@ fn the_root_key_revokes_the_owners_lost_passkey() {
 
     assert_vouched(&fixture, answer, &root_key, &key_of(&new_key), &lost);
 }
+
+/// REVIEW-9488 P1 7: on a shared vault each owner's ways back are their own.
+/// The first owner enrols the kit root's authority key and holds no device
+/// key; the co-Owner holds one device key and no kit root. Red on the
+/// mutation branch that drops the owner filters in `Vault::ways_back`.
+#[test]
+fn each_owners_ways_back_count_only_their_own_keys() {
+    let fixture = co_owner_fixture();
+    let first_owner = fixture
+        .vault
+        .ensure_embedded_owner_actor()
+        .expect("the first owner");
+    let first = proof(&fixture.vault, first_owner);
+    fixture
+        .vault
+        .enrol_recovery_authority_key_as_host(
+            &ActAuthority::Owner(first.clone(), ActSurface::ThisInstall),
+            fixture.machine,
+            &fixture.seed,
+            &fixture.issuer,
+        )
+        .expect("the first owner enrols the root's authority key");
+
+    let firsts = fixture
+        .vault
+        .ways_back(&first)
+        .expect("the first owner's read");
+    assert_eq!(
+        firsts.owner_devices, 0,
+        "the co-Owner's device key is not the first owner's"
+    );
+    assert!(firsts.kit_root_enrolled, "the first owner's kit root");
+
+    let co_owners = fixture
+        .vault
+        .ways_back(&fixture.owner())
+        .expect("the co-Owner's read");
+    assert_eq!(co_owners.owner_devices, 1, "the co-Owner's own device key");
+    assert!(
+        !co_owners.kit_root_enrolled,
+        "the first owner's kit root is not the co-Owner's"
+    );
+    assert_eq!(co_owners.passkeys, 0);
+}

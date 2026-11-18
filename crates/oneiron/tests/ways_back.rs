@@ -102,7 +102,7 @@ impl Fixture {
 fn ways_back_before_and_after_the_kits_activation() {
     let fixture = self_hosted();
 
-    let before = fixture.vault.ways_back().expect("the read");
+    let before = fixture.vault.ways_back(&fixture.owner()).expect("the read");
     assert_eq!(before.owner_devices, 0);
     assert_eq!(before.passkeys, 0);
     assert!(!before.kit_root_enrolled);
@@ -115,7 +115,7 @@ fn ways_back_before_and_after_the_kits_activation() {
             &fixture.issuer,
         )
         .expect("the owner enrols this install's device key");
-    let with_device = fixture.vault.ways_back().expect("the read");
+    let with_device = fixture.vault.ways_back(&fixture.owner()).expect("the read");
     assert_eq!(with_device.owner_devices, 1);
     assert_eq!(with_device.passkeys, 0);
     assert!(!with_device.kit_root_enrolled);
@@ -123,7 +123,7 @@ fn ways_back_before_and_after_the_kits_activation() {
 
     let issued = fixture.issue();
     fixture.confirm(&issued);
-    let after = fixture.vault.ways_back().expect("the read");
+    let after = fixture.vault.ways_back(&fixture.owner()).expect("the read");
     assert_eq!(after.owner_devices, 1, "R is no device");
     assert_eq!(after.passkeys, 0);
     assert!(after.kit_root_enrolled);

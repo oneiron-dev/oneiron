@@ -11,6 +11,15 @@ const KIT_NOT_CURRENT: &str = "this recovery kit is not the vault's current kit:
                                replaced it, or it was never confirmed; use your newest kit, or \
                                sign in from a device that is still yours; nothing was written";
 
+/// A kit restore whose kit's authority key R only a passkey vouched for,
+/// unconfirmed (lead ruling WEBPASSKEY-BLIND-SIGNATURE = B): such a key
+/// signs no machine profile, so R cannot put the restored machine on the
+/// roster, and the door refuses before any write (REVIEW-9488 P1 3).
+const KIT_ROOT_KEY_UNCONFIRMED: &str = "this recovery kit's root key was vouched for by a passkey \
+                                        alone and is not confirmed: confirm the kit again from a \
+                                        device that is still yours, then restore; nothing was \
+                                        written";
+
 impl Vault {
     /// Kit restore: finds the stored root that matches the seed's id and both
     /// its keys, or publishes it when the kit-restored seed rule allows;
@@ -66,8 +75,10 @@ impl Vault {
     /// The kit's root authority key R for this vault, while `fold`'s roster
     /// holds it as a live owner key: what signs the restored machine's
     /// roster row. Refused with [`KIT_NOT_CURRENT`] otherwise
-    /// (WAYBACK-KIT-RESTORE-NO-LIVE-R = A). The sealed bundle's kit restore
-    /// asks it too, before its first window lands.
+    /// (WAYBACK-KIT-RESTORE-NO-LIVE-R = A), and with
+    /// [`KIT_ROOT_KEY_UNCONFIRMED`] while the passkey limits hold R. The
+    /// sealed bundle's kit restore asks it too, on the fold its import would
+    /// commit.
     pub(crate) fn kit_root_authority_signer(
         &self,
         fold: &AuthorityFold,
@@ -83,6 +94,9 @@ impl Vault {
             });
         if !live {
             return Err(authority_refused(KIT_NOT_CURRENT));
+        }
+        if fold.passkey_limited(&signer.authority_key()) {
+            return Err(authority_refused(KIT_ROOT_KEY_UNCONFIRMED));
         }
         Ok(signer)
     }

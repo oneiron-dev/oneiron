@@ -292,6 +292,16 @@ impl Vault {
     /// of a vault that stored a stranger's row before #1449 imports without
     /// them.
     pub fn import_signed_authority_history(&self, blobs: &[Vec<u8>]) -> Result<Vec<EntityId>> {
+        self.import_signed_authority_history_judged(blobs, |_| Ok(()), |_| Ok(()))
+    }
+
+    /// The import with `prelude` first in its write txn and `judge` on the fold it would commit.
+    pub(crate) fn import_signed_authority_history_judged(
+        &self,
+        blobs: &[Vec<u8>],
+        prelude: impl FnOnce(&mut heed::RwTxn<'_>) -> Result<()>,
+        judge: impl FnOnce(&AuthorityFold) -> Result<()>,
+    ) -> Result<Vec<EntityId>> {
         let mut decoded = Vec::with_capacity(blobs.len());
         for bytes in blobs {
             let entry = decode_authority_log_entry_body(bytes)?;
@@ -299,6 +309,7 @@ impl Vault {
         }
         let watch = crate::federation::StaleSweepWatch::begin(self);
         let mut txn = self.store.env.write_txn()?;
+        prelude(&mut txn)?;
         let carried: BTreeMap<_, _> = decoded
             .iter()
             .map(|(hash, _, entry)| (*hash, entry.clone()))
@@ -354,23 +365,21 @@ impl Vault {
             let id = authority_log_entity_id_from_hash(&hash)?;
             ids.push(id);
             let re_root = super::recovery::arriving_re_root(&entry, hash, resident.contains(&hash));
-            rows.push((
-                BatchOp::Put {
-                    id,
-                    entity_type: ENTITY_TYPE_AUTHORITY_LOG,
-                    occurred: TimeRange {
-                        start: now,
-                        end: now,
-                    },
-                    learned_at: now,
-                    row_version: None,
-                    data: bytes,
-                    allow_maintenance: true,
-                    allow_reserved_predicate: false,
-                    hub_sync_imported: false,
+            let op = BatchOp::Put {
+                id,
+                entity_type: ENTITY_TYPE_AUTHORITY_LOG,
+                occurred: TimeRange {
+                    start: now,
+                    end: now,
                 },
-                re_root,
-            ));
+                learned_at: now,
+                row_version: None,
+                data: bytes,
+                allow_maintenance: true,
+                allow_reserved_predicate: false,
+                hub_sync_imported: false,
+            };
+            rows.push((op, re_root));
         }
         self.stage_authority_rows_judging_re_roots_in_txn(&mut txn, rows, &|| {
             Ok(staged_rows.clone())
@@ -383,6 +392,7 @@ impl Vault {
         if fold.vault_root_is_conflicted() {
             return Err(invalid_authority());
         }
+        judge(&fold)?;
         #[cfg(feature = "sync")]
         self.mark_pending_mirrors_in_txn(&mut txn, &ids.iter().copied().collect())?;
         txn.commit()?;

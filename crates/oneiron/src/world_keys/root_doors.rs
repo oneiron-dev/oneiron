@@ -508,6 +508,15 @@ impl Vault {
                 seed,
                 predecessor,
             )?;
+        } else {
+            // A live R only a passkey vouched for is confirmed (REVIEW-9488 P1 3).
+            self.confirm_recovery_authority_key_in_txn(
+                txn,
+                authority,
+                secret.machine,
+                seed,
+                predecessor,
+            )?;
         }
         // A new kit replaces the old one (WAYBACK-SECOND-KIT-OLD-ROOT-KEY =
         // A), and R carries what the revoked ones approved, chosen before

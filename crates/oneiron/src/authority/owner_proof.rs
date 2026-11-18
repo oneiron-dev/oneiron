@@ -369,6 +369,16 @@ impl AuthorityFold {
             && !self.passkey_limited_keys.contains(key)
     }
 
+    /// Whether the passkey limits hold `key` on this fold, read on the
+    /// merged history ([`FoldState::passkey_limited`]): a passkey, or a key
+    /// only a passkey vouched for until a key that is no passkey confirms
+    /// it. Such a key vouches for no further key and signs no machine
+    /// profile (row WEB-PASSKEY-OWNER-KEY).
+    #[must_use]
+    pub(crate) fn passkey_limited(&self, key: &AuthorityKey) -> bool {
+        self.passkey_limited_keys.contains(key)
+    }
+
     /// A choice door's answer about `act`, the choice it appended in its
     /// writing transaction and this fold has folded: the owner-key refusal
     /// when the act waits for the owner's proof

@@ -391,7 +391,6 @@ impl WindowManager {
         }
         let base = decode_base(opened.base())?;
         let carried = base.checkpoint.as_ref();
-        checkpoint::adopt(vault, vault_id, carried, trust, seed, confirm)?;
         let (capsules, awaiting_reader) = opened.authority_history_with_kit(seed)?;
         let authority = with_world_authority(base.authority, capsules);
         let mut restore = SealedKitRestore {
@@ -399,7 +398,16 @@ impl WindowManager {
             awaiting_reader,
             ..SealedKitRestore::default()
         };
-        vault.import_signed_authority_history(&authority)?;
+        // Only the kit's live root authority key puts this machine on the
+        // roster, so a kit a newer one replaced is refused on the fold the
+        // image's adoption and the history's import would commit, in their
+        // one transaction, and neither is written
+        // (WAYBACK-KIT-RESTORE-NO-LIVE-R = A; REVIEW-9488 P1 1).
+        vault.import_signed_authority_history_judged(
+            &authority,
+            |txn| checkpoint::adopt_in_txn(vault, txn, vault_id, carried, trust, seed, confirm),
+            |fold| vault.kit_root_authority_signer(fold, seed).map(drop),
+        )?;
         {
             let txn = vault.store.env.read_txn()?;
             let fold = vault.authority_view_readonly_in_txn(&txn)?;
@@ -407,10 +415,6 @@ impl WindowManager {
                 return Err(refused("the bundle's authority is another vault's"));
             }
             opened.require_publisher(&fold, None)?;
-            // Only the kit's live root authority key puts this machine on the
-            // roster, so a kit a newer one replaced is refused before the
-            // first window lands (WAYBACK-KIT-RESTORE-NO-LIVE-R = A).
-            vault.kit_root_authority_signer(&fold, seed)?;
         }
         // Base windows first: a window of a world read everywhere may name a
         // base row.

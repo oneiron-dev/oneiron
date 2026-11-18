@@ -536,10 +536,13 @@ impl Vault {
     /// wrap's publisher, so a machine only an anchor marked does neither.
     /// The row is one act-free `Owned(Yours)` revision with the request's
     /// keys and proof, the next of the roster's chain: an owner-held
-    /// signer's approval, which no custodian's later revision reaches. A
-    /// roster head that names the machine live with these keys needs no row
-    /// (`None`). A removed machine, or a roster head with other keys, is
-    /// refused. The fold is the judge: the revision must stand.
+    /// signer's approval, which no custodian's later revision reaches. An
+    /// accepted roster chain whose head already says this machine is the
+    /// owner's own with these keys needs no row (`None`); a live head in any
+    /// other role, such as the `Unanswered` profile a serving install's
+    /// startup writes, takes the row above it (REVIEW-9488 P1 4). A removed
+    /// machine, or a roster head with other keys, is refused. The fold is
+    /// the judge: the revision must stand.
     pub(crate) fn put_machine_on_roster_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
@@ -552,18 +555,24 @@ impl Vault {
         if vault_id != request.vault_id {
             return Err(invalid_authority());
         }
-        let head = fold
-            .machine(request.machine)
-            .and_then(|folded| folded.roster.as_ref());
+        let folded = fold.machine(request.machine);
+        let same_keys = |revision: &MachineRevision| {
+            revision.profile.machine_key == request.machine_key
+                && revision.profile.encryption_key == request.encryption_key
+        };
+        let head = folded.and_then(|folded| folded.roster.as_ref());
+        if let Some(head) = head
+            && (head.removed || !same_keys(head))
+        {
+            return Err(authority_refused(ROSTER_HOLDS_MACHINE_OTHERWISE));
+        }
+        if folded
+            .and_then(|folded| folded.roster_trusted.as_ref())
+            .is_some_and(|trusted| trusted.says_yours() && same_keys(trusted))
+        {
+            return Ok(None);
+        }
         let revision = match head {
-            Some(head)
-                if head.removed
-                    || head.profile.machine_key != request.machine_key
-                    || head.profile.encryption_key != request.encryption_key =>
-            {
-                return Err(authority_refused(ROSTER_HOLDS_MACHINE_OTHERWISE));
-            }
-            Some(head) if head.is_live() => return Ok(None),
             Some(head) => head
                 .profile
                 .revision
@@ -596,14 +605,17 @@ impl Vault {
             .map(Some)
     }
 
-    /// The next revision of `machine`'s roster head, the same standing,
-    /// signed by `signer`, a live owner key of the roster held behind `sign`,
-    /// in the caller's transaction: a kit change's carry of a standing the
-    /// R it revokes signed ([`Self::carry_recovery_authority_approvals_in_txn`],
+    /// `standing`, a roster revision of its machine, again as the next
+    /// revision above that machine's roster head, signed by `signer`, a live
+    /// owner key of the roster held behind `sign`, in the caller's
+    /// transaction: a kit change's carry of a standing the R it revokes
+    /// signed ([`Self::carry_recovery_authority_approvals_in_txn`],
     /// WAYBACK-R-REVOCATION-STALES-R-APPROVALS = A), as
     /// [`Self::carry_machine_standing_in_txn`] carries a host re-root's. The
-    /// carry chose the head while it was live, before the revocation; an aged
-    /// head reads stale here, and the new revision stands again.
+    /// carry chose the standing while it was live, before the revocation: the
+    /// roster head, or the accepted chain's head below a custodial one
+    /// (REVIEW-9488 P1 5). An aged standing reads stale here, and the new
+    /// revision stands again.
     ///
     /// # Errors
     /// A machine with no roster head, or a revision that does not stand.
@@ -611,15 +623,15 @@ impl Vault {
         &self,
         txn: &mut heed::RwTxn<'_>,
         (signer, sign): (&AuthorityKey, &dyn Fn(&[u8]) -> Result<Vec<u8>>),
-        machine: EntityId,
+        standing: &MachineProfile,
     ) -> Result<AuthorityEntryHash> {
         let fold = self.authority_view_readonly_in_txn(txn)?;
-        let current = fold
-            .machine(machine)
+        let head = fold
+            .machine(standing.machine)
             .and_then(|folded| folded.roster.as_ref())
             .ok_or_else(invalid_authority)?;
         let profile = MachineProfile {
-            revision: current
+            revision: head
                 .profile
                 .revision
                 .checked_add(1)
@@ -628,9 +640,9 @@ impl Vault {
                 &self.store,
                 txn,
                 &fold,
-                machine,
+                standing.machine,
             )?,
-            ..current.profile.clone()
+            ..standing.clone()
         };
         self.append_owner_signed_roster_revision_in_txn(txn, (signer, sign), &fold, profile)
     }

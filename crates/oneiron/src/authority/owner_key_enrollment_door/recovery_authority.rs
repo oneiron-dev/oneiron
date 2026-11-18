@@ -47,8 +47,10 @@ const CARRY_NOT_COUNTED: &str = "this install's fold does not count the new kit'
 /// R keys it replaces ([`Vault::recovery_authority_carry_in_txn`]).
 #[derive(Debug, Default)]
 pub(crate) struct RecoveryAuthorityCarry {
-    /// Each machine whose roster head the new R signs the next revision of.
-    machines: Vec<EntityId>,
+    /// Each roster standing the new R signs again, as the next revision
+    /// above its machine's roster head: the head, or the accepted chain's
+    /// head when that is another revision (REVIEW-9488 P1 5).
+    machines: Vec<MachineProfile>,
     /// Each binding's `RebindActor` one epoch on, which the new R signs.
     rebinds: Vec<AuthorityOp>,
 }
@@ -223,16 +225,16 @@ impl Vault {
     /// loaded before its write transaction opens (pass 27 R4 PR 2): (a) this
     /// install's owner key when a signer this handle holds names an enrolled
     /// owner key of kind `Device`, live with `ROLE_OWNER`, whose enrolment
-    /// names `owner`; else (b) this install's host root when the fold holds
-    /// no live host-stamped root, that root is live under `require_host`,
-    /// and no live `human` binding gives it to another person
-    /// ([`host_root_is_the_owners`]); else (c) refused with
-    /// [`NO_PREDECESSOR`]. A co-owner's key this install holds never signs
-    /// another owner's R (REVIEW2 #8798 P2-1, the vouch door's rule). Makes
-    /// no keystore or store write: one read snapshot for the owner and the
-    /// roster checks, then the host seed read, which opens its own read txn.
-    /// Liveness is judged again in the txn by the enrol door (its
-    /// `NOT_COUNTED` refusal).
+    /// names `owner`, that the passkey limits do not hold; else (b) this
+    /// install's host root when the fold holds no live host-stamped root,
+    /// that root is live under `require_host`, and no live `human` binding
+    /// gives it to another person ([`host_root_is_the_owners`]); else (c)
+    /// refused with [`NO_PREDECESSOR`]. A co-owner's key this install holds
+    /// never signs another owner's R (REVIEW2 #8798 P2-1, the vouch door's
+    /// rule). Makes no keystore or store write: one read snapshot for the
+    /// owner and the roster checks, then the host seed read, which opens its
+    /// own read txn. Liveness is judged again in the txn by the enrol door
+    /// (its `NOT_COUNTED` refusal).
     ///
     /// # Errors
     /// [`RecordError::AuthorityRefused`] with [`NO_PREDECESSOR`] when this
@@ -267,7 +269,11 @@ impl Vault {
                 .roster
                 .get(&root)
                 .is_some_and(|device| !device.revoked && device.roles & ROLE_OWNER != 0);
-            if live_owner {
+            // A key only a passkey vouched for vouches for no further key
+            // until it is confirmed (WEBPASSKEY-BLIND-SIGNATURE = B), so it
+            // is never R's predecessor: the next key, then the host root,
+            // is tried (REVIEW-9488 P1 2).
+            if live_owner && !fold.passkey_limited(&root) {
                 return Ok(ActivationPredecessor::OwnerKey(signer));
             }
         }
@@ -331,6 +337,57 @@ impl Vault {
             predecessor_key,
             &mut sign,
         )
+    }
+
+    /// Confirms the kit's root authority key R in the caller's write
+    /// transaction when the roster holds R live and only a passkey vouched
+    /// for it (lead ruling WEBPASSKEY-BLIND-SIGNATURE = B): `predecessor`,
+    /// the activation's, vouches for R again, carried by `machine`, and R
+    /// then acts as any owner root, the restored machine's roster row
+    /// included (REVIEW-9488 P1 3). Nothing on the roster changes. An R the
+    /// passkey limits do not hold needs no row (`None`).
+    ///
+    /// # Errors
+    /// As [`Self::confirm_owner_key_as`].
+    pub(crate) fn confirm_recovery_authority_key_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        authority: &ActAuthority,
+        machine: EntityId,
+        seed: &crate::world_keys::RecoveryRootSeed,
+        predecessor: &ActivationPredecessor,
+    ) -> Result<Option<OwnerKeyEnrollmentReceipt>> {
+        let owner = match authority {
+            ActAuthority::Owner(owner, _) => owner,
+            ActAuthority::Agent(_) => return Err(authority_refused(OWNER_ONLY)),
+        };
+        let actor = owner.revalidate_as_vault_owner_in_txn(self, txn)?;
+        let fold = self.authority_view_readonly_in_txn(txn)?;
+        let vault_id = fold.vault_id.ok_or_else(invalid_authority)?;
+        let input = recovery_authority_enrollment(seed, &vault_id, machine, actor)?;
+        if !fold.passkey_limited(&AuthorityKey::Ed25519(input.public_key)) {
+            return Ok(None);
+        }
+        let device = enrolled_device(
+            input.public_key,
+            input.proof,
+            EnrolledOwnerKeyKind::RecoveryAuthority,
+        );
+        let mut sign = |transcript: &[u8]| predecessor.sign(transcript);
+        let (entry, machine) = self.write_owner_key_enroll_in_txn(
+            txn,
+            authority,
+            Some(input.machine),
+            device,
+            predecessor.predecessor_key(),
+            &mut sign,
+            true,
+        )?;
+        Ok(Some(OwnerKeyEnrollmentReceipt {
+            entry,
+            machine,
+            public_key: input.public_key,
+        }))
     }
 
     /// Revokes, in a kit activation's write transaction, every live owner
@@ -467,16 +524,32 @@ impl Vault {
             .filter(|(_, device)| device.revoked)
             .map(|(key, _)| key)
             .collect();
-        let mut machines: std::collections::BTreeMap<_, _> = fold
+        // Each machine's roster head, and the accepted chain's head when it
+        // is another revision (a custodial revision above an owner-held one
+        // leaves the accepted chain at the owner-held one): the stale-roster
+        // window expires either once the R it rests on is revoked.
+        let mut machines: std::collections::BTreeMap<_, Vec<_>> = fold
             .machines
             .iter()
             .filter_map(|(machine, folded)| {
                 let head = folded.roster.as_ref()?;
-                let carried = head.is_live()
-                    && head.profile.act.is_none()
-                    && head.profile.revision < u64::MAX
-                    && !fold.anchor_entries.contains(&head.entry);
-                carried.then(|| (*machine, (&head.profile, CarrySupport::default())))
+                if head.profile.revision == u64::MAX {
+                    return None;
+                }
+                let trusted = folded
+                    .roster_trusted
+                    .as_ref()
+                    .filter(|trusted| trusted.entry != head.entry);
+                let heads: Vec<_> = std::iter::once(head)
+                    .chain(trusted)
+                    .filter(|head| {
+                        head.is_live()
+                            && head.profile.act.is_none()
+                            && !fold.anchor_entries.contains(&head.entry)
+                    })
+                    .map(|head| (&head.profile, CarrySupport::default()))
+                    .collect();
+                (!heads.is_empty()).then_some((*machine, heads))
             })
             .collect();
         let mut bindings: std::collections::BTreeMap<_, _> = fold
@@ -513,12 +586,10 @@ impl Vault {
             }
             let anchor = fold.anchor_entries.contains(hash);
             let support = match &entry.op {
-                AuthorityOp::MachineProfile(profile) if !anchor => {
-                    match machines.get_mut(&profile.machine) {
-                        Some((head, support)) if *head == profile => Some(support),
-                        _ => None,
-                    }
-                }
+                AuthorityOp::MachineProfile(profile) if !anchor => machines
+                    .get_mut(&profile.machine)
+                    .and_then(|heads| heads.iter_mut().find(|(head, _)| *head == profile))
+                    .map(|(_, support)| support),
                 AuthorityOp::BindActor {
                     authority_key,
                     actor_ref,
@@ -566,11 +637,18 @@ impl Vault {
                 })
             })
             .collect::<Result<Vec<_>>>()?;
+        // One row per machine: the accepted chain's standing when the act
+        // would leave it with no approval, else the head's.
         Ok(RecoveryAuthorityCarry {
             machines: machines
-                .into_iter()
-                .filter(|(_, (_, support))| support.carried())
-                .map(|(machine, _)| machine)
+                .into_values()
+                .filter_map(|heads| {
+                    heads
+                        .into_iter()
+                        .rev()
+                        .find(|(_, support)| support.carried())
+                        .map(|(profile, _)| profile.clone())
+                })
                 .collect(),
             rebinds,
         })
@@ -595,8 +673,8 @@ impl Vault {
     ) -> Result<()> {
         let key = next.authority_key();
         let sign = |transcript: &[u8]| next.sign_authority_transcript(transcript);
-        for machine in carry.machines {
-            self.carry_roster_standing_under_key_in_txn(txn, (&key, &sign), machine)?;
+        for standing in &carry.machines {
+            self.carry_roster_standing_under_key_in_txn(txn, (&key, &sign), standing)?;
         }
         for rebind in carry.rebinds {
             self.append_key_signed_op_in_txn(txn, (&key, &sign), rebind, CARRY_NOT_COUNTED)?;
@@ -604,27 +682,40 @@ impl Vault {
         Ok(())
     }
 
-    /// What ways back the owner has: live device owner keys, live passkeys,
-    /// whether the kit's root is enrolled, and whether the box PIN is set.
-    /// Engine read only: no route and no verb.
-    pub fn ways_back(&self) -> Result<WaysBack> {
+    /// What ways back `owner` has: their live device owner keys, their live
+    /// passkeys, whether their kit's root is enrolled, and whether the box
+    /// PIN is set. Each count reads only the keys whose enrolment names the
+    /// owner, revalidated in the read's snapshot, so a co-owner's keys on a
+    /// shared vault are never theirs (REVIEW-9488 P1 7). Engine read only:
+    /// no route and no verb.
+    ///
+    /// # Errors
+    /// An owner refusal when the proof is no longer the vault's live owner;
+    /// the store's own.
+    pub fn ways_back(&self, owner: &crate::consent::AuthenticatedOwner) -> Result<WaysBack> {
         let txn = self.store.env.read_txn()?;
+        let actor = owner.revalidate_as_vault_owner_in_txn(self, &txn)?;
         let enrolled = self.enrolled_owner_keys_in_txn(&txn)?;
         let fold = self.authority_view_readonly_in_txn(&txn)?;
+        let owners = |key: &&EnrolledOwnerKey| key.live && key.owner == actor;
         let owner_devices = enrolled
             .iter()
-            .filter(|key| key.kind == EnrolledOwnerKeyKind::Device && key.live)
+            .filter(owners)
+            .filter(|key| key.kind == EnrolledOwnerKeyKind::Device)
             .count() as u32;
         let kit_root_enrolled = enrolled
             .iter()
-            .any(|key| key.kind == EnrolledOwnerKeyKind::RecoveryAuthority && key.live);
-        let passkeys = fold
-            .roster
+            .filter(owners)
+            .any(|key| key.kind == EnrolledOwnerKeyKind::RecoveryAuthority);
+        let passkeys = self
+            .live_owner_keys_enrolled_for_in_txn(&txn, actor)?
             .iter()
-            .filter(|(key, device)| {
+            .filter(|key| {
                 matches!(key, AuthorityKey::P256(_))
-                    && !device.revoked
-                    && device.roles & ROLE_OWNER != 0
+                    && fold
+                        .roster
+                        .get(key)
+                        .is_some_and(|device| device.roles & ROLE_OWNER != 0)
             })
             .count() as u32;
         Ok(WaysBack {
