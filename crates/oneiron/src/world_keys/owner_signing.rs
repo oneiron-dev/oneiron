@@ -740,15 +740,13 @@ pub(crate) struct OwnerSigningSlot {
 
 impl OwnerSigningSlot {
     /// The slot's owner signing key, its seed made on first use. The roster
-    /// may name it, live or revoked.
+    /// may name it, live or revoked. Refused on a device with a PIN set or
+    /// forgotten, as [`Self::fresh_key`] is (`slot_owner_signer`'s rule).
     ///
     /// # Errors
-    /// The keystore's own refusal.
+    /// The keystore's own refusal; the slot's rule.
     pub(crate) fn key(&self) -> Result<OwnerRootSigner> {
-        Ok(OwnerRootSigner::from_seed(&*super::slot_seed(
-            self.keystore.as_ref(),
-            &self.slot,
-        )?))
+        slot_owner_signer(&self.keystore, &self.slot)
     }
 
     /// A new owner signing key, made in this slot from the OS CSPRNG after

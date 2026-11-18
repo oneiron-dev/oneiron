@@ -29,7 +29,8 @@ use super::owner_key_enrollment_door::EntrySigner;
 use super::*;
 use crate::consent::AuthenticatedOwner;
 use crate::world_keys::{
-    KitConfirmation, OwnerRootSigner, OwnerSigningSlot, RecoveryAuthoritySigner, RecoveryRootSeed,
+    DevicePin, KitConfirmation, OwnerRootSigner, OwnerSigningSlot, RecoveryAuthoritySigner,
+    RecoveryRootSeed,
 };
 use crate::{EntityId, Result, Vault};
 
@@ -177,6 +178,12 @@ impl Vault {
         let mut sign_enrolment =
             |_: &AuthorityFold, transcript: &[u8]| signer.sign_authority_transcript(transcript);
         let sign_revoke = |transcript: &[u8]| signer.sign_authority_transcript(transcript);
+        // One step with a first PIN's set, entered before the writer and held
+        // to its commit (row OCS-OWNER-PIN), as the root appointment holds it:
+        // no PIN of this process is set between this install's successor's
+        // making and the commit.
+        let device_pin = self.device_pin();
+        let _step = device_pin.as_deref().map(DevicePin::step);
         let mut txn = self.store.env.write_txn()?;
         let fold = self.authority_view_readonly_in_txn(&txn)?;
         if !live_owner_key(&fold, &root_key) {
