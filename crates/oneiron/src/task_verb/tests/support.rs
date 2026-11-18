@@ -957,21 +957,41 @@ pub(super) fn enqueue_sibling(queue: &AttemptQueue<'_>, task_hex: &str, now: u64
 
 /// Outcome fixtures make deliberate Approved writes. Keep the shipped policy
 /// and its actor ceilings; classify only these fixture predicates as normal.
-/// Outcome labels are scoped reads by the asking principal, so it alone holds
-/// an unrestricted `core:read` grant.
+/// Outcome labels are scoped reads by the asking principal, so it holds
+/// an unrestricted `core:read` grant (beside any ask-holder grants Cause A
+/// already added; existing rows are kept).
 pub(in crate::task_verb) fn permit_outcome_fixture_predicates(
     vault: &Vault,
     principal: EntityId,
 ) -> crate::Result<()> {
-    let bytes = crate::gate::default_policy_manifest()?;
+    let id = crate::gate::default_policy_manifest_id()?;
+    let bytes = match vault.get(&id)? {
+        Some(body) => body,
+        None => crate::gate::default_policy_manifest()?,
+    };
     let mut manifest: serde_json::Value = rmp_serde::from_slice(&bytes).expect("default policy");
-    manifest["scoped_grants"] = serde_json::json!([{
-        "actor_ref": principal.to_hex(),
-        "effector": "core:read",
-        "scope": serde_json::to_value(crate::federation::scope_codec::read_preset())
-            .expect("read preset"),
-        "receipt_required": false,
-    }]);
+    if manifest.get("scoped_grants").is_none() {
+        manifest
+            .as_object_mut()
+            .expect("policy map")
+            .insert("scoped_grants".into(), serde_json::Value::Array(Vec::new()));
+    }
+    let principal_hex = principal.to_hex();
+    let grants = manifest["scoped_grants"]
+        .as_array_mut()
+        .expect("scoped grants");
+    if !grants.iter().any(|row| {
+        row.get("actor_ref").and_then(|v| v.as_str()) == Some(principal_hex.as_str())
+            && row.get("effector").and_then(|v| v.as_str()) == Some("core:read")
+    }) {
+        grants.push(serde_json::json!({
+            "actor_ref": principal_hex,
+            "effector": "core:read",
+            "scope": serde_json::to_value(crate::federation::scope_codec::read_preset())
+                .expect("read preset"),
+            "receipt_required": false,
+        }));
+    }
     let rules = manifest["rules"].as_array_mut().expect("policy rules");
     for predicate in [
         "outcome.earned",
@@ -983,7 +1003,53 @@ pub(in crate::task_verb) fn permit_outcome_fixture_predicates(
     }
     crate::test_util::put_policy_manifest_bytes(
         vault,
-        crate::gate::default_policy_manifest_id()?,
+        id,
+        &rmp_serde::to_vec_named(&manifest).expect("fixture policy"),
+    )
+}
+
+/// Give each `holders` a live read position on every record (Cause A): an
+/// unrestricted `core:read` grant in the vault's default policy, the same
+/// row shape `permit_outcome_fixture_predicates` gives its principal. Ask
+/// admission requires every holder (and the asker) to read the question unit
+/// (`validate_task_answer_unit` -> `record_allowed_in_txn`); a bare PERSON
+/// with no grant reads as absent. Existing grants, ceilings and rules are
+/// kept; only missing holder rows are added.
+pub(crate) fn grant_ask_read(vault: &Vault, holders: &[EntityId]) -> crate::Result<()> {
+    let id = crate::gate::default_policy_manifest_id()?;
+    let bytes = match vault.get(&id)? {
+        Some(body) => body,
+        None => crate::gate::default_policy_manifest()?,
+    };
+    let mut manifest: serde_json::Value = rmp_serde::from_slice(&bytes).expect("policy manifest");
+    if manifest.get("scoped_grants").is_none() {
+        manifest
+            .as_object_mut()
+            .expect("policy map")
+            .insert("scoped_grants".into(), serde_json::Value::Array(Vec::new()));
+    }
+    let grants = manifest["scoped_grants"]
+        .as_array_mut()
+        .expect("scoped grants");
+    for holder in holders {
+        let hex = holder.to_hex();
+        if grants.iter().any(|row| {
+            row.get("actor_ref").and_then(|v| v.as_str()) == Some(hex.as_str())
+                && row.get("effector").and_then(|v| v.as_str()) == Some("core:read")
+        }) {
+            continue;
+        }
+        grants.push(serde_json::json!({
+            "actor_ref": hex,
+            "effector": "core:read",
+            "scope": serde_json::to_value(crate::federation::scope_codec::read_preset())
+                .expect("read preset"),
+            "receipt_required": false,
+        }));
+    }
+    crate::test_util::put_policy_manifest_bytes(
+        vault,
+        id,
         &rmp_serde::to_vec_named(&manifest).expect("fixture policy"),
     )
 }

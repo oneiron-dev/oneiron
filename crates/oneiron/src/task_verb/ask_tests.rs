@@ -538,6 +538,7 @@ impl RuledAskFixture {
             1_000,
             &body,
         )?;
+        super::tests::support::grant_ask_read(&vault, &people)?;
         Ok(Self {
             vault,
             dir,
@@ -1504,17 +1505,22 @@ fn governed_agent_in(
         1_000,
         b"agent",
     )?;
-    let mut manifest: serde_json::Value =
-        rmp_serde::from_slice(&crate::gate::default_policy_manifest()?)?;
+    let manifest_id = crate::gate::default_policy_manifest_id()?;
+    let manifest_bytes = match fixture.vault.get(&manifest_id)? {
+        Some(body) => body,
+        None => crate::gate::default_policy_manifest()?,
+    };
+    let mut manifest: serde_json::Value = rmp_serde::from_slice(&manifest_bytes)?;
     manifest["actor_ceilings"]
         .as_array_mut()
         .ok_or("default actor ceilings")?
         .push(serde_json::json!({"actor_class": "agent", "actor_ref": agent.to_hex(), "ceiling": "auto"}));
     crate::test_util::put_policy_manifest_bytes(
         &fixture.vault,
-        crate::gate::default_policy_manifest_id()?,
+        manifest_id,
         &rmp_serde::to_vec_named(&manifest)?,
     )?;
+    super::tests::support::grant_ask_read(&fixture.vault, &[agent])?;
     let class = fixture.policy(true);
     assign_governed_task(fixture, agent, &class, world)?;
     Ok((agent, class))
@@ -2043,6 +2049,7 @@ fn guest_fixture(
             )?,
         )?;
     }
+    super::tests::support::grant_ask_read(&fixture.vault, &[companion])?;
     Ok(TaskAskGuest {
         companion_ref: companion,
         disclosure_grant_ref,
@@ -3206,7 +3213,11 @@ fn slot_commitment_human_can_approve_or_reject_typed_notice() -> Result<()> {
 #[test]
 fn manifest_retry_limit_bounds_pending_notice_work() -> Result<()> {
     let fixture = RuledAskFixture::new(2)?;
-    let mut bytes = crate::gate::default_policy_manifest().unwrap();
+    let manifest_id = crate::gate::default_policy_manifest_id()?;
+    let mut bytes = match fixture.vault.get(&manifest_id)? {
+        Some(body) => body,
+        None => crate::gate::default_policy_manifest().unwrap(),
+    };
     let rmpv::Value::Map(mut entries) =
         rmpv::decode::read_value(&mut bytes.as_slice()).expect("default policy manifest map")
     else {
@@ -3226,11 +3237,7 @@ fn manifest_retry_limit_bounds_pending_notice_work() -> Result<()> {
     bytes.clear();
     rmpv::encode::write_value(&mut bytes, &rmpv::Value::Map(entries))
         .expect("encode policy manifest");
-    crate::test_util::put_policy_manifest_bytes(
-        &fixture.vault,
-        crate::gate::default_policy_manifest_id()?,
-        &bytes,
-    )?;
+    crate::test_util::put_policy_manifest_bytes(&fixture.vault, manifest_id, &bytes)?;
     let mut guests = std::collections::BTreeMap::new();
     let mut companions = Vec::new();
     for person in &fixture.people {
@@ -3425,6 +3432,7 @@ fn an_agents_omitted_target_lists_the_assignment_it_comes_from() -> Result<()> {
     let human = vault.ensure_embedded_owner_actor()?;
     let agent = super::tests::support::own_agent(&vault);
     let question = super::tests::support::consult_turn(&vault, 0x81);
+    super::tests::support::grant_ask_read(&vault, &[agent])?;
     let world = EntityId::now();
     vault.put_entity(
         &world,
