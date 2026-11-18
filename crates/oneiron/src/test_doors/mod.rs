@@ -217,6 +217,8 @@ pub mod msgpack_duplicate_key;
 pub mod msgpack_trailing;
 pub mod nightly;
 pub mod note_bm25f_repair;
+#[cfg(feature = "sync")]
+pub mod note_fork_upload;
 pub mod off_record_shell;
 pub mod off_record_side_row;
 pub mod open_conflict_marker;
