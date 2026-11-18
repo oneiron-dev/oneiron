@@ -3358,6 +3358,7 @@ mdb_txn_renew0(MDB_txn *txn)
 #endif
 		txn->mt_child = NULL;
 		txn->mt_rdonly_child_count = 0;
+		pthread_mutex_init(&txn->mt_child_mutex, NULL);
 		txn->mt_loose_pgs = NULL;
 		txn->mt_loose_count = 0;
 		if (env->me_flags & MDB_WRITEMAP) {
@@ -3544,7 +3545,6 @@ mdb_txn_begin(MDB_env *env, MDB_txn *parent, unsigned int flags, MDB_txn **ret)
 				return ENOMEM;
 			}
 			txn->mt_u.dirty_list[0].mid = 0;
-			pthread_mutex_init(&txn->mt_child_mutex, NULL);
 		}
 		txn->mt_txnid = parent->mt_txnid;
 		txn->mt_dirty_room = parent->mt_dirty_room;
@@ -6365,7 +6365,6 @@ mdb_env_open(MDB_env *env, const char *path, unsigned int flags, mdb_mode_t mode
 #endif
 				txn->mt_dbxs = env->me_dbxs;
 				txn->mt_flags = MDB_TXN_FINISHED;
-				pthread_mutex_init(&txn->mt_child_mutex, NULL);
 				env->me_txn0 = txn;
 			} else {
 				rc = ENOMEM;
@@ -6419,10 +6418,7 @@ mdb_env_close_active(MDB_env *env, int excl)
 	}
 	}
 #endif
-	if (env->me_txn0) {
-		pthread_mutex_destroy(&env->me_txn0->mt_child_mutex);
-		free(env->me_txn0);
-	}
+	free(env->me_txn0);
 	mdb_midl_free(env->me_free_pgs);
 
 	if (env->me_flags & MDB_ENV_TXKEY) {
