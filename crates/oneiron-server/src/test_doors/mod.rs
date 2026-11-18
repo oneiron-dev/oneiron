@@ -18,6 +18,8 @@ pub mod compaction_pass;
 pub mod connector_issuer_watch;
 pub mod connector_sends;
 #[cfg(feature = "mesh")]
+pub mod device_sync_dial_gate;
+#[cfg(feature = "mesh")]
 pub mod embedded_peer_fixture;
 #[cfg(feature = "mesh")]
 pub mod embedded_peer_path;
