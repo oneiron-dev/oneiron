@@ -1,6 +1,8 @@
 //! The owner's machine list and his name for each machine, as facade rows
 //! (FIX [DEVICE-DISPLAY-NAME]): `vault.machines.list` and
-//! `vault.machines.name.set`, under the owner's proof. Display only.
+//! `vault.machines.name.set`, under the owner's proof. Display only. Each
+//! reads the server's vault, the one the owner door's memory handle wraps
+//! (`Memory::vault` is crate-private to oneiron).
 
 use std::sync::Arc;
 
@@ -20,9 +22,13 @@ pub(crate) async fn vault_machines_list(
     auth: &CoreAuth,
     _input: EmptyRequest,
 ) -> Listed<MachineListReply> {
-    as_owner(server, auth, "vault.machines.list", |memory, owner| {
-        oneiron::task_verb::sdk::list_machines_as(memory.vault(), owner)
-    })
+    let vault = Arc::clone(server.vault());
+    as_owner(
+        server,
+        auth,
+        "vault.machines.list",
+        move |_memory, owner| oneiron::task_verb::sdk::list_machines_as(&vault, owner),
+    )
     .await
 }
 
@@ -33,13 +39,12 @@ pub(crate) async fn vault_machines_name_set(
     auth: &CoreAuth,
     input: MachineNameSetRequest,
 ) -> Listed<MachineNameSetReply> {
+    let vault = Arc::clone(server.vault());
     as_owner(
         server,
         auth,
         "vault.machines.name.set",
-        move |memory, owner| {
-            oneiron::task_verb::sdk::set_machine_name_as(memory.vault(), owner, input)
-        },
+        move |_memory, owner| oneiron::task_verb::sdk::set_machine_name_as(&vault, owner, input),
     )
     .await
 }
