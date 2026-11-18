@@ -216,7 +216,18 @@ pub(super) fn origins_disagree(
 /// witnesses nothing), so the held chains are laid under it only to judge
 /// it: what it folds to is then held as an act-free revision is, and an
 /// answer the owner's proof holds back leaves only its held answer. Nothing
-/// of the machine stands from it (REVIEW-9524 P1).
+/// of the machine stands from it (REVIEW-9524 P1), also when it is the
+/// machine's first revision and nothing was held before it: the roster view
+/// reads no floor, so a first pairing that stood there would make the copy a
+/// carrier that joins the enrolments its own entries name (REVIEW-9524
+/// round 2 P1 :236).
+///
+/// A revision that folds to a removal is the exception to holding: a removal
+/// is terminal and grants nothing, so its chain stands, removed, where a
+/// branch merge and the restriction pass (`revoke_proof`) read a machine's
+/// chains. A sibling that joins the held enrolment so meets the removal on
+/// merge, and the target never stands live past it (REVIEW-9524 round 2 P1
+/// :277). Its key claims stay out, and the enrolment it revised stays held.
 pub(super) fn fold_revision(
     state: &mut FoldState,
     profile: &MachineProfile,
@@ -233,7 +244,7 @@ pub(super) fn fold_revision(
         return Err(AuthorityFoldIssue::MissingAuthorityConsent(hash));
     }
     let waiting = waiting(state, machine);
-    if waiting.is_empty() && (carried || profile.restored_from.is_none()) {
+    if waiting.is_empty() && ((carried && !restriction_only) || profile.restored_from.is_none()) {
         return fold(state, None);
     }
     let parents = carried.then(|| state.clone());
@@ -274,6 +285,14 @@ pub(super) fn fold_revision(
             Err(AuthorityFoldIssue::InvalidEntry(hash))
         };
     };
+    if chain.head.removed {
+        state
+            .machines
+            .entry(machine)
+            .or_default()
+            .insert(admitter, chain);
+        return Ok(());
+    }
     state.restored_enrolments.insert(
         hash,
         RestoredEnrolment {
