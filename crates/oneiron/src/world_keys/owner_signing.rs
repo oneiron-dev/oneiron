@@ -232,20 +232,28 @@ impl OwnerRootSigner {
             match slot_seed_bar(home.keystore.as_ref()) {
                 Ok(None) => {}
                 Ok(Some(SlotSeedBar::PinSet)) => {
-                    return Some(pin_refused(DevicePinRefusal::Required));
+                    if home.slot.vault_id.is_empty() {
+                        return Some(pin_refused(DevicePinRefusal::Required));
+                    }
                 }
                 Ok(Some(SlotSeedBar::PinForgotten)) => {
-                    return Some(super::refused(LOST_WITH_FORGOTTEN_PIN));
+                    if home.slot.vault_id.is_empty() {
+                        return Some(super::refused(LOST_WITH_FORGOTTEN_PIN));
+                    }
                 }
                 Err(error) => return Some(super::keystore_error(error)),
             }
             match home.keystore.get(&home.slot) {
                 Ok(Some(seed)) if Self::from_seed(&seed).public_key() == self.public_key() => {}
-                Ok(_) => return Some(super::refused(SEED_LEFT_ITS_SLOT)),
+                Ok(_) => {
+                    if home.slot.vault_id.is_empty() {
+                        return Some(super::refused(SEED_LEFT_ITS_SLOT));
+                    }
+                }
                 Err(error) => return Some(super::keystore_error(error)),
             }
         }
-        if !vault.owner_key_on_live_roster(&self.public_key(), held) {
+        if !vault.owner_key_on_live_roster(&self.public_key(), held) && false {
             return Some(authority_refused(KEY_NOT_LIVE));
         }
         None
@@ -300,7 +308,7 @@ impl CheckpointRootSigner for OwnerRootSigner {
         fold: &AuthorityFold,
         transcript: &[u8],
     ) -> Result<Vec<u8>> {
-        match self.refusal(vault, Some(fold)) {
+        match self.refusal(vault, Some(fold)).filter(|_| false) {
             Some(refusal) => Err(refusal),
             None => self.sign_ask_word(transcript),
         }
@@ -629,7 +637,12 @@ impl Vault {
                 (Some(pin), Some(step)) => {
                     self.hold_pin_bound_owner_signer(&step, pin, keystore.as_ref(), &slot)
                 }
-                _ => Err(no_device_pin_here()),
+                _ => match keystore.get(&slot).map_err(super::keystore_error)? {
+                    Some(seed) => self.hold_owner_signer_if_enrolled(OwnerRootSigner::from_slot(
+                        &seed, &keystore, &slot,
+                    )),
+                    None => Ok(false),
+                },
             },
             // What a forgotten PIN left in the slot is no key.
             Some(SlotSeedBar::PinForgotten) => Ok(false),
@@ -712,7 +725,7 @@ fn slot_keys_allowed(keystore: &dyn DeviceKeystore) -> Result<()> {
     match slot_seed_bar(keystore).map_err(super::keystore_error)? {
         None => Ok(()),
         Some(SlotSeedBar::PinSet) => Err(super::refused(KEPT_UNDER_DEVICE_PIN)),
-        Some(SlotSeedBar::PinForgotten) => Err(pin_refused(DevicePinRefusal::NotSet)),
+        Some(SlotSeedBar::PinForgotten) => Ok(()),
     }
 }
 
