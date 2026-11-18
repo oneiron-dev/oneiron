@@ -40,7 +40,7 @@ impl Vault {
     /// A). An install born of a restore that has not joined the vault joins
     /// first, by R's word, the owner's proved act (Engine ANSWER
     /// KIT-RESTORE-JOINS-RESTORED-COPY = A); one whose R gives no owner's
-    /// proof here is refused before any write too.
+    /// proof here is refused before its identity mint too.
     pub fn restore_world_keys(
         &self,
         owner: &AuthenticatedOwner,
@@ -82,7 +82,8 @@ impl Vault {
             owner.revalidate_as_vault_owner_in_txn(self, txn)?;
             let fold = self.authority_view_readonly_in_txn(txn)?;
             self.kit_seed_gate_in_txn(txn, &fold, seed, confirm)?;
-            self.kit_root_authority_signer(&fold, seed)?;
+            let authority = self.kit_root_authority_signer(&fold, seed)?;
+            self.restored_join_by_key_precheck(txn, &fold, &authority.authority_key())?;
             let stored = self.restore_key_pads_in_txn(txn, pads)?;
             owed(txn);
             let keys =
