@@ -154,6 +154,61 @@ impl AttemptQueue<'_> {
         Ok(Some(current))
     }
 
+    /// Whether a try of the retry lineage that began at `first` is pending:
+    /// `first` itself, or a try that retries it, directly or through other
+    /// tries, a landing successor included. Every retry of each try is
+    /// followed, so a try with two retries is read on both sides. A try whose
+    /// row is gone, or is the erased marker of a retired row, is not pending,
+    /// and its retries are still followed. Like [`Self::newest_retry_in_txn`]
+    /// it releases nothing and asks through the `attempt_retry_tip_rows` row.
+    pub(crate) fn retry_lineage_pending_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        first: AttemptId,
+    ) -> Result<bool> {
+        let mut seen = std::collections::HashSet::from([first]);
+        let mut pending = self
+            .unretired_row_in_txn(txn, first)?
+            .is_some_and(|row| row.state.is_pending());
+        let mut unread = vec![first];
+        while !pending {
+            let Some(current) = unread.pop() else {
+                break;
+            };
+            for id in crate::attempt_queue::index::retry_child_ids_in_txn(self.store, txn, current)?
+            {
+                let Some(retry) = self.unretired_row_in_txn(txn, id)? else {
+                    continue;
+                };
+                if retry.retry_of != Some(current) || !seen.insert(id) {
+                    continue;
+                }
+                if retry.state.is_pending() {
+                    pending = true;
+                    break;
+                }
+                unread.push(id);
+            }
+        }
+        self.store
+            .limit_watch
+            .measure(EngineLimit::AttemptRetryTipRows, seen.len() as u64);
+        Ok(pending)
+    }
+
+    /// The row of try `id`, with the erased marker of a retired row read as no
+    /// row: such a row is never pending (FIX 10708).
+    fn unretired_row_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: AttemptId,
+    ) -> Result<Option<AttemptRecord>> {
+        match self.get_in_txn(txn, id) {
+            Err(error) if super::reads::retired_marker(&error) => Ok(None),
+            row => row,
+        }
+    }
+
     /// The rows whose `retry_of` names `parent`, read by their keys from the
     /// retry-child index (FIX 11318); an id whose row is gone or retries
     /// another try is passed over.

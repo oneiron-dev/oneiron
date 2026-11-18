@@ -21,6 +21,11 @@ crate::side_table::side_tables! {
     /// person cleanup arm. Key: id16 (PERSON id).
     VAULT_CLEANUP_EXTRACTION_PERSON: VaultMeta b"vault_cleanup.extraction_person.v1:" Raw
         [restore: content] [family: unclassified] [tier: canonical];
+    /// The first try of the retry lineage whose attempt minted an extraction PERSON. The
+    /// claimless-person cleanup arm spares the PERSON while a try of that lineage is pending
+    /// (FIX CLEANUP-ARCHIVES-MINTED-PERSON-BETWEEN-TRIES). Key: id16 (PERSON id).
+    VAULT_CLEANUP_EXTRACTION_PERSON_LINEAGE: VaultMeta b"vault_cleanup.extraction_person_lineage.v1:" Named
+        [restore: content] [family: unclassified] [tier: canonical];
     /// Owner-set cleanup posture: auto-with-digest when absent, or propose-first. Key: ().
     VAULT_CLEANUP_POSTURE: VaultMeta b"vault_cleanup.posture.v1" Raw
         [restore: live] [family: unclassified] [tier: canonical];
