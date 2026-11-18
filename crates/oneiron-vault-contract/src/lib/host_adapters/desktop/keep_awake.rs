@@ -7,6 +7,7 @@ use std::{
 };
 
 mod power;
+pub use power::on_mains_power;
 
 /// When a live wake pass may hold the machine awake (ruled 2026-10-08).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
