@@ -45,8 +45,12 @@ pub(crate) struct AuthorityStructure {
     /// The install keys only other anchors' revisions named. Such a key
     /// signs as a machine key does, but as a stranger ([`Self::is_stranger`]).
     stranger_keys: BTreeSet<(crate::EntityId, AuthorityKey)>,
-    /// The machines a filed removal names: removal is terminal, so a
-    /// frontier join one of them carries is a stranger's (FIX 7908).
+    /// The machines a removal filed as this install's own names (a slip
+    /// issuer's or an own anchor's mark, or an answer an own carrier key
+    /// signed): removal is terminal, so a frontier join one of them carries
+    /// is a stranger's (FIX 7908). A stranger anchor's removal mark removes
+    /// nothing here, as the fold reads a foreign anchor's chains only under
+    /// the pin (FIX [STRANGER-REMOVED-MARK-GLOBAL]).
     removed: BTreeSet<crate::EntityId>,
     /// The owner anchors a root record named, each signed by its own anchor
     /// alone (world privacy P6b). An anchor signs only what the fold's anchor
@@ -457,7 +461,9 @@ impl<'a> StructureBuilder<'a> {
     /// install's own, or files it under its signer. An owner answer is
     /// taken when its carrier's install key signed it, alone or beside one
     /// owner key's proof that the fold judges (row CARRIER-OWNER-PROOF), as
-    /// its carrier's key stands: own, or a stranger's (mesh PR1b).
+    /// its carrier's key stands: own, or a stranger's (mesh PR1b). Only a
+    /// revision taken as own files its removal (FIX
+    /// [STRANGER-REMOVED-MARK-GLOBAL]).
     fn file_profile(&mut self, entry: &'a AuthorityLogEntry) {
         let AuthorityOp::MachineProfile(profile) = &entry.op else {
             return;
@@ -485,7 +491,7 @@ impl<'a> StructureBuilder<'a> {
         if verify_entry_signatures(entry).is_err() {
             return;
         }
-        if profile.role == MachineRole::Removed {
+        if own && profile.role == MachineRole::Removed {
             self.structure.removed.insert(profile.machine);
         }
         let key = (profile.machine, AuthorityKey::Ed25519(profile.machine_key));
