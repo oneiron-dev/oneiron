@@ -450,8 +450,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/genui/protocol.rs` | src | s | 1 struct · 1 enum | Of336ActionDescriptor, Of336ComponentKind | Moved from `crates/oneiron/src/genui/protocol.rs` (lib split R2: record types below the lib) |
 | `src/genui/receipt_view.rs` | src | s | 1 struct · 2 enum · 2 fn | ReceiptDeepLink, ReceiptDeepLinkKind, ViewTimeResolution | Moved from `crates/oneiron/src/genui/receipt_view.rs` (lib split R2: record types below the lib) |
 | `src/genui/voice_offer.rs` | src | s | 1 struct | VoiceGrantOffer | Moved from `crates/oneiron/src/genui/voice_offer.rs` (lib split R2: record types below the lib) |
-| `src/housekeeping/mod.rs` | src | s | 1 mod · 10 re-export | — | — |
-| `src/housekeeping/schedule.rs` | src | s | 1 fn · 2 const | — | Moved from `crates/oneiron/src/housekeeping/schedule.rs` (lib split R1: record types below the lib) |
+| `src/housekeeping/mod.rs` | src | s | 10 re-export | — | — |
 | `src/identity_topology/mod.rs` | src | s | 1 mod · 11 re-export | — | — |
 | `src/identity_topology/post_hoc_review.rs` | src | s | 3 struct · 4 enum · 2 fn · 1 const · 1 mod | TopologyAuditCorrection, TopologyAuditDecider, TopologyAuditEvidence, TopologyAuditIntent, TopologyAuditOutcome, TopologyAuditResult, TopologyAuditScope | Moved from `crates/oneiron/src/identity_topology/post_hoc_review.rs` (lib split R1: record types below the… |
 | `src/identity_topology/post_hoc_review/home/mod.rs` | src | s | 1 mod | — | — |
