@@ -123,6 +123,13 @@ pub(super) fn project_once(
                 device.revoked = true;
             }
         }
+        if !state
+            .roster
+            .values()
+            .any(|device| !device.revoked && device.roles & ROLE_OWNER != 0)
+        {
+            issues.push(AuthorityFoldIssue::NoRootKey);
+        }
     }
     let machines = merged.as_ref().map_or_else(BTreeMap::new, |state| {
         super::machine_claims::folded_machines(state, unsettled)
@@ -193,6 +200,14 @@ pub(super) fn project_once(
         host_custody: merged
             .as_ref()
             .map_or_else(BTreeSet::new, super::machine_profile::host_custody_closure),
+        passkey_limited_keys: merged.as_ref().map_or_else(BTreeSet::new, |state| {
+            state
+                .roster
+                .keys()
+                .filter(|key| state.passkey_limited(key))
+                .cloned()
+                .collect()
+        }),
         closed_handoffs,
         genesis_fragile: merged.as_ref().is_some_and(|state| {
             state.genesis_recovery_dismissed && !state.recovery_redundancy_established

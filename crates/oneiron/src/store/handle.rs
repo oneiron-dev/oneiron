@@ -359,6 +359,9 @@ pub struct StoreCore {
     /// Scan checks raised since the vault's last write, which keeps them
     /// ([`crate::scan_check`]).
     pub(crate) pending_scan_checks: crate::store::PendingScanChecks,
+    /// Records served to external readers since the vault's last write,
+    /// which keeps them ([`crate::claim::PendingReadExposure`], L8-65).
+    pub(crate) pending_read_exposure: crate::claim::PendingReadExposure,
     /// The engine's `[limits]` rows on this vault: what they are set to,
     /// fixed at open, and the port a crossing asks through
     /// ([`crate::Vault::set_limit_ask`]).
@@ -382,6 +385,11 @@ pub struct StoreCore {
     /// worker, none until one attaches (FIX 14976,
     /// [`crate::Vault::attach_drafter_serving`]). Never persisted.
     pub(crate) drafter_serving: RwLock<Option<Arc<dyn crate::drafter::DrafterServingRuntime>>>,
+    /// The host operator's mail settings on this vault and the runner its
+    /// blocking mail work runs on, the defaults and none until a host
+    /// installs them (fix list row 17645, [`crate::Vault::install_mail_host`]).
+    /// Never persisted.
+    pub(crate) mail_host: crate::mail_pack::MailHostSlot,
     /// The pool code-mode result bodies held in memory draw on: this
     /// vault's own until the host installs the process's
     /// ([`crate::Vault::set_result_memory`]).
@@ -430,6 +438,10 @@ pub struct StoreCore {
     /// Committed consent answers wake this vault's connector-call settler.
     /// Content-free and in memory only; the durable answer is re-read.
     pub(crate) consent_answers: tokio::sync::Notify,
+    /// A committed per-request Coach host job wakes the host's Coach worker
+    /// beside its tick. Content-free and in memory only; the worker re-reads
+    /// its queue.
+    pub(crate) coach_host_requests: std::sync::Arc<tokio::sync::Notify>,
     /// The committed-notification signal live queries wake on (FIX 3084).
     pub(crate) notification_updates: tokio::sync::watch::Sender<u64>,
     /// Content-free, per-vault: bumped after each commit that revoked a
@@ -462,6 +474,14 @@ pub struct StoreCore {
     /// lock because the two critical sections never nest.
     #[cfg(feature = "sync")]
     pub(crate) staged_import_confirm_lock: Mutex<()>,
+    /// Held while an install reads its owner signing slot for this vault,
+    /// checks the slot's key against the roster and gives a revoked key's slot
+    /// a fresh seed. Two callers never act on one reading: a later delete
+    /// would take a fresh key that a vouch had made live in between. It was a
+    /// process-wide lock; the slot belongs to this vault, and a process holds
+    /// one store per vault path, so the vault's own lock keeps every caller
+    /// of the process that reaches the slot in one line.
+    pub(crate) owner_signing_slot_lock: Mutex<()>,
     /// This vault's test seams. `#[cfg(test)]` so a production `StoreCore`
     /// carries neither the field nor its types: see [`TestHooks`] for why a
     /// test seam is exactly the state that must not be process-wide.
@@ -750,6 +770,7 @@ macro_rules! manifest_dbs {
             fn key_custody(&self) -> &crate::store::key_custody::KeyCustody { &self.base.core.key_custody }
             fn gate_custody_archived(&self) -> bool { self.base.core.gate_custody_archived() }
             fn is_union(&self) -> bool { self.room.is_some() }
+            fn room_base(&self) -> Option<&Store> { self.room.is_some().then_some(self.base) }
             fn manifest_memo(&self) -> &crate::gate::ManifestDecodeMemo {
                 &self.base.core.manifest_memo
             }
@@ -796,6 +817,13 @@ macro_rules! manifest_dbs {
             /// alone. A cache keyed and validated by base versions cannot
             /// answer for such a read: overlay writes bump none of them.
             fn is_union(&self) -> bool;
+            /// The base store a room's view composes over, `None` for a
+            /// target that is no room's view. The side-row wall decides a
+            /// room's rows with its custody, which a room only reads and
+            /// never mints through (FIX 2329).
+            fn room_base(&self) -> Option<&Store> {
+                None
+            }
             /// The vault's memo of policy manifest decodes.
             fn manifest_memo(&self) -> &crate::gate::ManifestDecodeMemo;
         }
@@ -827,6 +855,7 @@ macro_rules! manifest_dbs {
             fn key_custody(&self) -> &crate::store::key_custody::KeyCustody { &self.core.key_custody }
             fn gate_custody_archived(&self) -> bool { self.core.gate_custody_archived() }
             fn is_union(&self) -> bool { true }
+            fn room_base(&self) -> Option<&Store> { Some(self.base) }
             fn manifest_memo(&self) -> &crate::gate::ManifestDecodeMemo {
                 &self.core.manifest_memo
             }

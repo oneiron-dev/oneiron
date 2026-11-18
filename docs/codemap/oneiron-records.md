@@ -49,7 +49,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/authority/conversation_training/door.rs` | src | s | 1 struct | ConversationTrainingView | Moved from `crates/oneiron/src/authority/conversation_training/door.rs` (lib split R1: record types below… |
 | `src/authority/conversation_training/mod.rs` | src | s | 1 mod · 1 re-export | — | — |
 | `src/authority/export_secret_work.rs` | src | s | 1 struct · 4 re-export | ExportSecretSupplement | Moved from `crates/oneiron/src/authority/export_secret_work.rs` (lib split R1: record types below the lib) |
-| `src/authority/fold_state.rs` | src | s | 2 struct · 3 enum | ActorBindingRejection, ActorBindingState, ActorBindingStatus, AuthorityFoldIssue, FoldedActorBinding | Moved from `crates/oneiron/src/authority/fold_state.rs` (lib split R1: record types below the lib) |
+| `src/authority/fold_state.rs` | src | s | 2 struct · 5 enum | ActorBindingRejection, ActorBindingState, ActorBindingStatus, AppointmentVerdict, AppointmentVoidReason, AuthorityFoldIssue, FoldedActorBinding | Moved from `crates/oneiron/src/authority/fold_state.rs` (lib split R1: record types below the lib) |
 | `src/authority/forwarded_caller.rs` | src | s | 2 struct | ForwardedCallerProof, ForwardingMachineProof | Moved from `crates/oneiron/src/authority/forwarded_caller.rs` (lib split R1: record types below the lib) |
 | `src/authority/host_action.rs` | src | s | 1 fn | — | Moved from `crates/oneiron/src/authority/host_action.rs` (lib split R1: record types below the lib) |
 | `src/authority/leave_notice_continuity/home_rows.rs` | src | s | 1 enum | NoActorContent | Moved from `crates/oneiron/src/authority/leave_notice_continuity/home_rows.rs` (lib split R1: record types… |
@@ -73,7 +73,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/authority/world_privacy.rs` | src | s | 1 enum · 4 fn · 3 re-export | WorldEditStanding | Moved from `crates/oneiron/src/authority/world_privacy.rs` (lib split R1: record types below the lib) |
 | `src/batch/export/archive_side_tables.rs` | src | s | 1 struct · 2 enum · 4 fn · 1 const | ArchiveLfsObject, ArchiveSideKeyPart, ArchiveSideWithheldReason | Moved from `crates/oneiron/src/batch/export/archive_side_tables.rs` (lib split R2: record types below the lib) |
 | `src/batch/export/document_import.rs` | src | s | 2 fn | — | Moved from `crates/oneiron/src/batch/export/document_import.rs` (lib split R2: record types below the lib) |
-| `src/batch/export/document_types.rs` | src | s | 11 struct · 1 const | ExportAdapterDescriptor, ExportDeterminism, ExportEdge, ExportEpochFloor, ExportReaderFold, ExportResultBody, ExportRun, ExportRunBinding +3 | Moved from `crates/oneiron/src/batch/export/document_types.rs` (lib split R2: record types below the lib) |
+| `src/batch/export/document_types.rs` | src | s | 11 struct · 2 const | ExportAdapterDescriptor, ExportDeterminism, ExportEdge, ExportEpochFloor, ExportReaderFold, ExportResultBody, ExportRun, ExportRunBinding +3 | Moved from `crates/oneiron/src/batch/export/document_types.rs` (lib split R2: record types below the lib) |
 | `src/batch/export/embedding_setup.rs` | src | s | 3 struct · 2 fn | EmbeddingSetupWithheld, PortableEmbeddingSpace, PortableEvidenceFloors | Moved from `crates/oneiron/src/batch/export/embedding_setup.rs` (lib split R2: record types below the lib) |
 | `src/batch/export/foreign_stage/body_work.rs` | src | s | 2 const | — | Moved from `crates/oneiron/src/batch/export/foreign_stage/body_work.rs` (lib split R2: record types below… |
 | `src/batch/export/foreign_stage/mod.rs` | src | s | 1 mod | — | — |
@@ -85,7 +85,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/batch/secret_scan/mod.rs` | src | s | 1 mod · 7 re-export | — | — |
 | `src/booking/agent_api.rs` | src | s | 2 struct · 1 enum · 3 fn · 1 const · 8 re-export | BookingAgentEndpoint, BookingAgentInstructionsBlock, BookingAgentInstructionsDefect | Moved from `crates/oneiron/src/booking/agent_api.rs` (lib split R2: record types below the lib) |
 | `src/booking/anti_abuse/mod.rs` | src | s | 1 mod · 4 re-export | — | — |
-| `src/booking/anti_abuse/rules.rs` | src | s | 3 struct · 1 enum · 2 fn · 1 mod | BookingAntiAbuseOwnerConfig, BookingAntiAbuseRule, BookingRuleOwnerStampBinding, BookingRuleScope | Moved from `crates/oneiron/src/booking/anti_abuse/rules.rs` (lib split R2: record types below the lib) |
+| `src/booking/anti_abuse/rules.rs` | src | s | 3 struct · 1 enum · 4 fn · 1 mod | BookingAntiAbuseOwnerConfig, BookingAntiAbuseRule, BookingRuleOwnerStampBinding, BookingRuleScope | Moved from `crates/oneiron/src/booking/anti_abuse/rules.rs` (lib split R2: record types below the lib) |
 | `src/booking/companion_preset/mod.rs` | src | s | 2 mod · 9 re-export | — | — |
 | `src/booking/companion_preset/preset.rs` | src | s | 2 enum | CompanionConfirmationMode, ProposalCarrier | Moved from `crates/oneiron/src/booking/companion_preset/preset.rs` (lib split R2: record types below the lib) |
 | `src/booking/companion_preset/proposal.rs` | src | s | 7 struct · 3 fn · 1 mod | ChoiceId, CompanionProposal, CompanionSoftConfirmation, ProposalChoice, ProposalId, ProposalTap, TapAggregate | Moved from `crates/oneiron/src/booking/companion_preset/proposal.rs` (lib split R2: record types below the… |
@@ -94,14 +94,15 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/booking/conversion.rs` | src | s | 5 struct · 3 fn · 2 mod · 7 re-export | BookingFaq, BookingLandingContent, BookingSlotPreview, BookingSnippetLink, BookingSnippetSelection | Moved from `crates/oneiron/src/booking/conversion.rs` (lib split R2: record types below the lib) |
 | `src/booking/conversion/policy.rs` | src | s | 2 enum | BookingPolicyPrecedence, BookingPolicyScope | Moved from `crates/oneiron/src/booking/conversion/policy.rs` (lib split R2: record types below the lib) |
 | `src/booking/conversion/ux.rs` | src | s | 4 struct · 1 enum | BookingShortlist, ConfigurableReminderWake, ReminderAction, ReminderStep, ZonedBookingTime | Moved from `crates/oneiron/src/booking/conversion/ux.rs` (lib split R2: record types below the lib) |
-| `src/booking/disclosure_rung.rs` | src | m | 4 struct · 3 enum · 11 fn · 2 mod | BusyBlockRow, DisclosureRung, EventDetailsRow, EventRow, RungProjection, SurfaceClass, TitledEventRow | Moved from `crates/oneiron/src/booking/disclosure_rung.rs` (lib split R2: record types below the lib) |
+| `src/booking/deposit.rs` | src | s | 2 struct · 3 fn · 2 const | DepositRefundRule, DepositTerms | The deposit record types, below the lib beside the card that carries them (lib split R2) |
+| `src/booking/disclosure_rung.rs` | src | m | 3 struct · 3 enum · 11 fn · 2 mod · 1 re-export | DisclosureRung, EventDetailsRow, EventRow, RungProjection, SurfaceClass, TitledEventRow | Moved from `crates/oneiron/src/booking/disclosure_rung.rs` (lib split R2: record types below the lib) |
 | `src/booking/emergency_reschedule.rs` | src | s | 2 struct · 1 enum · 7 fn · 3 mod · 1 re-export | EmergencyActionPolicy, EmergencyRescheduleRequest, OwnerInstructionRecord | Moved from `crates/oneiron/src/booking/emergency_reschedule.rs` (lib split R2: record types below the lib) |
 | `src/booking/emergency_reschedule/planning.rs` | src | s | 1 enum | EmergencyLocalBasis | Moved from `crates/oneiron/src/booking/emergency_reschedule/planning.rs` (lib split R2: record types below… |
 | `src/booking/lifecycle/feed_move.rs` | src | s | 1 struct | BookingRevisionInvitePayload | Moved from `crates/oneiron/src/booking/lifecycle/feed_move.rs` (lib split R2: record types below the lib) |
 | `src/booking/lifecycle/mod.rs` | src | s | 4 fn · 5 mod · 18 re-export | — | Moved from `crates/oneiron/src/booking/lifecycle/mod.rs` (lib split R2: record types below the lib) |
 | `src/booking/lifecycle/token.rs` | src | s | 3 struct · 1 enum · 2 fn · 1 const | HoldLeaseSpec, OpaqueCheckoutLeaseToken, OpaqueLifecycleToken, SessionKey | Moved from `crates/oneiron/src/booking/lifecycle/token.rs` (lib split R2: record types below the lib) |
 | `src/booking/lifecycle/types.rs` | src | s | 9 struct · 3 enum · 4 fn · 1 const | BookingBookerContactValue, BookingEventTypeRefValue, BookingSourcePageValue, BookingStatus, BookingStatusValue, BookingVerb, CalendarRevision, CancelSpec +4 | Moved from `crates/oneiron/src/booking/lifecycle/types.rs` (lib split R2: record types below the lib) |
-| `src/booking/mod.rs` | src | s | 12 mod · 70 re-export | — | — |
+| `src/booking/mod.rs` | src | s | 13 mod · 74 re-export | — | — |
 | `src/booking/public_lens.rs` | src | s | 4 struct · 1 enum · 1 fn | BookingPageModelError, ConstraintFieldConfig, EventTypeCard, PublicBookingPageToken, ThemeTokens | Moved from `crates/oneiron/src/booking/public_lens.rs` (lib split R2: record types below the lib) |
 | `src/booking/publication.rs` | src | s | 1 fn · 2 const | — | Moved from `crates/oneiron/src/booking/publication.rs` (lib split R2: record types below the lib) |
 | `src/booking/solver/counts.rs` | src | s | 2 struct | BookingCountBucket, BookingCounts | Moved from `crates/oneiron/src/booking/solver/counts.rs` (lib split R2: record types below the lib) |
@@ -111,7 +112,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/browser_library/evidence.rs` | src | s | 2 struct · 1 enum · 3 fn · 5 const | FiledScope, SolvedRunScope, SolvedSource | Moved from `crates/oneiron/src/browser_library/evidence.rs` (lib split R1: record types below the lib) |
 | `src/calendar/connectors/literal.rs` | src | s | 1 enum · 3 fn · 2 const | LiteralKind | Moved from `crates/oneiron/src/calendar/connectors/literal.rs` (lib split R2: record types below the lib) |
 | `src/calendar/connectors/mod.rs` | src | s | 4 mod · 10 re-export | — | — |
-| `src/calendar/connectors/outbound.rs` | src | s | 2 enum · 2 fn | CalendarWriteAction, CalendarWriteOutboxState | Moved from `crates/oneiron/src/calendar/connectors/outbound.rs` (lib split R2: record types below the lib) |
+| `src/calendar/connectors/outbound.rs` | src | s | 2 enum · 1 fn | CalendarWriteAction, CalendarWriteOutboxState | Moved from `crates/oneiron/src/calendar/connectors/outbound.rs` (lib split R2: record types below the lib) |
 | `src/calendar/connectors/remote.rs` | src | s | 1 struct · 2 re-export | RemoteWriteRequest | Moved from `crates/oneiron/src/calendar/connectors/remote.rs` (lib split R2: record types below the lib) |
 | `src/calendar/connectors/seat.rs` | src | s | 1 struct · 4 re-export | CalendarConnectorSyncPayload | Moved from `crates/oneiron/src/calendar/connectors/seat.rs` (lib split R2: record types below the lib) |
 | `src/calendar/ingest/admission/continuation.rs` | src | s | 1 struct | IcsPropertyContinuationPayload | Moved from `crates/oneiron/src/calendar/ingest/admission/continuation.rs` (lib split R2: record types below… |
@@ -130,7 +131,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/campaign/presets/shape.rs` | src | s | 9 struct · 2 enum · 1 re-export | BriefSectionData, BriefTemplateData, BriefTemplateKind, BriefTemplateSet, CampaignPresetData, CampaignTemplateData, CommitmentRhythmData, LanePolicyData +3 | Moved from `crates/oneiron/src/campaign/presets/shape.rs` (lib split R1: record types below the lib) |
 | `src/campaign/surface/mod.rs` | src | s | 1 mod · 27 re-export | — | — |
 | `src/campaign/surface/verbs.rs` | src | s | 2 struct | SurfaceCall, SurfaceReply | Moved from `crates/oneiron/src/campaign/surface/verbs.rs` (lib split R1: record types below the lib) |
-| `src/check_in/act_class.rs` | src | m | 1 struct · 4 enum · 6 fn · 6 const · 1 static | ActClass, ActClassRow, ModelCheck, ProofKind, UndoClass | Moved from `crates/oneiron/src/check_in/act_class.rs` (lib split R1: record types below the lib) |
+| `src/check_in/act_class.rs` | src | m | 1 struct · 4 enum · 8 fn · 6 const · 1 static | ActClass, ActClassRow, ModelCheck, ProofKind, UndoClass | Moved from `crates/oneiron/src/check_in/act_class.rs` (lib split R1: record types below the lib) |
 | `src/check_in/mod.rs` | src | s | 6 mod · 24 re-export | — | — |
 | `src/check_in/mode.rs` | src | s | 1 enum · 2 fn · 1 const | CheckInMode | Moved from `crates/oneiron/src/check_in/mode.rs` (lib split R1: record types below the lib) |
 | `src/check_in/pending.rs` | src | m | 7 struct · 4 enum · 12 fn · 1 re-export | CapturedWait, DelayWindow, EligibleBasis, Extension, HolderAnswer, Objection, PendingCheckIn, PendingState +3 | Moved from `crates/oneiron/src/check_in/pending.rs` (lib split R1: record types below the lib) |
@@ -159,9 +160,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/code_run/contribution/execution.rs` | src | s | 2 struct · 3 enum | ExecutedBody, ExecutedStepStatus, ForkEvidenceMode, ForkJudge, ForkScore | Moved from `crates/oneiron/src/code_run/contribution/execution.rs` (lib split R2: record types below the lib) |
 | `src/code_run/contribution/owner.rs` | src | s | 1 struct · 1 enum | OwnerJudgment, OwnerPairRoute | Moved from `crates/oneiron/src/code_run/contribution/owner.rs` (lib split R2: record types below the lib) |
 | `src/code_run/contribution/source_admission.rs` | src | s | 1 struct · 3 enum · 1 fn | ContributionSourceConsumer, ContributionSourcePurpose, ContributionSourceReadRequest, PairReader | Moved from `crates/oneiron/src/code_run/contribution/source_admission.rs` (lib split R2: record types below… |
-| `src/code_run/mod.rs` | src | s | 16 mod · 133 re-export | — | — |
+| `src/code_run/mod.rs` | src | s | 16 mod · 134 re-export | — | — |
 | `src/code_run/model_call.rs` | src | s | 2 struct · 6 enum · 1 fn · 1 const | ModelCallDigests, ModelCallInputPart, ModelCallKind, ModelCallPartRef, NativeReadDigests, NativeReadFailure, NativeReadOutcome, NativeReadRunSource | Moved from `crates/oneiron/src/code_run/model_call.rs` (lib split R2: record types below the lib) |
-| `src/code_run/reader.rs` | src | s | 9 struct · 4 enum · 8 fn · 1 const · 1 mod | ReaderActor, ReaderJobState, ReaderReportReceipt, ReaderRoute, ReaderSpawnReceipt, RunDeadline, SummarizeEffort, SummarizeReply +5 | Moved from `crates/oneiron/src/code_run/reader.rs` (lib split R2: record types below the lib) |
+| `src/code_run/reader.rs` | src | m | 9 struct · 5 enum · 6 fn · 1 const · 1 mod | ReaderActor, ReaderJobState, ReaderJobStatus, ReaderReportReceipt, ReaderRoute, ReaderSpawnReceipt, RunDeadline, SummarizeEffort +6 | Moved from `crates/oneiron/src/code_run/reader.rs` (lib split R2: record types below the lib) |
 | `src/code_run/reader/coverage.rs` | src | s | 2 fn | — | Moved from `crates/oneiron/src/code_run/reader/coverage.rs` (lib split R2: record types below the lib) |
 | `src/code_run/replay.rs` | src | s | 1 const · 3 re-export | — | Moved from `crates/oneiron/src/code_run/replay.rs` (lib split R2: record types below the lib) |
 | `src/code_run/replay_context/mod.rs` | src | s | 1 mod | — | — |
@@ -186,7 +187,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/code_run/types/session_hooks.rs` | src | s | 1 struct · 4 enum | SessionHookDisposition, SessionHookNotKept, SessionHookPhase, SessionHookReceipt, SessionHookState | Moved from `crates/oneiron/src/code_run/types/session_hooks.rs` (lib split R2: record types below the lib) |
 | `src/code_run/vault_read/context_pack.rs` | src | s | 12 struct · 3 enum · 7 re-export | CoreContextPackAccounting, CoreContextPackAccountingReason, CoreContextPackEdgeProvenance, CoreContextPackEdgeRecord, CoreContextPackEmpty, CoreContextPackEmptyReason, CoreContextPackEntityRecord, CoreContextPackItemTokenStats +7 | Moved from `crates/oneiron/src/code_run/vault_read/context_pack.rs` (lib split R2: record types below the lib) |
 | `src/code_run/vault_read/mod.rs` | src | s | 2 mod · 54 re-export | — | — |
-| `src/code_run/vault_read/types.rs` | src | s | 11 struct · 2 enum · 10 re-export | AskResponse, CodeExecuteResponse, CodeSearchResponse, CoreBatchShortIdHydrateItem, CoreBatchShortIdHydrateResponse, CoreEntityRecord, CoreHydrateResponse, CoreHydrateStatus +5 | Moved from `crates/oneiron/src/code_run/vault_read/types.rs` (lib split R2: record types below the lib) |
+| `src/code_run/vault_read/types.rs` | src | s | 12 struct · 2 enum · 1 const · 10 re-export | AskResponse, CodeExecuteResponse, CodeSearchResponse, CoreBatchShortIdHydrateItem, CoreBatchShortIdHydrateResponse, CoreBodyOmitted, CoreEntityRecord, CoreHydrateResponse +6 | Moved from `crates/oneiron/src/code_run/vault_read/types.rs` (lib split R2: record types below the lib) |
 | `src/code_sandbox/egress/mod.rs` | src | s | 1 enum · 1 mod · 1 re-export | RawProtocol | Moved from `crates/oneiron/src/code_sandbox/egress/mod.rs` (lib split R1: record types below the lib) |
 | `src/code_sandbox/egress/receipt.rs` | src | s | 1 struct | EgressReceipt | Moved from `crates/oneiron/src/code_sandbox/egress/receipt.rs` (lib split R1: record types below the lib) |
 | `src/code_sandbox/mod.rs` | src | s | 1 mod · 21 re-export | — | — |
@@ -242,9 +243,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/context_board/tasks/mod.rs` | src | s | 1 mod · 3 re-export | — | — |
 | `src/context_board/tasks/projection.rs` | src | s | 2 struct · 1 enum · 5 fn · 2 const · 1 re-export | CancelRejectionPathology, TaskBoardStatus, TasksOverflow | Moved from `crates/oneiron/src/context_board/tasks/projection.rs` (lib split R2: record types below the lib) |
 | `src/context_pack/mcp_ref.rs` | src | s | 1 struct · 1 enum · 3 fn · 1 const | McpContextPackRef, McpContextPackRefError | Moved from `crates/oneiron/src/context_pack/mcp_ref.rs` (lib split R1: record types below the lib) |
-| `src/context_pack/mod.rs` | src | s | 3 mod · 17 re-export | — | — |
+| `src/context_pack/mod.rs` | src | s | 3 mod · 18 re-export | — | — |
 | `src/context_pack/quarantine.rs` | src | s | 1 enum | PackQuarantineContainer | Moved from `crates/oneiron/src/context_pack/quarantine.rs` (lib split R1: record types below the lib) |
-| `src/context_pack/types.rs` | src | s | 1 struct · 10 re-export | PackStats | Moved from `crates/oneiron/src/context_pack/types.rs` (lib split R1: record types below the lib) |
+| `src/context_pack/types.rs` | src | s | 2 struct · 2 fn · 10 re-export | PackStats, PackWorkingSetStats | Moved from `crates/oneiron/src/context_pack/types.rs` (lib split R1: record types below the lib) |
 | `src/conversation/attendee.rs` | src | s | 1 enum | ContainerAttendee | Moved from `crates/oneiron/src/conversation/attendee.rs` (lib split R2: record types below the lib) |
 | `src/conversation/chat_breakpoint.rs` | src | s | 2 struct | ChatBreakpointRung, ChatBreakpointUserTurn | Moved from `crates/oneiron/src/conversation/chat_breakpoint.rs` (lib split R2: record types below the lib) |
 | `src/conversation/membership.rs` | src | s | 1 struct · 2 enum · 1 re-export | HistoryChoice, MembershipAction, MembershipRow | Moved from `crates/oneiron/src/conversation/membership.rs` (lib split R2: record types below the lib) |
@@ -499,7 +500,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/llm/decision/routine.rs` | src | s | 1 struct · 1 enum · 4 fn · 4 const | RoutineOutcome, RoutineTrail | Moved from `crates/oneiron/src/llm/decision/routine.rs` (lib split R2: record types below the lib) |
 | `src/llm/defaults/mod.rs` | src | s | 1 mod · 2 re-export | — | — |
 | `src/llm/defaults/submit.rs` | src | s | 1 struct · 1 enum | PurposeDefaultProposal, PurposeDefaultProposalStatus | Moved from `crates/oneiron/src/llm/defaults/submit.rs` (lib split R2: record types below the lib) |
-| `src/llm/manifest/doors.rs` | src | s | 1 struct · 8 re-export | OneironerBundleReceipt | Moved from `crates/oneiron/src/llm/manifest/doors.rs` (lib split R2: record types below the lib) |
+| `src/llm/manifest/doors.rs` | src | s | 1 struct · 7 re-export | OneironerBundleReceipt | Moved from `crates/oneiron/src/llm/manifest/doors.rs` (lib split R2: record types below the lib) |
 | `src/llm/manifest/encoder_export.rs` | src | s | 2 struct · 6 fn | CheckpointPin, SharedBaseFork | Moved from `crates/oneiron/src/llm/manifest/encoder_export.rs` (lib split R2: record types below the lib) |
 | `src/llm/manifest/mod.rs` | src | s | 2 mod · 14 re-export | — | — |
 | `src/llm/mod.rs` | src | s | 11 mod · 268 re-export · 1 crate-vis | — | — |
@@ -542,9 +543,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/memory/key_value/types.rs` | src | s | 3 struct · 4 re-export | KeyValueDeleteReceipt, KeyValueItem, KeyValuePutReceipt | Moved from `crates/oneiron/src/memory/key_value/types.rs` (lib split R2: record types below the lib) |
 | `src/memory/merge_queue_doors/check_receipt.rs` | src | s | 4 struct · 1 re-export | CodeCheckAttemptView, CodeCheckCommandResult, CodeCheckReceiptView, CodeCheckReuseSource | Moved from `crates/oneiron/src/memory/merge_queue_doors/check_receipt.rs` (lib split R2: record types below… |
 | `src/memory/merge_queue_doors/checker_types.rs` | src | s | 1 struct · 2 enum · 5 re-export | MergeQueueCheckState, MergeQueueCheckWorkKind, MergeQueueCheckWorkView | Moved from `crates/oneiron/src/memory/merge_queue_doors/checker_types.rs` (lib split R1: record types below… |
-| `src/memory/merge_queue_doors/mod.rs` | src | s | 3 mod · 12 re-export | — | — |
+| `src/memory/merge_queue_doors/mod.rs` | src | s | 3 mod · 7 re-export | — | — |
 | `src/memory/merge_queue_doors/types.rs` | src | s | 5 struct · 4 re-export | MergeQueueBatchView, MergeQueueObservation, MergeQueuePathView, MergeQueuePointersView, MergeQueueRequeueView | Moved from `crates/oneiron/src/memory/merge_queue_doors/types.rs` (lib split R2: record types below the lib) |
-| `src/memory/mod.rs` | src | s | 24 mod · 272 re-export | — | — |
+| `src/memory/mod.rs` | src | s | 24 mod · 273 re-export | — | — |
 | `src/memory/origin_doors/mod.rs` | src | s | 1 mod · 30 re-export | — | — |
 | `src/memory/origin_doors/workbench_types.rs` | src | s | 8 struct · 3 re-export | CodeForkDocumentView, CodeForkView, CodeIngressRef, CodePushIngressView, CodeRepoImportLink, CodeRepoView, CodeRunWorkFile, CodeRunWorkLink | Moved from `crates/oneiron/src/memory/origin_doors/workbench_types.rs` (lib split R2: record types below the… |
 | `src/memory/outbound/mod.rs` | src | s | 1 mod · 8 re-export | — | — |
@@ -882,7 +883,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/workspace_roster/project/mod.rs` | src | s | 1 struct · 1 fn · 10 mod · 46 re-export · 1 crate-vis | ProjectRoomChange | Moved from `crates/oneiron/src/workspace_roster/project/mod.rs` (lib split R2: record types below the lib) |
 | `src/workspace_roster/project/proposal.rs` | src | s | 2 enum · 2 re-export | ProjectCardState, ProjectDetectionAnswer | Moved from `crates/oneiron/src/workspace_roster/project/proposal.rs` (lib split R2: record types below the… |
 | `src/workspace_roster/project/resolution.rs` | src | s | 2 struct · 3 fn · 2 const | ProjectResolution, ProjectSeal | Moved from `crates/oneiron/src/workspace_roster/project/resolution.rs` (lib split R2: record types below the… |
-| `src/workspace_roster/project/revision.rs` | src | s | 1 enum · 1 fn · 1 const · 1 re-export | RevisionOrigin | Moved from `crates/oneiron/src/workspace_roster/project/revision.rs` (lib split R2: record types below the… |
+| `src/workspace_roster/project/revision.rs` | src | s | 1 enum · 1 fn · 1 re-export | RevisionOrigin | Moved from `crates/oneiron/src/workspace_roster/project/revision.rs` (lib split R2: record types below the… |
 | `src/workspace_roster/project/widen.rs` | src | s | 1 struct · 1 enum | ProjectWidenAsk, ProjectWidenAxis | Moved from `crates/oneiron/src/workspace_roster/project/widen.rs` (lib split R2: record types below the lib) |
 | `src/workspace_roster/room_leave.rs` | src | s | 1 struct · 1 re-export | RoomLeaveOutcome | Moved from `crates/oneiron/src/workspace_roster/room_leave.rs` (lib split R2: record types below the lib) |
 | `src/workspace_roster/rooms/audience_events.rs` | src | s | 3 enum · 3 fn · 2 const · 1 re-export | AudienceOp, AudiencePerson, JoinSettlement | Moved from `crates/oneiron/src/workspace_roster/rooms/audience_events.rs` (lib split R1: record types below… |
@@ -909,3 +910,4 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/fingerprint_keep_policy_hash.rs` | test | s | 3 fn · 1 crate-vis | — | K-proof (oracle) for PLAN-UC-04 stage 3.4a: the hosted legal policy hash keeps its bytes |
 | `tests/identity_ask_key_hex.rs` | test | s | — | — | The identity ask key's hex form (UC-07 PR 8; FIX [IDENTITY-ASK-KEY-ACCEPTS-SIGN]) |
 | `tests/records_register_names.rs` | test | s | — | — | Register names (oneiron-records, wave A1): the names each hand table below wrote before its type became a… |
+| `tests/snapshot_id_side_key.rs` | test | s | — | — | `SnapshotId`'s side-table key (UC-06 PR 9) |

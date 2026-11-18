@@ -5,8 +5,9 @@ use axum::extract::rejection::PathRejection;
 use axum::http::header::{CACHE_CONTROL, CONTENT_DISPOSITION, LOCATION, X_CONTENT_TYPE_OPTIONS};
 use axum::http::{HeaderValue, StatusCode};
 use oneiron::booking::{
-    BookingPageLens, BookingPageModel, BookingPagePresentation, BookingPagePublication, BookingVerb,
-    PUBLIC_BOOKING_ROUTE_PREFIX, PublicBookingAction, PublicBookingPageToken, slot_mask,
+    BookingPageLens, BookingPageModel, BookingPagePresentation, BookingPagePublication,
+    BookingVerb, PUBLIC_BOOKING_ROUTE_PREFIX, PublicBookingAction, PublicBookingPageToken,
+    slot_mask,
 };
 use oneiron::settings::ReadDestination;
 
@@ -160,6 +161,7 @@ pub(crate) async fn render_public_booking_page(
         slots,
         flex_used,
         full_days,
+        ..
     } = response
     else {
         return Err(ApiError::internal_server_error(
@@ -424,8 +426,14 @@ mod availability_tests;
 #[path = "client_address_tests.rs"]
 mod client_address_tests;
 #[cfg(test)]
+#[path = "public_deposit_tests.rs"]
+mod deposit_tests;
+#[cfg(test)]
 #[path = "public_fixture.rs"]
 mod fixture;
+#[cfg(test)]
+#[path = "public_grant_view_tests.rs"]
+mod grant_view_tests;
 #[cfg(test)]
 #[path = "public_lifecycle_tests.rs"]
 mod lifecycle_tests;

@@ -568,11 +568,9 @@ fn authored_source_save_update_and_fork_keep_real_files_atomic_and_candidate() {
     let vault = crate::Vault::open(dir.path(), crate::VaultConfig::default()).unwrap();
     assert_eq!(source_files(&vault, id), files("2"));
     assert_eq!(source_files(&vault, fork), copied);
-    let export = vault
-        .export_whole_vault(crate::context_pack::PackFormat::Json)
-        .unwrap();
+    let export = vault.export_whole_vault(false).unwrap();
     let (_other_dir, target) = open_vault();
-    target.import_whole_vault_json(export.bytes()).unwrap();
+    target.import_whole_vault_archive(export.bytes()).unwrap();
     assert_eq!(source_files(&target, id), files("2"));
     assert_eq!(source_files(&target, fork), copied);
     let imported = target.get_skill_record(&id).unwrap().unwrap();

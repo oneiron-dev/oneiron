@@ -13,7 +13,12 @@ use super::PENDING;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::store::ManifestDbs;
+use crate::store::checkpoint_payload::rows::descriptor::{AdapterTable, CapturedByAdapter};
 use crate::store::checkpoint_payload::rows::{self, Captured, OwnerRef, RowLocator};
+
+/// The staged index inputs, which the revision-ledger getter's own capture
+/// places ([`capture`]).
+pub(crate) const TABLE: &dyn AdapterTable = &CapturedByAdapter(PENDING);
 
 pub(crate) fn capture(dbs: &impl ManifestDbs, txn: &RoTxn<'_>, out: &mut Captured) -> Result<()> {
     for row in rows::typed_rows(dbs, txn, PENDING, out)? {
