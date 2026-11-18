@@ -1228,11 +1228,12 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/config/self_heal.rs` | src | s | 2 struct · 1 enum · 2 fn · 4 crate-vis | DetectorConfig, DetectorTier, SelfHealConfig | The `[self_heal]` section: the model-graded detectors this deployment runs over its retrieval telemetry… |
 | `src/config/serve_args.rs` | src | L | 1 struct · 1 crate-vis | ServeArgs | CLI surface: `ServeArgs`, its redacting `Debug`, and argv-derived overrides |
 | `src/config/serve_args/debug.rs` | src | s | — | — | `ServeArgs`'s redacting `Debug` |
-| `src/config/server_config.rs` | src | L | 2 struct · 1 enum · 3 fn · 1 re-export | IngressAuth, ServeConfig, SyncServerConfig | Resolved server configuration: `SyncServerConfig` and `ServeConfig` |
+| `src/config/server_config.rs` | src | m | 2 struct · 1 enum · 1 fn · 1 re-export | IngressAuth, ServeConfig, SyncServerConfig | Resolved server configuration: `SyncServerConfig` and `ServeConfig` |
 | `src/config/server_config/artifact_localhost.rs` | src | s | 1 fn | — | The host a local vault answers on under `*.localhost` (APP-HOST = A), which serve names on the operator's… |
 | `src/config/server_config/debug.rs` | src | s | — | — | The redacting `Debug` of [`SyncServerConfig`] and [`ServeConfig`]: a secret prints as redacted, never its… |
 | `src/config/server_config/embedded_holder.rs` | src | s | 1 struct · 1 crate-vis | EmbeddedHolderOverrides | [`EmbeddedHolderOverrides`]: the explicit vault inputs an embedded binding resolved over its config file… |
 | `src/config/server_config/sync_server_methods.rs` | src | s | 2 fn | — | The methods of [`SyncServerConfig`]: the usage debit mode its runtime mode derives, and its validation |
+| `src/config/server_config/vault_config.rs` | src | s | 2 fn | — | The vault config a [`ServeConfig`] names: with this device's page seal, with none, and the privacy posture… |
 | `src/config/shared_env.rs` | src | s | 1 struct · 1 crate-vis | SharedEnvConfig | `[[shared_env]]`: the dedicated shared-vault envs this host keeps open |
 | `src/config/skills.rs` | src | s | 1 struct · 1 fn · 1 re-export · 4 crate-vis | SkillsConfig | The `[skills]` section: how the skill-edit gate's live slice is funded at this server, and the skills a… |
 | `src/config/skills/replay_judge.rs` | src | s | 1 struct · 4 fn · 4 crate-vis | ReplayJudgeWording | `[skills.replay_judge]`: the serve replay judge's wording (OF-495, FIX 1091) |
