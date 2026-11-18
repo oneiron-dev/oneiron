@@ -808,9 +808,9 @@ pub(super) fn land(
         }
         NoteVerdict::Switch | NoteVerdict::Reject => None,
     };
-    // The fork's found keys, their rulings and its ruled screen go to the
-    // NOTE before its text is admitted there: a value ruled in the fork
-    // lands kept, and a key still open is answered on the NOTE
+    // The fork's found keys and their rulings go to the NOTE before its text
+    // is admitted there: a value ruled in the fork lands kept, and a key
+    // still open is answered on the NOTE
     // (NOTE-PROPOSAL-FORK-RULING-KEEPS-HANDLE). A reject lands no text. A
     // merge the write gate holds as Proposed keeps the move with the fork
     // still pending, so a later reject leaves its keys on the NOTE (FIX

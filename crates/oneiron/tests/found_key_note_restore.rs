@@ -1,8 +1,8 @@
 //! FIX [L6-03-NOTE-RULING-KEEPS-DOC-HANDLE] (Engine RULING 14 Nov 13:01,
 //! NEXT-ROW-21 B): every NOTE read serves the NOTE's document, and the mask
-//! on write stored a found key's handle there. The owner's "not a secret"
-//! answer, or the writer's own "kept as text", puts the value back into the
-//! document, so a NOTE read shows the value, not "[secret scN]".
+//! on write stored a found key's handle there. The owner's "not a secret" or
+//! "kept as text" answer puts the value back into the document, as the
+//! owner's own edit, so a NOTE read shows the value, not "[secret scN]".
 //!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test found_key_note_restore`.
 
@@ -25,8 +25,7 @@ const HANDLE_OPEN: &str = "[secret ";
 
 /// A vault with a device keystore, its embedded owner, a live PERSON who
 /// does not own it, and this install's live machine profile, so a ruling
-/// carries its revoke to the owner's other machines (the
-/// `found_key_audit_author.rs` fixture).
+/// carries its revoke to the owner's other machines.
 fn open_vault() -> Result<(tempfile::TempDir, Vault, EntityId, EntityId), Box<dyn std::error::Error>>
 {
     let dir = tempfile::tempdir()?;
@@ -127,15 +126,14 @@ fn a_note_body_ruled_not_a_secret_reads_back_with_its_value() -> TestResult {
 }
 
 #[test]
-fn a_note_body_its_writer_kept_as_text_reads_back_with_its_value() -> TestResult {
+fn a_note_body_another_person_wrote_kept_as_text_reads_back_with_its_value() -> TestResult {
     let (_dir, vault, owner, writer) = open_vault()?;
     let owner_proof = proof_of(&vault, owner)?;
     let written = format!("Release notes: deploy with token={TOKEN}.");
     let note = write_note(&vault, writer, &written);
     let handle = found_handle(&vault, &owner_proof, &note)?;
-    let writer_proof = proof_of(&vault, writer)?;
 
-    vault.keep_found_key_as_text(&writer_proof, ActSurface::ThisInstall, &handle)?;
+    vault.keep_found_key_as_text(&owner_proof, ActSurface::ThisInstall, &handle)?;
 
     for markdown in markdown_reads(&vault, note)? {
         assert_eq!(
@@ -143,14 +141,14 @@ fn a_note_body_its_writer_kept_as_text_reads_back_with_its_value() -> TestResult
             "kept as text puts the value back in the NOTE's document"
         );
     }
-    // The birth record names the writer too, so only a later record counts
-    // (REVIEW-7876 F3).
+    // Only a record after the birth counts (REVIEW-7876 F3): the restore is
+    // the owner's edit, not the writer's.
     let document = vault.note_document(note)?;
     assert!(
         document
             .authorship
             .iter()
-            .any(|record| record.operation != note && record.actor == NoteActor::Actor(writer)),
+            .any(|record| record.operation != note && record.actor == NoteActor::Actor(owner)),
         "the restore is an edit by the person who answered: {:?}",
         document.authorship
     );
