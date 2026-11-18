@@ -43,6 +43,18 @@ impl KnownValues {
             .collect()
     }
 
+    /// Whether `data` is, whole, one value the custody record `handle`
+    /// holds, at any generation its history keeps, in any spelling
+    /// [`Self::spans_except`] reads (FIX RECEIPT-RECORDS-CALL-HELD-INPUT):
+    /// what a handle a held row keeps meets in the offer read against it.
+    pub(crate) fn is_whole_held_by(&self, data: &[u8], handle: &str) -> bool {
+        !data.is_empty()
+            && self
+                .spans_held_by(data, |_| false, |held| held == handle)
+                .first()
+                .is_some_and(|hit| hit.span == (0..data.len()))
+    }
+
     pub(super) fn of_entries<'a>(
         master: &'a [u8; 32],
         values: impl IntoIterator<Item = (&'a KnownEntry, ValueOrigin, String)>,

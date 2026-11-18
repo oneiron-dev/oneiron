@@ -2,7 +2,7 @@
 //! rows are compared with it. A continuation also asks here whether a
 //! receipt past its cut may have run (FIX 4199).
 
-use crate::batch::secret_scan::held_record_forms;
+use crate::batch::secret_scan::{MapOrder, held_row_meets};
 use crate::code_run::CompareKnown;
 use crate::code_run::payload::{
     agent_verb_call_identity as call_identity, decode_self_dispatch_outcome,
@@ -16,6 +16,7 @@ use crate::code_run::types::{
 use crate::error::{Error, Result};
 use crate::task_verb::sdk::AgentVerb;
 use crate::{EntityId, Vault};
+use oneiron_store::batch::secret_scan::mask::wipe::PlanTree;
 
 use super::super::{ExecutorCallSite, HostSelfDispatcher};
 
@@ -309,25 +310,26 @@ pub(super) fn records_call(
 /// Whether `kept`, a live write row the side-row wall admitted, holds the
 /// verb call `offered` spells (FIX RECEIPT-RECORDS-CALL-HELD-INPUT). The two
 /// verb names are read first, as written, and must be one verb; only the
-/// JSON input texts are read for custody's values. The wall placed each
-/// shaped secret, as the handle of a record it minted for it, and each value
-/// base custody held, as its record's handle, in the input text the row
-/// keeps. While base custody knows a value, read through `known`, both
-/// input texts are read for the values of the records the row's handles
-/// name alone ([`held_record_forms`]): each as its record's handle, never
-/// inside a handle on either side, and no shape sought. So a handle the
-/// row holds meets a value its record holds, or the same handle offered
-/// again, and nothing else: a value another record holds, another token of
-/// a shape, or a longer value another record took since, is another write
-/// (FIX REPLAY-COMPARE-KNOWN-OTHER-CALLERS); a key the wall kept as written
-/// with its switch off, and a value the row holds as written, meet only
-/// themselves. A handle no record custody knows names (literal text, or an
+/// JSON inputs are read for custody's values. The wall placed each shaped
+/// secret, as the handle of a record it minted for it, and each value base
+/// custody held, as its record's handle, in the input text the row keeps.
+/// While base custody knows a value, read through `known`, both inputs are
+/// read as JSON and the row's is a template ([`held_row_meets`]): each
+/// handle it holds that names a record custody knows meets the same handle
+/// offered again, or one value of that record at any generation, whose
+/// length lets the row's text after it match; every other byte meets only
+/// itself. So a value another record holds, another token of a shape, or a
+/// longer value another record took since, is another write (FIX
+/// REPLAY-COMPARE-KNOWN-OTHER-CALLERS); a key the wall kept as written with
+/// its switch off, and a value the row holds as written, meet only
+/// themselves, also after custody took that value (a rotation into it
+/// included). A handle no record custody knows names (literal text, or an
 /// erased record's) reads only as written, so two such handles are two
 /// writes, and a custody that knows no value leaves the two to meet as
-/// written, by [`row_identity`] alone. The inputs are compared by their
-/// identity, so their object keys may come in any order, as a receipt reads
-/// them. A row an erase took the words of and a custody value row (its
-/// input is a digest) meet only by [`row_identity`].
+/// written, by [`row_identity`] alone. An input's object keys may come in
+/// any order, as a receipt reads them. A row an erase took the words of and
+/// a custody value row (its input is a digest) meet only by
+/// [`row_identity`].
 fn held_input_meets(
     kept: &CodeRunBridgeCall,
     offered: &rmpv::Value,
@@ -344,21 +346,40 @@ fn held_input_meets(
     let Some(known) = known.get()? else {
         return Ok(false);
     };
-    let Some((held, again)) = held_record_forms(
-        &rmpv::Value::from(input),
-        &rmpv::Value::from(again_input),
-        &known,
-    )?
-    else {
+    let tree = |input: &str| {
+        serde_json::from_str::<serde_json::Value>(input)
+            .ok()
+            .map(|input| json_tree(&input))
+    };
+    let (Some(held), Some(again)) = (tree(input), tree(again_input)) else {
         return Ok(false);
     };
-    let identity = |input: &rmpv::Value| {
-        Some(call_identity(
-            verb,
-            &serde_json::from_str(input.as_str()?).ok()?,
-        ))
-    };
-    Ok(identity(&held).is_some_and(|held| identity(&again) == Some(held)))
+    held_row_meets(&PlanTree(held).0, &PlanTree(again).0, &known, MapOrder::Any)
+}
+
+/// `value` as a MessagePack tree, each object's members in the order the
+/// JSON holds them: a number as an integer when it is one, else as a
+/// 64-bit float.
+fn json_tree(value: &serde_json::Value) -> rmpv::Value {
+    match value {
+        serde_json::Value::Null => rmpv::Value::Nil,
+        serde_json::Value::Bool(flag) => rmpv::Value::Boolean(*flag),
+        serde_json::Value::Number(number) => number
+            .as_i64()
+            .map(rmpv::Value::from)
+            .or_else(|| number.as_u64().map(rmpv::Value::from))
+            .unwrap_or_else(|| rmpv::Value::F64(number.as_f64().unwrap_or(f64::NAN))),
+        serde_json::Value::String(text) => rmpv::Value::from(text.as_str()),
+        serde_json::Value::Array(items) => {
+            rmpv::Value::Array(items.iter().map(json_tree).collect())
+        }
+        serde_json::Value::Object(fields) => rmpv::Value::Map(
+            fields
+                .iter()
+                .map(|(key, member)| (rmpv::Value::from(key.as_str()), json_tree(member)))
+                .collect(),
+        ),
+    }
 }
 
 /// Whether a write row carries the answer its receipt kept: a verb's answer,

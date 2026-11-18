@@ -37,6 +37,7 @@ pub(crate) use self::mask::carrier::{
     mark_carrier_text_in_txn, mark_carrier_texts_in_txn, mask_spanning_json, mask_unplaced_json,
 };
 pub(crate) use self::mask::claim_value_plan::plan_masked_claim_value_in_txn;
+pub(crate) use self::mask::held_template::{MapOrder, held_row_meets};
 #[cfg(oneiron_test_support)]
 pub(crate) use self::mask::mark_text_value_in_txn;
 pub(super) use self::mask::mask_batch_ops;
@@ -52,7 +53,7 @@ pub(crate) use self::mask::retained_repo::{
 pub(crate) use self::mask::side_row::admit_typed_with_rule;
 pub(crate) use self::mask::side_row::{
     SidePart, TextReplacements, admit_side_parts, admit_side_row, admit_tracked_side_parts,
-    admit_typed, admitted_from_known, from_named_tree, held_record_forms, named_tree,
+    admit_typed, admitted_from_known, admitted_from_plan, from_named_tree, named_tree,
     origin as side_row_origin,
 };
 pub(crate) use self::mask::spool::{

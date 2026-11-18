@@ -39,6 +39,7 @@ pub(super) mod claim_value_plan;
 // An escaped key's span (FIX 1369).
 use oneiron_store::batch::secret_scan::mask::escaped_span;
 mod file_plane;
+pub(super) mod held_template;
 pub(super) mod known_marks;
 mod known_note;
 mod leaf_keys;

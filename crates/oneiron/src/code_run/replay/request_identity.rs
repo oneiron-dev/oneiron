@@ -33,7 +33,7 @@ use super::super::support::{invalid_code_run_replay, request_map};
 use super::super::types::SelfEffect;
 use super::CodeRunBridgeCall;
 use crate::Result;
-use crate::batch::secret_scan::{admission_form, held_record_forms};
+use crate::batch::secret_scan::{MapOrder, admission_form, held_row_meets};
 use crate::code_run::RESPONSE_ERASED;
 use crate::store::known_value_index::KnownValues;
 use crate::task_verb::sdk::AgentVerb;
@@ -209,16 +209,18 @@ impl CodeRunBridgeCall {
     ///
     /// As `admitted_from_known` does, a live row that is not `offered` as
     /// written is read, once base custody knows a value, through `known`,
-    /// for the values of the records the row's handles name alone, each as
-    /// its record's handle on both sides ([`held_record_forms`], FIX
+    /// as a template ([`held_row_meets`], FIX
     /// REPLAY-COMPARE-KNOWN-OTHER-CALLERS, FIX
-    /// RECEIPT-RECORDS-CALL-HELD-INPUT): the row took that value's handle,
-    /// and a value another record holds, shaped or not, stays another
-    /// request. A custody that knows no value holds no record a handle
-    /// names, so the two meet only as written: never by a digest that reads
-    /// two shaped tokens, or two keys the row kept as written with the
-    /// switch off, as one stand-in. An erased row meets `offered` as
-    /// [`ErasedRequest::meets_known`] reads it.
+    /// RECEIPT-RECORDS-CALL-HELD-INPUT): each handle the row holds that
+    /// names a record custody knows meets the same handle or one value of
+    /// that record, and every other byte meets only itself, so a value
+    /// another record holds, shaped or not, stays another request, and text
+    /// the row holds as written never reads as a handle. A custody that
+    /// knows no value holds no record a handle names, so the two meet only
+    /// as written: never by a digest that reads two shaped tokens, or two
+    /// keys the row kept as written with the switch off, as one stand-in.
+    /// An erased row meets `offered` as [`ErasedRequest::meets_known`]
+    /// reads it.
     ///
     /// # Errors
     ///
@@ -239,12 +241,10 @@ impl CodeRunBridgeCall {
         if held == again {
             return Ok(true);
         }
-        Ok(match known.get()? {
-            Some(known) => {
-                held_record_forms(&held, &again, &known)?.is_some_and(|(held, again)| held == again)
-            }
-            None => false,
-        })
+        match known.get()? {
+            Some(known) => held_row_meets(&held, &again, &known, MapOrder::Written),
+            None => Ok(false),
+        }
     }
 
     /// Whether this call dispatched `offered`, a kept or an erased row read
