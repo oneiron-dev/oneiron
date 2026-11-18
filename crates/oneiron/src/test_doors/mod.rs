@@ -127,6 +127,7 @@ pub mod fingerprint_keep_executor_cohort_credit;
 pub mod fingerprint_keep_git_wire;
 pub mod fingerprint_keep_hook_digests;
 pub mod fingerprint_keep_imap_plan_encoder_digests;
+pub mod fingerprint_keep_import_digests;
 pub mod fingerprint_keep_index_keys;
 pub mod fingerprint_keep_origin;
 pub mod fingerprint_keep_release_inquiry_digests;
