@@ -51,8 +51,25 @@ pub fn resumed_write_meets_its_stored_receipt(
     first: &SelfAgentVerbCall,
     again: &SelfAgentVerbCall,
 ) -> Result<StoredReceiptMeet> {
+    resumed_write_meets_its_stored_receipt_after(vault, first, again, |_| Ok(()))
+}
+
+/// [`resumed_write_meets_its_stored_receipt`], with `between` run once the
+/// stored row reads back and before the write is made again: a change
+/// custody takes in that time (FIX RECEIPT-RECORDS-CALL-HELD-INPUT).
+///
+/// # Errors
+///
+/// A call the bridge cannot record, a receipt the vault cannot store or
+/// read back, or `between`'s own.
+pub fn resumed_write_meets_its_stored_receipt_after(
+    vault: &crate::Vault,
+    first: &SelfAgentVerbCall,
+    again: &SelfAgentVerbCall,
+    between: impl FnOnce(&crate::Vault) -> Result<()>,
+) -> Result<StoredReceiptMeet> {
     let (write_meets, close_meets, kept_input) =
-        crate::code_run::resumed_write_meets_stored_receipt(vault, first, again)?;
+        crate::code_run::resumed_write_meets_stored_receipt(vault, first, again, between)?;
     Ok(StoredReceiptMeet {
         write_meets,
         close_meets,
