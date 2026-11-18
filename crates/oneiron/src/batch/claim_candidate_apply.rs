@@ -1,5 +1,7 @@
 use super::*;
 
+use std::collections::HashMap;
+
 use heed::RwTxn;
 
 use crate::edge::EdgeKind;
@@ -315,6 +317,89 @@ pub(crate) fn claim_candidate_birth_facet(
     match stored_facet {
         Some(facet) => Ok(facet),
         None => crate::claim::default_facet_in(store, txn),
+    }
+}
+
+/// [`claim_candidate_birth_facet`] as apply reads it, for a walk over a
+/// batch's ops before any of them applies (PREFLIGHT-SAME-BATCH-BIRTH-FACET).
+/// Apply runs the ops in order in one transaction: a CLAIM an earlier op
+/// births stamps the facet a later candidate of that id is stored at, and a
+/// delete leaves the id to the vault default. The pre-batch state shows
+/// neither. A write over a stored claim keeps its birth facet (apply refuses
+/// one that names another, `FacetStampImmutable`), so only births and
+/// deletes change the answer.
+#[derive(Default)]
+pub(crate) struct BatchBirthFacets {
+    /// Each id an earlier op wrote: `Some(facet)` born at it, `None` deleted.
+    written: HashMap<EntityId, Option<EntityId>>,
+}
+
+impl BatchBirthFacets {
+    /// The facet a candidate for `id` is stored at once the ops noted so far
+    /// have applied.
+    pub(crate) fn birth_facet(
+        &self,
+        store: &Store,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+    ) -> Result<EntityId> {
+        match self.written.get(id) {
+            Some(Some(facet)) => Ok(*facet),
+            Some(None) => crate::claim::default_facet_in(store, txn),
+            None => claim_candidate_birth_facet(store, txn, id),
+        }
+    }
+
+    /// Notes what `op` does to the birth facet of the id it writes; call it
+    /// after the read for `op` itself. A body apply cannot decode aborts the
+    /// batch at that op, so no later op reads it and it is not noted.
+    pub(crate) fn note(
+        &mut self,
+        store: &Store,
+        txn: &heed::RoTxn<'_>,
+        op: &BatchOp,
+    ) -> Result<()> {
+        let (id, facet) = match op {
+            BatchOp::Put {
+                id,
+                entity_type,
+                data,
+                ..
+            } if *entity_type == crate::registry::ENTITY_TYPE_CLAIM => {
+                let Ok(body) = crate::write_envelope::claim_body::decode_claim_body(data, true)
+                else {
+                    return Ok(());
+                };
+                (id, body.scope_facet)
+            }
+            BatchOp::ClaimCandidate {
+                id,
+                candidate,
+                envelope,
+                ..
+            } => {
+                let facet = self.birth_facet(store, txn, id)?;
+                let Ok(body) = (**candidate).clone().into_claim_body(envelope, facet) else {
+                    return Ok(());
+                };
+                (id, body.scope_facet)
+            }
+            BatchOp::Delete { id } => {
+                self.written.insert(*id, None);
+                return Ok(());
+            }
+            _ => return Ok(()),
+        };
+        // A birth when no row is stored for `id` at this point of the batch:
+        // apply then stamps the body's facet as the claim's birth edge.
+        let stored = match self.written.get(id) {
+            Some(written) => written.is_some(),
+            None => crate::ports::EntityStoreRead::port_entity_present(store, txn, id)?,
+        };
+        if !stored {
+            self.written.insert(*id, Some(facet));
+        }
+        Ok(())
     }
 }
 
