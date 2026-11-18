@@ -527,11 +527,11 @@ fn consume_decided_wake_in_txn(
     Ok(RowMerge::Written)
 }
 
-/// Drops, in the caller's writer, the riding wake this machine recorded
-/// under `map_key` once the window no longer holds it: an erase took it (a
-/// decided wake arrives as an `Admitted` row instead). The home keeps what
-/// it owes; a wake that does not ride was never carried. Answers whether a
-/// wake went.
+/// Drops, in the caller's writer, the wake this machine recorded under
+/// `map_key` and carried, once the window no longer holds it: an erase took
+/// it (a decided wake arrives as an `Admitted` row instead). The home keeps
+/// what it owes; a wake that neither rides nor bears a carried mark was
+/// never carried. Answers whether a wake went.
 pub(crate) fn drop_wake_row_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -628,7 +628,8 @@ pub(crate) fn arming_row_outranked_here_in_txn(
 /// hold: one this machine recorded and held while it was the home goes to the
 /// home elected since, which admits it at its rebind or its expiry. A copy
 /// this machine took from a window as the home never rides from it: its
-/// recording machine carries that wake.
+/// recording machine carries that wake. A wake this machine retracted rides
+/// as owed no more, whether or not it rides again.
 pub(crate) fn turn_wake_rows_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,

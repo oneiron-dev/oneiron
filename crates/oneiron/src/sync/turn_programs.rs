@@ -238,10 +238,11 @@ fn mirror_arming_rows(
 }
 
 /// Writes into `doc`, base window `key`'s, the wake rows this vault owes for
-/// TURN `turn` that ride to the home, except over a carried row the home
-/// decided, and writes as decided each carried wake of the turn this vault
-/// admitted. Each emitted `Owed` row's arming is mirrored first into the same
-/// window. Returns whether it wrote; the caller commits.
+/// TURN `turn` that ride to the home, except over a carried row past `Owed`
+/// (retracted, released or decided), and writes as decided each carried wake
+/// of the turn this vault admitted. Each emitted `Owed` row's arming is
+/// mirrored first into the same window. Returns whether it wrote; the caller
+/// commits.
 pub(crate) fn mirror_turn_program_wakes(
     vault: &Vault,
     doc: &LoroDoc,
@@ -439,8 +440,10 @@ fn merge_armings(vault: &Vault, window: &str, rows: Vec<(String, Option<Vec<u8>>
     }
 }
 
-/// Merges each carried wake row in one write, on the home only, and drops
-/// the riding wake this vault recorded for each row the window cleared.
+/// Merges each carried wake row in one write, each as
+/// `replica::merge_wake_row_in_txn` takes its kind (an `Owed` row on the
+/// home only), and drops the wake this vault carried for each row the
+/// window cleared.
 fn merge_wakes(vault: &Vault, window: &str, rows: Vec<(String, Option<Vec<u8>>)>) {
     if rows.is_empty() {
         return;
