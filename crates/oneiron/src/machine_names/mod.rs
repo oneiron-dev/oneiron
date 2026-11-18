@@ -8,13 +8,17 @@
 //! model it reports, and its class (`Phone`, `Computer`). This install reports its own name and
 //! model as its host declares them (`VaultConfig::machine_reported_name`,
 //! `VaultConfig::machine_reported_model`). Another machine's report, and a name the owner gave
-//! on another machine, reach this install only once a sync map carries them; until then this
-//! install names another machine by the owner's name set here, else by its class.
+//! on another machine, reach this install through its residence home on each steady pass
+//! ([`exchange`]): every node holds the latest dated cell of each, and a clear is a dated cell
+//! without a name.
 //!
 //! Display only. Nothing here enters the signed machine profile, and no authority, policy or
 //! routing code reads it: a name changes no machine's revision, role or reach.
 
+pub(crate) mod exchange;
 pub(crate) mod tables;
+
+pub use exchange::MachineNameCell;
 
 use heed::{RoTxn, RwTxn};
 use serde::{Deserialize, Serialize};
@@ -42,13 +46,20 @@ const OWNER_NAME_REASON_CLEARED: &str = "gate.machine.owner_name.cleared";
 /// The Gate content kind of a machine-name ruling.
 const OWNER_NAME_CONTENT_KIND: &str = "machine_owner_name";
 
-/// One owner name: the text the side-row wall stored, and the Gate receipt
-/// of the set that wrote it. The Gate row behind the receipt carries who
-/// set it and when.
+/// One owner name: the text the side-row wall stored, empty for a clear (a
+/// dated cell without a name), the Gate receipt of the act that wrote it on
+/// its writer, and the cell's date: the writer's recording time and the
+/// writer's MACHINE row. The Gate row behind the receipt, on the writer,
+/// carries who set it. A row written before rows were dated reads as dated
+/// 0 by no writer, and so loses to every dated cell.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct MachineOwnerName {
     pub(crate) name: String,
     pub(crate) receipt: [u8; 16],
+    #[serde(default)]
+    pub(crate) written_at: u64,
+    #[serde(default)]
+    pub(crate) writer: Option<EntityId>,
 }
 
 /// Whether a masked copy of an owner-name row still reads as one, for the
@@ -136,8 +147,10 @@ impl Vault {
 
     /// Sets the owner's own name for one of his machines, or clears it when
     /// `name` is `None` or blank, so the machine is shown by its report or
-    /// class again. Either way a Gate record keeps the act, and a set's
-    /// receipt is the name row's link to it. The name is admitted by the
+    /// class again. Either way a Gate record keeps the act, the row's receipt
+    /// is its link to it, and the row is dated past the cell it replaces, so
+    /// the act wins on every machine of the owner's the home reaches
+    /// ([`exchange`]). The name is admitted by the
     /// side-row wall, as any authored text is, and validated like a label:
     /// trimmed, one line, no NUL, at most [`MACHINE_NAME_MAX_BYTES`] bytes.
     /// Display only: the machine's profile, revision, role and reach do not
@@ -156,7 +169,8 @@ impl Vault {
     ) -> Result<MachineOwnerNameSet> {
         self.with_write_txn_grouped(|txn| {
             let actor = owner.revalidate_as_vault_owner_in_txn(self, txn)?;
-            let this_install = self.serving_machine_in_txn(txn)? == Some(machine);
+            let serving = self.serving_machine_in_txn(txn)?;
+            let this_install = serving == Some(machine);
             let folded = self
                 .authority_view_readonly_in_txn(txn)?
                 .machine(machine)
@@ -177,19 +191,19 @@ impl Vault {
             }
             let decision =
                 append_owner_name_ruling_in_txn(self, txn, actor, machine, trimmed.is_some())?;
-            if let Some(text) = trimmed {
-                OWNER_NAME.put(
-                    self,
-                    txn,
-                    &machine,
-                    &MachineOwnerName {
-                        name: text.to_owned(),
-                        receipt: decision.as_bytes(),
-                    },
-                )?;
-            } else {
-                erase_machine_owner_name_in_txn(self, txn, &machine)?;
-            }
+            let held = OWNER_NAME.get(&self.store, txn, &machine)?;
+            let written_at = exchange::written_at_past_in_txn(
+                self,
+                txn,
+                held.as_ref().map(|held| held.written_at),
+            )?;
+            let row = MachineOwnerName {
+                name: trimmed.unwrap_or_default().to_owned(),
+                receipt: decision.as_bytes(),
+                written_at,
+                writer: serving,
+            };
+            put_owner_name_in_txn(self, txn, machine, held.as_ref(), &row)?;
             let listing = self
                 .machine_listing_in_txn(txn, machine, &folded, this_install)?
                 .ok_or(Error::EntityNotFound)?;
@@ -219,14 +233,17 @@ impl Vault {
         let class = chain.profile.device_class;
         let owner_name = OWNER_NAME
             .get(&self.store, txn, &machine)?
-            .map(|row| row.name);
+            .map(|row| row.name)
+            .filter(|name| !name.is_empty());
         let (reported_name, reported_model) = if this_install {
             (
                 declared(self.config.machine_reported_name.as_deref()),
                 declared(self.config.machine_reported_model.as_deref()),
             )
         } else {
-            (None, None)
+            exchange::REPORTED_NAME
+                .get(&self.store, txn, &machine)?
+                .map_or((None, None), |row| (row.name, row.model))
         };
         let (name, name_source) = shown_name(
             owner_name.as_deref(),
@@ -292,19 +309,24 @@ fn declared(report: Option<&str>) -> Option<String> {
     (!cut.is_empty()).then(|| cut.to_owned())
 }
 
-/// Drops the owner's name for `machine` with the custody the side-row wall
-/// lifted out of it, as an authored row's erase does.
-fn erase_machine_owner_name_in_txn(
+/// Writes `row` as the owner's name for `machine`, through the side-row
+/// wall. A clear (an empty name) over a held name first drops the custody
+/// the wall lifted out of it, as an authored row's erase does; the dated
+/// empty row stays, so the clear wins over the name it clears on every node.
+fn put_owner_name_in_txn(
     vault: &Vault,
     txn: &mut RwTxn<'_>,
-    machine: &EntityId,
+    machine: EntityId,
+    held: Option<&MachineOwnerName>,
+    row: &MachineOwnerName,
 ) -> Result<()> {
-    let place = format!("side:{}", OWNER_NAME.decl().name);
-    let origin =
-        crate::batch::secret_scan::side_row_origin(&place, &OWNER_NAME.key_bytes(machine))?;
-    crate::secret_custody::revoke_side_row_custody_in_txn(vault, txn, &origin, None)?;
-    OWNER_NAME.delete(&vault.store, txn, machine)?;
-    Ok(())
+    if row.name.is_empty() && held.is_some_and(|held| !held.name.is_empty()) {
+        let place = format!("side:{}", OWNER_NAME.decl().name);
+        let origin =
+            crate::batch::secret_scan::side_row_origin(&place, &OWNER_NAME.key_bytes(&machine))?;
+        crate::secret_custody::revoke_side_row_custody_in_txn(vault, txn, &origin, None)?;
+    }
+    OWNER_NAME.put(vault, txn, &machine, row)
 }
 
 /// Appends the owner's machine-name set or clear to the Gate receipt
