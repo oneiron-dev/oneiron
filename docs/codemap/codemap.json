@@ -42231,7 +42231,7 @@
      "path": "src/federation/pending_act/owner_change_wait.rs",
      "purpose": "The vault's common owner-change wait: one scalar, not per-act rows",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 2
      }
     },
@@ -42642,7 +42642,7 @@
      "path": "src/federation/shared_act/owner_add.rs",
      "purpose": "Add a co-owner while retaining every existing Owner",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 3,
       "fn": 2,
       "re-export": 1
      }
@@ -101445,8 +101445,19 @@
      "purpose": "A house mind's link to the org it runs (HOUSE-BIND = A: the owner, 10 Nov 07:43; the Engine's link shapes…",
      "surface": {
       "const": 1,
-      "crate-vis": 10,
+      "crate-vis": 11,
       "fn": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/workspace_roster/house_link/owner_seat.rs",
+     "purpose": "A house seated at the Owner role is a co-Owner, so over its workspace's shared vault the seat waits as a…",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 1
      }
     },
     {
@@ -101592,7 +101603,7 @@
      "path": "src/workspace_roster/mod.rs",
      "purpose": "Workspace roster preset + member onboarding (ONEIRON-ARCH-0065)",
      "surface": {
-      "crate-vis": 48,
+      "crate-vis": 49,
       "mod": 1,
       "re-export": 30
      }
@@ -107494,6 +107505,36 @@
      "notable": [],
      "path": "tests/house_bind_own_device.rs",
      "purpose": "HOUSE-BIND = A and OWN-DEVICE-GRANT-PURPOSE-MARKER: a house bound as an Owner holds no own-device grant",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [
+      "Org"
+     ],
+     "path": "tests/house_owner_role/fixture.rs",
+     "purpose": "The shared fixture of `house_owner_role_waits.rs` and `house_owner_role_act.rs` (FIX…",
+     "surface": {
+      "const": 5,
+      "fn": 10,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/house_owner_role_act.rs",
+     "purpose": "HOUSE-OWNER-ROLE-VIA-ADD-OWNER (Engine RULING HOUSE-UNBIND-AUTHORITY = A: \"an Owner-role house link goes…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/house_owner_role_waits.rs",
+     "purpose": "HOUSE-OWNER-ROLE-VIA-ADD-OWNER (Engine RULING HOUSE-UNBIND-AUTHORITY = A, 10 Nov 08:46; ARCH-0043…",
      "surface": {}
     },
     {
@@ -114389,7 +114430,7 @@
      "purpose": "Monthly CRDT window keys and their timestamp conversion"
     },
     "workspace_roster": {
-     "files": 145,
+     "files": 146,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -114405,8 +114446,8 @@
    },
    "over_bar": 299,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 8113,
-   "test_files": 1868
+   "source_files": 8114,
+   "test_files": 1871
   },
   "oneiron-agent-runtime": {
    "files": [
