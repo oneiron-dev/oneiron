@@ -30,6 +30,7 @@
 use std::fs::File;
 use std::io::{Read, Write};
 
+use oneiron_contracts::fingerprint::ContentHash;
 use oneiron_crypto::backup::{MANIFEST_PIECE_STREAM, MANIFEST_STREAM};
 use serde::{Deserialize, Serialize};
 
@@ -176,7 +177,7 @@ pub(super) fn write_manifest(
     let bytes = rmp_serde::to_vec_named(&root).map_err(|_| codec())?;
     let envelope = sink.sealer.seal(MANIFEST_STREAM, 0, &bytes)?;
     sink.frame(&envelope)?;
-    Ok((root_at, *blake3::hash(&envelope).as_bytes(), pieces))
+    Ok((root_at, *ContentHash::of(&envelope).as_bytes(), pieces))
 }
 
 /// Opens the manifest whose root is the frame at `root_at`, its envelope
