@@ -449,7 +449,8 @@ impl Vault {
     /// Refuses a request no restore made, and one the fold did not hold.
     /// Only the owner's join door (`Vault::join_restored_install`) writes
     /// one, beside that word, and the test door that proves the fold's hold
-    /// and join.
+    /// and join; a kit restore files its own by the kit's R
+    /// ([`Self::file_restored_enrolment_by_key_in_txn`]).
     pub(crate) fn file_restored_enrolment_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
@@ -471,6 +472,37 @@ impl Vault {
                 .unjoined_restored_enrolment(request.machine)
                 .ok_or_else(invalid_authority),
             Landed::Answer(_) => Err(invalid_authority()),
+        }
+    }
+
+    /// [`Self::file_restored_enrolment_in_txn`] signed by `signer`, a live
+    /// owner key of the roster held behind `sign`, in place of the root: the
+    /// kit's root authority key R at a kit restore of an install born of a
+    /// restore (Engine ANSWER KIT-RESTORE-JOINS-RESTORED-COPY = A). The
+    /// enrolment is the row R puts a machine on the roster with
+    /// ([`Self::put_machine_on_roster_in_txn`]): one act-free `Owned(Yours)`
+    /// revision with the request's keys, proof and origin, numbered above
+    /// every enrolment of the machine held under a scope this install
+    /// counts. Returns its entry, which the fold holds.
+    pub(crate) fn file_restored_enrolment_by_key_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        (signer, sign): (&AuthorityKey, &dyn Fn(&[u8]) -> Result<Vec<u8>>),
+        owner: EntityId,
+        request: &MachineEnrolmentRequest,
+    ) -> Result<AuthorityEntryHash> {
+        let fold = self.authority_view_readonly_in_txn(txn)?;
+        if request.restored_from.is_none() {
+            return Err(invalid_authority());
+        }
+        let role = MachineRole::Owned(MachineOwnership::Yours);
+        let mut profile = joining_profile(&fold, owner, request, role)?;
+        profile.seen_world_edits =
+            super::act_standing::acknowledged_by_in_txn(&self.store, txn, &fold, request.machine)?;
+        self.ensure_machine_row_in_txn(txn, request.machine)?;
+        match self.land_owner_signed_roster_revision_in_txn(txn, (signer, sign), &fold, profile)? {
+            (hash, Landed::Restored) => Ok(hash),
+            (_, Landed::Answer(_)) => Err(invalid_authority()),
         }
     }
 
@@ -804,6 +836,27 @@ impl Vault {
         fold: &AuthorityFold,
         profile: MachineProfile,
     ) -> Result<AuthorityEntryHash> {
+        // An owner-held signer's revision carries no act, so the fold never
+        // holds it for the owner's proof: it stands or the door refuses. A
+        // restored machine's enrolment, which the fold holds, refuses here.
+        match self.land_owner_signed_roster_revision_in_txn(txn, (signer, sign), fold, profile)? {
+            (hash, Landed::Answer(landing)) => landing
+                .into_standing()
+                .map(|_| hash)
+                .ok_or_else(invalid_authority),
+            (_, Landed::Restored) => Err(authority_refused(RESTORED_NOT_JOINED)),
+        }
+    }
+
+    /// [`Self::append_owner_signed_roster_revision_in_txn`]'s write: its
+    /// entry, and what the fold did with it.
+    fn land_owner_signed_roster_revision_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        (signer, sign): (&AuthorityKey, &dyn Fn(&[u8]) -> Result<Vec<u8>>),
+        fold: &AuthorityFold,
+        profile: MachineProfile,
+    ) -> Result<(AuthorityEntryHash, Landed)> {
         let vault_id = fold.vault_id.ok_or_else(invalid_authority)?;
         profile.validate()?;
         // FIX 7908: join a frontier wider than one entry names, else today's path.
@@ -834,12 +887,8 @@ impl Vault {
         };
         entry.signer.signature = sign(&authority_transcript(&entry)?)?;
         let hash = authority_entry_hash(&entry)?;
-        // An owner-held signer's revision carries no act, so the fold never
-        // holds it: it stands or the door refuses.
-        self.land_machine_profile_in_txn(txn, entry, &profile, now)?
-            .into_standing()
-            .ok_or_else(invalid_authority)?;
-        Ok(hash)
+        let landed = self.land_revision_in_txn(txn, entry, &profile, now)?;
+        Ok((hash, landed))
     }
 
     /// Lands one machine revision and reads the fold back. A removal keeps
