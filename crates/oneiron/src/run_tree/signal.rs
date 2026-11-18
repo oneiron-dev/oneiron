@@ -238,7 +238,21 @@ impl RunTreeAdapter<'_> {
                 return Err(Error::InvalidConfig("unaddressed ask answer".into()));
             }
             if let Some(prior) = ask.answers.iter().find(|a| &a.who == who) {
-                if &prior.answer != answer || prior.kind != *kind {
+                // The held answer is as the side-row wall stored it: a value
+                // base custody holds reads as its record's handle there, and
+                // the keyed intent (FIX 10066) names the signal's key, so the
+                // answer given again under a new key is planned with the
+                // values this writer reads, as `open_ask` plans its questions
+                // (FIX SIGNAL-NEW-KEY-MASKED-ANSWER). A value another record
+                // holds reads as another handle and still refuses.
+                if prior.kind != *kind
+                    || (&prior.answer != answer
+                        && !admitted_from_known(
+                            &named_tree(&prior.answer)?,
+                            &named_tree(answer)?,
+                            || KnownValues::shared_in_writer(&self.vault.store, txn),
+                        )?)
+                {
                     return Err(Error::InvalidConfig("ask already answered".into()));
                 }
             } else {
