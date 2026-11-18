@@ -9,6 +9,7 @@
 
 use crate::dto::WireJson;
 use crate::facade_types_generated::LegalHoldNotice;
+use crate::facade_types_generated::MemoryPending;
 use crate::facade_types_generated::RoomJoinHold;
 
 /// Every failure that crosses the generated foreign boundary.
@@ -49,6 +50,10 @@ pub enum OneironError {
         legal_hold: Option<LegalHoldNotice>,
         /// The room-join hold behind this refusal, when its producer supplied one.
         room_join_hold: Option<RoomJoinHold>,
+        /// What a `CHECK_IN_PENDING` refusal waits on, typed: the engine's
+        /// `pending` block (Engine ruling P38-PENDING-BLOCK-REACH = A). Named
+        /// apart because `pending` here is the pending ask's retry payload.
+        pending_block: Option<MemoryPending>,
     },
 }
 
@@ -82,6 +87,13 @@ impl From<oneiron::MemoryError> for OneironError {
             },
             None => None,
         };
+        let pending_block = match error.pending {
+            Some(block) => match crate::codec::lift_memory_pending(*block) {
+                Ok(block) => Some(block),
+                Err(error) => return error,
+            },
+            None => None,
+        };
         Self::Failure {
             code: error.code,
             message: error.message,
@@ -95,6 +107,7 @@ impl From<oneiron::MemoryError> for OneironError {
             reason_codes: error.reason_codes,
             legal_hold,
             room_join_hold,
+            pending_block,
         }
     }
 }

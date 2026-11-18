@@ -32,11 +32,12 @@ mod heads;
 mod image;
 mod receipts;
 mod resumed;
+mod scope_tops;
 mod side_tail;
 
 use capture::Once;
 pub(super) use capture::{
-    ConfirmKeys, FoldCapture, OnceParts, add_bound_keys, add_writers, admits_past,
+    ConfirmKeys, FoldCapture, OnceParts, ProofParts, add_bound_keys, add_writers, admits_past,
 };
 pub(super) use image::ImageFold;
 use receipts::BaseReceipts;
@@ -99,8 +100,7 @@ type BaseRows = im::OrdMap<AuthorityEntryHash, Arc<RowSummary>>;
 /// way.
 type ProjectedRows = im::OrdMap<AuthorityEntryHash, Arc<AuthorityLogEntry>>;
 
-/// Each row's first-seen seconds or sequence floor, by hash, shared the
-/// same way.
+/// Each row's first-seen seconds, by hash, shared the same way.
 type RowSeconds = im::OrdMap<AuthorityEntryHash, u64>;
 
 impl super::fold_project::RowsReadWhole for ProjectedRows {
@@ -116,7 +116,7 @@ impl super::stale_roster::FirstSeenMap for RowSeconds {
 }
 
 /// A row's metadata, from its signed entry or the base's summary of it: all
-/// the heads, the next sequences and the sequence floors read of a row.
+/// the heads and the next sequences read of a row.
 #[derive(Clone, Copy)]
 pub(super) struct RowMeta<'a> {
     pub(super) hash: Option<AuthorityEntryHash>,
@@ -149,8 +149,9 @@ impl<'a> RowMeta<'a> {
 }
 
 /// Whether a fold past the base reads `op`'s row whole: the approvals and
-/// revocations stale-roster expiry and renewal weigh (`stale_roster`), the
-/// world-key records whose envelopes a folded key carries
+/// revocations stale-roster expiry and renewal weigh (`stale_roster`; a
+/// root appointment revokes every old roster key, OWNER-ANCHOR-ROOT-RECOVERY),
+/// the world-key records whose envelopes a folded key carries
 /// (`world_key_fold::folded_world_keys`), and the owner work requests,
 /// results, cancels and import marks an executor, a receipt and a relay
 /// read past the base. Every other row's summary is all a later fold reads
@@ -166,6 +167,7 @@ pub(super) fn is_projected(op: &AuthorityOp) -> bool {
             | AuthorityOp::RevokeDevice { .. }
             | AuthorityOp::RotateKey { .. }
             | AuthorityOp::ReRoot { .. }
+            | AuthorityOp::RootAppointment(_)
             | AuthorityOp::WorldKeyWraps(_)
             | AuthorityOp::OwnerWorkRequest(_)
             | AuthorityOp::OwnerWorkResult(_)
@@ -186,6 +188,9 @@ pub(in crate::authority) struct FoldBase {
     /// ([`stale_roster_rows`]).
     revokes_roster_keys: bool,
     receipts: BaseReceipts,
+    /// Each signer's top rows per sequence scope: a fold past the base takes
+    /// only new rows that move no row's floor ([`scope_tops::ScopeTops`]).
+    scope_tops: scope_tops::ScopeTops,
     once: Once,
     /// The heads, scope heads and next sequences of the base's view, which
     /// a fold past it updates from its new rows (FIX 12307).
@@ -200,7 +205,6 @@ impl FoldBase {
         once: Once,
         rows: &[(AuthorityEntryHash, &AuthorityLogEntry)],
         first_seen: &BTreeMap<AuthorityEntryHash, u64>,
-        floors: &BTreeMap<AuthorityEntryHash, u64>,
         view: &AuthorityFold,
     ) -> Self {
         let expired = once
@@ -228,10 +232,10 @@ impl FoldBase {
                     .iter()
                     .map(|(hash, secs)| (*hash, *secs))
                     .collect(),
-                floors: floors.iter().map(|(hash, floor)| (*hash, *floor)).collect(),
                 pinned: im::OrdSet::new(),
                 unpinned: rows.iter().map(|(hash, _)| *hash).collect(),
             },
+            scope_tops: scope_tops::ScopeTops::of(rows),
             once,
             heads: heads::LogHeads::of(view, expired),
         }
@@ -379,7 +383,7 @@ pub(in crate::authority) struct StoredLog<'a> {
 /// The stored rows past a base, and what this vault folds the whole log
 /// under: [`StoredLog`]'s inputs over the base's rows and the tail alike.
 /// A base row the base pins and this fold did not read keeps the base's
-/// first-seen seconds and floor (FIX 12282).
+/// first-seen seconds (FIX 12282).
 #[derive(Clone, Copy)]
 pub(in crate::authority) struct StoredTail<'a> {
     /// Each stored row the base does not hold, with its hash.
@@ -390,10 +394,9 @@ pub(in crate::authority) struct StoredTail<'a> {
     pub(in crate::authority) now_secs: u64,
     pub(in crate::authority) peer_consent_roots:
         &'a BTreeMap<AuthorityVaultId, BTreeSet<AuthorityKey>>,
-    /// The floors of the same rows, and this vault's observation policy.
+    /// This vault's observation policy and vouch.
     pub(in crate::authority) observations: &'a AuthorityLocalObservations,
-    /// The rows read whose first-seen seconds and floor are receipts' (FIX
-    /// 1854).
+    /// The rows read whose first-seen seconds are receipts' (FIX 1854).
     pub(in crate::authority) pinned: &'a BTreeSet<AuthorityEntryHash>,
     pub(in crate::authority) posture: crate::HostingPrivacyPosture,
     pub(in crate::authority) pin: Option<&'a PinnedRoot>,
@@ -485,17 +488,76 @@ pub(in crate::authority) fn fold_stored_log(
             ..local
         },
     );
-    let base = capture.take().zip(rows).map(|(once, rows)| {
-        FoldBase::capture(
-            inputs,
-            *once,
-            &rows,
-            first_seen_at_secs,
-            &observations.sequence_floors,
-            &fold,
+    let base = capture
+        .take()
+        .zip(rows)
+        .map(|(once, rows)| FoldBase::capture(inputs, *once, &rows, first_seen_at_secs, &fold));
+    (fold, base)
+}
+
+/// The stored-log fold of `entries` on a self-hosted install that pins
+/// `pin`, each row first seen at second 1 and folded at second 2 under a
+/// stale-roster window of `window_secs`: whole, and resumed past the base
+/// the fold of the first `base_len` rows keeps (None where the resumed fold
+/// declines the rest). For the integration tests' door
+/// (OWNER-ANCHOR-ROOT-RECOVERY).
+#[cfg(oneiron_test_support)]
+pub(crate) fn whole_and_resumed_folds_for_test(
+    entries: &[AuthorityLogEntry],
+    base_len: usize,
+    pin: Option<&PinnedRoot>,
+    window_secs: u64,
+) -> (AuthorityFold, Option<AuthorityFold>) {
+    let first_seen: BTreeMap<_, _> = entries
+        .iter()
+        .filter_map(|entry| Some((authority_entry_hash(entry).ok()?, 1)))
+        .collect();
+    let peers = BTreeMap::new();
+    let observations = AuthorityLocalObservations {
+        vouched: BTreeSet::new(),
+        unvouched: false,
+        policy: AuthorityObservationPolicy {
+            stale_roster_window_secs: window_secs,
+            ..AuthorityObservationPolicy::default()
+        },
+    };
+    let whole_log = StoredLog {
+        entries,
+        first_seen_at_secs: &first_seen,
+        now_secs: 2,
+        peer_consent_roots: &peers,
+        observations: &observations,
+        posture: crate::HostingPrivacyPosture::SelfHostLocal,
+        pin,
+    };
+    let (whole, _) = fold_stored_log(whole_log, None);
+    let (_, base) = fold_stored_log(
+        StoredLog {
+            entries: &entries[..base_len],
+            ..whole_log
+        },
+        None,
+    );
+    let tail: Vec<_> = entries[base_len..]
+        .iter()
+        .filter_map(|entry| Some((authority_entry_hash(entry).ok()?, entry)))
+        .collect();
+    let resumed = base.and_then(|base| {
+        fold_stored_tail(
+            StoredTail {
+                tail: &tail,
+                first_seen_at_secs: &first_seen,
+                now_secs: 2,
+                peer_consent_roots: &peers,
+                observations: &observations,
+                pinned: &BTreeSet::new(),
+                posture: crate::HostingPrivacyPosture::SelfHostLocal,
+                pin,
+            },
+            &base,
         )
     });
-    (fold, base)
+    (whole, resumed.map(|(fold, _)| fold))
 }
 
 impl FoldBase {
@@ -521,11 +583,12 @@ impl FoldBase {
             .filter(|(hash, _)| !self.rows.contains_key(hash))
             .map(|(hash, entry)| (*hash, *entry))
             .collect();
-        // A row pinned here and in the base holds one receipt's values, and
+        // A row pinned here and in the base holds one receipt's value, and
         // a row the base pins and this fold did not read holds the base's
         // (FIX 12282). Every other base row reads as the base read it: each
         // one the base does not pin, and each pinned one read with no
-        // receipt now.
+        // receipt now. No row's floor is read: the new rows move none
+        // (`scope_tops`).
         let base = &self.receipts;
         let mut reread = base.unpinned.iter().chain(
             first_seen_at_secs
@@ -533,19 +596,17 @@ impl FoldBase {
                 .filter(|hash| base.pinned.contains(*hash) && !pinned.contains(*hash)),
         );
         if new_rows.is_empty()
-            || reread.any(|hash| {
-                first_seen_at_secs.get(hash) != base.first_seen.get(hash)
-                    || observations.sequence_floors.get(hash) != base.floors.get(hash)
-            })
+            || reread.any(|hash| first_seen_at_secs.get(hash) != base.first_seen.get(hash))
         {
             return None;
         }
         let memory_floor_bytes = super::log_budget::fold_memory_floor(Some(&observations.policy));
         let (consent_arm, _) = super::fold_engine::own_log_inputs(inputs.posture, None);
         let no_handoff_line = BTreeSet::new();
-        // Only the new rows' floors are read, and this fold read each one.
+        // The new rows sit past no floor and move none (`scope_tops`), so no
+        // floor applies to them.
         let context = FoldContext {
-            sequence_floors: Some(&observations.sequence_floors),
+            sequence_floors: Some(&super::fold_engine::SEQUENCE_FLOORS_FROM_ROWS),
             floor_vouched: (!observations.unvouched).then_some(&observations.vouched),
             install_held: None,
             entry_ancestors: None,
@@ -557,10 +618,12 @@ impl FoldBase {
             pre_handoff_entries: Some(&no_handoff_line),
             memory_floor_bytes,
             pin: inputs.pin.as_ref(),
+            appointments: None,
         };
         // The new rows: main rows one chain off the head, and world key
         // records on the kept frontier, each on its own parents' states.
         let mut tail = side_tail::fold_tail(once, &self.rows, &new_rows, context)?;
+        let scope_tops = self.scope_tops.past(&self.rows, &new_rows, &tail.order)?;
         let mut merged = once.merged.clone();
         let mut writers = once.writers.clone();
         let mut bound_keys = once.bound_keys.clone();
@@ -673,6 +736,7 @@ impl FoldBase {
             projected,
             revokes_roster_keys,
             receipts,
+            scope_tops,
             once: Once {
                 judged,
                 head: tail.tip,

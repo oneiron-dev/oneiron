@@ -196,6 +196,7 @@ fn a_leaked_host_secret_moves_to_a_new_one_and_the_vault_keeps_its_id() {
             }],
             occurred_at: unix_seconds_now(),
             thread_audience: None,
+            project: None,
             assertions: Default::default(),
         })
         .unwrap();
@@ -267,9 +268,9 @@ fn a_leaked_host_secret_moves_to_a_new_one_and_the_vault_keeps_its_id() {
     let moved: Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(moved["vault_id"], vault_id, "{moved:#}");
     // OF-455 (#1367): re-root carries every engine writer that was live. The
-    // engine has eight since the Coach's runner (#1579) and the verified
-    // seal machine (baed1e252976) joined the first six.
-    assert_eq!(moved["engine_writers_enrolled"], 8, "{moved:#}");
+    // engine has twelve since the provider-inbound MACHINE joined them
+    // (FIX [PROVIDER-EVENT-ARCHIVE-MACHINE-UNSIGNED]).
+    assert_eq!(moved["engine_writers_enrolled"], 12, "{moved:#}");
     let agent_slip = agent["slip_id"].as_str().unwrap();
     assert!(
         moved["retired_credentials"]

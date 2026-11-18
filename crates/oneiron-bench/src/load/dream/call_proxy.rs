@@ -16,9 +16,9 @@
 //! an earlier call with the same body digest, and `extends` an earlier call
 //! whose messages are a strict prefix of this one's (a corrective call).
 //! Nothing records a header (the key rides in one) or a body: only digests
-//! and counts. The engine puts no attempt or step id on the wire, so a call
-//! joins its attempt by time: the stage lines' `call_ms` spans hold each
-//! attempt's own extraction calls.
+//! and counts. The engine puts no attempt or step id on the wire: a call
+//! joins the attempt and step that sent it by its body digest, which the
+//! server's `model request sent` line logs too (`call_attribution`).
 //!
 //! It reads plain HTTP/1.1 only, so it runs for an `http://` gateway (as on
 //! nelly, CPA over the tailnet) and stays off for `https://`.

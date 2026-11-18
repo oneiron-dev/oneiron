@@ -57,6 +57,9 @@ use crate::server::SyncServer;
 pub(crate) mod hook;
 mod model_calls;
 
+/// A rung's run, kept off record for a bound caller whose off-record
+/// session keeps no model-call record (census L5-25).
+pub(crate) use model_calls::run_for_caller;
 /// Binds the capture caller [`model_call_context`] reads back (FIX
 /// 12516/12742), on the decision's blocking thread.
 pub(crate) use model_calls::scoped as with_model_call_context;
@@ -136,6 +139,29 @@ pub(crate) fn on_caller_payer<T>(payer: Option<&PayerPerson>, call: impl FnOnce(
     }
     let _restore = Restore(CALLER_PAYER.with(|slot| slot.replace(payer.cloned())));
     call()
+}
+
+/// Runs `call` on the caller's own line, as [`run_verdict`] seats a verdict:
+/// every model rung it reaches on this thread spends on a meter bound to
+/// `principal` with no limit ([`BudgetGuard::uncapped`]), named after
+/// `line`, and bills the vault owner; its model calls are captured under
+/// `session_ref`. A host door asking typed questions for a facade caller
+/// runs its ladder calls inside it, on a blocking thread.
+pub(crate) fn on_caller_line<T>(
+    vault: &oneiron::Vault,
+    (principal, class): (EntityId, EdgeActorClass),
+    line: &str,
+    session_ref: Option<&str>,
+    call: impl FnOnce() -> T,
+) -> T {
+    let meter = BudgetGuard::uncapped(
+        format!("{line}:{}:{}", principal.to_hex(), vault.now_recorded_at()),
+        oneiron::llm::DEFAULT_BUDGET_RESERVE_UNITS,
+        WriteActor::new(principal, class),
+    );
+    model_calls::scoped(principal, session_ref, || {
+        on_caller_meter(&meter, || on_caller_payer(None, call))
+    })
 }
 
 /// Each caller's verdict spend in the current window, on this server: a

@@ -12,6 +12,7 @@ use crate::registry::{ENTITY_TYPE_ORG, ENTITY_TYPE_PERSON, ENTITY_TYPE_PLACE};
 use crate::{EntityId, Vault};
 use oneiron_model::llm::Scope;
 
+use super::chunks::chunk_digest;
 use super::recipes::queue_key;
 use super::{QUEUE, SPANS, SieveRung, SieveSpan, SpanBand, SpanKind, SpanOrigin, chunks};
 
@@ -70,15 +71,6 @@ pub(crate) fn span_chunk_in_txn(
         return Ok(None);
     };
     Ok((chunk_digest(&text) == span.source_digest).then_some(text))
-}
-
-/// BLAKE3 of a chunk's words, as the sieve versions a span's source.
-fn chunk_digest(text: &str) -> [u8; 32] {
-    *blake3::Hasher::new()
-        .update(b"oneiron:dreamer-sieve:chunk:v1")
-        .update(text.as_bytes())
-        .finalize()
-        .as_bytes()
 }
 
 /// The Dreamer's own scoped read, as a rung reads its evidence.

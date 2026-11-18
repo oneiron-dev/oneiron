@@ -9,8 +9,8 @@ use std::collections::BTreeSet;
 use loro::LoroDoc;
 
 use super::{
-    BurstPeer, DeferredWork, FederationBurstDecision, FederationBurstPeerRef, WorkKind, admit_work,
-    corrupt, hash_grant_pacts,
+    BurstPeer, DeferredWork, FederationBurstDecision, FederationBurstPeerRef,
+    FederationBurstWorkState, WorkKind, admit_work, corrupt, hash_grant_pacts,
 };
 use crate::authority::{PeerMachine, WorldPrivacyView};
 use crate::federation::decode_federation_grant_body;
@@ -279,6 +279,13 @@ pub enum DeviceBurstAdmission {
         batch_ref: String,
         bundle_ref: String,
     },
+    /// The same bytes already settled here: they landed, or the owner
+    /// rejected them at review. Its receipt's `state` is the answer; nothing
+    /// lands again.
+    Settled {
+        batch_ref: String,
+        state: FederationBurstWorkState,
+    },
 }
 
 /// An own device's update the burst core holds until it lands.
@@ -355,7 +362,9 @@ impl DeviceBurstWork {
 /// home persists or relays it (L7-41). Its writes are the operations the
 /// update carries, counted against the device's own baseline and the vault's
 /// size. Its rows and `carried`, the rows the home's admission lands it as,
-/// are named, so an erase of any scrubs the retained bytes (FIX 7998).
+/// are named, so an erase of any scrubs the retained bytes (FIX 7998). The
+/// same bytes sent again while held are answered as held until the device's
+/// rate is back, and once settled by their receipt.
 ///
 /// # Errors
 /// [`Error::InvalidConfig`] for bytes that are no Loro update or that pass
@@ -381,7 +390,15 @@ pub fn admit_device_window_update(
         (writes, carried.as_slice()),
         Some(parts.as_slice()),
     )?;
-    let work = work.ok_or_else(corrupt)?;
+    let Some(work) = work else {
+        let (id, _) =
+            DeferredWork::identity(BurstPeer::Device(peer), key, WorkKind::DeviceUpdate, update)?;
+        let batch_ref = blake3::Hash::from(id).to_hex().to_string();
+        let state = vault
+            .federation_burst_disposition(BurstPeer::Device(peer), &batch_ref)?
+            .state;
+        return Ok(DeviceBurstAdmission::Settled { batch_ref, state });
+    };
     let batch_ref = blake3::Hash::from(work.id).to_hex().to_string();
     Ok(match decision {
         FederationBurstDecision::Allow(_) => DeviceBurstAdmission::Allow(DeviceBurstWork {

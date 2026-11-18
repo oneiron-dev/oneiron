@@ -16,7 +16,7 @@ const ONLY_B: &[u8] = b"bytes only the second record holds";
 const OTHER: &[u8] = b"bytes an unrelated record holds";
 
 const FLAG: EraseOptions<'static> = EraseOptions {
-    reason: EraseReason::UserHardDelete,
+    reason: EraseReason::OwnerErase,
     also_same_bytes: true,
     veto_starter: None,
 };
@@ -132,7 +132,7 @@ fn rows(outcome: &EntityEraseOutcome) -> BTreeMap<EntityId, SameBytesOutcome> {
 fn without_the_flag_an_erase_leaves_shared_bytes_to_the_other_record() {
     for erase_door in [true, false] {
         let (_dir, vault) = blob_vault();
-        let person = put_person(&vault, 0xE1);
+        let person = put_owner(&vault);
         // Deleting is an owner verb, which holds only for a bound owner (H149).
         crate::test_util::bind_test_owner(&vault, person);
         let memory = facade_for(&vault, person);
@@ -212,27 +212,34 @@ fn only_a_live_vault_owner_confirms_a_same_bytes_erase() {
     let b = artifact(&mine, &[SHARED]);
     let m = artifact(&theirs, &[SHARED]);
     let owner_preview = mine.preview_entity_delete(&a).expect("owner preview");
-    // The member deletes its own record only as a bound human (H149); the
-    // flag still asks for a live owner of the vault, which a member is not.
+    // The member holds a human binding but is not a live Owner, so the
+    // owner-only preview refuses it with the binding code.
     crate::test_util::bind_test_owner(&vault, member);
-    let previews = [
-        owner_preview,
-        theirs.preview_entity_delete(&m).expect("member preview"),
-    ];
+    assert_eq!(
+        theirs
+            .preview_entity_delete(&m)
+            .expect_err("member preview")
+            .code,
+        MEMORY_CODE_OWNER_BINDING_REQUIRED
+    );
+    let previews = [owner_preview];
     let agent = vault.memory(owner, EdgeActorClass::Agent);
 
     for preview in &previews {
-        for reason in [EraseReason::UserHardDelete, EraseReason::GdprDelete] {
+        for reason in [EraseReason::OwnerErase, EraseReason::GdprDelete] {
             let options = EraseOptions {
                 reason,
                 also_same_bytes: true,
                 veto_starter: None,
             };
-            for (who, facade) in [("member", &theirs), ("agent", &agent)] {
+            for (who, facade, expected) in [
+                ("member", &theirs, MEMORY_CODE_OWNER_BINDING_REQUIRED),
+                ("agent", &agent, MEMORY_CODE_FORBIDDEN),
+            ] {
                 let refused = facade
                     .confirm_entity_erase(preview, options)
                     .expect_err(who);
-                assert_eq!(refused.code, MEMORY_CODE_FORBIDDEN, "{who}");
+                assert_eq!(refused.code, expected, "{who}");
             }
         }
     }
@@ -520,6 +527,7 @@ fn brief_grant(vault: &crate::Vault, issuer: EntityId, brief: EntityId) -> Entit
         created_at: 42,
         revoked_at: None,
         expires_at: None,
+        mention: None,
     };
     crate::share::tests::policy(vault, &issuer, &share, true, None).expect("share policy");
     let grant = EntityId::from_bytes([0xC8; 16]).expect("grant id");
@@ -529,7 +537,7 @@ fn brief_grant(vault: &crate::Vault, issuer: EntityId, brief: EntityId) -> Entit
 
 #[test]
 fn a_match_with_its_own_brief_grant_is_erased_and_keeps_no_grant() {
-    for reason in [EraseReason::UserHardDelete, EraseReason::GdprDelete] {
+    for reason in [EraseReason::OwnerErase, EraseReason::GdprDelete] {
         let (_dir, vault) = blob_vault();
         let owner = vault.ensure_embedded_owner_actor().expect("owner");
         let memory = facade_for(&vault, owner);
@@ -586,10 +594,8 @@ struct TwoOwners {
 
 fn two_owners() -> TwoOwners {
     let clock = crate::ports::ManualClock::new(100);
-    let config = VaultConfig {
-        store_clock: clock.bundle(),
-        ..VaultConfig::default()
-    };
+    let mut config = VaultConfig::device();
+    config.store_clock = clock.bundle();
     let (dir, vault, owner, other) = shared_vault_with(config, FederationGrantRole::Owner);
     let me = crate::test_util::embedded_owner_proof(&vault);
     let other_proof = vault
@@ -709,6 +715,8 @@ fn an_act_whose_record_was_erased_without_its_claim_reads_as_erased() {
             existed: true,
             reason: "user_hard_delete".to_owned(),
             receipt_ref: None,
+            state: DeleteRequestState::Applied,
+            check_in: None,
         }
     );
     assert!(erased(&owners.vault, &owners.b));

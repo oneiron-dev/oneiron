@@ -589,6 +589,135 @@ fn a_held_burst_ends_stale_once_a_world_is_kept_off_its_device() -> TestResult {
     Ok(())
 }
 
+/// Review round 2 of #8386, P1 1: a device that sends its held update again
+/// before its rate is back at its baseline is answered as held again, not
+/// handed the work to land, deferred or isolated and released alike; once
+/// the rate is back, the same bytes are the same work.
+#[test]
+fn a_held_device_burst_sent_again_before_its_rate_is_back_stays_held() -> TestResult {
+    let home = home(FederationBurstOutcome::Defer)?;
+    let burst = home.rows_update(BURST_ROWS)?;
+    let batch_ref = match home.admit(&burst)? {
+        DeviceBurstAdmission::Defer { batch_ref } => batch_ref,
+        other => panic!("a burst over the device's baseline is deferred: {other:?}"),
+    };
+    let again = home.admit(&burst)?;
+    assert!(
+        matches!(&again, DeviceBurstAdmission::Defer { batch_ref: held } if *held == batch_ref),
+        "the same bytes sent again in the same tick are held again: {again:?}"
+    );
+    assert_eq!(
+        home.receipt(&batch_ref)?.state,
+        FederationBurstWorkState::Pending
+    );
+
+    home.clock.set(NOW + 2);
+    match home.admit(&burst)? {
+        DeviceBurstAdmission::Allow(work) => assert_eq!(work.batch_ref(), batch_ref),
+        other => panic!("once the rate is back, the held bytes are the same work: {other:?}"),
+    }
+
+    let isolating = home(FederationBurstOutcome::IsolateAndPropose)?;
+    let burst = isolating.rows_update(BURST_ROWS)?;
+    let (batch_ref, bundle_ref) = match isolating.admit(&burst)? {
+        DeviceBurstAdmission::IsolateAndPropose {
+            batch_ref,
+            bundle_ref,
+        } => (batch_ref, bundle_ref),
+        other => panic!("a burst over the device's baseline is isolated: {other:?}"),
+    };
+    isolating
+        .vault
+        .release_federation_burst_review(&isolating.owner, &bundle_ref)?;
+    let again = isolating.admit(&burst)?;
+    assert!(
+        !matches!(again, DeviceBurstAdmission::Allow(_)),
+        "a released isolated burst sent again before the rate is back is held: {again:?}"
+    );
+    assert_eq!(
+        isolating.receipt(&batch_ref)?.state,
+        FederationBurstWorkState::Pending
+    );
+    Ok(())
+}
+
+/// Review round 2 of #8386, P1 2: a batch its owner rejected at review, or
+/// one that already landed, is settled. The device that sends the same
+/// bytes again is answered by that receipt; it never gets them back as work
+/// to land, and the drain never hands them out.
+#[test]
+fn a_settled_device_batch_sent_again_is_never_handed_back_to_land() -> TestResult {
+    let home = home(FederationBurstOutcome::IsolateAndPropose)?;
+    let burst = home.rows_update(BURST_ROWS)?;
+    let (batch_ref, bundle_ref) = match home.admit(&burst)? {
+        DeviceBurstAdmission::IsolateAndPropose {
+            batch_ref,
+            bundle_ref,
+        } => (batch_ref, bundle_ref),
+        other => panic!("a burst over the device's baseline is isolated: {other:?}"),
+    };
+    home.vault
+        .reject_federation_burst_review(&home.owner, &bundle_ref)?;
+    assert_eq!(
+        home.receipt(&batch_ref)?.state,
+        FederationBurstWorkState::Rejected
+    );
+    for at in [NOW, NOW + 2] {
+        home.clock.set(at);
+        let again = home.admit(&burst)?;
+        assert!(
+            !matches!(again, DeviceBurstAdmission::Allow(_)),
+            "a rejected batch sent again at {at} is not work to land: {again:?}"
+        );
+        assert!(
+            matches!(
+                &again,
+                DeviceBurstAdmission::Settled {
+                    batch_ref: settled,
+                    state: FederationBurstWorkState::Rejected,
+                } if *settled == batch_ref
+            ),
+            "its receipt answers it: {again:?}"
+        );
+        assert!(
+            ready_device_work(&home.vault)?.is_empty(),
+            "the drain hands out no rejected batch at {at}"
+        );
+        assert_eq!(
+            home.receipt(&batch_ref)?.state,
+            FederationBurstWorkState::Rejected
+        );
+    }
+
+    let landing = home(FederationBurstOutcome::Defer)?;
+    let trickle = landing.rows_update(1)?;
+    let work = match landing.admit(&trickle)? {
+        DeviceBurstAdmission::Allow(work) => work,
+        other => panic!("one row at the device's baseline is allowed: {other:?}"),
+    };
+    work.complete(&landing.vault)?;
+    let again = landing.admit(&trickle)?;
+    assert!(
+        !matches!(again, DeviceBurstAdmission::Allow(_)),
+        "a batch that landed, sent again, is not work to land again: {again:?}"
+    );
+    assert!(
+        matches!(
+            &again,
+            DeviceBurstAdmission::Settled {
+                batch_ref,
+                state: FederationBurstWorkState::Imported,
+            } if *batch_ref == work.batch_ref()
+        ),
+        "its receipt answers it: {again:?}"
+    );
+    assert_eq!(
+        landing.receipt(&work.batch_ref())?.state,
+        FederationBurstWorkState::Imported
+    );
+    Ok(())
+}
+
 /// A federated peer's burst receipt as a vault stored it before own devices
 /// had receipts: it names the peer by `principal` and `grant`, field for
 /// field in the order the ledger wrote them.

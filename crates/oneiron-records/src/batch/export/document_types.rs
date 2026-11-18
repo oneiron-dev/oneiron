@@ -4,7 +4,12 @@
 use serde::Deserialize;
 use serde::Serialize;
 
-pub const WHOLE_VAULT_DOCUMENT_VERSION: u16 = 5;
+/// The whole-vault document version this build writes.
+pub const WHOLE_VAULT_DOCUMENT_VERSION: u16 = 6;
+/// The manifest versions this build restores: 5 (no retained side family, no table omissions)
+/// and 6 (with them). A v5 archive has no retained family and no table omissions, so archives
+/// written before this change still restore.
+pub const WHOLE_VAULT_DOCUMENT_VERSIONS: [u16; 2] = [5, 6];
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

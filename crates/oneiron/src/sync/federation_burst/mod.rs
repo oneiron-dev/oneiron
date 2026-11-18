@@ -288,7 +288,9 @@ pub enum FederationBurstDecision {
 /// it runs now, defers, or is isolated for review. Isolation keeps
 /// `admitted_update`, every part, as the review's evidence; the work, its
 /// debit and its replay stay the original request's. `carried` names the
-/// rows whose bytes the work carries, which an erase of any scrubs.
+/// rows whose bytes the work carries, which an erase of any scrubs. No work
+/// comes back only for an own device's batch that already settled (landed,
+/// or rejected at review): its receipt is the answer.
 pub(in crate::sync) fn admit_work(
     vault: &Vault,
     peer: BurstPeer<'_>,
@@ -371,10 +373,15 @@ fn admit_work_at(
                 rate_ratio: receipt.baseline.rate_ratio,
                 streak: receipt.baseline.streak,
             };
-            return Ok((
-                FederationBurstDecision::Allow(inputs),
-                Some(work.with_inputs(inputs)),
-            ));
+            // An own device's batch that landed, or that its owner rejected
+            // at review, is answered by its receipt: the same bytes sent
+            // again are never work to land again. A federated peer's ingress
+            // answers a settled receipt before it gets here.
+            let work = match peer {
+                BurstPeer::Device(_) => None,
+                BurstPeer::Federated(_) => Some(work.with_inputs(inputs)),
+            };
+            return Ok((FederationBurstDecision::Allow(inputs), work));
         }
         let health = observations::observe_in_txn(vault, txn, peer, writes, now)?;
         let mut work = work.with_inputs(health.inputs);
@@ -451,7 +458,5 @@ fn corrupt() -> Error {
     Error::CorruptedIndex("federation deferred work")
 }
 
-// FIX [LIBTEST-QUARANTINE-SYNC-FEDERATION-BURST-TESTS]: the lib test target's type check fails here (2 errors: E0061 x2); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 pub(in crate::sync) mod tests;

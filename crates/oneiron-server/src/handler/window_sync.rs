@@ -5,7 +5,7 @@ use std::ops::ControlFlow;
 use loro::{LoroDoc, VersionVector};
 
 use oneiron::authority::PeerMachine;
-use oneiron::sync::federation_burst::{DeviceBurstAdmission, DevicePeer};
+use oneiron::sync::federation_burst::{DeviceBurstAdmission, DevicePeer, FederationBurstWorkState};
 use oneiron::sync::residence::{admit_promoted_window_update, promotion_covers_full_window_for};
 use oneiron::sync::schema::read_window_list;
 use oneiron::sync::window::WindowExport;
@@ -471,6 +471,33 @@ pub(super) async fn handle_window_sync(
             .map_err(map_update_admission_err)?
             {
                 DeviceBurstAdmission::Allow(burst) => burst,
+                // The same bytes already settled here (#8386 review): landed,
+                // they are acknowledged with nothing persisted, imported or
+                // relayed again; rejected by the owner at review, they are
+                // refused again.
+                DeviceBurstAdmission::Settled { batch_ref, state } => {
+                    if state != FederationBurstWorkState::Imported {
+                        tracing::info!(
+                            window = %key,
+                            batch_ref = %batch_ref,
+                            ?state,
+                            "an own device sent a batch its owner rejected again"
+                        );
+                        return Err(ProtocolError::InvalidPayload(
+                            "own device batch rejected at review",
+                        ));
+                    }
+                    if residence_seq.is_some() || receipt.binding.sidecar_digest.is_some() {
+                        let frame =
+                            super::window_pads::receipt_frame(window_key, sub_tag, &receipt)?;
+                        direct_tx.send(frame).map_err(|_| {
+                            ProtocolError::Persistence(
+                                "residence acknowledgment channel closed".into(),
+                            )
+                        })?;
+                    }
+                    return Ok(ControlFlow::Continue(()));
+                }
                 DeviceBurstAdmission::Defer { batch_ref }
                 | DeviceBurstAdmission::IsolateAndPropose { batch_ref, .. } => {
                     tracing::info!(
@@ -497,7 +524,10 @@ pub(super) async fn handle_window_sync(
                 (&key, &doc),
                 update,
                 inserts,
-                DeviceWriteRecheck::Credential(write_auth),
+                DeviceWriteRecheck::Credential {
+                    auth: write_auth,
+                    promoted: protocol::is_residence_version(conn_state.protocol_version),
+                },
             )
             .await;
             // The burst core's batch ends as the landing went (L7-41): landed,
@@ -591,7 +621,14 @@ pub(super) struct LandedDeviceUpdate {
 #[derive(Debug, Clone, Copy)]
 pub(super) enum DeviceWriteRecheck<'a> {
     /// The Write credential of the socket that sent it, when one bound it.
-    Credential(Option<&'a CoreAuth>),
+    /// `promoted` is a socket on the residence protocol, which writes only
+    /// promoted windows: the writer also judges the update's destination
+    /// for the socket's machine again, as world privacy may have changed
+    /// since the pre-write check.
+    Credential {
+        auth: Option<&'a CoreAuth>,
+        promoted: bool,
+    },
     /// The retained batch the home's drain replays, which no socket sent:
     /// still held, and its device's authority as the burst core held it
     /// ([`oneiron::sync::federation_burst::DeviceBurstWork::stands_in_txn`]).
@@ -672,10 +709,20 @@ pub(super) async fn land_device_update(
     let (positions, imported) = oneiron::sync::window::with_live_window_turn(
         server.reassert_manager.materializer(),
         || -> Result<_, ProtocolError> {
+            // A promoted window's write judges its destination in the
+            // committing transaction, as a document's does: world privacy
+            // may have changed since the pre-write check.
             match recheck {
-                DeviceWriteRecheck::Credential(auth) => {
-                    server.persist_imported_update(key, &persisted, &inserts, &landings, auth)
-                }
+                DeviceWriteRecheck::Credential {
+                    auth,
+                    promoted: true,
+                } => server.persist_promoted_imported_update(
+                    key, &persisted, &inserts, &landings, auth, machine, doc,
+                ),
+                DeviceWriteRecheck::Credential {
+                    auth,
+                    promoted: false,
+                } => server.persist_imported_update(key, &persisted, &inserts, &landings, auth),
                 DeviceWriteRecheck::Retained(work) => server
                     .persist_retained_device_update(key, &persisted, &inserts, &landings, work),
             }

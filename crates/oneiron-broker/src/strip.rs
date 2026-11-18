@@ -394,10 +394,7 @@ fn ws_bridges_escapes(
     last_was_escape: bool,
 ) -> bool {
     let mut next = at;
-    while bytes
-        .get(next)
-        .is_some_and(|byte| byte.is_ascii_whitespace())
-    {
+    while bytes.get(next).is_some_and(u8::is_ascii_whitespace) {
         next += 1;
     }
     let rest = &bytes[next..];

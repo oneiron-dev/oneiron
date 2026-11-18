@@ -60,6 +60,12 @@ doc = false
 # doctest compile pass entirely.
 doctest = false
 
+# The parked-step restart resume holds its host root in a `MemoryKeystore` (STEP-PARK-BOOT-RESUME).
+[[test]]
+name = "model_step_health_rest"
+path = "tests/model_step_health_rest.rs"
+required-features = ["oneiron/test-support"]
+
 # A mailbox's own person approves its drafted replies at the served door (FIX 18868).
 [[test]]
 name = "mail_reply_approve_mailbox_person_door"
@@ -125,13 +131,14 @@ loro = { workspace = true }
 axum = { version = "0.8", features = ["ws"] }
 # The accept loop (`http_listener`) drives hyper's HTTP/1 connection itself, so
 # it can set the header deadline and hold a permit inside each socket. Both
-# are already in the graph through axum.
-hyper = { version = "1", features = ["http1", "server", "client"] }
+# are already in the graph through axum. Its HTTP/2 client carries the gRPC
+# of Modal's sandbox API (`sandbox_vendor::grpc`), with tokio-rustls below.
+hyper = { version = "1", features = ["http1", "http2", "server", "client"] }
 hyper-util = { version = "0.1", features = ["tokio", "server", "service"] }
 tokio = { version = "1", features = ["full"] }
 tokio-tungstenite = { version = "0.26", features = ["rustls-tls-webpki-roots"] }
-tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"], optional = true }
-webpki-roots = { version = "1", optional = true }
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
+webpki-roots = "1"
 # The WebSocket codec PRODUCTION runs, under a name that says so.
 #
 # `src/handler/protocol_close.rs` reads a socket's read error by its type
@@ -257,6 +264,13 @@ objc2-core-ml = { version = "=0.3.2", default-features = false, features = [
     "MLMultiArray", "MLMultiArrayConstraint",
 ] }
 
+# The field editor's save to a draft roots its server on a `MemoryKeystore`, and sends its
+# document through `oneiron::test_support::mark_esign_sent`.
+[[test]]
+name = "esign_editor_draft_fields"
+path = "tests/esign_editor_draft_fields.rs"
+required-features = ["oneiron/test-support"]
+
 # The console echo guard (`commands/owner/secret_input.rs`, FIX 11387),
 # through the binding the workspace already locks; no SDK at build time.
 [target.'cfg(windows)'.dependencies]
@@ -288,6 +302,13 @@ name = "vault_runners_doors"
 path = "tests/vault_runners_doors.rs"
 required-features = ["oneiron/test-support"]
 
+# The owner's resume door on a node whose runner seats name an official seat (FIX
+# RUNNER-RESUME-DROPS-NODE-REGISTRY) roots its owner on a `MemoryKeystore` too.
+[[test]]
+name = "runner_resume_node_registry"
+path = "tests/runner_resume_node_registry.rs"
+required-features = ["oneiron/test-support"]
+
 # Test-only constructors and fault-injection seams stay out of the shipped graph.
 # The policy doors (owner rows, owner configure, outbound/relay decide, preflight) root on a `MemoryKeystore`.
 [[test]]
@@ -306,12 +327,25 @@ name = "self_desktop_doors"
 path = "tests/self_desktop_doors.rs"
 required-features = ["oneiron/test-support"]
 
+# The model door promises root on a `MemoryKeystore` (`oneiron/test-support`); the trial fixture is
+# the cfg door `oneiron::test_doors::model_binding_proposer`.
+[[test]]
+name = "vault_models_owner_doors"
+path = "tests/vault_models_owner_doors.rs"
+required-features = ["oneiron/test-support"]
+
 # Its signing fixture vault holds a `MemoryKeystore` (`oneiron-keystore/test-keystore`, forwarded
 # by `oneiron/test-support`): the e-sign dispatch signs with the install's keys.
 [[test]]
 name = "it_esign_public"
 path = "tests/it_esign_public.rs"
 required-features = ["oneiron/test-support", "oneiron/test-hooks"]
+
+# The retrieval policy and outcome door promise tests serve the owner's root from a `MemoryKeystore`.
+[[test]]
+name = "vault_retrieval_policy_doors"
+path = "tests/vault_retrieval_policy_doors.rs"
+required-features = ["oneiron/test-support"]
 
 # The sieve doors (queue, spans, policies, lease, evidence, settlements, budgets) root on a `MemoryKeystore`.
 [[test]]
@@ -377,12 +411,25 @@ name = "vault_hooks_doors"
 path = "tests/vault_hooks_doors.rs"
 required-features = ["oneiron/test-support"]
 
+# The calendar passport doors serve the owner's root from a `MemoryKeystore` too
+# (`oneiron-keystore/test-keystore`, forwarded by `oneiron/test-support`).
+[[test]]
+name = "calendar_ics_passport_doors"
+path = "tests/calendar_ics_passport_doors.rs"
+required-features = ["oneiron/test-support"]
+
 # Publishes its apps with `publish_artifact_pointer_with_tier` (`oneiron/test-hooks`) on a
 # `MemoryKeystore` vault (`oneiron-keystore/test-keystore`, forwarded by `oneiron/test-support`).
 [[test]]
 name = "artifact_vault_hosts"
 path = "tests/artifact_vault_hosts.rs"
 required-features = ["oneiron/test-support", "oneiron/test-hooks"]
+
+# The pack door promises root on a `MemoryKeystore` (`oneiron/test-support`).
+[[test]]
+name = "vault_packs_owner_doors"
+path = "tests/vault_packs_owner_doors.rs"
+required-features = ["oneiron/test-support"]
 
 # Publishes its bundle with `publish_artifact_pointer_with_tier` (`oneiron/test-hooks`) on a
 # `MemoryKeystore` vault (`oneiron-keystore/test-keystore`, forwarded by `oneiron/test-support`).
@@ -391,12 +438,45 @@ name = "artifact_pinned_document_cache"
 path = "tests/artifact_pinned_document_cache.rs"
 required-features = ["oneiron/test-support", "oneiron/test-hooks"]
 
+# These two store the owner's vendor key (Daytona, E2B) in custody on a `MemoryKeystore` vault
+# (`oneiron-keystore/test-keystore`, forwarded by `oneiron/test-support`).
+[[test]]
+name = "sandbox_vendor_daytona"
+path = "tests/sandbox_vendor_daytona.rs"
+required-features = ["oneiron/test-support"]
+
+[[test]]
+name = "sandbox_vendor_e2b"
+path = "tests/sandbox_vendor_e2b.rs"
+required-features = ["oneiron/test-support"]
+
+[[test]]
+name = "sandbox_vendor_modal"
+path = "tests/sandbox_vendor_modal.rs"
+required-features = ["oneiron/test-support"]
+
+[[test]]
+name = "sandbox_vendor_boat"
+path = "tests/sandbox_vendor_boat.rs"
+required-features = ["oneiron/test-support"]
+
+[[test]]
+name = "sandbox_vendor_instabox"
+path = "tests/sandbox_vendor_instabox.rs"
+required-features = ["oneiron/test-support"]
+
 # These three build their servers on a `MemoryKeystore` (`oneiron-keystore/test-keystore`,
 # forwarded by `oneiron/test-support`), so they take `it`'s rolling-tier features.
 [[test]]
 name = "agent_definition_served_batch"
 path = "tests/agent_definition_served_batch.rs"
 required-features = ["oneiron/test-support", "oneiron/test-hooks", "oneiron-broker/test-support"]
+
+# The caller-deadline cases root their server on a `MemoryKeystore` as well.
+[[test]]
+name = "caller_deadline"
+path = "tests/caller_deadline.rs"
+required-features = ["oneiron/test-support"]
 
 [[test]]
 name = "consent_revoke_grantee_renounce"
@@ -460,11 +540,30 @@ name = "vault_drafters_doors"
 path = "tests/vault_drafters_doors.rs"
 required-features = ["oneiron/test-support"]
 
+# The retrieval configuration door promise tests serve the owner's root from a `MemoryKeystore`.
+[[test]]
+name = "vault_retrieval_config_doors"
+path = "tests/vault_retrieval_config_doors.rs"
+required-features = ["oneiron/test-support"]
+
+# The data-key generation route roots its vault on a `MemoryKeystore`.
+[[test]]
+name = "vault_key_generation_route"
+path = "tests/vault_key_generation_route.rs"
+required-features = ["oneiron/test-support"]
+
 # Census L8-46's pin: a video job's poll and cancel reach the provider only for
 # the admitted job, through the broker and the same TLS fake provider.
 [[test]]
 name = "broker_followup_job_binding"
 path = "tests/broker_followup_job_binding.rs"
+required-features = ["oneiron/test-support", "oneiron-broker/test-support"]
+
+# #7827's System One broker leg registers its seat key in a test vault and
+# answers from the paid-leg TLS fake provider.
+[[test]]
+name = "system_one_broker_budget"
+path = "tests/system_one_broker_budget.rs"
 required-features = ["oneiron/test-support", "oneiron-broker/test-support"]
 
 # The self-browser door refusals root their server on a `MemoryKeystore` too.
@@ -527,6 +626,12 @@ required-features = ["oneiron/test-support"]
 name = "off_record_room_context_pack"
 path = "tests/off_record_room_context_pack.rs"
 required-features = ["oneiron/test-support", "oneiron/test-hooks", "oneiron-broker/test-support"]
+# 0053-EMB's host-line and spent-line notice pins install the owner's `budget_policy` row
+# through `oneiron::conversation_dag::test_support` (`oneiron/test-hooks`).
+[[test]]
+name = "embedder_host_line_notice"
+path = "tests/embedder_host_line_notice.rs"
+required-features = ["oneiron/test-support", "oneiron/test-hooks"]
 
 # FIX OFF-RECORD-RUN-POLICY-REFUSAL-500's session run roots its owner on a
 # `MemoryKeystore` too.
@@ -539,6 +644,12 @@ required-features = ["oneiron/test-support"]
 [[test]]
 name = "vault_off_record_doors"
 path = "tests/vault_off_record_doors.rs"
+required-features = ["oneiron/test-support"]
+
+# L5-11's issuer watch roots its owner on a `MemoryKeystore` too.
+[[test]]
+name = "connector_issuer_prm_refusal"
+path = "tests/connector_issuer_prm_refusal.rs"
 required-features = ["oneiron/test-support"]
 
 # The rerank pair template price cases root their owner on a `MemoryKeystore` too.
@@ -582,8 +693,6 @@ code-sandbox-wasmtime = ["oneiron/code-sandbox-wasmtime", "oneiron-agent-runtime
 # only when the host names a bind address (`ONEIRON_MESH_BIND`, or
 # `--mesh-bind` in managed mode); without one no listener runs.
 mesh = [
-  "dep:tokio-rustls",
-  "dep:webpki-roots",
   # The model route on the mesh listener (OF-575).
   "oneiron-llm/oneiron-rpc",
   "dep:oneiron-mesh-transport",
