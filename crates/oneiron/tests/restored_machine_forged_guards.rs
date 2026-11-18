@@ -34,6 +34,11 @@
 //! - A carried removal below its carrier's floor stands past a sibling
 //!   branch's owner join of the target (REVIEW-9524 round 2 P1,
 //!   restored_join.rs:277; fix 92c5ba34). Red at 39976c09.
+//! - The owner's join of a copy that a pinned anchor's mark holds, with no
+//!   roster enrolment, files the root's roster enrolment and joins it.
+//!   Before, the door named the mark, whose join heads no roster chain, so
+//!   the join was refused and rolled back (REVIEW-9539 round 2 P1,
+//!   restored_join_door.rs:179). Red at 2efec88a.
 //!
 //! The red commits hold this file and its door over the commit before each
 //! fix (for 3b98c1ed also the clock door of 04f15516).
@@ -57,7 +62,8 @@ use oneiron::authority::{
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::store::GateDecisionId;
 use oneiron::test_doors::restored_enrolment::forged_rows::{
-    RowSigner, SignedRow, install_key, publish_unpinned_root_and_mark, put_signed_row,
+    RowSigner, SignedRow, install_key, publish_pinned_root_and_mark,
+    publish_unpinned_root_and_mark, put_signed_row,
 };
 use oneiron::test_doors::restored_enrolment::{authority_clock_floor, file_restored_enrolment};
 use oneiron::test_support::test_host_issuer;
@@ -732,4 +738,55 @@ fn a_floored_removal_stands_past_a_sibling_join() {
         !stands(&host.vault, target),
         "the removed copy does not stand"
     );
+}
+
+#[test]
+fn the_owners_join_files_a_roster_enrolment_beside_a_pinned_anchors_mark() {
+    let host = rooted_host(MachineRole::Unanswered, true);
+    let backups = oneiron::test_support::restore_tempdir();
+    let copy = restored_copy(&host, backups.path(), "t7");
+    let target = copy.request.machine;
+    let mark = publish_pinned_root_and_mark(&copy.vault, host.owner, &copy.request)
+        .expect("FIXTURE: the copy pins an owner root whose anchor marks the copy");
+    let fold = copy
+        .vault
+        .authority_fold()
+        .expect("FIXTURE: the copy's fold");
+    assert!(
+        fold.pinned_root.is_some(),
+        "FIXTURE: the copy pins the root"
+    );
+    let held = fold
+        .restored_enrolments()
+        .get(&mark)
+        .expect("FIXTURE: the anchor's mark is held");
+    assert!(
+        matches!(held.admitter, MachineAdmitter::Anchor(_))
+            && held.joined_by.is_none()
+            && held.profile.role == YOURS,
+        "FIXTURE: the pinned anchor's mark of the copy waits, as the owner's own"
+    );
+    assert!(
+        fold.counted_waiting_enrolments(target)
+            .all(|(_, held)| held.admitter != MachineAdmitter::Roster),
+        "FIXTURE: no roster enrolment of the copy waits"
+    );
+
+    let joined = copy
+        .vault
+        .join_restored_install(&host.issuer, &copy.proof, YOURS)
+        .expect("the owner's word joins a copy that a pinned anchor's mark holds");
+    let roster = joined
+        .roster
+        .as_ref()
+        .expect("the joined copy has a roster head");
+    assert!(
+        roster.is_live() && roster.profile.role == YOURS,
+        "the copy stands on the roster as the owner's own"
+    );
+    assert_ne!(
+        roster.entry, mark,
+        "the roster head is the root's roster enrolment, never the anchor's mark"
+    );
+    assert!(stands(&copy.vault, target), "the copy stands");
 }

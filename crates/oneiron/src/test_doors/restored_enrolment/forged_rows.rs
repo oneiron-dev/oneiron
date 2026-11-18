@@ -5,8 +5,8 @@
 //! higher sequence that does not descend from it, or an owner's join no
 //! public door writes. No public writer does either: each signs at the next
 //! sequence over the vault's heads. Beside them, an owner root this install
-//! does not pin, with its anchor's mark of a machine. The rows are stored as
-//! any row is; the fold judges them.
+//! does not pin, or one it pins, with its anchor's mark of a machine. The
+//! rows are stored as any row is; the fold judges them.
 
 use std::collections::BTreeSet;
 
@@ -129,6 +129,30 @@ pub fn publish_unpinned_root_and_mark(
     owner: EntityId,
     request: &MachineEnrolmentRequest,
 ) -> Result<AuthorityEntryHash> {
+    publish_root_and_mark(vault, owner, request, false)
+}
+
+/// An owner root of `owner` published by a fresh anchor, that anchor's mark
+/// of `request`'s machine, and this install's pin of the root, in one write:
+/// a held mark under the pinned anchor and no roster row of the machine.
+/// Returns the mark's entry.
+///
+/// # Errors
+/// A request of another vault; storage faults.
+pub fn publish_pinned_root_and_mark(
+    vault: &Vault,
+    owner: EntityId,
+    request: &MachineEnrolmentRequest,
+) -> Result<AuthorityEntryHash> {
+    publish_root_and_mark(vault, owner, request, true)
+}
+
+fn publish_root_and_mark(
+    vault: &Vault,
+    owner: EntityId,
+    request: &MachineEnrolmentRequest,
+    pin: bool,
+) -> Result<AuthorityEntryHash> {
     let seed = RecoveryRootSeed::generate()?;
     let root = seed.public(&request.vault_id)?;
     let record = OwnerRootRecord {
@@ -144,6 +168,13 @@ pub fn publish_unpinned_root_and_mark(
     let mut txn = vault.store.env.write_txn()?;
     vault.publish_owner_root_in_txn(&mut txn, &anchor, record)?;
     let mark = vault.append_anchor_mark_in_txn(&mut txn, &anchor, owner, request)?;
+    if pin {
+        let pinned = crate::authority::PinnedRoot {
+            id: root.id,
+            anchor_key: root.anchor_key,
+        };
+        crate::authority::write_pinned_root_in_txn(&vault.store, &mut txn, pinned, None)?;
+    }
     txn.commit()?;
     Ok(mark)
 }
