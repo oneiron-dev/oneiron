@@ -34,6 +34,9 @@ impl Vault {
         crate::store::base_agent::guard_actor_delete(id)?;
         {
             let rtxn = self.store.env.read_txn()?;
+            // The root project refuses here, before a privacy erase's
+            // audience-edit write below can commit anything.
+            crate::workspace_roster::reject_root_project_delete(&self.store, &rtxn, id)?;
             crate::origin::lfs::reject_direct_lfs_chunk_delete(&self.store, &rtxn, id)?;
             self.require_room_delete_gate(&rtxn, id, gate.as_ref(), allow_replay_test)?;
         }
@@ -63,7 +66,6 @@ impl Vault {
         }
         {
             let txn = self.store.env.read_txn()?;
-            crate::workspace_roster::reject_root_project_delete(&self.store, &txn, id)?;
             self.store
                 .delete_guards
                 .reject_ruling_delete(&self.store, &txn, id)?;

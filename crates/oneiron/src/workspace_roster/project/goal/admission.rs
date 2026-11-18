@@ -494,9 +494,40 @@ fn retire_goal(
 
 /// Deletion is not a backdoor for dropping a protected goal or its project.
 /// A future owner-delete flow must supply its own checked authorization.
+/// The one project that passes with a goal pointer is one the hard rail
+/// purges in this txn: its `dt:` marker is written, and [`retire_for_delete`]
+/// has already retired the goal it points to (the goal's admission marker is
+/// gone), so the tear removes the stale pointer with the row (FIX
+/// ROOT-PROJECT-ERASE-REPUT-REFUSED). A direct or batch delete writes no
+/// `dt:` marker and is refused as before.
 pub(crate) fn guard_goal_delete(store: &Store, txn: &RoTxn<'_>, id: EntityId) -> Result<()> {
-    if CLAIM_MARKERS.contains(store, txn, &id)? || pointed_goal(store, txn, id)?.is_some() {
+    if CLAIM_MARKERS.contains(store, txn, &id)? {
+        return Err(invalid());
+    }
+    if let Some(goal) = pointed_goal(store, txn, id)?
+        && !goal_retired_by_hard_purge(store, txn, id, &goal)?
+    {
         return Err(invalid());
     }
     Ok(())
+}
+
+/// Whether `project`, which points to `goal`, is hard-purged in this txn
+/// with that goal already retired: its `dt:` marker is written and the
+/// goal's admission marker is gone.
+fn goal_retired_by_hard_purge(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    project: EntityId,
+    goal: &str,
+) -> Result<bool> {
+    let Ok(goal) = EntityId::from_hex(goal) else {
+        return Ok(false);
+    };
+    Ok(crate::ports::TombstoneStoreRead::port_deletion_marked(
+        store,
+        txn,
+        crate::ports::DeletionMarker::HardDelete,
+        &project,
+    )? && !CLAIM_MARKERS.contains(store, txn, &goal)?)
 }
