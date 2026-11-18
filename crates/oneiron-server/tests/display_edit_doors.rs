@@ -20,10 +20,14 @@
 //! - a newer proposal of the agent's for the same edit replaces the open one;
 //! - text with a credential, a subject the vault does not know, and a
 //!   proposal past the agent's open cap (32) are refused;
-//! - an agent never answers, and the owner never proposes.
+//! - an agent never answers, and the owner never proposes;
+//! - a label, the owner's own or an accepted proposal's, is admitted by the
+//!   side-row wall: a key, or a value custody already holds, is stored as its
+//!   handle, and no agent's handle card shows it (SECRET-HANDLE-LABEL-UNWALLED).
 //!
 //! Red on the base (#8635's head): none of the rows or routes exists there
-//! (404).
+//! (404). The two label-wall cases are red on #8665's head 7bc394199c3e: the
+//! label is stored as given.
 //!
 //! Fleet command: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked
 //! -p oneiron-server --all-features --features oneiron/test-support --test
@@ -299,7 +303,14 @@ impl Served {
     /// 1 with one binding, as the register route's own test does): its bare
     /// handle, as an agent names it.
     async fn register(&self, name: &str) -> String {
-        let value = STANDARD.encode(format!("display_edit_{}", EntityId::now().to_hex()));
+        let value = format!("display_edit_{}", EntityId::now().to_hex());
+        self.register_value(name, &value).await
+    }
+
+    /// The owner registers `value` as a secret named `name`, as
+    /// [`Self::register`] does: its bare handle.
+    async fn register_value(&self, name: &str, value: &str) -> String {
+        let value = STANDARD.encode(value);
         let (status, body) = self
             .post(
                 Caller::Owner,
@@ -491,6 +502,74 @@ fn an_accepted_label_proposal_labels_the_secret_as_the_owners_act() {
             status.is_client_error(),
             "a closed proposal is no longer answered: {status} {body}"
         );
+    });
+}
+
+/// An accepted label holding a value custody already holds (one with no
+/// credential shape, as a passphrase an agent was revealed) is stored as
+/// that record's handle: no agent's handle card shows the value
+/// (SECRET-HANDLE-LABEL-UNWALLED; REVIEW2 #8665 P2-1).
+#[test]
+fn an_accepted_label_holding_a_value_custody_holds_shows_its_handle_on_the_card() {
+    run_on_engine_stack("display-edit-label-known-value", || async {
+        let served = served().await;
+        let value = format!("display_edit_{}", EntityId::now().to_hex());
+        let holder = served.register_value("display-edit-held-value", &value).await;
+        let handle = served.register(NAME).await;
+        let id = served
+            .proposed(json!({
+                "target": "secret_label",
+                "subject": handle,
+                "value": format!("deploy key {value}"),
+                "why": "the deploy notes call it this",
+            }))
+            .await;
+        let (status, body) = served
+            .request(
+                Caller::Owner,
+                "/v1/owner/display-edits/accept",
+                json!({"id": id}),
+            )
+            .await;
+        assert_eq!(status, StatusCode::OK, "the owner accepts: {body}");
+        let label = served.card_label(&handle).await;
+        assert!(
+            !label.contains(&value),
+            "the card shows no value custody holds: {label}"
+        );
+        assert!(
+            label.contains("[secret ") && label.contains(&holder),
+            "the label keeps the holding record's handle: {label}"
+        );
+    });
+}
+
+/// The owner's label holding a key is stored as the key's handle, and the
+/// door answers what it stored: the handle card shows no key bytes
+/// (SECRET-HANDLE-LABEL-UNWALLED; REVIEW2 #8559 P2-1).
+#[test]
+fn the_owners_label_holding_a_key_is_stored_as_its_handle() {
+    run_on_engine_stack("display-edit-label-key", || async {
+        let served = served().await;
+        let handle = served.register(NAME).await;
+        let set = served
+            .vault
+            .set_secret_handle_label(
+                &served.owner_proof(),
+                &handle,
+                Some("token=ghp_0123456789abcdefghijklmnopqrstuvwxyz"),
+            )
+            .expect("the owner labels the secret");
+        let stored = set.label.expect("the set answers the stored label");
+        assert!(
+            !stored.contains("ghp_0123456789"),
+            "the door stores no key bytes: {stored}"
+        );
+        assert!(
+            stored.contains("[secret "),
+            "the label keeps the key's handle: {stored}"
+        );
+        assert_eq!(served.card_label(&handle).await, stored);
     });
 }
 
