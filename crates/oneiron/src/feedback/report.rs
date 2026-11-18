@@ -2,6 +2,8 @@
 
 mod delivery;
 mod disclosure;
+#[cfg(oneiron_test_support)]
+pub(crate) use disclosure::report_request_digest_for_test;
 mod routing;
 mod store;
 
