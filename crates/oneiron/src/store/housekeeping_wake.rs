@@ -4,8 +4,8 @@
 //! transaction: a secret lease's expiry, a voice print's retention deadline, a
 //! critical confirm's window. Rows are keyed by sweep, deadline and a fresh id
 //! per note, so a sweep's earliest deadline is the first row under its tag and
-//! two notes of the same deadline are two rows. The schedule makes the sweep
-//! due at its earliest row, and a vault that is not running wakes for it. A
+//! two notes of the same deadline are two rows. The note makes the sweep's
+//! job due by its deadline, and a vault that is not running wakes for it. A
 //! run that covered its rows removes exactly the rows it read before it
 //! started; a row noted since stays for the next run. A deadline that moved or
 //! was settled early leaves a row that costs one run that finds nothing.
@@ -54,18 +54,20 @@ fn tag(sweep: HousekeepingSweep) -> Option<[u8; 1]> {
 }
 
 /// Notes that `sweep` has work due at `at`, in the caller's transaction, so
-/// the note commits with the deadline it records. A sweep without notes
-/// notes nothing.
+/// the note commits with the deadline it records, and makes the sweep's job
+/// due by then unless it is backing off (DESIGN 15-setting-primitive, stage
+/// 5a). A sweep without notes notes nothing.
 pub(crate) fn note_wake_in_txn(
     store: &Store,
     txn: &mut RwTxn<'_>,
     sweep: HousekeepingSweep,
     at: u64,
 ) -> Result<()> {
-    match tag(sweep) {
-        Some(tag) => WAKE.put(store, txn, &(tag, at, store.clock.entity_id()?), &()),
-        None => Ok(()),
-    }
+    let Some(tag) = tag(sweep) else {
+        return Ok(());
+    };
+    WAKE.put(store, txn, &(tag, at, store.clock.entity_id()?), &())?;
+    crate::housekeeping::jobs::sweep_due_by_in_txn(store, txn, sweep, at)
 }
 
 /// The earliest deadline noted for `sweep`.
@@ -111,7 +113,20 @@ pub(crate) fn clear(vault: &Vault, covered: &[WakeKey]) -> Result<()> {
     Ok(())
 }
 
-/// Lands archived wake notes with recognized sweep tags, holding back the rest.
+/// The sweep whose notes carry `tag`.
+fn sweep_of(tag: [u8; 1]) -> Option<HousekeepingSweep> {
+    match tag {
+        [1] => Some(HousekeepingSweep::SecretLeaseExpiry),
+        [2] => Some(HousekeepingSweep::CriticalConfirmExpiry),
+        [3] => Some(HousekeepingSweep::VoicePrintRetention),
+        [4] => Some(HousekeepingSweep::SharedActMaturity),
+        [5] => Some(HousekeepingSweep::AnnotationBodyAnchors),
+        _ => None,
+    }
+}
+
+/// Lands archived wake notes with recognized sweep tags, holding back the rest. A note it
+/// installs makes its sweep's job due by its deadline in the same write, as a live note does.
 pub(crate) fn land_archived_housekeeping_wake_rows_in_txn(
     vault: &Vault,
     txn: &mut RwTxn<'_>,
@@ -122,13 +137,21 @@ pub(crate) fn land_archived_housekeeping_wake_rows_in_txn(
     for row in rows {
         let outcome = match decode_archived_row(&WAKE, row) {
             Err(reason) => ArchivedSideRowOutcome::HeldBack(reason),
-            Ok((key, ())) => {
-                if !matches!(key.0, [1] | [2] | [3] | [4] | [5]) {
-                    ArchivedSideRowOutcome::HeldBack(RetainedSideHeldBackReason::InvalidValue)
-                } else {
-                    install_archived_row(&WAKE, vault, txn, permit, &key, row)?
+            Ok((key, ())) => match sweep_of(key.0) {
+                None => ArchivedSideRowOutcome::HeldBack(RetainedSideHeldBackReason::InvalidValue),
+                Some(sweep) => {
+                    let outcome = install_archived_row(&WAKE, vault, txn, permit, &key, row)?;
+                    if matches!(outcome, ArchivedSideRowOutcome::Installed) {
+                        crate::housekeeping::jobs::sweep_due_by_in_txn(
+                            &vault.store,
+                            txn,
+                            sweep,
+                            key.1,
+                        )?;
+                    }
+                    outcome
                 }
-            }
+            },
         };
         outcomes.push(outcome);
     }

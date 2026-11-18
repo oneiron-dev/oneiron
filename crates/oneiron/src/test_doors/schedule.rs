@@ -1,6 +1,6 @@
 //! The job kinds and doors the Schedule primitive's tests use (DESIGN 15-setting-primitive,
-//! stages 0.2 and 5a-1). They exist only under `--cfg oneiron_test_support`; no engine code arms
-//! them.
+//! stages 0.2, 5a-1 and 5a-2). They exist only under `--cfg oneiron_test_support`; no engine code
+//! arms them.
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -15,7 +15,7 @@ use crate::schedule::{
     ArmBy, Armed, JobOutcome, JobPass, JobResult, JobSpec, Late, RETRY_FIRST_SECS, Ran,
     ScheduleView, Trigger, When,
 };
-use crate::store::housekeeping_schedule::HousekeepingBudget;
+use crate::store::housekeeping_schedule::{HousekeepingBudget, HousekeepingSweep};
 
 /// Every test run, by job code and subject.
 static RUNS: Mutex<BTreeMap<(&'static str, Option<EntityId>), u64>> = Mutex::new(BTreeMap::new());
@@ -86,6 +86,10 @@ static SEEN: Mutex<BTreeMap<(PathBuf, &'static str), Vec<SeenRun>>> = Mutex::new
 
 /// The `due_by` the cadence job answers, by vault.
 static CADENCE_DUE_BY: Mutex<BTreeMap<PathBuf, u64>> = Mutex::new(BTreeMap::new());
+
+/// A deadline the next run of a sweep notes while it runs, by vault and sweep.
+static PLANTED_DEADLINES: Mutex<BTreeMap<(PathBuf, &'static str), u64>> =
+    Mutex::new(BTreeMap::new());
 
 /// Records a run; answers how many runs of its job this vault has made, this one included.
 fn record(vault: &Vault, armed: &Armed) -> usize {
@@ -158,6 +162,13 @@ fn run_seen(vault: &Vault, armed: &Armed, _pass: &JobPass<'_>) -> Result<JobResu
     Ok(JobResult::of(Ran::Done))
 }
 
+/// Always stops at its bound with work left, from the same cursor: a drain that may find the same
+/// items again.
+fn run_bounded(vault: &Vault, armed: &Armed, _pass: &JobPass<'_>) -> Result<JobResult> {
+    record(vault, armed);
+    Ok(JobResult::of(Ran::More { cursor: vec![0] }))
+}
+
 /// A job an actor arms; each run counts, and it wakes a stopped vault.
 pub static TEST_COUNT: JobSpec = JobSpec {
     code: "test.count",
@@ -168,6 +179,7 @@ pub static TEST_COUNT: JobSpec = JobSpec {
     retry_cap_secs: None,
     wakes_host: true,
     at_open: false,
+    once_per_pass: false,
     run: run_count,
 };
 
@@ -181,6 +193,7 @@ pub static TEST_FAIL: JobSpec = JobSpec {
     retry_cap_secs: None,
     wakes_host: false,
     at_open: false,
+    once_per_pass: false,
     run: run_fail,
 };
 
@@ -194,6 +207,7 @@ pub static TEST_PAGED: JobSpec = JobSpec {
     retry_cap_secs: None,
     wakes_host: false,
     at_open: false,
+    once_per_pass: false,
     run: run_paged,
 };
 
@@ -207,6 +221,7 @@ pub static TEST_ENGINE: JobSpec = JobSpec {
     retry_cap_secs: None,
     wakes_host: false,
     at_open: false,
+    once_per_pass: false,
     run: run_count,
 };
 
@@ -220,6 +235,7 @@ pub static TEST_LAPSE: JobSpec = JobSpec {
     retry_cap_secs: None,
     wakes_host: false,
     at_open: false,
+    once_per_pass: false,
     run: run_count,
 };
 
@@ -233,6 +249,7 @@ pub static TEST_CADENCE: JobSpec = JobSpec {
     retry_cap_secs: None,
     wakes_host: false,
     at_open: false,
+    once_per_pass: false,
     run: run_cadence,
 };
 
@@ -246,6 +263,7 @@ pub static TEST_ITEMS: JobSpec = JobSpec {
     retry_cap_secs: None,
     wakes_host: false,
     at_open: false,
+    once_per_pass: false,
     run: run_items,
 };
 
@@ -259,6 +277,7 @@ pub static TEST_OPEN: JobSpec = JobSpec {
     retry_cap_secs: None,
     wakes_host: false,
     at_open: true,
+    once_per_pass: false,
     run: run_seen,
 };
 
@@ -272,8 +291,50 @@ pub static TEST_ANSWER: JobSpec = JobSpec {
     retry_cap_secs: None,
     wakes_host: false,
     at_open: false,
+    once_per_pass: false,
     run: run_answer,
 };
+
+/// A drain that starts once a pass, as the engine's sweeps do (stage 5a-2).
+pub static TEST_ONCE: JobSpec = JobSpec {
+    code: "test.once",
+    when: When::PerArming,
+    arm_by: ArmBy::Engine,
+    late: Late::Run,
+    retry_first_secs: RETRY_FIRST_SECS,
+    retry_cap_secs: None,
+    wakes_host: false,
+    at_open: false,
+    once_per_pass: true,
+    run: run_bounded,
+};
+
+/// The next run of `sweep` in `vault` notes a deadline at `at` while it runs, after it listed
+/// the deadlines it covers, as a door that writes during the run does (stage 5a-2, review round 2
+/// of #9300).
+pub fn note_deadline_during_next_run(vault: &Vault, sweep: HousekeepingSweep, at: u64) {
+    PLANTED_DEADLINES
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .insert((vault_of(vault), sweep.code()), at);
+}
+
+/// The hook a sweep's run calls once it listed the deadlines it covers: it notes the deadline
+/// [`note_deadline_during_next_run`] planted for this run, if any.
+///
+/// # Errors
+///
+/// As the note.
+pub(crate) fn note_planted_deadline(vault: &Vault, sweep: HousekeepingSweep) -> Result<()> {
+    let planted = PLANTED_DEADLINES
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .remove(&(vault_of(vault), sweep.code()));
+    match planted {
+        Some(at) => note_sweep_deadline(vault, sweep, at),
+        None => Ok(()),
+    }
+}
 
 /// Whether `spec` is one of these test job kinds (code `test.*`): the doors below take only
 /// them, so the engine's own jobs never join a test's runs.
@@ -348,6 +409,66 @@ pub fn pull_due_forward(
     })
 }
 
+/// The write that queues an erasure obligation makes the erasure sweep due, here in its own
+/// write and with no obligation queued: the pull alone (stage 5a-2).
+///
+/// # Errors
+///
+/// Storage errors.
+pub fn pull_for_queued_erase_obligation(vault: &Vault) -> Result<()> {
+    vault.with_write_txn_grouped(|txn| {
+        crate::housekeeping::jobs::erase_obligation_queued_in_txn(&vault.store, txn)
+    })
+}
+
+/// A run of `job` about `subject` started at `at` and never finished, as a crash or a kill leaves
+/// it: its start marker, in its own write (stage 5a-2). Nothing when the job is not armed.
+///
+/// # Errors
+///
+/// Storage errors.
+pub fn plant_start_marker(
+    vault: &Vault,
+    job: &str,
+    subject: Option<EntityId>,
+    at: u64,
+) -> Result<()> {
+    vault.with_write_txn_grouped(|txn| {
+        crate::schedule::plant_start_marker_in_txn(&vault.store, txn, job, subject, at)
+    })
+}
+
+/// The codes of the job kinds whose cadence is a Setting key but which someone other than the
+/// engine may arm; empty, since only the engine arms from a cadence key.
+#[must_use]
+pub fn cadence_jobs_not_engine_armed() -> Vec<&'static str> {
+    crate::schedule::jobs()
+        .filter(|spec| matches!(spec.when, When::Setting(_)) && spec.arm_by != ArmBy::Engine)
+        .map(|spec| spec.code)
+        .collect()
+}
+
+/// The codes of the job kinds whose cadence is a Setting key.
+#[must_use]
+pub fn cadence_jobs() -> Vec<&'static str> {
+    crate::schedule::jobs()
+        .filter(|spec| matches!(spec.when, When::Setting(_)))
+        .map(|spec| spec.code)
+        .collect()
+}
+
+/// A door notes that `sweep` has work due at `at`, in its own write, as the secret-lease, voice
+/// print, critical-confirm and shared-act doors do (DESIGN 15-setting-primitive, stage 5a).
+///
+/// # Errors
+///
+/// Storage errors.
+pub fn note_sweep_deadline(vault: &Vault, sweep: HousekeepingSweep, at: u64) -> Result<()> {
+    vault.with_write_txn_grouped(|txn| {
+        crate::housekeeping::note_wake_in_txn(&vault.store, txn, sweep, at)
+    })
+}
+
 /// When `job` about `subject` is next due, as the engine reads it.
 ///
 /// # Errors
@@ -377,6 +498,7 @@ pub static TEST_FAIL_ONCE: JobSpec = JobSpec {
     retry_cap_secs: None,
     wakes_host: false,
     at_open: false,
+    once_per_pass: false,
     run: run_fail_once,
 };
 
@@ -408,6 +530,7 @@ pub static TEST_REARM: JobSpec = JobSpec {
     retry_cap_secs: None,
     wakes_host: false,
     at_open: false,
+    once_per_pass: false,
     run: run_rearm,
 };
 
@@ -437,6 +560,7 @@ pub static TEST_WITHDRAWN: JobSpec = JobSpec {
     retry_cap_secs: None,
     wakes_host: false,
     at_open: false,
+    once_per_pass: false,
     run: run_fail,
 };
 

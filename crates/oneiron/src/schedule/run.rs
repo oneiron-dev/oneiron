@@ -55,7 +55,8 @@ pub struct JobRun {
 pub enum JobOutcome {
     /// It ran to the end of its work.
     Done,
-    /// It stopped at its budget and is due again at once.
+    /// It stopped at its budget and is due again at once; a job that starts once a pass goes on
+    /// at the next pass.
     More,
     /// It ran to the end of its work but left items, and is due again after the backoff.
     ItemsFailed,
@@ -73,11 +74,13 @@ pub enum JobOutcome {
     UnknownJob,
 }
 
-/// The first due-index entry due by `now`: its due time and its row's key.
+/// The first due-index entry due by `now` whose row is not one of `ran_once`, the rows of the
+/// once-a-pass jobs this pass has started: its due time and its row's key.
 fn first_due_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     now: u64,
+    ran_once: &[Vec<u8>],
 ) -> Result<Option<(u64, Vec<u8>)>> {
     for entry in DUE.iter_raw_from(&vault.store, txn, &[])? {
         let (key, _) = entry?;
@@ -85,7 +88,12 @@ fn first_due_in_txn(
             continue;
         };
         let due = u64::from_be_bytes(*due);
-        return Ok((due <= now).then(|| (due, row_key.to_vec())));
+        if due > now {
+            return Ok(None);
+        }
+        if !ran_once.iter().any(|ran| ran.as_slice() == row_key) {
+            return Ok(Some((due, row_key.to_vec())));
+        }
     }
     Ok(None)
 }
@@ -120,7 +128,8 @@ impl Vault {
     }
 
     /// [`Self::run_due`] within `pass`. A pass starts at least one due job, so it makes
-    /// progress however its budget was spent before it, unless its host asked it to stop.
+    /// progress however its budget was spent before it, unless its host asked it to stop. A job
+    /// that starts once a pass ([`JobSpec::once_per_pass`]) is not started again in it.
     pub(crate) fn run_due_until(&self, pass: &JobPass<'_>) -> Result<ScheduleRunReport> {
         let _pass = self
             .housekeeping
@@ -128,6 +137,7 @@ impl Vault {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let deadline = pass.deadline;
         let mut report = ScheduleRunReport::default();
+        let mut ran_once: Vec<Vec<u8>> = Vec::new();
         while report.runs.len() < RUNS_PER_PASS
             && !deadline.stopped()
             && (report.runs.is_empty() || !deadline.passed())
@@ -135,14 +145,29 @@ impl Vault {
             let now = self.now_recorded_at();
             let due = {
                 let txn = self.store.env.read_txn()?;
-                first_due_in_txn(self, &txn, now)?
+                first_due_in_txn(self, &txn, now, &ran_once)?
             };
             let Some((due_at, key)) = due else {
                 break;
             };
-            if let Some(run) = self.run_one(&key, due_at, pass)? {
-                report.runs.push(run);
+            // `None`: the row was armed again for later, and nothing ran.
+            let Some(run) = self.run_one(&key, due_at, pass)? else {
+                continue;
+            };
+            // Only a run that started takes a once-a-pass job's start: an interrupted run's
+            // cleared marker, a lapsed occurrence or a withdrawn arming ran nothing, and the job
+            // runs in this pass when it is due.
+            let started = !matches!(
+                run.outcome,
+                JobOutcome::Interrupted
+                    | JobOutcome::Lapsed
+                    | JobOutcome::Withdrawn
+                    | JobOutcome::UnknownJob
+            );
+            if started && job_named(&run.job).is_some_and(|spec| spec.once_per_pass) {
+                ran_once.push(key);
             }
+            report.runs.push(run);
         }
         Ok(report)
     }
@@ -430,9 +455,9 @@ fn next_occurrence(row: &ScheduleRow, now: u64) -> Option<u64> {
 
 /// The row after a run that ended at `end`, or `None` when the job is done for good.
 /// - done: the next occurrence ([`next_occurrence`]): a deadline is done; a repeating job is due
-///   at its next occurrence after now, or at the run's `due_by` when that is earlier but never
-///   sooner than its first retry after the end, its failures, cursor and answered request
-///   cleared;
+///   at its next occurrence after now, or at the run's `due_by` or the time a door pulled it to
+///   while the run went on (`pulled_to`) when that is earlier, but never sooner than its first
+///   retry after the end, its failures, cursor, answered request and pull cleared;
 /// - more: due again at once, going on from its cursor;
 /// - items failed: due again after the backoff, its cursor cleared;
 /// - failed: due again after the backoff, its cursor kept.
@@ -447,19 +472,25 @@ fn finished(spec: &JobSpec, row: ScheduleRow, result: &JobResult, end: u64) -> O
         ..row
     };
     match &result.ran {
-        Ran::Done => next_occurrence(&row, end).map(|next_due_at| ScheduleRow {
-            // A `due_by` already past means soon, never again in this pass.
-            next_due_at: result.due_by.map_or(next_due_at, |due_by| {
-                due_by
-                    .max(end.saturating_add(spec.retry_first_secs))
-                    .min(next_due_at)
-            }),
-            resume_at: None,
-            failures: 0,
-            cursor: None,
-            answering: false,
-            ..row
-        }),
+        Ran::Done => {
+            // Work a door made due while the run went on, after the run read its own, counts as
+            // the run's `due_by` (review round 2 of #9300, P1).
+            let due_by = result.due_by.into_iter().chain(row.pulled_to).min();
+            next_occurrence(&row, end).map(|next_due_at| ScheduleRow {
+                // A `due_by` already past means soon, never again in this pass.
+                next_due_at: due_by.map_or(next_due_at, |due_by| {
+                    due_by
+                        .max(end.saturating_add(spec.retry_first_secs))
+                        .min(next_due_at)
+                }),
+                resume_at: None,
+                failures: 0,
+                cursor: None,
+                answering: false,
+                pulled_to: None,
+                ..row
+            })
+        }
         Ran::More { cursor } => Some(ScheduleRow {
             resume_at: Some(end),
             cursor: Some(cursor.clone()),
@@ -497,11 +528,16 @@ fn finished(spec: &JobSpec, row: ScheduleRow, result: &JobResult, end: u64) -> O
 
 /// A row armed again while a run of its earlier arming ran, after that run ended at `end`: the
 /// new arming stands, due no sooner than the run's first retry after its end, so a job that arms
-/// itself again at once never runs in a loop. Its occurrence stays where the arming put it, and
-/// its last run is the one that ended at `end`.
+/// itself again at once never runs in a loop. Its occurrence stays where the arming put it, or
+/// where a door pulled it to while the run went on when that is earlier, and its last run is the
+/// one that ended at `end`.
 fn armed_again(spec: &JobSpec, row: ScheduleRow, end: u64) -> ScheduleRow {
     let floor = end.saturating_add(spec.retry_first_secs);
     let row = ScheduleRow {
+        next_due_at: row
+            .pulled_to
+            .map_or(row.next_due_at, |pulled| pulled.min(row.next_due_at)),
+        pulled_to: None,
         finished_at: end,
         ..row
     };

@@ -7,7 +7,7 @@ use crate::Vault;
 use crate::consent::AuthenticatedOwner;
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
-use crate::error::{Error, Result};
+use crate::error::{Error, ErrorKind, Result};
 use crate::setting::SettingChange;
 use crate::side_table::{self, Named, SideTable};
 use crate::store::Store;
@@ -49,6 +49,11 @@ pub(super) struct ScheduleRow {
     /// answers a "run now". It stays until a run of the work ends done.
     #[serde(default)]
     pub(super) answering: bool,
+    /// The earliest time a door made the job due by while a run of it was in flight: work that
+    /// run read its state too early to see. The next run that ends done is due again by then
+    /// (as its own `due_by`), and so is a new arming made while the run went on.
+    #[serde(default)]
+    pub(super) pulled_to: Option<u64>,
 }
 
 /// The agent behind an arming.
@@ -90,6 +95,8 @@ impl ScheduleRow {
             resume_at: None,
             cursor: None,
             answering: false,
+            // Work a door made due while a run of the earlier arming went on is still owed.
+            pulled_to: prior.and_then(|prior| prior.pulled_to),
         })
     }
 }
@@ -504,16 +511,48 @@ fn cadence_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>, spec: &JobSpec) -> Resul
 
 /// Arms every job of a kind `which` takes whose cadence is a Setting key from the key's value in
 /// force, in one write. The host's pass calls it on its handle's first pass for every such job; a
-/// job already armed with that trigger keeps its due time.
+/// job already armed with that trigger keeps its due time. A value in force this build cannot
+/// read or arm (a row a later build wrote, a zone this build does not know, a wall time with no
+/// occurrence ahead) is logged: a job already armed keeps the arming it has (its due time, its
+/// walk, its backoff and a run asked for), and a job never armed is armed from the key's
+/// default. One cadence never holds the others, and no job is left unarmed.
 ///
 /// # Errors
 ///
-/// As [`arm_in_txn`]; storage errors.
+/// Storage errors.
 pub(crate) fn arm_setting_jobs(vault: &Vault, which: fn(&JobSpec) -> bool) -> Result<()> {
     vault.with_write_txn_grouped(|txn| {
         for spec in jobs().filter(|spec| which(spec)) {
-            if let Some(trigger) = cadence_in_txn(vault, txn, spec)? {
-                arm_in_txn(vault, txn, spec, None, trigger)?;
+            let When::Setting(key) = spec.when else {
+                continue;
+            };
+            let armed = match key.read_in_txn(vault, txn, &[], None) {
+                Ok(in_force) => arm_in_txn(vault, txn, spec, None, in_force.value),
+                Err(error) => Err(error),
+            };
+            match armed {
+                Err(error)
+                    if matches!(
+                        error.kind(),
+                        ErrorKind::InvalidConfig | ErrorKind::CorruptedIndex
+                    ) =>
+                {
+                    if ROWS.get(&vault.store, txn, &row_key(spec.code, None))?.is_some() {
+                        tracing::warn!(
+                            job = spec.code,
+                            %error,
+                            "schedule: the cadence in force cannot be armed; the job keeps the arming it has"
+                        );
+                    } else {
+                        tracing::warn!(
+                            job = spec.code,
+                            %error,
+                            "schedule: the cadence in force cannot be armed; the job is armed from the key's default"
+                        );
+                        arm_in_txn(vault, txn, spec, None, key.kind.default_typed())?;
+                    }
+                }
+                armed => armed?,
             }
         }
         Ok(())
@@ -574,8 +613,10 @@ pub(crate) fn request_runs(vault: &Vault, which: fn(&JobSpec) -> bool) -> Result
 }
 
 /// Pulls the due time of `job` about `subject` forward to `at` inside the caller's write: work
-/// a door made due before the job's next occurrence. A job that is backing off, or has a run in
-/// flight, keeps its due time; one not armed, or already due by `at`, is left as it is.
+/// a door made due before the job's next occurrence. A job with a run in flight keeps its due
+/// time, and that run's end makes it due by `at` (the run read its work before this write); a
+/// job that is backing off keeps its due time; one not armed, or already due by `at`, is left as
+/// it is.
 ///
 /// # Errors
 ///
@@ -591,11 +632,63 @@ pub(crate) fn due_by_in_txn(
     let Some(prior) = ROWS.get(store, txn, &key)? else {
         return Ok(());
     };
-    if prior.failures > 0 || prior.started_at.is_some() || prior.due_at() <= at {
+    let row = if prior.started_at.is_some() {
+        if prior.pulled_to.is_some_and(|pulled| pulled <= at) {
+            return Ok(());
+        }
+        ScheduleRow {
+            pulled_to: Some(at),
+            ..prior.clone()
+        }
+    } else {
+        if prior.failures > 0 || prior.due_at() <= at {
+            return Ok(());
+        }
+        ScheduleRow {
+            next_due_at: at,
+            ..prior.clone()
+        }
+    };
+    store_row_in_txn(store, txn, &key, Some(&prior), Some(&row))
+}
+
+/// When the last run of `job` about `subject` ended (0 before the first), or `None` when it is
+/// not armed.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn finished_at_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    job: &str,
+    subject: Option<EntityId>,
+) -> Result<Option<u64>> {
+    Ok(ROWS
+        .get(store, txn, &row_key(job, subject))?
+        .map(|row| row.finished_at))
+}
+
+/// A run of `job` about `subject` started at `at` and never finished, as a crash or a kill leaves
+/// it: its start marker. Nothing when the job is not armed.
+///
+/// # Errors
+///
+/// Storage errors.
+#[cfg(oneiron_test_support)]
+pub(crate) fn plant_start_marker_in_txn(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    job: &str,
+    subject: Option<EntityId>,
+    at: u64,
+) -> Result<()> {
+    let key = row_key(job, subject);
+    let Some(prior) = ROWS.get(store, txn, &key)? else {
         return Ok(());
-    }
+    };
     let row = ScheduleRow {
-        next_due_at: at,
+        started_at: Some(at),
         ..prior.clone()
     };
     store_row_in_txn(store, txn, &key, Some(&prior), Some(&row))
