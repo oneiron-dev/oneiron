@@ -14,8 +14,8 @@
 //! connector change, and an outbound connector write's local completion,
 //! which can turn an inbound passport two-way. An ICS feed's or a CalDAV seat's
 //! setting change takes the turn too, before its write opens
-//! ([`ADMISSION_WRITE_TURN`]), an owner archive restore's among them, so none
-//! lands inside a running admission. The turn is a lock per vault, by canonical
+//! ([`ADMISSION_WRITE_TURN`]), an owner archive restore of such a row among
+//! them, so none lands inside a running admission. The turn is a lock per vault, by canonical
 //! root, kept for the process's life as the writer-spend locks are. The
 //! serving process is the vault's only writer, so the turn is the whole
 //! boundary.

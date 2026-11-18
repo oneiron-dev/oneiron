@@ -287,6 +287,38 @@ fn opaque_withholds_credential(bytes: &[u8]) -> bool {
     crate::batch::secret_scan::scan_file_content("", bytes).is_some()
 }
 
+/// Visits each retained side row envelope the archive holds, in key order, once its key is
+/// checked as its envelope identity. Reads the archive alone, so it runs before or inside the
+/// import's writer; a row of another family is passed over before its value is read.
+pub(super) fn visit_retained_envelopes<R: Read + Seek>(
+    archive: &IndexedArchive<'_, R>,
+    mut visit: impl FnMut([u8; 32], ArchiveRetainedSideRow) -> Result<()>,
+) -> Result<()> {
+    let mut files = |file: &ExportBodyFile| file.read(&archive.files);
+    let mut after: Option<Vec<u8>> = None;
+    while let Some((key, value)) = archive.index.next(Tag::Side, &[], after.as_deref())? {
+        let archived = archive
+            .spool
+            .parse::<ArchiveSideRow>(Loc::decode(&value)?)?;
+        if archived.family == ArchiveSideFamily::RetainedSideRow {
+            let row = archived.stored(&mut files)?;
+            let envelope = RETAINED_SIDE_ROWS
+                .decode_value(&row.value)
+                .map_err(|_| invalid("retained side row does not decode as its envelope"))?;
+            let typed = <[u8; 32] as SideKey>::decode_key(&row.key)
+                .ok_or_else(|| invalid("retained side row key"))?;
+            if typed != retained_side_row_key(&envelope) {
+                return Err(invalid(
+                    "retained side row key is not its envelope identity",
+                ));
+            }
+            visit(typed, envelope)?;
+        }
+        after = Some(key);
+    }
+    Ok(())
+}
+
 /// Installs the owner's supported source tables and otherwise keeps envelopes inert in the
 /// import transaction; actor and actorless doors retain only, with the original inert counts.
 /// On the owner door, each source-live HOOKS_GRANT tuple kept as a retained row is recorded
@@ -304,31 +336,10 @@ pub(crate) fn install_or_retain_side_rows_in_txn<R: Read + Seek>(
         land_archived_side_group_in_txn,
     };
 
-    let mut files = |file: &ExportBodyFile| file.read(&archive.files);
     let mut tables: BTreeMap<String, RetainedSideTableCount> = BTreeMap::new();
     let mut groups: BTreeMap<ArchivedSideGroup, Vec<([u8; 32], ArchiveRetainedSideRow)>> =
         BTreeMap::new();
-    let mut after: Option<Vec<u8>> = None;
-    while let Some((key, value)) = archive.index.next(Tag::Side, &[], after.as_deref())? {
-        let row = archive
-            .spool
-            .parse::<ArchiveSideRow>(Loc::decode(&value)?)?
-            .stored(&mut files)?;
-        if row.family != ArchiveSideFamily::RetainedSideRow {
-            after = Some(key);
-            continue;
-        }
-        let envelope = RETAINED_SIDE_ROWS
-            .decode_value(&row.value)
-            .map_err(|_| invalid("retained side row does not decode as its envelope"))?;
-        let expected = retained_side_row_key(&envelope);
-        let typed = <[u8; 32] as SideKey>::decode_key(&row.key)
-            .ok_or_else(|| invalid("retained side row key"))?;
-        if typed != expected {
-            return Err(invalid(
-                "retained side row key is not its envelope identity",
-            ));
-        }
+    visit_retained_envelopes(archive, |typed, envelope| {
         let count = tables
             .entry(envelope.source_table.clone())
             .or_insert_with(|| RetainedSideTableCount {
@@ -354,8 +365,8 @@ pub(crate) fn install_or_retain_side_rows_in_txn<R: Read + Seek>(
                 super::record_deferred_hook_grant_in_txn(vault, wtxn, receipt_hex, typed)?;
             }
         }
-        after = Some(key);
-    }
+        Ok(())
+    })?;
     if let Some(permit) = permit {
         // The enum declaration order is the fixed owning-group dependency order.
         for (group, staged) in groups {
