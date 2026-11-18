@@ -110,4 +110,9 @@ pub struct CalendarPassportValue {
     pub last_seen_at: u64,
     /// Whether this source still reports the UID.
     pub presence: CalendarPassportPresence,
+    /// When this source first reported the UID cancelled, carried across its
+    /// later cancelled versions; absent while it reports the UID uncancelled.
+    /// A host-cancel deposit refund is dated by it, not by the newest version.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cancelled_since: Option<u64>,
 }

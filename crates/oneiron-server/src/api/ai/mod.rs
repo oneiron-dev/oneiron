@@ -19,7 +19,7 @@ use oneiron::llm::{VaultRef, WorkerMode};
 
 use crate::auth::{CoreAuth, CoreScope};
 use crate::config::models::role_key;
-use crate::models::{QuotaChoice, SeatState, TaggerRuntimeStatus, TaggerStatus};
+use crate::models::{QuotaAnswerer, QuotaChoice, SeatState, TaggerRuntimeStatus, TaggerStatus};
 use crate::oneironer::TaggerSlot;
 use crate::server::SyncServer;
 
@@ -111,10 +111,25 @@ async fn status(auth: CoreAuth, State(server): State<Arc<SyncServer>>) -> Respon
     models.tagger = server.tagger_slot().as_deref().map(tagger_status);
     point_tagger_seat(&mut models);
     name_worker_machines(&server, &mut models).await;
+    // The owner's open asks about runs held at their spend cap (ARCH-0036
+    // #offers-ask-home): the status shows them; the decision queue owns them.
+    let budget_questions = oneiron::agent_dispatch::run_budget_questions(server.vault())
+        .unwrap_or_else(|error| {
+            tracing::warn!(%error, "the run-budget asks could not be read");
+            Vec::new()
+        });
+    // And about Dreamer work parked at a spend cap or a pinned share.
+    let budget_trap_questions = oneiron::agent_dispatch::budget_trap_questions(server.vault())
+        .unwrap_or_else(|error| {
+            tracing::warn!(%error, "the budget trap asks could not be read");
+            Vec::new()
+        });
     Json(serde_json::json!({
         "ai": server.ai.status(),
         "models": models,
         "quota_questions": server.ai.model_runtime().quota_questions(),
+        "budget_questions": budget_questions,
+        "budget_trap_questions": budget_trap_questions,
     }))
     .into_response()
 }
@@ -325,23 +340,15 @@ async fn answer_quota(
             "the admission credential is no longer live",
         );
     }
+    // The question's answer row keeps who answered (WAVE11-QUOTA-CANON).
+    let answerer = agent.map_or(QuotaAnswerer::Owner, QuotaAnswerer::Agent);
     match server.ai.model_runtime().answer_quota(
         &question,
         answer.choice,
         answer.fallback.as_deref(),
+        answerer,
     ) {
-        Ok(true) => {
-            // The answer keeps no receipt, so the agent's answer is logged.
-            if let Some(agent) = agent {
-                tracing::info!(
-                    agent = %agent.to_hex(),
-                    choice = quota_choice_wire_name(answer.choice),
-                    question = %question,
-                    "an agent answered a quota question",
-                );
-            }
-            StatusCode::NO_CONTENT.into_response()
-        }
+        Ok(true) => StatusCode::NO_CONTENT.into_response(),
         Ok(false) => refusal(
             StatusCode::NOT_FOUND,
             "no_such_question",

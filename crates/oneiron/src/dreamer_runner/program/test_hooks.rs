@@ -21,6 +21,9 @@ use crate::entity_id::bytes_to_hex_lower;
 use crate::error::{Error, Result};
 use crate::{EdgeActorClass, EntityId, Vault};
 
+// The K-proof door's reach into the step digests (PLAN-UC-04 stage 7).
+pub(crate) use super::run::{outbound_result_digest_for_test, step_id_for_test};
+
 /// Arms a program for the agent `actor` in `conversation` at `armed_at`,
 /// sealed by the verified slip `proof` and the instrument `binding`, then
 /// records the wake TURN `turn`, landed at `landed_at`, owes it, as the
@@ -394,6 +397,46 @@ pub(crate) fn arming_row_bytes(
         .ok_or(Error::EntityNotFound)?;
     serde_json::to_vec(&std::collections::BTreeMap::from([("armed", arming)]))
         .map_err(|_| Error::InvalidConfig("the arming row does not encode".into()))
+}
+
+/// Overwrites the ARM row (`actor`, `registration`) with bytes that decode as no arming,
+/// as a damaged row sits.
+pub(crate) fn damage_arming_row(
+    vault: &Vault,
+    actor: EntityId,
+    registration: EntityId,
+) -> Result<()> {
+    vault.with_write_txn_grouped(|txn| {
+        ARM.put_undecodable(
+            vault,
+            txn,
+            &(actor, registration),
+            b"not a turn program arming",
+        )
+    })
+}
+
+/// Erases `actor`'s turn programs as the owner's erase does, in one writer.
+pub(crate) fn erase_actor_programs(vault: &Vault, actor: EntityId) -> Result<()> {
+    vault.with_write_txn_grouped(|txn| {
+        super::arm::erase_turn_program_actor_in_txn(vault, txn, &actor)
+    })
+}
+
+/// Each due row one of `actor`'s timers keeps: its due time and registration.
+pub(crate) fn timer_due_rows_for_actor(
+    vault: &Vault,
+    actor: EntityId,
+) -> Result<Vec<(u64, EntityId)>> {
+    super::trigger::timer_due_rows_for_actor(vault, actor)
+}
+
+/// Each idle or feed row one of `actor`'s programs keeps: its kind tag and registration.
+pub(crate) fn trigger_rows_for_actor(
+    vault: &Vault,
+    actor: EntityId,
+) -> Result<Vec<(u8, EntityId)>> {
+    super::trigger::trigger_rows_for_actor(vault, actor)
 }
 
 /// The `Admitted` row a linked machine would carry for the owed wake of

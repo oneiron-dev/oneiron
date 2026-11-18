@@ -127,8 +127,10 @@ async fn execute(
     // An authenticated caller past a window waits for it and is admitted
     // again (`turn::Turn`), so the clock and the facts are read each time.
     // A hold, the one request that can wait, first takes its place in its
-    // page session's line: it runs admission only once every hold on that
-    // session that came first is answered (ARCH-0062 #booking-turn-divergence).
+    // page session's line: an authenticated hold runs admission only once
+    // every hold on that session that came first is answered (ARCH-0062
+    // #booking-turn-divergence); an anonymous hold takes an empty line or is
+    // answered "retry after" before any admission (`turn::Turn::line_up`).
     let mut turn = turn::Turn::new(server, transport.credential.is_some());
     if let BookingOperationRequest::Book(BookingBookInput::Hold(input)) = &request {
         turn.line_up(session_key(page_ref, &input.session_ref))
@@ -270,6 +272,8 @@ async fn execute(
             }
         }
         BookingOperationRequest::Book(BookingBookInput::Hold(input)) => {
+            // The hold's write holds its place in the line until it returns.
+            let place = turn.take_place();
             let (response, sources) = execute_hold(
                 server,
                 page_ref,
@@ -277,6 +281,7 @@ async fn execute(
                 now,
                 public_authority,
                 transport.owner_verified,
+                place,
             )
             .await?;
             let listed = listed.map(|mut rows| {
