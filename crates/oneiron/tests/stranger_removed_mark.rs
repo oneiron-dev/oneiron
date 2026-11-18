@@ -16,7 +16,10 @@
 //! install's own anchors, or an own carrier key signed it.
 //!
 //! T1 is the attack (red on main, green with the fix); T2 guards the owner's
-//! own removal (green on both).
+//! own removal (green on both). T3 (REVIEW-9555 P1) is the owner's removal
+//! a carrier machine carries, filed before the issuer's enrolment of that
+//! carrier makes its key own: red at c6faec2e, where the removal stayed a
+//! stranger's; green once the structure files it again as own.
 //!
 //! Run: `cargo test --locked -p oneiron --all-features --test
 //! stranger_removed_mark`.
@@ -31,8 +34,8 @@ use oneiron::authority::{
     AUTHORITY_LOG_SCHEMA_VERSION, ActSurface, AuthorityEntryHash, AuthorityKey, AuthorityLogEntry,
     AuthorityOp, AuthoritySignature, AuthorityVaultId, MACHINE_ENCRYPTION_KEY_LEN,
     MACHINE_ENCRYPTION_SUITE_HYBRID_V1, MachineDeviceClass, MachineEncryptionKey,
-    MachineEnrolmentRequest, MachineOwnership, MachineProfile, MachineRole, OwnerRootRecord,
-    authority_entry_hash, authority_log_entity_id, authority_transcript,
+    MachineEnrolmentRequest, MachineOwnership, MachineProfile, MachineRole, OwnerAct, OwnerActKind,
+    OwnerRootRecord, authority_entry_hash, authority_log_entity_id, authority_transcript,
     encode_authority_log_entry_body, machine_profile_proof_transcript,
 };
 use oneiron::consent::AuthenticatedOwner;
@@ -49,6 +52,11 @@ use oneiron_authority::authority::{
 
 /// The seed of the joining machine's machine key.
 const JOINING_SEED: u8 = 68;
+/// The seed of the carrier machine's machine key, its install key (T3).
+const CARRIER_SEED: u8 = 69;
+/// How many timestamps T3 tries for a hand-signed row whose stored id must
+/// sort before another row's.
+const ORDER_TRIES: u64 = 1 << 26;
 /// The stored rows' occurred range and learned-at, as the store-door tests use.
 const AT: TimeRange = TimeRange { start: 2, end: 2 };
 
@@ -76,6 +84,18 @@ fn signed(
     op: AuthorityOp,
     signer: &SigningKey,
 ) -> AuthorityLogEntry {
+    signed_at(vault_id, seq, parent_hashes, op, signer, 1)
+}
+
+/// [`signed`] with the row's timestamp `ts`, which moves its hash.
+fn signed_at(
+    vault_id: AuthorityVaultId,
+    seq: u64,
+    parent_hashes: Vec<AuthorityEntryHash>,
+    op: AuthorityOp,
+    signer: &SigningKey,
+    ts: u64,
+) -> AuthorityLogEntry {
     let mut row = AuthorityLogEntry {
         schema_version: AUTHORITY_LOG_SCHEMA_VERSION,
         vault_id: Some(vault_id),
@@ -84,7 +104,7 @@ fn signed(
         op,
         signer: signature_slot(key_of(signer)),
         cosigns: Vec::new(),
-        ts: 1,
+        ts,
     };
     let transcript = authority_transcript(&row).expect("the transcript signs");
     row.signer.signature = signer.sign(&transcript).to_bytes().to_vec();
@@ -143,9 +163,15 @@ impl ServedVault {
 
     /// Machine M's request to join this vault, with its own proof.
     fn joining_machine(&self) -> MachineEnrolmentRequest {
+        self.machine_request(0x76, JOINING_SEED)
+    }
+
+    /// The request of the machine with id bytes `id` and machine key seed
+    /// `seed` to join this vault, with its own proof.
+    fn machine_request(&self, id: u8, seed: u8) -> MachineEnrolmentRequest {
         let vault_id = self.vault_id();
-        let machine = EntityId::from_bytes([0x76; 16]).expect("an id parses");
-        let node = signing(JOINING_SEED);
+        let machine = EntityId::from_bytes([id; 16]).expect("an id parses");
+        let node = signing(seed);
         let machine_key = node.verifying_key().to_bytes();
         let device_class = MachineDeviceClass::Computer;
         let encryption_key = MachineEncryptionKey {
@@ -476,6 +502,195 @@ fn the_owners_removal_makes_the_machines_join_a_strangers() {
             .contains(&withheld),
         "a machine the owner removed: its join is a stranger's row, so the history this \
          install believes it lacks leaves out P"
+    );
+    assert!(
+        authority_fold_settled(&served.vault).expect("the settled read"),
+        "a removed machine's withheld parent must stall no peer route"
+    );
+}
+
+/// A row's place in the order the store lists AUTHORITY_LOG rows, and the
+/// store gate's structure files them: its stored id, the first 16 bytes of
+/// its hash.
+fn stored_order(hash: &AuthorityEntryHash) -> u128 {
+    u128::from_be_bytes(hash[..16].try_into().expect("16 bytes"))
+}
+
+/// The first row `row_at(ts)` builds, over timestamps from 1, whose stored
+/// order `fits`.
+fn row_in_order(
+    row_at: impl Fn(u64) -> AuthorityLogEntry,
+    fits: impl Fn(u128) -> bool,
+) -> AuthorityLogEntry {
+    (1..=ORDER_TRIES)
+        .map(row_at)
+        .find(|row| fits(stored_order(&hash(row))))
+        .expect("FIXTURE: a timestamp puts the row in the stored order the case needs")
+}
+
+/// T3 (REVIEW-9555 P1): the issuer enrols carrier C. A stranger's anchor marks C
+/// as its own, and C carries the owner's removal of M. The store gate's
+/// structure files rows by stored id, and here the stranger's root, its
+/// mark of C and C's removal of M all sort before the issuer's enrolment of
+/// C. So the removal is filed while C's key still stands as a stranger's;
+/// the enrolment then takes the key as own. The removal must count then: M
+/// is removed, so M's install join J over its withheld candidacy P is a
+/// stranger's row, and the believed history leaves out P. RED at c6faec2e
+/// (the removal stayed a stranger's, so J was believed and P stalled the
+/// peer route); GREEN once the structure files the removal again as own.
+#[test]
+fn a_carriers_removal_counts_once_its_key_is_taken_as_own() {
+    let (served, request) = enrolled_self_host();
+    let machine = request.machine;
+    let vault_id = served.vault_id();
+    let person = served
+        .vault
+        .ensure_embedded_owner_actor()
+        .expect("the owner");
+    let carrier = served.machine_request(0x77, CARRIER_SEED);
+    served
+        .vault
+        .enroll_machine(
+            &served.owner,
+            ActSurface::ThisInstall,
+            &carrier,
+            MachineRole::Owned(MachineOwnership::Yours),
+            None,
+        )
+        .expect("the owner's enrolment of carrier C lands");
+    let enrolment = served.roster_head(carrier.machine);
+    let head = served.roster_head(machine);
+    let mut removal_parents = vec![head, enrolment];
+    removal_parents.sort_unstable();
+
+    // C's install key signs the owner's removal of M, carried, below the
+    // enrolment in stored order.
+    let removal = row_in_order(
+        |ts| {
+            let profile = MachineProfile {
+                machine,
+                owner: person,
+                machine_key: request.machine_key,
+                device_class: request.device_class,
+                encryption_key: request.encryption_key.clone(),
+                role: MachineRole::Removed,
+                revision: 2,
+                machine_proof: request.machine_proof,
+                seen_world_edits: BTreeSet::new(),
+                carrier: Some(carrier.machine),
+                act: Some(OwnerAct::by_owner(
+                    person,
+                    OwnerActKind::MachineRemoval,
+                    machine,
+                    ActSurface::ThisInstall,
+                    [0; 32],
+                )),
+            };
+            signed_at(
+                vault_id,
+                1,
+                removal_parents.clone(),
+                AuthorityOp::MachineProfile(profile),
+                &signing(CARRIER_SEED),
+                ts,
+            )
+        },
+        |order| order < stored_order(&enrolment),
+    );
+    let removal_order = stored_order(&hash(&removal));
+
+    // A stranger's root, and its anchor's mark of C as its own, below the
+    // removal in stored order, the root first.
+    let seed = RecoveryRootSeed::generate().expect("a fresh stranger root seed");
+    let root = seed
+        .public(&vault_id)
+        .expect("the stranger root's public half");
+    let anchor = seed.anchor();
+    let record = OwnerRootRecord {
+        owner: stranger_owner(),
+        root: root.id,
+        recovery_key: MachineEncryptionKey {
+            suite: MACHINE_ENCRYPTION_SUITE_HYBRID_V1,
+            key: root.recovery_key.to_bytes(),
+        },
+        anchor_key: root.anchor_key,
+    };
+    let root_row = row_in_order(
+        |ts| {
+            signed_at(
+                vault_id,
+                1,
+                vec![head],
+                AuthorityOp::OwnerRoot(record.clone()),
+                &anchor,
+                ts,
+            )
+        },
+        |order| order < removal_order / 2,
+    );
+    let root_order = stored_order(&hash(&root_row));
+    let mark = row_in_order(
+        |ts| {
+            let profile = MachineProfile {
+                machine: carrier.machine,
+                owner: stranger_owner(),
+                machine_key: carrier.machine_key,
+                device_class: carrier.device_class,
+                encryption_key: carrier.encryption_key.clone(),
+                role: MachineRole::Owned(MachineOwnership::Yours),
+                revision: 1,
+                machine_proof: carrier.machine_proof,
+                seen_world_edits: BTreeSet::new(),
+                carrier: None,
+                act: None,
+            };
+            signed_at(
+                vault_id,
+                2,
+                vec![hash(&root_row)],
+                AuthorityOp::MachineProfile(profile),
+                &anchor,
+                ts,
+            )
+        },
+        |order| root_order < order && order < removal_order,
+    );
+    for row in [&removal, &root_row, &mark] {
+        served
+            .vault
+            .put_authority_log_entry(row, AT, 2)
+            .expect("FIXTURE: the row is stored");
+    }
+    let fold = served.vault.authority_fold().expect("authority fold reads");
+    for row in [&removal, &root_row, &mark] {
+        assert!(
+            served
+                .vault
+                .get_authority_log_entry(&authority_log_entity_id(row).expect("the row's id"))
+                .expect("the row reads back")
+                .is_some(),
+            "FIXTURE: the row is in the log"
+        );
+    }
+    assert!(
+        fold.valid_entries.contains(&hash(&root_row)),
+        "FIXTURE: the stranger's root counts, so its anchor marks as a stranger's"
+    );
+    assert!(
+        authority_fold_settled(&served.vault).expect("the settled read"),
+        "FIXTURE: the stored rows alone stall no peer route"
+    );
+
+    let withheld = deliver_join_over_withheld_candidacy(&served, machine, head, hash(&root_row));
+    assert!(
+        !served
+            .vault
+            .authority_missing_believed_history()
+            .expect("the believed history read")
+            .missing
+            .contains(&withheld),
+        "the owner's removal C carried counts once the issuer's enrolment takes C's key as own: \
+         M's join is a stranger's row, so the history this install believes it lacks leaves out P"
     );
     assert!(
         authority_fold_settled(&served.vault).expect("the settled read"),
