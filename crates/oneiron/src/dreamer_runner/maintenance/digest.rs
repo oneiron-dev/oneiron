@@ -702,3 +702,6 @@ impl crate::store::Store {
         }
     }
 }
+
+#[cfg(oneiron_test_support)]
+pub(crate) use self::urgent::{harm_basis_of_for_test, host_witness_key_of_for_test};
