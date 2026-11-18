@@ -149,8 +149,10 @@ fn no_request_owner() -> Option<AuthenticatedOwner> {
 /// The owner behind `memory`: the handle's own owner proof ([`Memory::embedded_owner`]), else,
 /// for a human caller that one refuses, the live owner the host proved from the request
 /// (`request_owner`, as the host's owner doors prove one: a co-owner on their own full slip
-/// included) when that proof names the handle's own actor. `None` for any other caller, who then
-/// acts as its verified agent or is refused, as before.
+/// included) when that proof belongs to this vault and names the handle's own actor. `None` for
+/// any other caller, who then acts as its verified agent or is refused, as before. Each door
+/// still revalidates the proof it is given (a read with [`AuthenticatedOwner::revalidate`], a
+/// change inside its own transaction).
 fn owner_of(
     memory: &Memory<'_>,
     verb: &str,
@@ -162,7 +164,8 @@ fn owner_of(
     if memory.actor_class() != EdgeActorClass::Human {
         return None;
     }
-    request_owner().filter(|owner| owner.actor() == memory.actor())
+    request_owner()
+        .filter(|owner| owner.actor_for_read(memory.vault()).ok() == Some(memory.actor()))
 }
 
 /// Who reads, through `memory`: the owner when its proof holds ([`owner_of`]), else its verified
