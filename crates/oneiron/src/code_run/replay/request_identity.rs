@@ -33,7 +33,7 @@ use super::super::support::{invalid_code_run_replay, request_map};
 use super::super::types::SelfEffect;
 use super::CodeRunBridgeCall;
 use crate::Result;
-use crate::batch::secret_scan::{admission_form, known_admission_form, known_held_form};
+use crate::batch::secret_scan::{admission_form, held_record_forms};
 use crate::code_run::RESPONSE_ERASED;
 use crate::store::known_value_index::KnownValues;
 use crate::task_verb::sdk::AgentVerb;
@@ -209,13 +209,14 @@ impl CodeRunBridgeCall {
     ///
     /// As `admitted_from_known` does, a live row that is not `offered` as
     /// written is read, once base custody knows a value, through `known`,
-    /// with each value custody holds as its record's handle on both sides
-    /// (FIX REPLAY-COMPARE-KNOWN-OTHER-CALLERS): the row took that value's
-    /// handle, and a value another record holds, shaped or not, stays
-    /// another request. The row is read for those values alone
-    /// ([`known_held_form`]). A custody that knows no value compares the
-    /// two by their identity, each handle and each secret the plan places
-    /// as the plan's one stand-in. An erased row meets `offered` as
+    /// for the values of the records the row's handles name alone, each as
+    /// its record's handle on both sides ([`held_record_forms`], FIX
+    /// REPLAY-COMPARE-KNOWN-OTHER-CALLERS, FIX
+    /// RECEIPT-RECORDS-CALL-HELD-INPUT): the row took that value's handle,
+    /// and a value another record holds, shaped or not, stays another
+    /// request. A custody that knows no value compares the two by their
+    /// identity, each handle and each secret the plan places as the plan's
+    /// one stand-in. An erased row meets `offered` as
     /// [`ErasedRequest::meets_known`] reads it.
     ///
     /// # Errors
@@ -238,7 +239,9 @@ impl CodeRunBridgeCall {
             return Ok(true);
         }
         Ok(match known.get()? {
-            Some(known) => known_held_form(&held, &known)? == known_admission_form(&again, &known)?,
+            Some(known) => {
+                held_record_forms(&held, &again, &known)?.is_some_and(|(held, again)| held == again)
+            }
             None => {
                 live_identity(self.effect, &self.request)? == live_identity(self.effect, offered)?
             }

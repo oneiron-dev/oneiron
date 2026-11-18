@@ -2,7 +2,7 @@
 //! rows are compared with it. A continuation also asks here whether a
 //! receipt past its cut may have run (FIX 4199).
 
-use crate::batch::secret_scan::{admission_form, held_form, known_admission_form, known_held_form};
+use crate::batch::secret_scan::held_record_forms;
 use crate::code_run::CompareKnown;
 use crate::code_run::payload::{
     agent_verb_call_identity as call_identity, decode_self_dispatch_outcome,
@@ -307,59 +307,58 @@ pub(super) fn records_call(
 }
 
 /// Whether `kept`, a live write row the side-row wall admitted, holds the
-/// verb call `offered` spells (FIX RECEIPT-RECORDS-CALL-HELD-INPUT). The wall
-/// placed each shaped secret, as the handle of a record it minted for it,
-/// and each value base custody held, as its record's handle, in the input
-/// text the row keeps. While base custody knows a value, read through
-/// `known`, both are read with those values: each value custody holds, and
-/// each handle of its record, as that record's handle, and each other
-/// handle, and each other secret the plan places in `offered`, as the plan's
-/// one stand-in. The row is read for those values alone
-/// ([`known_held_form`]): never for a shape, so a key the wall kept as
-/// written with its switch off stays so, and never inside a handle it
-/// holds. So a handle the row holds meets only a value its record holds: a
-/// value another record holds, or another token of a shape the wall places,
-/// is another write (FIX REPLAY-COMPARE-KNOWN-OTHER-CALLERS), and a value
-/// the row holds as written meets it beside the handle of another. The
-/// custody history keeps every value a record held until the record is
-/// erased, and an erased record's handle reads as the stand-in. A custody
-/// that knows no value holds no record a handle names, so then each handle
-/// in `kept`, and each secret the plan places in `offered`, reads as the
-/// plan's one stand-in, as `admitted_from_known` reads a held row and a raw
-/// offer. The inputs are compared by their identity, so their object keys
-/// may come in any order, as a receipt reads them. A row an erase took the
-/// words of and a custody value row (its input is a digest) meet only by
-/// [`row_identity`].
+/// verb call `offered` spells (FIX RECEIPT-RECORDS-CALL-HELD-INPUT). The two
+/// verb names are read first, as written, and must be one verb; only the
+/// JSON input texts are read for custody's values. The wall placed each
+/// shaped secret, as the handle of a record it minted for it, and each value
+/// base custody held, as its record's handle, in the input text the row
+/// keeps. While base custody knows a value, read through `known`, both
+/// input texts are read for the values of the records the row's handles
+/// name alone ([`held_record_forms`]): each as its record's handle, never
+/// inside a handle on either side, and no shape sought. So a handle the
+/// row holds meets a value its record holds, or the same handle offered
+/// again, and nothing else: a value another record holds, another token of
+/// a shape, or a longer value another record took since, is another write
+/// (FIX REPLAY-COMPARE-KNOWN-OTHER-CALLERS); a key the wall kept as written
+/// with its switch off, and a value the row holds as written, meet only
+/// themselves. A handle no record custody knows names (literal text, or an
+/// erased record's) reads only as written, so two such handles are two
+/// writes, and a custody that knows no value leaves the two to meet as
+/// written, by [`row_identity`] alone. The inputs are compared by their
+/// identity, so their object keys may come in any order, as a receipt reads
+/// them. A row an erase took the words of and a custody value row (its
+/// input is a digest) meet only by [`row_identity`].
 fn held_input_meets(
     kept: &CodeRunBridgeCall,
     offered: &rmpv::Value,
     known: &CompareKnown<'_>,
 ) -> Result<bool> {
-    let Some((verb, _)) = recorded_call(kept) else {
+    let (Some((verb, input)), Some((again_verb, again_input))) =
+        (recorded_call(kept), request_call(offered))
+    else {
         return Ok(false);
     };
-    if crate::task_verb::sdk::CUSTODY_VALUE_ROWS.contains(&verb) {
+    if verb != again_verb || crate::task_verb::sdk::CUSTODY_VALUE_ROWS.contains(&verb) {
         return Ok(false);
     }
-    let (held, again) = match known.get()? {
-        Some(known) => (
-            known_held_form(&kept.request, &known)?,
-            known_admission_form(offered, &known)?,
-        ),
-        None => (held_form(&kept.request), admission_form(offered, None)?),
-    };
-    let Some(held) = input_identity(&held) else {
+    let Some(known) = known.get()? else {
         return Ok(false);
     };
-    Ok(input_identity(&again).as_ref() == Some(&held))
-}
-
-/// The identity of the verb call `request` spells, its JSON input read back
-/// from its text. `None` for a request that spells no verb call, or whose
-/// input does not read as JSON.
-fn input_identity(request: &rmpv::Value) -> Option<Vec<u8>> {
-    let (verb, input) = request_call(request)?;
-    Some(call_identity(verb, &serde_json::from_str(input).ok()?))
+    let Some((held, again)) = held_record_forms(
+        &rmpv::Value::from(input),
+        &rmpv::Value::from(again_input),
+        &known,
+    )?
+    else {
+        return Ok(false);
+    };
+    let identity = |input: &rmpv::Value| {
+        Some(call_identity(
+            verb,
+            &serde_json::from_str(input.as_str()?).ok()?,
+        ))
+    };
+    Ok(identity(&held).is_some_and(|held| identity(&again) == Some(held)))
 }
 
 /// Whether a write row carries the answer its receipt kept: a verb's answer,

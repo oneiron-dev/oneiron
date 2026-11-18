@@ -52,10 +52,9 @@ pub(crate) use self::mask::retained_repo::{
 pub(crate) use self::mask::side_row::admit_typed_with_rule;
 pub(crate) use self::mask::side_row::{
     SidePart, TextReplacements, admit_side_parts, admit_side_row, admit_tracked_side_parts,
-    admit_typed, admitted_from_known, from_named_tree, held_form, named_tree,
+    admit_typed, admitted_from_known, from_named_tree, held_record_forms, named_tree,
     origin as side_row_origin,
 };
-pub(crate) use self::mask::side_row::{known_admission_form, known_held_form};
 pub(crate) use self::mask::spool::{
     AdmissionCustody, BodySpool, SPOOL_HEAD_BYTES, SpoolAdmission, admit_spool_in_txn,
 };

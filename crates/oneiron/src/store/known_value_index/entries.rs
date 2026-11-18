@@ -1,6 +1,6 @@
 //! The shared value-print matcher builder.
 
-use super::{Bucket, Keys, Known, KnownValues, RollingSets, TAG_WINDOW, ValueOrigin};
+use super::{Bucket, Keys, Known, KnownSpan, KnownValues, RollingSets, TAG_WINDOW, ValueOrigin};
 use crate::error::{Error, Result};
 use crate::store::KnownEntry;
 
@@ -13,6 +13,34 @@ impl KnownValues {
             .iter()
             .flat_map(|bucket| &bucket.known)
             .any(|known| matches!(known.origin, ValueOrigin::Custody(_)) && known.handle == handle)
+    }
+
+    /// Each value a custody record `holds` takes holds in `data`, past those
+    /// `keep` exempts, as [`Self::spans_except`] reads them, with every
+    /// other value out before the longest at a place is chosen (FIX
+    /// RECEIPT-RECORDS-CALL-HELD-INPUT): a compare reads a held row and its
+    /// offer for the values of the records the row names alone, so a longer
+    /// value another record took since never hides the one a handle names.
+    pub(crate) fn spans_held_by(
+        &self,
+        data: &[u8],
+        keep: impl Fn(&[u8]) -> bool,
+        holds: impl Fn(&str) -> bool,
+    ) -> Vec<KnownSpan<'_>> {
+        let admits = |known: &Known| {
+            matches!(known.origin, ValueOrigin::Custody(_)) && holds(known.handle.as_str())
+        };
+        self.matched_spans_by(data, keep, &admits)
+            .into_iter()
+            .filter_map(|hit| match hit.origin {
+                ValueOrigin::Custody(custody) => Some(KnownSpan {
+                    span: hit.span,
+                    custody,
+                    handle: hit.handle,
+                }),
+                ValueOrigin::Person => None,
+            })
+            .collect()
     }
 
     pub(super) fn of_entries<'a>(

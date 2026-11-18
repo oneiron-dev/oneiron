@@ -31,6 +31,7 @@
 //! (base64, percent, JSON escapes), on the plan and on the minted pass alike.
 
 use std::borrow::Cow;
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use heed::RwTxn;
@@ -45,6 +46,7 @@ use super::super::{
 };
 use super::admit::Lifted;
 pub(crate) use super::text::TextReplacements;
+use super::text::handles_in;
 use super::wipe::{PlanParts, PlanTree, replace_wiped, wipe_value};
 use super::{HANDLE_OPEN, Masker, STAND_IN, credential_member};
 use crate::Vault;
@@ -695,20 +697,21 @@ pub(crate) fn admit_typed_with_rule<T: Serialize + DeserializeOwned>(
 /// value it alone decides: the wall gave each value custody held its
 /// record's handle, a value no shape rule places too, and each shaped
 /// secret the handle of a record it minted for it, which custody holds
-/// too. Both are read with those values: the offer as the plan masks it
-/// ([`known_form`]) and the held row for those values alone
-/// ([`held_known_plan`]). A value `known` holds reads as its record's
-/// handle on both sides, so it meets only the handle of the record that
-/// holds it, and two values custody holds apart stay apart, shaped or not
-/// (FIX REPLAY-COMPARE-KNOWN-OTHER-CALLERS): a handle is never first read
-/// as the plan's one stand-in beside another record's value. A row
-/// admitted before its value entered custody holds that value as written
-/// and meets its call, also beside the handle of another value. A value
-/// the row holds as written that a shape rule reads stays as written, so
-/// it meets only itself. A scope that does not decide with custody, or a
-/// custody that knows no value, reads each handle on either side, and each
-/// secret the plan places in `raw`, as the plan's one stand-in, so a secret
-/// the wall lifted meets the same secret offered again. Nothing is minted.
+/// too. Both are read for the values of the records the row's handles name
+/// alone ([`held_record_plans`]), so a handle the row holds meets only a
+/// value its record holds, or the same handle offered again: two values
+/// custody holds apart stay apart, shaped or not (FIX
+/// REPLAY-COMPARE-KNOWN-OTHER-CALLERS), a longer value another record took
+/// since never hides the one a handle names, and a handle no record
+/// custody knows names reads only as written (FIX
+/// RECEIPT-RECORDS-CALL-HELD-INPUT). A row admitted before its value
+/// entered custody holds that value as written and meets its call, also
+/// beside the handle of another value; a value the row holds as written
+/// that a shape rule reads meets only itself. A scope that does not decide
+/// with custody, or a custody that knows no value, reads each handle on
+/// either side, and each secret the plan places in `raw`, as the plan's
+/// one stand-in, so a secret the wall lifted meets the same secret offered
+/// again. Nothing is minted.
 pub(crate) fn admitted_from_known(
     held: &Value,
     raw: &Value,
@@ -718,18 +721,21 @@ pub(crate) fn admitted_from_known(
         return Ok(true);
     }
     Ok(match known()? {
-        Some(known) => held_known_plan(held, &known)?.0 == known_form(raw, &known)?.0,
+        Some(known) => match held_record_plans(held, raw, &known)? {
+            Some((held, raw)) => held.0 == raw.0,
+            None => false,
+        },
         None => held_form(held) == planned_form(raw, None)?.0,
     })
 }
 
 /// `held`, a value the wall may have masked, in the form
-/// [`admitted_from_known`] reads a held row in: each handle as the plan's one
-/// stand-in, and nothing else changed. A raw offer takes that form through
-/// [`admission_form`].
-pub(crate) fn held_form(held: &Value) -> Value {
+/// [`admitted_from_known`] reads a held row in where custody knows no value:
+/// each handle as the plan's one stand-in, and nothing else changed. A raw
+/// offer takes that form through [`admission_form`].
+fn held_form(held: &Value) -> Value {
     let mut held = held.clone();
-    stand_in_handles(&mut held, None);
+    stand_in_handles(&mut held);
     held
 }
 
@@ -738,45 +744,81 @@ pub(crate) fn held_form(held: &Value) -> Value {
 /// holds too. Nothing is minted. The copy is wiped when it drops (FIX 1101).
 fn planned_form(value: &Value, known: Option<Arc<KnownValues>>) -> Result<PlanTree> {
     let mut planned = masked_plan(value, known)?;
-    stand_in_handles(&mut planned.0, None);
+    stand_in_handles(&mut planned.0);
     Ok(planned)
 }
 
-/// `value` as the replay plan masks it, with `known` the values custody
-/// holds now (FIX REPLAY-COMPARE-KNOWN-OTHER-CALLERS): each value `known`
-/// holds, and each handle of a record that holds one of them, as that
-/// record's handle; each other secret the plan places, and each other
-/// handle, as the plan's one stand-in. A raw offer takes this form, and a
-/// held row [`held_known_plan`]'s, so the handle a row holds meets only the
-/// value its record holds. Nothing is minted. The copy is wiped when it
-/// drops (FIX 1101).
-fn known_form(value: &Value, known: &Arc<KnownValues>) -> Result<PlanTree> {
-    let mut planned = masked_plan(value, Some(Arc::clone(known)))?;
-    stand_in_handles(&mut planned.0, Some(known.as_ref()));
-    Ok(planned)
-}
-
-/// `held`, a row the wall stored, in the form [`known_form`] gives a raw
-/// offer with `known`, the values custody holds now: each of those values
-/// the row holds as written, and each handle of a record that holds one, as
-/// that record's handle; each other handle as the plan's one stand-in. The
-/// row is read for those values alone, never for a shape: the wall placed
-/// each shape it sought, and a value it left as written, with its switch
-/// off (FIX 8644), stays as written. Nor is a handle it holds read for a
-/// value, as the handle names its record and holds none. Nothing is minted.
-/// The copy is wiped when it drops (FIX 1101).
-fn held_known_plan(held: &Value, known: &Arc<KnownValues>) -> Result<PlanTree> {
-    let mut planned = PlanTree(held.clone());
-    Masker {
-        mints: true,
-        known_only: true,
-        at: Some((origin("replay", &[])?, "replay".to_owned())),
-        known: Some(Arc::clone(known)),
-        ..Masker::default()
+/// `held`, a live row the wall stored, and `offered`, a raw offer, each read
+/// for the values custody holds now, through `known`, of the records the
+/// row's handles name, and of no other record (FIX
+/// RECEIPT-RECORDS-CALL-HELD-INPUT): each such value as its record's handle,
+/// a handle on either side never read inside, and nothing else changed. No
+/// shape is sought: the wall placed each shape it sought as the handle of a
+/// record it minted, which custody holds, and a value it left as written
+/// (its switch off, FIX 8644) stays as written on both sides. So a handle
+/// the row holds meets a value its record holds, or the same handle offered
+/// again, and nothing else: a value another record holds, or another token
+/// of a shape, stays as written and is another request; a longer value
+/// another record took since never hides the one the handle names; a value
+/// the row holds as written meets itself beside the handle of another. A
+/// handle no record custody knows names (literal text, or an erased
+/// record's) reads only as written. `None` when no record the row names
+/// holds a value custody knows: the two then meet only as written. Nothing
+/// is minted, and the plan copies are wiped when they drop (FIX 1101).
+fn held_record_plans(
+    held: &Value,
+    offered: &Value,
+    known: &Arc<KnownValues>,
+) -> Result<Option<(PlanTree, PlanTree)>> {
+    let mut records = BTreeSet::new();
+    named_records(held, &mut records);
+    records.retain(|handle| known.holds_handle(handle));
+    if records.is_empty() {
+        return Ok(None);
     }
-    .mask_value(&mut planned.0)?;
-    stand_in_handles(&mut planned.0, Some(known.as_ref()));
-    Ok(planned)
+    let read = |value: &Value| -> Result<PlanTree> {
+        let mut planned = PlanTree(value.clone());
+        Masker {
+            mints: true,
+            known_only: true,
+            records: Some(records.clone()),
+            at: Some((origin("replay", &[])?, "replay".to_owned())),
+            known: Some(Arc::clone(known)),
+            ..Masker::default()
+        }
+        .mask_value(&mut planned.0)?;
+        Ok(planned)
+    };
+    Ok(Some((read(held)?, read(offered)?)))
+}
+
+/// Each record a handle in `value` names, by its bare handle, into
+/// `records`: in each text, map key and member included.
+fn named_records(value: &Value, records: &mut BTreeSet<String>) {
+    match value {
+        Value::String(text) => {
+            if let Some(text) = text.as_str() {
+                records.extend(handles_in(text).map(str::to_owned));
+            }
+        }
+        Value::Binary(bytes) => {
+            if let Ok(text) = std::str::from_utf8(bytes) {
+                records.extend(handles_in(text).map(str::to_owned));
+            }
+        }
+        Value::Array(items) => {
+            for item in items {
+                named_records(item, records);
+            }
+        }
+        Value::Map(fields) => {
+            for (key, member) in fields {
+                named_records(key, records);
+                named_records(member, records);
+            }
+        }
+        _ => {}
+    }
 }
 
 /// `value` with each secret the plan places as the plan's one stand-in, and
@@ -811,36 +853,30 @@ pub(crate) fn admission_form(value: &Value, known: Option<Arc<KnownValues>>) -> 
     Ok(std::mem::replace(&mut planned.0, Value::Nil))
 }
 
-/// `value`, a raw offer, in the form [`admitted_from_known`] compares it in
-/// once the plan without `known` misses ([`known_form`]): each value
-/// `known`, the values custody holds now, holds as its record's handle, so
-/// two values custody holds apart stay apart (FIX
-/// REPLAY-COMPARE-KNOWN-OTHER-CALLERS). The live row it meets takes
-/// [`known_held_form`]. Nothing is minted, and the plan's copy is wiped.
+/// `held`, a live row the wall stored, and `offered`, a raw offer, in the
+/// forms a compare reads them in once custody knows a value (FIX
+/// RECEIPT-RECORDS-CALL-HELD-INPUT): each read for the values custody holds
+/// now, through `known`, of the records the row's handles name alone, as
+/// [`admitted_from_known`] reads them. `None` when no record the row names
+/// holds a value custody knows: the two then meet only as written. Nothing
+/// is minted, and the plan copies are wiped.
 ///
 /// # Errors
 ///
 /// A value the plan cannot read.
-pub(crate) fn known_admission_form(value: &Value, known: &Arc<KnownValues>) -> Result<Value> {
-    let mut planned = known_form(value, known)?;
-    Ok(std::mem::replace(&mut planned.0, Value::Nil))
-}
-
-/// `held`, a live row the wall stored, in the form [`admitted_from_known`]
-/// compares it in once the plan without `known` misses
-/// ([`held_known_plan`]): each value `known` holds that the row keeps as
-/// written, and each handle of its record, as that record's handle; each
-/// other handle as the plan's one stand-in; nothing a shape rule reads, nor
-/// anything inside a handle, read again. The offer it meets takes
-/// [`known_admission_form`]. Nothing is minted, and the plan's copy is
-/// wiped.
-///
-/// # Errors
-///
-/// A value the plan cannot read.
-pub(crate) fn known_held_form(held: &Value, known: &Arc<KnownValues>) -> Result<Value> {
-    let mut planned = held_known_plan(held, known)?;
-    Ok(std::mem::replace(&mut planned.0, Value::Nil))
+pub(crate) fn held_record_forms(
+    held: &Value,
+    offered: &Value,
+    known: &Arc<KnownValues>,
+) -> Result<Option<(Value, Value)>> {
+    Ok(
+        held_record_plans(held, offered, known)?.map(|(mut held, mut offered)| {
+            (
+                std::mem::replace(&mut held.0, Value::Nil),
+                std::mem::replace(&mut offered.0, Value::Nil),
+            )
+        }),
+    )
 }
 
 /// `value` as a MessagePack tree that keeps its field names, as a named row
@@ -860,45 +896,33 @@ pub(crate) fn from_named_tree<T: DeserializeOwned>(tree: &Value) -> Option<T> {
 }
 
 /// Every handle in `value`, a whole `sc12` or `[secret sc12]` in text,
-/// spelled as the plan's stand-in, but the handle of a record `known` holds
-/// a value of, which stays as written.
-fn stand_in_handles(value: &mut Value, known: Option<&KnownValues>) {
+/// spelled as the plan's stand-in.
+fn stand_in_handles(value: &mut Value) {
     match value {
         Value::String(text) => {
-            if let Some(spelled) = text.as_str().map(|text| stand_in_text(text, known)) {
+            if let Some(spelled) = text.as_str().map(stand_in_text) {
                 *text = spelled.into();
             }
         }
         Value::Binary(bytes) => {
-            if let Ok(spelled) = std::str::from_utf8(bytes).map(|text| stand_in_text(text, known)) {
+            if let Ok(spelled) = std::str::from_utf8(bytes).map(stand_in_text) {
                 *bytes = spelled.into_bytes();
             }
         }
-        Value::Array(items) => {
-            for item in items {
-                stand_in_handles(item, known);
-            }
-        }
+        Value::Array(items) => items.iter_mut().for_each(stand_in_handles),
         Value::Map(fields) => {
             for (key, member) in fields {
-                stand_in_handles(key, known);
-                stand_in_handles(member, known);
+                stand_in_handles(key);
+                stand_in_handles(member);
             }
         }
         _ => {}
     }
 }
 
-fn stand_in_text(text: &str, known: Option<&KnownValues>) -> String {
-    let spelled = |handle: &str| {
-        if known.is_some_and(|known| known.holds_handle(handle)) {
-            handle.to_owned()
-        } else {
-            STAND_IN.to_owned()
-        }
-    };
+fn stand_in_text(text: &str) -> String {
     if bare_handle(text) {
-        return spelled(text);
+        return STAND_IN.to_owned();
     }
     let mut out = String::with_capacity(text.len());
     let mut rest = text;
@@ -908,7 +932,7 @@ fn stand_in_text(text: &str, known: Option<&KnownValues>) -> String {
         let after = &rest[at + HANDLE_OPEN.len()..];
         rest = match after.split_once(']') {
             Some((handle, tail)) if bare_handle(handle) => {
-                out.push_str(&spelled(handle));
+                out.push_str(STAND_IN);
                 out.push(']');
                 tail
             }

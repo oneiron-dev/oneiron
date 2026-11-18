@@ -4,14 +4,14 @@
 //! indexes into the text (a replay capsule's exposure spans) moves its
 //! bounds by the replacements the pass made, never by a guess.
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::ops::Range;
 
 use super::side_row::bare_handle;
 use super::text_log::TextSpans;
 use super::{HANDLE_OPEN, Masker, secret_spans};
 use crate::error::Result;
-use crate::store::known_value_index::KnownValues;
+use crate::store::known_value_index::{KnownSpan, KnownValues};
 
 /// Each text a tracked pass masked, by the BLAKE3 of the text as given:
 /// every replacement it made there, in order, as the span it replaced and
@@ -108,7 +108,9 @@ impl Masker {
             return spans;
         }
         let known = match &self.known {
-            Some(known) => known_outside_handles(known, text, |value| self.is_kept(value)),
+            Some(known) => known_outside_handles(known, self.records.as_ref(), text, |value| {
+                self.is_kept(value)
+            }),
             None => Vec::new(),
         };
         // The switch is off: no shape span is discovered (FIX 8644). A text
@@ -131,9 +133,11 @@ impl Masker {
 /// (`secret`), or that a handle's closing bracket opens (`]!~!`), is not in
 /// the text, and the value that follows the handle is still found. A mask
 /// of a row it already masked so places nothing new (an authored row
-/// admitted, then put), and a stored row is read as its write read it.
+/// admitted, then put), and a stored row is read as its write read it. With
+/// `records`, only those records' values are read ([`known_spans`]).
 fn known_outside_handles(
     known: &KnownValues,
+    records: Option<&BTreeSet<String>>,
     text: &str,
     keep: impl Fn(&[u8]) -> bool,
 ) -> Vec<(Range<usize>, String)> {
@@ -143,15 +147,45 @@ fn known_outside_handles(
     let end = text.len()..text.len();
     for handle in handle_spans(text).into_iter().chain(std::iter::once(end)) {
         let stretch = &bytes[from..handle.start];
-        found.extend(known.spans_except(stretch, &keep).into_iter().map(|hit| {
-            (
-                from + hit.span.start..from + hit.span.end,
-                hit.handle.to_owned(),
-            )
-        }));
+        found.extend(
+            known_spans(known, records, stretch, &keep)
+                .into_iter()
+                .map(|hit| {
+                    (
+                        from + hit.span.start..from + hit.span.end,
+                        hit.handle.to_owned(),
+                    )
+                }),
+        );
         from = handle.end;
     }
     found
+}
+
+/// Each known value in `data` past those `keep` exempts: every value
+/// `known` holds, or with `records`, only the values those records hold,
+/// every other value out before the longest at a place is chosen (FIX
+/// RECEIPT-RECORDS-CALL-HELD-INPUT).
+pub(super) fn known_spans<'k>(
+    known: &'k KnownValues,
+    records: Option<&BTreeSet<String>>,
+    data: &[u8],
+    keep: impl Fn(&[u8]) -> bool,
+) -> Vec<KnownSpan<'k>> {
+    match records {
+        Some(records) => known.spans_held_by(data, keep, |handle| records.contains(handle)),
+        None => known.spans_except(data, keep),
+    }
+}
+
+/// Each handle `text` holds, as its bare `sc12`, in order.
+pub(super) fn handles_in(text: &str) -> impl Iterator<Item = &str> {
+    handle_spans(text).into_iter().map(move |span| {
+        let held = &text[span];
+        held.strip_prefix(HANDLE_OPEN)
+            .and_then(|body| body.strip_suffix(']'))
+            .unwrap_or(held)
+    })
 }
 
 /// The spans of `text` a mask on write placed a handle in, in order: each

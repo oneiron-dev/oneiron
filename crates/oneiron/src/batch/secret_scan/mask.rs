@@ -53,7 +53,7 @@ use oneiron_store::batch::secret_scan::mask::text_log;
 mod text_spans;
 mod wipe;
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::ops::Range;
 use std::sync::Arc;
 
@@ -535,6 +535,11 @@ struct Masker {
     mints: bool,
     /// The switch is off: place known values only, mint nothing (FIX 8644).
     known_only: bool,
+    /// A compare of a held row with its offer: only the values of the
+    /// records the row's handles name are read, by their handles (FIX
+    /// RECEIPT-RECORDS-CALL-HELD-INPUT). `None` reads every value `known`
+    /// holds.
+    records: Option<BTreeSet<String>>,
     /// The door's scan read each text this pass reads now by the same text
     /// rules and found no shape: none is sought again (speed).
     shapes_read: bool,
@@ -979,7 +984,8 @@ impl Masker {
     /// The handle of the custody record that holds `value` whole, if one
     /// does.
     fn known_whole(&self, value: &[u8]) -> Option<String> {
-        match self.known.as_ref()?.spans(value).as_slice() {
+        let known = self.known.as_ref()?;
+        match text::known_spans(known, self.records.as_ref(), value, |_| false).as_slice() {
             [hit] if hit.span == (0..value.len()) => Some(hit.handle.to_owned()),
             _ => None,
         }
