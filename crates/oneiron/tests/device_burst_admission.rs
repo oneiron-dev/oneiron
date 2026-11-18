@@ -334,6 +334,16 @@ fn a_settled_device_batch_sent_again_is_never_handed_back_to_land() -> TestResul
             "a rejected batch sent again at {at} is not work to land: {again:?}"
         );
         assert!(
+            matches!(
+                &again,
+                DeviceBurstAdmission::Settled {
+                    batch_ref: settled,
+                    state: FederationBurstWorkState::Rejected,
+                } if *settled == batch_ref
+            ),
+            "its receipt answers it: {again:?}"
+        );
+        assert!(
             ready_device_work(&home.vault)?.is_empty(),
             "the drain hands out no rejected batch at {at}"
         );
@@ -354,6 +364,16 @@ fn a_settled_device_batch_sent_again_is_never_handed_back_to_land() -> TestResul
     assert!(
         !matches!(again, DeviceBurstAdmission::Allow(_)),
         "a batch that landed, sent again, is not work to land again: {again:?}"
+    );
+    assert!(
+        matches!(
+            &again,
+            DeviceBurstAdmission::Settled {
+                batch_ref,
+                state: FederationBurstWorkState::Imported,
+            } if *batch_ref == work.batch_ref()
+        ),
+        "its receipt answers it: {again:?}"
     );
     assert_eq!(
         landing.receipt(&work.batch_ref())?.state,
