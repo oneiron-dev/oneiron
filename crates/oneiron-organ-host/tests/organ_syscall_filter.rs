@@ -252,8 +252,8 @@ fn an_organ_call_aimed_at_another_process_dies_by_the_syscall_filter() {
     // SAFETY: getpriority(2) of this process reads and writes no memory.
     let nice = i64::from(unsafe { libc::getpriority(libc::PRIO_PROCESS, host_pid) });
     for which in ["signal", "limits", "owner", "priority"] {
-        let host = host();
-        let organ = host.call(
+        let new_host = host();
+        let organ = new_host.call(
             &vault,
             call(
                 "probe.reach",
@@ -304,8 +304,8 @@ fn an_organ_sets_no_limit_and_makes_no_prctl_but_a_thread_name() {
         named.report,
     );
     // Any other prctl, even a read, kills the organ under its call.
-    let host = host();
-    let dumpable = host.call(
+    let new_host = host();
+    let dumpable = new_host.call(
         &vault,
         call("probe.reach", reach("dumpable", None, 0), Vec::new()),
     );
