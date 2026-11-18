@@ -9636,7 +9636,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/note_subject_reference.rs` | test | s | — | — | — |
 | `tests/off_record_side_row_custody.rs` | test | s | — | — | FIX 2329 (OF-067 B; Engine RULINGS FIX-2329-ROOM-CUSTODY = C and FIX-2329-CUSTODY-FIRST = A): an off-record… |
 | `tests/one_way_confirm.rs` | test | m | — | — | The shared one-way confirm: every one-way verb meets one preview |
-| `tests/open_conflict_marker.rs` | test | s | — | — | Native's open-conflict marker over a real vault |
+| `tests/open_conflict_marker.rs` | test | m | — | — | Native's open-conflict marker over a real vault |
 | `tests/opened_device_admits_owner_slip.rs` | test | L | — | — | An opened device admits its owner's paired slip once its authority catch-up also brings the own-device grant… |
 | `tests/ordinary_room_thread_reply_refused.rs` | test | m | — | — | An ordinary room's witness lands every turn it mints on the room's trunk, and the room's threads live on its… |
 | `tests/origin_lfs_path_policy.rs` | test | s | — | — | NO-DOOR REPO-LFS-PATH-POLICY (tests/e2e/code-custody.test.ts CODE-CUSTODY-06; Engine CODECUSTODY-LFS Q1 =… |
