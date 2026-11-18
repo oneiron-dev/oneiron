@@ -2194,10 +2194,12 @@ fn an_owner_act_is_proven_with_the_key_under_the_pin_only_inside_a_window() {
         "a held answer makes no machine the owner's"
     );
     let entries = [held.answers[0].entry];
-    let refused =
-        device
-            .vault
-            .confirm_held_machine_answers(&device.proof, ActSurface::ThisInstall, &entries);
+    let refused = device.vault.confirm_held_machine_answers(
+        &device.proof,
+        ActSurface::ThisInstall,
+        &entries,
+        &std::collections::BTreeMap::new(),
+    );
     assert!(
         matches!(refused, Err(Error::Record(RecordError::OwnerKeyRequired))),
         "outside the window a confirm is refused for the owner's key: {refused:?}"
@@ -2218,7 +2220,12 @@ fn an_owner_act_is_proven_with_the_key_under_the_pin_only_inside_a_window() {
     );
     device
         .vault
-        .confirm_held_machine_answers(&device.proof, ActSurface::ThisInstall, &entries)
+        .confirm_held_machine_answers(
+            &device.proof,
+            ActSurface::ThisInstall,
+            &entries,
+            &std::collections::BTreeMap::new(),
+        )
         .expect("inside the window the owner's confirm is proven and lands");
     assert!(
         device.install_is_mine(),
