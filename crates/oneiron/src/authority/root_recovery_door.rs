@@ -174,7 +174,8 @@ impl Vault {
             RootSuccessor::Device(_) => None,
         };
         let root_key = signer.authority_key();
-        let mut sign_enrolment = |transcript: &[u8]| signer.sign_authority_transcript(transcript);
+        let mut sign_enrolment =
+            |_: &AuthorityFold, transcript: &[u8]| signer.sign_authority_transcript(transcript);
         let sign_revoke = |transcript: &[u8]| signer.sign_authority_transcript(transcript);
         let mut txn = self.store.env.write_txn()?;
         let fold = self.authority_view_readonly_in_txn(&txn)?;
