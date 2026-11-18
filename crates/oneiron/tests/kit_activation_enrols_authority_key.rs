@@ -26,16 +26,20 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use oneiron::authority::{
-    ActAuthority, ActSurface, AuthorityKey, AuthorityOp, EnrolledOwnerKeyKind, HostSlipIssuer,
-    MachineRole, RootMaterial, RootSuccessor, decode_authority_log_entry_body,
+    ActAuthority, ActSurface, ActorBindingStatus, AuthorityKey, AuthorityOp, EnrolledOwnerKeyKind,
+    HostSlipIssuer, MachineRole, RootMaterial, RootSuccessor, decode_authority_log_entry_body,
 };
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::federation::{FederationGrantRole, InitialSharedMember};
-use oneiron::recovery::{CodeKeeping, KitIssue, PassphraseCost, PieceHome};
+use oneiron::recovery::{
+    CodeKeeping, KitIssue, KitSecretKind, PassphraseCost, PieceHome, restore_kit,
+};
 use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::store::GateDecisionId;
 use oneiron::test_support::{bind_host_owner, provision_engine_machines};
-use oneiron::world_keys::{ConfirmedWorldKit, IssuedWorldKit, RecoveryAuthoritySigner};
+use oneiron::world_keys::{
+    ConfirmedWorldKit, IssuedWorldKit, RecoveryAuthoritySigner, RecoveryRootSeed,
+};
 use oneiron::{EntityId, ErrorKind, HostingPrivacyPosture, TimeRange, Vault, VaultConfig};
 use zeroize::Zeroizing;
 
@@ -49,6 +53,11 @@ const NO_PREDECESSOR: &str =
 const ROOT_KEY_NOT_LIVE: &str = "the recovery root's authority key is not a live owner key on \
                                  this vault's roster, and the roster still holds a live root \
                                  key; nothing was written";
+
+/// The activation's refusal of a kit whose R another owner enrolled
+/// (REVIEW-9488 round 2 P1 3).
+const NOT_THE_OWNERS_R: &str =
+    "this kit's root authority key is enrolled, but not as your recovery key; nothing was written";
 
 /// The co-Owner fixture's shared vault id.
 const SHARED: u64 = 28;
@@ -271,6 +280,53 @@ impl SelfHosted {
             )
             .expect("the released key"),
         )
+    }
+
+    /// `issued`'s seed, rebuilt from two of its pieces, as a restore
+    /// rebuilds it.
+    fn seed_of(&self, issued: &IssuedWorldKit) -> RecoveryRootSeed {
+        let vault_id = self
+            .vault
+            .authority_fold()
+            .expect("the fold")
+            .vault_id
+            .expect("a rooted vault");
+        let pieces: Vec<_> = issued.pieces.iter().take(2).collect();
+        let secret = restore_kit(vault_id, KitSecretKind::RecoveryRoot, &pieces, None)
+            .expect("two pieces restore the seed");
+        RecoveryRootSeed::from_restored_kit(secret).expect("the restored seed")
+    }
+
+    /// `owner` enrols `seed`'s R explicitly, under the host root, carried by
+    /// this install: the R key.
+    fn enrol_r_as(&self, owner: &AuthenticatedOwner, seed: &RecoveryRootSeed) -> AuthorityKey {
+        let machine = self
+            .vault
+            .prepare_install_signing()
+            .expect("this install's machine");
+        let receipt = self
+            .vault
+            .enrol_recovery_authority_key_as_host(
+                &ActAuthority::Owner(owner.clone(), ActSurface::ThisInstall),
+                machine,
+                seed,
+                &self.issuer,
+            )
+            .expect("the owner enrols the kit's R");
+        AuthorityKey::Ed25519(receipt.public_key)
+    }
+
+    /// The person an active `human` binding of `key` names.
+    fn bound_human(&self, key: &AuthorityKey) -> Option<EntityId> {
+        self.vault
+            .authority_fold()
+            .expect("the fold")
+            .actor_bindings
+            .get(key)
+            .filter(|binding| {
+                binding.status == ActorBindingStatus::Active && binding.actor_class == "human"
+            })
+            .map(|binding| binding.actor_ref)
     }
 
     /// How many enrol rows the history holds for `public_key`.
@@ -656,5 +712,123 @@ fn a_self_hosted_vault_reopened_as_hosted_takes_no_host_root_as_rs_predecessor()
             .len(),
         before_history,
         "the history is unchanged"
+    );
+}
+
+/// A kit whose R another owner enrolled is never this owner's (REVIEW-9488
+/// round 2 P1 3): the owner enrols the R of a kit the co-Owner issued, then
+/// the co-Owner, with a live device key of their own here, confirms that
+/// kit. The activation refuses with the exact words and writes nothing; the
+/// owner's R stays live and theirs. Red at 24c6aa90f805, where the
+/// activation took the owner's live row as the co-Owner's R and confirmed
+/// the kit.
+#[test]
+fn a_kit_whose_r_another_owner_enrolled_is_refused() {
+    let fixture = self_hosted();
+    let co_owner = fixture.add_co_owner();
+    let theirs = proof(&fixture.vault, co_owner);
+    fixture
+        .vault
+        .enrol_device_owner_signing_key(
+            &ActAuthority::Owner(theirs.clone(), ActSurface::ThisInstall),
+            &fixture.issuer,
+        )
+        .expect("the co-Owner enrols this install's device key");
+    let issued = fixture.issue_as(&theirs);
+    let r = fixture.enrol_r_as(&fixture.owner(), &fixture.seed_of(&issued));
+    let enrolled = fixture.vault.enrolled_owner_keys().expect("the list");
+    assert!(
+        enrolled.iter().any(|key| {
+            AuthorityKey::Ed25519(key.public_key) == r
+                && key.kind == EnrolledOwnerKeyKind::RecoveryAuthority
+                && key.live
+                && key.owner == fixture.person
+        }),
+        "guard: the kit's R is the owner's live R"
+    );
+    let before_fold = fixture.vault.authority_fold().expect("the fold");
+    let before_history = fixture
+        .vault
+        .export_signed_authority_history()
+        .expect("the history")
+        .len();
+
+    let pieces: Vec<&oneiron::store::recovery_kit::KitPiece> =
+        issued.pieces.iter().take(2).collect();
+    let refused = fixture
+        .vault
+        .confirm_world_kit(&theirs, &pieces, None, &BTreeSet::new())
+        .expect_err("the owner's R is not the co-Owner's kit");
+    assert_eq!(refused.kind(), ErrorKind::AuthorityRefused, "{refused}");
+    assert!(
+        refused.to_string().contains(NOT_THE_OWNERS_R),
+        "the exact words: {refused}"
+    );
+    let after_fold = fixture.vault.authority_fold().expect("the fold");
+    assert_eq!(
+        after_fold.roster, before_fold.roster,
+        "the roster is unchanged"
+    );
+    assert_eq!(
+        after_fold.pinned_root, before_fold.pinned_root,
+        "the pin is unchanged"
+    );
+    assert_eq!(
+        fixture
+            .vault
+            .export_signed_authority_history()
+            .expect("the history")
+            .len(),
+        before_history,
+        "the history is unchanged"
+    );
+    assert!(fixture.live(&r), "the owner's R stays live");
+}
+
+/// An R enrolled before its kit's activation still binds its owner when the
+/// activation revokes the R that held their only `human` binding
+/// (REVIEW-9488 round 2 P1 4): on a self-hosted vault the co-Owner's first
+/// key, R1, binds them; then their device key and kit 2's R2 enrol while that
+/// binding stands; kit 2's activation, signed by the device key, revokes R1
+/// and binds the co-Owner to R2. Red at 24c6aa90f805, where the activation
+/// bound only an R it enrolled itself, so the co-Owner kept no binding.
+#[test]
+fn a_pre_enrolled_r_binds_its_owner_when_the_revoked_r_held_the_binding() {
+    let fixture = self_hosted();
+    let co_owner = fixture.add_co_owner();
+    let theirs = proof(&fixture.vault, co_owner);
+    let r1 = fixture.enrol_r_as(&theirs, &fixture.seed_of(&fixture.issue_as(&theirs)));
+    assert_eq!(
+        fixture.bound_human(&r1),
+        Some(co_owner),
+        "guard: the co-Owner's first key, R1, binds them"
+    );
+    fixture
+        .vault
+        .enrol_device_owner_signing_key(
+            &ActAuthority::Owner(theirs.clone(), ActSurface::ThisInstall),
+            &fixture.issuer,
+        )
+        .expect("the co-Owner enrols this install's device key");
+    let kit = fixture.issue_as(&theirs);
+    let r2 = fixture.enrol_r_as(&theirs, &fixture.seed_of(&kit));
+    assert_eq!(
+        fixture.bound_human(&r2),
+        None,
+        "guard: R2 enrols while R1's binding stands, so it binds no one"
+    );
+
+    let pieces: Vec<&oneiron::store::recovery_kit::KitPiece> = kit.pieces.iter().take(2).collect();
+    fixture
+        .vault
+        .confirm_world_kit(&theirs, &pieces, None, &BTreeSet::new())
+        .expect("the co-Owner confirms kit 2 under their device key");
+
+    assert!(!fixture.live(&r1), "kit 2's activation revokes R1");
+    assert!(fixture.live(&r2), "R2 stays live");
+    assert_eq!(
+        fixture.bound_human(&r2),
+        Some(co_owner),
+        "R2 binds the co-Owner, whose binding R1 held"
     );
 }
