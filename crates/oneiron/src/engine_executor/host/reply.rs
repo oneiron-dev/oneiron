@@ -69,6 +69,7 @@ impl ExecutorReplyPublisher for CallReplyPublisher<'_, '_> {
             self.run_id,
             &[],
             None,
+            None,
             |wtxn, output| {
                 let reply = ExecutorReply {
                     owner: self.run_id,

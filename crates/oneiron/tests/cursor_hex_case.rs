@@ -187,6 +187,7 @@ fn campaign_member_cursor_resumes_in_either_case() -> TestResult {
                 reply_snooze_policy: None,
                 voice_guide_ref: None,
                 copy_review: None,
+                send_mode: None,
             },
             10,
         )?

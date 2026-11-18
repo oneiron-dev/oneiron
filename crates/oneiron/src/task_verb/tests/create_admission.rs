@@ -217,6 +217,7 @@ fn sync_admission_takes_a_task_born_expired_and_the_board_derives_it() {
                 end: now,
             },
             now,
+            None,
             &body,
         )
         .commit()

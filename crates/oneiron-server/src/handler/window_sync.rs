@@ -5,7 +5,7 @@ use std::ops::ControlFlow;
 use loro::{LoroDoc, VersionVector};
 
 use oneiron::authority::PeerMachine;
-use oneiron::sync::federation_burst::{DeviceBurstAdmission, DevicePeer};
+use oneiron::sync::federation_burst::{DeviceBurstAdmission, DevicePeer, FederationBurstWorkState};
 use oneiron::sync::residence::{admit_promoted_window_update, promotion_covers_full_window_for};
 use oneiron::sync::schema::read_window_list;
 use oneiron::sync::window::WindowExport;
@@ -471,6 +471,33 @@ pub(super) async fn handle_window_sync(
             .map_err(map_update_admission_err)?
             {
                 DeviceBurstAdmission::Allow(burst) => burst,
+                // The same bytes already settled here (#8386 review): landed,
+                // they are acknowledged with nothing persisted, imported or
+                // relayed again; rejected by the owner at review, they are
+                // refused again.
+                DeviceBurstAdmission::Settled { batch_ref, state } => {
+                    if state != FederationBurstWorkState::Imported {
+                        tracing::info!(
+                            window = %key,
+                            batch_ref = %batch_ref,
+                            ?state,
+                            "an own device sent a batch its owner rejected again"
+                        );
+                        return Err(ProtocolError::InvalidPayload(
+                            "own device batch rejected at review",
+                        ));
+                    }
+                    if residence_seq.is_some() || receipt.binding.sidecar_digest.is_some() {
+                        let frame =
+                            super::window_pads::receipt_frame(window_key, sub_tag, &receipt)?;
+                        direct_tx.send(frame).map_err(|_| {
+                            ProtocolError::Persistence(
+                                "residence acknowledgment channel closed".into(),
+                            )
+                        })?;
+                    }
+                    return Ok(ControlFlow::Continue(()));
+                }
                 DeviceBurstAdmission::Defer { batch_ref }
                 | DeviceBurstAdmission::IsolateAndPropose { batch_ref, .. } => {
                     tracing::info!(
@@ -497,7 +524,10 @@ pub(super) async fn handle_window_sync(
                 (&key, &doc),
                 update,
                 inserts,
-                write_auth,
+                (
+                    write_auth,
+                    protocol::is_residence_version(conn_state.protocol_version),
+                ),
             )
             .await;
             // The burst core's batch ends as the landing went (L7-41): landed,
@@ -597,7 +627,10 @@ pub(super) struct LandedDeviceUpdate {
 /// entity ids the update's history inserts as its admission read them, which
 /// owe a compaction when one names a row hard-deleted here (census L6-05); a
 /// translated copy's admission reads its own. `write_auth`, when given, is
-/// rechecked in the writer that persists the update.
+/// rechecked in the writer that persists the update. `promoted` is a socket
+/// on the residence protocol, which writes only promoted windows: the
+/// writer judges the update's destination for `machine` again, as world
+/// privacy may have changed since the pre-write check.
 ///
 /// # Errors
 /// The copy translation's store failure; a translated update the window
@@ -610,7 +643,7 @@ pub(super) async fn land_device_update(
     (key, doc): (&WindowKey, &LoroDoc),
     update: &[u8],
     inserts: oneiron::sync::window::UpdateInserts,
-    write_auth: Option<&CoreAuth>,
+    (write_auth, promoted): (Option<&CoreAuth>, bool),
 ) -> Result<Option<LandedDeviceUpdate>, DeviceLandingError> {
     let admitted = oneiron::sync::selector::admit_repo_sync_frame(
         server.vault.as_ref(),
@@ -660,8 +693,17 @@ pub(super) async fn land_device_update(
     let (positions, imported) = oneiron::sync::window::with_live_window_turn(
         server.reassert_manager.materializer(),
         || -> Result<_, ProtocolError> {
-            server
-                .persist_imported_update(key, &persisted, &inserts, &landings, write_auth)
+            // A promoted window's write judges its destination in the
+            // committing transaction, as a document's does: world privacy
+            // may have changed since the pre-write check.
+            let stored = if promoted {
+                server.persist_promoted_imported_update(
+                    key, &persisted, &inserts, &landings, write_auth, machine, doc,
+                )
+            } else {
+                server.persist_imported_update(key, &persisted, &inserts, &landings, write_auth)
+            };
+            stored
                 .map_err(|e| ProtocolError::Persistence(format!("update persist failed: {e}")))?;
             let positions = oneiron::sync::prepare_own_device_push_positions(
                 server.vault(),

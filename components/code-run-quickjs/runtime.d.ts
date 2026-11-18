@@ -232,15 +232,18 @@ declare interface FoldCoverage {
   children: number;
   unresolved?: number;
 }
-/** One model call over a result and the results after it (`group`), made
- * by a host job, never inside the step, and memoised by those results and
- * the recipe: the same call again answers the same summary. A made summary
+/** One model call over a result and the results after it (`group`), then
+ * the NOTEs named by id (`note_refs`), made by a host job, never inside the
+ * step, and memoised by those members and the recipe: the same call again
+ * answers the same summary. `r` is null when the call summarizes NOTEs
+ * alone. Each NOTE is read as the caller reads it; one the caller cannot
+ * read refuses the whole call (`summarize_note_unreadable`). A made summary
  * answers its card (with its `task`); `defer: true` answers `{task, state}`
  * at once, to wait on with `tasks.wait`; without it the run parks until the
  * summary is made, and the same call in a later step answers it. A withheld
  * member answers its withheld reply, and nothing is summarized. A group too
  * big for the model's window settles `group_exceeds_window`: split it. */
-declare function summarize(r: ResultRef, opts?: { effort?: "low" | "medium" | "high"; group?: ResultRef[]; defer?: boolean }):
+declare function summarize(r: ResultRef | null, opts?: { effort?: "low" | "medium" | "high"; group?: ResultRef[]; note_refs?: string[]; defer?: boolean }):
   Promise<(StoredResult & { task: string }) | { task: string; state: "queued" | "active" | "failed" | "partial" | "done"; reason?: string } | WithheldReply>;
 /** Reads a result with reader children and folds what they find (an SDK
  * helper, not an engine verb): `can` first, then chunks of half the child

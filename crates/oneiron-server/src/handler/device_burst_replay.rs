@@ -140,7 +140,7 @@ pub(crate) async fn land_retained_device_update(
         (&key, &doc),
         work.update(),
         inserts,
-        None,
+        (None, false),
     )
     .await?;
     // The relayed ask intents it landed go to their consumer now, as the

@@ -1,5 +1,7 @@
 //! The ledger record a native output's Keep or Discard writes.
 
+use oneiron_contracts::fingerprint::ContentHash;
+
 use super::{PendingBody, PendingRow};
 use crate::edit_settle::records::{SettleConsent, SettleOutcomeKind, SettlementRecord};
 use crate::write_envelope::WriteActor;
@@ -33,7 +35,7 @@ pub(super) fn output_record(
         before_version: version.and(replaced),
         version: version.map(|version| version.version),
         content_hash: version.map(|version| version.content_hash),
-        manifest_ref: version.map(|_| *blake3::hash(report).as_bytes()),
+        manifest_ref: version.map(|_| *ContentHash::of(report).as_bytes()),
         manifest_ops: 0,
         pptx_slide_creation_id_mints: Vec::new(),
         pptx_review_identities: Vec::new(),

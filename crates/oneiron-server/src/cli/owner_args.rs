@@ -321,6 +321,93 @@ pub enum VaultKeyCommand {
     /// The recovery preset: `standard`, or `nobody-but-me`, where the
     /// printed sheet alone restores the vault. Shown, or set with `--set`.
     RecoveryPreset(Box<VaultKeyRecoveryPresetArgs>),
+    /// Start a new data-key generation: everything written after it is sealed
+    /// under a fresh key. `--preview` names the wraps it would remove.
+    NewGeneration(Box<VaultKeyNewGenerationArgs>),
+}
+
+/// A passkey the owner keeps: its credential NAME and the FILE holding its
+/// PRF output.
+#[derive(Clone, Debug)]
+pub struct KeptPasskeyArg {
+    /// The passkey's credential name.
+    pub name: String,
+    /// The owner-only file holding the passkey's PRF output.
+    pub file: PathBuf,
+}
+
+/// `NAME=FILE`, split at the first `=`.
+fn kept_passkey(text: &str) -> Result<KeptPasskeyArg, String> {
+    let (name, file) = kept_way(text, "a kept passkey is NAME=FILE")?;
+    Ok(KeptPasskeyArg {
+        name: name.to_owned(),
+        file: PathBuf::from(file),
+    })
+}
+
+/// An escrow the owner keeps: its LABEL and the FILE holding the recipient's
+/// hybrid public key bytes.
+#[derive(Clone, Debug)]
+pub struct KeptEscrowArg {
+    /// The escrow's label.
+    pub label: String,
+    /// The file holding the recipient's hybrid public key bytes.
+    pub file: PathBuf,
+}
+
+/// `LABEL=FILE`, split at the first `=`.
+fn kept_escrow(text: &str) -> Result<KeptEscrowArg, String> {
+    let (label, file) = kept_way(text, "a kept escrow is LABEL=FILE")?;
+    Ok(KeptEscrowArg {
+        label: label.to_owned(),
+        file: PathBuf::from(file),
+    })
+}
+
+/// `NAME=FILE` split at the first `=`, neither side empty; `what` words any
+/// other text.
+fn kept_way<'t>(text: &'t str, what: &str) -> Result<(&'t str, &'t str), String> {
+    let refused = || what.to_owned();
+    let (name, file) = text.split_once('=').ok_or_else(refused)?;
+    if name.is_empty() || file.is_empty() {
+        return Err(refused());
+    }
+    Ok((name, file))
+}
+
+#[derive(Args, Clone, Debug)]
+pub struct VaultKeyNewGenerationArgs {
+    /// Print the wraps the act would remove; read no secret; change nothing.
+    #[arg(long)]
+    pub preview: bool,
+
+    /// The owner keeps the vault password, read as a secret from stdin or
+    /// `--secret-file`.
+    #[arg(long)]
+    pub keep_password: bool,
+
+    /// A passkey the owner keeps: NAME=FILE, FILE an owner-only file holding
+    /// the passkey's PRF output.
+    #[arg(long = "keep-passkey", value_name = "NAME=FILE", value_parser = kept_passkey)]
+    pub keep_passkeys: Vec<KeptPasskeyArg>,
+
+    /// An escrow the owner keeps: LABEL=FILE, FILE holding the recipient's
+    /// hybrid public key bytes.
+    #[arg(long = "keep-escrow", value_name = "LABEL=FILE", value_parser = kept_escrow)]
+    pub keep_escrows: Vec<KeptEscrowArg>,
+
+    /// A wrap id the owner confirms for removal.
+    #[arg(long = "confirm-removal", value_name = "ID")]
+    pub confirm_removals: Vec<String>,
+
+    #[command(flatten)]
+    pub unlock: VaultUnlockArgs,
+
+    #[command(flatten)]
+    pub secret: SecretSourceArgs,
+
+    #[command(flatten)]
+    pub serve: ServeArgs,
 }
 
 /// The owner's recovery preset, as `vault-key recovery-preset --set` names
@@ -396,7 +483,8 @@ pub struct VaultKeyAddDeviceArgs {
     #[arg(long, value_enum, default_value_t = UnlockMethod::Device)]
     pub unlock: UnlockMethod,
 
-    /// With `--unlock passkey`: the passkey's credential name.
+    /// With `--unlock passkey`, or `--unlock kit` with
+    /// `--kit-passkey-prf-file`: the passkey's credential name.
     #[arg(long, value_name = "NAME")]
     pub credential: Option<String>,
 
@@ -421,6 +509,16 @@ pub struct VaultKeyAddDeviceArgs {
     /// from the vault's page-seal mirror.
     #[arg(long, value_name = "HEX")]
     pub vault_id: Option<String>,
+
+    /// With `--unlock kit` and `--credential`: an owner-only file holding
+    /// the synced passkey's PRF output (32 raw bytes, 64 hex digits or
+    /// base64url) at the PRF input `vault-key prf-input` prints for that
+    /// name. The data-key kit's piece the vault keeps sealed under that
+    /// passkey (its `kit_point` wrap) joins the pieces given, so one
+    /// `--piece` and the passkey unlock, or the passkey and the kit
+    /// passphrase with no `--piece` (census L10-18).
+    #[arg(long, value_name = "FILE", requires = "credential")]
+    pub kit_passkey_prf_file: Option<PathBuf>,
 
     #[command(flatten)]
     pub secret: SecretSourceArgs,

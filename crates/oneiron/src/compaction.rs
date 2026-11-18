@@ -59,6 +59,7 @@
 //! after every serialized assembly.
 
 use crate::ports::EntityStoreRead;
+mod carry;
 mod check_material;
 mod conversation;
 mod driver;
@@ -85,6 +86,7 @@ pub use folds::{
     FoldUnfoldInput, FoldUnfolded, FoldsInput, SelfFoldCall, fold_handle, parse_fold_handle,
 };
 
+pub(crate) use carry::{carried_rows_in, is_epoch_summary_in};
 pub use check_material::CompactionCheckMaterialRef;
 pub(crate) use check_material::{
     CheckMaterialFault, CompactionCheckMaterial, admit_check_material_in_txn,
@@ -107,6 +109,8 @@ pub use driver::{
     CompactionProduct, CompactionRequest, CompactionSignal, CompactionTierClass,
     CompactionWatermark, CompactionWindowMessage, MarginLaw, SwapPlan,
 };
+#[cfg(oneiron_test_support)]
+pub(crate) use epoch::prior_epoch_in_txn_for_test_door;
 pub use epoch::{
     EPOCH_SUMMARY_BODY_KEYS, EPOCH_SUMMARY_BODY_VERSION, EPOCH_SUMMARY_LEVEL, EpochSummaryBody,
     decode_epoch_summary_body, encode_epoch_summary_body,

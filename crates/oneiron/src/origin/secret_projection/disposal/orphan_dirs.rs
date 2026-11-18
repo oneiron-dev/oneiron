@@ -11,10 +11,11 @@
 //! its graph record is written (its building directory is never a graph's),
 //! so a copy still being made is never one. Only a strict graph id
 //! directory is removed: never the canonical store, never a private
-//! ingress (a pending push keeps its own), never a building directory, and
-//! never a copy store a checkout's worktree is still registered in (its
-//! retained work stays). A removal that fails is found again by the next
-//! pass.
+//! ingress (a pending push keeps its own), never a building directory,
+//! never a copy store a checkout's linked worktree is still registered in
+//! (a worktree made before a checkout carried its own store), and never
+//! one a checkout binding or an ingress still owns (its retained work
+//! stays). A removal that fails is found again by the next pass.
 
 use std::path::{Path, PathBuf};
 
@@ -86,6 +87,7 @@ pub(crate) fn collect_orphan_graph_dirs(vault: &Vault) -> Result<usize> {
         let txn = vault.store.env.read_txn()?;
         for (_, graph, path) in copies {
             if RepoProjectionClaim::load_graph_in_txn(vault, &txn, &graph)?.is_none()
+                && !super::owned_in_txn(vault, &txn, &graph)?
                 && !worktree_registered(&path)
             {
                 orphaned.push(path);
@@ -106,7 +108,8 @@ pub(crate) fn collect_orphan_graph_dirs(vault: &Vault) -> Result<usize> {
 }
 
 /// Whether a checkout's linked worktree is still registered in the copy
-/// store under `copy_dir`.
+/// store under `copy_dir` (a worktree made before a checkout carried its
+/// own store; a checkout that carries one registers in its handle).
 fn worktree_registered(copy_dir: &Path) -> bool {
     let worktrees = COPY_STORE_WORKTREES
         .iter()

@@ -2,7 +2,7 @@
 
 use super::document::{NoteDocument, invalid};
 use super::document_store::{
-    load, persist_authoritative, require_note_writer, validate_pin_source,
+    load, persist_authoritative, require_note_writer_with_landing, validate_pin_source,
 };
 use super::pin_index::NOTE_PIN_SOURCE;
 use super::side_keys::HexPair;
@@ -317,6 +317,7 @@ impl Memory<'_> {
                     operation,
                     Some(selector.grant_id),
                     lane,
+                    super::NoteEditLanding::Grant,
                 )
             })
         })?;
@@ -346,7 +347,14 @@ impl Memory<'_> {
                 }
                 self.verify_owner_in_txn(txn)?;
                 crate::sync::documents::owner_note_admission(self.vault(), txn, note)?;
-                self.apply_note_operation_in_lane(txn, note, operation, None, lane)
+                self.apply_note_operation_in_lane(
+                    txn,
+                    note,
+                    operation,
+                    None,
+                    lane,
+                    super::NoteEditLanding::Grant,
+                )
             })
         })?;
         self.vault().notify_note_document(note);
@@ -366,7 +374,14 @@ impl Memory<'_> {
                     )
                     .into());
                 }
-                self.apply_note_operation_in_lane(txn, note, operation, None, lane)
+                self.apply_note_operation_in_lane(
+                    txn,
+                    note,
+                    operation,
+                    None,
+                    lane,
+                    super::NoteEditLanding::Grant,
+                )
             })
         })?;
         #[cfg(feature = "sync")]
@@ -387,9 +402,14 @@ impl Memory<'_> {
             operation,
             grant,
             crate::core_write::CoreWriteLaneRef::Unbound,
+            super::NoteEditLanding::Grant,
         )
     }
 
+    /// Applies `operation` to `note` when the writer may write it through
+    /// `landing` ([`require_note_writer_with_landing`]): every door passes
+    /// [`super::NoteEditLanding::Grant`] but the program edit, which passes
+    /// the landing it already decided with.
     pub(super) fn apply_note_operation_in_lane(
         &self,
         txn: &mut heed::RwTxn<'_>,
@@ -397,8 +417,9 @@ impl Memory<'_> {
         operation: &NoteOperation,
         grant: Option<EntityId>,
         lane: crate::core_write::CoreWriteLaneRef<'_>,
+        landing: super::NoteEditLanding<'_>,
     ) -> MemoryResult<NoteOperationReceipt> {
-        self.apply_note_candidate_in_lane(txn, note, operation, grant, None, lane)
+        self.apply_note_candidate_in_lane(txn, note, operation, grant, None, lane, landing)
     }
 
     /// Loads the actual native fork under the same writer as admission. There
@@ -441,9 +462,14 @@ impl Memory<'_> {
             None,
             Some(candidate),
             crate::core_write::CoreWriteLaneRef::Unbound,
+            super::NoteEditLanding::Grant,
         )
     }
 
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "a NOTE operation applies in its lane, under its grant and through its landing"
+    )]
     fn apply_note_candidate_in_lane(
         &self,
         txn: &mut heed::RwTxn<'_>,
@@ -452,6 +478,7 @@ impl Memory<'_> {
         grant: Option<EntityId>,
         native: Option<NoteDocument>,
         lane: crate::core_write::CoreWriteLaneRef<'_>,
+        landing: super::NoteEditLanding<'_>,
     ) -> MemoryResult<NoteOperationReceipt> {
         if SYNC_DS_E.contains(&self.vault().store, txn, &HexId(note))? {
             return Err(invalid("replica NOTE edits require authenticated authority").into());
@@ -459,7 +486,7 @@ impl Memory<'_> {
         super::lifecycle::refuse_sealed_note_in_txn(&self.vault().store, txn, note)?;
         self.vault()
             .authorize_shared_note_write_in_txn(txn, note, &self.write_actor())?;
-        require_note_writer(self, txn, note)?;
+        require_note_writer_with_landing(self, txn, note, landing)?;
         let doc = load(self.vault(), txn, note)?;
         let hash = operation.hash()?;
         let receipt_key = HexPair(HexId(note), HexId(operation.request_id));

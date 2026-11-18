@@ -327,6 +327,34 @@ impl OfferLadder {
         }
     }
 
+    /// This ladder for a call of a role whose work never leaves the device
+    /// (`leave_device = "never"`): a call-local copy scoped so that no
+    /// owner's fallback that would take the call off the device is
+    /// reachable ([`Self::can_serve`]), as the role's own seat is scoped. A
+    /// role's route may hand out a ladder its seat does not scope: a
+    /// model's bare ladder, or another role's seat or rung (FIX-LIST
+    /// ROLE-LEAVE-DEVICE-LOST-ON-BARE-LADDER-FALLBACK). This ladder itself
+    /// when its scope already keeps the call on the device. The shared
+    /// ladder is never changed.
+    #[must_use]
+    pub(super) fn with_stays_on_device(self: &Arc<Self>) -> Arc<Self> {
+        if self.scope.stays_on_device {
+            return Arc::clone(self);
+        }
+        Arc::new(Self {
+            name: self.name.clone(),
+            rungs: self.rungs.clone(),
+            picked: self.picked,
+            rests: Arc::clone(&self.rests),
+            scope: SeatScope {
+                stays_on_device: true,
+                ..self.scope
+            },
+            prefix: self.prefix.clone(),
+            listed: self.listed.clone(),
+        })
+    }
+
     /// This ladder with its rungs in the order `routes` names them (FIX
     /// 11768 seam for L05): [`WorldModelRoutes::order`] over each rung's
     /// [`LadderRung::offer_id`], the same route id the ladder's doors
@@ -1316,8 +1344,9 @@ impl OfferLadder {
     /// that time, so a caller can say when. Any other last failure is
     /// returned as it came, as is an outage: every rung resting rests for
     /// its health, so the call ends with its provider's own failure, never a
-    /// rate refusal. Every rung parked, the owner is asked about the spent
-    /// ones.
+    /// rate refusal. A call that met no failure and passed rungs for their
+    /// hours refuses as outside them, with when the first opens. Every rung
+    /// parked, the owner is asked about the spent ones.
     fn unanswered(&self, call: Call<'_>, walk: Walk) -> LlmError {
         self.ask_parked(&walk, call.needs, call.run.principal());
         // The world's own order refused every rung the call met: that
@@ -1359,6 +1388,13 @@ impl OfferLadder {
             }
             .into();
         }
+        // A call that met no failure and passed rungs for their hours: no
+        // rung serves at this hour, until the first of them opens.
+        let closed = if walk.last.is_none() {
+            self.outside_hours_refusal(&walk)
+        } else {
+            None
+        };
         match back.filter(|_| walk.limited()) {
             Some((retry_after, resets_at)) => RetryableLlmError::RateLimited {
                 retry_after,
@@ -1367,6 +1403,7 @@ impl OfferLadder {
             .into(),
             None => walk
                 .last
+                .or(closed)
                 .unwrap_or_else(|| FatalLlmError::InvalidRequest.into()),
         }
     }
