@@ -10,7 +10,8 @@
 //! as the next answer made under a grant is queued, after the answer is
 //! made and before it can leave. A federation UPDATE whose basis changed
 //! is not sent; a residence reply whose basis changed is replaced by an
-//! RPC error with code RESULT_CHANGED.
+//! RPC error with code RESULT_CHANGED. A served asset body's Data frames
+//! whose grant was deleted are not sent; the body's End still goes.
 
 #[path = "support/engine_stack.rs"]
 mod engine_stack;
@@ -24,6 +25,7 @@ use base64::Engine;
 use ed25519_dalek::{Signer, SigningKey};
 use engine_stack::run_on_engine_stack;
 use futures_util::{SinkExt, StreamExt};
+use loro::{LoroMap, LoroValue, ValueOrContainer};
 use oneiron::access_grant::{
     AccessGrant, AccessGrantCapability, AccessGrantScope, AccessGrantStatus,
 };
@@ -40,12 +42,17 @@ use oneiron::federation::{
 };
 use oneiron::memory::{WitnessAuthor, WitnessMessage, WitnessTurn};
 use oneiron::registry::{
-    ENTITY_TYPE_CLAIM, ENTITY_TYPE_FACET, ENTITY_TYPE_PERSON, ENTITY_TYPE_RELATIONSHIP,
+    ENTITY_TYPE_ASSET, ENTITY_TYPE_CLAIM, ENTITY_TYPE_FACET, ENTITY_TYPE_PERSON,
+    ENTITY_TYPE_RELATIONSHIP,
 };
 use oneiron::store::GateDecisionId;
 use oneiron::sync::schema::create_window_doc;
 use oneiron::sync::server_state::persist_window_snapshot;
-use oneiron::sync::transport::{self, window_sub_tags};
+use oneiron::sync::transport::{
+    self, ASSET_BODY_FRAME_BYTES, AssetBodyAddress, AssetBodyWant, TAG_ASSET_BODY_DATA,
+    TAG_ASSET_BODY_END, decode_asset_body_data, decode_asset_body_end, encode_asset_body_want,
+    window_sub_tags,
+};
 use oneiron::sync::window::reverse_rematerialize;
 use oneiron::sync::{
     SyncSelector, SyncSelectorWorld, WindowKey, encode_selector_vv_request, encode_sync_selector,
@@ -1241,5 +1248,225 @@ fn a_selector_update_carrying_no_coreference_link_leaves_when_an_omitted_link_is
             !carries_link(&fx.window, &update, case.person_a, case.person_b),
             "the facet-only UPDATE carries no same_as link"
         );
+    });
+}
+
+// --- Served asset body frames ([SELECTOR-RELEASE-ASSET-BODY-FRAMES]; REVIEW2
+// #8876 P2-1). A federation socket's served by-reference ASSET body frames
+// are one selector answer under every grant whose windows they were served
+// from: at the release a refused Data frame is dropped, and the End still
+// goes (it carries no bytes; the receiver's spool is short, so the attempt
+// lands nothing).
+
+/// The planted body: one KiB past the file plane's inline bound, so the row is
+/// filed and travels by reference, and no larger, so the transfer is as short
+/// as a by-reference body gets (129 DATA frames at 64 KiB).
+const ASSET_BODY_LEN: usize = 8 * 1024 * 1024 + 1024;
+
+/// Deterministic body bytes: the byte cycle 0x00..=0xFF repeated. The lead
+/// 0x00 is a MessagePack fixint, never a keyed map, a container magic or a
+/// carrier; the 0xFF every 256 bytes keeps the whole invalid UTF-8. So the
+/// file plane judges it Opaque and files it.
+fn asset_body_bytes() -> Vec<u8> {
+    (0..ASSET_BODY_LEN).map(|at| (at % 256) as u8).collect()
+}
+
+/// A Loro map's binary value, as `transport_credential_release` reads one.
+fn map_get_bytes(map: &LoroMap, key: &str) -> Option<Vec<u8>> {
+    match map.get(key)? {
+        ValueOrContainer::Value(LoroValue::Binary(bytes)) => Some(bytes.to_vec()),
+        _ => None,
+    }
+}
+
+struct BodyFixture {
+    fx: Fixture,
+    asset: EntityId,
+    body: Vec<u8>,
+}
+
+/// `fixture()` plus a by-reference ASSET in window 2026-03, selected by an
+/// Unnarrowed selector. `fixture()` itself is untouched: the existing cases
+/// keep its behaviour.
+async fn body_fixture() -> BodyFixture {
+    let mut fx = fixture().await;
+    let at = fx.window.start_timestamp().unwrap() + 86_400;
+    let asset = EntityId::now();
+    let body = asset_body_bytes();
+    fx.vault
+        .put_entity(
+            &asset,
+            ENTITY_TYPE_ASSET,
+            TimeRange { start: at, end: at },
+            at,
+            &body,
+        )
+        .unwrap();
+    // By reference, not inline: the stored row keeps the small manifest.
+    let raw = fx
+        .vault
+        .get_raw(&asset)
+        .unwrap()
+        .expect("the stored ASSET row");
+    assert!(
+        raw.len() < body.len(),
+        "an 8 MiB + 1 KiB ASSET is filed, its row keeps the manifest: {} vs {}",
+        raw.len(),
+        body.len()
+    );
+    let doc = create_window_doc("home", &fx.window);
+    reverse_rematerialize(&fx.vault, &doc, &fx.window).unwrap();
+    persist_window_snapshot(&fx.vault, &fx.window, &doc).unwrap();
+    // Unnarrowed on both axes: every in-scope row (the FACET and the ASSET) is
+    // admitted, as the coreference and member-message cases show. Requesting
+    // the ASSET id as a FacetOf target instead would narrow to that facet's
+    // stamped positions, which a non-facet ASSET does not confer.
+    fx.selector = SyncSelector::new(
+        fx.grant_id,
+        fx.grant.member_ref,
+        SyncSelectorWorld::All,
+        vec![],
+        vec![],
+    );
+    BodyFixture { fx, asset, body }
+}
+
+/// Sends one Want for `asset`'s body as one binary frame and returns the
+/// attempt. The address is read from the copy the peer was sent: the UPDATE
+/// imports whole into a fresh doc, its `entities` value is the carrier (and
+/// equals the vault's stored row), its `asset_body_refs` entry proves the copy
+/// binds the body by reference. The body's BLAKE3 and length are the planted
+/// body's, which is what the carrier's manifest names.
+async fn send_asset_want(
+    socket: &mut Socket,
+    fx: &Fixture,
+    asset: EntityId,
+    body: &[u8],
+    update: &[u8],
+) -> [u8; 16] {
+    let receiver = create_window_doc("receiver", &fx.window);
+    assert!(
+        receiver.import(update).unwrap().pending.is_none(),
+        "the UPDATE imports whole"
+    );
+    let key = asset.to_hex();
+    let entities = receiver.get_map("entities");
+    let carrier = map_get_bytes(&entities, &key).expect("the UPDATE carries the ASSET carrier");
+    assert!(
+        receiver.get_map("asset_body_refs").get(&key).is_some(),
+        "the copy binds the body by reference"
+    );
+    assert_eq!(
+        fx.vault.get_raw(&asset).unwrap().as_deref(),
+        Some(carrier.as_slice()),
+        "the sent carrier is the stored row"
+    );
+    let attempt: [u8; 16] = *EntityId::now().as_bytes();
+    let want = AssetBodyWant {
+        attempt,
+        body: AssetBodyAddress {
+            window: fx.window.as_str().to_owned(),
+            entity: asset,
+            carrier_blake3: *blake3::hash(&carrier).as_bytes(),
+            body_blake3: *blake3::hash(body).as_bytes(),
+            len: body.len() as u64,
+        },
+        max_frame_bytes: ASSET_BODY_FRAME_BYTES as u32,
+    };
+    send_binary(socket, encode_asset_body_want(&want).into_result().unwrap()).await;
+    attempt
+}
+
+/// Body frames until the END of `attempt`: DATA of any other attempt and every
+/// other frame are skipped; the socket must stay open.
+async fn body_frames_until_end(socket: &mut Socket, attempt: [u8; 16]) -> (usize, Vec<u8>, bool) {
+    let mut data_frames = 0usize;
+    let mut bytes = Vec::new();
+    let start = std::time::Instant::now();
+    loop {
+        let remaining = REPLY_WAIT.saturating_sub(start.elapsed());
+        assert!(!remaining.is_zero(), "no END for the body attempt arrived");
+        match next_message_within(socket, remaining).await {
+            Message::Binary(data) => {
+                let tag = data.first().copied();
+                if tag == Some(TAG_ASSET_BODY_DATA) {
+                    let frame = decode_asset_body_data(&data[1..]).unwrap();
+                    if frame.attempt != attempt {
+                        continue;
+                    }
+                    assert_eq!(
+                        frame.offset,
+                        bytes.len() as u64,
+                        "one attempt's DATA arrives in order"
+                    );
+                    data_frames += 1;
+                    bytes.extend_from_slice(frame.bytes);
+                } else if tag == Some(TAG_ASSET_BODY_END) {
+                    let end = decode_asset_body_end(&data[1..]).unwrap();
+                    if end.attempt != attempt {
+                        continue;
+                    }
+                    return (data_frames, bytes, end.complete);
+                }
+            }
+            Message::Ping(_) | Message::Pong(_) | Message::Text(_) => {}
+            Message::Close(close) => {
+                panic!("the socket closed before the body's END arrived: {close:?}")
+            }
+            Message::Frame(_) => {}
+        }
+    }
+}
+
+#[test]
+fn a_served_asset_body_whose_grant_stands_leaves() {
+    run_on_engine_stack("selector-release-asset-guard", || async {
+        let case = body_fixture().await;
+        let fx = &case.fx;
+        let mut socket = bound(fx, transport::PROTOCOL_VERSION).await;
+        send_window(
+            &mut socket,
+            &fx.window,
+            window_sub_tags::SELECTOR_VV_REQUEST,
+            &encode_selector_vv_request(&fx.selector, &[]).unwrap(),
+        )
+        .await;
+        let update = wait_update(&mut socket, &fx.window).await;
+        let attempt = send_asset_want(&mut socket, fx, case.asset, &case.body, &update).await;
+        let (data_frames, bytes, complete) = body_frames_until_end(&mut socket, attempt).await;
+        assert!(data_frames >= 1, "the standing grant's body sends DATA");
+        assert!(complete, "the standing grant's body completes");
+        assert_eq!(bytes, case.body, "the served bytes are the planted body");
+    });
+}
+
+#[test]
+fn an_asset_body_queued_before_its_grant_is_deleted_never_leaves() {
+    run_on_engine_stack("selector-release-asset-delete", || async {
+        let case = body_fixture().await;
+        let fx = &case.fx;
+        let vault = Arc::clone(&fx.vault);
+        let grant = fx.grant_id;
+        let mut socket = bound(fx, transport::PROTOCOL_VERSION).await;
+        send_window(
+            &mut socket,
+            &fx.window,
+            window_sub_tags::SELECTOR_VV_REQUEST,
+            &encode_selector_vv_request(&fx.selector, &[]).unwrap(),
+        )
+        .await;
+        let update = wait_update(&mut socket, &fx.window).await;
+        // The UPDATE is an answer under the grant too: arm only after it arrived.
+        arm(grant, move || {
+            vault.delete_entity(&grant).unwrap();
+        });
+        assert!(armed(&grant), "the hook is armed before the Want");
+        let attempt = send_asset_want(&mut socket, fx, case.asset, &case.body, &update).await;
+        let (data_frames, _, _) = body_frames_until_end(&mut socket, attempt).await;
+        assert_eq!(
+            data_frames, 0,
+            "a body's bytes left after its grant was deleted"
+        );
+        assert!(!armed(&grant), "the hook ran as the body was queued");
     });
 }
