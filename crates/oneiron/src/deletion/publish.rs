@@ -616,6 +616,13 @@ impl Vault {
                             &wtxn,
                             &[*id],
                         )?;
+                        // The purge refuses a project with a live child, so
+                        // its publication refuses it first, before the fence.
+                        crate::workspace_roster::reject_project_with_live_children(
+                            &self.store,
+                            &wtxn,
+                            id,
+                        )?;
                         self.reject_held_redirect_shells_in_txn(&wtxn, id)
                     } else {
                         Ok(())
