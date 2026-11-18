@@ -1,0 +1,16 @@
+{
+  "name": "vault.display_edits.decline",
+  "description": "The owner declines an agent's display-edit proposal: the proposal closes, and nothing it names changes.",
+  "input": "crate::task_verb::sdk::DisplayEditAnswerRequest",
+  "output": "crate::task_verb::sdk::DisplayEditDeclineReply",
+  "call": "crate::task_verb::sdk::decline_display_edit_as(memory.vault(), &memory.embedded_owner(\"vault.display_edits.decline\")?, input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "act_class": "unstated",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "host_door_proof": "owner"
+}

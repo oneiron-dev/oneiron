@@ -110,6 +110,7 @@ pub(super) fn apply_device_succession(
     hash: AuthorityEntryHash,
     counting: (Option<&PinnedRoot>, InstallCounted<'_>),
     restriction_only: bool,
+    needs_proof_off_the_line: bool,
 ) -> std::result::Result<(), AuthorityFoldIssue> {
     let choice = DeviceSuccessionChoice {
         successor: succession.successor,
@@ -119,6 +120,7 @@ pub(super) fn apply_device_succession(
         machine: succession.machine,
         choice: Some(&choice),
         context: DEVICE_SUCCESSION_REVISION_CONTEXT,
+        needs_proof_off_the_line,
         persons_own_narrowing: false,
     };
     let landing = owner_choice_landing(
@@ -243,7 +245,7 @@ impl Vault {
                 successor: machine,
             }),
             now,
-            self.owner_proof_signer(fold).as_deref(),
+            self.owner_proof_signer(fold).as_ref(),
         )?;
         let hash = authority_entry_hash(&entry)?;
         let at = TimeRange {

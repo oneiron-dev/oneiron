@@ -294,6 +294,290 @@ before this change.
 **Re-vendoring:** re-apply these three hunks with the FIX 1910 hunks, or take
 an upstream mdb.master3 that contains commit `567292b5d489`.
 
+## ITS#10519: overflow runs count the authentication area
+
+FIX row LMDB-MASTER3-UPSTREAM-FIXES-AUDIT. A sealed environment (OF-570)
+keeps `AUTH` = 40 bytes (the nonce, then the tag) at the tail of every page
+and every overflow run: `mdb_page_encrypt` (`:7162`) seals the run less its
+16-byte clear prefix and its last 40 bytes, and writes the nonce and tag into
+those 40. `me_pagespace` leaves the area out of a leaf or branch page, but
+`OVPAGES` sized an overflow run from the value alone,
+`(PAGEHDRSZ-1 + size) / psize + 1`. A value whose last byte fell into the
+run's last 40 bytes got one page too few. Those value bytes were never
+sealed, the commit still succeeded, and every later read returned other bytes
+in their place. With 4 KiB pages (`PAGEHDRSZ` 24) that is every value of
+4033-4072 bytes, and the same 40 lengths below each later page end. Two paths
+size a run: `mdb_node_add` (a new value) and the in-place overwrite in
+`mdb_cursor_put` (a value written earlier in the same transaction).
+
+Upstream fixed it on mdb.master3 in commit
+`e27f3d616b7b39c8294c0135ac60476b88cc5189` (9 Jun 2026, "ITS#10519 LMDB: fix
+ovpage size calculation with encryptino & checksums"). This copy carries its
+three hunks verbatim:
+
+- `OVPAGES(env, size)` (`:1154-1158`) adds `me_sumsize + me_esumsize` under
+  `MDB_RPAGE_CACHE`.
+- Its two callers, `_mdb_cursor_put` (`:8782`) and `mdb_node_add` (`:9259`),
+  pass the env.
+
+A plain environment (no page key, no checksum) has both sizes 0 and counts as
+before. A run keeps the page count it was written with (`op_pages` in its
+node); readers, `mdb_ovpage_free` and the overwrite test read that count,
+never `OVPAGES`, so runs an older build wrote read and free as before (stored
+change: keep). A value an older build already cut stays cut: its lost bytes
+were never written. `mdb.c` is now 12,349 lines, SHA-256
+`fd8391fc979ce2bee80d3645fd996b7d713818aa72c192fe41036d3b40627a82`. Every
+line this file cites in the vendored copy after `:1154` (FIX 1910, PAGE-FULL
+trace, ITS#10551) is now 4 lines further down. To find an upstream line after
+1154 in this copy, add 4 to the offset the sections above give (4 up to
+upstream line 6487, 24 after it, and so on).
+`crates/oneiron-store/tests/lmdb_sealed_overflow.rs` is the regression test:
+values of each length near the end of a one- and a two-page run, put new and
+overwritten in their transaction, read back from a sealed environment.
+
+**Re-vendoring:** re-apply these three hunks with the hunks above, or take an
+upstream mdb.master3 that contains commit `e27f3d616b7b`.
+
+## Upstream LMDB hardening: ITS#10454, ITS#9291, ITS#10520
+
+FIX row LMDB-MASTER3-UPSTREAM-FIXES-AUDIT. The audit read every mdb.master3
+commit after this copy's base (`10161b20fef8`) up to `ba47717cc877`
+(20 Oct 2026) and took the ones that fix a fault on a path oneiron uses.
+This copy carries each one verbatim, in upstream order, plus fork hunks
+(`ONEIRON FORK (LMDB audit)`) that close faults the review of these hunks
+found (upstream's head `ba47717cc877` still has every one):
+
+- `bd9cd548b02e77fea8e9ba5d03993b1a688ef223` (15 Apr 2026, ITS#10454, "can't
+  rely on O_DSYNC on MacOS") and its follow-up
+  `4e8a093a861dbfd4adadd14fb66af9d233bf297e` (27 Apr 2026, "fix prev commit
+  for Mac OSX + WRITEMAP"). macOS does not honour `O_DSYNC` on the metapage
+  descriptor, so a commit could return before its meta page was stable.
+  `mdb_env_write_meta` (`:4811`) now syncs the meta write explicitly
+  (`MDB_FDATASYNC`, which is `F_FULLFSYNC` there), under `__APPLE__` only. The
+  follow-up corrects the WRITEMAP branch, which oneiron never takes (sealed
+  environments refuse WRITE_MAP), and is carried so the copy matches upstream.
+  - Fork (`:4929-4946`): upstream returns a failed sync as a plain error,
+    with the new meta still in the page cache, so the failed commit could
+    show on a later read or reopen. The fork handles it as the failed meta
+    `pwrite` above it: it writes the old meta back (retrying an interrupted
+    write) and marks the env `MDB_FATAL_ERROR`. If the old meta cannot be
+    written back whole, the commit is indeterminate (a reopen in the same
+    boot may see it), and the call answers `MDB_PANIC` instead of the sync's
+    error.
+- `340f04593e3a05db615b3444fac9f3572ed75e3f` (ITS#9291, "quick sanity check on
+  env open"). `mdb_env_open2` (`:5524-5556`) refuses a data file whose FREE or
+  MAIN root lies past its end (`MDB_PAGE_NOTFOUND`) or whose FREE and MAIN
+  page counts exceed it (`MDB_CORRUPTED`). Before it, a file truncated to its
+  meta pages opened, and the first read of a missing page faulted the process.
+  It is upstream's quick check, not a walk of every page: a file cut below a
+  named database's page only, with both roots and the counts inside it, still
+  opens (FIX row LMDB-TRUNCATED-NAMED-DB-PAGE-SIGBUS; the page bound below
+  makes the first read of the missing page answer `MDB_CORRUPTED`).
+  - Fork (`:5528-5532`): the check divides by the meta's page size, which
+    nothing had checked yet, so a meta page holding 0 faulted the process
+    (SIGFPE). The fork refuses a page size that `mdb_env_set_pagesize` would
+    refuse (under 256 or over `MAX_PAGESIZE`) with `MDB_INVALID`.
+  - Fork (`:5540-5544`): upstream compares a root with `>` against the count
+    of whole pages, so a root that starts exactly at the end of the file
+    passed. The fork compares with `>=`.
+- `c9912dbeaf10afa8a36c07a28d8daf270e7a6566` (10 Jun 2026, ITS#10520, "cleanup
+  on crypto errors and exits"). A sealed environment decrypts each page chunk
+  into a heap buffer (`menc`) that its page cache keeps until the environment
+  closes. `mdb_env_close_active` (`:6421-6424`) now frees each cached chunk's
+  buffer, and `mdb_rpage_get` frees the buffer of a chunk whose page fails to
+  open. Before it, every close leaked one buffer per chunk read (64 KiB on
+  4 KiB pages), and every open under a wrong page key leaked one.
+  - Fork (`:7126`, `:7197`): that failed chunk's mapping was leaked too,
+    since neither page cache holds it. The fork unmaps it next to
+    upstream's `free`.
+
+`mdb_enckey_clear` and its two calls (FIX 1910) are in other functions and
+unchanged. The page format does not change, and no stored row changes meaning
+(stored change: keep). `mdb.c` is now 12,415 lines, SHA-256
+`70c41d4acef742617239b29cd6f45b073e0334ce52cd6d6a4655d8ab2629d7f2`. Line
+numbers in this section cite this copy. The FIX 1910 hunks are now at `:6553`
+(`mdb_enckey_clear`), `:6590` (`mdb_env_close`) and `:11705`
+(`mdb_env_set_encrypt`); every vendored line after `:4862` that an older
+section cites has moved by up to 66 lines. Regression tests:
+`crates/oneiron-store/tests/lmdb_open_damaged_file.rs` (ITS#9291 and its
+fork hunks: a data file truncated to its meta pages, one cut so that its FREE
+root starts at the end, and one whose meta pages hold a zero page size each
+refuse to open) and
+`crates/oneiron-store/tests/lmdb_sealed_page_buffers.rs` (ITS#10520 and its
+fork hunk: the C heap stays flat over sealed read-and-close cycles, and the
+heap and the process's mappings stay flat over opens under a wrong page key;
+Linux with glibc). ITS#10454 and its fork hunk have no deterministic test:
+both are macOS durability paths that only a power loss or a failing disk
+shows.
+
+The audit left the rest, with its reasons in the FIX row: Windows- and
+BSD-only commits, the copy, compact-copy and incremental dump paths (oneiron
+never copies an environment, and heed refuses to copy a sealed one), checksums
+(oneiron sets none), PREVSNAPSHOT rollback, `MDB_MULTIPLE`, `mdb_drop` of
+MAIN_DBI, new error codes, the DUPSORT page-counter fixes (ITS#9388, #10642,
+#10643: no oneiron code reads a DUPSORT database's page counters), sub-page
+growth (ITS#7772: space use only, no fault), and ITS#10518 (`741c1e8c899d`,
+child-txn mutex init: no observable effect on glibc, macOS or Android, and on
+Windows its nested commit path frees the txn without destroying the new
+mutex, so it would leak one handle per nested commit).
+
+**Re-vendoring:** re-apply these commits and the five `ONEIRON FORK (LMDB
+audit)` hunks with the hunks above, or take an upstream mdb.master3 that
+contains commit `c9912dbeaf10` and re-check each fork hunk against it.
+
+## Page bound: a read past the end of a cut data file
+
+FIX row LMDB-TRUNCATED-NAMED-DB-PAGE-SIGBUS (found by the review of the
+ITS#9291 hunk above). A data file cut below a named database's page or below
+an overflow run, with the FREE and MAIN roots and their counts inside it,
+passes ITS#9291's check and opens. The first read of a page the cut removed
+then touched the map past the end of the file, and the process died with
+SIGBUS: plain and sealed environments alike, since `mdb_rpage_get` maps a
+sealed environment's chunks from the same file. Upstream's head `ba47717cc877`
+has no such check. The fork (`ONEIRON FORK (page bound)`) adds one:
+
+- `mdb_page_get` (`:7441-7453`), at `mapped:`, so for the plain map, for
+  `mdb_rpage_get`, and for a parent's spilled page: unless the environment
+  uses `MDB_WRITEMAP` (oneiron never does; sealed environments refuse it), it
+  asks `mdb_page_in_file` (`:7352-7381`) whether
+  `[pgno, pgno + numpgs)` lies inside the data file. A page past the end
+  answers `MDB_CORRUPTED` and marks the transaction failed (`MDB_TXN_ERROR`),
+  as the `mt_next_pgno` check above it does. The range test subtracts
+  (`pgno <= pages - numpgs`), so a corrupt overflow count cannot wrap past
+  it, and a count of 0 checks the page itself.
+- It checks each page lookup. A pointer that an earlier lookup returned is
+  not checked again; the file does not shrink, so it stays inside it. The
+  meta pages are read with `pread` at open, which refuses a short file.
+- `MDB_env.me_file_pages` (`:1673-1676`) caches the file's whole pages. The
+  open sets it from ITS#9291's length read (`:5541`); a miss reads the length
+  again (`mdb_fsize`) before it refuses. Without `MDB_WRITEMAP` the data file
+  never shrinks while it is open, and every cached value comes from a real
+  length read, so the cache can lag the file (one more `fstat`) but never
+  exceed it. Only something outside LMDB's rules can shrink an open file (a
+  `MDB_WRITEMAP` handle on the same file, which LMDB forbids, or an outside
+  truncate); the cache then runs high and the read goes ahead as it did
+  before the fork. A failed length read or a zero length (a raw partition)
+  reads the page as before.
+- It refuses no whole file: pages a write transaction spills or flushes are
+  written before they are read back through the map, and the free pages past
+  the end that upstream's `mm_last_pg` comment allows ("the file may be
+  shorter if the freeDB lists the final pages") are never read through the
+  map, since a reused free page is a fresh heap copy until it is written.
+- Cost: one comparison per page read, and one `fstat` after the file grew.
+
+The page format does not change, and no stored row changes meaning (stored
+change: keep): a file that read before reads the same, and a cut file that
+faulted now answers an error. C runs on sel (lane log
+`lanes/kimi/OPUS-TESTKIT/check/truncproto/t3/t3-runs.log`): without the fork
+both cuts fault (SIGBUS), plain and sealed; with it both answer
+`MDB_CORRUPTED`; a reader opened on a small file that another process grew
+by 40 MB, and a write transaction plus a nested child that spill, read every
+row back on both. Regression tests: four more in
+`crates/oneiron-store/tests/lmdb_open_damaged_file.rs` (a named database's
+leaf and an overflow run's last page cut off, plain and sealed).
+
+`mdb.c` is now 12,463 lines, SHA-256
+`ad402eff08862df1d77abd3e9ba6bd9d4d54b6efbc97b59c9af43b4e817cd985`. Line
+numbers in this section cite this copy. Against the copy the section above
+cites, lines after `:1672` moved down by 4, after `:5536` by 5, after `:7346`
+by 36 and after `:7405` by 48.
+
+**Re-vendoring:** re-apply the four `ONEIRON FORK (page bound)` hunks, or take
+an upstream mdb.master3 that refuses a page past the end of the data file on
+every read through the map.
+
+## Fetch rc: a stale named database's root fetch keeps its error
+
+FIX row LMDB-IGNORED-PAGE-FETCH-RC (found by the design read of the page bound
+above). Every transaction starts with each named database's record marked
+stale (`DB_STALE`, `mdb_txn_renew0` `:3405`). The first call that sets a cursor
+up on such a database (`mdb_cursor_init`, `:9673-9702`) reads the record again
+from the main tree and fetches the database's root (`mdb_page_search` with
+`MDB_PS_ROOTONLY`). Upstream, and its head `ba47717cc877`, drops that call's
+rc. A failed page fetch marks the transaction failed (`MDB_TXN_ERROR`), so the
+caller's next call answered `MDB_BAD_TXN`, and the fetch's own error was lost:
+`MDB_CORRUPTED` from the page bound, `MDB_CRYPTO_FAIL` for a sealed page that
+fails its authentication, `MDB_PAGE_NOTFOUND`. `mdb_cursor_open`,
+`mdb_cursor_renew` and `mdb_stat` even answered success on the failed
+transaction; `mdb_stat` then counted from the record, or answered zeros when
+the main tree's page was the one that failed. The first transaction that
+opens a database reads its record in `mdb_dbi_open` and is not stale, so only
+later transactions were affected: in oneiron, every read after the vault's
+open. The fork (`ONEIRON FORK (fetch rc)`):
+
+- `mdb_cursor_init` returns that rc, with `MDB_NOTFOUND` from the database's
+  own empty tree as success. The calls that set a cursor up on a user
+  database check it: `mdb_get` (`:7820-7822`), `mdb_cursor_open`
+  (`:9723-9728`; a failed init holds no page reference, so the cursor is
+  freed before it is linked), `mdb_cursor_renew` (`:9756`), `mdb_del0`
+  (`:10662-10664`), `mdb_put` (`:11144-11146`) and `mdb_stat`
+  (`:12039-12041`). The calls on `FREE_DBI`
+  and `MAIN_DBI` never see a stale record (`mdb_txn_renew0` marks only user
+  databases) and are unchanged.
+- The other errors that call can return (`MDB_BAD_DBI`, `MDB_INCOMPATIBLE`)
+  leave the record stale, and upstream's next call computed them again. The
+  fork answers them on the first call.
+- A `MDB_NOTFOUND` from the main tree also leaves the record stale
+  (`:7610-7612`): the main tree is empty, so the database is gone, as when
+  another process dropped it and no other key was left. Upstream took it for
+  an empty database: a get answered `MDB_NOTFOUND`, a cursor walked no rows,
+  and a count answered the transaction's copy of the record (zeros in a read
+  transaction). `mdb_cursor_init` tells the two apart by the stale flag
+  (`:9697-9698`) and answers `MDB_BAD_DBI`, as the record lookup does when the
+  main tree lacks the name (`:7619-7620`). Found by review round 1 of #9507.
+- `mdb_rpage_get` (`:7140-7149`, `MDB_REMAP_CHUNKS` environments only) took
+  the reference of a chunk the environment's chunk table already held
+  (`el[x].mref`) before it checked the page (`mdb_rpage_encsum`: the sealed
+  page's authentication, or its checksum). A failed check then returned with
+  that reference and no entry in the transaction's chunk table, which is all
+  a transaction's end releases (`:3751-3774`), so the chunk stayed held for
+  the environment's life. A held chunk keeps its decrypted copy and its
+  checked-page bits (`muse`, cleared at `:3763-3764` only when the last
+  reference goes), so its pages were never decrypted or checked again: a
+  page whose bytes changed later (an altered file; a freed page the free
+  list gives a later commit) answered its old decrypted bytes. The failed
+  root fetch of a stale sealed database reached it whenever an earlier
+  transaction had cached the root's chunk and the record's main-tree page
+  lay in another chunk. The fork takes the reference after the check passed;
+  the leak predates the fork, and the cursor open's "holds no page
+  reference" above needs it. Found by review round 2 of #9507.
+- `mdb_drop0` (`:12101-12111`, `MDB_REMAP_CHUNKS` environments only) takes an
+  extra reference on each of the cursor's pages for its copy `mx` and dropped
+  each `MDB_PAGE_GET` rc. A failed fetch would leave `mx`'s slot holding the
+  cursor's pointer with no reference of its own, and `done:` would then unref
+  one too many. The fork stops at the first failure, and `done:` unrefs only
+  the pages taken. No trigger was found: each fetch is a page the cursor
+  already holds, so it hits the transaction's chunk table in `mdb_rpage_get`
+  and passes the page bound's cached count. It is a guard, with no test.
+
+The page format does not change, and no stored row changes meaning (stored
+change: keep): only the error a call answers on a damaged file changes.
+Regression tests: ten more in
+`crates/oneiron-store/tests/lmdb_open_damaged_file.rs`, each in a transaction
+after the one that opened the database: a get, a cursor, a count, a put and a
+delete on a named database whose leaf the cut removed answer `MDB_CORRUPTED`,
+and a sealed get of an altered leaf answers `MDB_CRYPTO_FAIL`. Upstream's code
+answers `MDB_BAD_TXN` to five of them and the record's count to the count. A
+get, a cursor and a count on a named database whose main tree was emptied
+under the open handle answer `MDB_BAD_DBI`; upstream's code answers not
+found, no rows and a count of 0. A sealed read of an intact leaf altered
+after a failed check in its chunk answers `MDB_CRYPTO_FAIL`; upstream's code
+answers the leaf's old value.
+
+`mdb.c` is now 12,496 lines, SHA-256
+`133a6de0942045811edaa48081d73733357a5636be2c16bbbae8096f81f9811b`. Line
+numbers in this section cite this copy. Against the copy the section above
+cites, line `:7140` moved to `:7148`, lines `:7141-7146` up by 1, and lines
+after `:7146` down by 2, after `:7819` by 3, after `:9662` by 10, after
+`:9686` by 13, after `:9687` by 14, after `:9709` by 19, after `:9738` by 18,
+after `:10644` by 20, after `:11124` by 22, after `:12017` by 24 and after
+`:12078` by 33.
+
+**Re-vendoring:** re-apply the nine `ONEIRON FORK (fetch rc)` hunks (and the
+prototype's `int`), or take an upstream mdb.master3 whose `mdb_cursor_init`
+returns the stale root fetch's error and whose
+`mdb_rpage_get` takes a cached chunk's reference only after the page's check.
+
 ## Re-packaging for the Python sdist (ONE-1441)
 
 The workspace dependency also declares this vendor as a path dependency so

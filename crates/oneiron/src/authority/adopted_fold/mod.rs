@@ -362,12 +362,16 @@ pub(super) fn capture_adopted_checkpoint_tail(
         issues,
         missing_parents,
         marks: image.safety.marks.clone(),
-        revocations: final_merged.actor_revocation_hashes,
+        revocations: crate::authority::fold_state::to_btree_set_map(
+            &final_merged.actor_revocation_hashes,
+        ),
         writers,
         bound_keys,
         confirm_ids: confirms.0,
         confirm_nonces: confirms.1,
-        nonce_provenance: merged.critical_write_confirm_nonce_provenance.clone(),
+        nonce_provenance: crate::authority::fold_state::to_btree_set_map(
+            &merged.critical_write_confirm_nonce_provenance,
+        ),
     };
     Ok(AdoptedImageFold::Captured {
         fold: Box::new(ImageFold {
@@ -522,6 +526,12 @@ fn tail_folds_past(
             .values()
             .any(|entry| matches!(entry.op, AuthorityOp::ResidenceResult(_)))
     {
+        return None;
+    }
+    // A tail an owner key's line could reach where the image's kept states
+    // do not show it is judged by the whole log (row
+    // CARRIER-PROOF-OLD-PARENTS).
+    if super::owner_key_line::tail_reaches_old_parents(image, tail) {
         return None;
     }
     // Only the rows the whole fold judges set or carry a floor

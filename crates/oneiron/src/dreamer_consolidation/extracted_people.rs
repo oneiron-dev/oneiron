@@ -11,13 +11,12 @@ use super::support::invalid_consolidation;
 use super::watermark::read_turn_facts_in_txn;
 use crate::Vault;
 use crate::analyzer::normalize::{casefold, nfkc};
-use crate::claim::ClaimSource;
+use crate::attempt_queue::AttemptId;
 use crate::dreamer_runner::{dreamer_extraction_role_admissible, dreamer_turn_role};
 use crate::dreamer_wake::WakePassDeadline;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::registry::{ENTITY_TYPE_NOTE, ENTITY_TYPE_TURN};
-use crate::temporal::TimeRange;
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 use oneiron_model::llm::ScopeResource;
 
@@ -127,7 +126,7 @@ pub(super) fn mint_extracted_people(
             if !admissible || !mentioned {
                 continue;
             }
-            put_person(vault, txn, &person.id, name, now)?;
+            put_person(vault, txn, &person.id, name, now, person.lineage)?;
         }
         Ok(())
     })
@@ -184,20 +183,22 @@ pub(super) fn mint_note_people(
             {
                 continue;
             }
-            put_person(vault, txn, &person.id, name, now)?;
+            put_person(vault, txn, &person.id, name, now, person.lineage)?;
         }
         Ok(())
     })
 }
 
 /// Writes one extracted PERSON named `name` under `id`, Generated; the door
-/// refuses an existing or deleted id.
+/// refuses an existing or deleted id. The mint records `lineage`, the first
+/// try of the minting attempt's retry lineage.
 fn put_person(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     id: &EntityId,
     name: &str,
     now_ms: u64,
+    lineage: AttemptId,
 ) -> Result<()> {
     // The wake's clock is milliseconds; an entity's times are Unix seconds
     // (FIX 8695).
@@ -208,17 +209,7 @@ fn put_person(
         &rmpv::Value::Map(vec![(rmpv::Value::from("name"), rmpv::Value::from(name))]),
     )
     .map_err(|_| invalid_consolidation("extracted person body"))?;
-    vault.put_extraction_minted_person_in_txn(
-        txn,
-        id,
-        ClaimSource::Generated,
-        TimeRange {
-            start: now,
-            end: now,
-        },
-        now,
-        &body,
-    )?;
+    vault.put_attempt_minted_person_in_txn(txn, id, now, &body, lineage)?;
     Ok(())
 }
 

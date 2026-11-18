@@ -81,9 +81,23 @@ use serde::Serialize;
 /// or admin key, the custodial root's too), counts only with the proof of an owner key no cloud
 /// key holds and no passkey limit holds (rows OLD-PARENTS-OWNER-BINDING-REVOKE,
 /// OLD-PARENTS-OWNER-BINDING-CONFLICT).
-/// 47: a `ReRoot` by a key without the host's stamp never counts while a live owner key with that
+/// 47: an owner choice or a carried machine answer outside a proving owner-key enrolment's line
+/// waits for the owner's proof, and an enrolment of the owner's key (a rotation or a handoff that
+/// names it too) outside the line of the enrolment that made it the owner's is refused, and a
+/// device revocation proved through such an enrolment of its key ends nothing (row
+/// CARRIER-PROOF-OLD-PARENTS).
+/// 48: host custody comes from the cloud stamp alone (`ROLE_CLOUD` or `CloudCustodial` on the key
+/// or a key that admitted it); the host-root attestation marks no key, so a self-host root keeps
+/// proving for the owner when its log is folded as hosted (row
+/// HOSTED-REOPEN-REJUDGES-SELF-HOST-ROOT); a custodial carry takes an act-free owner's answer
+/// whose signer the roster no longer holds on as unanswered.
+/// 49: an enrolment of the owner's passkey (P-256), and of an Ed25519 owner key only a passkey
+/// vouched for, draws the line too: an enrolment of its key outside that line is refused, and a
+/// revocation proved through one ends nothing; only a proving enrolment's line makes a row wait
+/// for the owner's proof (row PASSKEY-OWNER-KEY-DRAWS-NO-LINE).
+/// 50: a `ReRoot` by a key without the host's stamp never counts while a live owner key with that
 /// stamp stands, and every row above such a move is refused with it (FIX HOSTED-REROOT-FOLD-RULE).
-pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 47;
+pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 50;
 
 /// The domain every encoded image starts with.
 pub const AUTHORITY_CHECKPOINT_V2_DOMAIN: &[u8] = b"oneiron/authority/checkpoint/v2";

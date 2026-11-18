@@ -26,7 +26,8 @@ use oneiron::calendar::connectors::door::{
 use oneiron::calendar::connectors::{
     CalendarConnectorError, CalendarConnectorSeatConfig, CalendarRemoteTransport,
     CalendarSyncOutcome, RemoteCalendarChange, RemoteCalendarObject, RemoteSyncBatch,
-    RemoteWriteReceipt, RemoteWriteRequest, run_calendar_connector_sync, write_calendar_event,
+    RemoteWriteReceipt, RemoteWriteRequest, calendar_collection_members_for_operation,
+    run_calendar_connector_sync, write_calendar_event,
 };
 use oneiron::calendar::parse_ics_feed;
 use oneiron::consent::AuthenticatedOwner;
@@ -75,6 +76,12 @@ pub(crate) enum SeatChange {
         /// The booking's UID.
         uid: String,
     },
+    /// The seat's complete listing left out the resource carrying one
+    /// booking's UID: an omission, which is no cancellation evidence.
+    Omitted {
+        /// The booking's UID.
+        uid: String,
+    },
 }
 
 impl SeatChange {
@@ -120,6 +127,13 @@ impl SeatChange {
     /// A provider tombstone for one booking's UID.
     pub(crate) fn tombstone(uid: &str) -> Self {
         Self::Tombstone {
+            uid: uid.to_owned(),
+        }
+    }
+
+    /// A complete listing's omission of one booking's UID.
+    pub(crate) fn omitted(uid: &str) -> Self {
+        Self::Omitted {
             uid: uid.to_owned(),
         }
     }
@@ -214,6 +228,22 @@ impl Seat {
                     href: self.resource_href(uid),
                     uid: uid.to_string(),
                 },
+                // The omission carries the listing snapshot's observation of
+                // the UID's row (tests/calendar_google_owed_full_listing.rs).
+                SeatChange::Omitted { uid } => {
+                    let observation =
+                        calendar_collection_members_for_operation(vault, &self.operation(vault))
+                            .expect("the seat's collection members")
+                            .iter()
+                            .find(|member| member.uid == *uid)
+                            .expect("the booking is a member of the seat")
+                            .observation;
+                    RemoteCalendarChange::Omitted {
+                        href: self.resource_href(uid),
+                        uid: uid.to_string(),
+                        observation,
+                    }
+                }
             })
             .collect();
         self.run_pull(vault, changes, now)
