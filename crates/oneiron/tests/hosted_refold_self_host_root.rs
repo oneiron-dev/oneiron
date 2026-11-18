@@ -707,10 +707,26 @@ fn a_stamped_re_root_of_a_self_host_log_takes_the_new_root_into_host_custody() {
 /// A vault opened as a server opens one, under `posture`, with a device
 /// keystore.
 fn open_served(path: &std::path::Path, posture: HostingPrivacyPosture) -> Vault {
+    open_served_on(
+        path,
+        posture,
+        &Arc::new(oneiron_keystore::MemoryKeystore::default()),
+    )
+}
+
+/// A vault opened as a server opens one, under `posture`, on `keystore`: the
+/// install's device keystore, which outlives the vault handle as a host's
+/// platform keystore does, so a reopen on it keeps this install's machine and
+/// its keys.
+fn open_served_on(
+    path: &std::path::Path,
+    posture: HostingPrivacyPosture,
+    keystore: &Arc<oneiron_keystore::MemoryKeystore>,
+) -> Vault {
     let mut config = VaultConfig::device();
     config.privacy.posture = posture;
     let vault = Vault::open(path, config).expect("the vault opens");
-    vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
+    vault.install_device_keystore(keystore.clone());
     vault
 }
 
@@ -718,8 +734,19 @@ fn open_served(path: &std::path::Path, posture: HostingPrivacyPosture) -> Vault 
 /// `posture`, with this install profiled: the root is the test host's
 /// issuer.
 fn rooted_served(posture: HostingPrivacyPosture) -> (tempfile::TempDir, Vault, HostSlipIssuer) {
+    rooted_served_on(
+        posture,
+        &Arc::new(oneiron_keystore::MemoryKeystore::default()),
+    )
+}
+
+/// [`rooted_served`] on `keystore` ([`open_served_on`]).
+fn rooted_served_on(
+    posture: HostingPrivacyPosture,
+    keystore: &Arc<oneiron_keystore::MemoryKeystore>,
+) -> (tempfile::TempDir, Vault, HostSlipIssuer) {
     let dir = tempfile::tempdir().expect("vault directory");
-    let vault = open_served(dir.path(), posture);
+    let vault = open_served_on(dir.path(), posture, keystore);
     let issuer = oneiron::test_support::provision_engine_machines(&vault);
     vault
         .ensure_serving_install_profile(&issuer, MachineRole::Unanswered)
@@ -926,12 +953,20 @@ fn machine_is_mine(vault: &Vault, machine: EntityId) -> bool {
 /// the machine stands): reopened under the Hosted posture, an install whose
 /// own profile is still unanswered pairs a machine the owner answered
 /// "yours" through its carrier. It holds no key it may offer as his proof,
-/// so the answer lands held and the machine is not his yet.
+/// so the answer lands held and the machine is not his yet. The install
+/// keeps its keystore across the reopen and loads its signing keys from it,
+/// as a host does after each open (`Vault::install_default_keystore`):
+/// without them it carries nothing, and the redemption refuses before it
+/// reaches the carrier (row HOSTED-REOPEN-TEST-DROPS-INSTALL-KEYSTORE).
 #[test]
 fn a_hosted_install_pairs_a_yours_machine_through_its_carrier_not_the_self_host_root() {
-    let (dir, vault, _) = rooted_served(HostingPrivacyPosture::SelfHostLocal);
+    let keystore = Arc::new(oneiron_keystore::MemoryKeystore::default());
+    let (dir, vault, _) = rooted_served_on(HostingPrivacyPosture::SelfHostLocal, &keystore);
     drop(vault);
-    let hosted = open_served(dir.path(), HostingPrivacyPosture::Hosted);
+    let hosted = open_served_on(dir.path(), HostingPrivacyPosture::Hosted, &keystore);
+    hosted
+        .prepare_install_signing()
+        .expect("this install's signing keys load from the keystore it kept");
     let issuer = oneiron::test_support::test_host_issuer();
     let link = yours_link(&hosted, &issuer);
     let (_joining_dir, _joining, request) = joining_install(&hosted);
