@@ -21,7 +21,35 @@ pub(super) fn fold_adopted_in_txn(
     arriving: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
 ) -> Result<Option<AuthorityTailFold>> {
     let image = adopted.image();
-    let (held_covered, tail) = split_adopted_tail(store, txn, image, arriving)?;
+    // The store id is the row's content hash: a held covered row is known
+    // by its id alone.
+    let covered_ids: BTreeMap<_, _> = image
+        .covered
+        .iter()
+        .filter_map(|hash| Some((authority_log_entity_id_from_hash(hash).ok()?, *hash)))
+        .collect();
+    let mut held_covered = BTreeSet::new();
+    let mut tail = Vec::new();
+    for id in authority_log_ids_in_txn(store, txn)? {
+        if let Some(hash) = covered_ids.get(&id) {
+            held_covered.insert(*hash);
+            continue;
+        }
+        let entry = decode_stored_authority_log_body(&authority_log_body_in_txn(store, txn, &id)?)?;
+        let hash = authority_entry_hash(&entry)?;
+        if image.rows.contains_key(&hash) {
+            held_covered.insert(hash);
+        } else {
+            tail.push((hash, entry));
+        }
+    }
+    for (hash, entry) in arriving {
+        if image.rows.contains_key(hash) {
+            held_covered.insert(*hash);
+        } else if !tail.iter().any(|(stored, _)| stored == hash) {
+            tail.push((*hash, entry.clone()));
+        }
+    }
     let backfilled = AUTHORITY_FIRST_SEEN_BACKFILLED.contains(
         store,
         txn,
@@ -41,7 +69,7 @@ pub(super) fn fold_adopted_in_txn(
     let peer_consent_roots =
         crate::federation::admitted_peer_consent_roots_for_store_in_txn(store, txn)?;
     // The tail rows this install believes, judged as the store gate judges
-    // them: the fold's gaps walk starts from these rows' parents alone (FIX
+    // them: the fold refuses only for the gaps these rows rest on (FIX
     // [STRANGER-GAP-STALLS-ADOPTED-TAIL-FOLD]).
     let door = crate::authority::log_budget::door_view(store, txn)?;
     let believed: BTreeSet<_> = tail
@@ -92,49 +120,6 @@ pub(super) fn fold_adopted_in_txn(
     })
 }
 
-/// The adopted image's covered rows still stored here, and the stored rows
-/// past it with `arriving` folded in as stored rows: the tail the fold reads.
-fn split_adopted_tail(
-    store: &Store,
-    txn: &heed::RoTxn<'_>,
-    image: &crate::authority::checkpoint_image::AuthorityCheckpointV2,
-    arriving: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
-) -> Result<(
-    BTreeSet<AuthorityEntryHash>,
-    Vec<(AuthorityEntryHash, AuthorityLogEntry)>,
-)> {
-    // The store id is the row's content hash: a held covered row is known
-    // by its id alone.
-    let covered_ids: BTreeMap<_, _> = image
-        .covered
-        .iter()
-        .filter_map(|hash| Some((authority_log_entity_id_from_hash(hash).ok()?, *hash)))
-        .collect();
-    let mut held_covered = BTreeSet::new();
-    let mut tail = Vec::new();
-    for id in authority_log_ids_in_txn(store, txn)? {
-        if let Some(hash) = covered_ids.get(&id) {
-            held_covered.insert(*hash);
-            continue;
-        }
-        let entry = decode_stored_authority_log_body(&authority_log_body_in_txn(store, txn, &id)?)?;
-        let hash = authority_entry_hash(&entry)?;
-        if image.rows.contains_key(&hash) {
-            held_covered.insert(hash);
-        } else {
-            tail.push((hash, entry));
-        }
-    }
-    for (hash, entry) in arriving {
-        if image.rows.contains_key(hash) {
-            held_covered.insert(*hash);
-        } else if !tail.iter().any(|(stored, _)| stored == hash) {
-            tail.push((*hash, entry.clone()));
-        }
-    }
-    Ok((held_covered, tail))
-}
-
 /// What the fold on a vault that adopted a checkpoint image needs and this
 /// vault does not hold (OF-469), through the fold's own preflight, so a
 /// delivery fetches exactly what the fold asks for: nothing the fold needs
@@ -176,20 +161,16 @@ pub(in crate::authority) fn adopted_history_request_in_txn(
         None => return Ok(None),
     };
     if naming == NamingRows::Every {
-        request.missing.extend(every_tail_gaps_in_txn(
-            store,
-            txn,
-            adopted.as_ref(),
-            required,
-        )?);
+        let gaps = every_tail_gaps_in_txn(store, txn, adopted.as_ref(), required)?;
+        request.missing.extend(gaps);
     }
     Ok(Some(request))
 }
 
-/// The parents the stored tail past the adopted image names that the image
-/// does not cover and this vault does not hold, plus `required` as the fold
-/// filters it: what the [`NamingRows::Every`] request names, though the fold
-/// reads past the gaps only rows this install does not believe reach.
+/// What the [`NamingRows::Every`] request names past the adopted image: each
+/// parent a stored row past the image names that the image does not cover and
+/// this vault does not hold, and each `required` hash neither held nor a kept
+/// frontier state, as the fold counted every gap before the believed rule.
 fn every_tail_gaps_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
@@ -197,19 +178,32 @@ fn every_tail_gaps_in_txn(
     required: &BTreeSet<AuthorityEntryHash>,
 ) -> Result<BTreeSet<AuthorityEntryHash>> {
     let image = adopted.image();
-    let (held_covered, tail) = split_adopted_tail(store, txn, image, &BTreeMap::new())?;
-    let held: BTreeSet<_> = tail.iter().map(|(hash, _)| *hash).collect();
-    Ok(tail
-        .iter()
-        .flat_map(|(_, entry)| entry.parent_hashes.iter())
-        .filter(|parent| !image.rows.contains_key(*parent))
+    let covered: BTreeSet<_> = image.covered.iter().copied().collect();
+    // Split as the fold splits: a covered row stored here is held, any other
+    // stored row is tail.
+    let mut held_covered = BTreeSet::new();
+    let mut tail = BTreeSet::new();
+    let mut parents = BTreeSet::new();
+    for (_, body) in authority_log_rows_in_txn(store, txn)? {
+        let entry = decode_stored_authority_log_body(&body)?;
+        let hash = authority_entry_hash(&entry)?;
+        if covered.contains(&hash) || image.rows.contains_key(&hash) {
+            held_covered.insert(hash);
+        } else {
+            tail.insert(hash);
+            parents.extend(entry.parent_hashes.iter().copied());
+        }
+    }
+    Ok(parents
+        .into_iter()
+        .filter(|parent| !image.rows.contains_key(parent))
         .chain(
             required
                 .iter()
                 .filter(|hash| !held_covered.contains(*hash))
-                .filter(|hash| !image.keeps_state(hash)),
+                .filter(|hash| !image.keeps_state(hash))
+                .copied(),
         )
-        .filter(|hash| !held.contains(*hash))
-        .copied()
+        .filter(|hash| !tail.contains(hash))
         .collect())
 }
