@@ -8,6 +8,7 @@
 //! code fix replays (`source`, FIX 2343).
 use std::ops::Bound;
 
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
 use rmpv::Value;
 use serde::{Deserialize, Serialize};
 
@@ -123,7 +124,7 @@ impl Vault {
             actual: Value::from(true),
             delta: Value::from(1),
             replay: DiagnosticReplayCoordinate {
-                content_hash: *blake3::hash(entry.receipt.content()?.as_bytes()).as_bytes(),
+                content_hash: blocked_content_hash(&entry.receipt.content()?),
                 run_ref: run.map(|run| run.to_hex()),
                 checkpoint_ref: None,
             },
@@ -200,6 +201,21 @@ impl Vault {
             })
             .collect())
     }
+}
+
+/// A blocked report's replay hash over its receipt's `content`
+/// (`purposes::self_heal::BLOCKED_REPORT_CONTENT`).
+fn blocked_content_hash(content: &str) -> [u8; 32] {
+    LegacyDigest::new(purposes::self_heal::BLOCKED_REPORT_CONTENT)
+        .raw(content.as_bytes())
+        .finish()
+}
+
+/// [`blocked_content_hash`] for the K door
+/// (`test_doors::fingerprint_keep_self_heal_digests`). Not API.
+#[cfg(oneiron_test_support)]
+pub(crate) fn blocked_content_hash_for_test(content: &str) -> [u8; 32] {
+    blocked_content_hash(content)
 }
 
 /// The receipts of the blocked reports the durable run `run` filed, oldest

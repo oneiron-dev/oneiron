@@ -11492,7 +11492,7 @@
       "const": 1,
       "crate-vis": 5,
       "enum": 1,
-      "fn": 5,
+      "fn": 3,
       "re-export": 3,
       "struct": 5,
       "trait": 1
@@ -34443,6 +34443,7 @@
      "purpose": "The Coach's browser programs (CUA E8, FIX 7605): each night, fixed code reads the solved-run evidence that…",
      "surface": {
       "const": 1,
+      "crate-vis": 1,
       "fn": 1,
       "struct": 2
      }
@@ -34474,7 +34475,7 @@
      "path": "src/dreamer_runner/maintenance/browser_programs/induction/mod.rs",
      "purpose": "Deterministic induction for the Coach's browser programs (CUA E8): one candidate program from two solved…",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 7
      }
     },
     {
@@ -35612,7 +35613,7 @@
      "purpose": "The Coach's site skills (CUA E8b, FIX 7606): each night, fixed code reads the same solved-run evidence…",
      "surface": {
       "const": 1,
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 1,
       "struct": 1
      }
@@ -35624,7 +35625,7 @@
      "path": "src/dreamer_runner/maintenance/site_skills/distill.rs",
      "purpose": "Deterministic rendering for the Coach's site skills (CUA E8b, FIX 7606): one candidate folder per site from…",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 13
      }
     },
     {
@@ -43261,7 +43262,7 @@
      "path": "src/feedback/mod.rs",
      "purpose": "Engine feedback channel: bundle wire contract, consent, dispatch, export",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "mod": 1,
       "re-export": 10
      }
@@ -43503,7 +43504,7 @@
      "purpose": "Feedback triage custody (OF-420 T1, ARCH-0056 #open-inbox): the sweep that hands each open-inbox note to the…",
      "surface": {
       "const": 6,
-      "crate-vis": 9,
+      "crate-vis": 10,
       "enum": 2,
       "fn": 2,
       "re-export": 7,
@@ -43636,7 +43637,7 @@
      "path": "src/feedback/triage/work.rs",
      "purpose": "A long revision's durable work graph (FIX 7549)",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "enum": 2,
       "fn": 4,
       "re-export": 1,
@@ -54374,7 +54375,7 @@
      "path": "src/memory/claim_conflict.rs",
      "purpose": "Content-bound conflict questions and owner/delegated-admin rulings",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 4,
       "re-export": 1
      }
@@ -55753,7 +55754,7 @@
      "path": "src/memory/mod.rs",
      "purpose": "BRIDGE-01 (ONE-1454): transport-agnostic memory facade",
      "surface": {
-      "crate-vis": 45,
+      "crate-vis": 46,
       "mod": 41,
       "re-export": 75
      }
@@ -94169,6 +94170,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/test_doors/fingerprint_keep_generic_helpers.rs",
+     "purpose": "Door for `tests/fingerprint_keep_generic_helpers.rs` (PLAN-UC-04 stage 6.1a): the generic digest helpers of…",
+     "surface": {
+      "fn": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/test_doors/fingerprint_keep_git_wire.rs",
      "purpose": "Door for `tests/fingerprint_keep_git_wire.rs` (PLAN-UC-04 3.3): the two git-wire digests the engine computes…",
      "surface": {
@@ -94898,7 +94909,7 @@
      "purpose": "Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD)",
      "surface": {
       "fn": 1,
-      "mod": 300,
+      "mod": 301,
       "re-export": 1
      }
     },
@@ -107045,6 +107056,17 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/fingerprint_keep_generic_helpers.rs",
+     "purpose": "K-proof (oracle) for PLAN-UC-04 stage 6.1a: four generic digest helpers keep their bytes",
+     "surface": {
+      "const": 1,
+      "crate-vis": 11
+     }
+    },
+    {
      "bucket": "L",
      "kind": "test",
      "notable": [],
@@ -114475,7 +114497,7 @@
      "purpose": "`TimeRange`, temporal expressions/parsing, granularity/anchor enums"
     },
     "test_doors": {
-     "files": 306,
+     "files": 307,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -114652,8 +114674,8 @@
    },
    "over_bar": 300,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 8123,
-   "test_files": 1879
+   "source_files": 8124,
+   "test_files": 1880
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -129297,6 +129319,14 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/purposes/browser_library.rs",
+     "purpose": "Purposes of the browser library (`oneiron-records`' and the core's `browser_library`)",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/purposes/calendar.rs",
      "purpose": "Purposes of the calendar (`crates/oneiron/src/calendar`)",
      "surface": {}
@@ -129315,6 +129345,14 @@
      "notable": [],
      "path": "src/purposes/check_in.rs",
      "purpose": "Purposes of a person's check-in effects (`oneiron` `check_in::effect`; ARCH-0082 #composing)",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/purposes/claim.rs",
+     "purpose": "Purposes of claims (`crates/oneiron/src/claim`)",
      "surface": {}
     },
     {
@@ -129655,7 +129693,7 @@
      "purpose": "The K door: a digest that main already stores or sends keeps its exact bytes"
     },
     "purposes": {
-     "files": 46,
+     "files": 48,
      "impl_vault": false,
      "largest_src_bucket": "s",
      "layout": "dir",
@@ -129671,7 +129709,7 @@
    },
    "over_bar": 0,
    "purpose": "One fingerprint rule for engine digests (fable pass 22; PLAN-UC-04 stage 0)",
-   "source_files": 49,
+   "source_files": 51,
    "test_files": 1
   },
   "oneiron-gen": {
