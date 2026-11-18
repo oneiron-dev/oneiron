@@ -1996,6 +1996,7 @@ impl ServedVault {
             OriginResidence::LocalVault,
             self.install(),
             false,
+            None,
         )
     }
 

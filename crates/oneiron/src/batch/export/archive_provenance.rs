@@ -12,10 +12,15 @@
 //! sharpened by the lead's HOSTED-CARRIER-FIRST-PIN = D, "the yes must be
 //! provably his; a carrier's word is not him saying so"): only a machine this
 //! install trusts as the owner's own device signs one, and only while that
-//! `Yours` is his own signature: his pinned recovery root's mark, or on a
-//! vault that is not hosted an owner-held roster key's revision. A `Yours`
-//! that rests on a carrier's act (any linked machine, the signer itself
-//! included, carries one) proves no more than an unsigned archive. A live
+//! `Yours` is his own say-so: his pinned recovery root's mark, or, on a
+//! vault that is not hosted, an owner-held roster key's revision or an
+//! answer a machine carried whose row an owner key proved (row
+//! EXPORT-PROOF-OWNER-SIGNED-CARRIED-YOURS, the lead's CARRIER-SELF-ANSWER).
+//! A `Yours` that rests on a carrier's act alone (any linked machine, the
+//! signer itself included, carries one) proves no more than an unsigned
+//! archive. On a hosted vault a proven carried answer proves no archive
+//! either: there the custodial root enrols an owner key the host holds, and
+//! that key proves for the owner (FIX [HOSTED-ROOT-ENROLS-PROOF-KEY]). A live
 //! machine of the vault in any other role the owner answered (a hosted node,
 //! an execution node, a rented, work or school machine) signs an archive that
 //! is not his. An unanswered install's key, like an unprofiled install's,
@@ -37,14 +42,15 @@
 
 use ed25519_dalek::Signer;
 use oneiron_authority::authority::verify_entry_signatures;
+use oneiron_contracts::fingerprint::ContentHash;
 use serde::{Deserialize, Serialize};
 
 use super::WholeVaultDocumentManifest;
 use super::export_authority::hex_lower;
 use crate::Vault;
 use crate::authority::{
-    AuthorityFold, AuthorityOp, MachineRevision, authority_entry_hash,
-    authority_log_entity_id_from_hash, owner_act_signer_admits,
+    AuthorityFold, AuthorityKey, AuthorityLogEntry, AuthorityOp, MachineRevision, YoursProof,
+    authority_entry_hash, authority_log_entity_id_from_hash, owner_act_signer_admits,
 };
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -68,14 +74,15 @@ pub struct ArchiveProvenance {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ArchiveSigner {
     /// A machine this install trusts as the owner's own device, by his own
-    /// signature, signed it.
+    /// say-so, signed it: his pinned root's mark, or, off hosted, an
+    /// owner-held roster revision or a carried answer an owner key proved.
     OwnerDevice,
     /// A live machine of this vault signed it, in a role the owner answered
     /// that is not his own device here.
     OtherMachine,
     /// No signature, none this vault can tie to a machine of its own, or one
-    /// by a machine whose `Yours` here is a carrier's word or rests on no
-    /// owner-signed row this install holds.
+    /// by a machine whose `Yours` here rests on a carrier's act alone, or on
+    /// no row this install holds that proves it his.
     Unproven,
 }
 
@@ -126,7 +133,7 @@ pub fn archive_provenance_transcript(
     transcript.extend_from_slice(vault_id);
     transcript.extend_from_slice(machine.as_bytes());
     transcript.extend_from_slice(machine_key);
-    transcript.extend_from_slice(blake3::hash(&encoded).as_bytes());
+    transcript.extend_from_slice(ContentHash::of(&encoded).as_bytes());
     Ok(transcript)
 }
 
@@ -165,13 +172,15 @@ pub(crate) fn sign_archive_manifest(
 /// ([`owner_act_signer_admits`]: a live machine no chain removed, never a
 /// roster key), and the signature must verify. Then the machine is the
 /// owner's own device exactly when this install trusts it as his explicit
-/// `Yours` by his own signature
+/// `Yours` by his own say-so
 /// ([`AuthorityFold::trusted_yours_revision`]), holds the row of that
-/// signature ([`owner_signed_row_held`]), and, on a hosted vault, adopted
+/// say-so ([`held_revision_row`]), and, on a hosted vault, adopted
 /// no checkpoint image (Sol r3 P2: the host's image says which revision
 /// heads the chain, so it can keep a `Yours` the owner removed since). A
 /// `Yours` carried by a machine's install key is a carrier's word (Sol r1
-/// P1: a hosted node can carry an owner answer for itself), so it reads as
+/// P1: a hosted node can carry an owner answer for itself), so it proves
+/// only by the owner's proof cosign on its row
+/// ([`row_carries_owner_proof`]), off hosted. With none it reads as
 /// unsigned, as does a `Yours` whose row this install does not hold, one a
 /// hosted vault reads off an adopted image, and anything that does not
 /// parse or verify. A hosted vault that adopted an image keeps that record
@@ -212,15 +221,19 @@ pub(crate) fn archive_signer(
     if !stands {
         return Ok(ArchiveSigner::Unproven);
     }
-    let Some((revision, owner_signed)) = fold.trusted_yours_revision(machine, verifier.hosted)
-    else {
+    let Some((revision, proof)) = fold.trusted_yours_revision(machine, verifier.hosted) else {
         return Ok(ArchiveSigner::OtherMachine);
     };
     let head_attested_by_host = verifier.hosted && verifier.adopted_checkpoint;
     Ok(
-        if owner_signed
+        if proof != YoursProof::Unproven
             && !head_attested_by_host
-            && owner_signed_row_held(vault, txn, vault_id, revision, machine, &key)?
+            && held_revision_row(vault, txn, vault_id, revision, machine, &key)?.is_some_and(
+                |row| {
+                    proof == YoursProof::RevisionSigner
+                        || row_carries_owner_proof(fold, verifier.hosted, &row)
+                },
+            )
         {
             ArchiveSigner::OwnerDevice
         } else {
@@ -229,43 +242,63 @@ pub(crate) fn archive_signer(
     )
 }
 
-/// Whether `vault` holds, in `txn`, the row `revision` stands by as the
+/// The row `revision` stands by, when `vault` holds it in `txn` as the
 /// signature the fold says it is: the AUTHORITY_LOG row at
 /// [`MachineRevision::entry`], with that hash, this vault's id `vault_id`, a
-/// valid shape and signatures, the revision's signer as its primary signer,
-/// and a machine profile equal to the revision's, which names `machine` and
-/// `key`. A row this install does not hold in `txn`, and an entry whose id
-/// names a row of another kind, prove
-/// nothing (Sol r2 P1: a checkpoint image the host attests can carry a
-/// revision no owner key signed, under any entry hash). The vault id is
-/// checked here, not left to the doors that store rows (Sol r3 Q1).
+/// valid shape and signatures (its primary's and every cosign's, over the
+/// one transcript), the revision's signer as its primary signer, and a
+/// machine profile equal to the revision's, which names `machine` and `key`.
+/// A row this install does not hold in `txn`, and an entry whose id names a
+/// row of another kind, prove nothing (Sol r2 P1: a checkpoint image the
+/// host attests can carry a revision no owner key signed, under any entry
+/// hash). The vault id is checked here, not left to the doors that store
+/// rows (Sol r3 Q1).
 ///
 /// # Errors
 /// The store read fails, or a stored row there no longer decodes.
-fn owner_signed_row_held(
+fn held_revision_row(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     vault_id: &[u8; 32],
     revision: &MachineRevision,
     machine: EntityId,
     key: &[u8; 32],
-) -> Result<bool> {
+) -> Result<Option<AuthorityLogEntry>> {
     let Ok(id) = authority_log_entity_id_from_hash(&revision.entry) else {
-        return Ok(false);
+        return Ok(None);
     };
     let entry = match vault.get_authority_log_entry_in_txn(txn, &id) {
         Ok(Some(entry)) => entry,
-        Ok(None) | Err(Error::InvalidEntityType(_)) => return Ok(false),
+        Ok(None) | Err(Error::InvalidEntityType(_)) => return Ok(None),
         Err(error) => return Err(error),
     };
-    Ok(revision.profile.machine == machine
+    let held = revision.profile.machine == machine
         && revision.profile.machine_key == *key
         && authority_entry_hash(&entry)? == revision.entry
         && entry.vault_id == Some(*vault_id)
         && entry.validate_shape().is_ok()
         && verify_entry_signatures(&entry).is_ok()
         && *entry.signer_key() == revision.signer
-        && matches!(&entry.op, AuthorityOp::MachineProfile(profile) if *profile == revision.profile))
+        && matches!(&entry.op, AuthorityOp::MachineProfile(profile) if *profile == revision.profile);
+    Ok(held.then_some(entry))
+}
+
+/// Whether `row`, the held row of a carried `Yours`
+/// ([`YoursProof::ProofCosign`]), carries the owner's proof: exactly one
+/// cosign, in Ed25519, by a key `fold` trusts as the owner's under the
+/// vault's posture ([`AuthorityFold::proves_owner_acts`]), as the fold's
+/// judge of a carried answer takes one. The cosign's signature over the
+/// row's transcript was checked with the row's ([`held_revision_row`]).
+/// The key is judged on `fold`, this snapshot's, not at the row's parents:
+/// a key the roster revoked or retired since proves no archive.
+fn row_carries_owner_proof(fold: &AuthorityFold, hosted: bool, row: &AuthorityLogEntry) -> bool {
+    match row.cosigns.as_slice() {
+        [cosign] => {
+            matches!(cosign.public_key, AuthorityKey::Ed25519(_))
+                && fold.proves_owner_acts(&cosign.public_key, hosted)
+        }
+        _ => false,
+    }
 }
 
 /// `N` bytes of lowercase hex, the one spelling an archive writes.

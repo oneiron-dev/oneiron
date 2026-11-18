@@ -10,6 +10,7 @@ use crate::entity_id::bytes_to_hex_lower;
 use crate::error::{Error, Result};
 use crate::store::code_revision_record::CodeTreeInventory;
 use crate::store::code_tree_blob::CodeTreeBlob;
+use oneiron_contracts::fingerprint::ContentHash;
 use std::collections::BTreeMap;
 
 /// The pins and both complete trees one preview's identity binds.
@@ -90,7 +91,7 @@ pub(super) fn select_leaf(
     if leaf.bytes.len() as u64 != identity.size_bytes
         || leaf.blob.mode != identity.mode
         || leaf.blob.git_oid != identity.git_oid
-        || bytes_to_hex_lower(blake3::hash(&leaf.bytes).as_bytes()) != identity.content_hash
+        || bytes_to_hex_lower(ContentHash::of(&leaf.bytes).as_bytes()) != identity.content_hash
     {
         return Err(Error::InvariantViolation(
             "a pinned preview leaf differs from its identity",

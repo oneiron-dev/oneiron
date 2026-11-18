@@ -78,9 +78,10 @@ pub(super) fn settle_in(
 
 /// Cuts the ask `id` when it is due. `owner` is the live proof of the
 /// owner whose word was admitted in this same transaction, when there was
-/// one; it is passed in-process and never stored. An attendee ask cuts on a
-/// definitive word only under it (`super::attendee_answer::may_cut`), and
-/// that cut resolves the speaker's identity in this transaction.
+/// one; it is passed in-process and never stored. An ask that asks one
+/// party cuts on a definitive word only under its proof
+/// (`super::ask_guard::may_cut_in`); an attendee ask's cut resolves the
+/// speaker's identity in this transaction.
 pub(super) fn settle_with_owner_in(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -192,22 +193,7 @@ fn settle_with_cutoff_in(
     } else {
         return Ok(None);
     };
-    if !super::attendee_answer::may_cut(vault, txn, &group, reason, &decision, owner)? {
-        return Ok(None);
-    }
-    if !super::training_offer_ask::may_cut(vault, txn, id, &group, reason, &decision, owner)?
-        || !super::training_swap_ask::may_cut(vault, txn, id, &group, reason, &decision, owner)?
-        || !super::contribution_pair::may_cut(vault, txn, &group, reason, &decision, owner)?
-        || !crate::office_body::may_cut_live_edit(
-            vault,
-            txn,
-            id,
-            &group.requested.intent_key,
-            reason,
-            &decision,
-            owner,
-        )?
-    {
+    if !super::ask_guard::may_cut_in(vault, txn, id, &group, reason, &decision, owner)? {
         return Ok(None);
     }
     let decision = if stale {
@@ -518,6 +504,13 @@ pub(crate) fn ask_settlement_in(
     id: EntityId,
 ) -> Result<Option<TaskAskResult>> {
     read_result(vault, txn, id)
+}
+
+/// The id of the settlement row that closes the ask group `group`. The
+/// commit that settles a group writes this row, and names it, not the
+/// group, among the TASKs it wrote.
+pub(crate) fn ask_settlement_id(group: EntityId) -> Result<EntityId> {
+    settlement_id(group)
 }
 
 pub(super) fn evidence(

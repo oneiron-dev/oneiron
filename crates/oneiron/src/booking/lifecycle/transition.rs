@@ -5,15 +5,20 @@ use super::claim::{
     BookingConfirmationContext, calendar_status_value, encode_event_body, read_booking_facts,
     read_booking_facts_to_cancel, supersede_exact_claim, write_booking_event,
 };
+use super::deposit::{
+    authorized_deposit_in_writer, cap_refund_on_visitor_reschedule_in_writer,
+    check_hold_lease_deposit, mark_capture_due_in_writer, refund_on_visitor_cancel_in_writer,
+};
 use super::occurrence::{confirm_solve_window, inclusive_occurrence, offers_slot};
 use super::passport::{mint_booking_uid, supersede_outbound_passport, write_outbound_passport};
 use super::public_authority::booking_writer_with_publication;
+use super::setting_keys::reschedule_after_start_in_txn;
 use super::storage::{
     HOLD, calendar_wrap, claims_for_subject, confirm_receipt_key, encode_claim_value,
     engine_failure, read_receipt, refused, revision_receipt_key, write_receipt,
 };
 use super::token::{
-    HoldLeaseSpec, OpaqueLifecycleToken, SessionKey, hold_digest, lease_digest, mint_raw_token,
+    HoldLeaseSpec, OpaqueLifecycleToken, hold_digest, lease_digest, mint_raw_token,
     resolve_token_event, revision_token, session_digest, token_digest, write_revision_tokens,
 };
 use super::types::{
@@ -122,14 +127,16 @@ pub(super) fn execute_booking_lifecycle_attempt<S: OutboundExecutionSink>(
 /// # Errors
 ///
 /// [`BookingError::InvalidConstraint`] when a claimed extension has no live,
-/// session-bound lease behind it.
+/// session-bound lease behind it, or its lease's deposit is another event
+/// type's or already settled (BK-DEPOSITS).
 fn resolve_hold_expiry(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
-    session_key: &SessionKey,
-    lease: &HoldLeaseSpec,
+    spec: &HoldSpec,
     now_utc: u64,
 ) -> Result<(u64, Option<[u8; 32]>), BookingError> {
+    let session_key = &spec.session_key;
+    let lease = &spec.lease;
     match lease {
         HoldLeaseSpec::Ordinary => Ok((
             oneiron_store::expiry::expires_at_saturating(now_utc, DEFAULT_HOLD_TTL_SECS),
@@ -149,6 +156,7 @@ fn resolve_hold_expiry(
             if oneiron_store::expiry::is_expired(now_utc, row.expires_at) {
                 return Err(refused("checkout lease has expired"));
             }
+            check_hold_lease_deposit(vault, txn, &row, spec.page_ref, &spec.event_type)?;
             let capped =
                 oneiron_store::expiry::expires_at_saturating(now_utc, MAX_CHECKOUT_HOLD_TTL_SECS);
             Ok((row.expires_at.min(capped), Some(digest)))
@@ -177,7 +185,7 @@ pub(crate) fn execute_hold(
         now_utc,
         |wtxn| {
             let (expires_at, checkout_lease_hash) =
-                resolve_hold_expiry(vault, &*wtxn, &spec.session_key, &spec.lease, now_utc)?;
+                resolve_hold_expiry(vault, &*wtxn, spec, now_utc)?;
             let row = SoftHoldRow {
                 page_ref: spec.page_ref,
                 event_type: spec.event_type.clone(),
@@ -345,6 +353,9 @@ fn confirm_in_writer(
     if hold.token_hash != hold_hash {
         return Err(refused("hold token does not match this session's hold"));
     }
+    // A deposit event type confirms only on its authorized deposit
+    // (BK-DEPOSITS), checked here so a refusal writes nothing.
+    let deposit = authorized_deposit_in_writer(vault, &*wtxn, &hold, &session_hash)?;
 
     // (3) Fresh availability, read while we hold the writer. A hold the owner
     // took past the meeting caps is re-solved past them, and only it.
@@ -443,6 +454,11 @@ fn confirm_in_writer(
             reads: reads.clone(),
         },
     )?;
+    // The capture is due in the booking's own commit: a confirmed booking
+    // always names its deposit, and its settle row is queued with it.
+    if let Some(deposit) = deposit {
+        mark_capture_due_in_writer(vault, wtxn, &deposit, &event_ref, now_utc)?;
+    }
     HOLD.delete(&vault.store, wtxn, &digest)
         .map_err(|error| engine_failure("meta delete", error))?;
     Ok(ConfirmOutcome::Booked(ConfirmReceipt {
@@ -475,9 +491,9 @@ pub(super) fn booking_read_rows(
 ///
 /// # Errors
 ///
-/// [`BookingError::InvalidConstraint`] on an unknown or wrongly-scoped token or
-/// an unavailable slot; [`BookingError::SlotOracle`] on store or calendar
-/// failures.
+/// [`BookingError::InvalidConstraint`] on an unknown or wrongly-scoped token,
+/// a cancelled booking, a booking whose start has come, or an unavailable
+/// slot; [`BookingError::SlotOracle`] on store or calendar failures.
 pub(crate) fn execute_reschedule(
     vault: &Vault,
     oracle: &dyn SlotOracle,
@@ -519,6 +535,22 @@ pub(crate) fn execute_reschedule(
                 return Ok(RevisionReceipt { calendar, reads });
             }
 
+            // A booking whose start has come is a meeting that is happening or
+            // that happened (held, or a no-show), not one at an inconvenient time.
+            // Moving it would re-put that EVENT at a future interval under the
+            // outcome it already carries, and hand the visitor a second meeting
+            // from one booking. The line is the start second itself, where the
+            // owner's emergency path, reminders and CAL-07 already draw it. A retry
+            // of a move made before the start was answered above. The host may
+            // let visitors move a started booking (`booking.reschedule.after_start`,
+            // default off); the move then keeps its deposit rules.
+            if now_utc >= booking.slot.start
+                && !reschedule_after_start_in_txn(vault, &*wtxn)
+                    .map_err(|error| engine_failure("reschedule setting read", error))?
+            {
+                return Err(refused("a booking that has started cannot be rescheduled"));
+            }
+
             let context = booking
                 .context
                 .as_ref()
@@ -538,6 +570,15 @@ pub(crate) fn execute_reschedule(
             }
             let mut reads = booking_read_rows(vault, &*wtxn, &event_ref)?;
             reads.extend(oracle.take_read_rows());
+            // The reschedule token is the visitor's: a later cancel refunds at
+            // most what a cancel now would, against the slot being left.
+            cap_refund_on_visitor_reschedule_in_writer(
+                vault,
+                wtxn,
+                &event_ref,
+                booking.slot.start,
+                now_utc,
+            )?;
 
             // The EVENT's structural row carries the occurrence, so moving the
             // booking is a re-put of the same id at the new interval — the shape
@@ -624,6 +665,15 @@ pub(crate) fn execute_cancel(
             }
             let booking = read_booking_facts_to_cancel(vault, &*wtxn, &event_ref)?;
             let reads = booking_read_rows(vault, &*wtxn, &event_ref)?;
+            // The cancel token is the visitor's: its refund follows the
+            // deposit's terms, decided in the cancel's own commit.
+            refund_on_visitor_cancel_in_writer(
+                vault,
+                wtxn,
+                &event_ref,
+                booking.slot.start,
+                now_utc,
+            )?;
 
             supersede_exact_claim(
                 vault,

@@ -37,6 +37,8 @@ use std::pin::Pin;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
+
 use crate::attempt_queue::{AttemptId, AttemptRecord};
 use crate::authority::ManagedOwnerCheckError;
 use crate::code_run::{AgentVerbDoor, HostSelfDispatcher};
@@ -72,7 +74,6 @@ mod lapsed_sends;
 /// occurrence in. No adapter reads it; the step's identity does.
 const OCCURRENCE_NAMESPACE: &str = "oneiron";
 const OCCURRENCE_KEY: &str = "turn_program_step";
-const RESPONSE_DOMAIN: &[u8] = b"oneiron:dreamer:turn-program-response:v1";
 
 const TRAPPED_REASON: &str = "durable step trapped for resume";
 /// Why a program's entry stopped short of a hold: the next entry resumes it
@@ -808,14 +809,13 @@ impl ProgramModelSeam<'_> {
     }
 }
 
+/// Stored step result digests keep their bytes (K, PLAN-UC-04 stage 7).
 fn response_digest(response: &LlmResponse) -> Option<[u8; 32]> {
     let bytes = serde_json::to_vec(response).ok()?;
     Some(
-        *blake3::Hasher::new()
-            .update(RESPONSE_DOMAIN)
-            .update(&bytes)
-            .finalize()
-            .as_bytes(),
+        LegacyDigest::new(purposes::dreamer_wake::TURN_PROGRAM_RESPONSE)
+            .raw(&bytes)
+            .finish(),
     )
 }
 
@@ -835,4 +835,9 @@ impl LlmBackend for ProgramModelSeam<'_> {
     fn stream<'a>(&'a self, _request: LlmRequest, _lease: &'a BudgetLease) -> LlmStreamResult<'a> {
         Err(FatalLlmError::InvalidRequest.into())
     }
+}
+
+#[cfg(oneiron_test_support)]
+pub(crate) fn response_digest_for_test(response: &LlmResponse) -> Option<[u8; 32]> {
+    response_digest(response)
 }

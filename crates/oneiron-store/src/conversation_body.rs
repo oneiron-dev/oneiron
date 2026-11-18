@@ -53,14 +53,25 @@ pub struct ConversationBody {
     pub history_visible: Option<bool>,
     pub relationship: Option<EntityId>,
     pub is_default: Option<bool>,
-    /// The room's shared pins, one record per target; only the room pin
-    /// doors write them. Absent from the bytes while empty.
+    /// The room's shared pins; only the room pin doors write them, one record
+    /// per target, and a merge of two machines' copies may keep two records
+    /// of one target ([`merge_room_pins`]). Absent from the bytes while empty.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub pins: Vec<RoomPin>,
+    /// The pin records an unpin removed (ROOM-PINS-LWW-MERGE): a merge never
+    /// brings one back. Only the room pin doors write them. Absent from the
+    /// bytes while empty, so a room no one unpinned in keeps its bytes.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub unpinned: Vec<RoomPin>,
     /// Who may change `pins`; only the room pin-policy door writes it.
     /// Absent from the bytes while it is the default.
     #[serde(skip_serializing_if = "RoomPinPolicy::is_members")]
     pub pin_policy: RoomPinPolicy,
+    /// Whether every add to the room asks the room's owner, whoever adds
+    /// (ARCH-0082 #closed-room); only the room's closed-setting door writes
+    /// it. Absent from the bytes while false.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub closed: bool,
     #[serde(flatten)]
     pub extra: BTreeMap<String, rmpv::Value>,
 }
@@ -70,7 +81,9 @@ pub struct ConversationBody {
 /// PERSON (`None` when the PERSON acted), and the engine time of the pin in
 /// Unix seconds. A pin moves its target into the PINNED tier of the boards
 /// that work in the room; every reader still reads the target as itself.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, schemars::JsonSchema,
+)]
 #[serde(deny_unknown_fields)]
 pub struct RoomPin {
     pub target: EntityId,
@@ -97,14 +110,87 @@ impl RoomPinPolicy {
     }
 }
 
-/// Refuses a pin list that names one target twice.
-pub fn validate_room_pins(pins: &[RoomPin]) -> Result<()> {
-    let mut targets = BTreeSet::new();
-    if pins.iter().all(|pin| targets.insert(pin.target)) {
-        Ok(())
-    } else {
-        Err(invalid("duplicate pin target"))
+/// Refuses a pin list that names one record twice, an unpinned list that
+/// does, and a record both lists name. One target may hold two records: a
+/// merge keeps each record no unpin saw ([`merge_room_pins`]).
+pub fn validate_room_pins(pins: &[RoomPin], unpinned: &[RoomPin]) -> Result<()> {
+    let mut live = BTreeSet::new();
+    if !pins.iter().all(|pin| live.insert(pin)) {
+        return Err(invalid("duplicate pin record"));
     }
+    let mut removed = BTreeSet::new();
+    if !unpinned.iter().all(|pin| removed.insert(pin)) {
+        return Err(invalid("duplicate unpinned record"));
+    }
+    if !live.is_disjoint(&removed) {
+        return Err(invalid("pin record both pinned and unpinned"));
+    }
+    Ok(())
+}
+
+/// The order a merge lists pin records in: by time, then by target and
+/// writer, so two machines that merge the same records write the same bytes.
+fn pin_order(pin: &RoomPin) -> (u64, EntityId, EntityId, Option<EntityId>) {
+    (pin.pinned_at, pin.target, pin.pinned_by, pin.acting_agent)
+}
+
+/// The pins and unpinned records two copies of one room settle to
+/// (ROOM-PINS-LWW-MERGE; RULED ROOM-PIN-CONCURRENT-UNPIN = A, add-wins, an
+/// observed-remove set): every record either copy unpinned stays unpinned,
+/// and every other record either copy holds stays pinned. An unpin removes
+/// only the records it saw, so a pin another machine made meanwhile stays.
+/// `None` when the merge holds the same records as `carried`, the copy that
+/// arrived; else the merged `(pins, unpinned)`, each ordered by time, then
+/// by target and writer.
+pub fn merge_room_pins(
+    carried: (&[RoomPin], &[RoomPin]),
+    held: (&[RoomPin], &[RoomPin]),
+) -> Option<(Vec<RoomPin>, Vec<RoomPin>)> {
+    let unpinned: BTreeSet<&RoomPin> = carried.1.iter().chain(held.1).collect();
+    let pins: BTreeSet<&RoomPin> = carried
+        .0
+        .iter()
+        .chain(held.0)
+        .filter(|pin| !unpinned.contains(pin))
+        .collect();
+    if same_records(carried.0, &pins) && same_records(carried.1, &unpinned) {
+        return None;
+    }
+    Some((ordered_records(pins), ordered_records(unpinned)))
+}
+
+/// Whether `list` holds exactly the records of `set`.
+fn same_records(list: &[RoomPin], set: &BTreeSet<&RoomPin>) -> bool {
+    list.len() == set.len() && list.iter().all(|pin| set.contains(pin))
+}
+
+/// The records of `set`, in [`pin_order`].
+fn ordered_records(set: BTreeSet<&RoomPin>) -> Vec<RoomPin> {
+    let mut list: Vec<RoomPin> = set.into_iter().cloned().collect();
+    list.sort_by_key(pin_order);
+    list
+}
+
+/// The pins a reader is served from a stored list: one record per target,
+/// the earliest (by time, then by writer), at its stored place. Two records of one
+/// target remain only where two machines pinned it at once; the earlier one
+/// stands for both.
+pub fn live_room_pins(pins: &[RoomPin]) -> Vec<RoomPin> {
+    let mut first: BTreeMap<EntityId, &RoomPin> = BTreeMap::new();
+    for pin in pins {
+        first
+            .entry(pin.target)
+            .and_modify(|kept| {
+                if pin_order(pin) < pin_order(kept) {
+                    *kept = pin;
+                }
+            })
+            .or_insert(pin);
+    }
+    pins.iter()
+        .filter(|pin| first.get(&pin.target).is_some_and(|kept| *kept == *pin))
+        .cloned()
+        .collect()
 }
 impl ConversationBody {
     pub fn from_bytes(bytes: &[u8]) -> Result<Self> {
@@ -189,7 +275,7 @@ impl ConversationBody {
         {
             return Err(invalid("duplicate member"));
         }
-        validate_room_pins(&self.pins)?;
+        validate_room_pins(&self.pins, &self.unpinned)?;
         Ok(())
     }
 }
@@ -212,6 +298,14 @@ pub const ROOM_THREAD_KEY: &str = "room_thread";
 /// The door-owned CONVERSATION body key naming the project that groups this ordinary room as an
 /// extra room; only vault.projects.rooms.link and .unlink stamp it.
 pub const ROOM_PROJECT_GROUP_KEY: &str = "project_group";
+
+/// The room body key (ordinary and home rooms) of the room's shared pin records; only the room
+/// pin doors write it.
+pub const ROOM_PINS_KEY: &str = "pins";
+
+/// The room body key (ordinary and home rooms) of the pin records the room's unpins removed,
+/// which a merge never brings back (ROOM-PINS-LWW-MERGE); only the room pin doors write it.
+pub const ROOM_UNPINNED_KEY: &str = "unpinned";
 
 /// A thread TURN's birth binding: its thread's root, the room whose
 /// membership it reads under, the trunk turn the thread hangs off and, on
@@ -255,6 +349,9 @@ pub struct ProjectRoom {
     /// project projector carries them forward unchanged.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub pins: Vec<RoomPin>,
+    /// As [`ConversationBody::unpinned`]; carried forward as `pins` is.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub unpinned: Vec<RoomPin>,
     /// As [`ConversationBody::pin_policy`].
     #[serde(default, skip_serializing_if = "RoomPinPolicy::is_members")]
     pub pin_policy: RoomPinPolicy,

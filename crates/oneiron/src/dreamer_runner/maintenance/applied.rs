@@ -131,7 +131,7 @@ impl MaintenanceInverse {
             Self::Finding | Self::RepresentationPlan => Ok(()),
             Self::Curator(inverse) => curator::revert_in_txn(vault, txn, inverse, owner, now, out),
             Self::ProactivityPolicy(inverse) => {
-                digest::revert_policy_in_txn(vault, txn, inverse, out)
+                digest::revert_policy_in_txn(vault, txn, proof, inverse, out)
             }
             Self::ReachOut => stewardship::revert_reach_out_in_txn(vault, txn, owner, now, out),
             Self::IdentityProvisional(inverse) => {
@@ -219,8 +219,9 @@ pub struct AppliedMaintenance {
     pub reverted: Option<MaintenanceRevert>,
 }
 
-/// The BLAKE3 of a claim's body as it stands; `None` when it is gone.
-pub(super) fn claim_revision_in_txn(
+/// The BLAKE3 of a claim's body as it stands; `None` when it is gone. A
+/// curator finding's `source_hash` is its hex.
+pub(crate) fn claim_revision_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     id: &EntityId,

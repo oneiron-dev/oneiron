@@ -71,6 +71,8 @@ pub(crate) use self::items::{
 };
 pub use self::items::{FreeTimeItemBinding, is_free_time_try};
 pub(crate) use self::policy::free_time_owns_reflection_in_txn;
+#[cfg(oneiron_test_support)]
+pub(crate) use self::policy::free_time_policy_digest_for_test;
 pub use self::policy::{
     FREE_TIME_WHEN_UNSET, FreeTimeCadence, FreeTimePolicy, FreeTimePolicyInput, FreeTimeSchedule,
     FreeTimeSplit, UnsetFreeTimePolicy,

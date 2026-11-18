@@ -160,10 +160,10 @@ pub(super) fn effect_ref(
 ) -> Result<String, BookingError> {
     Ok(format!(
         "intent:booking_emergency:{}:{lane}",
-        hex_lower(&content_hash(&(
-            item_key(&item.plan.request, item.calendar.event_ref)?,
-            hash,
-        ))?)
+        hex_lower(&content_hash(
+            purposes::booking::EMERGENCY_EFFECT_REF,
+            &(item_key(&item.plan.request, item.calendar.event_ref)?, hash),
+        )?)
     ))
 }
 

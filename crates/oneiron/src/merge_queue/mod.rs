@@ -4,6 +4,7 @@
 //! a queue-issued permit under the existing repository single-writer lock. The
 //! queue verifies the durable mutation receipt and the complete landed tree.
 mod batch_index;
+mod batch_split;
 mod candidate_intake;
 mod check_execute;
 mod check_exhaust;
@@ -31,6 +32,7 @@ mod received_enqueue;
 mod review_policy;
 mod reviewed;
 mod run;
+pub(crate) mod setting_keys;
 mod source;
 mod source_materialize;
 mod source_types;
@@ -43,8 +45,6 @@ mod tested_export;
 mod tested_received;
 mod tested_store;
 mod tested_types;
-// FIX [LIBTEST-QUARANTINE-MERGE-QUEUE-TESTS]: the lib test target's type check fails here (4 errors: E0063 x2, E0308 x2); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;
 mod types;
@@ -55,12 +55,16 @@ use crate::{
     git_wire::{GitWire, GitWireRepo},
     store::code_snapshot::RepoRef,
 };
+// The base a later batch of a split enqueue was reviewed on, which the
+// reviewed landing admits it at ([MERGE-QUEUE-ENQUEUE-SPLITS-LARGE-BATCH]).
+pub(crate) use batch_split::{EnqueueBase, enqueue_base};
 // The pinned-plan checker (FIX 6868).
 pub use check_inputs::{
     QUEUE_CHECK_CANDIDATE_PREFIX, QueueCheckEnvironment, QueueCheckExecution, QueueCheckFile,
     QueueCheckHold, QueueCheckHoldReason, QueueCheckHost, QueueCheckInputs, QueueCheckInvocation,
-    QueueCheckLimits, QueueCheckNeed, QueueCheckOutputRef, QueueCheckReceipt, QueueCheckRun,
-    QueueCheckTarget, QueueCheckTreeSource, QueueCommandReceipt, StoredQueueCheckReceipt,
+    QueueCheckLimits, QueueCheckNeed, QueueCheckOutputRef, QueueCheckReceipt,
+    QueueCheckReuseSource, QueueCheckRun, QueueCheckTarget, QueueCheckTreeSource,
+    QueueCommandReceipt, StoredQueueCheckReceipt,
 };
 pub use check_store::{
     DEFAULT_QUEUE_CHECK_CONCURRENCY, QUEUE_CHECK_ATTEMPT_KIND, QueueCheckConfiguration,
@@ -74,9 +78,9 @@ pub(crate) use check_exhaust::QueueCheckFieldToken;
 // The restart driver and overlap handoff (FIX 6868, G2 PR2).
 pub(crate) use driver_types::QueueStageOverlap;
 pub use driver_types::{
-    QueueBatchDrive, QueueConflictLink, QueueConflictView, QueueDriveHold, QueueDriveHoldReason,
-    QueueDriveOutcome, QueueDrivePass, QueueDriveStatus, QueueDriveView, QueueDriverTarget,
-    QueueSurvivorLink, QueueWork,
+    QueueBatchDrive, QueueConflictLink, QueueConflictResolver, QueueConflictView, QueueDriveHold,
+    QueueDriveHoldReason, QueueDriveOutcome, QueueDrivePass, QueueDriveStatus, QueueDriveView,
+    QueueDriverTarget, QueueSurvivorLink, QueueWork,
 };
 pub use plan::{FrozenCheckPlan, REPO_CHECK_PLAN_PATH, RepoCheckPlan};
 // A queue entry's admission and completion receipts (FIX 4338) and the
@@ -89,8 +93,8 @@ pub(crate) use composition::LineComposition;
 // The vault's opt-in review policy (FIX 8268).
 pub(crate) use review_policy::{
     ActiveQueueReviewPolicy, DEFAULT_QUEUE_REVIEW_CRITICS, DEFAULT_QUEUE_REVIEW_VOTES,
-    QueueReviewRequirement, StoredQueueReviewPolicy, erase_review_policy_actor_in_txn,
-    queue_review_requirement_in_txn, review_policy_unreadable_hold,
+    QueueReviewRequirement, StoredQueueReviewPolicy, queue_review_requirement_in_txn,
+    review_policy_unreadable_hold,
 };
 pub use review_policy::{
     QueueReviewDefault, QueueReviewPolicy, QueueReviewThresholds, REVIEW_POLICY_DEFAULT,
@@ -150,5 +154,4 @@ impl<'a> MergeQueue<'a> {
 // tables (FIX 2680), named by their declarations.
 pub(crate) use self::check_store::merge_queue_check_config_accepts_masked;
 pub(crate) use self::check_store::merge_queue_check_work_accepts_masked;
-pub(crate) use self::review_policy::merge_queue_review_policy_accepts_masked;
 pub(crate) use self::storage::merge_queue_batch_accepts_masked;

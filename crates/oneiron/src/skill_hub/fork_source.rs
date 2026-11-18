@@ -1,8 +1,152 @@
 //! A fork copies real files and edits source identity before hashing the new tree.
-use super::{HubPackage, SkillPackageFormat, folder, package_codec::invalid};
+use super::{HubFile, HubPackage, SkillPackageFormat, folder, package_codec::invalid};
+use crate::dreamer_runner::maintenance::agent_health::{
+    object_without_duplicates, reviewer_policy_effective_seeds,
+};
 use crate::skill::health_review::REVIEWER_POLICY_FILE;
+use crate::skill::team_shape_catalog::TASK_TYPE_TREE_FILE;
+use crate::skill_optimize::SkillFileEdit;
+use crate::store::skill_package::site_folder::{PROGRAMS_DIR, SITE_FILE};
 use crate::{Vault, entity_id::EntityId, error::Result, skill::SkillRecord};
 use std::collections::BTreeMap;
+
+/// The instruction file of a skill's tree.
+const INSTRUCTION_FILE: &str = "SKILL.md";
+
+/// Extensions of the text and data files a skill_optimize draft may replace
+/// whole (census L9-02, Engine ruling 13 Nov 22:39: existing text and data
+/// files, no scripts). Any other file is code, or bytes a draft cannot read.
+const DRAFTABLE_EXTENSIONS: [&str; 10] = [
+    "md", "markdown", "txt", "json", "jsonl", "yaml", "yml", "toml", "csv", "tsv",
+];
+
+/// The dependency and package manifests a draft never replaces, by file
+/// name: they choose the third-party code a skill's scripts install and run
+/// (`package-lock.json` and `requirements.txt` are the inventory the OSV
+/// advisory scan reads at every import and update door, and an optimizer
+/// revision runs no such scan), so they stay a human edit like the scripts
+/// themselves (cold read N2 of #7949).
+const DEPENDENCY_MANIFEST_FILES: [&str; 16] = [
+    "package.json",
+    "package-lock.json",
+    "npm-shrinkwrap.json",
+    "pnpm-lock.yaml",
+    "pnpm-workspace.yaml",
+    ".yarnrc.yml",
+    "bunfig.toml",
+    "pyproject.toml",
+    "cargo.toml",
+    "composer.json",
+    "deno.json",
+    "import_map.json",
+    "environment.yml",
+    "environment.yaml",
+    "conda-lock.yml",
+    "pixi.toml",
+];
+
+/// Whether `path` names a dependency or package manifest: a file whose name
+/// [`DEPENDENCY_MANIFEST_FILES`] lists, or a pip requirements or constraints
+/// file, i.e. a `.txt` file whose name holds `requirements` or
+/// `constraints`, or any `.txt` file inside a `requirements` folder. Names
+/// compare without case.
+fn is_dependency_manifest_path(path: &str) -> bool {
+    let name = path.rsplit('/').next().unwrap_or(path).to_ascii_lowercase();
+    if DEPENDENCY_MANIFEST_FILES.contains(&name.as_str()) {
+        return true;
+    }
+    name.ends_with(".txt")
+        && (name.contains("requirements")
+            || name.contains("constraints")
+            || path
+                .split('/')
+                .rev()
+                .skip(1)
+                .any(|dir| dir.eq_ignore_ascii_case("requirements")))
+}
+
+/// Whether a skill_optimize draft may replace `record`'s file at `path`
+/// whole (census L9-02): a text or data file by its extension, and never a
+/// script or hook, a dependency or package manifest
+/// ([`is_dependency_manifest_path`]), the callable's entry, a site skill's
+/// `site.json` and seed programs, which declare what the skill may reach,
+/// or a task-type tree (`task-type-tree.json`), which the team-shape skill
+/// and each project or promote fork of it (`team-shape.project.<hex>`,
+/// `team-shape.promote.<hex>`) carry and only the tree gate revises
+/// (review F1 of #7949): the name is reserved for every skill.
+/// `SKILL.md` stands for its body below the engine-written frontmatter; a
+/// workflow skill's body is its `desc`, so a draft moves it through `desc`
+/// instead. A graph workflow program is also never drafted, by its content
+/// ([`reads_as_graph_program`]).
+pub(crate) fn draftable_skill_file(record: &SkillRecord, path: &str) -> bool {
+    if record
+        .call
+        .as_ref()
+        .is_some_and(|call| call.reference == path)
+    {
+        return false;
+    }
+    if path == INSTRUCTION_FILE {
+        return record.role != crate::skill::SkillRole::Workflow;
+    }
+    let text_or_data = path.rsplit_once('.').is_some_and(|(_, extension)| {
+        DRAFTABLE_EXTENSIONS
+            .iter()
+            .any(|draftable| extension.eq_ignore_ascii_case(draftable))
+    });
+    text_or_data
+        && !super::pack_catalog::is_script_or_hook_path(path)
+        && !is_dependency_manifest_path(path)
+        && path != SITE_FILE
+        && !path.starts_with(PROGRAMS_DIR)
+        && path != TASK_TYPE_TREE_FILE
+}
+
+/// Whether `content` reads as a graph workflow program
+/// ([`crate::skill::GraphSkillProgram`]). `self.skills.graph` runs such a
+/// file stage by stage from whatever tree path its caller names, so no
+/// extension or path marks it (review F2 of #7949). A draft never replaces
+/// such a file, and never writes one: the brief withholds it, and the draft
+/// check and the write door refuse either way.
+pub(crate) fn reads_as_graph_program(content: &[u8]) -> bool {
+    serde_json::from_slice::<crate::skill::GraphSkillProgram>(content).is_ok()
+}
+
+/// Each file of `files` a draft may replace ([`draftable_skill_file`]) with
+/// its whole UTF-8 text, path-sorted; `SKILL.md` as its body below the
+/// frontmatter. A file that is not UTF-8 is not text and is left out, and so
+/// is a graph workflow program ([`reads_as_graph_program`]).
+///
+/// # Errors
+///
+/// A `SKILL.md` whose frontmatter does not read.
+pub(crate) fn draftable_skill_texts(
+    record: &SkillRecord,
+    files: &[HubFile],
+) -> Result<Vec<(String, String)>> {
+    let mut texts = Vec::new();
+    for file in files {
+        if !draftable_skill_file(record, &file.path) || reads_as_graph_program(&file.content) {
+            continue;
+        }
+        let Ok(text) = std::str::from_utf8(&file.content) else {
+            continue;
+        };
+        let text = if file.path == INSTRUCTION_FILE {
+            instruction_body(text)?
+        } else {
+            text
+        };
+        texts.push((file.path.clone(), text.to_owned()));
+    }
+    texts.sort();
+    Ok(texts)
+}
+
+/// `SKILL.md`'s text below its frontmatter; the whole text when it has none.
+fn instruction_body(text: &str) -> Result<&str> {
+    Ok(folder::source_frontmatter(text)?.map_or(text, |front| &text[4 + front.len() + 5..]))
+}
 
 impl Vault {
     pub(crate) fn fork_skill_package_in_txn(
@@ -80,22 +224,32 @@ impl Vault {
 
 impl Vault {
     /// Carry the exact skill tree into an improver revision. The edit changes
-    /// only the descriptive recipe text; companion scripts/capabilities stay
+    /// the descriptive recipe text, and replaces whole each text or data file
+    /// `files` names (census L9-02); companion scripts/capabilities stay
     /// byte-exact, so a callable never silently loses its executable file.
     /// A rule skill's `policy.json` is re-derived from the improved text: a
-    /// dial the text names with a number takes it (FIX 10878).
+    /// dial the text names with a number takes it (FIX 10878). A draft that
+    /// replaces the file itself must pass [`validate_drafted_policy`], so no
+    /// revision's text names a dial value its file does not run, and a later
+    /// re-derive never undoes a drafted file (cold read N3 of #7949).
     pub(crate) fn optimized_skill_package_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         parent_id: &EntityId,
         parent: &SkillRecord,
         proposed: &mut SkillRecord,
+        files: &[SkillFileEdit],
     ) -> Result<Option<HubPackage>> {
         let Some(mut package) = self.fork_skill_package_in_txn(txn, parent_id, parent, proposed)?
         else {
             if parent.content_hash.is_some() {
                 return Err(invalid(
                     "source-backed optimized skill has no recoverable source",
+                ));
+            }
+            if !files.is_empty() {
+                return Err(invalid(
+                    "a drafted file edit needs the target's recoverable source",
                 ));
             }
             return Ok(None);
@@ -147,10 +301,90 @@ impl Vault {
         {
             policy.content = derived;
         }
+        for edit in files {
+            replace_drafted_file(proposed, &mut package.files, edit)?;
+        }
+        if files.iter().any(|edit| edit.path == REVIEWER_POLICY_FILE)
+            && let Some(policy) = package
+                .files
+                .iter()
+                .find(|file| file.path == REVIEWER_POLICY_FILE)
+        {
+            validate_drafted_policy(&policy.content, &proposed.desc)?;
+        }
         proposed.content_hash = Some(package.content_hash()?);
         package.record = proposed.clone();
         folder::package_from_source(proposed, package.files, SkillPackageFormat::Native).map(Some)
     }
+}
+
+/// Refuses a drafted `policy.json` the final instructions `text` do not run
+/// (cold read N3 of #7949): it must be one JSON object with no key named
+/// twice, which is what the rule's reader seeds from (bytes of another
+/// shape fall back whole, FIX 10882), and it must hold each number `text`
+/// names for one of its keys. Each detector dial `text` names a number for
+/// must also run that number, by the reader's effective seed (review round
+/// 2 of #7949): a draft that leaves the dial out, or holds it out of
+/// bounds, runs the compiled seed instead. The skill_optimize draft check
+/// and the write door both apply it, so a Coach heal files such a draft as
+/// unusable instead of failing its transaction.
+///
+/// # Errors
+///
+/// `InvalidSkillBody` when `policy` is not such an object, a key holds
+/// another number than `text` names for it, or a dial `text` names runs
+/// another number.
+pub(crate) fn validate_drafted_policy(policy: &[u8], text: &str) -> Result<()> {
+    let runs_named_dials = reviewer_policy_effective_seeds(policy)
+        .into_iter()
+        .all(|(key, seed)| named_number(text, key).is_none_or(|n| n.as_f64() == Some(seed)));
+    if object_without_duplicates(policy).is_none()
+        || rederived_rule_policy(policy, text).is_some()
+        || !runs_named_dials
+    {
+        return Err(invalid(
+            "a drafted policy.json must be one JSON object, with no key named twice, that holds and runs the number its instructions name for each key",
+        ));
+    }
+    Ok(())
+}
+
+/// Replaces the file `edit` names in `files` with its text whole: for
+/// `SKILL.md`, the body below the frontmatter this revision already wrote.
+/// Only a file a draft may replace ([`draftable_skill_file`]) that the tree
+/// holds as text: never a new path, and never to or from a graph workflow
+/// program ([`reads_as_graph_program`]).
+fn replace_drafted_file(
+    record: &SkillRecord,
+    files: &mut [HubFile],
+    edit: &SkillFileEdit,
+) -> Result<()> {
+    if !draftable_skill_file(record, &edit.path) {
+        return Err(invalid(
+            "a drafted file edit names a file a draft may not replace",
+        ));
+    }
+    let file = files
+        .iter_mut()
+        .find(|file| file.path == edit.path)
+        .ok_or_else(|| {
+            invalid("a drafted file edit names a path the skill's tree does not hold")
+        })?;
+    let text = std::str::from_utf8(&file.content)
+        .map_err(|_| invalid("a drafted file edit names a file that is not text"))?;
+    let content = if edit.path == INSTRUCTION_FILE {
+        let body = instruction_body(text)?;
+        format!("{}{}", &text[..text.len() - body.len()], edit.content).into_bytes()
+    } else {
+        edit.content.clone().into_bytes()
+    };
+    if reads_as_graph_program(&file.content) || reads_as_graph_program(&content) {
+        return Err(invalid(
+            "a drafted file edit never replaces or writes a graph workflow program",
+        ));
+    }
+    file.content = content;
+    Ok(())
 }
 
 /// A rule skill's `policy.json` re-derived from its improved rule `text`

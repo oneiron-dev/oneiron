@@ -9,6 +9,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use super::super::fold_engine::FoldContext;
 use super::super::fold_project::Settled;
 use super::super::fold_resume::{ConfirmKeys, Resumed};
+use super::covered_floors::{CoveredFloors, NoVouchPast};
 use super::*;
 use crate::EntityId;
 use crate::error::Result;
@@ -41,6 +42,8 @@ pub(super) struct SettledTail {
     /// The restrictive facts the projection applied: the image's, with each
     /// serial tail actor revocation's (FIX 11760).
     pub(super) revoke_facts: crate::authority::revoke_proof::RevokeFacts,
+    /// What the whole install fold's fold with no vouch makes of the tail.
+    pub(super) no_vouch: NoVouchPast,
 }
 
 /// Whether `op` is a withdrawal the tail folds past the image only serially,
@@ -57,13 +60,15 @@ pub(super) fn serial_withdrawal_op(op: &AuthorityOp) -> bool {
 
 /// The tail's fold on the image's frontier states, merged into the image's
 /// fold and projected, with `confirms` the confirms once the tail joined
-/// them ([`tail_folds_past`]); None wherever only the whole history folds
-/// the tail. A carried body that does not decode is corruption.
+/// them and `floors` the covered rows it floors ([`tail_folds_past`]); None
+/// wherever only the whole history folds the tail. A carried body that does
+/// not decode is corruption.
 pub(super) fn settle_tail(
     image: &AuthorityCheckpointV2,
     tail: &BTreeMap<AuthorityEntryHash, &AuthorityLogEntry>,
     log: AdoptedTail<'_>,
     confirms: ConfirmKeys,
+    mut floors: CoveredFloors,
 ) -> Result<Option<SettledTail>> {
     let mut issues = image.safety.issues.clone();
     let judged = judged_tail(image, tail, &mut issues);
@@ -99,7 +104,9 @@ pub(super) fn settle_tail(
     };
     let causal = crate::authority::fold_engine::CausalPast::new(&summaries);
     let context = FoldContext {
-        sequence_floors: Some(&log.observations.sequence_floors),
+        // No tail row sits past a floor, and a covered row the tail floors
+        // folds as the image folded it (`tail_folds_past`).
+        sequence_floors: Some(&crate::authority::fold_engine::SEQUENCE_FLOORS_FROM_ROWS),
         floor_vouched: (!log.observations.unvouched).then_some(&log.observations.vouched),
         install_held: None,
         entry_ancestors: None,
@@ -111,6 +118,7 @@ pub(super) fn settle_tail(
         pre_handoff_entries: Some(&no_handoff_line),
         memory_floor_bytes,
         pin: log.pin,
+        appointments: None,
     };
     let mut seed: BTreeMap<_, _> = image
         .per_parent
@@ -164,6 +172,9 @@ pub(super) fn settle_tail(
     }) {
         return Ok(None);
     }
+    // No tail row vouches for a covered row past its floor
+    // (`tail_signers_covered_rows_unfloored`), so every covered verdict
+    // stands past the image.
     states.retain(|hash, _| judged.contains_key(hash));
     if states
         .values()
@@ -178,6 +189,17 @@ pub(super) fn settle_tail(
     let serial = tail.values().any(|entry| serial_withdrawal_op(&entry.op));
     if serial && tail.keys().any(|hash| !states.contains_key(hash)) {
         return Ok(None);
+    }
+    // A tail that floors covered rows folds past them only counted whole and
+    // with no issue of its own: the image's issues then stand in the whole
+    // fold's order, but for its fork block (`CoveredFloors::issues_past`).
+    if !floors.is_empty() {
+        if issues.len() != image.safety.issues.len()
+            || tail.keys().any(|hash| !states.contains_key(hash))
+        {
+            return Ok(None);
+        }
+        issues = floors.issues_past(image);
     }
     let revoke_facts = if serial {
         image
@@ -202,6 +224,7 @@ pub(super) fn settle_tail(
     for (hash, row) in &image.rows {
         if let Some(body) = &row.body {
             let entry = decode_authority_log_entry_body(body)?;
+            floors.note(hash, &entry.op);
             if crate::authority::fold_resume::is_projected(&entry.op) {
                 projected.insert(*hash, entry);
             }
@@ -258,6 +281,25 @@ pub(super) fn settle_tail(
     {
         return Ok(None);
     }
+    let no_vouch = if floors.is_empty() {
+        NoVouchPast::Idle
+    } else {
+        let read_whole: Vec<&AuthorityLogEntry> = projected
+            .values()
+            .chain(
+                judged
+                    .iter()
+                    .filter(|(hash, _)| !projected.contains_key(*hash))
+                    .map(|(_, entry)| entry),
+            )
+            .collect();
+        let no_vouch =
+            floors.no_vouch_past(image, tail, log.observations, &states, &fold, &read_whole);
+        let Some(no_vouch) = no_vouch else {
+            return Ok(None);
+        };
+        no_vouch
+    };
     Ok(Some(SettledTail {
         judged,
         states,
@@ -273,6 +315,7 @@ pub(super) fn settle_tail(
         fold,
         final_merged,
         revoke_facts,
+        no_vouch,
     }))
 }
 

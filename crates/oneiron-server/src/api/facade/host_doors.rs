@@ -49,6 +49,7 @@ pub(crate) use super::calendar_doors::*;
 pub(crate) use super::campaign_doors::*;
 pub(crate) use super::compliance_doors::*;
 pub(crate) use super::credential_doors::*;
+pub(crate) use super::esign_rules_doors::*;
 // The caller's own actor and person refs (FIX 1047).
 pub(crate) use super::saved_query_doors::*;
 pub(crate) use super::self_actor_doors::*;
@@ -90,11 +91,14 @@ pub(crate) use super::shared_admin_doors::*;
 pub(crate) use super::shared_member_doors::*;
 // The shared-act policy doors (DOOR-129) too.
 pub(crate) use super::shared_policy_doors::*;
+// The owner's role-training prepare door (ROLE-TRAINING-RUN) too.
+pub(crate) use super::training_run_doors::*;
 // The trusted-contact doors (DOOR-140, OF-527) too.
 pub(crate) use super::trusted_contact_doors::*;
 // The voice-bank doors (DOOR-143, FIX 4393) too.
 pub(crate) use super::voice_bank_doors::*;
-// The voice-recognition consent door (VOICE-RECOGNITION-CONSENT-NO-DOOR) too.
+// The voice-recognition consent and withdrawal doors (VOICE-RECOGNITION-CONSENT-NO-DOOR,
+// VOICE-CONSENT-LOG-WHO = A) too.
 pub(crate) use super::voice_recognition_doors::*;
 // The owner's legal-hold doors (OF-470) too.
 pub(crate) use super::asr_doors::*;
@@ -120,8 +124,10 @@ pub(crate) use super::model_step_doors::*;
 pub(crate) use super::model_stream_doors::*;
 pub(crate) use super::non_base_world_claim_fraction_doors::*;
 pub(crate) use super::outbox_diverged_doors::*;
+pub(crate) use super::sandbox_provider_doors::*;
 pub(crate) use super::snapshot_read_settings_doors::*;
 pub(crate) use super::web_connector_doors::*;
+pub(crate) use super::world_vectors_doors::*;
 // The owner's committed-run reads (DOOR-141 A/B), likewise.
 pub(crate) use super::run_read_doors::*;
 // A turn program's reads (DOOR-141 PR3a), on the caller's own lane.
@@ -184,6 +190,7 @@ pub(crate) use super::weave_admin_doors::{
 pub(crate) use super::inbox_group_doors::*;
 // The inquiry rows (INQUIRE-1 PR 5), likewise.
 pub(crate) use super::inquiry_doors::*;
+pub(crate) use super::schedule_doors::*;
 pub(crate) use super::setting_catalogue_doors::*;
 pub(crate) use super::web_fetch_doors::*;
 // The graph ask and standing-question doors (OF-506), likewise.
@@ -263,6 +270,8 @@ pub(crate) use super::connector_slate_doors::*;
 pub(crate) use super::connector_witness_read_doors::*;
 // The owner's per-call outbound request erase (FIX 11801), likewise.
 pub(crate) use super::outbound_call_erase_doors::*;
+// The shared owner-checked preview of one one-way act (DEC-0006 #undo-class).
+pub(crate) use super::owner_confirm_doors::*;
 pub(crate) use super::proxy_doors::*;
 pub(crate) use crate::api::openai_proxy::ai_chat_completions;
 // The secret use door, whose connector.call sends (OF-560), likewise.
@@ -281,6 +290,7 @@ pub(crate) use super::critic_review_doors::*;
 pub(crate) use super::affect_doors::*;
 pub(crate) use super::agent_verb_class_doors::*;
 pub(crate) use super::aging_doors::*;
+pub(crate) use super::archive_judge_doors::*;
 pub(crate) use super::campaign_split_doors::*;
 pub(crate) use super::coach_offer_doors::*;
 // The drafter's owner and agent doors (FIX 12569), likewise.
@@ -294,8 +304,18 @@ pub(crate) use super::vector_doors::*;
 pub(crate) use super::stream_recovery_doors::*;
 // The owner's project-card tap door (OF-501), likewise.
 pub(crate) use super::project_card_doors::*;
+// The owner's room facet set door (L7-39 PR 3), likewise.
+pub(crate) use super::project_room_facet_doors::*;
 // The owner's proposed-claim review and settle doors (DOOR-115), likewise.
 pub(crate) use super::claim_settle_doors::*;
+// The owner's claim-refinement reserve and offer doors (FIX [SKILL-HUB-PROMOTION-VERBS]), likewise.
+pub(crate) use super::claim_refinement_doors::*;
+// The owner's held-out admission door for a hub skill (FIX [SKILL-HUB-PROMOTION-VERBS]), likewise.
+pub(crate) use super::skill_activation_doors::*;
+// The owner's ingress door for a shared-skill merge offer (FIX [SKILL-HUB-PROMOTION-VERBS]), likewise.
+pub(crate) use super::skill_merge_doors::*;
+// A run's own skill pack load on its attached live run (FIX [SKILL-HUB-PROMOTION-VERBS]), likewise.
+pub(crate) use super::skill_pack_load_doors::*;
 // The plugin Context Board section doors (DOOR-112), likewise.
 pub(crate) use super::commitment_doors::*;
 pub(crate) use super::consolidation_doors::*;
