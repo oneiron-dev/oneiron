@@ -14,9 +14,11 @@
 //! object keys in any order. With those values, each reads as its record's
 //! handle on both sides, so a passphrase another custody record holds still
 //! changed the write (FIX REPLAY-COMPARE-KNOWN-OTHER-CALLERS), and so does
-//! another token of the shape the wall minted a record for. Only a custody
-//! that knows no value reads every handle and shaped token as the plan's one
-//! stand-in, as the replay compare does (`admitted_from_known`).
+//! another token of the shape the wall minted a record for. The receipt is
+//! read for those values alone, never for a shape (a key the wall kept as
+//! written with its switch off stays so) and never inside a handle it holds.
+//! Only a custody that knows no value reads every handle and shaped token as
+//! the plan's one stand-in, as the replay compare does (`admitted_from_known`).
 //!
 //! Red on the base (#9500's head 1507c44a73d): the three held-value tests
 //! fail at their meet asserts, after their FIXTURE asserts; the two guards,
@@ -24,7 +26,10 @@
 //! other-held-passphrase test fails where the known arm read every value
 //! custody holds as one stand-in (8ed4fa51188). The other-shaped-token test
 //! fails where each compare read the plan's one stand-in before custody's
-//! values (9f76b08b8b9 with that test), and the others pass there.
+//! values (9f76b08b8b9 with that test), and the others pass there. The
+//! word-of-its-handle and other-shaped-key tests fail where the receipt was
+//! planned as an offer is, shapes and handles read too (the merge of #9500's
+//! 3e6f08a37c0 with those tests).
 //!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test write_receipt_held_input`.
@@ -33,6 +38,8 @@
 use std::sync::Arc;
 
 use oneiron::code_run::SelfAgentVerbCall;
+use oneiron::policy_model::SecretScanMode;
+use oneiron::store::GateDecisionId;
 use oneiron::task_verb::sdk::AgentVerb;
 use oneiron::test_doors::code_run_write_identity::{
     StoredReceiptMeet, resumed_write_meets_its_stored_receipt,
@@ -52,6 +59,9 @@ const OTHER_HELD_PASSPHRASE: &str = "autumn meadow candle ribbon";
 const SHAPED_TOKEN: &str = "ghp_0123456789abcdefghijklmnopqrstuvwxyz";
 /// Another token of the same shape.
 const OTHER_SHAPED_TOKEN: &str = "ghp_zyxwvutsrqponmlkjihgfedcba9876543210";
+/// Two keys of one shape, which the wall keeps as written with its switch off.
+const SHAPED_KEY: &str = "AKIA1234567890123456";
+const OTHER_SHAPED_KEY: &str = "AKIA1234567890123457";
 
 fn vault() -> TestResult<(tempfile::TempDir, Vault)> {
     let directory = tempfile::tempdir()?;
@@ -261,6 +271,60 @@ fn a_resumed_write_holding_another_shaped_token_does_not_meet_its_receipt() -> T
     assert!(
         !meet.close_meets,
         "a write with another shaped token is refused when its step closes: {meet:?}"
+    );
+    Ok(())
+}
+
+/// Custody holds a value, `secret`, that spells part of the handle the wall
+/// placed in the receipt (`[secret sc12]`). The handle names its record and
+/// holds no value, so the receipt is never read inside it, and the identical
+/// write meets it.
+#[test]
+fn a_resumed_write_meets_its_receipt_while_custody_holds_a_word_of_its_handle() -> TestResult {
+    let (_directory, vault) = vault()?;
+    vault.register_test_secret("handle word", b"secret", Vec::new(), 1)?;
+    let call = task_holding(HELD_PASSPHRASE);
+
+    let meet = resumed_write_meets_its_stored_receipt(&vault, &call, &call)?;
+
+    assert!(
+        !meet.kept_input.contains(HELD_PASSPHRASE),
+        "FIXTURE: the wall placed the held passphrase as a handle in the receipt: {meet:?}"
+    );
+    assert_meets(&meet);
+    Ok(())
+}
+
+/// With the owner's switch off the wall seeks no shape (FIX 8644), so the
+/// receipt keeps a key a shape rule reads as written. A resumed write with
+/// another key of that shape changed the write: the receipt is read for the
+/// values custody holds alone, never for a shape, so both compares refuse
+/// it and never read the two keys as one stand-in.
+#[test]
+fn a_resumed_write_holding_another_shaped_key_kept_as_written_does_not_meet_its_receipt()
+-> TestResult {
+    let (_directory, vault) = vault()?;
+    let owner = vault.ensure_embedded_owner_actor()?;
+    let owner = vault.authenticate_owner(owner, &owner.to_hex(), true, GateDecisionId::now())?;
+    vault.set_secret_scan_mode(&owner, SecretScanMode::Off, 1)?;
+
+    let meet = resumed_write_meets_its_stored_receipt(
+        &vault,
+        &task_holding(SHAPED_KEY),
+        &task_holding(OTHER_SHAPED_KEY),
+    )?;
+
+    assert!(
+        meet.kept_input.contains(SHAPED_KEY),
+        "FIXTURE: with the switch off the receipt keeps the key as written: {meet:?}"
+    );
+    assert!(
+        !meet.write_meets,
+        "a write with another key is refused when it is answered from its receipt: {meet:?}"
+    );
+    assert!(
+        !meet.close_meets,
+        "a write with another key is refused when its step closes: {meet:?}"
     );
     Ok(())
 }
