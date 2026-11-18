@@ -50,7 +50,16 @@ TREE = {
         #[cfg(feature = "sync")]
         mod synced;
         pub mod self_gated;
+        #[cfg(oneiron_test_support)]
+        #[path = "shared/mod.rs"]
+        mod shared_probe;
+        #[path = "shared/mod.rs"]
+        mod shared_live;
         """,
+    # Mounted both as a test door and as production code: production wins,
+    # for the module and for the child it mounts without a test-only cfg.
+    "shared/mod.rs": "mod writer;\n",
+    "shared/writer.rs": raw_write("entities"),
     # Counted: line 2. Both inline modules are masked.
     "live.rs": """\
         pub fn write(v: &V) {
@@ -98,6 +107,7 @@ TREE = {
 COUNTED = [
     "crates/oneiron/src/live.rs:2",
     "crates/oneiron/src/release_only.rs:2",
+    "crates/oneiron/src/shared/writer.rs:2",
     "crates/oneiron/src/shipped_with_feature.rs:2",
     "crates/oneiron/src/synced.rs:2",
 ]

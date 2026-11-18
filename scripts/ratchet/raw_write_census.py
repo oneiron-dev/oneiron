@@ -44,8 +44,10 @@ Non-test file: three rules, unioned.
    `booking/publication/regressions.rs` and `branch_store_oracle/**` are each
    reached only via a `#[cfg(test)]` mount (directly, or transitively through
    a parent that is itself test-only). A production `mod` that resolves to
-   the SAME target path vetoes the exclusion for that path: hiding production
-   code is not the safe failure, scanning a test file as production is. This
+   the SAME target path vetoes the exclusion for that path, and for every
+   file that path mounts without a test-only cfg, transitively (stopping at
+   rule 3 files and path-rule files): hiding production code is not the safe
+   failure, scanning a test file as production is. This
    is a same-crate port of `crate::test_util::source_scan`
    (`crates/oneiron/src/test_util/source_scan.rs`) restricted to the subset
    that module needs for its own `SourceTree`, with one deliberate
@@ -685,15 +687,26 @@ def test_only_external_files(sources):
         if len(tests) == before:
             break
 
-    production_targets = set()
-    for mount in mounts:
-        if (
-            not mount.test_only
-            and mount.parent not in tests
-            and not test_only_by_path(mount.parent)
-        ):
-            production_targets.update(mount.targets)
-    return (tests - production_targets) | file_gated
+    # The veto, to a fixed point: a file a production file mounts without a
+    # test-only cfg is production, and so is every file IT mounts that way. A
+    # module mounted both as a test door and as production code is rescued
+    # together with its ungated children. The walk stops at files gated by
+    # their own inner cfg and at files the path rule excludes.
+    production = set()
+    while True:
+        before = len(production)
+        for mount in mounts:
+            parent = mount.parent
+            if (
+                not mount.test_only
+                and (parent not in tests or parent in production)
+                and parent not in file_gated
+                and not test_only_by_path(parent)
+            ):
+                production.update(mount.targets)
+        if len(production) == before:
+            break
+    return (tests - production) | file_gated
 
 
 # --- driver -----------------------------------------------------------
