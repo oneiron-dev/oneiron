@@ -32,9 +32,17 @@
 //! the goal's retirement re-puts the project after its hard-delete marker, and
 //! the put guard refuses that id. The root project is the vault itself
 //! (ARCH-0067) and no delete door takes it: its ask offers no erase preview,
-//! the preview and the delete rail refuse it before any writer, and it stays
-//! with its goal. On main its ask offers the preview, which its erase then
-//! fails behind.
+//! the preview and the delete rail refuse it before any writer commits (a
+//! privacy erase's audience-edit write included), and it stays with its
+//! goal. On main its ask offers the preview, which its erase then fails
+//! behind.
+//!
+//! A project another live project names as its parent refuses a hard delete
+//! before any writer commits, so its erase leaves it readable with its child
+//! (round-2 P1 of #9494). On main the owner's erase publishes the tombstone
+//! and its read fence, the purge then refuses, and the parent stays fenced:
+//! the case fails where the parent should still read. A new project never
+//! names a parent whose hard delete published; on main its put stands.
 //!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test agent_erase_proposal`.
@@ -54,7 +62,10 @@ use oneiron::inbox::NotificationKind;
 use oneiron::memory::MEMORY_CODE_FORBIDDEN;
 use oneiron::registry::ENTITY_TYPE_CLAIM;
 use oneiron::task_verb::sdk::invoke;
-use oneiron::test_doors::coach::{define_agent, write_project_goal, write_root_goal};
+use oneiron::test_doors::coach::{
+    define_agent, fence_row_for_hard_delete, last_committed_txn_id, write_project_goal,
+    write_root_goal,
+};
 use oneiron::test_doors::derive::grant_core_read_of_kinds;
 use oneiron::test_doors::steward::{open_owner_carrier_vault, owner};
 use oneiron::verbs::{
@@ -181,6 +192,18 @@ impl Fixture {
         write_project_goal(&self.vault, &self.owner_proof, project)
             .expect("the child project's goal");
         project
+    }
+
+    /// The owner's put of a new project under `parent`, and its id.
+    fn put_project_under(&self, parent: EntityId) -> (EntityId, oneiron::Result<()>) {
+        let root = self.vault.root_project().expect("the root project");
+        let project = EntityId::now();
+        let record =
+            ProjectRecord::new(project, Some(parent), root, self.owner).expect("a project record");
+        let put = self
+            .vault
+            .put_project(project, &record, self.vault.now_recorded_at());
+        (project, put)
     }
 
     /// The taps each of the owner's personal erase asks offers.
@@ -509,13 +532,21 @@ fn the_owners_ask_offers_no_erase_of_the_root_project_and_no_door_takes_it() {
     .expect("the preview input");
     preview_owner_confirm(&owner, &fx.owner_proof, input)
         .expect_err("the root project previews no erase");
-    let refused = fx
-        .vault
-        .delete_entity_with_reason(&fx.project, DeleteReason::OwnerErase)
-        .expect_err("the delete rail refuses the root project");
-    assert!(
-        refused.to_string().contains("cannot delete root project"),
-        "the rail refuses it as the root, before any writer: {refused}"
+    let committed = last_committed_txn_id(&fx.vault);
+    for reason in [DeleteReason::OwnerErase, DeleteReason::GdprDelete] {
+        let refused = fx
+            .vault
+            .delete_entity_with_reason(&fx.project, reason)
+            .expect_err("the delete rail refuses the root project");
+        assert!(
+            refused.to_string().contains("cannot delete root project"),
+            "the rail refuses it as the root ({reason:?}): {refused}"
+        );
+    }
+    assert_eq!(
+        last_committed_txn_id(&fx.vault),
+        committed,
+        "before any writer commits, a privacy erase's included"
     );
     assert_eq!(
         fx.vault
@@ -526,5 +557,73 @@ fn the_owners_ask_offers_no_erase_of_the_root_project_and_no_door_takes_it() {
             .as_deref(),
         Some(fx.goal_claim.to_hex().as_str()),
         "with its goal"
+    );
+}
+
+#[test]
+fn a_project_with_a_live_child_refuses_its_erase_before_any_writer_and_stays_readable() {
+    let fx = Fixture::new(false);
+    let parent = fx.child_project_with_goal();
+    let (child, put) = fx.put_project_under(parent);
+    put.expect("the parent's live child");
+    let committed = last_committed_txn_id(&fx.vault);
+    for reason in [DeleteReason::OwnerErase, DeleteReason::GdprDelete] {
+        let refused = fx
+            .vault
+            .delete_entity_with_reason(&parent, reason)
+            .expect_err("the delete rail refuses a project with a live child");
+        assert!(
+            refused.to_string().contains("project has live children"),
+            "the rail refuses it for its child ({reason:?}): {refused}"
+        );
+    }
+    assert_eq!(
+        last_committed_txn_id(&fx.vault),
+        committed,
+        "before any writer commits"
+    );
+    let owner = fx.vault.memory(fx.owner, EdgeActorClass::Human);
+    let input: OwnerConfirmPreviewRequest = serde_json::from_value(json!({
+        "verb": ERASE_CONFIRM,
+        "input": { "record": parent.to_hex() },
+    }))
+    .expect("the preview input");
+    if let Ok(shown) = preview_owner_confirm(&owner, &fx.owner_proof, input) {
+        let confirm: RecordEraseConfirmRequest = serde_json::from_value(json!({
+            "record": parent.to_hex(),
+            "confirm": shown.confirm,
+        }))
+        .expect("the confirm input");
+        confirm_record_erase(&owner, &fx.owner_proof, confirm)
+            .expect_err("the owner's erase of a project with a live child refuses");
+    }
+    assert!(
+        fx.vault.get(&parent).expect("the parent's read").is_some(),
+        "the parent still reads: no publication fenced it"
+    );
+    assert!(
+        fx.vault.project(parent).expect("project read").is_some(),
+        "the parent project stays"
+    );
+    assert!(
+        fx.vault.project(child).expect("project read").is_some(),
+        "with its child"
+    );
+}
+
+#[test]
+fn no_new_project_names_a_parent_whose_hard_delete_published() {
+    let fx = Fixture::new(false);
+    let parent = fx.child_project_with_goal();
+    fence_row_for_hard_delete(&fx.vault, parent).expect("the parent's publication fence");
+    let (child, put) = fx.put_project_under(parent);
+    let refused = put.expect_err("a new child of a fenced parent refuses");
+    assert!(
+        refused.to_string().contains("parent project is deleted"),
+        "the put refuses it for its fenced parent: {refused}"
+    );
+    assert!(
+        fx.vault.project(child).expect("project read").is_none(),
+        "and no child stands"
     );
 }
