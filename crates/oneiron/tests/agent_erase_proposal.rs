@@ -67,7 +67,9 @@ use oneiron::test_doors::coach::{
     write_root_goal,
 };
 use oneiron::test_doors::derive::grant_core_read_of_kinds;
+use oneiron::test_doors::room_facet_set::create_owner_project;
 use oneiron::test_doors::steward::{open_owner_carrier_vault, owner};
+use oneiron::test_support::{bind_host_owner, test_host_issuer};
 use oneiron::verbs::{
     AgentGrantMintRequest, OwnerConfirmPreviewRequest, RecordEraseConfirmRequest,
     confirm_record_erase, mint_agent_grant_as, preview_owner_confirm,
@@ -183,27 +185,39 @@ impl Fixture {
     /// owner may erase, as the root project never is.
     fn child_project_with_goal(&self) -> EntityId {
         let root = self.vault.root_project().expect("the root project");
-        let project = EntityId::now();
-        let record =
-            ProjectRecord::new(project, Some(root), root, self.owner).expect("a project record");
-        self.vault
-            .put_project(project, &record, self.vault.now_recorded_at())
-            .expect("the child project");
+        let (project, born) = self.put_project_under(root);
+        born.expect("the child project");
         write_project_goal(&self.vault, &self.owner_proof, project)
             .expect("the child project's goal");
         project
     }
 
-    /// The owner's put of a new project under `parent`, and its id.
+    /// The owner's birth of a new project under `parent`, and its id. A
+    /// rooted vault takes a new project only from an owner-signed birth (a
+    /// bare put is refused: "a new project requires an owner-signed birth"):
+    /// the depth birth is signed with the test host key bound to the owner,
+    /// and the first state with the owner's project signer.
     fn put_project_under(&self, parent: EntityId) -> (EntityId, oneiron::Result<()>) {
         let root = self.vault.root_project().expect("the root project");
         let project = EntityId::now();
         let record =
             ProjectRecord::new(project, Some(parent), root, self.owner).expect("a project record");
-        let put = self
+        let issuer = test_host_issuer();
+        bind_host_owner(&self.vault, &issuer, self.owner).expect("the owner's host binding");
+        let signer = self
             .vault
-            .put_project(project, &record, self.vault.now_recorded_at());
-        (project, put)
+            .owner_project_signer(&issuer)
+            .expect("the owner's project signer");
+        let born = create_owner_project(
+            &self.vault,
+            &issuer,
+            &self.owner_proof,
+            &signer,
+            self.owner,
+            project,
+            &record,
+        );
+        (project, born)
     }
 
     /// The taps each of the owner's personal erase asks offers.
