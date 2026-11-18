@@ -334,7 +334,7 @@ pub(super) fn human_bind_proved(
 /// Hosted config) or imported into a hosted vault would lose the bind of the
 /// transaction that rooted it, and with it every row after.
 fn owner_key_outside_cloud_custody(state: &FoldState, key: &AuthorityKey) -> bool {
-    if !roster_has_live_owner(&state.roster, key) {
+    if !state.has_live_owner(key) {
         return false;
     }
     let mut seen = BTreeSet::new();
