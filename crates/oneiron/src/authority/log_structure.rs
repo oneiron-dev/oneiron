@@ -285,6 +285,16 @@ pub(super) struct StructureBuilder<'a> {
     /// has not yet woken the answers they carry with: the fixed point that
     /// makes a carrier-approved key usable downstream in any batch order.
     woken: Vec<AuthorityKey>,
+    /// The owner answers [`Self::file_profile`] took while their carrier's
+    /// install key stood as a stranger's, under that key. Once a slip
+    /// issuer's or an own anchor's revision takes the key as own,
+    /// [`Self::settle`] files them again as own, so a removal one of them
+    /// carries counts in any row order (REVIEW-9555 P1).
+    stranger_answers: BTreeMap<AuthorityKey, Vec<&'a AuthorityLogEntry>>,
+    /// The install keys [`Self::file_profile`] took as own after they stood
+    /// as a stranger's, whose answers [`Self::settle`] has not yet filed
+    /// again.
+    promoted: Vec<AuthorityKey>,
     /// The grants [`Self::settle`] made since the caller last took them.
     pub(super) grown: Vec<Grant>,
 }
@@ -418,6 +428,10 @@ impl<'a> StructureBuilder<'a> {
                 for entry in self.profiles.remove(&key).unwrap_or_default() {
                     self.file_profile(entry);
                 }
+            } else if let Some(key) = self.promoted.pop() {
+                for entry in self.stranger_answers.remove(&key).unwrap_or_default() {
+                    self.file_profile(entry);
+                }
             } else {
                 break;
             }
@@ -463,7 +477,8 @@ impl<'a> StructureBuilder<'a> {
     /// owner key's proof that the fold judges (row CARRIER-OWNER-PROOF), as
     /// its carrier's key stands: own, or a stranger's (mesh PR1b). Only a
     /// revision taken as own files its removal (FIX
-    /// [STRANGER-REMOVED-MARK-GLOBAL]).
+    /// [STRANGER-REMOVED-MARK-GLOBAL]). An answer taken as a stranger's is
+    /// filed again once its carrier's key is taken as own (REVIEW-9555 P1).
     fn file_profile(&mut self, entry: &'a AuthorityLogEntry) {
         let AuthorityOp::MachineProfile(profile) = &entry.op else {
             return;
@@ -494,10 +509,18 @@ impl<'a> StructureBuilder<'a> {
         if own && profile.role == MachineRole::Removed {
             self.structure.removed.insert(profile.machine);
         }
+        if !own && profile.carrier.is_some() {
+            self.stranger_answers
+                .entry(signer.clone())
+                .or_default()
+                .push(entry);
+        }
         let key = (profile.machine, AuthorityKey::Ed25519(profile.machine_key));
         let vouched = self.structure.vouching_key(&key);
         if own {
-            self.structure.stranger_keys.remove(&key);
+            if self.structure.stranger_keys.remove(&key) {
+                self.promoted.push(key.1.clone());
+            }
             self.structure.machine_keys.insert(key.clone());
         } else if !self.structure.machine_keys.contains(&key) {
             self.structure.stranger_keys.insert(key.clone());
