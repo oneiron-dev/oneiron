@@ -27,8 +27,10 @@
 //! 15e): one [`RestoredMachineJoin`] row, signed alone by a key the vault
 //! trusts as the owner's ([`apply_owner_join`]), joins the one enrolment it
 //! names. Its door (`Vault::join_restored_install`) files this install's
-//! enrolment and that row in one transaction; it is the only door that
-//! writes a held enrolment.
+//! enrolment and that row in one transaction. A kit restore of such an
+//! install does the same with the kit's root authority key R, a live owner
+//! key, as the signer of both (Engine ANSWER KIT-RESTORE-JOINS-RESTORED-COPY
+//! = A). They are the only doors that write a held enrolment.
 //!
 //! A machine's origin is fixed by its first revision: a later revision of it
 //! that names another image, or none, is refused (`origin_differs`), so the
