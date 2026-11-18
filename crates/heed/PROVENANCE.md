@@ -371,7 +371,8 @@ found (upstream's head `ba47717cc877` still has every one):
   meta pages opened, and the first read of a missing page faulted the process.
   It is upstream's quick check, not a walk of every page: a file cut below a
   named database's page only, with both roots and the counts inside it, still
-  opens (FIX row LMDB-TRUNCATED-NAMED-DB-PAGE-SIGBUS).
+  opens (FIX row LMDB-TRUNCATED-NAMED-DB-PAGE-SIGBUS; the page bound below
+  makes the first read of the missing page answer `MDB_CORRUPTED`).
   - Fork (`:5528-5532`): the check divides by the meta's page size, which
     nothing had checked yet, so a meta page holding 0 faulted the process
     (SIGFPE). The fork refuses a page size that `mdb_env_set_pagesize` would
@@ -423,6 +424,67 @@ mutex, so it would leak one handle per nested commit).
 **Re-vendoring:** re-apply these commits and the five `ONEIRON FORK (LMDB
 audit)` hunks with the hunks above, or take an upstream mdb.master3 that
 contains commit `c9912dbeaf10` and re-check each fork hunk against it.
+
+## Page bound: a read past the end of a cut data file
+
+FIX row LMDB-TRUNCATED-NAMED-DB-PAGE-SIGBUS (found by the review of the
+ITS#9291 hunk above). A data file cut below a named database's page or below
+an overflow run, with the FREE and MAIN roots and their counts inside it,
+passes ITS#9291's check and opens. The first read of a page the cut removed
+then touched the map past the end of the file, and the process died with
+SIGBUS: plain and sealed environments alike, since `mdb_rpage_get` maps a
+sealed environment's chunks from the same file. Upstream's head `ba47717cc877`
+has no such check. The fork (`ONEIRON FORK (page bound)`) adds one:
+
+- `mdb_page_get` (`:7441-7453`), at `mapped:`, so for the plain map, for
+  `mdb_rpage_get`, and for a parent's spilled page: unless the environment
+  uses `MDB_WRITEMAP` (oneiron never does; sealed environments refuse it), it
+  asks `mdb_page_in_file` (`:7352-7381`) whether
+  `[pgno, pgno + numpgs)` lies inside the data file. A page past the end
+  answers `MDB_CORRUPTED` and marks the transaction failed (`MDB_TXN_ERROR`),
+  as the `mt_next_pgno` check above it does. The range test subtracts
+  (`pgno <= pages - numpgs`), so a corrupt overflow count cannot wrap past
+  it, and a count of 0 checks the page itself.
+- It checks each page lookup. A pointer that an earlier lookup returned is
+  not checked again; the file does not shrink, so it stays inside it. The
+  meta pages are read with `pread` at open, which refuses a short file.
+- `MDB_env.me_file_pages` (`:1673-1676`) caches the file's whole pages. The
+  open sets it from ITS#9291's length read (`:5541`); a miss reads the length
+  again (`mdb_fsize`) before it refuses. Without `MDB_WRITEMAP` the data file
+  never shrinks while it is open, and every cached value comes from a real
+  length read, so the cache can lag the file (one more `fstat`) but never
+  exceed it. Only something outside LMDB's rules can shrink an open file (a
+  `MDB_WRITEMAP` handle on the same file, which LMDB forbids, or an outside
+  truncate); the cache then runs high and the read goes ahead as it did
+  before the fork. A failed length read or a zero length (a raw partition)
+  reads the page as before.
+- It refuses no whole file: pages a write transaction spills or flushes are
+  written before they are read back through the map, and the free pages past
+  the end that upstream's `mm_last_pg` comment allows ("the file may be
+  shorter if the freeDB lists the final pages") are never read through the
+  map, since a reused free page is a fresh heap copy until it is written.
+- Cost: one comparison per page read, and one `fstat` after the file grew.
+
+The page format does not change, and no stored row changes meaning (stored
+change: keep): a file that read before reads the same, and a cut file that
+faulted now answers an error. C runs on sel (lane log
+`lanes/kimi/OPUS-TESTKIT/check/truncproto/t3/t3-runs.log`): without the fork
+both cuts fault (SIGBUS), plain and sealed; with it both answer
+`MDB_CORRUPTED`; a reader opened on a small file that another process grew
+by 40 MB, and a write transaction plus a nested child that spill, read every
+row back on both. Regression tests: four more in
+`crates/oneiron-store/tests/lmdb_open_damaged_file.rs` (a named database's
+leaf and an overflow run's last page cut off, plain and sealed).
+
+`mdb.c` is now 12,463 lines, SHA-256
+`ad402eff08862df1d77abd3e9ba6bd9d4d54b6efbc97b59c9af43b4e817cd985`. Line
+numbers in this section cite this copy. Against the copy the section above
+cites, lines after `:1672` moved down by 4, after `:5536` by 5, after `:7346`
+by 36 and after `:7405` by 48.
+
+**Re-vendoring:** re-apply the four `ONEIRON FORK (page bound)` hunks, or take
+an upstream mdb.master3 that refuses a page past the end of the data file on
+every read through the map.
 
 ## Re-packaging for the Python sdist (ONE-1441)
 

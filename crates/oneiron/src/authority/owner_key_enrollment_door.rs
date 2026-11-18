@@ -428,10 +428,39 @@ impl Vault {
         authority: &ActAuthority,
         input: OwnerKeyEnrollment,
         predecessor: AuthorityKey,
-        sign_predecessor: S,
+        mut sign_predecessor: S,
     ) -> Result<OwnerKeyEnrollmentReceipt>
     where
         S: FnMut(&[u8]) -> Result<Vec<u8>>,
+    {
+        self.enrol_owner_signing_key_on_entry_fold_as(
+            authority,
+            input,
+            predecessor,
+            |_, transcript| sign_predecessor(transcript),
+        )
+    }
+
+    /// [`Self::enrol_owner_signing_key_as`] for a predecessor that checks its
+    /// own right to sign, an owner key this install holds
+    /// ([`crate::authority::CheckpointRootSigner::sign_owner_proof`]): with
+    /// each transcript `sign_predecessor` takes the fold its entry is signed
+    /// on, as the writer reads it in its transaction: after any frontier
+    /// join for the enrollment, and after the enrollment for the owner's
+    /// binding. So the key is asked on the roster its entry is judged by,
+    /// never on an earlier read's.
+    ///
+    /// # Errors
+    /// As [`Self::enrol_owner_signing_key_as`].
+    pub(super) fn enrol_owner_signing_key_on_entry_fold_as<S>(
+        &self,
+        authority: &ActAuthority,
+        input: OwnerKeyEnrollment,
+        predecessor: AuthorityKey,
+        sign_predecessor: S,
+    ) -> Result<OwnerKeyEnrollmentReceipt>
+    where
+        S: FnMut(&AuthorityFold, &[u8]) -> Result<Vec<u8>>,
     {
         let device = enrolled_device(input.public_key, input.proof, EnrolledOwnerKeyKind::Device);
         let (entry, machine) = self.enrol_owner_device_as(
@@ -451,7 +480,8 @@ impl Vault {
     /// The one writer of the device door and the passkey door: `device` in
     /// its fixed shape, held by `holder`, or by no machine (a passkey), when
     /// the carrier is named in its place. Answers the counted entry and the
-    /// machine it names.
+    /// machine it names. `sign_predecessor` takes each entry's fold
+    /// ([`Self::write_owner_key_enroll_as`]).
     fn enrol_owner_device_as<S>(
         &self,
         authority: &ActAuthority,
@@ -461,7 +491,7 @@ impl Vault {
         sign_predecessor: S,
     ) -> Result<(AuthorityEntryHash, EntityId)>
     where
-        S: FnMut(&[u8]) -> Result<Vec<u8>>,
+        S: FnMut(&AuthorityFold, &[u8]) -> Result<Vec<u8>>,
     {
         self.write_owner_key_enroll_as(
             authority,
@@ -479,6 +509,11 @@ impl Vault {
     /// fold counts only as that key's confirmation. A new key binds its
     /// owner as [`Self::enrol_owner_signing_key_as`] says (OWNER-ENROL); a
     /// confirmation binds no one.
+    ///
+    /// `sign_predecessor` takes, with each transcript, the fold its entry is
+    /// signed on: the one the enrollment is built on, after any frontier
+    /// join, and for the owner's binding the fold after the enrollment. A
+    /// predecessor that checks its own right to sign reads the roster there.
     fn write_owner_key_enroll_as<S>(
         &self,
         authority: &ActAuthority,
@@ -489,7 +524,7 @@ impl Vault {
         confirming: bool,
     ) -> Result<(AuthorityEntryHash, EntityId)>
     where
-        S: FnMut(&[u8]) -> Result<Vec<u8>>,
+        S: FnMut(&AuthorityFold, &[u8]) -> Result<Vec<u8>>,
     {
         let mut txn = self.store.env.write_txn()?;
         let landed = self.write_owner_key_enroll_in_txn(
@@ -522,7 +557,7 @@ impl Vault {
         sign_predecessor: &mut S,
     ) -> Result<OwnerKeyEnrollmentReceipt>
     where
-        S: FnMut(&[u8]) -> Result<Vec<u8>>,
+        S: FnMut(&AuthorityFold, &[u8]) -> Result<Vec<u8>>,
     {
         let device = enrolled_device(input.public_key, input.proof, kind);
         let (entry, machine) = self.write_owner_key_enroll_in_txn(
@@ -558,9 +593,9 @@ impl Vault {
         confirming: bool,
     ) -> Result<(AuthorityEntryHash, EntityId)>
     where
-        S: FnMut(&[u8]) -> Result<Vec<u8>>,
+        S: FnMut(&AuthorityFold, &[u8]) -> Result<Vec<u8>>,
     {
-        let (mut entry, carrier_key) = self.unsigned_owner_key_enroll_in_txn(
+        let (mut entry, carrier_key, built_on) = self.unsigned_owner_key_enroll_in_txn(
             txn,
             authority,
             holder,
@@ -573,7 +608,8 @@ impl Vault {
         };
         let (owner, key) = (enroll.act.owner, enroll.device.key.clone());
         let transcript = authority_transcript(&entry)?;
-        entry.signer.signature = sign_predecessor(&transcript)?;
+        let entry_fold: &AuthorityFold = &built_on;
+        entry.signer.signature = sign_predecessor(entry_fold, &transcript)?;
         let (hash, machine) = self.land_owner_key_enroll_in_txn(txn, entry, &carrier_key)?;
         if !confirming {
             self.bind_owner_to_enrolled_key_in_txn(txn, owner, key, predecessor, sign_predecessor)?;
@@ -595,7 +631,7 @@ impl Vault {
         sign_predecessor: &mut S,
     ) -> Result<()>
     where
-        S: FnMut(&[u8]) -> Result<Vec<u8>>,
+        S: FnMut(&AuthorityFold, &[u8]) -> Result<Vec<u8>>,
     {
         if self.privacy_posture() != crate::HostingPrivacyPosture::SelfHostLocal {
             return Ok(());
@@ -638,9 +674,10 @@ impl Vault {
     /// The enrollment of `device` as `authority`, carried by this install,
     /// with `predecessor` as its primary signer (with `confirming`, the
     /// second vouch for a key the roster already names), built in `txn` with
-    /// no signature yet (zero placeholders), and the carrier's install key
-    /// that cosigns it. A frontier wider than one entry names is joined in
-    /// `txn` first (FIX 7908).
+    /// no signature yet (zero placeholders), the carrier's install key that
+    /// cosigns it, and the fold it is built on. A frontier wider than one
+    /// entry names is joined in `txn` first (FIX 7908), and that fold is the
+    /// one after the join.
     fn unsigned_owner_key_enroll_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
@@ -649,7 +686,7 @@ impl Vault {
         device: DeviceAuthority,
         predecessor: AuthorityKey,
         confirming: bool,
-    ) -> Result<(AuthorityLogEntry, ed25519_dalek::SigningKey)> {
+    ) -> Result<(AuthorityLogEntry, ed25519_dalek::SigningKey, AuthorityView)> {
         let (owner, surface) = match authority {
             ActAuthority::Owner(owner, surface) => (owner, *surface),
             ActAuthority::Agent(_) => return Err(authority_refused(OWNER_ONLY)),
@@ -719,7 +756,7 @@ impl Vault {
             ts: now,
         };
         verify_unsigned(&entry)?;
-        Ok((entry, carrier_key))
+        Ok((entry, carrier_key, fold))
     }
 
     /// Lands `entry`, its predecessor's signature in place: the carrier's
@@ -827,14 +864,16 @@ impl Vault {
         authority: &ActAuthority,
         input: &OwnerPasskeyEnrollment,
         predecessor: AuthorityKey,
-        sign_predecessor: S,
+        mut sign_predecessor: S,
     ) -> Result<OwnerPasskeyEnrollmentReceipt>
     where
         S: FnMut(&[u8]) -> Result<Vec<u8>>,
     {
         let (public_key, device) = passkey_enrollment_device(input)?;
         let (entry, machine) =
-            self.enrol_owner_device_as(authority, None, device, predecessor, sign_predecessor)?;
+            self.enrol_owner_device_as(authority, None, device, predecessor, |_, transcript| {
+                sign_predecessor(transcript)
+            })?;
         Ok(OwnerPasskeyEnrollmentReceipt {
             entry,
             machine,
@@ -863,7 +902,7 @@ impl Vault {
         authority: &ActAuthority,
         input: &OwnerPasskeyEnrollment,
         predecessor: AuthorityKey,
-        sign_predecessor: S,
+        mut sign_predecessor: S,
     ) -> Result<OwnerPasskeyEnrollmentReceipt>
     where
         S: FnMut(&[u8]) -> Result<Vec<u8>>,
@@ -874,7 +913,7 @@ impl Vault {
             None,
             device,
             predecessor,
-            sign_predecessor,
+            |_, transcript| sign_predecessor(transcript),
             true,
         )?;
         Ok(OwnerPasskeyEnrollmentReceipt {
@@ -921,7 +960,7 @@ impl Vault {
         authority: &ActAuthority,
         input: OwnerKeyEnrollment,
         predecessor: AuthorityKey,
-        sign_predecessor: S,
+        mut sign_predecessor: S,
     ) -> Result<OwnerKeyEnrollmentReceipt>
     where
         S: FnMut(&[u8]) -> Result<Vec<u8>>,
@@ -932,7 +971,7 @@ impl Vault {
             Some(input.machine),
             device,
             predecessor,
-            sign_predecessor,
+            |_, transcript| sign_predecessor(transcript),
             true,
         )?;
         Ok(OwnerKeyEnrollmentReceipt {
@@ -962,7 +1001,7 @@ impl Vault {
     ) -> Result<PreparedOwnerKeyEnrollment> {
         let mut txn = self.store.env.write_txn()?;
         let device = enrolled_device(input.public_key, input.proof, EnrolledOwnerKeyKind::Device);
-        let (entry, _) = self.unsigned_owner_key_enroll_in_txn(
+        let (entry, _, _) = self.unsigned_owner_key_enroll_in_txn(
             &mut txn,
             authority,
             Some(input.machine),
@@ -1280,8 +1319,9 @@ impl Vault {
 
     /// Binds `bind.key`, enrolled in this transaction, to `bind.owner` as
     /// `human`: the next entry after the enrollment, at the first epoch,
-    /// signed by the enrollment's predecessor. The fold must count it and the
-    /// owner's binding must stand, or the enrollment commits nothing.
+    /// signed by the enrollment's predecessor on `bind.fold`, the fold after
+    /// the enrollment. The fold must count it and the owner's binding must
+    /// stand, or the enrollment commits nothing.
     fn bind_enrolled_owner_key_in_txn<S>(
         &self,
         txn: &mut heed::RwTxn<'_>,
@@ -1289,7 +1329,7 @@ impl Vault {
         sign_predecessor: &mut S,
     ) -> Result<()>
     where
-        S: FnMut(&[u8]) -> Result<Vec<u8>>,
+        S: FnMut(&AuthorityFold, &[u8]) -> Result<Vec<u8>>,
     {
         let parents = bind.fold.append_heads.clone();
         if parents.is_empty() {
@@ -1319,7 +1359,7 @@ impl Vault {
             ts: now,
         };
         let transcript = authority_transcript(&entry)?;
-        entry.signer.signature = sign_predecessor(&transcript)?;
+        entry.signer.signature = sign_predecessor(bind.fold, &transcript)?;
         let hash = authority_entry_hash(&entry)?;
         let at = TimeRange {
             start: now,
@@ -1507,13 +1547,13 @@ impl Vault {
                         act: None,
                     },
                 ))?;
-                let proof_key = proof.root();
+                let proof_key = proof.key();
                 keys.sort_by_key(|key| *key == proof_key);
                 Some(proof)
             };
             for revoked_key in keys {
                 let signer = match &proof {
-                    Some(proof) => EntrySigner::HostWithOwnerProof(issuer, proof.as_ref()),
+                    Some(proof) => EntrySigner::HostWithOwnerProof(issuer, proof),
                     None => EntrySigner::Host(issuer),
                 };
                 self.append_revoke_device_in_txn(txn, signer, revoked_key)?;

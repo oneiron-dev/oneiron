@@ -30,7 +30,8 @@ use super::owner_key_enrollment_door::EntrySigner;
 use super::*;
 use crate::consent::AuthenticatedOwner;
 use crate::world_keys::{
-    KitConfirmation, OwnerRootSigner, OwnerSigningSlot, RecoveryAuthoritySigner, RecoveryRootSeed,
+    DevicePin, KitConfirmation, OwnerRootSigner, OwnerSigningSlot, RecoveryAuthoritySigner,
+    RecoveryRootSeed,
 };
 use crate::{EntityId, Result, Vault};
 
@@ -188,13 +189,20 @@ impl Vault {
             RootSuccessor::Device(_) => None,
         };
         let root_key = signer.authority_key();
-        let mut sign_enrolment = |transcript: &[u8]| signer.sign_authority_transcript(transcript);
+        let mut sign_enrolment =
+            |_: &AuthorityFold, transcript: &[u8]| signer.sign_authority_transcript(transcript);
         let sign_revoke = |transcript: &[u8]| signer.sign_authority_transcript(transcript);
         // This install's slot is read, renewed and its successor committed
         // under the vault's owner signing slot lock, which every door that
         // renews the slot takes before its transaction (REVIEW-9487 P1 2): a
         // vouch request that read the slot's old key revoked never drops the
-        // seed of a successor this door enrolled.
+        // seed of a successor this door enrolled. One step with a first PIN's
+        // set is entered before that lock and held to the commit (row
+        // OCS-OWNER-PIN), as the root appointment holds it and in the order
+        // every slot door takes them: no PIN of this process is set between
+        // this install's successor's making and the commit.
+        let device_pin = self.device_pin();
+        let _step = device_pin.as_deref().map(DevicePin::step);
         let _slot_lock = install.is_some().then(|| {
             self.store
                 .owner_signing_slot_lock

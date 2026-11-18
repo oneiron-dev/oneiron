@@ -2,6 +2,7 @@
 //! roster key, in the caller's write transaction (pass 27 R4).
 
 use super::*;
+use crate::authority::owner_proof::OwnerProofSigner;
 
 /// The fold did not count a key revocation signed by a roster key in this
 /// transaction. Nothing was written.
@@ -16,7 +17,7 @@ pub(crate) enum EntrySigner<'a> {
     /// The host root with an owner key's proof beside its signature (row
     /// HOSTED-ROOT-REVOKES-OWNER-KEY): a root that does not prove for the
     /// owner revokes an owner key only cosigned by a key that does.
-    HostWithOwnerProof(&'a HostSlipIssuer, &'a dyn CheckpointRootSigner),
+    HostWithOwnerProof(&'a HostSlipIssuer, &'a OwnerProofSigner<'a>),
     /// A live roster key held behind the caller's signing callback, which
     /// signs the entry's authority transcript: the recovery root's
     /// authority key at the root's door.

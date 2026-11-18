@@ -366,7 +366,8 @@ impl Memory<'_> {
     /// preview of the owner's own erase of it, whose `confirm` that erase
     /// then takes. An erased record, and
     /// one that no longer reads, offers none (FIX
-    /// AGENT-ERASE-PROPOSAL-INBOX-TAP).
+    /// AGENT-ERASE-PROPOSAL-INBOX-TAP), and nor does the root project, which
+    /// no delete door takes (FIX ROOT-PROJECT-ERASE-REPUT-REFUSED).
     fn erase_proposal_actions(&self, row: &NotificationRow) -> Vec<NotificationAction> {
         let Some(record) = row
             .source
@@ -377,13 +378,23 @@ impl Memory<'_> {
             return Vec::new();
         };
         let vault = self.vault();
-        let live = vault
+        let erasable = vault
             .store
             .env
             .read_txn()
             .map_err(crate::error::Error::from)
-            .and_then(|txn| crate::vault::live_entity_row_in_txn(&vault.store, &txn, &record));
-        if !live.is_ok_and(|entity| entity.is_live()) {
+            .and_then(|txn| {
+                Ok(
+                    crate::vault::live_entity_row_in_txn(&vault.store, &txn, &record)?.is_live()
+                        && crate::workspace_roster::reject_root_project_delete(
+                            &vault.store,
+                            &txn,
+                            &record,
+                        )
+                        .is_ok(),
+                )
+            });
+        if !matches!(erasable, Ok(true)) {
             return Vec::new();
         }
         vec![NotificationAction::new(

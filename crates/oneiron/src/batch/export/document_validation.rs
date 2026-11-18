@@ -97,7 +97,7 @@ impl<R: Read + Seek> IndexedArchive<'_, R> {
         Ok(())
     }
 
-    /// Table omissions are empty or name exactly the 23 omitted tables with their disposition
+    /// Table omissions are empty or name exactly the 22 omitted tables with their disposition
     /// reasons, sorted without duplicates. Version 5 permits neither omissions nor retained
     /// rows; version 6 requires omissions when retained rows are present. Export scope and
     /// locality are not serialized, so an empty retained set cannot prove the export gate here.

@@ -30,9 +30,9 @@ impl ActivationPredecessor {
     }
 
     /// The predecessor's signature over the enrolment's authority transcript.
-    fn sign(&self, transcript: &[u8]) -> Result<Vec<u8>> {
+    fn sign(&self, vault: &Vault, fold: &AuthorityFold, transcript: &[u8]) -> Result<Vec<u8>> {
         match self {
-            Self::OwnerKey(signer) => signer.sign_owner_proof(transcript),
+            Self::OwnerKey(signer) => signer.sign_owner_proof(vault, fold, transcript),
             Self::HostRoot(issuer) => Ok(issuer.sign_slip(transcript)),
         }
     }
@@ -163,13 +163,14 @@ impl Vault {
             return Err(authority_refused(OWNER_ONLY));
         }
         let mut txn = self.store.env.write_txn()?;
+        let mut sign_on_fold = |_: &AuthorityFold, transcript: &[u8]| sign_predecessor(transcript);
         let receipt = self.enrol_owner_signing_key_in_txn(
             &mut txn,
             authority,
             input,
             kind,
             predecessor,
-            &mut sign_predecessor,
+            &mut sign_on_fold,
         )?;
         txn.commit()?;
         Ok(receipt)
@@ -346,7 +347,8 @@ impl Vault {
         let vault_id = fold.vault_id.ok_or_else(invalid_authority)?;
         let input = recovery_authority_enrollment(seed, &vault_id, machine, actor)?;
         let predecessor_key = predecessor.predecessor_key();
-        let mut sign = |transcript: &[u8]| predecessor.sign(transcript);
+        let mut sign =
+            |fold: &AuthorityFold, transcript: &[u8]| predecessor.sign(self, fold, transcript);
         self.enrol_owner_signing_key_in_txn(
             txn,
             authority,
@@ -391,7 +393,8 @@ impl Vault {
             input.proof,
             EnrolledOwnerKeyKind::RecoveryAuthority,
         );
-        let mut sign = |transcript: &[u8]| predecessor.sign(transcript);
+        let mut sign =
+            |fold: &AuthorityFold, transcript: &[u8]| predecessor.sign(self, fold, transcript);
         let (entry, machine) = self.write_owner_key_enroll_in_txn(
             txn,
             authority,
@@ -483,7 +486,8 @@ impl Vault {
             .collect();
         let carry = self.recovery_authority_carry_in_txn(txn, &earlier)?;
         let predecessor_key = predecessor.predecessor_key();
-        let sign = |transcript: &[u8]| predecessor.sign(transcript);
+        let signing_fold = self.authority_view_readonly_in_txn(txn)?;
+        let sign = |transcript: &[u8]| predecessor.sign(self, &signing_fold, transcript);
         for revoked_key in &earlier {
             let signer = match predecessor {
                 ActivationPredecessor::OwnerKey(_) => EntrySigner::Key(&predecessor_key, &sign),
@@ -528,7 +532,8 @@ impl Vault {
             key,
             owner: actor,
         };
-        let mut sign = |transcript: &[u8]| predecessor.sign(transcript);
+        let mut sign =
+            |fold: &AuthorityFold, transcript: &[u8]| predecessor.sign(self, fold, transcript);
         self.bind_enrolled_owner_key_in_txn(txn, bind, &mut sign)
     }
 
