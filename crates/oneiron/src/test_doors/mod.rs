@@ -133,6 +133,7 @@ pub mod fingerprint_keep_index_keys;
 pub mod fingerprint_keep_origin;
 pub mod fingerprint_keep_release_inquiry_digests;
 pub mod fingerprint_keep_saved_query;
+pub mod fingerprint_keep_self_heal_digests;
 pub mod fingerprint_keep_store_digests;
 #[cfg(feature = "sync")]
 pub mod fingerprint_keep_sync_digests;
