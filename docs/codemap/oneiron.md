@@ -3656,7 +3656,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/federation/vault_id_decimal.rs` | src | s | 1 crate-vis | — | A shared vault's id on the wire (OF-158): a decimal string, since a `u64` past 2^53 does not survive a… |
 | `src/feedback/bundle.rs` | src | m | 6 struct · 2 enum · 21 fn · 6 const · 2 re-export · 2 crate-vis | FeedbackBundle, FeedbackConfigSnapshot, FeedbackDagHop, FeedbackEncoding, FeedbackHealerDiagnosis, FeedbackPlatform, FeedbackProposal, FeedbackVerb | Feedback bundle wire contract: bundle, config, and diagnosis types plus the MessagePack codec and digest |
 | `src/feedback/consent.rs` | src | m | 4 struct · 2 enum · 1 trait · 20 fn · 3 const · 4 crate-vis | FeedbackApproval, FeedbackApprovalScope, FeedbackPreview, FeedbackRedactionError, FeedbackRedactor, FeedbackSendRoute, UnredactedFeedback | Feedback consent: send routes, approval scope, redaction seam, preview, disclosure card, and approval… |
-| `src/feedback/conversation_training.rs` | src | s | 2 struct · 2 enum · 1 trait · 1 fn · 6 re-export | ConversationSource, ConversationTrainingChoice, Eligibility, NoChoicesYet, Withheld | "Learn from my conversations" (FIX 4489, FIX 5502 owner rulings, OF-420): the one check real conversation… |
+| `src/feedback/conversation_training.rs` | src | s | 2 struct · 2 enum · 1 trait · 1 fn · 6 re-export · 1 crate-vis | ConversationSource, ConversationTrainingChoice, Eligibility, NoChoicesYet, Withheld | "Learn from my conversations" (FIX 4489, FIX 5502 owner rulings, OF-420): the one check real conversation… |
 | `src/feedback/conversation_training/anonymous.rs` | src | s | 1 enum · 1 fn · 4 re-export · 6 crate-vis | TrainingPieceState | The anonymous training window's side of local custody (TL-6, FIX 5813): where each anonymous piece stands at… |
 | `src/feedback/conversation_training/anonymous/apply.rs` | src | m | 2 struct · 2 fn | AnonymousApplied, AnonymousRefusal | Signed piece receipts applied to anonymous custody (TL-6; CALLS TL6_ANON_RECEIPT_APPLICATION) |
 | `src/feedback/conversation_training/anonymous/files.rs` | src | s | 1 struct · 1 fn · 1 re-export · 2 crate-vis | AnonymousFilesSeen | A released anonymous offer whose outbox files ship nothing (FIX 6916): a manifest or chunk file the… |
@@ -3669,7 +3669,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/feedback/conversation_training/receipts.rs` | src | m | 5 struct · 1 enum · 4 fn | AnonymousReceiptView, PersonTrainingReceipts, PersonTrainingSubmission, TrainingCustody, TrainingReceiptsCursor, TrainingUsedRun | A person's own publisher training receipts (OF-420, FIX 5372): what the outbox holds and what the intake… |
 | `src/feedback/conversation_training/reconcile.rs` | src | m | 1 struct · 3 fn · 2 crate-vis | TrainingUpkeep | Withdrawal by reconciliation (OF-420 A4, D2), receipts (C2, C3, C5) and the outbox's upkeep |
 | `src/feedback/conversation_training/reconcile/receipts_v2.rs` | src | s | 1 crate-vis | — | The intake's V2 receipts (C2, C3, C5), applied per scope: each scope keeps its own cursor, and no scope's… |
-| `src/feedback/conversation_training/release.rs` | src | m | 1 struct · 2 fn | TrainingOfferPass | The offer pass and its release gate (OF-420 A2, A3; D1; FIX 5502; TRAINING-LINK = C) |
+| `src/feedback/conversation_training/release.rs` | src | m | 1 struct · 2 fn · 1 crate-vis | TrainingOfferPass | The offer pass and its release gate (OF-420 A2, A3; D1; FIX 5502; TRAINING-LINK = C) |
 | `src/feedback/conversation_training/release/prepare.rs` | src | s | 2 crate-vis | — | An offer's preparation: its hold in local custody, then its seal and its signed manifest (OF-420 A2… |
 | `src/feedback/conversation_training/source.rs` | src | m | 9 crate-vis | — | The source selector (OF-420 A3; FIX 5502 owner rulings): what counts of one of this vault's conversations… |
 | `src/feedback/conversation_training/withdraw.rs` | src | s | 3 crate-vis | — | A hosted submission's withdrawal at the intake (FIX 9855): one helper for a person's erase, a source's… |
@@ -3681,7 +3681,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/feedback/intake/report.rs` | src | s | 2 crate-vis | — | T2 for universal reports, sharing the bundle intake's cosine normalization |
 | `src/feedback/intake/report/erase.rs` | src | m | 7 crate-vis | — | A report cluster's members and their erase (FIX 9856) |
 | `src/feedback/intake/tests.rs` | test | s | — | — | — |
-| `src/feedback/mod.rs` | src | s | 1 mod · 10 re-export · 3 crate-vis | — | Engine feedback channel: bundle wire contract, consent, dispatch, export |
+| `src/feedback/mod.rs` | src | s | 1 mod · 10 re-export · 4 crate-vis | — | Engine feedback channel: bundle wire contract, consent, dispatch, export |
 | `src/feedback/preview_store.rs` | src | s | 1 struct · 2 fn | RetainedFeedbackPreview | The feedback previews an owner was shown, kept until they expire (FIX 5212): a send reads back the exact… |
 | `src/feedback/redaction.rs` | src | s | 3 struct · 1 enum · 1 trait · 5 fn | FilteredFeedback, FilteredText, TextFilter, TextFilterError, TextFilterIdentity | The engine text filter (OF-420): the seam every free text crosses before it may leave the vault, and the… |
 | `src/feedback/report.rs` | src | s | 3 struct · 1 enum · 3 fn · 1 const · 5 re-export · 4 crate-vis | ReportIssue, ReportIssueOrigin, ReportReceipt, ReportRequest | OF-537: free, actor-bound reports about a durable subject, never a task kind |
@@ -4185,8 +4185,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/inquiry/holder.rs` | src | s | 2 fn · 6 crate-vis | — | The task-held answer (federation.md #inquiry-keep: "held with the task and bound to the asking actor… |
 | `src/inquiry/landing.rs` | src | s | 3 crate-vis | — | The copy landing (INQUIRE-1 PR 6; Engine ruling INQUIRE-SHAPE Q9 = A; federation.md #inquiry-copy) |
 | `src/inquiry/log.rs` | src | s | 1 struct · 2 fn · 1 re-export · 4 crate-vis | InquiryLogEntry | "Asked about you" (federation.md #inquiry-keep): the member vault's own full log of the inquiries companies… |
-| `src/inquiry/member.rs` | src | m | 1 struct · 2 enum · 1 trait · 3 fn · 1 const · 3 crate-vis | InquiryJudgment, InquiryJudgmentOutcome, InquiryMemberAnswer, UnsureInquiryJudgment | The member side of an inquiry (federation.md #inquiry, #inquiry-checkin; ARCH-0082 #inquiry; Engine ruling… |
-| `src/inquiry/mod.rs` | src | s | 8 re-export · 10 crate-vis | — | Inquiry: a company vault asks a member's vault (federation.md #inquiry, ARCH-0082 #inquiry; owner… |
+| `src/inquiry/member.rs` | src | m | 1 struct · 2 enum · 1 trait · 3 fn · 1 const · 4 crate-vis | InquiryJudgment, InquiryJudgmentOutcome, InquiryMemberAnswer, UnsureInquiryJudgment | The member side of an inquiry (federation.md #inquiry, #inquiry-checkin; ARCH-0082 #inquiry; Engine ruling… |
+| `src/inquiry/mod.rs` | src | s | 8 re-export · 11 crate-vis | — | Inquiry: a company vault asks a member's vault (federation.md #inquiry, ARCH-0082 #inquiry; owner… |
 | `src/inquiry/policy.rs` | src | s | 2 struct · 1 enum · 2 fn · 1 const · 3 crate-vis | InquiryKeepSetting, InquiryKeepSource, InquiryPolicy | The `inquiry` policy row (federation.md #inquiry-keep; Engine ruling INQUIRE-SHAPE Q8 = A): one versioned… |
 | `src/inquiry/receipt.rs` | src | m | 7 crate-vis | — | The asking side's `inquiry` receipt (federation.md #inquiry-keep): one receipt per send of an inquiry, with… |
 | `src/inquiry/record.rs` | src | s | 2 struct · 15 fn · 1 re-export · 1 crate-vis | InquiryAnswer, InquiryStatement | The inquiry and its answer (federation.md #inquiry, ruled 2026-11-11): the records a company vault's… |
@@ -8093,6 +8093,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/test_doors/fingerprint_keep_imap_plan_encoder_digests.rs` | src | s | 3 fn | — | Door for `tests/fingerprint_keep_imap_plan_encoder_digests.rs` (PLAN-UC-04 stage 6.3e): an IMAP folder's… |
 | `src/test_doors/fingerprint_keep_index_keys.rs` | src | s | 9 fn | — | Door for `tests/fingerprint_keep_index_keys.rs` (PLAN-UC-04 stage 5): the keys local vault tables are… |
 | `src/test_doors/fingerprint_keep_origin.rs` | src | s | 2 struct · 1 enum · 4 fn | MirrorPlanFields, MirrorPlanRefFields, MirrorSectionWrite | The origin publish and mirror digests, for the K-proof of PLAN-UC-04 stage 3.2… |
+| `src/test_doors/fingerprint_keep_release_inquiry_digests.rs` | src | s | 2 fn | — | Door for `tests/fingerprint_keep_release_inquiry_digests.rs` (PLAN-UC-04 stage 6.2d): a publisher training… |
 | `src/test_doors/fingerprint_keep_saved_query.rs` | src | s | 1 fn | — | The saved-query plan digest, for the K-proof of PLAN-UC-04 stage 1.1 (`tests/fingerprint_keep_saved_query.rs`) |
 | `src/test_doors/fingerprint_keep_store_digests.rs` | src | s | 11 fn | — | K-proof door for store digests that existing rows, files and acks hold |
 | `src/test_doors/fingerprint_keep_sync_digests.rs` | src | s | 13 fn | — | K-proof door for sync digests that existing records store, send or compare |
@@ -8152,7 +8153,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/test_doors/mesh_machine_endpoint_index.rs` | src | s | 1 enum · 5 fn | IndexedEndpoint | Doors for `tests/mesh_machine_endpoint_index.rs` (census L3-28B): the endpoint lookup as the MACHINE… |
 | `src/test_doors/meso_extraction_width.rs` | src | m | 1 struct · 1 enum · 1 fn | ExtractionWidth, PriorScenario | Door for `tests/dreamer_meso_width.rs` (FIX 21927 P2): measure the extraction calls in flight during one… |
 | `src/test_doors/microsoft_token.rs` | src | s | 1 struct · 6 fn · 1 crate-vis | ExchangedMicrosoftGrant | Door for `tests/microsoft365_oauth.rs` and `tests/microsoft365_refresh_write_back.rs`… |
-| `src/test_doors/mod.rs` | src | m | 1 fn · 297 mod · 1 re-export | — | Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD) |
+| `src/test_doors/mod.rs` | src | m | 1 fn · 298 mod · 1 re-export | — | Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD) |
 | `src/test_doors/model_binding_proposer.rs` | src | m | 1 struct · 2 fn · 1 const | TrialFixture | Fixture for the `model_binding_proposer_grant` server test: one completed held-out trial offer for a role… |
 | `src/test_doors/model_call_turn_link.rs` | src | s | 1 fn | — | Doors for `oneiron-server/tests/chat_model_call_turn_link.rs` (UNBUILT3-41, FIX [TURN-MODEL-LINK]): the… |
 | `src/test_doors/model_step_submission_codec.rs` | src | s | 1 fn | — | Doors for `tests/model_step_submission_codec.rs` (STEP-CORRECTION-HEALTH-PARK): a model step's submission… |
@@ -9285,6 +9286,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/fingerprint_keep_index_keys.rs` | test | m | 14 crate-vis | — | K-proof (oracle) for PLAN-UC-04 stage 5a: the keys local vault tables are indexed and deduplicated by keep… |
 | `tests/fingerprint_keep_origin.rs` | test | m | 1 const · 16 crate-vis | — | K-proof (oracle) for PLAN-UC-04 stage 3.2: the origin publish review digest and a mirror plan's section… |
 | `tests/fingerprint_keep_outbound_intent.rs` | test | s | 1 fn | — | K-proof (oracle) for PLAN-UC-04 stage 1.3: the outbound intent id keeps its bytes |
+| `tests/fingerprint_keep_release_inquiry_digests.rs` | test | s | 7 crate-vis | — | K-proof (oracle) for PLAN-UC-04 stage 6.2d: a publisher training offer's world settings digest and an… |
 | `tests/fingerprint_keep_saved_query.rs` | test | m | — | — | K-proof (pins) for PLAN-UC-04 stage 1.1: the saved-query digests keep their bytes |
 | `tests/fingerprint_keep_store_digests.rs` | test | m | 3 fn · 2 const · 25 crate-vis | — | K-proof for store legacy digests at c715a39b45b5: existing stored, sent and compared identities keep main's… |
 | `tests/fingerprint_keep_sync_digests.rs` | test | L | 3 fn · 21 crate-vis | — | K-proof for sync legacy digests at 62d2d72f5c1b: existing stored, sent and compared identities keep main's… |

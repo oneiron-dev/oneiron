@@ -60,7 +60,7 @@ macro_rules! areas {
     };
 }
 
-areas! { agent, ai_host, archive, booking, broker, calendar, channel_identity, check_in, cluster, connector, dreamer, dreamer_consolidation, dreamer_runner, engine_executor, feedback, git_wire, inquiry, key_custody, learning, mail_pack, memory, note, origin, outbound_intent_ledger, phone_line, plugin, policy_model, restore, retrieval, runtime_hooks, saved_query, secret, setting, skill, skill_attribution, skill_optimize, store, subject_model, sync, task, testing, vault_import, vault_shape, web_fetch, workspace_roster }
+areas! { agent, ai_host, archive, booking, broker, calendar, channel_identity, check_in, cluster, connector, dreamer, dreamer_consolidation, dreamer_runner, dreamer_wake, engine_executor, feedback, git_wire, inquiry, key_custody, learning, mail_pack, memory, note, origin, outbound_intent_ledger, phone_line, plugin, policy_model, restore, retrieval, runtime_hooks, saved_query, secret, setting, skill, skill_attribution, skill_optimize, store, subject_model, sync, task, testing, vault_import, vault_shape, web_fetch, workspace_roster }
 
 const _: () = assert_distinct_registry(PURPOSE_FILES, LEGACY_FILES);
 
