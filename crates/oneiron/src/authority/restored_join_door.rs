@@ -145,11 +145,10 @@ impl Vault {
         let proof = self
             .owner_proof_signer(&fold)
             .ok_or_else(|| authority_refused(NO_OWNER_KEY))?;
-        let mut held = fold
-            .restored_enrolments()
-            .iter()
-            .filter(|(_, held)| held.machine == request.machine && held.joined_by.is_none())
-            .peekable();
+        // Only holds under a scope this install counts, the roster's and its
+        // pinned anchor's: an unpinned anchor's mark refuses nothing here
+        // (REVIEW-9509 round 2 P1).
+        let mut held = fold.counted_waiting_enrolments(request.machine).peekable();
         let enrolment = if held.peek().is_some() {
             let mut held: Vec<_> = held.collect();
             if !held
