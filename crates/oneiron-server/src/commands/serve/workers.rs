@@ -212,6 +212,9 @@ pub(crate) async fn start_desktop_workers(
     workers.push(crate::wire_health::spawn(&sync_server, admitted()));
     // Sensitive imported topics ask the owner who sees their later imports (OF-492).
     workers.push(crate::import_audience::spawn(&sync_server, admitted()));
+    // This machine's measured capacity, on its MACHINE entity (CROSS-ARCH-0024
+    // #my-network 05): at start and every hour.
+    workers.push(crate::machine_capacity::spawn(&sync_server, admitted()));
     timings.mark("board_and_watches");
     // Due standing questions are answered through the ladder (OF-506).
     if !ai.bind_question_timer(&sync_server) {
