@@ -11,7 +11,7 @@ pub const MAX_DBS: u32 = 32;
 /// stands, and an act whose carrier only an anchor chain admitted stood and
 /// is now refused. A stored checkpoint image written before it holds the
 /// old answers and no longer decodes (the authority fold schema moves
-/// 47 -> 48 with it). No old-meaning reader or migration is provided (the
+/// 48 -> 49 with it). No old-meaning reader or migration is provided (the
 /// lead's M-1 stored-change rule, path "loud").
 ///
 /// v37 (row OWNER-ANCHOR-ROOT-RECOVERY, FIX OWNER-ANCHOR-NO-ROOT-RECOVERY): the
