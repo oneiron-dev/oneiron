@@ -32,7 +32,7 @@ use super::{
     require_gate_consent_bundle_run_id,
 };
 use crate::agent_dispatch::{LineageStart, settling_lineage_in_txn};
-use crate::attempt_queue::{AttemptId, AttemptQueue};
+use crate::attempt_queue::AttemptQueue;
 use crate::claim::{ClaimReadStatus, ScopedRead};
 use crate::commitment_wake::PREDICATE_COMMITMENT_WAKE_PROPOSAL;
 use crate::consent::bundle_projection::{GateConsentBundleAction, GateConsentBundleReceipt};
@@ -41,7 +41,7 @@ use crate::edge::EdgeActorClass;
 use crate::gate::setting_keys::CONSENT_BUNDLE_DELEGATE_RESOLVE;
 use crate::memory::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
 use crate::setting::SettingScope;
-use crate::{EntityId, Error, Vault, WriteActor};
+use crate::{EntityId, Error, Vault};
 
 /// `vault.gate.consent_bundle.review_as`, the name a Grant lists to name an
 /// agent's bundle review.
@@ -210,18 +210,15 @@ fn agent_bundle_members_in_txn(
     Ok(Some(members))
 }
 
-/// Refuses `settler`'s settlement of a bundle its own lineage or a fork of
-/// it opened (DEC-0006), whatever the key says. The settler is the agent and
-/// the run attempt its handle writes from: a dispatch at the dispatcher's own
-/// ceiling pins no delegation parent on the child, so the run carries the
-/// lineage its id does not. The opener is each member's writer, as its
-/// pending gate decision names it, and every try of the run. A member whose
-/// decision no longer names its writer, or a lineage the engine cannot read
-/// whole, counts as the agent's own.
+/// Refuses `agent`'s settlement of a bundle its own lineage or a fork of it
+/// opened (DEC-0006), whatever the key says. The opener is each member's
+/// writer, as its pending gate decision names it, and every try of the run.
+/// A member whose decision no longer names its writer, or a lineage the
+/// engine cannot read whole, counts as the agent's own.
 fn refuse_opener_lineage_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
-    settler: WriteActor,
+    agent: EntityId,
     dreamer_run_id: &str,
     members: &[BundleDigestMember],
 ) -> MemoryResult<()> {
@@ -252,14 +249,7 @@ fn refuse_opener_lineage_in_txn(
             .into_iter()
             .map(|attempt| LineageStart::Attempt(attempt.id)),
     );
-    let mut starts = vec![LineageStart::Actor(settler.entity_ref())];
-    starts.extend(
-        settler
-            .run_attempt()
-            .and_then(|bytes| AttemptId::from_bytes(&bytes).ok())
-            .map(LineageStart::Attempt),
-    );
-    let settler = settling_lineage_in_txn(vault, txn, &starts)?;
+    let settler = settling_lineage_in_txn(vault, txn, &[LineageStart::Actor(agent)])?;
     let opener = settling_lineage_in_txn(vault, txn, &opener)?;
     match (settler, opener) {
         (Some(settler), Some(opener)) if settler.is_disjoint(&opener) => Ok(()),
@@ -342,9 +332,8 @@ pub fn resolve_gate_consent_bundle_as_agent(
     let vault = memory.vault();
     let lane = memory.read_lane(ClaimReadStatus::Recorded)?;
     let now = vault.now_recorded_at();
-    let settler = memory.write_actor();
     let receipt = vault.settle_gate_consent_bundle(
-        BundleSettler::Agent(settler),
+        BundleSettler::Agent(agent),
         expected,
         &input.dreamer_run_id,
         input.action,
@@ -370,7 +359,7 @@ pub fn resolve_gate_consent_bundle_as_agent(
                     &["Ask the owner to settle this bundle."],
                 ));
             }
-            refuse_opener_lineage_in_txn(vault, wtxn, settler, &input.dreamer_run_id, &members)?;
+            refuse_opener_lineage_in_txn(vault, wtxn, agent, &input.dreamer_run_id, &members)?;
             Ok(Some(grant))
         },
     )?;

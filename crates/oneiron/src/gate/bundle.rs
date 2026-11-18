@@ -96,9 +96,8 @@ enum BundleSettler<'a> {
     Owner(&'a AuthenticatedOwner),
     /// An agent the owner's `gate.consent_bundle.delegate_resolution` row
     /// admits, under its live Grant listing the verb (restriction census
-    /// C29), as its handle writes: with the run attempt its host bound, so
-    /// each member replay meets its live delegation chain at the gate.
-    Agent(WriteActor),
+    /// C29).
+    Agent(EntityId),
 }
 
 impl BundleSettler<'_> {
@@ -422,7 +421,7 @@ impl Vault {
                 ),
                 // An agent's answer is never the owner's: every member's
                 // obligation stays open for the owner.
-                BundleSettler::Agent(agent) => (agent.entity_ref(), None),
+                BundleSettler::Agent(agent) => (agent, None),
             };
             let members = gate_consent_bundle_members_in_txn(&self.store, &*wtxn, dreamer_run_id)?;
             if members.is_empty() {
@@ -439,10 +438,7 @@ impl Vault {
             }
 
             let policy = resolve_policy_manifest(&self.store, &*wtxn)?;
-            let actor = match settler {
-                BundleSettler::Agent(agent) => agent,
-                BundleSettler::Owner(_) => WriteActor::new(actor, settler.actor_class()),
-            };
+            let actor = WriteActor::new(actor, settler.actor_class());
             let bundle_ref = gate_consent_bundle_ref(&bundle_id);
             let (member_outcome, member_reason) = match action {
                 GateConsentBundleAction::Approve => {
@@ -516,7 +512,6 @@ impl Vault {
                     GateConsentBundleAction::Approve => &resolved,
                     GateConsentBundleAction::Decline => &body,
                 };
-                let replay_decisions = recorded_decisions.len();
                 replay_gate_consent_bundle_member(
                     self,
                     wtxn,
@@ -526,24 +521,6 @@ impl Vault {
                     actor,
                     &mut recorded_decisions,
                 )?;
-                // An agent's approval lands the members as its own writes
-                // (C29): a hold on its own actor or delegation-chain ceiling
-                // stands, and is never redeemed through the consent override,
-                // which is the owner's. Its decline replays the reviewed
-                // Proposed body, which redeems nothing.
-                if matches!(settler, BundleSettler::Agent(_))
-                    && action == GateConsentBundleAction::Approve
-                    && let Some(ceiling) = recorded_decisions[replay_decisions..]
-                        .iter()
-                        .map(RecordedClaimGateDecision::ceiling_reason_codes)
-                        .find(|codes| !codes.is_empty())
-                {
-                    return Err(Error::Gate(GateError::GateWriteRejected {
-                        outcome: "pending",
-                        reason_codes: ceiling,
-                    })
-                    .into());
-                }
                 match settler {
                     BundleSettler::Owner(owner) if action == GateConsentBundleAction::Approve => {
                         self.confirm_bundled_proactivity_policy_in_txn(wtxn, owner, id, &body)?;

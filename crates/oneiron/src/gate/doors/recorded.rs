@@ -1,6 +1,6 @@
 //! Recorded claim decisions retained until transaction commit or selective denial rollback.
 
-use crate::gate::{GateDecision, GateMetrics, GateReasonCode};
+use crate::gate::{GateDecision, GateMetrics};
 use crate::store::{GateDecisionId, GateDecisionRecord};
 
 pub(crate) struct RecordedClaimGateDecision {
@@ -15,25 +15,6 @@ impl RecordedClaimGateDecision {
 
     pub(crate) fn outcome(&self) -> &str {
         &self.record.outcome
-    }
-
-    /// The actor and delegation-chain ceiling codes this decision held on:
-    /// a hold that changes only with the actor's policy or Grant, never with
-    /// an approval (as an effect's approval leaves them, gate/effect/
-    /// preflight.rs).
-    pub(crate) fn ceiling_reason_codes(&self) -> Vec<&'static str> {
-        self.decision
-            .reason_codes()
-            .iter()
-            .filter(|code| {
-                matches!(
-                    code,
-                    GateReasonCode::PendingActorCeiling
-                        | GateReasonCode::PendingDelegationChainCeiling
-                )
-            })
-            .map(|code| code.as_str())
-            .collect()
     }
 
     pub(crate) fn record_metrics(&self, metrics: &GateMetrics) {
