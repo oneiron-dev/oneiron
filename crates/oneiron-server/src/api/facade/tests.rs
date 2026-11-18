@@ -1432,9 +1432,9 @@ async fn export_projects_five_formats_and_refuses_non_owner_credentials() {
         .body(Body::from(json!({"format":"json"}).to_string()))
         .unwrap();
     let host = crate::test_credentials::bind_slip_request(&server, &host_slip, &host_key, host);
-    let app = app.clone();
+    let host_app = app.clone();
     let (status, body) = crate::test_engine_stack::on_engine_stack(async move {
-        let response = app.oneshot(host).await.unwrap();
+        let response = host_app.oneshot(host).await.unwrap();
         let status = response.status();
         let body = to_bytes(response.into_body(), 1_048_576).await.unwrap();
         (status, body)
