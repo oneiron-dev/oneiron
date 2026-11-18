@@ -34,8 +34,6 @@ mod read_set;
 mod room;
 pub(crate) mod room_offer;
 mod room_verbs;
-// FIX [LIBTEST-QUARANTINE-CONTEXT-BOARD-ROOM-VERBS-TESTS]: the lib test target's type check fails here (1 errors: E0061 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod room_verbs_tests;
 mod worlds;
@@ -85,6 +83,8 @@ pub use memories::MemoryTier;
 pub use memories_frame::assemble_memories_sections;
 mod paging;
 mod plugin;
+#[cfg(oneiron_test_support)]
+pub(crate) use plugin::fit_map_entry_for_test;
 mod readers;
 mod scratchpad;
 pub(crate) mod setting_keys;
@@ -117,8 +117,6 @@ pub use stream::{
 pub use stream::{HANDED_WAKES_CAP, WakeDelivery};
 mod layout;
 mod layout_store;
-// FIX [LIBTEST-QUARANTINE-CONTEXT-BOARD-SURFACES-TESTS]: the lib test target's type check fails here (2 errors: E0063 x2); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod surfaces_tests;
 mod tasks;

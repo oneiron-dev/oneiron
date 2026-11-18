@@ -60,6 +60,8 @@ mod binding;
 mod budget;
 mod children;
 mod continuation;
+#[cfg(oneiron_test_support)]
+pub(crate) use continuation::continuation_field_for_test;
 mod estimator;
 mod promotion;
 mod recording;
@@ -96,8 +98,8 @@ pub use binding::{
     ResearchGoalBasis, bind_research, bound_research_roots, research_binding, research_goal_basis,
     research_nodes, research_rounds,
 };
+pub(crate) use binding::{bind_research_with, binding_in_txn, has_binding_in_txn};
 pub(super) use binding::{binding, check_goal_current, check_goal_current_in_txn, nodes_in_txn};
-pub(crate) use binding::{binding_in_txn, has_binding_in_txn};
 pub use recording::{
     prune_branch, record_fork, record_held_out_measurement, record_invalid_experiment,
     record_search_measurement, record_weave,

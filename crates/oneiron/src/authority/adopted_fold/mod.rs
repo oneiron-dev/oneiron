@@ -25,7 +25,10 @@
 //! ([`context`], FIX 3004, 3005). Anything else needs history, never a fold
 //! of the rows held: a late fork the image keeps no state for, an op outside
 //! that set, another posture, a covered row another pin or peer set moves,
-//! or a guard a resumed fold declines at. That request names every covered
+//! or a guard a resumed fold declines at. A tail row that floors covered
+//! rows folds past them where each is of an op a floor never refuses and
+//! records the whole fold's forks ([`covered_floors`], FIX
+//! [SEQ-FLOOR-S-ADOPTED-FORK-NEEDS-HISTORY]). That request names every covered
 //! row not held here, since only the whole history folds past such a row
 //! (CALLS "FIX 3007 history closure"); a parent neither covered nor held is
 //! named alone.
@@ -42,12 +45,14 @@ use super::*;
 use crate::error::Result;
 
 mod context;
+mod covered_floors;
 mod result_parents;
 mod settle;
 
 pub(crate) use result_parents::proven_residence_result_parents_in_txn;
 
 use context::image_stands_here;
+use covered_floors::{CoveredFloors, NoVouchPast};
 use settle::{SettledTail, settle_tail};
 
 /// The fold past an adopted image.
@@ -130,17 +135,20 @@ pub(super) fn fold_adopted_checkpoint_tail(
     } else {
         None
     };
-    let Some(confirms) = confirms else {
+    let Some((confirms, floors)) = confirms else {
         return Ok(whole());
     };
     if !gaps.is_empty() {
         return Ok(need(gaps.clone()));
     }
-    let Some(settled) = settle_tail(image, &tail, log, confirms)? else {
+    let Some(settled) = settle_tail(image, &tail, log, confirms, floors)? else {
         return Ok(whole());
     };
     let SettledTail {
-        projected, fold, ..
+        projected,
+        fold,
+        no_vouch,
+        ..
     } = settled;
     // This install's own view, over the rows its stale-roster window reads:
     // the tail's first-seen times are the only ones it has.
@@ -164,6 +172,11 @@ pub(super) fn fold_adopted_checkpoint_tail(
     );
     if view.rests_on_counting() && !super::install_fold::stale_chains(&view).is_empty() {
         return Ok(whole());
+    }
+    // The whole install fold's fold with no vouch folds as this one does
+    // here, so its cap is the cap of this fold by itself (`NoVouchPast`).
+    if no_vouch == NoVouchPast::Identical {
+        super::install_fold::cap_by_identical_no_vouch_fold(&mut view);
     }
     let mut metas: BTreeMap<_, _> = image
         .rows
@@ -251,7 +264,7 @@ pub(super) fn capture_adopted_checkpoint_tail(
     } else {
         None
     };
-    let Some(confirms) = confirms else {
+    let Some((confirms, floors)) = confirms else {
         return Ok(whole());
     };
     let Some(SettledTail {
@@ -269,7 +282,10 @@ pub(super) fn capture_adopted_checkpoint_tail(
         fold,
         final_merged: Some(final_merged),
         revoke_facts,
-    }) = settle_tail(image, &tail, log, confirms)?
+        // The whole build keeps the once fold before any cap of a fold with
+        // no vouch.
+        no_vouch: _,
+    }) = settle_tail(image, &tail, log, confirms, floors)?
     else {
         return Ok(whole());
     };
@@ -479,21 +495,32 @@ fn successor_replay(
 /// Whether every tail row folds past the image as a resumed fold's tail row
 /// would: each parent on the frontier or in the tail (a covered parent off
 /// the frontier is a late fork), an op that leaves every earlier row's fate
-/// as it was (a world key record among them, FIX 4881), no row that moves a
-/// covered row's sequence floor or sits past its own ([`rows_floors_unmoved`],
-/// [`tail_signers_covered_rows_unfloored`]: only the whole history judges
-/// those, though a floor refuses no row), none signed by a retired key, none
+/// as it was (a world key record among them, FIX 4881), no row past a floor
+/// and no covered row of a tail row's signer past one
+/// ([`tail_signers_covered_rows_unfloored`]), a covered floor moved only on
+/// rows of an op a floor never refuses with no row to vouch it away
+/// ([`rows_floors_unmoved`], [`covered_floors::floored_covered_rows`], FIX
+/// [SEQ-FLOOR-S-ADOPTED-FORK-NEEDS-HISTORY]), none signed by a retired key, none
 /// a covered row names, and no withdrawal on a frontier
 /// row the image holds rejected (only older states could judge it). None for
 /// a residence result past an image that dropped its residence bodies for
 /// [`super::checkpoint_image::AUTHORITY_RESIDENCE_BODY_OVERFLOW`], as at
 /// fold 14 (FIX 11400). Some with the log's confirms once the tail's joined
-/// them; None otherwise.
+/// them, and the covered rows the tail floors; None otherwise.
 fn tail_folds_past(
     image: &AuthorityCheckpointV2,
     tail: &BTreeMap<AuthorityEntryHash, &AuthorityLogEntry>,
     log: AdoptedTail<'_>,
-) -> Option<ConfirmKeys> {
+) -> Option<(ConfirmKeys, CoveredFloors)> {
+    // A root appointment is counted over its whole ancestry, and one arriving
+    // can burn its anchor and un-count an appointment the image counted
+    // (OWNER-ANCHOR-ROOT-RECOVERY): the whole history folds it.
+    if tail
+        .values()
+        .any(|entry| matches!(entry.op, AuthorityOp::RootAppointment(_)))
+    {
+        return None;
+    }
     if image.residence_overflow
         && tail
             .values()
@@ -509,10 +536,14 @@ fn tail_folds_past(
         .filter(|(_, entry)| verify_entry_signatures(entry).is_ok())
         .map(|(hash, entry)| (*hash, *entry))
         .collect();
-    if !rows_floors_unmoved(image, &signed) || !tail_signers_covered_rows_unfloored(image, &signed)
-    {
+    if !tail_signers_covered_rows_unfloored(image, &signed) {
         return None;
     }
+    let floored = if rows_floors_unmoved(image, &signed) {
+        BTreeSet::new()
+    } else {
+        covered_floors::floored_covered_rows(image, &signed)?
+    };
     let mut confirms = (
         image.safety.confirm_ids.clone(),
         image.safety.confirm_nonces.clone(),
@@ -539,7 +570,7 @@ fn tail_folds_past(
             && (super::fold_resume::admits_past(&image.aggregate.merged, entry, &mut confirms)
                 || serial_withdrawal(image, tail, log, entry))
     });
-    folds_past.then_some(confirms)
+    folds_past.then_some((confirms, CoveredFloors::of(floored)))
 }
 
 /// Whether `tail` moves no covered row's sequence floor and holds no row
@@ -643,7 +674,9 @@ fn rows_floors_unmoved(
 /// row's signer sits past a floor (`rows_floor::rows_sequence_floors`), and
 /// no tail row vouches for one (`sequence_ancestry`): a row vouches only for
 /// rows of its own signer, and [`rows_floors_unmoved`] keeps the tail from
-/// moving a covered floor. Otherwise a tail row at or above a covered row's
+/// moving a covered floor, or [`covered_floors::floored_covered_rows`] from
+/// moving one but onto rows a floor never refuses, which no row vouches
+/// for. Otherwise a tail row at or above a covered row's
 /// floor that descends from it may lift that floor in the whole fold, so the
 /// row the image holds refused past it (review R1 of
 /// [SEQUENCE-FLOOR-DELIVERY-ORDER]) or landed restriction only (Astra round 1
@@ -653,72 +686,14 @@ fn rows_floors_unmoved(
 /// tail to the whole history. A row that names a side row of another world
 /// is left out and never walked, as in [`rows_floors_unmoved`].
 ///
-/// Cost: one parents-first order of the covered rows; then each pair of a
-/// signer's rows next to each other in a scope walks only rows that order
-/// puts between the two, so one signer's walks in a scope pass each covered
-/// row and parent link at most once. Different signers' walks share no such
-/// bound (Astra round 2 F1: signers whose rows sit either side of one long
-/// chain each walk all of it): the gate costs O(K (rows + links) log rows)
-/// for the K tail signers with two or more covered rows in one scope. Each
-/// walk stays inside its upper row's ancestry, and a row is the upper of at
-/// most one pair, so the gate does no more work than building the covered
-/// rows' ancestor index (`entry_ancestor_index`) for the whole fold a false
-/// answer falls back to. It holds one visited set at a time.
+/// The chain check is [`covered_floors::covered_rows_unfloored`], over the
+/// tail's signers.
 fn tail_signers_covered_rows_unfloored(
     image: &AuthorityCheckpointV2,
     tail: &BTreeMap<AuthorityEntryHash, &AuthorityLogEntry>,
 ) -> bool {
     let signers: BTreeSet<_> = tail.values().map(|entry| entry.signer_key()).collect();
-    let violates = |world: Option<crate::EntityId>, parents: &[AuthorityEntryHash]| {
-        parents.iter().any(|parent| {
-            image
-                .rows
-                .get(parent)
-                .and_then(|parent| parent.world)
-                .is_some_and(|parent_world| world != Some(parent_world))
-        })
-    };
-    let mut scopes = BTreeMap::<_, Vec<(u64, AuthorityEntryHash)>>::new();
-    for (hash, row) in &image.rows {
-        if signers.contains(&row.signer) && !violates(row.world, &row.parents) {
-            scopes
-                .entry((&row.signer, row.world))
-                .or_default()
-                .push((row.seq, *hash));
-        }
-    }
-    if scopes.values().all(|rows| rows.len() < 2) {
-        return true;
-    }
-    let parents: BTreeMap<_, _> = image
-        .rows
-        .iter()
-        .map(|(hash, row)| (*hash, row.parents.clone()))
-        .collect();
-    let rank: BTreeMap<_, _> = parents_first_of(&parents)
-        .into_iter()
-        .enumerate()
-        .map(|(rank, hash)| (hash, rank))
-        .collect();
-    scopes.into_iter().all(|((_, world), mut rows)| {
-        rows.sort_unstable();
-        rows.windows(2).all(|pair| {
-            let ((lower_seq, lower), (upper_seq, upper)) = (pair[0], pair[1]);
-            // A row before `lower` in the order has no path to it.
-            let lower_rank = rank[&lower];
-            lower_seq < upper_seq
-                && crate::authority::rows_floor::descends_within_scope(
-                    &lower,
-                    &image.rows[&upper].parents,
-                    world,
-                    |hash| {
-                        let row = image.rows.get(hash)?;
-                        (rank[hash] > lower_rank && !violates(row.world, &row.parents))
-                            .then_some((row.parents.as_slice(), row.world))
-                    },
-                )
-        })
-    })
+    covered_floors::covered_rows_unfloored(image, |signer| signers.contains(signer))
 }
 
 /// A withdrawal [`super::fold_resume::admits_past`] leaves to the history

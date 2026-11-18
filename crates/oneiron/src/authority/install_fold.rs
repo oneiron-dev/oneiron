@@ -46,6 +46,7 @@ pub(super) fn fold_as_install(
             local.observations.map(|observations| &observations.policy),
         ),
         pin: local.pin,
+        appointments: None,
     };
     let no_vouch = NoVouch::of(entries, first_seen_at_secs, now_secs, local, bare);
     let context = FoldContext {
@@ -560,6 +561,23 @@ pub(super) fn cap_by_no_vouch_fold(
         fold: no_vouch,
         handoffs,
         after,
+        held: BTreeSet::new(),
+        deadline: None,
+    }
+    .cap(fold);
+}
+
+/// [`NoVouch::cap`] of `fold` by its fold with no vouch, where that fold
+/// folds as `fold` does, with no candidate handoff, no hold and no deadline:
+/// the cap the whole install fold applies past an adopted image whose tail
+/// floors covered rows beside a machine removal
+/// (`adopted_fold::covered_floors`, FIX
+/// [SEQ-FLOOR-S-ADOPTED-FORK-NEEDS-HISTORY]).
+pub(super) fn cap_by_identical_no_vouch_fold(fold: &mut AuthorityFold) {
+    NoVouch {
+        fold: fold.clone(),
+        handoffs: BTreeSet::new(),
+        after: BTreeSet::new(),
         held: BTreeSet::new(),
         deadline: None,
     }

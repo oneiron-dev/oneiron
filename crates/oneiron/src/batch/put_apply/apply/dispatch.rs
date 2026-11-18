@@ -142,6 +142,7 @@ pub(super) fn dispatch_put_type(
                     policy,
                     fixed.options.gate_write_mode(),
                     fixed.options.decision.preflight,
+                    fixed.options.decision.pre_mask_diff,
                 );
                 match verdict {
                     Err(Error::Gate(crate::error::GateError::GateWriteRejected {

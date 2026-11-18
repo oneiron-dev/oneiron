@@ -91,7 +91,7 @@ pub(super) fn addressed(data: &[u8], conn: u32) -> Option<Routed<'_>> {
 }
 
 /// A routed frame's app frame, whoever it is addressed to.
-#[cfg(test)]
+#[cfg(any(test, oneiron_test_support))]
 pub(super) fn unwrapped(data: &[u8]) -> &[u8] {
     if !is_routed(data) || data.len() < HEADER {
         return data;
