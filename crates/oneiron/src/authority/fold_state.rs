@@ -55,6 +55,14 @@ pub struct AuthorityFold {
     /// (FIX 12196).
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     pub(super) host_custody: BTreeSet<AuthorityKey>,
+    /// Every roster key the passkey limits hold on the merged history
+    /// (`FoldState::passkey_limited`, row WEB-PASSKEY-OWNER-KEY): a passkey,
+    /// and a key only a passkey vouched for until a key that is no passkey
+    /// confirms it. Read through [`AuthorityFold::proves_owner_acts`], so
+    /// the writer takes no owner proof from a key whose cosign the fold
+    /// judges forged (REVIEW-8451 P1).
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub(super) passkey_limited_keys: BTreeSet<AuthorityKey>,
     /// The handoffs whose fences stand: settled, or in conflict.
     pub(super) closed_handoffs: BTreeSet<AuthorityEntryHash>,
     /// Owner dismissed saving the recovery secret and no second device has enrolled.
@@ -234,6 +242,41 @@ pub fn actor_binding_is_active(
     })
 }
 
+/// [`actor_binding_is_active`] for a door that lets the bound actor act: the
+/// Active binding AND a live row behind it whose kind admits the class
+/// (`human`: a PERSON; `agent`: a PERSON or an AGENT_DEF; `system`: a
+/// MACHINE; `provenance::validate_actor_class`). A soft-deleted actor keeps
+/// its row's header (ARCH-0038) and its binding, so the fold alone would
+/// still let it act; a deleted actor's binding authorizes nothing, as H149
+/// rules for the unrooted owner and for host acts ("A deleted owner is not
+/// brought back").
+///
+/// # Errors
+///
+/// The row or deletion-state read's: it fails closed, never live.
+pub(crate) fn actor_binding_is_live_in(
+    store: &impl crate::store::ManifestDbs,
+    txn: &heed::RoTxn<'_>,
+    fold: &AuthorityFold,
+    actor_ref: &EntityId,
+    actor_class: &str,
+) -> crate::Result<bool> {
+    if !actor_binding_is_active(fold, actor_ref, actor_class) {
+        return Ok(false);
+    }
+    let class = match actor_class {
+        "human" => crate::edge::EdgeActorClass::Human,
+        "agent" => crate::edge::EdgeActorClass::Agent,
+        "system" => crate::edge::EdgeActorClass::System,
+        _ => return Ok(false),
+    };
+    Ok(crate::vault::live_entity_row_in_txn(store, txn, actor_ref)?
+        .live_type()
+        .is_some_and(|entity_type| {
+            crate::provenance::validate_actor_class(entity_type, class).is_ok()
+        }))
+}
+
 impl AuthorityFold {
     /// The entries this install holds back (FIX 1104): each machine revision
     /// that landed restriction only, and each world edit, grant travel choice
@@ -348,9 +391,11 @@ pub(super) struct FoldState {
     /// and its marks), merged by union. They rest on no roster key, even when
     /// a roster also names the anchor's public key.
     pub(super) anchor_entries: BTreeSet<AuthorityEntryHash>,
-    /// Roster keys marked as the host's, merged by union: each key a host
-    /// enrolled as its own root, and each key marked for the cloud (role or
-    /// tier). Custody also passes along `key_admitters`.
+    /// Roster keys marked as the host's, merged by union: each key stamped
+    /// for the cloud (`ROLE_CLOUD` or `CloudCustodial`), as every Hosted root
+    /// is. The host-root attestation alone marks none: a self-host root
+    /// carries it too (HOSTED-REFOLD-SELF-HOST-ROOT-CUSTODY = A). Custody also
+    /// passes along `key_admitters`.
     pub(super) host_custody_keys: BTreeSet<AuthorityKey>,
     pub(super) worlds: BTreeMap<EntityId, WorldFrontier>,
     pub(super) refused_world_edits: BTreeSet<AuthorityEntryHash>,
@@ -435,6 +480,22 @@ pub(super) struct FoldState {
     /// merged by union: a residence result past its directive's row reads
     /// it here (FIX 5412).
     pub(super) residence_directives: BTreeMap<AuthorityEntryHash, (EntityId, EntityId)>,
+    /// Each enrolled passkey's assertion contexts (row WEB-PASSKEY-OWNER-KEY;
+    /// Sol xhigh F2): the RP id hash and origin of its enrollment's own
+    /// assertion, merged by union. A passkey-form signature by the key counts
+    /// only in one of them. An image carries it only once a passkey enrolled.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub(super) passkey_contexts: BTreeMap<AuthorityKey, BTreeSet<WebAuthnContext>>,
+    /// Each key whose enrollment a passkey vouched for, merged by union
+    /// (lead ruling WEBPASSKEY-BLIND-SIGNATURE = B): until a non-passkey,
+    /// owner-held key vouches for it too, it neither re-roots, nor revokes
+    /// another owner key, nor vouches for a further key.
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub(super) passkey_vouched_keys: BTreeSet<AuthorityKey>,
+    /// Each passkey-vouched key such a second vouch confirmed, merged by
+    /// union.
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub(super) passkey_vouch_confirmations: BTreeSet<AuthorityKey>,
 }
 
 impl FoldState {
@@ -708,6 +769,19 @@ pub(super) fn merge_states(left: &FoldState, right: &FoldState) -> FoldState {
             .iter()
             .map(|(row, directive)| (*row, *directive)),
     );
+    for (key, contexts) in &right.passkey_contexts {
+        merged
+            .passkey_contexts
+            .entry(key.clone())
+            .or_default()
+            .extend(contexts.iter().cloned());
+    }
+    merged
+        .passkey_vouched_keys
+        .extend(right.passkey_vouched_keys.iter().cloned());
+    merged
+        .passkey_vouch_confirmations
+        .extend(right.passkey_vouch_confirmations.iter().cloned());
     merged
 }
 

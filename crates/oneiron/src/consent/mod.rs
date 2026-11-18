@@ -51,6 +51,7 @@
 mod adapters;
 mod answer_wake;
 pub mod approval_proof;
+pub(crate) mod archive_restore;
 mod ask_holders;
 mod bound;
 mod browser;
@@ -81,8 +82,6 @@ pub mod widen;
 
 mod bypass;
 
-// FIX [LIBTEST-QUARANTINE-CONSENT-TESTS]: the lib test target's type check fails here (12 errors: E0599 x7, E0063 x3, E0308 x1, E0061 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;
 

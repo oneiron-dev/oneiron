@@ -22,10 +22,11 @@
 //! one that received every row in order. A
 //! row that its own ancestry already
 //! shows its signer past is still refused on every install (the control). A
-//! revocation or a re-root on a row of another signer that reached an
-//! install past that signer's floor holds there as on the install that
-//! received every row in order (root FIX-LIST
-//! [ROSTER-ROW-CROSS-SIGNER-FLOORED-PARENT]).
+//! revocation, a re-root or an enrolment on a row of another signer that
+//! reached an install past that signer's floor holds there as on the install
+//! that received every row in order (root FIX-LIST
+//! [ROSTER-ROW-CROSS-SIGNER-FLOORED-PARENT]; the enrolment since #8449, which
+//! takes each row's floor from the rows rather than their arrival order).
 
 use std::collections::BTreeSet;
 
@@ -911,4 +912,103 @@ fn a_reroot_on_another_signers_row_past_the_floor_holds_in_either_arrival_order(
             install.fold.issues
         );
     }
+}
+
+/// An enrolment on another signer's binding past the floor (the residual of
+/// [ROSTER-ROW-CROSS-SIGNER-FLOORED-PARENT]): the same rows as the
+/// revocation test above, with the owner enrolling agent W on B's lower
+/// binding in place of the revocation. Install J receives the higher
+/// binding first, so the lower one reaches it past B's floor. W must be live
+/// there as on install I, and both installs apply the same rows.
+#[test]
+fn an_enrolment_on_another_signers_binding_past_the_floor_holds_in_either_arrival_order() {
+    let owner = SigningKey::from_bytes(&[181; 32]);
+    let binder = SigningKey::from_bytes(&[182; 32]);
+    let agent = SigningKey::from_bytes(&[183; 32]);
+    let enrolled = SigningKey::from_bytes(&[184; 32]);
+    let (genesis, vault_id) = genesis(&owner, 185);
+    let enrol_binder = enrolment(vault_id, &genesis, &owner, 1, &binder);
+    let enrol_agent = enrolment(vault_id, &enrol_binder, &owner, 2, &agent);
+    let binding = cosigned(
+        vault_id,
+        1,
+        &enrol_agent,
+        AuthorityOp::BindActor {
+            authority_key: key_of(&binder),
+            actor_ref: EntityId::now(),
+            actor_class: "agent".to_owned(),
+            epoch: 1,
+        },
+        &binder,
+        &owner,
+    );
+    let higher_binding = cosigned(
+        vault_id,
+        10,
+        &enrol_agent,
+        AuthorityOp::BindActor {
+            authority_key: key_of(&agent),
+            actor_ref: EntityId::now(),
+            actor_class: "agent".to_owned(),
+            epoch: 1,
+        },
+        &binder,
+        &owner,
+    );
+    let enrol_on_binding = enrolment(vault_id, &binding, &owner, 3, &enrolled);
+
+    let in_order = install_receiving(&[
+        &genesis,
+        &enrol_binder,
+        &enrol_agent,
+        &binding,
+        &enrol_on_binding,
+        &higher_binding,
+    ]);
+    let reversed = install_receiving(&[
+        &genesis,
+        &enrol_binder,
+        &enrol_agent,
+        &higher_binding,
+        &binding,
+        &enrol_on_binding,
+    ]);
+
+    let installs = [
+        ("I (binding first)", &in_order),
+        ("J (binding last)", &reversed),
+    ];
+    for (name, install) in installs {
+        assert!(
+            is_live(&install.fold, &key_of(&enrolled)),
+            "install {name} holds the agent the owner enrolled on B's lower binding; puts {:?}, \
+             issues {:?}",
+            install.puts,
+            install.fold.issues
+        );
+    }
+    let all = [
+        &genesis,
+        &enrol_binder,
+        &enrol_agent,
+        &binding,
+        &enrol_on_binding,
+        &higher_binding,
+    ]
+    .into_iter()
+    .map(hash_of)
+    .collect::<BTreeSet<_>>();
+    assert_eq!(
+        applied(&in_order.fold),
+        all,
+        "install I applies all six rows; issues {:?}",
+        in_order.fold.issues
+    );
+    assert_eq!(
+        applied(&reversed.fold),
+        all,
+        "install J applies the same rows as install I; puts {:?}, issues {:?}",
+        reversed.puts,
+        reversed.fold.issues
+    );
 }

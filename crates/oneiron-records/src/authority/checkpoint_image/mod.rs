@@ -72,7 +72,26 @@ use serde::Serialize;
 /// row that grants counts in full, a world key record included, and the image records its fork
 /// as a `SequenceFork` issue (Engine RULINGs SEQ-FLOOR-SHAPE-S = B, SEQ-FLOOR-S-WORLD-KEY-FLOOR
 /// = A).
-pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 43;
+/// 44: the fold keeps each enrolled passkey's assertion contexts, each key a passkey vouched
+/// for and each such key a second vouch confirmed (row WEB-PASSKEY-OWNER-KEY).
+/// 45: a counted root appointment folds its line as its own ancestry's fold did, and a
+/// rootless roster names itself (OWNER-ANCHOR-ROOT-RECOVERY).
+/// 46: on a hosted fold a `human` bind or rebind, and a bind or rebind of any class of a key whose
+/// binding, live or revoked, is `human` or of a live key a `human` binding could name (an owner
+/// or admin key, the custodial root's too), counts only with the proof of an owner key no cloud
+/// key holds and no passkey limit holds (rows OLD-PARENTS-OWNER-BINDING-REVOKE,
+/// OLD-PARENTS-OWNER-BINDING-CONFLICT).
+/// 47: an owner choice or a carried machine answer outside a proving owner-key enrolment's line
+/// waits for the owner's proof, and an enrolment of the owner's key (a rotation or a handoff that
+/// names it too) outside the line of the enrolment that made it the owner's is refused, and a
+/// device revocation proved through such an enrolment of its key ends nothing (row
+/// CARRIER-PROOF-OLD-PARENTS).
+/// 48: host custody comes from the cloud stamp alone (`ROLE_CLOUD` or `CloudCustodial` on the key
+/// or a key that admitted it); the host-root attestation marks no key, so a self-host root keeps
+/// proving for the owner when its log is folded as hosted (row
+/// HOSTED-REOPEN-REJUDGES-SELF-HOST-ROOT); a custodial carry takes an act-free owner's answer
+/// whose signer the roster no longer holds on as unanswered.
+pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 48;
 
 /// The domain every encoded image starts with.
 pub const AUTHORITY_CHECKPOINT_V2_DOMAIN: &[u8] = b"oneiron/authority/checkpoint/v2";

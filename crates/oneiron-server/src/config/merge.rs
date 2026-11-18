@@ -38,11 +38,13 @@ use super::{
 };
 
 mod file_admission;
+mod layers;
 mod refusal_origin;
 mod sections;
 mod validation;
 
 pub(crate) use self::file_admission::{read_config_file, read_referenced_file};
+use self::layers::{merge_layers, read_layers};
 pub use self::sections::default_config_path;
 pub(crate) use self::validation::settings_schema_keys;
 use self::validation::{validate_embedder_config, validate_serve_config};
@@ -127,186 +129,6 @@ pub(crate) fn layer_serve_config(
 ) -> anyhow::Result<ServeConfig> {
     let layers = read_layers(args, env, default_config_path)?;
     merge_layers(args, &layers, |_| Ok(()))
-}
-
-/// One layer of the merge: its place in the precedence order, where its
-/// values came from, and the values.
-struct Layer {
-    source: ConfigLayer,
-    /// `None` for a config file layer with no file to read.
-    origin: Option<refusal_origin::LayerOrigin>,
-    values: PartialServeConfig,
-}
-
-/// Every layer serve merges, lowest precedence first: the config file, the
-/// owner's settings file, the environment, the flags.
-fn read_layers(
-    args: &ServeArgs,
-    env: EnvConfig,
-    default_config_path: Option<PathBuf>,
-) -> anyhow::Result<Vec<Layer>> {
-    let flag_values = PartialServeConfig::from(args);
-    let config_path = args
-        .config
-        .clone()
-        .or_else(|| env.config_path.clone())
-        .or(default_config_path);
-    let explicit_config = args.config.is_some() || env.config_path.is_some();
-    // A config path whose existence cannot be checked (a parent this process
-    // may not search) is not taken as absent, even the default one: its file
-    // may set what the defaults do not, such as a manual `[runtime] clock`.
-    let file_layer = match config_path {
-        Some(path) => match path.try_exists() {
-            Ok(true) => {
-                let (values, raw) = load_file_config(&path)?;
-                Layer {
-                    source: ConfigLayer::Vault,
-                    origin: Some(refusal_origin::LayerOrigin::ConfigFile { path, raw }),
-                    values,
-                }
-            }
-            Ok(false) if explicit_config => {
-                anyhow::bail!("config file {} does not exist", path.display());
-            }
-            Ok(false) => Layer::unread(),
-            Err(error) => {
-                let path = path.display();
-                anyhow::bail!("config file {path} cannot be checked: {error}");
-            }
-        },
-        None => Layer::unread(),
-    };
-    let mut layers = vec![file_layer];
-    // The owner's settings file (`--settings-file`, FIX 5016), in the config
-    // file's schema as a managed vault reads it: one more vault file layer,
-    // over the config file and under the environment and the flags.
-    if let Some(path) = args.settings_file.as_deref() {
-        let (values, raw) = load_file_config(path)?;
-        layers.push(Layer {
-            source: ConfigLayer::Vault,
-            origin: Some(refusal_origin::LayerOrigin::SettingsFile {
-                path: path.to_path_buf(),
-                raw,
-            }),
-            values,
-        });
-    }
-    layers.push(Layer {
-        source: ConfigLayer::Environment,
-        origin: Some(refusal_origin::LayerOrigin::Environment),
-        values: env.values,
-    });
-    layers.push(Layer {
-        source: ConfigLayer::Holder,
-        origin: Some(refusal_origin::LayerOrigin::CommandLine),
-        values: flag_values,
-    });
-    Ok(layers)
-}
-
-impl Layer {
-    /// The config file's layer when there is no file to read.
-    fn unread() -> Self {
-        Self {
-            source: ConfigLayer::Vault,
-            origin: None,
-            values: PartialServeConfig::default(),
-        }
-    }
-}
-
-/// `layers` merged over the defaults in order, then settled and held to
-/// `check`. A value refused as its layer is applied names that layer; one
-/// refused once every layer has applied (the local embedder's space, then
-/// `check`) names the layer [`refusal_origin::locate_refusal`] finds (FIX
-/// CONFIG-REFUSED-VALUE-NAMES-NO-FILE-LINE).
-fn merge_layers(
-    args: &ServeArgs,
-    layers: &[Layer],
-    check: fn(&ServeConfig) -> anyhow::Result<()>,
-) -> anyhow::Result<ServeConfig> {
-    let (resolved, space_naming) = apply_layers(args, layers)?;
-    settle_merged(resolved, space_naming, check).map_err(|refusal| {
-        let origins: Vec<_> = layers.iter().map(|layer| layer.origin.as_ref()).collect();
-        refusal_origin::locate_refusal(refusal, &origins, |start| {
-            let (resolved, space_naming) = apply_layers(args, &layers[start..]).ok()?;
-            settle_merged(resolved, space_naming, check).err()
-        })
-    })
-}
-
-/// `resolved`'s local embedder space settled as `space_naming` says, then
-/// `resolved` held to `check`.
-fn settle_merged(
-    mut resolved: ServeConfig,
-    space_naming: super::embedder_space::SpaceNaming,
-    check: fn(&ServeConfig) -> anyhow::Result<()>,
-) -> anyhow::Result<ServeConfig> {
-    if let Some(embedder) = resolved.embedder.as_mut() {
-        super::embedder_space::settle_local_space(embedder, space_naming)?;
-    }
-    check(&resolved)?;
-    Ok(resolved)
-}
-
-/// `layers` applied over the defaults in order, then the settings only argv
-/// gives, and what the layers name of the local embedder's space and files.
-/// A layer's value refused as it is applied names that layer.
-fn apply_layers(
-    args: &ServeArgs,
-    layers: &[Layer],
-) -> anyhow::Result<(ServeConfig, super::embedder_space::SpaceNaming)> {
-    let mut embedders = [None; 4];
-    for (slot, layer) in embedders.iter_mut().zip(layers) {
-        *slot = layer.values.embedder.as_ref();
-    }
-    let space_naming = super::embedder_space::SpaceNaming::of(embedders);
-    let mut resolved = ServeConfig::default();
-    let mut posture_source = None;
-    let mut key_ref_source = None;
-    for layer in layers {
-        let source = layer.source;
-        let values = layer.values.clone();
-        if values.privacy_posture.is_some() {
-            posture_source = Some(source);
-        }
-        if values.hosted_kms_key_ref.is_some() {
-            key_ref_source = Some(source);
-        }
-        values
-            .apply_to(&mut resolved, source)
-            .map_err(|refusal| match &layer.origin {
-                Some(origin) => origin.attach(refusal),
-                None => refusal,
-            })?;
-    }
-    // Only the final posture may discard inherited custody, and only a blind
-    // relay, which holds no key: a self-hosted vault keeps an inherited KMS
-    // reference as its own key's custody. An intermediate relay layer can
-    // still be overridden by a later hosted layer, which needs the
-    // highest-precedence reference even when it came from the file.
-    if resolved.privacy_posture == HostingPrivacyPosture::Relay
-        && let (Some(posture_source), Some(key_ref_source)) = (posture_source, key_ref_source)
-        && key_ref_source < posture_source
-    {
-        resolved.hosted_kms_key_ref = None;
-    }
-    // The organ builds this server runs as first party, from argv alone
-    // (FIX 7644): no file, settings file or environment layer names one.
-    resolved.trusted_organ_builds = args.trusted_organ_builds.iter().cloned().collect();
-    // The self-hoster's lift of the payment-credential withholding, from
-    // argv alone (L8-60).
-    resolved.release_payment_credentials_unfenced = args.release_payment_credentials_unfenced;
-    // `--voice-socket` names where the voice loop the layered
-    // `[models.voice]` turns on listens, over its `socket` (FIX 5016), as
-    // managed mode sets it on its settings file. With no voice configured it
-    // names nothing.
-    if let Some(socket) = &args.voice_socket
-        && let Some(models) = resolved.models.as_mut()
-    {
-        models.voice.listen_on(socket)?;
-    }
-    Ok((resolved, space_naming))
 }
 
 /// One `[embedder]` table settled onto `config` as [`layer_serve_config`]
@@ -466,6 +288,7 @@ struct FileServeConfig {
     connectors: Option<std::collections::BTreeMap<String, super::ConnectorHostConfig>>,
     embedding: Option<super::EmbeddingConfig>,
     line: Option<super::LineConfig>,
+    mail: Option<super::MailConfig>,
     channel_endpoints: Option<super::ChannelEndpointsConfig>,
     apns: Option<super::ApnsConfig>,
     linear: Option<super::LinearConfig>,
@@ -477,6 +300,8 @@ struct FileServeConfig {
     maximum_tier: Option<bool>,
     off_record_dump_suppression: Option<bool>,
     device_class: Option<oneiron::authority::MachineDeviceClass>,
+    machine_reported_name: Option<String>,
+    machine_reported_model: Option<String>,
 }
 
 impl From<FileServeConfig> for PartialServeConfig {
@@ -543,6 +368,7 @@ impl From<FileServeConfig> for PartialServeConfig {
             connectors: value.connectors,
             embedding: value.embedding,
             line: value.line,
+            mail: value.mail,
             channel_endpoints: value.channel_endpoints,
             apns: value.apns,
             linear: value.linear,
@@ -554,6 +380,8 @@ impl From<FileServeConfig> for PartialServeConfig {
             maximum_tier: value.maximum_tier,
             off_record_dump_suppression: value.off_record_dump_suppression,
             device_class: value.device_class,
+            machine_reported_name: value.machine_reported_name,
+            machine_reported_model: value.machine_reported_model,
             esign_delivery_outbox_dir: None,
             cloud_registration_pins: None,
             publisher_training_outbox_dir: None,
@@ -639,6 +467,8 @@ struct PartialServeConfig {
     embedding: Option<super::EmbeddingConfig>,
     /// `[line]` is file-only, as `[browser]` is.
     line: Option<super::LineConfig>,
+    /// `[mail]` is file-only, as `[line]` is.
+    mail: Option<super::MailConfig>,
     /// `[channel_endpoints]` is file-only, as `[line]` is.
     channel_endpoints: Option<super::ChannelEndpointsConfig>,
     /// `[apns]` is file-only, as `[channel_endpoints]` is.
@@ -659,6 +489,10 @@ struct PartialServeConfig {
     off_record_dump_suppression: Option<bool>,
     /// `device_class` is file-only, as `maximum_tier` is.
     device_class: Option<oneiron::authority::MachineDeviceClass>,
+    /// `machine_reported_name` is file-only, as `device_class` is.
+    machine_reported_name: Option<String>,
+    /// `machine_reported_model` is file-only, as `device_class` is.
+    machine_reported_model: Option<String>,
     /// `--esign-delivery-outbox-dir` is argv-only: no file key, no env.
     esign_delivery_outbox_dir: Option<PathBuf>,
     /// `--cloud-registration-pins` is argv-only, as the outbox: no file key,
@@ -744,6 +578,7 @@ impl fmt::Debug for PartialServeConfig {
             .field("connectors", &self.connectors)
             .field("embedding", &self.embedding)
             .field("line", &self.line)
+            .field("mail", &self.mail)
             .field("channel_endpoints", &self.channel_endpoints)
             .field("apns", &self.apns)
             .field("linear", &self.linear)
@@ -759,6 +594,8 @@ impl fmt::Debug for PartialServeConfig {
                 &self.off_record_dump_suppression,
             )
             .field("device_class", &self.device_class)
+            .field("machine_reported_name", &self.machine_reported_name)
+            .field("machine_reported_model", &self.machine_reported_model)
             .field("esign_delivery_outbox_dir", &self.esign_delivery_outbox_dir)
             .field("cloud_registration_pins", &self.cloud_registration_pins)
             .field(
@@ -854,6 +691,7 @@ impl From<&ServeArgs> for PartialServeConfig {
             connectors: None,
             embedding: None,
             line: None,
+            mail: None,
             channel_endpoints: None,
             apns: None,
             linear: None,
@@ -865,6 +703,8 @@ impl From<&ServeArgs> for PartialServeConfig {
             maximum_tier: None,
             off_record_dump_suppression: None,
             device_class: None,
+            machine_reported_name: None,
+            machine_reported_model: None,
             esign_delivery_outbox_dir: value.esign_delivery_outbox_dir.clone(),
             cloud_registration_pins: value.cloud_registration_pins.clone(),
             publisher_training_outbox_dir: value.publisher_training_outbox_dir.clone(),

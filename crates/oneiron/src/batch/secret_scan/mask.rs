@@ -34,6 +34,8 @@ mod batch_door;
 mod body;
 pub(super) mod carrier;
 mod changed_scan;
+// The claim value a checker reads before the door masks it.
+pub(super) mod claim_value_plan;
 // An escaped key's span (FIX 1369).
 use oneiron_store::batch::secret_scan::mask::escaped_span;
 mod file_plane;
@@ -70,7 +72,7 @@ use crate::file_secret_marks::KeyPlaces;
 use crate::file_secret_marks::KeySpan;
 use crate::file_secret_marks::MemberStep;
 use crate::ports::ShortIdStoreRead;
-use crate::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_SECRET_CUSTODY};
+use crate::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_CLAIM, ENTITY_TYPE_SECRET_CUSTODY};
 use crate::secret_custody::KeptValues;
 use crate::secret_custody::{note_found_keys_in_txn, register_custody_in_txn};
 use crate::secret_record::CustodyClass;
@@ -426,6 +428,21 @@ fn kept_split_phrases_screened(
 #[must_use]
 pub(in crate::batch) struct MaskedFiles(Vec<EntityId>);
 
+/// The pre-mask body of each CLAIM op the minted pass read, one slot per op
+/// in op order, `None` for one it left as written: the apply reads a gate
+/// receipt the preflight recorded, which names the pre-mask body, against
+/// it. A plan pass and a replayed batch report none.
+#[derive(Default)]
+pub(in crate::batch) struct MaskedClaimBodies {
+    /// Each claim candidate op, with its pre-mask candidate when rewritten:
+    /// the candidate apply also renews a MACHINE proof over what is stored
+    /// (FIX 11356).
+    pub(in crate::batch) candidates: Vec<(EntityId, Option<ClaimCandidate>)>,
+    /// Each local CLAIM put op, with its pre-mask bytes when rewritten,
+    /// wiped when dropped (RAW-CLAIM-PUT-MASK-REPLAY-MISMATCH).
+    pub(in crate::batch) puts: Vec<(EntityId, Option<Zeroizing<Vec<u8>>>)>,
+}
+
 impl MaskedFiles {
     pub(in crate::batch) fn restrict(self, store: &Store, wtxn: &mut RwTxn<'_>) -> Result<()> {
         for id in self.0 {
@@ -548,10 +565,10 @@ struct Masker {
     traced: Option<text::TextReplacements>,
     /// The spans of each text a plan read, for its minted pass (speed).
     text_log: text_log::TextLog,
-    /// Each MACHINE claim candidate the minted pass rewrote, with its
-    /// pre-mask body, in op order: the candidate apply renews its proof
-    /// over what is stored (FIX 11356). A plan pass never fills it.
-    masked_claims: Vec<(EntityId, ClaimCandidate)>,
+    /// Each claim candidate op and each local CLAIM put op the minted pass
+    /// read, in op order, with its pre-mask body when the pass rewrote it. A
+    /// plan pass never fills it.
+    masked_claims: MaskedClaimBodies,
 }
 
 impl Masker {
@@ -587,21 +604,33 @@ impl Masker {
                     ..
                 } if !matches!(*entity_type, ENTITY_TYPE_SECRET_CUSTODY | ENTITY_TYPE_ASSET) => {
                     self.at = Some((*id, "body".to_owned()));
-                    if let Some(masked) = self.mask_body(data)? {
-                        replace_wiped(data, masked);
+                    // The minted pass only: a gate receipt the preflight
+                    // recorded for a CLAIM put names its bytes before the
+                    // mask wrote its handles. One slot per CLAIM put op, so
+                    // the apply's queue per id stays aligned with its ops
+                    // (RAW-CLAIM-PUT-MASK-REPLAY-MISMATCH).
+                    let claim_put = self.minted && *entity_type == ENTITY_TYPE_CLAIM;
+                    let before = match self.mask_body(data)? {
+                        Some(masked) if claim_put => {
+                            Some(Zeroizing::new(std::mem::replace(data, masked)))
+                        }
+                        Some(masked) => {
+                            replace_wiped(data, masked);
+                            None
+                        }
+                        None => None,
+                    };
+                    if claim_put {
+                        self.masked_claims.puts.push((*id, before));
                     }
                 }
-                BatchOp::ClaimCandidate {
-                    id,
-                    candidate,
-                    envelope,
-                    ..
-                } => {
+                BatchOp::ClaimCandidate { id, candidate, .. } => {
                     self.at = Some((*id, "claim".to_owned()));
-                    // The minted pass only: a plan rewrites a copy. Only a
-                    // MACHINE candidate can need its proof renewed.
-                    let before = (self.minted && envelope.machine_signature().is_some())
-                        .then(|| (**candidate).clone());
+                    // The minted pass only: a plan rewrites a copy. A MACHINE
+                    // candidate's proof is renewed over what is stored, and a
+                    // gate receipt its preflight recorded names this body
+                    // (CHECKER-PREVIEW-READS-UNMASKED-CANDIDATE).
+                    let before = self.minted.then(|| (**candidate).clone());
                     // The door read the claim's encoded body, not each value
                     // as a text: each value is read by the text rules.
                     // A phrase split over a value's parts, which the door
@@ -613,10 +642,11 @@ impl Masker {
                         self.mask_spread_phrases(value, true)?;
                     }
                     self.shapes_read = shapes_read;
-                    if let Some(before) = before
-                        && **candidate != before
-                    {
-                        self.masked_claims.push((*id, before));
+                    // One entry per candidate op, so the apply's queue per id
+                    // stays aligned with its ops: `None` when nothing changed.
+                    if let Some(before) = before {
+                        let rewritten = (**candidate != before).then_some(before);
+                        self.masked_claims.candidates.push((*id, rewritten));
                     }
                 }
                 BatchOp::Text { id, fields } => {

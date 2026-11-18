@@ -9,8 +9,11 @@
 //!   for the asking actor's task;
 //! - the held answer is gone once its task ends, and an answer past its
 //!   `valid_until` is not held;
-//! - a housekeeping pass drops an ended task's answer when nothing reads it
-//!   (Engine ruling INQUIRE-HOLDER-EVICT);
+//! - the commit that ends the task drops its answer, with no read (FIX
+//!   INQUIRY-HOLDER-EVICT-ON-TERMINAL-WRITE), and so does the commit that
+//!   settles an ask group held as the task; a housekeeping pass, a send
+//!   and a read drop an answer whose task a write outside the write door
+//!   ended (Engine ruling INQUIRE-HOLDER-EVICT);
 //! - a stopped member vault, no route, and the member's leave each give
 //!   `unavailable`;
 //! - a re-send with the same id writes the next receipt of that inquiry.
@@ -39,6 +42,7 @@
 //!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test inquiry_asking_side`.
 
+use std::collections::BTreeSet;
 use std::sync::{Arc, Mutex};
 
 use oneiron::authority::{
@@ -58,7 +62,10 @@ use oneiron::inquiry::{
 };
 use oneiron::receipt::{ReceiptKind, ReceiptQuery, ReceiptRecord};
 use oneiron::store::GateDecisionId;
-use oneiron::task_verb::TaskCreateSpec;
+use oneiron::task_verb::{
+    ConsultPayloadRef, TaskAskDefault, TaskAskQuestion, TaskAskSpec, TaskAskStatus, TaskAskTarget,
+    TaskAskWord, TaskCreateSpec,
+};
 use oneiron::test_doors::inquiry as door;
 use oneiron::test_doors::membership::stand_member_grant;
 use oneiron::{EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig};
@@ -648,11 +655,12 @@ fn a_housekeeping_pass_drops_an_ended_tasks_answer_with_no_read() {
     let vault = &fixture.company.vault;
     assert_eq!(door::held_inquiry_answer_count(vault), 2);
 
-    door::cancel_task(vault, fixture.task, fixture.asker).expect("the task ends");
+    door::cancel_task_outside_write_door(vault, fixture.task, fixture.asker)
+        .expect("the task ends");
     assert_eq!(
         door::held_inquiry_answer_count(vault),
         2,
-        "ending the task alone drops no held answer"
+        "a task ended outside the write door drops no held answer by itself"
     );
     vault
         .housekeeping(HousekeepingBudget::unbounded())
@@ -666,6 +674,112 @@ fn a_housekeeping_pass_drops_an_ended_tasks_answer_with_no_read() {
     assert!(fixture.held(fixture.other_task, &other).is_some());
 }
 
+/// FIX INQUIRY-HOLDER-EVICT-ON-TERMINAL-WRITE (INQUIRE-SHAPE Q6 = A: the
+/// held answer is "evicted at the task's terminal transition"): the commit
+/// that ends the task drops its answer, with no read, no send and no
+/// housekeeping pass. Red on main: the count stays 2 until a touch or a pass.
+#[test]
+fn ending_the_task_drops_its_held_answer_at_commit() {
+    let fixture = asking();
+    let host = MemberHost::answering(&fixture.company);
+    let sent = fixture.send(&host, fixture.task);
+    let other = fixture.send(&host, fixture.other_task);
+    let vault = &fixture.company.vault;
+    assert_eq!(door::held_inquiry_answer_count(vault), 2);
+
+    door::cancel_task(vault, fixture.task, fixture.asker).expect("the task ends");
+    assert_eq!(
+        door::held_inquiry_answer_count(vault),
+        1,
+        "the commit that ends the task drops its answer and keeps the open task's"
+    );
+    assert_eq!(fixture.held(fixture.task, &sent), None);
+    assert_eq!(
+        fixture
+            .held(fixture.other_task, &other)
+            .map(|held| texts(&held).len()),
+        Some(1),
+        "another task's answer stays while that task is open"
+    );
+
+    door::cancel_task(vault, fixture.other_task, fixture.asker).expect("the other task ends");
+    assert_eq!(
+        door::held_inquiry_answer_count(vault),
+        0,
+        "the second end drops the last answer at its own commit"
+    );
+}
+
+/// The same, for an answer held under an ask group (review round 2 of
+/// #9185): a group settles by a `tasks.ask_settlement` row of its own, and
+/// the settling commit names that row, not the group, among its TASKs. The
+/// commit that settles the ask drops the answer held for it, with no read.
+/// Red at 3e342c8ada: the count stays 2 until a touch or a pass.
+#[test]
+fn settling_an_ask_drops_the_answer_held_for_it_at_commit() {
+    let fixture = asking();
+    let host = MemberHost::answering(&fixture.company);
+    let vault = &fixture.company.vault;
+    let owner = vault.ensure_embedded_owner_actor().expect("owner actor");
+    let question = question_turn(vault);
+    let memory = vault.memory(owner, EdgeActorClass::Human);
+    let handle = memory
+        .tasks_ask(&TaskAskSpec::shorthand(
+            Some(TaskAskTarget::People(BTreeSet::from([owner]))),
+            TaskAskQuestion::new(ConsultPayloadRef::Turn(question)),
+            None,
+            TaskAskDefault::AskMe,
+        ))
+        .expect("the owner asks")
+        .handle;
+    let group = handle.group_ref;
+    let sent = fixture.send(&host, group);
+    let other = fixture.send(&host, fixture.other_task);
+    assert_eq!(door::held_inquiry_answer_count(vault), 2);
+
+    memory
+        .tasks_answer(&handle, &TaskAskWord::new(question))
+        .expect("the owner answers");
+    assert!(
+        matches!(
+            memory.tasks_ask_status(handle).expect("the ask's status"),
+            TaskAskStatus::Settled(_)
+        ),
+        "the owner's word settles the ask"
+    );
+    assert_eq!(
+        door::held_inquiry_answer_count(vault),
+        1,
+        "the commit that settles the ask drops its answer and keeps the open task's"
+    );
+    assert_eq!(fixture.held(group, &sent), None);
+    assert!(fixture.held(fixture.other_task, &other).is_some());
+}
+
+/// A question TURN an ask can be about.
+fn question_turn(vault: &Vault) -> EntityId {
+    let mut body = Vec::new();
+    rmpv::encode::write_value(
+        &mut body,
+        &rmpv::Value::Map(vec![(
+            rmpv::Value::from("role"),
+            rmpv::Value::from("question"),
+        )]),
+    )
+    .expect("a TURN body");
+    let question = EntityId::now();
+    vault
+        .put_entity(
+            &question,
+            oneiron::registry::ENTITY_TYPE_TURN,
+            TimeRange { start: 2, end: 2 },
+            2,
+            &body,
+        )
+        .expect("the question TURN");
+    question
+}
+
 #[test]
 fn an_unanswered_or_refused_send_drops_an_ended_tasks_answer() {
     let fixture = asking();
@@ -674,7 +788,8 @@ fn an_unanswered_or_refused_send_drops_an_ended_tasks_answer() {
     assert!(fixture.send(&host, fixture.other_task).held);
     let vault = &fixture.company.vault;
 
-    door::cancel_task(vault, fixture.task, fixture.asker).expect("the task ends");
+    door::cancel_task_outside_write_door(vault, fixture.task, fixture.asker)
+        .expect("the task ends");
     assert_eq!(door::held_inquiry_answer_count(vault), 2);
     let stopped = MemberHost::new(Reply::Stopped);
     let unavailable = fixture.send(&stopped, fixture.other_task);
@@ -685,7 +800,8 @@ fn an_unanswered_or_refused_send_drops_an_ended_tasks_answer() {
         "an unavailable send drops the ended task's answer and keeps the open task's"
     );
 
-    door::cancel_task(vault, fixture.other_task, fixture.asker).expect("the other task ends");
+    door::cancel_task_outside_write_door(vault, fixture.other_task, fixture.asker)
+        .expect("the other task ends");
     vault
         .send_inquiry(&fixture.request(fixture.other_task, None), &host)
         .expect_err("an ended task sends no inquiry");

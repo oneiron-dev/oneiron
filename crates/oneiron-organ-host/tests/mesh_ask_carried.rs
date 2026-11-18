@@ -386,7 +386,7 @@ impl OrganNodes for OneNode {
 /// router asks, the serving host runs the probe, `handler` answers the
 /// organ's ask back on this node. Returns the outcome and how many streams
 /// the serving end accepted.
-async fn run_over_mesh(value: Value, handler: &'static dyn AskHandler) -> (OrganOutcome, u64) {
+async fn run_over_mesh(value: Value, handler: &'static dyn AskHandler) -> (OrganOutcome, usize) {
     let (_ask_dir, asking_vault) = vault();
     let asking_vault = Arc::new(asking_vault);
     let (_serve_dir, serving_vault) = vault();
