@@ -8,6 +8,7 @@ use crate::side_table::{self, Named, SideTable};
 use crate::{
     EntityId, Error, Result, Vault, consent::AuthenticatedOwner, write_envelope::WriteActor,
 };
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
 use serde::{Deserialize, Serialize};
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HealerDeployment {
@@ -159,9 +160,18 @@ pub(crate) fn self_heal_healer_run_accepts_masked(bytes: &[u8]) -> bool {
 }
 
 /// The digest half of a run receipt's key: a run name is unbounded text, so
-/// only its blake3 hash is stored.
+/// only its blake3 hash is stored (`purposes::self_heal::HEALER_RUN`).
 fn run_digest(run: &str) -> [u8; 32] {
-    *blake3::hash(run.as_bytes()).as_bytes()
+    LegacyDigest::new(purposes::self_heal::HEALER_RUN)
+        .raw(run.as_bytes())
+        .finish()
+}
+
+/// [`run_digest`] for the K door
+/// (`test_doors::fingerprint_keep_self_heal_digests`). Not API.
+#[cfg(oneiron_test_support)]
+pub(crate) fn run_digest_for_test(run: &str) -> [u8; 32] {
+    run_digest(run)
 }
 impl Vault {
     pub fn register_dev_healer(
