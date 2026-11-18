@@ -438,7 +438,7 @@ pub(crate) fn facade_dispatch(
                 .and_then(|name| HOME_SERVER_DOORS.iter().find(|(row, _)| *row == name))
             {
                 Some((_, home_door)) => format!(
-                    "{home_door}(actor, class, auth.verified_slip().cloned(), auth.destination(), call.room_turn()?, facade_input(value)?, call.home_caller(), server.vault().model_call_keeps_no_record_for(auth.off_record_session(), crate::api::call_receipt::request_principal(auth)))"
+                    "{home_door}(actor, class, Some(auth), auth.destination(), call.room_turn()?, facade_input(value)?, call.home_caller(), server.vault().model_call_keeps_no_record_for(auth.off_record_session(), crate::api::call_receipt::request_principal(auth)))"
                 ),
                 None => format!(
                     "{}_listing(actor, class, auth.verified_slip().cloned(), auth.locality(), call.room_turn()?, facade_input(value)?)",
