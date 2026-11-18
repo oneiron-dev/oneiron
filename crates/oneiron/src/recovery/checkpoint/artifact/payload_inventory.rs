@@ -22,6 +22,7 @@
 use std::fs::File;
 use std::path::{Path, PathBuf};
 
+use oneiron_contracts::fingerprint::ContentHash;
 use oneiron_crypto::backup::MANIFEST_STREAM;
 use oneiron_vault_contract::backup_handoff::write_private_file;
 use serde::{Deserialize, Serialize};
@@ -142,7 +143,7 @@ pub(in crate::recovery::checkpoint) fn write_payload_inventory(
     let root = Root {
         pieces: u32::try_from(pieces.len()).map_err(|_| codec())?,
         len: plain.len() as u64,
-        digest: *blake3::hash(&plain).as_bytes(),
+        digest: *ContentHash::of(&plain).as_bytes(),
     };
     let root = rmp_serde::to_vec_named(&root).map_err(|_| codec())?;
     let mut out = MAGIC.to_vec();
@@ -187,7 +188,7 @@ fn read_inventory(artifact: &Path, key: &CheckpointKey) -> Result<Inventory> {
     }
     if !rest.is_empty()
         || plain.len() as u64 != root.len
-        || *blake3::hash(&plain).as_bytes() != root.digest
+        || *ContentHash::of(&plain).as_bytes() != root.digest
     {
         return Err(codec());
     }
