@@ -264,12 +264,12 @@ pub(super) fn seed(vault: &Vault, scan: EngineScan) -> Option<(usize, Read<'_>)>
         | EngineScan::RoomThreadTokens
         | EngineScan::RoomThreadWaitRows => {
             // Project room with an empty history; the list asks PAST rows past
-            // ROW and renders none.
+            // ROW and renders none. Keep the default token budget for the headings
+            // and the quiet lane's find/get footer, even on an empty list.
             let (owner, room) = rv_project_room(vault, 50, 51);
             let memory = vault.memory(owner, crate::edge::EdgeActorClass::Human);
             let policy = crate::workspace_roster::RoomThreadPolicy {
                 rows_per_list: PAST,
-                tokens_per_list: PAST,
                 waits_per_thread: PAST,
                 ..Default::default()
             };
@@ -363,29 +363,41 @@ pub(super) fn seed(vault: &Vault, scan: EngineScan) -> Option<(usize, Read<'_>)>
                     .expect("project record");
             vault.put_project(project, &record, 1).expect("project");
             let room = EntityId::from_hex(&record.home_room).expect("room");
+            crate::test_util::authorize_readers(vault, &[&owner.to_hex()]);
             let (parent, slot, mid, source) =
                 (id(0xcb, 10), id(0xcb, 11), id(0xcb, 12), id(0xcb, 13));
             let (m0, m1, m2) = (id(0xcb, 20), id(0xcb, 21), id(0xcb, 22));
-            for turn in [parent, slot, mid, source] {
+            vault
+                .put_entity(
+                    &parent,
+                    crate::registry::ENTITY_TYPE_TURN,
+                    crate::temporal::TimeRange { start: 1, end: 1 },
+                    1,
+                    b"turn",
+                )
+                .expect("turn");
+            for (turn, message) in [(slot, m0), (mid, m1), (source, m2)] {
                 vault
-                    .put_entity(
-                        &turn,
-                        crate::registry::ENTITY_TYPE_TURN,
-                        crate::temporal::TimeRange { start: 1, end: 1 },
-                        1,
-                        b"turn",
-                    )
-                    .expect("turn");
-            }
-            for message in [m0, m1, m2] {
-                vault
-                    .put_entity(
-                        &message,
-                        crate::registry::ENTITY_TYPE_MESSAGE,
-                        crate::temporal::TimeRange { start: 1, end: 1 },
-                        1,
-                        b"message",
-                    )
+                    .memory(owner, crate::edge::EdgeActorClass::Human)
+                    .witness(&crate::memory::WitnessTurn {
+                        conversation_ref: room.to_hex(),
+                        turn_ref: Some(turn.to_hex()),
+                        thread_audience: None,
+                        project: None,
+                        messages: vec![crate::memory::WitnessMessage {
+                            id: Some(message.to_hex()),
+                            author: crate::memory::WitnessAuthor::User,
+                            message_type: "text".into(),
+                            content: "retry lineage".into(),
+                            parts: None,
+                            metadata: None,
+                            is_visible: true,
+                            order: 0,
+                            quote: None,
+                        }],
+                        occurred_at: 1,
+                        assertions: Default::default(),
+                    })
                     .expect("message");
             }
             vault
@@ -1265,6 +1277,8 @@ fn guest_spec(
             )
             .expect("person");
     }
+    // Recorded disclosure does not grant either recipient its own record read.
+    crate::test_util::authorize_readers(vault, &[&person.to_hex(), &companion.to_hex()]);
     let questions: Vec<EntityId> = (0..PAST).map(|index| id(0x8a, 22 + index)).collect();
     for question in &questions {
         let body =
