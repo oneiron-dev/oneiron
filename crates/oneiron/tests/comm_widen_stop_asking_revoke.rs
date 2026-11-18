@@ -125,7 +125,11 @@ fn claim(vault: &Vault, id: AttemptId) -> Result<AttemptRecord, TestError> {
 }
 
 /// `actor`'s Memory bound to `leased`'s lease, as the host binds an agent's call.
-fn hosted(vault: &Vault, actor: EntityId, leased: &AttemptRecord) -> Result<Memory<'_>, TestError> {
+fn hosted<'vault>(
+    vault: &'vault Vault,
+    actor: EntityId,
+    leased: &AttemptRecord,
+) -> Result<Memory<'vault>, TestError> {
     let binding = HostBinding::from_leased(leased, None)?;
     Ok(vault
         .memory(actor, EdgeActorClass::Agent)

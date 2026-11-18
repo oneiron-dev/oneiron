@@ -1,5 +1,6 @@
 //! Owner-permitted promotion of retained archive envelopes through their owning modules.
-//! Installed drafter and merge-queue policies queue refreshes that run only after commit.
+//! Installed policies, digest schedules and consent rows queue refreshes that run only after
+//! commit.
 
 use super::archive_retained_side_rows::retained_side_row_withholds_credential;
 use super::{
@@ -11,7 +12,7 @@ use crate::side_table::{self, Named, SideCodec, SideKey, SideTable};
 
 /// The live disposition of one source envelope; retained-only rows have no live outcome.
 pub(crate) enum ArchivedSideRowOutcome {
-    /// The absent live key now holds the source bytes.
+    /// The absent live key now holds validated archive bytes, adapted for restore if needed.
     Installed,
     /// The live key already holds the source bytes.
     Unchanged,
@@ -21,13 +22,17 @@ pub(crate) enum ArchivedSideRowOutcome {
     HeldBack(RetainedSideHeldBackReason),
 }
 
-/// Refreshes required by newly installed policies after the import commits.
+/// Refreshes required by newly installed side rows after the import commits.
 #[derive(Default)]
 pub(crate) struct ArchivedSideRowRefresh {
     /// Serving hosts must observe repaired drafter bindings.
     drafter_serving: bool,
-    /// Queue attempts must observe the installed review policy.
-    attempt_observers: bool,
+    /// Digest timers must re-read installed schedules and settings.
+    proactivity: bool,
+    /// Consent settlers must recheck newly restored answers.
+    consent_answer: bool,
+    /// The after-commit wake of each setting key with an installed row.
+    setting_wakes: Vec<crate::setting::OnCommitted>,
 }
 
 impl ArchivedSideRowRefresh {
@@ -39,7 +44,8 @@ impl ArchivedSideRowRefresh {
         {
             match group {
                 ArchivedSideGroup::Drafter => self.drafter_serving = true,
-                ArchivedSideGroup::MergeQueue => self.attempt_observers = true,
+                ArchivedSideGroup::WeaveDigest => self.proactivity = true,
+                ArchivedSideGroup::Consent => self.consent_answer = true,
                 _ => {}
             }
         }
@@ -50,8 +56,14 @@ impl ArchivedSideRowRefresh {
         if self.drafter_serving {
             vault.notify_drafter_serving();
         }
-        if self.attempt_observers {
-            vault.store.notify_attempt_observers();
+        if self.proactivity {
+            vault.store.notify_proactivity_changes();
+        }
+        if self.consent_answer {
+            vault.notify_consent_answer();
+        }
+        for wake in self.setting_wakes {
+            wake(vault);
         }
     }
 }
@@ -59,14 +71,21 @@ impl ArchivedSideRowRefresh {
 /// The fixed dependency order of the owning landing groups.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum ArchivedSideGroup {
+    /// Setting catalogue rows, their change history and its counter: first, because later
+    /// groups read choices that are catalogue keys.
+    SettingRows,
     /// Independent owner settings.
     Settings,
     /// Grants whose holders have already been restored.
     AgentDef,
     /// Consolidation strength policy.
     DreamerConsolidation,
-    /// Projector wake policy.
+    /// Projector, sieve and wake policies.
     DreamerWake,
+    /// Digest schedules, owner settings and change records.
+    WeaveDigest,
+    /// Web provider and key-selection choices.
+    WebConnector,
     /// Dependent walk bounds.
     Ports,
     /// Passive housekeeping wake notes.
@@ -81,8 +100,6 @@ pub(crate) enum ArchivedSideGroup {
     DreamerRunner,
     /// Served-origin LFS path rules.
     OriginLfs,
-    /// Queue review policy.
-    MergeQueue,
     /// Owner learning rows before holder rows.
     LearningSetting,
     /// Retrieval pins and local active weights.
@@ -119,13 +136,37 @@ pub(crate) enum ArchivedSideGroup {
     Team,
     /// Customer hold protection and its supporting history.
     LegalHold,
+    /// Standing grants and one-use markers.
+    Consent,
+    /// Voice identity and reference-render consent.
+    Voice,
+    /// Room role grants backed by current membership and body roles.
+    ConversationRole,
+    /// Connector slates retained as nonportable references.
+    ConnectorSlate,
+    /// Immutable org-admin policy.
+    OrgAdmin,
+    /// Shared-act policy change requests.
+    SharedAct,
+    /// Edit-distance escalation standing policies.
+    EscalationPolicy,
+    /// Mail compliance switch.
+    MailCompliance,
 }
 
 /// Selects only the tables with a landing group; every other envelope stays retained-only.
 pub(crate) fn archived_side_group(source_table: &str) -> Option<ArchivedSideGroup> {
     use ArchivedSideGroup as Group;
     match source_table {
+        name if name == side_table::SETTING.name
+            || name == side_table::SETTING_CHANGE.name
+            || name == side_table::SETTING_CHANGE_NEXT.name
+            || name == side_table::SETTING_CONTENT.name =>
+        {
+            Some(Group::SettingRows)
+        }
         name if name == side_table::BOARD_LAYOUT_SETTINGS.name
+            || name == side_table::MODEL_OWNER_FALLBACK.name
             || name == side_table::NON_BASE_WORLD_CLAIM_FRACTION.name
             || name == side_table::ROOM_THREADS_ADMIN_DELETE.name
             || name == side_table::ROOM_THREADS_ADMIN_WALK_IN.name
@@ -138,7 +179,19 @@ pub(crate) fn archived_side_group(source_table: &str) -> Option<ArchivedSideGrou
         name if name == side_table::DREAMER_CONSOLIDATION_STRENGTH_POLICY.name => {
             Some(Group::DreamerConsolidation)
         }
-        name if name == side_table::DREAMER_PROJECTOR_POLICY.name => Some(Group::DreamerWake),
+        name if name == side_table::DREAMER_PROJECTOR_POLICY.name
+            || name == side_table::DREAMER_SIEVE_POLICY.name
+            || name == side_table::DREAMER_WAKE_POLICY.name =>
+        {
+            Some(Group::DreamerWake)
+        }
+        name if name == side_table::WEAVE_DIGEST_SCHEDULE.name
+            || name == side_table::WEAVE_DIGEST_SETTINGS.name
+            || name == side_table::WEAVE_DIGEST_SETTING_CHANGE.name =>
+        {
+            Some(Group::WeaveDigest)
+        }
+        name if name == side_table::WEB_CONNECTOR_SETTING.name => Some(Group::WebConnector),
         name if name == side_table::PORTS_DEPENDENT_WALK_POLICY.name => Some(Group::Ports),
         name if name == side_table::HOUSEKEEPING_WAKE.name => Some(Group::HousekeepingWake),
         name if name == side_table::AUTHORITY_WITHDRAWN_GRANT.name => Some(Group::WithdrawnGrant),
@@ -150,14 +203,19 @@ pub(crate) fn archived_side_group(source_table: &str) -> Option<ArchivedSideGrou
         }
         name if name == side_table::DREAMER_FREE_TIME_RECEIPT.name => Some(Group::DreamerRunner),
         name if name == side_table::ORIGIN_LFS_PATH_POLICY.name => Some(Group::OriginLfs),
-        name if name == side_table::MERGE_QUEUE_REVIEW_POLICY.name => Some(Group::MergeQueue),
         name if name == side_table::LEARNING_SETTING.name => Some(Group::LearningSetting),
         name if name == side_table::RETRIEVAL_POLICY_PINS.name => Some(Group::RetrievalPins),
         name if name == side_table::DRAFTER_POLICY.name => Some(Group::Drafter),
         name if name == side_table::ACCESS_GRANT_OWNER_ACT.name => Some(Group::AccessGrant),
         name if name == side_table::POLICY_SETTING_ACT.name => Some(Group::PolicySetting),
         name if name == side_table::OWNER_POLICY_CHANGE_EVENT.name => Some(Group::PolicyModel),
-        name if name == side_table::OWNER_POLICY_SECRET_SCAN_RECEIPT.name => {
+        name if name == side_table::OWNER_POLICY_SECRET_SCAN_RECEIPT.name
+            || name == side_table::OWNER_POLICY_SECRET_SCAN_MODE.name
+            || name == side_table::OWNER_POLICY_WORLD_PRIVACY_RECEIPT.name
+            || name == side_table::OWNER_POLICY_WORLD_PRIVACY_REQUEST.name
+            || name == side_table::OWNER_POLICY_WORLD_PRIVACY_UNANIMITY.name
+            || name == side_table::OWNER_POLICY_WORLD_PRIVACY_UNANIMITY_OFF.name =>
+        {
             Some(Group::PolicyModel)
         }
         name if name == side_table::ATTEMPT_HOLD_OVERRIDE_RECEIPT.name => Some(Group::AttemptQueue),
@@ -183,6 +241,26 @@ pub(crate) fn archived_side_group(source_table: &str) -> Option<ArchivedSideGrou
         {
             Some(Group::LegalHold)
         }
+        name if name == side_table::CONSENT_STANDING_GRANT.name
+            || name == side_table::CONSENT_APPROVE_ONCE_MARKER.name =>
+        {
+            Some(Group::Consent)
+        }
+        name if name == side_table::VOICE_IDENTITY_CONSENT.name
+            || name == side_table::VOICE_REF_RENDER_CONSENT.name =>
+        {
+            Some(Group::Voice)
+        }
+        name if name == side_table::CONVERSATION_ROLE_GRANT.name => Some(Group::ConversationRole),
+        name if name == side_table::CONNECTOR_GRANT_SLATE.name => Some(Group::ConnectorSlate),
+        name if name == side_table::ORG_ADMIN_POLICY.name => Some(Group::OrgAdmin),
+        name if name == side_table::SHARED_ACT_POLICY_CHANGE.name => Some(Group::SharedAct),
+        name if name == side_table::EDIT_DISTANCE_ESCALATION_POLICY.name => {
+            Some(Group::EscalationPolicy)
+        }
+        name if name == side_table::MAIL_PACK_COMPLIANCE_SETTING.name => {
+            Some(Group::MailCompliance)
+        }
         _ => None,
     }
 }
@@ -197,6 +275,15 @@ pub(crate) fn land_archived_side_group_in_txn(
     refresh: &mut ArchivedSideRowRefresh,
 ) -> Result<Vec<ArchivedSideRowOutcome>> {
     let outcomes = match group {
+        ArchivedSideGroup::SettingRows => {
+            crate::setting::archive_restore::land_archived_setting_rows_in_txn(
+                vault,
+                txn,
+                permit,
+                rows,
+                &mut refresh.setting_wakes,
+            )
+        }
         ArchivedSideGroup::Settings => {
             crate::settings::archive_restore::land_archived_settings_rows_in_txn(
                 vault, txn, permit, rows,
@@ -214,6 +301,14 @@ pub(crate) fn land_archived_side_group_in_txn(
         }
         ArchivedSideGroup::DreamerWake => {
             crate::dreamer_wake::archive_restore::land_archived_dreamer_wake_rows_in_txn(
+                vault, txn, permit, rows,
+            )
+        }
+        ArchivedSideGroup::WeaveDigest => {
+            crate::Vault::land_archived_weave_digest_rows_in_txn(vault, txn, permit, rows)
+        }
+        ArchivedSideGroup::WebConnector => {
+            crate::web_connector::archive_restore::land_archived_web_connector_rows_in_txn(
                 vault, txn, permit, rows,
             )
         }
@@ -243,9 +338,6 @@ pub(crate) fn land_archived_side_group_in_txn(
         }
         ArchivedSideGroup::OriginLfs => {
             crate::Vault::land_archived_origin_lfs_rows_in_txn(vault, txn, permit, rows)
-        }
-        ArchivedSideGroup::MergeQueue => {
-            crate::Vault::land_archived_merge_queue_rows_in_txn(vault, txn, permit, rows)
         }
         ArchivedSideGroup::LearningSetting => {
             crate::learning_setting::land_archived_learning_setting_rows_in_txn(
@@ -309,6 +401,46 @@ pub(crate) fn land_archived_side_group_in_txn(
                 vault, txn, permit, rows,
             )
         }
+        ArchivedSideGroup::Consent => {
+            crate::consent::archive_restore::land_archived_consent_rows_in_txn(
+                vault, txn, permit, rows,
+            )
+        }
+        ArchivedSideGroup::Voice => {
+            crate::voice_identity::archive_restore::land_archived_voice_rows_in_txn(
+                vault, txn, permit, rows,
+            )
+        }
+        ArchivedSideGroup::ConversationRole => {
+            crate::conversation::archive_restore::land_archived_conversation_role_rows_in_txn(
+                vault, txn, permit, rows,
+            )
+        }
+        ArchivedSideGroup::ConnectorSlate => {
+            crate::connector_key::land_archived_connector_slate_rows_in_txn(
+                vault, txn, permit, rows,
+            )
+        }
+        ArchivedSideGroup::OrgAdmin => {
+            crate::federation::org_admin::land_archived_org_admin_rows_in_txn(
+                vault, txn, permit, rows,
+            )
+        }
+        ArchivedSideGroup::SharedAct => {
+            crate::federation::pending_act::policy_change::land_archived_shared_act_policy_change_rows_in_txn(
+                vault, txn, permit, rows,
+            )
+        }
+        ArchivedSideGroup::EscalationPolicy => {
+            crate::edit_distance::escalation::archive_restore::land_archived_escalation_policy_rows_in_txn(
+                vault, txn, permit, rows,
+            )
+        }
+        ArchivedSideGroup::MailCompliance => {
+            crate::mail_pack::compliance::land_archived_mail_compliance_rows_in_txn(
+                vault, txn, permit, rows,
+            )
+        }
     }?;
     refresh.record(group, &outcomes);
     Ok(outcomes)
@@ -363,6 +495,32 @@ pub(crate) fn install_archived_row<K: SideKey, V, C: SideCodec<V>>(
         Some(_) => Ok(ArchivedSideRowOutcome::KeptLive),
         None => {
             match table.put_archived_as_stored_in_txn(vault, txn, permit, key, &row.source_value) {
+                Ok(()) => Ok(ArchivedSideRowOutcome::Installed),
+                Err(Error::Store(StoreError::SideTableRow { .. })) => Ok(
+                    ArchivedSideRowOutcome::HeldBack(RetainedSideHeldBackReason::InvalidEncoding),
+                ),
+                Err(error) => Err(error),
+            }
+        }
+    }
+}
+
+/// Compares against the source bytes, but installs validated rewritten bytes at an absent key.
+/// A repeat import of a rewritten row keeps its destination-adapted live value.
+pub(crate) fn install_archived_row_with_rewrite<K: SideKey, V, C: SideCodec<V>>(
+    table: &SideTable<K, V, C>,
+    vault: &crate::Vault,
+    txn: &mut heed::RwTxn<'_>,
+    permit: &OwnerArchiveRestorePermit,
+    key: &K,
+    row: &ArchiveRetainedSideRow,
+    rewritten_value: &[u8],
+) -> Result<ArchivedSideRowOutcome> {
+    match table.get_bytes(vault, txn, key)? {
+        Some(stored) if stored == row.source_value => Ok(ArchivedSideRowOutcome::Unchanged),
+        Some(_) => Ok(ArchivedSideRowOutcome::KeptLive),
+        None => {
+            match table.put_archived_as_stored_in_txn(vault, txn, permit, key, rewritten_value) {
                 Ok(()) => Ok(ArchivedSideRowOutcome::Installed),
                 Err(Error::Store(StoreError::SideTableRow { .. })) => Ok(
                     ArchivedSideRowOutcome::HeldBack(RetainedSideHeldBackReason::InvalidEncoding),

@@ -15,6 +15,15 @@
 //! under its route's body limit and [`EditorBudget`]'s two slots and
 //! 60-per-minute window. A present header the registry does not admit is
 //! refused before the body; it never falls back to that anonymous door.
+//!
+//! The shell mints its caller a second token beside it, of the draft-fields
+//! purpose (RULING ESIGN-EDITOR-SAVES-DRAFT = A, Engine 15 Nov 13:48), in its
+//! own meta tag and sent in the same header. Each purpose admits its own
+//! doors alone: a draft-fields token admits only `POST /sign/fields`
+//! ([`EditorFieldsToken`]), which has no anonymous door, and a computation
+//! token admits only the two computation POSTs. The draft-fields token buys
+//! one verb, `vault.esign.fields.place`, run through the verb door as its
+//! caller (`editor_fields`).
 use super::editor_budget::{EditorBudget, EditorWaitError};
 use super::*;
 use axum::extract::FromRequestParts;
@@ -34,10 +43,13 @@ pub(super) const EDITOR_HEADER: &str = "x-oneiron-esign-editor";
 /// editor capability). A POST admitted before then runs to its end.
 const EDITOR_TOKEN_LIFETIME: Duration = Duration::from_secs(3_600);
 
-/// What a token was minted for: the editor's computation POSTs alone.
+/// What a token was minted for. A token admits only its purpose's doors.
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum Purpose {
+pub(super) enum Purpose {
+    /// The editor's computation POSTs, `/sign/layout` and `/sign/geometry`.
     EditorComputation,
+    /// `POST /sign/fields` alone: the caller's fields saved to a draft.
+    EditorDraftFields,
 }
 
 /// One live token, keyed by its digest.
@@ -63,10 +75,10 @@ impl EditorDesk {
         })
     }
 
-    /// Mints a token for `caller`, whom the shell admitted, and keeps only
-    /// its digest. Expired tokens are reaped here; no count bounds the live
-    /// ones.
-    pub(super) fn mint(&self, caller: crate::auth::CoreAuth) -> String {
+    /// Mints a token of `purpose` for `caller`, whom the shell admitted, and
+    /// keeps only its digest. Expired tokens are reaped here; no count bounds
+    /// the live ones.
+    pub(super) fn mint(&self, caller: crate::auth::CoreAuth, purpose: Purpose) -> String {
         let mut secret = [0u8; 32];
         OsRng.fill_bytes(&mut secret);
         let token = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(secret);
@@ -76,7 +88,7 @@ impl EditorDesk {
         grants.insert(
             digest(token.as_bytes()),
             Grant {
-                purpose: Purpose::EditorComputation,
+                purpose,
                 caller,
                 expires: now + EDITOR_TOKEN_LIFETIME,
             },
@@ -85,15 +97,33 @@ impl EditorDesk {
     }
 
     /// The caller a presented token was minted for, when it is a live
-    /// editor-computation token. Expired tokens are reaped here.
-    fn admit(&self, presented: &[u8]) -> Option<crate::auth::CoreAuth> {
+    /// token of `purpose`. Expired tokens are reaped here.
+    fn admit(&self, presented: &[u8], purpose: Purpose) -> Option<crate::auth::CoreAuth> {
         let now = Instant::now();
         let mut grants = self.grants.lock().unwrap_or_else(PoisonError::into_inner);
         grants.retain(|_, grant| grant.expires > now);
         grants
             .get(&digest(presented))
-            .filter(|grant| grant.purpose == Purpose::EditorComputation)
+            .filter(|grant| grant.purpose == purpose)
             .map(|grant| grant.caller.clone())
+    }
+
+    /// [`Self::admit`], then the caller's credential re-consulted the way a
+    /// live sync socket's is ([`crate::auth::CoreAuth::credential_is_live`]):
+    /// the caller, or the 401 that refuses the request.
+    fn admit_live(
+        &self,
+        server: &SyncServer,
+        presented: &[u8],
+        purpose: Purpose,
+    ) -> Result<crate::auth::CoreAuth, Response> {
+        let caller = self
+            .admit(presented, purpose)
+            .ok_or_else(|| editor_refused("editor_token_unadmitted"))?;
+        if !caller.credential_is_live(server.vault()) {
+            return Err(editor_refused("editor_caller_not_live"));
+        }
+        Ok(caller)
     }
 }
 
@@ -146,28 +176,68 @@ impl FromRequestParts<Arc<SyncServer>> for EditorIngress {
             .get::<Arc<EditorDesk>>()
             .cloned()
             .ok_or_else(unavailable)?;
-        let caller = desk
-            .admit(presented.as_bytes())
-            .ok_or_else(|| editor_refused("editor_token_unadmitted"))?;
-        if !caller.credential_is_live(server.vault()) {
-            return Err(editor_refused("editor_caller_not_live"));
-        }
+        desk.admit_live(server, presented.as_bytes(), Purpose::EditorComputation)?;
         crate::http_listener::authenticated();
         let permit = match desk.budget.queue(server.config.limits.queue_wait()).await {
             Ok(permit) => permit,
             Err(EditorWaitError::TimedOut) => return Err(editor_waited_out()),
             Err(EditorWaitError::Closed) => return Err(unavailable()),
         };
-        let caller = desk
-            .admit(presented.as_bytes())
-            .ok_or_else(|| editor_refused("editor_token_unadmitted"))?;
-        if !caller.credential_is_live(server.vault()) {
-            return Err(editor_refused("editor_caller_not_live"));
-        }
+        let caller = desk.admit_live(server, presented.as_bytes(), Purpose::EditorComputation)?;
         Ok(Self::Admitted(EditorSlot {
             permit,
             owner: caller.principal_entity(),
         }))
+    }
+}
+
+/// A `POST /sign/fields` admitted from its head: a live draft-fields token
+/// whose caller's credential stood when the head arrived. The request's own
+/// credential headers name no one here; the door runs as the token's caller,
+/// which [`Self::caller`] admits again once the body is read.
+pub(super) struct EditorFieldsToken {
+    presented: axum::http::HeaderValue,
+    desk: Arc<EditorDesk>,
+}
+
+impl EditorFieldsToken {
+    /// The caller the token was minted for, when the token is still a live
+    /// draft-fields token and its caller's credential still stands.
+    pub(super) fn caller(&self, server: &SyncServer) -> Result<crate::auth::CoreAuth, Response> {
+        self.desk.admit_live(
+            server,
+            self.presented.as_bytes(),
+            Purpose::EditorDraftFields,
+        )
+    }
+}
+
+impl FromRequestParts<Arc<SyncServer>> for EditorFieldsToken {
+    type Rejection = Response;
+
+    /// Runs on the request's head alone, before any body poll: a request
+    /// with no editor header is refused (`editor_token_missing`), and one
+    /// whose token is not a live draft-fields token, or whose caller's
+    /// credential no longer stands, is refused as a computation POST's is.
+    /// No computation slot is taken: the door reads a JSON body and runs one
+    /// verb.
+    async fn from_request_parts(
+        parts: &mut Parts,
+        server: &Arc<SyncServer>,
+    ) -> Result<Self, Self::Rejection> {
+        let presented = parts
+            .headers
+            .get(EDITOR_HEADER)
+            .cloned()
+            .ok_or_else(|| editor_refused("editor_token_missing"))?;
+        let desk = parts
+            .extensions
+            .get::<Arc<EditorDesk>>()
+            .cloned()
+            .ok_or_else(unavailable)?;
+        desk.admit_live(server, presented.as_bytes(), Purpose::EditorDraftFields)?;
+        crate::http_listener::authenticated();
+        Ok(Self { presented, desk })
     }
 }
 
@@ -182,9 +252,10 @@ fn editor_waited_out() -> Response {
         .into_response()
 }
 
-/// A present editor header that does not admit its request: an unknown or
-/// expired token, or one whose caller's credential no longer stands. The
-/// body is unread; the owner reloads the editor shell for a new token.
+/// An editor header that does not admit its request: an unknown or expired
+/// token, one of another purpose, one whose caller's credential no longer
+/// stands, or none at the draft-fields door. The body is unread; the owner
+/// reloads the editor shell for a new token.
 fn editor_refused(code: &'static str) -> Response {
     (
         StatusCode::UNAUTHORIZED,

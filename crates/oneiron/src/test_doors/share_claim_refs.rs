@@ -29,7 +29,7 @@ pub fn put_stored_claim(vault: &Vault, id: &EntityId, body: &ClaimBody) -> Resul
             0,
             &bytes,
         );
-        vault.store.entities.put(txn, id.as_bytes(), &raw)?;
+        vault.store.put_entity_row_bytes_for_test(txn, id, &raw)?;
         Ok(())
     })
 }
