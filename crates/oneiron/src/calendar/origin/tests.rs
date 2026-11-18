@@ -5,6 +5,7 @@ use crate::edge::EdgeActorClass;
 fn fixture() -> (tempfile::TempDir, Vault, WriteActor) {
     let dir = tempfile::tempdir().unwrap();
     let vault = Vault::open(dir.path(), crate::VaultConfig::default()).unwrap();
+    vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
     let actor = WriteActor::new(
         vault.ensure_embedded_owner_actor().unwrap(),
         EdgeActorClass::Human,
@@ -490,6 +491,8 @@ fn late_origin_binding_preserves_source_invalidation_without_hiding_native_event
         // The deletion fact is durable, not just the temporary unbound gate.
         drop(vault);
         let reopened = Vault::open(dir.path(), crate::VaultConfig::default()).unwrap();
+        reopened
+            .install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
         assert_eq!(
             read_event(&reopened, &request).unwrap().is_some(),
             origin != CalendarOrigin::Dreamer

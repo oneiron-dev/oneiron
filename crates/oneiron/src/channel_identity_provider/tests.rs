@@ -32,6 +32,10 @@ fn temp_vault() -> (tempfile::TempDir, Vault) {
     cfg.dimensions = 4;
     cfg.embedding_model = None;
     let vault = Vault::open(tmp.path(), cfg).expect("open vault");
+    // These tests cover identity-provider routing, not the built-in pack gate.
+    vault
+        .remove_builtin_pack_seed_marker_for_test()
+        .expect("FIXTURE: drop the built-in pack seed marker (OF-519 gate is not under test here)");
     (tmp, vault)
 }
 

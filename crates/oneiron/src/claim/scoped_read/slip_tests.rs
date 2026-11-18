@@ -9,6 +9,7 @@ use std::collections::BTreeSet;
 fn host_root_reads_stamped_rows_but_plain_keys_and_revoked_proofs_do_not() -> Result<()> {
     let dir = tempfile::tempdir()?;
     let vault = crate::Vault::open(dir.path(), crate::VaultConfig::default())?;
+    vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
     let id = EntityId::now();
     let row = ClaimBody::new(
         "test.slip_read",

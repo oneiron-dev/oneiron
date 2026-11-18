@@ -18,6 +18,7 @@ fn test_manager() -> Arc<WindowManager> {
     let dir = tempfile::tempdir().unwrap();
     let config = crate::config::VaultConfig::device();
     let vault = Arc::new(Vault::open(dir.path(), config).unwrap());
+    vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
     Arc::new(WindowManager::new(
         vault,
         Arc::new(Materializer::new()),

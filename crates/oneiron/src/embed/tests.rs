@@ -75,6 +75,7 @@ fn test_vault() -> (tempfile::TempDir, Arc<Vault>) {
     config.dimensions = 4;
     config.embedding_model = Some("test/embedder@v1".to_owned());
     let vault = Vault::open_unseeded_for_test(dir.path(), config).expect("open vault");
+    vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
     let facet = crate::claim::substrate_facet_id(entity_id(0xC1)).expect("subject facet");
     vault
         .put_entity(
