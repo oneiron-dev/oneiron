@@ -216,7 +216,23 @@ fn apply_remote_change(
                     None => None,
                 };
                 match classify_remote_change(current.as_ref(), &normalized) {
-                    EchoDisposition::AcknowledgeEcho => counters.acknowledged += 1,
+                    EchoDisposition::AcknowledgeEcho => {
+                        // A cancellation whose admission stopped before its
+                        // deposit refund reads as an echo on the next pull
+                        // of the same bytes: its refund is asked again here.
+                        if let (Some(id), Some(passport)) = (event_ref, current.as_ref()) {
+                            crate::calendar::ingest::repeat_connector_host_cancel_refund(
+                                vault,
+                                system,
+                                admission_source,
+                                id,
+                                passport,
+                                parsed,
+                                now,
+                            )?;
+                        }
+                        counters.acknowledged += 1;
+                    }
                     EchoDisposition::ApplyInbound | EchoDisposition::ApplyRemoteUpdate => {
                         if crate::calendar::ingest::admit_connector_event(
                             vault,

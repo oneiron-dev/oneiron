@@ -99,6 +99,11 @@ pub const LIFECYCLE_KIND_DISSOLVE: &str = "dissolve";
 /// key signs it, then the canonical map of its vault, machine, key, owner,
 /// target and `seen`.
 pub const OWNER_KEY_ENROLLMENT_POP_DOMAIN: &[u8] = b"oneiron/authority/owner-key-enrollment/pop/v1";
+/// Domain of an appointed successor root key's proof of possession
+/// (OWNER-ANCHOR-ROOT-RECOVERY): the key signs it, then the canonical map of
+/// its vault, the appointing root, the row's parents and the key.
+pub const ROOT_APPOINTMENT_SUCCESSOR_DOMAIN: &[u8] =
+    b"oneiron/authority/root-appointment/successor/v1";
 /// Domain of an owner key enrollment act's target: BLAKE3 over it, the vault
 /// id and the public key (FIX 4920).
 pub const OWNER_KEY_ENROLLMENT_TARGET_DOMAIN: &[u8] =

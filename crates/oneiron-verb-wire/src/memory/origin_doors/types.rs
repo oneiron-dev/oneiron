@@ -30,6 +30,11 @@ pub struct OriginAuthoritySetRequest {
     /// This copy serves reads only, at every ref.
     #[serde(default)]
     pub mirror: bool,
+    /// The writer host's git door base (`https://host.example/git`; HTTP
+    /// only on loopback; no userinfo, query or fragment). A push to a copy
+    /// this host does not write is redirected there; absent, it is refused.
+    #[serde(default)]
+    pub writer_door: Option<String>,
 }
 
 /// One served repository authority and the host reading it.

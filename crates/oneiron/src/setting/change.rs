@@ -15,8 +15,10 @@ use crate::error::{Error, Result};
 use crate::side_table::{self, Named, SideTable};
 use crate::store::Store;
 
-const CHANGES: SideTable<u64, SettingChange, Named> = SideTable::new(&side_table::SETTING_CHANGE);
-const CHANGE_NEXT: SideTable<(), u64, Named> = SideTable::new(&side_table::SETTING_CHANGE_NEXT);
+pub(super) const CHANGES: SideTable<u64, SettingChange, Named> =
+    SideTable::new(&side_table::SETTING_CHANGE);
+pub(super) const CHANGE_NEXT: SideTable<(), u64, Named> =
+    SideTable::new(&side_table::SETTING_CHANGE_NEXT);
 
 /// One change to one setting row.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

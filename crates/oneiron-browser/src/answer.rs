@@ -173,6 +173,31 @@ pub struct SessionManifest {
     /// the wire; untyped here so the mirror needs no container dependency.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub image_release: Option<serde_json::Value>,
+    /// Pressure the guest showed before its container went away (FIX 8013):
+    /// absent where nothing was observed. Evidence only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub guest_pressure: Option<SessionGuestPressure>,
+}
+
+/// Pressure one session's guest showed before its container went away
+/// (FIX 8013), as `oneiron_container::GuestPressure` reads on the wire.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SessionGuestPressure {
+    /// The guest's cgroup refused `hits` fork/clone calls.
+    Processes { hits: u64 },
+}
+
+/// Exhaustive on purpose: a pressure kind the container adds fails the driver
+/// build here until the mirror names it, so a typed reader never meets a
+/// variant it cannot decode.
+#[cfg(feature = "driver")]
+impl From<&oneiron_container::GuestPressure> for SessionGuestPressure {
+    fn from(pressure: &oneiron_container::GuestPressure) -> Self {
+        match pressure {
+            oneiron_container::GuestPressure::Processes { hits } => Self::Processes { hits: *hits },
+        }
+    }
 }
 
 /// Evidence the session verified before its guest made its first network

@@ -119,6 +119,24 @@ fn bind_decision_in(
     Ok(())
 }
 
+/// Whether the bank's identity for `decision`'s voice admits the decision
+/// beside it: [`bind_decision_in`]'s check for a voice with no current
+/// decision, as an answer. The archive landing asks it before it installs a
+/// restored decision at an absent key. `false` is the writer's own refusal:
+/// another subject, another kind, or an identity the bank cannot read back.
+/// A store fault stays an error.
+pub(in crate::voice_identity) fn banked_identity_admits_decision_in(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    decision: &VoiceRenderDecision,
+) -> Result<bool> {
+    match bind_decision_in(store, txn, decision, None) {
+        Ok(()) => Ok(true),
+        Err(Error::InvalidConfig(_)) => Ok(false),
+        Err(error) => Err(error),
+    }
+}
+
 /// [`crate::Vault::record_voice_render_consent`]'s write of a validated
 /// `decision`, in `txn`, which it commits when the decision is new. Its
 /// caller holds the ref guard's write lock. The decision's event and the

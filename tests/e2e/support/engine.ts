@@ -295,6 +295,7 @@ export class EngineFixture {
       if(enrolled.exitCode!==0) throw new CliError(enrolled,"device-enrol");
       peer.enrolment=JSON.parse(enrolled.stdout) as DeviceEnrolment;
       if(peer.enrolment.checkpoint_pinned!==true) throw new Error("Device enrolment did not adopt the pinned checkpoint");
+      peer.enrolledCredential=await peer.readCredential();
       await reservation.release();released=true;
       await peer.launch();
       return peer;
@@ -435,6 +436,9 @@ export class DevicePeer {
   /** The home owner's remote CLI (api calls), pointed at the peer; never the peer's local commands. */
   readonly cli:CliClient;
   enrolment!:DeviceEnrolment;
+  /** The paired credential `device enrol` wrote, read before the first launch, so a case can see
+   * the device renew it (the file's later content differs). Redacted like every credential. */
+  enrolledCredential!:string;
   private server:ManagedProcess|undefined;
   private closed=false;
   constructor(readonly home:EngineFixture,readonly root:string,private readonly env:Readonly<Record<string,string>>,readonly options:DevicePeerOptions,port:number) {
@@ -460,6 +464,12 @@ export class DevicePeer {
       return reply;
     },reply=>reply.status===200&&reply.body.actor_ref===owner&&reply.body.actor_class==="human",
       {timeoutMs:LIMITS.readyMs,label:"device peer admits the home owner"});
+  }
+  /** The paired credential the device's credential file holds now: the file `device enrol` names,
+   * which the device's renewal replaces. Redacted; its shape is the case's to check. */
+  async readCredential():Promise<string> {
+    const credential=(await readFile(resolve(this.root,this.enrolment.credential_file),"utf8")).trim();
+    redactor.add(credential);return credential;
   }
   async kill():Promise<void> {await this.server?.stop("SIGKILL")}
   async restart():Promise<void> {
