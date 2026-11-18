@@ -5,8 +5,10 @@
 //! partial restore) passes every check of the meta pages. Before upstream ITS#9291
 //! (`crates/heed/PROVENANCE.md`, "Upstream LMDB hardening"), `mdb_env_open2` then opened it: the
 //! main tree's root pointed past the end of the file, and the first read of that page faulted the
-//! process (SIGBUS). With the check, the open answers `MDB_CORRUPTED` (the page counts exceed the
-//! file) or `MDB_PAGE_NOTFOUND` (a root lies past its end), and nothing maps a missing page.
+//! process (SIGBUS). The check compares the FREE and MAIN roots and their page counts with the
+//! file's length: the open then answers `MDB_CORRUPTED` (the counts exceed the file) or
+//! `MDB_PAGE_NOTFOUND` (a root lies past its end). It is upstream's quick check, not a walk: a file
+//! cut below a named database's page only, with both roots and the counts inside it, still opens.
 //!
 //! `cargo test --locked -p oneiron-store --test lmdb_open_truncated_file` (default features, as
 //! `lmdb_page_split.rs`).

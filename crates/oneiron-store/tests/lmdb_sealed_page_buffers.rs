@@ -1,14 +1,18 @@
 //! FIX row LMDB-MASTER3-UPSTREAM-FIXES-AUDIT (upstream ITS#10520): a sealed environment frees the
-//! page buffers it decrypted into, when it closes and when a page fails to open.
+//! page buffers it decrypted into, when it closes and when a page fails to open, and unmaps the
+//! chunk of a page that failed to open.
 //!
 //! A sealed environment (`EnvOpenOptions::page_key`) decrypts each chunk of pages it reads into a
 //! heap buffer (16 pages: 64 KiB on 4 KiB pages) and keeps the chunk in its page cache until the
 //! environment closes. Before upstream ITS#10520 (`crates/heed/PROVENANCE.md`, "Upstream LMDB
 //! hardening"), closing unmapped every cached chunk but never freed its buffer, so each close
 //! leaked one buffer per chunk read. A chunk whose page failed to open leaked its buffer as well:
-//! heed reads one page to check the page key, so each open under a wrong key leaked one.
+//! heed reads one page to check the page key, so each open under a wrong key leaked one. That
+//! chunk's mapping stayed too, in no cache that could unmap it; the fork unmaps it (`ONEIRON FORK
+//! (LMDB audit)` in `mdb_rpage_get`).
 //!
-//! The test counts the C heap through glibc's `mallinfo2`, so it runs on Linux with glibc only.
+//! The test counts the C heap through glibc's `mallinfo2` and the process's mappings through
+//! `/proc/self/maps`, so it runs on Linux with glibc only.
 //!
 //! `cargo test --locked -p oneiron-store --test lmdb_sealed_page_buffers` (default features, as
 //! `lmdb_page_split.rs`).
@@ -32,6 +36,8 @@ const WRONG_KEY_OPENS: usize = 64;
 /// Heap growth allowed over all measured cycles of one arm. The leak is one 64 KiB buffer per
 /// chunk: over 30 per close cycle here, and one per wrong-key open.
 const GROWTH_BOUND: usize = 1 << 20;
+/// New mappings allowed over all measured wrong-key opens. The leak is one per open.
+const MAPPING_GROWTH_BOUND: usize = 16;
 
 /// glibc's `struct mallinfo2` (glibc 2.33 and later): ten `size_t` fields.
 #[repr(C)]
@@ -51,6 +57,11 @@ unsafe extern "C" {
 fn heap_in_use() -> usize {
     let info = mallinfo2();
     info.0[HBLKHD] + info.0[UORDBLKS]
+}
+
+/// Memory mappings of this process: one line each in `/proc/self/maps`.
+fn mappings() -> std::io::Result<usize> {
+    Ok(std::fs::read_to_string("/proc/self/maps")?.lines().count())
 }
 
 type Rows = Database<Bytes, Bytes>;
@@ -103,15 +114,19 @@ fn growth_over_close_cycles(dir: &Path) -> Result<usize, Box<dyn Error>> {
     Ok(heap_in_use().saturating_sub(before))
 }
 
-/// Heap growth over `WRONG_KEY_OPENS` opens under a wrong page key, each of which must refuse.
-fn growth_over_wrong_key_opens(dir: &Path) -> usize {
+/// Heap growth and new mappings over `WRONG_KEY_OPENS` opens under a wrong page key, each of
+/// which must refuse.
+fn growth_over_wrong_key_opens(dir: &Path) -> std::io::Result<(usize, usize)> {
     let wrong_key_refuses = || open_sealed_env(dir, &WRONG_PAGE_KEY).is_err();
     assert!(wrong_key_refuses(), "a wrong page key refuses");
-    let before = heap_in_use();
+    let (heap_before, mappings_before) = (heap_in_use(), mappings()?);
     for _ in 0..WRONG_KEY_OPENS {
         assert!(wrong_key_refuses(), "a wrong page key refuses");
     }
-    heap_in_use().saturating_sub(before)
+    Ok((
+        heap_in_use().saturating_sub(heap_before),
+        mappings()?.saturating_sub(mappings_before),
+    ))
 }
 
 #[test]
@@ -120,12 +135,15 @@ fn a_sealed_environment_frees_its_page_buffers_on_close_and_on_a_page_that_fails
     let dir = tempfile::tempdir()?;
     write_rows_and_close(dir.path())?;
     let close_growth = growth_over_close_cycles(dir.path())?;
-    let wrong_key_growth = growth_over_wrong_key_opens(dir.path());
+    let (wrong_key_growth, wrong_key_mappings) = growth_over_wrong_key_opens(dir.path())?;
     assert!(
-        close_growth < GROWTH_BOUND && wrong_key_growth < GROWTH_BOUND,
+        close_growth < GROWTH_BOUND
+            && wrong_key_growth < GROWTH_BOUND
+            && wrong_key_mappings < MAPPING_GROWTH_BOUND,
         "the C heap grew by {close_growth} bytes over {CLOSE_CYCLES} read-and-close cycles and \
          by {wrong_key_growth} bytes over {WRONG_KEY_OPENS} opens under a wrong page key \
-         (bound {GROWTH_BOUND} bytes each)"
+         (bound {GROWTH_BOUND} bytes each); those opens left {wrong_key_mappings} new mappings \
+         (bound {MAPPING_GROWTH_BOUND})"
     );
     Ok(())
 }
