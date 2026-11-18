@@ -395,10 +395,10 @@ pub use self::consent_wait::{
 };
 
 pub(crate) use self::dispatcher::kept_reveal_lease;
-pub use self::dispatcher::{SecretUseAnswer, SecretUseRecord, SecretUseStatus, kept_reveal_answer};
 #[cfg(oneiron_test_support)]
-pub(crate) use self::dispatcher::{
-    resumed_write_meets_recorded_row, resumed_write_meets_stored_receipt,
-};
+pub(crate) use self::dispatcher::resumed_write_meets_recorded_row;
+#[cfg(oneiron_test_support)]
+pub(crate) use self::dispatcher::resumed_write_meets_stored_receipt;
+pub use self::dispatcher::{SecretUseAnswer, SecretUseRecord, SecretUseStatus, kept_reveal_answer};
 
 pub use self::dispatcher::workflow_operations;
