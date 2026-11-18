@@ -6,11 +6,20 @@
 //! saw it at the job's start; a warning reaches the customer at 95 percent; a
 //! checkpoint is taken after it, before the stop; the stop carries an add-funds notice; and the job
 //! resumes from that checkpoint in one step. The job reserves its whole
-//! maximum through [`crate::llm::run_admission::RunAdmission::admit_paid`]; a resume takes a fresh
-//! admission for the next chunk.
+//! maximum through `RunAdmission::admit_paid` (`oneiron::llm::run_admission`);
+//! a resume takes a fresh admission for the next chunk.
+//!
+//! Apart from the customer's warning, the job itself is told to checkpoint at
+//! 50, 80 and 95 percent of its maximum (lifecycle 04). The state is stored
+//! with the job's record, so a host restart keeps the warning, the checkpoint
+//! and the stop.
 use serde::{Deserialize, Serialize};
 
 use super::declaration::LeaseUnit;
+
+/// The percents of the maximum at which the job is told to checkpoint, lowest
+/// first (CROSS-ARCH-0023 lifecycle 04).
+const CHECKPOINT_PERCENTS: [u8; 3] = [50, 80, 95];
 
 /// The most a job may use, in its service's unit, as the customer set it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -34,6 +43,10 @@ pub struct CheckpointRef(pub String);
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "signal", rename_all = "snake_case")]
 pub enum JobSignal {
+    /// Usage reached `percent` (50, 80 or 95) of the maximum: the job should
+    /// checkpoint now. It goes to the job, not the customer. Returned once per
+    /// percent in each chunk; a record that passes several returns the highest.
+    CheckpointDue { percent: u8 },
     /// 95 percent of the maximum is used. Returned at each record until the
     /// host confirms it reached the customer.
     Warning95 { used_units: u64, maximum_units: u64 },
@@ -104,8 +117,9 @@ pub enum ResumeRefused {
 }
 
 /// One paid job's run against its declared maximum. It is not `Clone`: one
-/// state decides the stop and consumes its resume.
-#[derive(Debug, PartialEq, Eq)]
+/// state decides the stop and consumes its resume. It is stored with the job's
+/// record, so a restarted host takes up the same state.
+#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct JobMaximum {
     job: String,
     maximum: DeclaredMaximum,
@@ -115,6 +129,20 @@ pub struct JobMaximum {
     checkpoint: Option<CheckpointRef>,
     stops: u32,
     stopped: bool,
+    /// The highest checkpoint percent signalled in this chunk, 0 for none.
+    checkpoint_percent_signalled: u8,
+}
+
+/// The highest checkpoint percent `used_units` has reached under
+/// `maximum_units`, or 0 below the first.
+fn reached_checkpoint_percent(used_units: u64, maximum_units: u64) -> u8 {
+    CHECKPOINT_PERCENTS
+        .into_iter()
+        .rev()
+        .find(|percent| {
+            u128::from(used_units) * 100 >= u128::from(maximum_units) * u128::from(*percent)
+        })
+        .unwrap_or(0)
 }
 
 impl JobMaximum {
@@ -139,6 +167,7 @@ impl JobMaximum {
             checkpoint: None,
             stops: 0,
             stopped: false,
+            checkpoint_percent_signalled: 0,
         })
     }
 
@@ -157,10 +186,16 @@ impl JobMaximum {
         self.stopped
     }
 
-    /// Records the job's usage so far and returns what it crossed.
+    /// Records the job's usage so far and returns what it crossed, in this
+    /// order: a checkpoint percent, the customer's warning, the maximum.
     pub fn record_usage(&mut self, used_units: u64) -> Vec<JobSignal> {
         self.used_units = self.used_units.max(used_units);
         let mut signals = Vec::new();
+        let reached = reached_checkpoint_percent(self.used_units, self.maximum.units);
+        if reached > self.checkpoint_percent_signalled {
+            self.checkpoint_percent_signalled = reached;
+            signals.push(JobSignal::CheckpointDue { percent: reached });
+        }
         let warn_at = u128::from(self.maximum.units) * 95;
         if u128::from(self.used_units) * 100 >= warn_at {
             self.warning_due = true;
@@ -227,7 +262,8 @@ impl JobMaximum {
 
     /// Resumes a stopped job from its checkpoint under a larger maximum the
     /// customer was shown. Returns the checkpoint to restart from; the next
-    /// chunk takes its own admission.
+    /// chunk takes its own admission. The new chunk gets its own checkpoint
+    /// signals, from the percents its usage has not reached yet.
     pub fn resume(
         &mut self,
         offer: &ResumeOffer,
@@ -253,6 +289,8 @@ impl JobMaximum {
         self.warning_due = false;
         self.warning_delivered = false;
         self.stopped = false;
+        self.checkpoint_percent_signalled =
+            reached_checkpoint_percent(self.used_units, self.maximum.units);
         Ok(self
             .checkpoint
             .take()
