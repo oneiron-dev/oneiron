@@ -5,8 +5,8 @@
 //! build reaches them. Hidden; never API.
 
 pub mod access_request_seed;
-pub mod action_replay_custody;
 pub mod action_mode_pass;
+pub mod action_replay_custody;
 pub mod advisory_rate_window;
 pub mod agent_authoring;
 pub mod agent_definition_scans;
@@ -17,6 +17,7 @@ pub mod approval_target_round_trip;
 pub mod archive_import;
 pub mod archive_producers;
 pub mod archive_provenance;
+pub mod archive_side_binary_credential;
 pub mod archive_side_catalogue;
 #[cfg(feature = "sync")]
 pub mod artifact_publication_pump;
@@ -24,6 +25,7 @@ pub mod ask_answer_proof;
 pub mod ask_intent_pins;
 pub mod authority_adopted_fold;
 pub mod authority_ancestor_index;
+pub mod authority_fold_encoding;
 pub mod authority_sequence_floor;
 pub mod authority_signed_branch;
 pub mod authority_stored_damage;
@@ -92,6 +94,7 @@ pub mod derivation_position;
 pub mod derive;
 pub mod derive_person;
 pub mod derive_verbs;
+pub mod device_pin;
 pub mod device_succession_fold;
 pub mod disclosure_word_sources;
 pub mod do_not_contact_subject_reads;
@@ -120,6 +123,7 @@ pub mod feed_prune;
 pub mod feeds;
 pub mod file_custody_marks;
 pub mod fingerprint_keep_booking_dreamer_digests;
+pub mod fingerprint_keep_code_run_digests;
 pub mod fingerprint_keep_codec_digests;
 pub mod fingerprint_keep_custody_digests;
 pub mod fingerprint_keep_custody_policy_digest;
@@ -152,6 +156,7 @@ pub mod frontier_walk;
 #[cfg(feature = "sync")]
 pub mod full_copy_mark;
 pub mod gate_receipt_rows;
+pub mod gpu_job;
 pub mod grant_roles;
 pub mod graph_ask_centre;
 #[cfg(feature = "sync")]

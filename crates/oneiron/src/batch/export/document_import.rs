@@ -292,6 +292,20 @@ impl Vault {
         } else {
             BTreeMap::new()
         };
+        // An owner restore can install a setting row through its key's hook, so it holds the write
+        // turn of each key the archive holds a row of through its commit and the wakes after it,
+        // as a set of that key does.
+        let setting_turns = if owner.is_some() {
+            use crate::setting::archive_restore::{take_write_turns, write_turn_of_archived_row};
+            let mut turns = Vec::new();
+            super::archive_retained_side_rows::visit_retained_side_rows(&archive, |_, row| {
+                turns.extend(write_turn_of_archived_row(&row));
+                Ok(())
+            })?;
+            take_write_turns(self, turns)?
+        } else {
+            Vec::new()
+        };
         let retrieval_tuning_guard = if owner.is_some() {
             Some(self.store.archive_retrieval_tuning_guard()?)
         } else {
@@ -812,6 +826,7 @@ impl Vault {
         drop(retrieval_tuning_guard);
         cleanup.committed = true;
         side_refresh.after_commit(self);
+        drop(setting_turns);
         self.embedding_setup_committed(setup_rows);
         let mut remapped_entities = BTreeMap::new();
         for entry in archive.index.entries(Tag::Model)? {

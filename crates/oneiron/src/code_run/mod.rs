@@ -72,6 +72,8 @@ mod wait_rows;
 pub(crate) use self::action_inputs::self_call_inputs;
 pub(crate) use self::agent_authoring::agent_put_draft;
 pub use self::agent_authoring::{AgentPutInput, AgentPutOutput, parse_agent_put_request};
+#[cfg(oneiron_test_support)]
+pub(crate) use self::codec::pending_step_bytes_digest_for_test;
 pub use self::codec::{
     CODE_RUN_ABI_LAYOUT_CHECK_KEYS, CODE_RUN_BRIDGE_CALL_KEYS, CODE_RUN_DETERMINISM_KEYS,
     CODE_RUN_OUTPUT_PREVIEW_KEYS, CODE_RUN_RAW_OUTPUT_KEYS, CODE_RUN_REPLAY_RECORD_KEYS,
@@ -91,6 +93,8 @@ pub use self::compaction_home::{
 pub(crate) use self::compaction_home::{
     bound_self_model_in, erase_self_model_binding_actor_in_txn,
 };
+#[cfg(oneiron_test_support)]
+pub(crate) use self::consent_wait::code_consent_run_origin_digest_for_test;
 pub use self::consent_wait::{
     AdmittedBrowserAct, CodeConsentAnswerInput, CodeConsentBrowserAction,
     CodeConsentBrowserOutcome, CodeConsentChoice, CodeConsentEffectHost, CodeConsentParkedRun,
@@ -154,6 +158,8 @@ pub use self::replay::{
     PendingCodeStep, ResultOccurrence, code_run_replay_abi_layout_checks,
 };
 pub(crate) use self::replay::{CODE_RUN_OUTPUT_PREVIEW_WITHHELD, agent_verb_rows_of};
+#[cfg(oneiron_test_support)]
+pub(crate) use self::replay_capsule::messages_digest_for_test;
 pub use self::replay_capsule::{
     CapsuleContent, CapsuleHost, CapsuleRequest, CapsuleRungBinding, ConsoleSlot,
     ExecutorStepStart, ExposureKind, ExposureSlot, ReplayRoutePin, ReplayRung, StepContextRef,
@@ -400,5 +406,11 @@ pub(crate) use self::dispatcher::resumed_write_meets_recorded_row;
 #[cfg(oneiron_test_support)]
 pub(crate) use self::dispatcher::resumed_write_meets_stored_receipt;
 pub use self::dispatcher::{SecretUseAnswer, SecretUseRecord, SecretUseStatus, kept_reveal_answer};
+#[cfg(oneiron_test_support)]
+pub(crate) use self::dispatcher::{
+    code_emission_record_id_for_test, consent_request_digest_for_test,
+    program_answer_digest_for_test, program_call_digest_for_test, repo_params_hash_for_test,
+    review_claim_id_for_test, spawn_slip_id_for_test,
+};
 
 pub use self::dispatcher::workflow_operations;

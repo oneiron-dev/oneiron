@@ -124,12 +124,16 @@ impl ImageFold {
             issues,
             missing_parents,
             marks,
-            revocations: final_merged.actor_revocation_hashes.clone(),
+            revocations: crate::authority::fold_state::to_btree_set_map(
+                &final_merged.actor_revocation_hashes,
+            ),
             writers,
             bound_keys,
             confirm_ids,
             confirm_nonces,
-            nonce_provenance: merged.critical_write_confirm_nonce_provenance.clone(),
+            nonce_provenance: crate::authority::fold_state::to_btree_set_map(
+                &merged.critical_write_confirm_nonce_provenance,
+            ),
         };
         Some(Self {
             replay: if replay {

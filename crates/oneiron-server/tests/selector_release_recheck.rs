@@ -767,6 +767,7 @@ async fn forwarded_search_reply(
             conversation_ref: room.to_hex(),
             turn_ref: Some(turn.to_hex()),
             thread_audience: None,
+            project: None,
             messages: vec![WitnessMessage {
                 id: None,
                 author: WitnessAuthor::User,
@@ -952,6 +953,7 @@ fn a_selector_update_carrying_a_message_its_members_revoked_grant_admits_never_l
                 conversation_ref: room.to_hex(),
                 turn_ref: Some(turn.to_hex()),
                 thread_audience: None,
+                project: None,
                 messages: vec![WitnessMessage {
                     id: None,
                     author: WitnessAuthor::User,
@@ -1373,11 +1375,7 @@ async fn send_asset_want(
         },
         max_frame_bytes: ASSET_BODY_FRAME_BYTES as u32,
     };
-    send_binary(
-        socket,
-        encode_asset_body_want(&want).into_result().unwrap(),
-    )
-    .await;
+    send_binary(socket, encode_asset_body_want(&want).into_result().unwrap()).await;
     attempt
 }
 

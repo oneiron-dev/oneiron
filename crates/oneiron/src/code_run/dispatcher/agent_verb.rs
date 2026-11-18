@@ -10,6 +10,8 @@ mod stored_answer;
 use serde_json::Value;
 
 use self::connector_wait::connector_call_answer;
+#[cfg(oneiron_test_support)]
+pub(crate) use self::consent::consent_request_digest_for_test;
 use crate::EntityId;
 use crate::code_run::CompareKnown;
 use crate::code_run::payload::{decode_self_dispatch_outcome, self_call_request_value};

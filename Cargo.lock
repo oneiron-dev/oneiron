@@ -8028,6 +8028,7 @@ dependencies = [
  "oneiron-lens-wire",
  "oneiron-linkedin-policy",
  "oneiron-model",
+ "oneiron-persistent-collections",
  "oneiron-policy-vocabulary",
  "oneiron-records",
  "oneiron-retrieval",
@@ -8752,6 +8753,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "oneiron-persistent-collections"
+version = "0.1.0"
+dependencies = [
+ "im",
+ "proptest",
+ "rmp-serde",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "oneiron-policy-vocabulary"
 version = "0.1.0"
 dependencies = [
@@ -8889,6 +8901,7 @@ dependencies = [
  "oneiron-model",
  "schemars 0.8.22",
  "serde",
+ "serde_json",
  "thiserror 2.0.20",
 ]
 
@@ -8900,6 +8913,8 @@ version = "0.1.0"
 name = "oneiron-schedule-contract"
 version = "0.1.0"
 dependencies = [
+ "oneiron-contracts",
+ "oneiron-setting-contract",
  "schemars 0.8.22",
  "serde",
 ]
