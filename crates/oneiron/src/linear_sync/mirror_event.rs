@@ -22,6 +22,7 @@ use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
 use crate::side_table::{self, Named, Raw, SideTable};
 use crate::task_verb::{TaskActor, TaskCallReceipt};
+use oneiron_contracts::fingerprint::{LegacyDigest, LegacyPurpose, purposes};
 
 use super::model::{LinearMirrorReceipt, LinearWriteActor};
 
@@ -33,9 +34,10 @@ pub use oneiron_verb_wire::linear_sync::mirror_event::LinearMirrorEvent;
 /// A direction byte and a 32-byte digest.
 pub(crate) type EventKey = [u8; 33];
 
-const DELIVERY_DOMAIN: &[u8] = b"oneiron:linear-mirror-delivery:v1";
-const MAPPING_DOMAIN: &[u8] = b"oneiron:linear-mirror-mapping:v1";
-const TASK_EDIT_DOMAIN: &[u8] = b"oneiron:linear-mirror-task-edit:v1";
+/// The first bytes of an edit's request digest. They are also the context of
+/// a body occurrence's id (`super::custody`), so they cannot be a purpose's
+/// tag as well: `purposes::connector::LINEAR_MIRROR_EDIT_REQUEST` writes no
+/// tag, and [`request_digest`] writes these.
 const BODY_DOMAIN: &[u8] = b"oneiron:linear-mirror-body:v1";
 
 const EVENTS: SideTable<EventKey, LinearMirrorEvent, Named> =
@@ -81,14 +83,18 @@ pub(crate) struct LinearMirrorControl {
     pub(crate) at: u64,
 }
 
-fn keyed(domain: &[u8], parts: &[&[u8]]) -> [u8; 32] {
-    let mut hasher = blake3::Hasher::new();
-    hasher.update(domain);
+/// A mirror event's key digest: `purpose`'s tag, then each part as a u64
+/// little-endian length and its bytes. Stored row keys, so they keep their
+/// bytes (K, PLAN-UC-04 4.1).
+fn keyed(purpose: LegacyPurpose, parts: &[&[u8]]) -> [u8; 32] {
+    framed(LegacyDigest::new(purpose), parts)
+}
+
+fn framed(mut digest: LegacyDigest, parts: &[&[u8]]) -> [u8; 32] {
     for part in parts {
-        hasher.update(&(part.len() as u64).to_le_bytes());
-        hasher.update(part);
+        digest.len_u64_le(part.len()).raw(part);
     }
-    *hasher.finalize().as_bytes()
+    digest.finish()
 }
 
 /// The key of one row: its direction byte, then its digest.
@@ -103,7 +109,10 @@ pub(crate) fn event_key(direction: EventDirection, digest: &[u8; 32]) -> EventKe
 pub(crate) fn delivery_key(delivery_id: &str) -> EventKey {
     event_key(
         EventDirection::IssueToTask,
-        &keyed(DELIVERY_DOMAIN, &[delivery_id.as_bytes()]),
+        &keyed(
+            purposes::connector::LINEAR_MIRROR_DELIVERY,
+            &[delivery_id.as_bytes()],
+        ),
     )
 }
 
@@ -119,7 +128,10 @@ pub(crate) fn bind_delivery_in(
     delivery_id: &str,
     body_digest: &[u8; 32],
 ) -> Result<bool> {
-    let delivery = keyed(DELIVERY_DOMAIN, &[delivery_id.as_bytes()]);
+    let delivery = keyed(
+        purposes::connector::LINEAR_MIRROR_DELIVERY,
+        &[delivery_id.as_bytes()],
+    );
     let forward = binding_key(DELIVERY_TO_BODY, &delivery);
     let backward = binding_key(BODY_TO_DELIVERY, body_digest);
     let bound_body = BINDINGS.get(vault, txn, &forward)?;
@@ -154,7 +166,10 @@ pub(crate) fn outbound_key(operation_id: &[u8; 32]) -> EventKey {
 pub(crate) fn mapping_key(task: EntityId, intent_key: &str) -> EventKey {
     event_key(
         EventDirection::MappingEdit,
-        &keyed(MAPPING_DOMAIN, &[task.as_bytes(), intent_key.as_bytes()]),
+        &keyed(
+            purposes::connector::LINEAR_MIRROR_MAPPING,
+            &[task.as_bytes(), intent_key.as_bytes()],
+        ),
     )
 }
 
@@ -163,15 +178,18 @@ pub(crate) fn task_edit_key(task: EntityId, actor: EntityId, report_key: &str) -
     event_key(
         EventDirection::TaskEdit,
         &keyed(
-            TASK_EDIT_DOMAIN,
+            purposes::connector::LINEAR_MIRROR_TASK_EDIT,
             &[task.as_bytes(), actor.as_bytes(), report_key.as_bytes()],
         ),
     )
 }
 
-/// The hex digest an edit's request is compared by on a replay.
+/// The hex digest an edit's request is compared by on a replay. The edit's
+/// row stores it, so it keeps its bytes (K, PLAN-UC-04 4.1).
 pub(crate) fn request_digest(parts: &[&[u8]]) -> String {
-    bytes_to_hex_lower(&keyed(BODY_DOMAIN, parts))
+    let mut digest = LegacyDigest::new(purposes::connector::LINEAR_MIRROR_EDIT_REQUEST);
+    digest.raw(BODY_DOMAIN);
+    bytes_to_hex_lower(&framed(digest, parts))
 }
 
 fn task_of(row: &LinearMirrorEvent) -> Option<EntityId> {
