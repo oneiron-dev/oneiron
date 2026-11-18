@@ -65,12 +65,15 @@ struct SelfHosted {
     vault: Vault,
     issuer: HostSlipIssuer,
     person: EntityId,
+    /// The device keystore, which holds the host seed across a reopen.
+    keystore: Arc<oneiron_keystore::MemoryKeystore>,
 }
 
 fn self_hosted() -> SelfHosted {
     let dir = tempfile::tempdir().expect("tempdir");
     let vault = Vault::open(dir.path(), VaultConfig::device()).expect("the vault");
-    vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
+    let keystore = Arc::new(oneiron_keystore::MemoryKeystore::default());
+    vault.install_device_keystore(keystore.clone());
     vault.prepare_install_signing().expect("install signing");
     let issuer = vault.bootstrap_host_slip_issuer().expect("the host seed");
     vault.ensure_host_root_slip(&issuer).expect("the host root");
@@ -87,10 +90,35 @@ fn self_hosted() -> SelfHosted {
         vault,
         issuer,
         person,
+        keystore,
     }
 }
 
 impl SelfHosted {
+    /// The same vault closed and opened again under `posture`, with the
+    /// same keystore: this install still holds the host seed.
+    fn reopened(self, posture: HostingPrivacyPosture) -> Self {
+        let Self {
+            _dir: dir,
+            vault,
+            issuer,
+            person,
+            keystore,
+        } = self;
+        drop(vault);
+        let mut config = VaultConfig::device();
+        config.privacy.posture = posture;
+        let vault = Vault::open(dir.path(), config).expect("the vault reopens");
+        vault.install_device_keystore(keystore.clone());
+        Self {
+            _dir: dir,
+            vault,
+            issuer,
+            person,
+            keystore,
+        }
+    }
+
     fn owner(&self) -> AuthenticatedOwner {
         proof(&self.vault, self.person)
     }
@@ -567,6 +595,58 @@ fn a_co_owner_without_a_key_of_their_own_confirms_no_kit_under_the_owners_host_r
     assert_eq!(
         after_fold.pinned_root, before_fold.pinned_root,
         "the pin is unchanged"
+    );
+    assert_eq!(
+        fixture
+            .vault
+            .export_signed_authority_history()
+            .expect("the history")
+            .len(),
+        before_history,
+        "the history is unchanged"
+    );
+}
+
+/// Main's writer rule (Engine ANSWER HOSTED-REFOLD-SELF-HOST-ROOT-CUSTODY =
+/// A): an install under the Hosted posture never offers a host root it holds
+/// as the owner's proof. A self-hosted vault reopened as Hosted keeps its
+/// unstamped root, which the fold still trusts as the owner's, and this
+/// install still holds that root's seed; the activation takes no host root
+/// there as R's predecessor: refused with the exact words, nothing written.
+/// Red at the merge of main 28b2ecb4fcc2 (009a2c92929), where the host root
+/// signs R's row.
+#[test]
+fn a_self_hosted_vault_reopened_as_hosted_takes_no_host_root_as_rs_predecessor() {
+    let fixture = self_hosted();
+    let issued = fixture.issue();
+    let fixture = fixture.reopened(HostingPrivacyPosture::Hosted);
+    let before_fold = fixture.vault.authority_fold().expect("the fold");
+    assert!(
+        before_fold
+            .roster
+            .get(&fixture.issuer.public_key())
+            .is_some_and(|device| !device.revoked),
+        "guard: the self-host root is still live on the hosted fold"
+    );
+    let before_history = fixture
+        .vault
+        .export_signed_authority_history()
+        .expect("the history")
+        .len();
+
+    let refused = fixture
+        .confirm(&issued)
+        .expect_err("a hosted install takes no host root as R's predecessor");
+    assert_eq!(refused.kind(), ErrorKind::AuthorityRefused, "{refused}");
+    assert!(
+        refused.to_string().contains(NO_PREDECESSOR),
+        "the exact words: {refused}"
+    );
+    assert!(fixture.live_r().is_empty(), "no R is enrolled");
+    assert_eq!(
+        fixture.vault.authority_fold().expect("the fold").roster,
+        before_fold.roster,
+        "the roster is unchanged"
     );
     assert_eq!(
         fixture
