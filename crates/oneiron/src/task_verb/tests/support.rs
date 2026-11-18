@@ -40,6 +40,7 @@ impl DescribeArms for Memory<'_> {
 pub(in crate::task_verb) fn open_vault() -> (tempfile::TempDir, Vault) {
     let dir = tempfile::tempdir().expect("tempdir");
     let vault = Vault::open(dir.path(), VaultConfig::default()).expect("open vault");
+    vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
     // These tests cover task lifecycle behavior, not the built-in pack gate.
     vault
         .remove_builtin_pack_seed_marker_for_test()
@@ -128,6 +129,7 @@ pub(in crate::task_verb) fn open_consult_vault() -> (tempfile::TempDir, Vault) {
     let mut config = VaultConfig::device();
     config.store_clock = crate::test_util::pinned_store_clock(CONSULT_NOW + 30);
     let vault = Vault::open(dir.path(), config).expect("open vault");
+    vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
     (dir, vault)
 }
 

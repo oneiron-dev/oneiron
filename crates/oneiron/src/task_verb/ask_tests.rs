@@ -509,6 +509,7 @@ impl RuledAskFixture {
         let mut config = crate::test_util::embedding_test_config();
         config.store_clock = clock.bundle();
         let vault = Vault::open(dir.path(), config)?;
+        vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
         let owner = vault.ensure_embedded_owner_actor()?;
         let mut people = Vec::new();
         for _ in 0..count {

@@ -16,6 +16,7 @@ use crate::temporal::TimeRange;
 fn temp_vault() -> (tempfile::TempDir, Vault) {
     let tmp = tempfile::tempdir().expect("temp dir");
     let vault = Vault::open(tmp.path(), telemetry_config()).expect("open vault");
+    vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
     // These tests cover off-record behavior, not the built-in pack gate.
     vault
         .remove_builtin_pack_seed_marker_for_test()

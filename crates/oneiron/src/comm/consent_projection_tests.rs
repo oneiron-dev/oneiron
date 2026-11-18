@@ -10,7 +10,10 @@ fn open_production_vault(dir: &std::path::Path) -> Result<Vault> {
     config.map_size = 64 * 1024 * 1024;
     config.dimensions = 4;
     config.embedding_model = None;
-    Vault::open(dir, config)
+    let vault = Vault::open(dir, config)?;
+    vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
+    vault.prepare_install_signing().expect("install signing");
+    Ok(vault)
 }
 
 /// The `opt_out` entries the party's public contact view carries.

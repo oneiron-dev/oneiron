@@ -96,6 +96,7 @@ fn turn(id: EntityId, messages: &[(&str, &str)]) -> (String, Vec<(String, String
 fn a_transcript_reads_turns_in_order_and_never_returns_an_erased_message() {
     let dir = tempfile::tempdir().expect("tempdir");
     let vault = Vault::open(dir.path(), VaultConfig::default()).expect("open vault");
+    vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
     let owner = vault.ensure_embedded_owner_actor().expect("owner");
     let room = entity(0xD0);
     let (first, second, third) = (entity(0xD3), entity(0xD1), entity(0xD2));

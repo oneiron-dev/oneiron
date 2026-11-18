@@ -10,8 +10,15 @@ use super::authority::{
 use crate::error::ErrorKind;
 use crate::llm::{Scope, ScopeResource};
 
+thread_local! {
+    static HISTORY_KEYS: std::sync::Arc<oneiron_keystore::MemoryKeystore> = std::sync::Arc::default();
+}
+
 pub(super) fn open(dir: &tempfile::TempDir) -> Result<Vault> {
-    Vault::open(dir.path(), crate::VaultConfig::default())
+    let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
+    vault.install_device_keystore(HISTORY_KEYS.with(std::sync::Arc::clone));
+    vault.prepare_install_signing().expect("install signing");
+    Ok(vault)
 }
 
 /// Another device of the vault in `dir`, as it stands now. The vault in

@@ -82,6 +82,7 @@ fn setup_with(
 ) -> Result<(tempfile::TempDir, Vault, EntityId, EsignDocument)> {
     let dir = tempfile::tempdir()?;
     let vault = Vault::open(dir.path(), config)?;
+    vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
     // These tests cover e-sign behavior, not the built-in pack gate.
     vault
         .remove_builtin_pack_seed_marker_for_test()
@@ -996,6 +997,7 @@ fn signing_field_save_survives_reopen_without_rotating_the_bearer() -> Result<()
     let audit = vault.esign_audit(id)?;
     drop(vault);
     let reopened = Vault::open(dir.path(), VaultConfig::default())?;
+    reopened.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
     let resumed =
         reopened.execute_signing_action(&tokens[0].1, &SigningAction::Load, None, None)?;
     assert_eq!(resumed, SigningOutcome::Page(saved));
@@ -1034,6 +1036,7 @@ fn audit_chain_survives_document_deletion_and_reopen() -> Result<()> {
 
     drop(vault);
     let reopened = Vault::open(dir.path(), VaultConfig::default())?;
+    reopened.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
     assert!(reopened.get_blob_artifact(&id)?.is_none());
     assert_eq!(reopened.esign_audit(id)?, audit);
     Ok(())
@@ -1316,6 +1319,8 @@ fn deleted_documents_refuse_every_capability_door_but_retain_audit() -> Result<(
         assert_eq!(vault.esign_audit(id)?, audit);
         drop(vault);
         let reopened = Vault::open(dir.path(), VaultConfig::default())?;
+        reopened
+            .install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
         assert!(
             reopened
                 .esign_pdf_for_capability(token, 0, None, None)
