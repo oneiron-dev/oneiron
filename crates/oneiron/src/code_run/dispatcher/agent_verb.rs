@@ -520,11 +520,16 @@ impl HostSelfDispatcher<'_> {
                     ordinal,
                 )?)
         };
+        // A receipt the side-row wall placed a value of base custody in is
+        // read with base custody's values (FIX
+        // RECEIPT-RECORDS-CALL-HELD-INPUT).
+        let base_known = || self.base_known_values();
+        let known = CompareKnown::new(Some(&base_known));
         for (ordinal, made) in (0_u64..).zip(site.earlier.iter().filter(is_write)) {
             let Some(receipt) = receipt_at(ordinal)? else {
                 continue;
             };
-            if meets(&receipt, made) {
+            if meets(&receipt, made, &known)? {
                 continue;
             }
             return match decode_self_dispatch_outcome(&made.outcome) {
