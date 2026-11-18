@@ -185,6 +185,15 @@ fn rebind_owed_wake(
                 "this wake was admitted on another machine; rebind its try by attempt".to_owned(),
             ));
         }
+        // A wake this machine retracted is admitted here once the home
+        // releases it, and nowhere before: its rebind waits for that.
+        #[cfg(feature = "sync")]
+        if super::retraction::wake_awaits_release_in_txn(vault, &*txn, &wake)? {
+            return Err(Error::InvalidConfig(
+                "this wake waits for the elected home to release it; rebind it once it has"
+                    .to_owned(),
+            ));
+        }
         // A riding wake is the elected home's to admit (FIX 5266): its
         // rebind runs there, where the admission it commits with can.
         #[cfg(feature = "sync")]
