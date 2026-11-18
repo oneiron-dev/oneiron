@@ -228,7 +228,7 @@ impl BrokerConnection {
     /// 1895). The daemon's copy of the key is wiped once the frame is
     /// written. A reply for another call or digest counts as lost.
     pub async fn open(
-        mut self,
+        self,
         call: &CallHeader,
         body: &[u8],
         secret: Zeroizing<Vec<u8>>,
@@ -240,7 +240,7 @@ impl BrokerConnection {
     /// Opens a Responses call, whose whole turn is one raw segment after the
     /// planned create body. The broker uses it only for a same-socket full retry.
     pub async fn open_with_whole(
-        mut self,
+        self,
         call: &CallHeader,
         body: &[u8],
         whole: &[u8],

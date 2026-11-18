@@ -21,6 +21,7 @@
 //! ([`replan_fenced`]); the new export takes a fresh id.
 
 use heed::{RoTxn, RwTxn};
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
 
 use super::routes;
 use super::store::{self, HandoffHead, HandoffRole, HeadFloor, MoveRequest, StagedHandoff};
@@ -36,8 +37,6 @@ use crate::dreamer_runner::{DreamerHomeNodeDesignation, DreamerRunnerStore};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::side_table::{Named, SideCodec};
-
-const BASIS_DOMAIN: &[u8] = b"oneiron/home-handoff/election-basis/v1\0";
 
 /// A handoff this node froze that no target acked yet, and what delivering
 /// it needs.
@@ -250,24 +249,39 @@ fn election_basis(
     home: Option<&DreamerHomeNodeDesignation>,
     target: &HomeIdentity,
 ) -> [u8; 32] {
-    let mut hasher = blake3::Hasher::new();
-    hasher.update(BASIS_DOMAIN);
-    hasher.update(vault_id);
-    let nodes = [
-        request.and_then(|request| request.from),
-        request.and_then(|request| request.to),
-        home.map(|home| home.node_id),
-    ];
+    election_basis_of(
+        vault_id,
+        [
+            request.and_then(|request| request.from),
+            request.and_then(|request| request.to),
+            home.map(|home| home.node_id),
+        ],
+        home.map_or(0, |home| home.elected_at),
+        target.machine.as_bytes(),
+        target.node_id,
+    )
+}
+
+/// The signed handoff's election evidence (K, PLAN-UC-04 stage 7).
+fn election_basis_of(
+    vault_id: &[u8; 32],
+    nodes: [Option<u64>; 3],
+    elected_at: u64,
+    target_machine: &[u8; 16],
+    target_node: u64,
+) -> [u8; 32] {
+    let mut hasher = LegacyDigest::new(purposes::sync::ELECTION_BASIS);
+    hasher.raw(vault_id);
     for node in nodes {
         match node {
-            Some(node) => hasher.update(&[1]).update(&node.to_be_bytes()),
-            None => hasher.update(&[0]),
+            Some(node) => hasher.raw(&[1]).raw(&node.to_be_bytes()),
+            None => hasher.raw(&[0]),
         };
     }
-    hasher.update(&home.map_or(0, |home| home.elected_at).to_be_bytes());
-    hasher.update(target.machine.as_bytes());
-    hasher.update(&target.node_id.to_be_bytes());
-    *hasher.finalize().as_bytes()
+    hasher.raw(&elected_at.to_be_bytes());
+    hasher.raw(target_machine);
+    hasher.raw(&target_node.to_be_bytes());
+    hasher.finish()
 }
 
 /// Part `index` of the sealed bytes of handoff `id` this node froze.
@@ -554,4 +568,15 @@ pub(crate) fn encode_ack(ack: &HomeAck) -> Result<Vec<u8>> {
 
 pub(crate) fn decode_ack(bytes: &[u8]) -> Result<HomeAck> {
     <Named as SideCodec<HomeAck>>::decode(bytes).map_err(|_| refused("an ack does not decode"))
+}
+
+#[cfg(oneiron_test_support)]
+pub(crate) fn election_basis_for_test(
+    vault_id: &[u8; 32],
+    nodes: [Option<u64>; 3],
+    elected_at: u64,
+    target_machine: &[u8; 16],
+    target_node: u64,
+) -> [u8; 32] {
+    election_basis_of(vault_id, nodes, elected_at, target_machine, target_node)
 }

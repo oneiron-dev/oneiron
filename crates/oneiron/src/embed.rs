@@ -21,6 +21,8 @@ mod repo_projection;
 #[cfg(feature = "sync")]
 mod routing;
 mod session_media;
+/// The embedding owner Setting keys (the space move's undo window, "Wait for the night box");
+/// the build script names their rows in the setting catalogue.
 pub(crate) mod setting_keys;
 mod space;
 mod space_card;
@@ -28,6 +30,7 @@ mod space_move;
 mod space_probe;
 mod turn;
 pub(crate) mod world_space;
+pub mod world_vectors;
 pub use binding_move::{
     BindingMoveLink, BindingMoveState, BindingNotApplied, BindingSource, PendingEmbedderBinding,
 };
@@ -300,6 +303,9 @@ pub struct PendingEmbeddingReconciler {
     lease_duration_ms: u64,
     remote_rung: Option<RemoteRung>,
     rung_role: routing::RungRole,
+    /// The primary embedder, held on the vault for `vault.worlds.vectors`
+    /// while this reconciler lives.
+    registration: world_vectors::HostTextEmbedderRegistration,
     pod_hours: Option<std::sync::Arc<dyn PodHoursClock>>,
 }
 
@@ -310,6 +316,8 @@ impl PendingEmbeddingReconciler {
         vault: std::sync::Arc<crate::Vault>,
         embedder: std::sync::Arc<dyn Embedder>,
     ) -> Self {
+        let registration =
+            world_vectors::HostTextEmbedderRegistration::register(&vault, embedder.as_ref());
         Self {
             vault,
             embedder,
@@ -317,6 +325,7 @@ impl PendingEmbeddingReconciler {
             lease_duration_ms: DEFAULT_PENDING_EMBEDDING_LEASE_MS,
             remote_rung: None,
             rung_role: routing::RungRole::Fallback,
+            registration,
             pod_hours: None,
         }
     }
@@ -388,6 +397,7 @@ impl PendingEmbeddingReconciler {
         }
         let mut rung = RemoteRung::new(std::sync::Arc::clone(&self.embedder), predicate);
         rung.lease_duration_ms = self.lease_duration_ms;
+        self.registration.hold_to_primary_rung(rung.offer_id());
         self.remote_rung = Some(rung);
         self.rung_role = routing::RungRole::Primary;
         Ok(self)
@@ -661,12 +671,21 @@ impl PendingEmbeddingReconciler {
         let rung_endpoint = self.remote_rung.as_ref().map(RemoteRung::endpoint);
         // The pods' hours are read once, before the writer: a job the wait
         // names is held before its payload is read.
-        let wait = PodHoursWait::default();
         let outside_pod_hours = self
             .pod_hours
             .as_ref()
             .is_some_and(|clock| clock.outside_pod_hours());
         self.vault.with_write_txn_grouped(|wtxn| {
+            // The owner's wait is read in the writer too, and only while the
+            // pods are outside their hours: every change committed before
+            // this pass is one it reads (NIGHT-BACKFILL-HOLD).
+            let wait = if outside_pod_hours {
+                setting_keys::POD_HOURS_WAIT
+                    .read_in_txn(&self.vault, wtxn, &[], None)?
+                    .value
+            } else {
+                PodHoursWait::Nothing
+            };
             let world_spaces = world_space::WorldTextSpaces::read_in(&self.vault, wtxn)?;
             let flagged_primary =
                 crate::settings::device_local_worlds_for(&self.vault, wtxn, &primary_endpoint)?;
@@ -687,7 +706,7 @@ impl PendingEmbeddingReconciler {
                 if batch.work.len() >= self.batch_size {
                     break;
                 }
-                if outside_pod_hours && wait.holds(job.priority) {
+                if wait.holds(job.priority) {
                     batch.held_for_pod_hours += 1;
                     continue;
                 }

@@ -1,0 +1,14 @@
+{
+  "name": "vault.consolidation.extraction.observations.page",
+  "description": "The owner under proof or a reader with a live Steward grant naming read pages the facts one extraction attempt's candidate operands need: engine claim ids, equality tokens, evidence counts, admitted priors and similarity scores; no words.",
+  "input": "crate::snapshot_read::ExtractionObservationsPageRequest",
+  "output": "crate::claim::ScopedReadResult<crate::snapshot_read::ExtractionObservationsPage>",
+  "call": "crate::snapshot_read::extraction_observations_page(memory, &input)?",
+  "scope": "Read",
+  "act_class": "read",
+  "admission": {
+    "lane_record_scope": true
+  },
+  "section": false,
+  "mcp_scope": "filtered"
+}

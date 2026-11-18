@@ -2,6 +2,7 @@
 
 use super::{ProactivityPolicyRequest, load_cadence, load_presentation};
 use crate::dreamer_runner::maintenance::MAINTENANCE_QUEUE_KIND;
+use crate::dreamer_runner::maintenance::stewardship::wake_dedupe_key;
 use crate::dreamer_runner::{DreamerAdmittedAttempt, DreamerAttemptPayload, DreamerRunnerStore};
 use crate::{Result, Vault};
 
@@ -25,12 +26,7 @@ impl DreamerRunnerStore<'_> {
                 input: rmpv::Value::Nil,
                 parent_attempt,
             },
-            wake_key.map(|key| {
-                format!(
-                    "{PROACTIVITY_POLICY_FACET}:{}",
-                    blake3::hash(key.as_bytes()).to_hex()
-                )
-            }),
+            wake_key.map(|key| wake_dedupe_key(PROACTIVITY_POLICY_FACET, key)),
             run_id,
             now,
         )?;

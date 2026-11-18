@@ -66,7 +66,7 @@ pub const FOLLOWUP_WAKE_LIMIT: usize = 64;
 /// next pass resumes after the last one read.
 pub const FOLLOWUP_SWEEP_ROWS: usize = 4_096;
 
-/// Page size for the bounded TASK walk in [`HumanTaskFollowupDriver::rebuild_cursors`].
+/// Page size for the bounded TASK walk in `HumanTaskFollowupDriver::rebuild_cursors`.
 pub const REBUILD_PAGE: usize = 256;
 
 /// Typed failure surface for native-human routing and response signalling.

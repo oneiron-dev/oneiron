@@ -221,16 +221,25 @@ async fn v1_core_memory_verbs_resolve_aliases_to_typed_operations() {
     seed_active_claim(&server, new, subject, "after", 320);
     seed_active_claim(&server, retractable, subject, "withdraw", 330);
 
-    let (replace_status, replace_body) = route_json_auth(
+    // supersede and a retract naming `at` are the vault owner's mechanics on
+    // this route (LEGACY-MEMORY-VERB-RETRACT-SUPERSEDE-UNGUARDED): the
+    // default read+write recipe names no person, so they travel on the
+    // owner's own slip.
+    let owner = test_bearer(&format!(
+        "principal_ref={};actor_class=human",
+        server.vault.ensure_embedded_owner_actor().unwrap().to_hex()
+    ));
+    let (replace_status, replace_body) = route_json(
         server.clone(),
-        json_request(
+        core_request_with_authz(
             "POST",
             "/v1/core/memory/verbs/replace",
-            json!({
+            owner.clone(),
+            Some(&json!({
                 "new_id": new.to_hex(),
                 "old_id": old.to_hex(),
                 "at": 900_u64
-            }),
+            })),
         ),
     )
     .await;
@@ -240,15 +249,16 @@ async fn v1_core_memory_verbs_resolve_aliases_to_typed_operations() {
     assert_eq!(replace_body["new_id"], Value::from(new.to_hex()));
     assert_eq!(replace_body["old_id"], Value::from(old.to_hex()));
 
-    let (withdraw_status, withdraw_body) = route_json_auth(
+    let (withdraw_status, withdraw_body) = route_json(
         server.clone(),
-        json_request(
+        core_request_with_authz(
             "POST",
             "/v1/core/memory/verbs/withdraw",
-            json!({
+            owner,
+            Some(&json!({
                 "id": retractable.to_hex(),
                 "at": 901_u64
-            }),
+            })),
         ),
     )
     .await;

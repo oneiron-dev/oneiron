@@ -185,6 +185,12 @@ pub(crate) struct CoreRunTreeNode {
     #[serde(rename = "agent_id", skip_serializing_if = "Option::is_none")]
     #[schema(example = "companion.agent.summarizer")]
     agent_id: Option<String>,
+    /// The model id and revision the attempt's executor ran, as its lease
+    /// stamped it. Elided when no run stamped one; the seat and role that
+    /// configured it are not shown.
+    #[serde(rename = "executor_model", skip_serializing_if = "Option::is_none")]
+    #[schema(example = "anthropic/claude-opus@2026-07-01")]
+    executor_model: Option<String>,
     /// Surface lifecycle state.
     status: CoreRunTreeStatus,
     /// The artifact version this attempt's durable output lives in, copied from

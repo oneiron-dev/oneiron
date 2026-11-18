@@ -34,8 +34,10 @@ pub const PERSONA_SNAPSHOT_NAME_PREDICATE: &str = "profile.name";
 pub const PERSONA_SNAPSHOT_ROLE_PREDICATE: &str = "profile.role";
 
 /// Sensitivity band at or above which a claim is Tier A for disclosure
-/// (OF-365): restricted-band claims never enter a compile. A claim whose
-/// band cannot be resolved unambiguously also never enters (fail closed).
+/// (OF-365): restricted-band claims never enter a compile, unless the
+/// subject is a live owner whose `persona_snapshot.compile.include_restricted_band`
+/// is on. A claim whose band cannot be resolved unambiguously never enters
+/// (fail closed).
 pub(super) const TIER_A_MIN_SENSITIVITY_BAND: u8 = 3;
 
 pub(super) const ROW_ID_PREFIX: &str = "row:";
