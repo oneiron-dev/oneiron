@@ -391,7 +391,6 @@ impl WindowManager {
         }
         let base = decode_base(opened.base())?;
         let carried = base.checkpoint.as_ref();
-        checkpoint::adopt(vault, vault_id, carried, trust, seed, confirm)?;
         let (capsules, awaiting_reader) = opened.authority_history_with_kit(seed)?;
         let authority = with_world_authority(base.authority, capsules);
         let mut restore = SealedKitRestore {
@@ -399,7 +398,16 @@ impl WindowManager {
             awaiting_reader,
             ..SealedKitRestore::default()
         };
-        vault.import_signed_authority_history(&authority)?;
+        // Only the kit's live root authority key puts this machine on the
+        // roster, so a kit a newer one replaced is refused on the fold the
+        // image's adoption and the history's import would commit, in their
+        // one transaction, and neither is written
+        // (WAYBACK-KIT-RESTORE-NO-LIVE-R = A; REVIEW-9488 P1 1).
+        vault.import_signed_authority_history_judged(
+            &authority,
+            |txn| checkpoint::adopt_in_txn(vault, txn, vault_id, carried, trust, seed, confirm),
+            |fold| vault.kit_root_authority_signer(fold, seed).map(drop),
+        )?;
         {
             let txn = vault.store.env.read_txn()?;
             let fold = vault.authority_view_readonly_in_txn(&txn)?;
@@ -408,11 +416,25 @@ impl WindowManager {
             }
             opened.require_publisher(&fold, None)?;
         }
+        // R is judged again, and this install's identity minted, before any
+        // window lands; then before each window, and last in the transaction
+        // that lands the pads and the world keys, so no pad, world key, pin
+        // or roster row outlives a kit a revocation retired after the
+        // history's import (REVIEW-9488 round 2 P1 2). Each base window still
+        // commits in its own writers: one may land under an R revoked after
+        // its check (FIX KIT-RESTORE-BASE-WINDOWS-OUTSIDE-R-WRITER).
+        let prepared = vault.restore_prep(owner, seed, confirm)?;
+        let kit_root_live = || -> Result<()> {
+            let txn = vault.store.env.read_txn()?;
+            let fold = vault.authority_view_readonly_in_txn(&txn)?;
+            vault.kit_root_authority_signer(&fold, seed).map(drop)
+        };
         // Base windows first: a window of a world read everywhere may name a
         // base row.
         let mut windows = base.windows;
         windows.sort_by_key(|(key, _)| key.world().is_some());
         for (key, snapshot) in &windows {
+            kit_root_live()?;
             let (window, _) = self.replace_window_bounded(
                 key,
                 snapshot,
@@ -431,9 +453,20 @@ impl WindowManager {
         // Before every section that opens with them, less what current
         // retirement names now the base windows are in (PAD-1).
         restore_pads::admit_kit_pads(vault, &mut pads);
-        restore.pads = vault.restore_key_pads(&pads)?;
-        restore_pads::reconcile_owed_epochs(vault);
-        restore.keys = vault.restore_world_keys(owner, seed, confirm)?;
+        let mut reconciled = false;
+        (restore.pads, restore.keys) = vault.restore_kit_pads_and_world_keys(
+            owner,
+            seed,
+            confirm,
+            &prepared,
+            &pads,
+            |txn| {
+                reconciled = restore_pads::reconcile_owed_epochs_in_txn(vault, txn);
+            },
+        )?;
+        if reconciled {
+            restore_pads::prune_carried_pads(vault);
+        }
         for section in vault.open_vault_bundle_sections_with_kit(&opened, &pads, seed)? {
             self.take_section(&section, true, &mut restore.take);
         }
@@ -695,12 +728,10 @@ fn deleted_here(vault: &Vault, world: EntityId) -> Result<bool> {
 /// Refuses a kit restore on an install that holds another vault, or that is
 /// already one of the owner's machines here: that one takes the bundle instead.
 fn refuse_machine_of_the_vault(vault: &Vault, vault_id: &[u8; 32]) -> Result<()> {
-    // No machine identity yet reads as none.
-    let machine = vault
-        .machine_secret_outside_txn()
-        .ok()
-        .map(|secret| secret.machine);
+    // The stored machine id alone, none yet reading as none: no secret is
+    // loaded or made before the kit's R is judged (REVIEW-9488 round 2 P1 1).
     let txn = vault.store.env.read_txn()?;
+    let machine = crate::identity::read_machine_id_in_txn(vault, &txn)?;
     let fold = vault.authority_view_readonly_in_txn(&txn)?;
     if fold.vault_id.is_some_and(|held| held != *vault_id) {
         return Err(refused("this install holds another vault"));
