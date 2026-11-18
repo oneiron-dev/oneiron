@@ -5886,7 +5886,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/receipt/ledgers.rs` | src | m | 4 fn · 18 crate-vis | — | — |
 | `src/receipt/lens.rs` | src | s | 1 re-export | — | The receipts of the pack lens lifecycle (OF-250): a proposal, and the owner's selection or clearing of a… |
 | `src/receipt/mod.rs` | src | s | 5 mod · 20 re-export · 32 crate-vis | — | Unified receipt-family query surface over existing receipt emitters |
-| `src/receipt/off_device.rs` | src | m | 5 crate-vis | — | A caller off this device and the receipt family (FIX 1119, FIX 1120): the rows each receipt names, by its… |
+| `src/receipt/off_device.rs` | src | m | 6 crate-vis | — | A caller off this device and the receipt family (FIX 1119, FIX 1120): the rows each receipt names, by its… |
 | `src/receipt/pack_attribution.rs` | src | s | 2 struct · 1 fn · 1 re-export · 8 crate-vis | PackAttributionFields, PackLearningContext | Frozen execution and actual-use facts on an attempt's pack receipt |
 | `src/receipt/projection.rs` | src | L | 5 struct · 3 fn · 8 crate-vis | BriefReceiptProjection, CounterpartyReceiptProjection, GrantReceiptProjection, ReceiptProjectionIntent, ReceiptProjectionRun | — |
 | `src/receipt/prompt_stamp.rs` | src | s | 1 struct · 1 const | PromptRecompileStamp | Receipt stamp for a compiled prompt package |
@@ -10068,6 +10068,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/vault_sync_doors.rs` | test | m | — | — | The `vault.sync.*` doors keep the sync promises (ruling L4-23 = A: each test proves a promise at its public… |
 | `tests/vault_tasks_doors.rs` | test | m | — | — | The `vault.tasks.*` doors keep the force-stop, stop-asking and Linear mirror promises (ruling L4-23 = A… |
 | `tests/verb_connector_call_source_rows.rs` | test | m | — | — | `connector.call_source_rows` through the generated verb dispatch (`oneiron::task_verb::sdk::invoke`), as a… |
+| `tests/verb_hook_receipt_credential_screen.rs` | test | m | — | — | A verb hook's receipt is screened by its real rows, not its invocation (HOOKS-04, leg B1) |
 | `tests/verb_self_memory_diary_pinned.rs` | test | m | — | — | `self.memory.diary.pinned` through the generated verb dispatch (`oneiron::task_verb::sdk::invoke`), as a… |
 | `tests/verb_self_memory_self_model.rs` | test | m | — | — | `self.memory.self_model` through the generated verb dispatch (`oneiron::task_verb::sdk::invoke`), as a… |
 | `tests/verb_self_skills_package.rs` | test | m | — | — | `self.skills.package`: an agent with a read permit but no Grant naming the verb is refused, the holder reads… |
