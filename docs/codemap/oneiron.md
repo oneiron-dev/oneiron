@@ -2894,9 +2894,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/dreamer_runner/lease_fence.rs` | src | s | 5 crate-vis | — | The lease a wake pass ran an admitted try under, and the park fenced on it (FIX 6057): a held program… |
 | `src/dreamer_runner/maintenance/action_mode.rs` | src | m | 4 struct · 1 enum · 2 fn · 2 const · 7 crate-vis | ActionModeCeiling, ActionModeEffect, ActionModePolicy, ActionModeProjection, ActionModeRule | Action modes (OF-335): the owner's bands over the composite state index, each naming a mode in the owner's… |
 | `src/dreamer_runner/maintenance/action_mode/setting_keys.rs` | src | s | — | — | The owner's auto-apply of an action-mode patch as a Setting key (restriction wave 14, C22; Engine RULING… |
-| `src/dreamer_runner/maintenance/agent_health.rs` | src | s | 1 const · 1 mod · 14 re-export · 13 crate-vis | — | The Coach's agent-health review (OF-568, agent-mind §3): a closed-form T1 recipe on the gated maintenance… |
+| `src/dreamer_runner/maintenance/agent_health.rs` | src | s | 1 const · 1 mod · 14 re-export · 14 crate-vis | — | The Coach's agent-health review (OF-568, agent-mind §3): a closed-form T1 recipe on the gated maintenance… |
 | `src/dreamer_runner/maintenance/agent_health/apply.rs` | src | m | 2 fn · 1 re-export · 1 crate-vis | — | The owner applies the Coach's `skill_edit` draft on an agent-health card (OF-568, FIX 1849) |
-| `src/dreamer_runner/maintenance/agent_health/ask.rs` | src | m | 3 struct · 1 trait · 2 fn · 1 const · 1 re-export · 1 crate-vis | AgentHealthCoachAnswer, AgentHealthCoachAsk, CoachHealthBrief, CoachHealthHost | Ask the Coach (agent-mind §3.5): a card's reader takes its `ask_coach` move, and a `coach.agent_health_ask`… |
+| `src/dreamer_runner/maintenance/agent_health/ask.rs` | src | m | 3 struct · 1 trait · 2 fn · 1 const · 1 re-export · 2 crate-vis | AgentHealthCoachAnswer, AgentHealthCoachAsk, CoachHealthBrief, CoachHealthHost | Ask the Coach (agent-mind §3.5): a card's reader takes its `ask_coach` move, and a `coach.agent_health_ask`… |
 | `src/dreamer_runner/maintenance/agent_health/brief.rs` | src | s | 2 struct · 3 crate-vis | HealthBriefPin, HealthObservedBrief | The typed brief one agent-health review observed (OF-568 L7, agent-mind §3.5: "the evidence: the brief… |
 | `src/dreamer_runner/maintenance/agent_health/call_evidence.rs` | src | m | 14 crate-vis | — | The call receipts the agent-health review reads, by the attempt each names (OF-568 L4) |
 | `src/dreamer_runner/maintenance/agent_health/call_loop.rs` | src | s | 1 crate-vis | — | `loop` over agents' call receipts, one call stream at a time (`call_evidence`, OF-568 L4) |
@@ -2911,7 +2911,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/dreamer_runner/maintenance/agent_health/grant_reads.rs` | src | s | 2 struct · 3 fn · 1 re-export | AgentCallReceipt, DiagnosticEvidence | The agent health rows any granted agent reads (untangle 6.6c): the health cards of a period, an agent's call… |
 | `src/dreamer_runner/maintenance/agent_health/loaded.rs` | src | s | 2 re-export · 6 crate-vis | — | The skills a card's run loaded (OF-568, FIX 3724): each SKILL revision the pack manifest of the card's… |
 | `src/dreamer_runner/maintenance/agent_health/moves.rs` | src | m | 1 enum · 2 fn · 1 re-export · 1 crate-vis | ConcernMoveOutcome | A card's moves (agent-mind §3.5: "moves, each a proposal that the leader or owner takes"): `ask_coach`… |
-| `src/dreamer_runner/maintenance/agent_health/outcomes.rs` | src | m | 1 struct · 1 fn · 1 re-export · 3 crate-vis | HealthReviewReceipt | Reviewer outcome receipts (OF-568 L9, agent-mind §3.7: "Score the reviewer"; "Health flags never move… |
+| `src/dreamer_runner/maintenance/agent_health/outcomes.rs` | src | m | 1 struct · 1 fn · 1 re-export · 4 crate-vis | HealthReviewReceipt | Reviewer outcome receipts (OF-568 L9, agent-mind §3.7: "Score the reviewer"; "Health flags never move… |
 | `src/dreamer_runner/maintenance/agent_health/outcomes/float_setting_fit.rs` | src | s | 1 crate-vis | — | Exact-float dial fits for `long_wait`, `cost_spike` and `silent` (FIX 8076): an owner's verdict on a card… |
 | `src/dreamer_runner/maintenance/agent_health/outcomes/review_state.rs` | src | s | 1 re-export · 3 crate-vis | — | One agent-health review state froze the card's DIAGNOSTICs and evidence ids as an outcome found them (FIX… |
 | `src/dreamer_runner/maintenance/agent_health/outcomes/setting_fit.rs` | src | s | 1 crate-vis | — | Integer health-threshold checks derived from an owner's frozen card label |
@@ -2954,7 +2954,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/dreamer_runner/maintenance/coach/person_threshold.rs` | src | s | 1 fn | — | Q3 tuning as the Coach (ARCH-0076 #ask, FIX 8708): every requested override record is read, a page at a… |
 | `src/dreamer_runner/maintenance/coach/think_threshold.rs` | src | s | 1 trait · 2 fn · 2 crate-vis | ThinkThresholdPolicy | Q2 tuning as the Coach (ARCH-0076 #ask, FIX 2437): the ThinkThreshold row learns from quick picks that later… |
 | `src/dreamer_runner/maintenance/coach_diagnostic.rs` | src | m | 1 struct · 1 enum · 2 fn · 1 const · 2 re-export · 8 crate-vis | ProducerFixDraft, ProducerTarget | The Coach's diagnosis of a model finding's issue (OF-418 L3; ARCH-0066 §4, §6) |
-| `src/dreamer_runner/maintenance/coach_environment.rs` | src | s | 2 struct · 3 crate-vis | CoachEnvironmentDraft, EnvironmentGrantTarget | Reviewable grant-environment repair data for a failure-ladder case |
+| `src/dreamer_runner/maintenance/coach_environment.rs` | src | s | 2 struct · 4 crate-vis | CoachEnvironmentDraft, EnvironmentGrantTarget | Reviewable grant-environment repair data for a failure-ladder case |
 | `src/dreamer_runner/maintenance/coach_heal.rs` | src | L | 2 struct · 1 enum · 1 trait · 3 fn · 4 re-export · 9 crate-vis | CoachHealAuthor, HealDecisions, HealRoute, IssuesRun | The Coach's heal and Issues jobs (ARCH-0066 #coach, OF-418) |
 | `src/dreamer_runner/maintenance/coach_learning.rs` | src | s | 3 fn · 2 const · 2 crate-vis | — | The Coach's own record (ARCH-0066 #coach: "calibration, meta-learning"): each anchored outcome of the… |
 | `src/dreamer_runner/maintenance/coach_person.rs` | src | s | 1 crate-vis | — | Case-bound human-escalation intent in the Coach's ordinary proposal write |
@@ -2962,14 +2962,14 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/dreamer_runner/maintenance/coach_repair.rs` | src | m | 7 crate-vis | — | The Coach's draft-first skill repair (ARCH-0066 #healer, OF-418) |
 | `src/dreamer_runner/maintenance/coach_research.rs` | src | s | 1 trait · 3 fn | ResearchGoalOracle | The Coach's autoresearch jobs (OF-351, FIX 886, FIX 1331), both on the host lane: execution advances a… |
 | `src/dreamer_runner/maintenance/coach_resolution.rs` | src | s | 1 crate-vis | — | The Coach's resolution of its model issues (OF-418 L3; ARCH-0066 §6) |
-| `src/dreamer_runner/maintenance/code_fix.rs` | src | m | 5 struct · 1 trait · 3 fn · 1 const · 4 re-export · 2 crate-vis | CodeFixDecisions, CodeFixDraft, CodeFixHost, CodeFixJob, CodeFixSettled, CodeFixWork | The Coach's code fixes (DEC-0005 FIX6, OF-380) |
+| `src/dreamer_runner/maintenance/code_fix.rs` | src | m | 5 struct · 1 trait · 3 fn · 1 const · 4 re-export · 3 crate-vis | CodeFixDecisions, CodeFixDraft, CodeFixHost, CodeFixJob, CodeFixSettled, CodeFixWork | The Coach's code fixes (DEC-0005 FIX6, OF-380) |
 | `src/dreamer_runner/maintenance/code_fix/admission.rs` | src | m | 18 crate-vis | — | The Coach's admission to a failure's captured source (FIX 6357, 7031, 7548, 8704) |
 | `src/dreamer_runner/maintenance/code_fix/candidate_run.rs` | src | s | 1 struct · 4 crate-vis | CandidateRun | Candidate results and the native origin each replay carries |
 | `src/dreamer_runner/maintenance/code_fix/engine.rs` | src | m | 2 crate-vis | — | A publisher's engine candidate replayed against the real failure (FIX 1661, 2144, 6357): one matched pair on… |
 | `src/dreamer_runner/maintenance/code_fix/instruction.rs` | src | m | 9 crate-vis | — | The Coach's in-vault replay of an instruction candidate (OF-380, FIX 1662): the failing agent's call as the… |
 | `src/dreamer_runner/maintenance/code_fix/publisher.rs` | src | m | 2 struct · 3 enum · 1 trait · 2 fn · 1 re-export · 4 crate-vis | CodeFixShadowHost, EngineArmStatus, EngineArmSummary, EngineCandidateRun, EngineNotRun, EnginePairState | A publisher's candidates beyond an instruction (FIX 1661, 2144): a candidate engine build, or a patch over… |
 | `src/dreamer_runner/maintenance/code_fix/publisher_refs.rs` | src | s | 1 fn · 1 re-export | — | Local references to occurrences in the host's actual publisher inputs |
-| `src/dreamer_runner/maintenance/code_fix/work.rs` | src | m | 10 crate-vis | — | A code fix's work rows (OF-380): each failure's row and its key, the `coach.code_fix` run a filed heal… |
+| `src/dreamer_runner/maintenance/code_fix/work.rs` | src | m | 11 crate-vis | — | A code fix's work rows (OF-380): each failure's row and its key, the `coach.code_fix` run a filed heal… |
 | `src/dreamer_runner/maintenance/compaction_check.rs` | src | m | 2 struct · 1 enum · 3 fn · 1 const · 2 re-export · 4 crate-vis | CompactionCheckDeclaration, CompactionCheckModel, CompactionCheckVerdict | The Dreamer's check of a self-written compaction (FIX 4465 B; owner 10-19: the Dreamer "checks the agent's… |
 | `src/dreamer_runner/maintenance/compaction_check/conversation.rs` | src | m | 5 crate-vis | — | The Dreamer's check of a conversation's self-written summary (FIX 4465 D), on the same maintenance queue and… |
 | `src/dreamer_runner/maintenance/compaction_check/support.rs` | src | m | 1 struct · 11 crate-vis | CompactionCheckDecisions | The support verdict of a compaction check (FIX 8713) |
@@ -2978,7 +2978,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/dreamer_runner/maintenance/curator.rs` | src | L | 1 struct · 1 enum · 5 fn · 1 re-export · 14 crate-vis | CuratorRubric, CuratorTrigger | Curator grading data and minimum-force findings |
 | `src/dreamer_runner/maintenance/curator/approved.rs` | src | s | 1 fn · 2 crate-vis | — | A curator rung the owner approved (FIX 3223) |
 | `src/dreamer_runner/maintenance/detectors.rs` | src | s | 1 crate-vis | — | The Coach's nightly detector pass (ARCH-0066 §4, OF-298): the tier-1 sweep over Gate receipts plus the… |
-| `src/dreamer_runner/maintenance/digest.rs` | src | m | 8 struct · 8 fn · 7 const · 6 re-export · 10 crate-vis | DigestCleanup, DigestNoteTombstones, ProactivityDelivery, ProactivityDigest, ProactivityPeriod, ProactivityPolicyProposal, ProactivityPolicyRequest, ProactivityPresentation | One durable proactivity digest per vault cadence, with intent-bound urgent wakes |
+| `src/dreamer_runner/maintenance/digest.rs` | src | m | 8 struct · 8 fn · 7 const · 6 re-export · 11 crate-vis | DigestCleanup, DigestNoteTombstones, ProactivityDelivery, ProactivityDigest, ProactivityPeriod, ProactivityPolicyProposal, ProactivityPolicyRequest, ProactivityPresentation | One durable proactivity digest per vault cadence, with intent-bound urgent wakes |
 | `src/dreamer_runner/maintenance/digest/after_notice.rs` | src | s | 1 struct · 1 const · 1 re-export · 3 crate-vis | DigestApplied | The applied-maintenance after-notice a regular digest carries (FIX 3226, OF-023): the Dreamer's maintenance… |
 | `src/dreamer_runner/maintenance/digest/assembly.rs` | src | m | 1 crate-vis | — | Assembles one digest in one write: select, mark seen, store, notify |
 | `src/dreamer_runner/maintenance/digest/pending.rs` | src | s | 4 crate-vis | — | What a digest may carry that no digest carried yet, by its seen state |
@@ -2986,19 +2986,19 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/dreamer_runner/maintenance/digest/policy_author.rs` | src | s | 3 crate-vis | — | Proposed shared digest rhythm from the existing owner's Weave verdict |
 | `src/dreamer_runner/maintenance/digest/private_sources.rs` | src | s | 1 re-export · 2 crate-vis | — | The proactivity digest's screen of private thread words (FIX 6411; FIX 6381 and 6383: "never the words") |
 | `src/dreamer_runner/maintenance/digest/tests.rs` | test | m | — | — | — |
-| `src/dreamer_runner/maintenance/digest/urgent.rs` | src | m | 4 struct · 8 fn · 3 const · 1 re-export · 13 crate-vis | DigestHarmAsk, DigestHarmCandidate, DigestHarmJudgeInput, UrgentDigestAssessment | The digest's urgent breakthrough (OF-194 L3; ARCH-0026: "urgent breakthrough only when waiting would harm… |
+| `src/dreamer_runner/maintenance/digest/urgent.rs` | src | m | 4 struct · 8 fn · 3 const · 1 re-export · 15 crate-vis | DigestHarmAsk, DigestHarmCandidate, DigestHarmJudgeInput, UrgentDigestAssessment | The digest's urgent breakthrough (OF-194 L3; ARCH-0026: "urgent breakthrough only when waiting would harm… |
 | `src/dreamer_runner/maintenance/digest/urgent/intent.rs` | src | s | 5 crate-vis | — | The urgent digest's stated-intent read: the Approved, Active, non-stale UserStated `profile.intent` about… |
 | `src/dreamer_runner/maintenance/digest/view.rs` | src | m | 1 struct · 2 fn · 1 re-export · 6 crate-vis | ProactivityDigestView | A delivered proactivity digest as one viewer reads it (FIX 6411) |
 | `src/dreamer_runner/maintenance/evaluation.rs` | src | m | 3 struct · 6 fn · 1 const · 2 re-export · 2 crate-vis | DreamerTuningConfig, HarnessEvaluationTarget, RetuneThresholds | Eval-schedule observations over actual immutable config artifact versions |
 | `src/dreamer_runner/maintenance/evaluation/of360.rs` | src | s | 3 struct · 1 enum · 1 fn · 3 crate-vis | HarnessOf360Evaluation, HarnessOf360Metric, HarnessOf360Observation, HarnessOf360Scheduled | Owner-selected native OF360 metrics over the supplied, digest-pinned inputs |
 | `src/dreamer_runner/maintenance/feedback_triage.rs` | src | s | 1 fn · 1 crate-vis | — | The Coach's feedback triage findings (OF-420 T1) |
 | `src/dreamer_runner/maintenance/feedback_triage/lease.rs` | src | s | 1 fn · 1 crate-vis | — | The feedback sweep's lease on a long GitHub walk (FIX 7628) |
-| `src/dreamer_runner/maintenance/fold_suggestions.rs` | src | s | 1 crate-vis | — | Fold suggestions per agent type (FIX 12572; owner 2026-11-03 20:31 and 20:33, ledger… |
-| `src/dreamer_runner/maintenance/fork_promote.rs` | src | m | 1 struct · 1 trait · 1 fn · 2 const | ForkPromoteReport, UpstreamSeat | The project tree fork (ARCH-0079 #task-type, OF-420): a project whose receipts disagree with the vault tree… |
+| `src/dreamer_runner/maintenance/fold_suggestions.rs` | src | s | 2 crate-vis | — | Fold suggestions per agent type (FIX 12572; owner 2026-11-03 20:31 and 20:33, ledger… |
+| `src/dreamer_runner/maintenance/fork_promote.rs` | src | m | 1 struct · 1 trait · 1 fn · 2 const · 1 crate-vis | ForkPromoteReport, UpstreamSeat | The project tree fork (ARCH-0079 #task-type, OF-420): a project whose receipts disagree with the vault tree… |
 | `src/dreamer_runner/maintenance/fork_promote/leaf_promote.rs` | src | m | 1 crate-vis | — | The promote step of the project tree fork pass (ARCH-0079 #task-type, OF-420): a type a project's own tree… |
-| `src/dreamer_runner/maintenance/fork_promote/project_upkeep.rs` | src | m | 1 crate-vis | — | Project tree upkeep (ARCH-0079 #task-type, OF-420): a project on a tree of its own keeps reshaping it from… |
+| `src/dreamer_runner/maintenance/fork_promote/project_upkeep.rs` | src | m | 2 crate-vis | — | Project tree upkeep (ARCH-0079 #task-type, OF-420): a project on a tree of its own keeps reshaping it from… |
 | `src/dreamer_runner/maintenance/fork_promote/project_upkeep/admission.rs` | src | s | 5 crate-vis | — | The owner's goal on a project tree revision (FIX 8706, CALL R3) |
-| `src/dreamer_runner/maintenance/fork_promote/project_upkeep/state.rs` | src | s | 14 crate-vis | — | The project tree upkeep journal: one row per project and body of its evidence, naming the Candidate revision… |
+| `src/dreamer_runner/maintenance/fork_promote/project_upkeep/state.rs` | src | s | 15 crate-vis | — | The project tree upkeep journal: one row per project and body of its evidence, naming the Candidate revision… |
 | `src/dreamer_runner/maintenance/honesty.rs` | src | s | 1 const · 2 crate-vis | — | The Coach's audit-draw recipe on the shared, gated maintenance lane |
 | `src/dreamer_runner/maintenance/identity.rs` | src | m | 2 struct · 1 enum · 2 fn · 4 const · 4 re-export · 15 crate-vis | IdentityCardCopy, IdentityDecisions, IdentityRuling | Background identity checks (OF-123; owner ruling: ask rule B) |
 | `src/dreamer_runner/maintenance/identity/admission.rs` | src | s | 1 fn · 9 crate-vis | — | Identity asks as one reader may read them (FIX 8711) |
@@ -3017,7 +3017,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/dreamer_runner/maintenance/judge_label_rechecks.rs` | src | s | 1 fn · 1 re-export | — | The judge labels' re-check after a rubric edit, run (ARCH-0042 "A human edits the rubric at any time |
 | `src/dreamer_runner/maintenance/judge_label_rechecks/decide.rs` | src | s | 2 struct · 1 enum · 3 fn | JudgeLabelFitCheck, JudgeLabelFitDecision, JudgeLabelFitDecisions | The judge label recheck's fits question on the decision ladder (ARCH-0076 #decide-required): "Every such… |
 | `src/dreamer_runner/maintenance/layout_suggestions.rs` | src | s | 1 crate-vis | — | Board layout suggestions per agent type (FIX 12572, layout half; owner 2026-11-03 20:31, ledger… |
-| `src/dreamer_runner/maintenance/mod.rs` | src | m | 1 fn · 3 const · 28 mod · 13 re-export · 25 crate-vis | — | Scheduled curator and harness-evaluation facets on one gated Dreamer authority, and the Coach's nightly… |
+| `src/dreamer_runner/maintenance/mod.rs` | src | m | 1 fn · 3 const · 28 mod · 13 re-export · 26 crate-vis | — | Scheduled curator and harness-evaluation facets on one gated Dreamer authority, and the Coach's nightly… |
 | `src/dreamer_runner/maintenance/optimize.rs` | src | m | 2 struct · 2 crate-vis | CoachLiveSlice, CoachSkillOptimizer | The Coach's skill-maintenance body on the shared wake runner |
 | `src/dreamer_runner/maintenance/person_threshold.rs` | src | s | 1 fn | — | The accepted PersonThreshold row (Q3) |
 | `src/dreamer_runner/maintenance/proposals.rs` | src | m | 14 crate-vis | — | The shared Generated writer for deterministic maintenance findings |
@@ -3028,14 +3028,14 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/dreamer_runner/maintenance/representation/tests.rs` | test | m | — | — | Public-path fixture: queued wake -> review -> OF-327 task -> recorded sink |
 | `src/dreamer_runner/maintenance/retrieval_policy.rs` | src | s | 1 crate-vis | — | The Coach's retrieval-policy update on the shared nightly maintenance lane: the fast loop, then the slow… |
 | `src/dreamer_runner/maintenance/retrieval_skill_review.rs` | src | m | 6 struct · 4 enum · 1 trait · 2 fn · 1 const · 1 crate-vis | RetrievalLearnerSetting, RetrievalSkillBrief, RetrievalSkillFile, RetrievalSkillReviewer, RetrievalSlowLoopStatus, RetrievalSlowLoopView, RetrievalTuningDisposition, RetrievalTuningKnob +3 | The Coach's slow retrieval loop (ARCH-0053 #tune-retrieval, census L1-18) |
-| `src/dreamer_runner/maintenance/room_upkeep.rs` | src | m | 2 crate-vis | — | Room upkeep (ARCH-0067 §8, ARCH-0079, OF-417): "The engine performs every room's mechanical upkeep, and a… |
+| `src/dreamer_runner/maintenance/room_upkeep.rs` | src | m | 3 crate-vis | — | Room upkeep (ARCH-0067 §8, ARCH-0079, OF-417): "The engine performs every room's mechanical upkeep, and a… |
 | `src/dreamer_runner/maintenance/seal_checks.rs` | src | s | 1 struct · 1 enum · 1 trait · 2 fn · 1 re-export | SealCheck, SealCheckReport, SealChecker | The seal's checks, run (ARCH-0079 #stuck-confession-and-the-seal, OF-544, OF-420): "A confession triggers a… |
 | `src/dreamer_runner/maintenance/seal_checks/decide.rs` | src | s | 2 struct · 1 enum · 3 fn | SealObjectiveCheck, SealObjectiveDecision, SealObjectiveDecisions | The seal's objective questions on the decision ladder (ARCH-0076 #decide-required, DECIDE-BYPASS-2): "Every… |
 | `src/dreamer_runner/maintenance/setting_keys.rs` | src | s | — | — | The settings the Dreamer's maintenance keeps (DESIGN 15-setting-primitive, stages 1 and 2): each row is one… |
 | `src/dreamer_runner/maintenance/site_skills.rs` | src | m | 1 struct · 1 fn · 1 const · 1 crate-vis | CoachSiteSkillsReport | The Coach's site skills (CUA E8b, FIX 7606): each night, fixed code reads the same solved-run evidence… |
 | `src/dreamer_runner/maintenance/site_skills/distill.rs` | src | L | 12 crate-vis | — | Deterministic rendering for the Coach's site skills (CUA E8b, FIX 7606): one candidate folder per site from… |
 | `src/dreamer_runner/maintenance/source_erase.rs` | src | s | 1 crate-vis | — | The one entity eraser maintenance registers with both delete doors (`deletion::derived_rows`): each copy of… |
-| `src/dreamer_runner/maintenance/stewardship.rs` | src | L | 4 struct · 1 enum · 8 fn · 2 const · 1 re-export · 5 crate-vis | StewardshipDraftOutcome, StewardshipDraftPage, StewardshipDraftRequest, StewardshipRule, StewardshipRules | Relationship stewardship (ARCH-0026, Forward and relationships) |
+| `src/dreamer_runner/maintenance/stewardship.rs` | src | L | 4 struct · 1 enum · 8 fn · 2 const · 1 re-export · 7 crate-vis | StewardshipDraftOutcome, StewardshipDraftPage, StewardshipDraftRequest, StewardshipRule, StewardshipRules | Relationship stewardship (ARCH-0026, Forward and relationships) |
 | `src/dreamer_runner/maintenance/strength.rs` | src | s | 1 fn · 1 const · 1 crate-vis | — | Nightly strength maintenance rides the existing wake recipe/run-tree lane |
 | `src/dreamer_runner/maintenance/tests.rs` | test | s | — | — | — |
 | `src/dreamer_runner/maintenance/type_tree_gate.rs` | src | m | 8 crate-vis | — | The held-out gate on a team-shape tree revision (ARCH-0079 #task-type, OF-420): "revised by the loop from… |
@@ -3070,11 +3070,11 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/dreamer_runner/program/release.rs` | src | m | 2 fn · 1 const · 1 re-export | — | The owner's release of a held turn program (DOOR-141, FIX 5880) |
 | `src/dreamer_runner/program/replica.rs` | src | m | 24 crate-vis | — | A vault's turn programs across its linked machines (FIX 5266; ruled by the Engine 10-20: replicate the… |
 | `src/dreamer_runner/program/resume.rs` | src | m | 2 fn · 9 crate-vis | — | A turn program's holds and their resume (DOOR-141 PR3b, FIX 4382, FIX 5711) |
-| `src/dreamer_runner/program/run.rs` | src | m | 24 crate-vis | — | Where a turn program's run stands (DOOR-141 PR2), as execution progress: CONTENT, never authority |
+| `src/dreamer_runner/program/run.rs` | src | m | 26 crate-vis | — | Where a turn program's run stands (DOOR-141 PR2), as execution progress: CONTENT, never authority |
 | `src/dreamer_runner/program/run/page.rs` | src | s | 2 crate-vis | — | One page of a program run's STEP rows, for its reads (moved out of the run module whole; FIX 9391 names its… |
 | `src/dreamer_runner/program/stop_recovery.rs` | src | s | 1 fn · 2 crate-vis | — | The abandon an owner's Stop still owes its try's sends (FIX 7188, FIX 7352), retried on every wake host… |
 | `src/dreamer_runner/program/stop_sends.rs` | src | s | 2 crate-vis | — | The sends of a try the owner stopped (FIX 7188) |
-| `src/dreamer_runner/program/test_hooks.rs` | src | m | 21 crate-vis | — | Hooks for the integration tests, compiled only under `--cfg oneiron_test_support` and reached through… |
+| `src/dreamer_runner/program/test_hooks.rs` | src | m | 22 crate-vis | — | Hooks for the integration tests, compiled only under `--cfg oneiron_test_support` and reached through… |
 | `src/dreamer_runner/program/trigger.rs` | src | m | 3 fn · 9 crate-vis | — | Programs a turn does not wake (untangle slice 6.8c, B-3 = A): a due time, the host turning idle, or a change… |
 | `src/dreamer_runner/program/types.rs` | src | s | 2 struct · 1 enum · 2 re-export · 13 crate-vis | TurnProgramAdmissionOutcome, TurnProgramAdmissionReceipt, TurnProgramDrain | The DOOR-141 vocabulary: the pinned program, its arming, the wake a landed turn owes it, and what admitting… |
 | `src/dreamer_runner/program/wake.rs` | src | s | 3 crate-vis | — | The wake a landed turn owes its actor's armed programs (DOOR-141 §4): it is recorded in the turn's own… |
@@ -8082,6 +8082,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/test_doors/file_custody_marks.rs` | src | s | 3 fn | — | Doors for `tests/sync_live_file_custody_reuse.rs` (FIX 1370): the custody records a stored file's mark… |
 | `src/test_doors/fingerprint_keep_custody_digests.rs` | src | s | 3 fn | — | Door for `tests/fingerprint_keep_custody_digests.rs` (PLAN-UC-04 stage 6.1b): a custody input witness's… |
 | `src/test_doors/fingerprint_keep_dreamer.rs` | src | s | 1 fn | — | The agent-health trend replay hash, for the K-proof of PLAN-UC-04 stage 3.2… |
+| `src/test_doors/fingerprint_keep_dreamer_runner_digests.rs` | src | s | 1 struct · 13 fn | UpkeepTeam | K-proof door for dreamer-runner digests that existing records store or compare |
 | `src/test_doors/fingerprint_keep_executor_cohort_credit.rs` | src | s | 1 struct · 5 fn | StepState | Door for `tests/fingerprint_keep_executor_cohort_credit.rs` (PLAN-UC-04 3.4b): the two executor digests and… |
 | `src/test_doors/fingerprint_keep_git_wire.rs` | src | s | 4 fn | — | Door for `tests/fingerprint_keep_git_wire.rs` (PLAN-UC-04 3.3): the two git-wire digests the engine computes… |
 | `src/test_doors/fingerprint_keep_hook_digests.rs` | src | s | 5 fn | — | Door for `tests/fingerprint_keep_hook_digests.rs` (PLAN-UC-04 stage 6.3d): the input hashes of the hook fact… |
@@ -8146,7 +8147,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/test_doors/mesh_machine_endpoint_index.rs` | src | s | 1 enum · 5 fn | IndexedEndpoint | Doors for `tests/mesh_machine_endpoint_index.rs` (census L3-28B): the endpoint lookup as the MACHINE… |
 | `src/test_doors/meso_extraction_width.rs` | src | m | 1 struct · 1 enum · 1 fn | ExtractionWidth, PriorScenario | Door for `tests/dreamer_meso_width.rs` (FIX 21927 P2): measure the extraction calls in flight during one… |
 | `src/test_doors/microsoft_token.rs` | src | s | 1 struct · 6 fn · 1 crate-vis | ExchangedMicrosoftGrant | Door for `tests/microsoft365_oauth.rs` and `tests/microsoft365_refresh_write_back.rs`… |
-| `src/test_doors/mod.rs` | src | m | 1 fn · 292 mod · 1 re-export | — | Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD) |
+| `src/test_doors/mod.rs` | src | m | 1 fn · 293 mod · 1 re-export | — | Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD) |
 | `src/test_doors/model_binding_proposer.rs` | src | m | 1 struct · 2 fn · 1 const | TrialFixture | Fixture for the `model_binding_proposer_grant` server test: one completed held-out trial offer for a role… |
 | `src/test_doors/model_call_turn_link.rs` | src | s | 1 fn | — | Doors for `oneiron-server/tests/chat_model_call_turn_link.rs` (UNBUILT3-41, FIX [TURN-MODEL-LINK]): the… |
 | `src/test_doors/model_step_submission_codec.rs` | src | s | 1 fn | — | Doors for `tests/model_step_submission_codec.rs` (STEP-CORRECTION-HEALTH-PARK): a model step's submission… |
@@ -9268,6 +9269,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/fingerprint_keep_check_in_effect_digests.rs` | test | m | 5 fn | — | K-proof (oracle) for the check-in effect digests of P2.5's delete and security-control doors: each keeps its… |
 | `tests/fingerprint_keep_custody_digests.rs` | test | s | 2 const · 5 crate-vis | — | K-proof (oracle) for PLAN-UC-04 stage 6.1b: three custody digest helpers keep their bytes |
 | `tests/fingerprint_keep_dreamer.rs` | test | s | 5 crate-vis | — | K-proof (oracle) for PLAN-UC-04 stage 3.2: the agent-health trend replay hash keeps its bytes |
+| `tests/fingerprint_keep_dreamer_runner_digests.rs` | test | L | 1 fn · 5 const · 29 crate-vis | — | K-proof for dreamer-runner legacy digests at b1897bd53d07: existing stored and compared identities keep… |
 | `tests/fingerprint_keep_executor_cohort_credit.rs` | test | m | 1 const · 11 crate-vis | — | K-proof (oracle) for PLAN-UC-04 stage 3.4b: the executor's config and step checkpoint hashes, the claim… |
 | `tests/fingerprint_keep_git_wire.rs` | test | L | 6 fn · 1 const · 18 crate-vis | — | K-proof (oracle) for PLAN-UC-04 stage 3.3: the seven git-wire digests keep their bytes |
 | `tests/fingerprint_keep_hook_digests.rs` | test | m | 9 crate-vis | — | K-proof (oracle) for PLAN-UC-04 stage 6.3d: the runtime hook digests keep their bytes |
