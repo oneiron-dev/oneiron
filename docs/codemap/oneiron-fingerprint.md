@@ -50,5 +50,6 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/purposes/vault_import.rs` | src | s | — | — | Purposes of a staged foreign vault import (`oneiron-store` `batch::export::foreign_stage`, sync builds) |
 | `src/purposes/vault_shape.rs` | src | s | — | — | Purposes of the vault shape (`crates/oneiron/src/vault_shape`) |
 | `src/purposes/web_fetch.rs` | src | s | — | — | Purposes of web acquisition (`oneiron-web-fetch`; OF-444) |
+| `src/purposes/workspace_roster.rs` | src | s | — | — | Purposes of the workspace roster (`crates/oneiron/src/workspace_roster`) |
 | `src/record.rs` | src | s | 1 enum · 2 fn | CanonicalBytesError | The one canonical byte form of a structured value (DESIGN section 1.5) |
 | `tests/fingerprint_rules.rs` | test | m | — | — | PLAN-UC-04 stage 0: the rules of the fingerprint door, checked against hand-written transcripts |
