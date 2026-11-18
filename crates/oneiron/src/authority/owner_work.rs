@@ -62,6 +62,8 @@ mod root_basis;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
+use oneiron_persistent_collections::{PersistentMap, PersistentSet};
+
 use crate::entity_id::EntityId;
 
 use super::machine_standing::{InstallCounted, Mark, Standing, StandingView};
@@ -98,33 +100,33 @@ pub(crate) struct OwnerWorkAnswer {
 /// request replaced.
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(super) struct WorkHeads {
-    live: BTreeSet<AuthorityEntryHash>,
-    superseded: BTreeSet<AuthorityEntryHash>,
+    live: PersistentSet<AuthorityEntryHash>,
+    superseded: PersistentSet<AuthorityEntryHash>,
 }
 
 /// The fold state of every owner work request and result, merged by union.
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(super) struct OwnerWorkState {
-    requests: BTreeMap<AuthorityEntryHash, Arc<WorkRequest>>,
+    requests: PersistentMap<AuthorityEntryHash, Arc<WorkRequest>>,
     /// Each answered request's result, keyed by the request's entry.
-    results: BTreeMap<AuthorityEntryHash, OwnerWorkAnswer>,
-    heads: BTreeMap<(OwnerWorkKind, EntityId), WorkHeads>,
+    results: PersistentMap<AuthorityEntryHash, OwnerWorkAnswer>,
+    heads: PersistentMap<(OwnerWorkKind, EntityId), WorkHeads>,
     /// Well-signed requests and results without effect.
-    refused: BTreeSet<AuthorityEntryHash>,
+    refused: PersistentSet<AuthorityEntryHash>,
     /// Each secret an admitted custody revoke names: terminal for it.
-    revoked: BTreeSet<EntityId>,
+    revoked: PersistentSet<EntityId>,
     /// Each root request's cancels with effect, by the request's entry
     /// (`cancel`).
-    cancels: BTreeMap<AuthorityEntryHash, BTreeSet<AuthorityEntryHash>>,
+    cancels: PersistentMap<AuthorityEntryHash, PersistentSet<AuthorityEntryHash>>,
     /// Each export secret request the owner's mark with effect says he
     /// imported the supplement of (`import_mark`, FIX 12062).
-    imported: BTreeSet<AuthorityEntryHash>,
+    imported: PersistentSet<AuthorityEntryHash>,
     /// Each custody permit piece, by its signer, commitment and place: what
     /// a request in pieces joins its permits from (`permit_pieces`, FIX
     /// 11866). Kept after its request joins (FIX 12015): a later fold
     /// re-joins from pieces, a resumed fold seeds from them, and one
     /// commitment may serve requests on more than one secret.
-    permit_pieces: BTreeMap<permit_pieces::PermitPieceKey, Arc<CustodyPermitPiece>>,
+    permit_pieces: PersistentMap<permit_pieces::PermitPieceKey, Arc<CustodyPermitPiece>>,
     /// Each (signer, commitment) whose permit set a kept request joined and
     /// verified here, with that request as the fold keeps it: the `Arc`
     /// `requests` holds (FIX 12014, 12139). A later join of the same request
@@ -134,7 +136,8 @@ pub(super) struct OwnerWorkState {
     /// a merge keeps only the left's entries on unchanged sets. An entry
     /// whose request is superseded or whose secret is revoked is pruned (FIX
     /// 12140).
-    verified_permit_sets: BTreeMap<([u8; 32], CustodyPermitPieces), permit_pieces::JoinedPermitSet>,
+    verified_permit_sets:
+        PersistentMap<([u8; 32], CustodyPermitPieces), permit_pieces::JoinedPermitSet>,
 }
 
 /// One admitted request as this install reads it. The body is the fold
@@ -501,20 +504,20 @@ fn apply_result(
 /// superseded, and of two different results of one request the lesser
 /// entry hash stands, the other is without effect. Two copies of one
 /// request that disagree never count here. Custody permit pieces join by
-/// union, the lesser of two kept for one place standing (FIX 11866).
+/// union, the lesser of two kept for one place standing (FIX 11866). An
+/// entry the merge leaves as it was is not written.
 pub(super) fn merge_owner_work(merged: &mut OwnerWorkState, right: &OwnerWorkState) {
     for (hash, request) in &right.requests {
-        merged
-            .requests
-            .entry(*hash)
-            .and_modify(|held| {
-                if !Arc::ptr_eq(held, request) && **held != **request {
-                    let mut disputed = WorkRequest::clone(&**held);
-                    disputed.narrow_only = true;
-                    *held = Arc::new(disputed);
-                }
-            })
-            .or_insert_with(|| Arc::clone(request));
+        let held_here = merged.requests.modify(hash, |held| {
+            if !Arc::ptr_eq(held, request) && **held != **request {
+                let mut disputed = WorkRequest::clone(&**held);
+                disputed.narrow_only = true;
+                *held = Arc::new(disputed);
+            }
+        });
+        if !held_here {
+            merged.requests.insert(*hash, Arc::clone(request));
+        }
     }
     merged.refused.extend(right.refused.iter().copied());
     merged.revoked.extend(right.revoked.iter().copied());
@@ -530,9 +533,7 @@ pub(super) fn merge_owner_work(merged: &mut OwnerWorkState, right: &OwnerWorkSta
     for (request, cancels) in &right.cancels {
         merged
             .cancels
-            .entry(*request)
-            .or_default()
-            .extend(cancels.iter().copied());
+            .modify_or_default(*request, |held| held.extend(cancels.iter().copied()));
     }
     for (request, answer) in &right.results {
         match merged.results.get(request) {
@@ -552,11 +553,12 @@ pub(super) fn merge_owner_work(merged: &mut OwnerWorkState, right: &OwnerWorkSta
         }
     }
     for (at, heads) in &right.heads {
-        let held = merged.heads.entry(*at).or_default();
-        held.live.extend(heads.live.iter().copied());
-        held.superseded.extend(heads.superseded.iter().copied());
-        let superseded = &held.superseded;
-        held.live.retain(|hash| !superseded.contains(hash));
+        merged.heads.modify_or_default(*at, |held| {
+            held.live.extend(heads.live.iter().copied());
+            held.superseded.extend(heads.superseded.iter().copied());
+            let superseded = &held.superseded;
+            held.live.retain(|hash| !superseded.contains(hash));
+        });
     }
     // A join whose request the right superseded, or whose secret it
     // revoked, leaves the memo (FIX 12140).
@@ -598,16 +600,16 @@ pub(super) fn folded_owner_work(
                 )
             })
             .collect(),
-        results: work.results.clone(),
+        results: work.results.to_btree_map(),
         heads: work
             .heads
             .iter()
-            .map(|(at, heads)| (*at, heads.live.clone()))
+            .map(|(at, heads)| (*at, heads.live.to_btree_set()))
             .collect(),
-        refused: work.refused.clone(),
-        revoked: work.revoked.clone(),
-        cancels: work.cancels.clone(),
-        imported: work.imported.clone(),
+        refused: work.refused.to_btree_set(),
+        revoked: work.revoked.to_btree_set(),
+        cancels: crate::authority::fold_state::to_btree_set_map(&work.cancels),
+        imported: work.imported.to_btree_set(),
     }
 }
 

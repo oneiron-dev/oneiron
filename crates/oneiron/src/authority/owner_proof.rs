@@ -76,7 +76,7 @@ pub(super) fn owner_proof_key(
 /// restore onto a managed node or a hosted peer of a linked vault (Engine
 /// ANSWER HOSTED-REFOLD-SELF-HOST-ROOT-CUSTODY = A).
 fn proves_for_the_owner(state: &FoldState, key: &AuthorityKey) -> bool {
-    roster_has_live_owner(&state.roster, key) && !(state.hosted && in_host_custody(state, key))
+    state.has_live_owner(key) && !(state.hosted && in_host_custody(state, key))
 }
 
 /// Whether `key` is one whose cosign the fold takes as the owner's proof in
@@ -374,6 +374,16 @@ impl AuthorityFold {
         hosted: bool,
     ) -> bool {
         !(hosted && signer.is_host_root()) && self.proves_owner_acts(&signer.root(), hosted)
+    }
+
+    /// Whether the passkey limits hold `key` on this fold, read on the
+    /// merged history ([`FoldState::passkey_limited`]): a passkey, or a key
+    /// only a passkey vouched for until a key that is no passkey confirms
+    /// it. Such a key vouches for no further key and signs no machine
+    /// profile (row WEB-PASSKEY-OWNER-KEY).
+    #[must_use]
+    pub(crate) fn passkey_limited(&self, key: &AuthorityKey) -> bool {
+        self.passkey_limited_keys.contains(key)
     }
 
     /// A choice door's answer about `act`, the choice it appended in its

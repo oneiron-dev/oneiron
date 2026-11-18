@@ -36,38 +36,34 @@
 //! seed that still waited in its slot. Such a seed is no key from the forget
 //! on, and the door that next finds it in a step of its own removes it.
 
+mod first_pin;
+mod pin_bound_signer;
+
 use std::sync::{Arc, PoisonError};
 
 use oneiron_keystore::{DeviceKeystore, KeystoreSlot, SealedBytesName};
 use zeroize::Zeroizing;
 
+use self::first_pin::set_first_pin;
+use super::secret_seal::{open_slot_secret, seal_slot_secret, sealed_slot_public_key};
 use super::{
     DevicePin, DevicePinStep, DevicePinTier, SlotSeedBar, device_pin_tier,
-    device_pin_was_forgotten, open_slot_secret, seal_slot_secret, sealed_slot_public_key,
-    slot_seed_bar,
+    device_pin_was_forgotten, slot_seed_bar,
 };
 use crate::authority::{
-    ActAuthority, AuthorityFold, AuthorityKey, CheckpointRootSigner, HostSlipIssuer,
-    OwnerKeyEnrollment, OwnerKeyEnrollmentReceipt, authority_refused,
+    ActAuthority, AuthorityKey, HostSlipIssuer, OwnerKeyEnrollment, OwnerKeyEnrollmentReceipt,
+    authority_refused,
 };
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
-use crate::error::{Error, Result};
+use crate::error::Result;
 use crate::vault::Vault;
-use crate::world_keys::owner_signing::{
-    KEY_NOT_LIVE, OTHER_VAULT_KEY, OwnerRootSigner, held_logged,
-};
+use crate::world_keys::owner_signing::{OwnerRootSigner, held_logged};
 use crate::world_keys::{keystore_error, os_fill, refused};
 
 const OWNER_ONLY: &str = "the device PIN is the owner's to set, change and forget; no Grant \
                           action names it";
 const OTHER_KEYSTORE: &str = "the device PIN guards another keystore than this vault's";
-const NO_SEALED_KEY: &str = "no owner signing key rests under the device PIN";
-const SEALED_KEY_UNOPENED: &str = "the owner signing key does not open under this device's PIN \
-                                   key";
-const SEALED_KEY_MISNAMED: &str = "the sealed owner signing key is not the key its envelope names";
-const KEY_NO_LONGER_NAMED: &str = "this handle no longer names this owner signing key as the one \
-                                    it opened under the device PIN";
 const SEAL_NOT_READ_BACK: &str = "the owner signing key sealed under the device PIN did not read \
                                   back; its slot is kept";
 
@@ -118,109 +114,6 @@ struct PinBoundOwnerSigner {
     pin: Arc<DevicePin>,
     /// The count of device PIN keys when the seed was opened under this one.
     key_generation: u64,
-}
-
-impl PinBoundOwnerSigner {
-    /// Why the key does not sign on `vault` now, from what needs no key:
-    /// `vault` is another vault's handle, the device PIN key was set or
-    /// forgotten since the seed was opened, `vault` no longer names this
-    /// key as the one it opened under the PIN, or the roster no longer
-    /// lists the key live. `held` is the fold of a caller that signs inside
-    /// its own transaction ([`Vault::owner_key_on_live_roster`]).
-    ///
-    /// The handle stops naming a key when the seed that rests was replaced,
-    /// also by a write the keystore answered a failure for, and when a
-    /// later window found another seed or none. A signer of that key may
-    /// still be held; it is refused here, so a pass and a door pass it over
-    /// in place of failing at its signature.
-    fn refusal(&self, vault: &Vault, held: Option<&AuthorityFold>) -> Option<Error> {
-        if self.slot.vault_id != *vault.vault_id().as_bytes() {
-            return Some(authority_refused(OTHER_VAULT_KEY));
-        }
-        if self.pin.key_generation() != self.key_generation {
-            return Some(refused(SEALED_KEY_UNOPENED));
-        }
-        if vault.opened_pin_bound_owner_key() != Some(self.public_key) {
-            return Some(refused(KEY_NO_LONGER_NAMED));
-        }
-        if !vault.owner_key_on_live_roster(&self.public_key, held) {
-            return Some(authority_refused(KEY_NOT_LIVE));
-        }
-        None
-    }
-
-    /// One signature of the key, which `sign` makes with it: a checkpoint
-    /// statement's, an owner act's proof, or an ask word's proof. Each is
-    /// made here, under the same checks, and the key is dropped inside the
-    /// call.
-    ///
-    /// # Errors
-    /// [`crate::error::DevicePinRefusal::Required`] outside a window; the refusals of
-    /// [`Self::refusal`]; a refusal for a seed that does not open, or opens
-    /// to another key than its envelope names; what `sign` refuses.
-    fn sign(
-        &self,
-        vault: &Vault,
-        held: Option<&AuthorityFold>,
-        sign: impl FnOnce(&OwnerRootSigner) -> Result<Vec<u8>>,
-    ) -> Result<Vec<u8>> {
-        if let Some(refusal) = self.refusal(vault, held) {
-            return Err(refusal);
-        }
-        // Read before the key's lock is taken: a home may be slow.
-        let sealed = self
-            .pin
-            .sealed_slot(&self.slot)?
-            .ok_or_else(|| refused(NO_SEALED_KEY))?;
-        // The seed is opened, used and wiped under the lock the window's end
-        // takes.
-        self.pin.with_pin_key(|pin_key| {
-            let opened = open_owner_seed(pin_key, &self.slot, &sealed)
-                .ok_or_else(|| refused(SEALED_KEY_UNOPENED))?;
-            if opened.public_key != self.public_key {
-                return Err(refused(SEALED_KEY_MISNAMED));
-            }
-            sign(&OwnerRootSigner::from_seed(&opened.seed))
-        })?
-    }
-}
-
-impl CheckpointRootSigner for PinBoundOwnerSigner {
-    fn root(&self) -> AuthorityKey {
-        AuthorityKey::Ed25519(self.public_key)
-    }
-
-    fn sign_checkpoint_statement(&self, vault: &Vault, statement: &[u8]) -> Result<Vec<u8>> {
-        self.sign(vault, None, |key| key.sign_statement(statement))
-    }
-
-    fn signs_now(&self, vault: &Vault) -> bool {
-        self.pin.window_is_open() && self.refusal(vault, None).is_none()
-    }
-
-    /// Only inside the window a right PIN opened, as a checkpoint statement.
-    fn sign_owner_proof(
-        &self,
-        vault: &Vault,
-        fold: &AuthorityFold,
-        transcript: &[u8],
-    ) -> Result<Vec<u8>> {
-        self.sign(vault, Some(fold), |key| key.sign_proof(transcript))
-    }
-
-    fn proves_now(&self, vault: &Vault, fold: &AuthorityFold) -> bool {
-        self.pin.window_is_open() && self.refusal(vault, Some(fold)).is_none()
-    }
-
-    /// Only inside the window a right PIN opened, as an owner act's proof.
-    fn sign_ask_word_proof(
-        &self,
-        vault: &Vault,
-        fold: &AuthorityFold,
-        transcript: &[u8],
-    ) -> Result<Vec<u8>> {
-        self.sign(vault, Some(fold), |key| key.sign_ask_word(transcript))
-    }
 }
 
 impl Vault {
@@ -755,129 +648,4 @@ fn fresh_seed() -> Result<Zeroizing<[u8; 32]>> {
     let mut seed = Zeroizing::new([0u8; 32]);
     os_fill(&mut seed[..])?;
     Ok(seed)
-}
-
-/// The first PIN of a device, for the vault whose owner slot is `slot`: one
-/// step, in the order that never leaves the device with a PIN set and no
-/// sealed copy of the seed.
-/// 1. The seed in the slot, when one rests there, is sealed under the new
-///    device PIN key and read back ([`stage_slot_owner_seed`]).
-/// 2. The device PIN key is stored under `typed`, and a window opens with
-///    the key its home gave back ([`DevicePin::store_first_key`]).
-/// 3. The slot is emptied.
-///
-/// A refusal is undone by [`undo_first_pin`], which removes the sealed seed
-/// only while the seed is seen in its slot. A keystore may answer an error
-/// for a delete that did remove the seed, so after a refused step 3 the slot
-/// is read: a seed that left it means the step is whole.
-fn set_first_pin(
-    step: &DevicePinStep<'_>,
-    pin: &DevicePin,
-    keystore: &dyn DeviceKeystore,
-    slot: &KeystoreSlot,
-    typed: &[u8],
-) -> Result<()> {
-    let mut pin_key = Zeroizing::new([0u8; 32]);
-    os_fill(&mut pin_key[..])?;
-    let staged = match stage_slot_owner_seed(pin, keystore, slot, &pin_key) {
-        Ok(staged) => staged,
-        Err(refusal) => {
-            // No PIN is set, so nothing opens what the stage left sealed.
-            let _removed = pin.delete_sealed_slot(slot);
-            return Err(refusal);
-        }
-    };
-    if let Err(refusal) = pin.store_first_key(step, typed, &pin_key) {
-        undo_first_pin(step, pin, keystore, slot, staged.as_deref());
-        return Err(refusal);
-    }
-    if staged.is_none() {
-        return Ok(());
-    }
-    let Err(refusal) = DeviceKeystore::delete(keystore, slot) else {
-        return Ok(());
-    };
-    match keystore.get(slot) {
-        Ok(None) => {
-            tracing::warn!(
-                "the owner signing slot was emptied for the device PIN, and its keystore \
-                 answered a failure after it"
-            );
-            Ok(())
-        }
-        Ok(Some(_)) => {
-            undo_first_pin(step, pin, keystore, slot, staged.as_deref());
-            Err(keystore_error(refusal))
-        }
-        // The slot does not answer: the PIN stays set and the sealed seed
-        // stays, so nothing is lost whatever the slot holds.
-        Err(_) => Err(keystore_error(refusal)),
-    }
-}
-
-/// Undoes a first PIN that did not finish: removes the device PIN key, and
-/// then the seed staged under it. `staged` is the seed step 1 sealed, when
-/// it sealed one. Nothing is removed unless that seed is seen in its slot,
-/// and the sealed seed stays when the device PIN key cannot be removed: the
-/// sealed copy is never removed while it may be the only one, or while a
-/// device PIN key that opens it may rest. What is left then is the state the
-/// module notes describe: a PIN set, the seed under it, and a copy in the
-/// slot that signs nothing.
-fn undo_first_pin(
-    step: &DevicePinStep<'_>,
-    pin: &DevicePin,
-    keystore: &dyn DeviceKeystore,
-    slot: &KeystoreSlot,
-    staged: Option<&[u8; 32]>,
-) {
-    if let Some(staged) = staged {
-        let in_slot = keystore.get(slot).ok().flatten();
-        if in_slot.as_deref() != Some(staged) {
-            tracing::warn!(
-                "a first device PIN did not finish and its owner signing seed is not seen in \
-                 its slot; the sealed seed is kept"
-            );
-            return;
-        }
-    }
-    if pin.remove_pin_key(step).is_err() {
-        tracing::warn!(
-            "a first device PIN did not finish and its device PIN key could not be removed; \
-             the sealed owner signing seed is kept"
-        );
-        return;
-    }
-    let _removed = pin.delete_sealed_slot(slot);
-}
-
-/// Step 1 of [`set_first_pin`], before any PIN is set: seals the seed in
-/// `slot` under `pin_key`, the device PIN key about to be stored, and reads
-/// it back. Answers the seed it sealed; `None` when no seed rests in the
-/// slot, and then sealed bytes left under `slot`'s name are removed: no
-/// device PIN key opens them. On a device that forgot a PIN, a seed left in
-/// the slot is no key ([`SlotSeedBar::PinForgotten`]): it is removed first,
-/// never sealed.
-fn stage_slot_owner_seed(
-    pin: &DevicePin,
-    keystore: &dyn DeviceKeystore,
-    slot: &KeystoreSlot,
-    pin_key: &[u8; 32],
-) -> Result<Option<Zeroizing<[u8; 32]>>> {
-    if device_pin_was_forgotten(keystore).map_err(keystore_error)? {
-        DeviceKeystore::delete(keystore, slot).map_err(keystore_error)?;
-    }
-    let Some(seed) = keystore.get(slot).map_err(keystore_error)? else {
-        pin.delete_sealed_slot(slot)?;
-        return Ok(None);
-    };
-    let public_key = OwnerRootSigner::from_seed(&seed).public_key();
-    let sealed = seal_slot_secret(pin_key, slot, &public_key, &seed)?;
-    pin.put_sealed_slot(slot, &sealed)?;
-    let read_back = pin
-        .sealed_slot(slot)?
-        .and_then(|rests| open_owner_seed(pin_key, slot, &rests));
-    if read_back.as_ref().map(|rests| &*rests.seed) != Some(&*seed) {
-        return Err(refused(SEAL_NOT_READ_BACK));
-    }
-    Ok(Some(seed))
 }

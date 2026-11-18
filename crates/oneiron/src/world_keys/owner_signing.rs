@@ -142,7 +142,7 @@ impl OwnerRootSigner {
 
     /// The enrollment's proof of possession: the key's signature over the
     /// challenge the engine made for it.
-    pub(super) fn sign_possession(&self, challenge: &[u8]) -> Vec<u8> {
+    pub(crate) fn sign_possession(&self, challenge: &[u8]) -> Vec<u8> {
         self.signing.sign(challenge).to_bytes().to_vec()
     }
 
@@ -739,14 +739,25 @@ pub(crate) struct OwnerSigningSlot {
 }
 
 impl OwnerSigningSlot {
+    /// The slot's owner signing key, its seed made on first use. The roster
+    /// may name it, live or revoked. Refused on a device with a PIN set or
+    /// forgotten, as [`Self::fresh_key`] is (`slot_owner_signer`'s rule).
+    ///
+    /// # Errors
+    /// The keystore's own refusal; the slot's rule.
+    pub(crate) fn key(&self) -> Result<OwnerRootSigner> {
+        slot_owner_signer(&self.keystore, &self.slot)
+    }
+
     /// A new owner signing key, made in this slot from the OS CSPRNG after
     /// the slot's seed is dropped: a root appointment's successor
     /// (OWNER-ANCHOR-ROOT-RECOVERY), which must be a key no row names. Never
     /// the slot's existing key, which the roster may name, live or revoked.
     /// It touches the keystore alone, so the appointment's writer makes it
-    /// once the roster reads rootless there: a door run checked before
-    /// another run's appointment committed is refused first, and never drops
-    /// the seed of that run's successor, a live root key.
+    /// once the roster reads rootless there, and the recovery root's door's
+    /// once the roster reads the slot's key revoked there: a door run checked
+    /// before another run's write committed is refused first, and never
+    /// drops the seed of that run's successor, a live root key.
     ///
     /// Refused, before any seed is dropped, on a device with a PIN set or
     /// forgotten (`slot_owner_signer`'s rule; ruling

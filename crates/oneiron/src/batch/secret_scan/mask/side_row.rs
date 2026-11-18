@@ -44,6 +44,7 @@ use super::super::{
     scan_write_tree_with_rule, secret_scan_error, secret_scan_mode_in_txn,
 };
 use super::admit::Lifted;
+use super::held_template::{MapOrder, held_row_meets};
 pub(crate) use super::text::TextReplacements;
 use super::wipe::{PlanParts, PlanTree, replace_wiped, wipe_value};
 use super::{HANDLE_OPEN, Masker, STAND_IN, credential_member};
@@ -689,23 +690,25 @@ pub(crate) fn admit_typed_with_rule<T: Serialize + DeserializeOwned>(
 }
 
 /// Whether `held`, a value the wall may have masked, is what admitting `raw`
-/// stored: a replay that compares a held row with the value offered again.
-/// Each handle on either side reads as the plan's one stand-in, so a secret
-/// the wall lifted matches the same secret offered again. Nothing is minted.
-pub(crate) fn admitted_from(held: &Value, raw: &Value) -> Result<bool> {
-    admitted_from_known(held, raw, || Ok(None))
-}
-
-/// [`admitted_from`] for a row the wall admitted in a scope that decides
-/// with custody (FIX REPLAY-COMPARE-KNOWN-MATCHER): there a value custody
-/// holds took its record's handle, a value no shape rule places too, so
-/// `raw` is planned again with `known`, the values custody holds now, as
-/// the wall planned it. `known` is read only when the plan without it
-/// misses, and a row admitted before its value entered custody, which holds
-/// that value as written, still meets its call by that first plan. A row
-/// that holds one value as written beside the handle of another, its parts
-/// admitted under different custody, meets neither plan and drifts, which
-/// fails closed (FIX-LIST [REPLAY-COMPARE-MIXED-ERA]). Nothing is minted.
+/// stored: a replay that compares a held row with the value offered again
+/// in a scope that decides with custody (FIX REPLAY-COMPARE-KNOWN-MATCHER).
+/// `known` gives the values custody holds now, and custody alone decides:
+/// the held row is read as a template ([`held_row_meets`], FIX
+/// RECEIPT-RECORDS-CALL-HELD-INPUT). Each handle it holds that names a
+/// record custody knows meets the same handle offered again, or one value
+/// of that record at any generation, whose length lets the row's text after
+/// it match; every other byte of the row meets only itself. So two values
+/// custody holds apart stay apart, shaped or not (FIX
+/// REPLAY-COMPARE-KNOWN-OTHER-CALLERS); a longer value custody took since
+/// never hides the one a handle names; a value the row holds as written,
+/// admitted before custody held it, meets its call beside the handle of
+/// another value, and never reads as a handle, also after a rotation into
+/// it; and a handle no record custody knows names (literal text, or an
+/// erased record's) meets only itself. A custody that knows no value holds
+/// no record a handle names, so the two meet only as written (blind review
+/// round 2 of #9503): two handle texts are never one stand-in there. A
+/// compare with no custody read in reach takes [`admitted_from_plan`].
+/// Nothing is minted.
 pub(crate) fn admitted_from_known(
     held: &Value,
     raw: &Value,
@@ -714,21 +717,48 @@ pub(crate) fn admitted_from_known(
     if held == raw {
         return Ok(true);
     }
+    match known()? {
+        Some(known) => held_row_meets(held, raw, &known, MapOrder::Written),
+        None => Ok(false),
+    }
+}
+
+/// Whether `held` is what admitting `raw` stored, in a compare with no
+/// custody read in reach (a record read in memory): each handle on either
+/// side, and each secret the plan places in `raw`, as the plan's one
+/// stand-in, so a secret the wall lifted meets the same secret offered
+/// again (FIX 6534). Nothing is minted.
+///
+/// # Errors
+///
+/// A value the plan cannot read.
+pub(crate) fn admitted_from_plan(held: &Value, raw: &Value) -> Result<bool> {
+    Ok(held == raw || held_form(held) == planned_form(raw, None)?.0)
+}
+
+/// `held`, a value the wall may have masked, in the form
+/// [`admitted_from_plan`] reads a held row in: each handle as the plan's one
+/// stand-in, and nothing else changed. A raw offer takes that form through
+/// [`admission_form`].
+fn held_form(held: &Value) -> Value {
     let mut held = held.clone();
     stand_in_handles(&mut held);
-    if held == planned_form(raw, None)?.0 {
-        return Ok(true);
-    }
-    Ok(match known()? {
-        Some(known) => held == planned_form(raw, Some(known))?.0,
-        None => false,
-    })
+    held
 }
 
 /// `value` as the replay plan places it: each secret the plan places, and
 /// each handle, as the plan's one stand-in, and with `known`, each value it
 /// holds too. Nothing is minted. The copy is wiped when it drops (FIX 1101).
 fn planned_form(value: &Value, known: Option<Arc<KnownValues>>) -> Result<PlanTree> {
+    let mut planned = masked_plan(value, known)?;
+    stand_in_handles(&mut planned.0);
+    Ok(planned)
+}
+
+/// `value` with each secret the plan places as the plan's one stand-in, and
+/// with `known`, each value it holds as its record's handle. Handles already
+/// in `value` are left as written.
+fn masked_plan(value: &Value, known: Option<Arc<KnownValues>>) -> Result<PlanTree> {
     let mut planned = PlanTree(value.clone());
     Masker {
         mints: true,
@@ -737,19 +767,17 @@ fn planned_form(value: &Value, known: Option<Arc<KnownValues>>) -> Result<PlanTr
         ..Masker::default()
     }
     .mask_value(&mut planned.0)?;
-    stand_in_handles(&mut planned.0);
     Ok(planned)
 }
 
-/// `value` in the one form [`admitted_from`] compares a held row and a raw
+/// `value` in the one form [`admitted_from_plan`] compares a held row and a raw
 /// offer in (FIX 6534): each secret the plan places, and each handle, as
 /// the plan's one stand-in. A held row and the raw value it was admitted
 /// from read the same here, so a digest of either is one identity. Nothing
 /// is minted, and the plan's copy is wiped. With `known`, the values
 /// custody holds now, each of them reads as the stand-in too: the form a
-/// raw offer takes against a row the wall admitted in a scope that decides
-/// with custody, as [`admitted_from_known`] compares them (FIX
-/// REPLAY-COMPARE-KNOWN-MATCHER).
+/// raw offer takes against the identity a row erased while it held such a
+/// value's handle keeps (FIX REPLAY-COMPARE-KNOWN-MATCHER).
 ///
 /// # Errors
 ///
@@ -824,7 +852,7 @@ fn stand_in_text(text: &str) -> String {
 }
 
 /// `sc` and digits: a custody handle.
-fn bare_handle(text: &str) -> bool {
+pub(super) fn bare_handle(text: &str) -> bool {
     text.strip_prefix("sc").is_some_and(|digits| {
         !digits.is_empty() && digits.bytes().all(|byte| byte.is_ascii_digit())
     })

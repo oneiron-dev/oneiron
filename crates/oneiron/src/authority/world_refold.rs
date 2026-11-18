@@ -120,19 +120,23 @@ pub(super) fn refold_world_edits(
                 .is_some_and(|entry| side_world(&entry.op).is_none())
     };
     // An invalid edit or choice one descends from is crossed like any
-    // main-log row.
+    // main-log row. One marked pass over the index finds the crossable rows
+    // below the rows that refold (row [ROSTER-KEY-LOG-FLOOD], PR 3).
+    let refolding: Vec<_> = by_hash
+        .iter()
+        .filter(|(hash, entry)| {
+            refolds(&entry.op, kind_of) && !states.contains_key(*hash) && !fenced(*hash)
+        })
+        .map(|(hash, _)| *hash)
+        .collect();
+    if refolding.is_empty() {
+        return;
+    }
+    let below_crossable = ancestors.marks(&crossable);
     let lost = causal(
-        by_hash
-            .iter()
-            .filter(|(hash, entry)| {
-                refolds(&entry.op, kind_of)
-                    && !states.contains_key(*hash)
-                    && !fenced(*hash)
-                    && ancestors
-                        .get(*hash)
-                        .is_some_and(|past| past.iter_unordered().any(crossable))
-            })
-            .map(|(hash, _)| *hash)
+        refolding
+            .into_iter()
+            .filter(|hash| below_crossable.in_ancestry(hash))
             .collect(),
     );
     if lost.is_empty() {

@@ -7,6 +7,8 @@
 
 use std::collections::BTreeMap;
 
+use oneiron_persistent_collections::PersistentMap;
+
 use crate::entity_id::EntityId;
 
 use super::principal_standing::{
@@ -48,13 +50,33 @@ use super::*;
 /// nor an engine MACHINE writer, which no profile names.
 pub(crate) fn owner_act_signer_admits(
     machine: Option<&FoldedMachine>,
-    roster: &BTreeMap<AuthorityKey, FoldedDevice>,
+    roster: &impl RosterKeyLookup,
     key: &[u8; 32],
 ) -> bool {
-    !roster.contains_key(&AuthorityKey::Ed25519(*key))
+    !roster.contains_roster_key(&AuthorityKey::Ed25519(*key))
         && machine
             .and_then(|folded| folded.roster.as_ref())
             .is_some_and(|chain| chain.is_live() && chain.profile.machine_key == *key)
+}
+
+/// The one roster read [`owner_act_signer_admits`] makes: whether a roster
+/// holds a device under a key. The fold's roster (a `BTreeMap`) and a fold
+/// state's persistent roster both answer it in place, without a copy.
+pub(crate) trait RosterKeyLookup {
+    /// Whether this roster holds a device under `key`, live or revoked.
+    fn contains_roster_key(&self, key: &AuthorityKey) -> bool;
+}
+
+impl RosterKeyLookup for BTreeMap<AuthorityKey, FoldedDevice> {
+    fn contains_roster_key(&self, key: &AuthorityKey) -> bool {
+        self.contains_key(key)
+    }
+}
+
+impl RosterKeyLookup for PersistentMap<AuthorityKey, FoldedDevice> {
+    fn contains_roster_key(&self, key: &AuthorityKey) -> bool {
+        self.contains_key(key)
+    }
 }
 
 /// Whether `owner` is a live owner at an act's causal point, as the fold
