@@ -11596,7 +11596,7 @@
      "purpose": "BK-09: logged owner instructions, real solver proposals, and resumable emergency revisions",
      "surface": {
       "const": 1,
-      "crate-vis": 6,
+      "crate-vis": 8,
       "fn": 2,
       "re-export": 5
      }
@@ -11633,7 +11633,7 @@
      "path": "src/booking/emergency_reschedule/lookup.rs",
      "purpose": "Disposable lookup rows derived from the existing plans and checkpoints",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 11
      }
     },
     {
@@ -33768,7 +33768,7 @@
      "path": "src/dreamer_runner/free_time/mod.rs",
      "purpose": "An agent's free time (FIX 4453, ARCH-0005b #free-time)",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "enum": 1,
       "fn": 1,
       "re-export": 5
@@ -33785,7 +33785,7 @@
      "purpose": "The owner's free-time policy for one agent (FIX 4453): the total budget one cycle may spend, the cycle's…",
      "surface": {
       "const": 1,
-      "crate-vis": 6,
+      "crate-vis": 7,
       "enum": 1,
       "fn": 4,
       "re-export": 2,
@@ -34940,7 +34940,7 @@
      "purpose": "One durable proactivity digest per vault cadence, with intent-bound urgent wakes",
      "surface": {
       "const": 7,
-      "crate-vis": 11,
+      "crate-vis": 12,
       "fn": 8,
       "re-export": 6,
       "struct": 8
@@ -35063,7 +35063,7 @@
      "path": "src/dreamer_runner/maintenance/digest/view.rs",
      "purpose": "A delivered proactivity digest as one viewer reads it (FIX 6411)",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 8,
       "fn": 2,
       "re-export": 1,
       "struct": 1
@@ -35772,7 +35772,7 @@
      "path": "src/dreamer_runner/mod.rs",
      "purpose": "Private Dreamer runner store plus atomic admission",
      "surface": {
-      "crate-vis": 20,
+      "crate-vis": 21,
       "mod": 6,
       "re-export": 21
      }
@@ -94085,6 +94085,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/test_doors/fingerprint_keep_booking_dreamer_digests.rs",
+     "purpose": "Door for `tests/fingerprint_keep_booking_dreamer_digests.rs` (PLAN-UC-04 stage 6.2c): the emergency…",
+     "surface": {
+      "fn": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/test_doors/fingerprint_keep_codec_digests.rs",
      "purpose": "Door for `tests/fingerprint_keep_codec_digests.rs` (PLAN-UC-04 stage 6.1c): a calendar connector literal's…",
      "surface": {
@@ -94920,7 +94930,7 @@
      "purpose": "Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD)",
      "surface": {
       "fn": 1,
-      "mod": 302,
+      "mod": 303,
       "re-export": 1
      }
     },
@@ -106955,6 +106965,18 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/fingerprint_keep_booking_dreamer_digests.rs",
+     "purpose": "K-proof (oracle) for PLAN-UC-04 stage 6.2c: the emergency reschedule's digests, a proactivity digest's…",
+     "surface": {
+      "const": 2,
+      "crate-vis": 7,
+      "fn": 3
+     }
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -114522,7 +114544,7 @@
      "purpose": "`TimeRange`, temporal expressions/parsing, granularity/anchor enums"
     },
     "test_doors": {
-     "files": 308,
+     "files": 309,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -114699,8 +114721,8 @@
    },
    "over_bar": 300,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 8125,
-   "test_files": 1881
+   "source_files": 8126,
+   "test_files": 1882
   },
   "oneiron-agent-runtime": {
    "files": [
