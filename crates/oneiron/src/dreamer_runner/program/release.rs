@@ -161,13 +161,14 @@ pub fn release_turn_program_hold_as_delegate(
 }
 
 /// Whether the owner's delegate `agent`, on its own verified `credential`,
-/// reads the program `attempt` is a try of, judged in `txn` as the program's
-/// reads judge a caller: a program's try names no TASK, so no read lane
-/// holds it, and its rows read for its waking actor or the verified owner
-/// alone (`read::program_for`). The credential must build a read key whose
-/// holder is the agent, and the try's program stamp must name the agent as
-/// its waking actor, at the agent class. No credential, one that grants no
-/// read, or another actor's program reads none.
+/// reads the program `attempt` is a try of, judged in `txn`: a program's
+/// try names no TASK, so no read lane holds it, and its rows read for its
+/// waking actor or the verified owner alone (`read::program_for`). The
+/// credential must still stand in `txn` (a revoke after the door's check
+/// refuses here), build a read key whose holder is the agent, and the try's
+/// program stamp must name the agent as its waking actor, at the agent
+/// class. No credential, one revoked or expired, one that grants no read,
+/// or another actor's program reads none.
 ///
 /// # Errors
 ///
@@ -182,6 +183,11 @@ fn delegate_reads_program_in_txn(
     let Some(credential) = credential else {
         return Ok(false);
     };
+    // The door checked the slip in its own snapshot before this writer
+    // opened; the key below checks no revocation (REVIEW-9425 P1).
+    if !vault.capability_slip_is_live_in_txn(txn, credential)? {
+        return Ok(false);
+    }
     let holder = vault
         .credential_read_key_in(txn, credential)?
         .and_then(|key| EntityId::from_hex(key.actor_ref()).ok());
