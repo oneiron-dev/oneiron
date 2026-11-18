@@ -5,8 +5,8 @@
 //! build reaches them. Hidden; never API.
 
 pub mod access_request_seed;
-pub mod action_replay_custody;
 pub mod action_mode_pass;
+pub mod action_replay_custody;
 pub mod advisory_rate_window;
 pub mod agent_authoring;
 pub mod agent_definition_scans;
@@ -120,6 +120,7 @@ pub mod feed_prune;
 pub mod feeds;
 pub mod file_custody_marks;
 pub mod fingerprint_keep_booking_dreamer_digests;
+pub mod fingerprint_keep_code_run_digests;
 pub mod fingerprint_keep_codec_digests;
 pub mod fingerprint_keep_custody_digests;
 pub mod fingerprint_keep_custody_policy_digest;
@@ -195,6 +196,7 @@ pub mod live_window_import;
 #[cfg(feature = "sync")]
 pub mod live_window_note_scrub;
 pub mod machine_history;
+pub mod machine_names;
 pub mod mail_counterparty;
 pub mod mail_landing;
 pub mod mail_pack_setting_keys;

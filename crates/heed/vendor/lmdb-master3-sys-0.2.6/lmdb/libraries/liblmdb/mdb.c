@@ -4860,6 +4860,12 @@ mdb_env_write_meta(MDB_txn *txn)
 				rc = ErrCode();
 				goto fail;
 			}
+#if defined(__APPLE__)
+			if (MDB_FDATASYNC(env->me_fd)) {
+				rc = ErrCode();
+				goto fail;
+			}
+#endif
 		}
 		goto done;
 	}
@@ -4919,6 +4925,25 @@ fail:
 		env->me_flags |= MDB_FATAL_ERROR;
 		return rc;
 	}
+#if defined(__APPLE__)
+	if (mfd == env->me_mfd && MDB_FDATASYNC(env->me_mfd)) {
+		rc = ErrCode();
+		/* ONEIRON FORK (LMDB audit): a failed sync is a failed meta write.
+		 * Put the old meta back in the page cache and mark the env fatal,
+		 * as the pwrite failure above does. If the old meta cannot be put
+		 * back whole, the commit is indeterminate (a reopen may see it):
+		 * answer MDB_PANIC instead of the sync's error.
+		 */
+		meta.mm_last_pg = metab.mm_last_pg;
+		meta.mm_txnid = metab.mm_txnid;
+		do {
+			r2 = pwrite(env->me_fd, ptr, len, off);
+		} while (r2 < 0 && ErrCode() == EINTR);
+		if (r2 != len)
+			rc = MDB_PANIC;
+		goto fail;
+	}
+#endif
 	/* MIPS has cache coherency issues, this is a no-op everywhere else */
 	CACHEFLUSH(env->me_map + off, len, DCACHE);
 done:
@@ -5496,6 +5521,39 @@ mdb_env_open2(MDB_env *env, int prev)
 		if (env->me_mapsize == DEFAULT_MAPSIZE)
 			env->me_mapsize = 0;
 	}
+
+	/* Verify that root pages are actually inside the file */
+	{
+		mdb_size_t fsize = 0;
+		/* ONEIRON FORK (LMDB audit): refuse a page size that
+		 * mdb_env_set_pagesize would refuse, before dividing by it.
+		 */
+		if (env->me_psize < 256 || env->me_psize > MAX_PAGESIZE)
+			return MDB_INVALID;
+		if (mdb_fsize(env->me_fd, &fsize) == MDB_SUCCESS && fsize) {
+			MDB_dbi dbi;
+			pgno_t maxpgno = fsize / env->me_psize;
+			pgno_t sum = NUM_METAS;
+			for (dbi = FREE_DBI; dbi <= MAIN_DBI; dbi++) {
+				MDB_db *db = &meta.mm_dbs[dbi];
+				if (db->md_root != P_INVALID) {
+					/* ONEIRON FORK (LMDB audit): maxpgno counts whole
+					 * pages, so a root at maxpgno is past the end too.
+					 */
+					if (db->md_root >= maxpgno)
+						return MDB_PAGE_NOTFOUND;
+					sum += db->md_branch_pages;
+					sum += db->md_leaf_pages;
+					sum += db->md_overflow_pages;
+				}
+			}
+			/* Slack sanity check as sum ignores pages from 2nd meta. */
+			/* (2nd meta may be corrupted; thus do not rely on it.)  */
+			if (sum > maxpgno)
+				return MDB_CORRUPTED;
+		}
+	}
+
 	/* Was a mapsize configured? */
 	if (!env->me_mapsize) {
 		env->me_mapsize = meta.mm_mapsize;
@@ -6373,8 +6431,10 @@ mdb_env_close_active(MDB_env *env, int excl)
 	if (env->me_rpages) {
 		MDB_ID3L el = env->me_rpages;
 		unsigned int x;
-		for (x=1; x<=el[0].mid; x++)
+		for (x=1; x<=el[0].mid; x++) {
 			munmap(el[x].mptr, el[x].mcnt * env->me_psize);
+			free(el[x].menc);
+		}
 		free(el);
 	}
 	}
@@ -7061,8 +7121,11 @@ retry:
 					id3.mid = pg0;
 					if (env->me_encfunc || env->me_sumfunc) {
 						rc = mdb_rpage_encsum(env, &id3, rem, numpgs);
-						if (rc)
+						if (rc) {
+							free(id3.menc);
+							munmap(id3.mptr, len);	/* ONEIRON FORK (LMDB audit): no cache holds this map */
 							goto fail;
+						}
 						el[x].muse = id3.muse;
 					}
 					pthread_mutex_unlock(&env->me_rpmutex);
@@ -7129,8 +7192,11 @@ fail:
 		}
 		if (env->me_encfunc || env->me_sumfunc) {
 			rc = mdb_rpage_encsum(env, &id3, rem, numpgs);
-			if (rc)
+			if (rc) {
+				free(id3.menc);
+				munmap(id3.mptr, len);	/* ONEIRON FORK (LMDB audit): no cache holds this map */
 				goto fail;
+			}
 		}
 		mdb_mid3l_insert(el, &id3);
 		pthread_mutex_unlock(&env->me_rpmutex);

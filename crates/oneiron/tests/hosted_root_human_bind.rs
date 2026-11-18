@@ -757,9 +757,10 @@ fn a_self_host_root_binds_the_owner_alone() {
 }
 
 /// Passes on main too: the gate reads the cloud stamp, a fact in the log,
-/// and not host custody, which takes a host-attested self-host root as the
-/// host's on a hosted fold. A self-hosted vault opened as Hosted keeps the
-/// bind of the transaction that rooted it, and every row after.
+/// never the host-root attestation a self-host root carries too (row
+/// HOSTED-REOPEN-REJUDGES-SELF-HOST-ROOT). A self-hosted vault opened as
+/// Hosted keeps the bind of the transaction that rooted it, and every row
+/// after.
 #[test]
 fn a_self_host_root_bind_counts_when_its_log_is_folded_as_hosted() {
     let mut vault = OwnerKeyVault::self_hosted_folded_as_hosted();
