@@ -35,6 +35,22 @@ pub(super) fn apply_put_arm(
     own_device: Option<&VerifiedOwnDeviceLane>,
 ) -> Result<()> {
     let mut data = Zeroizing::new(data);
+    // One slot per local CLAIM put, holding its pre-mask bytes when the mask
+    // rewrote it and None when it did not. It is taken here whatever the put
+    // does next, so a later put of the same id keeps its own
+    // (RAW-CLAIM-PUT-MASK-REPLAY-MISMATCH).
+    let pre_mask = if entity_type == crate::registry::ENTITY_TYPE_CLAIM
+        && !allow_maintenance
+        && !hub_sync_imported
+    {
+        state
+            .masked_claim_puts
+            .get_mut(&id)
+            .and_then(VecDeque::pop_front)
+            .flatten()
+    } else {
+        None
+    };
     entity_type = validate_put_type(
         store,
         wtxn,
@@ -185,6 +201,20 @@ pub(super) fn apply_put_arm(
     put_options.consent.can_resolve_pending =
         state.pending_gate_consent_at_batch_start.contains(&id);
     put_options.decision.preflight = preflight_decision_id;
+    // A receipt the preflight recorded names this put's body before the mask
+    // wrote its handles, decoded as the preflight decoded it (it validated
+    // these bytes in this transaction): the gate reads the receipt against
+    // that body's diff.
+    if preflight_decision_id.is_some()
+        && let Some(pre_mask) = &pre_mask
+    {
+        let pre_body = crate::claim::decode_claim_body(pre_mask, false)?;
+        let (diff, _) = crate::gate::claim_consent_binding_parts(store, wtxn, &pre_body)?;
+        put_options.decision.pre_mask_diff = Some(
+            <[u8; 32]>::try_from(diff.as_slice())
+                .map_err(|_| Error::InvariantViolation("a claim diff handle is not 32 bytes"))?,
+        );
+    }
     put_options.decision.pending_auto_probe = preflight_decision_id
         .and_then(|decision| state.pending_auto_probes.get(&decision))
         .copied()

@@ -8,8 +8,8 @@ use std::collections::VecDeque;
 use serde_json::json;
 
 use crate::code_run::{
-    AgentVerbAnswer, CodeRunBridgeCall, ProgramResumeCall, ProgramResumeKind, ProgramRowAnswer,
-    SelfCall, SelfDispatchOutcome,
+    AgentVerbAnswer, BaseKnownRead, CodeRunBridgeCall, ProgramResumeCall, ProgramResumeKind,
+    ProgramRowAnswer, SelfCall, SelfDispatchOutcome,
 };
 
 const DIVERGED: &str = "the pinned source made another call where an earlier entry settled one";
@@ -110,8 +110,14 @@ impl ProgramInjection {
     /// and its own calls meet the rows listed after it. One that returned
     /// past the wait, halted or stored outputs, or that parked before its
     /// body ran, holds. A spawn that misses its row (FIX 7447) runs live, as
-    /// every call after it.
-    pub(in crate::engine_executor) fn answer(&mut self, call: &SelfCall) -> InjectedAnswer {
+    /// every call after it. A value base custody holds, read through
+    /// `base_known`, meets the handle it took in a settled row (FIX
+    /// REPLAY-COMPARE-KNOWN-MATCHER).
+    pub(in crate::engine_executor) fn answer(
+        &mut self,
+        call: &SelfCall,
+        base_known: BaseKnownRead<'_>,
+    ) -> InjectedAnswer {
         if !self.entered {
             self.entered = true;
             return InjectedAnswer::Live;
@@ -136,7 +142,7 @@ impl ProgramInjection {
                 if settled.row.rewritten_request.is_some() {
                     return self.hold(REOPEN_REDIRECTED);
                 }
-                return match settled.row.program_answer_for(call) {
+                return match settled.row.program_answer_for(call, base_known) {
                     Ok(ProgramRowAnswer::Settled(_)) if matches!(call, SelfCall::SkillsCall(_)) => {
                         self.reopening = true;
                         InjectedAnswer::Live
@@ -146,7 +152,7 @@ impl ProgramInjection {
                 };
             }
         }
-        let outcome = match settled.row.program_answer_for(call) {
+        let outcome = match settled.row.program_answer_for(call, base_known) {
             // Its guest read a post hook's view in place of the result the
             // row keeps (a callable's included): the row cannot answer it as
             // the guest read it, so the entry holds, as a resumed pending

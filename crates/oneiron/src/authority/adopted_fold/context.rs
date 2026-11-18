@@ -184,6 +184,7 @@ fn judged_alike(
             pre_handoff_entries: Some(&no_handoff_line),
             memory_floor_bytes,
             pin,
+            owner_key_lines: None,
             appointments: None,
         };
         match fold_entry_state(entry, hash, &parents, context) {

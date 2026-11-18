@@ -4684,7 +4684,7 @@
      "path": "src/authority/fold_engine.rs",
      "purpose": "Top-level fold orchestration",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 14,
       "re-export": 1
      }
     },
@@ -5552,7 +5552,7 @@
      "path": "src/authority/mod.rs",
      "purpose": "AUTHORITY_LOG record substrate",
      "surface": {
-      "crate-vis": 77,
+      "crate-vis": 78,
       "mod": 2,
       "re-export": 88
      }
@@ -5763,6 +5763,16 @@
     {
      "bucket": "m",
      "kind": "src",
+     "notable": [],
+     "path": "src/authority/owner_key_line.rs",
+     "purpose": "The owner key's line (row CARRIER-PROOF-OLD-PARENTS; Engine RULING 15 Nov 21:09, design A, and…",
+     "surface": {
+      "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
      "notable": [
       "OwnerKeyMovePlan",
       "OwnerKeyMoveSigner"
@@ -5810,7 +5820,7 @@
      "path": "src/authority/owner_proof.rs",
      "purpose": "An owner act's proof (row CARRIER-OWNER-PROOF; the lead's rulings 15 Nov 12:1x and 13:2x, FIX…",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 14,
       "fn": 2
      }
     },
@@ -6113,7 +6123,7 @@
      "path": "src/authority/revoke_proof.rs",
      "purpose": "Log-derived, typed restrictive facts (actor and device revocations, slip withdrawals, a Grant's slip…",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 12
      }
     },
     {
@@ -9497,7 +9507,7 @@
      "path": "src/batch/secret_scan/mask/side_row.rs",
      "purpose": "The side-row wall (OF-067; ARCH-0069 #mask-on-write and #handles-in-fields, owner ruling G04 = A)",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 16
      }
     },
     {
@@ -16842,7 +16852,7 @@
      "purpose": "Claim lifecycle transitions: the supersession-chain walk, the write-verb validity guard, `supersede_claim` /…",
      "surface": {
       "crate-vis": 16,
-      "fn": 4
+      "fn": 6
      }
     },
     {
@@ -19398,7 +19408,7 @@
      "path": "src/code_run/dispatcher/admission.rs",
      "purpose": "The admission of the run door and its answered dispatch bracket",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -20212,7 +20222,7 @@
      "path": "src/code_run/replay/cursor.rs",
      "purpose": "The cursor that replays a code run's recorded bridge calls in order and answers each with its stored…",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "fn": 3,
       "struct": 1
      }
@@ -20247,7 +20257,7 @@
      "path": "src/code_run/replay/request_identity.rs",
      "purpose": "A bridge request's identity apart from its words (FIX 6534)",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 12
      }
     },
     {
@@ -20781,7 +20791,7 @@
      "path": "src/code_run/spawn_replay.rs",
      "purpose": "The one comparison of a recorded bridge row's request with the request its call makes again (FIX 7447), for…",
      "surface": {
-      "crate-vis": 22
+      "crate-vis": 26
      }
     },
     {
@@ -21384,7 +21394,7 @@
      "path": "src/code_run/storage/routing.rs",
      "purpose": "Where one run's reads and writes land: the canonical vault or a bound off-record session",
      "surface": {
-      "crate-vis": 43
+      "crate-vis": 44
      }
     },
     {
@@ -60310,7 +60320,7 @@
      "path": "src/off_record/lifecycle/session.rs",
      "purpose": "Session and vault handles: routes, shells, search, VaultMeta family, flips, receipts, close",
      "surface": {
-      "crate-vis": 42,
+      "crate-vis": 43,
       "fn": 12,
       "struct": 2
      }
@@ -82844,7 +82854,7 @@
      "purpose": "The known-value index (OF-560 C): a value custody holds, or a reveal delivered, that comes back in a later…",
      "surface": {
       "const": 1,
-      "crate-vis": 32
+      "crate-vis": 33
      }
     },
     {
@@ -92831,6 +92841,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/test_doors/action_replay_custody.rs",
+     "purpose": "Door for `tests/action_replay_custody.rs` (FIX REPLAY-COMPARE-KNOWN-MATCHER): one agent's action called…",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/test_doors/advisory_rate_window.rs",
      "purpose": "Door for `oneiron-server/tests/own_rate_health_ask.rs`: an own actor's acts counted on an advisory rate…",
      "surface": {
@@ -94456,6 +94476,16 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/test_doors/holder_slip_revoke.rs",
+     "purpose": "Door for `oneiron-server/tests/memory_verb_owner_proof_at_commit.rs` (FIX…",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "ErasableKeyState"
      ],
@@ -94930,7 +94960,7 @@
      "purpose": "Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD)",
      "surface": {
       "fn": 1,
-      "mod": 303,
+      "mod": 306,
       "re-export": 1
      }
     },
@@ -95118,6 +95148,16 @@
      "surface": {
       "fn": 1,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/test_doors/owner_key_line.rs",
+     "purpose": "The tail guard of an adopted image, for the integration tests of row CARRIER-PROOF-OLD-PARENTS (Astra review…",
+     "surface": {
+      "fn": 1
      }
     },
     {
@@ -104197,6 +104237,14 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/action_replay_custody.rs",
+     "purpose": "FIX REPLAY-COMPARE-KNOWN-MATCHER (Engine RULING FIX-2329-REPLAY-KNOWN = C, then A, 15 Nov 22:05): the…",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -104943,7 +104991,7 @@
      "path": "tests/booking_host_seat_support/mod.rs",
      "purpose": "The host's own calendar as a connector seat the booking is written to",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
      }
     },
     {
@@ -105240,6 +105288,14 @@
      "notable": [],
      "path": "tests/carrier_prompt_sentences.rs",
      "purpose": "The question the engine composes for a carried pin and for a held machine answer (FIX…",
+     "surface": {}
+    },
+    {
+     "bucket": "XL",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/carrier_proof_old_parents.rs",
+     "purpose": "Row CARRIER-PROOF-OLD-PARENTS (FIX-LIST 26314; Engine RULING 21:09, the lead 21:13): a carrier that is not…",
      "surface": {}
     },
     {
@@ -110649,6 +110705,14 @@
      "bucket": "m",
      "kind": "test",
      "notable": [],
+     "path": "tests/restriction_native_demotion.rs",
+     "purpose": "FIX [RESTRICTION-CLOSE-BY-NATIVE-DEMOTION] (Astra census-l2-derive-recheck F4 on #8238)",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
      "path": "tests/restriction_page_keys.rs",
      "purpose": "The owner's raised page maxima, served (restriction wave 19)",
      "surface": {}
@@ -113088,7 +113152,7 @@
      "purpose": "Generic LMDB-backed background attempt queue"
     },
     "authority": {
-     "files": 304,
+     "files": 305,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -114544,7 +114608,7 @@
      "purpose": "`TimeRange`, temporal expressions/parsing, granularity/anchor enums"
     },
     "test_doors": {
-     "files": 309,
+     "files": 312,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -114721,8 +114785,8 @@
    },
    "over_bar": 300,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 8126,
-   "test_files": 1882
+   "source_files": 8130,
+   "test_files": 1885
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -132692,7 +132756,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [
       "BudgetGuard"
@@ -132722,7 +132786,7 @@
      "path": "src/llm/budget/ledger.rs",
      "purpose": "Lease and tally bookkeeping: reservations, charging, and metering math",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 21
      }
     },
     {
@@ -132732,6 +132796,7 @@
      "path": "src/llm/budget/mod.rs",
      "purpose": "Budget admission and settlement surface",
      "surface": {
+      "crate-vis": 1,
       "re-export": 6
      }
     },
@@ -132770,7 +132835,7 @@
      "path": "src/llm/budget/state.rs",
      "purpose": "Budget meter core: reserve planning and admission",
      "surface": {
-      "crate-vis": 23
+      "crate-vis": 24
      }
     },
     {
@@ -132792,6 +132857,14 @@
      "notable": [],
      "path": "src/llm/budget/tests.rs",
      "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/llm/budget/tests/closed_leases.rs",
+     "purpose": "FIX BUDGET-LINE-LEASE-TABLE-UNBOUNDED: a meter keeps a record for its open leases only, while every handle…",
      "surface": {}
     },
     {
@@ -133571,7 +133644,7 @@
      "purpose": "Extraction-quality evaluation facade"
     },
     "llm": {
-     "files": 53,
+     "files": 54,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -133595,7 +133668,7 @@
    "over_bar": 0,
    "purpose": "Model seam of the oneiron engine: the LLM request, response, streaming, usage, error and catalog types, the…",
    "source_files": 54,
-   "test_files": 10
+   "test_files": 11
   },
   "oneiron-napi": {
    "files": [
@@ -164566,7 +164639,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/device_sync.rs",
@@ -164719,10 +164792,20 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
-     "path": "src/device_sync/url.rs",
-     "purpose": "A verified TLS carrier for the ordinary URL sync connection",
+     "path": "src/device_sync/selector.rs",
+     "purpose": "What residence reads select on the device's connection to its home: the own-device member grant its paired…",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/device_sync/url.rs",
+     "purpose": "The ordinary URL sync connection: the rule its home URL keeps off the mesh (`direct`) and its verified TLS…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -173230,6 +173313,17 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/test_doors/memory_owner_commit.rs",
+     "purpose": "Door for `tests/memory_verb_owner_proof_at_commit.rs` (FIX…",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/test_doors/merge_queue_checker_pressure.rs",
      "purpose": "Doors for `tests/merge_queue_checker_pressure.rs` ([GUEST-PIDS-PRESSURE-MERGE-QUEUE-CHECKER], FIX 8013…",
      "surface": {
@@ -173243,7 +173337,7 @@
      "path": "src/test_doors/mod.rs",
      "purpose": "Doors for the integration tests to crate-private items, as in `oneiron::test_doors`",
      "surface": {
-      "mod": 63
+      "mod": 64
      }
     },
     {
@@ -175660,6 +175754,14 @@
      "bucket": "m",
      "kind": "test",
      "notable": [],
+     "path": "tests/memory_verb_owner_proof_at_commit.rs",
+     "purpose": "The core memory route's owner `retract` and `supersede` check the owner's proof again in the writer that…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
      "path": "tests/memory_verbs_retract_supersede_authority.rs",
      "purpose": "The core memory route's `retract` and `supersede` judge their caller (FIX-LIST…",
      "surface": {}
@@ -177114,7 +177216,7 @@
      "purpose": "Release checks for a payload a caller was served earlier and is sent again (DEC-0005): a payload naming a…"
     },
     "device_sync": {
-     "files": 16,
+     "files": 17,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -177457,7 +177559,7 @@
      "purpose": "Request fixtures mint real logged slips before crossing the production router"
     },
     "test_doors": {
-     "files": 65,
+     "files": 66,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -177520,10 +177622,10 @@
      "purpose": "The host's precision recalculator (ARCH-0075 xlsx row; FIX 2462, OF-505 = A): LibreOffice Calc headless…"
     }
    },
-   "over_bar": 70,
+   "over_bar": 69,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 2018,
-   "test_files": 486
+   "source_files": 2020,
+   "test_files": 487
   },
   "oneiron-setting-contract": {
    "files": [
