@@ -5,11 +5,14 @@
 //! [`cancel_task`] and counts the held answers through
 //! [`held_inquiry_answer_count`]; PR 6 reads a copied answer's
 //! retained-copy check through [`retained_copy_admits`].
+//! `tests/archive_import_owner_installs_side_receipts.rs` stores a terms
+//! change's Share receipt through [`record_terms_change`].
 
 use crate::error::Result;
 use crate::inquiry::{
-    Inquiry, InquiryAnswer, InquiryDecider, InquiryLogEntry, InquiryOutcome, log_inquiry_in_txn,
-    settle_inquiry_in_txn, write_inquiry_receipt_in_txn,
+    Inquiry, InquiryAnswer, InquiryDecider, InquiryEdge, InquiryLogEntry, InquiryOutcome,
+    InquiryTerms, InquiryTermsChangeOutcome, log_inquiry_in_txn, settle_inquiry_in_txn,
+    write_inquiry_receipt_in_txn, write_inquiry_terms_receipt_in_txn,
 };
 use crate::receipt::ReceiptRecord;
 use crate::{EntityId, Vault};
@@ -61,6 +64,26 @@ pub fn record_send(
     })
 }
 
+/// The Share receipt of `member`'s change of `edge`'s terms from `previous`
+/// to the terms `edge` carries, through the writer the change itself calls.
+/// A test stores the receipt without the Connect that makes an edge live.
+///
+/// # Errors
+///
+/// As `write_inquiry_terms_receipt_in_txn`.
+pub fn record_terms_change(
+    vault: &Vault,
+    edge: &InquiryEdge,
+    previous: &InquiryTerms,
+    member: &EntityId,
+    outcome: InquiryTermsChangeOutcome,
+) -> Result<ReceiptRecord> {
+    vault.with_write_txn(|txn| {
+        let now = crate::ports::recorded_at_in_txn(&vault.store, txn)?;
+        write_inquiry_terms_receipt_in_txn(&vault.store, txn, edge, previous, member, outcome, now)
+    })
+}
+
 /// Ends `task` as `tasks.cancel` does for an open TASK with no attempt
 /// running: the immutable Cancelled fact, by `actor`, at the store clock.
 /// `tests/inquiry_asking_side.rs` ends the asking task with it.
@@ -73,6 +96,26 @@ pub fn cancel_task(vault: &Vault, task: EntityId, actor: EntityId) -> Result<()>
         let now = crate::ports::recorded_at_in_txn(&vault.store, txn)?;
         crate::context_board::cancel_task_in_txn(vault, txn, task, actor, now)
     })
+}
+
+/// [`cancel_task`] in a raw write transaction outside the write door, as a
+/// writer outside a post-commit scope commits: no post-commit work runs
+/// after it. A held answer whose task ends this way is left to the
+/// holder's backstops, each touch and each housekeeping pass.
+///
+/// # Errors
+///
+/// Storage errors.
+pub fn cancel_task_outside_write_door(
+    vault: &Vault,
+    task: EntityId,
+    actor: EntityId,
+) -> Result<()> {
+    let mut txn = vault.store.env.write_txn()?;
+    let now = crate::ports::recorded_at_in_txn(&vault.store, &mut txn)?;
+    crate::context_board::cancel_task_in_txn(vault, &mut txn, task, actor, now)?;
+    txn.commit()?;
+    Ok(())
 }
 
 /// How many task-held inquiry answers `vault` holds now. Unlike

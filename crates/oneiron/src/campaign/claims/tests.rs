@@ -822,6 +822,7 @@ fn gate_effect(counterparty: Option<&str>) -> ExternalEffectGateInput {
         has_opted_in: true,
         has_permission: true,
         policy_risk: ExternalEffectPolicyRisk::Normal,
+        send_autonomy: None,
     }
 }
 
