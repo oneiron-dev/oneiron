@@ -441,19 +441,18 @@ impl Vault {
     }
 
     /// The owner key this install holds that vouches for `actor`'s new key:
-    /// a key the fold trusts as the owner's, under this vault's posture
-    /// ([`AuthorityFold::offers_owner_proof`], built on
-    /// [`AuthorityFold::proves_owner_acts`], the rule of
+    /// a key this install may offer as the owner's proof, under this vault's
+    /// posture ([`AuthorityFold::offers_owner_proof`], the rule of
     /// `Vault::owner_proof_signer`: never a host root under the Hosted
-    /// posture), that is `actor`'s own
-    /// ([`key_is_the_owners`]), and that proves at this moment
-    /// ([`CheckpointRootSigner::proves_now`]). A co-owner's key held on this
-    /// install never vouches a key into another owner. A key that does not
-    /// prove now is passed over as if it were not held: one the roster no
-    /// longer lists live, one whose seed left its slot, and one that rests
-    /// under a device PIN outside the window a right PIN opened (row
-    /// OCS-OWNER-PIN). The door calls this inside its read, so each signer
-    /// is asked on `fold` and opens no transaction of the vault.
+    /// posture), that is `actor`'s own ([`key_is_the_owners`]), and that
+    /// proves at this moment ([`CheckpointRootSigner::proves_now`]). A
+    /// co-owner's key held on this install never vouches a key into another
+    /// owner. A key that does not prove now is passed over as if it were not
+    /// held: one the roster no longer lists live, one whose seed left its
+    /// slot, and one that rests under a device PIN outside the window a
+    /// right PIN opened (row OCS-OWNER-PIN). The door calls this inside its
+    /// read, so each signer is asked on `fold` and opens no transaction of
+    /// the vault.
     ///
     /// # Errors
     /// The store's, reading the enrolled keys.
@@ -469,9 +468,8 @@ impl Vault {
             .held_checkpoint_root_signers()
             .into_iter()
             .find(|signer| {
-                let key = signer.root();
                 fold.offers_owner_proof(signer.as_ref(), hosted)
-                    && key_is_the_owners(fold, &enrolled, &key, actor)
+                    && key_is_the_owners(fold, &enrolled, &signer.root(), actor)
                     && signer.proves_now(self, fold)
             }))
     }

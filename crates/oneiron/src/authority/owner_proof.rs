@@ -462,10 +462,8 @@ impl OwnerProofSigner<'_> {
 impl crate::Vault {
     /// The owner key this install can prove an owner act with on `fold`: the
     /// first root signer this handle holds that it may offer as the owner's
-    /// proof ([`AuthorityFold::offers_owner_proof`], built on
-    /// [`AuthorityFold::proves_owner_acts`], the rule of
-    /// `Vault::owner_proof_signer`: never a host root under the Hosted
-    /// posture) under this vault's posture and that proves at this moment
+    /// proof ([`AuthorityFold::offers_owner_proof`]) under this vault's
+    /// posture and that proves at this moment
     /// ([`CheckpointRootSigner::proves_now`]). The list is in the order of
     /// each signer's latest hold, so where an install holds two keys that
     /// both prove (a self-host server's host root and its owner signing
