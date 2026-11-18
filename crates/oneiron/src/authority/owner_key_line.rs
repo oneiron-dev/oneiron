@@ -26,7 +26,15 @@
 //!   one no fold took yet would end it for good, though a later line can
 //!   let it fold (a held removal keeps its holder machine live; blind
 //!   review round 1 of #9495, P1). Its own judge decides it, and a fold
-//!   that keeps it takes it with the others of its key.
+//!   that keeps it takes it with the others of its key. One is refused once
+//!   a fold takes it: an `OwnerKeyEnroll` whose key gives no proof in the
+//!   state it leaves, outside the line of one of the same key that gives it
+//!   (a passkey's vouch beside a fresh enrolment by the custodial root,
+//!   which confirms no vouch). The vouched keys merge by union, so the
+//!   merge would limit the key and end the proof its enrolment gave it
+//!   (blind review round 2 of #9495, P1). It draws no line of its own: the
+//!   proving enrolment's line is its key's. A key its parents already limit
+//!   gives no proof on either branch, so the root confirms nothing this way.
 //!
 //! An owner-key enrolment is an `OwnerKeyEnroll` that stands once the
 //! handoffs settle and whose key the state it leaves trusts as the owner's
@@ -215,6 +223,21 @@ impl OwnerKeyEnrolments {
                 .iter()
                 .any(|enrolment| proving(enrolment) && beneath(enrolment, row))
         };
+        // A taken enrolment whose key gives no proof, outside the line of a
+        // proving enrolment of the same key: the merge of the two would
+        // limit the key (blind review round 2 of #9495, P1). Refused, and
+        // its line is not drawn.
+        let outranked: BTreeSet<AuthorityEntryHash> = self
+            .taken
+            .iter()
+            .filter(|&(hash, taken)| {
+                !taken.proving
+                    && self.taken.iter().any(|(enrolment, other)| {
+                        other.proving && other.key == taken.key && outside(hash, enrolment)
+                    })
+            })
+            .map(|(hash, _)| *hash)
+            .collect();
         let mut lines = OwnerKeyLines::default();
         for (hash, entry) in entries {
             if needs_proof_off_the_line(&entry.op)
@@ -226,17 +249,20 @@ impl OwnerKeyEnrolments {
             {
                 lines.unproven_outside.insert(*hash);
             }
-            // Never an `OwnerKeyEnroll`, taken or not: one the fold has not
+            // No other `OwnerKeyEnroll`, taken or not: one the fold has not
             // taken yet may fold once a later line holds what refused it
             // (blind review round 1 of #9495, P1), and its row is the
             // owner's, so it narrows nothing.
-            if let Some(key) = enrolled_key(&entry.op)
-                && !matches!(entry.op, AuthorityOp::OwnerKeyEnroll(_))
-                && self
-                    .taken
-                    .iter()
-                    .any(|(enrolment, taken)| taken.key == *key && outside(hash, enrolment))
-            {
+            let refused = outranked.contains(hash)
+                || enrolled_key(&entry.op).is_some_and(|key| {
+                    !matches!(entry.op, AuthorityOp::OwnerKeyEnroll(_))
+                        && self.taken.iter().any(|(enrolment, taken)| {
+                            !outranked.contains(enrolment)
+                                && taken.key == *key
+                                && outside(hash, enrolment)
+                        })
+                });
+            if refused {
                 lines.refused_enrolments.insert(*hash);
             }
         }
@@ -254,7 +280,9 @@ pub(super) struct OwnerKeyLines {
     unproven_outside: BTreeSet<AuthorityEntryHash>,
     /// Enrolments, other than an `OwnerKeyEnroll`, of a key an owner-key
     /// enrolment enrolled (a rotation or a handoff naming it among them),
-    /// outside that enrolment's line: each is an invalid entry.
+    /// outside that enrolment's line, and taken `OwnerKeyEnroll`s whose key
+    /// gives no proof outside the line of a proving one of their key: each
+    /// is an invalid entry.
     refused_enrolments: BTreeSet<AuthorityEntryHash>,
 }
 
