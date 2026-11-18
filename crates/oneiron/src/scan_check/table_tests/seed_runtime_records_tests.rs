@@ -622,6 +622,7 @@ pub(super) fn seed(vault: &Vault, scan: EngineScan) -> Option<(usize, Read<'_>)>
                                 actor_generation: None,
                                 assigned_generation: None,
                                 occurred_at: LEARNED_AT,
+                                maker: None,
                             },
                         )?;
                     }
