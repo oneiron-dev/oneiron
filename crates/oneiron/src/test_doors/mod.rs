@@ -17,6 +17,7 @@ pub mod approval_target_round_trip;
 pub mod archive_import;
 pub mod archive_producers;
 pub mod archive_provenance;
+pub mod archive_side_binary_credential;
 pub mod archive_side_catalogue;
 #[cfg(feature = "sync")]
 pub mod artifact_publication_pump;
