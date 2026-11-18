@@ -106,9 +106,9 @@ enum OwnerRow {
     /// L9-52 (b)).
     Live,
     /// The owner's delete of their own PERSON, re-proved after this delete's
-    /// own scrub: the row's deletion is the delete itself, so the binding
-    /// alone answers. The gate's first evaluation, before any scrub, asked
-    /// for a live row.
+    /// own scrub: the row's deletion is the delete itself, so the active
+    /// binding answers, and the owner census with that PERSON taken as live.
+    /// The gate's first evaluation, before any scrub, asked for a live row.
     DeletingItself,
 }
 
@@ -197,7 +197,9 @@ fn verify_owner_binding_in_txn(
     if bound {
         let owner = match row {
             OwnerRow::Live => crate::policy_model::is_live_vault_owner_in_txn(vault, txn, &actor)?,
-            OwnerRow::DeletingItself => true,
+            OwnerRow::DeletingItself => {
+                vault.is_vault_owner_deleting_own_person_in_txn(txn, &actor)?
+            }
         };
         if owner {
             return Ok(());
@@ -332,8 +334,9 @@ pub(crate) fn verify_deletion_authority_in_txn(
 
 /// [`verify_deletion_authority_in_txn`] for an owner deleting their own
 /// PERSON, as its writes re-prove it: after this delete's own scrub commits,
-/// the actor's row is that delete's shell, so the owner binding alone
-/// answers (`OwnerRow::DeletingItself`). Every other check is the same.
+/// the actor's row is that delete's shell, so the active owner binding and
+/// the owner census with that PERSON taken as live answer
+/// (`OwnerRow::DeletingItself`). Every other check is the same.
 pub(crate) fn verify_own_person_deletion_authority_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
