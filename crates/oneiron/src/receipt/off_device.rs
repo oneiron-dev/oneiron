@@ -153,17 +153,25 @@ const HOOK_RUN_KEY: &str = "run_key";
 /// over this many times the rows the last pass kept.
 const REFILL_GROWTH: usize = 2;
 
-/// Every row `receipt` names, by its family's explicit set: its trigger, the
-/// rows its family's [`ROW_FIELDS`] hold, a share's parties, and the rows a
-/// hook run's reads served. `None` when they cannot be known: a hook receipt
+/// Every row `receipt` names, by its family's explicit set: its trigger (a
+/// verb hook's invocation trigger excepted: it names no row), the rows its
+/// family's [`ROW_FIELDS`] hold, a share's parties, and the rows a hook
+/// run's reads served. `None` when they cannot be known: a hook receipt
 /// whose run is not kept.
 pub(crate) fn referenced_rows(
     vault: &Vault,
     receipt: &ReceiptRecord,
 ) -> Result<Option<Vec<EntityId>>> {
+    // A verb hook's trigger is its call's invocation id, not a row: its
+    // `fields` carry `verb` and its `invocation` equals `trigger_ref`
+    // (HOOKS-04). A fact hook's trigger is its entity and stays a row.
+    let verb_hook_trigger = receipt.receipt_kind == ReceiptKind::Hook
+        && receipt.fields.contains_key("verb")
+        && receipt.fields.get("invocation") == receipt.trigger_ref.as_ref();
     let mut rows: Vec<EntityId> = receipt
         .trigger_ref
         .as_deref()
+        .filter(|_| !verb_hook_trigger)
         .and_then(row_of)
         .into_iter()
         .collect();
