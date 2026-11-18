@@ -346,7 +346,7 @@ impl Vault {
     /// (C4): the host root signs, with no owner act. Only the host's own
     /// node and a fresh self-host first install take it; the fold judges the
     /// root's custody, so a hosted root never answers "yours" here.
-    pub(super) fn enroll_bootstrap_in_txn(
+    pub(crate) fn enroll_bootstrap_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         issuer: &HostSlipIssuer,
