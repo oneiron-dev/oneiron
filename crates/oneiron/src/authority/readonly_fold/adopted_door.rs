@@ -92,6 +92,8 @@ pub fn fold_past_prefix_image(
         AdoptedTail {
             tail: &tail,
             held_covered: &cold,
+            // The vault's own rows: every tail row counts.
+            believed: None,
             required: &none_required,
             first_seen_at_secs: &first_seen_at_secs,
             now_secs: key.now_secs,
@@ -117,6 +119,7 @@ pub fn fold_past_prefix_image(
         AdoptedTail {
             tail: &closed_tail,
             held_covered: &cold,
+            believed: None,
             required: &none_required,
             first_seen_at_secs: &no_first_seen,
             now_secs: 0,

@@ -173,6 +173,8 @@ impl Vault {
             AdoptedTail {
                 tail: &closed_tail,
                 held_covered: &held_covered,
+                // Image-grade: every handed-over row counts.
+                believed: None,
                 required: &none_required,
                 first_seen_at_secs: &no_first_seen,
                 now_secs: 0,

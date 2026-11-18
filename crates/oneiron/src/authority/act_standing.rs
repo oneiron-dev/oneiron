@@ -491,6 +491,8 @@ fn capture_past_adopted(
         AdoptedTail {
             tail: &closed_tail,
             held_covered: &held_covered,
+            // Image-grade: every handed-over row counts.
+            believed: None,
             required: heads,
             first_seen_at_secs: &BTreeMap::new(),
             now_secs: 0,

@@ -200,9 +200,10 @@ pub(crate) fn authority_history_request_in_txn(
 /// gate's view of this snapshot believes: their parents and, walking down
 /// through every held row they reach, its parents; the checkpoint cover, the
 /// resumed hashes and `required` count either way. A vault that adopted a
-/// checkpoint image answers the fold's own request past the image under
-/// either naming; that fold still names a parent a stranger's tail row
-/// names (FIX [STRANGER-GAP-STALLS-ADOPTED-TAIL-FOLD]).
+/// checkpoint image answers the fold's own request past the image: the gaps
+/// the believed tail rows rest on, and under [`NamingRows::Every`] the gaps
+/// only non-believed rows reach too, which the fold reads past (FIX
+/// [STRANGER-GAP-STALLS-ADOPTED-TAIL-FOLD]).
 fn held_history_request_in_txn(
     store: &Store,
     posture: HostingPrivacyPosture,
@@ -211,7 +212,7 @@ fn held_history_request_in_txn(
     naming: NamingRows,
 ) -> Result<AuthorityHistoryRequest> {
     if let Some(request) =
-        super::readonly_fold::adopted_history_request_in_txn(store, posture, txn, required)?
+        super::readonly_fold::adopted_history_request_in_txn(store, posture, txn, required, naming)?
     {
         return Ok(request);
     }
