@@ -131,6 +131,8 @@ fn validate_claim_body_and_decode_with_descriptor(
         crate::provider_confidence::validate_actor_confidence_prior_claim_structure(&body)?;
     } else if crate::provider_confidence::is_provider_enrichment_claim_predicate(&body.predicate) {
         crate::provider_confidence::validate_provider_enrichment_claim_structure(&body)?;
+    } else if body.predicate == crate::machine_capacity::PREDICATE_MACHINE_CAPACITY {
+        crate::machine_capacity::validate_machine_capacity_claim_structure(&body)?;
     } else if body.predicate == crate::write_envelope::subject_record::PREDICATE_ACTOR_SUBJECT_REF {
         crate::write_envelope::subject_record::validate_actor_subject_claim_structure(&body)?;
     } else if body.predicate == crate::write_envelope::claim_predicate::PREDICATE_PERSON_SUBSTRATE {
