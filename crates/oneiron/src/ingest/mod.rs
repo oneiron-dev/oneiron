@@ -11,6 +11,10 @@ pub use ag_ui::{
     AgUiEventLinks, AgUiFileImport, AgUiFileRead, AgUiFileReadInput, AgUiFileReceipt, AgUiFileView,
     AgUiObservationKind, AgUiRepairLink, AgUiRepairLinkStatus, AgUiSource,
 };
+pub(crate) use ag_ui::{
+    StoredAgUiCapture, ag_ui_capture_holds_in_txn, collect_capture_asset_erases,
+    owe_capture_asset_erase_in_txn, standing_ag_ui_captures_in_txn,
+};
 mod fingerprint;
 pub use fingerprint::{BlobBirthDecision, BlobFingerprintSnapshot, FingerprintRung};
 pub(crate) use fingerprint::{
@@ -39,6 +43,8 @@ pub use identity_key::identity_fields_for_kind;
 pub(crate) use identity_key::{identity_hint_body, identity_hint_digest, reindex_identity_hints};
 mod admission;
 mod bulk_review;
+#[cfg(oneiron_test_support)]
+pub(crate) use self::bulk_review::claim_import_content_hash_for_test;
 pub mod image;
 pub mod meeting_audio;
 mod provider;
@@ -53,7 +59,6 @@ pub use image::{
     parse_exif_evidence, register_image_caption_recognizer, register_image_text_recognizer,
 };
 
-pub(crate) use self::admission::json_to_msgpack_value;
 pub use self::admission::{
     ImportedEvidenceAdmission, ImportedEvidenceEntityResolution, ImportedEvidenceScreen,
     admit_imported_entity, admit_imported_evidence_claim, admit_imported_evidence_claim_typed,
@@ -62,6 +67,7 @@ pub use self::admission::{
 pub(crate) use self::admission::{
     admit_imported_evidence_claim_for_memory, admit_imported_evidence_claim_typed_for_machine,
     admit_imported_evidence_claim_typed_for_machine_in_txn, admit_imported_evidence_in_content,
+    imported_screen_verdict,
 };
 pub use self::bulk_review::{
     ImportedClaimBatch, ImportedClaimBatchEntry, ImportedClaimBatchReceipt,
@@ -87,8 +93,6 @@ pub use self::types::{
 
 #[cfg(test)]
 mod bulk_review_tests;
-// FIX [LIBTEST-QUARANTINE-INGEST-DOCS-TESTS]: the lib test target's type check fails here (2 errors: E0061 x1, E0277 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod docs_tests;
 #[cfg(test)]

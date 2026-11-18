@@ -23,6 +23,7 @@
 mod bind;
 mod hosted_command;
 mod hosted_selection;
+mod hosted_sign_in;
 mod recall;
 
 pub use self::hosted_command::hosted;
@@ -32,6 +33,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, ExitStatus, Stdio};
 use std::time::{Duration, Instant};
 
+use oneiron::ingest::history::HistorySource;
 use serde_json::{Map, Value};
 
 use self::hosted_selection::{HostedDiscovery, HostedVault};
@@ -79,13 +81,13 @@ fn context_reply(host: HookHost, said: &[String]) -> Option<String> {
 }
 
 /// The `oneiron import` source that reads `host`'s session log.
-const fn import_source(host: HookHost) -> &'static str {
+const fn import_source(host: HookHost) -> HistorySource {
     match host {
         // Hermes asks only `bind`; a hand-over under its name reads a Claude
         // Code log, as every hand-over did before hosts had their own.
-        HookHost::ClaudeCode | HookHost::Hermes => "claude-code",
-        HookHost::Codex => "codex",
-        HookHost::Cursor | HookHost::Copilot => "hook-transcript",
+        HookHost::ClaudeCode | HookHost::Hermes => HistorySource::ClaudeCode,
+        HookHost::Codex => HistorySource::Codex,
+        HookHost::Cursor | HookHost::Copilot => HistorySource::HookTranscript,
     }
 }
 
@@ -247,7 +249,12 @@ fn hand_over(host: HookHost, args: &HookHandOverArgs) {
     };
     let mut command = oneiron_spawn::command(oneiron(args.common.oneiron.as_deref()));
     command
-        .args(["import", import_source(host), transcript, "--queue"])
+        .args([
+            "import",
+            import_source(host).source_id(),
+            transcript,
+            "--queue",
+        ])
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());

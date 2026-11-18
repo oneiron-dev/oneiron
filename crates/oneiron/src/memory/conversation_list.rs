@@ -736,7 +736,5 @@ thread_local! {
         const { std::cell::RefCell::new(None) };
 }
 
-// FIX [LIBTEST-QUARANTINE-MEMORY-CONVERSATION-LIST-TESTS]: the lib test target's type check fails here (4 errors: E0063 x3, E0061 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;

@@ -28,7 +28,9 @@ use heed::RoTxn;
 use rmpv::Value;
 use std::collections::BTreeSet;
 
-const PAGE_LIMIT: usize = 256;
+/// The strips a reply-strip page holds when the ask names no limit, and its maximum while the
+/// owner has not moved `conversation_dag.reply_strips.max_page` (its default).
+pub(super) const PAGE_LIMIT: usize = 256;
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::conversation_dag::quote_strips::ReplyStripsRequest;
@@ -415,7 +417,11 @@ impl Memory<'_> {
             .as_deref()
             .map(EntityId::from_hex)
             .transpose()?;
-        let limit = page_limit_zero_refused(request.limit, PAGE_LIMIT, PAGE_LIMIT)
+        let max = self
+            .vault()
+            .page_max_in_force(&super::setting_keys::REPLY_STRIPS_PAGE_MAX)?
+            .rows();
+        let limit = page_limit_zero_refused(request.limit, PAGE_LIMIT, max)
             .map_err(|ZeroLimitRefused| {
                 MemoryError::bad_request_with("reply strip limit must be positive", &[])
             })?

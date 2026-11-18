@@ -80,14 +80,14 @@ pub(crate) fn record_callable_invocation(
         }
         if let Some(raw) = INVOCATIONS.get(&vault.store, txn, &binding)? {
             let prior = decode_value(&raw)?;
-            if map_str(&prior, "executor") != Some(executor)
-                || map_str(&prior, "version") != Some(version)
+            if map_str(&prior, "executor")? != Some(executor)
+                || map_str(&prior, "version")? != Some(version)
             {
                 return Err(invalid(
                     "callable step is already bound to another executor or revision",
                 ));
             }
-            if !succeeded || map_entry(&prior, "success").and_then(Value::as_bool) == Some(true) {
+            if !succeeded || map_entry(&prior, "success")?.and_then(Value::as_bool) == Some(true) {
                 return Ok(());
             }
         } else if succeeded {
@@ -122,12 +122,12 @@ pub(super) fn callable_invokers_in_txn(
     for row in INVOCATIONS.iter_from(&vault.store, txn, &prefix)? {
         let (_, raw) = row?;
         let witness = decode_value(&raw)?;
-        if map_str(&witness, "version") != Some(record.version.as_str()) {
+        if map_str(&witness, "version")? != Some(record.version.as_str()) {
             continue;
         }
         let executor =
-            map_str(&witness, "executor").ok_or(invalid("callable invocation lacks executor"))?;
-        let success = map_entry(&witness, "success")
+            map_str(&witness, "executor")?.ok_or(invalid("callable invocation lacks executor"))?;
+        let success = map_entry(&witness, "success")?
             .and_then(Value::as_bool)
             .ok_or(invalid("callable invocation lacks result state"))?;
         *executors.entry(executor.to_owned()).or_default() |= success;

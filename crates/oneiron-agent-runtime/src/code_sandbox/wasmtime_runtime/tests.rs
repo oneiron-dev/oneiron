@@ -146,9 +146,21 @@ impl JsCodeModeHost for DispatcherHost<'_> {
     }
 }
 
+/// The core crate's embedding test config (its `test_util` is crate-private):
+/// 16 MiB map, 4 dimensions, `test/model@v1`, 16 readers, the rest the device
+/// preset.
+fn embedding_test_config() -> crate::VaultConfig {
+    let mut config = crate::VaultConfig::device();
+    config.map_size = 16 * 1024 * 1024;
+    config.dimensions = 4;
+    config.embedding_model = Some("test/model@v1".to_owned());
+    config.max_readers = 16;
+    config
+}
+
 fn gate_fixture() -> Result<(tempfile::TempDir, Vault, EntityId, EntityId, EntityId)> {
     let dir = tempfile::tempdir().expect("test fixture");
-    let vault = Vault::open(dir.path(), crate::test_util::embedding_test_config())?;
+    let vault = Vault::open(dir.path(), embedding_test_config())?;
     let actor = EntityId::from_bytes([0x64; 16])?;
     let subject = EntityId::from_bytes([0xb4; 16])?;
     let claim = EntityId::from_bytes([0xc4; 16])?;
@@ -453,6 +465,7 @@ fn native_quickjs_memory_rows_make_the_calls_their_imports_made() -> Result<()> 
                             id: self.1,
                             score: 0.5,
                         }],
+                        hooks: Vec::new(),
                     })
                 }
                 SelfCall::MemoryPutClaim(call) => {
@@ -629,8 +642,16 @@ fn native_quickjs_report_blocked_refuses_an_unknown_category() -> Result<()> {
     )?;
     assert!(outcome.done);
     assert_ne!(outcome.observation, "unexpected");
-    let receipt = crate::code_run::executor_speech_message_id("native-report-blocked-invalid", 0)?;
-    assert!(vault.get_raw(&receipt)?.is_none());
+    // The speech MESSAGE id is crate-private to oneiron; its door builds only
+    // under the test cfg.
+    #[cfg(oneiron_test_support)]
+    {
+        let receipt = oneiron::test_doors::code_sandbox_conformance::executor_speech_message_id(
+            "native-report-blocked-invalid",
+            0,
+        )?;
+        assert!(vault.get_raw(&receipt)?.is_none());
+    }
     Ok(())
 }
 

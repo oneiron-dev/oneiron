@@ -189,6 +189,7 @@ fn turn(turn_ref: Option<String>, messages: Vec<WitnessMessage>) -> WitnessTurn 
         messages,
         occurred_at: NOW,
         thread_audience: None,
+        project: None,
         assertions: Default::default(),
     }
 }
@@ -927,7 +928,7 @@ fn a_stream_continuation_marks_its_turn_again() {
 
     let dir = tempfile::tempdir().expect("dir");
     let vault = open(dir.path(), true);
-    let writer = speaker(&vault);
+    let writer = vault.ensure_embedded_owner_actor().expect("owner");
     crate::test_util::bind_test_owner(&vault, writer);
     let memory = vault.memory(writer, EdgeActorClass::Human);
     let mut streamed = message(0, "");
@@ -1947,6 +1948,7 @@ fn bind_resident(vault: &Vault) -> EntityId {
                 ..message(0, "room")
             }],
             thread_audience: None,
+            project: None,
             assertions: Default::default(),
         })
         .expect("room");
@@ -1983,11 +1985,9 @@ fn bind_resident(vault: &Vault) -> EntityId {
 /// another kind passes tagging rows over, uncounted.
 #[test]
 fn a_vault_past_100k_settled_tagging_markers_still_serves_the_inbox_and_resident_dispatch() {
-    let config = VaultConfig {
-        store_clock: ManualClock::new(NOW).bundle(),
-        tagging: Some(shadow(CHECKPOINT)),
-        ..VaultConfig::default()
-    };
+    let mut config = VaultConfig::default();
+    config.store_clock = ManualClock::new(NOW).bundle();
+    config.tagging = Some(shadow(CHECKPOINT));
     let (_dir, vault) = crate::test_util::open_test_vault_with(config);
     let lead = bind_resident(&vault);
     let cap = crate::receipt::MAX_RECEIPT_QUERY_SCAN as u64;
@@ -2059,6 +2059,7 @@ fn cleanup_proposals(vault: &Vault, clock: &ManualClock) -> Vec<[u8; 16]> {
         .expect("cleanup")
         .candidates
         .iter()
+        .flatten()
         .map(|candidate| *candidate.entity.as_bytes())
         .collect()
 }

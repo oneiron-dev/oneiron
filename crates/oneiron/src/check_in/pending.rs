@@ -143,6 +143,15 @@ pub(crate) trait RungResolver {
     /// enters the agent's rung (P22-SHAPE Q4 = A). `None`: no verdict, and
     /// the agent passes the ask up.
     fn agent_verdict(&self, pending: &PendingCheckIn, holder: &RungHolder) -> Option<HolderAnswer>;
+
+    /// The asker's spawn parent this chain was built with, which an open
+    /// stores on the row ([`PendingCheckIn::spawn_parent`]) before it enters
+    /// the first rung, so every later rung reads it from the row. `None`
+    /// unless the agent verb door built the chain from the caller's running
+    /// attempt (FIX CHECK-IN-SPAWN-PARENT-PRINCIPAL).
+    fn spawn_parent(&self) -> Option<EntityId> {
+        None
+    }
 }
 
 /// A holder's answer and the effect it is over: it settles the ask only
@@ -220,7 +229,21 @@ pub(crate) fn open_pending_check_in_in_txn(
     chain: &dyn RungResolver,
     now: u64,
 ) -> Result<PendingCheckIn> {
-    validate_open(&request, now)?;
+    create_open_row_in_txn(vault, txn, request, None, chain, now)
+}
+
+/// [`open_pending_check_in_in_txn`], for the closed `room` when it is
+/// `Some`: the row enters only [`Rung::RoomOwner`], and its grant ref may be
+/// empty, for an adder who holds no grant on the vault.
+fn create_open_row_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    request: OpenPendingCheckIn,
+    room: Option<EntityId>,
+    chain: &dyn RungResolver,
+    now: u64,
+) -> Result<PendingCheckIn> {
+    validate_open(&request, room.is_some(), now)?;
     let floor = super::waits::class_wait_in_txn(vault, txn, request.act, &request.scope)?;
     if request
         .asker_wait_secs
@@ -233,6 +256,7 @@ pub(crate) fn open_pending_check_in_in_txn(
     let mut row = PendingCheckIn {
         id: vault.store.clock.entity_id()?,
         asker: request.asker,
+        spawn_parent: chain.spawn_parent(),
         grant_ref: request.grant_ref,
         verb: request.verb,
         act: request.act,
@@ -255,6 +279,7 @@ pub(crate) fn open_pending_check_in_in_txn(
         transitions: 0,
         consumed_at: None,
         invocation: None,
+        room,
     };
     let fields = ReceiptFields::new(&row)
         .with("verb", row.verb.clone())
@@ -264,6 +289,10 @@ pub(crate) fn open_pending_check_in_in_txn(
             "effect_digest",
             crate::receipt::hex_lower(&row.effect_digest),
         );
+    let fields = match row.room {
+        Some(room) => fields.with("room", room.to_hex()),
+        None => fields,
+    };
     let asker = row.asker;
     write_check_in_receipt_in_txn(
         &vault.store,
@@ -295,8 +324,17 @@ pub(crate) fn keyed_pending_check_in_in_txn(
     scope: &CheckInScope,
     effect_digest: &[u8; 32],
 ) -> Result<Option<PendingCheckIn>> {
-    let key = open_key_of(asker, verb, act, scope, effect_digest);
-    let Some(id) = OPEN_KEY.get(store, txn, &key)? else {
+    let key = open_key_of(asker, verb, act, scope, effect_digest, None);
+    keyed_row_in_txn(store, txn, &key)
+}
+
+/// The row the natural key `key` names while it answers a repeat.
+fn keyed_row_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    key: &[u8; 32],
+) -> Result<Option<PendingCheckIn>> {
+    let Some(id) = OPEN_KEY.get(store, txn, key)? else {
         return Ok(None);
     };
     Ok(PENDING
@@ -321,18 +359,50 @@ pub(crate) fn open_keyed_pending_check_in_in_txn(
     chain: &dyn RungResolver,
     now: u64,
 ) -> Result<(PendingCheckIn, bool)> {
-    if let Some(row) = keyed_pending_check_in_in_txn(
-        &vault.store,
-        txn,
+    open_keyed_row_in_txn(vault, txn, request, None, invocation, chain, now)
+}
+
+/// [`open_keyed_pending_check_in_in_txn`] for an add into the closed `room`
+/// (ARCH-0082 #closed-room; P26-SHAPE Q5 = A): the row enters only
+/// [`Rung::RoomOwner`], its key names the room, and its grant ref may be
+/// empty, for an adder who holds no grant on the vault.
+///
+/// # Errors
+///
+/// As [`open_pending_check_in_in_txn`].
+pub(crate) fn open_keyed_room_owner_check_in_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    request: OpenPendingCheckIn,
+    room: EntityId,
+    invocation: Option<[u8; 16]>,
+    chain: &dyn RungResolver,
+    now: u64,
+) -> Result<(PendingCheckIn, bool)> {
+    open_keyed_row_in_txn(vault, txn, request, Some(room), invocation, chain, now)
+}
+
+fn open_keyed_row_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    request: OpenPendingCheckIn,
+    room: Option<EntityId>,
+    invocation: Option<[u8; 16]>,
+    chain: &dyn RungResolver,
+    now: u64,
+) -> Result<(PendingCheckIn, bool)> {
+    let key = open_key_of(
         request.asker,
         &request.verb,
         request.act,
         &request.scope,
         &request.effect_digest,
-    )? {
+        room.as_ref(),
+    );
+    if let Some(row) = keyed_row_in_txn(&vault.store, txn, &key)? {
         return Ok((row, false));
     }
-    let mut row = open_pending_check_in_in_txn(vault, txn, request, chain, now)?;
+    let mut row = create_open_row_in_txn(vault, txn, request, room, chain, now)?;
     if invocation.is_some() {
         row.invocation = invocation;
         store_pending_in_txn(&vault.store, txn, &row)?;
@@ -341,11 +411,12 @@ pub(crate) fn open_keyed_pending_check_in_in_txn(
     Ok((row, true))
 }
 
-fn validate_open(request: &OpenPendingCheckIn, now: u64) -> Result<()> {
+/// `room_route`: a closed room's ask, whose adder may hold no grant.
+fn validate_open(request: &OpenPendingCheckIn, room_route: bool, now: u64) -> Result<()> {
     if request.mode == CheckInMode::NeverAsk {
         return Err(refuse("a NeverAsk act does not wait"));
     }
-    if request.verb.is_empty() || request.grant_ref.is_empty() {
+    if request.verb.is_empty() || (request.grant_ref.is_empty() && !room_route) {
         return Err(refuse("a pending check-in names its verb and grant"));
     }
     if request.until.is_some_and(|until| until <= now) {
@@ -651,8 +722,11 @@ fn require_may_answer(
 /// a pending check-in the actor asked is removed, since no act of theirs
 /// waits any more; every other row drops the actor from its pinned holders
 /// and from a skipped rung's missing link, and names nobody where it named
-/// the actor as the one who answered, extended or objected. The answer, the
-/// extension, the objection and the skip stand. The receipts stand,
+/// the actor as the one who answered, extended or objected, or as the
+/// asker's spawn parent. A rung the ask enters after that reads the asker's
+/// grantor as an ask no spawned run opened does (the grant's
+/// `delegated_by`). The answer, the extension, the objection and the skip
+/// stand. The receipts stand,
 /// scrubbed by their own table's scrub, which takes the actor out of the
 /// same `missing_link` value the same way.
 ///
@@ -695,6 +769,7 @@ fn scrub_row(row: &mut PendingCheckIn, actor: &EntityId) -> bool {
     if let PendingState::Answered { by, .. } = &mut row.state {
         scrub(by);
     }
+    scrub(&mut row.spawn_parent);
     for entry in &mut row.rungs {
         if let Some(extension) = entry.extension.as_mut() {
             scrub(&mut extension.by);

@@ -78,7 +78,8 @@ mod time_range_serde {
 #[doc(hidden)]
 pub use oneiron_verb_wire::booking::agent_api::{
     BookingAgentOperation, BookingBookResult, BookingCancelInput, BookingConfirmInput,
-    BookingIntakeAnswer, BookingOperationResponse, BookingRescheduleInput, SelectedSlot,
+    BookingDepositCheckout, BookingIntakeAnswer, BookingOperationResponse, BookingRescheduleInput,
+    GrantedBusyView, SelectedSlot,
 };
 
 // -------------------------------------------------------------------------
@@ -126,9 +127,22 @@ pub struct BookingHoldInput {
     pub constraint: Option<ConstraintObject>,
     pub session_ref: String,
     pub checkout_lease_token: Option<String>,
+    /// The deposit terms the visitor read on the event type's card
+    /// (`EventTypeCard::deposit`, BK-DEPOSITS). A hold that opens a deposit
+    /// checkout must carry them, equal to the live terms, so the visitor
+    /// pays only under terms they were shown; a stale card is refused before
+    /// any payment is created. Absent for an event type with no deposit.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deposit_terms: Option<crate::booking::DepositTerms>,
     /// Replay hygiene only. Correctness comes from the home-node writer's
     /// revalidation, never from this key.
     pub idempotency_key: String,
+    /// The vault owner's own hold past the event type's daily or weekly
+    /// meeting cap, and why (1 to 4096 bytes). Only a caller the owner door
+    /// verifies may send it (RULING BK-CAP-OVERRIDE-WHO = B); anyone else
+    /// gets a 400. The reason is recorded on the booking.
+    #[serde(default)]
+    pub cap_override_reason: Option<String>,
 }
 
 /// The typed two-stage book flow.

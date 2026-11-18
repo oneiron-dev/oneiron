@@ -165,7 +165,17 @@ impl Replay<'_> {
         }
         let mut reads = PinnedReads::new(&memo.reads);
         let mut verdicts = PinnedVerdicts::new(&memo.verdicts);
-        let mut context = HookRunContext::new(self.binding.selector.budget_ms);
+        let max_budget_ms = match crate::runtime_hooks::setting_keys::hook_max_budget_ms(self.vault)
+        {
+            Ok(max_budget_ms) => max_budget_ms,
+            Err(error) => {
+                return HookReplayResult::MissingHistory {
+                    reason: error.to_string(),
+                };
+            }
+        };
+        let mut context =
+            HookRunContext::new(self.binding.selector.budget_ms).with_max_budget_ms(max_budget_ms);
         let result = match &self.body {
             Ok(body) => {
                 // Unavailable until the runtime reports it (FIX 9332).
@@ -234,7 +244,17 @@ impl Replay<'_> {
             };
         }
         let mut reads = PinnedReads::new(&saved.reads);
-        let mut context = HookRunContext::new(self.binding.selector.budget_ms);
+        let max_budget_ms = match crate::runtime_hooks::setting_keys::hook_max_budget_ms(self.vault)
+        {
+            Ok(max_budget_ms) => max_budget_ms,
+            Err(error) => {
+                return HookReplayResult::MissingHistory {
+                    reason: error.to_string(),
+                };
+            }
+        };
+        let mut context =
+            HookRunContext::new(self.binding.selector.budget_ms).with_max_budget_ms(max_budget_ms);
         let result = match &self.body {
             Ok(body) => {
                 context.body_starts();
@@ -523,7 +543,9 @@ impl Replay<'_> {
         // A live replay is an execution of its own: its verdicts ask under
         // the entry's run key, and nothing keeps what they settled.
         let key = store::run_key(self.binding_id, self.binding, entry)?;
-        let mut context = HookRunContext::new(self.binding.selector.budget_ms);
+        let max_budget_ms = crate::runtime_hooks::setting_keys::hook_max_budget_ms(self.vault)?;
+        let mut context =
+            HookRunContext::new(self.binding.selector.budget_ms).with_max_budget_ms(max_budget_ms);
         let deadline = context.deadline();
         let mut pins = Vec::new();
         let mut asked = 0_u32;

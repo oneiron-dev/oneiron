@@ -44,7 +44,32 @@ pub(super) fn apply_put_arm(
         allow_reserved_predicate,
         hub_sync_imported,
     )?;
+    // A put at an id the permanent `dt:` hard-delete marker holds must not
+    // commit a body that then reads deleted forever (hard-once-seen): every
+    // read refuses the row, so the put arm refuses it too, as the facade's
+    // single-put doors do. A delete-protected record or a base agent reads
+    // through the marker (`row_deletion_marked` exempts both), so those
+    // puts stay admitted. A replicated project revision is admitted too:
+    // sync ingest lands it and then neutralizes the stale `dt:` poison a
+    // headerless tombstone-first replay planted at its id
+    // (`neutralize_delete_protected_marker_in_txn` accepts project
+    // revisions), so refusing it here would block that revision forever.
     let replicated = allow_maintenance && allow_reserved_predicate;
+    if !crate::registry::is_delete_protected_engine_record(entity_type)
+        && !crate::store::base_agent::is_base_agent_actor(&id)?
+        && !(replicated && crate::store::project_kind::is_project_revision_type(store, entity_type))
+        && crate::ports::TombstoneStoreRead::port_deletion_marked(
+            store,
+            wtxn,
+            crate::ports::DeletionMarker::HardDelete,
+            &id,
+        )?
+    {
+        return Err(Error::Refused(format!(
+            "id {} was hard-deleted and cannot be recreated; use a fresh id",
+            id.to_hex()
+        )));
+    }
     // FIX 3677: a long local ASSET body the file plane holds goes to
     // its file here, and the row keeps its manifest; a replicated or
     // replayed row is written as it came.
