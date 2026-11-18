@@ -46,7 +46,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/error/sync.rs` | src | m | 1 struct · 7 enum · 6 fn · 4 crate-vis | FederationReplayEnd, SyncConfigField, SyncEngineContext, SyncError, SyncProtocolPruneScope, SyncProtocolValidation, SyncRollbackError, SyncSelectorValidation | Sync-domain errors: the CRDT window/protocol/engine failures behind `feature = "sync"`, plus the… |
 | `src/gate.rs` | src | s | 2 struct · 4 fn · 1 const | ReadFilterInput, RetrievalFilter | The caller-supplied retrieval filter |
 | `src/host_descriptors.rs` | src | s | 1 fn | — | What the platform says of this process's descriptors: the probe the process's descriptor floor is sized from… |
-| `src/host_memory.rs` | src | m | 2 struct · 1 enum · 17 fn | MachineMemory, MemoryLease, MemoryRefusal | The process's physical-memory admission line for host and native work |
+| `src/host_memory.rs` | src | m | 2 struct · 1 enum · 18 fn | MachineMemory, MemoryLease, MemoryRefusal | The process's physical-memory admission line for host and native work |
 | `src/identity_topology.rs` | src | s | 2 enum · 4 fn | EntityLifecycleState, IdentityTopologyRejection | Identity-topology lifecycle states and per-op rejections: the values the topology ledger, the sync replay… |
 | `src/lib.rs` | src | s | 31 mod · 4 re-export | — | Shared value vocabulary of the oneiron engine: the lowest engine crate, with no dependency on any… |
 | `src/lifecycle.rs` | src | s | 1 struct · 2 trait | IllegalTransition, Lifecycle, LifecycleWords | One declared state machine for a stored lifecycle status (census UC-15) |
