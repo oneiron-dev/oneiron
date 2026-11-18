@@ -486,6 +486,98 @@ by 36 and after `:7405` by 48.
 an upstream mdb.master3 that refuses a page past the end of the data file on
 every read through the map.
 
+## Fetch rc: a stale named database's root fetch keeps its error
+
+FIX row LMDB-IGNORED-PAGE-FETCH-RC (found by the design read of the page bound
+above). Every transaction starts with each named database's record marked
+stale (`DB_STALE`, `mdb_txn_renew0` `:3405`). The first call that sets a cursor
+up on such a database (`mdb_cursor_init`, `:9673-9702`) reads the record again
+from the main tree and fetches the database's root (`mdb_page_search` with
+`MDB_PS_ROOTONLY`). Upstream, and its head `ba47717cc877`, drops that call's
+rc. A failed page fetch marks the transaction failed (`MDB_TXN_ERROR`), so the
+caller's next call answered `MDB_BAD_TXN`, and the fetch's own error was lost:
+`MDB_CORRUPTED` from the page bound, `MDB_CRYPTO_FAIL` for a sealed page that
+fails its authentication, `MDB_PAGE_NOTFOUND`. `mdb_cursor_open`,
+`mdb_cursor_renew` and `mdb_stat` even answered success on the failed
+transaction; `mdb_stat` then counted from the record, or answered zeros when
+the main tree's page was the one that failed. The first transaction that
+opens a database reads its record in `mdb_dbi_open` and is not stale, so only
+later transactions were affected: in oneiron, every read after the vault's
+open. The fork (`ONEIRON FORK (fetch rc)`):
+
+- `mdb_cursor_init` returns that rc, with `MDB_NOTFOUND` from the database's
+  own empty tree as success. The calls that set a cursor up on a user
+  database check it: `mdb_get` (`:7820-7822`), `mdb_cursor_open`
+  (`:9723-9728`; a failed init holds no page reference, so the cursor is
+  freed before it is linked), `mdb_cursor_renew` (`:9756`), `mdb_del0`
+  (`:10662-10664`), `mdb_put` (`:11144-11146`) and `mdb_stat`
+  (`:12039-12041`). The calls on `FREE_DBI`
+  and `MAIN_DBI` never see a stale record (`mdb_txn_renew0` marks only user
+  databases) and are unchanged.
+- The other errors that call can return (`MDB_BAD_DBI`, `MDB_INCOMPATIBLE`)
+  leave the record stale, and upstream's next call computed them again. The
+  fork answers them on the first call.
+- A `MDB_NOTFOUND` from the main tree also leaves the record stale
+  (`:7610-7612`): the main tree is empty, so the database is gone, as when
+  another process dropped it and no other key was left. Upstream took it for
+  an empty database: a get answered `MDB_NOTFOUND`, a cursor walked no rows,
+  and a count answered the transaction's copy of the record (zeros in a read
+  transaction). `mdb_cursor_init` tells the two apart by the stale flag
+  (`:9697-9698`) and answers `MDB_BAD_DBI`, as the record lookup does when the
+  main tree lacks the name (`:7619-7620`). Found by review round 1 of #9507.
+- `mdb_rpage_get` (`:7140-7149`, `MDB_REMAP_CHUNKS` environments only) took
+  the reference of a chunk the environment's chunk table already held
+  (`el[x].mref`) before it checked the page (`mdb_rpage_encsum`: the sealed
+  page's authentication, or its checksum). A failed check then returned with
+  that reference and no entry in the transaction's chunk table, which is all
+  a transaction's end releases (`:3751-3774`), so the chunk stayed held for
+  the environment's life. A held chunk keeps its decrypted copy and its
+  checked-page bits (`muse`, cleared at `:3763-3764` only when the last
+  reference goes), so its pages were never decrypted or checked again: a
+  page whose bytes changed later (an altered file; a freed page the free
+  list gives a later commit) answered its old decrypted bytes. The failed
+  root fetch of a stale sealed database reached it whenever an earlier
+  transaction had cached the root's chunk and the record's main-tree page
+  lay in another chunk. The fork takes the reference after the check passed;
+  the leak predates the fork, and the cursor open's "holds no page
+  reference" above needs it. Found by review round 2 of #9507.
+- `mdb_drop0` (`:12101-12111`, `MDB_REMAP_CHUNKS` environments only) takes an
+  extra reference on each of the cursor's pages for its copy `mx` and dropped
+  each `MDB_PAGE_GET` rc. A failed fetch would leave `mx`'s slot holding the
+  cursor's pointer with no reference of its own, and `done:` would then unref
+  one too many. The fork stops at the first failure, and `done:` unrefs only
+  the pages taken. No trigger was found: each fetch is a page the cursor
+  already holds, so it hits the transaction's chunk table in `mdb_rpage_get`
+  and passes the page bound's cached count. It is a guard, with no test.
+
+The page format does not change, and no stored row changes meaning (stored
+change: keep): only the error a call answers on a damaged file changes.
+Regression tests: ten more in
+`crates/oneiron-store/tests/lmdb_open_damaged_file.rs`, each in a transaction
+after the one that opened the database: a get, a cursor, a count, a put and a
+delete on a named database whose leaf the cut removed answer `MDB_CORRUPTED`,
+and a sealed get of an altered leaf answers `MDB_CRYPTO_FAIL`. Upstream's code
+answers `MDB_BAD_TXN` to five of them and the record's count to the count. A
+get, a cursor and a count on a named database whose main tree was emptied
+under the open handle answer `MDB_BAD_DBI`; upstream's code answers not
+found, no rows and a count of 0. A sealed read of an intact leaf altered
+after a failed check in its chunk answers `MDB_CRYPTO_FAIL`; upstream's code
+answers the leaf's old value.
+
+`mdb.c` is now 12,496 lines, SHA-256
+`133a6de0942045811edaa48081d73733357a5636be2c16bbbae8096f81f9811b`. Line
+numbers in this section cite this copy. Against the copy the section above
+cites, line `:7140` moved to `:7148`, lines `:7141-7146` up by 1, and lines
+after `:7146` down by 2, after `:7819` by 3, after `:9662` by 10, after
+`:9686` by 13, after `:9687` by 14, after `:9709` by 19, after `:9738` by 18,
+after `:10644` by 20, after `:11124` by 22, after `:12017` by 24 and after
+`:12078` by 33.
+
+**Re-vendoring:** re-apply the nine `ONEIRON FORK (fetch rc)` hunks (and the
+prototype's `int`), or take an upstream mdb.master3 whose `mdb_cursor_init`
+returns the stale root fetch's error and whose
+`mdb_rpage_get` takes a cached chunk's reference only after the page's check.
+
 ## Re-packaging for the Python sdist (ONE-1441)
 
 The workspace dependency also declares this vendor as a path dependency so
