@@ -81,13 +81,18 @@ use serde::Serialize;
 /// or admin key, the custodial root's too), counts only with the proof of an owner key no cloud
 /// key holds and no passkey limit holds (rows OLD-PARENTS-OWNER-BINDING-REVOKE,
 /// OLD-PARENTS-OWNER-BINDING-CONFLICT).
-/// 47: only the roster's chain admits or removes an owner act's carrier, never an anchor's
+/// 47: an owner choice or a carried machine answer outside a proving owner-key enrolment's line
+/// waits for the owner's proof, and an enrolment of the owner's key (a rotation or a handoff that
+/// names it too) outside the line of the enrolment that made it the owner's is refused, and a
+/// device revocation proved through such an enrolment of its key ends nothing (row
+/// CARRIER-PROOF-OLD-PARENTS).
+/// 48: only the roster's chain admits or removes an owner act's carrier, never an anchor's
 /// (FIX FOREIGN-ANCHOR-CHAIN-COUNTS-IN-EVERY-CHAIN-PREDICATES, site S1, and FIX
 /// FOREIGN-ANCHOR-ADMIT-SIDE); every other shared judge reads the roster's chain alone too (an
 /// owner key's enrolled machine, a residence result's signer, a one-machine pick, the
 /// names-the-key gates; Fable pass 29 K3), and a one-machine pick needs a live roster head in
 /// any role, not "yours".
-pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 47;
+pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 48;
 
 /// The domain every encoded image starts with.
 pub const AUTHORITY_CHECKPOINT_V2_DOMAIN: &[u8] = b"oneiron/authority/checkpoint/v2";
