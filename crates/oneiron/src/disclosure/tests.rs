@@ -529,6 +529,7 @@ fn an_epoch_summary_reaches_a_guest_only_with_every_record_it_was_written_from()
         encode_epoch_summary_body(&EpochSummaryBody {
             v: EPOCH_SUMMARY_BODY_VERSION,
             session: test_id(0x33).to_hex(),
+            conversation: None,
             epoch,
             turn_start: epoch * 3,
             turn_end: epoch * 3 + 2,

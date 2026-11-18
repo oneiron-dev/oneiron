@@ -9,19 +9,20 @@
 //! `/v1/owner` takes it and rechecks it in its own write.
 use std::sync::Arc;
 
+use oneiron::authority::OwnerOrDelegate;
 use oneiron::dreamer_runner::{
-    self, ParkReleaseView, ProgramCheckpointRequest, ProgramCheckpointView, ProgramHoldReleaseView,
-    ProgramRunRequest, ProgramRunView, ReleaseParkedAttemptRequest, ReleaseTurnProgramHoldRequest,
-    SettledProgramStepRequest, SettledProgramStepView, TurnProgramAdmissionRequest,
-    TurnProgramAdmissionView, program_checkpoint, program_run, settled_program_step,
-    turn_program_admission,
+    self, PROGRAM_HOLD_RELEASE_VERB, ParkReleaseView, ProgramCheckpointRequest,
+    ProgramCheckpointView, ProgramHoldReleaseView, ProgramRunRequest, ProgramRunView,
+    ReleaseParkedAttemptRequest, ReleaseTurnProgramHoldRequest, SettledProgramStepRequest,
+    SettledProgramStepView, TurnProgramAdmissionRequest, TurnProgramAdmissionView,
+    program_checkpoint, program_run, settled_program_step, turn_program_admission,
 };
 use oneiron::memory::MemoryError;
 use oneiron::runtime_hooks::InvocationId;
 use oneiron::{EdgeActorClass, EntityId};
 
 use super::host_doors::support::{Listed, credential_listing};
-use super::legal_hold_doors::as_owner_naming;
+use super::legal_hold_doors::{as_owner_naming, as_owner_or_delegate_naming};
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
 
@@ -98,13 +99,18 @@ pub(crate) async fn vault_runs_program_hold_release(
     auth: &CoreAuth,
     input: ReleaseTurnProgramHoldRequest,
 ) -> Listed<ProgramHoldReleaseView> {
-    as_owner_naming(
+    as_owner_or_delegate_naming(
         server,
         auth,
-        "vault.runs.program_hold.release",
-        move |server, owner| {
-            dreamer_runner::release_turn_program_hold_as_owner(server.vault(), owner, &input)
-                .map_err(MemoryError::from)
+        PROGRAM_HOLD_RELEASE_VERB,
+        move |server, who| match who {
+            OwnerOrDelegate::Owner(owner) => {
+                dreamer_runner::release_turn_program_hold_as_owner(server.vault(), owner, &input)
+                    .map_err(MemoryError::from)
+            }
+            OwnerOrDelegate::Delegate(agent) => {
+                dreamer_runner::release_turn_program_hold_as_delegate(server.vault(), agent, &input)
+            }
         },
         |_| Vec::new(),
     )

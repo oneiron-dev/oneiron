@@ -3,7 +3,7 @@
 //! Listener setup, transport shutdown, and vault construction stay in the parent.
 
 #[cfg(feature = "code-sandbox-wasmtime")]
-use super::spawn_fact_hooks;
+use super::hooks::spawn_fact_hooks_in_background;
 use super::{Arc, ServeConfig, SyncServer, build_artifact_app};
 
 /// What [`start_desktop_workers`] hands the transport half of a serve path.
@@ -20,6 +20,8 @@ pub(crate) struct StartedWorkers {
     /// Turns `true` when serving stops; the fact hooks stop on it too.
     pub(crate) stopping: tokio::sync::watch::Sender<bool>,
     pub(crate) stopped: tokio::sync::watch::Receiver<bool>,
+    /// How long each step here took, for serve's `startup finished` line.
+    pub(crate) timings: super::startup_timings::StartupTimings,
     /// The workers themselves, until [`DesktopWorkers::shutdown`].
     pub(crate) workers: DesktopWorkers,
 }
@@ -72,6 +74,7 @@ pub(crate) async fn start_desktop_workers(
     lifecycle_admission: impl FnOnce() -> crate::server::HousekeepingAdmission,
     drain_tagging: bool,
 ) -> anyhow::Result<StartedWorkers> {
+    let mut timings = super::startup_timings::StartupTimings::begin();
     // Read before any worker starts, so a candidate file that does not read
     // stops the start with nothing running (FIX 7386).
     let publisher_candidates = config.failure_signals.publisher_candidates()?;
@@ -86,6 +89,7 @@ pub(crate) async fn start_desktop_workers(
     // Plain and embedded serve launch `[models.workers]`' managed workers; a
     // managed per-vault process never reaches here (FIX 8315).
     crate::models::permit_worker_launch();
+    timings.mark("config_reads");
     // `--no-hooks` turns verb hooks off before any worker starts, so a queued
     // Continue or Retry taken up below runs none (FIX 9480).
     if !config.hooks {
@@ -119,6 +123,7 @@ pub(crate) async fn start_desktop_workers(
         Some(dreamer_control),
     )
     .await;
+    timings.mark("ai_attach");
     let sync_server = Arc::new(sync_server);
     let model_setup = Arc::new(crate::server::ModelSetupRuntime::new(
         tokio::runtime::Handle::current(),
@@ -141,14 +146,17 @@ pub(crate) async fn start_desktop_workers(
     ai.bind_turn_actions(&sync_server);
     // The skill-edit gate's replay judge, on the ladder the server just built (OF-495).
     crate::replay_judge::register(&sync_server, config.skills.live_pulls_per_axis);
+    timings.mark("server_installs");
     // The vault's first oversight receipts, before the host's own workers
     // start: a vault that cannot sign them never reports ready.
     let oversight = sync_server
         .start_healer_oversight(crate::server::HEALER_OVERSIGHT_EVERY, || Some(()))
         .await?;
+    timings.mark("healer_oversight");
     // The `[linear]` mirror; its passes stop at the vault's deletion.
     let linear_handle =
         crate::linear_host::spawn_configured(sync_server.clone(), admitted()).await?;
+    timings.mark("linear_mirror");
     // The lifecycle's passes stop at the vault's deletion on plain serve;
     // the caller's admission, and its awake hold, is kept inside the gate.
     let lifecycle_admit = lifecycle_admission();
@@ -161,6 +169,7 @@ pub(crate) async fn start_desktop_workers(
     // server's ladder, under the host root it holds (STEP-PARK-BOOT-RESUME).
     crate::api::resume_parked_model_steps(&sync_server);
     let lifecycle = sync_server.spawn_lifecycle_scheduler(lifecycle_admit);
+    timings.mark("lifecycle_scheduler");
     // An answered code consent wait's effect runs on this server, whatever
     // hooks or models it serves, before the connector settler starts
     // (DOOR-079 1a).
@@ -195,6 +204,7 @@ pub(crate) async fn start_desktop_workers(
     } else {
         (sync_server.spawn_slot_workers(), None)
     };
+    timings.mark("slot_workers");
     workers.extend(gpu_poller);
     workers.push(sync_server.spawn_board_publisher());
     workers.push(sync_server.spawn_cloud_erase_watch());
@@ -202,6 +212,10 @@ pub(crate) async fn start_desktop_workers(
     workers.push(crate::wire_health::spawn(&sync_server, admitted()));
     // Sensitive imported topics ask the owner who sees their later imports (OF-492).
     workers.push(crate::import_audience::spawn(&sync_server, admitted()));
+    // This machine's measured capacity, on its MACHINE entity (CROSS-ARCH-0024
+    // #my-network 05): at start and every hour.
+    workers.push(crate::machine_capacity::spawn(&sync_server, admitted()));
+    timings.mark("board_and_watches");
     // Due standing questions are answered through the ladder (OF-506).
     if !ai.bind_question_timer(&sync_server) {
         workers.push(crate::decision_graph::spawn(&sync_server, admitted()));
@@ -211,6 +225,7 @@ pub(crate) async fn start_desktop_workers(
             admitted(),
         ));
     }
+    timings.mark("question_timer");
     // Saved queries are evaluated over the vault's people in bounded wakes (ARCH-0059).
     workers.push(crate::saved_query_sweep::spawn(&sync_server, admitted()));
     // Queued campaign enrollments land on the campaign's home node (ARCH-0059).
@@ -235,6 +250,7 @@ pub(crate) async fn start_desktop_workers(
         &sync_server,
         admitted(),
     ));
+    timings.mark("sweeps_and_coach");
     // Failure signals reach the deployment's publisher (OF-380). The
     // private endpoint's bearer (FIX 5013): a named vault secret wins, and
     // reads as none when it does not resolve; without one the env token,
@@ -258,17 +274,20 @@ pub(crate) async fn start_desktop_workers(
         ),
         admitted(),
     ));
+    timings.mark("failure_signals");
     // The owner's model-graded detectors read the retrieval telemetry (OF-418).
     workers.extend(crate::ai_host::self_heal_detectors::spawn(
         &sync_server,
         &config.self_heal,
         admitted(),
     ));
+    timings.mark("self_heal_detectors");
     workers.push(sync_server.spawn_connector_event_worker(admitted()));
     // Approved sends leave through the connector executor (OF-187).
     workers.push(sync_server.spawn_connector_send_worker(admitted()));
     // A Dreamer pass hands agent replies off; this worker runs them (FIX 2405).
     workers.push(sync_server.spawn_connector_reply_worker(admitted()));
+    timings.mark("connector_workers");
     // The calendar safeguard's pattern head, unless the host installed its own (FIX 12099).
     crate::calendar_host::install_calendar_label_head(crate::calendar_host::PatternLabelHead);
     // Installed ICS feeds and queued CalDAV syncs poll on their own cadence.
@@ -291,18 +310,23 @@ pub(crate) async fn start_desktop_workers(
         Arc::clone(&sync_server),
         crate::server::admit_every_pass(),
     ));
+    timings.mark("calendar");
     // Checked built-in channels and their provider webhooks (OF-519).
     workers.push(crate::builtin_host::spawn(&sync_server, admitted()));
+    timings.mark("builtin_channels");
     // Mail & Calendar pack sources sync as the local owner (FIX 12559).
     workers.push(crate::mail_host::spawn_mail_source_syncs(
         Arc::clone(&sync_server),
         admitted(),
     ));
+    timings.mark("mail_sources");
     // Past the vault's deletion these two run on, to let its backups go at
     // their deadline (FIX 11979): every pass admitted, as today.
     workers.extend(sync_server.spawn_backup_schedule(crate::owner::schedule::SCHEDULE_TICK));
+    timings.mark("backup_schedule");
     // The custody head beside the backups, and its anchor (KS-4A1).
     workers.extend(sync_server.spawn_custody_publication());
+    timings.mark("custody_publication");
     // Documents whose signing finished are sealed as a task (OF-415).
     #[cfg(unix)]
     workers.push(crate::api::spawn_esign_seal_worker_admitted(
@@ -319,6 +343,7 @@ pub(crate) async fn start_desktop_workers(
     workers.extend(config.esign_delivery_outbox_dir.clone().map(|dir| {
         crate::api::spawn_esign_delivery_outbox(Arc::clone(&sync_server), admitted(), dir)
     }));
+    timings.mark("esign");
     // The publisher training outbox, only with its flag (OF-420), and the
     // self-host shipper's descriptor fetch with it, only with its own (TL-6).
     workers.extend(crate::conversation_training::spawn_self_host_admitted(
@@ -326,6 +351,7 @@ pub(crate) async fn start_desktop_workers(
         config,
         admitted(),
     ));
+    timings.mark("conversation_training");
     #[cfg(unix)]
     workers.extend(import_queue.map(|queue| queue.spawn(Arc::clone(&sync_server))));
     // Hosted imports staged in the vault's data folder (ARCH-0027
@@ -340,13 +366,21 @@ pub(crate) async fn start_desktop_workers(
         .with_archive_entry_cap(config.import.archive_entry_cap())
         .spawn(Arc::clone(&sync_server)),
     );
+    timings.mark("imports");
     // Attached folders rescan after the import queue starts (OF-554).
     #[cfg(unix)]
     workers.push(crate::files_intake::spawn_rescans(Arc::clone(&sync_server)));
+    timings.mark("files_intake");
     // Fact hooks (ARCH-0080) run unless `--no-hooks`; they stop with serve.
+    // Their sandbox builds on a task of its own, so the gated startup never
+    // waits for it (FIX 25667).
     #[cfg(feature = "code-sandbox-wasmtime")]
     if config.hooks {
-        workers.extend(spawn_fact_hooks(&sync_server, admitted(), stopped.clone()).await);
+        workers.push(spawn_fact_hooks_in_background(
+            Arc::clone(&sync_server),
+            admitted(),
+            stopped.clone(),
+        ));
     }
     #[cfg(feature = "code-sandbox-wasmtime")]
     let hook_regen = if config.hooks {
@@ -354,11 +388,13 @@ pub(crate) async fn start_desktop_workers(
     } else {
         None
     };
+    timings.mark("fact_hooks");
     // The API's CORS stays the API's: the artifact origin is never granted.
     let artifact_app = build_artifact_app(sync_server.clone());
     let questions = Arc::clone(sync_server.wire_telemetry.limit_questions());
     #[cfg(unix)]
     let vault_id = super::local_servers::vault_id(sync_server.vault());
+    timings.mark("artifact_app");
     // The server's own voice loop (OF-410): off unless `[models.voice]`
     // names its socket. A call is the owner's foreground work: one in flight
     // runs on, but no new call is admitted past the vault's deletion
@@ -377,6 +413,7 @@ pub(crate) async fn start_desktop_workers(
     if plain_serve {
         sync_server.live_voice.admit_with(admitted());
     }
+    timings.mark("voice");
     let owner_host = sync_server.owner_host.clone().filter(|_| drain_tagging);
     #[cfg(unix)]
     let sleep_watch = {
@@ -391,6 +428,7 @@ pub(crate) async fn start_desktop_workers(
             );
         })
     };
+    timings.mark("sleep_watch");
     Ok(StartedWorkers {
         server: Arc::clone(&sync_server),
         artifact_app,
@@ -399,6 +437,7 @@ pub(crate) async fn start_desktop_workers(
         vault_id,
         stopping,
         stopped,
+        timings,
         workers: DesktopWorkers {
             server: Arc::clone(&sync_server),
             model_setup,

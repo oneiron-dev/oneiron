@@ -59,10 +59,13 @@ mod emergency;
 mod feed_move;
 mod hold_source;
 mod occurrence;
+mod owner_card;
 mod passport;
 mod public_authority;
 pub(crate) mod setting_keys;
 mod storage;
+#[cfg(oneiron_test_support)]
+pub(crate) use self::storage::{confirm_receipt_key_for_test, revision_receipt_key_for_test};
 mod token;
 mod transition;
 mod types;
@@ -101,6 +104,10 @@ pub use self::feed_move::{
 };
 pub(crate) use self::feed_move::{FeedMoveOutcome, move_booking_by_feed};
 pub use self::hold_source::VaultActiveHoldSource;
+pub use self::owner_card::{
+    BOOKING_OWNER_CARD_ITEM_PREFIX, BookingOwnerCard, BookingOwnerCardOffer,
+};
+pub(crate) use self::owner_card::{booking_owner_card_inbox_items, booking_owner_card_of_item};
 pub use self::token::{
     HoldLeaseSpec, OpaqueCheckoutLeaseToken, OpaqueLifecycleToken, SessionKey, confirm_event_type,
     confirm_hold_taken_at, token_event_type, token_page_ref,

@@ -2,6 +2,8 @@
 //! Entry: Memory::generate_image_asset.
 //! Definitions: types stay in the parent; this module owns the listed impls and body functions.
 
+use oneiron_contracts::fingerprint::ContentHash;
+
 use super::{
     AiMediaDoor, AiOperation, AssetConsumer, BODY_BLAKE3, BODY_MEDIA_TYPE, BudgetLease,
     ENTITY_TYPE_ASSET, EdgeKind, EntityId, ImageBytes, ImageCatalog, ImageIntent, ImageResponse,
@@ -278,7 +280,7 @@ pub(in crate::memory) fn asset_body(
         (Value::from(BODY_MEDIA_TYPE), Value::from(mime_type)),
         (
             Value::from(BODY_BLAKE3),
-            Value::from(blake3::hash(bytes).to_hex().as_str()),
+            Value::from(ContentHash::of(bytes).to_hex().as_str()),
         ),
         (Value::from("byte_size"), Value::from(bytes.len() as u64)),
     ];

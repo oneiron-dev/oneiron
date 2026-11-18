@@ -51,7 +51,7 @@ use super::booking_anti_abuse::{enforce_amend, enforce_hold, enforce_slot_list};
 use super::{json_payload, scoped_auth::check_request_owner_act};
 use crate::auth::ClientAddress;
 use crate::error::ApiError;
-use crate::server::SyncServer;
+use crate::server::{LinePlace, SyncServer};
 
 mod admission;
 mod constants;
@@ -103,6 +103,8 @@ pub(crate) use self::transport::{
     is_booking_payer_door,
 };
 // The integration tests' door to the booking turn's line (census L3-11).
+#[cfg(oneiron_test_support)]
+pub(crate) use self::lifecycle::write_holding_line_place;
 #[cfg(oneiron_test_support)]
 pub(crate) use self::turn::Turn as BookingTurn;
 use self::validate::validate_operation_shape;
@@ -514,6 +516,7 @@ async fn execute_hold(
     now: u64,
     public_authority: Option<oneiron::booking::publication::PublicBookingAuthority>,
     owner_verified: bool,
+    place: Option<LinePlace>,
 ) -> Result<(BookingOperationResponse, Vec<EntityId>), ApiError> {
     let session_key = session_key(page_ref, &input.session_ref);
     // The owner's own hold past a full day (RULING BK-CAP-OVERRIDE-WHO = B):
@@ -575,6 +578,7 @@ async fn execute_hold(
         Some(session_key),
         now,
         public_authority,
+        place,
     )
     .await?;
     // The hold writer reads only node-local hold and lease rows beside the
@@ -634,6 +638,7 @@ async fn execute_confirm(
         Some(session_key),
         now,
         public_authority,
+        None,
     )
     .await?;
     match receipt {
@@ -684,6 +689,7 @@ async fn execute_reschedule(
         None,
         now,
         public_authority,
+        None,
     )
     .await?;
     match receipt {
@@ -723,6 +729,7 @@ async fn execute_cancel(
         None,
         now,
         public_authority,
+        None,
     )
     .await?;
     match receipt {

@@ -5,6 +5,7 @@ use crate::booking::{
     encode_event_type_claim_value,
 };
 use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus};
+use crate::edge::EdgeActorClass;
 use crate::memory::{ClaimInput, MEMORY_CODE_FORBIDDEN, MEMORY_CODE_OWNER_BINDING_REQUIRED};
 use serde_json::json;
 
@@ -12,10 +13,14 @@ use serde_json::json;
 mod regressions;
 
 fn id(byte: u8) -> EntityId {
+    if byte == 2 {
+        // The fixture owner is the embedded owner, so the bound owner passes the live owner census.
+        return crate::vault::embedded_owner_actor_id().expect("owner");
+    }
     EntityId::from_bytes([byte; 16]).expect("id")
 }
 
-/// A vault rooted under the test host, with `id(2)` bound as its owner.
+/// A vault rooted under the test host, with the embedded owner bound as its owner.
 fn open() -> (tempfile::TempDir, Vault) {
     let (dir, vault) = open_unrooted();
     crate::test_util::bind_test_owner(&vault, id(2));
@@ -109,6 +114,7 @@ fn publication() -> BookingPagePublication {
             enabled: false,
             placeholder: String::new(),
         },
+        constraint_front: None,
         theme: ThemeTokens(json!({"arbitrary": [false, null, {"nested": "</script>"}]})),
         landing: crate::booking::BookingLandingContent::default(),
         initial_availability: PublicBookingAvailability {
@@ -117,6 +123,7 @@ fn publication() -> BookingPagePublication {
             window_secs: 3_600,
             visitor_tz: "UTC".to_owned(),
         },
+        sponsor: None,
     }
 }
 

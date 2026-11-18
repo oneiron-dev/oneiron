@@ -17,7 +17,7 @@
 //! - `login` with no credential file signs in first, through the vault's
 //!   own OAuth server as a native app ([`super::hosted_sign_in`]), and
 //!   records that sign-in in OAuth mode, its vault id the one the origin
-//!   answers for.
+//!   answers for. Its origin is https, or http on this machine.
 //! - `select` selects one recorded vault, or none.
 //! - `logout` forgets one recorded vault, or every one. It never deletes a
 //!   credential file another surface wrote: that surface keeps it. An OAuth
@@ -37,6 +37,7 @@ use super::hosted_selection::{self, HostedAuthMode, HostedVault, Selection};
 use super::{hosted_sign_in, recall};
 use crate::cli::{HostedCommand, HostedLoginArgs, HostedLogoutArgs, HostedSelectArgs, McpAuthMode};
 use crate::commands::credential_file::PairedCredentialFile;
+use crate::commands::oauth_sign_in;
 
 /// An authority vault id: 32 bytes, in hex.
 const VAULT_ID_HEX_CHARS: usize = 64;
@@ -125,6 +126,16 @@ fn login(args: &HostedLoginArgs) -> anyhow::Result<()> {
                 args.credential_file.is_none() && args.owner_upgrade_headers_file.is_none(),
                 "oauth mode signs in here and reads no credential file; drop --credential-file \
                  and --owner-upgrade-headers-file, or pass the --auth-mode they belong to"
+            );
+            // The code and its verifier, the bearer and the refresh token
+            // prove no holder: they go over https, or stay on this machine.
+            anyhow::ensure!(
+                oauth_sign_in::admits_tokens_to(&reqwest::Url::parse(&origin)?),
+                "--origin {origin} is plain http to another machine, and an OAuth sign-in's \
+                 code, bearer and refresh token prove no holder: whoever reads them on the way \
+                 can use them. Serve the vault over https, or sign in to a plain-http vault with \
+                 a paired slip: pass the file `oneiron token agent --out` wrote with \
+                 --credential-file"
             );
             let named = args.vault_id.as_deref().map(vault_id).transpose()?;
             let file = hosted_selection::oauth_sign_in_file(&origin).ok_or_else(|| {

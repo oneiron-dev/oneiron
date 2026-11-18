@@ -161,9 +161,12 @@ pub use self::ask_band::{AskBandLabel, AskBandPolicy};
 pub(crate) use self::brief::optimize_brief_bound_at;
 pub use self::brief::{
     RejectedSkillEdit, RejectedSkillEditReason, SKILL_OPTIMIZE_CALL_PURPOSE_NAME,
-    SKILL_OPTIMIZE_MAX_BRIEF_EVIDENCE, SKILL_OPTIMIZE_RATIONALE_MAX_BYTES, SkillEditDraft,
-    SkillFailureContext, SkillFailureReport, SkillOptimizeAuthor, SkillOptimizeBrief,
-    optimize_brief, optimize_brief_for_principal_at, skill_optimize_call_purpose,
+    SKILL_OPTIMIZE_MAX_BRIEF_EVIDENCE, SKILL_OPTIMIZE_MAX_DRAFT_FILE_BYTES,
+    SKILL_OPTIMIZE_MAX_DRAFT_FILES, SKILL_OPTIMIZE_MAX_DRAFT_FILES_BYTES,
+    SKILL_OPTIMIZE_MAX_JUDGED_ARM_BYTES, SKILL_OPTIMIZE_RATIONALE_MAX_BYTES, SkillBriefFile,
+    SkillEditDraft, SkillFailureContext, SkillFailureReport, SkillFileEdit, SkillOptimizeAuthor,
+    SkillOptimizeBrief, optimize_brief, optimize_brief_for_principal_at,
+    skill_optimize_call_purpose,
 };
 pub use self::decisions::{
     SkillOptimizeDecisions, SkillReplayResponse, SkillReplayResponses, judgment_kind,
@@ -213,10 +216,11 @@ pub use self::goal_axes::{
 };
 pub use self::job::{
     PROVENANCE_OPTIMIZE_ATTEMPT_KEY, PROVENANCE_OPTIMIZE_CYCLE_KEY,
-    PROVENANCE_OPTIMIZE_OF_ENTITY_KEY, PROVENANCE_OPTIMIZE_OF_KEY,
-    PROVENANCE_OPTIMIZE_OF_VERSION_KEY, PROVENANCE_OPTIMIZE_RATIONALE_KEY,
-    PROVENANCE_OPTIMIZE_RECEIPTS_KEY, SKILL_OPTIMIZE_BIRTH_PATH, SkillOptimizeOutcome,
-    run_skill_optimize, run_skill_optimize_as, run_skill_optimize_for_resident,
+    PROVENANCE_OPTIMIZE_EDITED_FILES_KEY, PROVENANCE_OPTIMIZE_OF_ENTITY_KEY,
+    PROVENANCE_OPTIMIZE_OF_KEY, PROVENANCE_OPTIMIZE_OF_VERSION_KEY,
+    PROVENANCE_OPTIMIZE_RATIONALE_KEY, PROVENANCE_OPTIMIZE_RECEIPTS_KEY, SKILL_OPTIMIZE_BIRTH_PATH,
+    SkillOptimizeOutcome, run_skill_optimize, run_skill_optimize_as,
+    run_skill_optimize_for_resident,
 };
 pub use self::judge_swap::{
     JUDGE_SWAP_NOTIFICATION_PRODUCER, JudgeIncumbent, JudgeOutcomeLink, JudgeShadowAnswer,
@@ -274,6 +278,8 @@ pub use self::tradeoff_route::{
     TRADEOFF_ROUTE_NOTIFICATION_PRODUCER, TradeoffRouteChannel, TradeoffRouteIssue,
     TradeoffRouteReport,
 };
+#[cfg(oneiron_test_support)]
+pub(crate) use gate::live_axis_plan_digest_for_test;
 pub use gate::{
     AnchorLabelScore, AuditPair, BlindPreference, DEFAULT_SKILL_EDIT_CYCLE_CAP, GoalAxisKind,
     GoalAxisScore, GoalAxisSpec, HELD_OUT_REPLAY_SCORER, HELD_OUT_RESERVE_DIVISOR,
@@ -314,6 +320,8 @@ pub(crate) use gate::{skill_edit_goal_sourced, skill_edit_goal_sourced_in_txn};
 pub(crate) use self::goal_binding::validate_goal_birth_in_txn;
 use self::goal_binding::{GOAL_ID_KEY, SkillGoalId};
 pub(crate) use self::input::optimize_target_input;
+#[cfg(oneiron_test_support)]
+pub(crate) use self::job::draft_and_propose;
 pub(crate) use self::job::{
     SKILL_EDIT_CYCLE_RUN_PREFIX, SkillRepairStamp, propose_skill_package_revision,
     propose_skill_repair_in_txn, proven_cycle, run_skill_optimize_targeted, skill_repair_brief,
@@ -323,8 +331,6 @@ pub(crate) use self::job::{
 use self::dials::invalid;
 pub(crate) use self::tier::tier_verdict_in_txn;
 pub(crate) mod tables;
-// FIX [LIBTEST-QUARANTINE-SKILL-OPTIMIZE-TESTS]: the lib test target's type check fails here (20 errors: E0061 x15, E0308 x3, E0277 x1, E0609 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;
 

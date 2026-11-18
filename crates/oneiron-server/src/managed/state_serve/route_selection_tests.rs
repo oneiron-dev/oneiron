@@ -76,8 +76,10 @@ const UNATTESTED: &[(&str, &str, Unattested)] = &[
         "/public/booking/{page_token}/verbs/{verb}",
         PublicProof,
     ),
-    // The signing ceremony's signer doors.
+    // The signing ceremony's signer doors, and the owner's editor POSTs,
+    // each under the token its shell minted (`api/esign/editor_auth.rs`).
     ("GET", "/sign", PublicProof),
+    ("POST", "/sign/fields", PublicProof),
     ("POST", "/sign/geometry", PublicProof),
     ("POST", "/sign/image", PublicProof),
     ("POST", "/sign/layout", PublicProof),
