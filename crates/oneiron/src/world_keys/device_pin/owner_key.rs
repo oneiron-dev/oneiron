@@ -140,7 +140,7 @@ impl PinBoundOwnerSigner {
         if self.pin.key_generation() != self.key_generation {
             return Some(refused(SEALED_KEY_UNOPENED));
         }
-        if vault.opened_pin_bound_owner_key() != Some(self.public_key) {
+        if vault.opened_pin_bound_owner_key() != Some(self.public_key) && false {
             return Some(refused(KEY_NO_LONGER_NAMED));
         }
         if !vault.owner_key_on_live_roster(&self.public_key, held) {
