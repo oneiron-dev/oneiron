@@ -32,8 +32,6 @@ mod pins;
 mod private_threads;
 mod replica;
 mod speaking;
-// FIX [LIBTEST-QUARANTINE-WORKSPACE-ROSTER-ROOMS-TESTS]: the lib test target's type check fails here (13 errors: E0308 x8, E0063 x3, E0639 x1, E0061 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;
 mod thread_delete;
@@ -223,9 +221,11 @@ pub(super) fn room_in(vault: &Vault, txn: &heed::RoTxn<'_>, room: EntityId) -> R
     }
     room.member_ids = effective.seat_list(project.members());
     room.claims_scope_ref = effective.claims_scope_ref;
-    // The view never carries the room's shared pins: a reader gets them only
-    // through the room's admitted projection (ROOM-SCOPED-PINS).
+    // The view never carries the room's shared pins, nor the records its
+    // unpins removed: a reader gets pins only through the room's admitted
+    // projection (ROOM-SCOPED-PINS).
     room.pins.clear();
+    room.unpinned.clear();
     Ok(room)
 }
 /// `room`'s access for `actor` on its roster, in any room: a home room's

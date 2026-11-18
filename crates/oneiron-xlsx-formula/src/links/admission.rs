@@ -314,7 +314,7 @@ impl<'a> Parent<'a> {
     fn context(&self) -> ParentContext<'a> {
         match self {
             Parent::Root => ParentContext::Root,
-            Parent::Operator(op) => ParentContext::Operator(*op),
+            Parent::Operator(op) => ParentContext::Operator(op),
             Parent::Argument {
                 function,
                 index,

@@ -27,6 +27,13 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/beam/chroma/tests.rs` | test | s | 1 crate-vis | — | — |
 | `src/beam/chroma/tests/support.rs` | test | s | — | — | — |
 | `src/beam/citations.rs` | src | m | 4 crate-vis | — | Evidence-backed per-number citations |
+| `src/beam/code_bench/grade.rs` | src | m | 2 crate-vis | — | `beam code-bench <attempts.json>`: grade what the writers left |
+| `src/beam/code_bench/manifest.rs` | src | m | 18 crate-vis | — | The CODE-BENCH task manifest (`fixtures/code_bench.tasks.v1.json`): three merged PRs of our repo, each with… |
+| `src/beam/code_bench/mcp_probe.rs` | src | s | 1 crate-vis | — | Probes each MCP server a run plan declares before any cell that needs it is ready |
+| `src/beam/code_bench/mod.rs` | src | s | 1 crate-vis | — | CODE-BENCH (ARCH-0042 #code-bench, owner intent 2026-10-21, cut by 90%): a small dogfood check of Oneiron… |
+| `src/beam/code_bench/pack.rs` | src | L | 5 crate-vis | — | `beam code-bench-pack <plan.json>`: materialize every ready cell for the run's driver, and list every cell… |
+| `src/beam/code_bench/profile.rs` | src | m | 24 crate-vis | — | Each CODE-BENCH arm is a fixed tool profile plus the pieces it needs |
+| `src/beam/code_bench/transcript.rs` | src | m | 2 crate-vis | — | Reads one writer's transcript in Claude Code's `--output-format stream-json`: one JSON object per line… |
 | `src/beam/community.rs` | src | m | 9 crate-vis | — | Community-beam run, timing loop, and aggregate gating |
 | `src/beam/comparability.rs` | src | s | 10 crate-vis | — | Seven independent comparability axes and per-number publication decisions |
 | `src/beam/corpus_clock.rs` | src | s | 1 crate-vis | — | Dataset valid-time admission |
@@ -130,11 +137,12 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/load/corpus.rs` | src | m | 16 crate-vis | — | The synthetic corpus: invented words drawn with Zipf frequencies from a fixed seed, so two runs of one plan… |
 | `src/load/corpus_recall.rs` | src | m | 2 crate-vis | — | `load corpus-recall` — warm recall latency on a vault seeded from a recorded conversation corpus, on the… |
 | `src/load/dream.rs` | src | m | 6 crate-vis | — | `load dream` — one Dreamer cycle end to end on the shipped server binary (L07 DREAM-BENCH) |
+| `src/load/dream/call_attribution.rs` | src | s | 2 crate-vis | — | Which durable step sent each recorded model call (FIX DREAMER-CALL-ATTEMPT-ID) |
 | `src/load/dream/call_proxy.rs` | src | L | 5 crate-vis | — | The model-call timing proxy of `load dream` (FIX 21929) |
 | `src/load/dream/cycle.rs` | src | m | 22 crate-vis | — | The cycle itself: the session hints that open and end the sitting (`POST /v1/ai/session`, `api/ai/mod.rs`)… |
 | `src/load/dream/proof.rs` | src | s | 4 crate-vis | — | Whether a recall finds what the cycle landed: the landed claim ids (the stage lines' `landed_ids`, else the… |
 | `src/load/dream/report.rs` | src | m | 4 crate-vis | — | The `load dream` result: the JSON report and the summary lines on stdout |
-| `src/load/dream/server_log.rs` | src | s | 15 crate-vis | — | The server log as `load dream` reads it: the lines written since the last read, the Dreamer's `dreamer… |
+| `src/load/dream/server_log.rs` | src | s | 16 crate-vis | — | The server log as `load dream` reads it: the lines written since the last read, the Dreamer's `dreamer… |
 | `src/load/dream/setup.rs` | src | s | 9 crate-vis | — | What `load dream` sets up before the server starts: the model check, the `[models]` section that routes… |
 | `src/load/dream/turns.rs` | src | m | 12 crate-vis | — | The recorded corpus `load dream` seeds: one JSON line per turn (world, person, day, conversation_ref… |
 | `src/load/embedder.rs` | src | s | 9 crate-vis | — | A stand-in embedder on loopback: the plain OpenAI `/v1/embeddings` wire, answering bag-of-words vectors |
@@ -213,6 +221,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/vector/vector_tests.rs` | test | s | — | — | Vector bench contract and end-to-end tests |
 | `tests/beam_picks_for_cli.rs` | test | s | — | — | `oneiron-bench beam measure --picks-for` (census L9-32; Engine ruling L9-32-PICK-WRITER, Sat 14 Nov 07:43)… |
 | `tests/cleanup_retrieval.rs` | test | s | — | — | ANN recall corpus `ann_seed42.v1` (source: ec9cbdec92e7dbcc865b9958dd1ff8652714d6c7). rand 0.8.8 StdRng seed… |
+| `tests/code_bench_cli.rs` | test | L | — | — | `oneiron-bench beam code-bench-pack` (plan L4-02, CODE-BENCH; ARCH-0042 #code-bench; Engine ruling… |
 | `tests/e2e_approved_manifest_fixture.rs` | test | s | — | — | Runs the shipped bench flow to produce and check the approved E2E manifest fixture |
 | `tests/lives_bench_cli.rs` | test | L | — | — | `oneiron-bench load lives` (census L9-36; ARCH-0042 #lives-bench): the synthetic-lives screen ingests the… |
 | `tests/retrieval_matrix_cli.rs` | test | m | — | — | The retrieval matrix CLI end to end: the mini pack converts, the keyword arm grades it to hand-counted… |

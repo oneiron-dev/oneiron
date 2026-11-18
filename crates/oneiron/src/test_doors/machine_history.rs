@@ -111,3 +111,25 @@ pub fn peer_machine_history(origin: &Vault, target: EntityId) -> Result<PeerMach
         controls: ranked.into_iter().map(|(_, id, raw)| (id, raw)).collect(),
     })
 }
+
+thread_local! {
+    /// How many times this thread resolved each target's machine history
+    /// (folded it from its verified rows), by target:
+    /// `history_projection::machine_history` counts each fold under the test
+    /// cfg only, so a test can bound how often one read resolves one history
+    /// (FIX MACHINE-HISTORY-PAGE-PER-CONTROL-RESOLVE). Per thread, so a test
+    /// that reads on its own thread counts only its own folds.
+    static HISTORY_RESOLUTIONS: std::cell::RefCell<std::collections::BTreeMap<EntityId, u64>> =
+        const { std::cell::RefCell::new(std::collections::BTreeMap::new()) };
+}
+
+/// Counts one resolution of `target`'s machine history on this thread.
+pub(crate) fn count_history_resolution(target: EntityId) {
+    HISTORY_RESOLUTIONS.with_borrow_mut(|counts| *counts.entry(target).or_default() += 1);
+}
+
+/// How many times this thread has resolved `target`'s machine history.
+#[must_use]
+pub fn history_resolutions(target: EntityId) -> u64 {
+    HISTORY_RESOLUTIONS.with_borrow(|counts| counts.get(&target).copied().unwrap_or(0))
+}
