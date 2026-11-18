@@ -18,9 +18,11 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/purposes/archive.rs` | src | s | — | — | Purposes of the whole-vault archive (`oneiron` `batch::export`) |
 | `src/purposes/booking.rs` | src | s | — | — | Purposes of booking (`crates/oneiron/src/booking`) |
 | `src/purposes/broker.rs` | src | s | — | — | Purposes of the credential broker (`oneiron-broker`; ARCH-0069 `#broker-digest`) |
+| `src/purposes/browser_library.rs` | src | s | — | — | Purposes of the browser library (`oneiron-records`' and the core's `browser_library`) |
 | `src/purposes/calendar.rs` | src | s | — | — | Purposes of the calendar (`crates/oneiron/src/calendar`) |
 | `src/purposes/channel_identity.rs` | src | s | — | — | Purposes of channel identities (`crates/oneiron/src/channel_identity`) |
 | `src/purposes/check_in.rs` | src | s | — | — | Purposes of a person's check-in effects (`oneiron` `check_in::effect`; ARCH-0082 #composing) |
+| `src/purposes/claim.rs` | src | s | — | — | Purposes of claims (`crates/oneiron/src/claim`) |
 | `src/purposes/cluster.rs` | src | s | — | — | Purposes of claim clustering (`oneiron::cluster`, `crates/oneiron/src/memory/claim_cluster.rs`) |
 | `src/purposes/dreamer.rs` | src | s | — | — | Purposes of the Dreamer (`crates/oneiron/src/dreamer_consolidation`, `crates/oneiron/src/dreamer_promotion`… |
 | `src/purposes/dreamer_consolidation.rs` | src | s | — | — | Legacy dreamer-consolidation digests stored or compared by existing records |
