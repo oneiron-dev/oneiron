@@ -129178,6 +129178,14 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/purposes/ai_host.rs",
+     "purpose": "Purposes of the AI host (`crates/oneiron-server/src/ai_host`)",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/purposes/archive.rs",
      "purpose": "Purposes of the whole-vault archive (`oneiron` `batch::export`)",
      "surface": {}
@@ -129520,7 +129528,7 @@
      "purpose": "The K door: a digest that main already stores or sends keeps its exact bytes"
     },
     "purposes": {
-     "files": 40,
+     "files": 41,
      "impl_vault": false,
      "largest_src_bucket": "s",
      "layout": "dir",
@@ -129536,7 +129544,7 @@
    },
    "over_bar": 0,
    "purpose": "One fingerprint rule for engine digests (fable pass 22; PLAN-UC-04 stage 0)",
-   "source_files": 43,
+   "source_files": 44,
    "test_files": 1
   },
   "oneiron-gen": {
@@ -151956,7 +151964,7 @@
      "path": "src/ai_host/lens_callbacks.rs",
      "purpose": "OF-181 (FIX 2611): a lens card's model round trip goes back to the agent that rendered the card, as that…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -152013,7 +152021,7 @@
      "path": "src/ai_host/mod.rs",
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…",
      "surface": {
-      "crate-vis": 29,
+      "crate-vis": 30,
       "mod": 4,
       "re-export": 1,
       "struct": 2
@@ -172800,6 +172808,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/test_doors/fingerprint_keep_lens_callback.rs",
+     "purpose": "Door for `tests/fingerprint_keep_lens_callback.rs` (PLAN-UC-04 stage 5): the dedupe key of a lens card…",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/test_doors/history_import.rs",
      "purpose": "Doors for `tests/history_import_review_id_same_second.rs` ([HISTORY-IMPORT-REVIEW-ID-SAME-SECOND]): the…",
      "surface": {
@@ -173005,7 +173023,7 @@
      "path": "src/test_doors/mod.rs",
      "purpose": "Doors for the integration tests to crate-private items, as in `oneiron::test_doors`",
      "surface": {
-      "mod": 62
+      "mod": 63
      }
     },
     {
@@ -174699,6 +174717,16 @@
      "path": "tests/files_ask_cited.rs",
      "purpose": "`vault.files.sources.ask` (census L2-16 PR 2; ARCH-0027 #files-world: \"The owner can ask about a file and…",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/fingerprint_keep_lens_callback.rs",
+     "purpose": "K-proof (oracle) for PLAN-UC-04 stage 5c: a lens card press's dedupe key keeps its bytes",
+     "surface": {
+      "crate-vis": 1
+     }
     },
     {
      "bucket": "m",
@@ -177209,7 +177237,7 @@
      "purpose": "Request fixtures mint real logged slips before crossing the production router"
     },
     "test_doors": {
-     "files": 64,
+     "files": 65,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -177274,8 +177302,8 @@
    },
    "over_bar": 70,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 2017,
-   "test_files": 485
+   "source_files": 2018,
+   "test_files": 486
   },
   "oneiron-setting-contract": {
    "files": [

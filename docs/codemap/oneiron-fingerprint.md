@@ -14,6 +14,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/legacy.rs` | src | s | 2 struct · 2 enum · 10 fn · 1 crate-vis | LegacyDigest, LegacyHash, LegacyPurpose, TagMode | The K door: a digest that main already stores or sends keeps its exact bytes |
 | `src/lib.rs` | src | s | 5 struct · 20 fn · 1 const · 1 mod · 3 re-export · 1 crate-vis | ContentHash, ContentHasher, Fingerprint, Fingerprinter, Purpose | One fingerprint rule for engine digests (fable pass 22; PLAN-UC-04 stage 0) |
 | `src/purposes/agent.rs` | src | s | — | — | Purposes of agent dispatch (`crates/oneiron/src/agent_dispatch`) |
+| `src/purposes/ai_host.rs` | src | s | — | — | Purposes of the AI host (`crates/oneiron-server/src/ai_host`) |
 | `src/purposes/archive.rs` | src | s | — | — | Purposes of the whole-vault archive (`oneiron` `batch::export`) |
 | `src/purposes/booking.rs` | src | s | — | — | Purposes of booking (`crates/oneiron/src/booking`) |
 | `src/purposes/broker.rs` | src | s | — | — | Purposes of the credential broker (`oneiron-broker`; ARCH-0069 `#broker-digest`) |
