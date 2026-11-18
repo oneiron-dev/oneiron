@@ -68,12 +68,13 @@ pub(super) fn fold_adopted_in_txn(
     let peer_consent_roots =
         crate::federation::admitted_peer_consent_roots_for_store_in_txn(store, txn)?;
     // The tail rows this install believes, judged as the store gate judges
-    // them: the fold refuses only for the gaps these rows rest on (FIX
-    // [STRANGER-GAP-STALLS-ADOPTED-TAIL-FOLD]).
-    let door = crate::authority::log_budget::door_view(store, txn)?;
+    // them but with a root request's wait unresolved, since resolving it
+    // reads this fold: the fold refuses only for the gaps these rows rest on
+    // (FIX [STRANGER-GAP-STALLS-ADOPTED-TAIL-FOLD]).
+    let structure = crate::authority::log_budget::fold_belief_structure_in_txn(store, txn)?;
     let believed: BTreeSet<_> = tail
         .iter()
-        .filter(|(_, entry)| door.believes(entry))
+        .filter(|(_, entry)| structure.believes(entry))
         .map(|(hash, _)| *hash)
         .collect();
     let folded = crate::authority::adopted_fold::fold_adopted_checkpoint_tail(

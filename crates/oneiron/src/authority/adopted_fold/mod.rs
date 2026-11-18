@@ -58,7 +58,7 @@ pub(crate) use result_parents::proven_residence_result_parents_in_txn;
 use context::image_stands_here;
 use covered_floors::{CoveredFloors, NoVouchPast};
 use settle::{SettledTail, settle_tail};
-use tail_gaps::{parent_gaps, refusing_gaps};
+use tail_gaps::{keep_dropped_verdicts, parent_gaps, refusing_gaps};
 
 /// The fold past an adopted image.
 pub(super) enum AdoptedTailFold {
@@ -135,7 +135,7 @@ pub(super) fn fold_adopted_checkpoint_tail(
         .collect();
     // Only the gaps the believed rows rest on refuse the fold; the tail rows
     // above any other gap drop out of what it settles ([`refusing_gaps`]).
-    let (gaps, tail) = refusing_gaps(image, tail, log.believed, required_gaps);
+    let (gaps, tail, dropped) = refusing_gaps(image, tail, log.believed, required_gaps);
     // What only the whole history closes: every covered row not held here.
     let whole = || AdoptedTailFold::NeedHistory(whole_history(adopted, &gaps, log.held_covered));
     let confirms = if image_stands_here(image, log) {
@@ -154,10 +154,12 @@ pub(super) fn fold_adopted_checkpoint_tail(
     };
     let SettledTail {
         projected,
-        fold,
+        mut fold,
         no_vouch,
+        issues,
         ..
     } = settled;
+    keep_dropped_verdicts(&mut fold, issues.len(), &dropped);
     // This install's own view, over the rows its stale-roster window reads:
     // the tail's first-seen times are the only ones it has.
     let window_secs = log.observations.policy.stale_roster_window_secs;

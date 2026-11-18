@@ -93,6 +93,32 @@ impl LocalRoots {
         local.roots.extend(awaited);
         Ok(local)
     }
+
+    /// [`Self::read_in_txn`] with a wait a root request committed left out,
+    /// unresolved: resolving it reads the fold, so the fold past an adopted
+    /// image reads its belief this way (FIX
+    /// [STRANGER-GAP-STALLS-ADOPTED-TAIL-FOLD]). It believes no fewer rows
+    /// than the store gate: an awaited anchor's rows are believed under
+    /// neither reading ([`AuthorityStructure::believes`]), and a wait made at
+    /// this install's pin door stays.
+    pub(super) fn read_without_request_wait_in_txn(
+        store: &Store,
+        txn: &heed::RoTxn<'_>,
+    ) -> crate::error::Result<Self> {
+        let row = super::pinned_root::read_pin_row_in_txn(store, txn)?;
+        let mut local = Self::default();
+        if let Some(pin) = row.pin {
+            local.anchors.insert(pin.anchor_key);
+            local.roots.insert(pin.id);
+        }
+        if let Some(MachineAdmitter::Anchor(anchor)) = row.earlier {
+            local.anchors.insert(anchor);
+        }
+        local
+            .roots
+            .extend(row.awaiting.filter(|_| row.awaited_for.is_none()));
+        Ok(local)
+    }
 }
 
 /// A root record its own anchor signed, alone and verifiably: it names its

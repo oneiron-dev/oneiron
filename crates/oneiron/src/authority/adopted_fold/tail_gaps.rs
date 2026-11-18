@@ -8,12 +8,12 @@ use std::collections::{BTreeMap, BTreeSet};
 use super::*;
 
 /// The gaps that refuse the fold of `tail` past `image`, `required_gaps`
-/// among them, and the tail rows the fold settles. None `believed`: every
-/// tail row counts. Otherwise only the gaps the believed rows rest on refuse
-/// the fold. The tail rows above any other gap drop out of what the fold
-/// settles: invalid, as the stored log's fold holds the rows above a gap. No
-/// believed row rests on a dropped row, since its walk would have reached
-/// that row's gap.
+/// among them, the tail rows the fold settles, and the rows it drops. None
+/// `believed`: every tail row counts. Otherwise only the gaps the believed
+/// rows rest on refuse the fold. The tail rows above any other gap drop out
+/// of what the fold settles: invalid, as the stored log's fold holds the
+/// rows above a gap ([`keep_dropped_verdicts`]). No believed row rests on a
+/// dropped row, since its walk would have reached that row's gap.
 pub(super) fn refusing_gaps<'e>(
     image: &AuthorityCheckpointV2,
     tail: BTreeMap<AuthorityEntryHash, &'e AuthorityLogEntry>,
@@ -22,6 +22,7 @@ pub(super) fn refusing_gaps<'e>(
 ) -> (
     BTreeSet<AuthorityEntryHash>,
     BTreeMap<AuthorityEntryHash, &'e AuthorityLogEntry>,
+    BTreeSet<AuthorityEntryHash>,
 ) {
     match believed {
         None => {
@@ -29,7 +30,7 @@ pub(super) fn refusing_gaps<'e>(
                 .into_iter()
                 .chain(required_gaps)
                 .collect();
-            (gaps, tail)
+            (gaps, tail, BTreeSet::new())
         }
         Some(believed) => {
             let gaps: BTreeSet<_> = believed_tail_gaps(image, &tail, believed)
@@ -45,9 +46,27 @@ pub(super) fn refusing_gaps<'e>(
                 .into_iter()
                 .filter(|(hash, _)| !dropped.contains(hash))
                 .collect();
-            (gaps, tail)
+            (gaps, tail, dropped)
         }
     }
+}
+
+/// Gives each `dropped` row the verdict the stored log's fold gives a row
+/// whose parent never folds, `InvalidAncestry` (`fold_schedule`), where that
+/// fold reports it: after the settlement's `settled` issues, before the
+/// projection's own (#9476 review round 1).
+pub(super) fn keep_dropped_verdicts(
+    fold: &mut AuthorityFold,
+    settled: usize,
+    dropped: &BTreeSet<AuthorityEntryHash>,
+) {
+    let projected = fold.issues.split_off(settled.min(fold.issues.len()));
+    fold.issues.extend(
+        dropped
+            .iter()
+            .map(|hash| AuthorityFoldIssue::InvalidAncestry(*hash)),
+    );
+    fold.issues.extend(projected);
 }
 
 /// The parents the tail rows name that the image does not cover and the tail
