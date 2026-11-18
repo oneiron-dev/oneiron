@@ -165,13 +165,16 @@ impl Vault {
         actor: EntityId,
         decision_id: GateDecisionId,
     ) -> Result<AuthenticatedOwner> {
-        let signer = {
+        // The read transaction ends before the key signs: the signer reads
+        // the roster from the fold it was picked on and opens none.
+        let (fold, signer) = {
             let txn = self.store.env.read_txn()?;
             let fold = self.authority_view_readonly_in_txn(&txn)?;
-            self.owner_proof_signer(&fold)
-        }
-        .ok_or(Error::Record(crate::error::RecordError::OwnerKeyRequired))?;
-        let key = signer.root();
+            let signer = self.owner_proof_signer(&fold);
+            (fold, signer)
+        };
+        let signer = signer.ok_or(Error::Record(crate::error::RecordError::OwnerKeyRequired))?;
+        let key = signer.key();
         let decision = decision_id.as_bytes();
         let parts: [&[u8]; 4] = [
             crate::authority::ASK_WORD_PROOF_DOMAIN,
@@ -183,7 +186,7 @@ impl Vault {
         let signature = crate::authority::AuthoritySignature {
             suite: key.suite(),
             public_key: key.clone(),
-            signature: signer.sign_ask_word_proof(&transcript)?,
+            signature: signer.sign_ask_word(&fold, &transcript)?,
         };
         if !crate::authority::verify_authority_signature(&signature, &transcript) {
             return Err(Error::Gate(GateError::ConsentOwnerNotAuthenticated(

@@ -94,6 +94,14 @@ impl Vault {
         {
             let rtxn = self.store.env.read_txn()?;
             self.refuse_last_bound_owner_delete_in(&rtxn, id)?;
+            // The root project refuses here, before a privacy erase's
+            // audience-edit write below can commit anything.
+            crate::workspace_roster::reject_root_project_delete(&self.store, &rtxn, id)?;
+            // A hard purge refuses a project with a live child; it refuses
+            // here, before its publication fences the project's reads.
+            if reason.active_store_hard_purge_v1() {
+                crate::workspace_roster::reject_project_with_live_children(&self.store, &rtxn, id)?;
+            }
             crate::origin::lfs::reject_direct_lfs_chunk_delete(&self.store, &rtxn, id)?;
             self.require_room_delete_gate(&rtxn, id, gate.as_ref(), allow_replay_test)?;
         }

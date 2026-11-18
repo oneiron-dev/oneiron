@@ -461,9 +461,7 @@ impl Vault {
                     wtxn,
                     &entry.id,
                 )?;
-                crate::secret_custody::erase_secret_handle_label_in_txn(
-                    self, wtxn, &entry.id,
-                )?;
+                crate::secret_custody::erase_secret_handle_label_in_txn(self, wtxn, &entry.id)?;
                 crate::store::secret_handle_purpose::erase_secret_handle_purpose_in_txn(
                     self, wtxn, &entry.id,
                 )?;
@@ -515,9 +513,7 @@ impl Vault {
                         wtxn,
                         &entry.id,
                     )?;
-                    crate::secret_custody::erase_secret_handle_label_in_txn(
-                        self, wtxn, &entry.id,
-                    )?;
+                    crate::secret_custody::erase_secret_handle_label_in_txn(self, wtxn, &entry.id)?;
                     crate::store::secret_handle_purpose::erase_secret_handle_purpose_in_txn(
                         self, wtxn, &entry.id,
                     )?;
