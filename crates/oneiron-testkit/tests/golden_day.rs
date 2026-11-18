@@ -30,8 +30,11 @@ const DIFF_LINES: usize = 60;
 fn run_day(label: &str) -> (GoldenDayRun, Value) {
     let backend = golden_day::backend();
     let run = golden_day::run(&backend).unwrap_or_else(|error| panic!("{error}"));
+    golden_day::probe("run-returned");
     print_seen(&backend.seen());
+    golden_day::probe("printed");
     let normalised = run.normalise();
+    golden_day::probe("normalised");
     let script = backend.check();
     if normalised.is_err() || script.is_err() {
         println!("## GOLDEN-DAY RAW {label} {}", run.raw());
