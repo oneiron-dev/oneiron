@@ -33,11 +33,21 @@
 //!   so it gets none of its receipts (a receipt can carry the call's own
 //!   words in `note`). Green on main (the invocation withholds), red at
 //!   49fff85d (2 of 2), green on the head.
+//! - (e) `a_narrower_credential_of_the_caller_reads_no_receipt_whose_input_showed_a_row_it_cannot_read`
+//!   (review round 2 of #9535): the owner makes three calls whose post
+//!   hooks see a result: one naming no row, one a pack whose item is a row
+//!   the narrower credential does not read (the run's input dependency),
+//!   one a list with no pack naming that row (a row the call named). The
+//!   owner's credential held to the binding and CODE rows keeps the first
+//!   call's two receipts and none of the others'; the broad one keeps all
+//!   six. Green on main (the invocation withholds every one: 0 for the
+//!   first call, so its MISSING assert fails there; red on main), red at
+//!   c029867c (2 and 2: LEAK), green on the head.
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use std::collections::BTreeSet;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::{Arc, Mutex};
 
 use oneiron::authority::{HostSlipIssuer, VerifiedSlip};
 use oneiron::consent::AuthenticatedOwner;
@@ -68,6 +78,13 @@ const FACT_PREDICATE: &str = "example.factscreen.input";
 const CHALLENGE: &[u8] = b"oneiron-request:verb-hook-receipt-screen";
 /// A page large enough to hold every Hook receipt the fixture records.
 const PAGE_LIMIT: usize = 100;
+/// The words only the restricted row's place in a result carries, so the
+/// body inputs that showed it are found among every test's.
+const RESTRICTED_WORDS: &str = "words drawn from the restricted row";
+
+/// Every input a verb body ran on, as JSON, from every test of this file:
+/// a case finds its own by its invocation id.
+static HOOK_INPUTS: Mutex<Vec<String>> = Mutex::new(Vec::new());
 
 const PACK_MD: &str = "---
 name: example.hookscreen
@@ -129,17 +146,22 @@ Watches example.factscreen.input claims and does nothing.
 
 const NOTHING_BODY_JS: &str = "return { kind: \"nothing\" };\n";
 
-/// A hook sandbox that answers every verb body with Continue, reading nothing.
+/// A hook sandbox that answers every verb body with Continue, reading
+/// nothing; it keeps each input in [`HOOK_INPUTS`].
 struct ContinueRuntime;
 
 impl HookBodyRuntime for ContinueRuntime {
     fn run_hook(
         &self,
         _body: &str,
-        _input_json: &str,
+        input_json: &str,
         _context: &mut HookRunContext,
         _read: &mut dyn FnMut(&str) -> std::result::Result<String, String>,
     ) -> oneiron::Result<HookBodyRun> {
+        HOOK_INPUTS
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push(input_json.to_owned());
         Ok(HookBodyRun {
             outcome_json: r#"{"kind":"continue"}"#.to_owned(),
             fuel_used: None,
@@ -293,6 +315,12 @@ impl Fixture {
 
     /// One call of `VERB` as `actor`, as `run_verb_call`.
     fn run_verb_call_as(&self, actor: EntityId) -> InvocationId {
+        self.run_verb_call_with(actor, serde_json::json!({"rows": []}))
+    }
+
+    /// One call of `VERB` as `actor` whose post hooks see `result`, as
+    /// `run_verb_call`.
+    fn run_verb_call_with(&self, actor: EntityId, result: serde_json::Value) -> InvocationId {
         let invocation = InvocationId::mint();
         let call = VerbCall {
             verb: VERB.to_owned(),
@@ -312,7 +340,6 @@ impl Fixture {
             .pre_verb_hooks(call, args, &check)
             .expect("FIXTURE: the pre chain runs")
             .expect("FIXTURE: the pre chain passes with no pre hook");
-        let result = serde_json::json!({"rows": []});
         self.vault
             .post_verb_hooks(pre, result)
             .expect("FIXTURE: the post chain runs")
@@ -634,5 +661,131 @@ fn a_verb_hook_receipt_reaches_only_the_actor_that_made_the_call() {
     assert!(
         got.is_empty(),
         "LEAK: a credential that did not make the call reads its verb-hook receipts, got {got:?}"
+    );
+}
+
+/// The hex of each row `field` names among `receipts`' fields, after any
+/// `<kind>:` prefixes.
+fn named_hex(receipts: &[ReceiptRecord], field: &str) -> BTreeSet<String> {
+    receipts
+        .iter()
+        .filter_map(|receipt| receipt.fields.get(field))
+        .filter_map(|value| value.rsplit(':').next())
+        .map(str::to_owned)
+        .collect()
+}
+
+/// How many of `reader`'s kinds [hook] page receipts each of `calls` has.
+fn kept_per_call(reader: &oneiron::Memory<'_>, calls: &[InvocationId]) -> Vec<usize> {
+    let page = reader
+        .receipts_page(PAGE_LIMIT, &["hook".to_owned()], None)
+        .expect("FIXTURE: the credential-bound kinds [hook] page reads");
+    calls
+        .iter()
+        .map(|call| {
+            let want = call.to_hex();
+            page.receipts
+                .iter()
+                .filter(|receipt| {
+                    receipt.fields.get("invocation").map(String::as_str) == Some(want.as_str())
+                })
+                .count()
+        })
+        .collect()
+}
+
+#[test]
+fn a_narrower_credential_of_the_caller_reads_no_receipt_whose_input_showed_a_row_it_cannot_read() {
+    let fixture = Fixture::new();
+    fixture.put_verb_pack();
+    let restricted = EntityId::now();
+    fixture
+        .vault
+        .put_entity(
+            &restricted,
+            ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"a row the narrower credential does not read",
+        )
+        .expect("FIXTURE: put the restricted row");
+    let plain = fixture.run_verb_call();
+    let packed = fixture.run_verb_call_with(
+        fixture.owner,
+        serde_json::json!({
+            "pack_version": "v1",
+            "items": [{"short_id": restricted.to_hex(), "text": RESTRICTED_WORDS}],
+            "rendered": RESTRICTED_WORDS,
+        }),
+    );
+    let listed = fixture.run_verb_call_with(
+        fixture.owner,
+        serde_json::json!({
+            "rows": [{"claim_ref": restricted.to_hex(), "value": RESTRICTED_WORDS}],
+        }),
+    );
+    let shown: Vec<usize> = {
+        let inputs = HOOK_INPUTS
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        [packed, listed]
+            .iter()
+            .map(|call| {
+                let want = call.to_hex();
+                inputs
+                    .iter()
+                    .filter(|input| input.contains(&want) && input.contains(RESTRICTED_WORDS))
+                    .count()
+            })
+            .collect()
+    };
+    assert_eq!(
+        shown,
+        vec![2, 2],
+        "FIXTURE: both post hooks of each call saw the restricted row's words (packed, listed)"
+    );
+    let mut kept = Vec::new();
+    for call in [plain, packed, listed] {
+        let runs = fixture.hook_runs(call);
+        assert_eq!(
+            runs.len(),
+            2,
+            "FIXTURE: the post chain records two Hook receipts for each call: {runs:?}"
+        );
+        kept.extend(runs);
+    }
+    let mut records = named_hex(&kept, "binding");
+    records.extend(named_hex(&kept, "code"));
+    assert!(
+        records.len() >= 2 && !records.contains(&restricted.to_hex()),
+        "FIXTURE: the narrower credential is held to the binding and CODE rows: {records:?}"
+    );
+    let calls = [plain, packed, listed];
+
+    let broad = credential(&fixture, fixture.owner, BTreeSet::new());
+    let broad_reader = fixture
+        .vault
+        .memory(fixture.owner, EdgeActorClass::Human)
+        .with_read_proof(&broad);
+    assert_eq!(
+        kept_per_call(&broad_reader, &calls),
+        vec![2, 2, 2],
+        "MISSING: the owner's broad credential, which reads the restricted row, keeps every call's two receipts (plain, packed, listed)"
+    );
+
+    let narrow = credential(&fixture, fixture.owner, records);
+    let narrow_reader = fixture
+        .vault
+        .memory(fixture.owner, EdgeActorClass::Human)
+        .with_read_proof(&narrow);
+    let got = kept_per_call(&narrow_reader, &calls);
+    assert_eq!(
+        got[0], 2,
+        "MISSING: the owner's credential held to the binding and CODE rows keeps the receipts of a call whose input showed no other row, got {got:?} (plain, packed, listed)"
+    );
+    assert_eq!(
+        &got[1..],
+        &[0, 0],
+        "LEAK: a narrower credential of the caller reads receipts whose run's input showed a row it cannot read, got {got:?} (plain, packed, listed)"
     );
 }

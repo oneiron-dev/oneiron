@@ -325,7 +325,10 @@ fn credential_kept_receipts(
         }
         // A Hook receipt's real rows, not its trigger alone: a verb hook's
         // invocation trigger names no row, and an unknown or unkept run
-        // withholds it (HOOKS-04). Every other family keeps `trigger_row_of`.
+        // withholds it (HOOKS-04). A verb run's rows include its input's (the
+        // rows its call showed or named), so a narrower credential of the
+        // same actor reads no text drawn from a row it cannot read (review
+        // round 2 of #9535). Every other family keeps `trigger_row_of`.
         let mut rows: Vec<EntityId> = if receipt.receipt_kind == ReceiptKind::Hook {
             let Some(rows) = crate::receipt::referenced_rows(reader.receipt_vault(), &receipt)?
             else {

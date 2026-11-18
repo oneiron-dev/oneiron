@@ -27,7 +27,8 @@ use crate::settings::ReadDestination;
 /// admits a receipt.
 const ROW_FIELDS: &[(ReceiptKind, &[&str])] = &[
     // A hook run: its binding and its body's CODE row. The rows its reads
-    // served are its run's own record's (`HOOK_RUN_KEY`).
+    // served, and a verb run's input rows, are its run's own record's
+    // (`HOOK_RUN_KEY`).
     (ReceiptKind::Hook, &["binding", "code"]),
     // A share: its parties, and what it shared.
     (
@@ -156,8 +157,10 @@ const REFILL_GROWTH: usize = 2;
 /// Every row `receipt` names, by its family's explicit set: its trigger (a
 /// verb hook's invocation trigger excepted: it names no row), the rows its
 /// family's [`ROW_FIELDS`] hold, a share's parties, and the rows a hook
-/// run's reads served. `None` when they cannot be known: a hook receipt
-/// whose run is not kept.
+/// run stood on ([`crate::runtime_hooks::hook_run_read_rows`]: its reads,
+/// and a verb run's input rows). `None` when they cannot be known: a hook
+/// receipt whose run is not kept, or whose verb run's input showed a host
+/// verb's free text.
 pub(crate) fn referenced_rows(
     vault: &Vault,
     receipt: &ReceiptRecord,
