@@ -31,7 +31,9 @@
 //! actor's for good (Astra delta 2 review finding 1). A device key's
 //! enrolment of a key confirms it, so a passkey's vouch for the same key on
 //! a sibling branch limits nothing once the fold merges the two (Astra
-//! delta review finding 2). An install that holds such a key as its only
+//! delta review finding 2). The custodial root's enrolment confirms none,
+//! so the fold refuses a passkey's vouch on a sibling branch of it (blind
+//! review round 2 of #9495, P1). An install that holds such a key as its only
 //! owner key proves no owner act with it, as the fold takes no proof from it
 //! (REVIEW-8451 P1).
 //! A passkey that only another passkey vouched for has its own confirmation
@@ -60,8 +62,8 @@ use std::sync::Arc;
 use base64::Engine as _;
 use ed25519_dalek::Signer as _;
 use oneiron::authority::{
-    ActAuthority, ActSurface, AuthorityAttestation, AuthorityKey, AuthorityOp, AuthorityTier,
-    DeviceAuthority, HostSlipIssuer, MACHINE_ENCRYPTION_KEY_LEN,
+    ActAuthority, ActSurface, AuthorityAttestation, AuthorityFold, AuthorityKey, AuthorityOp,
+    AuthorityTier, DeviceAuthority, HostSlipIssuer, MACHINE_ENCRYPTION_KEY_LEN,
     MACHINE_ENCRYPTION_SUITE_HYBRID_V1, MachineDeviceClass, MachineEncryptionKey, MachineOwnership,
     MachineProfile, MachineRole, OwnerAct, OwnerActKind, OwnerKeyEnrollment,
     OwnerPasskeyEnrollment, ROLE_AGENT, ROLE_OWNER, encode_authority_log_entry_body,
@@ -646,6 +648,54 @@ fn a_device_keys_enrolment_confirms_against_a_sibling_passkey_vouch() {
     );
 }
 
+/// Blind review round 2 of #9495, P1: with the owner's passkey enrolled, the
+/// custodial root enrols a fresh key at the heads, and the passkey vouches
+/// for the same key, with the same holder and proof, on a sibling branch.
+/// The root is in the host's custody, so its enrolment confirms no vouch,
+/// and a counted vouch would limit the key once the fold merges the two.
+/// The vouch's key gives no proof where the root's enrolment's key gives
+/// it, so the fold refuses the vouch, and an install that holds the key
+/// proves owner acts with it. The reviewed head counted the vouch, and the
+/// key proved nothing.
+#[test]
+fn a_host_roots_enrolment_keeps_its_proof_against_a_sibling_passkey_vouch() {
+    let hosted = HostedVault::open();
+    let machine = enrol_passkey(&hosted).machine;
+    let fork = main_log_heads(&hosted.vault).expect("the heads before the fork");
+    hosted
+        .vault
+        .enrol_owner_signing_key_as_host(
+            &hosted.owner(),
+            keyed_enrollment(&hosted, machine, &fresh_owner_key()),
+            &hosted.issuer,
+        )
+        .expect("the host root enrols a fresh key");
+    let vouched = enrol_owner_key_on(
+        &hosted.vault,
+        &hosted.owner(),
+        keyed_enrollment(&hosted, machine, &fresh_owner_key()),
+        fork,
+        passkey_roster_key(),
+        |transcript| passkey_signs(transcript, FLAGS_PRESENT_VERIFIED),
+    )
+    .expect("the sibling vouch is stored");
+    assert!(
+        !vouched,
+        "the passkey's sibling vouch for the key the host root enrolled counts for nothing"
+    );
+    hosted
+        .vault
+        .hold_checkpoint_root_signer(Arc::new(HeldOwnerKey(fresh_owner_key())));
+    let listing = hosted
+        .vault
+        .held_machine_answers(&hosted.proof)
+        .expect("the held answers");
+    assert!(
+        listing.can_confirm,
+        "the key the host root enrolled proves owner acts after the merge"
+    );
+}
+
 /// The install key of a machine a roster-signed profile answers for.
 fn machine_install() -> ed25519_dalek::SigningKey {
     ed25519_dalek::SigningKey::from_bytes(&[0x4C; 32])
@@ -962,15 +1012,29 @@ impl oneiron::authority::CheckpointRootSigner for HeldOwnerKey {
         ed_key(&self.0)
     }
 
-    fn sign_checkpoint_statement(&self, statement: &[u8]) -> oneiron::Result<Vec<u8>> {
+    fn sign_checkpoint_statement(
+        &self,
+        _vault: &Vault,
+        statement: &[u8],
+    ) -> oneiron::Result<Vec<u8>> {
         Ok(self.0.sign(statement).to_bytes().to_vec())
     }
 
-    fn sign_owner_proof(&self, transcript: &[u8]) -> oneiron::Result<Vec<u8>> {
+    fn sign_owner_proof(
+        &self,
+        _vault: &Vault,
+        _fold: &AuthorityFold,
+        transcript: &[u8],
+    ) -> oneiron::Result<Vec<u8>> {
         Ok(self.0.sign(transcript).to_bytes().to_vec())
     }
 
-    fn sign_ask_word_proof(&self, transcript: &[u8]) -> oneiron::Result<Vec<u8>> {
+    fn sign_ask_word_proof(
+        &self,
+        _vault: &Vault,
+        _fold: &AuthorityFold,
+        transcript: &[u8],
+    ) -> oneiron::Result<Vec<u8>> {
         Ok(self.0.sign(transcript).to_bytes().to_vec())
     }
 }

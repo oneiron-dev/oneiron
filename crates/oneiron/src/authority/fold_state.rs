@@ -405,9 +405,11 @@ pub(super) struct FoldState {
     /// and its marks), merged by union. They rest on no roster key, even when
     /// a roster also names the anchor's public key.
     pub(super) anchor_entries: BTreeSet<AuthorityEntryHash>,
-    /// Roster keys marked as the host's, merged by union: each key a host
-    /// enrolled as its own root, and each key marked for the cloud (role or
-    /// tier). Custody also passes along `key_admitters`.
+    /// Roster keys marked as the host's, merged by union: each key stamped
+    /// for the cloud (`ROLE_CLOUD` or `CloudCustodial`), as every Hosted root
+    /// is. The host-root attestation alone marks none: a self-host root
+    /// carries it too (HOSTED-REFOLD-SELF-HOST-ROOT-CUSTODY = A). Custody also
+    /// passes along `key_admitters`.
     pub(super) host_custody_keys: BTreeSet<AuthorityKey>,
     pub(super) worlds: BTreeMap<EntityId, WorldFrontier>,
     pub(super) refused_world_edits: BTreeSet<AuthorityEntryHash>,
