@@ -22,9 +22,11 @@ use oneiron::attempt_queue::{ClaimAttempt, ClaimOutcome};
 use oneiron::dreamer_runner::{
     DreamerRunnerStore, EnqueueDreamerAttempt, EnqueueDreamerAttemptOutcome,
 };
+use oneiron::policy_model::SecretScanMode;
 use oneiron::run_tree::{
     RunAskAnswerKind, RunAskQuestion, RunBranchSignal, RunSignalInput, RunSignalKind,
 };
+use oneiron::store::GateDecisionId;
 use oneiron::{AttemptQueue, RunTreeAdapter, Vault, VaultConfig};
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
@@ -34,6 +36,8 @@ const HELD_PASSPHRASE: &str = "winter orchard notebook lantern";
 const UNHELD_PASSPHRASE: &str = "summer harbour pencil compass";
 /// A passphrase a second custody record holds.
 const OTHER_HELD_PASSPHRASE: &str = "autumn meadow candle ribbon";
+/// An answer holding the held passphrase and a word after it.
+const HELD_PASSPHRASE_AND_WORD: &str = "winter orchard notebook lantern twice";
 
 const RUN: &str = "known-answer-run";
 const LEASE: &str = "known-answer-worker";
@@ -72,6 +76,22 @@ fn answered_twice(
     answers: [&str; 2],
     keys: [&str; 2],
 ) -> TestResult<[oneiron::Result<RunBranchSignal>; 2]> {
+    let [first, second] = answered_in_turn(
+        vault,
+        [(answers[0], keys[0]), (answers[1], keys[1])],
+        |_| Ok(()),
+    )?;
+    Ok([first, second])
+}
+
+/// Opens one ask on a leased branch, then gives each answer under its key
+/// in turn, running `after_first` once the first is given, and gives every
+/// signal result.
+fn answered_in_turn<const N: usize>(
+    vault: &Vault,
+    given: [(&str, &str); N],
+    after_first: impl FnOnce(&Vault) -> TestResult,
+) -> TestResult<[oneiron::Result<RunBranchSignal>; N]> {
     let outcome = DreamerRunnerStore::new(vault).enqueue(EnqueueDreamerAttempt {
         attempt_type: "known-answer-ask".to_owned(),
         input: rmpv::Value::Nil,
@@ -122,8 +142,17 @@ fn answered_twice(
             },
         })
     };
-    let first = answer(answers[0], keys[0]);
-    Ok([first, answer(answers[1], keys[1])])
+    let mut after_first = Some(after_first);
+    let mut results = Vec::with_capacity(N);
+    for (text, key) in given {
+        results.push(answer(text, key));
+        if let Some(run) = after_first.take() {
+            run(vault)?;
+        }
+    }
+    results
+        .try_into()
+        .map_err(|_| "one result per answer given".into())
 }
 
 /// Checks that the answer given again under a new key is taken: its
@@ -231,4 +260,90 @@ fn an_answer_under_a_new_key_with_a_passphrase_no_custody_holds_after_a_held_one
         )
         .into()),
     }
+}
+
+/// Turns the owner's secret scan off: the wall then stores a row as given.
+fn scan_off(vault: &Vault) -> TestResult {
+    let owner = vault.ensure_embedded_owner_actor()?;
+    let owner = vault.authenticate_owner(owner, &owner.to_hex(), true, GateDecisionId::now())?;
+    vault.set_secret_scan_mode(&owner, SecretScanMode::Off, 3)?;
+    Ok(())
+}
+
+/// Checks the receipts of an answer given, the same answer given again
+/// under a new key, and that again under that key: the second carries the
+/// held answer of the first, and the third replays the second.
+fn answer_again_carries_the_held_answer(
+    signals: [oneiron::Result<RunBranchSignal>; 3],
+) -> TestResult {
+    let [first, second, third] = signals;
+    let first = first.map_err(|error| format!("the first answer was refused: {error:?}"))?;
+    let second = second
+        .map_err(|error| format!("the identical answer under a new key was refused: {error:?}"))?;
+    assert_eq!(
+        second.key, SECOND_KEY,
+        "the second receipt is the new key's"
+    );
+    assert_eq!(
+        second.kind, first.kind,
+        "the new key's receipt carries the held answer"
+    );
+    let third = third.map_err(|error| format!("{error:?}"));
+    assert_eq!(
+        third,
+        Ok(second),
+        "the same answer again under the new key replays its receipt"
+    );
+    Ok(())
+}
+
+/// The answer is given with the scan on, so the wall holds the
+/// passphrase's handle; the owner then turns the scan off, and the
+/// identical answer comes under a new key. It meets the held answer, and
+/// its receipt carries that held answer: the branch still holds one answer
+/// for the ask and reads again. Red at b526283dab7 (blind review round 1 of
+/// #9531): the receipt held the raw passphrase beside the held handle, and
+/// the branch no longer read ("orphan Signal ask answer").
+#[test]
+fn an_answer_given_again_under_a_new_key_with_the_scan_off_carries_the_held_answer() -> TestResult {
+    let (_directory, vault) = vault()?;
+    answer_again_carries_the_held_answer(answered_in_turn(
+        &vault,
+        [
+            (HELD_PASSPHRASE, FIRST_KEY),
+            (HELD_PASSPHRASE, SECOND_KEY),
+            (HELD_PASSPHRASE, SECOND_KEY),
+        ],
+        scan_off,
+    )?)
+}
+
+/// The answer holds the held passphrase and a word after it; custody then
+/// takes the whole answer as a value of its own. The identical answer under
+/// a new key meets the held answer, the passphrase's handle and the word,
+/// and its receipt carries that held answer, which the wall leaves as it
+/// is. Red at b526283dab7 (blind review round 1 of #9531): the wall gave
+/// the raw answer the longer value's handle, the receipt no longer matched
+/// the held answer, and the save refused.
+#[test]
+fn an_answer_given_again_under_a_new_key_after_custody_took_it_whole_carries_the_held_answer()
+-> TestResult {
+    let (_directory, vault) = vault()?;
+    answer_again_carries_the_held_answer(answered_in_turn(
+        &vault,
+        [
+            (HELD_PASSPHRASE_AND_WORD, FIRST_KEY),
+            (HELD_PASSPHRASE_AND_WORD, SECOND_KEY),
+            (HELD_PASSPHRASE_AND_WORD, SECOND_KEY),
+        ],
+        |vault| {
+            vault.register_test_secret(
+                "whole answer",
+                HELD_PASSPHRASE_AND_WORD.as_bytes(),
+                Vec::new(),
+                3,
+            )?;
+            Ok(())
+        },
+    )?)
 }
