@@ -6,6 +6,7 @@
 //! knows only DOCX.
 
 use crate::{ArchiveLimits, DoceditError, Document, preflight_with_limits};
+use oneiron_contracts::register::Register;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
@@ -16,9 +17,7 @@ mod projection;
 mod stories;
 pub use projection::{DocxGroupEvents, DocxProjection};
 use projection::{apply_built, group_ops, native};
-use std::collections::HashMap;
-use stemma::edit::EditTransaction;
-use stemma::view::{BlockRole, BlockView, DocumentView, SegmentView, TextMark, TrackStatus};
+use stemma::view::{BlockRole, BlockView, SegmentView, TextMark, TrackStatus};
 pub use stories::{
     DocxHeaderFooterBand, DocxRead, DocxStory, DocxStoryScope, read_docx_body,
     read_docx_scoped_blocks, story_anchor_blocks,
@@ -67,9 +66,21 @@ pub struct DocxRun {
 /// The inline marks Word's comprehension view carries and a tracked
 /// formatting change writes.
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, JsonSchema,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    Register,
 )]
 #[serde(rename_all = "snake_case")]
+#[register("docx.mark")]
 pub enum DocxMark {
     Bold,
     Italic,
@@ -92,14 +103,7 @@ impl DocxMark {
     /// The mark's name on the revision wire and in the body.
     #[must_use]
     pub const fn key(self) -> &'static str {
-        match self {
-            Self::Bold => "bold",
-            Self::Italic => "italic",
-            Self::Underline => "underline",
-            Self::Strike => "strike",
-            Self::Subscript => "subscript",
-            Self::Superscript => "superscript",
-        }
+        self.as_str()
     }
 
     #[must_use]

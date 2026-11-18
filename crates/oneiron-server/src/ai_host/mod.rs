@@ -14,6 +14,7 @@ use oneiron::dreamer_wake::{AgentWakeSignals, WakeIdleState, WakeTurnSubject};
 use oneiron::llm::manifest::ModelRole;
 use oneiron::llm::run_admission::RunReceiptSink;
 use oneiron::{DreamerRunnerStore, EdgeActorClass, EntityId, ModelId, ModelLocality, Vault};
+use oneiron_base::unix_seconds_now;
 use oneiron_driver::{HintPusher, IdleSample, SessionHint};
 
 use crate::config::models::{ChatSettings, ModelsConfig, VoiceSettings};
@@ -27,9 +28,12 @@ use crate::server::SyncServer;
 #[cfg(feature = "code-sandbox-wasmtime")]
 mod code_mode;
 mod compaction;
+#[cfg(oneiron_test_support)]
+pub(crate) use compaction::pass_door;
 #[cfg(all(test, feature = "code-sandbox-wasmtime"))]
 pub(crate) use compaction::tests::cross_the_passes;
 pub(crate) use compaction::{ChatBreakpointCall, ChatSelfMode};
+mod attempt_retry;
 pub mod browser_planner;
 pub(crate) mod browser_program_admission;
 mod coach_browser_programs;
@@ -60,8 +64,11 @@ pub(crate) mod hook_regen;
 pub(crate) mod identity;
 mod judge_swap;
 mod lens_callbacks;
+#[cfg(oneiron_test_support)]
+pub(crate) use lens_callbacks::dedupe_key_for_test as lens_callback_dedupe_key_for_test;
 pub mod live_lease;
 mod local_vision;
+mod meeting_follow_up_drafting;
 pub(crate) mod payer_funding;
 mod policy;
 mod question_timer;
@@ -144,6 +151,9 @@ pub struct AiHandle {
     raw_budget_units: u64,
     /// Each paid recall's line for its rerank calls (`[models.recall]`).
     rerank_budget_units: u64,
+    /// What a rerank call is priced at a pair beside its words
+    /// (`[models.recall] rerank_pair_template_units`).
+    rerank_pair_template_units: u64,
     turns: TurnTracker,
     /// When the last turn landed, in seconds: the inbound silence the
     /// Dreamer's wake policy waits out before an idle recipe.
@@ -228,10 +238,4 @@ struct Attached {
 struct SieveDrain {
     stop: Arc<AtomicBool>,
     task: tokio::task::JoinHandle<()>,
-}
-
-fn unix_now() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |elapsed| elapsed.as_secs())
 }

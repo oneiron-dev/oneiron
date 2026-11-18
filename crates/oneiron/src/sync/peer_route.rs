@@ -58,13 +58,14 @@ pub const HOME_PROBE_TIMEOUT_SECS: u64 = 10;
 /// ([`Vault::mesh_machines_granted`], the sync ALPN), less this machine
 /// (`local`) and the down home, kept only when marked mine: a trusted
 /// identity under this install's pin, the mark the world privacy judge reads.
-/// The standby home leads: the machine the MACRO election would pick next
-/// with the down home out, by the election's own rank over each machine's
-/// signed candidacy (the owner's pick, then an attached cloud, an always-on
-/// node, a primary device, the lowest node id breaking a tie). Every other
-/// candidate follows in that same rank, machines with no eligible candidacy
-/// last, by machine id. No signed row says a machine holds a full copy yet,
-/// so none ranks first for it (My network item 04 waits on one).
+/// Machines that hold a full copy lead: each one's signed full-copy mark,
+/// standing on the key that signed it (L7-47). The standby home comes first
+/// among them, the machine the MACRO election would pick next with the down
+/// home out, by the election's own rank over each machine's signed candidacy
+/// (the owner's pick, then an attached cloud, an always-on node, a primary
+/// device, the lowest node id breaking a tie); then the rest in that same
+/// rank, machines with no eligible candidacy last within each group, by
+/// machine id.
 ///
 /// Fails closed: a grant list, fold or pick this snapshot cannot read asks
 /// no peer, and the reason is logged.
@@ -90,8 +91,10 @@ pub fn choose_sync_peer(
     }
 }
 
-/// [`choose_sync_peer`]'s order over `granted`, in one snapshot.
-fn rank_sync_peers(
+/// [`choose_sync_peer`]'s order over `granted`, in one snapshot: every
+/// machine that holds a full copy before every machine that does not, and
+/// the election's order within each group (L7-47).
+pub(crate) fn rank_sync_peers(
     vault: &Vault,
     granted: &[EntityId],
     local: EntityId,
@@ -107,7 +110,7 @@ fn rank_sync_peers(
     let pick =
         crate::authority::election_home_pick_in_txn(&vault.store, vault.privacy_posture(), &txn)?
             .and_then(|picks| picks.election_pick());
-    let mut ranked: Vec<(u8, u64, EntityId)> = granted
+    let mut ranked: Vec<(u8, u8, u64, EntityId)> = granted
         .iter()
         .copied()
         .filter(|machine| *machine != local && *machine != down_home)
@@ -122,12 +125,20 @@ fn rank_sync_peers(
                         .map(|rank| (rank, candidate.node_id))
                 })
                 .unwrap_or((u8::MAX, u64::MAX));
-            (rank, node_id, machine)
+            (
+                u8::from(!fold.holds_full_copy(machine)),
+                rank,
+                node_id,
+                machine,
+            )
         })
         .collect();
     ranked.sort_unstable();
     ranked.dedup();
-    Ok(ranked.into_iter().map(|(_, _, machine)| machine).collect())
+    Ok(ranked
+        .into_iter()
+        .map(|(_, _, _, machine)| machine)
+        .collect())
 }
 
 /// FIX 4748 engine call (CALLS "FIX 4748 peer relays"): whether a frame of
@@ -147,8 +158,8 @@ pub const fn peer_ignores_frame(tag: u8) -> bool {
 /// this machine's authority fold is settled enough to serve a peer; it fails
 /// closed otherwise ("It fails closed while the authority fold is
 /// unsettled"). Settled is all of: the fold reads (no history it lacks
-/// refuses it), its vault root is not in conflict, every row its own rows
-/// and checkpoint name is held ([`Vault::authority_missing_history`]), and
+/// refuses it), its vault root is not in conflict, the history it believes it
+/// lacks is held ([`Vault::authority_missing_believed_history`]), and
 /// this machine's own chains do not rest on an unsettled roster root (no
 /// chain `admitter_unsettled`, the retired-signer conflict mark).
 ///
@@ -176,7 +187,7 @@ pub fn authority_fold_settled(vault: &Vault) -> Result<bool> {
             return Ok(false);
         }
     }
-    Ok(vault.authority_missing_history()?.is_complete())
+    Ok(vault.authority_missing_believed_history()?.is_complete())
 }
 
 /// FIX 4748 engine call (CALLS "FIX 4748 peer state-only export"): whether a

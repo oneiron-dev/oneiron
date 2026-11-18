@@ -65,30 +65,21 @@ fn account_auth_migrates_managed_root_without_widening() {
         },
     };
     let vault = Vault::open(dir.path(), config).unwrap();
+    vault.install_device_keystore(std::sync::Arc::new(
+        oneiron_keystore::MemoryKeystore::default(),
+    ));
+    // The managed host's root: on a hosted vault the host stamps it
+    // `ROLE_CLOUD`, `CloudCustodial`.
+    let issuer = crate::test_fixtures::provision_engine_machines(&vault);
+    vault
+        .ensure_serving_install_profile(&issuer, MachineRole::Unanswered)
+        .unwrap();
     let actor = vault.ensure_embedded_owner_actor().unwrap();
-    let old = ed_key(140);
     let new = ed_key(141);
-    let key = authority_key_from_ed(&old);
-    let mut genesis = genesis_entry(140, 1);
-    if let AuthorityOp::Genesis { device, .. } = &mut genesis.op {
-        device.roles |= ROLE_CLOUD;
-        device.tier = AuthorityTier::CloudCustodial;
-    }
-    genesis = sign_ed(genesis, &old);
-    let id = genesis_vault_id(&genesis).unwrap();
-    store(&vault, &genesis);
-    let bind = sign_ed(
-        unsigned_entry(
-            Some(id),
-            1,
-            vec![authority_entry_hash(&genesis).unwrap()],
-            bind_op(&key, actor, "human", 1),
-            key.clone(),
-            2,
-        ),
-        &old,
-    );
-    store(&vault, &bind);
+    let key = issuer.public_key();
+    let root = vault.authority_fold().unwrap();
+    assert!(root.roster[&key].roles & ROLE_CLOUD != 0);
+    assert_eq!(root.roster[&key].tier, AuthorityTier::CloudCustodial);
     assert!(
         vault
             .authenticate_owner(
@@ -107,6 +98,12 @@ fn account_auth_migrates_managed_root_without_widening() {
             crate::store::GateDecisionId::now(),
         )
         .unwrap();
+    // The recovery needs the owner's binding, and a hosted fold counts it
+    // only with an owner key's proof: the custodial root alone binds no
+    // person there.
+    vault
+        .bind_host_owner_with_owner_key_for_test(&owner, &issuer, actor)
+        .unwrap();
     vault
         .recover_cloud_account(
             &owner,
@@ -116,30 +113,26 @@ fn account_auth_migrates_managed_root_without_widening() {
                 AuthorityTier::CloudCustodial,
             ),
             key.clone(),
-            |bytes| Ok(old.sign(bytes).to_bytes().to_vec()),
+            |bytes| Ok(issuer.sign_claim_handoff(bytes).to_vec()),
         )
         .unwrap();
     let fold = vault.authority_fold().unwrap();
-    assert_eq!(fold.vault_id, Some(id));
+    assert_eq!(fold.vault_id, root.vault_id);
     assert!(fold.roster[&key].revoked);
     assert!(!fold.roster[&authority_key_from_ed(&new)].revoked);
 }
 
-// FIX [LIBTEST-QUARANTINE-AUTHORITY-TESTS-HISTORY-TRANSFER-ITEMS]: the lib test target's type check fails here (1 errors: E0639 x1); port it, then drop this gate
-#[cfg(any())]
 #[test]
 fn signed_pre_handoff_rotation_survives_hosted_transfer_and_cannot_be_reissued() {
     let source_dir = tempfile::tempdir().unwrap();
     let target_dir = tempfile::tempdir().unwrap();
     let source = Vault::open(source_dir.path(), VaultConfig::default()).unwrap();
-    let hosted = VaultConfig {
-        privacy: crate::config::VaultPrivacyConfig {
-            posture: crate::HostingPrivacyPosture::Hosted,
-            data_key_custody: crate::config::VaultDataKeyCustody::HostManagedKms {
-                key_ref: "handoff-test".into(),
-            },
+    let mut hosted = VaultConfig::device();
+    hosted.privacy = crate::config::VaultPrivacyConfig {
+        posture: crate::HostingPrivacyPosture::Hosted,
+        data_key_custody: crate::config::VaultDataKeyCustody::HostManagedKms {
+            key_ref: "handoff-test".into(),
         },
-        ..VaultConfig::default()
     };
     let target = Vault::open(target_dir.path(), hosted).unwrap();
     let old = ed_key(115);
@@ -525,8 +518,6 @@ fn a_retired_root_installs_no_second_root() {
     }
 }
 
-// FIX [LIBTEST-QUARANTINE-AUTHORITY-TESTS-HISTORY-TRANSFER-ITEMS]: the lib test target's type check fails here (1 errors: E0061 x1); port it, then drop this gate
-#[cfg(any())]
 /// engine-crates-03 at the doors: after a handoff, a row the old root signs
 /// is refused by the signed re-root door, by replicated replay and by
 /// signed-history import, so the fork never reaches the log. The first
@@ -569,6 +560,7 @@ fn every_door_refuses_a_row_the_retired_root_signs() {
                 crate::registry::ENTITY_TYPE_AUTHORITY_LOG,
                 TimeRange { start: 2, end: 2 },
                 2,
+                None,
                 &body,
             )
             .commit()
@@ -802,9 +794,9 @@ fn a_handoff_hides_no_second_genesis() {
     assert!(fold.vault_root_is_conflicted());
 }
 
-/// A retired key's confirmation contends with nothing (Sol review 1): it
-/// never wins a nonce collision against the new root's, so the new root's
-/// confirmation and the slip it minted after it stand.
+/// A retired key's confirmation displaces nothing (Sol review 1): the
+/// handoff's fence refuses it, so the new root's confirmation that shares its
+/// nonce, and the slip the new root minted after it, stand.
 #[test]
 fn a_retired_root_confirmation_displaces_no_confirmation_of_the_new_root() {
     let dir = tempfile::tempdir().unwrap();

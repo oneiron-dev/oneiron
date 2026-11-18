@@ -39,6 +39,7 @@ fn synthetic_config() -> EventTypeConfig {
         booking_window_secs: 14 * 24 * 3_600,
         daily_cap: None,
         weekly_cap: None,
+        deposit: None,
         routing: RoutingMode::Either,
         hosts: vec![HostAvailabilityConfig {
             host_ref: id(HOST),
@@ -52,6 +53,7 @@ fn synthetic_config() -> EventTypeConfig {
             preferred_hours: Vec::new(),
         }],
         // The generous flex pool the preset declares.
+        flex_with_ordinary: false,
         flex_windows: vec![WeeklyWallWindow {
             weekday: 5,
             start_minute: 10 * 60,
@@ -109,6 +111,7 @@ impl SlotOracle for ScriptedOracle {
         Ok(SolveResult {
             slots: self.slots.lock().expect("scripted slots").clone(),
             flex_used: false,
+            full_days: Vec::new(),
             host_bindings: Vec::new(),
         })
     }

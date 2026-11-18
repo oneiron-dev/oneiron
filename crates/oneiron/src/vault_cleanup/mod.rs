@@ -50,25 +50,28 @@
 //! [`MACHINE_MINTED_CLAIM_SOURCES`] class is eligible. Ordinary PERSON rows,
 //! replaced revisions, and missing or unreadable evidence are never candidates.
 //!
-//! # Posture: propose-first today, auto later
+//! # Posture: automatic from birth, propose-first by the owner's choice
 //!
+//! The default posture is [`CleanupPosture::AutoWithDigest`] (owner
+//! 2026-10-18, ARCH-0073 #arm-ruled: "the Dreamer applies, then reverts if
+//! needed"; DEC-0006: no grant step, no holdout). A run takes its snapshot,
+//! archives directly and emits ONE digest receipt listing the ids —
+//! job-level, never per-entity — and the owner can revert the whole run.
 //! ARCH-0066 teeth #5 (read/fold verification coverage) and #9 (OS-level
-//! vault-file separation) are OPEN, so the
-//! default posture is [`CleanupPosture::ProposeFirst`]: a run emits ONE
-//! proposal carrying the impact preview (counts + ids — the preview IS the
-//! proposal body) and archives nothing. Accepting RE-RUNS the tripwire per
-//! entity and archives only the ones still empty; a candidate that gained a
-//! live claim between proposal and accept is SKIPPED, and the skip is on the
-//! run's digest receipt. Rejecting archives nothing and leaves no receipt.
-//! The owner may also review a proposal slot by slot, with each slot's
-//! evidence and full content, and decide it per item in one complete verdict
-//! ([`review_cleanup_proposal_as`], [`Vault::decide_cleanup_proposal_as`];
-//! FIX 1758): what he rejects is recorded as rejected, never as skipped.
+//! vault-file separation) do not gate it: their state rides each automatic
+//! run's digest and receipt as a proof badge ([`CleanupIntegrityTeeth`]).
 //!
-//! [`CleanupPosture::AutoWithDigest`] is the post-teeth path, built now and
-//! reachable only by an owner flipping the `vault_meta` posture flag. It
-//! archives directly and emits ONE digest receipt per run listing the ids —
-//! job-level, never per-entity.
+//! An owner who stores [`CleanupPosture::ProposeFirst`] keeps it: a run then
+//! emits ONE proposal carrying the impact preview (counts + ids — the preview
+//! IS the proposal body) and archives nothing. Accepting RE-RUNS the tripwire
+//! per entity and archives only the ones still empty; a candidate that gained
+//! a live claim between proposal and accept is SKIPPED, and the skip is on
+//! the run's digest receipt. Rejecting archives nothing and leaves no
+//! receipt. The owner may also review a proposal slot by slot, with each
+//! slot's evidence and full content, and decide it per item in one complete
+//! verdict ([`review_cleanup_proposal_as`],
+//! [`Vault::decide_cleanup_proposal_as`]; FIX 1758): what he rejects is
+//! recorded as rejected, never as skipped.
 //!
 //! # Notice and oversight (OF-449)
 //!
@@ -112,6 +115,7 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::store::attempt_id::AttemptId;
 
+mod agent_decide;
 mod attempt_delete_authority;
 mod attempt_delete_receipts;
 mod attempt_delete_wire;
@@ -132,10 +136,12 @@ mod run_record;
 mod run_revert;
 mod run_snapshot;
 mod scan;
+pub(crate) mod setting_keys;
 pub mod surface;
 mod tripwire;
 mod visibility;
 
+pub use self::agent_decide::decide_cleanup_proposal_wire;
 pub use self::attempt_delete_wire::{
     AttemptArchiveDeleteConfirmRequest, AttemptArchiveDeleteExpectation,
     AttemptArchiveDeletePreviewRequest, AttemptArchiveDeletePreviewView,
@@ -144,12 +150,13 @@ pub use self::attempt_delete_wire::{
 };
 pub use self::cleanup_types::{
     ArchivedEntity, CLEANUP_PHASE, CleanupAcceptOutcome, CleanupCandidate, CleanupDecision,
-    CleanupDigest, CleanupImpactPreview, CleanupKind, CleanupPosture, CleanupProposal,
-    CleanupRunReport, FIELD_CLEANUP_ARCHIVED_COUNT, FIELD_CLEANUP_ARCHIVED_IDS,
+    CleanupDigest, CleanupImpactPreview, CleanupIntegrityTeeth, CleanupKind, CleanupPosture,
+    CleanupProposal, CleanupRunReport, FIELD_CLEANUP_ARCHIVED_COUNT, FIELD_CLEANUP_ARCHIVED_IDS,
     FIELD_CLEANUP_DECISION, FIELD_CLEANUP_PHASE, FIELD_CLEANUP_POSTURE, FIELD_CLEANUP_PROPOSAL,
     FIELD_CLEANUP_REJECTED_COUNT, FIELD_CLEANUP_REJECTED_IDS, FIELD_CLEANUP_SKIPPED_COUNT,
-    FIELD_CLEANUP_SKIPPED_IDS, FIELD_CLEANUP_TOMBSTONE_REASON, VAULT_CLEANUP_ACTOR,
-    VAULT_CLEANUP_POSTURE_KEY, VAULT_CLEANUP_RECEIPT_PREFIX,
+    FIELD_CLEANUP_SKIPPED_IDS, FIELD_CLEANUP_TOMBSTONE_REASON, FIELD_CLEANUP_TOOTH_OS_SEPARATION,
+    FIELD_CLEANUP_TOOTH_READ_FOLD_COVERAGE, VAULT_CLEANUP_ACTOR, VAULT_CLEANUP_POSTURE_KEY,
+    VAULT_CLEANUP_RECEIPT_PREFIX,
 };
 pub use self::codec_receipts::{cleanup_digests, is_vault_cleanup_receipt};
 pub use self::proposals_archive::{
@@ -180,24 +187,24 @@ pub(crate) use self::attempt_delete_receipts::{
 pub(crate) use self::codec_receipts::{cleanup_digests_in_txn, cleanup_receipts};
 pub(crate) use self::erase::{erase_attempt_references_in_txn, erase_in_txn};
 pub(crate) use self::proposals_archive::cleanup_proposals_in_txn;
-pub(crate) use self::tripwire::zero_live_members_in_txn;
+pub(crate) use self::tripwire::{person_mint_unclaimed_in_txn, zero_live_members_in_txn};
 pub(crate) use visibility::is_archived_in_txn;
 
 use self::cleanup_types::{
     DIGEST_ROW_LABEL, DIGEST_SCHEMA_VERSION, KEY_ARCHIVED, KEY_AT, KEY_ATTEMPT, KEY_CANDIDATES,
-    KEY_CREATED_AT, KEY_DECISION, KEY_ENTITY, KEY_KIND, KEY_POSTURE, KEY_PROPOSAL, KEY_REJECTED,
-    KEY_SCHEMA_VERSION, KEY_SKIPPED, PROPOSAL_ROW_LABEL, PROPOSAL_SCHEMA_VERSION, live_slots,
+    KEY_CREATED_AT, KEY_DECISION, KEY_ENTITY, KEY_INTEGRITY_TEETH, KEY_KIND,
+    KEY_OS_SEPARATION_CLOSED, KEY_POSTURE, KEY_PROPOSAL, KEY_READ_FOLD_COVERAGE_CLOSED,
+    KEY_REJECTED, KEY_SCHEMA_VERSION, KEY_SKIPPED, PROPOSAL_ROW_LABEL, PROPOSAL_SCHEMA_VERSION,
+    live_slots,
 };
 use self::codec_receipts::{
-    candidate_slot, candidate_value, decode_proposal, decode_row, encode_row, field, fresh_row_id,
-    id_list, id_value_list, put_digest_in_txn, put_proposal_in_txn,
+    candidate_slot, candidate_value, decode_proposal, decode_row, field, fresh_row_id, id_list,
+    id_value_list, put_digest_in_txn, put_proposal_in_txn,
 };
 use self::tripwire::{
     CLEANUP_CHECKS, apply_archives_in_txn, cleanup_posture_in_txn, run_cleanup_candidates_in_txn,
 };
 
-// FIX [LIBTEST-QUARANTINE-VAULT-CLEANUP-QODO-TESTS]: the lib test target's type check fails here (1 errors: E0639 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod qodo_tests;
 #[cfg(test)]
@@ -227,14 +234,40 @@ use crate::vault::LiveEntityRow;
 #[cfg(test)]
 use uuid::Uuid;
 
-// FIX [LIBTEST-QUARANTINE-VAULT-CLEANUP-RETENTION-TESTS]: the lib test target's type check fails here (1 errors: E0639 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod retention_tests;
 
 mod attempt_retention;
+#[cfg(oneiron_test_support)]
+pub(crate) use attempt_retention::task_attempt_key_pin_for_test;
 pub(crate) mod tables;
 pub(crate) use attempt_retention::{
     attempt_is_archived, forget_archived_attempt_in_txn, refresh_archived_attempt_in_rows,
     refresh_archived_attempt_in_txn, restore_task_attempts,
 };
+
+/// The receipt-row decoder (`codec_receipts::decode_row`) for the trailing-bytes test door. Not API.
+#[cfg(oneiron_test_support)]
+pub(crate) fn receipt_row_decode_for_test(
+    raw: &[u8],
+) -> crate::Result<Vec<(rmpv::Value, rmpv::Value)>> {
+    codec_receipts::decode_row(raw, "vault cleanup test row")
+}
+
+/// Whether `raw` decodes as a cleanup proposal, for the duplicate-key test door. Not API.
+#[cfg(oneiron_test_support)]
+pub(crate) fn cleanup_proposal_decodes_for_test(raw: &[u8]) -> bool {
+    codec_receipts::decode_proposal(EntityId::from_bytes_unchecked([1; 16]), raw).is_ok()
+}
+
+/// How many ids `raw` names as a cleanup proposal, for the duplicate-key test door. Not API.
+#[cfg(oneiron_test_support)]
+pub(crate) fn cleanup_proposal_named_id_count_for_test(raw: &[u8]) -> usize {
+    erase::named_ids(entity_rows::Listing::Proposal, raw).len()
+}
+
+/// The proposal schema version, for the duplicate-key test door. Not API.
+#[cfg(oneiron_test_support)]
+pub(crate) fn cleanup_proposal_schema_version_for_test() -> u64 {
+    PROPOSAL_SCHEMA_VERSION
+}

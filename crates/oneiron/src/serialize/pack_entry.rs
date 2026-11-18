@@ -33,10 +33,10 @@ pub const CODE_RUN_OUTPUT_PREVIEW_CODEC: &str = "utf8-lossy-whitespace-compact-v
 #[doc(hidden)]
 pub use oneiron_verb_wire::serialize::pack_entry::CODE_RUN_OUTPUT_PREVIEW_MAX_CHARS;
 
-/// Stable serializer identity recorded in whole-vault export manifests.
-pub const WHOLE_VAULT_EXPORT_SERIALIZER: &str = "oneiron.whole_vault_export";
-/// Version of the whole-vault export serializer contract.
-pub const WHOLE_VAULT_EXPORT_SERIALIZER_VERSION: u16 = 2;
+#[doc(hidden)]
+pub use oneiron_records::serialize::pack_entry::{
+    WHOLE_VAULT_EXPORT_SERIALIZER, WHOLE_VAULT_EXPORT_SERIALIZER_VERSION,
+};
 
 #[derive(Debug, Clone)]
 pub struct SerializeConfig {
@@ -63,6 +63,11 @@ pub(super) struct PreparedEntity {
     /// read from its hydrated fields before any field cut. Rows sort by its
     /// section first, so a partitioned pack keeps the base section first.
     pub(super) world_section: Option<String>,
+    /// The row's place in the pack's working set
+    /// (`PackWorkingSetStats::served`), `None` for a ranked or neighbor row.
+    /// Within a record kind, working-set rows sort after critical rows and
+    /// before the ranked fill.
+    pub(super) working_set_rank: Option<usize>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -163,8 +168,9 @@ pub fn project_pack_for_json_response_with_tokenizer(
         &mut projected_neighbors,
     );
 
-    pack.results = apply_projected_json_rows(pack.results, projected_results);
-    pack.neighbors = apply_projected_json_rows(pack.neighbors, projected_neighbors);
+    pack.results =
+        apply_projected_json_rows(pack.results, projected_results, &stats.working_set.served);
+    pack.neighbors = apply_projected_json_rows(pack.neighbors, projected_neighbors, &[]);
     pack.stats = stats;
     pack
 }
@@ -188,13 +194,20 @@ fn collect_projected_json_rows(
     }
 }
 
+/// A stable sort: rows of equal keys keep the pack's order, its results the
+/// pipeline's (RERANK-GROUP-ORDER = A: a tie at a zero score can hold the
+/// reranked block's boundary) and its neighbors by id, as the pack's source
+/// ranking sorts them.
 fn apply_projected_json_rows(
     entities: Vec<ContextEntity>,
     mut projected_rows: HashMap<[u8; 16], Vec<(String, Value)>>,
+    working_set: &[crate::entity_id::EntityId],
 ) -> Vec<ContextEntity> {
     // A partitioned pack's rows keep their world sections in order, base
     // first (ARCH-0004 #world-scope); the rank is 0 for every row of an
-    // unpartitioned pack, which sorts as before.
+    // unpartitioned pack, which sorts as before. Within a section the rows
+    // sort as the serialized groups do: critical, then the working set in
+    // its order, then by score.
     let sections = WorldSectionOrder::of_rows(&entities, |entity| {
         world_section_label(entity.fields.as_ref())
     });
@@ -203,18 +216,22 @@ fn apply_projected_json_rows(
         .filter_map(|mut entity| {
             let fields = projected_rows.remove(entity.id.as_bytes())?;
             let section = sections.rank(world_section_label(entity.fields.as_ref()));
+            let seed = working_set
+                .iter()
+                .position(|id| *id == entity.id)
+                .unwrap_or(usize::MAX);
             if entity.fields.is_some() {
                 entity.fields = Some(HashMap::from_iter(fields));
             }
-            Some((section, entity))
+            Some(((section, seed), entity))
         })
         .collect();
-    projected.sort_by(|(a_section, a), (b_section, b)| {
+    projected.sort_by(|((a_section, a_seed), a), ((b_section, b_seed), b)| {
         a_section
             .cmp(b_section)
             .then_with(|| b.critical.cmp(&a.critical))
+            .then_with(|| a_seed.cmp(b_seed))
             .then_with(|| b.score.total_cmp(&a.score))
-            .then_with(|| a.id.cmp(&b.id))
     });
     projected.into_iter().map(|(_, entity)| entity).collect()
 }

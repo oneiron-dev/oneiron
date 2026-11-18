@@ -3,6 +3,7 @@
 use crate::ports::EdgeStoreRead;
 use crate::ports::EntityStoreRead;
 use crate::ports::{DeletionMarker, TombstoneStoreRead};
+use crate::store::gate_reason::GateReceiptOutcome;
 use sha2::Digest;
 use std::collections::BTreeSet;
 
@@ -48,6 +49,7 @@ pub use actor_erase::{ACTOR_ERASE_SHARE_ADMISSION, ShareAdmissionErase};
 pub(crate) use admission_refs::share_gate_decision_refs_in_txn;
 pub use history::{ACTOR_ERASE_SHARE_RECIPIENT, ShareRecipientErase};
 pub(crate) use history::{ShareView, read_share_history_in_txn};
+pub(crate) use revoke::owner_revokes_every_share_in_txn;
 pub(crate) use view_link::{
     authorize_share_link_in_txn, live_share_for_holder_in_txn, share_prompt_sources,
 };
@@ -456,7 +458,24 @@ pub(crate) fn read_share_in_txn(
     let Some(issuer) = admission.issuer else {
         return Ok(None);
     };
-    if gate.outcome != "allow"
+    let allowed = match gate.gate_outcome() {
+        Some(GateReceiptOutcome::Allow) => true,
+        Some(
+            GateReceiptOutcome::Pending
+            | GateReceiptOutcome::Deny
+            | GateReceiptOutcome::Approved
+            | GateReceiptOutcome::ApprovedAmended
+            | GateReceiptOutcome::Rejected
+            | GateReceiptOutcome::LetGo
+            | GateReceiptOutcome::Superseded
+            | GateReceiptOutcome::Retracted
+            | GateReceiptOutcome::Invalidated
+            | GateReceiptOutcome::Revoked
+            | GateReceiptOutcome::Noted,
+        )
+        | None => false,
+    };
+    if !allowed
         || gate.redacted_at.is_some()
         || gate.content_kind != "external_effect"
         || gate.actor_ref.as_deref() != Some(issuer.entity_ref().to_hex().as_str())
@@ -497,10 +516,14 @@ pub(crate) fn active_brief_shares_for(
 }
 
 fn verify_share_actor(store: &Store, txn: &heed::RoTxn<'_>, actor: &WriteActor) -> Result<()> {
-    let raw = store
-        .port_entity_record(txn, &actor.entity_ref())?
-        .ok_or(Error::EntityNotFound)?;
-    crate::provenance::validate_actor_class(raw.entity_type, actor.actor_class())
+    // A deleted shell keeps its header and type byte, so the raw row alone
+    // would admit a deleted issuer; only a live row names one.
+    let crate::vault::LiveEntityRow::Live { entity_type, .. } =
+        crate::vault::live_entity_row_in_txn(store, txn, &actor.entity_ref())?
+    else {
+        return Err(Error::EntityNotFound);
+    };
+    crate::provenance::validate_actor_class(entity_type, actor.actor_class())
 }
 
 // PERSON admits both human and agent. Only a live, verified authority binding
@@ -766,6 +789,22 @@ impl Vault {
                 .retain(|id| request.facet_refs.contains(id));
             scope.include_unscoped &= request.include_unscoped;
         }
+        // A brief candidate is a claim ref a caller names, so it must also
+        // pass the scoped read lane's own row admission for this viewer:
+        // its principal audience, credential and audience checks, and the
+        // per-row trailing conjuncts (the records an `edge.provenance`
+        // claim names, an `esign.*` claim's signing document, and both
+        // ends of a `core.coreference.status` claim). The share checks
+        // below are a maximum on top of that admission, never a substitute
+        // for it. A supplied lane for this viewer judges the rows as the
+        // rendering lane will; otherwise the lane is the viewer key this
+        // resolution just proved.
+        let viewer_ref = viewer.to_hex();
+        let viewer_lane = self.scoped_read(actor.clone());
+        let supplied_lane = read.filter(|lane| {
+            lane.vault().vault_id() == self.vault_id()
+                && lane.actor_key().actor_ref() == viewer_ref.as_str()
+        });
         let mut visible_claim_refs = Vec::new();
         let mut seen = BTreeSet::new();
         for id in brief_claim_refs {
@@ -798,7 +837,14 @@ impl Vault {
             // Evaluate LIVE authority on only the facets that survived the maximum.
             // Passing all facets here would let grant A and current authority B
             // combine to leak a multiply-faceted claim despite an empty intersection.
-            if scoped_read_claim_allowed(&policy, &actor, &body, &permitted_facets) {
+            if !scoped_read_claim_allowed(&policy, &actor, &body, &permitted_facets) {
+                continue;
+            }
+            let row_admitted = match supplied_lane {
+                Some(lane) => lane.is_ref_readable_with_policy_in(&txn, &policy, id)?,
+                None => viewer_lane.is_ref_readable_with_policy_in(&txn, &policy, id)?,
+            };
+            if row_admitted {
                 visible_claim_refs.push(*id);
             }
         }
@@ -893,7 +939,5 @@ fn share_claim_facets(
 }
 
 pub(crate) mod tables;
-// FIX [LIBTEST-QUARANTINE-SHARE-TESTS]: the lib test target's type check fails here (11 errors: E0061 x7, E0308 x3, E0063 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 pub(crate) mod tests;

@@ -99,6 +99,39 @@ base_url = "https://api.anthropic.com"
 key_env = "ANTHROPIC_API_KEY"
 ```
 
+A rung of `rungs` may keep daily hours, such as a GPU box at home that runs
+batch models at night (`hours = { start, end, utc_offset | iana_timezone }`,
+the type and checks of `[[gpu.pods]] hours`, section 12):
+
+```toml
+[models.roles.dreamer_current]
+rungs = [
+  { model = "claude:claude-sonnet-4-5" },
+  { model = "gpubox:qwen3.8-27b", hours = { start = "22:00", end = "07:00", iana_timezone = "Europe/Berlin" } },
+]
+
+[models.providers.gpubox]               # the GPU box's OpenAI-compatible server
+kind = "local-openai-compat"
+base_url = "http://gpubox.lan:8000"
+```
+
+Inside its hours the seat's walk tries that rung before the rungs without
+hours, wherever the ladder lists it; a failure hands the call on as usual.
+Outside them the walk passes it at once, with no wait for the hours to open,
+and the receipt's `passed_over` row for it reads `"passed": "outside_hours"`.
+A run's live compaction fork is bound to the rung that answered the run only
+while the walk would take that rung, so never outside its hours.
+A model the vault's model manifest pins for the role is served at any hour:
+the pin names that one model, so there is no walk. A ladder whose every rung
+keeps hours is refused, so a call outside them always has a rung, as is
+`hours` on a role's single `model`. The hours say when, not where: the rung's
+provider is the owner's own entry, and `leave_device` applies to it as to any
+rung. When the rungs without hours are gone at run time, such as one whose
+provider was unavailable when the server started, a call outside the
+remaining rungs' hours ends with the retryable refusal `outside_hours` (HTTP
+503), whose `retry_after` and `resets_at` say when the first of those hours
+opens; a durable model step parks until then.
+
 The local Dreamer model the examples name is the measured recipe for the
 Dreamer's seat: Qwen3.8-27B as EXL3 4 bpw (`turboderp/Qwen3.8-27B-exl3`) with
 the DFlash2 5 bpw draft (`Mia-AiLab/Qwen3.8-27B-DFlash2-EXL3-5.0bpw`, at
@@ -252,7 +285,14 @@ sends it once over verified TLS (no redirect, no retry, no proxy) and strips the
 key from the reply. Each call reads the key at the custody door, so register the
 secret with a binding for the effector `broker:model` at T0 (doored). Run
 the broker with `oneiron-broker serve --socket <path> --client-uid <the
-server's uid>` (add `--extra-roots <pem>` for a private CA), and name it:
+server's uid>` (add `--extra-roots <pem>` for a private CA). On a systemd
+host, install `deploy/sysusers.d/oneiron-broker.conf` and
+`deploy/systemd/oneiron-broker@.service` instead (`oneiron-server host init`
+writes both), and enable `oneiron-broker@<the server's uid>.service`. That unit
+runs the broker as the user `oneiron-broker`, on the socket
+`/run/oneiron-broker/<the server's uid>/broker.sock`, in a directory only that
+user's group may enter: add the server's user to the group `oneiron-broker`.
+Name the broker:
 
 ```toml
 [models.broker]
@@ -284,9 +324,11 @@ extra_roots = ["/etc/oneiron/private-ca.pem"] # optional, absolute
 ```
 
 A declared run's paid keys must sit at T0, so its teacher calls go out this way.
-A `key_secret` provider answers whole chat replies only for now: a streamed chat
-call to it is refused before it starts. Its media calls go through the same
-broker (§10).
+A streamed chat call to a `key_secret` provider goes through the broker as
+the provider's event request; the broker strips each form of the key from
+the events as they pass, and the call keeps its permit and digest binding.
+A Gemini model streams this way too when its entry declares `streaming`. Its
+media calls go through the same broker (§10).
 
 A self-hosted `serve` takes `--settings-file <path>` too: a TOML file in its
 config file's schema, read as one more config file over `--config` and under
@@ -384,11 +426,11 @@ names the field and never its value:
   the like). An import queue with no `claude_code_root` and `codex_root` of
   its own would read the defaults under HOME, so it stops the vault too.
 
-The supervisor binds ten more settings on argv alone; a settings file that
+The supervisor binds eleven more settings on argv alone; a settings file that
 names `browser_runtime`, `desktop_runtime`, `organ_dir`, `mesh_bind`,
 `mesh_relays`, `shared_model_root`, `container_home`,
-`container_runtime_dir`, `guest_runtime_fact` or `hosted_private_origins` is
-refused `SupervisorOwned`:
+`container_runtime_dir`, `guest_runtime_fact`, `hosted_private_origins` or
+`hosted_private_networks` is refused `SupervisorOwned`:
 
 - `--browser-runtime <path>` and `--desktop-runtime <path>`: the browser and
   desktop guests' container CLI, an absolute path on the vault's own host or
@@ -463,13 +505,39 @@ refused `SupervisorOwned`:
   scheme or port no entry lists is refused. A listed origin never admits
   infrastructure, an address-literal URL or a raw connection: a headless
   render's relay (WebSocket, worker and other raw TCP or UDP traffic) knows
-  only addresses and refuses every private one. The host's DNS (its own
+  only addresses and refuses every private one outside a listed network
+  (`--hosted-private-network`, below). The host's DNS (its own
   lookups and the guest's port-53 datagrams to the host's resolvers) stays
-  unchecked. Without the flag the list is empty and every private address is
-  refused. Plain serve and self-hosted nodes carry no guard and fetch as
+  unchecked. Without the flag the list is empty and every private address
+  outside a listed network is refused. Plain serve and self-hosted nodes carry no guard and fetch as
   before. A vault VM has no config-drive file for it. An engine from before
   this flag refuses it, so a supervisor passes it only to engines at or
   after the merge that added it (`version.rs`, hosted private origins).
+- `--hosted-private-network <network>` (managed only, repeatable): a private
+  network the hosted node's web fetch and calendar feed polls may reach,
+  every address in it
+  (HOSTED-EGRESS-OPERATOR-SETTING): `rfc1918` (`10.0.0.0/8`, `172.16.0.0/12`,
+  `192.168.0.0/16`), `cgnat` (`100.64.0.0/10`) or `ula` (`fc00::/7`), spelled
+  exactly so; any other spelling stops the start. It is the hosting
+  operator's setting, never a vault owner's: a managed settings file that
+  names `hosted_private_networks` is refused. A listed network is judged by
+  address, so it admits its addresses at every check, an address-literal
+  URL and a headless render's raw connections included; a name a
+  `--hosted-private-origin` lists stays bound to the schemes and ports its
+  origins list. It never admits the infrastructure the engine knows inside
+  it: Alibaba Cloud's metadata endpoint (`100.100.100.200`) and Tailscale's
+  node address (`100.100.100.100`) in CGNAT; the AWS (`fd00:ec2::254`, EKS
+  Pod Identity `fd00:ec2::23`), Google Cloud (`fd20:ce::254`), Oracle Cloud
+  (`fd00:c1::a9fe:a9fe`), Scaleway (`fd00:42::42`) and Akamai
+  (`fd00:a9fe:a9fe::1`) metadata endpoints and Tailscale's
+  `fd7a:115c:a1e0::53` in ULA; and the node's own addresses. Another
+  provider's endpoint inside an admitted network is reachable, so an
+  operator admits a network only where no such endpoint sits. Without the
+  flag no network is listed, and the node refuses all three except at a
+  listed origin, as before. Plain serve and self-hosted nodes carry no
+  guard. A vault VM has no config-drive file for it. An engine from before
+  this flag refuses it, so a supervisor passes it only to engines at or
+  after the merge that added it (`version.rs`, hosted private networks).
 
 The container CLI gets `HOME` and `XDG_RUNTIME_DIR` from these two flags
 alone. Every call the engine makes to it for a guest (run, inspect and
@@ -717,11 +785,12 @@ the broker sends plain until restart. A `key_secret` entry takes no
 Our own model servers decode compressed bodies once built or started for it
 (OF-604): the house model's `exl3_server.py`, a `llama-server` built by
 `deploy/house-model/build-llama.sh` (cpp-httplib's zstd and zlib support on),
-a vLLM server started with `--middleware body_codec.DecodeContentEncoding`
-(deploy/house-model/README.md, "Compressed requests"), and the VoxCPM2 worker.
+and a vLLM server started with `--middleware body_codec.DecodeContentEncoding`
+(deploy/house-model/README.md, "Compressed requests").
 Each opts in on its own entry with `request_compression = "zstd"`; an entry
-whose server does not decode stays plain. A `voxcpm2` entry compresses its
-`/render` uploads, and an opted-in provider's media JSON bodies compress by
+whose server does not decode stays plain. A `voxcpm2` entry takes none (its
+loopback voice socket carries no codec frame) and an entry that sets it is
+refused at config load; an opted-in provider's media JSON bodies compress by
 the same rules. A tagger endpoint opts in on its section, `[oneironer]
 request_compression = "zstd"`, for its `/v1/extract` posts, with the same
 plain resend; a `kind = "oneironer"` provider entry takes none.
@@ -1352,7 +1421,10 @@ the source its flight ran on (`retained_turns` or `live_fork`, never
 provider-reported input, cached-read, cache-write and output tokens (`null`
 when the provider reported none, never a guessed zero), each try the gate
 refused as its own line, the call's step hash and the home parts it wore,
-and, on the live fork, every row the captured request was read from.
+and, on the live fork, every row the captured request was read from. A call
+refused after it went out keeps its own record as the pass's last try: what
+ran it and what it wore, with its usage `null` unless the provider reported
+it; it answered nothing, so no step is filed for it.
 The epoch's receipt rides its coverage row and is named by its SUMMARY's
 birth; a fold's rides its fold record. The run's `compaction` object shows
 the last pass as `self_writer` (landed or not) and every summary the run
@@ -1732,17 +1804,22 @@ model = "rerank:<the model your server loaded>"
 
 [models.recall]
 rerank_budget_units = 32000   # each recall's own line; the default
+rerank_pair_template_units = 16   # what the template adds to each pair; the default
 ```
 
 Each paid recall runs on a line of its own under the vault's budget policy,
 as a chat turn does. Before a call leaves it is priced on its words, a unit
-per byte of each document plus the query once per document, and 16 more
-per document for the marks a cross-encoder puts around each pair. A line
-that cannot cover that refuses the call unsent with `BUDGET_SPENT`. The
-default line covers 50 documents of 500 ASCII characters beside a query of
-about 120; longer documents, text outside ASCII (several bytes a
-character), or a model whose template wraps each pair in a longer prompt
-need a larger `rerank_budget_units`. Each rung of the `reranker` route the
+per byte of each document plus the query once per document, and
+`rerank_pair_template_units` more per document for what the reranker's
+template puts around each pair: 16 when unset, the marks a cross-encoder
+puts around a pair. A line that cannot cover that refuses the call unsent
+with `BUDGET_SPENT`. The default line covers 50 documents of 500 ASCII
+characters beside a query of about 120; longer documents or text outside
+ASCII (several bytes a character) need a larger `rerank_budget_units`. A
+model whose template wraps each pair in a longer prompt (an instruction-style
+reranker's template adds about a hundred tokens a pair) needs
+`rerank_pair_template_units` set to the most any rung's template adds, and a
+line to match; left at 16, its short documents can bill past the line. Each rung of the `reranker` route the
 call reaches is admitted on its own permit, reserving that price (at least
 one call's 8000 units, or the whole line if smaller), sent through the run's
 gate and settled: the tokens the reranker reports, or the reservation when
@@ -1754,10 +1831,12 @@ role picks the model, as for chat.
 
 The recall scores exactly the block it would rerank: the candidates the
 reader may read, with each one's text as the reader's own read serves it.
-A row with no revision that holds its words (a message whose words live in
-its document: a streamed message, the server's own chat replies among them,
-or an edited one; or a turn whose messages show none) is found but not
-reranked yet: it follows the reranked rows in its first-stage order. Each
+A message whose words live in its document (a streamed message, the
+server's own chat replies among them, or an edited one) is scored at the
+words its indexed revision holds. A row with no revision that holds its
+words (a message whose document head was written around the ledger, or a
+turn whose messages show none) is found but not reranked yet: it follows
+the reranked rows in its first-stage order. Each
 text is judged by the write door as it would leave, a turn's messages
 joined as the reranker would read them, and one the door refuses is sent
 empty. So is a row a device-only world keeps, at the revision scored: a
@@ -2029,9 +2108,9 @@ Gemini file's one redirect is followed only under the API's own origin.
 
 A `gemini` provider is Google's Gemini API, its origin as `base_url` and its
 key in `key_env` or `key_secret` (sent as `x-goog-api-key`). Its chat rungs send
-`models/{model}:generateContent`, streamed as `streamGenerateContent` on a direct key
-when the model declares it; a `key_secret` chat goes through the credential broker as
-a whole reply, like its media calls do. A configured `max_output_tokens` is sent as
+`models/{model}:generateContent`, streamed as `streamGenerateContent?alt=sse` when the
+model declares `streaming`; a `key_secret` chat, whole or streamed, goes through the
+credential broker, like its media calls do. A configured `max_output_tokens` is sent as
 `generationConfig.maxOutputTokens` on both paths. It also serves the image and video
 seats. An image is `models/{model}:generateContent` asked for image
 output: the instruction and each reference image go inline, a `size`
@@ -2869,11 +2948,25 @@ Answer with `POST /v1/ai/quota/{id}`
 A rung whose provider is down hands the call to the next rung, and its offer
 rests for its health in memory. A server error, a timeout, a cut stream and an
 empty answer all count as down. The rest is 5 s, doubling with each failure
-in a row up to 60 s, with jitter. A restart starts every offer healthy. While
+in a row up to 60 s, with jitter. `[models] health_rest_secs` sets the first
+rest, from 1 to 60 s. A restart starts every offer healthy. While
 every rung the call may use rests, the call waits for the first one back
 within the same wait budget as for limits, then tries the chain again. A call
 that runs out of wait ends with the provider's own failure, not
 `rate_limited`.
+
+A durable model step (`ai.steps.submit`) names one exact model, so it waits
+for that offer instead of the next rung. A send it would make while the offer
+rests for its health, or while its probation request is out, is not sent and
+spends none of the step's `retry.max_attempts`: those count sends. The step
+waits for the offer back within the vault's longest wait, or within
+`[models] step_rest_wait_secs` when that is shorter. Past it, the receipt says
+`{"status": "parked", "until": <when the offer is back>, "sends": <sends made>}`
+and the step resumes on its own then, with the rest of its declared attempts.
+A restart drops that wait; a submission of the same `step_key` resumes the step.
+A send counts once it goes out: a step stopped while a send is out resumes with
+that send spent, and a resume that finds every declared attempt sent fails at
+once with an `io_after_send` cut, as the last reply was lost.
 
 When an offer's rest ends it is on probation: a failure rests it again with
 one more strike. On probation it takes one request at a time. The call that
@@ -2940,18 +3033,31 @@ id = "home-gpu"
 url = "https://home-gpu.example:8000/v1"
 capacity = 2
 hours = { start = "22:00", end = "07:00", utc_offset = "+09:00" }
+
+# A box in a zone with daylight saving: its hours follow the zone's clock.
+[[gpu.pods]]
+id = "berlin-gpu"
+url = "https://berlin-gpu.example:8000/v1"
+capacity = 2
+hours = { start = "22:00", end = "07:00", iana_timezone = "Europe/Berlin" }
 ```
 
 A pod with `hours` takes new batches only inside them (CROSS-ARCH-0024
 #my-network 07: embeddings can run on the GPU box at night). `start` is the
-first minute in and `end` the first minute out, both `"HH:MM"` in
-`utc_offset`; a start later than the end runs across midnight. The offset is
-required and fixed, so it does not follow daylight-saving changes. A batch
-that took its lease inside the hours keeps it until the batch ends. Outside
-every pod's hours, batches go to the `[embedder]` endpoint, as with no
-healthy pod. A pod without `hours` takes batches at any hour. `serve` refuses
-a time that is not `"HH:MM"`, a start equal to the end, and an offset beyond
-14:00.
+first minute in and `end` the first minute out, both `"HH:MM"`; a start later
+than the end runs across midnight. The hours are read on exactly one clock:
+`utc_offset`, a fixed offset that does not follow daylight-saving changes, or
+`iana_timezone`, an IANA zone in its canonical spelling, read in the engine's
+embedded zone database (the calendar's), so the hours move with the zone's
+daylight-saving changes. In a zone, on the night the clocks jump forward the
+skipped minutes never occur, so a start inside the gap opens at the first
+minute after it; on the night they fall back, the repeated hour is in or out
+both times. A batch that took its lease inside the hours keeps it until the
+batch ends. Outside every pod's hours, batches go to the `[embedder]`
+endpoint, as with no healthy pod. A pod without `hours` takes batches at any
+hour. `serve` refuses a time that is not `"HH:MM"`, a start equal to the end,
+an offset beyond 14:00, a zone the database does not hold, and hours with no
+clock or with both.
 
 `serve` polls each pod at start and then every `poll_seconds`. A pod is
 healthy when it answers at all (transport), answers `health_path` with a 2xx
@@ -3307,6 +3413,35 @@ tier's checkpoint stops tagging and names that tier in the log.
 configured processing language as a lowercase ISO 639 code. It covers every
 vault turn the tagger reads. Leave it unset when the vault's language is
 unknown or mixed; unset sends no configured language.
+
+`[oneironer.relations]` maps a tagger's relation labels to claim
+predicates, for a tagger whose model card declares `"relations": true`:
+
+```toml
+[oneironer.relations]
+works_at = "work.employer"
+```
+
+The tagger saves the relations it reads between a turn's spans with the
+turn's tags, and `vault.tagging.tags` shows them. A relation is a tag, never
+a claim: the Dreamer's child authors any claim (JointIE, ARCH-0026). Each
+predicate must be one a public claim write takes: two or more dotted
+lowercase segments, outside the engine's reserved namespaces (`edge.*`,
+`skill.*`, `actor.*` and the other engine-owned families), or the server
+refuses to start.
+
+When the Dreamer consolidates a slice whose every turn holds a current tag
+set from the configured tagger with relations, it extracts that slice from
+the relations instead of calling the extraction model. Each relation whose
+label the table maps files one candidate claim: the head span's linked
+entity as its subject, the table's predicate, the tail span's words as its
+value, and the turn as its evidence. Its corrections and conflicts are
+decided as a model's candidates are. Such a slice files only the relations
+its table maps, even where the extraction model would have filed more. A
+slice with a turn the tagger has not tagged, or tagged without relations,
+keeps the extraction model. The table is read when it is used, so changing
+it needs no new tagging pass, and an empty table, the default, leaves every
+slice to the extraction model.
 
 `device = "cuda"` opens only in a server built with candle's CUDA kernels,
 and a named device never falls back to the CPU: a build without them refuses

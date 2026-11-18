@@ -356,6 +356,7 @@ fn zero_role_devices_do_not_count_as_quorum_participants() {
         seqs: BTreeMap::from([(owner_key.clone(), 0)]),
         machines: BTreeMap::new(),
         machine_keys: BTreeMap::new(),
+        held_machine_answers: BTreeMap::new(),
         root_anchors: BTreeMap::new(),
         anchor_entries: BTreeSet::new(),
         host_custody_keys: BTreeSet::new(),
@@ -373,6 +374,7 @@ fn zero_role_devices_do_not_count_as_quorum_participants() {
         refused_export_acts: BTreeSet::new(),
         agent_carried_acts: BTreeMap::new(),
         home_candidacy: Default::default(),
+        full_copy_mark: Default::default(),
         owner_work: Default::default(),
         world_keys: BTreeMap::new(),
         refused_world_keys: BTreeSet::new(),
@@ -380,6 +382,9 @@ fn zero_role_devices_do_not_count_as_quorum_participants() {
         hosted: false,
         actor_rows: BTreeSet::new(),
         residence_directives: BTreeMap::new(),
+        passkey_contexts: BTreeMap::new(),
+        passkey_vouched_keys: BTreeSet::new(),
+        passkey_vouch_confirmations: BTreeSet::new(),
     };
     let entry = cosign_ed(
         unsigned_entry(

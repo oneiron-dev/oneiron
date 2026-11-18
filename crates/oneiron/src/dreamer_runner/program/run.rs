@@ -22,6 +22,7 @@ mod page;
 
 use std::collections::BTreeSet;
 
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
 use serde::{Deserialize, Serialize};
 
 use crate::Vault;
@@ -39,8 +40,6 @@ use crate::side_table::{self, Named, SideKey, SideTable};
 pub(super) use self::page::program_steps_page_in_txn;
 use super::ATTEMPT;
 use super::types::code_run_bytes;
-
-const STEP_DOMAIN: &[u8] = b"oneiron:dreamer:turn-program-step:v1";
 
 /// Where a send's body sits, as each custody record the wall mints from it
 /// names its origin (with the step's full key): one stable place for every
@@ -115,40 +114,8 @@ pub(super) struct TurnProgramStep {
     pub(super) at: u64,
 }
 
-/// The issuing binding, committed before the effect runs.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub(super) enum StepIssue {
-    /// A model step: its logical occurrence in the run and its request.
-    Model {
-        occurrence: u64,
-        request_hash: [u8; 32],
-    },
-    /// A verb write: its place in its step and the call it makes.
-    Write {
-        step_start: u64,
-        ordinal: u64,
-        receipt: EntityId,
-        call_digest: [u8; 32],
-    },
-    /// An outbound send: its frozen intent.
-    Outbound { intent: [u8; 32], call_seq: u64 },
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub(super) enum StepState {
-    /// Bound and not ended.
-    Issued,
-    /// Ended, with its exact result's digest and, for a send, the body the
-    /// transport returned as the side-row wall admitted it. The digest is
-    /// over the bytes returned; the body is absent when the wall refused it
-    /// or the program's actor is erased.
-    Settled {
-        result_digest: [u8; 32],
-        result: Option<Vec<u8>>,
-    },
-    /// Its end is unknown: never taken for settled, never sent again.
-    Uncertain { why: String },
-}
+#[doc(hidden)]
+pub(super) use oneiron_records::dreamer_runner::program::run::{StepIssue, StepState};
 
 /// How one entry into a program's code run stands.
 pub(crate) enum TurnProgramEntered {
@@ -218,15 +185,29 @@ fn leased_parts(attempt: &AttemptRecord) -> Result<&str> {
 }
 
 fn step_id(parts: &[&[u8]]) -> Result<EntityId> {
-    let mut hasher = blake3::Hasher::new();
-    hasher.update(STEP_DOMAIN);
+    let mut hasher = LegacyDigest::new(purposes::dreamer_runner::TURN_PROGRAM_STEP);
     for part in parts {
-        hasher.update(&(part.len() as u64).to_be_bytes());
-        hasher.update(part);
+        hasher.len_u64_be(part.len());
+        hasher.raw(part);
     }
     let mut bytes = [0_u8; 16];
-    bytes.copy_from_slice(&hasher.finalize().as_bytes()[..16]);
+    bytes.copy_from_slice(&hasher.finish()[..16]);
     EntityId::from_bytes(bytes)
+}
+
+/// The digest an outbound step settles with: the step tag, the intent's
+/// payload hash, then the bytes the send returned, when it returned a body
+/// (K, PLAN-UC-04 stage 7).
+fn outbound_result_digest(
+    payload_hash: &[u8; 32],
+    body: Option<impl std::io::Read>,
+) -> Result<[u8; 32]> {
+    let mut hasher = LegacyDigest::new(purposes::dreamer_runner::TURN_PROGRAM_STEP);
+    hasher.raw(payload_hash);
+    if let Some(body) = body {
+        hasher.raw_reader(body)?;
+    }
+    Ok(hasher.finish())
 }
 
 impl Vault {
@@ -534,12 +515,10 @@ pub(crate) fn settle_program_outbound_in_txn(
         };
         let code_run = turn_program_code_run(&stamp.admission)?;
         let key = (code_run, step_id(&[b"outbound", &record.id])?);
-        let mut hasher = blake3::Hasher::new();
-        hasher.update(STEP_DOMAIN).update(&record.payload_hash);
-        if let Some(body) = &body {
-            hasher.update_reader(body.reader())?;
-        }
-        let result_digest = *hasher.finalize().as_bytes();
+        let result_digest = outbound_result_digest(
+            &record.payload_hash,
+            body.as_ref().map(RawOutboundBody::reader),
+        )?;
         let skeleton = TurnProgramStep {
             attempt: *record.attempt_id.as_bytes(),
             issued: StepIssue::Outbound {
@@ -746,4 +725,17 @@ fn actor_steps_in_txn(
         }
     }
     Ok(steps)
+}
+
+#[cfg(oneiron_test_support)]
+pub(crate) fn step_id_for_test(parts: &[&[u8]]) -> Result<EntityId> {
+    step_id(parts)
+}
+
+#[cfg(oneiron_test_support)]
+pub(crate) fn outbound_result_digest_for_test(
+    payload_hash: &[u8; 32],
+    body: Option<&[u8]>,
+) -> Result<[u8; 32]> {
+    outbound_result_digest(payload_hash, body)
 }

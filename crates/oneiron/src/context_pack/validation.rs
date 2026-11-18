@@ -11,7 +11,7 @@ use heed::RoTxn;
 use crate::Vault;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::{ClaimBody, ClaimSubject, claim_surfaceable};
-use crate::disclosure::{DisclosureContext, DisclosureMode};
+use crate::disclosure::DisclosureContext;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_CLAIM;
@@ -52,6 +52,7 @@ pub(super) fn disclosure_admits_candidate(
     super::retained_copies::clamp_admits(
         ctx,
         vault,
+        store,
         rtxn,
         id,
         header.entity_type,
@@ -73,7 +74,7 @@ pub(crate) fn disclosure_admits_target(
     let Some(ctx) = clamp else {
         return Ok(true);
     };
-    if ctx.mode() == DisclosureMode::OwnerAlone {
+    if !ctx.clamps() {
         return Ok(true);
     }
     let Some(raw) = store.port_entity_record(rtxn, id)?.map(|row| row.encode()) else {
@@ -82,7 +83,7 @@ pub(crate) fn disclosure_admits_target(
     let Some(header) = EntityMetadataHeader::parse(&raw) else {
         return Err(Error::CorruptedIndex("entity metadata header"));
     };
-    super::retained_copies::clamp_admits(ctx, vault, rtxn, id, header.entity_type, None)
+    super::retained_copies::clamp_admits(ctx, vault, store, rtxn, id, header.entity_type, None)
 }
 
 /// OF-365 enforcement point 4 — the final fail-closed sweep: re-checks every
@@ -98,13 +99,14 @@ pub(super) fn validate_pack_disclosure(
     results: &[ContextEntity],
     neighbors: &[ContextEntity],
 ) -> Result<()> {
-    if ctx.mode() == DisclosureMode::OwnerAlone {
+    if !ctx.clamps() {
         return Ok(());
     }
     for entity in results.iter().chain(neighbors.iter()) {
         if !super::retained_copies::clamp_admits(
             ctx,
             vault,
+            store,
             rtxn,
             &entity.id,
             entity.entity_type,

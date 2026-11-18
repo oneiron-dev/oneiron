@@ -3,7 +3,7 @@
 use super::base::SyncClient;
 use crate::authority::PeerMachine;
 use crate::batch::export::{
-    OwedBody, StagedImportBodyWork, StagedVaultImport, VaultImportConfirmation,
+    OwedBody, StagedImportBodyWork, StagedVaultImport, VaultImportConfirmation, VaultImportFailure,
     VaultImportStageReceipt, VaultImportStageStatus,
 };
 use crate::error::SyncProtocolValidation;
@@ -16,8 +16,8 @@ use crate::sync::federation_burst::{
 use crate::sync::ingest::{Delivery, watch_births, with_delivery, with_placements};
 use crate::sync::selector::{
     AdmittedUpdate, FederationAdmissionRole, SyncSelector, admit_peer_window_update_as,
-    encode_selector_vv_request, revalidate_admitted_facet_stamps,
-    revalidate_admitted_federated_claims, staged_births,
+    encode_selector_vv_request, is_peer_task_authority_fact_refusal,
+    revalidate_admitted_facet_stamps, revalidate_admitted_federated_claims, staged_births,
 };
 use crate::sync::transport;
 use crate::sync::transport::{
@@ -435,6 +435,12 @@ impl SyncClient {
         // artifact permanently unimportable under its re-derived id even after the
         // operator installs the missing permit. Leaving the receipt Pending lets a
         // re-stage under the same receipt id re-evaluate once policy relaxes.
+        //
+        // One refusal is terminal: a peer's TASK authority fact in the bytes. It
+        // reads nothing but the digest-pinned bytes, so no policy change admits
+        // them, and a Pending receipt left behind would never settle. It settles
+        // Failed(AdmissionRejected), as the stage leg's refusal of the same bytes
+        // does (FIX TASK-FACT-STAGED-CONFIRM-NEVER-SETTLES).
         let mut carried = Vec::with_capacity(parts.len());
         // Each part's by-ref bodies, and every row the parts carry: the
         // bodies left unlanded stay owed under the receipt (FIX 12408).
@@ -442,8 +448,17 @@ impl SyncClient {
         let mut carried_rows = Vec::new();
         for part in &parts {
             let (admission_key, update) = (&part.key, &part.update);
-            revalidate_admitted_federated_claims(&self.vault, admission_key, update, durable.role)
-                .map_err(map_federated_admission_err)?;
+            if let Err(error) = revalidate_admitted_federated_claims(
+                &self.vault,
+                admission_key,
+                update,
+                durable.role,
+            ) {
+                if is_peer_task_authority_fact_refusal(&error) {
+                    fail_pending_staged_import(&self.vault, &durable)?;
+                }
+                return Err(map_federated_admission_err(error));
+            }
             revalidate_admitted_facet_stamps(admission_key, update)
                 .map_err(map_federated_admission_err)?;
             let admitted =
@@ -725,6 +740,27 @@ impl SyncClient {
             .discard(&self.vault)
             .map_err(map_federated_admission_err)
     }
+}
+
+/// Settles the Pending staged import `pending` `Failed(AdmissionRejected)`,
+/// dropping its staged content and its record of staged stamps in the same
+/// write, as a confirmation that owes no body drops them. The caller holds the
+/// staged-import confirm lock; a writer that moved the receipt first keeps its
+/// outcome.
+fn fail_pending_staged_import(
+    vault: &crate::Vault,
+    pending: &VaultImportStageReceipt,
+) -> std::result::Result<(), TransportError> {
+    // A Failed receipt holds no admitted bytes and no staged stamps: the codec
+    // refuses one that names either, so both digests go with the content.
+    let mut failed = pending.clone();
+    failed.status = VaultImportStageStatus::Failed;
+    failed.failure = Some(VaultImportFailure::AdmissionRejected);
+    failed.admitted_update_digest = None;
+    failed.staged_stamps_digest = None;
+    crate::batch::export::vault_import_confirm_if_pending(vault, pending, &failed, None)
+        .map(|_| ())
+        .map_err(|error| TransportError::Storage(error.to_string()))
 }
 
 pub(super) fn map_federated_admission_err(e: crate::error::Error) -> TransportError {

@@ -355,6 +355,14 @@ fn class_judge_in(
     {
         return Ok(false);
     }
+    // A named room's standing lifts the conversation home only while this
+    // serving snapshot finds the reader standing in the room (DEC-0006
+    // `#home-clearance`); the verdict is held for this snapshot alone.
+    if crate::disclosure::scope_home_band(view.scope).is_some()
+        && key.room_standing_lapsed_in(vault, txn)?
+    {
+        return Ok(false);
+    }
     Ok(crate::gate::claim_read_policy_allows(
         &reader.policy,
         key,
@@ -441,9 +449,9 @@ impl ScopedRead<'_> {
             }
         };
         // A provenance Claim's named records, an e-sign Claim's signing
-        // document and originals, and a coreference status Claim's endpoints
-        // are the row's own, never its class's: judged last, for an admitted
-        // row only.
+        // document and originals, and a coreference (status or consent)
+        // Claim's endpoints are the row's own, never its class's: judged
+        // last, for an admitted row only.
         Ok(Some(
             verdict
                 && self.provenance_cited_readable_in(rtxn, policy, &body, authority)?

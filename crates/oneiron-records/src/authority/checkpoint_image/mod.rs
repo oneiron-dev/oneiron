@@ -50,7 +50,38 @@ use serde::Serialize;
 /// them, so such a view reads them under the same cap (FIX 23218).
 /// 33: an owner's agent Grant mint an image carries may bind its repo bounds to one owner
 /// working view (row 6 WORKING-VIEW-EDIT).
-pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 33;
+/// 37: an image's revoke facts carry each device revocation proved on its own signed branch,
+/// so a key a dropped branch revoked stays revoked (FIX [CONFIRM-COLLISION-SUBTREE-ROLLBACK]).
+/// 34 to 36 are unused: they were left for PRs that were open when 37 landed, and each of
+/// those takes the next number at its own landing.
+/// 39: two concurrent federation confirmations that share an id or a nonce both stay valid as
+/// spent evidence, and settlement removes neither nor any row above it (FIX
+/// CONFIRM-COLLISION-SUBTREE-ROLLBACK). 38 is unused: it was an open PR's number when the
+/// train assigned this one.
+/// 40: a revocation retires its key on every branch, as a handoff retires its predecessors
+/// (REVOKED-OWNER-ROOT-SIBLING-ENROL).
+/// 41: a carried machine answer that needed an owner key's proof and carried none is held
+/// beside the chains, never in them, and an owner answer may carry that one proof cosign (row
+/// CARRIER-OWNER-PROOF).
+/// 42: a `RevokeDevice` of an owner key counts only with an owner key's proof, as its signer or a
+/// cosign; the custodial root alone never ends one, and every row above such a revoke is refused
+/// with it (row HOSTED-ROOT-REVOKES-OWNER-KEY).
+/// 43: each covered row's sequence floor comes from the covered rows, not from the order
+/// they arrived in, and a row that only takes away is never floored (FIX
+/// [SEQUENCE-FLOOR-DELIVERY-ORDER], [CHECKPOINT-RAW-FLOOR-CLEARED-ROW]); below its floor a
+/// row that grants counts in full, a world key record included, and the image records its fork
+/// as a `SequenceFork` issue (Engine RULINGs SEQ-FLOOR-SHAPE-S = B, SEQ-FLOOR-S-WORLD-KEY-FLOOR
+/// = A).
+/// 44: the fold keeps each enrolled passkey's assertion contexts, each key a passkey vouched
+/// for and each such key a second vouch confirmed (row WEB-PASSKEY-OWNER-KEY).
+/// 45: a counted root appointment folds its line as its own ancestry's fold did, and a
+/// rootless roster names itself (OWNER-ANCHOR-ROOT-RECOVERY).
+/// 46: on a hosted fold a `human` bind or rebind, and a bind or rebind of any class of a key whose
+/// binding, live or revoked, is `human` or of a live key a `human` binding could name (an owner
+/// or admin key, the custodial root's too), counts only with the proof of an owner key no cloud
+/// key holds and no passkey limit holds (rows OLD-PARENTS-OWNER-BINDING-REVOKE,
+/// OLD-PARENTS-OWNER-BINDING-CONFLICT).
+pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 46;
 
 /// The domain every encoded image starts with.
 pub const AUTHORITY_CHECKPOINT_V2_DOMAIN: &[u8] = b"oneiron/authority/checkpoint/v2";

@@ -46,6 +46,7 @@ pub(crate) mod custody;
 pub(crate) mod document_pins;
 pub mod documents;
 pub mod federation_burst;
+mod fetch_conditions;
 pub(crate) mod home_handoff;
 pub mod home_proof;
 mod ingest;
@@ -102,8 +103,8 @@ pub use client::{
     SyncTransportCredential, ThinItem,
 };
 pub use connection::{
-    ConnectionConfig, DeviceResidence, HomeNodeTopology, HomeRoute, HomeSearch, LocalUpdate,
-    ResidenceModeChange, SyncConnection,
+    ConnectionConfig, DeviceResidence, FetchConditions, HomeNodeTopology, HomeRoute, HomeSearch,
+    LocalUpdate, ResidenceModeChange, SyncConnection,
 };
 pub(crate) use ingest::VerifiedOwnDeviceLane;
 pub(crate) use ingest::forget_stale_peer_origins;
@@ -156,3 +157,6 @@ pub use transport::{
     encode_legacy_full_window_protocol_hello, encode_protocol_hello, encode_window_sync,
 };
 pub use types::{MessagePresenceScope, ScopedPresenceFrame, SyncConfig, WindowKey};
+
+#[cfg(oneiron_test_support)]
+pub(crate) use self::ingest::asset_digest_for_test;

@@ -13,8 +13,8 @@ use super::super::replay::{
 };
 use super::super::support::invalid_code_run_replay;
 use super::records::{
-    RAW_OUTPUT_SECRETS, RAW_OUTPUT_TAINTS, RAW_OUTPUTS, REPLAY_RECORDS, finish_output_sourced,
-    load_whole_body, read_body_row_range,
+    RAW_OUTPUT_SECRETS, RAW_OUTPUT_TAINTS, RAW_OUTPUTS, finish_output_sourced, load_whole_body,
+    read_body_row_range,
 };
 use super::speech_identity::{
     ResultSpeech, canonical_witness_executor_turn_sourced, executor_speech_message_id_for_run,
@@ -168,7 +168,6 @@ impl SessionBinding<'_> {
         expected: Option<CodeRunReplayGeneration>,
         healed_model: Option<&ModelId>,
     ) -> Result<CodeRunReplayGeneration> {
-        REPLAY_RECORDS.encode_value(record)?;
         let next_generation = record.generation()?;
         self.answered(|| self.put_replay_routed(record, expected, healed_model, |_, _| Ok(())))?;
         Ok(next_generation)
@@ -187,7 +186,9 @@ impl SessionBinding<'_> {
 
     /// [`Vault::inherit_code_run_result_marks`] on the room's route: the
     /// marks of every occurrence in `from` join those of `owner`'s
-    /// occurrence of `output`.
+    /// occurrence of `output`. A secret named twice keeps its lowest
+    /// recorded generation, as on the vault, so a merge across a rotation
+    /// stays storable.
     fn inherit_marks(
         &self,
         owner: EntityId,
@@ -202,17 +203,21 @@ impl SessionBinding<'_> {
             Ok::<_, crate::Error>((key, refs.unwrap_or_default(), secret))
         };
         let (key, mut refs, mut secret) = get_marks(owner, output)?;
-        let (own_refs, own_secret) = (refs.len(), secret.is_some());
+        let (own_refs, own_secret) = (refs.clone(), secret.is_some());
         for (source, held) in from {
             let (_, more, marked) = get_marks(*source, held)?;
             for taint in more {
-                if !refs.contains(&taint) {
-                    refs.push(taint);
+                match refs
+                    .iter_mut()
+                    .find(|held| held.secret_ref == taint.secret_ref)
+                {
+                    Some(held) => held.generation = held.generation.min(taint.generation),
+                    None => refs.push(taint),
                 }
             }
             secret = secret.or(marked);
         }
-        if refs.len() > own_refs {
+        if refs != own_refs {
             self.answered(|| {
                 self.session
                     .side_table_put_routed(&self.route, &RAW_OUTPUT_TAINTS, &key, &refs)
@@ -888,6 +893,17 @@ impl<'a> ExecutorStorage<'a> {
         match self {
             Self::Canonical(vault) => vault.limit_watch(),
             Self::Session(binding) => binding.session.limit_watch(),
+        }
+    }
+
+    /// The owner's `code_run.result_search.max_context` on the vault this
+    /// run's storage is on.
+    pub(crate) fn result_search_max_context(&self) -> Result<usize> {
+        match self {
+            Self::Canonical(vault) => {
+                crate::code_run::setting_keys::result_search_max_context(vault)
+            }
+            Self::Session(binding) => binding.session.result_search_max_context(),
         }
     }
 

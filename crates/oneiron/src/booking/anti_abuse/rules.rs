@@ -2,8 +2,6 @@
 //! Entry: `BookingAntiAbuseRule`.
 //! Defines its own items.
 
-use std::num::{NonZeroU16, NonZeroU32, NonZeroU64};
-
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use super::storage::{ROW_ID_MAX_LEN, RULE_KEY_DOMAIN, hex_lower, refused};
@@ -15,64 +13,17 @@ use crate::EntityId;
 use crate::booking::lifecycle::digest_with;
 use crate::booking::{BookingError, EventTypeKey};
 
-// -------------------------------------------------------------------------
-// Rule types (the keystone)
-// -------------------------------------------------------------------------
-
-/// A rule row's subject: an existing booking page, optionally narrowed to one
-/// event type. A `None` event type applies page-wide.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct BookingRuleScope {
-    #[serde(with = "entity_ref_serde")]
-    pub page_ref: EntityId,
-    pub event_type: Option<EventTypeKey>,
-}
-
-/// The SHIP/SKIP/RESERVE control set. Reserve rows are stored off-by-default
-/// policy, not active enforcement.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-pub enum BookingAntiAbuseRule {
-    /// Required open-text intake with a positive minimum length.
-    RequiredIntake { min_chars: NonZeroU16 },
-    /// Minimum notice the solver must honour, normal vs high-value.
-    MinimumNotice {
-        normal_secs: NonZeroU64,
-        high_value_secs: NonZeroU64,
-    },
-    /// Honeypot plus a time-to-submit floor; violations are rejected as an
-    /// indistinguishable HTTP 200 with no booking-side write.
-    HoneypotAndSubmitFloor { min_submit_millis: NonZeroU64 },
-    /// Slot-list listing: per-minute cap per IP plus the response cache TTL.
-    SlotListRate {
-        per_minute_per_ip: NonZeroU32,
-        cache_ttl_secs: NonZeroU64,
-    },
-    /// Booking: per-minute cap plus the active-future-booking cap per email.
-    BookRate {
-        per_minute_per_ip: NonZeroU32,
-        max_active_future_per_email: u8,
-    },
-    /// Holds: one active hold per session plus a per-IP minute cap.
-    HoldRate {
-        max_active_per_session: u8,
-        per_minute_per_ip: NonZeroU32,
-    },
-    /// Email evidence prompts a correction; it never hard-blocks.
-    EmailPromptToCorrect {
-        check_syntax: bool,
-        check_mx: bool,
-        check_disposable_domain: bool,
-    },
-    /// Route borderline traffic to a pending-review record.
-    QuarantineBorderline,
-    /// Reserve: per-event-type email OTP. Stored policy only; defaults off.
-    EmailOtpReserve { enabled: bool },
-    /// Reserve: per-event-type tentative confirm link. Defaults off.
-    TentativeConfirmLinkReserve {
-        enabled: bool,
-        expires_after_secs: NonZeroU64,
-    },
-}
+#[doc(hidden)]
+use oneiron_records::booking::anti_abuse::rules::entity_ref_serde;
+#[doc(hidden)]
+pub use oneiron_records::booking::anti_abuse::rules::{
+    BookingAntiAbuseOwnerConfig, BookingAntiAbuseRule, BookingRuleOwnerStampBinding,
+    BookingRuleScope,
+};
+#[doc(hidden)]
+pub(crate) use oneiron_records::booking::anti_abuse::rules::{
+    email_prompt_at_failed_checks_default, email_quarantine_at_failed_checks_default,
+};
 
 /// One versioned rule row.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -88,33 +39,6 @@ pub struct BookingAntiAbuseRuleRow {
     /// caller-supplied.
     #[serde(with = "opt_entity_ref_serde")]
     pub owner_stamp_ref: Option<EntityId>,
-}
-
-/// Owner-chosen seed thresholds. Every value arrives as a constructor
-/// argument; the module bakes no threshold of its own.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-pub struct BookingAntiAbuseOwnerConfig {
-    pub min_intake_chars: NonZeroU16,
-    pub normal_notice_secs: NonZeroU64,
-    pub high_value_notice_secs: NonZeroU64,
-    pub min_submit_millis: NonZeroU64,
-    pub slot_list_per_minute_per_ip: NonZeroU32,
-    pub slot_list_cache_ttl_secs: NonZeroU64,
-    pub book_per_minute_per_ip: NonZeroU32,
-    pub max_active_future_per_email: u8,
-    pub max_active_holds_per_session: u8,
-    pub hold_per_minute_per_ip: NonZeroU32,
-    pub tentative_confirm_ttl_secs: NonZeroU64,
-}
-
-/// A logged owner stamp: `stamp_ref` names the logged owner action, and the
-/// binding equals [`booking_rule_row_version_hash`] of the exact proposed
-/// row (version included).
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-pub struct BookingRuleOwnerStampBinding {
-    #[serde(with = "entity_ref_serde")]
-    pub stamp_ref: EntityId,
-    pub proposed_row_version_hash: [u8; 32],
 }
 
 /// How a proposed row orders against the current one.
@@ -134,24 +58,6 @@ pub struct RuleAmendmentOutcome {
     /// `false`: the change is retained as a proposal awaiting its holder
     /// (FIX 9627), and the active row is unchanged.
     pub activated: bool,
-}
-
-mod entity_ref_serde {
-    use super::{Deserialize, Deserializer, EntityId, Serializer};
-
-    pub(super) fn serialize<S: Serializer>(
-        value: &EntityId,
-        serializer: S,
-    ) -> Result<S::Ok, S::Error> {
-        serializer.serialize_str(&value.to_hex())
-    }
-
-    pub(super) fn deserialize<'de, D: Deserializer<'de>>(
-        deserializer: D,
-    ) -> Result<EntityId, D::Error> {
-        let hex = String::deserialize(deserializer)?;
-        EntityId::from_hex(&hex).map_err(serde::de::Error::custom)
-    }
 }
 
 mod opt_entity_ref_serde {
@@ -180,14 +86,42 @@ mod opt_entity_ref_serde {
 // Validation
 // -------------------------------------------------------------------------
 
-/// Validates one row: row-id shape, version, and the ratified per-variant
-/// ranges. Ranges live in the validator — never as module constants an owner
-/// could mistake for a picked threshold.
+/// Validates one row a write door would store (seed rows, an amendment's
+/// proposal): every check of `validate_stored_rule_row`, and the
+/// per-session active hold cap is one. Storage keys a hold by the session
+/// digest, so a new hold for a session replaces the prior one (canon
+/// ARCH-0062 "1 active hold/session"; Engine RULING
+/// PACK-KEYS-HOLDS-PER-SESSION = A, 15 Nov 23:20).
 ///
 /// # Errors
 ///
 /// [`BookingError::InvalidConstraint`] when any field is out of range.
 pub fn validate_rule_row(row: &BookingAntiAbuseRuleRow) -> Result<(), BookingError> {
+    validate_stored_rule_row(row)?;
+    if let BookingAntiAbuseRule::HoldRate {
+        max_active_per_session,
+        ..
+    } = &row.rule
+        && *max_active_per_session != 1
+    {
+        return Err(refused(
+            "the per-session active hold cap is one: a new hold for a session replaces the prior one",
+        ));
+    }
+    Ok(())
+}
+
+/// Validates one row a vault already holds: row-id shape, version, and the
+/// ratified per-variant ranges. Ranges live in the validator — never as module
+/// constants an owner could mistake for a picked threshold. A stored hold row
+/// keeps the range it was written under (a cap of 1-255), so a manifest that
+/// holds a cap above one still decodes and acts as before (stored change:
+/// keep; Engine RULING HOLD-CAP-STORED-MANIFEST = A, 16 Nov 00:48).
+///
+/// # Errors
+///
+/// [`BookingError::InvalidConstraint`] when any field is out of range.
+pub(super) fn validate_stored_rule_row(row: &BookingAntiAbuseRuleRow) -> Result<(), BookingError> {
     if row.row_id.is_empty() || row.row_id.len() > ROW_ID_MAX_LEN {
         return Err(refused("booking anti-abuse row id must be 1-128 chars"));
     }
@@ -211,6 +145,17 @@ pub fn validate_rule_row(row: &BookingAntiAbuseRuleRow) -> Result<(), BookingErr
             if normal_secs > high_value_secs {
                 return Err(refused(
                     "normal minimum notice may not exceed the high-value notice",
+                ));
+            }
+        }
+        BookingAntiAbuseRule::EmailPromptToCorrect {
+            prompt_at_failed_checks,
+            quarantine_at_failed_checks,
+            ..
+        } => {
+            if prompt_at_failed_checks > quarantine_at_failed_checks {
+                return Err(refused(
+                    "the email prompt count may not exceed the email quarantine count",
                 ));
             }
         }
@@ -240,7 +185,6 @@ pub fn validate_rule_row(row: &BookingAntiAbuseRuleRow) -> Result<(), BookingErr
         BookingAntiAbuseRule::RequiredIntake { .. }
         | BookingAntiAbuseRule::SlotListRate { .. }
         | BookingAntiAbuseRule::HoneypotAndSubmitFloor { .. }
-        | BookingAntiAbuseRule::EmailPromptToCorrect { .. }
         | BookingAntiAbuseRule::QuarantineBorderline
         | BookingAntiAbuseRule::EmailOtpReserve { .. }
         | BookingAntiAbuseRule::TentativeConfirmLinkReserve { .. } => {}
@@ -338,6 +282,8 @@ pub fn default_booking_anti_abuse_rows(
             check_syntax: true,
             check_mx: true,
             check_disposable_domain: true,
+            prompt_at_failed_checks: email_prompt_at_failed_checks_default(),
+            quarantine_at_failed_checks: email_quarantine_at_failed_checks_default(),
         },
         BookingAntiAbuseRule::QuarantineBorderline,
         BookingAntiAbuseRule::EmailOtpReserve { enabled: false },

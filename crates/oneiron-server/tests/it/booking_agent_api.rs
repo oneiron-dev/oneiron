@@ -115,6 +115,7 @@ fn event_type_config(key: &str, host: EntityId, calendar: EntityId) -> EventType
         booking_window_secs: 30 * 86_400,
         daily_cap: None,
         weekly_cap: None,
+        deposit: None,
         routing: RoutingMode::Either,
         hosts: vec![HostAvailabilityConfig {
             host_ref: host,
@@ -129,6 +130,7 @@ fn event_type_config(key: &str, host: EntityId, calendar: EntityId) -> EventType
                 .collect(),
             preferred_hours: Vec::new(),
         }],
+        flex_with_ordinary: false,
         flex_windows: Vec::new(),
     }
 }
@@ -525,7 +527,10 @@ async fn booking_availability_discloses_slots_only() {
 
     assert_eq!(object_keys(&body), keys(&["op", "result"]));
     assert_eq!(body["op"], "availability");
-    assert_eq!(object_keys(&body["result"]), keys(&["slots", "flex_used"]));
+    assert_eq!(
+        object_keys(&body["result"]),
+        keys(&["slots", "flex_used", "full_days"])
+    );
     assert!(body["result"]["flex_used"].is_boolean());
 
     let slots = body["result"]["slots"].as_array().unwrap();

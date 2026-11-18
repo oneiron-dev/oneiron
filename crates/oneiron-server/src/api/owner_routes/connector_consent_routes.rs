@@ -18,6 +18,7 @@ use oneiron::connector_key::{
 use oneiron::outbound_consent::DataClass;
 use serde::{Deserialize, Serialize};
 
+use super::connector_admission_routes::{StdioInstalled, installed_config};
 use super::{OwnerReply, OwnerRoute, OwnerTable, RestShape, blocking, owner};
 use crate::api::body_spool::OwnerJsonBody;
 use crate::api::query_params;
@@ -101,6 +102,10 @@ struct ConsentRead {
     /// The endpoint this host installed for the connector; none: no
     /// transport, so no consent can be written.
     endpoint: Option<String>,
+    /// What a stdio connector runs and where it sends a credential, which
+    /// its endpoint's digest stands for; none for an HTTP connector, or no
+    /// transport.
+    stdio: Option<StdioInstalled>,
 }
 
 #[derive(Debug, Serialize, schemars::JsonSchema)]
@@ -122,15 +127,11 @@ pub(crate) fn consented_schema() -> serde_json::Value {
     oneiron_contracts::code_run::vault_read::request_schema::<Consented>()
 }
 
-/// The endpoint this host installed under the connector's name.
+/// The endpoint this host installed under the connector's name: a URL, or
+/// a stdio connector's `stdio:` endpoint (row L8-27).
 fn installed_endpoint(server: &SyncServer, connector: &str) -> Option<String> {
     let name = normalize_name(connector);
-    server
-        .config
-        .connectors
-        .iter()
-        .find(|(section, _)| normalize_name(section) == name)
-        .map(|(_, installed)| installed.endpoint.clone())
+    installed_config(server, &name).map(|installed| installed.installed_endpoint(&name))
 }
 
 /// `GET /v1/owner/connectors/consent?connector=&actor=`: the connector's
@@ -152,9 +153,12 @@ async fn read(
             .vault()
             .connector_consent_view(&owner, &query.connector, actor)?
             .ok_or_else(|| OwnerError::Invalid("no catalog connector by that name".to_owned()))?;
+        let name = normalize_name(&query.connector);
+        let installed = installed_config(&server, &name);
         Ok(ConsentRead {
             view,
-            endpoint: installed_endpoint(&server, &query.connector),
+            endpoint: installed.map(|installed| installed.installed_endpoint(&name)),
+            stdio: installed.and_then(StdioInstalled::of),
         })
     })
     .await?;

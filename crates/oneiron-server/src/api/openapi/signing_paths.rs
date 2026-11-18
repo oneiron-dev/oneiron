@@ -1,10 +1,15 @@
 //! The public signing ceremony routes (`/sign/*`, DOOR-117): their
 //! payload and answer schemas are the verb table's `vault.esign.signing.*`
 //! types, the bodies the typed facade rows take less their `token`, so the
-//! page, the SDK and this document describe one ceremony. On these routes
-//! the capability rides in the `x-oneiron-esign-capability` header, which
-//! the vault admits before the body is read (FIX 3808); it is never a path
-//! token, a body field or a core credential. A credential a call also
+//! page, the SDK and this document describe one ceremony. The page trades
+//! the link's capability once, at `POST /sign/exchange` (the
+//! `x-oneiron-esign-capability` header), for a single-use exchange that
+//! `POST /sign/session` consumes to open a signing session (ARCH-0064a
+//! [SGN-03]). The ceremony routes name their ceremony and carry only that
+//! ceremony's session cookie, and the vault admits the capability it stands
+//! for before the body is read
+//! (FIX 3808); the capability is never a path token, a body field or a
+//! core credential. A credential a call also
 //! presents only classes the caller, and an agent's Complete is an
 //! automated sign act. The typed facade twins carry the capability in
 //! their input and answer the same acts as base64 JSON views; these public
@@ -15,8 +20,13 @@ use serde_json::{Map, Value, json};
 
 use oneiron::task_verb::sdk::{input_schema, output_schema};
 
-/// The security scheme the ceremony POSTs name.
+/// The security scheme `POST /sign/exchange` names.
 const CAPABILITY_SCHEME: &str = "EsignCapability";
+
+/// The security schemes the ceremony POSTs name, together: the session
+/// cookie and the ceremony it is a session of.
+const SESSION_SCHEME: &str = "EsignSigningSession";
+const CEREMONY_SCHEME: &str = "EsignSigningCeremony";
 
 pub(super) fn merge_signing_paths(spec: &mut Value) {
     add_capability_scheme(spec);
@@ -28,12 +38,72 @@ pub(super) fn merge_signing_paths(spec: &mut Value) {
         json!({"get": {
             "tags": ["signing"],
             "operationId": "signing_page",
-            "summary": "The signing page shell. The recipient link is /sign#<capability>; the page scrubs the fragment and sends the capability only in the x-oneiron-esign-capability header of each ceremony POST.",
+            "summary": "The signing page shell. The recipient link is /sign#<capability>; the page scrubs the fragment, trades the capability once at POST /sign/exchange, and opens its signing session at POST /sign/session.",
             "security": [],
             "responses": {
                 "200": {
                     "description": "The signing page, served no-store with a hash-pinned script.",
                     "content": {"text/html": {"schema": {"type": "string"}}}
+                }
+            }
+        }}),
+    );
+    paths.insert(
+        "/sign/exchange".to_owned(),
+        json!({"post": {
+            "tags": ["signing"],
+            "operationId": "signing_exchange",
+            "summary": "Trades a signing link's capability for a single-use exchange that opens its signing session.",
+            "description": "The only door that reads the x-oneiron-esign-capability header. The vault admits the capability; the answer is an exchange that lives [limits] esign_exchange_seconds (120 by default) and replaces any exchange the link had pending. The emailed link stays reusable.",
+            "security": [{ CAPABILITY_SCHEME: [] }],
+            "responses": {
+                "200": {
+                    "description": "The single-use exchange, 64 lowercase hex characters.",
+                    "content": {"application/json": {"schema": {
+                        "type": "object",
+                        "required": ["exchange"],
+                        "properties": {"exchange": {"type": "string", "pattern": "^[0-9a-f]{64}$"}}
+                    }}}
+                },
+                "403": {
+                    "description": "No x-oneiron-esign-capability header, or one the vault does not admit (signing_unavailable).",
+                    "content": {"application/json": {"schema": {
+                        "type": "object",
+                        "required": ["error"],
+                        "properties": {"error": {
+                            "type": "object",
+                            "required": ["code"],
+                            "properties": {"code": {"type": "string"}}
+                        }}
+                    }}}
+                }
+            }
+        }}),
+    );
+    paths.insert(
+        "/sign/session".to_owned(),
+        json!({"post": {
+            "tags": ["signing"],
+            "operationId": "signing_session",
+            "summary": "Consumes a single-use exchange and opens its link's signing session.",
+            "description": "The signing page's top-level form POST. A live exchange is consumed at once; the session it opens replaces any session the link had open. Its idle and absolute lifetimes are the optional [limits] esign_session_idle_seconds and esign_session_absolute_seconds rows; unset, the session lasts while its link admits. Ending a session never ends the link.",
+            "security": [],
+            "requestBody": {"required": true, "content": {"application/x-www-form-urlencoded": {"schema": {
+                "type": "object",
+                "required": ["exchange"],
+                "properties": {"exchange": {"type": "string", "pattern": "^[0-9a-f]{64}$"}}
+            }}}},
+            "responses": {
+                "303": {
+                    "description": "The session is open: Set-Cookie oneiron-sign-session-<ceremony> (Path=/sign; Secure; HttpOnly; SameSite=Strict) and Location /sign?ceremony=<ceremony>. The ceremony id is 32 lowercase hex characters drawn from the link; it grants nothing on its own, and no capability can be read back from it.",
+                    "headers": {
+                        "Set-Cookie": {"schema": {"type": "string"}},
+                        "Location": {"schema": {"type": "string"}}
+                    }
+                },
+                "403": {
+                    "description": "An unknown, used or expired exchange, or a POST a browser marks as sent from another site: no session and no cookie.",
+                    "content": {"text/plain": {"schema": {"type": "string"}}}
                 }
             }
         }}),
@@ -47,12 +117,12 @@ pub(super) fn merge_signing_paths(spec: &mut Value) {
             json!({"post": {
                 "tags": ["signing"],
                 "operationId": "signing_action",
-                "summary": "One recipient ceremony act: load, save a field, complete with consent, or reject.",
-                "description": "The capability in the x-oneiron-esign-capability header is the authority. A call that also presents a vault credential is classed by it: an agent Complete is an automated sign act, held or refused where the signing dial or a natural-person recipient requires a person. Complete answers awaiting_seal; sealing runs as its own task and is observed through vault.esign.seal.get and vault.esign.get.",
+                "summary": "One recipient ceremony act: load, save a field, review, complete with consent after a review that still stands, or reject.",
+                "description": "The link capability the signing session stands for is the authority. A call that also presents a vault credential is classed by it: an agent Complete is an automated sign act, held or refused where the signing dial or a natural-person recipient requires a person. Complete answers review_required, naming the e-sign rule pack's UETA section 10 row, until the signer's Review stands; a field saved after it voids it. Complete then answers awaiting_seal; sealing runs as its own task and is observed through vault.esign.seal.get and vault.esign.get.",
                 "security": capability_security(),
                 "requestBody": {"required": true, "content": {"application/json": {"schema": headerless(request)}}},
                 "responses": ceremony_responses(json!({
-                    "description": "The ceremony outcome: the page, not_your_turn, terminal, awaiting_seal, held_for_owner, or consent_required.",
+                    "description": "The ceremony outcome: the page, not_your_turn, terminal, awaiting_seal, held_for_owner, consent_required, or review_required.",
                     "content": {"application/json": {"schema": answer}}
                 }))
             }}),
@@ -129,8 +199,10 @@ pub(super) fn merge_signing_paths(spec: &mut Value) {
     }
 }
 
-/// Adds the header scheme a ceremony POST names: the recipient link's
-/// capability, the 64 lowercase hex characters after `/sign#`.
+/// Adds the two schemes the signing routes name: the recipient link's
+/// capability, the 64 lowercase hex characters after `/sign#`, which only
+/// the exchange door reads; and the signing session's cookie, which every
+/// ceremony POST carries.
 fn add_capability_scheme(spec: &mut Value) {
     let Some(schemes) = spec
         .get_mut("components")
@@ -150,18 +222,37 @@ fn add_capability_scheme(spec: &mut Value) {
             "type": "apiKey",
             "in": "header",
             "name": "x-oneiron-esign-capability",
-            "description": "The recipient's signing capability from their link (/sign#<capability>). The vault admits it against its envelope before the request body is read; a request without an admitted one is refused with its body unread. It is never a path segment or a body field on these routes."
+            "description": "The recipient's signing capability from their link (/sign#<capability>), read only by POST /sign/exchange. The vault admits it against its envelope. It is never a path segment or a body field on these routes."
+        }),
+    );
+    schemes.insert(
+        SESSION_SCHEME.to_owned(),
+        json!({
+            "type": "apiKey",
+            "in": "cookie",
+            "name": "oneiron-sign-session-<ceremony>",
+            "description": "The signing session POST /sign/session opened (Path=/sign; Secure; HttpOnly; SameSite=Strict). Its name ends with the id of the ceremony it is a session of, the one the x-oneiron-sign-ceremony header names. The vault admits the link capability it stands for before the request body is read; a request without a live session of that ceremony, or whose capability the vault no longer admits, is refused with its body unread."
+        }),
+    );
+    schemes.insert(
+        CEREMONY_SCHEME.to_owned(),
+        json!({
+            "type": "apiKey",
+            "in": "header",
+            "name": "x-oneiron-sign-ceremony",
+            "description": "The ceremony the call acts on: the id in the signing page's address (/sign?ceremony=<ceremony>). A session of another ceremony answers nothing, so a page acts only on the document it shows."
         }),
     );
 }
 
-/// The `security` a ceremony POST names: the capability header alone.
+/// The `security` a ceremony POST names: the signing session and the
+/// ceremony it is a session of, together.
 fn capability_security() -> Value {
-    json!([{ CAPABILITY_SCHEME: [] }])
+    json!([{ SESSION_SCHEME: [], CEREMONY_SCHEME: [] }])
 }
 
 /// A facade row's input as its public door takes it: the `token` field
-/// dropped, since the door reads the capability from its header.
+/// dropped, since the door reads the capability from its session.
 fn headerless(schema: &Value) -> Value {
     let mut schema = schema.clone();
     if let Some(schema) = schema.as_object_mut() {
@@ -196,7 +287,7 @@ fn ceremony_responses(ok: Value) -> Value {
         ),
         (
             "403",
-            "No x-oneiron-esign-capability header, or one the vault does not admit, refused with the body unread; or the capability does not admit this act (signing_unavailable).",
+            "No live signing session of the ceremony the x-oneiron-sign-ceremony header names, or one whose link capability the vault does not admit, refused with the body unread; or the capability does not admit this act (signing_unavailable).",
         ),
         (
             "503",
@@ -222,8 +313,10 @@ fn ceremony_responses(ok: Value) -> Value {
 const EDITOR_SCHEME: &str = "EsignEditorCapability";
 
 /// The owner's field editor (FIX 5618): its shell, `GET /sign/editor`,
-/// behind an owner-grade caller, and its two computation POSTs, which take
-/// the editor token the shell minted, or no credential at all.
+/// behind an owner-grade caller, its two computation POSTs, which take the
+/// editor-computation token the shell minted, or no credential at all, and
+/// its save to a draft, `POST /sign/fields`, which takes only the shell's
+/// draft-fields token (RULING ESIGN-EDITOR-SAVES-DRAFT).
 pub(super) fn merge_editor_paths(spec: &mut Value) {
     add_editor_scheme(spec);
     let Some(paths) = spec.get_mut("paths").and_then(Value::as_object_mut) else {
@@ -235,7 +328,7 @@ pub(super) fn merge_editor_paths(spec: &mut Value) {
             "tags": ["signing"],
             "operationId": "signing_editor",
             "summary": "The owner's field geography editor page, which mints its editor token.",
-            "description": "Owner-grade callers only: a top-scope logged slip presented as CoreBearer with its holder proof in x-oneiron-binding, or a managed vault's attested owner. Owner grade is the authorization; the bearer scheme alone is not. The page is served no-store and carries a fresh random editor token; its script reads the token, removes it from the document, keeps it in memory and sends it only in the x-oneiron-esign-editor header of POST /sign/layout and POST /sign/geometry. The server keeps only the token's digest, purpose, caller and expiry. A token admits new requests for 3,600 seconds and is forgotten when the server restarts; the owner then reloads this page for a new one.",
+            "description": "Owner-grade callers only: a top-scope logged slip presented as CoreBearer with its holder proof in x-oneiron-binding, or a managed vault's attested owner. Owner grade is the authorization; the bearer scheme alone is not. The page is served no-store and carries two fresh random editor tokens: an editor-computation token, which its script sends only in the x-oneiron-esign-editor header of POST /sign/layout and POST /sign/geometry, and a draft-fields token, which it sends only in that header of POST /sign/fields. The script reads both, removes them from the document and keeps them in memory. The server keeps only each token's digest, purpose, caller and expiry. A token admits new requests for 3,600 seconds and is forgotten when the server restarts; the owner then reloads this page for new ones.",
             "security": [{"CoreBearer": []}],
             "responses": {
                 "200": {
@@ -278,6 +371,35 @@ pub(super) fn merge_editor_paths(spec: &mut Value) {
         }}),
     );
     paths.insert(
+        "/sign/fields".to_owned(),
+        json!({"post": {
+            "tags": ["signing"],
+            "operationId": "signing_editor_fields",
+            "summary": "Saves the editor's fields to a signing document still in draft: vault.esign.fields.place, run as the caller the editor page was minted for.",
+            "description": "Takes only the editor page's draft-fields token in x-oneiron-esign-editor; there is no anonymous door, and the request's own credential headers name no one. The token is checked from the request head, before the body is read: its digest, its draft-fields purpose and its expiry, and its caller's credential is re-consulted. The body is read up to the API's request floor, limits.request_body_bytes, as the facade reads the verb's body. The token and its caller are then checked again, and vault.esign.fields.place runs through the facade's verb dispatch as that caller, with the verb's own Grant, lane and project admission. Its answer, and every refusal past the token's, are the verb's own, as POST /v1/core/facade/vault.esign.fields.place answers them: a document no longer in draft keeps its fields.",
+            "security": [{ EDITOR_SCHEME: [] }],
+            "requestBody": {"required": true, "content": {"application/json": {"schema": {
+                "type": "object",
+                "required": ["document_ref", "fields"],
+                "properties": {
+                    "document_ref": {"type": "string", "description": "The signing document's artifact id, 32 lowercase hex digits."},
+                    "fields": {"type": "array", "items": {"type": "object"}, "description": "The fields to place in place of the draft's own, in the field geography pack's field shape."}
+                }
+            }}}},
+            "responses": {
+                "200": {
+                    "description": "The draft as vault.esign.fields.place answers it.",
+                    "content": {"application/json": {"schema": {"type": "object"}}}
+                },
+                "400": {"description": "The body is not JSON (signing_body_malformed) or did not arrive whole; or the verb refused its input."},
+                "401": {"description": "No x-oneiron-esign-editor token (editor_token_missing); a token that is unknown, expired or of another purpose (editor_token_unadmitted); or one whose caller's credential no longer stands (editor_caller_not_live), at the head or after the body is read. Reload GET /sign/editor for new tokens."},
+                "403": {"description": "The verb's Grant, lane or project admission refused the caller."},
+                "413": {"description": "The body is past limits.request_body_bytes."},
+                "503": {"description": "The editor's state is unavailable (signing_transport_unavailable)."}
+            }
+        }}),
+    );
+    paths.insert(
         "/sign/geometry".to_owned(),
         json!({"post": {
             "tags": ["signing"],
@@ -298,9 +420,8 @@ pub(super) fn merge_editor_paths(spec: &mut Value) {
     );
 }
 
-/// Adds the header scheme the editor's computation POSTs name: the token
-/// the editor page was minted, never a recipient capability or a core
-/// credential.
+/// Adds the header scheme the editor's POSTs name: a token the editor page
+/// was minted, never a recipient capability or a core credential.
 fn add_editor_scheme(spec: &mut Value) {
     let Some(schemes) = spec
         .get_mut("components")
@@ -320,7 +441,7 @@ fn add_editor_scheme(spec: &mut Value) {
             "type": "apiKey",
             "in": "header",
             "name": "x-oneiron-esign-editor",
-            "description": "The editor token GET /sign/editor minted for its owner-grade caller. It is checked before the request body is read: its digest, its editor-computation purpose and its expiry, and its caller's credential is re-consulted. It buys computation over the caller's own bytes only: no document read, recipient act or other door. It is never a URL, cookie or browser-storage carrier."
+            "description": "An editor token GET /sign/editor minted for its owner-grade caller. It is checked before the request body is read: its digest, its purpose and its expiry, and its caller's credential is re-consulted. Each token has one purpose and admits only its own doors. An editor-computation token buys computation over the caller's own bytes at POST /sign/layout and POST /sign/geometry: no document read, recipient act or other door. A draft-fields token buys one verb at POST /sign/fields: vault.esign.fields.place, as its caller. A token is never a URL, cookie or browser-storage carrier."
         }),
     );
 }
@@ -335,7 +456,7 @@ fn editor_security() -> Value {
 /// and its capability-free door's `anonymous_limit`.
 fn editor_description(row: &str, anonymous_limit: &str) -> String {
     format!(
-        "With an x-oneiron-esign-editor token, the request is admitted from its head before the body is read, then waits its turn for one of the editor's two computation slots, at most [limits] queue_wait_timeout_ms (then 503 editor_waited_out); no queue length refuses it. After the wait its token and caller are checked again. Its body spools whole under the vault's disk floor: past the [limits] {row} row the vault owner is asked whether everything is okay (GET /v1/owner/decisions/asks), and the work still runs. A token that is unknown or expired, or whose caller's credential no longer stands, is refused with 401 and the body unread; it is never served as an anonymous request. With no editor header the route is the public, capability-free door it was: a {anonymous_limit} body limit, and two slots taken only when free with 60 requests a minute, else 429 with Retry-After: 60."
+        "With an x-oneiron-esign-editor token, the request is admitted from its head before the body is read, then waits its turn for one of the editor's two computation slots, at most [limits] queue_wait_timeout_ms (then 503 editor_waited_out); no queue length refuses it. After the wait its token and caller are checked again. Its body spools whole under the vault's disk floor: past the [limits] {row} row the vault owner is asked whether everything is okay (GET /v1/owner/decisions/asks), and the work still runs. A token that is unknown, expired or of another purpose, or whose caller's credential no longer stands, is refused with 401 and the body unread; it is never served as an anonymous request. With no editor header the route is the public, capability-free door it was: a {anonymous_limit} body limit, and two slots taken only when free with 60 requests a minute, else 429 with Retry-After: 60."
     )
 }
 
@@ -360,7 +481,7 @@ fn editor_responses(ok: Value) -> Value {
         ),
         (
             "401",
-            "The x-oneiron-esign-editor token is unknown or expired (editor_token_unadmitted), or its caller's credential no longer stands (editor_caller_not_live), at the head or after the slot wait; the body is unread. Reload GET /sign/editor for a new token.",
+            "The x-oneiron-esign-editor token is unknown, expired or of another purpose (editor_token_unadmitted), or its caller's credential no longer stands (editor_caller_not_live), at the head or after the slot wait; the body is unread. Reload GET /sign/editor for a new token.",
             true,
         ),
         (

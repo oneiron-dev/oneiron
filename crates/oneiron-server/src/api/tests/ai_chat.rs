@@ -59,7 +59,10 @@ async fn send(server: &Arc<SyncServer>, mut request: Request<Body>) -> (StatusCo
     )
 }
 
-fn chat(body: Value) -> Request<Body> {
+fn chat(mut body: Value) -> Request<Body> {
+    // The route answers the whole saved message unless `stream` is set
+    // (50f37a5e62b, #1700); these tests read the NDJSON lines.
+    body["stream"] = json!(true);
     core_request_with_authz("POST", "/v1/ai/chat", owner_bearer(), Some(&body))
 }
 
@@ -140,7 +143,23 @@ async fn a_chat_turn_streams_deltas_to_subscribers_and_saves_its_terminal_once()
         .iter()
         .map(|message| message["content"].as_str().unwrap_or_default().to_owned())
         .collect();
-    assert_eq!(texts[texts.len() - 3..], ["earlier", "noted", "say hello"]);
+    // The turn's now-time opener closes a call its board does not ride (FIX
+    // 14676), and the board's omission note sits at the board's place, before
+    // the newest user message (recall.rs BoardOmission); history comes first.
+    let (opener, before) = texts.split_last().expect("the call carries messages");
+    assert!(
+        oneiron::context_board::is_turn_opener_line(opener),
+        "{opener}"
+    );
+    let before: Vec<&str> = before
+        .iter()
+        .map(String::as_str)
+        .filter(|text| !text.starts_with("The vault's context board is not part of this turn"))
+        .collect();
+    assert_eq!(
+        before[before.len() - 3..],
+        ["earlier", "noted", "say hello"]
+    );
     host.shutdown().await;
 }
 
@@ -163,7 +182,11 @@ async fn a_credential_revoked_mid_turn_sees_no_more_of_the_reply_and_it_is_not_f
             "POST",
             "/v1/ai/chat",
             test_bearer(recipe),
-            Some(&json!({"conversation_ref": oneiron::EntityId::now().to_hex(), "text": "hi"})),
+            Some(&json!({
+                "conversation_ref": oneiron::EntityId::now().to_hex(),
+                "text": "hi",
+                "stream": true,
+            })),
         );
         async move { send(&server, request).await }
     });
@@ -206,16 +229,7 @@ async fn a_quiet_model_keeps_its_message_open_under_a_short_idle_timeout() {
     .await;
     let (_dir, server, host) = ai_server(Some(&fake.base_url)).await;
     let vault = Arc::clone(server.vault());
-    let owner = oneiron::EntityId::now();
-    vault
-        .put_entity(
-            &owner,
-            oneiron::registry::ENTITY_TYPE_PERSON,
-            oneiron::TimeRange { start: 1, end: 1 },
-            1,
-            b"owner",
-        )
-        .unwrap();
+    let owner = vault.ensure_embedded_owner_actor().unwrap();
     crate::test_credentials::bind_owner(&vault, TEST_SECRET, owner);
     vault
         .memory(owner, oneiron::EdgeActorClass::Human)
@@ -356,8 +370,9 @@ async fn without_a_model_chat_refuses_and_status_says_why() {
         json!("no_model_configured")
     );
     assert_eq!(body["models"]["configured"], json!(false));
-    // A session hint without a Dreamer is accepted and changes nothing.
-    let (status, _) = send(
+    // A session hint without a Dreamer is refused with a typed 503
+    // (be36113c7cc, FIX 11405): there is nothing to hand the hint to.
+    let (status, body) = send(
         &server,
         core_request_with_authz(
             "POST",
@@ -367,7 +382,9 @@ async fn without_a_model_chat_refuses_and_status_says_why() {
         ),
     )
     .await;
-    assert_eq!(status, StatusCode::ACCEPTED);
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    let body: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(body["error"]["code"], json!("dreamer_unavailable"));
     host.shutdown().await;
 }
 
@@ -437,12 +454,44 @@ fn install_route_manifest(vault: &oneiron::Vault) {
         .unwrap();
 }
 
+/// The owner narrows the LLM slot's resident route through the key
+/// `models.resident_route` (item `llm`). SETTING-DIALS D2 (#8977) moved the
+/// route there and removed `Vault::set_model_route`; the key's write runs the
+/// same manifest admission the old door ran.
+fn set_llm_resident_route(vault: &oneiron::Vault, route: oneiron::ModelLocality) {
+    use oneiron::setting::{SetSetting, SetSettingOutcome, SettingCaller};
+    let owner_ref = vault.ensure_embedded_owner_actor().unwrap();
+    let owner = vault
+        .authenticate_owner(
+            owner_ref,
+            &owner_ref.to_hex(),
+            true,
+            oneiron::store::GateDecisionId::now(),
+        )
+        .unwrap();
+    let outcome = vault
+        .set_setting(
+            SettingCaller::Owner(&owner),
+            SetSetting {
+                item: Some("llm".into()),
+                ..SetSetting::vault_value(
+                    "models.resident_route",
+                    serde_json::to_value(route).unwrap(),
+                )
+            },
+        )
+        .unwrap();
+    assert!(
+        matches!(outcome, SetSettingOutcome::Applied { .. }),
+        "{outcome:?}"
+    );
+}
+
 /// Astra #1304 P1: chat and workflow steps took the raw-call exception, so a
 /// vault that narrowed its model route still sent them to a third party.
 #[tokio::test]
 async fn a_narrowed_vault_route_keeps_chat_and_workflow_steps_off_the_cloud() {
     use oneiron::agent_dispatch::{AgentDispatchTarget, AgentDispatcher, DispatchAgent};
-    use oneiron::llm::manifest::ModelSlot;
     use oneiron::{EntityId, ModelLocality};
     let cloud = FakeLlm::start(vec![], Some(Reply::text("from the cloud"))).await;
     let local = FakeLlm::start(vec![], Some(Reply::text("from this server"))).await;
@@ -463,9 +512,7 @@ async fn a_narrowed_vault_route_keeps_chat_and_workflow_steps_off_the_cloud() {
 
     // The vault narrows its LLM route to its own server: chat and a saved
     // workflow's step both stay there.
-    vault
-        .set_model_route(ModelSlot::Llm, ModelLocality::OwnServer)
-        .unwrap();
+    set_llm_resident_route(&vault, ModelLocality::OwnServer);
     let (status, body) = send(&server, turn()).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(lines(&body).last().unwrap()["type"], json!("saved"));
@@ -499,9 +546,7 @@ async fn a_narrowed_vault_route_keeps_chat_and_workflow_steps_off_the_cloud() {
 
     // Narrowed to the device, which this server cannot serve: refused before
     // any call leaves.
-    vault
-        .set_model_route(ModelSlot::Llm, ModelLocality::OnDevice)
-        .unwrap();
+    set_llm_resident_route(&vault, ModelLocality::OnDevice);
     let (status, body) = send(&server, turn()).await;
     assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
     let body: Value = serde_json::from_slice(&body).unwrap();

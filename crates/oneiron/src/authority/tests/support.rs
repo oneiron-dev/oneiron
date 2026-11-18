@@ -288,6 +288,7 @@ impl LocalFoldContext {
             pre_handoff_entries: None,
             memory_floor_bytes: DEFAULT_AUTHORITY_LOG_FOLD_MEMORY_FLOOR_BYTES,
             pin: None,
+            appointments: None,
         }
     }
 }
@@ -335,6 +336,7 @@ pub(super) fn single_owner_state(
         seqs: BTreeMap::from([(owner_key.clone(), 0)]),
         machines: BTreeMap::new(),
         machine_keys: BTreeMap::new(),
+        held_machine_answers: BTreeMap::new(),
         root_anchors: BTreeMap::new(),
         anchor_entries: BTreeSet::new(),
         host_custody_keys: BTreeSet::new(),
@@ -352,6 +354,7 @@ pub(super) fn single_owner_state(
         refused_export_acts: BTreeSet::new(),
         agent_carried_acts: BTreeMap::new(),
         home_candidacy: Default::default(),
+        full_copy_mark: Default::default(),
         owner_work: Default::default(),
         world_keys: BTreeMap::new(),
         refused_world_keys: BTreeSet::new(),
@@ -359,6 +362,9 @@ pub(super) fn single_owner_state(
         hosted: false,
         actor_rows: BTreeSet::new(),
         residence_directives: BTreeMap::new(),
+        passkey_contexts: BTreeMap::new(),
+        passkey_vouched_keys: BTreeSet::new(),
+        passkey_vouch_confirmations: BTreeSet::new(),
     };
     (owner, owner_key, parent, state)
 }

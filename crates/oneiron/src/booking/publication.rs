@@ -18,14 +18,14 @@ use crate::booking::{
     MAX_BOOKING_WINDOW_SECS, ThemeTokens,
 };
 use crate::claim::{ClaimBody, ClaimSource, ClaimSubject, claim_surfaceable};
-use crate::edge::EdgeActorClass;
-use crate::write_envelope::{
-    WRITE_ENVELOPE_EVIDENCE_ACTOR_CLASS_KEY, WRITE_ENVELOPE_EVIDENCE_ACTOR_KEY,
-};
 use crate::{EntityId, Error, Result, TimeRange, Vault};
 
-pub const BOOKING_PUBLIC_PAGE_PREDICATE: &str = "booking.public_page";
-pub const BOOKING_PUBLIC_PAGE_SCHEMA_VERSION: u64 = 1;
+#[doc(hidden)]
+use oneiron_records::booking::publication::publication_owner;
+#[doc(hidden)]
+pub use oneiron_records::booking::publication::{
+    BOOKING_PUBLIC_PAGE_PREDICATE, BOOKING_PUBLIC_PAGE_SCHEMA_VERSION,
+};
 
 /// Relative, bounded initial availability. It advances with the request clock,
 /// rather than persisting stale slots or an absolute window that runs out.
@@ -138,6 +138,13 @@ impl BookingPagePublication {
             {
                 return Err("public booking configuration hash must be a BLAKE3 digest");
             }
+            if let Some(defect) = event
+                .deposit
+                .as_ref()
+                .and_then(crate::booking::DepositTerms::defect)
+            {
+                return Err(defect);
+            }
             if event.key.0.trim().is_empty()
                 || event.title.trim().is_empty()
                 || event.duration_min == 0
@@ -234,29 +241,6 @@ pub(super) fn validate_public_booking_page_claim(body: &ClaimBody) -> Result<()>
     }
     decode_public_booking_page_value(&body.value)?;
     Ok(())
-}
-
-/// Actor identity comes from the engine's write envelope, never presentation.
-fn publication_owner(body: &ClaimBody) -> Option<EntityId> {
-    let rmpv::Value::Map(evidence) = body.evidence.as_ref()? else {
-        return None;
-    };
-    let field = |key: &str| {
-        let mut matches = evidence
-            .iter()
-            .filter(|(name, _)| name.as_str() == Some(key));
-        let (_, value) = matches.next()?;
-        matches.next().is_none().then_some(value)
-    };
-    if field(WRITE_ENVELOPE_EVIDENCE_ACTOR_CLASS_KEY)?.as_u64()
-        != Some(EdgeActorClass::Human as u64)
-    {
-        return None;
-    }
-    let rmpv::Value::Binary(bytes) = field(WRITE_ENVELOPE_EVIDENCE_ACTOR_KEY)? else {
-        return None;
-    };
-    EntityId::from_bytes(bytes.as_slice().try_into().ok()?).ok()
 }
 
 /// Resolve one genuinely live publication. An absent, stale, proposed, revoked,
@@ -393,6 +377,12 @@ fn load_public_booking_page_listed_in_txn(
         {
             return Ok(None);
         }
+        // The deposit a visitor reads on the card is the one confirm will
+        // ask (BK-DEPOSITS): a card whose terms drifted from its
+        // configuration is a stale page, as a drifted duration is.
+        if config.deposit != card.deposit {
+            return Ok(None);
+        }
     }
     Ok(Some((value, rows)))
 }
@@ -406,7 +396,5 @@ pub(crate) use write_index::{
     guard_publication_put, index_publication_in_txn, publication_setting_in_txn,
 };
 
-// FIX [LIBTEST-QUARANTINE-BOOKING-PUBLICATION-TESTS]: the lib test target's type check fails here (6 errors: E0061 x5, E0063 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;

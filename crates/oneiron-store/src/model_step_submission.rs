@@ -88,7 +88,7 @@ pub struct ModelStepFailure {
 pub enum ModelStepResult {
     Finished {
         response: LlmResponse,
-        /// Present only for ResponseFormat::Json, parsed after the engine's validation.
+        /// Holds validated JSON for a JSON request, or the decoded reply of a bound extraction submit.
         json: Option<serde_json::Value>,
         memoized: bool,
         fallback_source: Option<FatalLlmError>,
@@ -100,6 +100,16 @@ pub enum ModelStepResult {
     /// The existing step executor parked this attempt on its budget trap.
     BudgetDenied {
         trap_ref: String,
+    },
+    /// The step's offer rests for its provider's health past what one
+    /// submission waits (FIX 11226): the step is kept, not failed, and
+    /// resumes once the offer is back. `until` is when that is, as Unix
+    /// seconds; none while a probation request is out, whose end says it.
+    /// `sends` counts the sends the step made before it parked: a resume
+    /// keeps only the rest of its declared attempts.
+    Parked {
+        until: Option<u64>,
+        sends: u8,
     },
     /// An owner's erase took this step's request and result (FIX 9929). The
     /// receipt keeps its metadata; the step is over and is never asked again.

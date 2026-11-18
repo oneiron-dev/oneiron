@@ -14,8 +14,6 @@ mod refused;
 mod reply_assertions;
 mod session;
 mod storage;
-// FIX [LIBTEST-QUARANTINE-MEMORY-WITNESS-STREAM-TESTS]: the lib test target's type check fails here (2 errors: E0063 x2); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;
 mod types;
@@ -125,11 +123,6 @@ impl State {
         }
         Ok(())
     }
-}
-fn now_ms() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX))
 }
 fn lock<T>(mutex: &Mutex<T>) -> MessageStreamResult<std::sync::MutexGuard<'_, T>> {
     mutex.lock().map_err(|_| MessageStreamError::Poisoned)

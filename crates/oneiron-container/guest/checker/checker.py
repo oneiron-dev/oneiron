@@ -93,6 +93,12 @@ def write_frame(kind, payload):
         _out.flush()
 
 
+def tree_path(root, path):
+    """The bytes path of tree path `path` under the str `root`: tree paths
+    are bytes, and os.path.join refuses a str and bytes mix."""
+    return os.path.join(os.fsencode(root), *path.split(b"/"))
+
+
 def safe_join(root, path):
     """`path` under `root`, refusing absolute, `..` and `.git` components."""
     parts = path.split(b"/")
@@ -100,7 +106,7 @@ def safe_join(root, path):
         raise ValueError("a tree path is not a normal relative path")
     if any(part.lower() == b".git" for part in parts):
         raise ValueError("a tree path names git administration")
-    return os.path.join(root, *parts)
+    return tree_path(root, path)
 
 
 def materialize(root, frame, git_dir):
@@ -174,7 +180,7 @@ def observe(root, paths):
     mode and content sha256, the engine's own tree digest."""
     digest = hashlib.sha256()
     for path in sorted(paths):
-        target = os.path.join(root, *path.split(b"/"))
+        target = tree_path(root, path)
         try:
             info = os.lstat(target)
         except FileNotFoundError:
@@ -251,9 +257,22 @@ def report(kind, index, name, result):
 
 
 def watch_input():
-    """The engine closing this helper's input ends it and its child."""
-    while _in.read(65536):
-        pass
+    """The engine closing this helper's input ends it and its child.
+
+    It reads the raw descriptor, never the buffered stdin: a daemon thread
+    blocked inside a buffered read holds that buffer's lock, and an
+    interpreter that finalizes while it does aborts (SIGABRT, "could not
+    acquire lock ... at interpreter shutdown", Python 3.15 on macOS).
+    Everything up to the end frame was read already, so the buffer holds
+    nothing this thread needs."""
+    while True:
+        try:
+            if not os.read(0, 65536):
+                break
+        except InterruptedError:
+            continue
+        except OSError:
+            break
     child = _running["child"]
     if child is not None:
         try:
@@ -314,5 +333,24 @@ def main():
     return 0
 
 
+def finish(code):
+    """Leaves at once with `code` once stdout and stderr are flushed, as
+    watch_input does: the watcher may still sit in its read of the engine's
+    input, so no interpreter finalization runs beside it."""
+    for stream in (_out, sys.stdout, sys.stderr):
+        try:
+            stream.flush()
+        except (OSError, ValueError):
+            pass
+    os._exit(code)
+
+
 if __name__ == "__main__":
-    sys.exit(main())
+    try:
+        status = main()
+    except BaseException:  # its traceback, then exit 1, as an uncaught one leaves
+        import traceback
+
+        traceback.print_exc()
+        status = 1
+    finish(status)

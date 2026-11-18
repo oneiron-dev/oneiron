@@ -1,12 +1,26 @@
-//! Log-derived, typed restrictive facts (actor revocations, slip withdrawals,
-//! a Grant's slip withdrawals, slip burns and machine removals), independent
-//! of roster survivors.
+//! Log-derived, typed restrictive facts (actor and device revocations, slip
+//! withdrawals, a Grant's slip withdrawals, slip burns and machine removals),
+//! independent of roster survivors.
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::entity_id::EntityId;
 
 use super::*;
+
+#[cfg(oneiron_test_support)]
+thread_local! {
+    /// How many row transitions this thread's restriction proofs tried,
+    /// while the work door counts (Some; `signed_branch_door`).
+    pub(super) static PROOF_TRIES: std::cell::Cell<Option<u64>> =
+        const { std::cell::Cell::new(None) };
+}
+
+/// Counts one row transition a restriction proof tries, for the work door.
+fn note_proof_try() {
+    #[cfg(oneiron_test_support)]
+    PROOF_TRIES.with(|tries| tries.set(tries.get().map(|count| count + 1)));
+}
 
 /// One fully verified restrictive fact. Scratch ancestry is proof only; it
 /// never enters `valid_entries`, the roster, or the permissive merged state.
@@ -46,6 +60,13 @@ enum Restriction {
         admitter: MachineAdmitter,
         chain: Box<MachineChain>,
     },
+    /// A verified `RevokeDevice`: the revoked key (FIX
+    /// [CONFIRM-COLLISION-SUBTREE-ROLLBACK]). The fold can refuse a
+    /// revocation whose ancestry holds a permissive row it refused
+    /// (InvalidAncestry); the proof crosses that row (`skippable_permissive`),
+    /// so the key stays revoked. A confirmation collision refuses no row
+    /// (RULING COLLISION-SETTLEMENT-SHAPE = A).
+    DeviceRevoke(AuthorityKey),
 }
 
 #[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
@@ -92,8 +113,27 @@ impl RevokeFacts {
                 } => {
                     super::machine_profile::merge_machine_chain(state, *machine, *admitter, chain);
                 }
+                Restriction::DeviceRevoke(key) => super::op_apply::revoke_key(state, key),
             }
         }
+    }
+
+    /// The rows of the verified device revocations scoped to `vault_id`. A
+    /// fact stands where its row may not (a revocation above a refused
+    /// permissive row), so the stale-roster window times a revoked key's
+    /// approvals from these rows as from a valid revocation (Sol review F1
+    /// on #8608).
+    pub(super) fn device_revocations(
+        &self,
+        vault_id: AuthorityVaultId,
+    ) -> BTreeSet<AuthorityEntryHash> {
+        self.by_hash
+            .values()
+            .filter(|fact| {
+                fact.vault_id == vault_id && matches!(fact.kind, Restriction::DeviceRevoke(_))
+            })
+            .map(|fact| fact.entry_hash)
+            .collect()
     }
 }
 
@@ -108,13 +148,14 @@ pub(super) use oneiron_records::authority::revoke_proof::{
 /// Neither input arrival order nor a persisted node-local marker is involved.
 pub(super) fn derive_revoke_facts(
     entries: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
-    ancestors: &BTreeMap<AuthorityEntryHash, BTreeSet<AuthorityEntryHash>>,
+    ancestors: &AncestorIndex,
     context: FoldContext<'_>,
 ) -> RevokeFacts {
     let mut facts = RevokeFacts::default();
+    let mut proofs = SignedBranches::new(entries, ancestors, context);
     for (hash, entry) in entries {
         let removal = match &entry.op {
-            AuthorityOp::RevokeActor { .. } => false,
+            AuthorityOp::RevokeActor { .. } | AuthorityOp::RevokeDevice { .. } => false,
             op if removes_machine(op) => true,
             _ => continue,
         };
@@ -133,7 +174,7 @@ pub(super) fn derive_revoke_facts(
             ancestors
                 .get(hash)
                 .into_iter()
-                .flatten()
+                .flat_map(|past| past.iter_unordered())
                 .chain([hash])
                 .copied()
                 .collect()
@@ -148,7 +189,19 @@ pub(super) fn derive_revoke_facts(
         } else {
             context
         };
-        let Some(state) = verify_signed_branch(*hash, entries, ancestors, context, !removal) else {
+        // Every revocation's proof follows the fold on two entries of one
+        // signer at one sequence: the fold admits such siblings, so the
+        // revoked key could otherwise sign two of them under the owner's
+        // revocation and leave it with no fact once a floor refuses them
+        // (Astra T1 on #8608; [REVOKE-ACTOR-EQUAL-SEQUENCE-SIBLINGS]). A
+        // removal that vouches for its own branch is proved under that vouch
+        // alone; every other restriction shares the fold's proofs.
+        let proved = if removal_vouch {
+            verify_signed_branch(*hash, entries, ancestors, context)
+        } else {
+            proofs.verify(*hash)
+        };
+        let Some(state) = proved else {
             continue;
         };
         let (vault_id, routed) = (state.vault_id, state.anchor_entries.clone());
@@ -160,6 +213,9 @@ pub(super) fn derive_revoke_facts(
                 authority_key: authority_key.clone(),
                 epoch: *epoch,
             },
+            AuthorityOp::RevokeDevice { revoked_key } => {
+                Restriction::DeviceRevoke(revoked_key.clone())
+            }
             AuthorityOp::MachineProfile(profile) => {
                 let Some((admitter, chain)) = state
                     .machines
@@ -210,8 +266,8 @@ pub(super) fn derive_revoke_facts(
 }
 
 impl RevokeFacts {
-    /// Adds the slip withdrawals and burns the projection dropped. Selecting
-    /// one of two colliding confirmations removes the loser and every entry
+    /// Adds the slip withdrawals and burns the projection dropped. Settling a
+    /// handoff removes a fenced row or an unsettled handoff and every entry
     /// after it, a `SlipRevoke`, `SlipConsume` or membership execution
     /// record's Grant withdrawals (FIX 12335) among them, and a revoked or
     /// spent slip would live again. An entry in `survivors` already applied
@@ -220,10 +276,11 @@ impl RevokeFacts {
     pub(super) fn add_dropped_slip_restrictions(
         &mut self,
         entries: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
-        ancestors: &BTreeMap<AuthorityEntryHash, BTreeSet<AuthorityEntryHash>>,
+        ancestors: &AncestorIndex,
         context: FoldContext<'_>,
         survivors: &BTreeMap<AuthorityEntryHash, FoldState>,
     ) {
+        let mut proofs = SignedBranches::new(entries, ancestors, context);
         for (hash, entry) in entries {
             if survivors.contains_key(hash) {
                 continue;
@@ -247,8 +304,7 @@ impl RevokeFacts {
                 }
                 _ => continue,
             };
-            let Some(state) = verify_signed_branch(*hash, entries, ancestors, context, false)
-            else {
+            let Some(state) = proofs.verify(*hash) else {
                 continue;
             };
             let kind = match restriction {
@@ -271,34 +327,19 @@ impl RevokeFacts {
 impl RevokeFacts {
     /// These facts with each actor revocation a whole fold proves in `tail`,
     /// an adopted image's tail that folded past it serially (FIX 11760):
-    /// every tail row has its ordinary state in `states`, and every covered
-    /// row (`covered`, by hash, primary signer and sequence) is in the causal
-    /// past of each tail withdrawal. On a branch whose every row folds, the
-    /// whole fold's proof of a `RevokeActor` ([`verify_signed_branch`])
-    /// differs from the ordinary fold only in refusing a branch that holds
-    /// two rows of one signer at one sequence: such a revocation still binds
-    /// through its ordinary state and adds no fact here, as there. Each other
+    /// every tail row has its ordinary state in `states`. On a branch whose
+    /// every row folds, the whole fold's proof of a `RevokeActor`
+    /// ([`verify_signed_branch`]) is its ordinary state, siblings at one
+    /// sequence included ([REVOKE-ACTOR-EQUAL-SEQUENCE-SIBLINGS]), so each
     /// takes its fact on its ordinary state's vault and owner-anchor rows. A
     /// slip or Grant withdrawal adds none: the ordinary fold applied it, and
     /// only a dropped one is proved on its own.
-    pub(super) fn with_serial_actor_revokes<'a>(
+    pub(super) fn with_serial_actor_revokes(
         &self,
-        covered: impl IntoIterator<Item = (&'a AuthorityEntryHash, &'a AuthorityKey, u64)>,
         tail: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
         states: &BTreeMap<AuthorityEntryHash, FoldState>,
     ) -> Self {
         let mut facts = self.clone();
-        let mut covered_seqs = BTreeMap::new();
-        let mut covered_twice = false;
-        for (hash, signer, seq) in covered {
-            covered_twice |= covered_seqs
-                .insert((signer.clone(), seq), *hash)
-                .is_some_and(|other| other != *hash);
-        }
-        // Every covered row is in each candidate's branch.
-        if covered_twice {
-            return facts;
-        }
         for (hash, entry) in tail {
             let AuthorityOp::RevokeActor {
                 authority_key,
@@ -310,27 +351,6 @@ impl RevokeFacts {
             let Some(state) = states.get(hash) else {
                 continue;
             };
-            // The branch's tail rows: the candidate and every tail row it
-            // descends from; its covered rows are counted already.
-            let mut seqs = covered_seqs.clone();
-            let mut seen = BTreeSet::new();
-            let mut stack = vec![*hash];
-            let mut twice = false;
-            while let Some(at) = stack.pop() {
-                let Some(row) = tail.get(&at) else {
-                    continue;
-                };
-                if !seen.insert(at) {
-                    continue;
-                }
-                twice |= seqs
-                    .insert((row.signer_key().clone(), row.seq), at)
-                    .is_some_and(|other| other != at);
-                stack.extend(row.parent_hashes.iter().copied());
-            }
-            if twice {
-                continue;
-            }
             facts.by_hash.insert(
                 *hash,
                 VerifiedRestriction {
@@ -357,7 +377,7 @@ impl RevokeFacts {
         &mut self,
         retirements: &super::retired_signers::Retirements,
         entries: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
-        ancestors: &BTreeMap<AuthorityEntryHash, BTreeSet<AuthorityEntryHash>>,
+        ancestors: &AncestorIndex,
     ) {
         self.by_hash
             .retain(|hash, fact| !retirements.excludes(hash, entries, ancestors, &fact.routed));
@@ -371,92 +391,223 @@ impl RevokeFacts {
         &mut self,
         settled: &BTreeMap<AuthorityEntryHash, FoldState>,
         entries: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
-        ancestors: &BTreeMap<AuthorityEntryHash, BTreeSet<AuthorityEntryHash>>,
+        ancestors: &AncestorIndex,
     ) {
         self.by_hash.retain(|hash, _| {
             settled.contains_key(hash)
                 || ancestors.get(hash).is_some_and(|line| {
-                    line.iter().all(|ancestor| {
+                    line.iter_unordered().all(|ancestor| {
                         settled.contains_key(ancestor)
-                            || !entries
-                                .get(ancestor)
-                                .is_some_and(|row| matches!(row.op, AuthorityOp::ReRoot { .. }))
+                            || !entries.get(ancestor).is_some_and(|row| {
+                                // A root appointment hands the vault over as a
+                                // handoff does: one this install does not count
+                                // proves nothing beneath it.
+                                matches!(
+                                    row.op,
+                                    AuthorityOp::ReRoot { .. } | AuthorityOp::RootAppointment(_)
+                                )
+                            })
                     })
                 })
         });
     }
 }
 
-/// The target's own folded state, proved over its signed ancestry alone.
-/// `refuse_equal_sequences` refuses a branch holding two entries of one signer
-/// at one sequence, as an actor revocation's proof always has. A slip
-/// restriction's or machine removal's proof follows the fold instead, which
-/// admits concurrent siblings at one sequence and refuses only a sequence
-/// that does not rise along the ancestry.
-fn verify_signed_branch(
-    target: AuthorityEntryHash,
-    entries: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
-    ancestors: &BTreeMap<AuthorityEntryHash, BTreeSet<AuthorityEntryHash>>,
-    context: FoldContext<'_>,
-    refuse_equal_sequences: bool,
-) -> Option<FoldState> {
-    let mut pending = ancestors.get(&target)?.clone();
-    pending.insert(target);
-    let mut signer_seqs = BTreeMap::new();
-    for hash in &pending {
-        let entry = entries.get(hash)?;
-        // A branch with internal signer equivocation cannot invent a merged
-        // authority roster. External siblings may win the global projection,
-        // but cannot erase a verified restrictive fact on this branch.
-        if ancestors.get(hash)?.contains(hash)
-            || (refuse_equal_sequences
-                && signer_seqs
-                    .insert((entry.signer_key().clone(), entry.seq), *hash)
-                    .is_some_and(|other| other != *hash))
+/// The signed-branch proofs of one fold's restrictions under one context
+/// (row [REVOKE-PROOF-BRANCH-REFOLD-CUBIC]). A row's normal-round verdict
+/// reads only its own row, its parents' states and the context
+/// ([`fold_normal_rounds`]), so it is the same in every branch that holds
+/// the row. The proofs share those verdicts: each row folds once a fold, not
+/// once for each restriction above it. A branch whose normal rounds stall
+/// with only rejected permissive rows refused is proved on its own
+/// ([`verify_signed_branch`]), since its rescue crosses rows by the
+/// branch's own pending set.
+struct SignedBranches<'a> {
+    entries: &'a BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+    ancestors: &'a AncestorIndex,
+    /// The context [`verify_signed_branch`] would prove each branch under.
+    context: FoldContext<'a>,
+    /// Every row of the branches proved so far, with its whole ancestry.
+    folded: BTreeSet<AuthorityEntryHash>,
+    /// The normal-round state of each row of `folded` that folds.
+    states: BTreeMap<AuthorityEntryHash, FoldState>,
+    /// The rows of `folded` a normal round refuses.
+    refused: BTreeSet<AuthorityEntryHash>,
+}
+
+impl<'a> SignedBranches<'a> {
+    fn new(
+        entries: &'a BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+        ancestors: &'a AncestorIndex,
+        context: FoldContext<'a>,
+    ) -> Self {
+        Self {
+            entries,
+            ancestors,
+            context,
+            folded: BTreeSet::new(),
+            states: BTreeMap::new(),
+            refused: BTreeSet::new(),
+        }
+    }
+
+    /// `target`'s state as [`verify_signed_branch`] proves it under this
+    /// context.
+    fn verify(&mut self, target: AuthorityEntryHash) -> Option<FoldState> {
+        let branch = signed_branch(target, self.entries, self.ancestors)?;
+        // A row folded before came with its whole ancestry, so no row
+        // folded now is a parent of it: only the new rows wake each other.
+        let unfolded: BTreeSet<_> = branch.difference(&self.folded).copied().collect();
+        let children = children_within(&unfolded, self.entries);
+        self.folded.extend(unfolded.iter().copied());
+        let context = FoldContext {
+            entry_ancestors: Some(self.ancestors),
+            ..self.context
+        };
+        fold_normal_rounds(
+            unfolded,
+            &children,
+            self.entries,
+            &mut self.states,
+            &mut self.refused,
+            context,
+        );
+        if let Some(state) = self.states.get(&target) {
+            return Some(state.clone());
+        }
+        // The branch's own proof ends here too: on a refused row it may not
+        // cross, or with no refused row its rescue could cross.
+        let mut refused = self
+            .refused
+            .iter()
+            .filter(|hash| branch.contains(*hash))
+            .peekable();
+        if refused.peek().is_none()
+            || refused.any(|hash| {
+                *hash == target
+                    || !super::ancestry_evaluator::skippable_permissive(&self.entries[hash].op)
+            })
         {
             return None;
         }
+        verify_signed_branch(target, self.entries, self.ancestors, self.context)
     }
+}
+
+/// `target` with its whole ancestry, when every row of it is at hand and
+/// none is its own ancestor.
+fn signed_branch(
+    target: AuthorityEntryHash,
+    entries: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+    ancestors: &AncestorIndex,
+) -> Option<BTreeSet<AuthorityEntryHash>> {
+    let mut branch = ancestors.get(&target)?.to_set();
+    branch.insert(target);
+    for hash in &branch {
+        if !entries.contains_key(hash) || ancestors.get(hash)?.contains(hash) {
+            return None;
+        }
+    }
+    Some(branch)
+}
+
+/// Each row of `rows` that is a parent of rows of `rows`, with those rows.
+fn children_within(
+    rows: &BTreeSet<AuthorityEntryHash>,
+    entries: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+) -> BTreeMap<AuthorityEntryHash, Vec<AuthorityEntryHash>> {
+    let mut children = BTreeMap::<AuthorityEntryHash, Vec<AuthorityEntryHash>>::new();
+    for hash in rows {
+        for parent in &entries[hash].parent_hashes {
+            if rows.contains(parent) {
+                children.entry(*parent).or_default().push(*hash);
+            }
+        }
+    }
+    children
+}
+
+/// Folds in normal rounds each row of `woken` its parents' states let fold,
+/// and each row of `children` a landing parent wakes, and records every row
+/// a round refuses in `refused`. A transition waits only on a parent with no
+/// state, and its verdict reads only its own row, its parents' states and
+/// the context (`fold_entry_state`), so a row that waits is tried again only
+/// when one of its parents lands. That gives the verdicts of passes over
+/// every pending row until none moves, with each row tried about once per
+/// parent, not once per pass (row [REVOKE-PROOF-BRANCH-REFOLD-CUBIC]; the
+/// ordinary fold's scheduler does the same, H72).
+fn fold_normal_rounds(
+    mut woken: BTreeSet<AuthorityEntryHash>,
+    children: &BTreeMap<AuthorityEntryHash, Vec<AuthorityEntryHash>>,
+    entries: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+    states: &mut BTreeMap<AuthorityEntryHash, FoldState>,
+    refused: &mut BTreeSet<AuthorityEntryHash>,
+    context: FoldContext<'_>,
+) {
+    while let Some(hash) = woken.pop_first() {
+        if states.contains_key(&hash) || refused.contains(&hash) {
+            continue;
+        }
+        note_proof_try();
+        match super::ancestry_evaluator::evaluate_entry(
+            &entries[&hash],
+            hash,
+            entries,
+            states,
+            context,
+            super::ancestry_evaluator::EvaluationPhase::Normal,
+        ) {
+            EntryFold::Ready(state) => {
+                states.insert(hash, state);
+                woken.extend(children.get(&hash).into_iter().flatten().copied());
+            }
+            EntryFold::Invalid(_) => {
+                refused.insert(hash);
+            }
+            EntryFold::Waiting => {}
+        }
+    }
+}
+
+/// The target's own folded state, proved over its signed ancestry alone. The
+/// proof follows the fold: it admits concurrent siblings at one sequence and
+/// refuses only a sequence that does not rise along the ancestry. External
+/// siblings cannot erase a verified restrictive fact on this branch.
+fn verify_signed_branch(
+    target: AuthorityEntryHash,
+    entries: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+    ancestors: &AncestorIndex,
+    context: FoldContext<'_>,
+) -> Option<FoldState> {
+    let mut pending = signed_branch(target, entries, ancestors)?;
     let branch_context = FoldContext {
         entry_ancestors: Some(ancestors),
         ..context
     };
+    let children = children_within(&pending, entries);
     let mut states = BTreeMap::new();
     let mut rejected = BTreeSet::new();
+    let mut woken = pending.clone();
     loop {
-        let mut progressed = false;
-        for hash in pending.clone() {
-            match super::ancestry_evaluator::evaluate_entry(
-                &entries[&hash],
-                hash,
-                entries,
-                &states,
-                branch_context,
-                super::ancestry_evaluator::EvaluationPhase::Normal,
-            ) {
-                EntryFold::Ready(state) => {
-                    states.insert(hash, state);
-                    pending.remove(&hash);
-                    progressed = true;
-                }
-                EntryFold::Invalid(_)
-                    if hash != target
-                        && super::ancestry_evaluator::skippable_permissive(&entries[&hash].op) =>
-                {
-                    rejected.insert(hash);
-                    pending.remove(&hash);
-                    progressed = true;
-                }
-                EntryFold::Invalid(_) => return None,
-                EntryFold::Waiting => {}
-            }
-        }
+        fold_normal_rounds(
+            woken,
+            &children,
+            entries,
+            &mut states,
+            &mut rejected,
+            branch_context,
+        );
         if let Some(state) = states.remove(&target) {
             return Some(state);
         }
-        if progressed {
-            continue;
+        // Only a rejected permissive row other than the target may be
+        // crossed; any other refused row refuses the proof.
+        if rejected.iter().any(|hash| {
+            *hash == target || !super::ancestry_evaluator::skippable_permissive(&entries[hash].op)
+        }) {
+            return None;
         }
+        pending.retain(|hash| !states.contains_key(hash) && !rejected.contains(hash));
         // Pending children of a rejected ancestor are not proof that the child
         // was valid. Only their signed links may be traversed, and their ops
         // never apply.
@@ -468,14 +619,16 @@ fn verify_signed_branch(
                     && super::ancestry_evaluator::skippable_permissive(&entries[hash].op)
                     && ancestors
                         .get(hash)
-                        .is_some_and(|past| !past.is_disjoint(&rejected))
+                        .is_some_and(|past| past.intersects(&rejected))
             }))
             .collect();
         let mut rescued = false;
+        woken = BTreeSet::new();
         for hash in pending.clone() {
             if !restrictive_withdrawal(&entries[&hash].op) {
                 continue;
             }
+            note_proof_try();
             if let EntryFold::Ready(state) = super::ancestry_evaluator::evaluate_entry(
                 &entries[&hash],
                 hash,
@@ -486,6 +639,7 @@ fn verify_signed_branch(
             ) {
                 states.insert(hash, state);
                 pending.remove(&hash);
+                woken.extend(children.get(&hash).into_iter().flatten().copied());
                 rescued = true;
             }
         }

@@ -38,8 +38,15 @@ const TOO_MANY_HEADS: &str = "the authority log has more concurrent heads than o
 /// The fold did not count the signed choice here: it never reports success.
 const NOT_COUNTED: &str = "this install's fold does not count the checkpoint policy choice";
 
-const HOSTED_SELECTION_ADVANCED_ONLY: &str =
-    "hosted checkpoint root selection requires the operator's enterprise/advanced capability";
+/// The owner's QUORUM-HOST-ROOT = C: the host key signs a hosted vault's
+/// checkpoints, and dropping it is an enterprise/advanced setting the
+/// operator grants per vault. Neither law, a provider's term nor capacity,
+/// so it names no bound kind, only the rule and where the choice is the
+/// owner's own (DEC-0005 #will-sweep; RULING L9-61-CHECKPOINT = A).
+const HOSTED_SELECTION_ADVANCED_ONLY: &str = "hosted checkpoint root selection requires \
+     the operator's enterprise/advanced capability: on a hosted vault the host key signs its \
+     checkpoints unless the operator grants this vault that setting; a self-hosted or relay \
+     vault's owner chooses its roots";
 
 #[doc(hidden)]
 pub use oneiron_records::authority::checkpoint_policy_choice::CheckpointPolicyView;
@@ -176,7 +183,7 @@ impl Vault {
             current,
         );
         let now = self.instant_in_txn(&txn)?.secs();
-        let entry = sign_side_entry(
+        let entry = sign_side_entry_with_owner_proof(
             &fold,
             &key,
             seq,
@@ -187,6 +194,7 @@ impl Vault {
                 choice,
             }),
             now,
+            self.owner_proof_signer(&fold).as_deref(),
         )?;
         let entry_hash = authority_entry_hash(&entry)?;
         let at = TimeRange {
@@ -195,6 +203,7 @@ impl Vault {
         };
         self.put_authority_log_entries_in_txn(&mut txn, &[(entry, at, now)])?;
         let after = self.authority_view_readonly_in_txn(&txn)?;
+        after.refuse_waiting_choice(&entry_hash)?;
         if !after.checkpoint_policy.live.contains_key(&entry_hash)
             || after.install.held_back.contains(&entry_hash)
         {

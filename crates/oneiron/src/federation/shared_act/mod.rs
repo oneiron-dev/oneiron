@@ -6,7 +6,7 @@
 //! Erase keeps its own executor (`Memory::execute_completed_entity_erase`),
 //! and once it has erased the record [`Vault::record_erase_completion`]
 //! writes the act's receipt and tells the Owners (OF-150); a Member's or
-//! Admin's ask for one is `erase_ask`.
+//! Admin's ask for one is `erase_ask`, and so is an agent's.
 mod actor_erase;
 mod erase_ask;
 mod execute;
@@ -14,6 +14,7 @@ mod export_records;
 mod member_ask;
 mod membership;
 mod owner_add;
+mod owner_key_confirm;
 mod removal;
 mod removal_answer;
 mod removal_archive;
@@ -21,7 +22,8 @@ mod removal_file;
 mod removal_import;
 
 pub use erase_ask::{
-    EraseAskKind, EraseAskStatus, NOTIFICATION_PRODUCER_ERASE_ASK, SharedEraseAsk,
+    EraseAskKind, EraseAskStatus, EraseProposal, NOTIFICATION_PRODUCER_ERASE_ASK,
+    NOTIFICATION_PRODUCER_ERASE_PROPOSAL, SharedEraseAsk,
 };
 pub use member_ask::{
     MemberAskChange, MemberAskStatus, NOTIFICATION_PRODUCER_MEMBER_ASK, SharedMemberAsk,
@@ -98,44 +100,12 @@ impl ArchiveRow {
     }
 }
 
-/// The acts the shared preset lists. Their names are the policy row names.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum SharedActKind {
-    DeleteVault,
-    Erase,
-    AddOwner,
-    TransferOwnership,
-    RemoveOwner,
-}
-impl SharedActKind {
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::DeleteVault => "delete_vault",
-            Self::Erase => "erase",
-            Self::AddOwner => "add_owner",
-            Self::TransferOwnership => "transfer_ownership",
-            Self::RemoveOwner => "remove_owner",
-        }
-    }
-    pub fn parse(act: &str) -> Option<Self> {
-        match act {
-            "delete_vault" => Some(Self::DeleteVault),
-            "erase" => Some(Self::Erase),
-            "add_owner" => Some(Self::AddOwner),
-            "transfer_ownership" => Some(Self::TransferOwnership),
-            "remove_owner" => Some(Self::RemoveOwner),
-            _ => None,
-        }
-    }
-}
+#[doc(hidden)]
+pub use oneiron_records::federation::shared_act::{
+    DeleteVaultPlan, DetachRemainder, DetachRemainderReason, DetachReport, RemovalExportDelivery,
+    SharedActExport, SharedActKind, SharedVaultDeletion,
+};
 
-/// Payload of a `delete_vault` act. The vault id is the act's own.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct DeleteVaultPlan {
-    pub v: u8,
-}
 /// Payload of a `transfer_ownership` act: the starting Owner hands the vault
 /// to `to`, then keeps `from_keeps` or leaves when it is `None`.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -238,6 +208,38 @@ pub enum SharedVaultChange {
         record: String,
         redaction: Option<String>,
     },
+    /// An admin act that changes no membership row, logged so every other
+    /// live Admin and Deputy hears of it (`Vault::record_admin_act_in_txn`).
+    /// The access roster of shared project `project` was reset.
+    ProjectAccessReset {
+        project: String,
+    },
+    /// `member` was onboarded into a workspace of this vault at `role`.
+    MemberOnboarded {
+        member: String,
+        role: Role,
+    },
+    /// The house mind of workspace `workspace` was seated at `role`, or with
+    /// `None` taken out of the role it held.
+    HouseRoleChanged {
+        workspace: String,
+        role: Option<Role>,
+    },
+    /// A setting of workspace `workspace` changed: its stored preset, its
+    /// work-companion policy or its house name.
+    WorkspaceSettingsChanged {
+        workspace: String,
+    },
+    /// The vault's conversation-learning setting was set.
+    ConversationLearningChanged {
+        on: bool,
+        allow_opt_out: bool,
+    },
+    /// `member` was given the Delegate grant `grant`.
+    DelegateGranted {
+        grant: String,
+        member: String,
+    },
 }
 
 /// The durable receipt of one executed shared act or membership change. An
@@ -302,52 +304,6 @@ pub struct SharedActExecutionReceipt {
     pub completed_at: u64,
 }
 
-/// What an export-first removal exported for `member`: the record count,
-/// the BLAKE3 of the archive (OF-222), never its content, and the diaries
-/// the export read (OF-490).
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct SharedActExport {
-    pub member: String,
-    pub records: u64,
-    pub digest: String,
-    pub diary_reads: Vec<crate::batch::export::ExportDiaryRead>,
-}
-
-/// The local outcome of releasing an owner's bound Connect grants when a
-/// member genuinely left (FIX 12555): the grants actually withdrawn here and
-/// the per-grant typed remainder still standing. It names no peer delivery,
-/// courtesy deletion or remote erasure.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct DetachReport {
-    /// Bound Connect grants actually withdrawn here, id hex.
-    pub withdrawn: Vec<String>,
-    /// Bound grants still standing, each with its typed remainder.
-    pub remaining: Vec<DetachRemainder>,
-}
-
-/// One bound grant still standing after a genuine leave, and why.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct DetachRemainder {
-    /// The grant still standing, id hex.
-    pub grant: String,
-    /// Why it still stands.
-    pub reason: DetachRemainderReason,
-}
-
-/// Why a bound grant still stands after a genuine leave.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum DetachRemainderReason {
-    /// No host issuer signed in this writer; the membership still progressed.
-    NoIssuer,
-    /// The withdrawal failed with this stable error kind; the membership
-    /// still progressed. The kind names the failure, never its payload.
-    WithdrawalFailed { kind: crate::error::ErrorKind },
-}
-
 /// What a genuine leave's detach wrote, before its receipt is written.
 pub(crate) struct DetachOutcome {
     /// Bound Connect grants actually withdrawn, for the receipt's lists.
@@ -400,23 +356,6 @@ pub struct SharedActExecution {
     /// execution built no export, a re-delivery included: that archive is
     /// the one the first execution built.
     pub export_records: Option<Vec<EntityId>>,
-}
-
-/// Where an export-first removal's archive went (FIX 1300): to the removed
-/// Owner, bound to them as its one recipient, retrievable by them until
-/// `expires_at`. Never the archive's content.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct RemovalExportDelivery {
-    /// The removal's receipt id, which keys the archive.
-    pub receipt_id: String,
-    /// The removed Owner, PERSON hex.
-    pub recipient: String,
-    /// BLAKE3 of the archive, lowercase hex, as the receipt records it.
-    pub digest: String,
-    /// When it was last delivered: the removal, or a remaining Owner's re-run.
-    pub delivered_at: u64,
-    pub expires_at: u64,
 }
 
 /// An export-first removal's archive of what the removed Owner could read,
@@ -566,19 +505,6 @@ impl TryFrom<SignedOutcomeWire> for SignedSharedActOutcome {
     }
 }
 
-/// The engine's record that the vault was deleted. Hosts stop serving it and
-/// keep its backups until `backup_retain_until`, then let them go.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct SharedVaultDeletion {
-    #[serde(with = "crate::federation::vault_id_decimal")]
-    pub vault_id: u64,
-    pub act_id: String,
-    pub receipt_id: String,
-    pub deleted_at: u64,
-    pub backup_retain_until: u64,
-}
-
 /// What the authority log holds of one change, as its receipt names it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ChangeRecord {
@@ -622,6 +548,18 @@ fn live_owners(holders: &[LiveActHolder], verb: Option<&str>) -> BTreeSet<Entity
             Some(verb) => holder.can(&[Role::Owner], verb),
             None => holder.role == Role::Owner,
         })
+        .map(|holder| holder.member)
+        .collect()
+}
+/// Who hears of an admin act: every live Owner, Admin and Deputy of
+/// `holders`, read by `Vault::live_notice_holders`, so a house mind its org
+/// link seats at one of those roles too (canon identity.md
+/// #cloud-agent-recovery, ORG-1 A: "The vault logs each admin act and
+/// notifies the other admins"; UNBUILT06-SHAPE Q3 = A).
+fn admin_act_recipients(holders: &[LiveActHolder]) -> BTreeSet<EntityId> {
+    holders
+        .iter()
+        .filter(|holder| matches!(holder.role, Role::Owner | Role::Admin | Role::Deputy))
         .map(|holder| holder.member)
         .collect()
 }
@@ -921,8 +859,10 @@ impl Vault {
         Ok(())
     }
 
-    /// Persist the receipt and one notice to each live Owner, the actor and
-    /// every holder the change concerns, in the change's own writer.
+    /// Persist the receipt and one notice to each of `recipients` (the live
+    /// Owners, and for an admin act every live Admin and Deputy too), the
+    /// actor and every holder the change concerns, in the change's own
+    /// writer.
     #[allow(clippy::too_many_arguments)]
     fn record_shared_change_in_txn(
         &self,
@@ -931,7 +871,7 @@ impl Vault {
         vault_id: u64,
         act: Option<(String, String)>,
         actor: EntityId,
-        owners: BTreeSet<EntityId>,
+        mut recipients: BTreeSet<EntityId>,
         effect: Effect,
         export: Option<SharedActExport>,
         record: ChangeRecord,
@@ -967,7 +907,6 @@ impl Vault {
         self.store
             .vault_meta
             .put(txn, &key(RECEIPT_PREFIX, &receipt.id), &encode(&receipt)?)?;
-        let mut recipients = owners;
         recipients.insert(actor);
         recipients.extend(effect.notify);
         for recipient in recipients {
@@ -988,6 +927,56 @@ impl Vault {
                 .put(txn, &outcome_key, &encode(&outcome)?)?;
         }
         Ok(receipt)
+    }
+
+    /// Logs admin act `change` by `actor` in shared vault `vault_id`, in the
+    /// act's own writer at `now`: one receipt, and one outcome notice to the
+    /// actor and to each live Owner, Admin and Deputy, a seated house mind
+    /// among them (`admin_act_recipients`). For the admin doors that change no
+    /// membership row (the membership writer tells the same people itself):
+    /// a project access reset, an onboarding, a house role, a workspace
+    /// setting, the conversation-learning setting and a delegate mint.
+    /// `None`, and nothing written, when this vault holds no shared creation
+    /// for `vault_id`.
+    pub(crate) fn record_admin_act_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        vault_id: u64,
+        actor: EntityId,
+        change: SharedVaultChange,
+        now: u64,
+    ) -> Result<Option<SharedActExecutionReceipt>> {
+        // A vault id this vault holds no shared creation for is no shared
+        // vault here: its device owner's act tells no one (review of #8384).
+        if self
+            .shared_vault_creation_in_txn(txn)?
+            .is_none_or(|creation| creation.vault_id != vault_id)
+        {
+            return Ok(None);
+        }
+        let holders = self.live_notice_holders(txn, vault_id, now)?;
+        let id = self.store.clock.entity_id()?.to_hex();
+        let effect = Effect {
+            change,
+            grants: Vec::new(),
+            revoked_slips: Vec::new(),
+            detach: None,
+            notify: BTreeSet::new(),
+        };
+        self.record_shared_change_in_txn(
+            txn,
+            id,
+            vault_id,
+            None,
+            actor,
+            admin_act_recipients(&holders),
+            effect,
+            None,
+            ChangeRecord::Unnamed,
+            None,
+            now,
+        )
+        .map(Some)
     }
 
     fn shared_act_receipt_in_txn(

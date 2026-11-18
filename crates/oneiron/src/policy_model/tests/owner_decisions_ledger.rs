@@ -16,7 +16,7 @@ fn a_bare_classify_then_the_enforce_door_leaves_exactly_one_row() -> Result<()> 
         1,
         "the door that MADE the decision writes its row"
     );
-    assert_eq!(after_classify[0].outcome, "owner_plane_block");
+    assert_eq!(after_classify[0].outcome, "deny");
     assert!(has_trace(&after_classify[0], "gate.policy_model.block"));
 
     // The enforce door records nothing: the decision is already in the ledger.
@@ -96,7 +96,10 @@ fn a_flood_of_response_parts_is_stopped_while_joining() {
     let part = "x".repeat(4096);
     let parts = (super::contract::POLICY_MODEL_ANSWER_PARSE_MAX_BYTES / 4096) + 2;
     let content: Vec<ContentPart> = (0..parts)
-        .map(|_| ContentPart::Text { text: part.clone() })
+        .map(|_| ContentPart::Text {
+            text: part.clone(),
+            signature: None,
+        })
         .collect();
     assert!(
         super::prompt::response_text(&multi_part_response(content)).is_none(),
@@ -108,9 +111,11 @@ fn a_flood_of_response_parts_is_stopped_while_joining() {
     let ordinary = vec![
         ContentPart::Text {
             text: r#"{"violation":0,"#.to_owned(),
+            signature: None,
         },
         ContentPart::Text {
             text: r#""policy_category":null}"#.to_owned(),
+            signature: None,
         },
     ];
     assert_eq!(
@@ -417,7 +422,7 @@ fn owner_block_withholds_and_names_the_owner_plane() -> Result<()> {
     let receipts = gate_receipts(&vault)?;
     assert_eq!(receipts.len(), 1);
     assert_eq!(receipts[0].receipt_id, receipt_ref);
-    assert_eq!(receipts[0].outcome, "block");
+    assert_eq!(receipts[0].outcome, "deny");
     assert_eq!(receipts[0].actor.as_deref(), Some("agent:relay"));
     assert!(has_trace(&receipts[0], "gate.policy_model.block"));
     assert!(has_trace(

@@ -1,5 +1,6 @@
 //! Caller-bound doors over the existing compliance classifier and stamp writer.
 
+use crate::authority::owner_delegate_in_txn;
 use crate::consent::AuthenticatedOwner;
 use crate::gate::{
     PolicyApprovalCeiling, agent_definition_ceiling_for_actor, resolve_policy_manifest,
@@ -19,6 +20,14 @@ use super::*;
 const RECEIPTS: SideTable<[u8; 16], ComplianceReceipt, Named> =
     SideTable::new(&side_table::CAMPAIGN_COMPLIANCE_RECEIPT);
 
+/// The compliance-install verb a delegate's Grant lists:
+/// `vault.campaign.compliance.install`.
+pub const COMPLIANCE_INSTALL_VERB: &str = "vault.campaign.compliance.install";
+
+/// The compliance-reject verb a delegate's Grant lists:
+/// `vault.campaign.compliance.reject`.
+pub const COMPLIANCE_REJECT_VERB: &str = "vault.campaign.compliance.reject";
+
 impl Memory<'_> {
     /// Installs cited rows through the amendment path, not pack-file activation.
     /// Even an owner install leaves a loosening pending an exact-hash approval.
@@ -29,6 +38,27 @@ impl Memory<'_> {
     ) -> MemoryResult<ComplianceReceipt> {
         self.with_verified_actor_write_txn(|txn| {
             require_owner(self, owner, txn)?;
+            amend_in_txn(self, txn, input, ComplianceOperation::Install, true)
+        })
+    }
+
+    /// Installs cited rows as the owner's delegate: the caller is an agent,
+    /// and its binding, its live Grant for
+    /// `vault.campaign.compliance.install` and the setting
+    /// `campaign.compliance.agent_may_decide` are checked in the writer. A
+    /// loosening among them still waits for the owner's exact-hash approval.
+    /// The receipt names the agent.
+    ///
+    /// # Errors
+    /// `FORBIDDEN` when the caller is no agent, the setting reads false at
+    /// it, or no live Grant lists the verb; a pack that does not amend the
+    /// active one; storage errors.
+    pub fn compliance_install_as_delegate(
+        &self,
+        input: &ComplianceAmendRequest,
+    ) -> MemoryResult<ComplianceReceipt> {
+        self.with_verified_actor_write_txn(|txn| {
+            require_delegate(self, txn, COMPLIANCE_INSTALL_VERB)?;
             amend_in_txn(self, txn, input, ComplianceOperation::Install, true)
         })
     }
@@ -89,6 +119,45 @@ impl Memory<'_> {
                 proposal_hash: receipt.proposal_hash.clone(),
                 recorded_at: receipt.recorded_at,
             });
+            save_receipt(self, txn, receipt)
+        })
+    }
+
+    /// Rejects the exact pending proposal as the owner's delegate: the
+    /// caller is an agent, and its binding, its live Grant for
+    /// `vault.campaign.compliance.reject` and the setting
+    /// `campaign.compliance.agent_may_decide` are checked in the writer. No
+    /// active restriction changes. The receipt names the agent.
+    ///
+    /// # Errors
+    /// `FORBIDDEN` when the caller is no agent, the setting reads false at
+    /// it, or no live Grant lists the verb; a proposal that is not the
+    /// pending one; storage errors.
+    pub fn compliance_reject_as_delegate(
+        &self,
+        input: &ComplianceApprovalRequest,
+    ) -> MemoryResult<ComplianceReceipt> {
+        self.with_verified_actor_write_txn(|txn| {
+            require_delegate(self, txn, COMPLIANCE_REJECT_VERB)?;
+            let current = prior_pack(self, txn, input.prior_version)?;
+            let pack = reject_compliance_amendment_in_txn(
+                &self.vault().store,
+                txn,
+                parse_hash(&input.proposal_hash)?,
+            )?;
+            let class = if pack.pack_version > current.pack_version {
+                Some(classify_compliance_amendment(&current, &pack)?)
+            } else {
+                None
+            };
+            let receipt = new_receipt(
+                self,
+                &current,
+                &pack,
+                ComplianceOperation::Reject,
+                ComplianceDisposition::Rejected,
+                class,
+            )?;
             save_receipt(self, txn, receipt)
         })
     }
@@ -215,7 +284,7 @@ impl Memory<'_> {
         };
         let pending = pending_compliance_pack_in_txn(&vault.store, &txn)?
             .map(|pack| {
-                let proposal_hash = hash_hex(&compliance_proposal_hash(&pack)?);
+                let proposal_hash = oneiron_hex::encode(&compliance_proposal_hash(&pack)?);
                 Ok::<_, crate::Error>(CompliancePendingProposal {
                     pack,
                     proposal_hash,
@@ -245,6 +314,21 @@ fn require_owner(
             &[],
         ));
     }
+    Ok(())
+}
+
+/// The delegate twin of [`require_owner`]: the caller is an agent, and its
+/// binding, its live Grant for `verb` and the setting
+/// `campaign.compliance.agent_may_decide` stand in `txn`.
+fn require_delegate(memory: &Memory<'_>, txn: &heed::RoTxn<'_>, verb: &str) -> MemoryResult<()> {
+    if memory.actor_class() != EdgeActorClass::Agent {
+        return Err(MemoryError::new(
+            MEMORY_CODE_FORBIDDEN,
+            format!("{verb} is the vault owner's"),
+            &["Present the owner's own verified, unattenuated credential."],
+        ));
+    }
+    owner_delegate_in_txn(memory.vault(), txn, memory.actor(), verb)?;
     Ok(())
 }
 
@@ -325,7 +409,7 @@ fn new_receipt(
         },
         proposed_version: proposed.pack_version,
         class,
-        proposal_hash: hash_hex(&compliance_proposal_hash(proposed)?),
+        proposal_hash: oneiron_hex::encode(&compliance_proposal_hash(proposed)?),
         actor_ref: memory.actor().to_hex(),
         owner_stamp: None,
         notice: None,
@@ -344,10 +428,6 @@ fn save_receipt(
     Ok(receipt)
 }
 
-fn hash_hex(hash: &[u8; 32]) -> String {
-    hash.iter().map(|byte| format!("{byte:02x}")).collect()
-}
-
 fn parse_hash(hash: &str) -> MemoryResult<[u8; 32]> {
     if hash.len() != 64
         || !hash
@@ -364,4 +444,114 @@ fn parse_hash(hash: &str) -> MemoryResult<[u8; 32]> {
             .map_err(|_| MemoryError::bad_request("invalid proposal_hash"))?;
     }
     Ok(bytes)
+}
+
+/// Whether `text` is `len` lowercase hex characters.
+fn is_lower_hex(text: &str, len: usize) -> bool {
+    text.len() == len
+        && text
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
+/// Whether a decoded compliance receipt keeps the writer's pure row invariants.
+fn archived_compliance_holds(key: &[u8; 16], receipt: &ComplianceReceipt) -> bool {
+    if !is_lower_hex(&receipt.receipt_ref, 32) {
+        return false;
+    }
+    let Ok(id) = EntityId::from_hex(&receipt.receipt_ref) else {
+        return false;
+    };
+    if id.as_bytes() != key {
+        return false;
+    }
+    if !is_lower_hex(&receipt.proposal_hash, 64) {
+        return false;
+    }
+    if !is_lower_hex(&receipt.actor_ref, 32) {
+        return false;
+    }
+    match (receipt.operation, receipt.disposition) {
+        (
+            ComplianceOperation::Install | ComplianceOperation::Amend | ComplianceOperation::Verify,
+            ComplianceDisposition::Applied | ComplianceDisposition::PendingOwnerStamp,
+        ) => {}
+        (ComplianceOperation::Approve, ComplianceDisposition::Applied) => {}
+        (ComplianceOperation::Reject, ComplianceDisposition::Rejected) => {}
+        _ => return false,
+    }
+    match receipt.disposition {
+        ComplianceDisposition::Applied => {
+            if receipt.effective_version != receipt.proposed_version {
+                return false;
+            }
+        }
+        ComplianceDisposition::PendingOwnerStamp | ComplianceDisposition::Rejected => {
+            if receipt.effective_version != receipt.prior_version {
+                return false;
+            }
+        }
+    }
+    if receipt.operation != ComplianceOperation::Reject && receipt.class.is_none() {
+        return false;
+    }
+    match (&receipt.operation, &receipt.owner_stamp) {
+        (ComplianceOperation::Approve, Some(stamp)) => {
+            if !is_lower_hex(&stamp.owner_ref, 32) {
+                return false;
+            }
+            if stamp.proposal_hash != receipt.proposal_hash {
+                return false;
+            }
+            if stamp.recorded_at != receipt.recorded_at {
+                return false;
+            }
+        }
+        (ComplianceOperation::Approve, None) => return false,
+        (_, Some(_)) => return false,
+        (_, None) => {}
+    }
+    true
+}
+
+/// Lands one archived compliance receipt, never touching ACTIVE, PENDING, or NOTICE packs.
+fn land_archived_compliance_receipt_row_in_txn(
+    vault: &crate::Vault,
+    txn: &mut heed::RwTxn<'_>,
+    permit: &crate::batch::export::OwnerArchiveRestorePermit,
+    row: &crate::batch::export::ArchiveRetainedSideRow,
+) -> crate::error::Result<crate::batch::export::archive_side_install::ArchivedSideRowOutcome> {
+    use crate::batch::export::RetainedSideHeldBackReason;
+    use crate::batch::export::archive_side_install::{
+        ArchivedSideRowOutcome, decode_archived_row, install_archived_row,
+    };
+    let (key, receipt) = match decode_archived_row(&RECEIPTS, row) {
+        Ok(decoded) => decoded,
+        Err(reason) => return Ok(ArchivedSideRowOutcome::HeldBack(reason)),
+    };
+    if !archived_compliance_holds(&key, &receipt) {
+        return Ok(ArchivedSideRowOutcome::HeldBack(
+            RetainedSideHeldBackReason::InvalidValue,
+        ));
+    }
+    install_archived_row(&RECEIPTS, vault, txn, permit, &key, row)
+}
+
+impl crate::Vault {
+    /// Lands the owner's archived compliance receipts in input order as passive history only.
+    pub(crate) fn land_archived_campaign_compliance_rows_in_txn(
+        vault: &crate::Vault,
+        txn: &mut heed::RwTxn<'_>,
+        permit: &crate::batch::export::OwnerArchiveRestorePermit,
+        rows: &[crate::batch::export::ArchiveRetainedSideRow],
+    ) -> crate::error::Result<Vec<crate::batch::export::archive_side_install::ArchivedSideRowOutcome>>
+    {
+        let mut outcomes = Vec::with_capacity(rows.len());
+        for row in rows {
+            outcomes.push(land_archived_compliance_receipt_row_in_txn(
+                vault, txn, permit, row,
+            )?);
+        }
+        Ok(outcomes)
+    }
 }

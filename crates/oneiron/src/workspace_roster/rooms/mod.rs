@@ -13,6 +13,7 @@ mod audience_notices;
 mod audience_overlay;
 mod backfill;
 mod carrier_erase;
+mod closed;
 mod fact_subject;
 mod history;
 mod hosting;
@@ -31,8 +32,6 @@ mod pins;
 mod private_threads;
 mod replica;
 mod speaking;
-// FIX [LIBTEST-QUARANTINE-WORKSPACE-ROSTER-ROOMS-TESTS]: the lib test target's type check fails here (13 errors: E0308 x8, E0063 x3, E0639 x1, E0061 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;
 mod thread_delete;
@@ -94,6 +93,8 @@ pub(crate) use backfill::backfill_room_turns_on_open;
 pub(crate) use backfill::doors as backfill_doors;
 #[cfg(feature = "sync")]
 pub(crate) use carrier_erase::erased_side_row_here;
+pub use closed::RoomClosedSet;
+pub(crate) use closed::room_is_closed_in;
 pub use fact_subject::{ACTOR_ERASE_PARTICIPATION_KEY, ParticipationKeyErase};
 pub(super) use history::PAGE_LIMIT;
 pub(super) use history::delete_room_metadata;
@@ -128,6 +129,8 @@ pub use offer_settle::{OfferAnswer, OfferAnswerRequest, OfferSettlement};
 pub use offers::{OfferCard, OfferDraft, OfferState, OfferVoteTally, OffersPage, OffersRequest};
 pub use participants::{ParticipantView, ParticipantsPage, ParticipantsRequest};
 pub use participation::JoinCause;
+#[cfg(oneiron_test_support)]
+pub(crate) use participation::fact_key_pin_for_test;
 pub(super) use participation::record_bound_task_in_txn;
 pub(in crate::workspace_roster) use participation::stands_in_thread_in;
 pub(crate) use participation::{
@@ -218,9 +221,11 @@ pub(super) fn room_in(vault: &Vault, txn: &heed::RoTxn<'_>, room: EntityId) -> R
     }
     room.member_ids = effective.seat_list(project.members());
     room.claims_scope_ref = effective.claims_scope_ref;
-    // The view never carries the room's shared pins: a reader gets them only
-    // through the room's admitted projection (ROOM-SCOPED-PINS).
+    // The view never carries the room's shared pins, nor the records its
+    // unpins removed: a reader gets pins only through the room's admitted
+    // projection (ROOM-SCOPED-PINS).
     room.pins.clear();
+    room.unpinned.clear();
     Ok(room)
 }
 /// `room`'s access for `actor` on its roster, in any room: a home room's
@@ -276,28 +281,24 @@ pub enum RoomTrunkItem {
     Result(RoomTrunkHeader),
 }
 
-/// A delivered TASK's durable result, attached to its trunk on a room read.
-/// The TASK terminal register holds the fact; no second row is stored.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct RoomTrunkHeader {
-    pub thread: EntityId,
-    pub task: EntityId,
-    pub result_ref: EntityId,
-}
+#[doc(hidden)]
+pub use oneiron_records::workspace_roster::rooms::{
+    RoomClaimOutcome, RoomClaimReceipt, RoomThreadPage, RoomTrunkHeader,
+};
 
 /// A trunk turn with the delivered task headers under its thread anchors.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RoomTrunk {
     pub turn: RoomTurn,
     pub headers: Vec<RoomTrunkHeader>,
+    /// The org the turn's speaker ran as its house when it spoke (HOUSE-BIND
+    /// = A, FIX SPEAKER-BYLINE-FOR-ORG): "pr2, for <org>". Read from the
+    /// house link receipts at the turn's `at` on each read, never stored.
+    /// `None` when the speaker ran no org then.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub for_org: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct RoomThreadPage {
-    pub rows: Vec<EntityId>,
-    /// Explicit end marker: `None` means the room has no further page.
-    pub next_after: Option<EntityId>,
-}
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RoomPage {
@@ -305,6 +306,12 @@ pub struct RoomPage {
     pub next_after: Option<String>,
     /// The room Scope this page was read inside (ARCH-0067 §8).
     pub scope: crate::federation::Scope,
+    /// By turn id, the org each row's speaker ran as its house when it
+    /// spoke (HOUSE-BIND = A, FIX SPEAKER-BYLINE-FOR-ORG), as
+    /// [`RoomTrunk::for_org`] reads it. A row whose speaker ran no org then
+    /// has no entry, so the map is empty by default.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub for_org: std::collections::BTreeMap<String, String>,
     /// Who made each row, keyed by the `actor` it names, as this reader may
     /// name them (FIX [UI-GATE-PREVIEW] phase 3): one entry per actor on the
     /// page, `unknown` for one the reader cannot name. `vault.rooms.messages`
@@ -325,22 +332,6 @@ fn turns_readable(scope: &crate::federation::Scope) -> bool {
 fn outside_scope() -> MemoryError {
     MemoryError::bad_request_with("room turn is outside the room scope", &[])
 }
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct RoomClaimReceipt {
-    pub room_id: String,
-    pub turn_id: String,
-    pub actor: String,
-    pub receipt_ref: String,
-    pub at: u64,
-}
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub enum RoomClaimOutcome {
-    Claimed(RoomClaimReceipt),
-    HeldBy(RoomClaimReceipt),
-    NotAddressed,
-}
-
 /// Project rooms use the PROJECT roster instead of the ordinary membership
 /// ledger. Return None for other conversations so their historical membership
 /// windows remain authoritative at the ordinary audience door. Each audience
@@ -400,6 +391,30 @@ pub(crate) fn room_join_audience_in(
     let receipt =
         participation::require_join_covering_in_txn(vault, txn, room, None, &subject, None);
     Ok(participation::joined(receipt)?.is_some())
+}
+
+/// The live vault owner who alone reads the ordinary room `room`, or `None`:
+/// no project room, one current member, that member a live vault owner, and
+/// no Ready join filed for anyone else in the room or its threads. An
+/// unplaced voice speaker's entry (OF-365) is keyed by its speaker, not by
+/// room, and is not seen here.
+pub(crate) fn room_sole_owner_reader_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    room: EntityId,
+) -> Result<Option<EntityId>> {
+    if project_room_audience_in(vault, txn, room, &[])?.is_some() {
+        return Ok(None);
+    }
+    let [owner] = vault.members_in_txn(txn, room)?[..] else {
+        return Ok(None);
+    };
+    if !crate::policy_model::is_live_vault_owner_in_txn(vault, txn, &owner)?
+        || super::join_receipt::room_ready_join_for_other_in(&vault.store, txn, room, owner)?
+    {
+        return Ok(None);
+    }
+    Ok(Some(owner))
 }
 
 /// The validated project room `room` is, or `None` for an ordinary
@@ -463,7 +478,8 @@ impl Vault {
     }
 
     /// [`Self::room_audience_members`] as `read` reads the room, in one
-    /// snapshot: a room `read` cannot read is a missing room, unless
+    /// snapshot: a room `read` cannot read, its row or its own admission
+    /// ([`Self::room_structure_admitted`], L9-52), is a missing room, unless
     /// `member` is one of its members, who reads its roster by membership as
     /// its room turns do. Membership never widens the credential: one
     /// narrowed on any read axis or whose records leave the room out, or a
@@ -477,7 +493,9 @@ impl Vault {
         read.persist_grant_clock()?;
         let txn = self.store.env.read_txn()?;
         let policy = read.live_policy_manifest_in(&txn)?;
-        if read.is_ref_readable_with_policy_in(&txn, &policy, &room)? {
+        if read.is_ref_readable_with_policy_in(&txn, &policy, &room)?
+            && self.room_structure_admitted_in_txn(read, &txn, &room)?
+        {
             return self.room_audience_members_in_txn(&txn, room);
         }
         if !read.reaches_by_membership_in(&txn, &room)? {

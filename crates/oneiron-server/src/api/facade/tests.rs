@@ -207,6 +207,9 @@ async fn generated_agent_sdk_http_keeps_first_answer_and_durable_step_wait_seman
             b"holder",
         )
         .unwrap();
+    // The holder reads the question TURN through a read grant (FIX 9917,
+    // validate_task_answer_unit); the review grant below is no read.
+    crate::api::tests::put_actor_read_grant(&vault, second, None);
     let token = |actor: EntityId, scope: &str| {
         format!(
             "{}scope={scope};principal_ref={};actor_class=human",
@@ -259,34 +262,28 @@ async fn generated_agent_sdk_http_keeps_first_answer_and_durable_step_wait_seman
             "until": u64::MAX, "decide": "first",
         })
     };
-    let (status, _) = post(&server, &format!("Bearer {SECRET}"), "tasks.ask", json!({})).await;
+    let (status, _) = post(&server, &format!("Bearer {SECRET}"), "ask", json!({})).await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
     for answer_first in [false, true] {
         let spec = ask_spec(format!("order-{answer_first}"));
-        let (status, receipt) = post(&server, &owner_token, "tasks.ask", spec.clone()).await;
+        let (status, receipt) = post(&server, &owner_token, "ask", spec.clone()).await;
         assert_eq!(status, StatusCode::OK, "{receipt}");
         let handle = receipt["handle"].clone();
-        let (_, retry) = post(&server, &owner_token, "tasks.ask", spec).await;
+        let (_, retry) = post(&server, &owner_token, "ask", spec).await;
         assert_eq!(retry["handle"], handle);
         assert_eq!(retry["idempotent_replay"], true);
         let wait = json!({"handle":handle,"step_key":"caller-step"});
-        let (status, _) = post(
-            &server,
-            &token(owner, "core:read"),
-            "tasks.wait",
-            wait.clone(),
-        )
-        .await;
+        let (status, _) = post(&server, &token(owner, "core:read"), "wait", wait.clone()).await;
         assert_eq!(status, StatusCode::FORBIDDEN);
         if !answer_first {
-            let (status, pending) = post(&server, &owner_token, "tasks.wait", wait.clone()).await;
+            let (status, pending) = post(&server, &owner_token, "wait", wait.clone()).await;
             assert_eq!(status, StatusCode::OK, "{pending}");
             assert!(pending.get("Pending").is_some());
             // Only that logical step waited: the caller can issue another ask now.
             let (status, other) = post(
                 &server,
                 &owner_token,
-                "tasks.ask",
+                "ask",
                 ask_spec("kept-working".into()),
             )
             .await;
@@ -311,19 +308,14 @@ async fn generated_agent_sdk_http_keeps_first_answer_and_durable_step_wait_seman
         assert_eq!(second_answer["actor_ref"], second.to_hex());
         assert_eq!(second_answer["result_ref"], second.to_hex());
         assert_ne!(second_answer["task_ref"], first["task_ref"]);
-        let (_, ready) = post(&server, &owner_token, "tasks.wait", wait.clone()).await;
+        let (_, ready) = post(&server, &owner_token, "wait", wait.clone()).await;
         assert_eq!(ready["Ready"]["decision"]["first"], first);
-        let (_, replayed) = post(&server, &owner_token, "tasks.wait", wait).await;
+        let (_, replayed) = post(&server, &owner_token, "wait", wait).await;
         assert_eq!(replayed["Ready"], ready["Ready"]);
     }
     for i in 0..12 {
-        let (status, body) = post(
-            &server,
-            &owner_token,
-            "tasks.ask",
-            ask_spec(format!("burst-{i}")),
-        )
-        .await;
+        let (status, body) =
+            post(&server, &owner_token, "ask", ask_spec(format!("burst-{i}"))).await;
         assert_eq!(status, StatusCode::OK, "{body}");
         assert_eq!(body["task_refs"].as_array().unwrap().len(), 2);
     }
@@ -417,6 +409,12 @@ async fn rooms_http_routes_only_the_addressed_companion_and_requires_a_claim() {
             oneiron::WriteActor::new(other, oneiron::EdgeActorClass::Agent),
         ])
         .unwrap();
+    // The fixture permits are class-agnostic, as production agent rows are,
+    // so a member's class-less peer key matches them; the class-agnostic
+    // grants written after them (FIX 9917, FIX 1218) stay as belt-and-braces.
+    for actor in [addressed, other] {
+        crate::api::tests::put_actor_read_grant(&vault, actor, None);
+    }
     let owner_token = room_token(owner, "human");
     let addressed_token = room_token(addressed, "agent");
     let other_token = room_token(other, "agent");
@@ -1658,11 +1656,14 @@ async fn recall_reads_time_words_without_refusing_and_resolves_them_as_of() {
     assert!(both(&found), "{found:?}");
     assert_eq!(hints, named(&[("last several weeks", "unresolved")]));
 
-    // `as_of` moves the day "yesterday" names.
-    let (found, _) = recall("staging rollout yesterday", Some(DAY0 + DAY + 7_200)).await;
-    assert_eq!(ids(&found), [said[0].as_str()], "{found:?}");
-    let (found, _) = recall("staging rollout yesterday", Some(DAY0 + 2 * DAY + 7_200)).await;
-    assert_eq!(ids(&found), [said[1].as_str()], "{found:?}");
+    // `as_of` moves the day "yesterday" names. That day re-anchors the
+    // temporal channel and never filters (canon research-1009 P1.1), so the
+    // message said on the other day is found as well.
+    for as_of in [DAY0 + DAY + 7_200, DAY0 + 2 * DAY + 7_200] {
+        let (found, hints) = recall("staging rollout yesterday", Some(as_of)).await;
+        assert!(both(&found), "{found:?}");
+        assert_eq!(hints, named(&[("yesterday", "used")]));
+    }
 }
 
 /// Wave 9 long-context A/B: recall named a message `ms87:76@<revision>` where
@@ -1772,3 +1773,45 @@ async fn recall_returns_the_person_an_agent_asks_about() {
 }
 
 mod call_mode;
+
+/// A reap pause's facade body names its capacity bound and the self-host
+/// route, in the shape the managed HTTP body carries (L9-61).
+#[test]
+fn a_reap_pause_facade_body_names_its_capacity_bound_and_the_self_host_route() {
+    let error = FacadeApiError::from(oneiron::memory::MemoryError::new(
+        crate::managed::WRITES_FROZEN_TAG,
+        crate::managed::ManagedError::WritesFrozen.to_string(),
+        &[],
+    ));
+    assert_eq!(error.status, StatusCode::SERVICE_UNAVAILABLE);
+    let body = serde_json::to_value(&error.body).expect("body");
+    assert_eq!(body["error"]["code"], "writes_frozen");
+    assert_eq!(
+        body["error"]["bound"],
+        json!({
+            "kind": "capacity",
+            "resource": "vault_lifecycle_allocation",
+            "phase": "reap_prepare",
+        })
+    );
+    assert_eq!(
+        body["error"]["self_hosted"],
+        json!({"supported": true, "condition": "no_service_reap_limit"})
+    );
+    let message = body["error"]["message"].as_str().expect("message");
+    assert!(message.contains("a capacity bound"), "{message}");
+    assert!(message.contains("self-hosted vault"), "{message}");
+}
+
+/// Any other refusal's facade body carries no bound.
+#[test]
+fn another_facade_refusal_body_carries_no_bound() {
+    let error = FacadeApiError::from(oneiron::memory::MemoryError::new(
+        oneiron::memory::MEMORY_CODE_FORBIDDEN,
+        "refused",
+        &[],
+    ));
+    let body = serde_json::to_value(&error.body).expect("body");
+    assert!(body["error"].get("bound").is_none(), "{body}");
+    assert!(body["error"].get("self_hosted").is_none(), "{body}");
+}

@@ -7,6 +7,7 @@ use oneiron::dreamer_consolidation::{
     DREAMER_EXTRACTION_ROLE, DREAMER_NARRATIVE_ROLE, ExtractionPorts, PersonAboutExecutor,
     RoleBackends, RoleCall, ScopeSummaryExecutor, ThingChildHost,
 };
+use oneiron::dreamer_runner::DreamerDecisionLender;
 use oneiron::dreamer_runner::connector_event::{ConnectorEventExecutor, ConnectorEventResponder};
 use oneiron::dreamer_runner::maintenance::{
     CoachLiveSlice, CoachSkillOptimizer, ContributionReplayHost,
@@ -25,10 +26,11 @@ use oneiron::{
     DreamerClaimAuthoringStrategy, LlmBackend, ModelId, Result, WriteActor,
 };
 use oneiron::{EntityId, Vault, WavePlanner};
-use oneiron_llm_local::{LocalLlmBackend, LocalLlmRuntime};
+use oneiron_llm::local::{LocalLlmBackend, LocalLlmRuntime};
 
 use super::attachment::{LinkedShutdown, PassAttachment, PassAttachmentSource};
-use super::dreamer_jobs::DreamerJobsExecutor;
+use super::dreamer_jobs::{ConflictSettleCursor, DreamerJobsExecutor};
+use super::extraction_decisions::{ExtractionDecisionGate, ExtractionDecisionResources};
 
 /// Host-supplied consumer of the live ready TASK subset.
 pub type WaveReadyDispatcher =
@@ -248,6 +250,16 @@ pub struct ConsolidationExecutorFactory {
     /// the job wrapper is installed either way, and with `None` a strength
     /// attempt parks, resumable, for want of a host.
     dreamer_job_vault: Option<Arc<Vault>>,
+    /// The host decisions for conflict settlement asks, lent to each
+    /// settlement run. `None` runs without a ladder: the job returns an
+    /// error and the attempt parks for a retry.
+    conflict_settle_lender: Option<Arc<dyn DreamerDecisionLender>>,
+    /// The cursor after the last conflict asked about, shared across the
+    /// factories the host builds with one handle. The default holds no
+    /// cursor when the host lends none.
+    conflict_settle_cursor: ConflictSettleCursor,
+    /// Holds the live extraction gate and independent runtime for prepared pass loans.
+    extraction_decisions: Option<(Arc<dyn ExtractionDecisionGate>, tokio::runtime::Handle)>,
 }
 
 impl ConsolidationExecutorFactory {
@@ -285,6 +297,9 @@ impl ConsolidationExecutorFactory {
             attachment: None,
             decisions: None,
             dreamer_job_vault: None,
+            conflict_settle_lender: None,
+            conflict_settle_cursor: ConflictSettleCursor::default(),
+            extraction_decisions: None,
         }
     }
 
@@ -304,6 +319,37 @@ impl ConsolidationExecutorFactory {
     #[must_use]
     pub fn with_dreamer_job_vault(mut self, vault: Arc<Vault>) -> Self {
         self.dreamer_job_vault = Some(vault);
+        self
+    }
+
+    /// Lends conflict settlement its host decisions and shared cursor
+    /// (untangle 6.9d S69D4): a settlement attempt then runs
+    /// `oneiron_dreamer::conflict_settle` over a client bound to that
+    /// attempt, asking on `lender` from `cursor`. Cloned handles share one
+    /// cursor across factories rebuilt for each pass. Without this call the
+    /// factory keeps no lender and its own default cursor.
+    #[must_use]
+    pub fn with_conflict_settle_host(
+        mut self,
+        lender: Arc<dyn DreamerDecisionLender>,
+        cursor: ConflictSettleCursor,
+    ) -> Self {
+        self.conflict_settle_lender = Some(lender);
+        self.conflict_settle_cursor = cursor;
+        self
+    }
+
+    /// Lends extraction reads the prepared route's live gate and independent runtime.
+    ///
+    /// This does not route native extraction through a bound read. The job wrapper
+    /// only prepares lenders when a caller explicitly requests one for an attempt.
+    #[must_use]
+    pub fn with_extraction_decisions(
+        mut self,
+        gate: Arc<dyn ExtractionDecisionGate>,
+        runtime: tokio::runtime::Handle,
+    ) -> Self {
+        self.extraction_decisions = Some((gate, runtime));
         self
     }
 
@@ -530,7 +576,22 @@ impl ConsolidationExecutorFactory {
             Some(host) => roles.with_thing_child_host(Arc::clone(host)),
             None => roles,
         };
+        let extraction_resources = self.extraction_decisions.as_ref().map(|(gate, runtime)| {
+            Arc::new(ExtractionDecisionResources {
+                decisions: decisions.clone(),
+                roles: roles.clone(),
+                backend: Arc::clone(&self.backend),
+                model: self.model.clone(),
+                binding: self.binding.clone(),
+                extraction_egress: self.extraction_egress.clone(),
+                guard: guard.clone(),
+                gate: Arc::clone(gate),
+                runtime: runtime.clone(),
+            })
+        });
         let job_vault = self.dreamer_job_vault.clone();
+        let settle_lender = self.conflict_settle_lender.clone();
+        let settle_cursor = self.conflict_settle_cursor.clone();
         let mut executors = Vec::new();
         for sink in std::iter::once(&mut self.sink).chain(self.parallel_sinks.iter_mut()) {
             let inner = ConsolidationExecutor {
@@ -583,7 +644,11 @@ impl ConsolidationExecutorFactory {
                 runtime: runtime.take(),
             };
             let inner = ConnectorEventExecutor::new(inner, responder.take());
-            executors.push(DreamerJobsExecutor::new(inner, job_vault.clone()));
+            executors.push(
+                DreamerJobsExecutor::new(inner, job_vault.clone())
+                    .with_conflict_settle(settle_lender.clone(), settle_cursor.clone())
+                    .with_extraction_resources(extraction_resources.clone()),
+            );
         }
         Ok(executors)
     }

@@ -9,6 +9,11 @@
 //! an edit settlement's live work are in-flight work that never leaves; and a
 //! code view is a host directory, its id no record.
 //!
+//! The whole-vault archive also carries the retained rows: one inert copy of every row of
+//! each retained side table, naming its source table with the row's original key suffix
+//! and value bytes, and declares each omitted table with its reason in its manifest. No
+//! live reader reads a retained copy; the next archive carries it again.
+//!
 //! A row goes out with the record it belongs to and every carrier it names, read
 //! in the export's snapshot, and a record's rows of one family go together or
 //! not at all: a carried record whose family names a carrier the export lacks is
@@ -39,9 +44,14 @@ use crate::serialize::ExportBodyFile;
 use crate::side_table::{self, SideCodec, SideKey, SideTable, SideTableDecl};
 use crate::store::Store;
 
-/// A binary value or byte array longer than this goes in the archive's `files/`
-/// as it is stored; ids, hashes and folds stay inline as hex.
-const SIDE_INLINE_BYTES: usize = 64;
+#[doc(hidden)]
+pub use oneiron_records::batch::export::archive_side_tables::{
+    ArchiveLfsObject, ArchiveSideKeyPart, ArchiveSideWithheldReason,
+};
+#[doc(hidden)]
+use oneiron_records::batch::export::archive_side_tables::{
+    SIDE_INLINE_BYTES, byte_values, hex_any, hex_exact, invalid,
+};
 
 /// A side table its owning module lends the archive.
 pub(crate) type LentSideTable = &'static dyn PortableSideTable;
@@ -211,6 +221,9 @@ pub enum ArchiveSideFamily {
     CodeMemoryAlwaysOn,
     /// An anchor-transfer receipt from one code symbol to another.
     CodeMemoryTransfer,
+    /// One inert retained copy of an archived source-table row, naming its source table with
+    /// the row's original key suffix and value bytes.
+    RetainedSideRow,
 }
 
 /// One part of a stored key, in the order the key holds them.
@@ -270,6 +283,8 @@ enum Group {
     /// A transfer receipt goes apart from its symbol's slots: it names a
     /// second symbol, whose absence leaves the first's memory whole.
     CodeMemoryTransfer,
+    /// A retained copy travels vault-wide, apart from every record's rows.
+    RetainedSideRow,
 }
 
 #[derive(Clone, Copy)]
@@ -281,7 +296,7 @@ struct Spec {
 }
 
 impl ArchiveSideFamily {
-    const ALL: [Self; 41] = [
+    const ALL: [Self; 42] = [
         Self::BlobVersion,
         Self::BlobAssetRef,
         Self::BlobBornFrom,
@@ -323,12 +338,14 @@ impl ArchiveSideFamily {
         Self::CodeMemoryAttachment,
         Self::CodeMemoryAlwaysOn,
         Self::CodeMemoryTransfer,
+        Self::RetainedSideRow,
     ];
 
     fn spec(self) -> Spec {
         use Form::{Empty, Hash, LfsObject, MessagePack, Opaque, U64Be, U64Le};
         use Group::{
             Blob, CodeDocument, CodeMemory, CodeMemoryTransfer, CodeRevision, Codebase, Lfs,
+            RetainedSideRow,
         };
         use Part::{Hash as H, Id, Nul, Source, Text, U64};
         use side_table as t;
@@ -448,8 +465,22 @@ impl ArchiveSideFamily {
                 Opaque,
                 CodeMemoryTransfer,
             ),
+            Self::RetainedSideRow => spec(
+                &t::ARCHIVE_RETAINED_SIDE_ROW,
+                &[H],
+                MessagePack,
+                RetainedSideRow,
+            ),
         }
     }
+}
+
+/// Every archive side family's table name, in family order, for the catalogue guard.
+#[cfg(oneiron_test_support)]
+pub(crate) fn archive_side_family_table_names() -> impl Iterator<Item = &'static str> {
+    ArchiveSideFamily::ALL
+        .into_iter()
+        .map(|family| family.spec().decl.name)
 }
 
 fn spec(decl: &'static SideTableDecl, key: &'static [Part], value: Form, group: Group) -> Spec {
@@ -459,23 +490,6 @@ fn spec(decl: &'static SideTableDecl, key: &'static [Part], value: Form, group: 
         value,
         group,
     }
-}
-
-/// One part of a row's key, typed: ids and hashes as lowercase hex, text as text.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(
-    tag = "type",
-    content = "value",
-    rename_all = "snake_case",
-    deny_unknown_fields
-)]
-pub enum ArchiveSideKeyPart {
-    Id(String),
-    Hash(String),
-    /// A kind byte and 16 bytes: a born-from source or a code-memory payload.
-    Source(String),
-    U64(u64),
-    Text(String),
 }
 
 /// One row's value in its table's codec, typed.
@@ -500,16 +514,6 @@ pub enum ArchiveSideValue {
     Binary(String),
     /// A value in its table's own binary codec, stored as an archive file.
     BinaryFile(ExportBodyFile),
-}
-
-/// An LFS object record: its manifest ASSET, size, creation time and ref owner.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ArchiveLfsObject {
-    pub asset: String,
-    pub size_bytes: u64,
-    pub created_at: u64,
-    pub ref_owner: String,
 }
 
 /// A MessagePack value with nothing nulled or dropped: the export's credential
@@ -562,25 +566,16 @@ pub struct ArchiveSideWithheld {
     pub family: ArchiveSideFamily,
     pub owner: Option<String>,
     pub reason: ArchiveSideWithheldReason,
+    /// The source table of a retained row held out, naming what the copy is of without
+    /// exposing its key or value; `None` for every other family.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_table: Option<String>,
     /// The records a row held out alone names beside its owner, each one
     /// the archive carries (FIX 11128): a projection that cuts one of them
     /// judges the owner's group not whole, as a fresh export of the kept
     /// records does. Empty for a family held out whole.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub carriers: Vec<String>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ArchiveSideWithheldReason {
-    /// The credential pass would change the row: it carries a secret.
-    Credential,
-    /// The stored row does not read back through its table's key type and codec.
-    NotPortable,
-    /// FIX 3681: a carried record's rows of this family do not all travel (one
-    /// names a carrier the export does not hold, or does not read), and they go
-    /// together, so none go. Named once per record and family.
-    Incomplete,
 }
 
 /// One stored row the archive carries: its table, its key after the table's
@@ -600,7 +595,11 @@ impl SideRowBytes {
     /// `None` when the stored row does not read back through its table.
     pub(crate) fn portable(&self) -> Result<Option<(ArchiveSideRow, Vec<Vec<u8>>)>> {
         let spec = self.family.spec();
-        if !lent(self.family)?.canonical(&self.key, &self.value) {
+        if self.family == ArchiveSideFamily::RetainedSideRow {
+            if !super::archive_retained_side_rows::retained_row_portable(&self.key, &self.value)? {
+                return Ok(None);
+            }
+        } else if !lent(self.family)?.canonical(&self.key, &self.value) {
             return Ok(None);
         }
         let Some(key) = key_parts(spec.key, &self.key) else {
@@ -670,6 +669,11 @@ impl SideRowBytes {
             family: self.family,
             owner: self.owner.as_ref().map(EntityId::to_hex),
             reason,
+            source_table: if self.family == ArchiveSideFamily::RetainedSideRow {
+                super::archive_retained_side_rows::retained_envelope_source_table(&self.value)
+            } else {
+                None
+            },
             carriers: self.carriers.iter().map(EntityId::to_hex).collect(),
         }
     }
@@ -761,6 +765,11 @@ pub(crate) fn archive_side_rows_in_txn(
 ) -> Result<(Vec<SideRowBytes>, Vec<ArchiveSideWithheld>)> {
     let mut stored = Vec::new();
     for family in ArchiveSideFamily::ALL {
+        // The retained family is collected separately, unioned with the live source rows under
+        // the whole-vault gate; this loop carries the 41 live families only.
+        if family == ArchiveSideFamily::RetainedSideRow {
+            continue;
+        }
         for (key, value) in lent(family)?.stored_rows(store, rtxn)? {
             stored.push((family, key, value));
         }
@@ -939,6 +948,7 @@ fn incomplete(
             family,
             owner: Some(owner.to_hex()),
             reason: ArchiveSideWithheldReason::Incomplete,
+            source_table: None,
             carriers: Vec::new(),
         })
 }
@@ -1026,6 +1036,12 @@ pub(crate) fn restore_side_rows_in_txn<R: Read + Seek>(
             .spool
             .parse::<ArchiveSideRow>(Loc::decode(&value)?)?
             .stored(&mut files)?;
+        // The retained family's own pass keeps these rows; this pass restores the 41 live
+        // families only.
+        if row.family == ArchiveSideFamily::RetainedSideRow {
+            after = Some(key);
+            continue;
+        }
         let named: Vec<EntityId> = match context.travel(row.family, &row.key, &row.value)? {
             Travel::With(owner, carriers) => std::iter::once(owner).chain(carriers).collect(),
             Travel::Vault => Vec::new(),
@@ -1310,6 +1326,9 @@ impl SideContext {
                 id_at(key, 0),
                 id_at(key, ENTITY_ID_LEN).into_iter().collect(),
             ),
+            // A retained copy names no record: it travels vault-wide, with the whole-vault
+            // archive only.
+            F::RetainedSideRow => Travel::Vault,
         })
     }
 }
@@ -1394,7 +1413,7 @@ fn key_bytes(layout: &[Part], parts: &[ArchiveSideKeyPart]) -> Option<Vec<u8>> {
 /// A MessagePack value as its archive tree. A long binary value or byte array
 /// becomes a file, its bytes pushed to `files`; a string that is no UTF-8 has no
 /// tree, so its row does not travel.
-fn tree(value: &rmpv::Value, files: &mut Vec<Vec<u8>>) -> Option<ArchiveSideTree> {
+pub(crate) fn tree(value: &rmpv::Value, files: &mut Vec<Vec<u8>>) -> Option<ArchiveSideTree> {
     use rmpv::Value as Mp;
     Some(match value {
         Mp::Nil => ArchiveSideTree::Nil,
@@ -1478,39 +1497,4 @@ fn msgpack(
                 .collect::<Result<_>>()?,
         ),
     })
-}
-
-fn byte_values(items: &[rmpv::Value]) -> Option<Vec<u8>> {
-    items
-        .iter()
-        .map(|item| item.as_u64().and_then(|value| u8::try_from(value).ok()))
-        .collect()
-}
-
-/// Lowercase hex of exactly `len` bytes.
-fn hex_exact(text: &str, len: usize) -> Option<Vec<u8>> {
-    hex_any(text).ok().filter(|bytes| bytes.len() == len)
-}
-
-/// Lowercase hex of any length.
-fn hex_any(text: &str) -> Result<Vec<u8>> {
-    let bytes = text
-        .as_bytes()
-        .chunks(2)
-        .map(|pair| {
-            std::str::from_utf8(pair)
-                .ok()
-                .filter(|pair| pair.len() == 2)
-                .and_then(|pair| u8::from_str_radix(pair, 16).ok())
-        })
-        .collect::<Option<Vec<u8>>>()
-        .ok_or_else(|| invalid("side row hex"))?;
-    if bytes_to_hex_lower(&bytes) != text {
-        return Err(invalid("side row hex must be lowercase"));
-    }
-    Ok(bytes)
-}
-
-fn invalid(reason: &str) -> Error {
-    Error::InvalidConfig(format!("whole-vault side row: {reason}"))
 }

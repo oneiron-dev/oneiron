@@ -92,6 +92,7 @@ use oneiron::task_type::TaskTypeRef;
 use oneiron::{
     DreamerRunnerStore, EntityId, LlmError, ModelId, RetryableLlmError, Vault, WriteActor,
 };
+use oneiron_base::unix_seconds_now;
 use tokio::sync::broadcast;
 
 use super::run_host_door::RunHostDoor;
@@ -168,11 +169,33 @@ const FORK_REFUSALS: [&str; 5] = [
     "continuation_storage",
 ];
 
+/// L2-37: each parked run whose cached prompt prefix is about to expire gets
+/// its idle call, Fold or Expire, and the next one due bounds the pass's
+/// sleep. Blocking.
+fn idle_calls(vault: &Vault, now: u64, pass: &mut Pass) {
+    if let Err(error) = oneiron::idle_fold::run_due_idle_calls(vault, now.saturating_mul(1_000)) {
+        pass.faults
+            .insert("idle calls".to_owned(), error.to_string());
+    }
+    match oneiron::idle_fold::next_idle_call_due_ms(vault) {
+        Ok(Some(due_ms)) => {
+            let due = due_ms.div_ceil(1_000);
+            pass.held_until = Some(pass.held_until.map_or(due, |held| held.min(due)));
+        }
+        Ok(None) => {}
+        Err(error) => {
+            pass.faults
+                .insert("idle calls".to_owned(), error.to_string());
+        }
+    }
+}
+
 /// What one pass found: the ready runs, and what it could not serve, keyed
 /// by what it was for. `queued` is every ready row of the agent run queue at
 /// the pass's start; a later wake passes at once only for a row outside it.
 /// `held_until` is when the earliest wake a resident's hold keeps falls due
-/// (AGM-4), so the next pass comes by then and not a recheck later.
+/// (AGM-4), or the earliest parked run's idle call (L2-37), so the next pass
+/// comes by then and not a recheck later.
 #[derive(Default)]
 struct Pass {
     ready: Vec<(AttemptId, RunOf)>,
@@ -316,7 +339,7 @@ impl SyncServer {
             let server = Arc::clone(&self);
             let pass = tokio::task::spawn_blocking(move || {
                 let _admission = admission;
-                server.resident_pass(unix_now())
+                server.resident_pass(unix_seconds_now())
             })
             .await
             .unwrap_or_else(|error| Pass {
@@ -337,7 +360,7 @@ impl SyncServer {
             failing = pass.faults;
             let seen = pass.queued;
             let recheck = pass.held_until.map_or(RECHECK, |due| {
-                RECHECK.min(Duration::from_secs(due.saturating_sub(unix_now())))
+                RECHECK.min(Duration::from_secs(due.saturating_sub(unix_seconds_now())))
             });
             for (id, of) in pass.ready {
                 if !held(&running).insert(id) {
@@ -403,7 +426,8 @@ impl SyncServer {
     ) -> bool {
         let server = Arc::clone(self);
         let Ok(Ok(ready)) =
-            tokio::task::spawn_blocking(move || ready_run_ids(server.vault(), unix_now())).await
+            tokio::task::spawn_blocking(move || ready_run_ids(server.vault(), unix_seconds_now()))
+                .await
         else {
             return false;
         };
@@ -444,6 +468,7 @@ impl SyncServer {
             pass.faults
                 .insert("outage parks".to_owned(), error.to_string());
         }
+        idle_calls(vault, now, &mut pass);
         let agents = match vault.entities_by_type(ENTITY_TYPE_AGENT_DEF) {
             Ok(agents) => agents,
             Err(error) => {
@@ -606,15 +631,9 @@ impl SyncServer {
             Ok(BoundRun::Trapped) => true,
             Err(error) => parks_on_outage(error),
         };
-        let completed_run = match &ran {
-            Ok(BoundRun::Agent(outcome))
-                if matches!(outcome.status, EngineExecutorStatus::Complete) =>
-            {
-                Some(outcome.replay_record.run_id)
-            }
-            _ => None,
-        };
         let run = EntityId::from_bytes(*id.as_bytes()).ok();
+        // The settle's terminal write also seals the run's scratchpads
+        // (OF-548).
         if let Err(error) = self.live_runs.settle(run, waits, || {
             settle(
                 vault,
@@ -634,11 +653,6 @@ impl SyncServer {
         AgentDispatcher::new(vault).forget_agent_run_fence(id);
         self.desktop_seats.run_settled(run, waits);
         self.browser_seats.run_settled(run, waits);
-        if let Some(run) = completed_run {
-            if let Err(error) = vault.seal_code_run_scratchpads(run) {
-                tracing::warn!(%error, run = %run.to_hex(), "a completed agent run's scratchpads did not seal");
-            }
-        }
         false
     }
 }
@@ -654,7 +668,7 @@ fn claim(
     let dispatcher = AgentDispatcher::new(vault);
     let claimed = match of {
         RunOf::Resident(agent) => dispatcher
-            .claim_resident_run(id, LEASE_OWNER, unix_now())?
+            .claim_resident_run(id, LEASE_OWNER, unix_seconds_now())?
             .map(|(status, resident)| {
                 let briefing = briefing(&dispatcher, &status);
                 let claimed = Claimed {
@@ -669,7 +683,7 @@ fn claim(
                 (claimed, briefing)
             }),
         RunOf::Agent(agent) => dispatcher
-            .claim_agent_run(id, LEASE_OWNER, unix_now())?
+            .claim_agent_run(id, LEASE_OWNER, unix_seconds_now())?
             .map(
                 |AgentRun {
                      status,
@@ -900,6 +914,24 @@ pub(super) fn reap_agent_run_leases(server: &SyncServer) {
     }
 }
 
+/// One handed-over spend reconcile pass (FIX 4889), on the housekeeping tick
+/// before the agent run reaper: each run this machine holds custody of and
+/// that ended elsewhere settles its scope here, and each settled run this
+/// machine ran last for another machine's custody gets its shares stamped
+/// again once they moved (REVIEW-7890)
+/// ([`Vault::reconcile_handed_over_spend`]).
+pub(super) fn reconcile_handed_over_spend(server: &SyncServer) {
+    match server.vault().reconcile_handed_over_spend() {
+        Ok(0) => {}
+        Ok(runs) => {
+            tracing::info!(runs, "spend custody reconcile settled or stamped runs");
+        }
+        Err(error) => {
+            tracing::warn!(kind = ?error.kind(), "spend custody reconcile failed");
+        }
+    }
+}
+
 /// Whether a run stopped on a model call no provider answered (FIX 3194):
 /// its own step's, which the run makes again once it resumes, or a host
 /// door's, after which it goes on from its next step. Either parks it.
@@ -980,10 +1012,4 @@ fn held(running: &Mutex<HashSet<AttemptId>>) -> MutexGuard<'_, HashSet<AttemptId
 
 fn text(error: impl std::fmt::Display) -> String {
     error.to_string()
-}
-
-fn unix_now() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |elapsed| elapsed.as_secs())
 }

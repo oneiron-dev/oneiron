@@ -1,10 +1,13 @@
 //! Browser workflow resolution and candidate counters read by the Coach.
 use crate::entity_id::EntityId;
-use serde::{Deserialize, Serialize};
+use oneiron_contracts::fingerprint::purposes;
 
 /// The domain a candidate program's input fingerprint is hashed in (CUA E8,
-/// CALLS row "candidate dedup"), for the Coach's seen marker.
-pub const CANDIDATE_DOMAIN: &[u8] = b"oneiron:browser-program-induction:v1";
+/// CALLS row "candidate dedup"), for the Coach's seen marker: the tag of
+/// `purposes::browser_library::PROGRAM_CANDIDATE`.
+pub const CANDIDATE_DOMAIN: &[u8] = purposes::browser_library::PROGRAM_CANDIDATE
+    .tag()
+    .as_bytes();
 
 /// A program whose library runs failed, live or retired (CUA E8a): its
 /// own record's lifetime count, never a successor's.
@@ -26,25 +29,7 @@ pub struct FailureLineage {
     pub successor: Option<EntityId>,
 }
 
-/// A candidate program the Coach proposed (CUA E8): its finding, its
-/// admission job once one is queued, and the generation it read.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ProgramSeen {
-    pub finding: EntityId,
-    pub job: Option<EntityId>,
-    pub generation: u64,
-}
-
-/// Where a program's ref leads now.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum WorkflowResolution {
-    /// The live program `id`: the one named, or its successor.
-    Active { id: EntityId },
-    /// The lineage ends at `id`, retired for `reason` with no successor.
-    Retired {
-        id: EntityId,
-        reason: Option<String>,
-    },
-    /// No program was ever filed under the ref.
-    Missing,
-}
+#[doc(hidden)]
+pub use oneiron_records::dreamer_runner::maintenance::browser_candidate::{
+    ProgramSeen, WorkflowResolution,
+};

@@ -91,6 +91,13 @@ pub(crate) struct DeviceSyncHost {
     task: JoinHandle<()>,
     /// The archive receiver, kept after membership loss (FIX 3396).
     removal: Option<removal_delivery::Receiver>,
+    /// Whether the link to the home opened; a host kept for its archive
+    /// receiver alone has none (L7-47).
+    linked: bool,
+    /// Whether the link dials the vault's other machines while its home is
+    /// down, read by the test door (L7-47).
+    #[cfg(oneiron_test_support)]
+    dials_peers: bool,
 }
 
 impl DeviceSyncHost {
@@ -200,6 +207,20 @@ impl DeviceSyncHost {
                 removal.map(Self::receiving)
             }
         }
+    }
+
+    /// Whether the link to the home opened, rather than only the archive
+    /// receiver running (L7-47).
+    #[cfg(feature = "mesh")]
+    pub(crate) fn linked(&self) -> bool {
+        self.linked
+    }
+
+    /// Whether the link dials the vault's other machines while its home is
+    /// down: exactly when it opened with a mesh listener here (L7-47).
+    #[cfg(all(oneiron_test_support, feature = "mesh"))]
+    pub(crate) fn dials_peers(&self) -> bool {
+        self.dials_peers
     }
 
     /// Stops the connection and waits for its loop, and any credential
@@ -315,6 +336,8 @@ async fn open(
             Arc::clone(&resolve),
         )) as Arc<dyn SyncPeerDialer>
     });
+    #[cfg(oneiron_test_support)]
+    let dials_peers = peer_dialer.is_some();
     let mesh_dialer = match transport.as_ref() {
         Some(transport) => Some(
             Arc::new(MeshSyncDialer::resolving(Arc::clone(transport), resolve))
@@ -332,6 +355,7 @@ async fn open(
         pin,
         machine,
         candidacy,
+        authority_caught_up: Arc::new(tokio::sync::Notify::new()),
     };
     let connection = link.connection(link.client_config(&credential)?)?;
     let renewal = renewal::Renewal::new(
@@ -339,6 +363,7 @@ async fn open(
         credential_file,
         Arc::clone(host.vault()),
         link.mesh_dialer.clone(),
+        Arc::clone(&link.authority_caught_up),
         moves,
     );
     let (stop, stop_rx) = oneshot::channel();
@@ -346,6 +371,10 @@ async fn open(
     let over = if transport.is_some() { "mesh" } else { "url" };
     let catalog = host.catalog(mesh.filter(|_| paired), &freeze);
     tracing::info!(machine = %machine.to_hex(), %home, over, "device sync started");
+    // From here the link's client persists each root it learns from its home
+    // to `d:root`, so the server merges that root before it exports its own
+    // (SERVE-DEVICE-PEER-STALE-ROOT): serve's link and the macOS app's alike.
+    host.server().mark_device_link_opened();
     let task = tokio::spawn(async move {
         // The observer is synchronous, so each status goes to the catalog
         // loop; the channel closes when the last connection's run ends.
@@ -364,6 +393,9 @@ async fn open(
         stop,
         task,
         removal: None,
+        linked: true,
+        #[cfg(oneiron_test_support)]
+        dials_peers,
     })
 }
 
@@ -388,6 +420,10 @@ struct Link {
     /// Served hosts re-declare their candidacy after authority catch-up.
     /// An app-only device never declares itself as a home candidate.
     candidacy: Option<Candidacy>,
+    /// Signalled on each authority catch-up that takes rows, so a renewal
+    /// that found this install not a machine of the vault yet is made again
+    /// (FIX DEVICE-RENEWAL-REFUSED-BEFORE-FIRST-SYNC).
+    authority_caught_up: Arc<tokio::sync::Notify>,
 }
 
 #[cfg(feature = "mesh")]
@@ -496,6 +532,7 @@ impl Link {
                         Arc::clone(self.windows.vault()),
                         self.candidacy,
                         self.freeze.admission(),
+                        Arc::clone(&self.authority_caught_up),
                     ),
                 );
                 tokio::pin!(observed);
@@ -586,7 +623,9 @@ enum RunEnd {
 /// the log. An authority catch-up that took rows declares this machine's
 /// MACRO home candidacy again off the async thread, so a freshly enrolled
 /// device counts at once, not at its next start: under an admission of its
-/// own from `admit`, and not while frozen.
+/// own from `admit`, and not while frozen. Such a catch-up also signals
+/// `authority_caught_up`, frozen or not, so a credential renewal that found
+/// this install not a machine of the vault yet is made again.
 #[cfg(feature = "mesh")]
 fn observer(
     home: String,
@@ -594,6 +633,7 @@ fn observer(
     vault: Arc<oneiron::Vault>,
     candidacy: Option<Candidacy>,
     admit: crate::server::HousekeepingAdmission,
+    authority_caught_up: Arc<tokio::sync::Notify>,
 ) -> impl FnMut(oneiron::sync::SyncEvent) + Send {
     use oneiron::sync::SyncEvent;
 
@@ -603,6 +643,7 @@ fn observer(
             let _ = statuses.send(status);
         }
         SyncEvent::AuthorityCaughtUp => {
+            authority_caught_up.notify_one();
             let Some(candidacy) = candidacy else {
                 return;
             };
@@ -677,9 +718,7 @@ fn declare_candidacy(
             candidacy.macro_ready,
         );
     }
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |elapsed| elapsed.as_secs());
+    let now = oneiron_base::unix_seconds_now();
     let own: Vec<_> = home_node.map(home_candidate).into_iter().collect();
     if let Err(error) = store.elect_home_node(&own, now) {
         tracing::warn!(

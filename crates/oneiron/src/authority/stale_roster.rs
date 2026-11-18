@@ -63,15 +63,16 @@ impl FirstSeenMap for BTreeMap<AuthorityEntryHash, u64> {
     }
 }
 
-/// Whether `op` revokes a device, rotates a key or re-roots the vault: the
-/// rows the window reads revocations from. Over rows with none of these it
-/// expires no approval and finds no deadline.
+/// Whether `op` revokes a device, rotates a key, re-roots the vault or
+/// appoints a successor root: the rows the window reads revocations from.
+/// Over rows with none of these it expires no approval and finds no deadline.
 pub(super) fn revokes_roster_key(op: &AuthorityOp) -> bool {
     matches!(
         op,
         AuthorityOp::RevokeDevice { .. }
             | AuthorityOp::RotateKey { .. }
             | AuthorityOp::ReRoot { .. }
+            | AuthorityOp::RootAppointment(_)
     )
 }
 
@@ -90,7 +91,10 @@ fn stale_roster_approval_deadlines<E: LogRow>(
         let Some(hash) = row.entry_hash() else {
             continue;
         };
-        if !fold.valid_entries.contains(&hash) {
+        // A device revocation the fold applied as a verified fact counts
+        // where its row did not stay valid (Sol review F1 on #8608).
+        if !fold.valid_entries.contains(&hash) && !fold.verified_device_revocations.contains(&hash)
+        {
             continue;
         }
         let Some(seen) = first_seen.get(&hash).copied() else {
@@ -99,7 +103,11 @@ fn stale_roster_approval_deadlines<E: LogRow>(
         let keys = match &entry.op {
             AuthorityOp::RevokeDevice { revoked_key } => vec![revoked_key.clone()],
             AuthorityOp::RotateKey { old_key, .. } => vec![old_key.clone()],
-            AuthorityOp::ReRoot { new_device } => fold
+            AuthorityOp::ReRoot { new_device }
+            | AuthorityOp::RootAppointment(RootAppointment {
+                successor: new_device,
+                ..
+            }) => fold
                 .roster
                 .keys()
                 .filter(|key| **key != new_device.key)

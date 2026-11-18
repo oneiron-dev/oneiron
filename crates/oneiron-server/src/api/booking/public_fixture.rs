@@ -99,26 +99,11 @@ impl Fixture {
             config,
         };
         fixture.configure_page(page, id(0x72));
-        fixture
-            .server
-            .vault
-            .put_entity(
-                &id(0x77),
-                oneiron::registry::ENTITY_TYPE_PERSON,
-                TimeRange { start: 1, end: 1 },
-                1,
-                b"fixture owner",
-            )
-            .expect("owner");
-        // The secret server bootstrapped a host genesis, so the facade's
-        // owner verbs need an explicit host-signed owner binding for the
-        // fixture owner. Without it every publication write fails closed
-        // with OWNER_BINDING_REQUIRED.
-        crate::test_credentials::bind_owner(
-            &fixture.server.vault,
-            "owner-fixture-secret",
-            id(0x77),
-        );
+        // The rooted server binds its embedded owner at genesis (H149), and the
+        // host-root credential acts as that owner, so the fixture publishes as
+        // it. A second owner binding would rebind the host key and leave the
+        // embedded owner unbound (OWNER_BINDING_REQUIRED, and rule amendments
+        // stored as proposals).
         fixture
     }
 
@@ -177,17 +162,21 @@ impl Fixture {
         let mut input = publication_input(page, published, from, until);
         input.value["event_config_hashes"]["intro"] =
             json!(oneiron::booking::booking_config_hash(&self.config).expect("hash"));
+        // The card states the deposit its configuration asks (BK-DEPOSITS).
+        if let Some(terms) = &self.config.deposit {
+            input.value["event_types"][0]["deposit"] = json!(terms);
+        }
         let receipt = self
             .server
             .vault
-            .memory(id(0x77), EdgeActorClass::Human)
+            .memory(self.owner_actor(), EdgeActorClass::Human)
             .claim_upsert(&input)
             .expect("normal owner publication write");
         if receipt.approval == "proposed" {
             return self
                 .server
                 .vault
-                .memory(id(0x77), EdgeActorClass::Human)
+                .memory(self.owner_actor(), EdgeActorClass::Human)
                 .confirm_booking_publication(&receipt.claim_short_id, now_secs().expect("clock"))
                 .expect("owner confirms staged publication revision")
                 .claim_id;
@@ -276,6 +265,7 @@ pub(super) fn fixture_config() -> EventTypeConfig {
         booking_window_secs: 7 * 86_400,
         daily_cap: None,
         weekly_cap: None,
+        deposit: None,
         routing: RoutingMode::Either,
         hosts: vec![HostAvailabilityConfig {
             host_ref: id(0x73),
@@ -290,6 +280,7 @@ pub(super) fn fixture_config() -> EventTypeConfig {
                 .collect(),
             preferred_hours: Vec::new(),
         }],
+        flex_with_ordinary: false,
         flex_windows: Vec::new(),
     }
 }
@@ -312,6 +303,7 @@ pub(super) fn publication_input(
         event_types: vec![EventTypeCard {
             key: EventTypeKey("intro".to_owned()),
             title: "Fixture event".to_owned(),
+            deposit: None,
             duration_min: 30,
             description: "Fixture description".to_owned(),
         }],
@@ -368,7 +360,9 @@ pub(super) fn hold(
         constraint: None,
         session_ref: session.to_owned(),
         checkout_lease_token: lease,
+        deposit_terms: None,
         idempotency_key: format!("hold-{session}"),
+        cap_override_reason: None,
     }))
 }
 

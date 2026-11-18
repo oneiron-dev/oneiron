@@ -21,13 +21,16 @@ use crate::error::{Error, Result};
 use crate::memory::{Memory, MemoryError, MemoryResult};
 use crate::ports::EntityStoreRead;
 use crate::registry::{ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};
+use crate::request_limits::{ZeroLimitRefused, page_limit_zero_refused};
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 use crate::{EntityId, Vault};
 use heed::RoTxn;
 use rmpv::Value;
 use std::collections::BTreeSet;
 
-const PAGE_LIMIT: usize = 256;
+/// The strips a reply-strip page holds when the ask names no limit, and its maximum while the
+/// owner has not moved `conversation_dag.reply_strips.max_page` (its default).
+pub(super) const PAGE_LIMIT: usize = 256;
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::conversation_dag::quote_strips::ReplyStripsRequest;
@@ -414,13 +417,16 @@ impl Memory<'_> {
             .as_deref()
             .map(EntityId::from_hex)
             .transpose()?;
+        let max = self
+            .vault()
+            .page_max_in_force(&super::setting_keys::REPLY_STRIPS_PAGE_MAX)?
+            .rows();
+        let limit = page_limit_zero_refused(request.limit, PAGE_LIMIT, max)
+            .map_err(|ZeroLimitRefused| {
+                MemoryError::bad_request_with("reply strip limit must be positive", &[])
+            })?
+            .rows;
         let requested = request.limit.unwrap_or(PAGE_LIMIT);
-        if requested == 0 {
-            return Err(MemoryError::bad_request_with(
-                "reply strip limit must be positive",
-                &[],
-            ));
-        }
         // A larger ask is served a page at a time through `next_after`; the
         // ask itself is counted against its row (rule 5).
         {
@@ -436,7 +442,6 @@ impl Memory<'_> {
             count.rows(requested);
             count.defer(store);
         }
-        let limit = requested.min(PAGE_LIMIT);
         if self.room_turn().is_some_and(|turn| turn.room != room) {
             return Err(MemoryError::bad_request_with(
                 "room differs from the bound room turn",

@@ -173,7 +173,13 @@ fn fanout_approve_policy_deny_resume_exact_digest_and_gate_receipts() {
         .iter()
         .find(|row| Some(&row.receipt_id) == denied.choice_receipt_ref.as_ref())
         .unwrap();
-    assert_eq!(deny_receipt.outcome, "kept_paused");
+    assert_eq!(deny_receipt.outcome, "rejected");
+    assert!(
+        deny_receipt
+            .policy_trace
+            .iter()
+            .any(|reason| reason == "gate.fanout.human_ruling.kept_paused")
+    );
     assert_eq!(
         deny_receipt.fields["diff_handle"],
         crate::entity_id::bytes_to_hex_lower(&paused.meter.plan_digest)
@@ -276,14 +282,9 @@ fn fanout_approve_policy_deny_resume_exact_digest_and_gate_receipts() {
 fn fanout_rulings_use_the_vault_id_source_and_replay_the_same_receipt() {
     let clock = crate::ports::ManualClock::new(100);
     let dir = tempfile::tempdir().expect("tempdir");
-    let vault = Vault::open(
-        dir.path(),
-        VaultConfig {
-            store_clock: clock.bundle(),
-            ..VaultConfig::default()
-        },
-    )
-    .expect("open vault");
+    let mut config = VaultConfig::default();
+    config.store_clock = clock.bundle();
+    let vault = Vault::open(dir.path(), config).expect("open vault");
     let actor = own_agent(&vault);
     let human = owner(&vault);
     let mut input = plan(&vault, 26);
@@ -329,12 +330,14 @@ fn fanout_rulings_use_the_vault_id_source_and_replay_the_same_receipt() {
         .filter(|row| row.content_kind == "consult_fanout")
         .collect::<Vec<_>>();
     assert_eq!(before_replay.len(), 2);
-    assert!(
-        before_replay
-            .iter()
-            .any(|row| row.decision_id.as_bytes() == *denied_id.as_bytes()
-                && row.outcome == "kept_paused")
-    );
+    assert!(before_replay.iter().any(|row| {
+        row.decision_id.as_bytes() == *denied_id.as_bytes()
+            && row.outcome == "rejected"
+            && row
+                .reason_codes
+                .iter()
+                .any(|reason| reason == "gate.fanout.human_ruling.kept_paused")
+    }));
     assert!(
         before_replay
             .iter()
@@ -858,10 +861,8 @@ impl DecisionProvider for InterleavingClassifier<'_> {
 fn a_fan_out_held_across_a_window_counts_in_the_window_it_lands_in() {
     let dir = tempfile::tempdir().expect("tempdir");
     let clock = crate::ports::ManualClock::new(599);
-    let config = VaultConfig {
-        store_clock: clock.bundle(),
-        ..VaultConfig::default()
-    };
+    let mut config = VaultConfig::default();
+    config.store_clock = clock.bundle();
     let vault = Vault::open(dir.path(), config).expect("open vault");
     let actor = own_agent(&vault);
     let facade = vault.memory(actor, EdgeActorClass::Agent);

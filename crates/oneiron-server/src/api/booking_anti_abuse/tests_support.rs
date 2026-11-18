@@ -111,6 +111,7 @@ pub(crate) mod tests {
                 booking_window_secs: 86_400,
                 daily_cap: None,
                 weekly_cap: None,
+                deposit: None,
                 routing: RoutingMode::Either,
                 hosts: vec![HostAvailabilityConfig {
                     host_ref: EntityId::from_bytes([0x63; 16]).expect("host fixture id"),
@@ -125,6 +126,7 @@ pub(crate) mod tests {
                     }],
                     preferred_hours: Vec::new(),
                 }],
+                flex_with_ordinary: false,
                 flex_windows: Vec::new(),
             },
         };

@@ -99,7 +99,18 @@ impl Home {
             .unwrap();
         edit.commit();
         let update = edit.export(ExportMode::updates(&base)).unwrap();
-        let frame = transport::encode_window_sync(key.as_str(), window_sub_tags::UPDATE, &update)
+        // Every window UPDATE travels in its pad envelope (KS-5, FIX 7107).
+        let envelope = transport::WindowPadEnvelope {
+            kind: transport::WindowPadKind::Update,
+            form: transport::WindowPadForm::PadFree,
+            queue_seq: None,
+            payload: update.clone(),
+            refs: Vec::new(),
+            sidecar: None,
+        }
+        .encode()
+        .unwrap();
+        let frame = transport::encode_window_sync(key.as_str(), window_sub_tags::UPDATE, &envelope)
             .into_result()
             .unwrap();
         Change { frame, id, update }
@@ -159,6 +170,10 @@ impl Heard {
             .flatten()
             .any(|frame| {
                 let (_, tag, payload) = transport::decode_window_sync(&frame[1..]).unwrap();
+                // A released window frame carries its update inside the pad
+                // envelope; a frame with no envelope is read as it is.
+                let payload = transport::window_pad_frame_payload(payload)
+                    .map_or(payload, |(_, inner, _)| inner);
                 tag == window_sub_tags::UPDATE
                     && (payload == change.update.as_slice() || carries(payload, change.id))
             })
@@ -488,7 +503,9 @@ fn selector_documents(
             oneiron::WriteActor::new(owner, oneiron::EdgeActorClass::Human),
         )
         .unwrap();
-    let ids = [b"placeholder one", b"placeholder two"].map(|body| {
+    // Canonical txt maps: each TURN's document is born lazily (FIX 11794).
+    let ids = ["placeholder one", "placeholder two"].map(|text| {
+        let body = rmp_serde::to_vec_named(&serde_json::json!({ "txt": text })).unwrap();
         let id = EntityId::now();
         vault
             .put_entity(
@@ -496,7 +513,7 @@ fn selector_documents(
                 registry::ENTITY_TYPE_TURN,
                 TimeRange { start: 1, end: 1 },
                 1,
-                body,
+                &body,
             )
             .unwrap();
         vault
@@ -561,8 +578,9 @@ fn selector_documents(
 
 /// Bug repro (Bugbot, #1483): a document REQUEST or UPDATE whose open waited past the
 /// live-document row to its deadline was answered as a persistence failure, so its socket closed
-/// as if sync state could not be stored. Done-means: each is answered the typed waited-out
-/// error, and the subscription stays.
+/// as if sync state could not be stored. Done-means: each is answered the nonterminal
+/// DOCUMENT / WAITED_OUT frame on its open socket (docs/ops/document-open-retries.md),
+/// naming its initiator, and the subscription stays.
 #[tokio::test]
 async fn a_document_wait_past_its_deadline_is_waited_out_not_a_persistence_failure() {
     use super::documents::handle_document;
@@ -583,14 +601,20 @@ async fn a_document_wait_past_its_deadline_is_waited_out_not_a_persistence_failu
     remote.get_text("body").insert(0, "placeholder").unwrap();
     remote.commit();
     let update = remote.export(ExportMode::all_updates()).unwrap();
-    let (direct, _replies) = tokio::sync::mpsc::unbounded_channel();
+    let (direct, mut replies) = tokio::sync::mpsc::unbounded_channel();
     for (kind, frame) in [
         (document_sub_tags::REQUEST, request),
         (document_sub_tags::UPDATE, update),
     ] {
-        let error = handle_document(&server, 1, subscribed, kind, &frame, &direct, &mut state)
-            .expect_err("the open did not wait past its deadline");
-        assert_eq!(error.kind(), "waited_out", "sub-tag {kind}: {error}");
+        handle_document(&server, 1, subscribed, kind, &frame, &direct, &mut state)
+            .unwrap_or_else(|error| panic!("sub-tag {kind}: the wait ended the socket: {error}"));
+        let reply = replies
+            .try_recv()
+            .unwrap_or_else(|_| panic!("sub-tag {kind}: the waited-out open was not answered"));
+        let reply = transport::decode_document(&reply[1..]).expect("a document frame");
+        assert_eq!(reply.entity, subscribed, "sub-tag {kind}");
+        assert_eq!(reply.kind, document_sub_tags::WAITED_OUT, "sub-tag {kind}");
+        assert_eq!(reply.payload, [kind], "sub-tag {kind}: names its initiator");
     }
     assert!(state.documents.contains_key(&subscribed));
 }

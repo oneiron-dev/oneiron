@@ -71,8 +71,11 @@ mod seat_quota;
 pub use seat_quota::{
     RunnerSeatQuota, runner_capture_seat_quota_id, runner_seat_quotas, seat_quota_id,
 };
+#[cfg(oneiron_test_support)]
+pub(crate) use seat_quota::{plant_spent_credit_for_test, topped_up_by_for_test};
 mod owner_doors;
 pub use owner_doors::{
+    RUNNER_SEAT_QUOTAS_VERB, RUNNER_SEAT_TOP_UP_VERB, RUNNER_WORK_RESUME_VERB,
     RunnerSeatCreditTopUpRequest, RunnerSeatQuotasRequest, RunnerSeatQuotasView,
     RunnerSeatTopUpEffect, RunnerSeatTopUpReceipt, RunnerWorkResumeChoice, RunnerWorkResumeRequest,
     RunnerWorkResumeView, SkippedRunnerSeatView,
@@ -97,6 +100,7 @@ mod record;
 mod repo_binding;
 mod seat_candidate;
 mod seat_secrets;
+pub(crate) mod setting_keys;
 mod staged_input;
 mod stream;
 mod validate;
@@ -122,7 +126,8 @@ pub use self::connector::{
     ProtocolAttachSpec, decode_byoa_attempt_payload, encode_byoa_attempt_payload,
 };
 pub use self::dispatcher::{
-    ByoEndpointBackendFactory, ByoaCliExecutor, ByoaDispatcher, ByoaExecutionFence, ByoaMcpExecutor,
+    ByoEndpointBackendFactory, ByoEndpointBinding, ByoaCliExecutor, ByoaDispatcher,
+    ByoaExecutionFence, ByoaMcpExecutor,
 };
 pub use self::error::{ByoaError, ByoaResult, SeatProviderTerm};
 pub use self::exhaust::{
@@ -148,8 +153,6 @@ pub use self::validate::validate_connector;
 pub(crate) const ERASED_TASK_FAILURE_REASON: &str = "byoa_task_erased";
 
 pub(crate) mod tables;
-// FIX [LIBTEST-QUARANTINE-DISPATCH-BYOA-TESTS]: the lib test target's type check fails here (37 errors: E0063 x15, E0308 x11, E0061 x8, E0609 x2, E0533 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;
 

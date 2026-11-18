@@ -1,0 +1,497 @@
+//! Anthropic Messages protocol mapping: request build, response parse, message/part/tool codecs, usage, status classification.
+
+use std::collections::BTreeMap;
+
+use oneiron::llm::{REASONING_BUDGET_PARAM, ReasoningEffort, limit};
+use oneiron::{
+    ContentPart, FatalLlmError, FinishReason, ImageContent, LlmError, LlmInputUsage, LlmMessage,
+    LlmMessageRole, LlmOutputUsage, LlmRequest, LlmResponse, LlmResult, LlmToolSpec, LlmUsage,
+    ResponseFormat, RetryableLlmError, provider_finish_reason,
+};
+use serde_json::{Map as JsonMap, Value as JsonValue, json};
+
+use super::backend::validate_capabilities;
+use super::{AnthropicMessagesConfig, AnthropicMessagesHttpRequest, AnthropicProviderOptions};
+
+mod cache;
+
+pub fn build_anthropic_messages_request(
+    config: &AnthropicMessagesConfig,
+    request: &LlmRequest,
+    stream: bool,
+) -> LlmResult<AnthropicMessagesHttpRequest> {
+    // The model id and the catalog row pick the model and the route; a param
+    // or provider option never does.
+    if request.route_selector_override().is_some() {
+        return Err(FatalLlmError::InvalidRequest.into());
+    }
+    let catalog = config.catalog_entry(&request.model)?;
+    let mut provider_options = AnthropicProviderOptions::from_request(request)?;
+    if request.envelope.seat_effort.is_some() {
+        // Old thinking controls cannot silently override the seat's effort.
+        provider_options.thinking = None;
+    }
+    validate_capabilities(catalog, request, &provider_options, stream)?;
+
+    let mut body = JsonMap::new();
+    for (key, value) in &request.params {
+        body.insert(key.clone(), value.clone());
+    }
+    for (key, value) in provider_options.to_wire_fields() {
+        body.insert(key, value);
+    }
+    if let Some(effort) = request.envelope.seat_effort {
+        let mut output_config = match body.remove("output_config") {
+            Some(JsonValue::Object(config)) => config,
+            Some(_) => return Err(FatalLlmError::InvalidRequest.into()),
+            None => JsonMap::new(),
+        };
+        output_config.remove("effort");
+        // A thinking budget param is an own server's field; this wire has
+        // no per-request equivalent beside the effort.
+        for key in [
+            "reasoning_effort",
+            "reasoning",
+            "thinking",
+            REASONING_BUDGET_PARAM,
+        ] {
+            body.remove(key);
+        }
+        if effort != ReasoningEffort::None {
+            let level = match effort {
+                ReasoningEffort::Low => "low",
+                ReasoningEffort::Medium => "medium",
+                ReasoningEffort::High => "high",
+                ReasoningEffort::XHigh => "max",
+                ReasoningEffort::None => unreachable!(),
+            };
+            output_config.insert("effort".into(), json!(level));
+        }
+        if !output_config.is_empty() {
+            body.insert("output_config".into(), JsonValue::Object(output_config));
+        }
+    }
+    // Anthropic's /v1/messages defines no response_format parameter; strip any
+    // caller-supplied copy so the OpenAI-shaped key never reaches the wire.
+    body.remove("response_format");
+    // A catalog row may carry the provider's own spelling of the model, which
+    // need not fit the engine's `provider/name@revision` grammar.
+    body.insert(
+        "model".to_owned(),
+        JsonValue::String(
+            catalog
+                .metadata
+                .get("wire_model")
+                .and_then(JsonValue::as_str)
+                .unwrap_or_else(|| request.model.name())
+                .to_owned(),
+        ),
+    );
+    body.insert("stream".to_owned(), JsonValue::Bool(stream));
+    body.insert(
+        "messages".to_owned(),
+        JsonValue::Array(
+            request
+                .messages
+                .iter()
+                .filter(|message| message.role != LlmMessageRole::System)
+                .map(anthropic_message)
+                .collect::<Vec<_>>(),
+        ),
+    );
+
+    let system = request
+        .messages
+        .iter()
+        .filter(|message| message.role == LlmMessageRole::System)
+        .flat_map(|message| message.content.iter())
+        .filter_map(text_content)
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    if !system.is_empty() {
+        body.insert("system".to_owned(), JsonValue::String(system));
+    }
+
+    if !request.tools.is_empty() {
+        body.insert(
+            "tools".to_owned(),
+            JsonValue::Array(request.tools.iter().map(anthropic_tool).collect()),
+        );
+    }
+    if let ResponseFormat::Json { schema } = &request.envelope.response_format {
+        // The Anthropic Messages API expresses structured output as
+        // `output_config.format`, not OpenAI's top-level `response_format`.
+        // Merge into any caller-supplied output_config (e.g. effort) instead
+        // of clobbering it; a non-object output_config is a caller error.
+        let format = json!({ "type": "json_schema", "schema": schema });
+        match body.get_mut("output_config") {
+            Some(JsonValue::Object(output_config)) => {
+                output_config.insert("format".to_owned(), format);
+            }
+            Some(_) => return Err(FatalLlmError::InvalidRequest.into()),
+            None => {
+                body.insert("output_config".to_owned(), json!({ "format": format }));
+            }
+        }
+    }
+    // FIX 4465 C: the host's prompt-cache boundaries, when it names any, at
+    // the tier the request's own options ask for (FIX 6029).
+    cache::mark(request, &mut body, provider_options.cache_tier())?;
+
+    Ok(AnthropicMessagesHttpRequest {
+        method: "POST",
+        path: config.endpoint_path.clone(),
+        headers: BTreeMap::from([
+            ("content-type".to_owned(), "application/json".to_owned()),
+            (
+                "anthropic-version".to_owned(),
+                config.anthropic_version.clone(),
+            ),
+        ]),
+        body: JsonValue::Object(body),
+    })
+}
+
+pub fn parse_anthropic_messages_response(body: &JsonValue) -> LlmResult<LlmResponse> {
+    // `Stop` is a claim the provider makes about the reply. A body that names
+    // no stop reason made none, so it must not read as a finished answer.
+    let stop_reason = body
+        .get("stop_reason")
+        .and_then(JsonValue::as_str)
+        .map_or_else(unreported_finish_reason, anthropic_finish_reason);
+    let content_blocks = body
+        .get("content")
+        .and_then(JsonValue::as_array)
+        .ok_or(FatalLlmError::EmptyResponse)?;
+    let mut content = Vec::new();
+
+    for block in content_blocks {
+        match block.get("type").and_then(JsonValue::as_str) {
+            Some("text") => {
+                if let Some(text) = block.get("text").and_then(JsonValue::as_str)
+                    && !text.is_empty()
+                {
+                    content.push(ContentPart::Text {
+                        text: text.to_owned(),
+                        signature: None,
+                    });
+                }
+            }
+            Some("thinking") => {
+                let text = block
+                    .get("thinking")
+                    .or_else(|| block.get("text"))
+                    .and_then(JsonValue::as_str)
+                    .unwrap_or_default();
+                let signature = block
+                    .get("signature")
+                    .and_then(JsonValue::as_str)
+                    .map(str::to_owned);
+                if !text.is_empty() || signature.is_some() {
+                    content.push(ContentPart::Reasoning {
+                        text: text.to_owned(),
+                        signature,
+                        reasoning_kind: oneiron::ReasoningPartKind::Full,
+                        data: None,
+                    });
+                }
+            }
+            Some("tool_use") => {
+                let call_id = block
+                    .get("id")
+                    .and_then(JsonValue::as_str)
+                    .ok_or(FatalLlmError::InvalidRequest)?;
+                let name = block
+                    .get("name")
+                    .and_then(JsonValue::as_str)
+                    .ok_or(FatalLlmError::InvalidRequest)?;
+                content.push(ContentPart::ToolCall {
+                    call_id: call_id.to_owned(),
+                    name: name.to_owned(),
+                    input: block.get("input").cloned().unwrap_or(JsonValue::Null),
+                    signature: None,
+                });
+            }
+            Some("redacted_thinking") => {
+                let data = block
+                    .get("data")
+                    .and_then(JsonValue::as_str)
+                    .ok_or(FatalLlmError::InvalidRequest)?;
+                content.push(ContentPart::Reasoning {
+                    text: String::new(),
+                    signature: None,
+                    reasoning_kind: oneiron::ReasoningPartKind::Encrypted,
+                    data: Some(data.to_owned()),
+                });
+            }
+            // Every other block kind is tool traffic this decoder cannot read,
+            // so the decode fails, as the streamed decoder's does.
+            _ => return Err(FatalLlmError::InvalidRequest.into()),
+        }
+    }
+
+    if content.is_empty() {
+        return Err(if matches!(stop_reason, FinishReason::ContentFiltered) {
+            FatalLlmError::ContentFiltered.into()
+        } else {
+            FatalLlmError::EmptyResponse.into()
+        });
+    }
+
+    Ok(LlmResponse {
+        message: LlmMessage {
+            role: LlmMessageRole::Assistant,
+            content,
+        },
+        usage: body
+            .get("usage")
+            .map_or_else(LlmUsage::zero, parse_anthropic_usage),
+        finish_reason: stop_reason,
+        // A provider's reply asserts no record: its host alone does (FIX 3416).
+        reply_assertions: Default::default(),
+        token_scores: None,
+    })
+}
+
+/// A part's system text: ordinary text and a reasoning part's own words. A
+/// summary or a count describes the reasoning instead of speaking it, so it
+/// never joins the system string.
+fn text_content(part: &ContentPart) -> Option<String> {
+    match part {
+        ContentPart::Text { text, .. } => Some(text.clone()),
+        ContentPart::Reasoning {
+            text,
+            reasoning_kind,
+            ..
+        } if !matches!(
+            reasoning_kind,
+            oneiron::ReasoningPartKind::Summary | oneiron::ReasoningPartKind::Count
+        ) =>
+        {
+            Some(text.clone())
+        }
+        _ => None,
+    }
+}
+
+fn anthropic_message(message: &LlmMessage) -> JsonValue {
+    json!({
+        "role": anthropic_role(message.role),
+        "content": message
+            .content
+            .iter()
+            .filter_map(anthropic_content_part)
+            .collect::<Vec<_>>(),
+    })
+}
+
+fn anthropic_role(role: LlmMessageRole) -> &'static str {
+    match role {
+        LlmMessageRole::System => "user",
+        LlmMessageRole::User | LlmMessageRole::Tool => "user",
+        LlmMessageRole::Assistant => "assistant",
+    }
+}
+
+fn anthropic_content_part(part: &ContentPart) -> Option<JsonValue> {
+    match part {
+        ContentPart::Text { text, .. } => Some(json!({ "type": "text", "text": text })),
+        ContentPart::Reasoning {
+            text,
+            signature,
+            reasoning_kind: oneiron::ReasoningPartKind::Full,
+            ..
+        } => {
+            let mut object = JsonMap::new();
+            object.insert("type".to_owned(), JsonValue::String("thinking".to_owned()));
+            object.insert("thinking".to_owned(), JsonValue::String(text.clone()));
+            if let Some(signature) = signature {
+                object.insert("signature".to_owned(), JsonValue::String(signature.clone()));
+            }
+            Some(JsonValue::Object(object))
+        }
+        ContentPart::Reasoning {
+            reasoning_kind: oneiron::ReasoningPartKind::Encrypted,
+            data,
+            ..
+        } => data
+            .as_ref()
+            .map(|data| json!({ "type": "redacted_thinking", "data": data })),
+        ContentPart::Reasoning {
+            reasoning_kind: oneiron::ReasoningPartKind::Summary | oneiron::ReasoningPartKind::Count,
+            ..
+        } => None,
+        ContentPart::ToolCall {
+            call_id,
+            name,
+            input,
+            ..
+        } => Some(json!({
+            "type": "tool_use",
+            "id": call_id,
+            "name": name,
+            "input": input,
+        })),
+        ContentPart::ToolResult {
+            call_id,
+            output,
+            is_error,
+        } => Some(json!({
+            "type": "tool_result",
+            "tool_use_id": call_id,
+            "content": output.to_string(),
+            "is_error": is_error,
+        })),
+        ContentPart::Image { media_type, image } => Some(anthropic_image_part(media_type, image)),
+        // `validate_capabilities` refuses audio before any part is built.
+        ContentPart::Audio { .. } => Some(JsonValue::Null),
+    }
+}
+
+fn anthropic_image_part(media_type: &str, image: &ImageContent) -> JsonValue {
+    match image {
+        ImageContent::Base64 { data } => json!({
+            "type": "image",
+            "source": {
+                "type": "base64",
+                "media_type": media_type,
+                "data": data,
+            },
+        }),
+        ImageContent::Url { url } => json!({
+            "type": "image",
+            "source": {
+                "type": "url",
+                "url": url,
+            },
+        }),
+    }
+}
+
+fn anthropic_tool(tool: &LlmToolSpec) -> JsonValue {
+    json!({
+        "name": &tool.name,
+        "description": &tool.description,
+        "input_schema": &tool.input_schema,
+    })
+}
+
+/// The usage an Anthropic Messages `usage` object reports: input with its
+/// cache reads and writes counted in, and output. A relayed reply's own
+/// body is read through it too (FIX 15702).
+#[must_use]
+pub fn parse_anthropic_usage(usage: &JsonValue) -> LlmUsage {
+    let input_tokens = u64_field(usage, "input_tokens");
+    let cache_read = u64_field(usage, "cache_read_input_tokens");
+    let cache_write = u64_field(usage, "cache_creation_input_tokens");
+    let output_tokens = u64_field(usage, "output_tokens");
+    let mut measured = LlmUsage {
+        input: LlmInputUsage {
+            // The common input total includes cached tokens; the wire
+            // reports uncached input separately.
+            total: input_tokens
+                .saturating_add(cache_read)
+                .saturating_add(cache_write),
+            cache_read,
+            cache_write,
+        },
+        output: LlmOutputUsage {
+            total: output_tokens,
+            text: output_tokens,
+            reasoning: 0,
+        },
+        raw_provider: usage.clone(),
+        call_metadata: None,
+    };
+    let measured_input = usage
+        .get("input_tokens")
+        .and_then(JsonValue::as_u64)
+        .zip(
+            usage
+                .get("cache_read_input_tokens")
+                .and_then(JsonValue::as_u64),
+        )
+        .zip(
+            usage
+                .get("cache_creation_input_tokens")
+                .and_then(JsonValue::as_u64),
+        )
+        .and_then(|((input, read), write)| input.checked_add(read)?.checked_add(write));
+    measured.set_provider_token_measurement(oneiron::llm::ProviderTokenMeasurement {
+        input: measured_input,
+        output: usage.get("output_tokens").and_then(JsonValue::as_u64),
+    });
+    measured
+}
+
+/// The finish of a reply whose provider reported none.
+pub(super) fn unreported_finish_reason() -> FinishReason {
+    FinishReason::Other {
+        name: "unreported".to_owned(),
+    }
+}
+
+pub(super) fn anthropic_finish_reason(reason: &str) -> FinishReason {
+    match reason {
+        "end_turn" | "stop_sequence" => FinishReason::Stop,
+        "max_tokens" => FinishReason::Length,
+        "tool_use" => FinishReason::ToolCalls,
+        "refusal" | "content_filter" => FinishReason::ContentFiltered,
+        other => provider_finish_reason(other),
+    }
+}
+
+pub fn classify_anthropic_status(
+    status: u16,
+    headers: &BTreeMap<String, String>,
+    body: &JsonValue,
+) -> LlmError {
+    if is_content_filter_error(body) || status == 451 {
+        return FatalLlmError::ContentFiltered.into();
+    }
+    if limit::is_limit_status(status, body) {
+        return limit::limit_refusal(status, headers, body).into();
+    }
+    // A request error's status is the answer, whatever type its body names.
+    if matches!(status, 400 | 404 | 413 | 422) {
+        return FatalLlmError::InvalidRequest.into();
+    }
+
+    if let Some(error_type) = body
+        .get("error")
+        .and_then(|error| error.get("type"))
+        .and_then(JsonValue::as_str)
+    {
+        match error_type {
+            "rate_limit_error" => return limit::limit_refusal(status, headers, body).into(),
+            "overloaded_error" | "api_error" => return RetryableLlmError::ServerError.into(),
+            "authentication_error" | "permission_error" => return FatalLlmError::Auth.into(),
+            "invalid_request_error" | "not_found_error" => {
+                return FatalLlmError::InvalidRequest.into();
+            }
+            _ => {}
+        }
+    }
+
+    match status {
+        408 | 504 => RetryableLlmError::Timeout.into(),
+        500..=599 => RetryableLlmError::ServerError.into(),
+        401 | 403 => FatalLlmError::Auth.into(),
+        400 | 404 | 413 | 422 => FatalLlmError::InvalidRequest.into(),
+        _ if status >= 500 => RetryableLlmError::ServerError.into(),
+        _ => FatalLlmError::InvalidRequest.into(),
+    }
+}
+
+fn is_content_filter_error(body: &JsonValue) -> bool {
+    body.get("error").is_some_and(|error| {
+        error
+            .get("type")
+            .and_then(JsonValue::as_str)
+            .is_some_and(|kind| kind == "content_filter_error" || kind == "content_filtered")
+    })
+}
+
+fn u64_field(value: &JsonValue, key: &str) -> u64 {
+    value.get(key).and_then(JsonValue::as_u64).unwrap_or(0)
+}

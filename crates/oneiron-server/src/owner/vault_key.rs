@@ -9,8 +9,9 @@ use std::path::Path;
 use base64::Engine as _;
 use oneiron::recovery::checkpoint::{ArtifactKind, ArtifactUnlocks, CheckpointSigner};
 use oneiron::world_keys::{
-    EscrowRetirement, HybridSecretKey, RecoveryPreset, RecoveryPresetChange, RecoverySheet,
-    ResealedEscrowCapsule, VaultKeyStatus, VaultKeyWrapInfo, VaultKeyWrapKind,
+    DATA_KEY_GENERATION_PAGE_SEAL_NOTICE, DataKeyGenerationOutcome, EscrowRetirement,
+    HybridSecretKey, RecoveryPreset, RecoveryPresetChange, RecoverySheet, ResealedEscrowCapsule,
+    VaultKeyStatus, VaultKeyWrapInfo, VaultKeyWrapKind,
 };
 use oneiron_vault_contract::escrow::{
     ESCROW_REPORT_SCHEMA_VERSION, ESCROW_REPORT_TYPE, EscrowCapsuleReport,
@@ -143,6 +144,73 @@ pub(crate) fn report(vault: &oneiron::Vault) -> oneiron::Result<VaultKeyReport> 
             .map(RetiredEscrowView::from)
             .collect(),
     })
+}
+
+/// What a new data-key generation would remove, named before the act
+/// (DATAKEY-GEN-WAYS = A): every wrap of the current key that no kept way
+/// covers, this install's device wrap aside. The act removes each only when
+/// its id is in `confirmed_removals`.
+#[derive(Clone, Debug, Serialize, schemars::JsonSchema)]
+pub(crate) struct DataKeyGenerationPreviewView {
+    pub(crate) removes: Vec<WrapView>,
+}
+
+impl DataKeyGenerationPreviewView {
+    pub(crate) fn of(vault_id: &[u8; 32], removes: Vec<VaultKeyWrapInfo>) -> Self {
+        Self {
+            removes: removes
+                .into_iter()
+                .map(|info| WrapView::of(vault_id, info))
+                .collect(),
+        }
+    }
+}
+
+/// What a new data-key generation did, as the owner reads it.
+#[derive(Clone, Debug, Serialize, schemars::JsonSchema)]
+pub(crate) struct DataKeyGenerationView {
+    /// The new generation number.
+    pub(crate) generation: u32,
+    /// The commitment naming the new key, 64 hex.
+    pub(crate) commitment: String,
+    /// The wraps of the replaced key the act removed.
+    pub(crate) removed: Vec<WrapView>,
+    /// The wraps the act sealed of the new key.
+    pub(crate) rewrapped: Vec<WrapView>,
+    /// The page-seal mirror rewrite pends: the act stands, and the vault's
+    /// next sealed open repairs the mirror.
+    pub(crate) mirror_pending: bool,
+    /// The vault's pages are sealed and keep their earlier key until a
+    /// re-key (DATAKEY-GEN-PAGE-SEAL = A).
+    pub(crate) pages_keep_earlier_key: bool,
+    /// What the owner is told when the pages keep their earlier key; absent
+    /// otherwise.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) notice: Option<String>,
+}
+
+impl DataKeyGenerationView {
+    pub(crate) fn of(vault_id: &[u8; 32], outcome: DataKeyGenerationOutcome) -> Self {
+        Self {
+            generation: outcome.generation,
+            commitment: hex(&outcome.commitment),
+            removed: outcome
+                .removed
+                .into_iter()
+                .map(|info| WrapView::of(vault_id, info))
+                .collect(),
+            rewrapped: outcome
+                .rewrapped
+                .into_iter()
+                .map(|info| WrapView::of(vault_id, info))
+                .collect(),
+            mirror_pending: outcome.mirror_pending,
+            pages_keep_earlier_key: outcome.pages_keep_earlier_key,
+            notice: outcome
+                .pages_keep_earlier_key
+                .then(|| DATA_KEY_GENERATION_PAGE_SEAL_NOTICE.to_owned()),
+        }
+    }
 }
 
 /// The owner's recovery preset, as `GET /v1/owner/vault-key/recovery-preset`
@@ -550,17 +618,11 @@ fn secret_b64_into(raw: &[u8], out: &mut [u8; 32]) -> bool {
 }
 
 pub(crate) fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+    oneiron_hex::encode(bytes)
 }
 
 fn unhex(text: &str) -> Option<Vec<u8>> {
-    if text.len() % 2 != 0 || !text.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-        return None;
-    }
-    (0..text.len())
-        .step_by(2)
-        .map(|at| u8::from_str_radix(text.get(at..at + 2)?, 16).ok())
-        .collect()
+    oneiron_hex::decode_vec_any_case(text)
 }
 
 pub(crate) fn b64(bytes: &[u8]) -> String {

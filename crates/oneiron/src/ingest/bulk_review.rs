@@ -2,9 +2,10 @@
 
 use std::collections::HashSet;
 
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
 use serde_json::Value;
 
-use super::admission::{imported_candidate, json_to_msgpack_value};
+use super::admission::imported_candidate;
 use super::{INGEST_SOURCE_REGISTRY, ImportedEvidenceAdmission, ImportedEvidenceEntityResolution};
 use crate::claim::ClaimApprovalStatus;
 use crate::consent::{
@@ -13,6 +14,7 @@ use crate::consent::{
 };
 use crate::edge::EdgeActorClass;
 use crate::error::{Error, Result};
+use crate::serialize::json_to_msgpack_value;
 use crate::write_envelope::WriteActor;
 use crate::{EntityId, TimeRange, Vault};
 
@@ -56,7 +58,7 @@ impl Vault {
         batch: &ImportedClaimBatch,
     ) -> Result<ComposedEffect> {
         validate_batch(batch)?;
-        let hash = content_hash(batch)?.to_hex();
+        let hash = oneiron_hex::encode(&content_hash(batch)?);
         let bound = GrantBound::action(
             ActorBound::new(owner.revalidate(self)?.to_hex())?,
             ActionClass::new("claims.import.review")?,
@@ -169,6 +171,13 @@ impl Vault {
             {
                 return Err(Error::InvalidClaimBody("import claim id is not fresh"));
             }
+            // The owner's `commitment.content.max_text_bytes` binds an imported promise.
+            crate::commitment::setting_keys::check_claim_commitment_text_in_txn(
+                self,
+                txn,
+                &entry.predicate,
+                &json_to_msgpack_value(&entry.value),
+            )?;
         }
         // Proposed is the ordinary Gate admission path. With owner consent,
         // resolve these same candidates against the attached Gate bindings
@@ -240,8 +249,10 @@ impl Vault {
     }
 }
 
-/// The batch's claims, hashed: every member, subject, value and time.
-fn content_hash(batch: &ImportedClaimBatch) -> Result<blake3::Hash> {
+/// The batch's claims, hashed: every member, subject, value and time. The owner's approval
+/// and the batch's decision slot bind it, and both are stored and compared, so it keeps its
+/// bytes (K, PLAN-UC-04 stage 6.2).
+fn content_hash(batch: &ImportedClaimBatch) -> Result<[u8; 32]> {
     let content = serde_json::to_vec(
         &batch
             .entries
@@ -261,7 +272,15 @@ fn content_hash(batch: &ImportedClaimBatch) -> Result<blake3::Hash> {
             .collect::<Vec<_>>(),
     )
     .map_err(|_| Error::InvalidClaimBody("import batch encoding failed"))?;
-    Ok(blake3::hash(&content))
+    Ok(LegacyDigest::new(purposes::ingest::CLAIM_IMPORT_CONTENT)
+        .raw(&content)
+        .finish())
+}
+
+/// The batch's content hash.
+#[cfg(oneiron_test_support)]
+pub(crate) fn claim_import_content_hash_for_test(batch: &ImportedClaimBatch) -> Result<[u8; 32]> {
+    content_hash(batch)
 }
 
 /// The batch's one decision slot: the exact batch, whichever owner decides.
@@ -271,7 +290,7 @@ fn decision_slot(batch: &ImportedClaimBatch) -> Result<[u8; 32]> {
         batch.request_id.to_hex(),
         &batch.source_id,
         batch.entries.len(),
-        content_hash(batch)?.to_hex().as_str(),
+        oneiron_hex::encode(&content_hash(batch)?),
     ))
     .map_err(|_| Error::InvalidClaimBody("import batch encoding failed"))?;
     let mut hasher = blake3::Hasher::new_derive_key("oneiron claims.import.review decision v1");

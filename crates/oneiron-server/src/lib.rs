@@ -31,6 +31,7 @@ pub mod ai_host;
 mod api;
 mod auth;
 mod big_rung;
+mod booking_deposit;
 mod broadcast;
 mod builtin_host;
 mod byte_line;
@@ -64,6 +65,7 @@ mod feedback_redaction;
 mod files_intake;
 mod handler;
 mod home_candidacy;
+mod hook_decisions;
 #[cfg(feature = "code-sandbox-wasmtime")]
 mod hook_verdict;
 mod http_listener;
@@ -81,6 +83,7 @@ pub mod logging;
 #[cfg(target_os = "macos")]
 mod mac_worker_bootstrap;
 mod machine;
+pub mod machine_capacity;
 mod mail_host;
 pub mod managed;
 mod managed_owner_check;
@@ -91,11 +94,13 @@ mod oauth_relay;
 mod oneironer;
 mod owner;
 mod pipe_proof;
+pub mod process_readiness;
 pub mod projection;
 mod protocol;
 pub mod replay_judge;
 mod residence_machines;
 pub mod runtime;
+mod sandbox_vendor;
 mod saved_query_sweep;
 pub mod server;
 mod shared_envs;
@@ -180,12 +185,9 @@ pub fn build_app_for_position(
     position: web_client::DeploymentPosition,
 ) -> Router {
     // This server's Responses state (FIX 9516): its vault keeps its stored
-    // chains, and its owner's `store` switch (OF-602) is read now;
+    // chains, and each turn reads its owner's `store` switch (OF-602) there;
     // unreadable leaves it off.
-    server.ai.models().responses_context().bind(
-        server.vault(),
-        server.vault().responses_store().unwrap_or(false),
-    );
+    server.ai.models().responses_context().bind(server.vault());
     let mode = if server.managed_issuer.is_some() {
         oneiron::HostingPrivacyPosture::Hosted
     } else {
@@ -197,6 +199,27 @@ pub fn build_app_for_position(
         .merge(web_client::routes(web_client::EndpointDescriptor::engine(
             position, mode,
         )))
+        // A process whose watchdog sheds intake takes no new work while its
+        // event loop is hung or recovering (L8-11); ahead of auth, as it reads
+        // no vault.
+        .layer(axum::middleware::from_fn_with_state(
+            Arc::clone(server.process_readiness()),
+            process_readiness::refuse_new_work_while_not_ready,
+        ))
+        // Outermost, so a hatch server's off-device caller reaches no route.
+        .layer(axum::middleware::from_fn_with_state(
+            server,
+            auth::refuse_off_device_hatch_callers,
+        ))
+}
+
+/// The `/ws` route alone, for a listener that serves sync and nothing else
+/// (the macOS app's mesh listener, L7-47); every slip, machine proof and
+/// grant check of `ws_routes` runs unchanged.
+#[cfg(feature = "mesh")]
+pub(crate) fn build_sync_router(server: Arc<SyncServer>) -> Router {
+    Router::new()
+        .merge(handler::ws_routes(server.clone()))
         // Outermost, so a hatch server's off-device caller reaches no route.
         .layer(axum::middleware::from_fn_with_state(
             server,

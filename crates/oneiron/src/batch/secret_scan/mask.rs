@@ -34,6 +34,8 @@ mod batch_door;
 mod body;
 pub(super) mod carrier;
 mod changed_scan;
+// The claim value a checker reads before the door masks it.
+pub(super) mod claim_value_plan;
 // An escaped key's span (FIX 1369).
 use oneiron_store::batch::secret_scan::mask::escaped_span;
 mod file_plane;
@@ -59,6 +61,7 @@ use heed::RwTxn;
 use rmpv::Value;
 use zeroize::{Zeroize, Zeroizing};
 
+use super::FieldRule;
 use super::container::{self, Stop, holds_spans, is_sealed, masked_copy, walk_members};
 use super::scan_batch_ops;
 use super::shapes::{self, Door, HANDLE_OPEN};
@@ -86,7 +89,8 @@ use crate::write_envelope::ClaimCandidate;
 pub(in crate::batch) use batch_door::mask_batch_ops;
 pub(crate) use promoted_message_parts::seal_promoted_message_ops_in_txn;
 use split_phrase::Spread;
-use text_spans::{file_spans, merged, occurrences, secret_spans};
+pub(crate) use text_spans::{file_spans, span_placed_for};
+use text_spans::{merged, occurrences, secret_spans};
 use wipe::{PlanOps, PlanValues, replace_wiped};
 
 const REASON_BLOCKLIST: &str = "gate.secret_scan.blocklist";
@@ -173,6 +177,42 @@ pub(crate) fn rebind_mask_origin_in_txn(
     }
     origin.record = *new;
     MASK_ORIGIN.put(store, wtxn, custody, &origin)
+}
+
+/// The place a mask on write names for a key it lifted out of a stored
+/// file's bytes: the file keeps its bytes, and only its mark names the
+/// record.
+pub(crate) const FILE_PLACE: &str = "file";
+
+/// Each custody record a mask on write minted for a key it lifted out of a
+/// stored file, read in `txn`: the records whose only marks are the
+/// files' own (FILE-CUSTODY-MERGE-AFTER-REWRAP).
+pub(crate) fn file_mints_in_txn(store: &Store, txn: &heed::RoTxn<'_>) -> Result<Vec<EntityId>> {
+    Ok(MASK_ORIGIN
+        .scan(store, txn)?
+        .into_iter()
+        .filter(|(_, origin)| origin.place == FILE_PLACE)
+        .map(|(custody, _)| custody)
+        .collect())
+}
+
+/// Moves the mask origin of the custody record `from` to the record `to`
+/// (FILE-CUSTODY-MERGE-AFTER-REWRAP): `to` takes it unless it holds one of
+/// its own, and `from` keeps none.
+pub(crate) fn move_mask_origin_in_txn(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    from: &EntityId,
+    to: &EntityId,
+) -> Result<()> {
+    let Some(origin) = MASK_ORIGIN.get(store, wtxn, from)? else {
+        return Ok(());
+    };
+    if MASK_ORIGIN.get(store, wtxn, to)?.is_none() {
+        MASK_ORIGIN.put(store, wtxn, to, &origin)?;
+    }
+    MASK_ORIGIN.delete(store, wtxn, from)?;
+    Ok(())
 }
 
 /// Keeps an immutable part whole in existing custody. Only its handle leaves
@@ -483,6 +523,8 @@ struct Masker {
     /// The door's scan read each text this pass reads now by the same text
     /// rules and found no shape: none is sought again (speed).
     shapes_read: bool,
+    /// Which values under a credential name the field rule lifts whole.
+    field_rule: FieldRule,
     /// The batch door's plan: a recovery phrase split over a file's parts
     /// is marked word by word, one record for its words (LABEL-04). A
     /// carrier's text is placed as before, such a phrase left unplaced: a
@@ -508,10 +550,12 @@ struct Masker {
     traced: Option<text::TextReplacements>,
     /// The spans of each text a plan read, for its minted pass (speed).
     text_log: text_log::TextLog,
-    /// Each MACHINE claim candidate the minted pass rewrote, with its
-    /// pre-mask body, in op order: the candidate apply renews its proof
-    /// over what is stored (FIX 11356). A plan pass never fills it.
-    masked_claims: Vec<(EntityId, ClaimCandidate)>,
+    /// Each claim candidate op the minted pass read, in op order, with its
+    /// pre-mask body when the pass rewrote it: the candidate apply renews a
+    /// MACHINE proof over what is stored (FIX 11356), and reads a preflight
+    /// receipt, which names the pre-mask body, against it. A plan pass never
+    /// fills it.
+    masked_claims: Vec<(EntityId, Option<ClaimCandidate>)>,
 }
 
 impl Masker {
@@ -529,7 +573,7 @@ impl Masker {
                     if self.minted {
                         continue;
                     }
-                    self.at = Some((*id, "file".to_owned()));
+                    self.at = Some((*id, FILE_PLACE.to_owned()));
                     if let Some(copy) = self.mark_file(*id, data)? {
                         replace_wiped(data, copy);
                     }
@@ -551,17 +595,13 @@ impl Masker {
                         replace_wiped(data, masked);
                     }
                 }
-                BatchOp::ClaimCandidate {
-                    id,
-                    candidate,
-                    envelope,
-                    ..
-                } => {
+                BatchOp::ClaimCandidate { id, candidate, .. } => {
                     self.at = Some((*id, "claim".to_owned()));
-                    // The minted pass only: a plan rewrites a copy. Only a
-                    // MACHINE candidate can need its proof renewed.
-                    let before = (self.minted && envelope.machine_signature().is_some())
-                        .then(|| (**candidate).clone());
+                    // The minted pass only: a plan rewrites a copy. A MACHINE
+                    // candidate's proof is renewed over what is stored, and a
+                    // gate receipt its preflight recorded names this body
+                    // (CHECKER-PREVIEW-READS-UNMASKED-CANDIDATE).
+                    let before = self.minted.then(|| (**candidate).clone());
                     // The door read the claim's encoded body, not each value
                     // as a text: each value is read by the text rules.
                     // A phrase split over a value's parts, which the door
@@ -573,10 +613,11 @@ impl Masker {
                         self.mask_spread_phrases(value, true)?;
                     }
                     self.shapes_read = shapes_read;
-                    if let Some(before) = before
-                        && **candidate != before
-                    {
-                        self.masked_claims.push((*id, before));
+                    // One entry per candidate op, so the apply's queue per id
+                    // stays aligned with its ops: `None` when nothing changed.
+                    if let Some(before) = before {
+                        let rewritten = (**candidate != before).then_some(before);
+                        self.masked_claims.push((*id, rewritten));
                     }
                 }
                 BatchOp::Text { id, fields } => {
@@ -729,9 +770,10 @@ impl Masker {
     }
 
     /// One map member under its `key`, as the field rule reads it: a value
-    /// under a credential name whole, any other member by member.
+    /// under a credential name whole (text alone under
+    /// [`FieldRule::TextOnly`]), any other member by member.
     fn mask_member(&mut self, key: &Value, member: &mut Value) -> Result<bool> {
-        if !credential_member(key, member) {
+        if !credential_member(key, member, self.field_rule) {
             return self.mask_value(member);
         }
         let secret = Zeroizing::new(match &*member {
@@ -1031,10 +1073,12 @@ fn part_at<'v>(value: &'v mut Value, path: &[usize]) -> Option<&'v mut Value> {
     Some(part)
 }
 
-/// Whether the field rule reads `member`, under `key`, whole: a value under a
-/// credential name, neither nil nor a placeholder.
-fn credential_member(key: &Value, member: &Value) -> bool {
-    key.as_str().is_some_and(shapes::sensitive_key)
+/// Whether the field rule `rule` reads `member`, under `key`, whole: a value
+/// under a credential name, neither nil nor a placeholder, of a shape `rule`
+/// reads whole.
+fn credential_member(key: &Value, member: &Value, rule: FieldRule) -> bool {
+    rule.reads_whole(member)
+        && key.as_str().is_some_and(shapes::sensitive_key)
         && !member.is_nil()
         && !member
             .as_str()

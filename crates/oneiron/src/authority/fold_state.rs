@@ -46,14 +46,23 @@ pub struct AuthorityFold {
     pub valid_entries: ValidEntries,
     /// Fold-derived active/revoked roster.
     pub roster: BTreeMap<AuthorityKey, FoldedDevice>,
-    /// Keys a handoff (`ReRoot`) retired. They stay revoked on every branch:
-    /// no entry they sign stands outside the handoff's own ancestry.
+    /// Keys a handoff (`ReRoot`) or a revocation (`RevokeDevice`) retired.
+    /// They stay revoked on every branch: no entry they sign stands outside
+    /// that row's own ancestry.
     pub retired_keys: BTreeSet<AuthorityKey>,
     /// Every key in the host's custody, as the fold's custody walk judged it
     /// on the merged history: read through [`AuthorityFold::in_host_custody`]
     /// (FIX 12196).
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     pub(super) host_custody: BTreeSet<AuthorityKey>,
+    /// Every roster key the passkey limits hold on the merged history
+    /// (`FoldState::passkey_limited`, row WEB-PASSKEY-OWNER-KEY): a passkey,
+    /// and a key only a passkey vouched for until a key that is no passkey
+    /// confirms it. Read through [`AuthorityFold::proves_owner_acts`], so
+    /// the writer takes no owner proof from a key whose cosign the fold
+    /// judges forged (REVIEW-8451 P1).
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub(super) passkey_limited_keys: BTreeSet<AuthorityKey>,
     /// The handoffs whose fences stand: settled, or in conflict.
     pub(super) closed_handoffs: BTreeSet<AuthorityEntryHash>,
     /// Owner dismissed saving the recovery secret and no second device has enrolled.
@@ -61,6 +70,9 @@ pub struct AuthorityFold {
     /// Fold-derived federation pact states keyed by pact id.
     pub federation_pacts: BTreeMap<[u8; 32], FederationPactState>,
     /// Consumed federation confirmation ids and nonces, bound to signed entries.
+    /// Concurrent entries may share an id or a nonce: each stays here as spent
+    /// evidence (RULING COLLISION-SETTLEMENT-SHAPE = A, 16 Nov 04:39), so no
+    /// reader may take one entry here as the single use of its id or nonce.
     pub federation_confirms: BTreeMap<AuthorityEntryHash, AuthorityConfirmAction>,
     pub critical_write_confirms: BTreeMap<[u8; 32], CriticalWriteConfirmState>,
     pub consumed_critical_write_confirm_nonces: BTreeSet<[u8; 16]>,
@@ -79,6 +91,13 @@ pub struct AuthorityFold {
     pub actor_bindings: BTreeMap<AuthorityKey, FoldedActorBinding>,
     /// Each physical machine's folded standing, keyed by its MACHINE row.
     pub machines: BTreeMap<EntityId, FoldedMachine>,
+    /// Each machine's held answers that still ask the owner, by entry: read
+    /// through [`AuthorityFold::held_machine_answers`].
+    pub(super) held_machine_answers:
+        BTreeMap<EntityId, BTreeMap<AuthorityEntryHash, MachineRevision>>,
+    /// The owner choices that wait for the owner's proof and still ask, by
+    /// entry: read through [`AuthorityFold::waiting_owner_choices`].
+    pub(super) waiting_owner_choices: BTreeSet<AuthorityEntryHash>,
     /// This install's pinned root while the fold holds it as a valid root:
     /// the pin [`AuthorityFold::trusted_machine`] reads. `None` trusts the
     /// accepted roster revisions alone.
@@ -150,6 +169,10 @@ pub struct AuthorityFold {
     /// Each machine's newest MACRO home candidacy, as the log carries it
     /// (FIX 4898); an election judges each on this fold.
     pub(crate) home_candidacy: BTreeMap<EntityId, super::home_candidacy::DeclaredHomeCandidacy>,
+    /// Each machine's newest full-copy mark, as the log carries it (L7-47);
+    /// the peer order judges each on this fold.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub(crate) full_copy_mark: BTreeMap<EntityId, super::full_copy_mark::DeclaredFullCopyMark>,
     /// Every owner work request and its one result, as this install counts
     /// them.
     pub(super) owner_work: super::owner_work::FoldedOwnerWork,
@@ -163,6 +186,12 @@ pub struct AuthorityFold {
     /// Well-signed key records that count for nothing under this install's
     /// pin: valid entries without effect.
     pub refused_world_keys: BTreeSet<AuthorityEntryHash>,
+    /// The rows of the device revocations the fold applied as verified
+    /// restrictive facts, valid rows or not: a revocation on a losing
+    /// confirmation's branch holds only as a fact. The stale-roster window
+    /// reads them beside the valid entries (Sol review F1 on #8608).
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub(super) verified_device_revocations: BTreeSet<AuthorityEntryHash>,
     /// Fold diagnostics.
     pub issues: Vec<AuthorityFoldIssue>,
 }
@@ -314,6 +343,12 @@ pub(super) struct FoldState {
     /// Every claim of each install key (the machine, its admitter, and an
     /// owner-held roster signer), merged by union.
     pub(super) machine_keys: BTreeMap<[u8; 32], BTreeSet<KeyClaim>>,
+    /// Each machine's held answers by entry (row CARRIER-OWNER-PROOF): the
+    /// carried answers that needed an owner key's proof and carried none.
+    /// They stand for nothing (no head, no removal, no key claim). Merged by
+    /// union; a held answer the owner answered on either side stays answered.
+    pub(super) held_machine_answers:
+        BTreeMap<EntityId, BTreeMap<AuthorityEntryHash, super::owner_proof::HeldAnswer>>,
     /// Each valid root's anchor key, mapped to every root id it signed,
     /// merged by union. No root record is fold state.
     pub(super) root_anchors: BTreeMap<[u8; 32], BTreeSet<RecoveryRootId>>,
@@ -379,6 +414,13 @@ pub(super) struct FoldState {
     /// Each machine's home candidacies, the newest replacing the older
     /// (FIX 4898).
     pub(super) home_candidacy: super::home_candidacy::HomeCandidacyState,
+    /// Each machine's full-copy marks, the newest replacing the older
+    /// (L7-47). An image carries them only when some mark folded.
+    #[serde(
+        default,
+        skip_serializing_if = "super::full_copy_mark::FullCopyMarkState::is_empty"
+    )]
+    pub(super) full_copy_mark: super::full_copy_mark::FullCopyMarkState,
     /// Every owner work request and result, merged by union.
     pub(super) owner_work: super::owner_work::OwnerWorkState,
     /// Each world key's counted records, merged by union.
@@ -401,6 +443,22 @@ pub(super) struct FoldState {
     /// merged by union: a residence result past its directive's row reads
     /// it here (FIX 5412).
     pub(super) residence_directives: BTreeMap<AuthorityEntryHash, (EntityId, EntityId)>,
+    /// Each enrolled passkey's assertion contexts (row WEB-PASSKEY-OWNER-KEY;
+    /// Sol xhigh F2): the RP id hash and origin of its enrollment's own
+    /// assertion, merged by union. A passkey-form signature by the key counts
+    /// only in one of them. An image carries it only once a passkey enrolled.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub(super) passkey_contexts: BTreeMap<AuthorityKey, BTreeSet<WebAuthnContext>>,
+    /// Each key whose enrollment a passkey vouched for, merged by union
+    /// (lead ruling WEBPASSKEY-BLIND-SIGNATURE = B): until a non-passkey,
+    /// owner-held key vouches for it too, it neither re-roots, nor revokes
+    /// another owner key, nor vouches for a further key.
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub(super) passkey_vouched_keys: BTreeSet<AuthorityKey>,
+    /// Each passkey-vouched key such a second vouch confirmed, merged by
+    /// union.
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub(super) passkey_vouch_confirmations: BTreeSet<AuthorityKey>,
 }
 
 impl FoldState {
@@ -592,6 +650,15 @@ pub(super) fn merge_states(left: &FoldState, right: &FoldState) -> FoldState {
             .or_insert(*seq);
     }
     merge_machine_maps(&mut merged.machines, &mut merged.machine_keys, right);
+    for (machine, held) in &right.held_machine_answers {
+        let merged_held = merged.held_machine_answers.entry(*machine).or_default();
+        for (hash, answer) in held {
+            merged_held
+                .entry(*hash)
+                .and_modify(|kept| kept.answered |= answer.answered)
+                .or_insert_with(|| answer.clone());
+        }
+    }
     for (anchor, roots) in &right.root_anchors {
         merged
             .root_anchors
@@ -642,6 +709,7 @@ pub(super) fn merge_states(left: &FoldState, right: &FoldState) -> FoldState {
         &mut merged.home_candidacy,
         &right.home_candidacy,
     );
+    super::full_copy_mark::merge_full_copy_marks(&mut merged.full_copy_mark, &right.full_copy_mark);
     super::owner_work::merge_owner_work(&mut merged.owner_work, &right.owner_work);
     super::world_key_fold::merge_world_keys(&mut merged.world_keys, &right.world_keys);
     merged
@@ -664,6 +732,19 @@ pub(super) fn merge_states(left: &FoldState, right: &FoldState) -> FoldState {
             .iter()
             .map(|(row, directive)| (*row, *directive)),
     );
+    for (key, contexts) in &right.passkey_contexts {
+        merged
+            .passkey_contexts
+            .entry(key.clone())
+            .or_default()
+            .extend(contexts.iter().cloned());
+    }
+    merged
+        .passkey_vouched_keys
+        .extend(right.passkey_vouched_keys.iter().cloned());
+    merged
+        .passkey_vouch_confirmations
+        .extend(right.passkey_vouch_confirmations.iter().cloned());
     merged
 }
 

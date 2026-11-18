@@ -25,6 +25,8 @@
 //! 3). An agent reaches these acts through `vault.check_in.open`; PR 3's act
 //! gate admits agents at these doors.
 
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
+
 use super::act_class::ActClass;
 use super::chain::{NoAgentVerdict, VerifiedChain};
 use super::mode::CheckInMode;
@@ -41,6 +43,7 @@ use crate::authority::{RootChange, StepUpFactor};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::federation::FederationGrantRole;
+use crate::gate::PolicyRowChange;
 use crate::store::custody_protocol::{TargetScope, TargetSpec};
 
 /// One act a door runs for a person, as check-in judges it.
@@ -156,7 +159,7 @@ pub(crate) fn person_door_check_in_in_txn(
 }
 
 /// Spends the settled ask `id` for `act`, in the door's writer.
-fn spend_in_txn(
+pub(super) fn spend_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     act: &DoorAct<'_>,
@@ -165,10 +168,14 @@ fn spend_in_txn(
     now: u64,
 ) -> Result<DoorCheckIn> {
     let row = pending_check_in_in_txn(&vault.store, txn, id)?.ok_or(Error::EntityNotFound)?;
+    // An ask of a closed room's owners settles only the closed-room route
+    // (ARCH-0082 #closed-room): reopened, the room's add meets the asker's
+    // own ladder again, which the room's owners did not answer.
     if row.asker != act.person
         || row.verb != act.verb
         || row.act != act.act
         || row.scope != act.scope
+        || row.room.is_some()
     {
         return Err(refuse("the check-in is not this person's ask for this act"));
     }
@@ -558,10 +565,94 @@ pub fn custody_reenrol_effect_digest(spec: &TargetSpec) -> [u8; 32] {
     *hasher.finalize().as_bytes()
 }
 
+/// The digest of an Owner policy row change: the effect an asker's
+/// `vault.check_in.open` names for `vault.policy.owner.row.change`, and the
+/// one the Owner's change spends (2k4; P25-SHAPE Q1 = A). BLAKE3, key
+/// derived from `oneiron check_in policy row change v1`, over the change's
+/// MessagePack encoding with field names, as the change ledger keeps it
+/// (`purposes::check_in::POLICY_ROW_CHANGE`).
+///
+/// # Errors
+///
+/// The change does not encode.
+pub fn policy_row_change_effect_digest(change: &PolicyRowChange) -> Result<[u8; 32]> {
+    let encoded = rmp_serde::to_vec_named(change)
+        .map_err(|_| Error::InvariantViolation("policy row change encode"))?;
+    Ok(LegacyDigest::new(purposes::check_in::POLICY_ROW_CHANGE)
+        .raw(&encoded)
+        .finish())
+}
+
+/// The reason code of an agent's act refused at a person's door, naming the
+/// route it takes instead: it asks through `vault.check_in.open`, and the
+/// vault's Owner applies the approved ask (Engine ruling PEN-COMPLIANCE-SET
+/// = A; P25-SHAPE Q1: no agent path into an Owner's door before PR 4).
+pub const CHECK_IN_OPEN_ROUTE_REASON: &str = "check_in.route:vault.check_in.open";
+
+/// The digest of turning org compliance search on or off (`enabled`) for
+/// `purpose`: the effect `vault.mail.compliance.set` judges, and the one an
+/// approved check-in for it spends (2k4; P25-SHAPE Q1 = A). BLAKE3, key
+/// derived from `oneiron check_in mail compliance set v1`, over one byte, 1
+/// to turn it on, the purpose's length as eight big-endian bytes and its
+/// bytes (`purposes::check_in::MAIL_COMPLIANCE_SET`).
+#[must_use]
+pub fn mail_compliance_set_effect_digest(enabled: bool, purpose: &str) -> [u8; 32] {
+    LegacyDigest::new(purposes::check_in::MAIL_COMPLIANCE_SET)
+        .raw(&[u8::from(enabled)])
+        .len_u64_be(purpose.len())
+        .raw(purpose.as_bytes())
+        .finish()
+}
+
 /// `text`'s length as one byte (at most 255; custody ids are at most 128)
 /// and its bytes.
 fn update_short_text(hasher: &mut blake3::Hasher, text: &str) {
     hasher
         .update(&[u8::try_from(text.len()).unwrap_or(u8::MAX)])
         .update(text.as_bytes());
+}
+
+/// The digest of deleting `record` for `reason`: the effect a person's
+/// `vault.delete` judges, and the one an approved check-in for it spends
+/// (2k5; P25-SHAPE Q1 = A). BLAKE3, key derived from `oneiron check_in
+/// record delete v1`, over the record's 16 id bytes and the reason's wire
+/// token, as its length in one byte and its bytes
+/// (`purposes::check_in::RECORD_DELETE`).
+#[must_use]
+pub fn record_delete_effect_digest(
+    record: &EntityId,
+    reason: crate::deletion::DeleteReason,
+) -> [u8; 32] {
+    let reason = reason.as_str();
+    LegacyDigest::new(purposes::check_in::RECORD_DELETE)
+        .raw(record.as_bytes())
+        .raw(&[u8::try_from(reason.len()).unwrap_or(u8::MAX)])
+        .raw(reason.as_bytes())
+        .finish()
+}
+
+/// The digest of deleting stored embedding space probe `probe`: the effect
+/// an asker's `vault.check_in.open` names for
+/// `vault.embedding_spaces.probes.delete`, and the one the Owner's delete
+/// spends (2k5; P25-SHAPE Q1 = A). BLAKE3, key derived from `oneiron
+/// check_in embedding space probe delete v1`, over the probe's 16 id bytes
+/// (`purposes::check_in::EMBEDDING_SPACE_PROBE_DELETE`).
+#[must_use]
+pub fn embedding_space_probe_delete_effect_digest(probe: &[u8; 16]) -> [u8; 32] {
+    LegacyDigest::new(purposes::check_in::EMBEDDING_SPACE_PROBE_DELETE)
+        .raw(probe)
+        .finish()
+}
+
+/// The digest of deleting the cleanup-archived completed attempt `attempt`:
+/// the effect an Admin's or a Deputy's `vault.archive.attempt.delete.confirm`
+/// is judged over (2k5e; P25-SHAPE Q1 = A). The confirm's own expectation
+/// binds the exact queue bytes in the same writer. BLAKE3, key derived from
+/// `oneiron check_in attempt archive delete v1`, over the attempt's 16 id
+/// bytes (`purposes::check_in::ATTEMPT_ARCHIVE_DELETE`).
+#[must_use]
+pub fn attempt_archive_delete_effect_digest(attempt: &[u8; 16]) -> [u8; 32] {
+    LegacyDigest::new(purposes::check_in::ATTEMPT_ARCHIVE_DELETE)
+        .raw(attempt)
+        .finish()
 }

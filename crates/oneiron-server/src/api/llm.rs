@@ -1,8 +1,13 @@
 //! Owner-authenticated raw inference. Host injection is explicit and absent by default.
+use super::openai_proxy::CallerClock;
 use crate::models::{CallDeadline, ModelCallBinding, OfferLadder, RawInference};
 
 pub(super) mod decision_read;
 mod defaults_submit;
+// Review round 2 of #7831: the raw stream door's model stream, unpolled,
+// for the integration tests.
+#[cfg(oneiron_test_support)]
+mod stream_door;
 use crate::{auth::CoreAuth, server::SyncServer};
 use axum::{
     Json, Router,
@@ -20,7 +25,11 @@ use oneiron::code_run::model_call::{
 };
 use oneiron::llm::run_admission::{RunAdmission, RunDenied};
 use oneiron::{LlmError, LlmRequest, LlmResponse, LlmStreamEvent};
+use serde::Deserialize;
 use std::sync::Arc;
+#[cfg(oneiron_test_support)]
+pub(crate) use stream_door::raw_stream_opened_unpolled;
+use tokio::time::Instant;
 
 pub(super) fn routes() -> Router<Arc<SyncServer>> {
     Router::new()
@@ -62,6 +71,21 @@ fn coded(mut response: Response, code: &str, message: &str) -> Response {
 fn refusal(status: StatusCode, code: &str) -> Response {
     let response = (status, Json(serde_json::json!({"error":{"code":code}}))).into_response();
     coded(response, code, "")
+}
+/// The vault's inference policy refused a call: `code`'s body names the
+/// authorizer's typed reason as its `message`, and a server line logs it
+/// (STEP-DOOR-REFUSAL-REASON). Any other error the authorizer returns (a
+/// store or decode fault) keeps the code-only body, and its line names only
+/// the error's kind.
+fn policy_refusal(status: StatusCode, code: &str, error: &oneiron::Error) -> Response {
+    let Some(refused) = oneiron::llm::InferenceRefusal::of(error) else {
+        tracing::warn!(code, kind = ?error.kind(), "the inference policy did not admit a call");
+        return refusal(status, code);
+    };
+    let reason = refused.reason();
+    tracing::info!(code, reason, "the inference policy refused a call");
+    let body = serde_json::json!({"error":{"code":code,"message":reason}});
+    coded((status, Json(body)).into_response(), code, reason)
 }
 /// A param or provider option that would pick the model or the route
 /// (`LlmRequest::route_selector_override`), named as `key` or `namespace.key`,
@@ -107,6 +131,11 @@ fn failure_body(error: LlmError) -> (StatusCode, serde_json::Value) {
         }
         LlmError::Retryable(RetryableLlmError::WorldRouteNotAdmitted) => {
             (StatusCode::SERVICE_UNAVAILABLE, "world_route_not_admitted")
+        }
+        // No rung serves at this hour (UNBUILT-14); the body's error says
+        // when the first one opens.
+        LlmError::Retryable(RetryableLlmError::OutsideHours { .. }) => {
+            (StatusCode::SERVICE_UNAVAILABLE, "outside_hours")
         }
         LlmError::Retryable(_) => (StatusCode::BAD_GATEWAY, "stream_cut"),
     };
@@ -252,12 +281,12 @@ fn admit_owner(
     let authorized = server
         .vault
         .authorize_raw_inference(request.clone(), &context)
-        .map_err(|_| {
+        .map_err(|error| {
             let admitted = oneiron::llm::admitted_as(&original_purpose);
             Box::new(if *admitted == oneiron::CallPurpose::Extraction {
-                refusal(StatusCode::FORBIDDEN, "extraction_egress_denied")
+                policy_refusal(StatusCode::FORBIDDEN, "extraction_egress_denied", &error)
             } else {
-                refusal(StatusCode::BAD_REQUEST, "invalid_request")
+                policy_refusal(StatusCode::BAD_REQUEST, "invalid_request", &error)
             })
         })?;
     *request = authorized.into_request();
@@ -278,6 +307,25 @@ pub(crate) fn record_raw_response(
     response: &LlmResponse,
     binding: Option<&ModelCallBinding>,
     no_record: bool,
+) {
+    record_reply_response(
+        vault, ladder, run, request, response, binding, no_record, None,
+    );
+}
+
+/// [`record_raw_response`] for a call whose answer streams into the MESSAGE
+/// `reply`, when it names one: the record is linked to it in the same write
+/// (TURN-MODEL-LINK), so a thread reads which call answered each reply.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn record_reply_response(
+    vault: &oneiron::Vault,
+    ladder: &OfferLadder,
+    run: &RunAdmission,
+    request: &LlmRequest,
+    response: &LlmResponse,
+    binding: Option<&ModelCallBinding>,
+    no_record: bool,
+    reply: Option<oneiron::EntityId>,
 ) {
     if no_record {
         tracing::debug!("model-call record skipped: off-record session or room");
@@ -365,10 +413,50 @@ pub(crate) fn record_raw_response(
         summary_requested: false,
         erased: false,
     };
-    if let Err(error) =
-        vault.with_write_txn_grouped(|txn| record_model_call_in_txn(vault, txn, &record))
-    {
+    if let Err(error) = vault.with_write_txn_grouped(|txn| match reply {
+        Some(reply) => oneiron::code_run::model_call::record_reply_model_call_in_txn(
+            vault, txn, &record, reply,
+        ),
+        None => record_model_call_in_txn(vault, txn, &record),
+    }) {
         tracing::warn!(%error, "model-call record failed");
+    }
+}
+
+/// A raw call's body: the request, and beside it the caller's own deadline
+/// (census L9-23, ARCH-0036 "the caller's own deadline on role, raw and
+/// chat calls").
+#[derive(Deserialize)]
+struct RawCall {
+    #[serde(flatten)]
+    request: LlmRequest,
+    /// The memory proxy's field (FIX 8189), on its one clock
+    /// ([`CallerClock`], RULING CALLER-DEADLINE-WIRE = B): milliseconds from
+    /// when the call arrived, never renewed. It replaces the wait row as the
+    /// call's budget: waits for a resting offer run only within what is
+    /// left, so a call whose every usable offer rests past it answers
+    /// `rate_limited` at once with the earliest reset, and only a send the
+    /// clock cuts answers `timeout` (504, or a stream's last line). Omitted,
+    /// the caller's own connection is the call's deadline (FIX 8213; RULING
+    /// RAW-NO-DEADLINE-WAIT = A).
+    #[serde(default)]
+    deadline_ms: Option<u64>,
+}
+
+impl RawCall {
+    /// The request, the caller's clock from `arrived`, and the deadline its
+    /// ladder walk runs on: the clock's own, so no rung goes out past it
+    /// (review round 2 of #7831), or open with none named. A clock already
+    /// out is the call's `timeout`.
+    fn into_call(
+        self,
+        arrived: Instant,
+    ) -> (LlmRequest, CallerClock, Result<CallDeadline, LlmError>) {
+        let clock = CallerClock::starting(arrived, self.deadline_ms);
+        let walk_deadline = clock
+            .walk_deadline()
+            .map(|deadline| deadline.unwrap_or(CallDeadline::Open));
+        (self.request, clock, walk_deadline)
     }
 }
 
@@ -376,8 +464,9 @@ async fn generate(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
     headers: axum::http::HeaderMap,
-    Json(mut request): Json<LlmRequest>,
+    Json(call): Json<RawCall>,
 ) -> Response {
+    let (mut request, clock, walk_deadline) = call.into_call(Instant::now());
     let (ladder, run) = match admit(&server, &auth, &mut request) {
         Ok(v) => v,
         Err(e) => return *e,
@@ -391,11 +480,17 @@ async fn generate(
     // as initiator (attribution only), so its evidence row carries an
     // actor its erase can find. Owner-grade callers bind none, as before.
     let run = run.initiated_by(principal);
-    // The caller's own connection is the raw call's deadline (FIX 8213).
+    // The caller's `deadline_ms` on its clock, or its own connection (FIX
+    // 8213), is the raw call's deadline.
+    let walk_deadline = match walk_deadline {
+        Ok(walk_deadline) => walk_deadline,
+        Err(e) => return failure(e),
+    };
+    let may_send = clock.may_send();
     // generate_recorded_by takes the request by value; the record keeps its own copy.
     let record_request = request.clone();
-    match ladder
-        .generate_recorded_by(&run, request, None, &|| true, CallDeadline::Open)
+    match clock
+        .cut(ladder.generate_recorded_by(&run, request, None, &may_send, walk_deadline))
         .await
     {
         Ok((response, binding)) => {
@@ -417,24 +512,63 @@ async fn generate(
         Err(e) => failure(e),
     }
 }
+/// The sending half of a raw stream's line queue to its client.
+type LineSender = tokio::sync::mpsc::Sender<Result<Vec<u8>, std::io::Error>>;
+
 /// A stream's last line when it fails once started: the same typed body a
 /// refusal before the stream gets, so credit spent mid-stream closes it
 /// with `quota_spent` and its question's pointer, not a bare cut.
-async fn send_error(
-    send: &tokio::sync::mpsc::Sender<Result<Vec<u8>, std::io::Error>>,
-    error: LlmError,
-) {
+fn error_line(error: LlmError) -> Vec<u8> {
     let (_, body) = failure_body(error);
-    let mut bytes = serde_json::to_vec(&body).expect("LLM error serializes");
-    bytes.push(b'\n');
-    let _ = send.send(Ok(bytes)).await;
+    let mut line = serde_json::to_vec(&body).expect("LLM error serializes");
+    line.push(b'\n');
+    line
 }
+
+/// How a line handed to [`relay`] fared.
+enum Relayed {
+    /// It is in the client's queue.
+    Sent,
+    /// The client has left.
+    Gone,
+    /// The caller's deadline passed before the queue had room for it.
+    RanOut,
+}
+
+/// `line` into the client's queue, within the caller's clock. A client that
+/// stops reading fills the queue, and the call never waits on it past the
+/// deadline (review round 1 of #7831). With no deadline it waits for room
+/// or for the client to leave, as a stream always did.
+async fn relay(send: &LineSender, clock: CallerClock, line: Vec<u8>) -> Relayed {
+    // The send first: a line the queue has room for goes out even once the
+    // deadline has passed, as the walk's own `timeout` does when the relay
+    // was first polled after it (review round 2 of #7831).
+    tokio::select! {
+        biased;
+        sent = send.send(Ok(line)) => match sent {
+            Ok(()) => Relayed::Sent,
+            Err(_) => Relayed::Gone,
+        },
+        () = clock.run_out() => Relayed::RanOut,
+    }
+}
+
+/// The end of a stream the caller's deadline cut. The model's stream goes
+/// first, and with it the rung and the worker it holds; the `timeout` line
+/// follows only if the client's queue has room. A client that stopped
+/// reading keeps the lines already queued, and nothing waits on it.
+fn cut_at_deadline(source: oneiron::LlmStream<'_>, send: &LineSender) {
+    drop(source);
+    let _ = send.try_send(Ok(error_line(oneiron::RetryableLlmError::Timeout.into())));
+}
+
 async fn stream(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
     headers: axum::http::HeaderMap,
-    Json(mut request): Json<LlmRequest>,
+    Json(call): Json<RawCall>,
 ) -> Response {
+    let (mut request, clock, walk_deadline) = call.into_call(Instant::now());
     let (ladder, run) = match admit(&server, &auth, &mut request) {
         Ok(v) => v,
         Err(e) => return *e,
@@ -448,25 +582,43 @@ async fn stream(
     let run = run.initiated_by(principal);
     // The first rung is admitted here, so a refused call answers before the
     // stream starts. Each rung settles itself; a stream the client leaves
-    // ends its call, and a started rung keeps its reservation as spend.
+    // ends its call, and a started rung keeps its reservation as spend. The
+    // caller's `deadline_ms` ends it as the client leaving does, and its
+    // last line is then `timeout` when the client's queue has room for it.
+    // No line waits for room past the deadline, so a client that stopped
+    // reading never holds the model's stream beyond it. The walk runs on
+    // the same deadline, so no rung goes out past it, however late this
+    // relay first polls the model's stream (review round 2 of #7831).
+    let walk_deadline = match walk_deadline {
+        Ok(walk_deadline) => walk_deadline,
+        Err(e) => return failure(e),
+    };
     // stream_recorded_by takes the request by value; the record keeps its own copy.
     let record_request = request.clone();
     let (mut source, mut binding) =
-        match ladder.stream_recorded_by(&run, request, None, CallDeadline::Open) {
+        match ladder.stream_recorded_by(&run, request, None, walk_deadline) {
             Ok(opened) => opened,
             Err(e) => return failure(e),
         };
     let (send, receive) = tokio::sync::mpsc::channel::<Result<Vec<u8>, std::io::Error>>(8);
     tokio::spawn(async move {
         loop {
-            let item = tokio::select! { _ = send.closed() => return, item = source.next() => item };
+            let item = tokio::select! {
+                _ = send.closed() => return,
+                () = clock.run_out() => {
+                    cut_at_deadline(source, &send);
+                    return;
+                }
+                item = source.next() => item,
+            };
             let Some(item) = item else {
                 return;
             };
             let event = match item {
                 Ok(event) => event,
                 Err(error) => {
-                    send_error(&send, error).await;
+                    drop(source);
+                    relay(&send, clock, error_line(error)).await;
                     return;
                 }
             };
@@ -507,20 +659,25 @@ async fn stream(
                     no_record,
                 );
             }
-            match serde_json::to_vec(&event) {
-                Ok(mut bytes) => {
-                    bytes.push(b'\n');
-                    if send.send(Ok(bytes)).await.is_err() {
-                        return;
-                    }
+            let line = match serde_json::to_vec(&event) {
+                Ok(mut line) => {
+                    line.push(b'\n');
+                    line
                 }
                 Err(_) => {
-                    send_error(&send, oneiron::FatalLlmError::InvalidRequest.into()).await;
+                    drop(source);
+                    let error = oneiron::FatalLlmError::InvalidRequest.into();
+                    relay(&send, clock, error_line(error)).await;
                     return;
                 }
-            }
-            if done {
-                return;
+            };
+            match relay(&send, clock, line).await {
+                Relayed::Sent if !done => {}
+                Relayed::Sent | Relayed::Gone => return,
+                Relayed::RanOut => {
+                    cut_at_deadline(source, &send);
+                    return;
+                }
             }
         }
     });
@@ -545,7 +702,7 @@ mod tests;
 pub(crate) struct MeshLlm(pub(crate) Arc<SyncServer>);
 
 #[cfg(feature = "mesh")]
-impl oneiron_llm_own_server::LlmMeshHandler for MeshLlm {
+impl oneiron_llm::oneiron_rpc::LlmMeshHandler for MeshLlm {
     fn serves(&self, model: &oneiron::ModelId) -> bool {
         self.0.llm.is_some() && self.0.ai.model_locality(model).is_some()
     }
@@ -592,7 +749,7 @@ impl oneiron_llm_own_server::LlmMeshHandler for MeshLlm {
             .ai
             .chat_catalog()
             .into_iter()
-            .filter(|entry| oneiron_llm_own_server::advertises(entry.locality))
+            .filter(|entry| oneiron_llm::oneiron_rpc::advertises(entry.locality))
             .collect()
     }
 }

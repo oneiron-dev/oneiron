@@ -9,7 +9,6 @@ use super::queue::validate_operation;
 use super::snapshot::{
     SnapshotCustody, StoredRepoSnapshot, StoredRepoSnapshotEntryKind, capture_repo_snapshot,
 };
-use super::support::now_millis;
 use super::types::{
     RepoForkHash, RepoMutationOperation, RepoMutationOutcome, RepoMutationRequest,
     RepoMutationStatus,
@@ -25,7 +24,7 @@ use crate::critic::{
 use crate::entity_id::EntityId;
 use crate::error::{CodeError, Error, Result};
 use crate::git_wire::lock_repository;
-use crate::secret_snapshot::SnapshotWithhold;
+use crate::secret_snapshot::{SnapshotWithhold, withheld_base_refusal};
 use crate::side_table::{self, Raw, SideKey, SideTable};
 use rmpv::Value;
 use serde::{Deserialize, Serialize};
@@ -75,31 +74,20 @@ const PROPOSAL_OP: SideTable<OpKey, EntityId, Raw> =
 /// [`PROPOSAL_OP`]'s key: a repo key hash (fixed 64 lower-case hex characters)
 /// and a sequence number, joined by a literal `:` exactly as the hand-spelled
 /// key did.
+#[derive(SideKey)]
+#[side_key(sep = b':')]
 struct OpKey {
     repo_key_hash: [u8; 64],
     seq: u64,
 }
 
-impl SideKey for OpKey {
-    fn encode_into(&self, out: &mut Vec<u8>) {
-        out.extend_from_slice(&self.repo_key_hash);
-        out.push(b':');
-        out.extend_from_slice(&self.seq.to_be_bytes());
-    }
-
-    fn decode_key(bytes: &[u8]) -> Option<Self> {
-        let (head, rest) = bytes.split_at_checked(64)?;
-        let (colon, seq_bytes) = rest.split_at_checked(1)?;
-        if colon != b":" {
-            return None;
-        }
-        let mut repo_key_hash = [0_u8; 64];
-        repo_key_hash.copy_from_slice(head);
-        Some(Self {
-            repo_key_hash,
-            seq: u64::from_be_bytes(seq_bytes.try_into().ok()?),
-        })
-    }
+/// One [`OpKey`] for `test_doors::side_key_pins`.
+#[cfg(oneiron_test_support)]
+pub(crate) fn op_key_pin_for_test(
+    repo_key_hash: [u8; 64],
+    seq: u64,
+) -> crate::test_doors::side_key_pins::Pin {
+    crate::test_doors::side_key_pins::Pin::of(&OpKey { repo_key_hash, seq })
 }
 
 fn op_key(repo: &RepoRef, seq: u64) -> OpKey {
@@ -445,7 +433,8 @@ impl Vault {
 /// review holds the bytes it approves and reads the file they replace from
 /// its snapshot, so a write the policy would withhold, a write to a file the
 /// snapshot withholds, and a message that holds a secret are refused before
-/// the proposal or its snapshot is stored.
+/// the proposal or its snapshot is stored. The refusal of a write to a
+/// withheld live dotenv file names the remediation route (FIX 2229).
 fn admit_custody(
     custody: &SnapshotCustody,
     pre_action: &StoredRepoSnapshot,
@@ -461,7 +450,7 @@ fn admit_custody(
         .iter()
         .any(|entry| entry.path == path && entry.kind == StoredRepoSnapshotEntryKind::Withheld)
     {
-        return Err(SnapshotWithhold::Excluded.refusal());
+        return Err(withheld_base_refusal(path));
     }
     match crate::batch::secret_scan::scan_file_content("", message.as_bytes()) {
         Some(reason) => Err(SnapshotWithhold::Quarantined(reason).refusal()),

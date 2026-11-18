@@ -3,7 +3,7 @@
 //! revision of that whole list, so no page mixes two lists and none is cut
 //! short as complete. A search one page holds keeps its single call.
 
-use serde::{Deserialize, Serialize};
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
 
 use super::{ResolvedRecallSelection, recall_scope_transcript, residence_window_for_blob};
 use crate::Vault;
@@ -18,16 +18,8 @@ use crate::sync::types::WindowKey;
 /// pass it is cut short, and its cursor carries the rest.
 pub const RESIDENCE_PAGE_REPLY_BYTES: usize = 16 * 1024 * 1024;
 
-/// Where a paged residence search goes on: the offset into its final ranked
-/// list, that list's revision, and the second its time words and recency
-/// were read at.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct ResidenceSearchCursor {
-    pub offset: u64,
-    pub revision: String,
-    pub as_of: u64,
-}
+#[doc(hidden)]
+pub use oneiron_records::sync::residence::search::ResidenceSearchCursor;
 
 /// The tag that opens a caller filter's signed and hashed field (FIX 3977).
 const READ_FILTER_FIELD_TAG: &[u8] = b"oneiron.residence.search.read_filter.v1";
@@ -199,16 +191,28 @@ pub fn residence_search_revision(
     if let Some(filter) = &filter {
         fields.push(filter.as_slice());
     }
-    let mut hasher = blake3::Hasher::new();
-    hasher.update(b"oneiron.residence.search.page.v1");
+    search_page_revision(&fields, hits)
+}
+
+/// The page revision sent to peers and compared for changes (K, PLAN-UC-04 stage 7).
+fn search_page_revision(fields: &[&[u8]], hits: &[(EntityId, WindowKey)]) -> String {
+    let mut hasher = LegacyDigest::new(purposes::sync::RESIDENCE_SEARCH_PAGE);
     for field in fields {
-        hasher.update(&(field.len() as u64).to_be_bytes());
-        hasher.update(field);
+        hasher.len_u64_be(field.len());
+        hasher.raw(field);
     }
     for (id, window) in hits {
-        hasher.update(id.as_bytes());
-        hasher.update(&(window.as_str().len() as u64).to_be_bytes());
-        hasher.update(window.as_str().as_bytes());
+        hasher.raw(id.as_bytes());
+        hasher.len_u64_be(window.as_str().len());
+        hasher.raw(window.as_str().as_bytes());
     }
-    hasher.finalize().to_hex().to_string()
+    oneiron_hex::encode(&hasher.finish())
+}
+
+#[cfg(oneiron_test_support)]
+pub(crate) fn search_page_revision_for_test(
+    fields: &[&[u8]],
+    hits: &[(EntityId, WindowKey)],
+) -> String {
+    search_page_revision(fields, hits)
 }
