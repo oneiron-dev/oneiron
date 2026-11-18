@@ -4,10 +4,10 @@
 
 use super::{
     BackupArgs, CustodyAnchorCredentials, Path, RecoverClockArgs, RecoverWindowArgs, RestoreArgs,
-    Serialize, ServeConfig, backup_plan, base_vault_config, emit, local_owner, open_stopped_vault,
-    open_vault, resolve_serve_config, rfc3339_secs, vault_key,
+    Serialize, ServeConfig, backup_plan, base_vault_config, configured_host_issuer, emit,
+    local_owner, open_stopped_vault, open_vault, resolve_serve_config, rfc3339_secs, vault_key,
 };
-use crate::owner::backup;
+use crate::owner::{backup, host_owner};
 
 mod open_pads;
 
@@ -33,6 +33,9 @@ pub fn backup(args: BackupArgs) -> anyhow::Result<()> {
 
 pub fn restore(args: RestoreArgs) -> anyhow::Result<()> {
     let config = resolve_serve_config(&args.serve)?;
+    if args.join {
+        return join_restored_install(&config);
+    }
     if args.wrap.wrap_to.is_some() {
         refuse_wrap_elsewhere(&args, &config)?;
     }
@@ -76,6 +79,56 @@ pub fn restore(args: RestoreArgs) -> anyhow::Result<()> {
         eprintln!("{note}");
     }
     restored
+}
+
+#[derive(Serialize)]
+struct JoinedRestoredInstall {
+    /// This install's machine, 32 hex digits: a machine of the vault now.
+    machine: String,
+    /// The checkpoint image the restore made this install from, 64 hex
+    /// digits.
+    restored_from: Option<String>,
+    /// Its role: `unanswered` until the owner answers whose machine it is.
+    role: &'static str,
+    /// The machine revision the join counts.
+    revision: u64,
+}
+
+/// `--join` (row RESTORED-COPIES-ENROL-EACH-OTHER): the owner's word, on this
+/// install a restore made, that no other machine of the vault is left to pair
+/// it. The configured host root files the install's enrolment, and, held on
+/// the handle as `serve` holds it (row CARRIER-OWNER-PROOF), signs the word:
+/// on a self-host vault it is an owner key. Holding the writer lease is the
+/// owner proof of an offline host command, so on any other vault the operator
+/// acts as nobody (FIX 8225). A no-op on an install that already stands.
+fn join_restored_install(config: &ServeConfig) -> anyhow::Result<()> {
+    let vault = open_stopped_vault(config, "then run this again")?;
+    let owner = host_owner(&vault)?;
+    let issuer = configured_host_issuer(config, &vault, false).ok_or_else(|| {
+        anyhow::anyhow!(
+            "this install holds no host root for vault {}, and the configured host root signs \
+             the owner's word that no other machine is left: configure the auth secret `serve` \
+             reads, or pair this install from a machine of the vault",
+            config.vault_path.display()
+        )
+    })?;
+    let issuer = std::sync::Arc::new(issuer);
+    vault.hold_checkpoint_root_signer(issuer.clone());
+    let joined = vault
+        .join_restored_install(&issuer, &owner, oneiron::authority::SERVING_INSTALL_ROLE)
+        .map_err(|error| anyhow::anyhow!("join this restored install: {error}"))?;
+    let revision = joined
+        .roster
+        .ok_or_else(|| anyhow::anyhow!("the vault's fold counts no revision of this install"))?;
+    emit(&JoinedRestoredInstall {
+        machine: revision.profile.machine.to_hex(),
+        restored_from: revision
+            .profile
+            .restored_from
+            .map(|image| oneiron_hex::encode(&image)),
+        role: revision.profile.role.wire(),
+        revision: revision.profile.revision,
+    })
 }
 
 /// `--wrap-to` adds a wrap to a restore where no vault is yet (FIX 2558): a
