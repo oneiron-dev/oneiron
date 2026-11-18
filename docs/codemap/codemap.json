@@ -188635,6 +188635,14 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/lmdb_sealed_failed_read_begin.rs",
+     "purpose": "FIX row LMDB-TXN-BEGIN-FAILURE-WRONG-FREE (`ONEIRON FORK (begin failure)` in `mdb_txn_begin`): a sealed read…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/lmdb_sealed_overflow.rs",
      "purpose": "FIX row LMDB-MASTER3-UPSTREAM-FIXES-AUDIT (upstream ITS#10519): a sealed environment reads back every value…",
      "surface": {}
@@ -190340,7 +190348,7 @@
    "over_bar": 1,
    "purpose": "The store layer of the oneiron engine",
    "source_files": 653,
-   "test_files": 28
+   "test_files": 29
   },
   "oneiron-testkit": {
    "files": [
