@@ -429,6 +429,10 @@ impl Vault {
         super::ask_settlement::settle_in(self, &mut txn, row.group, now)?;
         super::ask_facade::signal_waiters(self, &mut txn, row.group, now.saturating_mul(1000))?;
         txn.commit().map_err(crate::Error::from)?;
+        // This answer settles its ask's TASK outside the write door: a
+        // task-held inquiry answer of that TASK leaves memory here (FIX
+        // INQUIRY-HOLDER-EVICT-ON-TERMINAL-WRITE).
+        self.evict_inquiry_answers_after_raw_commit();
         Ok(answer)
     }
 
@@ -563,7 +567,5 @@ pub(crate) fn deliver_ask_change_in_txn(
         .map(drop)
 }
 
-// FIX [LIBTEST-QUARANTINE-TASK-VERB-ASK-OPTION-LINK-TESTS]: the lib test target's type check fails here (9 errors: E0277 x7, E0063 x2); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;

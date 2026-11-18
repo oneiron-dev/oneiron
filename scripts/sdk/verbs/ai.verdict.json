@@ -1,6 +1,6 @@
 {
   "name": "ai.verdict",
-  "description": "The caller's own typed question through the host's decision ladder: yes or no, one of its options, a score in the caller's range, or a box or point in an image, answered with a probability and a decision receipt.",
+  "description": "The caller's own typed question through the host's decision ladder: yes or no, an option, a score, or a box or point in an image, with a probability and a receipt. A Dreamer extraction binding gets each answer of its checked pack in pack.",
   "input": "crate::task_verb::sdk::AiVerdictRequest",
   "output": "crate::task_verb::sdk::AiVerdict",
   "call": "crate::task_verb::sdk::host_only(memory, \"ai.verdict\", &input)?",

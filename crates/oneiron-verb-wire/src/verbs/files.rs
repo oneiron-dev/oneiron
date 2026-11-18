@@ -231,7 +231,8 @@ pub struct FilesSourceFilesRequest {
     /// Absent starts at the first file.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cursor: Option<String>,
-    /// How many files to answer, at most [`MAX_FILES_PAGE_LIMIT`];
+    /// How many files to answer, at most the owner's
+    /// `verbs.files.max_page_limit` (default [`MAX_FILES_PAGE_LIMIT`]);
     /// [`DEFAULT_FILES_PAGE_LIMIT`] when absent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub limit: Option<u64>,

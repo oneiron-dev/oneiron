@@ -298,13 +298,9 @@ fn semantic_cooldown_survives_reopen() -> std::result::Result<(), Box<dyn std::e
     );
     drop(vault);
     let clock = crate::ports::ManualClock::new(1_001);
-    let reopened = Vault::open(
-        tmp.path(),
-        VaultConfig {
-            store_clock: clock.bundle(),
-            ..VaultConfig::default()
-        },
-    )?;
+    let mut reopen_config = VaultConfig::device();
+    reopen_config.store_clock = clock.bundle();
+    let reopened = Vault::open(tmp.path(), reopen_config)?;
     let mut second_sink = RecordingExecutor::default();
     let result = reopened.dispatch_outbound_intent(request("second"), &mut second_sink)?;
     assert_eq!(result.outcome, OutboundDispatchOutcome::Suppressed);
@@ -315,13 +311,9 @@ fn semantic_cooldown_survives_reopen() -> std::result::Result<(), Box<dyn std::e
     assert!(second_sink.calls.is_empty());
     let before = reopened.gate_decisions(100)?.len();
     drop(reopened);
-    let reopened = Vault::open(
-        tmp.path(),
-        VaultConfig {
-            store_clock: crate::ports::ManualClock::new(1_002).bundle(),
-            ..VaultConfig::default()
-        },
-    )?;
+    let mut reopen_config = VaultConfig::device();
+    reopen_config.store_clock = crate::ports::ManualClock::new(1_002).bundle();
+    let reopened = Vault::open(tmp.path(), reopen_config)?;
     let queried = reopened.receipts(
         crate::receipt::ReceiptQuery::new(10).with_kind(crate::receipt::ReceiptKind::Outbound),
     )?;
@@ -414,6 +406,7 @@ fn replicated_suppression_artifact_projects_on_another_vault()
                     entity_type: crate::registry::ENTITY_TYPE_RECEIPT_RECORD,
                     occurred: at,
                     learned_at: 1_000,
+                    row_version: None,
                     data: body.to_vec(),
                     allow_maintenance: true,
                     allow_reserved_predicate: false,

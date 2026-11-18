@@ -27,7 +27,29 @@ fn maintenance_revalidates_owner_in_target_vault() -> Result<()> {
     };
     let refuse = |target: &Vault| -> Result<()> {
         for result in [
-            target.set_proactivity_cadence(&proof, &cadence),
+            target
+                .set_setting(
+                    crate::setting::SettingCaller::Owner(&proof),
+                    crate::setting::SetSetting::vault_value(
+                        "dreamer.proactivity.period",
+                        serde_json::to_value(digest::ProactivityPeriod(cadence.period_secs))
+                            .unwrap(),
+                    ),
+                )
+                .map(drop),
+            target
+                .set_setting(
+                    crate::setting::SettingCaller::Owner(&proof),
+                    crate::setting::SetSetting::vault_value(
+                        "dreamer.proactivity.delivery",
+                        serde_json::to_value(digest::ProactivityDelivery {
+                            group_by_facet: cadence.group_by_facet,
+                            urgent_breakthrough: cadence.urgent_breakthrough,
+                        })
+                        .unwrap(),
+                    ),
+                )
+                .map(drop),
             target.set_curator_rubric(&proof, &rubric),
             target.set_retune_thresholds(&proof, &thresholds),
             target.proactivity_digest(&proof, 10, None).map(|_| ()),
@@ -40,7 +62,24 @@ fn maintenance_revalidates_owner_in_target_vault() -> Result<()> {
         Ok(())
     };
     refuse(&vault)?;
-    other.set_proactivity_cadence(&proof, &cadence)?;
+    other.set_setting(
+        crate::setting::SettingCaller::Owner(&proof),
+        crate::setting::SetSetting::vault_value(
+            "dreamer.proactivity.period",
+            serde_json::to_value(digest::ProactivityPeriod(cadence.period_secs)).unwrap(),
+        ),
+    )?;
+    other.set_setting(
+        crate::setting::SettingCaller::Owner(&proof),
+        crate::setting::SetSetting::vault_value(
+            "dreamer.proactivity.delivery",
+            serde_json::to_value(digest::ProactivityDelivery {
+                group_by_facet: cadence.group_by_facet,
+                urgent_breakthrough: cadence.urgent_breakthrough,
+            })
+            .unwrap(),
+        ),
+    )?;
     let mut invalid_rubric = rubric.clone();
     invalid_rubric.questions.freshness.clear();
     assert_eq!(

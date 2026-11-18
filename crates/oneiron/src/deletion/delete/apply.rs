@@ -49,6 +49,13 @@ impl Vault {
         // arm publishes its tombstone after the scrub, so the re-fold below
         // in the publish txn is the decision that binds.
         reverify_deletion_authority_before_publication(gate.as_ref(), &wtxn)?;
+        // The last-bound-owner guard re-proven inside this transaction
+        // (round-1 P1 of #7900): the guard phase read a snapshot it already
+        // dropped, so a binding change committed since — a `RebindActor` of
+        // the sole key to this PERSON — refuses here before a single byte is
+        // scrubbed. The read-phase check stays as the early refusal; this
+        // write-transaction check is the one that decides.
+        self.refuse_last_bound_owner_delete_in(&wtxn, id)?;
         // A due owner delete scrubs only while its request still waits
         // (FIX 1465): this scrub is its first destructive commit.
         if let Some(due) = due {
@@ -273,6 +280,14 @@ impl Vault {
             // OWN view — the refusal is actionable (nothing is on the wire) and
             // true (nothing replays back).
             reverify_deletion_authority_when_unpublished(gate.as_ref(), authority_settled, &wtxn)?;
+            // The last-bound-owner guard under the same conditional law
+            // (round-1 P1 of #7900): with nothing published this scrub is the
+            // first irreversible act, so it re-proves the guard against its
+            // own view. Once the tombstone published, the publish transaction
+            // already decided it.
+            if !authority_settled {
+                self.refuse_last_bound_owner_delete_in(&wtxn, id)?;
+            }
             self.store.reject_legal_hold_in_txn(&wtxn, id.as_bytes())?;
             crate::world_keys::reject_held_pad_world_in_txn(&self.store, &wtxn, &[*id])?;
             self.reject_held_redirect_shells_in_txn(&wtxn, id)?;

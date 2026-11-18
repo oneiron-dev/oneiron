@@ -15,6 +15,7 @@ use super::limits::LimitsConfig;
 use super::line::LineConfig;
 use super::linear::LinearConfig;
 use super::lookup::LEGACY_DEFAULT_VAULT_PATH;
+use super::mail::MailConfig;
 use super::oneironer::OneironerConfig;
 use super::recall::RecallConfig;
 use super::self_heal::SelfHealConfig;
@@ -32,6 +33,9 @@ const DEFAULT_MAX_FRAME_SIZE: usize =
         + oneiron::sync::transport::WINDOW_PAD_HEADER_BYTES
         + 3
         + oneiron::sync::transport::MAX_WINDOW_KEY_LEN;
+
+/// The `*.localhost` host a local vault answers on.
+mod artifact_localhost;
 
 /// The two configs' redacting `Debug`.
 mod debug;
@@ -174,6 +178,10 @@ pub struct SyncServerConfig {
     /// `[line]`: the plan of the LINE Official Account the built-in LINE
     /// pack serves, and the pushes it includes each month.
     pub line: LineConfig,
+    /// `[mail]`: the host operator's mail settings each served vault's mail
+    /// pack reads (fix list row 17645); the defaults unless the file names
+    /// others.
+    pub mail: MailConfig,
     /// `[channel_endpoints]`: where the served sinks reach each provider's
     /// API; the public APIs unless the file names others.
     pub channel_endpoints: ChannelEndpointsConfig,
@@ -279,6 +287,7 @@ impl Default for SyncServerConfig {
             runtime: RuntimeConfig::default(),
             skills: SkillsConfig::default(),
             line: LineConfig::default(),
+            mail: MailConfig::default(),
             channel_endpoints: ChannelEndpointsConfig::default(),
             apns: ApnsConfig::default(),
             linear: None,
@@ -426,6 +435,9 @@ pub struct ServeConfig {
     /// The `[line]` section: the LINE Official Account's plan, a free
     /// account unless the config file names one.
     pub line: LineConfig,
+    /// The `[mail]` section: the host operator's mail settings, the
+    /// defaults unless the config file names others.
+    pub mail: MailConfig,
     /// The `[channel_endpoints]` section: the provider APIs the served sinks
     /// reach, the public ones unless the config file names others.
     pub channel_endpoints: ChannelEndpointsConfig,
@@ -472,6 +484,14 @@ pub struct ServeConfig {
     /// it for the owner to approve; it is never read off the operating
     /// system. A computer unless the file says otherwise.
     pub device_class: oneiron::authority::MachineDeviceClass,
+    /// `machine_reported_name`: the name this install reports for itself in
+    /// the owner's machine list, as the host declares it; display only, never
+    /// read off the operating system; FIX [DEVICE-DISPLAY-NAME].
+    pub machine_reported_name: Option<String>,
+    /// `machine_reported_model`: the model this install reports for itself,
+    /// as the host declares it; display only, never read off the operating
+    /// system; FIX [DEVICE-DISPLAY-NAME].
+    pub machine_reported_model: Option<String>,
     /// `--esign-delivery-outbox-dir`, argv only: where the e-sign delivery
     /// outbox hands authorized mail to the host's sender (OF-415). Unset, no
     /// outbox worker runs.
@@ -574,6 +594,7 @@ impl Default for ServeConfig {
             connectors: std::collections::BTreeMap::new(),
             embedding: None,
             line: server.line,
+            mail: server.mail,
             channel_endpoints: server.channel_endpoints.clone(),
             apns: server.apns.clone(),
             linear: None,
@@ -589,6 +610,8 @@ impl Default for ServeConfig {
             maximum_tier: false,
             off_record_dump_suppression: true,
             device_class: vault.machine_device_class,
+            machine_reported_name: vault.machine_reported_name.clone(),
+            machine_reported_model: vault.machine_reported_model.clone(),
             esign_delivery_outbox_dir: None,
             publisher_training_outbox_dir: None,
             publisher_training_self_host_shipper: false,
@@ -647,6 +670,7 @@ impl ServeConfig {
             runtime: self.runtime.clone(),
             skills: self.skills.clone(),
             line: self.line,
+            mail: self.mail,
             channel_endpoints: self.channel_endpoints.clone(),
             apns: self.apns.clone(),
             linear: self.linear.clone(),
@@ -704,6 +728,8 @@ impl ServeConfig {
         // #archive-precheck).
         config.storage_cap_bytes = self.import.storage_cap_bytes;
         config.machine_device_class = self.device_class;
+        config.machine_reported_name = self.machine_reported_name.clone();
+        config.machine_reported_model = self.machine_reported_model.clone();
         config.limits = self.limits.engine.clone();
         config.call_mode_deadline = std::time::Duration::from_millis(self.recall.call_deadline_ms);
         // Retrieval-run capture stays off unless this server's owner turns it

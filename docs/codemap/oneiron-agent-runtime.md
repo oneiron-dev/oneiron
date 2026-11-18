@@ -24,7 +24,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/code_sandbox/firecracker/snapshot.rs` | src | s | 3 crate-vis | — | Descriptor-relative, no-symlink source snapshot for a foreign VM |
 | `src/code_sandbox/firecracker/tests.rs` | test | s | — | — | — |
 | `src/code_sandbox/microvm/container.rs` | src | m | 1 struct · 2 fn · 1 const | ContainerBackend | OCI code and browser sessions on Linux hosts without a usable microVM |
-| `src/code_sandbox/microvm/mod.rs` | src | s | 2 re-export | — | The microVM lane: core's contract and selection law (`oneiron::code_sandbox::microvm`, re-exported whole)… |
+| `src/code_sandbox/microvm/mod.rs` | src | s | 3 re-export | — | The microVM lane: core's contract and selection law (`oneiron::code_sandbox::microvm`, re-exported whole)… |
+| `src/code_sandbox/microvm/vendor_batch.rs` | src | m | 4 struct · 1 trait · 3 fn · 3 const | VendorBatchBackend, VendorCallBound, VendorSandboxClient, VendorSandboxId, VendorSandboxSpec | A vendor's sandbox as the backend of a finite Foreign or Untrusted run (L8-43, VENDOR-BOUNDARY = A: a batch… |
 | `src/code_sandbox/mod.rs` | src | s | 5 mod · 2 re-export | — | The code sandbox backends, beside core's sandbox contract (re-exported whole, so the moved code's… |
 | `src/code_sandbox/quickjs.rs` | src | s | 1 struct · 3 fn | QuickJsRuntimeFactory | Hash-pinned, readiness-checked QuickJS artifact factory |
 | `src/code_sandbox/quickjs/tests.rs` | test | m | — | — | Acceptance tests require the real artifacts produced by the pinned build |
@@ -42,4 +43,5 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/callable_wait_park.rs` | test | s | — | — | ENGINE CALL SANDBOX-WAIT-PARK-SEMANTICS: a callable whose body finishes after its `wait` was answered with… |
 | `tests/code_mode_wait_park.rs` | test | s | — | — | ENGINE CALL CODE-SANDBOX-WAIT-RESPONSE-FIELD: a code-mode call whose row output holds a park, answered with… |
 | `tests/quickjs_factory_compiles_once.rs` | test | s | — | — | FIX AGENT-RUN-START-LATENCY-4S: a QuickJS runtime handle reuses its factory's compiled component |
+| `tests/vendor_batch_backend.rs` | test | m | — | — | A run on a vendor's sandbox (L8-43, VENDOR-BOUNDARY = A: a batch boundary) |
 | `tests/wait_park/fixture.rs` | test | s | 4 crate-vis | — | The shared fixture of `code_mode_wait_park.rs` and `callable_wait_park.rs` (ENGINE CALL… |

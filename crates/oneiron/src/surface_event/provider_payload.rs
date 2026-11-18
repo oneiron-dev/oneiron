@@ -83,7 +83,8 @@ impl Vault {
                 now,
             )?;
         }
-        let actor = self.ensure_provider_inbound_actor(now)?;
+        let actor =
+            self.with_write_txn_grouped(|txn| ensure_provider_inbound_machine(self, txn, now))?;
         let version = self.append_blob_artifact_version(
             &artifact_id,
             body,
@@ -183,10 +184,22 @@ impl Vault {
             .read_provider_event(payload_ref)?
             .and_then(|body| serde_json::from_slice(&body).ok()))
     }
+}
 
-    fn ensure_provider_inbound_actor(&self, now: u64) -> Result<EntityId> {
-        let id = EntityId::derive(SURFACE_PROVIDER_INBOUND_ACTOR, &[])?;
-        if self.get_entity_type(&id)? != Some(ENTITY_TYPE_MACHINE) {
+/// The provider-inbound MACHINE every archived provider event is written
+/// under, its row put on first use. It is one of the engine's MACHINE
+/// writers: the host enrolls it with the others
+/// (`provision_engine_machine_identities`) and retains its signer, so its
+/// `blob.version` claims carry the machine signature a MACHINE author needs.
+/// A row of another type under its id refuses.
+pub(crate) fn ensure_provider_inbound_machine(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    now: u64,
+) -> Result<EntityId> {
+    let id = EntityId::derive(SURFACE_PROVIDER_INBOUND_ACTOR, &[])?;
+    match vault.get_entity_type_in_txn(txn, &id)? {
+        None => {
             let mut body = Vec::new();
             rmpv::encode::write_value(
                 &mut body,
@@ -196,17 +209,26 @@ impl Vault {
                 )]),
             )
             .map_err(|_| Error::InvariantViolation("actor body did not encode"))?;
-            self.put_entity(
-                &id,
-                ENTITY_TYPE_MACHINE,
-                TimeRange {
-                    start: now,
-                    end: now,
-                },
-                now,
-                &body,
-            )?;
+            vault
+                .batch_in()
+                .put_internal(
+                    &id,
+                    ENTITY_TYPE_MACHINE,
+                    TimeRange {
+                        start: now,
+                        end: now,
+                    },
+                    now,
+                    &body,
+                )
+                .apply(txn)?;
         }
-        Ok(id)
+        Some(ENTITY_TYPE_MACHINE) => {}
+        Some(_) => {
+            return Err(Error::InvariantViolation(
+                "the provider-inbound machine is unavailable",
+            ));
+        }
     }
+    Ok(id)
 }

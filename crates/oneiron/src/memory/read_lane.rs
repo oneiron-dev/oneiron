@@ -834,6 +834,11 @@ impl Memory<'_> {
         txn: &heed::RoTxn<'_>,
         id: &EntityId,
     ) -> MemoryResult<Option<crate::provenance::made_by::MadeBy>> {
+        // A reaction claim's birth names its writer, so it goes only to a
+        // reader who may read its reactor (FIX REACTION-CLAIM-VALUE-REACTOR-ID).
+        if !lane.serves_birth_of_in(txn, id)? {
+            return Ok(None);
+        }
         let Some(birth) = crate::provenance::birth::row_birth_in_txn(&lane.store_read(), txn, id)?
         else {
             return Ok(None);

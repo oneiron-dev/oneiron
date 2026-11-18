@@ -558,7 +558,13 @@ fn share_viewer_actor_in_txn(
     }
     let mut actor_class = None;
     for class in classes {
-        if !crate::authority::actor_binding_is_active(&fold, viewer, class.gate_actor_class()) {
+        if !crate::authority::actor_binding_is_live_in(
+            &vault.store,
+            txn,
+            &fold,
+            viewer,
+            class.gate_actor_class(),
+        )? {
             continue;
         }
         if crate::provenance::validate_actor_class(raw.entity_type, class).is_err()
@@ -939,7 +945,5 @@ fn share_claim_facets(
 }
 
 pub(crate) mod tables;
-// FIX [LIBTEST-QUARANTINE-SHARE-TESTS]: the lib test target's type check fails here (11 errors: E0061 x7, E0308 x3, E0063 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 pub(crate) mod tests;
