@@ -271,6 +271,7 @@ fn event_type_config(
     EventTypeConfig {
         key: EventTypeKey(EVENT_TYPE.to_owned()),
         duration_min: 30,
+        allowed_durations_min: Vec::new(),
         slot_step_min: 30,
         pre_buffer_min: 0,
         post_buffer_min: 0,
@@ -483,6 +484,7 @@ fn publish(vault: &Vault, owner: EntityId, page: EntityId, config: &EventTypeCon
             title: EVENT_TITLE.to_owned(),
             deposit: None,
             duration_min: 30,
+            allowed_durations_min: Vec::new(),
             description: "A first call".to_owned(),
         }],
         constraint_field: ConstraintFieldConfig {

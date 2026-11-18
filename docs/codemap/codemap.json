@@ -11576,9 +11576,9 @@
      "path": "src/booking/config.rs",
      "purpose": "ONE-1823 [BK-00] booking-page event-type configuration",
      "surface": {
-      "const": 4,
-      "crate-vis": 13,
-      "fn": 6,
+      "const": 5,
+      "crate-vis": 14,
+      "fn": 7,
       "re-export": 1,
       "struct": 5
      }
@@ -11601,7 +11601,7 @@
       "const": 1,
       "crate-vis": 5,
       "enum": 1,
-      "fn": 3,
+      "fn": 4,
       "re-export": 3,
       "struct": 5,
       "trait": 1
@@ -30239,7 +30239,7 @@
      "path": "src/disclosure/model_channel.rs",
      "purpose": "The model connection is a disclosure audience, not a read grant",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "enum": 1,
       "fn": 4,
       "re-export": 1,
@@ -32668,7 +32668,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/dreamer_consolidation/settle/preference_pair.rs",
-     "purpose": "OF-023 (FIX 3079): the Memory door's observed-versus-stated preference markers, which stop asking once their…",
+     "purpose": "OF-023 (FIX 3079): the observed-versus-stated preference markers of the Memory door and of the derive Claim…",
      "surface": {
       "crate-vis": 1
      }
@@ -68820,7 +68820,7 @@
      "path": "src/receipt/off_device.rs",
      "purpose": "A caller off this device and the receipt family (FIX 1119, FIX 1120): the rows each receipt names, by its…",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -106824,6 +106824,14 @@
      "bucket": "m",
      "kind": "test",
      "notable": [],
+     "path": "tests/connect_export_stamped_claims.rs",
+     "purpose": "A Connect export carries the source owner's stamped claims up to the Connect grant's own sensitivity…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
      "path": "tests/connector_issuer_detection.rs",
      "purpose": "L5-11 (ARCH-0072 #drift, #living; ARCH-0054 #auth): the engine's own detection of a credential issuer change",
      "surface": {}
@@ -110040,6 +110048,14 @@
      "bucket": "m",
      "kind": "test",
      "notable": [],
+     "path": "tests/kit_restore_and_rotation_regressions.rs",
+     "purpose": "[KIT-ACTIVATION-REVIEW2-TESTS], REVIEW-9488 round 2: P1 1 checks that a revoked kit's sealed restore creates…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
      "path": "tests/kit_restore_puts_machine_on_roster.rs",
      "purpose": "FIX KIT-RESTORE-ANCHOR-ONLY-INSTALL-COUNTS-NO-WRAP (Engine TASK 16 Nov 06:34; ANCHORSEC, Astra T3 on #8673…",
      "surface": {}
@@ -110797,7 +110813,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "tests/pack_keys_booking.rs",
@@ -113668,6 +113684,14 @@
      "bucket": "m",
      "kind": "test",
      "notable": [],
+     "path": "tests/verb_hook_receipt_credential_screen.rs",
+     "purpose": "A verb hook's receipt is screened by its real rows, not its invocation (HOOKS-04, leg B1)",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
      "path": "tests/verb_self_memory_diary_pinned.rs",
      "purpose": "`self.memory.diary.pinned` through the generated verb dispatch (`oneiron::task_verb::sdk::invoke`), as a…",
      "surface": {}
@@ -115816,7 +115840,7 @@
    "over_bar": 302,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 8186,
-   "test_files": 1922
+   "test_files": 1925
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -154745,7 +154769,7 @@
      "path": "src/api/booking/public_availability.rs",
      "purpose": "Query-bound slot cache",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -154765,6 +154789,14 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/api/booking/public_duration_tests.rs",
+     "purpose": "BK-VARIABLE-DURATION through the real public router: one link carries the event type's allowed lengths, the…",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -154775,7 +154807,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/api/booking/public_grant_view_tests.rs",
@@ -177655,6 +177687,14 @@
      "bucket": "m",
      "kind": "test",
      "notable": [],
+     "path": "tests/self_actor_bounded_credential.rs",
+     "purpose": "`self.actor` answers a bounded credential (leg A1, E2E HOOKS-03 cause 1)",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
      "path": "tests/self_browser_doors.rs",
      "purpose": "An agent drives a browser only through its own attached live run, and each browser door refuses everyone…",
      "surface": {}
@@ -178365,7 +178405,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 826,
+     "files": 827,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -178970,7 +179010,7 @@
    "over_bar": 70,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 2030,
-   "test_files": 492
+   "test_files": 494
   },
   "oneiron-setting-contract": {
    "files": [
@@ -188627,6 +188667,14 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/lmdb_sealed_failed_read_begin.rs",
+     "purpose": "FIX row LMDB-TXN-BEGIN-FAILURE-WRONG-FREE (`ONEIRON FORK (begin failure)` in `mdb_txn_begin`): a sealed read…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/lmdb_sealed_overflow.rs",
      "purpose": "FIX row LMDB-MASTER3-UPSTREAM-FIXES-AUDIT (upstream ITS#10519): a sealed environment reads back every value…",
      "surface": {}
@@ -190332,7 +190380,7 @@
    "over_bar": 1,
    "purpose": "The store layer of the oneiron engine",
    "source_files": 653,
-   "test_files": 28
+   "test_files": 29
   },
   "oneiron-testkit": {
    "files": [

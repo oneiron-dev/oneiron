@@ -134,6 +134,7 @@ fn base_config(
     EventTypeConfig {
         key: event_type(),
         duration_min: 30,
+        allowed_durations_min: Vec::new(),
         slot_step_min: 30,
         pre_buffer_min: 0,
         post_buffer_min: 0,
