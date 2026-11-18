@@ -230,3 +230,16 @@ pub fn room_stored_call_is(
         custody,
     )
 }
+
+/// The handle custody gives `record`, or `None` when it gives none.
+///
+/// # Errors
+///
+/// The vault cannot be read.
+pub fn custody_handle(vault: &Vault, record: EntityId) -> Result<Option<String>> {
+    let txn = vault.store.env.read_txn()?;
+    Ok(
+        crate::ports::ShortIdStoreRead::port_short_id_reference(&vault.store, &txn, &record)?
+            .map(|(handle, _)| handle),
+    )
+}

@@ -33,7 +33,7 @@ use std::sync::Arc;
 
 use oneiron::off_record::OffRecordBackendClass;
 use oneiron::test_doors::erased_request_identity::{
-    room_stored_call_erased, room_stored_call_is, store_note_body, store_note_call,
+    custody_handle, room_stored_call_erased, room_stored_call_is, store_note_body, store_note_call,
     store_note_call_in_room, stored_body_call_is, stored_call_erased, stored_call_is,
 };
 use oneiron::{EntityId, Vault, VaultConfig};
@@ -45,6 +45,8 @@ const HELD_PASSPHRASE: &str = "winter orchard notebook lantern";
 const OTHER_HELD_PASSPHRASE: &str = "autumn meadow candle ribbon";
 /// A passphrase custody takes only after a row holds it as written.
 const LATER_PASSPHRASE: &str = "spring valley mirror basket";
+/// A passphrase whose record shows which handle custody gives next.
+const PROBE_PASSPHRASE: &str = "harbor compass lighthouse ribbon";
 /// Keys of one shape a shape rule reads as a secret: the first two custody
 /// records hold, the third none.
 const FIRST_SHAPED_KEY: &str = "AKIA1234567890123456";
@@ -329,5 +331,90 @@ fn a_rooms_call_put_after_its_agent_is_gone_meets_only_a_call_naming_its_records
             "{other} is another call"
         );
     }
+    Ok(())
+}
+
+/// The number a custody handle (`sc` and digits) carries.
+fn handle_number(handle: &str) -> TestResult<u64> {
+    Ok(handle
+        .strip_prefix("sc")
+        .ok_or("a custody handle opens with sc")?
+        .parse()?)
+}
+
+/// The handle custody gives `record`.
+fn handle_of(vault: &Vault, record: EntityId) -> TestResult<String> {
+    Ok(custody_handle(vault, record)?.ok_or("custody gives the record a handle")?)
+}
+
+/// A record holds, as its value, the handle custody gives the record after
+/// it, spelled as a handle, while no record has that handle: the wall and
+/// the erase read the spelling as the value it is. Custody then takes that
+/// next record. The call made again still meets its row: its erase named
+/// one record, and a read for that record knows that record's handle alone.
+/// Red at 6058748001c (blind review round 1 of #9528): the read took the
+/// spelling for the handle of the record custody took since, and drifted.
+#[test]
+fn an_erased_call_spelling_the_handle_of_a_record_custody_takes_later_meets_its_call() -> TestResult
+{
+    let (_directory, vault) = vault()?;
+    let probe = vault.register_test_secret(
+        "harbor passphrase",
+        PROBE_PASSPHRASE.as_bytes(),
+        Vec::new(),
+        2,
+    )?;
+    let next = handle_number(&handle_of(&vault, probe)?)? + 2;
+    let spelled = format!("[secret sc{next}]");
+    let holder = vault.register_test_secret("spelled handle", spelled.as_bytes(), Vec::new(), 2)?;
+    assert_eq!(handle_of(&vault, holder)?, format!("sc{}", next - 1));
+    let call = erased_call(&vault, &words(&spelled), |_| Ok(()))?;
+    let later = vault.register_test_secret(
+        "valley passphrase",
+        LATER_PASSPHRASE.as_bytes(),
+        Vec::new(),
+        3,
+    )?;
+    assert_eq!(
+        handle_of(&vault, later)?,
+        format!("sc{next}"),
+        "custody gives its handles in order"
+    );
+    assert!(stored_call_is(&vault, call, &words(&spelled), true)?);
+    Ok(())
+}
+
+/// Custody holds, as a value, the word an erased form once named its
+/// custody identity by. The room's put fence erases the call of a gone
+/// agent before the wall reads the record, so the wall reads the erased
+/// form too: it names no such word, and its records are bare handles the
+/// wall leaves as they are. The call made again with the key it held meets
+/// the row, and another key of the same shape is another call. Red at
+/// 6058748001c (blind review round 1 of #9528): the wall took the word for
+/// that value and placed its handle, and the row no longer read as erased.
+#[test]
+fn a_rooms_call_put_after_its_agent_is_gone_keeps_its_records_when_custody_holds_a_form_word()
+-> TestResult {
+    let (_directory, vault) = vault()?;
+    vault.register_test_secret("erased form word", b"custody", Vec::new(), 2)?;
+    let session = vault
+        .off_record_session_vault()
+        .enter("sess-erased-identity-word", OffRecordBackendClass::Local)?;
+    let call = store_note_call_in_room(&vault, &session, &words(FIRST_SHAPED_KEY), true)?;
+    assert!(
+        room_stored_call_erased(&session, call[1])?,
+        "the room's put fence erases the call of a gone agent"
+    );
+    assert!(room_stored_call_is(
+        &vault,
+        &session,
+        call,
+        &words(FIRST_SHAPED_KEY),
+        true
+    )?);
+    assert!(
+        !room_stored_call_is(&vault, &session, call, &words(SECOND_SHAPED_KEY), true)?,
+        "another key of the same shape is another call"
+    );
     Ok(())
 }
