@@ -46,6 +46,7 @@ pub(super) fn fold_as_install(
             local.observations.map(|observations| &observations.policy),
         ),
         pin: local.pin,
+        owner_key_lines: None,
         appointments: None,
     };
     let no_vouch = NoVouch::of(entries, first_seen_at_secs, now_secs, local, bare);

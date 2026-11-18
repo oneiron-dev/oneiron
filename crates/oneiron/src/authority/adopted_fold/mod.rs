@@ -524,6 +524,12 @@ fn tail_folds_past(
     {
         return None;
     }
+    // A tail an owner key's line could reach where the image's kept states
+    // do not show it is judged by the whole log (row
+    // CARRIER-PROOF-OLD-PARENTS).
+    if super::owner_key_line::tail_reaches_old_parents(image, tail) {
+        return None;
+    }
     // Only the rows the whole fold judges set or carry a floor
     // (`fold_engine::judged_entries`): a tail row whose signature fails is
     // neither a link nor a setter, as it is in no ancestry of the whole fold.
