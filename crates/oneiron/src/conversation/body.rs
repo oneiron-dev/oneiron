@@ -86,14 +86,25 @@ pub(crate) fn validate_put_in_txn(
                 return Err(state("role changes require the room role door"));
             }
         }
-        // ROOM-SCOPED-PINS: a room's shared pins and their policy change only
-        // through the room pin doors, which mark their write transaction; a
-        // new room starts with no pins and the default policy.
-        let (previous_pins, previous_policy) = previous
+        // ROOM-SCOPED-PINS: a room's shared pins, the records its unpins
+        // removed and the pin policy change only through the room pin doors,
+        // which mark their write transaction; a new room starts with no pins
+        // and the default policy.
+        let previous_pin_state = previous
             .as_ref()
-            .map(|previous| (previous.pins.as_slice(), previous.pin_policy))
+            .map(|previous| {
+                (
+                    previous.pins.as_slice(),
+                    previous.unpinned.as_slice(),
+                    previous.pin_policy,
+                )
+            })
             .unwrap_or_default();
-        if (body.pins.as_slice(), body.pin_policy) != (previous_pins, previous_policy)
+        if (
+            body.pins.as_slice(),
+            body.unpinned.as_slice(),
+            body.pin_policy,
+        ) != previous_pin_state
             && !pins::PIN_UPDATES.contains(store, txn, &id)?
         {
             return Err(state("pin changes require the room pin doors"));

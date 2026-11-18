@@ -546,3 +546,258 @@ fn a_masked_copy_is_refused_and_the_other_paths_edit() -> TestResult {
     assert_eq!(fixture.read(one, "label.rs")?, label);
     Ok(())
 }
+
+// VIEW-BOUND-READ = A (FIX VIEW-EDIT-GRANT-HAS-NO-READ): the live Grant bound
+// to a view reads that view through `vault.code.views.get` and `.read`, as
+// the SDK runs those rows on the agent's own handle: only the paths its
+// editable globs admit, through the masked reader's read.
+
+impl Fixture {
+    /// `verb` run by name on `agent`'s own handle, as the embedded SDK
+    /// runs the row.
+    fn agent_call<T: serde::de::DeserializeOwned>(
+        &self,
+        agent: EntityId,
+        verb: &str,
+        input: impl serde::Serialize,
+    ) -> MemoryResult<T> {
+        let memory = self.repo.vault.memory(agent, EdgeActorClass::Agent);
+        let input = serde_json::to_value(input).expect("the row's input encodes");
+        let answer = oneiron::verbs::invoke(&memory, verb, input)?;
+        Ok(serde_json::from_value(answer).expect("the row's answer decodes"))
+    }
+
+    fn agent_get(
+        &self,
+        agent: EntityId,
+        view: CodeViewRequest,
+    ) -> MemoryResult<oneiron::memory::code_view_doors::CodeWorkingView> {
+        self.agent_call(agent, "vault.code.views.get", view)
+    }
+
+    fn agent_read(
+        &self,
+        agent: EntityId,
+        view: EntityId,
+        path: &str,
+    ) -> MemoryResult<oneiron::memory::code_view_doors::CodeViewFileBytes> {
+        self.agent_call(
+            agent,
+            "vault.code.views.read",
+            CodeViewReadRequest {
+                view: self.view(view),
+                path: path.to_owned(),
+                why: None,
+            },
+        )
+    }
+}
+
+/// The paths a view answer lists: its files, then its edited files.
+fn listed(view: &oneiron::memory::code_view_doors::CodeWorkingView) -> (Vec<&str>, Vec<&str>) {
+    (
+        view.files.iter().map(|file| file.path.as_str()).collect(),
+        view.forks.iter().map(|fork| fork.path.as_str()).collect(),
+    )
+}
+
+#[test]
+fn a_view_bound_grant_reads_its_view_within_its_globs() -> TestResult {
+    let fixture = Fixture::new()?;
+    let one = fixture.one;
+    let editor = create_enabled_agent(
+        &fixture.repo.vault,
+        &fixture.repo.owner_proof,
+        "view-reader",
+    )?;
+    fixture.mint(editor, &["math.rs"], Some(fixture.bound(one)))?;
+
+    // The agent reads the view and the one file its Grant edits.
+    let view = fixture.agent_get(editor, fixture.view(one))?;
+    assert_eq!(view.view, one);
+    assert_eq!(view.revision, 0);
+    assert!(
+        view.host_path.is_empty(),
+        "the owner's view folder is not the agent's"
+    );
+    assert_eq!(listed(&view), (vec!["math.rs"], vec![]));
+    let file = fixture.agent_read(editor, one, "math.rs")?;
+    assert_eq!(file.bytes, MATH_RS.as_bytes());
+    assert_eq!(file.sha256, sha256(MATH_RS));
+
+    // After the owner's own edit it reads the view's new revision and text,
+    // and its edit against what it read lands.
+    fixture.owner_edit(fixture.edit_request(one, "math.rs", 0, MATH_RS, MATH_EDITED))?;
+    let view = fixture.agent_get(editor, fixture.view(one))?;
+    assert_eq!(
+        view.revision, 1,
+        "the agent reads the owner's edit's revision"
+    );
+    assert_eq!(listed(&view), (vec!["math.rs"], vec!["math.rs"]));
+    let file = fixture.agent_read(editor, one, "math.rs")?;
+    assert_eq!(
+        file.bytes,
+        MATH_EDITED.as_bytes(),
+        "the agent reads the owner's edit"
+    );
+    let edit = fixture.agent_edit(
+        editor,
+        CodeViewEditRequest {
+            view: fixture.view(one),
+            path: "math.rs".to_owned(),
+            expected_revision: view.revision,
+            expected_sha256: file.sha256,
+            replacement_text: MATH_AGAIN.to_owned(),
+        },
+    )?;
+    assert_eq!(edit.revision, 2);
+    assert_eq!(
+        fixture.agent_read(editor, one, "math.rs")?.bytes,
+        MATH_AGAIN.as_bytes()
+    );
+    Ok(())
+}
+
+#[test]
+fn a_view_bound_grant_reads_no_path_outside_its_globs() -> TestResult {
+    let fixture = Fixture::new()?;
+    let one = fixture.one;
+    let editor = create_enabled_agent(
+        &fixture.repo.vault,
+        &fixture.repo.owner_proof,
+        "view-reader",
+    )?;
+    fixture.mint(editor, &["math.rs"], Some(fixture.bound(one)))?;
+    let label = "pub fn label() -> &'static str {\n    \"owner\"\n}\n";
+    fixture.owner_edit(fixture.edit_request(one, "label.rs", 0, LABEL_RS, label))?;
+
+    // The view answer lists neither the file nor the owner's edit of it.
+    let view = fixture.agent_get(editor, fixture.view(one))?;
+    assert_eq!(
+        listed(&view),
+        (vec!["math.rs"], vec![]),
+        "a path outside the editable globs is not listed"
+    );
+    assert_eq!(
+        refused(
+            fixture.agent_read(editor, one, "label.rs"),
+            "a path outside the editable globs"
+        ),
+        "repo_path_outside_scope"
+    );
+    assert_eq!(
+        refused(
+            fixture.agent_read(editor, one, "absent.rs"),
+            "a path that is no file of the view"
+        ),
+        "repo_path_outside_scope",
+        "an unknown path outside the globs is refused before the view is read"
+    );
+    // The owner still reads every file of his view.
+    assert_eq!(fixture.read(one, "label.rs")?, label);
+    Ok(())
+}
+
+#[test]
+fn a_view_bound_grant_reads_no_other_view_and_nothing_once_revoked() -> TestResult {
+    let fixture = Fixture::new()?;
+    let (one, two) = (fixture.one, fixture.two);
+    let vault = &fixture.repo.vault;
+    let owner_proof = &fixture.repo.owner_proof;
+    let editor = create_enabled_agent(vault, owner_proof, "view-reader")?;
+    let grant = fixture.mint(editor, &["math.rs"], Some(fixture.bound(one)))?;
+    assert_eq!(
+        fixture.agent_read(editor, one, "math.rs")?.bytes,
+        MATH_RS.as_bytes()
+    );
+
+    // Another view of the same tested tree, and a request naming another
+    // account, are not this Grant's.
+    assert_eq!(
+        refused(fixture.agent_get(editor, fixture.view(two)), "another view"),
+        "repo_no_membership"
+    );
+    assert_eq!(
+        refused(
+            fixture.agent_read(editor, two, "math.rs"),
+            "another view's file"
+        ),
+        "repo_no_membership"
+    );
+    let mut elsewhere = fixture.view(one);
+    elsewhere.account = editor;
+    assert_eq!(
+        refused(fixture.agent_get(editor, elsewhere), "another account"),
+        "repo_no_membership"
+    );
+
+    // A repo Grant bound to no view reads no view.
+    let plain = create_enabled_agent(vault, owner_proof, "repo-reader")?;
+    fixture.mint(plain, &["math.rs"], None)?;
+    assert_eq!(
+        refused(
+            fixture.agent_get(plain, fixture.view(one)),
+            "a Grant bound to no view"
+        ),
+        "repo_no_membership"
+    );
+    assert_eq!(
+        refused(
+            fixture.agent_read(plain, one, "math.rs"),
+            "a Grant bound to no view"
+        ),
+        "repo_no_membership"
+    );
+
+    // After a revoke the agent reads nothing of the view.
+    revoke_agent_grant_as(
+        vault,
+        owner_proof,
+        ActSurface::ThisInstall,
+        AgentGrantRevokeRequest {
+            grant_ref: grant,
+            seen: None,
+        },
+    )?;
+    assert_eq!(
+        refused(
+            fixture.agent_get(editor, fixture.view(one)),
+            "a revoked Grant"
+        ),
+        "repo_no_membership"
+    );
+    assert_eq!(
+        refused(
+            fixture.agent_read(editor, one, "math.rs"),
+            "a revoked Grant"
+        ),
+        "repo_no_membership"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_view_bound_grant_reads_a_masked_copy_as_its_projection() -> TestResult {
+    let fixture = Fixture::new()?;
+    let one = fixture.one;
+    let editor = create_enabled_agent(
+        &fixture.repo.vault,
+        &fixture.repo.owner_proof,
+        "view-reader",
+    )?;
+    fixture.mint(editor, &["math.rs", "label.rs"], Some(fixture.bound(one)))?;
+    hold_masked_copy(&fixture.repo.vault, one, "math.rs")?;
+
+    // The masked copy answers with the label its materializer recorded.
+    let masked = fixture.agent_read(editor, one, "math.rs")?;
+    let projection = masked
+        .projection
+        .expect("a masked copy reads as its projection");
+    assert_eq!(projection.way_out, "vault.code.views.read with why");
+    assert_eq!(masked.sha256, sha256(MATH_RS), "the copy's own bytes");
+    // A file the view holds as stored reads as stored.
+    let stored = fixture.agent_read(editor, one, "label.rs")?;
+    assert!(stored.projection.is_none());
+    assert_eq!(stored.bytes, LABEL_RS.as_bytes());
+    Ok(())
+}

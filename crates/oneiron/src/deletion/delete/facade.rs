@@ -157,7 +157,23 @@ impl Vault {
         gate: Option<GatedDeletion<'_>>,
         due: Option<&PendingConfirmedErase>,
     ) -> Result<DeleteEntityOutcome> {
-        let outcome = self.delete_entity_with_reason_impl(id, reason, gate, false, due);
+        self.delete_entity_through_dependents_across(id, reason, gate, due, || {})
+    }
+
+    /// [`Self::delete_entity_through_dependents`] with `between` run in the
+    /// gap between the guard phase's dropped read snapshot and the plan's
+    /// first write: the deterministic race point the last-bound-owner
+    /// regression drives a binding change through (round-1 P1 of #7900).
+    fn delete_entity_through_dependents_across(
+        &self,
+        id: &EntityId,
+        reason: DeleteReason,
+        gate: Option<GatedDeletion<'_>>,
+        due: Option<&PendingConfirmedErase>,
+        between: impl FnOnce(),
+    ) -> Result<DeleteEntityOutcome> {
+        let outcome =
+            self.delete_entity_with_reason_impl_across(id, reason, gate, false, due, between);
         // A fence its erase committed reaches key custody now (FIX 11211).
         self.store.journal_staged_fence_facts();
         let outcome = outcome?;
@@ -371,9 +387,37 @@ impl Vault {
         allow_replay_test: bool,
         due: Option<&PendingConfirmedErase>,
     ) -> Result<DeleteEntityOutcome> {
+        self.delete_entity_with_reason_impl_across(id, reason, gate, allow_replay_test, due, || {})
+    }
+
+    /// [`Self::delete_entity_with_reason_impl`] with `between` run after the
+    /// guard phase's read snapshot and before the plan's first write, or the
+    /// headerless leg's scope probe. No writer is held at the gap, so
+    /// `between` may commit (a binding change the write transactions below
+    /// must then see). Production passes an empty step; the `test_doors` race
+    /// door passes the test's.
+    fn delete_entity_with_reason_impl_across(
+        &self,
+        id: &EntityId,
+        reason: DeleteReason,
+        gate: Option<GatedDeletion<'_>>,
+        allow_replay_test: bool,
+        due: Option<&PendingConfirmedErase>,
+        between: impl FnOnce(),
+    ) -> Result<DeleteEntityOutcome> {
         let guard = self.delete_guard_phase(id, reason, &gate, allow_replay_test, due)?;
+        between();
         let (requested_at, header) = match guard {
             DeleteGuard::Done(outcome) => return Ok(outcome),
+            DeleteGuard::Headerless { requested_at } => {
+                return self.delete_entity_without_header(
+                    id,
+                    reason,
+                    requested_at,
+                    gate.as_ref(),
+                    due,
+                );
+            }
             DeleteGuard::Proceed {
                 requested_at,
                 header,
@@ -425,6 +469,27 @@ impl Vault {
             hard.authority_settled,
             hard.soft_complete_at,
         )
+    }
+
+    /// [`Self::delete_entity`] with `between` run in the gap between the
+    /// guard phase's dropped read snapshot and the plan's first write (the
+    /// `_across` split's test entry; round-1 P1 of #7900). The `test_doors`
+    /// race door is its only caller.
+    #[cfg(oneiron_test_support)]
+    pub(crate) fn delete_entity_across(
+        &self,
+        id: &EntityId,
+        between: impl FnOnce(),
+    ) -> Result<bool> {
+        let deleted = self.delete_entity_through_dependents_across(
+            id,
+            DeleteReason::UserDelete,
+            None,
+            None,
+            between,
+        );
+        self.store.flush_legal_hold_refusals_settled();
+        Ok(deleted?.existed)
     }
 }
 

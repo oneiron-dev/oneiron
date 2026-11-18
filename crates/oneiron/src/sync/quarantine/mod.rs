@@ -48,8 +48,6 @@ mod remat_markers;
 mod retention_reports;
 mod writes_batch;
 
-// FIX [LIBTEST-QUARANTINE-SYNC-QUARANTINE-TESTS]: the lib test target's type check fails here (2 errors: E0061 x2); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;
 

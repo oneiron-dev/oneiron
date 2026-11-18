@@ -70,6 +70,10 @@ mod carrier_marks;
 mod cloud_registration;
 mod codec;
 mod control;
+#[cfg(oneiron_test_support)]
+pub(crate) use self::control::input::{
+    custody_input_part_key_for_test, custody_witness_part_key_for_test,
+};
 mod doors;
 mod duplicate_merge;
 pub(crate) use self::duplicate_merge::custody_merged_in_txn;
@@ -102,6 +106,8 @@ mod storage_seal;
 mod transition;
 mod types;
 mod use_handle;
+#[cfg(oneiron_test_support)]
+pub(crate) use self::control::input::custody_witness_digest_for_test;
 
 /// MessagePack keys the custody floor reads out of POLICY_MANIFEST bodies.
 mod floor_keys {
@@ -134,6 +140,17 @@ pub(crate) use self::control::{
 pub use self::control::{
     CustodyCandidate, CustodyDelivery, CustodyKeptHere, CustodyManifestCheck, CustodyPlan,
     SealedCustodyChange, SecretCustodyView, SecretCustodyWork, SecretRevoked, SecretRotated,
+};
+#[cfg(all(oneiron_test_support, feature = "sync"))]
+pub(crate) use self::control::{
+    KeptNumberedOpen, drop_kept_numbered_part_for_test, keep_numbered_input_for_test,
+    open_kept_numbered_for_test,
+};
+#[cfg(oneiron_test_support)]
+pub(crate) use self::control::{
+    frame_envelope_count_for_test, open_numbered_as_holder_for_test,
+    seal_numbered_register_for_test, tamper_drop_first_envelope_for_test,
+    tamper_rewrite_envelope_count_for_test, tamper_swap_first_two_envelopes_for_test,
 };
 pub(crate) use self::doors::{
     CustodyWrite, SecretCustodyAdmission, message_part_original_matches_in_txn,
@@ -256,8 +273,6 @@ pub(crate) use self::use_handle::{
 pub use oneiron_authority::authority::{CustodyRegisterCheck, CustodyUncheckedReason};
 
 pub(crate) mod tables;
-// FIX [LIBTEST-QUARANTINE-SECRET-CUSTODY-TESTS]: the lib test target's type check fails here (5 errors: E0061 x4, E0063 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;
 

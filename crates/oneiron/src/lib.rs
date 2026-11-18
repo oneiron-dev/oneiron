@@ -20,6 +20,7 @@ pub use oneiron_store::config;
 pub mod deletion;
 /// The derivation transaction (untangle 6.7, primitive C).
 pub mod derive;
+pub mod display_edits;
 pub(crate) mod engine_store_hooks;
 pub mod edge {
     //! Edge kinds, layouts, value codec, strict edge-record parsing, `EdgeInfo`:
@@ -49,7 +50,9 @@ pub mod housekeeping;
 pub(crate) mod identity;
 pub mod idle_fold;
 pub mod limit_ask;
+pub mod machine_capacity;
 pub mod machine_destination;
+pub mod machine_names;
 pub(crate) use oneiron_base::limits;
 pub mod maintain;
 pub(crate) use oneiron_base::msgpack_shape;
@@ -558,7 +561,7 @@ pub use crate::llm::{
     LlmInputUsage, LlmMessage, LlmMessageRole, LlmOutputUsage, LlmRequest, LlmResponse, LlmResult,
     LlmStream, LlmStreamEvent, LlmStreamResult, LlmToolSpec, LlmUsage, ModelId, ModelLocality,
     ModelTierRef, PinnedConfigViolation, PinnedModelConfig, ReasoningPartKind, ResponseFormat,
-    RetryableLlmError, TierPrecedence, UnsupportedCapability,
+    RetryableLlmError, TierPrecedence, UnsupportedCapability, provider_finish_reason,
 };
 pub use crate::memory::{
     AdmitImportedClaimInput, BlobArtifactInput, CalendarInviteSurfaceInput,

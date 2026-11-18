@@ -15,6 +15,7 @@ use crate::llm::decision::{DecisionImage, EvidenceVersion, MAX_DECISION_IMAGE_BY
 use crate::llm::image::ImageBytes;
 use crate::office_body::document_resources;
 use crate::{EntityId, Result, Vault};
+use oneiron_contracts::fingerprint::ContentHash;
 use oneiron_docedit::ArchiveLimits;
 use oneiron_docedit::deck::DeckView;
 use oneiron_docedit::docx_body::read_docx_blocks;
@@ -75,7 +76,7 @@ impl Vault {
         }
         let base_live = self.office_body_pin(output)?;
         let (version, bytes, mut read_rows) = self.office_head(output, OfficeFormat::Xlsx)?;
-        let frontier = *blake3::hash(&bytes).as_bytes();
+        let frontier = *ContentHash::of(&bytes).as_bytes();
         let cells = named_sheet_cells(&bytes, request.sheet, &|cell: &CellRef| {
             cell.col == answer_col && rows.contains(&cell.row)
         })?;
@@ -135,7 +136,7 @@ impl Vault {
             read_rows.extend(rows);
             let pin = EvidenceVersion {
                 id: item.artifact,
-                body_hash: *blake3::hash(&file).as_bytes(),
+                body_hash: *ContentHash::of(&file).as_bytes(),
             };
             let (text, images) = match live {
                 Some((_, text)) => (

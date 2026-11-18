@@ -1326,7 +1326,7 @@ fn every_compliance_use_is_logged() {
             .expect("a search row keeps its query digest");
         assert_eq!(digest.len(), 64, "the digest is a BLAKE3 hex: {grown}");
         assert!(
-            digest.chars().all(char::is_ascii_hexdigit),
+            digest.chars().all(|c| c.is_ascii_hexdigit()),
             "the digest is hex, not the words: {grown}"
         );
         assert_ne!(digest, "Thursday", "the log keeps no search words: {grown}");
