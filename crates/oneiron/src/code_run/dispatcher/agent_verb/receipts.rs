@@ -2,9 +2,7 @@
 //! rows are compared with it. A continuation also asks here whether a
 //! receipt past its cut may have run (FIX 4199).
 
-use std::sync::Arc;
-
-use crate::batch::secret_scan::{admission_form, held_form};
+use crate::batch::secret_scan::{admission_form, held_form, known_admission_form};
 use crate::code_run::CompareKnown;
 use crate::code_run::payload::{
     agent_verb_call_identity as call_identity, decode_self_dispatch_outcome,
@@ -16,7 +14,6 @@ use crate::code_run::types::{
     SelfAgentVerbCall, SelfCall, SelfDeniedResult, SelfDispatchOutcome, SelfEffect,
 };
 use crate::error::{Error, Result};
-use crate::store::known_value_index::KnownValues;
 use crate::task_verb::sdk::AgentVerb;
 use crate::{EntityId, Vault};
 
@@ -315,13 +312,13 @@ pub(super) fn records_call(
 /// in the input text the row keeps, so the two are read as
 /// `admitted_from_known` reads a held row and a raw offer: each handle in
 /// `kept`, and each secret the plan places in `offered`, as the plan's one
-/// stand-in; once that misses, with each value base custody holds now, read
-/// through `known`, as the stand-in in `offered` too. The inputs are then
-/// compared by their identity, so their object keys may come in any order,
-/// as a receipt reads them. A row an erase took the words of, a custody
-/// value row (its input is a digest), and a row holding one value as written
-/// beside the handle of another (FIX-LIST [REPLAY-COMPARE-MIXED-ERA]) meet
-/// only by [`row_identity`].
+/// stand-in; once that misses, both with each value base custody holds now,
+/// read through `known`, as its record's handle, so a value another record
+/// holds is another write (FIX REPLAY-COMPARE-KNOWN-OTHER-CALLERS). The
+/// inputs are then compared by their identity, so their object keys may come
+/// in any order, as a receipt reads them. A row an erase took the words of
+/// and a custody value row (its input is a digest) meet only by
+/// [`row_identity`].
 fn held_input_meets(
     kept: &CodeRunBridgeCall,
     offered: &rmpv::Value,
@@ -336,16 +333,16 @@ fn held_input_meets(
     let Some(held) = input_identity(&held_form(&kept.request)) else {
         return Ok(false);
     };
-    let offered_meets = |known: Option<Arc<KnownValues>>| -> Result<bool> {
-        Ok(input_identity(&admission_form(offered, known)?).as_ref() == Some(&held))
-    };
-    if offered_meets(None)? {
+    if input_identity(&admission_form(offered, None)?).as_ref() == Some(&held) {
         return Ok(true);
     }
-    Ok(match known.get()? {
-        Some(known) => offered_meets(Some(known))?,
-        None => false,
-    })
+    let Some(known) = known.get()? else {
+        return Ok(false);
+    };
+    let Some(held) = input_identity(&known_admission_form(&kept.request, &known)?) else {
+        return Ok(false);
+    };
+    Ok(input_identity(&known_admission_form(offered, &known)?).as_ref() == Some(&held))
 }
 
 /// The identity of the verb call `request` spells, its JSON input read back
