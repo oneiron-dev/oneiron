@@ -76,7 +76,8 @@ pub(crate) enum FrontierSigner<'a> {
     /// P-256 (FIX 11993), held behind the caller's signing callback, which
     /// signs each join's transcript (FIX 11867). Its joins are in the host
     /// family: that family's rule, a live owner roster key, is the standing
-    /// the ReRoot itself stands on.
+    /// the ReRoot itself stands on. The recovery root's authority key joins
+    /// the same way at the root's door, under the same rule (pass 27 R4).
     Callback(&'a AuthorityKey, &'a dyn Fn(&[u8]) -> Result<Vec<u8>>),
 }
 
@@ -164,7 +165,7 @@ fn admits_join_signer(
         (FrontierJoinFamily::Install(carrier), AuthorityKey::Ed25519(key)) => {
             Standing::new(state, pin, counted).admits_owner_act_signer(carrier, key, roster)
         }
-        (FrontierJoinFamily::Host, _) => roster_has_live_owner(&state.roster, signer),
+        (FrontierJoinFamily::Host, _) => state.has_live_owner(signer),
         (FrontierJoinFamily::Anchor, AuthorityKey::Ed25519(key)) => {
             state.root_anchors.contains_key(key)
         }

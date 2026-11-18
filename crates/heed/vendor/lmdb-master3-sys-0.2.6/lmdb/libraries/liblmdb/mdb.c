@@ -1833,7 +1833,7 @@ static int	mdb_cursor_set(MDB_cursor *mc, MDB_val *key, MDB_val *data, MDB_curso
 static int	mdb_cursor_first(MDB_cursor *mc, MDB_val *key, MDB_val *data);
 static int	mdb_cursor_last(MDB_cursor *mc, MDB_val *key, MDB_val *data);
 
-static void	mdb_cursor_init(MDB_cursor *mc, MDB_txn *txn, MDB_dbi dbi, MDB_xcursor *mx);
+static int	mdb_cursor_init(MDB_cursor *mc, MDB_txn *txn, MDB_dbi dbi, MDB_xcursor *mx);
 static void	mdb_xcursor_init0(MDB_cursor *mc);
 static void	mdb_xcursor_init1(MDB_cursor *mc, MDB_node *node);
 static void	mdb_xcursor_init2(MDB_cursor *mc, MDB_xcursor *src_mx, int force);
@@ -3362,7 +3362,6 @@ mdb_txn_renew0(MDB_txn *txn)
 #endif
 		txn->mt_child = NULL;
 		txn->mt_rdonly_child_count = 0;
-		pthread_mutex_init(&txn->mt_child_mutex, NULL);
 		txn->mt_loose_pgs = NULL;
 		txn->mt_loose_count = 0;
 		if (env->me_flags & MDB_WRITEMAP) {
@@ -3549,6 +3548,15 @@ mdb_txn_begin(MDB_env *env, MDB_txn *parent, unsigned int flags, MDB_txn **ret)
 				return ENOMEM;
 			}
 			txn->mt_u.dirty_list[0].mid = 0;
+			/* ONEIRON FORK (child mutex): check the init. On Windows it is
+			 * CreateMutex, which can fail; a txn without its mutex would let
+			 * its own nested begins run unlocked. Nothing has seen the txn yet. */
+			if ((rc = pthread_mutex_init(&txn->mt_child_mutex, NULL)) != 0) {
+				mdb_midl_free(txn->mt_free_pgs);
+				free(txn->mt_u.dirty_list);
+				free(txn);
+				return rc;
+			}
 		}
 		txn->mt_txnid = parent->mt_txnid;
 		txn->mt_dirty_room = parent->mt_dirty_room;
@@ -3599,10 +3607,20 @@ renew:
 	}
 	if (rc) {
 		if (txn != env->me_txn0) {
-			/* mt_rpages belongs to parent */
 			if (!F_ISSET(flags, MDB_RDONLY)) {
-				free(txn->mt_u.dirty_list);
+				/* ONEIRON FORK (begin failure): only a nested write txn gets here,
+				 * after mdb_txn_end(MDB_END_FAIL_BEGINCHILD) above, which already
+				 * freed its dirty list and free pages and leaves only the txn.
+				 * ONEIRON FORK (child mutex): destroy the child mutex it got above,
+				 * which that mode does not. On Windows the mutex is a handle. */
+				pthread_mutex_destroy(&txn->mt_child_mutex);
 			}
+#if MDB_RPAGE_CACHE
+			/* ONEIRON FORK (begin failure): a top-level read txn owns the chunk
+			 * table allocated above; a nested txn's belongs to its parent. */
+			else if (!parent && MDB_REMAPPING(env->me_flags))
+				free(txn->mt_rpages);
+#endif
 			free(txn);
 		}
 	} else {
@@ -4494,6 +4512,10 @@ _mdb_txn_commit(MDB_txn *txn, int flag)
 		parent->mt_last_workid = txn->mt_last_workid;
 		parent->mt_child = NULL;
 		mdb_midl_free(((MDB_ntxn *)txn)->mnt_pgstate.mf_pghead);
+		/* ONEIRON FORK (child mutex): this path frees the nested write txn
+		 * without mdb_txn_end, so destroy the child mutex mdb_txn_begin gave it.
+		 * On Windows the mutex is a handle. */
+		pthread_mutex_destroy(&txn->mt_child_mutex);
 		free(txn);
 		return rc;
 	}
@@ -6391,6 +6413,15 @@ mdb_env_open(MDB_env *env, const char *path, unsigned int flags, mdb_mode_t mode
 #endif
 				txn->mt_dbxs = env->me_dbxs;
 				txn->mt_flags = MDB_TXN_FINISHED;
+				/* ONEIRON FORK (child mutex): check the init, as above: me_txn0
+				 * keeps this mutex for the env's life, so the open fails. */
+				if ((rc = pthread_mutex_init(&txn->mt_child_mutex, NULL)) != 0) {
+#if MDB_RPAGE_CACHE
+					free(txn->mt_rpages);
+#endif
+					free(txn);
+					goto leave;
+				}
 				env->me_txn0 = txn;
 			} else {
 				rc = ENOMEM;
@@ -6444,7 +6475,10 @@ mdb_env_close_active(MDB_env *env, int excl)
 	}
 	}
 #endif
-	free(env->me_txn0);
+	if (env->me_txn0) {
+		pthread_mutex_destroy(&env->me_txn0->mt_child_mutex);
+		free(env->me_txn0);
+	}
 	mdb_midl_free(env->me_free_pgs);
 
 	if (env->me_flags & MDB_ENV_TXKEY) {
@@ -7137,13 +7171,15 @@ retry:
 					goto found;
 				}
 			}
-			el[x].mref++;
 			if (env->me_encfunc || env->me_sumfunc) {
 				rc = mdb_rpage_encsum(env, &id3, rem, numpgs);
 				if (rc)
 					goto fail;
 				el[x].muse = id3.muse;
 			}
+			/* ONEIRON FORK (fetch rc): take the env ref only for a page that passed its
+			 * check. A failed check adds no txn entry, so no txn end would release it. */
+			el[x].mref++;
 			pthread_mutex_unlock(&env->me_rpmutex);
 			goto found;
 		}
@@ -7815,8 +7851,9 @@ mdb_get(MDB_txn *txn, MDB_dbi dbi,
 	if (txn->mt_flags & MDB_TXN_BLOCKED)
 		return MDB_BAD_TXN;
 
-	mdb_cursor_init(&mc, txn, dbi, &mx);
-	rc = mdb_cursor_set(&mc, key, data, MDB_SET, &exact);
+	rc = mdb_cursor_init(&mc, txn, dbi, &mx);	/* ONEIRON FORK (fetch rc) */
+	if (rc == MDB_SUCCESS)
+		rc = mdb_cursor_set(&mc, key, data, MDB_SET, &exact);
 	/* unref all the pages when MDB_REMAP_CHUNKS - caller must copy the data
 	 * before doing anything else
 	 */
@@ -9658,8 +9695,15 @@ mdb_xcursor_init2(MDB_cursor *mc, MDB_xcursor *src_mx, int new_dupdata)
 		mx->mx_db.md_root));
 }
 
-/** Initialize a cursor for a given transaction and database. */
-static void
+/** Initialize a cursor for a given transaction and database.
+ * ONEIRON FORK (fetch rc): returns the rc of a stale named DB's root
+ * fetch: #MDB_NOTFOUND is success for an empty named tree, and
+ * #MDB_BAD_DBI for an empty main tree (the DB is gone). Upstream drops
+ * it: a failed fetch flags the txn, so the caller's next call answers
+ * #MDB_BAD_TXN instead of the fetch's own error.
+ * @return 0 on success, non-zero on failure.
+ */
+static int
 mdb_cursor_init(MDB_cursor *mc, MDB_txn *txn, MDB_dbi dbi, MDB_xcursor *mx)
 {
 	mc->mc_next = NULL;
@@ -9683,8 +9727,12 @@ mdb_cursor_init(MDB_cursor *mc, MDB_txn *txn, MDB_dbi dbi, MDB_xcursor *mx)
 		mc->mc_xcursor = NULL;
 	}
 	if (*mc->mc_dbflag & DB_STALE) {
-		mdb_page_search(mc, NULL, MDB_PS_ROOTONLY);
+		int rc = mdb_page_search(mc, NULL, MDB_PS_ROOTONLY);
+		if (rc == MDB_NOTFOUND)	/* empty: the named tree, or the main one if still stale */
+			return (*mc->mc_dbflag & DB_STALE) ? MDB_BAD_DBI : MDB_SUCCESS;
+		return rc;
 	}
+	return MDB_SUCCESS;
 }
 
 int
@@ -9706,7 +9754,12 @@ mdb_cursor_open(MDB_txn *txn, MDB_dbi dbi, MDB_cursor **ret)
 		size += sizeof(MDB_xcursor);
 
 	if ((mc = malloc(size)) != NULL) {
-		mdb_cursor_init(mc, txn, dbi, (MDB_xcursor *)(mc + 1));
+		/* ONEIRON FORK (fetch rc): a failed init holds no page ref. */
+		int rc = mdb_cursor_init(mc, txn, dbi, (MDB_xcursor *)(mc + 1));
+		if (rc) {
+			free(mc);
+			return rc;
+		}
 		if (txn->mt_cursors) {
 			mc->mc_next = txn->mt_cursors[dbi];
 			txn->mt_cursors[dbi] = mc;
@@ -9734,8 +9787,7 @@ mdb_cursor_renew(MDB_txn *txn, MDB_cursor *mc)
 	if (txn->mt_flags & MDB_TXN_BLOCKED)
 		return MDB_BAD_TXN;
 
-	mdb_cursor_init(mc, txn, mc->mc_dbi, mc->mc_xcursor);
-	return MDB_SUCCESS;
+	return mdb_cursor_init(mc, txn, mc->mc_dbi, mc->mc_xcursor);	/* ONEIRON FORK (fetch rc) */
 }
 
 /* Return the count of duplicate data items for the current key */
@@ -10641,7 +10693,9 @@ mdb_del0(MDB_txn *txn, MDB_dbi dbi,
 
 	DPRINTF(("====> delete db %u key [%s]", dbi, DKEY(key)));
 
-	mdb_cursor_init(&mc, txn, dbi, &mx);
+	rc = mdb_cursor_init(&mc, txn, dbi, &mx);	/* ONEIRON FORK (fetch rc) */
+	if (rc)
+		return rc;
 
 	if (data) {
 		op = MDB_GET_BOTH;
@@ -11121,7 +11175,9 @@ mdb_put(MDB_txn *txn, MDB_dbi dbi,
 
 	MDB_TRACE(("%p, %u, %"Z"u[%s], %"Z"u%s, %u",
 		txn, dbi, key ? key->mv_size:0, DKEY(key), data->mv_size, mdb_dval(txn, dbi, data, dbuf), flags));
-	mdb_cursor_init(&mc, txn, dbi, &mx);
+	rc = mdb_cursor_init(&mc, txn, dbi, &mx);	/* ONEIRON FORK (fetch rc) */
+	if (rc)
+		return rc;
 	mc.mc_next = txn->mt_cursors[dbi];
 	txn->mt_cursors[dbi] = &mc;
 	rc = _mdb_cursor_put(&mc, key, data, flags);
@@ -12014,7 +12070,9 @@ mdb_stat(MDB_txn *txn, MDB_dbi dbi, MDB_stat *arg)
 		MDB_cursor mc;
 		MDB_xcursor mx;
 		/* Stale, must read the DB's root. cursor_init does it for us. */
-		mdb_cursor_init(&mc, txn, dbi, &mx);
+		int rc = mdb_cursor_init(&mc, txn, dbi, &mx);	/* ONEIRON FORK (fetch rc) */
+		if (rc)
+			return rc;
 	}
 	return mdb_stat0(txn->mt_env, &txn->mt_dbs[dbi], arg);
 }
@@ -12074,8 +12132,17 @@ mdb_drop0(MDB_cursor *mc, int subs)
 		mdb_cursor_copy(mc, &mx);
 		if (MDB_REMAPPING(mc->mc_txn->mt_env->me_flags)) {
 		/* bump refcount for mx's pages */
-		for (i=0; i<mc->mc_snum; i++)
-			MDB_PAGE_GET(&mx, mc->mc_pg[i]->mp_pgno, 1, &mx.mc_pg[i]);
+		for (i=0; i<mc->mc_snum; i++) {
+			/* ONEIRON FORK (fetch rc): a failed bump leaves mx's slot
+			 * with mc's pointer and no ref of its own. Stop, and let
+			 * done: unref only the pages bumped so far.
+			 */
+			rc = MDB_PAGE_GET(&mx, mc->mc_pg[i]->mp_pgno, 1, &mx.mc_pg[i]);
+			if (rc) {
+				mx.mc_snum = i;
+				goto done;
+			}
+		}
 		}
 
 		while (mc->mc_snum > 0) {

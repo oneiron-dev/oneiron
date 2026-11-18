@@ -46,7 +46,7 @@ pub(crate) static SEAT_RESET_JOB: JobSpec = JobSpec {
     wakes_host: false,
     at_open: false,
     once_per_pass: true,
-    runs_here: crate::schedule::any_node,
+    runs_here: |_vault, _txn| Ok(true),
     drive: crate::schedule::Drive::Runner,
     run: run_seat_reset,
 };

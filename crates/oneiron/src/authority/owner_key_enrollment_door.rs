@@ -25,13 +25,21 @@
 //! carrier is never a roster key.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
 
 use ed25519_dalek::Signer;
 
-use crate::error::{Error, OwnerKeyMoveStep, RecordError, Result};
+use crate::error::{Error, OwnerKeyMoveStep, RecordError, Result, SecretError};
 use crate::{EntityId, TimeRange, Vault};
 
 use super::*;
+
+mod revoke_device;
+pub(crate) use revoke_device::EntrySigner;
+
+mod recovery_authority;
+pub(crate) use recovery_authority::ActivationPredecessor;
+pub use recovery_authority::WaysBack;
 
 /// An owner signing key is the owner's to enrol: no Grant action names it,
 /// so an agent's act never enrols one. Authority; nothing was written.
@@ -56,6 +64,7 @@ const NOT_ON_ROSTER: &str = "the vault's roster does not name this key; a confir
 /// that would sign its own entry.
 const NOT_VALID: &str = "the enrollment does not verify: the proof must be the new key's own \
                          signature over its challenge for this vault, machine, key and owner";
+
 /// The enrollment would name more rows than one authority entry may: the
 /// log's encoding bound, never a possession test.
 const TOO_MANY_HEADS: &str = "the authority log has more concurrent heads than one key enrollment \
@@ -140,6 +149,40 @@ pub struct EnrolledOwnerKey {
     pub eligible: bool,
     /// When it was signed, advisory unix seconds.
     pub at: u64,
+    /// What the key is, as its enrollment's attestation kind says.
+    pub kind: EnrolledOwnerKeyKind,
+}
+
+/// What an enrolled owner key is, read from its enrollment row alone (pass
+/// 27 R4): a device's own key, or the recovery root's authority key. The
+/// owner's "last key held on a device" counts the first kind only.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EnrolledOwnerKeyKind {
+    /// A device's own owner signing key, held in its keystore
+    /// ([`OWNER_KEY_POSSESSION_KIND`]).
+    Device,
+    /// The recovery root's authority key, derived from the kit's seed
+    /// ([`RECOVERY_AUTHORITY_POSSESSION_KIND`]).
+    RecoveryAuthority,
+}
+
+impl EnrolledOwnerKeyKind {
+    /// The attestation kind an enrollment of this kind carries.
+    fn attestation_kind(self) -> &'static str {
+        match self {
+            Self::Device => OWNER_KEY_POSSESSION_KIND,
+            Self::RecoveryAuthority => RECOVERY_AUTHORITY_POSSESSION_KIND,
+        }
+    }
+
+    /// The kind an enrollment row names.
+    fn of(enroll: &OwnerKeyEnroll) -> Self {
+        if enroll.is_recovery_authority() {
+            Self::RecoveryAuthority
+        } else {
+            Self::Device
+        }
+    }
 }
 
 /// What a passkey hands its enrollment (row WEB-PASSKEY-OWNER-KEY): its
@@ -256,13 +299,18 @@ pub(super) fn not_valid(reason: &'static str) -> Error {
 }
 
 /// The one device shape an enrolled owner key has: Ed25519, `ROLE_OWNER`
-/// alone, Software tier, no transport binding, its proof as evidence.
-fn enrolled_device(public_key: [u8; 32], proof: Vec<u8>) -> DeviceAuthority {
+/// alone, Software tier, no transport binding, its proof as evidence under
+/// the attestation kind of `kind`.
+fn enrolled_device(
+    public_key: [u8; 32],
+    proof: Vec<u8>,
+    kind: EnrolledOwnerKeyKind,
+) -> DeviceAuthority {
     DeviceAuthority {
         key: AuthorityKey::Ed25519(public_key),
         transport_key_binding: [0; 32],
         attestation: AuthorityAttestation {
-            kind: OWNER_KEY_POSSESSION_KIND.to_owned(),
+            kind: kind.attestation_kind().to_owned(),
             evidence: proof,
         },
         tier: AuthorityTier::Software,
@@ -414,7 +462,7 @@ impl Vault {
     where
         S: FnMut(&AuthorityFold, &[u8]) -> Result<Vec<u8>>,
     {
-        let device = enrolled_device(input.public_key, input.proof);
+        let device = enrolled_device(input.public_key, input.proof, EnrolledOwnerKeyKind::Device);
         let (entry, machine) = self.enrol_owner_device_as(
             authority,
             Some(input.machine),
@@ -479,8 +527,76 @@ impl Vault {
         S: FnMut(&AuthorityFold, &[u8]) -> Result<Vec<u8>>,
     {
         let mut txn = self.store.env.write_txn()?;
-        let (mut entry, carrier_key, built_on) = self.unsigned_owner_key_enroll_in_txn(
+        let landed = self.write_owner_key_enroll_in_txn(
             &mut txn,
+            authority,
+            holder,
+            device,
+            predecessor,
+            &mut sign_predecessor,
+            confirming,
+        )?;
+        txn.commit()?;
+        Ok(landed)
+    }
+
+    /// [`Self::enrol_owner_signing_key_as`] for a key of `kind`, in the
+    /// caller's write transaction, which commits it or not: the recovery
+    /// root's door enrols the new key and revokes the lost ones in one (pass
+    /// 27 R4).
+    ///
+    /// # Errors
+    /// As [`Self::enrol_owner_signing_key_as`].
+    pub(super) fn enrol_owner_signing_key_in_txn<S>(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        authority: &ActAuthority,
+        input: OwnerKeyEnrollment,
+        kind: EnrolledOwnerKeyKind,
+        predecessor: AuthorityKey,
+        sign_predecessor: &mut S,
+    ) -> Result<OwnerKeyEnrollmentReceipt>
+    where
+        S: FnMut(&AuthorityFold, &[u8]) -> Result<Vec<u8>>,
+    {
+        let device = enrolled_device(input.public_key, input.proof, kind);
+        let (entry, machine) = self.write_owner_key_enroll_in_txn(
+            txn,
+            authority,
+            Some(input.machine),
+            device,
+            predecessor,
+            sign_predecessor,
+            false,
+        )?;
+        Ok(OwnerKeyEnrollmentReceipt {
+            entry,
+            machine,
+            public_key: input.public_key,
+        })
+    }
+
+    /// [`Self::write_owner_key_enroll_as`] in the caller's write
+    /// transaction, which commits it or not.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the enrollment's act, holder, device, predecessor, signer and confirming vouch"
+    )]
+    fn write_owner_key_enroll_in_txn<S>(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        authority: &ActAuthority,
+        holder: Option<EntityId>,
+        device: DeviceAuthority,
+        predecessor: AuthorityKey,
+        sign_predecessor: &mut S,
+        confirming: bool,
+    ) -> Result<(AuthorityEntryHash, EntityId)>
+    where
+        S: FnMut(&AuthorityFold, &[u8]) -> Result<Vec<u8>>,
+    {
+        let (mut entry, carrier_key, built_on) = self.unsigned_owner_key_enroll_in_txn(
+            txn,
             authority,
             holder,
             device,
@@ -494,17 +610,10 @@ impl Vault {
         let transcript = authority_transcript(&entry)?;
         let entry_fold: &AuthorityFold = &built_on;
         entry.signer.signature = sign_predecessor(entry_fold, &transcript)?;
-        let (hash, machine) = self.land_owner_key_enroll_in_txn(&mut txn, entry, &carrier_key)?;
+        let (hash, machine) = self.land_owner_key_enroll_in_txn(txn, entry, &carrier_key)?;
         if !confirming {
-            self.bind_owner_to_enrolled_key_in_txn(
-                &mut txn,
-                owner,
-                key,
-                predecessor,
-                &mut sign_predecessor,
-            )?;
+            self.bind_owner_to_enrolled_key_in_txn(txn, owner, key, predecessor, sign_predecessor)?;
         }
-        txn.commit()?;
         Ok((hash, machine))
     }
 
@@ -865,7 +974,7 @@ impl Vault {
     where
         S: FnMut(&[u8]) -> Result<Vec<u8>>,
     {
-        let device = enrolled_device(input.public_key, input.proof);
+        let device = enrolled_device(input.public_key, input.proof, EnrolledOwnerKeyKind::Device);
         let (entry, machine) = self.write_owner_key_enroll_as(
             authority,
             Some(input.machine),
@@ -900,7 +1009,7 @@ impl Vault {
         predecessor: AuthorityKey,
     ) -> Result<PreparedOwnerKeyEnrollment> {
         let mut txn = self.store.env.write_txn()?;
-        let device = enrolled_device(input.public_key, input.proof);
+        let device = enrolled_device(input.public_key, input.proof, EnrolledOwnerKeyKind::Device);
         let (entry, _, _) = self.unsigned_owner_key_enroll_in_txn(
             &mut txn,
             authority,
@@ -1169,7 +1278,11 @@ impl Vault {
                 act,
                 machine: input.machine,
                 carrier,
-                device: enrolled_device(input.public_key, input.proof),
+                device: enrolled_device(
+                    input.public_key,
+                    input.proof,
+                    EnrolledOwnerKeyKind::Device,
+                ),
             }),
             signer: AuthoritySignature {
                 suite: predecessor.suite(),
@@ -1213,58 +1326,6 @@ impl Vault {
         let txn = self.store.env.read_txn()?;
         let fold = self.authority_view_readonly_in_txn(&txn)?;
         Ok(fold.append_heads.iter().copied().collect())
-    }
-
-    /// Explicitly enrol the distinct authority key backed by `seed`, before loss.
-    /// The seed's source kit does not gain authority by existing or being restored.
-    /// This returns the ordinary counted enrollment receipt; it does not publish a
-    /// kit or make kit issuance atomic with enrollment.
-    ///
-    /// `machine` and the carrying install must satisfy the existing owner-key
-    /// enrollment rules. The predecessor signs inside that door's own writer.
-    pub fn enrol_recovery_authority_key_as<S>(
-        &self,
-        authority: &ActAuthority,
-        machine: EntityId,
-        seed: &crate::world_keys::RecoveryRootSeed,
-        predecessor: AuthorityKey,
-        sign_predecessor: S,
-    ) -> Result<OwnerKeyEnrollmentReceipt>
-    where
-        S: FnMut(&[u8]) -> Result<Vec<u8>>,
-    {
-        let input = {
-            let owner = match authority {
-                ActAuthority::Owner(owner, _) => owner,
-                ActAuthority::Agent(_) => return Err(authority_refused(OWNER_ONLY)),
-            };
-            let txn = self.store.env.read_txn()?;
-            let actor = owner.revalidate_as_vault_owner_in_txn(self, &txn)?;
-            let fold = self.authority_view_readonly_in_txn(&txn)?;
-            let vault_id = fold.vault_id.ok_or_else(invalid_authority)?;
-            let signer = crate::world_keys::RecoveryAuthoritySigner::from_seed(seed, &vault_id)?;
-            signer.enrollment(machine, actor)?
-        };
-        self.enrol_owner_signing_key_as(authority, input, predecessor, sign_predecessor)
-    }
-
-    /// [`Self::enrol_recovery_authority_key_as`] with this host's existing root
-    /// as predecessor. The owner's live act and normal carrying install remain
-    /// required; possession of a kit alone cannot enrol its derived key.
-    pub fn enrol_recovery_authority_key_as_host(
-        &self,
-        authority: &ActAuthority,
-        machine: EntityId,
-        seed: &crate::world_keys::RecoveryRootSeed,
-        issuer: &HostSlipIssuer,
-    ) -> Result<OwnerKeyEnrollmentReceipt> {
-        self.enrol_recovery_authority_key_as(
-            authority,
-            machine,
-            seed,
-            issuer.public_key(),
-            |transcript| Ok(issuer.sign_slip(transcript)),
-        )
     }
 
     /// Binds `bind.key`, enrolled in this transaction, to `bind.owner` as
@@ -1502,13 +1563,11 @@ impl Vault {
                 Some(proof)
             };
             for revoked_key in keys {
-                let op = AuthorityOp::RevokeDevice { revoked_key };
-                match &proof {
-                    Some(proof) => {
-                        self.append_slip_op_with_owner_proof_in_txn(txn, issuer, op, proof)?;
-                    }
-                    None => self.append_slip_op_in_txn(txn, issuer, op)?,
-                }
+                let signer = match &proof {
+                    Some(proof) => EntrySigner::HostWithOwnerProof(issuer, proof),
+                    None => EntrySigner::Host(issuer),
+                };
+                self.append_revoke_device_in_txn(txn, signer, revoked_key)?;
             }
         }
         let fold = self.authority_view_readonly_in_txn(txn)?;
@@ -1700,6 +1759,7 @@ fn keep_enrolled(
             eligible: device
                 .is_some_and(|device| super::checkpoint_policy::selectable_root(device, managed)),
             at: entry.ts,
+            kind: EnrolledOwnerKeyKind::of(enroll),
         },
     );
 }

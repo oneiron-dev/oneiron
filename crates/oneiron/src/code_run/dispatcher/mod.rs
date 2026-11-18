@@ -63,6 +63,8 @@ pub(crate) use self::agent_verb::consent_request_digest_for_test;
 pub(crate) use self::agent_verb::recorded_call as recorded_verb_call;
 #[cfg(oneiron_test_support)]
 pub(crate) use self::agent_verb::resumed_write_meets_recorded_row;
+#[cfg(oneiron_test_support)]
+pub(crate) use self::agent_verb::resumed_write_meets_stored_receipt;
 pub(crate) use self::agent_verb::write_receipt_may_have_run;
 pub(crate) use self::coordination::agent_attempt_run_ref;
 #[cfg(oneiron_test_support)]

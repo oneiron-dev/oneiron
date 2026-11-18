@@ -2,6 +2,14 @@
 //! stages 0.2, 5a-1 and 5a-2). They exist only under `--cfg oneiron_test_support`; no engine code
 //! arms them.
 
+mod job_specs;
+
+pub use job_specs::{
+    TEST_ANSWER, TEST_CADENCE, TEST_COUNT, TEST_DUE_BY, TEST_ENGINE, TEST_FAIL, TEST_ITEMS,
+    TEST_LAPSE, TEST_ONCE, TEST_OPEN, TEST_PAGED, TEST_REARM, TEST_REARM_AFTER_SECS,
+};
+
+use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Mutex;
@@ -81,59 +89,63 @@ fn vault_of(vault: &Vault) -> PathBuf {
     vault.store.env.path().to_path_buf()
 }
 
-/// Every run of a stage 5a-1 test job, by vault and job code, in run order.
-static SEEN: Mutex<BTreeMap<(PathBuf, &'static str), Vec<SeenRun>>> = Mutex::new(BTreeMap::new());
+thread_local! {
+    /// Every run of a stage 5a-1 test job, by vault and job code, in run order. Thread-local:
+    /// every write and read runs on the test's own thread.
+    static SEEN: RefCell<BTreeMap<(PathBuf, &'static str), Vec<SeenRun>>> =
+        const { RefCell::new(BTreeMap::new()) };
 
-/// The `due_by` the cadence job and the one-time job answer, by vault.
-static CADENCE_DUE_BY: Mutex<BTreeMap<PathBuf, u64>> = Mutex::new(BTreeMap::new());
+    /// The `due_by` the cadence job and the one-time job answer, by vault. Thread-local: every
+    /// write and read runs on the test's own thread.
+    static CADENCE_DUE_BY: RefCell<BTreeMap<PathBuf, u64>> =
+        const { RefCell::new(BTreeMap::new()) };
 
-/// A deadline the next run of a sweep notes while it runs, by vault and sweep.
-static PLANTED_DEADLINES: Mutex<BTreeMap<(PathBuf, &'static str), u64>> =
-    Mutex::new(BTreeMap::new());
+    /// A deadline the next run of a sweep notes while it runs, by vault and sweep. Thread-local:
+    /// every write and read runs on the test's own thread.
+    static PLANTED_DEADLINES: RefCell<BTreeMap<(PathBuf, &'static str), u64>> =
+        const { RefCell::new(BTreeMap::new()) };
+}
 
 /// Records a run; answers how many runs of its job this vault has made, this one included.
 fn record(vault: &Vault, armed: &Armed) -> usize {
-    let mut seen = SEEN
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let runs = seen.entry((vault_of(vault), armed.job)).or_default();
-    runs.push(SeenRun {
-        requested: armed.requested,
-        cursor: armed.cursor.clone(),
-    });
-    runs.len()
+    SEEN.with(|seen| {
+        let mut seen = seen.borrow_mut();
+        let runs = seen.entry((vault_of(vault), armed.job)).or_default();
+        runs.push(SeenRun {
+            requested: armed.requested,
+            cursor: armed.cursor.clone(),
+        });
+        runs.len()
+    })
 }
 
 /// The runs `job` made in `vault`, in order.
 #[must_use]
 pub fn seen(vault: &Vault, job: &str) -> Vec<SeenRun> {
-    SEEN.lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .iter()
-        .filter(|((at, code), _)| *at == vault_of(vault) && *code == job)
-        .flat_map(|(_, runs)| runs.iter().cloned())
-        .collect()
+    SEEN.with(|seen| {
+        seen.borrow()
+            .iter()
+            .filter(|((at, code), _)| *at == vault_of(vault) && *code == job)
+            .flat_map(|(_, runs)| runs.iter().cloned())
+            .collect()
+    })
 }
 
 /// The cadence job and the one-time job (`test.due_by`) in `vault` answer `due_by` from their
 /// next run on.
 pub fn set_cadence_due_by(vault: &Vault, due_by: Option<u64>) {
-    let mut due = CADENCE_DUE_BY
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    match due_by {
-        Some(at) => due.insert(vault_of(vault), at),
-        None => due.remove(&vault_of(vault)),
-    };
+    CADENCE_DUE_BY.with(|due| {
+        let mut due = due.borrow_mut();
+        match due_by {
+            Some(at) => due.insert(vault_of(vault), at),
+            None => due.remove(&vault_of(vault)),
+        };
+    });
 }
 
 fn run_cadence(vault: &Vault, armed: &Armed, _pass: &JobPass<'_>) -> Result<JobResult> {
     record(vault, armed);
-    let due_by = CADENCE_DUE_BY
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .get(&vault_of(vault))
-        .copied();
+    let due_by = CADENCE_DUE_BY.with(|due| due.borrow().get(&vault_of(vault)).copied());
     Ok(JobResult {
         due_by,
         ..JobResult::of(Ran::Done)
@@ -170,232 +182,15 @@ fn run_bounded(vault: &Vault, armed: &Armed, _pass: &JobPass<'_>) -> Result<JobR
     Ok(JobResult::of(Ran::More { cursor: vec![0] }))
 }
 
-/// A job an actor arms; each run counts, and it wakes a stopped vault.
-pub static TEST_COUNT: JobSpec = JobSpec {
-    code: "test.count",
-    when: When::PerArming,
-    arm_by: ArmBy::Actor,
-    late: Late::Run,
-    retry_first_secs: RETRY_FIRST_SECS,
-    retry_cap_secs: None,
-    wakes_host: true,
-    at_open: false,
-    once_per_pass: false,
-    runs_here: crate::schedule::any_node,
-    drive: crate::schedule::Drive::Runner,
-    run: run_count,
-};
-
-/// A job that always fails.
-pub static TEST_FAIL: JobSpec = JobSpec {
-    code: "test.fail",
-    when: When::PerArming,
-    arm_by: ArmBy::Actor,
-    late: Late::Run,
-    retry_first_secs: RETRY_FIRST_SECS,
-    retry_cap_secs: None,
-    wakes_host: false,
-    at_open: false,
-    once_per_pass: false,
-    runs_here: crate::schedule::any_node,
-    drive: crate::schedule::Drive::Runner,
-    run: run_fail,
-};
-
-/// A job whose work takes three runs.
-pub static TEST_PAGED: JobSpec = JobSpec {
-    code: "test.paged",
-    when: When::PerArming,
-    arm_by: ArmBy::Actor,
-    late: Late::Run,
-    retry_first_secs: RETRY_FIRST_SECS,
-    retry_cap_secs: None,
-    wakes_host: false,
-    at_open: false,
-    once_per_pass: false,
-    runs_here: crate::schedule::any_node,
-    drive: crate::schedule::Drive::Runner,
-    run: run_paged,
-};
-
-/// A job only the engine arms.
-pub static TEST_ENGINE: JobSpec = JobSpec {
-    code: "test.engine",
-    when: When::PerArming,
-    arm_by: ArmBy::Engine,
-    late: Late::Run,
-    retry_first_secs: RETRY_FIRST_SECS,
-    retry_cap_secs: None,
-    wakes_host: false,
-    at_open: false,
-    once_per_pass: false,
-    runs_here: crate::schedule::any_node,
-    drive: crate::schedule::Drive::Runner,
-    run: run_count,
-};
-
-/// A job that makes no sense more than ten minutes late.
-pub static TEST_LAPSE: JobSpec = JobSpec {
-    code: "test.lapse",
-    when: When::PerArming,
-    arm_by: ArmBy::Actor,
-    late: Late::Lapse { after_secs: 600 },
-    retry_first_secs: RETRY_FIRST_SECS,
-    retry_cap_secs: None,
-    wakes_host: false,
-    at_open: false,
-    once_per_pass: false,
-    runs_here: crate::schedule::any_node,
-    drive: crate::schedule::Drive::Runner,
-    run: run_count,
-};
-
-/// A job whose cadence is the test key `test.job_cadence`.
-pub static TEST_CADENCE: JobSpec = JobSpec {
-    code: "test.cadence",
-    when: When::Setting(&crate::test_doors::setting_keys::TEST_JOB_CADENCE),
-    arm_by: ArmBy::Engine,
-    late: Late::Run,
-    retry_first_secs: RETRY_FIRST_SECS,
-    retry_cap_secs: None,
-    wakes_host: false,
-    at_open: false,
-    once_per_pass: false,
-    runs_here: crate::schedule::any_node,
-    drive: crate::schedule::Drive::Runner,
-    run: run_cadence,
-};
-
-/// A paged job whose walk ends with items left.
-pub static TEST_ITEMS: JobSpec = JobSpec {
-    code: "test.items",
-    when: When::PerArming,
-    arm_by: ArmBy::Engine,
-    late: Late::Run,
-    retry_first_secs: RETRY_FIRST_SECS,
-    retry_cap_secs: None,
-    wakes_host: false,
-    at_open: false,
-    once_per_pass: false,
-    runs_here: crate::schedule::any_node,
-    drive: crate::schedule::Drive::Runner,
-    run: run_items,
-};
-
-/// A job that also runs at the first pass of every handle.
-pub static TEST_OPEN: JobSpec = JobSpec {
-    code: "test.open",
-    when: When::PerArming,
-    arm_by: ArmBy::Engine,
-    late: Late::Run,
-    retry_first_secs: RETRY_FIRST_SECS,
-    retry_cap_secs: None,
-    wakes_host: false,
-    at_open: true,
-    once_per_pass: false,
-    runs_here: crate::schedule::any_node,
-    drive: crate::schedule::Drive::Runner,
-    run: run_seen,
-};
-
-/// A job that fails once, then is done.
-pub static TEST_ANSWER: JobSpec = JobSpec {
-    code: "test.answer",
-    when: When::PerArming,
-    arm_by: ArmBy::Engine,
-    late: Late::Run,
-    retry_first_secs: RETRY_FIRST_SECS,
-    retry_cap_secs: None,
-    wakes_host: false,
-    at_open: false,
-    once_per_pass: false,
-    runs_here: crate::schedule::any_node,
-    drive: crate::schedule::Drive::Runner,
-    run: run_answer,
-};
-
-/// A drain that starts once a pass, as the engine's sweeps do (stage 5a-2).
-pub static TEST_ONCE: JobSpec = JobSpec {
-    code: "test.once",
-    when: When::PerArming,
-    arm_by: ArmBy::Engine,
-    late: Late::Run,
-    retry_first_secs: RETRY_FIRST_SECS,
-    retry_cap_secs: None,
-    wakes_host: false,
-    at_open: false,
-    once_per_pass: true,
-    runs_here: crate::schedule::any_node,
-    drive: crate::schedule::Drive::Runner,
-    run: run_bounded,
-};
-
-/// A one-time job the engine arms (`Trigger::At`); each run is seen and answers the `due_by`
-/// [`set_cadence_due_by`] set (stage 5b-1).
-pub static TEST_DUE_BY: JobSpec = JobSpec {
-    code: "test.due_by",
-    when: When::PerArming,
-    arm_by: ArmBy::Engine,
-    late: Late::Run,
-    retry_first_secs: RETRY_FIRST_SECS,
-    retry_cap_secs: None,
-    wakes_host: false,
-    at_open: false,
-    once_per_pass: false,
-    runs_here: crate::schedule::any_node,
-    drive: crate::schedule::Drive::Runner,
-    run: run_cadence,
-};
-
-/// How far past its due time the first run of [`TEST_REARM`] about a subject arms its own row
-/// again.
-pub const TEST_REARM_AFTER_SECS: u64 = 3_600;
-
-/// The first run about a subject arms its own row again, at its due time plus
-/// [`TEST_REARM_AFTER_SECS`], in its own write while it runs, then answers done with no `due_by`;
-/// every later run only counts. A TASK rewrite that moves a waiting tick's due time while the
-/// tick runs is the engine's case (OPUS-SETTING's review F2 of stage 5b-3).
-fn run_rearm(vault: &Vault, armed: &Armed, _pass: &JobPass<'_>) -> Result<JobResult> {
-    if count(armed) == 1 {
-        let at = armed.due_at.saturating_add(TEST_REARM_AFTER_SECS);
-        vault.with_write_txn_grouped(|txn| {
-            crate::schedule::arm_in_txn(
-                &vault.store,
-                txn,
-                &TEST_REARM,
-                armed.subject,
-                Trigger::At { at },
-            )
-        })?;
-    }
-    Ok(JobResult::of(Ran::Done))
-}
-
-/// A one-time job the engine arms (`Trigger::At`) whose first run arms its own row again
-/// ([`run_rearm`]; stage 5b-3).
-pub static TEST_REARM: JobSpec = JobSpec {
-    code: "test.rearm",
-    when: When::PerArming,
-    arm_by: ArmBy::Engine,
-    late: Late::Run,
-    retry_first_secs: RETRY_FIRST_SECS,
-    retry_cap_secs: None,
-    wakes_host: false,
-    at_open: false,
-    once_per_pass: false,
-    runs_here: crate::schedule::any_node,
-    drive: crate::schedule::Drive::Runner,
-    run: run_rearm,
-};
-
 /// The next run of `sweep` in `vault` notes a deadline at `at` while it runs, after it listed
 /// the deadlines it covers, as a door that writes during the run does (stage 5a-2, review round 2
 /// of #9300).
 pub fn note_deadline_during_next_run(vault: &Vault, sweep: HousekeepingSweep, at: u64) {
-    PLANTED_DEADLINES
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .insert((vault_of(vault), sweep.code()), at);
+    PLANTED_DEADLINES.with(|planted| {
+        planted
+            .borrow_mut()
+            .insert((vault_of(vault), sweep.code()), at);
+    });
 }
 
 /// The hook a sweep's run calls once it listed the deadlines it covers: it notes the deadline
@@ -405,10 +200,11 @@ pub fn note_deadline_during_next_run(vault: &Vault, sweep: HousekeepingSweep, at
 ///
 /// As the note.
 pub(crate) fn note_planted_deadline(vault: &Vault, sweep: HousekeepingSweep) -> Result<()> {
-    let planted = PLANTED_DEADLINES
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .remove(&(vault_of(vault), sweep.code()));
+    let planted = PLANTED_DEADLINES.with(|planted| {
+        planted
+            .borrow_mut()
+            .remove(&(vault_of(vault), sweep.code()))
+    });
     match planted {
         Some(at) => note_sweep_deadline(vault, sweep, at),
         None => Ok(()),
@@ -578,7 +374,7 @@ pub static TEST_FAIL_ONCE: JobSpec = JobSpec {
     wakes_host: false,
     at_open: false,
     once_per_pass: false,
-    runs_here: crate::schedule::any_node,
+    runs_here: |_vault, _txn| Ok(true),
     drive: crate::schedule::Drive::Runner,
     run: run_fail_once,
 };
@@ -610,7 +406,7 @@ pub static TEST_WITHDRAWN: JobSpec = JobSpec {
     wakes_host: false,
     at_open: false,
     once_per_pass: false,
-    runs_here: crate::schedule::any_node,
+    runs_here: |_vault, _txn| Ok(true),
     drive: crate::schedule::Drive::Runner,
     run: run_fail,
 };
@@ -690,10 +486,13 @@ pub fn paced_verb_call_waits(vault: &Vault, key: [u8; 16]) -> Result<bool> {
     vault.paced_verb_call_waits(key)
 }
 
-/// A call the next run of the paced verb line holds while it runs, by vault: its actor, the
-/// opening of its window and its deadline.
-static PLANTED_PACED_HOLDS: Mutex<BTreeMap<PathBuf, (EntityId, u64, u64)>> =
-    Mutex::new(BTreeMap::new());
+thread_local! {
+    /// A call the next run of the paced verb line holds while it runs, by vault: its actor, the
+    /// opening of its window and its deadline. Thread-local: every write and read runs on the
+    /// test's own thread.
+    static PLANTED_PACED_HOLDS: RefCell<BTreeMap<PathBuf, (EntityId, u64, u64)>> =
+        const { RefCell::new(BTreeMap::new()) };
+}
 
 /// The next run of the paced verb line in `vault` holds a call by `actor` once it took its
 /// turns and before it answers, its window opening at `next_eligible_at` and its deadline at
@@ -704,10 +503,11 @@ pub fn hold_during_next_line_run(
     next_eligible_at: u64,
     deadline: u64,
 ) {
-    PLANTED_PACED_HOLDS
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .insert(vault_of(vault), (actor, next_eligible_at, deadline));
+    PLANTED_PACED_HOLDS.with(|holds| {
+        holds
+            .borrow_mut()
+            .insert(vault_of(vault), (actor, next_eligible_at, deadline));
+    });
 }
 
 /// The hook the paced verb line's run calls once it took its turns: it holds the call
@@ -717,10 +517,7 @@ pub fn hold_during_next_line_run(
 ///
 /// As the hold.
 pub(crate) fn hold_planted_paced_call(vault: &Vault) -> Result<()> {
-    let planted = PLANTED_PACED_HOLDS
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .remove(&vault_of(vault));
+    let planted = PLANTED_PACED_HOLDS.with(|holds| holds.borrow_mut().remove(&vault_of(vault)));
     match planted {
         Some((actor, next_eligible_at, deadline)) => vault
             .plant_paced_verb_call(actor, next_eligible_at, deadline)
