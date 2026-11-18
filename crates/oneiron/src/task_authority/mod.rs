@@ -57,7 +57,6 @@ use crate::registry::ENTITY_TYPE_TASK;
 use crate::scan_check::ScanCount;
 use crate::side_table::{self, SideTable};
 use crate::store::EngineScan;
-#[cfg(test)]
 use crate::temporal::TimeRange;
 use crate::write_envelope::task_body::{TaskRole, task_role_from_body_bytes};
 
