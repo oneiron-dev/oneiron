@@ -24,7 +24,9 @@
 //! under a root move. A hosted install pairs a "yours" machine through its
 //! carrier, where the answer waits for an owner key's proof; it vouches no
 //! key with a self-host root it holds; and its root move to a stamped root
-//! lands without signing an owner's answer under that root.
+//! lands without signing an owner's answer under that root. The move carries
+//! the install's own "yours" profile on as unanswered, so the install still
+//! carries the owner's acts once the old root's approval expires (round 2).
 //!
 //! Pure folds over hand-signed rows (the scaffold of
 //! `hosted_root_human_bind.rs` and `carrier_owner_proof.rs`), and vaults
@@ -47,8 +49,8 @@ use oneiron::authority::{
     MachineDeviceClass, MachineEncryptionKey, MachineEnrolmentRequest, MachineOwnership,
     MachineProfile, MachineRole, OwnerAct, OwnerActKind, OwnerKeyVouchRequest, PairingLink,
     PairingPrincipal, ROLE_ADMIN, ROLE_AGENT, ROLE_CLOUD, ROLE_OWNER, authority_entry_hash,
-    authority_transcript, fold_authority_log_for_posture, genesis_vault_id,
-    machine_profile_proof_transcript, pairing_binding_transcript_pinned,
+    authority_transcript, decode_authority_log_entry_body, fold_authority_log_for_posture,
+    genesis_vault_id, machine_profile_proof_transcript, pairing_binding_transcript_pinned,
 };
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::error::RecordError;
@@ -1091,5 +1093,95 @@ fn a_hosted_re_root_lands_over_a_machine_the_self_host_root_answered_yours() {
             .and_then(|folded| folded.roster.as_ref())
             .is_none_or(|revision| revision.signer != next_root),
         "the stamped root signs no revision that says the machine is the owner's"
+    );
+}
+
+/// Two days: past the stale-roster window (`DEFAULT_STALE_ROSTER_WINDOW_SECS`,
+/// one day) after every row was first seen.
+const PAST_THE_STALE_ROSTER_WINDOW: u64 = 2 * 24 * 60 * 60;
+
+/// `vault`'s history folded under the Hosted posture once the stale-roster
+/// window has passed since every row was first seen: what a hosted install
+/// folds two days after a root move.
+fn hosted_fold_past_the_stale_roster_window(vault: &Vault) -> AuthorityFold {
+    let rows = vault
+        .export_signed_authority_history()
+        .expect("the vault's history")
+        .iter()
+        .map(|bytes| decode_authority_log_entry_body(bytes).expect("a row"))
+        .collect::<Vec<_>>();
+    let first_seen = rows
+        .iter()
+        .map(|row| (hash(row), 1))
+        .collect::<BTreeMap<_, _>>();
+    fold_authority_log_for_posture(
+        &rows,
+        &first_seen,
+        PAST_THE_STALE_ROSTER_WINDOW,
+        &BTreeMap::new(),
+        HostingPrivacyPosture::Hosted,
+    )
+}
+
+/// The review of #9474, round 2, P1 on the re-root carry (red at
+/// a5ac7a4b68, where the move skips this install's own profile, which then
+/// rests on the retired root and goes stale with its approval: a start
+/// refuses the stale profile, and no owner act finds a carrier here): an
+/// install the self-host root profiled "yours" on the bootstrap arm,
+/// reopened under the Hosted posture, keeps its standing through a root
+/// move there. The stamped successor carries it on as unanswered, the role
+/// a hosted serving install takes, never as the owner's.
+#[test]
+fn a_hosted_re_root_carries_this_installs_yours_profile_on_as_unanswered() {
+    let dir = tempfile::tempdir().expect("vault directory");
+    let vault = open_served(dir.path(), HostingPrivacyPosture::SelfHostLocal);
+    let issuer = oneiron::test_support::provision_engine_machines(&vault);
+    let yours = MachineRole::Owned(MachineOwnership::Yours);
+    let machine = vault
+        .ensure_serving_install_profile(&issuer, yours)
+        .expect("this install's profile, the owner's, under the self-host root")
+        .roster
+        .expect("this install's roster revision")
+        .profile
+        .machine;
+    drop(vault);
+    let hosted = open_served(dir.path(), HostingPrivacyPosture::Hosted);
+    let roster_head = |vault: &Vault| {
+        vault
+            .authority_fold()
+            .expect("the authority fold")
+            .machine(machine)
+            .and_then(|folded| folded.roster.clone())
+            .expect("this install's roster revision")
+    };
+    let before = roster_head(&hosted);
+    assert!(
+        before.profile.role == yours && before.is_live(),
+        "guard: reopened under the Hosted posture, this install stands as the owner's: {before:?}"
+    );
+    let next = HostSlipIssuer::from_seed(&[NEXT_ISSUER_SEED; HOST_ISSUER_SEED_BYTES])
+        .expect("the next host issuer");
+    let next_root = next.public_key();
+    let moved = hosted
+        .re_root_host(&oneiron::test_support::test_host_issuer(), &next)
+        .expect("the host root moves");
+    assert!(
+        moved.machines_carried >= 1,
+        "the move carries this install's standing"
+    );
+    let after = roster_head(&hosted);
+    assert!(
+        after.profile.role == MachineRole::Unanswered
+            && after.signer == next_root
+            && after.is_live(),
+        "the stamped root carries this install on as unanswered, not as the owner's: {after:?}"
+    );
+    let aged = hosted_fold_past_the_stale_roster_window(&hosted);
+    let standing = aged
+        .machine(machine)
+        .and_then(|folded| folded.roster.as_ref());
+    assert!(
+        standing.is_some_and(|revision| revision.signer == next_root && revision.is_live()),
+        "past the old root's approval this install still stands, so it still carries the owner's acts: {standing:?}"
     );
 }
