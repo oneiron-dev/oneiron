@@ -76,6 +76,7 @@ pub(crate) use source::record_timeout_demotion_in_txn;
 // Untangle slice 6.8: change feed subscriptions read the hooks' positions, heads and settlement
 // feed, and filter claims with the hooks' glob.
 pub(crate) use filter::glob_match;
+pub(crate) use source::TASK_TICK_JOB;
 pub(crate) use source::head_in_txn as fact_source_head_in_txn;
 pub(crate) use source::settled_feed_facts_after_in_txn;
 pub use source::{
@@ -83,9 +84,9 @@ pub use source::{
     SettledFact, SettledOutcome, SettlementKind, SettlementPosition, SurfaceInboundPosition,
 };
 pub(crate) use source::{
-    hold_task_tick_in_txn, index_task_due_in_txn, next_tick_release_at,
-    record_surface_inbound_in_txn, release_due_ticks, release_task_tick_hold_in_txn,
-    releases_here as releases_ticks_here, task_tick_held_in_txn, task_tick_waiting_in_txn,
+    hold_task_tick_in_txn, index_task_due_in_txn, record_surface_inbound_in_txn,
+    release_task_tick_hold_in_txn, releases_here as releases_ticks_here, task_tick_held_in_txn,
+    task_tick_waiting_in_txn,
 };
 #[cfg(oneiron_test_support)]
 pub(crate) use source::{

@@ -225,7 +225,7 @@ impl Vault {
             .then(|| self.owner_proof_signer(&fold))
             .flatten();
         let entry =
-            sign_side_entry_with_owner_proof(&fold, &key, seq, parents, op, now, proof.as_deref())?;
+            sign_side_entry_with_owner_proof(&fold, &key, seq, parents, op, now, proof.as_ref())?;
         let entry_hash = authority_entry_hash(&entry)?;
         let at = TimeRange {
             start: now,
