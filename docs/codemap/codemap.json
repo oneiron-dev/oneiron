@@ -30239,7 +30239,7 @@
      "path": "src/disclosure/model_channel.rs",
      "purpose": "The model connection is a disclosure audience, not a read grant",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "enum": 1,
       "fn": 4,
       "re-export": 1,
@@ -106824,6 +106824,14 @@
      "bucket": "m",
      "kind": "test",
      "notable": [],
+     "path": "tests/connect_export_stamped_claims.rs",
+     "purpose": "A Connect export carries the source owner's stamped claims up to the Connect grant's own sensitivity…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
      "path": "tests/connector_issuer_detection.rs",
      "purpose": "L5-11 (ARCH-0072 #drift, #living; ARCH-0054 #auth): the engine's own detection of a credential issuer change",
      "surface": {}
@@ -110034,6 +110042,14 @@
      "notable": [],
      "path": "tests/kit_change_carries_root_key_approvals.rs",
      "purpose": "A kit change carries the old R's live approvals (OPUS-WAYBACK, Engine RULING 16 Nov 07:13): the act that…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/kit_restore_and_rotation_regressions.rs",
+     "purpose": "[KIT-ACTIVATION-REVIEW2-TESTS], REVIEW-9488 round 2: P1 1 checks that a revoked kit's sealed restore creates…",
      "surface": {}
     },
     {
@@ -115816,7 +115832,7 @@
    "over_bar": 302,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 8186,
-   "test_files": 1922
+   "test_files": 1924
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -177663,6 +177679,14 @@
      "bucket": "m",
      "kind": "test",
      "notable": [],
+     "path": "tests/self_actor_bounded_credential.rs",
+     "purpose": "`self.actor` answers a bounded credential (leg A1, E2E HOOKS-03 cause 1)",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
      "path": "tests/self_browser_doors.rs",
      "purpose": "An agent drives a browser only through its own attached live run, and each browser door refuses everyone…",
      "surface": {}
@@ -178978,7 +179002,7 @@
    "over_bar": 70,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 2030,
-   "test_files": 493
+   "test_files": 494
   },
   "oneiron-setting-contract": {
    "files": [
