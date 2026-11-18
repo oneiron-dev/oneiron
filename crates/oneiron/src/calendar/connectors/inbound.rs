@@ -218,10 +218,11 @@ fn apply_remote_change(
                 match classify_remote_change(current.as_ref(), &normalized) {
                     EchoDisposition::AcknowledgeEcho => {
                         // A cancellation whose admission stopped before its
-                        // deposit refund reads as an echo on the next pull
-                        // of the same bytes: its refund is asked again here.
+                        // deposit refund or status reads as an echo on the
+                        // next pull of the same bytes: they are asked again
+                        // here.
                         if let (Some(id), Some(passport)) = (event_ref, current.as_ref()) {
-                            crate::calendar::ingest::repeat_connector_host_cancel_refund(
+                            crate::calendar::ingest::repeat_connector_imported_cancel(
                                 vault,
                                 system,
                                 admission_source,
