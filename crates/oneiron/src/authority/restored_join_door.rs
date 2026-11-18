@@ -119,23 +119,13 @@ impl Vault {
         if !owner.is_unbound() {
             return Err(authority_refused(BOUND_PROOF));
         }
-        let fold = self.authority_fold()?;
-        let vault_id = fold.vault_id.ok_or_else(|| authority_refused(NOT_ROOTED))?;
-        {
-            let txn = self.store.env.read_txn()?;
-            if crate::identity::read_restored_from_image_in_txn(self, &txn)?.is_none() {
-                return Err(authority_refused(NOT_RESTORED));
-            }
-            let stands = crate::identity::read_machine_id_in_txn(self, &txn)?
-                .is_some_and(|machine| fold.machine(machine).is_some());
-            if !stands {
-                if self.owner_proof_signer(&fold).is_none() {
-                    return Err(authority_refused(NO_OWNER_KEY));
-                }
-                super::slip_vault::require_host(&fold, issuer)
-                    .map_err(|_| authority_refused(NOT_THE_ROOT))?;
-            }
-        }
+        self.restored_join_preflight(Some(issuer))?;
+        // The clock rows and backfills `authority_fold` commits, as every
+        // door's first read does, only once nothing above refuses.
+        let vault_id = self
+            .authority_fold()?
+            .vault_id
+            .ok_or_else(|| authority_refused(NOT_ROOTED))?;
         // The install's identity, minted and signed outside the writer.
         let encryption_key = self.machine_encryption_key(vault_id)?;
         let request = self.machine_enrolment_request(vault_id, encryption_key)?;
@@ -155,11 +145,10 @@ impl Vault {
         let proof = self
             .owner_proof_signer(&fold)
             .ok_or_else(|| authority_refused(NO_OWNER_KEY))?;
-        let mut held = fold
-            .restored_enrolments()
-            .iter()
-            .filter(|(_, held)| held.machine == request.machine && held.joined_by.is_none())
-            .peekable();
+        // Only holds under a scope this install counts, the roster's and its
+        // pinned anchor's: an unpinned anchor's mark refuses nothing here
+        // (REVIEW-9509 round 2 P1).
+        let mut held = fold.counted_waiting_enrolments(request.machine).peekable();
         let enrolment = if held.peek().is_some() {
             let mut held: Vec<_> = held.collect();
             if !held
@@ -192,6 +181,41 @@ impl Vault {
             .ok_or_else(|| authority_refused(JOIN_NOT_COUNTED))?;
         txn.commit()?;
         Ok(folded)
+    }
+
+    /// Every refusal [`Self::join_restored_install`] reads before it writes,
+    /// in one read-only snapshot: a vault no root roots, an install no restore
+    /// made, and, given `issuer`, for an install that has not joined, no owner
+    /// key held here or a root that is not `issuer`. Writes nothing, so a
+    /// command checks it before it provisions this install's keys or its
+    /// owner actor, first without the issuer its keystore holds and then with
+    /// it (REVIEW-9511 P1).
+    ///
+    /// # Errors
+    /// [`crate::error::RecordError::AuthorityRefused`] naming the refusal;
+    /// storage faults.
+    pub fn restored_join_preflight(&self, issuer: Option<&HostSlipIssuer>) -> Result<()> {
+        let txn = self.store.env.read_txn()?;
+        let fold = self.authority_view_readonly_in_txn(&txn)?;
+        if fold.vault_id.is_none() {
+            return Err(authority_refused(NOT_ROOTED));
+        }
+        if crate::identity::read_restored_from_image_in_txn(self, &txn)?.is_none() {
+            return Err(authority_refused(NOT_RESTORED));
+        }
+        let Some(issuer) = issuer else {
+            return Ok(());
+        };
+        let stands = crate::identity::read_machine_id_in_txn(self, &txn)?
+            .is_some_and(|machine| fold.machine(machine).is_some());
+        if !stands {
+            if self.owner_proof_signer(&fold).is_none() {
+                return Err(authority_refused(NO_OWNER_KEY));
+            }
+            super::slip_vault::require_host(&fold, issuer)
+                .map_err(|_| authority_refused(NOT_THE_ROOT))?;
+        }
+        Ok(())
     }
 
     /// Appends `op`, signed alone by `proof`'s owner key over the authority

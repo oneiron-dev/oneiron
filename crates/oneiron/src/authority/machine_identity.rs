@@ -469,17 +469,17 @@ impl Vault {
         issuer: &HostSlipIssuer,
         role: MachineRole,
     ) -> Result<(FoldedMachine, Option<bool>)> {
+        // An install born of a restore that stands nowhere refuses before
+        // anything is written: read in one read-only snapshot, before the
+        // clock rows `authority_fold` commits and before any identity or key
+        // is minted (REVIEW-9509 P1, rounds 1 and 2).
+        if let Some(reason) = self.restored_install_refusal()? {
+            return Err(authority_refused(reason));
+        }
         let fold = self.authority_fold()?;
         let vault_id = fold
             .vault_id
             .ok_or_else(|| authority_refused(SERVING_ROOT_ABSENT))?;
-        // An install born of a restore that stands nowhere refuses before
-        // any identity or key is minted for it (REVIEW-9509 P1).
-        if self.restored_install_unjoined(&fold)? {
-            return Err(authority_refused(
-                super::machine_answers::RESTORED_NOT_JOINED,
-            ));
-        }
         // The install's identity, minted and signed outside the writer.
         let encryption_key = self.machine_encryption_key(vault_id)?;
         let request = self.machine_enrolment_request(vault_id, encryption_key)?;
@@ -522,17 +522,27 @@ impl Vault {
         Ok((folded, None))
     }
 
-    /// Whether this install was born of a restore (row
-    /// RESTORED-COPIES-ENROL-EACH-OTHER) and no machine of it stands on
-    /// `fold`: it has no machine id yet, or none under its id. Read-only, so
-    /// a door that refuses such an install mints nothing first.
-    pub(super) fn restored_install_unjoined(&self, fold: &AuthorityFold) -> Result<bool> {
+    /// The refusal an install born of a restore (row
+    /// RESTORED-COPIES-ENROL-EACH-OTHER) meets before anything is written:
+    /// [`SERVING_ROOT_ABSENT`] on a vault no root roots, and
+    /// [`super::machine_answers::RESTORED_NOT_JOINED`] when no machine of it
+    /// stands (no machine id yet, or none under its id). `None` for an
+    /// install no restore made, read from its mark alone, and for one that
+    /// stands. One read-only snapshot: no clock row, identity or key is
+    /// written to read it.
+    pub(super) fn restored_install_refusal(&self) -> Result<Option<&'static str>> {
         let txn = self.store.env.read_txn()?;
         if crate::identity::read_restored_from_image_in_txn(self, &txn)?.is_none() {
-            return Ok(false);
+            return Ok(None);
+        }
+        let fold = self.authority_view_readonly_in_txn(&txn)?;
+        if fold.vault_id.is_none() {
+            return Ok(Some(SERVING_ROOT_ABSENT));
         }
         let machine = crate::identity::read_machine_id_in_txn(self, &txn)?;
-        Ok(machine.is_none_or(|machine| fold.machine(machine).is_none()))
+        Ok(machine
+            .is_none_or(|machine| fold.machine(machine).is_none())
+            .then_some(super::machine_answers::RESTORED_NOT_JOINED))
     }
 
     /// [`Self::ensure_serving_install_profile`] in [`SERVING_INSTALL_ROLE`]

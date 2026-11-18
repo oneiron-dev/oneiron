@@ -14,8 +14,10 @@
 //!   Before, the copy's root enrolled the redeeming machine.
 //! - A managed vault's restore marks no copy (RESTORED-COPIES-JOIN-SCOPE =
 //!   A: its host root enrols the node its restores land); an owner-rooted
-//!   vault's restore of the same image does. Before, every restore that kept
-//!   the image's custody marked the copy.
+//!   vault's restore does, under a Hosted destination config too: custody is
+//!   read off the image's own log, never the destination's posture
+//!   (REVIEW-9509/9510 round 2). Before, every restore that kept the image's
+//!   custody marked the copy.
 //!
 //! Run: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test restored_machine_join_guards`.
 
@@ -294,38 +296,82 @@ fn an_unjoined_copy_pairs_no_machine_through_its_root() {
     );
 }
 
-#[test]
-fn a_managed_vaults_restore_marks_no_copy() {
-    let host = rooted_host();
-    let backups = oneiron::test_support::restore_tempdir();
-    let image = backups.path().join("image");
-    host.vault
+/// A vault rooted under the Hosted posture: its root is stamped for the
+/// cloud, so the host holds its custody (a managed vault).
+fn managed_host() -> (tempfile::TempDir, Vault, [u8; 32]) {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let mut config = VaultConfig::device();
+    config.privacy.posture = HostingPrivacyPosture::Hosted;
+    let vault = Vault::open(dir.path(), config).expect("the managed host");
+    vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
+    let _issuer = oneiron::test_support::provision_engine_machines(&vault);
+    let vault_id = vault
+        .authority_vault_id()
+        .expect("the fold")
+        .expect("a rooted vault");
+    (dir, vault, vault_id)
+}
+
+/// `source`'s checkpoint image restored at `name` under `backups`, under a
+/// destination config of `posture`.
+fn restored_under(
+    source: &Vault,
+    backups: &Path,
+    name: &str,
+    posture: HostingPrivacyPosture,
+) -> Vault {
+    let image = backups.join(format!("{name}.image"));
+    source
         .snapshot_checkpoint(&image, 100)
         .expect("FIXTURE: the image");
-    let key = host.vault.checkpoint_key().expect("FIXTURE: its key");
-    let restore = |name: &str, posture: HostingPrivacyPosture| {
-        let mut config = VaultConfig::device();
-        config.privacy.posture = posture;
-        let (vault, _) = Vault::restore_checkpoint(
-            &image,
-            &key,
-            &backups.path().join(name),
-            config,
-            RestoreReason::Restore,
-            200,
-        )
-        .expect("FIXTURE: a restore of the image");
-        vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
-        vault
-    };
+    let key = source.checkpoint_key().expect("FIXTURE: its key");
+    let mut config = VaultConfig::device();
+    config.privacy.posture = posture;
+    let (vault, _) = Vault::restore_checkpoint(
+        &image,
+        &key,
+        &backups.join(name),
+        config,
+        RestoreReason::Restore,
+        200,
+    )
+    .expect("FIXTURE: a restore of the image");
+    vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
+    vault
+}
 
-    let managed = restore("managed", HostingPrivacyPosture::Hosted);
+#[test]
+fn a_managed_vaults_restore_marks_no_copy() {
+    let backups = oneiron::test_support::restore_tempdir();
+    let (_managed_dir, managed_host, managed_id) = managed_host();
+    let managed = restored_under(
+        &managed_host,
+        backups.path(),
+        "managed",
+        HostingPrivacyPosture::Hosted,
+    );
     assert_eq!(
-        origin_named(&managed, host.vault_id),
+        origin_named(&managed, managed_id),
         None,
         "a managed vault's restore must not mark its node as born of a restore"
     );
-    let owned = restore("owned", HostingPrivacyPosture::SelfHostLocal);
+    let host = rooted_host();
+    let owned_hosted = restored_under(
+        &host.vault,
+        backups.path(),
+        "owned-hosted",
+        HostingPrivacyPosture::Hosted,
+    );
+    assert!(
+        origin_named(&owned_hosted, host.vault_id).is_some(),
+        "an owner-rooted vault's restore marks its copy under a Hosted destination config too"
+    );
+    let owned = restored_under(
+        &host.vault,
+        backups.path(),
+        "owned",
+        HostingPrivacyPosture::SelfHostLocal,
+    );
     assert!(
         origin_named(&owned, host.vault_id).is_some(),
         "an owner-rooted vault's restore marks its copy"

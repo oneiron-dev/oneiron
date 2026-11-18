@@ -150,7 +150,9 @@ fn answer_parent_bound(named: usize) -> Error {
 /// RESTORED-COPIES-ENROL-EACH-OTHER) joins on that held chain: the fold lays
 /// it under a carried answer, so the answer is numbered above every held
 /// revision, and it must name the same machine and encryption keys and
-/// origin, or it refuses and nothing is written (REVIEW-9509/9510 P1).
+/// origin, or it refuses and nothing is written (REVIEW-9509/9510 P1). Only
+/// the enrolments held under a scope this install counts are read: the
+/// roster's and its pinned anchor's (REVIEW-9509 round 2 P1).
 fn joining_profile(
     fold: &AuthorityFold,
     owner: EntityId,
@@ -166,10 +168,8 @@ fn joining_profile(
         return Err(invalid_authority());
     }
     let held = fold
-        .restored_enrolments()
-        .values()
-        .filter(|held| held.machine == request.machine && held.joined_by.is_none())
-        .map(|held| &held.profile);
+        .counted_waiting_enrolments(request.machine)
+        .map(|(_, held)| &held.profile);
     let mut revision = 1;
     for held in held {
         if held.machine_key != request.machine_key
@@ -382,6 +382,14 @@ impl Vault {
         } else {
             joining_profile(&fold, answer.owner, request, role)?
         };
+        // A pairing answers a machine's revision 1 only
+        // (`MachineProfile::validate_act`): a restored machine that joins on
+        // its held chain is numbered above it, and the owner's pairing then
+        // stands as his answer for it (REVIEW-9509/9511 round 2 P1).
+        let mut answer = answer;
+        if profile.revision > 1 && matches!(answer.kind, OwnerActKind::Pairing) {
+            answer.kind = OwnerActKind::MachineAnswer;
+        }
         self.ensure_machine_row_in_txn(txn, request.machine)?;
         self.append_owner_answer_in_txn(txn, &fold, answer, profile)
     }

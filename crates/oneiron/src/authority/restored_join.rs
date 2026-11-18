@@ -73,6 +73,8 @@ pub struct RestoredEnrolmentStanding {
     /// The held revision itself: its keys, role and number, which a joined
     /// machine's answer for the machine revises and must keep.
     pub profile: MachineProfile,
+    /// The scope that signed it: the roster, or one owner root's anchor.
+    pub admitter: MachineAdmitter,
 }
 
 /// Every enrolment `state` holds, as the fold shows it.
@@ -91,6 +93,7 @@ pub(super) fn listed(state: &FoldState) -> BTreeMap<AuthorityEntryHash, Restored
                     .unwrap_or_default(),
                 joined_by: enrolment.joined_by,
                 profile: enrolment.chain.head.profile.clone(),
+                admitter: enrolment.admitter,
             };
             (*hash, standing)
         })
@@ -136,26 +139,55 @@ fn waiting(state: &FoldState, machine: EntityId) -> Vec<RestoredEnrolment> {
         .collect()
 }
 
-/// A revision whose origin is not its machine's: some chain of the machine,
-/// or some enrolment held for it, names another image or none. Judged on the
-/// revision's parents, over every admitter's chain, not only the one it
-/// revises.
+/// A revision whose origin is not its machine's: some revision of the
+/// machine its parents hold, on any admitter's chain or any enrolment held
+/// for it, names another image or none. Judged on the revision's parents,
+/// over every revision each chain holds, not only its head, so a head a
+/// merge marked for disagreeing origins ([`origins_disagree`]) is never
+/// revised clean.
 pub(super) fn origin_differs(state: &FoldState, profile: &MachineProfile) -> bool {
     let chains = state
         .machines
         .get(&profile.machine)
         .into_iter()
-        .flat_map(BTreeMap::values)
-        .flat_map(|chain| std::iter::once(&chain.head).chain(chain.owner_held.iter()))
-        .map(|revision| revision.profile.restored_from);
+        .flat_map(BTreeMap::values);
     let held = state
         .restored_enrolments
         .values()
         .filter(|enrolment| enrolment.machine == profile.machine)
-        .map(|enrolment| enrolment.chain.head.profile.restored_from);
+        .map(|enrolment| &enrolment.chain);
     chains
         .chain(held)
+        .flat_map(|chain| {
+            std::iter::once(chain.head.profile.restored_from)
+                .chain(
+                    chain
+                        .owner_held
+                        .iter()
+                        .map(|head| head.profile.restored_from),
+                )
+                .chain(
+                    chain
+                        .revisions
+                        .values()
+                        .map(|revision| revision.profile().restored_from),
+                )
+        })
         .any(|origin| origin != profile.restored_from)
+}
+
+/// Whether two revisions one chain holds name different origins: branches
+/// that disagree on the image a machine was born of leave it conflicted,
+/// whatever their revision numbers (REVIEW-9509 round 2 P1).
+pub(super) fn origins_disagree(
+    revisions: &BTreeMap<AuthorityEntryHash, std::sync::Arc<super::machine_standing::Revision>>,
+) -> bool {
+    let mut origins = revisions
+        .values()
+        .map(|revision| revision.profile().restored_from);
+    origins
+        .next()
+        .is_some_and(|first| origins.any(|origin| origin != first))
 }
 
 /// One revision of `profile`'s machine through its transition `fold`, which
@@ -173,24 +205,28 @@ pub(super) fn origin_differs(state: &FoldState, profile: &MachineProfile) -> boo
 /// and the held chains this lays under a carried revision must not make it a
 /// carrier of its own (REVIEW-9509/9510 P1). The carrier rule reads only the
 /// carrier's own chains, so for any other carrier the verdict is the parents'.
+/// Nor do they speak for whether the answer needs the owner's proof: `fold`
+/// gets the parents as they were, before anything was laid under, and judges
+/// that on them (REVIEW-9509 round 2 P1); `None` when nothing was.
 pub(super) fn fold_revision(
     state: &mut FoldState,
     profile: &MachineProfile,
     hash: AuthorityEntryHash,
     carried: bool,
-    fold: impl FnOnce(&mut FoldState) -> std::result::Result<(), AuthorityFoldIssue>,
+    fold: impl FnOnce(&mut FoldState, Option<&FoldState>) -> std::result::Result<(), AuthorityFoldIssue>,
 ) -> std::result::Result<(), AuthorityFoldIssue> {
     let machine = profile.machine;
     if joined(state, machine) {
-        return fold(state);
+        return fold(state, None);
     }
     if carried && profile.carrier == Some(machine) {
         return Err(AuthorityFoldIssue::MissingAuthorityConsent(hash));
     }
     let waiting = waiting(state, machine);
     if waiting.is_empty() && (carried || profile.restored_from.is_none()) {
-        return fold(state);
+        return fold(state, None);
     }
+    let parents = carried.then(|| state.clone());
     for enrolment in &waiting {
         super::machine_profile::merge_machine_chain(
             state,
@@ -200,9 +236,9 @@ pub(super) fn fold_revision(
         );
     }
     if carried {
-        return fold(state);
+        return fold(state, parents.as_ref());
     }
-    let result = fold(state);
+    let result = fold(state, None);
     let chains = state.machines.remove(&machine).unwrap_or_default();
     let mut claims = BTreeSet::new();
     if let Some(named) = state.machine_keys.get_mut(&profile.machine_key) {
@@ -281,9 +317,10 @@ pub(super) fn witnessed(
 /// ([`super::owner_proof::gives_owner_proof`]): the recovery credential that
 /// opened the image proves nobody's will, so a key of his says it. The act's
 /// owner is live there ([`super::owner_act::owner_live_at`]), and the
-/// enrolment is one `state` holds for the act's target, and the signer's
-/// sequence is above the one `state` holds for it. An enrolment an entry
-/// joined already keeps that entry; the act then changes nothing.
+/// enrolment is one `state` holds for the act's target under the act's
+/// owner, of a machine no chain or held enrolment there removes, and the
+/// signer's sequence is above the one `state` holds for it. An enrolment an
+/// entry joined already keeps that entry; the act then changes nothing.
 pub(super) fn apply_owner_join(
     state: &mut FoldState,
     entry: &AuthorityLogEntry,
@@ -299,11 +336,29 @@ pub(super) fn apply_owner_join(
     {
         return Err(AuthorityFoldIssue::NonMonotonicSeq(hash));
     }
+    let target = record.act.target;
+    // The enrolment is held for the act's target and names the act's owner:
+    // a join under another owner id never admits his machine (REVIEW-9510
+    // round 2 P1 :305).
     let held = state
         .restored_enrolments
         .get(&record.enrolment)
-        .is_some_and(|enrolment| enrolment.machine == record.act.target);
+        .is_some_and(|enrolment| {
+            enrolment.machine == target && enrolment.chain.head.profile.owner == record.act.owner
+        });
+    // A removal is terminal: once the parents hold one of the target, on a
+    // chain that stands or one still held, no join brings it back
+    // (REVIEW-9510 round 2 P1 :312).
+    let removed = state
+        .machines
+        .get(&target)
+        .is_some_and(|chains| chains.values().any(|chain| chain.head.removed))
+        || state
+            .restored_enrolments
+            .values()
+            .any(|enrolment| enrolment.machine == target && enrolment.chain.head.removed);
     if !held
+        || removed
         || !super::owner_proof::gives_owner_proof(state, entry.signer_key())
         || !super::owner_act::owner_live_at(state, record.act.owner)
     {
@@ -365,5 +420,25 @@ impl AuthorityFold {
             .iter()
             .find(|(_, enrolment)| enrolment.machine == machine && enrolment.joined_by.is_none())
             .map(|(hash, _)| *hash)
+    }
+
+    /// The enrolments of `machine` that wait to join under a scope this
+    /// install counts: the roster's, and its pinned anchor's, as
+    /// [`FoldedMachine::standing_heads`] reads a machine. The mark of an
+    /// anchor this install does not pin numbers no pairing and refuses none
+    /// (REVIEW-9509 round 2 P1).
+    pub fn counted_waiting_enrolments(
+        &self,
+        machine: EntityId,
+    ) -> impl Iterator<Item = (&AuthorityEntryHash, &RestoredEnrolmentStanding)> + '_ {
+        let pinned = self
+            .pinned_root
+            .as_ref()
+            .map(|pin| MachineAdmitter::Anchor(pin.anchor_key));
+        self.restored_enrolments.iter().filter(move |(_, held)| {
+            held.machine == machine
+                && held.joined_by.is_none()
+                && (held.admitter == MachineAdmitter::Roster || Some(held.admitter) == pinned)
+        })
     }
 }
