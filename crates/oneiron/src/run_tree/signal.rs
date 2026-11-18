@@ -222,6 +222,9 @@ impl RunTreeAdapter<'_> {
                 ));
             }
         }
+        // The held answer an answer given again under a new key met, when the
+        // two differ as written: the new receipt carries it.
+        let mut held_answer = None;
         if let RunSignalKind::AskAnswer {
             handle,
             who,
@@ -255,6 +258,14 @@ impl RunTreeAdapter<'_> {
                 {
                     return Err(Error::InvalidConfig("ask already answered".into()));
                 }
+                // The new receipt carries the held answer, so the branch holds
+                // one answer for the ask: the raw answer the wall would store
+                // as written with the switch off, or under the handle of a
+                // longer value custody took since, would answer it twice
+                // (blind review round 1 of #9531).
+                if &prior.answer != answer {
+                    held_answer = Some(prior.answer.clone());
+                }
             } else {
                 let at = crate::ports::recorded_at_in_txn(&self.vault.store, txn)?;
                 ask.answers.push(RunAskAnswer {
@@ -273,22 +284,30 @@ impl RunTreeAdapter<'_> {
             }
         }
         let intent_bytes = intent::intent_bytes(&input);
-        let signal = RunBranchSignal {
+        let given = RunBranchSignal {
             key: input.key,
             actor: input.actor,
             kind: input.kind,
             state: RunSignalState::Pending,
         };
+        let mut signal = given.clone();
+        if let (Some(held), RunSignalKind::AskAnswer { answer, .. }) =
+            (held_answer, &mut signal.kind)
+        {
+            *answer = held;
+        }
         record.signals.push(signal.clone());
         self.save(txn, &mut record)?;
         // The receipt as the side-row wall stored it, which a retry replays.
+        // A receipt that is not the signal as given keeps the fingerprint of
+        // the given intent, so the same signal retried replays it.
         let stored = record
             .signals
             .iter()
             .find(|s| s.key == signal.key)
             .cloned()
             .unwrap_or_else(|| signal.clone());
-        if stored != signal
+        if stored != given
             && let Some(bytes) = intent_bytes
         {
             self.keep_intent_in(txn, &mut record, &stored.key, &bytes);
