@@ -5,7 +5,7 @@
 use super::{
     BackupArgs, CustodyAnchorCredentials, Path, RecoverClockArgs, RecoverWindowArgs, RestoreArgs,
     Serialize, ServeConfig, backup_plan, base_vault_config, configured_host_issuer, emit,
-    local_owner, open_stopped_vault, open_stopped_vault_unprofiled, open_vault,
+    local_owner, open_stopped_vault, open_stopped_vault_unprovisioned, open_vault,
     resolve_serve_config, rfc3339_secs, vault_config, vault_key,
 };
 use crate::owner::{backup, host_owner};
@@ -101,25 +101,46 @@ struct JoinedRestoredInstall {
 /// the handle as `serve` holds it (row CARRIER-OWNER-PROOF), signs the word:
 /// on a self-host vault it is an owner key. Holding the writer lease is the
 /// owner proof of an offline host command, so on any other vault the operator
-/// acts as nobody (FIX 8225). A no-op on an install that already stands. The
-/// vault opens without the serving profile an owner command ensures, so a
-/// refused join writes nothing (REVIEW-9511 P1).
+/// acts as nobody (FIX 8225). A no-op on an install that already stands.
+///
+/// A refused join writes nothing (REVIEW-9511 P1): the vault opens with no
+/// keystore keys and no serving profile, and every refusal readable first
+/// comes first: the posture, the configured secret that admits the host
+/// root, the vault's root and this install's restore mark. Then this
+/// install's keys and its host root load, the owner key and the root are
+/// checked, and only then is the owner actor ensured and the join written.
 fn join_restored_install(config: &ServeConfig) -> anyhow::Result<()> {
-    let vault = open_stopped_vault_unprofiled(config, vault_config(config), "then run this again")?;
-    let owner = host_owner(&vault)?;
-    let issuer = configured_host_issuer(config, &vault, false).ok_or_else(|| {
+    let vault =
+        open_stopped_vault_unprovisioned(config, vault_config(config), "then run this again")?;
+    if vault.privacy_posture() != oneiron::HostingPrivacyPosture::SelfHostLocal {
+        return Err(oneiron::Error::HostActionRequiresSupportGrant.into());
+    }
+    let no_issuer = || {
         anyhow::anyhow!(
             "this install holds no host root for vault {}, and the configured host root signs \
              the owner's word that no other machine is left: configure the auth secret `serve` \
              reads, or pair this install from a machine of the vault",
             config.vault_path.display()
         )
-    })?;
+    };
+    config
+        .sync_server_config()
+        .auth_secret
+        .filter(|secret| !secret.is_empty())
+        .ok_or_else(no_issuer)?;
+    let refused = |error: oneiron::Error| anyhow::anyhow!("join this restored install: {error}");
+    vault.restored_join_preflight(None).map_err(refused)?;
+    config.keystore.install_on(&vault, &config.vault_path);
+    let issuer = configured_host_issuer(config, &vault, false).ok_or_else(no_issuer)?;
     let issuer = std::sync::Arc::new(issuer);
     vault.hold_checkpoint_root_signer(issuer.clone());
+    vault
+        .restored_join_preflight(Some(&issuer))
+        .map_err(refused)?;
+    let owner = host_owner(&vault)?;
     let joined = vault
         .join_restored_install(&issuer, &owner, oneiron::authority::SERVING_INSTALL_ROLE)
-        .map_err(|error| anyhow::anyhow!("join this restored install: {error}"))?;
+        .map_err(refused)?;
     let revision = joined
         .roster
         .ok_or_else(|| anyhow::anyhow!("the vault's fold counts no revision of this install"))?;
