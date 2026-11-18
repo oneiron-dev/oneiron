@@ -19,9 +19,11 @@
 //! ([`Vault::enrol_vouched_owner_signing_key`]): the ordinary `OwnerKeyEnroll`
 //! act, whose primary signer is the vouching key and whose carrier is this
 //! install. A managed host's custodial root proves nothing on a hosted vault
-//! (`AuthorityFold::proves_owner_acts`), so an install holding only that root
-//! vouches for nothing, and a co-owner's key never vouches a key into
-//! another owner.
+//! (`AuthorityFold::proves_owner_acts`), and an install under the Hosted
+//! posture offers no host root it holds, a self-host root a move or a reopen
+//! carried here included (`AuthorityFold::offers_owner_proof`), so an install
+//! holding only such a root vouches for nothing, and a co-owner's key never
+//! vouches a key into another owner.
 //!
 //! The request carries no secret: the proof of possession is public, the key
 //! never leaves its device. The proof has no nonce and no time, so it never
@@ -431,11 +433,11 @@ impl Vault {
     }
 
     /// The owner key this install holds that vouches for `actor`'s new key:
-    /// a key the fold trusts as the owner's, under this vault's posture
-    /// ([`AuthorityFold::proves_owner_acts`], the rule of
-    /// `Vault::owner_proof_signer`), that is `actor`'s own
-    /// ([`key_is_the_owners`]). A co-owner's key held on this install never
-    /// vouches a key into another owner.
+    /// a key this install may offer as the owner's proof, under this vault's
+    /// posture ([`AuthorityFold::offers_owner_proof`], the rule of
+    /// `Vault::owner_proof_signer`: never a host root under the Hosted
+    /// posture), that is `actor`'s own ([`key_is_the_owners`]). A co-owner's
+    /// key held on this install never vouches a key into another owner.
     ///
     /// # Errors
     /// The store's, reading the enrolled keys.
@@ -448,8 +450,8 @@ impl Vault {
         let hosted = self.privacy_posture() == crate::HostingPrivacyPosture::Hosted;
         let enrolled = self.enrolled_owner_keys_in_txn(txn)?;
         Ok(self.checkpoint_root_signers().into_iter().find(|signer| {
-            let key = signer.root();
-            fold.proves_owner_acts(&key, hosted) && key_is_the_owners(fold, &enrolled, &key, actor)
+            fold.offers_owner_proof(signer.as_ref(), hosted)
+                && key_is_the_owners(fold, &enrolled, &signer.root(), actor)
         }))
     }
 
