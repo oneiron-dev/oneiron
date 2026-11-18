@@ -12771,7 +12771,7 @@
      "path": "src/calendar/connectors/literal.rs",
      "purpose": "Exact row-owned calendar preconditions, retained independently of the readable projection",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 11
      }
     },
     {
@@ -12781,7 +12781,7 @@
      "path": "src/calendar/connectors/mod.rs",
      "purpose": "Shared calendar connector kernel (CAL-05, ONE-1787)",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "mod": 1,
       "re-export": 4
      }
@@ -94060,6 +94060,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/test_doors/fingerprint_keep_codec_digests.rs",
+     "purpose": "Door for `tests/fingerprint_keep_codec_digests.rs` (PLAN-UC-04 stage 6.1c): a calendar connector literal's…",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/test_doors/fingerprint_keep_custody_digests.rs",
      "purpose": "Door for `tests/fingerprint_keep_custody_digests.rs` (PLAN-UC-04 stage 6.1b): a custody input witness's…",
      "surface": {
@@ -94815,7 +94825,7 @@
      "purpose": "Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD)",
      "surface": {
       "fn": 1,
-      "mod": 294,
+      "mod": 295,
       "re-export": 1
      }
     },
@@ -106868,6 +106878,18 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/fingerprint_keep_codec_digests.rs",
+     "purpose": "K-proof (oracle) for PLAN-UC-04 stage 6.1c: four codec digests keep their bytes",
+     "surface": {
+      "const": 1,
+      "crate-vis": 3,
+      "fn": 3
+     }
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -114315,7 +114337,7 @@
      "purpose": "`TimeRange`, temporal expressions/parsing, granularity/anchor enums"
     },
     "test_doors": {
-     "files": 300,
+     "files": 301,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -114492,8 +114514,8 @@
    },
    "over_bar": 299,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 8116,
-   "test_files": 1873
+   "source_files": 8117,
+   "test_files": 1874
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -129130,7 +129152,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/purposes/calendar.rs",
-     "purpose": "Purposes of calendar ingest (`oneiron` `calendar::ingest`)",
+     "purpose": "Purposes of the calendar (`crates/oneiron/src/calendar`)",
      "surface": {}
     },
     {
@@ -129246,6 +129268,14 @@
      "notable": [],
      "path": "src/purposes/outbound_intent_ledger.rs",
      "purpose": "Purposes of the outbound intent ledger (`crates/oneiron/src/outbound_intent_ledger`)",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/purposes/plugin.rs",
+     "purpose": "Purposes of plugin sections (`crates/oneiron/src/context_board/plugin`) and the Dreamer's plugin suggestions…",
      "surface": {}
     },
     {
@@ -129431,7 +129461,7 @@
      "purpose": "The K door: a digest that main already stores or sends keeps its exact bytes"
     },
     "purposes": {
-     "files": 38,
+     "files": 39,
      "impl_vault": false,
      "largest_src_bucket": "s",
      "layout": "dir",
@@ -129447,7 +129477,7 @@
    },
    "over_bar": 0,
    "purpose": "One fingerprint rule for engine digests (fable pass 22; PLAN-UC-04 stage 0)",
-   "source_files": 41,
+   "source_files": 42,
    "test_files": 1
   },
   "oneiron-gen": {
@@ -146847,7 +146877,6 @@
      "path": "src/workspace_roster/project/revision.rs",
      "purpose": "Moved from `crates/oneiron/src/workspace_roster/project/revision.rs` (lib split R2: record types below the…",
      "surface": {
-      "const": 1,
       "enum": 1,
       "fn": 1,
       "re-export": 1
@@ -175550,6 +175579,14 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/recall_host_root_read.rs",
+     "purpose": "The owner's host-root recall reads on a self-hosted vault ([RECALL-HOST-ROOT-READ-REFUSED], FIX-LIST row…",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -177153,7 +177190,7 @@
    "over_bar": 70,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 2016,
-   "test_files": 483
+   "test_files": 484
   },
   "oneiron-setting-contract": {
    "files": [
