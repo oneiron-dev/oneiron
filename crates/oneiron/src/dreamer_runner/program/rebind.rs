@@ -194,6 +194,19 @@ fn rebind_owed_wake(
                     .to_owned(),
             ));
         }
+        // A copy this machine took from a window as the home is admitted
+        // here by no door while no home is elected: its recording machine
+        // admits that wake, and its rebind runs there.
+        #[cfg(feature = "sync")]
+        if super::replica::home_here_in_txn(vault, &*txn)?.is_none()
+            && super::retraction::imported_in_txn(vault, &*txn, &wake)?
+        {
+            return Err(Error::InvalidConfig(
+                "this wake is a copy this machine took as the home, and no home is elected; \
+                 rebind it on the machine that recorded it"
+                    .to_owned(),
+            ));
+        }
         // A riding wake is the elected home's to admit (FIX 5266): its
         // rebind runs there, where the admission it commits with can.
         #[cfg(feature = "sync")]
