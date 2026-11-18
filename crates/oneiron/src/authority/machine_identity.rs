@@ -78,6 +78,11 @@ pub struct MachineEnrolmentRequest {
     pub device_class: MachineDeviceClass,
     pub encryption_key: MachineEncryptionKey,
     pub machine_proof: [u8; 64],
+    /// The checkpoint image this install was restored from, when a restore
+    /// that dropped the image's machine identity made it (row
+    /// RESTORED-COPIES-ENROL-EACH-OTHER): `machine_proof` then signs the
+    /// restored transcript, and the profile it enrols names the image.
+    pub restored_from: Option<[u8; 32]>,
 }
 
 /// What a new machine shows the owner, as a QR code or 26 base32 characters,
@@ -90,7 +95,9 @@ pub struct RequestCode(pub [u8; 16]);
 impl MachineEnrolmentRequest {
     /// The first 16 bytes of `BLAKE3-derive_key("oneiron/machine-request-code/v1",
     /// vault_id ‖ machine ‖ machine_key ‖ class name ‖ 0 ‖ suite (u16 BE) ‖ key
-    /// length (u32 BE) ‖ key ‖ machine_proof)`.
+    /// length (u32 BE) ‖ key ‖ machine_proof)`, then `1 ‖ image` for a
+    /// machine born of a restore (a request that names no image keeps its
+    /// code).
     #[must_use]
     pub fn code(&self) -> RequestCode {
         let key = &self.encryption_key.key;
@@ -104,6 +111,10 @@ impl MachineEnrolmentRequest {
         hasher.update(&u32::try_from(key.len()).unwrap_or(u32::MAX).to_be_bytes());
         hasher.update(key);
         hasher.update(&self.machine_proof);
+        if let Some(image) = &self.restored_from {
+            hasher.update(&[1]);
+            hasher.update(image);
+        }
         let mut code = [0; 16];
         code.copy_from_slice(&hasher.finalize().as_bytes()[..16]);
         RequestCode(code)
@@ -345,15 +356,28 @@ impl Vault {
             }
             let machine_key = key.verifying_key().to_bytes();
             let device_class = self.config.machine_device_class;
-            let machine_proof = key
-                .sign(&machine_profile_proof_transcript(
+            // The restore that made this install, if one did: every request
+            // it sends names that image, under its own signature (row
+            // RESTORED-COPIES-ENROL-EACH-OTHER).
+            let restored_from = crate::identity::read_restored_from_image_in_txn(self, wtxn)?;
+            let transcript = match &restored_from {
+                Some(image) => restored_machine_profile_proof_transcript(
                     &vault_id,
                     machine,
                     &machine_key,
                     device_class,
                     &encryption_key,
-                ))
-                .to_bytes();
+                    image,
+                ),
+                None => machine_profile_proof_transcript(
+                    &vault_id,
+                    machine,
+                    &machine_key,
+                    device_class,
+                    &encryption_key,
+                ),
+            };
+            let machine_proof = key.sign(&transcript).to_bytes();
             request = Some(MachineEnrolmentRequest {
                 vault_id,
                 machine,
@@ -361,6 +385,7 @@ impl Vault {
                 device_class,
                 encryption_key: encryption_key.clone(),
                 machine_proof,
+                restored_from,
             });
             Ok(())
         })?;
@@ -419,7 +444,11 @@ impl Vault {
     /// id refuses, naming why (removed, conflicted, other keys, not live
     /// here): its keys are never replaced and a removed machine never comes
     /// back. With none, the bootstrap arm enrols it in `role`. The vault must
-    /// already be rooted under `issuer`; no root is minted here.
+    /// already be rooted under `issuer`; no root is minted here. An install a
+    /// restore made is never enrolled here: a machine of the vault that has
+    /// joined pairs it, and this refuses with
+    /// [`super::machine_answers::RESTORED_NOT_JOINED`] (row
+    /// RESTORED-COPIES-ENROL-EACH-OTHER).
     pub fn ensure_serving_install_profile(
         &self,
         issuer: &HostSlipIssuer,
@@ -473,6 +502,14 @@ impl Vault {
             .first()
             .copied()
             .ok_or_else(|| authority_refused(SERVING_NO_OWNER))?;
+        // An install born of a restore is not a machine of the vault until a
+        // joined machine joins it (row RESTORED-COPIES-ENROL-EACH-OTHER): the
+        // root never enrols it, and nothing is written.
+        if request.restored_from.is_some() {
+            return Err(authority_refused(
+                super::machine_answers::RESTORED_NOT_JOINED,
+            ));
+        }
         let folded = self.enroll_bootstrap_in_txn(&mut txn, issuer, owner, &request, role)?;
         txn.commit()?;
         Ok((folded, None))

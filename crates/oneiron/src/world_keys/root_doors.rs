@@ -189,6 +189,7 @@ fn carried_marks(
             device_class: trusted.profile.device_class,
             encryption_key: trusted.profile.encryption_key.clone(),
             machine_proof: trusted.profile.machine_proof,
+            restored_from: trusted.profile.restored_from,
         });
     }
     Ok((root, marks))

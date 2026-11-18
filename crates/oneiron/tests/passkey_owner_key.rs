@@ -714,6 +714,7 @@ fn answers_machine(
         seen_world_edits: BTreeSet::new(),
         carrier: None,
         act: None,
+        restored_from: None,
     });
     append_signed_rows(
         &hosted.vault,
@@ -891,6 +892,7 @@ fn node_answer_proved_by(hosted: &HostedVault, prover: &ed25519_dalek::SigningKe
         seen_world_edits: BTreeSet::new(),
         carrier: Some(machine),
         act: Some(act),
+        restored_from: None,
     });
     append_signed_rows(
         &hosted.vault,

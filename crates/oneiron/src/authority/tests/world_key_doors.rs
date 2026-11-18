@@ -59,6 +59,7 @@ pub(super) fn keyed_machine(host: &Host, seed: u8) -> Keyed {
         device_class,
         encryption_key,
         machine_proof,
+        restored_from: None,
     };
     host.vault
         .enroll_machine(

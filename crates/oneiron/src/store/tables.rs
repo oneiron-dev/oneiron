@@ -109,6 +109,15 @@ crate::side_table::side_tables! {
     /// over. Dropped wherever the machine id is. Key: ().
     IDENTITY_MACHINE_PK: SyncState b"m:machine_pk" Raw
         [restore: live] [family: unclassified] [tier: canonical];
+    /// The 32-byte id of the checkpoint image this install was restored from (row
+    /// RESTORED-COPIES-ENROL-EACH-OTHER), written by every restore that drops the image's
+    /// machine identity on an owner-rooted vault, and by an archived vault's activation (a
+    /// fresh id): each enrolment request the install signs names it, and the fold holds its
+    /// act-free enrolment until a joined machine joins it. It belongs to the machine identity:
+    /// an image's own row is dropped with that identity, a restore that keeps the identity
+    /// keeps it, and a re-mint of the machine id on this install keeps it. Key: ().
+    IDENTITY_RESTORED_FROM: SyncState b"m:restored_from" Raw
+        [restore: live] [family: unclassified] [tier: canonical];
     /// Crash-safe monotonic counter allocating the next u:w: sequence number for one window. Key:
     /// yyyy-mm.
     SYNC_M_U_SEQ_W: SyncState b"m:u_seq:w:" Raw

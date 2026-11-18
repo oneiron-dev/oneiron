@@ -37,6 +37,7 @@ fn anchor_mark(host: &Host, prepared: &PreparedRoot, request: &MachineEnrolmentR
         seen_world_edits: BTreeSet::new(),
         carrier: None,
         act: None,
+        restored_from: None,
     });
     let fold = host.vault.authority_fold().unwrap();
     let at = prepared.entry().ts;

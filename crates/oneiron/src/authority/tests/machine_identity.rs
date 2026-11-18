@@ -96,6 +96,7 @@ pub(super) fn request_for(
                 &encryption_key(),
             ))
             .to_bytes(),
+        restored_from: None,
     }
 }
 
@@ -358,6 +359,7 @@ fn a_forged_mark_never_makes_a_machine_mine() {
         seen_world_edits: BTreeSet::new(),
         carrier: None,
         act: None,
+        restored_from: None,
     };
     let forge = |signer: &SigningKey| {
         let fold = host.vault.authority_fold().unwrap();

@@ -111,6 +111,21 @@ pub(super) fn no_carrier() -> Error {
     )
 }
 
+/// A machine born of a restore is not a machine of the vault until a joined
+/// machine joins it (row RESTORED-COPIES-ENROL-EACH-OTHER): the bootstrap arm
+/// never enrols it, and the fold holds a root-signed enrolment of it until an
+/// entry signed by a joined machine of the vault descends from it.
+pub(crate) const RESTORED_NOT_JOINED: &str = "this install was restored from a checkpoint and has \
+     not joined the vault: a machine of the vault that has joined must pair it";
+
+/// What the fold did with one landed machine revision: an owner's answer as
+/// it landed, or a restored machine's enrolment, held until it joins (row
+/// RESTORED-COPIES-ENROL-EACH-OTHER).
+enum Landed {
+    Answer(MachineAnswerLanding),
+    Restored,
+}
+
 /// The answer would name more rows than one authority entry may: the log's
 /// encoding bound (`MAX_PARENTS`), never a possession test. It refuses
 /// atomically (C5).
@@ -152,6 +167,7 @@ fn joining_profile(
         seen_world_edits: std::collections::BTreeSet::new(),
         carrier: None,
         act: None,
+        restored_from: request.restored_from,
     })
 }
 
@@ -194,6 +210,9 @@ fn class_revision_profile(
         owner,
         device_class: request.device_class,
         machine_proof: request.machine_proof,
+        // The proof signs the request's origin; the fold refuses one that is
+        // not the machine's (row RESTORED-COPIES-ENROL-EACH-OTHER).
+        restored_from: request.restored_from,
         revision: current
             .profile
             .revision
@@ -356,9 +375,45 @@ impl Vault {
     ) -> Result<FoldedMachine> {
         let fold = self.authority_view_readonly_in_txn(txn)?;
         require_host(&fold, issuer)?;
+        // A machine born of a restore joins only through a joined machine
+        // (row RESTORED-COPIES-ENROL-EACH-OTHER); the fold would hold it.
+        if request.restored_from.is_some() {
+            return Err(authority_refused(RESTORED_NOT_JOINED));
+        }
         let profile = joining_profile(&fold, owner, request, role)?;
         self.ensure_machine_row_in_txn(txn, request.machine)?;
         self.append_machine_profile_in_txn(txn, issuer, &fold, profile)
+    }
+
+    /// A root-signed enrolment of an install born of a restore, which no
+    /// door writes (row RESTORED-COPIES-ENROL-EACH-OTHER): the fold holds it
+    /// until an entry signed by a joined machine descends from it. Returns
+    /// that enrolment's entry for the caller to commit. Refuses a request no
+    /// restore made, and one the fold did not hold. The test door that
+    /// proves the fold's hold and join writes it.
+    #[cfg(oneiron_test_support)]
+    pub(crate) fn file_restored_enrolment_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        issuer: &HostSlipIssuer,
+        owner: EntityId,
+        request: &MachineEnrolmentRequest,
+        role: MachineRole,
+    ) -> Result<AuthorityEntryHash> {
+        let fold = self.authority_view_readonly_in_txn(txn)?;
+        require_host(&fold, issuer)?;
+        if request.restored_from.is_none() {
+            return Err(invalid_authority());
+        }
+        let profile = joining_profile(&fold, owner, request, role)?;
+        self.ensure_machine_row_in_txn(txn, request.machine)?;
+        match self.append_root_signed_in_txn(txn, issuer, &fold, profile)? {
+            Landed::Restored => self
+                .authority_view_readonly_in_txn(txn)?
+                .unjoined_restored_enrolment(request.machine)
+                .ok_or_else(invalid_authority),
+            Landed::Answer(_) => Err(invalid_authority()),
+        }
     }
 
     /// This install as the carrier of the owner's act: its machine and its
@@ -493,14 +548,29 @@ impl Vault {
     }
 
     /// Signs one bootstrap revision under the host root (C3, C4), with no
-    /// owner act.
+    /// owner act. A restored machine's enrolment, which the fold holds,
+    /// refuses here ([`RESTORED_NOT_JOINED`]): it stands for nothing.
     fn append_machine_profile_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         issuer: &HostSlipIssuer,
         fold: &AuthorityFold,
-        mut profile: MachineProfile,
+        profile: MachineProfile,
     ) -> Result<FoldedMachine> {
+        match self.append_root_signed_in_txn(txn, issuer, fold, profile)? {
+            Landed::Answer(landing) => landing.into_standing().ok_or_else(invalid_authority),
+            Landed::Restored => Err(authority_refused(RESTORED_NOT_JOINED)),
+        }
+    }
+
+    /// [`Self::append_machine_profile_in_txn`]'s write, and what the fold did.
+    fn append_root_signed_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        issuer: &HostSlipIssuer,
+        fold: &AuthorityFold,
+        mut profile: MachineProfile,
+    ) -> Result<Landed> {
         profile.seen_world_edits =
             super::act_standing::acknowledged_by_in_txn(&self.store, txn, fold, profile.machine)?;
         profile.validate()?;
@@ -515,10 +585,9 @@ impl Vault {
             AuthorityOp::MachineProfile(profile.clone()),
             now,
         )?;
-        // A root-signed revision carries no act, so the fold never holds it.
-        self.land_machine_profile_in_txn(txn, entry, &profile, now)?
-            .into_standing()
-            .ok_or_else(invalid_authority)
+        // A root-signed revision carries no act, so the fold never holds it
+        // for the owner's proof; it holds a restored machine's enrolment.
+        self.land_revision_in_txn(txn, entry, &profile, now)
     }
 
     /// Lands one machine revision and reads the fold back. A removal keeps
@@ -538,6 +607,21 @@ impl Vault {
         profile: &MachineProfile,
         now: u64,
     ) -> Result<MachineAnswerLanding> {
+        match self.land_revision_in_txn(txn, entry, profile, now)? {
+            Landed::Answer(landing) => Ok(landing),
+            Landed::Restored => Err(authority_refused(RESTORED_NOT_JOINED)),
+        }
+    }
+
+    /// [`Self::land_machine_profile_in_txn`], and its third verdict: a
+    /// restored machine's enrolment the fold holds until it joins.
+    fn land_revision_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        entry: AuthorityLogEntry,
+        profile: &MachineProfile,
+        now: u64,
+    ) -> Result<Landed> {
         let at = TimeRange {
             start: now,
             end: now,
@@ -554,17 +638,24 @@ impl Vault {
                 .as_ref()
                 .is_some_and(|roster| roster.profile == *profile && (roster.is_live() || removal))
         }) {
-            return Ok(MachineAnswerLanding::Stands(folded.clone()));
+            return Ok(Landed::Answer(MachineAnswerLanding::Stands(folded.clone())));
         }
         let held = after
             .held_machine_answers()
             .get(&profile.machine)
             .is_some_and(|held| held.contains_key(&answer));
         if held {
-            return Ok(MachineAnswerLanding::Held {
+            return Ok(Landed::Answer(MachineAnswerLanding::Held {
                 answer,
                 machine: machine.cloned(),
-            });
+            }));
+        }
+        if after
+            .restored_enrolments()
+            .get(&answer)
+            .is_some_and(|enrolment| enrolment.joined_by.is_none())
+        {
+            return Ok(Landed::Restored);
         }
         Err(invalid_authority())
     }

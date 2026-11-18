@@ -196,6 +196,7 @@ pub(super) fn fold_entry_state(
             machines: BTreeMap::new(),
             machine_keys: BTreeMap::new(),
             held_machine_answers: BTreeMap::new(),
+            restored_enrolments: BTreeMap::new(),
             root_anchors: BTreeMap::new(),
             anchor_entries: BTreeSet::new(),
             host_custody_keys: BTreeSet::new(),
@@ -248,10 +249,33 @@ pub(super) fn fold_entry_state(
             None => state.clone(),
         });
     }
-    let Some(mut state) = parent_state else {
+    let Some(state) = parent_state else {
         return EntryFold::Invalid(AuthorityFoldIssue::InvalidAncestry(hash));
     };
+    // A held enrolment of a machine born of a restore, among this entry's
+    // ancestors, joins when a live machine signs the entry (row
+    // RESTORED-COPIES-ENROL-EACH-OTHER): judged on the parents, applied only
+    // to an entry its own transition accepts.
+    let witnessed =
+        super::restored_join::witnessed(&state, entry, (context.pin, context.machine_standing));
+    match fold_merged_entry(entry, hash, state, context, restriction_only) {
+        EntryFold::Ready(mut state) => {
+            super::restored_join::join(&mut state, &witnessed, hash);
+            EntryFold::Ready(state)
+        }
+        other => other,
+    }
+}
 
+/// [`fold_entry_state`] past the parent merge: the vault and passkey checks
+/// and each op's transition on its parents' merged `state`.
+fn fold_merged_entry(
+    entry: &AuthorityLogEntry,
+    hash: AuthorityEntryHash,
+    mut state: FoldState,
+    context: FoldContext<'_>,
+    restriction_only: bool,
+) -> EntryFold {
     if entry.vault_id != Some(state.vault_id) {
         return EntryFold::Invalid(AuthorityFoldIssue::WrongVault(hash));
     }
@@ -478,15 +502,21 @@ pub(super) fn fold_entry_state(
     if let AuthorityOp::MachineProfile(profile) = &entry.op
         && profile.act.is_some()
     {
-        if let Err(issue) = super::machine_profile::apply_owner_answer(
-            &mut state,
-            entry,
-            profile,
-            hash,
-            (context.pin, context.machine_standing),
-            restriction_only,
-            context.needs_owner_proof_off_the_line(&hash),
-        ) {
+        // Carried by a live machine, so it stands on a restored target's
+        // held enrolments, which its entry joins.
+        if let Err(issue) =
+            super::restored_join::fold_revision(&mut state, profile, hash, true, |state| {
+                super::machine_profile::apply_owner_answer(
+                    state,
+                    entry,
+                    profile,
+                    hash,
+                    (context.pin, context.machine_standing),
+                    restriction_only,
+                    context.needs_owner_proof_off_the_line(&hash),
+                )
+            })
+        {
             return EntryFold::Invalid(issue);
         }
         state.seqs.insert(entry.signer_key().clone(), entry.seq);
@@ -688,14 +718,12 @@ pub(super) fn fold_entry_state(
         return EntryFold::Ready(state);
     }
     if let AuthorityOp::MachineProfile(profile) = &entry.op {
-        if let Err(issue) = apply_machine_profile(
-            &mut state,
-            &signer,
-            profile,
-            hash,
-            context,
-            restriction_only,
-        ) {
+        // A restored machine's root-signed enrolment is held until it joins.
+        if let Err(issue) =
+            super::restored_join::fold_revision(&mut state, profile, hash, false, |state| {
+                apply_machine_profile(state, &signer, profile, hash, context, restriction_only)
+            })
+        {
             return EntryFold::Invalid(issue);
         }
         state.seqs.insert(signer, entry.seq);

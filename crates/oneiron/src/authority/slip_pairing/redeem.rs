@@ -453,14 +453,23 @@ impl Vault {
         // redemption too (FIX 11715): its logged enrolment proof is no fresh
         // evidence, so without it the redemption refuses and writes nothing.
         held_machine_possession(&fold, request, possession)?;
+        let carries = self.carrier_in_txn(txn, &fold).is_ok();
+        // A machine born of a restore joins only through a machine that has
+        // joined (row RESTORED-COPIES-ENROL-EACH-OTHER): when this install
+        // can carry, it carries the owner's act for it, never the root's
+        // bootstrap, which the fold would hold. One no live machine here
+        // carries for is refused, and nothing is written.
+        let restored_and_carried = request.restored_from.is_some() && carries;
         // The never-profiled path first: an unanswered serving install also
         // carries, and it keeps pairing exactly as it did before its profile.
-        if unprofiled_install(&fold, crate::identity::read_machine_id_in_txn(self, txn)?) {
+        if !restored_and_carried
+            && unprofiled_install(&fold, crate::identity::read_machine_id_in_txn(self, txn)?)
+        {
             return self
                 .enroll_bootstrap_in_txn(txn, issuer, answer.owner, request, role)
                 .map(|machine| (MachineAnswerLanding::Stands(machine), false));
         }
-        if self.carrier_in_txn(txn, &fold).is_ok() {
+        if carries {
             let act = AnswerAct {
                 owner: answer.owner,
                 by: answer.by,

@@ -683,6 +683,7 @@ impl FoldBase {
         );
         if rows.missed.get()
             || fold.machines != once.fold.machines
+            || fold.restored_enrolments != once.fold.restored_enrolments
             || !super::world_privacy::worlds_unmoved_past(
                 &fold,
                 &once.fold,

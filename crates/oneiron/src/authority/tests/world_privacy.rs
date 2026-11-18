@@ -347,6 +347,7 @@ fn a_world_orphaned_by_a_shared_key_is_re_picked() {
             seen_world_edits: BTreeSet::new(),
             carrier: None,
             act: None,
+            restored_from: None,
         }),
         3,
     )
@@ -934,6 +935,7 @@ fn a_replica_without_a_worlds_entries_folds_the_same_main_log() {
                 seen_world_edits: BTreeSet::new(),
                 carrier: None,
                 act: None,
+                restored_from: None,
             }),
             2,
         )

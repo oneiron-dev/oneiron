@@ -86,7 +86,10 @@ use serde::Serialize;
 /// names it too) outside the line of the enrolment that made it the owner's is refused, and a
 /// device revocation proved through such an enrolment of its key ends nothing (row
 /// CARRIER-PROOF-OLD-PARENTS).
-pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 47;
+/// 48: the fold holds each act-free enrolment of a machine born of a restore until an entry
+/// signed by a joined machine descends from it, and refuses a revision that changes a
+/// machine's restore origin (row RESTORED-COPIES-ENROL-EACH-OTHER).
+pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 48;
 
 /// The domain every encoded image starts with.
 pub const AUTHORITY_CHECKPOINT_V2_DOMAIN: &[u8] = b"oneiron/authority/checkpoint/v2";

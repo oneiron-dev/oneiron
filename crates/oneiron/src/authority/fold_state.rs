@@ -95,6 +95,12 @@ pub struct AuthorityFold {
     /// through [`AuthorityFold::held_machine_answers`].
     pub(super) held_machine_answers:
         BTreeMap<EntityId, BTreeMap<AuthorityEntryHash, MachineRevision>>,
+    /// Each enrolment of a machine born of a restore, by entry, and the entry
+    /// that joined it (row RESTORED-COPIES-ENROL-EACH-OTHER): read through
+    /// [`AuthorityFold::restored_enrolments`].
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub(super) restored_enrolments:
+        BTreeMap<AuthorityEntryHash, super::restored_join::RestoredEnrolmentStanding>,
     /// The owner choices that wait for the owner's proof and still ask, by
     /// entry: read through [`AuthorityFold::waiting_owner_choices`].
     pub(super) waiting_owner_choices: BTreeSet<AuthorityEntryHash>,
@@ -384,6 +390,14 @@ pub(super) struct FoldState {
     /// union; a held answer the owner answered on either side stays answered.
     pub(super) held_machine_answers:
         BTreeMap<EntityId, BTreeMap<AuthorityEntryHash, super::owner_proof::HeldAnswer>>,
+    /// Each act-free enrolment of a machine born of a restore, by entry (row
+    /// RESTORED-COPIES-ENROL-EACH-OTHER): the chain and key claims it would
+    /// stand, held until an entry signed by a joined machine with it among
+    /// its ancestors joins it ([`super::restored_join`]). Merged by union; one
+    /// either side joined is joined.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub(super) restored_enrolments:
+        BTreeMap<AuthorityEntryHash, super::restored_join::RestoredEnrolment>,
     /// Each valid root's anchor key, mapped to every root id it signed,
     /// merged by union. No root record is fold state.
     pub(super) root_anchors: BTreeMap<[u8; 32], BTreeSet<RecoveryRootId>>,
@@ -685,6 +699,7 @@ pub(super) fn merge_states(left: &FoldState, right: &FoldState) -> FoldState {
             .or_insert(*seq);
     }
     merge_machine_maps(&mut merged.machines, &mut merged.machine_keys, right);
+    super::restored_join::merge(&mut merged.restored_enrolments, &right.restored_enrolments);
     for (machine, held) in &right.held_machine_answers {
         let merged_held = merged.held_machine_answers.entry(*machine).or_default();
         for (hash, answer) in held {
