@@ -1670,6 +1670,10 @@ struct MDB_env {
 	mdb_size_t	me_mapsize;		/**< size of the data memory map */
 	MDB_OFF_T	me_size;		/**< current file size */
 	pgno_t		me_maxpg;		/**< me_mapsize / me_psize */
+	/** ONEIRON FORK (page bound): whole pages in the data file at the last
+	 *	length read. It only lags the file, see #mdb_page_in_file().
+	 */
+	volatile pgno_t	me_file_pages;
 	MDB_dbx		*me_dbxs;		/**< array of static DB info */
 	uint16_t	*me_dbflags;	/**< array of flags from MDB_db.md_flags */
 	unsigned int	*me_dbiseqs;	/**< array of dbi sequence numbers */
@@ -5534,6 +5538,7 @@ mdb_env_open2(MDB_env *env, int prev)
 			MDB_dbi dbi;
 			pgno_t maxpgno = fsize / env->me_psize;
 			pgno_t sum = NUM_METAS;
+			env->me_file_pages = maxpgno;	/* ONEIRON FORK (page bound) */
 			for (dbi = FREE_DBI; dbi <= MAIN_DBI; dbi++) {
 				MDB_db *db = &meta.mm_dbs[dbi];
 				if (db->md_root != P_INVALID) {
@@ -7344,6 +7349,37 @@ static int mdb_page_chk_checksum(MDB_env *env, MDB_page *mp, size_t size)
 }
 #endif
 
+/** ONEIRON FORK (page bound): is [pgno, pgno + numpgs) inside the data file?
+ * A page past the end of a cut file would kill the process with SIGBUS
+ * when it is read through the map. Without #MDB_WRITEMAP the data file
+ * never shrinks, so #MDB_env.me_file_pages only lags the true length:
+ * a miss reads the length again before it refuses. Free pages past the
+ * end (see #MDB_meta.mm_last_pg) are never read through the map.
+ * The range test subtracts, so a corrupt run count cannot wrap past it,
+ * and a count of 0 checks the page itself.
+ * @return 0, or #MDB_CORRUPTED when the pages lie past the end.
+ */
+static int
+mdb_page_in_file(MDB_env *env, pgno_t pgno, pgno_t numpgs)
+{
+	mdb_size_t fsize = 0;
+	pgno_t pages = env->me_file_pages;
+
+	if (!numpgs)
+		numpgs = 1;
+	if (numpgs <= pages && pgno <= pages - numpgs)
+		return MDB_SUCCESS;
+	/* No length (a failed stat, a raw partition): read as before. */
+	if (mdb_fsize(env->me_fd, &fsize) != MDB_SUCCESS || !fsize)
+		return MDB_SUCCESS;
+	pages = fsize / env->me_psize;
+	env->me_file_pages = pages;
+	if (numpgs <= pages && pgno <= pages - numpgs)
+		return MDB_SUCCESS;
+	DPRINTF(("page %"Yu" past the end of the data file", pgno));
+	return MDB_CORRUPTED;
+}
+
 /** Find the address of the page corresponding to a given page number.
  * Set #MDB_TXN_ERROR on failure.
  * @param[in] mc the cursor accessing the page.
@@ -7403,6 +7439,18 @@ mdb_page_get(MDB_cursor *mc, pgno_t pgno,
 	}
 
 mapped:
+	/* ONEIRON FORK (page bound): refuse a page the file does not hold. */
+	if (!(txn->mt_env->me_flags & MDB_WRITEMAP)) {
+#if MDB_RPAGE_CACHE
+		int rc = mdb_page_in_file(txn->mt_env, pgno, (pgno_t)numpgs);
+#else
+		int rc = mdb_page_in_file(txn->mt_env, pgno, 1);
+#endif
+		if (rc) {
+			txn->mt_flags |= MDB_TXN_ERROR;
+			return rc;
+		}
+	}
 #if MDB_RPAGE_CACHE
 	if (MDB_REMAPPING(txn->mt_env->me_flags)) {
 		int rc = mdb_rpage_get(txn, pgno, numpgs, &p);
