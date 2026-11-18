@@ -108,9 +108,7 @@ impl Vault {
                 // entries' retirement staged; another record's stays (KS-3).
                 self.store.stage_known_history_erase_in_txn(wtxn, id)?;
                 crate::store::secret_handle_labels::erase_secret_handle_label_in_txn(
-                    &self.store,
-                    wtxn,
-                    id,
+                    self, wtxn, id,
                 )?;
                 crate::store::secret_payment_marks::erase_secret_payment_mark_in_txn(
                     &self.store,

@@ -1373,11 +1373,7 @@ async fn send_asset_want(
         },
         max_frame_bytes: ASSET_BODY_FRAME_BYTES as u32,
     };
-    send_binary(
-        socket,
-        encode_asset_body_want(&want).into_result().unwrap(),
-    )
-    .await;
+    send_binary(socket, encode_asset_body_want(&want).into_result().unwrap()).await;
     attempt
 }
 

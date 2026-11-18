@@ -25,6 +25,7 @@ use crate::task_type::PlacementDecisions;
 use crate::team::{LeasedSpawnRequest, PatternLaunchRunner, PlannedSpawnHost, SpawnPhase};
 use crate::workspace_roster::{ProjectProofVersion, ProjectRecord, ProjectWriteProof};
 use crate::{EntityId, Vault};
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
 
 fn invalid() -> Error {
     Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
@@ -583,11 +584,7 @@ impl HostSelfDispatcher<'_> {
         let mut claims = vault.ensure_host_root_slip(issuer)?.claims;
         // Each signing mints its own slip: a retry signs again for the same
         // child, and the fold refuses a slip id minted twice.
-        claims.slip_id = *blake3::Hasher::new()
-            .update(child.as_bytes())
-            .update(EntityId::now().as_bytes())
-            .finalize()
-            .as_bytes();
+        claims.slip_id = spawn_slip_id(child, EntityId::now());
         claims.parent_id = None;
         claims.holder_ref = actor.to_hex();
         let mut scope = crate::federation::Scope::top();
@@ -705,4 +702,20 @@ fn pattern_witness(loaded: &LoadedSkillPack) -> Option<SkillBodyWitness> {
         &loaded.record.version,
         files,
     )
+}
+
+/// A leader spawn's slip id over the child's id and a fresh id, so each
+/// signing mints its own (`purposes::code_run::LEADER_SPAWN_SLIP`).
+fn spawn_slip_id(child: EntityId, fresh: EntityId) -> [u8; 32] {
+    LegacyDigest::new(purposes::code_run::LEADER_SPAWN_SLIP)
+        .raw(child.as_bytes())
+        .raw(fresh.as_bytes())
+        .finish()
+}
+
+/// [`spawn_slip_id`] for the K door
+/// (`test_doors::fingerprint_keep_code_run_digests`). Not API.
+#[cfg(oneiron_test_support)]
+pub(crate) fn spawn_slip_id_for_test(child: EntityId, fresh: EntityId) -> [u8; 32] {
+    spawn_slip_id(child, fresh)
 }

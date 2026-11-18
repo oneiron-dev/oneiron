@@ -413,6 +413,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/facade/default_facet_doors.rs` | src | s | 2 crate-vis | — | Typed doors over the vault default facet (ARCH-0022 #facets: "Every vault has one default facet ... the… |
 | `src/api/facade/device_succession_doors.rs` | src | s | 1 crate-vis | — | Credential-bound owner projection of the native device-succession door |
 | `src/api/facade/disclosure_doors.rs` | src | s | 8 crate-vis | — | Owner registry, home-clearance and reveal-settlement doors, shared by HTTP and MCP |
+| `src/api/facade/display_edit_doors.rs` | src | s | 3 crate-vis | — | The owner's answers to his agents' display-edit proposals, as facade rows (FIX… |
 | `src/api/facade/drafter_doors.rs` | src | s | 6 crate-vis | — | The drafter host doors (FIX 12569): the owner's `vault.drafters.list`, `.status`, `.policy.set` and… |
 | `src/api/facade/embedding_space_doors.rs` | src | s | 13 crate-vis | — | The host doors of the owner's embedding-space rows (OF-370): `vault.embedding_spaces.*` |
 | `src/api/facade/engine_control_doors.rs` | src | s | 11 crate-vis | — | The host doors of the engine-control knob verbs (untangle 6.6d; owner 9 Nov 22:47, every substrate control… |
@@ -448,7 +449,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/facade/hook_regen_doors.rs` | src | s | 7 crate-vis | — | Credential-bound host projections of the typed hook regeneration doors (DOOR-077): the due list, one… |
 | `src/api/facade/hook_session.rs` | src | s | 1 crate-vis | — | Which facade row call keeps its verb hooks' records and ask pauses for its live session only (FIX 4283… |
 | `src/api/facade/hooks.rs` | src | m | 12 crate-vis | — | A facade row's verb hooks: the pre chain before its door runs and the post chain after it |
-| `src/api/facade/host_doors.rs` | src | m | 211 crate-vis | — | The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`… |
+| `src/api/facade/host_doors.rs` | src | m | 213 crate-vis | — | The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`… |
 | `src/api/facade/host_doors/admission.rs` | src | m | 1 crate-vis | — | The owner preflight every host door's verb meets before its door runs |
 | `src/api/facade/host_doors/artifacts_audit.rs` | src | s | 8 crate-vis | — | The owner's artifact review, ask, admit and deck preview doors, and his audit and mesh reads |
 | `src/api/facade/host_doors/authority_clock.rs` | src | s | 1 crate-vis | — | The owner's authority clock repair door (FIX 10106) |
@@ -480,6 +481,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/facade/live_run_doors.rs` | src | m | 11 crate-vis | — | Public coordination doors over the caller's own live-run attachment |
 | `src/api/facade/live_voice_doors.rs` | src | s | 8 crate-vis | — | Typed public live media doors |
 | `src/api/facade/live_voice_settlement.rs` | src | s | 2 crate-vis | — | Observes an already admitted connector call; never resends or answers it |
+| `src/api/facade/machine_name_doors.rs` | src | s | 2 crate-vis | — | The owner's machine list and his name for each machine, as facade rows (FIX [DEVICE-DISPLAY-NAME])… |
 | `src/api/facade/mail_pack_doors.rs` | src | s | 5 crate-vis | — | `vault.mail.pack.install`, `vault.mail.sources.sync`, `vault.mail.sources.search` and… |
 | `src/api/facade/merge_queue_checker_doors.rs` | src | s | 5 crate-vis | — | Credential-bound host projections of the owner's merge queue checker doors (FIX 6868) |
 | `src/api/facade/merge_queue_doors.rs` | src | s | 9 crate-vis | — | Credential-bound host projections of the typed speculative merge queue doors (DOOR-132) |
@@ -784,6 +786,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/owner_routes/diary_routes.rs` | src | s | 7 crate-vis | — | `/v1/owner/diary`: the owner's doors to agent diaries (OF-490, AGM-1+8) |
 | `src/api/owner_routes/disclosure_routes.rs` | src | m | 1 crate-vis | — | `/v1/owner/disclosure`: the owner's doors to contact disclosure (OF-365, the ILDF2 consent channel) |
 | `src/api/owner_routes/disclosure_routes/offers.rs` | src | s | 1 crate-vis | — | The owner's open-offer list, using the singular offer's frozen view |
+| `src/api/owner_routes/display_edit_routes.rs` | src | s | 1 crate-vis | — | `/v1/owner/display-edits`: the owner's answers to his agents' display-edit proposals (FIX… |
 | `src/api/owner_routes/dreamer_maintenance_routes.rs` | src | m | 5 crate-vis | — | `/v1/owner/dreamer/maintenance` (OF-023, owner ruling 10-18: "autoapply + revert rather than holdout"): the… |
 | `src/api/owner_routes/dreamer_routes.rs` | src | m | 5 crate-vis | — | `/v1/owner/dreamer`: the Dreamer's own changes, and the owner's revert of any one of them (OF-023, owner… |
 | `src/api/owner_routes/embedding_space_routes.rs` | src | m | 3 crate-vis | — | `/v1/owner/embedding-spaces`: the owner declares embedding spaces, binds kind slots and moves a slot to a… |
@@ -1363,7 +1366,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/files_intake/reader.rs` | src | m | 23 crate-vis | — | The host's reader of a folder of notes, shared by `oneiron import notes`, an attached folder's rescans and a… |
 | `src/files_intake/source.rs` | src | m | 7 crate-vis | — | One rescan of an attached folder, as `oneiron import folder`, `oneiron files`, the facade's… |
 | `src/files_intake/worker.rs` | src | s | 1 crate-vis | — | `oneiron serve`'s rescans of every attached folder, Files sources included (OF-554, FIX 6942): the one… |
-| `src/handler/admitted_windows.rs` | src | s | 7 crate-vis | — | A federation socket's admitted window copies (FIX 12118): the filtered copy of each window it fetched, with… |
+| `src/handler/admitted_windows.rs` | src | s | 8 crate-vis | — | A federation socket's admitted window copies (FIX 12118): the filtered copy of each window it fetched, with… |
 | `src/handler/app_tier.rs` | src | m | 6 crate-vis | — | Sync dispatch plus app-tier Rpc/Sub admission and bound-auth checks |
 | `src/handler/app_tier_tests.rs` | test | m | — | — | — |
 | `src/handler/asset_bodies.rs` | src | m | 3 crate-vis | — | A socket's by-reference ASSET body transfers on the home (FIX 5489): the engine's session over the windows… |
@@ -1461,6 +1464,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/livequery/residence/home_handoff.rs` | src | s | 3 crate-vis | — | `residence.home_handoff.status`, `.part`, `.commit` and `.cancel`: this node as the new home a home handoff… |
 | `src/livequery/residence/index.rs` | src | m | 7 crate-vis | — | A window's residence index: its paged projection, touches, promotions and version vector |
 | `src/livequery/residence/machine_history.rs` | src | s | 2 crate-vis | — | `residence.machine-history` (FIX 3820): a target's machine-claim history, a page at a time, for a machine… |
+| `src/livequery/residence/machine_names.rs` | src | s | 1 crate-vis | — | `residence.machine_names.exchange`: this home as the meeting point of its owner's machines' machine-name… |
 | `src/livequery/residence/media_vectors.rs` | src | s | 1 crate-vis | — | Read-only own-peer media vectors, of every kind a space fills; these bytes never enter a canonical window root |
 | `src/livequery/residence/pad_custody.rs` | src | s | 2 crate-vis | — | `residence.pad.fetch` (KS-5, FIX 6706): one page of a world's current pads, sealed for the machine this… |
 | `src/livequery/residence/pad_objects.rs` | src | s | 1 crate-vis | — | A kept pad object a get finds missing or short below its length (FIX 7106): a typed answer, never the… |
@@ -1957,7 +1961,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/sandbox_vendor/protobuf.rs` | src | s | 18 crate-vis | — | The protobuf wire format of the few messages a vendor's gRPC API takes and answers (L8-43) |
 | `src/sandbox_vendor/vendor_http.rs` | src | m | 31 crate-vis | — | What every vendor's sandbox client keeps the same way (L8-43): the owner's key, read at the custody door… |
 | `src/saved_query_sweep.rs` | src | m | 2 crate-vis | — | The saved-query sweep (ARCH-0059 `eval`, decide-host 1193): every active Wake or Reactive saved query is… |
-| `src/selector_release.rs` | src | s | 9 crate-vis | — | A selector answer leaves a socket only while what it was made under still stands (SELECTOR-RELEASE-POINT =… |
+| `src/selector_release.rs` | src | s | 10 crate-vis | — | A selector answer leaves a socket only while what it was made under still stands (SELECTOR-RELEASE-POINT =… |
 | `src/server/agent_wait_settle.rs` | src | s | 1 crate-vis | — | The due sweep of the waits over AGENT children on every housekeeping pass ([AGENT-WAIT-DEADLINE]): the… |
 | `src/server/artifact_previews.rs` | src | s | 1 fn · 7 crate-vis | — | Host-authenticated process declarations and their existing private preview leases |
 | `src/server/board_publisher.rs` | src | m | 5 crate-vis | — | The board publisher: committed TASK writes reach STREAM subscribers |
@@ -2259,6 +2263,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/decision_read_think_start.rs` | test | s | — | — | L2-33 (FIX 22360; lead ruling THINK-START = C, 13 Nov 2026): a served host's ThinkThreshold row starts at… |
 | `tests/delete_authority_served_door.rs` | test | m | — | — | DEL-2 at the core HTTP delete (ARCH-0043, owner DEL-2 = A; Engine ruling 13 Nov 02:51 = A) |
 | `tests/direct_answer_proof_store_error.rs` | test | s | — | — | DIRECT-ANSWER-PROOF-STORE-ERROR: a store fault met while binding a direct request's proof fails the call… |
+| `tests/display_edit_doors.rs` | test | L | — | — | Display-edit proposals at their served doors (FIX [SECRETS-LABEL-PURPOSE-VERBS], [DEVICE-DISPLAY-NAME]… |
 | `tests/doctor_off_record_dump_suppression.rs` | test | s | — | — | Census row L6-18: `oneiron doctor` reports the operator's core-dump switch for a process that holds an… |
 | `tests/doctor_synced_folder.rs` | test | s | — | — | A vault in a folder a sync service watches is named by the shipped binary: `init` prints a warning and… |
 | `tests/embed_backfill_pod_hours.rs` | test | m | — | — | Backfill waits for the GPU box's hours instead of embedding on the endpoint (NIGHT-BACKFILL-HOLD = C, 15 Nov… |
@@ -2348,6 +2353,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/live_run_payer_erased.rs` | test | s | — | — | [LIVE-RUN-PAYER-REQUIRED] (the Engine's ruling of 12 Nov 22:44, OF-531): a live run's model doors read its… |
 | `tests/machine_capacity.rs` | test | s | — | — | UNBUILT-14 PR 3a (CROSS-ARCH-0024 #my-network 01 and 05): this install measures its machine (cores, memory… |
 | `tests/machine_history_page_controls.rs` | test | L | — | — | A machine-history page judges every history control (L5-02 PR 5, RULING SECREAD-HOME-MACHINE-HISTORY = A)… |
+| `tests/machine_name_doors.rs` | test | m | — | — | The owner's machine list and his name for each machine at their served doors (FIX [DEVICE-DISPLAY-NAME])… |
+| `tests/machine_reported_name_settings.rs` | test | s | — | — | The settings file's machine-reported name and model reach the vault config |
 | `tests/mail_reply_approve_mailbox_person_door.rs` | test | m | — | — | `vault.mail.reply.approve` at the served door (FIX 18868): a mailbox's own person approves a drafted reply… |
 | `tests/managed_mode.rs` | test | XL | — | — | — |
 | `tests/managed_privacy.rs` | test | s | — | — | Privacy inputs must not be accepted and dropped by managed contract v1 |
