@@ -385,6 +385,61 @@ impl RevokeFacts {
             .retain(|hash, fact| !retirements.excludes(hash, entries, ancestors, &fact.routed));
     }
 
+    /// Forgets the machine removal of every carried answer outside a proving
+    /// owner-key enrolment's line that the fold did not count (row
+    /// CARRIER-PROOF-OLD-PARENTS): one it held for the owner's proof, or one
+    /// that does not stand. Its own branch, which lacks the owner's key,
+    /// proves the removal, but the fold judged it where that key reaches, so
+    /// the removal would otherwise end the machine on every branch.
+    pub(super) fn forget_held_off_the_line(
+        &mut self,
+        lines: Option<&super::owner_key_line::OwnerKeyLines>,
+        settled: &BTreeMap<AuthorityEntryHash, FoldState>,
+    ) {
+        let Some(lines) = lines else {
+            return;
+        };
+        self.by_hash.retain(|_, fact| {
+            let Restriction::MachineRemoval { machine, .. } = &fact.kind else {
+                return true;
+            };
+            !lines.needs_proof(&fact.entry_hash)
+                || settled.get(&fact.entry_hash).is_some_and(|state| {
+                    !state
+                        .held_machine_answers
+                        .get(machine)
+                        .is_some_and(|held| held.contains_key(&fact.entry_hash))
+                })
+        });
+    }
+
+    /// Forgets every device revocation whose proven branch holds an
+    /// enrolment of the revoked key that a line refuses (row
+    /// CARRIER-PROOF-OLD-PARENTS; REVIEW2 #8502, 16 Nov). The custodial
+    /// root's agent enrolment of the owner's key on parents before the
+    /// owner's enrolment is an invalid entry, and a revoke of that key above
+    /// it waits with it. The revoke's own branch, proved with no line, holds
+    /// the key as that agent enrolment's, which the root alone may end, so
+    /// the fact would end the owner's key on every branch.
+    pub(super) fn forget_revokes_above_refused_enrolments(
+        &mut self,
+        lines: Option<&super::owner_key_line::OwnerKeyLines>,
+        entries: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+        ancestors: &AncestorIndex,
+    ) {
+        let Some(lines) = lines else {
+            return;
+        };
+        self.by_hash.retain(|hash, fact| {
+            let Restriction::DeviceRevoke(key) = &fact.kind else {
+                return true;
+            };
+            !ancestors
+                .get(hash)
+                .is_some_and(|branch| lines.refuses_an_enrolment_of(key, branch, entries))
+        });
+    }
+
     /// Forgets every restriction proved through a handoff that did not take
     /// effect. The heir a refused or pruned ReRoot names was never root, so
     /// it restricts nothing, however its own branch folds; a restriction the

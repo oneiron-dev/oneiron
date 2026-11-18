@@ -601,8 +601,11 @@ fn a_key_only_a_passkey_vouched_for_binds_itself_to_no_actor() {
 /// Astra delta review finding 2: the owner's device key enrols a fresh key
 /// at the heads, and the passkey vouches for the same key on a sibling
 /// branch (a blind signature the page's host obtained). Once the fold merges
-/// the two, the key acts in full: the device key's enrolment confirms it, so
-/// it revokes the passkey-vouched key.
+/// the two, the key acts in full, so it revokes the passkey-vouched key. The
+/// device key's enrolment is the one that made the key the owner's, and the
+/// passkey's vouch lies outside its line, so the fold refuses the vouch (row
+/// CARRIER-PROOF-OLD-PARENTS, OLDPARENTS-ENROL-DODGE = A); were it counted,
+/// the device key's enrolment would confirm the key against it.
 #[test]
 fn a_device_keys_enrolment_confirms_against_a_sibling_passkey_vouch() {
     let hosted = HostedVault::open();
@@ -627,8 +630,9 @@ fn a_device_keys_enrolment_confirms_against_a_sibling_passkey_vouch() {
     )
     .expect("the sibling vouch is stored");
     assert!(
-        vouched,
-        "guard: the passkey's sibling vouch for the same fresh key counts"
+        !vouched,
+        "the passkey's sibling vouch for the same fresh key lies outside the line of the device \
+         key's enrolment and counts for nothing"
     );
     assert!(
         revoke_owner_key_signed_by(

@@ -121,6 +121,7 @@ pub(super) fn context(floors: Option<&BTreeMap<AuthorityEntryHash, u64>>) -> Fol
         pre_handoff_entries: Some(&NO_HANDOFFS),
         memory_floor_bytes: u64::MAX,
         pin: None,
+        owner_key_lines: None,
         appointments: None,
     }
 }
