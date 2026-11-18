@@ -39,6 +39,8 @@ pub use evidence_spans::{
     evidence_spans, validate_evidence_spans,
 };
 pub(crate) use evidence_spans::{evidence_spans_bound, evidence_spans_in_txn};
+#[cfg(oneiron_test_support)]
+pub(crate) use extraction_inputs::pin_of_encoded_policy_for_test;
 pub use extraction_inputs::{
     ExtractionInputsPage, ExtractionInputsPageRequest, ExtractionPolicy, ExtractionTurn,
     extraction_inputs_page,
@@ -52,6 +54,10 @@ pub use extraction_observations::{
     CandidateObservation, ExtractionObservationsPage, ExtractionObservationsPageRequest,
     ListedObservation, PriorObservation, ReplayObservation, SimilarityScore,
     extraction_observations_page,
+};
+#[cfg(oneiron_test_support)]
+pub(crate) use extraction_observations::{
+    pin_of_encoded_facts_for_test, tokens_of_encoded_keys_for_test,
 };
 pub use policy_preflight::{
     POLICY_PREFLIGHT_MAX_REFS, PolicyPreflight, PolicyPreflightAct, PolicyPreflightRef,
