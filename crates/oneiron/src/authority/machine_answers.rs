@@ -443,7 +443,7 @@ impl Vault {
             parents,
             AuthorityOp::MachineProfile(profile.clone()),
             now,
-            proof.as_deref(),
+            proof.as_ref(),
         )?;
         self.land_machine_profile_in_txn(txn, entry, &profile, now)
     }

@@ -60,8 +60,8 @@ use std::sync::Arc;
 use base64::Engine as _;
 use ed25519_dalek::Signer as _;
 use oneiron::authority::{
-    ActAuthority, ActSurface, AuthorityAttestation, AuthorityKey, AuthorityOp, AuthorityTier,
-    DeviceAuthority, HostSlipIssuer, MACHINE_ENCRYPTION_KEY_LEN,
+    ActAuthority, ActSurface, AuthorityAttestation, AuthorityFold, AuthorityKey, AuthorityOp,
+    AuthorityTier, DeviceAuthority, HostSlipIssuer, MACHINE_ENCRYPTION_KEY_LEN,
     MACHINE_ENCRYPTION_SUITE_HYBRID_V1, MachineDeviceClass, MachineEncryptionKey, MachineOwnership,
     MachineProfile, MachineRole, OwnerAct, OwnerActKind, OwnerKeyEnrollment,
     OwnerPasskeyEnrollment, ROLE_AGENT, ROLE_OWNER, encode_authority_log_entry_body,
@@ -956,15 +956,29 @@ impl oneiron::authority::CheckpointRootSigner for HeldOwnerKey {
         ed_key(&self.0)
     }
 
-    fn sign_checkpoint_statement(&self, statement: &[u8]) -> oneiron::Result<Vec<u8>> {
+    fn sign_checkpoint_statement(
+        &self,
+        _vault: &Vault,
+        statement: &[u8],
+    ) -> oneiron::Result<Vec<u8>> {
         Ok(self.0.sign(statement).to_bytes().to_vec())
     }
 
-    fn sign_owner_proof(&self, transcript: &[u8]) -> oneiron::Result<Vec<u8>> {
+    fn sign_owner_proof(
+        &self,
+        _vault: &Vault,
+        _fold: &AuthorityFold,
+        transcript: &[u8],
+    ) -> oneiron::Result<Vec<u8>> {
         Ok(self.0.sign(transcript).to_bytes().to_vec())
     }
 
-    fn sign_ask_word_proof(&self, transcript: &[u8]) -> oneiron::Result<Vec<u8>> {
+    fn sign_ask_word_proof(
+        &self,
+        _vault: &Vault,
+        _fold: &AuthorityFold,
+        transcript: &[u8],
+    ) -> oneiron::Result<Vec<u8>> {
         Ok(self.0.sign(transcript).to_bytes().to_vec())
     }
 }
