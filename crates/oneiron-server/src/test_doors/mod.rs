@@ -22,6 +22,7 @@ pub mod embedded_peer_fixture;
 #[cfg(feature = "mesh")]
 pub mod embedded_peer_path;
 pub mod embedding_line;
+pub mod fingerprint_keep_lens_callback;
 pub mod history_import;
 #[cfg(unix)]
 pub mod hosted_import;
