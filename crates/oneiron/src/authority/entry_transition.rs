@@ -255,9 +255,14 @@ pub(super) fn fold_entry_state(
     // A held enrolment of a machine born of a restore, among this entry's
     // ancestors, joins when a live machine signs the entry (row
     // RESTORED-COPIES-ENROL-EACH-OTHER): judged on the parents, applied only
-    // to an entry its own transition accepts.
-    let witnessed =
-        super::restored_join::witnessed(&state, entry, (context.pin, context.machine_standing));
+    // to an entry its own transition accepts. A row that lands as
+    // restriction only (past its signer's floor, or held back) grants
+    // nothing, so it joins nothing (REVIEW-9509 round 2 P1).
+    let witnessed = if restriction_only {
+        Vec::new()
+    } else {
+        super::restored_join::witnessed(&state, entry, (context.pin, context.machine_standing))
+    };
     match fold_merged_entry(entry, hash, state, context, restriction_only) {
         EntryFold::Ready(mut state) => {
             super::restored_join::join(&mut state, &witnessed, hash);
@@ -504,8 +509,12 @@ fn fold_merged_entry(
     {
         // Carried by a live machine, so it stands on a restored target's
         // held enrolments, which its entry joins.
-        if let Err(issue) =
-            super::restored_join::fold_revision(&mut state, profile, hash, true, |state| {
+        if let Err(issue) = super::restored_join::fold_revision(
+            &mut state,
+            profile,
+            hash,
+            true,
+            |state, parents| {
                 super::machine_profile::apply_owner_answer(
                     state,
                     entry,
@@ -513,10 +522,10 @@ fn fold_merged_entry(
                     hash,
                     (context.pin, context.machine_standing),
                     restriction_only,
-                    context.needs_owner_proof_off_the_line(&hash),
+                    (context.needs_owner_proof_off_the_line(&hash), parents),
                 )
-            })
-        {
+            },
+        ) {
             return EntryFold::Invalid(issue);
         }
         state.seqs.insert(entry.signer_key().clone(), entry.seq);
@@ -720,7 +729,7 @@ fn fold_merged_entry(
     if let AuthorityOp::MachineProfile(profile) = &entry.op {
         // A restored machine's root-signed enrolment is held until it joins.
         if let Err(issue) =
-            super::restored_join::fold_revision(&mut state, profile, hash, false, |state| {
+            super::restored_join::fold_revision(&mut state, profile, hash, false, |state, _| {
                 apply_machine_profile(state, &signer, profile, hash, context, restriction_only)
             })
         {
