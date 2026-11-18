@@ -26,9 +26,8 @@ mod kernel;
 mod ledgers;
 mod lens;
 mod off_device;
-#[cfg(oneiron_test_support)]
-pub(crate) use off_device::referenced_rows;
 pub(crate) use off_device::served_form_rows;
+pub(crate) use off_device::{is_verb_hook_receipt, referenced_rows};
 mod pack_attribution;
 mod projection;
 pub mod prompt_stamp;
