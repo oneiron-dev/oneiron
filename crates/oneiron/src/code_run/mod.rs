@@ -52,17 +52,17 @@ pub use self::scoped_generation::{ScopedChildGeneration, ScopedChildGenerationCa
 pub(crate) mod setting_keys;
 pub mod shadow_runner;
 mod spawn_replay;
-pub(crate) use self::spawn_replay::barrier_spawn_call;
+pub(crate) use self::spawn_replay::{BaseKnownRead, barrier_spawn_call};
 mod storage;
 pub(crate) use storage::erase_reader_caller_actor_in_txn;
 pub(crate) use storage::replay_rows;
 mod support;
+#[cfg(oneiron_test_support)]
+pub(crate) use support::dispatch_outcome_map_get_for_test;
 pub(crate) mod tables;
 mod task_reporting;
 mod task_settlement;
 mod team_submit;
-// FIX [LIBTEST-QUARANTINE-CODE-RUN-TESTS]: the lib test target's type check fails here (19 errors: E0063 x11, E0277 x4, E0061 x3, E0599 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;
 mod type_diagnostics;
@@ -181,8 +181,6 @@ pub(crate) use self::result_read::{
 pub(crate) use self::result_read::{unmarked_secret, unplaced_answer};
 pub use self::run_verb_call::run_verb_call;
 pub use self::storage::ReadWorldUnknown;
-#[cfg(oneiron_test_support)]
-pub(crate) use self::storage::capsule_stored_request_bytes;
 pub(crate) use self::storage::session_model_heal_count;
 pub use self::storage::step_replay_capsules;
 pub(crate) use self::storage::undecodable_step_capsule_in_txn;
@@ -248,6 +246,8 @@ pub(crate) use self::storage::{bind_owner_pair_ask_in_txn, owner_pair_in_txn};
 pub(crate) use self::storage::{
     canonical_wait_ids, deliver_changed_wait_in_txn, has_parked_run_in_txn, observe_wait_change,
 };
+#[cfg(oneiron_test_support)]
+pub(crate) use self::storage::{capsule_stored_request_bytes, piece_ref_for_test};
 pub(crate) use self::storage::{
     closed_read_world_capture_in_txn, invalidate_imported_read_world_capture_in_txn,
 };
@@ -321,7 +321,7 @@ pub use self::storage::ReaderJobs;
 pub(crate) use self::storage::SpendBook;
 #[cfg(test)]
 use self::storage::canonical_speech_conversation_id;
-#[cfg(test)]
+#[cfg(any(test, oneiron_test_support))]
 pub(crate) use self::storage::executor_speech_message_id;
 #[cfg(test)]
 pub(crate) use self::storage::require_facet_placement_in;

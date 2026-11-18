@@ -621,7 +621,7 @@ async fn answer_app_message(
                     ),
                 )));
             }
-            crate::livequery::residence_rpc(
+            let (reply, basis) = crate::livequery::residence_rpc(
                 server,
                 &bound,
                 peer,
@@ -629,8 +629,11 @@ async fn answer_app_message(
                 &mut state.residence_index,
                 &mut state.authority_append_stage,
                 &mut state.residence_touch,
-            )?
-            .queued(conn)
+            )?;
+            match basis {
+                Some(basis) => state.selector_answers.queue(basis, reply.queued(conn)),
+                None => reply.queued(conn),
+            }
         } else {
             // FIX 2059: the call context is taken here, before the call
             // leaves the loop: its session judged for the bound principal

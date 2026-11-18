@@ -79,6 +79,7 @@ use crate::connector_elicitation::{
 use crate::runtime::runner_fence::HostRunnerFence;
 use crate::server::SyncServer;
 
+pub(crate) mod issuer_watch;
 mod json_wire;
 mod live_exchange;
 mod presenting;
@@ -229,17 +230,7 @@ impl ServedConnectorCallHost {
         fence: Option<Arc<HostRunnerFence>>,
         door_origin: Option<String>,
     ) -> oneiron::Result<Self> {
-        let client = reqwest::blocking::Client::builder()
-            .redirect(reqwest::redirect::Policy::none())
-            .no_proxy()
-            .connect_timeout(CONNECT_TIMEOUT)
-            .timeout(CALL_TIMEOUT)
-            .build()
-            .map_err(|_| {
-                oneiron::Error::InvalidConfig(
-                    "the connector HTTP client could not be built".to_owned(),
-                )
-            })?;
+        let client = connector_client()?;
         Ok(Self {
             vault,
             connectors: connectors
@@ -545,6 +536,20 @@ fn retry_questions(message: &Value) -> Option<(Vec<ConnectorQuestion>, Option<Ke
     ))
 }
 
+/// The one HTTP client a connector send and its issuer watch use: no
+/// redirect followed, no proxy, the call's bounds.
+pub(crate) fn connector_client() -> oneiron::Result<reqwest::blocking::Client> {
+    reqwest::blocking::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .no_proxy()
+        .connect_timeout(CONNECT_TIMEOUT)
+        .timeout(CALL_TIMEOUT)
+        .build()
+        .map_err(|_| {
+            oneiron::Error::InvalidConfig("the connector HTTP client could not be built".to_owned())
+        })
+}
+
 /// What a send that declares elicitation keeps a question with.
 struct Declared<'a> {
     capability: Value,
@@ -650,6 +655,31 @@ impl<'a> Exchange<'a> {
             }
         }
     }
+
+    /// Reads a refusal at the connector's door for an issuer change (L5-11)
+    /// before the send answers with it: a change found holds the call's
+    /// dependent rows from the next send on, and never changes this answer.
+    fn watch_refusal(
+        &self,
+        status: reqwest::StatusCode,
+        headers: &HeaderMap,
+        presented: Option<&SentValue<'_>>,
+    ) {
+        let Some((vault, key_ref, _)) = &self.issuer else {
+            return;
+        };
+        if let Err(error) = issuer_watch::detect_at_refusal(
+            vault,
+            self.client,
+            self.endpoint,
+            key_ref,
+            status,
+            headers,
+            presented,
+        ) {
+            tracing::warn!(%error, "connector issuer change not recorded");
+        }
+    }
 }
 
 impl DoorExchange for Exchange<'_> {
@@ -680,6 +710,7 @@ impl DoorExchange for Exchange<'_> {
             Err(_) => return Sent::not_sent(OutboundFailureKind::TransportNotStarted, None),
         };
         if !response.status().is_success() {
+            self.watch_refusal(response.status(), response.headers(), value);
             // FIX 11025: a rate refusal keeps the provider's wait.
             return Sent::refused_status(response.status(), response.headers());
         }
@@ -712,7 +743,10 @@ impl DoorExchange for Exchange<'_> {
         match live.post(&notification, Some(HANDSHAKE_TIMEOUT)).send() {
             Ok(response) if response.status().is_success() => {}
             // FIX 11025: a rate refusal keeps the provider's wait.
-            Ok(response) => return Sent::refused_status(response.status(), response.headers()),
+            Ok(response) => {
+                self.watch_refusal(response.status(), response.headers(), value);
+                return Sent::refused_status(response.status(), response.headers());
+            }
             Err(_) => return Sent::not_sent(OutboundFailureKind::TransportNotStarted, None),
         }
 
@@ -774,6 +808,7 @@ impl Exchange<'_> {
             return Sent::ambiguous("connector_server_error");
         }
         if !status.is_success() {
+            self.watch_refusal(status, response.headers(), value);
             // A refusal at the door: the tool never ran. A rate refusal
             // keeps the provider's wait (FIX 11025).
             return Sent::refused_status(status, response.headers());

@@ -11,6 +11,7 @@ use crate::error::{Error, Result};
 use getrandom::SysRng;
 use oneiron_authority::authority::RecoveryRootId;
 use oneiron_authority::authority::{WorldKeyId, WrapRecipient};
+use oneiron_contracts::fingerprint::ContentHash;
 use oneiron_crypto::HybridPublicKey;
 use oneiron_crypto::{
     Envelope, HybridSecretKey, Kek, OpenKey, Purpose, SealKey, SealParams, WrapType, seal,
@@ -269,7 +270,7 @@ impl SealedWorldPads {
             world,
             recipients,
             required_keys,
-            digest: *blake3::hash(&bytes).as_bytes(),
+            digest: *ContentHash::of(&bytes).as_bytes(),
             bytes,
         })
     }
@@ -349,7 +350,7 @@ pub(crate) fn seal_world_pad_compartment(
         world,
         recipients: ids,
         required_keys,
-        digest: *blake3::hash(&bytes).as_bytes(),
+        digest: *ContentHash::of(&bytes).as_bytes(),
         bytes,
     })
 }
@@ -375,7 +376,7 @@ pub(crate) fn open_world_pad_compartment(
     recipient: WrapRecipient,
     secret: &HybridSecretKey,
 ) -> Result<OpenedWorldPads> {
-    if blake3::hash(&sealed.bytes).as_bytes() != expected_digest
+    if ContentHash::of(&sealed.bytes).as_bytes() != expected_digest
         || sealed.digest != *expected_digest
     {
         return Err(pads_corrupt());

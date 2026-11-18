@@ -330,11 +330,17 @@ pub(super) fn run(
     drop(txn);
     // Settle before proposing: a target moved by an approval this pass waits
     // for the next pass to be graded on its new rung. Each approved rung
-    // applies in its own write, as the Dreamer.
+    // applies in its own write, as the Dreamer, judged again there: one that
+    // now lifts a restriction waits (RESTRICTION-CURATOR-APPROVED-APPLY-REJUDGE).
     let mut moved = BTreeSet::new();
     for proposal in approved {
         let applied = vault.with_write_txn_grouped(|txn| {
-            vault.apply_approved_curator_in_txn(txn, proposal, Some(attempt.status.attempt.id), now)
+            vault.apply_approved_curator_rejudged_in_txn(
+                txn,
+                proposal,
+                Some(attempt.status.attempt.id),
+                now,
+            )
         });
         match applied {
             Ok(Some(target)) => {
@@ -478,11 +484,24 @@ pub(crate) fn finding_lifts_restriction_in(
     txn: &heed::RoTxn<'_>,
     finding: &crate::claim::ClaimBody,
 ) -> Result<bool> {
-    if finding.predicate != PROPOSAL_PREDICATE {
+    proposal_lifts_restriction_in(vault, txn, &finding.predicate, &finding.value)
+}
+
+/// [`finding_lifts_restriction_in`] on a finding's `predicate` and `value`
+/// before any body of it is stored: a conflict's retained alternative
+/// carries both, and a Keep that approves it applies its rung as it lands.
+/// Read by the conflict settlement, so a Keep of such a finding by no person
+/// is refused (RULING RESTRICTION-CLOSE-BY-CURATOR-APPROVAL).
+pub(crate) fn proposal_lifts_restriction_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    predicate: &str,
+    value: &Value,
+) -> Result<bool> {
+    if predicate != PROPOSAL_PREDICATE {
         return Ok(false);
     }
-    let Some(value) = finding
-        .value
+    let Some(value) = value
         .as_str()
         .and_then(|text| serde_json::from_str::<serde_json::Value>(text).ok())
     else {

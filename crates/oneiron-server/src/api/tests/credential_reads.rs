@@ -76,6 +76,16 @@ pub(super) fn room() -> Room {
     create_owned_project(&server, owner, project, &roster);
     let room = oneiron::EntityId::from_hex(&roster.home_room).unwrap();
     let space = seeded_test_entity_id(0x2401_0004);
+    server
+        .vault
+        .put_entity(
+            &space,
+            oneiron::registry::ENTITY_TYPE_RELATIONSHIP,
+            oneiron::TimeRange { start: 1, end: 1 },
+            1,
+            b"fixture",
+        )
+        .unwrap();
     let (spaced, unscoped) = (oneiron::EntityId::now(), oneiron::EntityId::now());
     for (message, content, metadata, at) in [
         (spaced, SPACED, Some(json!({ "rel": space.to_hex() })), 2),
@@ -322,8 +332,9 @@ async fn the_owners_full_credential_reads_as_the_owner_on_v1() {
 async fn a_narrower_owner_credential_stays_bounded_in_room_verbs() {
     let room = room();
     // Narrow the owner first: `restrict_principal_read_types` rewrites the
-    // first policy manifest carrying a `rules` key, and the actor grant
-    // below is one too, so granting first would lose the agent's read.
+    // first policy manifest, in id order, that carries a `rules` key. The
+    // actor grant below carries one too under a hashed id that can sort
+    // first, so granting first could rewrite it and lose the agent's read.
     super::context_board_history::restrict_principal_read_types(
         &room.server,
         room.owner,

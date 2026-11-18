@@ -1074,14 +1074,12 @@ fn reconcile(record: &mut PendingAuthorityAct, holders: &[LiveActHolder], now: u
 
 mod matured;
 mod owner_change_wait;
-mod policy_change;
+pub(crate) mod policy_change;
 pub use matured::PendingActMatured;
 pub use policy_change::{
     NOTIFICATION_PRODUCER_POLICY_CHANGE, SharedActPoliciesView, SharedActPolicyChange,
     SharedActPolicyChangeState,
 };
 
-// FIX [LIBTEST-QUARANTINE-FEDERATION-PENDING-ACT-TESTS]: the lib test target's type check fails here (5 errors: E0639 x2, E0061 x2, E0063 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;

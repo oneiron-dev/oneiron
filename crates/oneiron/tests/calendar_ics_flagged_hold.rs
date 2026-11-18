@@ -228,22 +228,30 @@ impl Fixture {
     }
 
     /// The owner's `vault.claims.review`, then `vault.claims.settle`
-    /// (approve), on one held claim.
+    /// (approve), on one held claim, each on the owner's proof. This
+    /// fixture's vault holds no writer lease, so the handle's
+    /// embedded-owner shortcut (`claim_review` with no grant) refuses.
     fn owner_releases(&self, id: EntityId) {
         let memory = self.memory();
         let review = memory
-            .claim_review(&ClaimProposalReviewRequest {
-                claim_ref: id.to_hex(),
-                grant_ref: None,
-            })
+            .claim_review_as_owner(
+                &self.proof,
+                &ClaimProposalReviewRequest {
+                    claim_ref: id.to_hex(),
+                    grant_ref: None,
+                },
+            )
             .expect("the owner reviews the held claim");
         let settled = memory
-            .claim_settle(&ClaimSettleRequest {
-                claim_ref: id.to_hex(),
-                review_id: review.review_id,
-                decision: ClaimSettleDecision::Approve,
-                grant_ref: None,
-            })
+            .claim_settle_as_owner(
+                &self.proof,
+                &ClaimSettleRequest {
+                    claim_ref: id.to_hex(),
+                    review_id: review.review_id,
+                    decision: ClaimSettleDecision::Approve,
+                    grant_ref: None,
+                },
+            )
             .expect("the owner settles the held claim");
         assert_eq!(settled.verdict, ClaimSettlementVerdict::Landed);
     }
