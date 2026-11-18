@@ -434,11 +434,6 @@ async fn recall(
     off_record: bool,
     served: &mut Vec<EntityId>,
 ) -> Result<Option<LlmMessage>, Response> {
-    let proof = actor
-        .auth
-        .as_ref()
-        .and_then(crate::auth::CoreAuth::verified_slip)
-        .cloned();
     let input = RecallRequest {
         query,
         effort: Some(RecallEffort::Call),
@@ -477,7 +472,7 @@ async fn recall(
         .recall_home_listing(
             actor.actor_ref,
             actor.actor_class,
-            proof,
+            actor.auth.as_ref(),
             reads_for,
             None,
             input,
