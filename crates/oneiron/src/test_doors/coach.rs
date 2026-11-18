@@ -48,6 +48,20 @@ fn axis(name: &str, measure: &str, bound: &str) -> GoalAxis {
 /// The vault's.
 pub fn write_root_goal(vault: &Vault, owner: &AuthenticatedOwner) -> Result<EntityId> {
     let project = vault.root_project()?;
+    write_project_goal(vault, owner, project)?;
+    Ok(project)
+}
+
+/// Writes one goal into `project` from an owner's intake.
+///
+/// # Errors
+///
+/// The vault's.
+pub fn write_project_goal(
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    project: EntityId,
+) -> Result<()> {
     let goal = GoalRecord {
         goal: "Answer customer requests correctly".into(),
         why: "Reduce repeat support tickets".into(),
@@ -79,7 +93,7 @@ pub fn write_root_goal(vault: &Vault, owner: &AuthenticatedOwner) -> Result<Enti
         },
     };
     vault.write_project_goal_from_intake(owner, project, &goal, 2)?;
-    Ok(project)
+    Ok(())
 }
 
 /// Writes a minimal human-authored agent definition, as the owner's own
