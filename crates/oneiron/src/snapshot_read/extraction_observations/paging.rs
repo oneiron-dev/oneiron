@@ -6,6 +6,7 @@ use super::types::{
     ExtractionObservationsPage, ExtractionObservationsPageRequest, ObservationFacts,
 };
 use crate::memory::{MemoryError, MemoryResult};
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
 
 /// One ordered section of the complete observations read.
 #[derive(Clone, Copy)]
@@ -71,11 +72,26 @@ pub(super) fn observation_facts_pin(
         facts,
     ))
     .map_err(|error| MemoryError::bad_request(error.to_string()))?;
-    let mut hash = blake3::Hasher::new();
-    hash.update(b"oneiron:extraction:observations-facts:v1");
-    hash.update(&[0]);
-    hash.update(&encoded);
-    Ok(hash.finalize().to_hex().to_string())
+    Ok(pin_of_encoded_facts(&encoded))
+}
+
+/// Hashes the encoded request and fact set after the facts tag and a NUL separator. The
+/// tag is a legacy purpose: an observations page and its cursors already send these
+/// bytes, so they are kept (K, PLAN-UC-04).
+fn pin_of_encoded_facts(encoded: &[u8]) -> String {
+    oneiron_hex::encode(
+        &LegacyDigest::new(purposes::dreamer::EXTRACTION_OBSERVATION_FACTS)
+            .raw(&[0])
+            .raw(encoded)
+            .finish(),
+    )
+}
+
+/// [`pin_of_encoded_facts`] for the K door
+/// (`test_doors::fingerprint_keep_extraction_read_digests`). Not API.
+#[cfg(oneiron_test_support)]
+pub(crate) fn pin_of_encoded_facts_for_test(encoded: &[u8]) -> String {
+    pin_of_encoded_facts(encoded)
 }
 
 /// Cuts a whole-row page across ordered sections under the effective bounds.
