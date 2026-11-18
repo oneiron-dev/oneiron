@@ -18,11 +18,15 @@
 //! - an enrolment of the key that enrolment enrolled (any op, any role, and a
 //!   rotation or a handoff that names it as the successor) is an invalid
 //!   entry, so the roster merge cannot narrow the owner's key away.
-//!   Another owner-key enrolment of the same key is not refused: its shape
-//!   is fixed and its possession proof names its holder machine, so both
-//!   branches hold the same roster row and the merge keeps it. Refusing
-//!   both would let a host that replays the owner's proof on a sibling row
-//!   end the owner's own enrolment.
+//!   Another `OwnerKeyEnroll` of the same key is not refused, whether a fold
+//!   took it yet or not: its shape is fixed and its possession proof names
+//!   its holder machine, so both branches hold the same roster row and the
+//!   merge keeps it. Refusing both would let a host that replays the
+//!   owner's proof on a sibling row end the owner's own enrolment. Refusing
+//!   one no fold took yet would end it for good, though a later line can
+//!   let it fold (a held removal keeps its holder machine live; blind
+//!   review round 1 of #9495, P1). Its own judge decides it, and a fold
+//!   that keeps it takes it with the others of its key.
 //!
 //! An owner-key enrolment is an `OwnerKeyEnroll` that stands once the
 //! handoffs settle and whose key the state it leaves trusts as the owner's
@@ -222,8 +226,12 @@ impl OwnerKeyEnrolments {
             {
                 lines.unproven_outside.insert(*hash);
             }
+            // Never an `OwnerKeyEnroll`, taken or not: one the fold has not
+            // taken yet may fold once a later line holds what refused it
+            // (blind review round 1 of #9495, P1), and its row is the
+            // owner's, so it narrows nothing.
             if let Some(key) = enrolled_key(&entry.op)
-                && !self.taken.contains_key(hash)
+                && !matches!(entry.op, AuthorityOp::OwnerKeyEnroll(_))
                 && self
                     .taken
                     .iter()
@@ -244,7 +252,7 @@ pub(super) struct OwnerKeyLines {
     /// enrolment's line, and owner choices that descend from a fallen one:
     /// each needs the owner's proof.
     unproven_outside: BTreeSet<AuthorityEntryHash>,
-    /// Enrolments, other than an owner-key one, of a key an owner-key
+    /// Enrolments, other than an `OwnerKeyEnroll`, of a key an owner-key
     /// enrolment enrolled (a rotation or a handoff naming it among them),
     /// outside that enrolment's line: each is an invalid entry.
     refused_enrolments: BTreeSet<AuthorityEntryHash>,
