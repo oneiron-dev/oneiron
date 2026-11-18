@@ -70,6 +70,9 @@ pub struct RestoredEnrolmentStanding {
     /// The entry that joined it; `None` while it waits for a joined
     /// machine's entry (or the owner's act) to join it.
     pub joined_by: Option<AuthorityEntryHash>,
+    /// The held revision itself: its keys, role and number, which a joined
+    /// machine's answer for the machine revises and must keep.
+    pub profile: MachineProfile,
 }
 
 /// Every enrolment `state` holds, as the fold shows it.
@@ -87,6 +90,7 @@ pub(super) fn listed(state: &FoldState) -> BTreeMap<AuthorityEntryHash, Restored
                     .restored_from
                     .unwrap_or_default(),
                 joined_by: enrolment.joined_by,
+                profile: enrolment.chain.head.profile.clone(),
             };
             (*hash, standing)
         })
@@ -163,6 +167,12 @@ pub(super) fn origin_differs(state: &FoldState, profile: &MachineProfile) -> boo
 /// carried by a live machine, so its entry joins them: [`witnessed`]) then
 /// stands on them. An act-free one is held: its chain and key claims go into
 /// `restored_enrolments` under its entry, and nothing of the machine stands.
+///
+/// A machine that has not joined never carries an answer for itself: no
+/// chain of it stands on the parents, so the carrier rule refuses it there,
+/// and the held chains this lays under a carried revision must not make it a
+/// carrier of its own (REVIEW-9509/9510 P1). The carrier rule reads only the
+/// carrier's own chains, so for any other carrier the verdict is the parents'.
 pub(super) fn fold_revision(
     state: &mut FoldState,
     profile: &MachineProfile,
@@ -173,6 +183,9 @@ pub(super) fn fold_revision(
     let machine = profile.machine;
     if joined(state, machine) {
         return fold(state);
+    }
+    if carried && profile.carrier == Some(machine) {
+        return Err(AuthorityFoldIssue::MissingAuthorityConsent(hash));
     }
     let waiting = waiting(state, machine);
     if waiting.is_empty() && (carried || profile.restored_from.is_none()) {
@@ -268,14 +281,24 @@ pub(super) fn witnessed(
 /// ([`super::owner_proof::gives_owner_proof`]): the recovery credential that
 /// opened the image proves nobody's will, so a key of his says it. The act's
 /// owner is live there ([`super::owner_act::owner_live_at`]), and the
-/// enrolment is one `state` holds for the act's target. An enrolment an
-/// entry joined already keeps that entry; the act then changes nothing.
+/// enrolment is one `state` holds for the act's target, and the signer's
+/// sequence is above the one `state` holds for it. An enrolment an entry
+/// joined already keeps that entry; the act then changes nothing.
 pub(super) fn apply_owner_join(
     state: &mut FoldState,
     entry: &AuthorityLogEntry,
     record: &RestoredMachineJoin,
     hash: AuthorityEntryHash,
 ) -> std::result::Result<(), AuthorityFoldIssue> {
+    // The signer's sequence moves forward here as everywhere: a join never
+    // rewinds it below what its parents hold (REVIEW-9510/9511 P1).
+    if state
+        .seqs
+        .get(entry.signer_key())
+        .is_some_and(|prior| entry.seq <= *prior)
+    {
+        return Err(AuthorityFoldIssue::NonMonotonicSeq(hash));
+    }
     let held = state
         .restored_enrolments
         .get(&record.enrolment)

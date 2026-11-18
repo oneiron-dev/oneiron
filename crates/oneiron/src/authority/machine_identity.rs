@@ -469,10 +469,17 @@ impl Vault {
         issuer: &HostSlipIssuer,
         role: MachineRole,
     ) -> Result<(FoldedMachine, Option<bool>)> {
-        let vault_id = self
-            .authority_fold()?
+        let fold = self.authority_fold()?;
+        let vault_id = fold
             .vault_id
             .ok_or_else(|| authority_refused(SERVING_ROOT_ABSENT))?;
+        // An install born of a restore that stands nowhere refuses before
+        // any identity or key is minted for it (REVIEW-9509 P1).
+        if self.restored_install_unjoined(&fold)? {
+            return Err(authority_refused(
+                super::machine_answers::RESTORED_NOT_JOINED,
+            ));
+        }
         // The install's identity, minted and signed outside the writer.
         let encryption_key = self.machine_encryption_key(vault_id)?;
         let request = self.machine_enrolment_request(vault_id, encryption_key)?;
@@ -513,6 +520,19 @@ impl Vault {
         let folded = self.enroll_bootstrap_in_txn(&mut txn, issuer, owner, &request, role)?;
         txn.commit()?;
         Ok((folded, None))
+    }
+
+    /// Whether this install was born of a restore (row
+    /// RESTORED-COPIES-ENROL-EACH-OTHER) and no machine of it stands on
+    /// `fold`: it has no machine id yet, or none under its id. Read-only, so
+    /// a door that refuses such an install mints nothing first.
+    pub(super) fn restored_install_unjoined(&self, fold: &AuthorityFold) -> Result<bool> {
+        let txn = self.store.env.read_txn()?;
+        if crate::identity::read_restored_from_image_in_txn(self, &txn)?.is_none() {
+            return Ok(false);
+        }
+        let machine = crate::identity::read_machine_id_in_txn(self, &txn)?;
+        Ok(machine.is_none_or(|machine| fold.machine(machine).is_none()))
     }
 
     /// [`Self::ensure_serving_install_profile`] in [`SERVING_INSTALL_ROLE`]

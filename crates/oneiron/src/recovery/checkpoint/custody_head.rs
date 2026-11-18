@@ -565,7 +565,15 @@ impl Vault {
         finish: impl FnOnce(&Self, Option<&super::HostOrderHolds>) -> Result<()>,
     ) -> Result<(Self, RestoreReport)> {
         let (mut image, checkpoint_id, bodies, required) = read_image_required(path, key)?;
-        image.drop_machine_identity_restored(&checkpoint_id)?;
+        // A managed vault's host root enrols the node its restores, wakes and
+        // migrates land, so its restore marks nothing; an owner-rooted vault's
+        // copy is born of a restore (RESTORED-COPIES-JOIN-SCOPE = A;
+        // REVIEW-9511 P1).
+        if config.privacy.posture == crate::config::HostingPrivacyPosture::Hosted {
+            image.drop_machine_identity();
+        } else {
+            image.drop_machine_identity_restored(&checkpoint_id)?;
+        }
         let artifact_holds = super::host_holds::artifact_host_holds(&mut image, key);
         let anchor = recovery.and_then(|recovery| recovery.anchor());
         let source = recovery.map(CustodyRecovery::source);
