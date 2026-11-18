@@ -158,6 +158,7 @@ mod readonly_fold;
 mod recover_many;
 mod recovery;
 mod restored_join;
+mod restored_join_door;
 mod retired_signers;
 mod revocation_notice;
 mod revoke_proof;
