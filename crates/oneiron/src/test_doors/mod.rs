@@ -25,6 +25,7 @@ pub mod ask_answer_proof;
 pub mod ask_intent_pins;
 pub mod authority_adopted_fold;
 pub mod authority_ancestor_index;
+pub mod authority_fold_encoding;
 pub mod authority_sequence_floor;
 pub mod authority_signed_branch;
 pub mod authority_stored_damage;

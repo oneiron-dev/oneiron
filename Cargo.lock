@@ -8028,6 +8028,7 @@ dependencies = [
  "oneiron-lens-wire",
  "oneiron-linkedin-policy",
  "oneiron-model",
+ "oneiron-persistent-collections",
  "oneiron-policy-vocabulary",
  "oneiron-records",
  "oneiron-retrieval",
@@ -8749,6 +8750,17 @@ dependencies = [
  "serde",
  "serde_bytes",
  "thiserror 2.0.20",
+]
+
+[[package]]
+name = "oneiron-persistent-collections"
+version = "0.1.0"
+dependencies = [
+ "im",
+ "proptest",
+ "rmp-serde",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
