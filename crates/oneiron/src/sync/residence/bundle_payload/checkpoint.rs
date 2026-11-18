@@ -163,7 +163,9 @@ impl WindowManager {
     /// that adopted a checkpoint image: the image the base section carries is
     /// adopted first, once `checkpoint` names its pin, so the authority tail
     /// imports on it however little of the covered history the publisher
-    /// held (FIX 3583).
+    /// held (FIX 3583). A revocation of the kit's root authority key that
+    /// lands during the restore leaves the pin this adoption wrote, besides
+    /// the base windows ([`Self::restore_sealed_bundle_with_kit`]).
     #[expect(clippy::too_many_arguments)]
     pub fn restore_sealed_bundle_with_kit_checkpoint(
         self: &Arc<Self>,

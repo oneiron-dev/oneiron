@@ -347,7 +347,10 @@ impl WindowManager {
     /// publisher check passes on that authority (a machine the owner vouched
     /// for, or the install he asked to publish), each base window installs as a replacement, of any
     /// length the section carried; one that does not install fails the
-    /// restore, and the windows installed before it stay. The pad object's
+    /// restore, and the windows installed before it stay. They stay too when
+    /// a revocation of the kit's root authority key lands during the restore
+    /// and the last transaction refuses the kit: no pad, world key, pin or
+    /// roster row is written then (`Self::restore_with_kit`). The pad object's
     /// pads are stored, but those current retirement names here (PAD-1),
     /// the world keys restore from the kit as
     /// [`Vault::restore_world_keys`] restores them (`owner`, `confirm`), and
@@ -418,11 +421,25 @@ impl WindowManager {
         }
         // R is judged again, and this install's identity minted, before any
         // window lands; then before each window, and last in the transaction
-        // that lands the pads and the world keys, so no pad, world key, pin
-        // or roster row outlives a kit a revocation retired after the
-        // history's import (REVIEW-9488 round 2 P1 2). Each base window still
-        // commits in its own writers: one may land under an R revoked after
-        // its check (FIX KIT-RESTORE-BASE-WINDOWS-OUTSIDE-R-WRITER).
+        // that lands the pads, the world keys, the restore's pin and the
+        // roster row, so none of those outlives a kit a revocation retired
+        // after the history's import (REVIEW-9488 round 2 P1 2).
+        //
+        // Two writes commit before that last transaction, so a revocation of
+        // R that commits after the last window's check leaves both when it
+        // refuses:
+        // - the pin the image's adoption writes in the history's import
+        //   transaction (`trust` only), when the image was built under the
+        //   kit's root and this install had no pin (`checkpoint::adopt_in_txn`);
+        // - each base window, which commits in its own writers: its admission
+        //   and its paged forward pass open their own transactions.
+        // The windows hold only what the kit's seed opened (the bundle opens
+        // with the seed whatever the fold says), on an install with no world
+        // key or roster row, which cannot send them on. A later restore
+        // replaces only the windows its own bundle carries; a window that
+        // bundle omits stays. One writer for every window, or a lock that
+        // every authority import waits on, costs more than that
+        // (KIT-RESTORE-WINDOWS-ATOMIC-COST = C, Engine 19 Nov 03:21).
         let prepared = vault.restore_prep(owner, seed, confirm)?;
         let kit_root_live = || -> Result<()> {
             let txn = vault.store.env.read_txn()?;

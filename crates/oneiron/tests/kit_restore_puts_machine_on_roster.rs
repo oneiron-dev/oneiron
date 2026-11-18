@@ -47,10 +47,12 @@ use oneiron::world_keys::{
 };
 use oneiron::{EntityId, ErrorKind, Vault, VaultConfig};
 
-/// The restore's refusal of a kit whose R is not live on the roster.
+/// The restore's refusal of a kit whose R is not live on the roster: its
+/// words claim nothing about what was written, since the sealed bundle's
+/// restore gives them after its history's import (REVIEW-9517 round 2 P1).
 const KIT_NOT_CURRENT: &str = "this recovery kit is not the vault's current kit: a newer kit \
                                replaced it, or it was never confirmed; use your newest kit, or \
-                               sign in from a device that is still yours; nothing was written";
+                               sign in from a device that is still yours";
 
 fn proof(vault: &Vault, person: EntityId) -> AuthenticatedOwner {
     vault

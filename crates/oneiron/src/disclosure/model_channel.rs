@@ -41,7 +41,7 @@ impl DisclosureBand {
         }
     }
 
-    fn sensitivity(self) -> Sensitivity {
+    pub(crate) fn sensitivity(self) -> Sensitivity {
         match self {
             Self::Public => Sensitivity::Public,
             Self::Private => Sensitivity::Private,
