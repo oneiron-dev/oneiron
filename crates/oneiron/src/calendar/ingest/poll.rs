@@ -32,7 +32,7 @@ pub(crate) fn calendar_ics_feed_cursor_accepts_masked(bytes: &[u8]) -> bool {
     crate::side_table::decodes::<IcsFeedCursor, LegacyJson>(bytes)
 }
 
-/// Actor string stamped on pause interventions.
+/// Actor string stamped on pause and uninstall interventions.
 const ICS_POLL_INTERVENTION_ACTOR: &str = "calendar.ics.poll";
 
 #[doc(hidden)]
@@ -294,6 +294,41 @@ fn pending_poll_record_in_txn(
     Ok(None)
 }
 
+/// The poll half of uninstalling a feed, in the write that uninstalls it: its cursor goes (and
+/// with it any pause exception), and each pending row of its chain (queued, scheduled or
+/// paused) is cancelled. A row a worker holds is left to settle: its poll reads the feed
+/// installed no more and writes nothing.
+pub(crate) fn uninstall_feed_polls_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    config: &IcsFeedPollConfig,
+    now: u64,
+) -> crate::Result<()> {
+    CURSOR.delete(&vault.store, txn, &ics_feed_cursor_digest(config))?;
+    let dedupe_key = ics_feed_poll_dedupe_key(config);
+    let queue = AttemptQueue::new(vault);
+    for record in queue.kind_working_rows_in_txn(&*txn, ICS_POLL_ATTEMPT_KIND)? {
+        if is_feed_poll_row(&record, &dedupe_key)
+            && matches!(
+                record.state,
+                AttemptState::Queued | AttemptState::Scheduled | AttemptState::Paused
+            )
+        {
+            queue.intervene_in_txn(
+                txn,
+                InterveneAttempt {
+                    id: record.id,
+                    kind: AttemptInterventionKind::Cancel,
+                    actor: ICS_POLL_INTERVENTION_ACTOR.to_owned(),
+                    note: Some("ICS feed uninstalled".to_owned()),
+                    now,
+                },
+            )?;
+        }
+    }
+    Ok(())
+}
+
 /// True when an attempt row belongs to this feed's poll chain — the bare
 /// setup key or any generation-scoped key derived from it.
 fn is_feed_poll_row(record: &AttemptRecord, dedupe_key: &str) -> bool {
@@ -353,6 +388,7 @@ pub fn run_ics_feed_poll_with_screener(
         now,
         jitter_seed,
         None,
+        None,
     )
 }
 
@@ -364,7 +400,7 @@ pub fn run_ics_feed_poll_with_screener(
 /// admitted claim Proposed and the chain running.
 #[expect(
     clippy::too_many_arguments,
-    reason = "one poll run, its screen, and the installed feed's owner"
+    reason = "one poll run, its screen, the installed feed's owner, and the turn its door keeps"
 )]
 pub(super) fn run_feed_poll(
     vault: &Vault,
@@ -375,6 +411,7 @@ pub(super) fn run_feed_poll(
     now: u64,
     jitter_seed: u64,
     installed_owner: Option<&AuthenticatedOwner>,
+    held_turn: Option<&mut Option<super::AdmissionTurn>>,
 ) -> Result<IcsPollRunState, CalendarError> {
     config.validate()?;
     let cursor_digest = ics_feed_cursor_digest(config);
@@ -385,7 +422,25 @@ pub(super) fn run_feed_poll(
     // FIX 4797: the diff, its writes and the cursor run in the vault's one
     // calendar admission turn; the fetch above does not hold it. The cursor
     // is read again under the turn: another poll may have moved it since.
-    let _turn = super::admission_turn(vault)?;
+    let turn = super::admission_turn(vault)?;
+    // A caller that writes after this poll (the installed feed's completion row) keeps the turn
+    // until that write is done (`held_turn`).
+    let _turn = match held_turn {
+        Some(slot) => {
+            *slot = Some(turn);
+            None
+        }
+        None => Some(turn),
+    };
+    // An installed feed is read again under the turn: its owner may have uninstalled it while
+    // the fetch was out, and then this poll writes nothing. An uninstall's write takes the turn
+    // too (feed_door::ics_feed_write_turn), so none lands from here to this poll's last write.
+    if installed_owner.is_some() {
+        let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
+        if !super::feed_door::installed_in_txn(vault, &txn, config)? {
+            return Err(ingest("ICS feed is not installed"));
+        }
+    }
     let cursor = read_cursor(vault, &cursor_digest)?.unwrap_or_else(|| IcsFeedCursor::new(config));
     match response {
         IcsFetchResponse::NotModified { .. } => {

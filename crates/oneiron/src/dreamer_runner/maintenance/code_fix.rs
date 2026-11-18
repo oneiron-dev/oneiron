@@ -87,8 +87,6 @@ pub(super) use self::work::{wake_blocked_in_txn, wake_in_txn};
 /// Key: `work::work_key`.
 const WORK: SideTable<EntityId, CodeFixWork, Named> =
     SideTable::new(&side_table::FAILURE_SIGNALS_CODE_FIX_WORK);
-/// Domain separator for a blocked report's work key.
-const BLOCKED_WORK_DOMAIN: &[u8] = b"oneiron.code-fix.blocked.v1\0";
 /// Work rows one owner read returns when its caller names no limit.
 pub const MAX_CODE_FIX_WORK: usize = 256;
 /// Work rows one catch-up step reads, and top-up runs it queues: a newly
@@ -763,3 +761,6 @@ fn measure_candidates(vault: &Vault, candidates: &[ReplayCandidate]) {
     let _ = vault.measure_limit(EngineLimit::MaintenanceRowItems, candidates.len() as u64);
     let _ = vault.measure_limit(EngineLimit::MaintenanceTextBytes, longest as u64);
 }
+
+#[cfg(oneiron_test_support)]
+pub(crate) use self::work::blocked_work_key_for_test;

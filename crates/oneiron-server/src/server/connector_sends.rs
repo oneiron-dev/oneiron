@@ -68,12 +68,12 @@ impl SyncServer {
             // signal already waiting; a commit after this point still wakes
             // the wait below.
             while let Ok(()) | Err(TryRecvError::Lagged(_)) = wake.try_recv() {}
-            let vault = Arc::clone(self.vault());
+            let server = Arc::clone(&self);
             let line_push_allowance = self.config.line.monthly_push_allowance();
             let mut kept = clients.take();
             let pass = tokio::task::spawn_blocking(move || {
                 let _admission = admission;
-                let next = send_pass(&vault, line_push_allowance, &mut kept, tick);
+                let next = send_pass(&server, line_push_allowance, &mut kept, tick);
                 (next, kept)
             })
             .await
@@ -176,14 +176,15 @@ pub(super) fn reap_connector_send_leases(vault: &Vault) {
 /// none yet. A pass a timer started (`tick`) opens with the general write
 /// door's per-write work, as the surface-event drain's does.
 fn send_pass(
-    vault: &Vault,
+    server: &SyncServer,
     line_push_allowance: u32,
     clients: &mut Option<CalendarSendClients>,
     tick: bool,
 ) -> oneiron::Result<Option<u64>> {
+    let vault = server.vault();
     let clients = match clients {
         Some(clients) => clients,
-        None => clients.insert(CalendarSendClients::new()?),
+        None => clients.insert(CalendarSendClients::new(server.hosted_egress_guard())?),
     };
     let mut sink = CalendarChannelSink::new(vault, line_push_allowance, clients);
     super::connector_events::carry_write_piggybacks(vault, tick)?;
@@ -204,7 +205,7 @@ impl SyncServer {
     pub(crate) fn run_connector_send_pass(&self) -> oneiron::Result<Option<u64>> {
         let mut clients = None;
         send_pass(
-            self.vault(),
+            self,
             self.config.line.monthly_push_allowance(),
             &mut clients,
             false,

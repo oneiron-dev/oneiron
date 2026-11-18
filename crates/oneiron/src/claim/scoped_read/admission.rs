@@ -723,7 +723,8 @@ impl ScopedRead<'_> {
         ) {
             return Ok(false);
         }
-        // A TASK and its authority facts, and an epoch SUMMARY, sit at their
+        // A TASK and its authority facts, an epoch SUMMARY, and an identity
+        // topology event (in its birth stamp's single world) sit at their
         // birth. Every other record that is not a claim is base reality,
         // stamped or not: a row
         // replayed with no stamp is no less outside a credential that cannot

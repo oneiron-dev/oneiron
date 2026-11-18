@@ -91,8 +91,8 @@ pub use self::engine::{
     oneiron_engine_connection_close, oneiron_engine_connection_free,
     oneiron_engine_connection_open, oneiron_engine_connection_receive,
     oneiron_engine_connection_send, oneiron_engine_free, oneiron_engine_reply_free,
-    oneiron_engine_request, oneiron_engine_start, oneiron_engine_stop, oneiron_engine_vault,
-    oneiron_engine_wake, oneiron_secret_sink_write,
+    oneiron_engine_request, oneiron_engine_set_fetch_conditions, oneiron_engine_start,
+    oneiron_engine_stop, oneiron_engine_vault, oneiron_engine_wake, oneiron_secret_sink_write,
 };
 #[cfg(feature = "engine")]
 pub use self::engine_error::{OneironEngineErrorCode, oneiron_engine_last_error};

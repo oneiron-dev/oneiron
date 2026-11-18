@@ -212,7 +212,7 @@ const PENDING_KIT_ROOT_RULE: PendingKitRootRule =
 impl Vault {
     /// Runs a root door's checks in a read snapshot, before this install's
     /// machine identity is minted.
-    fn precheck_root_door<T>(
+    pub(super) fn precheck_root_door<T>(
         &self,
         owner: &AuthenticatedOwner,
         check: impl FnOnce(&heed::RoTxn<'_>, &AuthorityFold) -> Result<T>,

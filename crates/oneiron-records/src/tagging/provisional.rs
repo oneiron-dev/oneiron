@@ -21,4 +21,11 @@ pub struct ProvisionalEntity {
     pub facet: Option<EntityId>,
     /// Store-clock seconds of the mint.
     pub minted_at: u64,
+    /// For a role phrase (`my manager`), its possessor: the one author of
+    /// the message it was said in, whose relation it names. `None` for any
+    /// other mention, and for a role phrase of no single author. A role
+    /// phrase's lookup finds only its own possessor's (FIX
+    /// LINKER-ROLE-PROVISIONAL-PER-SPEAKER); a row minted before reads `None`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub possessor: Option<EntityId>,
 }

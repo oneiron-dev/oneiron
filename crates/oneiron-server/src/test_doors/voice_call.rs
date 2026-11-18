@@ -25,6 +25,10 @@ const CASCADE_SESSION: u128 = 0x0e11_ca11;
 /// How long a turn may take to stop and keep what it keeps.
 const TURN_PATIENCE: Duration = Duration::from_secs(60);
 
+/// The brain of a call heard in a room, and one of its turns
+/// (`tests/voice_room_turn_off_record.rs`).
+pub mod room_turn;
+
 /// An owner's own standalone call, held open by its brain.
 pub struct StandaloneCall {
     brain: ChatBrain,

@@ -22,7 +22,8 @@ use crate::dreamer_consolidation::routing::{PredicateKeyRules, candidate_keys};
 use crate::dreamer_consolidation::{PriorHead, PromotionCandidate};
 use crate::dreamer_promotion::scope_with_taint;
 use crate::registry::ENTITY_TYPE_CLAIM;
-use crate::{ClaimSubject, EntityId, Result};
+use crate::{ClaimSubject, EntityId, Result, Vault};
+use oneiron_model::llm::Scope;
 use std::collections::{BTreeMap, BTreeSet};
 
 /// Each subject's unvetted Dreamer heads under one predicate that this
@@ -105,21 +106,9 @@ impl BranchResources<'_> {
     /// read folds into the branch's receipt; a withheld one is counted there.
     fn unlisted_heads_of(&self, subject: EntityId, predicate: &str) -> Result<Vec<PriorHead>> {
         let vault = self.read.vault();
-        let ids: Vec<EntityId> = {
+        let ids = {
             let txn = vault.store.env.read_txn()?;
-            let asked: BTreeSet<EntityId> =
-                crate::store::claim_projection::claim_ids_for_predicate_in_txn(
-                    &vault.store,
-                    &txn,
-                    predicate,
-                )?
-                .into_iter()
-                .collect();
-            vault
-                .claims_for_subject_in_txn(&txn, &subject)?
-                .into_iter()
-                .filter(|id| asked.contains(id) && !self.priors.contains_key(id))
-                .collect()
+            unlisted_cohort_ids_in_txn(vault, &txn, subject, predicate, &self.priors)?
         };
         if ids.is_empty() {
             return Ok(Vec::new());
@@ -127,35 +116,82 @@ impl BranchResources<'_> {
         let reads: Vec<_> = ids.iter().copied().map(PointRead::id).collect();
         let read = self.read.read(&reads, None)?;
         self.fold_read_receipt(&read.receipt)?;
-        let mut standing_heads = Vec::new();
-        for (id, row) in ids.into_iter().zip(read.value) {
-            let Some(ReadRow {
-                entity_type,
-                body: Some(bytes),
-                ..
-            }) = row
-            else {
-                continue;
-            };
-            if entity_type != ENTITY_TYPE_CLAIM {
-                continue;
-            }
-            let Ok(body) = decode_claim_body(&bytes, true) else {
-                continue;
-            };
-            let head = PriorHead { claim_id: id, body };
-            if standing(&head, &self.scope)? != Some(Standing::Provisional) {
-                continue;
-            }
+        let parts: Vec<Option<(u8, Vec<u8>)>> = read
+            .value
+            .into_iter()
+            .map(|row| {
+                let ReadRow {
+                    entity_type,
+                    body: Some(bytes),
+                    ..
+                } = row?
+                else {
+                    return None;
+                };
+                Some((entity_type, bytes))
+            })
+            .collect();
+        provisional_heads_from_parts(&ids, parts, &self.scope, |id| {
             // A head awaiting its owner's confirmation is no prior for anyone.
-            if !vault.claim_consolidation_eligible(
-                &id,
-                crate::gate::ConsolidationReader::ExplicitPrior,
-            )? {
-                continue;
-            }
-            standing_heads.push(head);
-        }
-        Ok(standing_heads)
+            vault.claim_consolidation_eligible(id, crate::gate::ConsolidationReader::ExplicitPrior)
+        })
     }
+}
+
+/// The unlisted cohort ids for `subject` under `predicate` in the caller transaction, in native subject-claims order.
+/// The predicate posting list met with the subject claims, minus the admitted priors.
+pub(super) fn unlisted_cohort_ids_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    subject: EntityId,
+    predicate: &str,
+    priors: &BTreeMap<EntityId, PriorHead>,
+) -> Result<Vec<EntityId>> {
+    let asked: BTreeSet<EntityId> = crate::store::claim_projection::claim_ids_for_predicate_in_txn(
+        &vault.store,
+        txn,
+        predicate,
+    )?
+    .into_iter()
+    .collect();
+    Ok(vault
+        .claims_for_subject_in_txn(txn, &subject)?
+        .into_iter()
+        .filter(|id| asked.contains(id) && !priors.contains_key(id))
+        .collect())
+}
+
+/// The provisional eligible heads among already-read cohort parts, in input order.
+/// A part is the actor-gated kind and body, or none for a withheld row.
+/// The caller supplies the owner-confirmation eligibility check.
+pub(super) fn provisional_heads_from_parts(
+    ids: &[EntityId],
+    parts: Vec<Option<(u8, Vec<u8>)>>,
+    scope: &Scope,
+    mut eligible: impl FnMut(&EntityId) -> Result<bool>,
+) -> Result<Vec<PriorHead>> {
+    let mut standing_heads = Vec::new();
+    for (id, part) in ids.iter().zip(parts) {
+        let Some((entity_type, bytes)) = part else {
+            continue;
+        };
+        if entity_type != ENTITY_TYPE_CLAIM {
+            continue;
+        }
+        let Ok(body) = decode_claim_body(&bytes, true) else {
+            continue;
+        };
+        let head = PriorHead {
+            claim_id: *id,
+            body,
+        };
+        if standing(&head, scope)? != Some(Standing::Provisional) {
+            continue;
+        }
+        if !eligible(id)? {
+            continue;
+        }
+        standing_heads.push(head);
+    }
+    Ok(standing_heads)
 }
