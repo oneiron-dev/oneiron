@@ -9,6 +9,7 @@
 use oneiron::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
 };
+use oneiron::dreamer_consolidation::ConflictSettlement;
 use oneiron::memory::{
     MEMORY_CODE_BAD_REQUEST, WitnessAssertions, WitnessAuthor, WitnessMessage, WitnessTurn,
 };
@@ -19,9 +20,10 @@ use oneiron::session_lifecycle::{
 use oneiron::test_doors::consolidation::open_dreamer_vault;
 use oneiron::test_doors::derive::{
     Claim, Committed, Named, batches_of, commit_claims, define_auto_agent, grant_derive_rows,
-    source_version,
+    revert_as_owner, source_version,
 };
 use oneiron::test_doors::derive_verbs::lease_run;
+use oneiron::test_doors::steward::owner;
 use oneiron::{EdgeActorClass, EntityId, TimeRange, Vault};
 use rmpv::Value;
 use serde_json::json;
@@ -213,6 +215,23 @@ fn subject_conflict_markers(fixture: &ObservedPreferenceFixture) -> Vec<ClaimBod
         .collect()
 }
 
+/// The markers of the conflicts the owner sees open on the subject.
+fn open_conflict_markers(fixture: &ObservedPreferenceFixture) -> Vec<EntityId> {
+    let proof = owner(&fixture.vault).expect("the owner's proof");
+    let reviewer = fixture
+        .vault
+        .ensure_embedded_owner_actor()
+        .expect("the embedded owner");
+    fixture
+        .vault
+        .memory(reviewer, EdgeActorClass::Human)
+        .open_conflicts(Some(&proof), Some(fixture.subject), usize::MAX)
+        .expect("the owner reads the open conflicts")
+        .into_iter()
+        .map(|conflict| conflict.marker)
+        .collect()
+}
+
 fn assert_preference_pair_active(
     fixture: &ObservedPreferenceFixture,
     observed: EntityId,
@@ -389,6 +408,104 @@ fn an_observed_preference_beside_a_differing_stated_one_opens_one_conflict() {
             .expect("the claim")
             .source,
         Some(ClaimSource::Observed)
+    );
+}
+
+#[test]
+fn a_reverted_observed_preference_leaves_no_open_conflict() {
+    let fixture = observed_preference_fixture();
+    let stated = standing_stated_preference(&fixture, "black coffee");
+    let evidence = preference_evidence(&fixture, true, WitnessAuthor::User);
+    let (committed, observed) = derive_preference_item(&fixture, "preference.drink", &evidence);
+    assert_preference_pair_active(&fixture, observed, stated);
+    assert_eq!(
+        open_conflict_markers(&fixture).len(),
+        1,
+        "the owner sees the differing pair as one open conflict"
+    );
+    let (reverted, left) = revert_as_owner(&fixture.vault, committed.batch)
+        .expect("revert")
+        .expect("the owner may revert any batch");
+    assert_eq!(reverted, vec!["drink".to_owned()]);
+    assert!(left.is_empty(), "{left:?}");
+    assert_eq!(
+        fixture
+            .vault
+            .get_claim(&observed)
+            .expect("read")
+            .expect("the derived claim")
+            .lifecycle,
+        ClaimLifecycleStatus::Retracted
+    );
+    assert_eq!(
+        subject_conflict_markers(&fixture).len(),
+        1,
+        "the revert leaves the marker row stored"
+    );
+    assert!(
+        open_conflict_markers(&fixture).is_empty(),
+        "a pair whose observed claim was taken back asks nothing"
+    );
+}
+
+#[test]
+fn a_restated_answer_leaves_no_open_conflict_for_the_old_pair() {
+    let fixture = observed_preference_fixture();
+    let stated = standing_stated_preference(&fixture, "black coffee");
+    let evidence = preference_evidence(&fixture, true, WitnessAuthor::User);
+    let (_, observed) = derive_preference_item(&fixture, "preference.drink", &evidence);
+    assert_preference_pair_active(&fixture, observed, stated);
+    let markers = open_conflict_markers(&fixture);
+    let [marker] = markers.as_slice() else {
+        panic!("the owner sees the differing pair as one open conflict: {markers:?}");
+    };
+    let marker = *marker;
+    let restated = standing_stated_preference(&fixture, "oolong tea");
+    fixture
+        .vault
+        .supersede_claim(&restated, &stated, fixture.vault.now_recorded_at())
+        .expect("the restated answer replaces the stated one");
+    assert_eq!(
+        fixture
+            .vault
+            .get_claim(&stated)
+            .expect("read")
+            .expect("the first stated claim")
+            .lifecycle,
+        ClaimLifecycleStatus::Superseded
+    );
+    assert_eq!(
+        subject_conflict_markers(&fixture).len(),
+        1,
+        "the raw supersession writes no marker and leaves the old one stored"
+    );
+    assert!(
+        open_conflict_markers(&fixture).is_empty(),
+        "a pair whose stated answer was replaced asks nothing"
+    );
+    // The direct open that a settlement starts with refuses the marker too.
+    let proof = owner(&fixture.vault).expect("the owner's proof");
+    let reviewer = fixture
+        .vault
+        .ensure_embedded_owner_actor()
+        .expect("the embedded owner");
+    let refusal = fixture
+        .vault
+        .memory(reviewer, EdgeActorClass::Human)
+        .settle_conflict(
+            Some(&proof),
+            marker,
+            ConflictSettlement::Dismiss,
+            fixture.vault.now_recorded_ms(),
+        )
+        .expect_err("a marker whose pair no longer stands does not open");
+    assert_eq!(refusal.code, MEMORY_CODE_BAD_REQUEST);
+    assert!(
+        refusal
+            .message
+            .contains("the conflict's pair no longer stands"),
+        "{}",
+        refusal.message
     );
 }
 
