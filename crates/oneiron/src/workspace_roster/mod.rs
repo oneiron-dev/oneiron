@@ -145,6 +145,7 @@ pub(crate) mod project;
 #[cfg(all(test, feature = "sync"))]
 pub(crate) use project::create_project_signed_for_test;
 pub(crate) use project::index_extra_room;
+pub(crate) use project::reject_project_with_live_children;
 #[cfg(test)]
 pub(crate) use project::set_project_depth_signed_for_test;
 pub use project::{
