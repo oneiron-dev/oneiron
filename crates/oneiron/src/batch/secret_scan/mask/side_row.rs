@@ -144,7 +144,7 @@ fn mask_body(masker: &mut Masker, bytes: &[u8], refs: &[RefPath]) -> Result<Opti
 
 /// The bodies `tree`'s byte members carry, then the door's rules over the
 /// whole tree; whether anything was placed.
-fn mask_tree(masker: &mut Masker, tree: &mut Value) -> Result<bool> {
+pub(super) fn mask_tree(masker: &mut Masker, tree: &mut Value) -> Result<bool> {
     let nested = mask_nested(masker, tree)?;
     Ok(masker.mask_value(tree)? | nested)
 }
@@ -282,7 +282,7 @@ fn mask_nested(masker: &mut Masker, value: &mut Value) -> Result<bool> {
 
 /// An array's items as bytes, when there are some and every one is a byte
 /// value.
-fn byte_values(items: &[Value]) -> Option<Vec<u8>> {
+pub(super) fn byte_values(items: &[Value]) -> Option<Vec<u8>> {
     if items.is_empty() {
         return None;
     }
@@ -293,7 +293,7 @@ fn byte_values(items: &[Value]) -> Option<Vec<u8>> {
 }
 
 /// `bytes` as one whole MessagePack value.
-fn whole_messagepack(bytes: &[u8]) -> Option<Value> {
+pub(super) fn whole_messagepack(bytes: &[u8]) -> Option<Value> {
     let mut cursor = std::io::Cursor::new(bytes);
     rmpv::decode::read_value(&mut cursor)
         .ok()

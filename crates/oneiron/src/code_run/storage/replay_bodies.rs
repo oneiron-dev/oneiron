@@ -21,6 +21,9 @@
 //! The live record's erase scrub is L11-B's (FIX 5718, [`erase_replies`]);
 //! this retires every image's copy beside it.
 
+use std::cell::OnceCell;
+use std::sync::Arc;
+
 use super::replay_rows;
 use super::response_owners::response_owner_in_txn;
 use crate::code_run::payload::{
@@ -225,9 +228,42 @@ pub(crate) fn erase_replies(
     Ok(())
 }
 
-/// [`erase_replies`] in the writer `wtxn`, read with the values custody
-/// holds there (FIX ERASED-IDENTITY-ONE-STAND-IN): each request it erases
-/// keeps the custody records it names and its custody identity.
+/// The values base custody holds in one writer, read once for every record
+/// an erase there rewrites (FIX ERASED-IDENTITY-ONE-STAND-IN): the first
+/// request that needs them reads them. An erase changes no custody record,
+/// so each later record reads the same values.
+#[derive(Default)]
+pub(crate) struct WriterCustody(OnceCell<Option<Arc<KnownValues>>>);
+
+impl WriterCustody {
+    /// [`erase_replies`] in the writer `wtxn`, read with the values base
+    /// custody `store` holds there: each request it erases keeps the custody
+    /// records it names and its custody identity.
+    ///
+    /// # Errors
+    ///
+    /// As [`erase_replies`]'s, and the read of custody's values.
+    pub(crate) fn erase_replies(
+        &self,
+        store: &Store,
+        wtxn: &heed::RwTxn<'_>,
+        record: &mut CodeRunReplayRecord,
+    ) -> Result<()> {
+        let read: BaseKnownRead<'_> = &|| self.known(store, wtxn);
+        erase_replies(record, &CompareKnown::new(Some(read)))
+    }
+
+    fn known(&self, store: &Store, wtxn: &heed::RwTxn<'_>) -> Result<Option<Arc<KnownValues>>> {
+        if let Some(known) = self.0.get() {
+            return Ok(known.clone());
+        }
+        let known = KnownValues::shared_in_writer(store, wtxn)?;
+        Ok(self.0.get_or_init(|| known).clone())
+    }
+}
+
+/// [`WriterCustody::erase_replies`] for one record (FIX
+/// ERASED-IDENTITY-ONE-STAND-IN).
 ///
 /// # Errors
 ///
@@ -237,15 +273,15 @@ pub(crate) fn erase_replies_in_writer(
     wtxn: &heed::RwTxn<'_>,
     record: &mut CodeRunReplayRecord,
 ) -> Result<()> {
-    let read: BaseKnownRead<'_> = &|| KnownValues::shared_in_writer(store, wtxn);
-    erase_replies(record, &CompareKnown::new(Some(read)))
+    WriterCustody::default().erase_replies(store, wtxn, record)
 }
 
 /// A replay record's erased form is [`erase_replies`]'s (FIX 5718): the
 /// actor scrub writes it past the side-row wall, so no wall ever fails an
 /// erase. No custody read is in reach here, so a request erased here first
-/// keeps its stand-in identity alone; the actor scrub erases in its writer
-/// first ([`erase_replies_in_writer`]), and erasing again changes nothing.
+/// keeps its stand-in identity alone. The actor scrub, the replay put
+/// fences and a room's sweep erase in their writer first
+/// ([`erase_replies_in_writer`]), and erasing again changes nothing.
 impl ErasedForm for CodeRunReplayRecord {
     fn into_erased(mut self) -> Result<Self> {
         erase_replies(&mut self, &CompareKnown::new(None))?;
