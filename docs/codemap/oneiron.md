@@ -7055,7 +7055,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/store/key_custody/home.rs` | src | m | 6 crate-vis | — | The residence home's side of the residence target (KS-4A2, FIX 5685) |
 | `src/store/key_custody/kept_images.rs` | src | s | 12 crate-vis | — | What keeps a body instance's key past its last row (FIX 6022, 6228): the in-flight leases of this process… |
 | `src/store/key_custody/log.rs` | src | m | 15 crate-vis | — | Core half of `store::key_custody::log`: its store-layer items live in `oneiron_store::key_custody::log` and… |
-| `src/store/key_custody/mod.rs` | src | m | 1 mod · 2 re-export · 42 crate-vis | — | Typed key custody (KS-1): one storage and lifecycle service for the independent, erasable secrets a vault… |
+| `src/store/key_custody/mod.rs` | src | m | 1 mod · 2 re-export · 43 crate-vis | — | Typed key custody (KS-1): one storage and lifecycle service for the independent, erasable secrets a vault… |
 | `src/store/key_custody/outbox/files.rs` | src | s | 8 crate-vis | — | Core half of `store::key_custody::outbox::files`: its store-layer items live in… |
 | `src/store/key_custody/outbox/mod.rs` | src | s | 3 crate-vis | — | The Hypnos outbox target (FIX 5899): a managed vault's hosted custody holder |
 | `src/store/key_custody/outbox/replay.rs` | src | s | 7 crate-vis | — | The outstanding batch's keyless record, and the intake of its ack (FIX 5899) |
@@ -7063,7 +7063,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/store/key_custody/protocol.rs` | src | s | 2 struct · 1 enum · 2 trait · 10 fn · 7 re-export · 6 crate-vis | CustodyBatch, CustodySource, CustodyTarget, ResidenceCommit, TargetPublication | Core half of `store::key_custody::protocol`: its store-layer items live in… |
 | `src/store/key_custody/protocol/drain.rs` | src | s | 1 struct · 3 fn · 2 re-export | DrainTicket | Core half of `store::key_custody::protocol::drain`: its store-layer items live in… |
 | `src/store/key_custody/protocol/fetched.rs` | src | s | 3 struct · 1 fn | CustodyHomeCursor, CustodyHomePage, FetchedCustodySource | A lineage's custody as its residence home holds it, read with the kit (FIX 5846): the page the home's kit… |
-| `src/store/key_custody/publication_policy.rs` | src | m | 7 crate-vis | — | The publication policy each custody head is sealed under (KS-5, FIX 7191): which worlds' pads a member's… |
+| `src/store/key_custody/publication_policy.rs` | src | m | 8 crate-vis | — | The publication policy each custody head is sealed under (KS-5, FIX 7191): which worlds' pads a member's… |
 | `src/store/key_custody/publish.rs` | src | m | 14 crate-vis | — | Publishing one lineage's custody (KS-4, FIX 5685): its keyless log, then its latest sealed head, to every… |
 | `src/store/key_custody/publish/backup.rs` | src | s | 3 crate-vis | — | Serializes the automatic backup companion's publication and expiry |
 | `src/store/key_custody/publish/pending.rs` | src | s | 1 crate-vis | — | A publication pass that stays pending before it seals anything (FIX 8825): its policy did not read, so no… |
@@ -7101,7 +7101,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/store/local_replica/left_env.rs` | src | L | 3 crate-vis | — | Local purge of a left shared vault's dedicated environment (OF-158) |
 | `src/store/local_replica/member_removal.rs` | src | m | 4 crate-vis | — | One member's local leaves for the replica tear: its index, projection, vector and edge rows, then its entity… |
 | `src/store/materialization_event.rs` | src | s | 1 struct · 1 enum · 1 trait · 1 re-export | LiveQueryTee, MaterializedDiffSummary, RevisionEvent | Core half of `store::materialization_event`: its store-layer items live in… |
-| `src/store/mod.rs` | src | m | 69 mod · 89 re-export · 170 crate-vis | — | LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the… |
+| `src/store/mod.rs` | src | m | 69 mod · 89 re-export · 171 crate-vis | — | LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the… |
 | `src/store/model_description_rows.rs` | src | s | 2 struct · 1 re-export · 1 crate-vis | DescriptionPolicy, ModelDescription | Core half of `store::model_description_rows`: its store-layer items live in… |
 | `src/store/model_score_diff.rs` | src | s | 1 re-export · 1 crate-vis | — | Core half of `store::model_score_diff`: its store-layer items live in `oneiron_store::model_score_diff` and… |
 | `src/store/model_step_response_carriage.rs` | src | s | 2 crate-vis | — | Core half of `store::model_step_response_carriage`: its store-layer items live in… |
@@ -8083,6 +8083,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/test_doors/file_custody_marks.rs` | src | s | 3 fn | — | Doors for `tests/sync_live_file_custody_reuse.rs` (FIX 1370): the custody records a stored file's mark… |
 | `src/test_doors/fingerprint_keep_codec_digests.rs` | src | s | 1 fn | — | Door for `tests/fingerprint_keep_codec_digests.rs` (PLAN-UC-04 stage 6.1c): a calendar connector literal's… |
 | `src/test_doors/fingerprint_keep_custody_digests.rs` | src | s | 3 fn | — | Door for `tests/fingerprint_keep_custody_digests.rs` (PLAN-UC-04 stage 6.1b): a custody input witness's… |
+| `src/test_doors/fingerprint_keep_custody_policy_digest.rs` | src | s | 1 fn | — | Door for `tests/fingerprint_keep_custody_policy_digest.rs` (PLAN-UC-04 stage 6.3f): the custody journal's… |
 | `src/test_doors/fingerprint_keep_dreamer.rs` | src | s | 1 fn | — | The agent-health trend replay hash, for the K-proof of PLAN-UC-04 stage 3.2… |
 | `src/test_doors/fingerprint_keep_dreamer_consolidation_digests.rs` | src | s | 11 fn | — | K-proof door for dreamer-consolidation digests that existing records store or compare |
 | `src/test_doors/fingerprint_keep_dreamer_runner_digests.rs` | src | s | 1 struct · 13 fn | UpkeepTeam | K-proof door for dreamer-runner digests that existing records store or compare |
@@ -8151,7 +8152,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/test_doors/mesh_machine_endpoint_index.rs` | src | s | 1 enum · 5 fn | IndexedEndpoint | Doors for `tests/mesh_machine_endpoint_index.rs` (census L3-28B): the endpoint lookup as the MACHINE… |
 | `src/test_doors/meso_extraction_width.rs` | src | m | 1 struct · 1 enum · 1 fn | ExtractionWidth, PriorScenario | Door for `tests/dreamer_meso_width.rs` (FIX 21927 P2): measure the extraction calls in flight during one… |
 | `src/test_doors/microsoft_token.rs` | src | s | 1 struct · 6 fn · 1 crate-vis | ExchangedMicrosoftGrant | Door for `tests/microsoft365_oauth.rs` and `tests/microsoft365_refresh_write_back.rs`… |
-| `src/test_doors/mod.rs` | src | m | 1 fn · 296 mod · 1 re-export | — | Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD) |
+| `src/test_doors/mod.rs` | src | m | 1 fn · 297 mod · 1 re-export | — | Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD) |
 | `src/test_doors/model_binding_proposer.rs` | src | m | 1 struct · 2 fn · 1 const | TrialFixture | Fixture for the `model_binding_proposer_grant` server test: one completed held-out trial offer for a role… |
 | `src/test_doors/model_call_turn_link.rs` | src | s | 1 fn | — | Doors for `oneiron-server/tests/chat_model_call_turn_link.rs` (UNBUILT3-41, FIX [TURN-MODEL-LINK]): the… |
 | `src/test_doors/model_step_submission_codec.rs` | src | s | 1 fn | — | Doors for `tests/model_step_submission_codec.rs` (STEP-CORRECTION-HEALTH-PARK): a model step's submission… |
@@ -9273,6 +9274,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/fingerprint_keep_check_in_effect_digests.rs` | test | m | 5 fn | — | K-proof (oracle) for the check-in effect digests of P2.5's delete and security-control doors: each keeps its… |
 | `tests/fingerprint_keep_codec_digests.rs` | test | m | 3 fn · 1 const · 3 crate-vis | — | K-proof (oracle) for PLAN-UC-04 stage 6.1c: four codec digests keep their bytes |
 | `tests/fingerprint_keep_custody_digests.rs` | test | s | 2 const · 5 crate-vis | — | K-proof (oracle) for PLAN-UC-04 stage 6.1b: three custody digest helpers keep their bytes |
+| `tests/fingerprint_keep_custody_policy_digest.rs` | test | s | 3 crate-vis | — | K-proof (oracle) for PLAN-UC-04 stage 6.3f: the custody journal's publication policy digest keeps its bytes |
 | `tests/fingerprint_keep_dreamer.rs` | test | s | 5 crate-vis | — | K-proof (oracle) for PLAN-UC-04 stage 3.2: the agent-health trend replay hash keeps its bytes |
 | `tests/fingerprint_keep_dreamer_consolidation_digests.rs` | test | m | 1 struct · 1 fn · 1 const · 23 crate-vis | ConsolidationPartitionKey | K-proof for dreamer-consolidation legacy digests at 13a57d8b3026: existing stored, sent and compared… |
 | `tests/fingerprint_keep_dreamer_runner_digests.rs` | test | L | 1 fn · 5 const · 29 crate-vis | — | K-proof for dreamer-runner legacy digests at b1897bd53d07: existing stored and compared identities keep… |

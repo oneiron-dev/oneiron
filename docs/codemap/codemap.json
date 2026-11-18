@@ -82533,7 +82533,7 @@
      "path": "src/store/key_custody/mod.rs",
      "purpose": "Typed key custody (KS-1): one storage and lifecycle service for the independent, erasable secrets a vault…",
      "surface": {
-      "crate-vis": 42,
+      "crate-vis": 43,
       "mod": 1,
       "re-export": 2
      }
@@ -82636,7 +82636,7 @@
      "path": "src/store/key_custody/publication_policy.rs",
      "purpose": "The publication policy each custody head is sealed under (KS-5, FIX 7191): which worlds' pads a member's…",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -83025,7 +83025,7 @@
      "path": "src/store/mod.rs",
      "purpose": "LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the…",
      "surface": {
-      "crate-vis": 170,
+      "crate-vis": 171,
       "mod": 69,
       "re-export": 89
      }
@@ -94099,6 +94099,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/test_doors/fingerprint_keep_custody_policy_digest.rs",
+     "purpose": "Door for `tests/fingerprint_keep_custody_policy_digest.rs` (PLAN-UC-04 stage 6.3f): the custody journal's…",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/test_doors/fingerprint_keep_dreamer.rs",
      "purpose": "The agent-health trend replay hash, for the K-proof of PLAN-UC-04 stage 3.2…",
      "surface": {
@@ -94854,7 +94864,7 @@
      "purpose": "Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD)",
      "surface": {
       "fn": 1,
-      "mod": 296,
+      "mod": 297,
       "re-export": 1
      }
     },
@@ -106933,6 +106943,16 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/fingerprint_keep_custody_policy_digest.rs",
+     "purpose": "K-proof (oracle) for PLAN-UC-04 stage 6.3f: the custody journal's publication policy digest keeps its bytes",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/fingerprint_keep_dreamer.rs",
      "purpose": "K-proof (oracle) for PLAN-UC-04 stage 3.2: the agent-health trend replay hash keeps its bytes",
      "surface": {
@@ -114388,7 +114408,7 @@
      "purpose": "`TimeRange`, temporal expressions/parsing, granularity/anchor enums"
     },
     "test_doors": {
-     "files": 302,
+     "files": 303,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -114565,8 +114585,8 @@
    },
    "over_bar": 300,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 8119,
-   "test_files": 1875
+   "source_files": 8120,
+   "test_files": 1876
   },
   "oneiron-agent-runtime": {
    "files": [

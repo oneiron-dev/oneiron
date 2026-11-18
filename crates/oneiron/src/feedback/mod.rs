@@ -132,6 +132,8 @@ pub use self::consent::{
     feedback_approval_component_id, feedback_approval_disclosure, feedback_content_ref,
     feedback_logical_send_ref, prepare_feedback_preview, validate_feedback_approval,
 };
+#[cfg(oneiron_test_support)]
+pub(crate) use self::conversation_training::training_policy_digest_for_test;
 pub use self::conversation_training::{
     ANONYMOUS_PAGE, AnonymousApplied, AnonymousFilesSeen, AnonymousReceiptView, AnonymousRefusal,
     AnonymousStatusWork, AnonymousUploadWork, AnonymousWithdrawalWork, ConversationSource,
