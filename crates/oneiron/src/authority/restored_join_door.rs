@@ -109,7 +109,8 @@ impl Vault {
     /// held enrolment that is not this install's ask, or a join the fold
     /// does not count; an owner refusal when the proof is no longer the
     /// vault's live owner; storage faults. Nothing is written on any error
-    /// but the install's own identity, minted once the reads above pass.
+    /// but the install's own identity, minted once the reads above pass: not
+    /// the authority clock's reading either, which commits with the join.
     pub fn join_restored_install(
         &self,
         issuer: &HostSlipIssuer,
@@ -120,12 +121,14 @@ impl Vault {
             return Err(authority_refused(BOUND_PROOF));
         }
         self.restored_join_preflight(Some(issuer))?;
-        // The clock rows and backfills `authority_fold` commits, as every
-        // door's first read does, only once nothing above refuses.
-        let vault_id = self
-            .authority_fold()?
-            .vault_id
-            .ok_or_else(|| authority_refused(NOT_ROOTED))?;
+        // Read-only up to the writer: a refusal there commits nothing, not
+        // even the clock reading `authority_fold` would store (REVIEW-9524
+        // P1). The writer takes the reading, so it commits only with the join.
+        let vault_id = {
+            let txn = self.store.env.read_txn()?;
+            self.authority_view_readonly_in_txn(&txn)?.vault_id
+        }
+        .ok_or_else(|| authority_refused(NOT_ROOTED))?;
         // The install's identity, minted and signed outside the writer.
         let encryption_key = self.machine_encryption_key(vault_id)?;
         let request = self.machine_enrolment_request(vault_id, encryption_key)?;
@@ -133,6 +136,7 @@ impl Vault {
             return Err(authority_refused(NOT_RESTORED));
         }
         let mut txn = self.store.env.write_txn()?;
+        self.instant_in_write_txn(&mut txn)?;
         let actor = owner.revalidate_as_vault_owner_in_txn(self, &txn)?;
         let fold = self.authority_view_readonly_in_txn(&txn)?;
         if let Some(folded) = fold.machine(request.machine) {
