@@ -2583,7 +2583,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/disclosure/import_audience.rs` | src | s | 5 fn · 2 crate-vis | — | The standing import audience rule (OF-492): the owner's answer to one sensitive-topic ask, kept as a private… |
 | `src/disclosure/mail_attachments.rs` | src | s | 4 crate-vis | — | The files a drafted mail message carries, judged for every recipient it goes to (fix list row 17645) |
 | `src/disclosure/mod.rs` | src | s | 1 mod · 9 re-export · 11 crate-vis | — | Interlocutor-scoped disclosure clamp substrate (OF-365 ILD-2) |
-| `src/disclosure/model_channel.rs` | src | m | 2 struct · 1 enum · 4 fn · 1 re-export · 6 crate-vis | DisclosureBand, DisclosureCeilingSet, DisclosureCeilingView | The model connection is a disclosure audience, not a read grant |
+| `src/disclosure/model_channel.rs` | src | m | 2 struct · 1 enum · 4 fn · 1 re-export · 7 crate-vis | DisclosureBand, DisclosureCeilingSet, DisclosureCeilingView | The model connection is a disclosure audience, not a read grant |
 | `src/disclosure/retained_copies.rs` | src | s | 1 crate-vis | — | Retained courtesy copies stay the recipient owner's to read (BIZ-LEGAL-0004 B2, Docs Q09) |
 | `src/disclosure/room_party.rs` | src | m | 1 struct · 1 enum · 4 fn · 5 crate-vis | RoomParty, RoomPartyEntry | The term one room member brings to the room's meet (ARCH-0067 §8: "the grants behind the people and agents… |
 | `src/disclosure/scope_codec.rs` | src | s | 1 struct · 1 enum · 6 fn · 2 const · 7 crate-vis | DisclosureScope, DisclosureScopeStatus | Contact clearance envelope and canonical six-axis Scope codec |
@@ -9225,6 +9225,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/confirm_collision_live_signers.rs` | test | m | — | — | Two live signers' federation confirmations that collide both stay valid as spent evidence, and settlement… |
 | `tests/conflict_settle_restriction.rs` | test | L | — | — | [RESTRICTION-CLOSE-BY-CONFLICT-SETTLE] and the Engine's RULING RESTRICTION-CLOSE-BY-CONFLICT-SETTLE = A (15… |
 | `tests/conflicts_page.rs` | test | m | — | — | Pages the Dreamer's open conflicts under the caller's live read grant |
+| `tests/connect_export_stamped_claims.rs` | test | m | — | — | A Connect export carries the source owner's stamped claims up to the Connect grant's own sensitivity… |
 | `tests/connector_issuer_detection.rs` | test | m | — | — | L5-11 (ARCH-0072 #drift, #living; ARCH-0054 #auth): the engine's own detection of a credential issuer change |
 | `tests/connector_key_suspend_admission.rs` | test | s | — | — | FIX 22392 CONNECTOR-KEY: the one writer of a connector key's suspension admits Active -> Suspended alone |
 | `tests/connector_protocol_narrow_keeps_stamp.rs` | test | m | — | — | Census row L5-15 (Engine ruling L5-15-PROTOCOL-NARROW = A): a catalog connector whose protocol revision… |
@@ -9613,6 +9614,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/judge_label_recheck_decide.rs` | test | s | — | — | [DECIDE-PATH-TWO-UNPINNED-SITES] (ARCH-0076 #decide-required: "Every such call goes through decide()"): the… |
 | `tests/kit_activation_enrols_authority_key.rs` | test | L | — | — | Pass 27 R4 PR 2 (WAYBACK-R4-FIRST-KEY = B, WAYBACK-R4-NO-PREDECESSOR = A): the kit's activation enrols the… |
 | `tests/kit_change_carries_root_key_approvals.rs` | test | L | — | — | A kit change carries the old R's live approvals (OPUS-WAYBACK, Engine RULING 16 Nov 07:13): the act that… |
+| `tests/kit_restore_and_rotation_regressions.rs` | test | m | — | — | [KIT-ACTIVATION-REVIEW2-TESTS], REVIEW-9488 round 2: P1 1 checks that a revoked kit's sealed restore creates… |
 | `tests/kit_restore_puts_machine_on_roster.rs` | test | m | — | — | FIX KIT-RESTORE-ANCHOR-ONLY-INSTALL-COUNTS-NO-WRAP (Engine TASK 16 Nov 06:34; ANCHORSEC, Astra T3 on #8673… |
 | `tests/learning_claim_value.rs` | test | s | — | — | FIX LEARNING-CELL-POSITIONAL-DECODE: a learning claim value is written with named fields, so a cell with… |
 | `tests/legacy_custody_history_export.rs` | test | s | — | — | A dev vault's window can hold, in its ordinary history only, a custody row from before the seal: a delete… |

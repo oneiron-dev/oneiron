@@ -2449,6 +2449,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/secret_list_doors.rs` | test | m | — | — | The owner's list of every secret in custody at its served doors (FIX [SECRETS-OWNER-LIST-READ]… |
 | `tests/selector_home_clearance_ws.rs` | test | m | — | — | A served selector fetch carries no stamped claim to a member homed elsewhere (L5-02 PR 4, RULING… |
 | `tests/selector_release_recheck.rs` | test | L | — | — | Socket regressions for SELECTOR-RELEASE-POINT = B: a selector answer is judged again where it leaves, so one… |
+| `tests/self_actor_bounded_credential.rs` | test | m | — | — | `self.actor` answers a bounded credential (leg A1, E2E HOOKS-03 cause 1) |
 | `tests/self_browser_doors.rs` | test | m | — | — | An agent drives a browser only through its own attached live run, and each browser door refuses everyone… |
 | `tests/self_desktop_doors.rs` | test | s | — | — | No `self.desktop.*` verb has an HTTP facade door: a caller outside a run's code mode cannot drive the… |
 | `tests/self_off_record_doors.rs` | test | L | — | — | Promise tests for the doors of a session-bound code run (ruling L4-23 = A: each test proves a promise at its… |
