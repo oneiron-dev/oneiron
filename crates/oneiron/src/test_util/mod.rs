@@ -14,6 +14,8 @@ pub(crate) mod row_dump;
 /// integration binaries mount the same file through `tests/common`.
 pub(crate) mod source_scan;
 
+mod bound_person;
+pub(crate) use bound_person::delete_bound_person;
 mod channel_identity;
 pub(crate) use channel_identity::{put_native_mail_sender, self_held_identity_in_state};
 mod dreamer_rows;
