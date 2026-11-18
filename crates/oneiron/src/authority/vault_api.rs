@@ -44,9 +44,9 @@ pub enum AuthorityEntryStatus {
 
 struct PreparedAuthorityLogRows {
     ids: Vec<EntityId>,
-    // Each staged row, with its signer when it is an arriving ReRoot, which
-    // the hosted refusal judges before it stages.
-    rows: Vec<(BatchOp, Option<AuthorityKey>)>,
+    // Each staged row, with the arriving ReRoot it carries, which the hosted
+    // refusal judges before it stages.
+    rows: Vec<(BatchOp, Option<super::recovery::ArrivingReRoot>)>,
     pending: Option<super::history_admission::PendingAuthorityHistory>,
     /// Every row the batch carries: each row's store door reads the fold
     /// beside them, as the batch's preflight did (owner-reserve delta
@@ -260,7 +260,7 @@ impl Vault {
                     allow_reserved_predicate: false,
                     hub_sync_imported: false,
                 },
-                super::recovery::arriving_re_root_signer(entry, resident),
+                super::recovery::arriving_re_root(entry, authority_entry_hash(entry)?, resident),
             ));
         }
         if rows.is_empty() {

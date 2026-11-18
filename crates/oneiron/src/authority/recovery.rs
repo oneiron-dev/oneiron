@@ -47,15 +47,40 @@ pub(crate) fn refuse_re_root_of_a_serving_host(
     Ok(())
 }
 
-/// The signer of `entry` when it is a ReRoot this vault does not hold yet
-/// (`resident` false), which an admission door judges before it stages the
-/// row.
-pub(crate) fn arriving_re_root_signer(
+/// A ReRoot this vault does not hold yet, which an admission door judges
+/// before it stages the row ([`ArrivingReRoot::refuse_on`]).
+pub(crate) struct ArrivingReRoot {
+    hash: AuthorityEntryHash,
+    signer: AuthorityKey,
+}
+
+/// `entry`, whose hash is `hash`, as an arriving ReRoot when it is a ReRoot
+/// this vault does not hold yet (`resident` false).
+pub(crate) fn arriving_re_root(
     entry: &AuthorityLogEntry,
+    hash: AuthorityEntryHash,
     resident: bool,
-) -> Option<AuthorityKey> {
-    (!resident && matches!(entry.op, AuthorityOp::ReRoot { .. }))
-        .then(|| entry.signer_key().clone())
+) -> Option<ArrivingReRoot> {
+    (!resident && matches!(entry.op, AuthorityOp::ReRoot { .. })).then(|| ArrivingReRoot {
+        hash,
+        signer: entry.signer_key().clone(),
+    })
+}
+
+impl ArrivingReRoot {
+    /// [`refuse_re_root_of_a_serving_host`] for this ReRoot against `fold`,
+    /// the fold before its row stages. A ReRoot `fold` already counts, as an
+    /// adopted checkpoint counts a row it covers before the row itself is
+    /// held, is in force already: its bytes arrive to be held, and staging
+    /// them moves nothing, so the refusal never meets it. The row's bytes,
+    /// signature and place still meet every other check of its door
+    /// (REVIEW-9487 P1 4).
+    pub(crate) fn refuse_on(&self, fold: &AuthorityFold) -> Result<()> {
+        if fold.valid_entries.contains(&self.hash) {
+            return Ok(());
+        }
+        refuse_re_root_of_a_serving_host(fold, &self.signer)
+    }
 }
 
 impl Vault {

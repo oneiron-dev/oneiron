@@ -17,13 +17,14 @@
 //!
 //! The recovery box brings the authority key alone
 //! ([`RecoveryAuthoritySigner::from_released_seed`]): it vouches and never
-//! appoints. A lost key is one of the owner signing keys the acting owner
-//! enrolled, live on the roster. The root's own key, the new key and the
-//! host roots are never a lost key here; a self-hosted vault's lost host
-//! root is a ReRoot's ([`Vault::recover_owner_authority_from_kit`]).
+//! appoints. A lost key is one of the owner keys the acting owner enrolled,
+//! a device key or a passkey, live on the roster. The root's own key, the
+//! new key and the host roots are never a lost key here; a self-hosted
+//! vault's lost host root is a ReRoot's
+//! ([`Vault::recover_owner_authority_from_kit`]).
 
 use std::collections::BTreeSet;
-use std::sync::Arc;
+use std::sync::{Arc, PoisonError};
 
 use super::owner_key_enrollment_door::EntrySigner;
 use super::*;
@@ -50,9 +51,14 @@ const APPOINTMENT_TAKES_THIS_INSTALL: &str = "the roster holds no live root key:
                                               nothing; nothing was written";
 /// A key named as lost is not one the root's key may revoke here. Nothing
 /// was written.
-const NOT_A_LOST_KEY: &str = "a key named as lost is not a live owner signing key the owner \
-                              enrolled, or is the root's own key or the new key; nothing was \
-                              written";
+const NOT_A_LOST_KEY: &str = "a key named as lost is not a live owner key the owner enrolled, \
+                              or is the root's own key or the new key; nothing was written";
+/// A key named as lost is the owner key that proved this owner's act: the
+/// owner holds it, so it is not lost, and the act would revoke the proof it
+/// stands on. Nothing was written.
+const PROVING_KEY_NAMED_LOST: &str = "a key named as lost is the owner key that proved this act, \
+                                      a key this install holds, not a lost one; nothing was \
+                                      written";
 /// This install's owner signing key is live: it needs no recovery. Nothing
 /// was written.
 const THIS_INSTALL_KEY_LIVE: &str = "this install's owner signing key is live on the roster; it \
@@ -164,6 +170,14 @@ impl Vault {
         successor: RootSuccessor,
         lost: &[AuthorityKey],
     ) -> Result<RootRecovery> {
+        // The key that proved the owner is held, never lost: refused before
+        // anything is readied (REVIEW-9487 P1 1).
+        if owner
+            .proving_owner_key()
+            .is_some_and(|key| lost.contains(key))
+        {
+            return Err(authority_refused(PROVING_KEY_NAMED_LOST));
+        }
         // Preparing this install's signing keys writes, so its slot is made
         // ready before the writer opens.
         let install = match successor {
@@ -176,6 +190,17 @@ impl Vault {
         let root_key = signer.authority_key();
         let mut sign_enrolment = |transcript: &[u8]| signer.sign_authority_transcript(transcript);
         let sign_revoke = |transcript: &[u8]| signer.sign_authority_transcript(transcript);
+        // This install's slot is read, renewed and its successor committed
+        // under the vault's owner signing slot lock, which every door that
+        // renews the slot takes before its transaction (REVIEW-9487 P1 2): a
+        // vouch request that read the slot's old key revoked never drops the
+        // seed of a successor this door enrolled.
+        let _slot_lock = install.is_some().then(|| {
+            self.store
+                .owner_signing_slot_lock
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+        });
         let mut txn = self.store.env.write_txn()?;
         let fold = self.authority_view_readonly_in_txn(&txn)?;
         if !live_owner_key(&fold, &root_key) {
@@ -228,8 +253,9 @@ impl Vault {
         })
     }
 
-    /// The keys `lost` names, once each: every one a live owner signing key
-    /// that `actor`, the owner who acts, enrolled, never the root's own key
+    /// The keys `lost` names, once each: every one a live owner key that
+    /// `actor`, the owner who acts, enrolled, a device key or a passkey
+    /// (REVIEW-9487 P1 3), never the root's own key
     /// or the new one (`root_key`, and `new_key` when the successor is
     /// another device's key; this install's successor is never a live key:
     /// [`this_install_successor`] refuses a live one, and a fresh key is on
@@ -244,17 +270,15 @@ impl Vault {
         (root_key, new_key): (&AuthorityKey, Option<&AuthorityKey>),
         lost: &[AuthorityKey],
     ) -> Result<BTreeSet<AuthorityKey>> {
-        let enrolled = self.enrolled_owner_keys_in_txn(txn)?;
+        let enrolled: BTreeSet<AuthorityKey> = self
+            .live_owner_keys_enrolled_for_in_txn(txn, actor)?
+            .into_iter()
+            .collect();
         let named: BTreeSet<AuthorityKey> = lost.iter().cloned().collect();
         for key in &named {
-            let enrolled_live = enrolled.iter().any(|listed| {
-                listed.live
-                    && listed.owner == actor
-                    && AuthorityKey::Ed25519(listed.public_key) == *key
-            });
             if key == root_key
                 || Some(key) == new_key
-                || !enrolled_live
+                || !enrolled.contains(key)
                 || !live_owner_key(fold, key)
             {
                 return Err(authority_refused(NOT_A_LOST_KEY));

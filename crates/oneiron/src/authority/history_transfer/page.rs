@@ -120,8 +120,9 @@ impl Vault {
             // An arriving ReRoot is judged as the full-history import judges
             // it (HOSTED-REROOT-ADMISSION-DOORS = C): the authority-tail
             // append and history repair reach this door.
-            let re_root_signer = crate::authority::recovery::arriving_re_root_signer(
+            let re_root = crate::authority::recovery::arriving_re_root(
                 &entry,
+                hash,
                 resident.contains(&hash),
             );
             let op = BatchOp::Put {
@@ -138,7 +139,7 @@ impl Vault {
                 allow_reserved_predicate: false,
                 hub_sync_imported: false,
             };
-            rows.push((op, re_root_signer));
+            rows.push((op, re_root));
         }
         self.stage_authority_rows_judging_re_roots_in_txn(&mut txn, rows, &|| {
             Ok(staged_rows.clone())

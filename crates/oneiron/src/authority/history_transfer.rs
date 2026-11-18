@@ -353,8 +353,7 @@ impl Vault {
         for (hash, bytes, entry) in ordered {
             let id = authority_log_entity_id_from_hash(&hash)?;
             ids.push(id);
-            let re_root_signer =
-                super::recovery::arriving_re_root_signer(&entry, resident.contains(&hash));
+            let re_root = super::recovery::arriving_re_root(&entry, hash, resident.contains(&hash));
             rows.push((
                 BatchOp::Put {
                     id,
@@ -370,7 +369,7 @@ impl Vault {
                     allow_reserved_predicate: false,
                     hub_sync_imported: false,
                 },
-                re_root_signer,
+                re_root,
             ));
         }
         self.stage_authority_rows_judging_re_roots_in_txn(&mut txn, rows, &|| {
