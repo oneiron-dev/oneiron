@@ -50,7 +50,7 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, RecordError, Result};
 use crate::registry::ENTITY_TYPE_TASK;
 use crate::scan_check::ScanCount;
-use crate::side_table::{self, SideTable};
+use crate::side_table::{self, SideKey, SideTable};
 use crate::store::EngineScan;
 #[cfg(test)]
 use crate::temporal::TimeRange;
@@ -900,12 +900,29 @@ fn optional_fact_body_field<'a>(
 const SUPPRESSED: SideTable<EntityId, [u8; 1], side_table::Raw> =
     SideTable::new(&side_table::TASK_FACT_SUPPRESSED);
 
+/// A refused fact's task, then its row id: one task's pending facts are one
+/// key prefix.
+#[derive(SideKey)]
+struct PendingFactKey {
+    task: EntityId,
+    fact: EntityId,
+}
+
+/// Refused facts that carry a carrier this vault had not admitted when they
+/// came, each with its whole body. A carrier's profile can arrive after its
+/// fact, and the refused row is gone by then, so the task's read proves the
+/// kept body again ([`fact_suppressed_in`]).
+const SUPPRESSION_PENDING: SideTable<PendingFactKey, Vec<u8>, side_table::Raw> =
+    SideTable::new(&side_table::TASK_FACT_SUPPRESSION_PENDING);
+
 /// A replicated row `id` refused because it was deleted here: when it is a
 /// task authority fact this vault does not hold and the fact proves itself
 /// here, its task is marked, so the task's facts read as a refusal. A
 /// tombstone that reached this vault before a fact would otherwise make a
 /// cancellation or a consent requirement read as never made. A row that
 /// proves nothing marks nothing, so it cannot fail its task's read either.
+/// A carried fact whose carrier the fold has not admitted yet is kept as
+/// pending: it marks its task once its carrier's profile arrives.
 pub(crate) fn note_suppressed_fact_in_txn(
     store: &crate::store::Store,
     wtxn: &mut heed::RwTxn<'_>,
@@ -923,10 +940,18 @@ pub(crate) fn note_suppressed_fact_in_txn(
         return Ok(());
     };
     let task = carried.fact.task_ref;
-    if proved_fact(&fact_proof::FactProof::in_txn(store, wtxn)?, id, body, task).is_none() {
-        return Ok(());
+    if proved_fact(&fact_proof::FactProof::in_txn(store, wtxn)?, id, body, task).is_some() {
+        return SUPPRESSED.put(store, wtxn, &task, &[1]);
     }
-    SUPPRESSED.put(store, wtxn, &task, &[1])
+    if carried.carrier.is_some() {
+        SUPPRESSION_PENDING.put(
+            store,
+            wtxn,
+            &PendingFactKey { task, fact: *id },
+            &body.to_vec(),
+        )?;
+    }
+    Ok(())
 }
 
 /// [`note_suppressed_fact_in_txn`] for a window document's entity carrier,
@@ -989,13 +1014,29 @@ pub(crate) fn note_fenced_fact_in_txn(
     Ok(())
 }
 
-/// Whether `task` is marked as holding an authority fact this vault refused.
+/// Whether `task` holds an authority fact this vault refused: it is marked,
+/// or a pending fact of it proves itself now that the fold admitted its
+/// carrier.
 pub(crate) fn fact_suppressed_in(
     store: &crate::store::Store,
     txn: &heed::RoTxn<'_>,
     task: &EntityId,
 ) -> Result<bool> {
-    SUPPRESSED.contains(store, txn, task)
+    if SUPPRESSED.contains(store, txn, task)? {
+        return Ok(true);
+    }
+    let mut proof = None;
+    for row in SUPPRESSION_PENDING.iter_from(store, txn, task.as_bytes())? {
+        let (key, body) = row?;
+        let proof = match &mut proof {
+            Some(proof) => proof,
+            None => proof.insert(fact_proof::FactProof::in_txn(store, txn)?),
+        };
+        if proved_fact(proof, &key.fact, &body, *task).is_some() {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 /// Marks the tasks a recovered canonical window names as holding a fact its
@@ -1046,41 +1087,69 @@ impl Vault {
     /// TASK-FACT-RULING-CROSSED-OPTION-D = B). The fold absorbs a twin as a set duplicate of
     /// its fact, so no task changes meaning.
     ///
-    /// Each root door calls it once the root is minted with this install's signer loaded.
-    /// With no root or no signer it writes nothing. It runs in one transaction, so a failure
-    /// leaves no twin, and a second call finds nothing left to adopt. Returns how many twins
-    /// it wrote.
+    /// Each root door calls it once the root is minted with this install's signer loaded, and
+    /// every later open that profiles this install calls it again, so a root whose adoption
+    /// failed or was cut off adopts at the next start. With no root, no signer or nothing to
+    /// adopt it writes nothing. It runs in one transaction, so a failure leaves no twin, and a
+    /// second call finds nothing left to adopt. Returns how many twins it wrote.
     pub fn adopt_unsigned_task_facts(&self) -> Result<usize> {
-        self.with_write_txn(|wtxn| {
-            if !fact_proof::signs_in_txn(self, wtxn)? {
+        {
+            let rtxn = self.store.env.read_txn()?;
+            if self.unsigned_task_facts_to_adopt_in(&rtxn)?.is_empty() {
                 return Ok(0);
             }
+        }
+        self.with_write_txn(|wtxn| {
             let mut adopted = 0;
-            for (fact_ref, _) in fact_proof::facts_written_here_in(&self.store, wtxn)? {
-                let Some(raw) = self.get_raw_in(wtxn, &fact_ref)? else {
-                    continue;
-                };
-                if EntityMetadataHeader::parse(&raw)
-                    .is_none_or(|header| header.entity_type != ENTITY_TYPE_TASK)
-                {
-                    continue;
-                }
-                let body = &raw[ENTITY_METADATA_HEADER_LEN..];
-                if !fact_proof::written_here_in(&self.store, wtxn, &fact_ref, body)? {
-                    continue;
-                }
-                let carried = decode_carried_task_authority_fact_body(body)?;
-                if carried.carrier.is_some() {
-                    continue;
-                }
+            for (fact_ref, fact) in self.unsigned_task_facts_to_adopt_in(wtxn)? {
                 // The same fact on a new row: it counts exactly when the
                 // unsigned row did, so it asks no door's rule again.
-                write_task_authority_fact_in_txn(self, wtxn, carried.fact)?;
+                write_task_authority_fact_in_txn(self, wtxn, fact)?;
                 fact_proof::forget_written_fact_in_txn(&self.store, wtxn, &fact_ref)?;
                 adopted += 1;
             }
             Ok(adopted)
         })
+    }
+
+    /// The unsigned facts [`Self::adopt_unsigned_task_facts`] gives a twin: this install's
+    /// doors wrote them, their rows still hold the bodies written, and their task is still a
+    /// live TASK. A deleted task's delete took the fact's link to it and left the fact, so a
+    /// twin of it would link the deleted task again. None when this install signs nothing.
+    fn unsigned_task_facts_to_adopt_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+    ) -> Result<Vec<(EntityId, TaskAuthorityFact)>> {
+        if !fact_proof::signs_in_txn(self, txn)? {
+            return Ok(Vec::new());
+        }
+        let mut facts = Vec::new();
+        for (fact_ref, _) in fact_proof::facts_written_here_in(&self.store, txn)? {
+            let Some(raw) = self.get_raw_in(txn, &fact_ref)? else {
+                continue;
+            };
+            if EntityMetadataHeader::parse(&raw)
+                .is_none_or(|header| header.entity_type != ENTITY_TYPE_TASK)
+            {
+                continue;
+            }
+            let body = &raw[ENTITY_METADATA_HEADER_LEN..];
+            if !fact_proof::written_here_in(&self.store, txn, &fact_ref, body)? {
+                continue;
+            }
+            let carried = decode_carried_task_authority_fact_body(body)?;
+            if carried.carrier.is_some() {
+                continue;
+            }
+            if crate::vault::live_entity_row_in_txn(&self.store, txn, &carried.fact.task_ref)?
+                .live_type()
+                != Some(ENTITY_TYPE_TASK)
+            {
+                continue;
+            }
+            facts.push((fact_ref, carried.fact));
+        }
+        Ok(facts)
     }
 
     /// The authority one TASK's replicated facts prove.
@@ -1154,7 +1223,7 @@ impl Vault {
     ) -> Result<TaskAuthorityFacts> {
         // A fact this vault never admitted is not a fact never made: no
         // cancellation, consent requirement or party is guessed past it.
-        if SUPPRESSED.contains(&self.store, rtxn, &task_ref)? {
+        if fact_suppressed_in(&self.store, rtxn, &task_ref)? {
             return Err(fact_suppressed());
         }
         let mut proved = Vec::new();

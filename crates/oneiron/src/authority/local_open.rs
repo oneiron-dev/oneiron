@@ -173,6 +173,22 @@ impl Vault {
             }
             Err(error) => return Err(error),
         };
+        if !rooted {
+            // A root committed before its adoption finished (a failure, or a stop between the
+            // two) left task facts unsigned: every open that profiles this install adopts what
+            // is left. It writes nothing when nothing is left; a fault is warned, and the next
+            // open tries again.
+            if let Err(error) = self
+                .prepare_install_signing()
+                .and_then(|_| self.adopt_unsigned_task_facts())
+            {
+                tracing::warn!(
+                    kind = ?error.kind(),
+                    reason = %error,
+                    "the task facts written before the root were not adopted; the next open tries again"
+                );
+            }
+        }
         Ok(match (rooted, stood) {
             (true, _) => LocalOpenProfile::RootedAndProfiled,
             (false, None) => LocalOpenProfile::Profiled,
