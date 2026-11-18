@@ -24,6 +24,12 @@
 //! anything is readied, and a machine with a removed chain is refused
 //! although another chain of it is live and the owner's. Red on the mutation
 //! branch that drops those two checks, green at the head.
+//!
+//! FIX APPOINTMENT-PIN-STEP-AND-VOUCH-ENTRY-FOLD-NO-TEST: the vouching key
+//! signs on the fold of the entry it signs, which the enrollment's writer
+//! reads, so a key revoked after the door picked it refuses its own
+//! signature. Red with the key asked on the fold of the door's earlier read:
+//! it signs there, and the append's admission refuses the row instead.
 #![cfg(oneiron_test_support)]
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
@@ -43,7 +49,9 @@ use oneiron::federation::{FederationGrantRole, InitialSharedMember, Scope, Scope
 use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::store::GateDecisionId;
 use oneiron::test_doors::label_writers::embedded_owner;
+use oneiron::test_doors::owner_key_vouch_between::enrol_vouched_owner_signing_key_between;
 use oneiron::test_doors::owner_key_vouch_holding_machine::require_holding_machine_beside_anchor_chain;
+use oneiron::test_doors::passkey_vouch_limits::revoke_owner_key_signed_by;
 use oneiron::verbs::{AgentGrantMintRequest, mint_agent_grant_as};
 use oneiron::{EntityId, Error, HostingPrivacyPosture, TimeRange, Vault, VaultConfig};
 use oneiron_keystore::{
@@ -54,6 +62,10 @@ use zeroize::Zeroizing;
 
 /// The co-Owner fixture's shared vault id.
 const SHARED: u64 = 27;
+
+/// What an owner signing key answers when the roster it is asked on does not
+/// list it live (`KEY_NOT_LIVE` of `world_keys::owner_signing`).
+const KEY_NOT_LIVE: &str = "the roster does not list this owner signing key live";
 
 fn hosted_config() -> VaultConfig {
     let mut config = VaultConfig::device();
@@ -404,6 +416,90 @@ fn an_owner_key_on_one_device_enrols_another_devices_key_on_a_hosted_vault() {
             .authority_key_in_host_custody(&new_key)
             .expect("custody read"),
         "the vouched key starts its own custody line on a hosted vault"
+    );
+}
+
+/// The vouching key is revoked after the door's read picked it and before
+/// the enrollment's writer. The key is asked on the fold of the entry it
+/// signs, which the writer reads after the revoke, so its own check refuses
+/// the signature: the writer stores nothing and the new key is not enrolled.
+#[test]
+fn a_vouching_key_revoked_after_the_pick_refuses_its_signature_and_enrols_nothing() {
+    let owner = owner_device(true);
+    let vouching = owner.key.expect("the owner device's key");
+    let vouching_key = AuthorityKey::Ed25519(vouching);
+    let device = new_device(&owner);
+    let request = device.request();
+    let signer = owner
+        .vault
+        .device_owner_signing_key()
+        .expect("the owner device's key, read from its slot");
+    assert_eq!(
+        signer.public_key(),
+        vouching,
+        "guard: the slot holds the enrolled owner key"
+    );
+    let picked_on = owner
+        .vault
+        .authority_fold()
+        .expect("the owner device's fold");
+    assert!(
+        picked_on
+            .roster
+            .get(&vouching_key)
+            .is_some_and(|listed| !listed.revoked),
+        "guard: the vouching key is live when the door picks it"
+    );
+
+    let mut after_revoke = None;
+    let refusal = enrol_vouched_owner_signing_key_between(
+        &owner.vault,
+        &owner_act(&owner.proof),
+        &request,
+        || {
+            let counted = revoke_owner_key_signed_by(
+                &owner.vault,
+                vouching_key.clone(),
+                vouching_key.clone(),
+                |transcript| {
+                    signer
+                        .sign_owner_proof(&owner.vault, &picked_on, transcript)
+                        .expect("the key, live at the revoke's parents, signs its own revoke")
+                },
+            )
+            .expect("the revoke is stored");
+            assert!(counted, "guard: the owner key's own revoke counts");
+            after_revoke = Some(owner.history());
+        },
+    )
+    .expect_err("a key revoked since the door picked it vouches for no key");
+    let after_revoke = after_revoke.expect("the revoke ran between the door's read and its writer");
+
+    assert!(
+        matches!(
+            &refusal,
+            Error::Record(RecordError::AuthorityRefused(reason)) if *reason == KEY_NOT_LIVE
+        ),
+        "the vouching key's own check refuses on the entry's fold: {refusal:?}"
+    );
+    assert_eq!(
+        owner.history(),
+        after_revoke,
+        "the refused vouch stores no row"
+    );
+    assert!(
+        !owner.roster_lists(request.public_key),
+        "the new key is not enrolled"
+    );
+    assert!(
+        owner
+            .vault
+            .authority_fold()
+            .expect("the owner device's fold")
+            .roster
+            .get(&vouching_key)
+            .is_some_and(|listed| listed.revoked),
+        "the vouching key stays revoked"
     );
 }
 

@@ -11,7 +11,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::ancestor_index::AncestorIndex;
-use super::fold_engine::{FoldContext, OnceFloors};
+use super::fold_engine::{FoldContext, JudgedRows, OnceFloors};
 use super::{AuthorityEntryHash, AuthorityFold, AuthorityKey, AuthorityLogEntry, AuthorityVaultId};
 
 static NO_PEERS: BTreeMap<AuthorityVaultId, BTreeSet<AuthorityKey>> = BTreeMap::new();
@@ -60,11 +60,9 @@ pub fn fold_both_ways(entries: &[AuthorityLogEntry], arrival: &[usize]) -> Floor
         .map(|entry| super::authority_entry_hash(entry).expect("row hash"))
         .collect();
     let floors = arrival_floors(entries, &hashes, arrival);
-    let by_hash: BTreeMap<AuthorityEntryHash, AuthorityLogEntry> = hashes
-        .iter()
-        .copied()
-        .zip(entries.iter().cloned())
-        .collect();
+    // The rows both folds judge (`fold_engine::judged_entries`): the lift's
+    // probe reads their signature verdicts.
+    let (by_hash, _) = super::fold_engine::judged_entries(entries);
     let (ancestors, _) = super::ancestor_index::entry_ancestor_index(&by_hash, u64::MAX)
         .expect("no memory floor refuses");
     let rows_floored = effective(
@@ -107,7 +105,9 @@ pub fn fold_both_ways(entries: &[AuthorityLogEntry], arrival: &[usize]) -> Floor
     }
 }
 
-fn context(floors: Option<&BTreeMap<AuthorityEntryHash, u64>>) -> FoldContext<'_> {
+/// The one context both folds run under: no handoff, no peer, every
+/// machine chain counted, no memory floor; `floors` as given.
+pub(super) fn context(floors: Option<&BTreeMap<AuthorityEntryHash, u64>>) -> FoldContext<'_> {
     FoldContext {
         sequence_floors: floors,
         floor_vouched: None,
@@ -195,7 +195,7 @@ fn single_chain(
 /// voucher folds on its own complete ancestry. This is the lift
 /// `sequence_ancestry` ran on arrival floors, kept here alone.
 fn arrival_lifted_floors(
-    by_hash: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+    by_hash: &JudgedRows,
     ancestors: &AncestorIndex,
     context: FoldContext<'_>,
 ) -> OnceFloors {
@@ -203,7 +203,7 @@ fn arrival_lifted_floors(
     let mut floors = original.clone();
     loop {
         let before = floors.len();
-        for (tip_hash, tip) in by_hash {
+        for (tip_hash, tip) in by_hash.iter() {
             let tip_floor = original.get(tip_hash).copied();
             let rollback_tip = tip_floor.is_some_and(|floor| tip.seq < floor);
             let roster_tip = super::entry_transition::changes_roster(&tip.op);

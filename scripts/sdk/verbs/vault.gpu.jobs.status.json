@@ -1,0 +1,16 @@
+{
+  "name": "vault.gpu.jobs.status",
+  "description": "Where one GPU job stands: its run time and spend against its maximum, the checkpoint signals sent, the warning and checkpoint, and its stop. The owner calls it, or an agent whose Grant names it.",
+  "input": "crate::gpu_job::GpuJobRef",
+  "output": "crate::gpu_job::GpuJobStatus",
+  "call": "crate::task_verb::sdk::host_only(memory, \"vault.gpu.jobs.status\", &input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Read",
+  "act_class": "read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "host_door_proof": "gpu_job_caller"
+}

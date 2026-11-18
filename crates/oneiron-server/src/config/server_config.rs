@@ -106,6 +106,9 @@ pub struct SyncServerConfig {
     /// The `[connectors.<name>]` transports the generic connector call
     /// reaches, by normalized catalog name.
     pub connectors: std::collections::BTreeMap<String, super::ConnectorHostConfig>,
+    /// The `[gpu_jobs]` offers customer GPU jobs start on, and how often the
+    /// worker steps them; no offer by default.
+    pub gpu_jobs: super::GpuJobsSettings,
     /// Explicit local/dev escape hatch for running without `auth_secret`.
     pub allow_unauthenticated: bool,
     /// Explicit CORS origins allowed to call the HTTP API. Empty is
@@ -262,6 +265,7 @@ impl Default for SyncServerConfig {
             cloud_registration_pins: None,
             native_mail: None,
             connectors: std::collections::BTreeMap::new(),
+            gpu_jobs: super::GpuJobsSettings::default(),
             allow_unauthenticated: false,
             allowed_origins: Vec::new(),
             house_role: None,
@@ -429,6 +433,9 @@ pub struct ServeConfig {
     /// The `[connectors.<name>]` sections: each catalog connector's installed
     /// transport and endpoint, empty until the config file names one.
     pub connectors: std::collections::BTreeMap<String, super::ConnectorHostConfig>,
+    /// The `[gpu_jobs]` section: the GPU offers this host posts for customer
+    /// GPU jobs, none until the config file names one.
+    pub gpu_jobs: super::GpuJobsSettings,
     /// The `[embedding]` section: spaces and kind slots seeded at start,
     /// absent until the config file names it.
     pub embedding: Option<super::EmbeddingConfig>,
@@ -592,6 +599,7 @@ impl Default for ServeConfig {
             device_sync: None,
             shared_env: Vec::new(),
             connectors: std::collections::BTreeMap::new(),
+            gpu_jobs: super::GpuJobsSettings::default(),
             embedding: None,
             line: server.line,
             mail: server.mail,
@@ -646,6 +654,7 @@ impl ServeConfig {
                     (super::connectors::normalize_name(name), connector.clone())
                 })
                 .collect(),
+            gpu_jobs: self.gpu_jobs.clone(),
             allow_unauthenticated: self.allow_unauthenticated,
             allowed_origins: self.allowed_origins.clone(),
             house_role: self.house_role,

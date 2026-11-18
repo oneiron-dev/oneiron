@@ -164,7 +164,7 @@ fn admits_join_signer(
         (FrontierJoinFamily::Install(carrier), AuthorityKey::Ed25519(key)) => {
             Standing::new(state, pin, counted).admits_owner_act_signer(carrier, key, roster)
         }
-        (FrontierJoinFamily::Host, _) => roster_has_live_owner(&state.roster, signer),
+        (FrontierJoinFamily::Host, _) => state.has_live_owner(signer),
         (FrontierJoinFamily::Anchor, AuthorityKey::Ed25519(key)) => {
             state.root_anchors.contains_key(key)
         }
