@@ -51,13 +51,13 @@ pub(super) fn park_open_conflict(
     now_ms: u64,
 ) -> Result<EntityId> {
     // A claim's times are Unix seconds; the wake's clock is milliseconds.
-    let at = now_ms / 1_000;
-    let parts = open_marker_parts(actor, attempt, conflict, members, decisions, at)?;
+    let now = now_ms / 1_000;
+    let parts = open_marker_parts(actor, attempt, conflict, members, decisions, now)?;
     let id = parts.id;
     vault.with_write_txn_grouped(|txn| {
         crate::ports::recorded_at_in_txn(&vault.store, txn)?;
         fence.validate_in_txn(vault, txn)?;
-        write_open_marker_in_txn(vault, txn, actor, parts, at)
+        write_open_marker_in_txn(vault, txn, actor, parts, now)
     })?;
     Ok(id)
 }
