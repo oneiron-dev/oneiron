@@ -95,18 +95,6 @@ pub(super) fn gives_owner_proof(state: &FoldState, key: &AuthorityKey) -> bool {
         && !state.passkey_limited(key)
 }
 
-/// Whether an `OwnerKeyEnroll` of `key` draws the owner key's line in the
-/// state it leaves ([`super::owner_key_line`]): `key` is a key `state`
-/// trusts as the owner's ([`proves_for_the_owner`]), of any suite. A
-/// passkey's key, and a key only a passkey vouched for, give no proof
-/// ([`gives_owner_proof`]) but are the owner's keys (CARRIER-HOSTED-WEB-ACTS
-/// = C): the line refuses another enrolment of them as it does of a
-/// device's key, so the roster merge cannot narrow them away (row
-/// PASSKEY-OWNER-KEY-DRAWS-NO-LINE).
-pub(super) fn owner_key_draws_a_line(state: &FoldState, key: &AuthorityKey) -> bool {
-    proves_for_the_owner(state, key)
-}
-
 /// Whether an act a not-mine carrier delivers needs the proof in `state`
 /// (item 2): as soon as its roster holds a key that can give it
 /// ([`gives_owner_proof`]). A self-host vault's live owner root is one; a
@@ -175,6 +163,18 @@ pub(super) fn owner_key_revoke_proved(
         || participants
             .iter()
             .any(|key| proves_for_the_owner(state, key))
+}
+
+/// Whether an `OwnerKeyEnroll` of `key` draws the owner key's line in the
+/// state it leaves ([`super::owner_key_line`]): `key` is a key `state`
+/// trusts as the owner's ([`proves_for_the_owner`]), of any suite. A
+/// passkey's key, and a key only a passkey vouched for, give no proof
+/// ([`gives_owner_proof`]) but are the owner's keys (CARRIER-HOSTED-WEB-ACTS
+/// = C): the line refuses another enrolment of them as it does of a
+/// device's key, so the roster merge cannot narrow them away (row
+/// PASSKEY-OWNER-KEY-DRAWS-NO-LINE).
+pub(super) fn owner_key_draws_a_line(state: &FoldState, key: &AuthorityKey) -> bool {
+    proves_for_the_owner(state, key)
 }
 
 /// One held answer in a fold state: the answer as it folded, and whether the
