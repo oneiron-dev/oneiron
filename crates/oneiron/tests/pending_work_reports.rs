@@ -654,12 +654,21 @@ fn moved_roots_refuse_the_request_as_a_revision_mismatch() {
     let device = device(&host);
     let root = host.mint_own_root();
     device.request_pin(host.machine(), root);
-    // The revision moves after the owner decided: another root the
-    // request's witness never saw.
-    let moved = host.mint_own_root();
+    // The target's roster head moves after the owner decided: a new
+    // revision the request's witness never saw.
+    let landing = host
+        .vault
+        .set_machine_role(
+            &host.owner,
+            ActSurface::HostedConsole,
+            host.machine(),
+            MachineRole::ExecutionNode,
+            None,
+        )
+        .expect("the owner re-answers the host");
     assert!(
-        moved != root,
-        "the second mint is the move the witness never saw"
+        landing.held().is_none(),
+        "FIXTURE: the owner key the host holds proves the host's answer"
     );
     host.take(&device);
     let before = host
