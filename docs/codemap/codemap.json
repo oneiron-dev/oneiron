@@ -4079,7 +4079,7 @@
      "path": "src/authority/ancestor_index.rs",
      "purpose": "Claimed authority-entry ancestry index for deterministic fold scheduling",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 14
      }
     },
     {
@@ -4592,7 +4592,7 @@
      "path": "src/authority/entry_transition.rs",
      "purpose": "Per-entry state transition and the consent predicates",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -4680,6 +4680,19 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "ProbeEquivalence"
+     ],
+     "path": "src/authority/floor_probe_door.rs",
+     "purpose": "The floor probe equivalence door (row [ROSTER-KEY-LOG-FLOOD], PR 3; Engine RULING 16 Nov 13:44 = A: each PR…",
+     "surface": {
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "StateEncodings"
      ],
      "path": "src/authority/fold_encoding_door.rs",
@@ -4696,7 +4709,7 @@
      "path": "src/authority/fold_engine.rs",
      "purpose": "Top-level fold orchestration",
      "surface": {
-      "crate-vis": 14,
+      "crate-vis": 16,
       "re-export": 1
      }
     },
@@ -5574,7 +5587,7 @@
      "path": "src/authority/mod.rs",
      "purpose": "AUTHORITY_LOG record substrate",
      "surface": {
-      "crate-vis": 80,
+      "crate-vis": 81,
       "mod": 2,
       "re-export": 88
      }
@@ -5819,7 +5832,7 @@
      "purpose": "An owner key vouches for another device's new owner key (pass 27 R2, \"an owner key vouches\"; MFA-1 A: \"vault…",
      "surface": {
       "const": 2,
-      "crate-vis": 4,
+      "crate-vis": 5,
       "enum": 1,
       "fn": 8,
       "struct": 1
@@ -6212,6 +6225,7 @@
      "path": "src/authority/sequence_floor_door.rs",
      "purpose": "The sequence floor equivalence door (Engine RULING SEQ-FLOOR-SHAPE = A, 15 Nov 16:37; FIX…",
      "surface": {
+      "crate-vis": 1,
       "fn": 1,
       "struct": 1
      }
@@ -9389,7 +9403,7 @@
      "path": "src/batch/secret_scan/mask.rs",
      "purpose": "Mask on write (OF-560; ARCH-0069 #mask-on-write and #handles-in-fields, owner ruling G04 = A): a secret the…",
      "surface": {
-      "crate-vis": 24
+      "crate-vis": 25
      }
     },
     {
@@ -9463,6 +9477,16 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/batch/secret_scan/mask/held_template.rs",
+     "purpose": "A live held row read against a raw offer once custody knows a value (FIX RECEIPT-RECORDS-CALL-HELD-INPUT…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -9529,7 +9553,7 @@
      "path": "src/batch/secret_scan/mask/side_row.rs",
      "purpose": "The side-row wall (OF-067; ARCH-0069 #mask-on-write and #handles-in-fields, owner ruling G04 = A)",
      "surface": {
-      "crate-vis": 18
+      "crate-vis": 17
      }
     },
     {
@@ -9569,7 +9593,7 @@
      "path": "src/batch/secret_scan/mask/text.rs",
      "purpose": "A text's mask on write (OF-560): each span the door's text rules place, and each value custody already…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 5
      }
     },
     {
@@ -14137,7 +14161,7 @@
      "path": "src/campaign/enrollment/approval.rs",
      "purpose": "FIX 6424 part 2a (Engine 10-20 21:0x rulings 6 and 7): the owner's approve-once ask on one campaign…",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 13
      }
     },
     {
@@ -14250,7 +14274,7 @@
      "path": "src/campaign/enrollment/mod.rs",
      "purpose": "CA-03 enrollment consequence writer: the leader-only MACRO job that turns a detected SAVED_QUERY membership…",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "re-export": 12
      }
     },
@@ -19450,7 +19474,7 @@
      "path": "src/code_run/dispatcher/agent_verb.rs",
      "purpose": "Code mode's verb-table calls: the run's write origin and the receipt a write keeps",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "fn": 1,
       "re-export": 1
      }
@@ -19683,7 +19707,7 @@
      "path": "src/code_run/dispatcher/mod.rs",
      "purpose": "State and export seam for the host-bound first-party dispatcher",
      "surface": {
-      "crate-vis": 17,
+      "crate-vis": 18,
       "re-export": 6,
       "struct": 1,
       "type": 1
@@ -20001,7 +20025,7 @@
      "path": "src/code_run/mod.rs",
      "purpose": "Host-side skeleton for first-party `self.*` code-mode calls",
      "surface": {
-      "crate-vis": 72,
+      "crate-vis": 73,
       "mod": 8,
       "re-export": 39
      }
@@ -20813,7 +20837,7 @@
      "path": "src/code_run/spawn_replay.rs",
      "purpose": "The one comparison of a recorded bridge row's request with the request its call makes again (FIX 7447), for…",
      "surface": {
-      "crate-vis": 26
+      "crate-vis": 27
      }
     },
     {
@@ -43320,7 +43344,7 @@
      "path": "src/feedback/mod.rs",
      "purpose": "Engine feedback channel: bundle wire contract, consent, dispatch, export",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "mod": 1,
       "re-export": 10
      }
@@ -43370,7 +43394,7 @@
      "purpose": "OF-537: free, actor-bound reports about a durable subject, never a task kind",
      "surface": {
       "const": 1,
-      "crate-vis": 5,
+      "crate-vis": 6,
       "enum": 1,
       "fn": 3,
       "re-export": 5,
@@ -43497,7 +43521,7 @@
      "path": "src/feedback/report/disclosure.rs",
      "purpose": "A report's text and its publisher (FIX 8747; DEC-0006)",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "fn": 1,
       "re-export": 1,
       "struct": 1
@@ -50504,7 +50528,7 @@
      "path": "src/linear_sync/mod.rs",
      "purpose": "Issue-tracker mirror adapter: one TASK ↔ one Linear issue, bidirectional, conflict-surfacing (ONE-1905…",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "re-export": 12
      }
     },
@@ -78808,7 +78832,7 @@
      "path": "src/skill_optimize/eval_set.rs",
      "purpose": "OF-578 (ARCH-0053 \"Eval authoring\", RESEARCH-0937; EVAL-SKILL = A, EVAL-COLDSTART = C, NOT-WORSE = A): the…",
      "surface": {
-      "crate-vis": 18,
+      "crate-vis": 19,
       "enum": 1,
       "fn": 7,
       "mod": 1,
@@ -78997,7 +79021,7 @@
      "path": "src/skill_optimize/eval_set/measurement.rs",
      "purpose": "Paired, family-grouped eval measurements (FIX 574, OF-578; ARCH-0053)",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 5,
       "re-export": 4,
       "struct": 5
@@ -79010,7 +79034,7 @@
      "path": "src/skill_optimize/eval_set/measurement/doors.rs",
      "purpose": "The measurement doors: ask, read, claim, record a case and fail",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 11,
       "fn": 9
      }
     },
@@ -79534,7 +79558,7 @@
      "path": "src/skill_optimize/mod.rs",
      "purpose": "SKILL-OPT-1 (ONE-1448, ARCH-0026 dreamer-v2 \"Optimize skills\"): the Coach's job on the Dreamer's runner that…",
      "surface": {
-      "crate-vis": 25,
+      "crate-vis": 26,
       "mod": 3,
       "re-export": 21
      }
@@ -83139,7 +83163,7 @@
      "path": "src/store/known_value_index/entries.rs",
      "purpose": "The shared value-print matcher builder",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 4
      }
     },
     {
@@ -91663,7 +91687,7 @@
      "path": "src/task_verb/highway_post.rs",
      "purpose": "The highway's Post arm, its brief revisions, and settlement: the one continuation that turns an approved…",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 11
      }
     },
     {
@@ -91931,7 +91955,7 @@
      "path": "src/task_verb/mod.rs",
      "purpose": "Typed, actor-bound verbs over the Context Board TASKS section",
      "surface": {
-      "crate-vis": 83,
+      "crate-vis": 84,
       "enum": 1,
       "fn": 2,
       "mod": 5,
@@ -93338,6 +93362,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/test_doors/authority_floor_probe.rs",
+     "purpose": "The floor probe equivalence door (row [ROSTER-KEY-LOG-FLOOD], PR 3): the probe a floored row's voucher folds…",
+     "surface": {
+      "re-export": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/test_doors/authority_fold_encoding.rs",
      "purpose": "The fold state encoding door (row [ROSTER-KEY-LOG-FLOOD], PR 2): every row's folded state of one log, and…",
      "surface": {
@@ -93722,11 +93756,14 @@
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [],
+     "notable": [
+      "StoredReceiptMeet"
+     ],
      "path": "src/test_doors/code_run_write_identity.rs",
-     "purpose": "Doors for `tests/write_receipt_float_input.rs` (census L1-06): whether a resumed write meets the receipt row…",
+     "purpose": "Doors for `tests/write_receipt_float_input.rs` (census L1-06) and `tests/write_receipt_held_input.rs` (FIX…",
      "surface": {
-      "fn": 1
+      "fn": 3,
+      "struct": 1
      }
     },
     {
@@ -94677,6 +94714,19 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "CampaignLeg"
+     ],
+     "path": "src/test_doors/fingerprint_keep_request_digests.rs",
+     "purpose": "Door for `tests/fingerprint_keep_request_digests.rs` (PLAN-UC-04 4.1): the request digests a replay or a…",
+     "surface": {
+      "fn": 11,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/test_doors/fingerprint_keep_saved_query.rs",
      "purpose": "The saved-query plan digest, for the K-proof of PLAN-UC-04 stage 1.1 (`tests/fingerprint_keep_saved_query.rs`)",
@@ -95372,7 +95422,7 @@
      "purpose": "Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD)",
      "surface": {
       "fn": 1,
-      "mod": 319,
+      "mod": 322,
       "re-export": 1
      }
     },
@@ -95590,6 +95640,16 @@
      "purpose": "This install's owner keys, for the integration tests of the owner-proof rule (rows CARRIER-OWNER-PROOF and…",
      "surface": {
       "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/test_doors/owner_key_vouch_between.rs",
+     "purpose": "Door for `tests/owner_key_vouch.rs` (FIX APPOINTMENT-PIN-STEP-AND-VOUCH-ENTRY-FOLD-NO-TEST): the vouch door…",
+     "surface": {
+      "fn": 1
      }
     },
     {
@@ -107896,6 +107956,16 @@
      }
     },
     {
+     "bucket": "L",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/fingerprint_keep_request_digests.rs",
+     "purpose": "K-proof (oracle) for PLAN-UC-04 stage 4.1: the request digests a replay or a retention compares with a…",
+     "surface": {
+      "crate-vis": 25
+     }
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -107990,6 +108060,14 @@
      "notable": [],
      "path": "tests/fix_l4637_external_stage_evidence.rs",
      "purpose": "FIX 4637: the external stage-evidence ingress checked only the declared evidence class and that some…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/floor_probe_equivalence.rs",
+     "purpose": "The floor probe folds a voucher's ancestry once, in the ancestor index's id order, on the fold's own…",
      "surface": {}
     },
     {
@@ -113853,6 +113931,14 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/write_receipt_held_input.rs",
+     "purpose": "FIX RECEIPT-RECORDS-CALL-HELD-INPUT (follow-up of FIX REPLAY-COMPARE-KNOWN-OTHER-CALLERS): a verb write's…",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -113933,7 +114019,7 @@
      "purpose": "Generic LMDB-backed background attempt queue"
     },
     "authority": {
-     "files": 307,
+     "files": 308,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -113947,7 +114033,7 @@
      "purpose": "Engine-side AR-3 campaign reports and read-only experiment selection"
     },
     "batch": {
-     "files": 202,
+     "files": 203,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -115410,7 +115496,7 @@
      "purpose": "`TimeRange`, temporal expressions/parsing, granularity/anchor enums"
     },
     "test_doors": {
-     "files": 326,
+     "files": 329,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -115587,8 +115673,8 @@
    },
    "over_bar": 302,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 8175,
-   "test_files": 1911
+   "source_files": 8180,
+   "test_files": 1914
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -130306,6 +130392,14 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/purposes/connector.rs",
+     "purpose": "Purposes of connectors (`crates/oneiron/src/connector_key`, `ingest::connector_*`, `outbound_consent`…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/purposes/dreamer.rs",
      "purpose": "Purposes of the Dreamer (`crates/oneiron/src/dreamer_consolidation`, `crates/oneiron/src/dreamer_promotion`…",
      "surface": {}
@@ -130422,7 +130516,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/purposes/note.rs",
-     "purpose": "Purposes of notes",
+     "purpose": "Purposes of notes (`crates/oneiron/src/note`)",
      "surface": {}
     },
     {
@@ -130439,6 +130533,14 @@
      "notable": [],
      "path": "src/purposes/outbound_intent_ledger.rs",
      "purpose": "Purposes of the outbound intent ledger (`crates/oneiron/src/outbound_intent_ledger`)",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/purposes/phone_line.rs",
+     "purpose": "Purposes of the phone line (`crates/oneiron/src/phone_line`)",
      "surface": {}
     },
     {
@@ -130656,7 +130758,7 @@
      "purpose": "The K door: a digest that main already stores or sends keeps its exact bytes"
     },
     "purposes": {
-     "files": 52,
+     "files": 54,
      "impl_vault": false,
      "largest_src_bucket": "s",
      "layout": "dir",
@@ -130672,7 +130774,7 @@
    },
    "over_bar": 0,
    "purpose": "One fingerprint rule for engine digests (fable pass 22; PLAN-UC-04 stage 0)",
-   "source_files": 55,
+   "source_files": 57,
    "test_files": 1
   },
   "oneiron-gen": {
