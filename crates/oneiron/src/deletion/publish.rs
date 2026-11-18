@@ -580,15 +580,12 @@ impl Vault {
                 // commit (round-1 P1 of #7900): a hard delete publishes before
                 // it purges, so the publish decides the guard and the later
                 // purge must not re-decide a call peers already obey. A soft
-                // delete's scrub transaction already decided it, so soft
-                // publications skip this.
-                .and_then(|()| {
-                    if value.reason.is_hard() {
-                        self.refuse_last_bound_owner_delete_in(&wtxn, id)
-                    } else {
-                        Ok(())
-                    }
-                })
+                // publication runs it too (round-2 P1): the headerless leg
+                // publishes before its purge, so a PERSON put and bound as
+                // the last owner under the id since the guard phase is
+                // refused here. A headerful soft delete's scrub decided it
+                // already and left a shell, which the guard passes.
+                .and_then(|()| self.refuse_last_bound_owner_delete_in(&wtxn, id))
                 .and_then(|()| {
                     self.store.delete_guards.precheck_goal_delete(
                         &self.store,

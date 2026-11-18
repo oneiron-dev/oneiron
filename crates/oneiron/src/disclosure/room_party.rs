@@ -52,7 +52,9 @@ impl RoomParty {
 /// delete's purged row, or a binding whose PERSON is deleted, names no owner.
 /// An embedded owner whose row was never written still is one, as before: the
 /// permanent hard-delete marker tells the purged row from the never-written
-/// one, since both read [`LiveEntityRow::Absent`] without it. On an unrooted
+/// one, since both read [`LiveEntityRow::Absent`] without it, and so does a
+/// peer's soft delete replayed before the PERSON reached this vault, which
+/// leaves no row, only its `df:` fence and identity marker. On an unrooted
 /// shared vault the embedded owner is one only while the live owner census
 /// names it ([`crate::memory::embedded_owner_shortcut_holds_in_txn`]): one
 /// another Owner made an Admin is classed as any other member is
@@ -75,11 +77,15 @@ pub(crate) fn is_vault_owner(
         if vault.local_hard_delete_marker_exists_in_txn(txn, member)? {
             return Ok(false);
         }
-        if matches!(
-            crate::vault::live_entity_row_in_txn(&vault.store, txn, member)?,
-            LiveEntityRow::DeletedShell
-        ) {
-            return Ok(false);
+        match crate::vault::live_entity_row_in_txn(&vault.store, txn, member)? {
+            LiveEntityRow::DeletedShell => return Ok(false),
+            // The never-written fallback holds only for an id with no
+            // deletion recorded at all: a replayed soft delete writes no row
+            // for an id it finds absent (round-2 P1 of #7900).
+            LiveEntityRow::Absent if absent_row_deletion_recorded_in_txn(vault, txn, member)? => {
+                return Ok(false);
+            }
+            LiveEntityRow::Absent | LiveEntityRow::Live { .. } => {}
         }
         return Ok(
             crate::memory::embedded_owner_shortcut_holds_in_txn(vault, txn).unwrap_or(false),
@@ -87,6 +93,22 @@ pub(crate) fn is_vault_owner(
     }
     Ok(fold.vault_id.is_some()
         && crate::authority::actor_binding_is_live_in(&vault.store, txn, fold, member, "human")?)
+}
+
+/// Whether this vault records a deletion of `id`, whose row it does not hold:
+/// a `df:` fence, the `dt:` marker, a tombstone or an archive
+/// ([`crate::ports::TombstoneStoreRead::port_deletion_state`]), or the
+/// identity marker of a soft delete applied here.
+fn absent_row_deletion_recorded_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<bool> {
+    use crate::ports::{DeletionMarker, TombstoneStoreRead};
+    Ok(vault.store.port_deletion_state(txn, id)?.deleted
+        || vault
+            .store
+            .port_deletion_marked(txn, DeletionMarker::IdentitySoftDelete, id)?)
 }
 
 /// The existing Owner party rule for a positively placed live PERSON,

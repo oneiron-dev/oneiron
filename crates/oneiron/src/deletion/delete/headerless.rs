@@ -130,8 +130,9 @@ impl Vault {
         reverify_deletion_authority_when_unpublished(gate, crdt_persisted, &wtxn)?;
         // The last-bound-owner guard under the same conditional law (round-1
         // P1 of #7900): only when nothing published does this purge linearize
-        // the delete. A headerless id holds no live PERSON row, so this is
-        // the re-put race's refusal and nothing else.
+        // the delete; a publication decided it, for a soft reason too (round
+        // 2). A headerless id holds no live PERSON row, so this is the re-put
+        // race's refusal and nothing else.
         if !crdt_persisted {
             self.refuse_last_bound_owner_delete_in(&wtxn, id)?;
         }
