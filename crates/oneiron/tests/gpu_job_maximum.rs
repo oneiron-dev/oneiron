@@ -11,9 +11,9 @@ use std::sync::{Arc, Barrier, Mutex};
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::gpu_job::{
     GPU_JOB_STOPPED_PRODUCER, GPU_JOB_WARNING_PRODUCER, GPU_QUOTE_VALID_MS, GpuConnectorError,
-    GpuEndReason, GpuJob, GpuJobConnector, GpuJobError, GpuJobPermits, GpuJobQuote, GpuJobRequest,
-    GpuJobSignal, GpuJobSpec, GpuJobState, GpuJobStepReport, GpuOffer, GpuResourceRef,
-    GpuResourceStatus, GpuTermination, PriceShape,
+    GpuEndReason, GpuJob, GpuJobActor, GpuJobConnector, GpuJobError, GpuJobPermits, GpuJobQuote,
+    GpuJobRequest, GpuJobSignal, GpuJobSpec, GpuJobStart, GpuJobState, GpuJobStepReport, GpuOffer,
+    GpuResourceRef, GpuResourceStatus, GpuTermination, PriceShape,
 };
 use oneiron::inbox::{NotificationBody, NotificationKind, decode_notification_body};
 use oneiron::llm::ModelLocality;
@@ -255,11 +255,13 @@ impl Rig {
     fn start(&self, quote: &GpuJobQuote, admission: &RunAdmission) -> GpuJob {
         self.vault
             .start_gpu_job(
-                &self.owner,
-                &self.offer,
-                quote,
-                None,
-                admission,
+                GpuJobStart {
+                    actor: GpuJobActor::Owner(&self.owner),
+                    offer: &self.offer,
+                    quote,
+                    resume: None,
+                    admission,
+                },
                 &self.permits,
                 &self.gpu,
                 NOW,
@@ -435,11 +437,13 @@ fn a_zero_maximum_or_a_reservation_that_does_not_fit_never_creates() {
     let quote = rig.quote(100, None, NOW);
     let (admission, _receipts) = admission(&quote.job, quote.units - 1);
     let refused = rig.vault.start_gpu_job(
-        &rig.owner,
-        &rig.offer,
-        &quote,
-        None,
-        &admission,
+        GpuJobStart {
+            actor: GpuJobActor::Owner(&rig.owner),
+            offer: &rig.offer,
+            quote: &quote,
+            resume: None,
+            admission: &admission,
+        },
         &rig.permits,
         &rig.gpu,
         NOW,
@@ -494,11 +498,13 @@ fn resume_runs_once_from_the_checkpoint_under_a_larger_maximum() {
     let resumed = rig
         .vault
         .start_gpu_job(
-            &rig.owner,
-            &rig.offer,
-            &quote,
-            Some(&resume),
-            &admission,
+            GpuJobStart {
+                actor: GpuJobActor::Owner(&rig.owner),
+                offer: &rig.offer,
+                quote: &quote,
+                resume: Some(&resume),
+                admission: &admission,
+            },
             &rig.permits,
             &rig.gpu,
             NOW,
@@ -537,11 +543,13 @@ fn resume_runs_once_from_the_checkpoint_under_a_larger_maximum() {
     );
 
     let again = rig.vault.start_gpu_job(
-        &rig.owner,
-        &rig.offer,
-        &rig.quote(100, Some(job.id), NOW),
-        Some(&resume),
-        &admission,
+        GpuJobStart {
+            actor: GpuJobActor::Owner(&rig.owner),
+            offer: &rig.offer,
+            quote: &rig.quote(100, Some(job.id), NOW),
+            resume: Some(&resume),
+            admission: &admission,
+        },
         &rig.permits,
         &rig.gpu,
         NOW,
@@ -564,11 +572,13 @@ fn resume_runs_once_from_the_checkpoint_under_a_larger_maximum() {
         "the chunk pays its own quote"
     );
     let stale = rig.vault.start_gpu_job(
-        &rig.owner,
-        &rig.offer,
-        &rig.quote(100, Some(job.id), NOW),
-        Some(&resume),
-        &admission,
+        GpuJobStart {
+            actor: GpuJobActor::Owner(&rig.owner),
+            offer: &rig.offer,
+            quote: &rig.quote(100, Some(job.id), NOW),
+            resume: Some(&resume),
+            admission: &admission,
+        },
         &rig.permits,
         &rig.gpu,
         NOW,
@@ -626,11 +636,13 @@ fn a_quote_from_a_changed_offer_is_refused() {
     let (admission, _receipts) = admission(&quote.job, quote.units * 2);
     let start = |offer: &GpuOffer, now_ms: u64| {
         rig.vault.start_gpu_job(
-            &rig.owner,
-            offer,
-            &quote,
-            None,
-            &admission,
+            GpuJobStart {
+                actor: GpuJobActor::Owner(&rig.owner),
+                offer,
+                quote: &quote,
+                resume: None,
+                admission: &admission,
+            },
             &rig.permits,
             &rig.gpu,
             now_ms,
@@ -667,7 +679,13 @@ fn cancel_ends_and_settles_without_the_maximum_conditions() {
 
     let cancelled = rig
         .vault
-        .cancel_gpu_job(&rig.owner, &job.id, &rig.permits, &rig.gpu, NOW)
+        .cancel_gpu_job(
+            GpuJobActor::Owner(&rig.owner),
+            &job.id,
+            &rig.permits,
+            &rig.gpu,
+            NOW,
+        )
         .expect("cancel");
     assert_eq!(
         cancelled.state,
@@ -737,9 +755,13 @@ fn a_create_that_loses_to_a_cancel_terminates_its_resource() {
     let (started, cancelled) = std::thread::scope(|scope| {
         let cancel = scope.spawn(|| {
             gate.wait();
-            let cancelled =
-                rig.vault
-                    .cancel_gpu_job(&rig.owner, &quote.job, &rig.permits, &rig.gpu, NOW);
+            let cancelled = rig.vault.cancel_gpu_job(
+                GpuJobActor::Owner(&rig.owner),
+                &quote.job,
+                &rig.permits,
+                &rig.gpu,
+                NOW,
+            );
             gate.wait();
             cancelled
         });
@@ -783,9 +805,13 @@ fn a_losing_create_is_terminated_until_its_provider_confirms() {
     std::thread::scope(|scope| {
         let cancel = scope.spawn(|| {
             gate.wait();
-            let cancelled =
-                rig.vault
-                    .cancel_gpu_job(&rig.owner, &quote.job, &rig.permits, &rig.gpu, NOW);
+            let cancelled = rig.vault.cancel_gpu_job(
+                GpuJobActor::Owner(&rig.owner),
+                &quote.job,
+                &rig.permits,
+                &rig.gpu,
+                NOW,
+            );
             gate.wait();
             cancelled
         });
@@ -858,9 +884,13 @@ fn a_permit_taken_up_by_a_losing_step_is_settled() {
     let report = std::thread::scope(|scope| {
         let cancel = scope.spawn(|| {
             gate.wait();
-            let cancelled = rig
-                .vault
-                .cancel_gpu_job(&rig.owner, &job.id, &elsewhere, &rig.gpu, NOW);
+            let cancelled = rig.vault.cancel_gpu_job(
+                GpuJobActor::Owner(&rig.owner),
+                &job.id,
+                &elsewhere,
+                &rig.gpu,
+                NOW,
+            );
             gate.wait();
             cancelled
         });
@@ -972,11 +1002,13 @@ fn a_resume_quote_for_another_offer_job_type_or_image_is_refused_before_anything
     for (case, offer, quote) in cases {
         let (admission, _receipts) = admission(&job.id, quote.units);
         let refused = rig.vault.start_gpu_job(
-            &rig.owner,
-            offer,
-            &quote,
-            Some(&resume),
-            &admission,
+            GpuJobStart {
+                actor: GpuJobActor::Owner(&rig.owner),
+                offer,
+                quote: &quote,
+                resume: Some(&resume),
+                admission: &admission,
+            },
             &rig.permits,
             &rig.gpu,
             NOW,
@@ -1003,11 +1035,13 @@ fn a_resume_quote_for_another_offer_job_type_or_image_is_refused_before_anything
     let resumed = rig
         .vault
         .start_gpu_job(
-            &rig.owner,
-            &rig.offer,
-            &quote,
-            Some(&resume),
-            &admission,
+            GpuJobStart {
+                actor: GpuJobActor::Owner(&rig.owner),
+                offer: &rig.offer,
+                quote: &quote,
+                resume: Some(&resume),
+                admission: &admission,
+            },
             &rig.permits,
             &rig.gpu,
             NOW,
@@ -1033,7 +1067,13 @@ fn a_cancel_after_a_restart_is_ended_and_paid_by_the_step_that_takes_the_chunk_u
 
     let cancelled = rig
         .vault
-        .cancel_gpu_job(&rig.owner, &job.id, &rig.permits, &rig.gpu, NOW)
+        .cancel_gpu_job(
+            GpuJobActor::Owner(&rig.owner),
+            &job.id,
+            &rig.permits,
+            &rig.gpu,
+            NOW,
+        )
         .expect("cancel");
     let (second, second_receipts) = admission(&job.id, quote.units);
     rig.step(&job.id, &second);
@@ -1087,7 +1127,7 @@ fn a_resume_between_a_stop_and_its_settlement_leaves_each_chunk_its_own_permit()
     rig.gpu
         .terminates(GpuTermination::Confirmed { billed_secs: 100 });
     let gate = Arc::new(Barrier::new(2));
-    oneiron::test_doors::gpu_job::gate_next_end_commit(job.id, Arc::clone(&gate));
+    oneiron::test_doors::gpu_job::gate_next_end_commit(&rig.permits, job.id, Arc::clone(&gate));
     let (second, second_receipts) = admission(&job.id, quote.units);
     std::thread::scope(|scope| {
         let worker = scope.spawn(|| rig.step(&job.id, &first));
@@ -1099,11 +1139,13 @@ fn a_resume_between_a_stop_and_its_settlement_leaves_each_chunk_its_own_permit()
         let next = rig.quote(100, Some(job.id), NOW);
         rig.vault
             .start_gpu_job(
-                &rig.owner,
-                &rig.offer,
-                &next,
-                Some(&resume),
-                &second,
+                GpuJobStart {
+                    actor: GpuJobActor::Owner(&rig.owner),
+                    offer: &rig.offer,
+                    quote: &next,
+                    resume: Some(&resume),
+                    admission: &second,
+                },
                 &rig.permits,
                 &rig.gpu,
                 NOW,

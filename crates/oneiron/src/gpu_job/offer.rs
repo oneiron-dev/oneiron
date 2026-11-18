@@ -1,5 +1,6 @@
 //! The offer a host posts for one GPU class and the quote a job starts on
 //! (CROSS-ARCH-0023 lifecycle 01, C3).
+use oneiron_contracts::fingerprint::ContentHash;
 use serde::{Deserialize, Serialize};
 
 use crate::EntityId;
@@ -78,7 +79,7 @@ pub struct GpuJobQuote {
     pub list_cost: Option<u64>,
     pub quoted_at_ms: u64,
     pub valid_until_ms: u64,
-    /// blake3 over the offer and every term above, hex.
+    /// The content hash of the offer and every term above, hex.
     pub digest: String,
 }
 
@@ -174,7 +175,7 @@ impl GpuOffer {
             list_cost,
             quoted_at_ms,
             valid_until_ms: quoted_at_ms.saturating_add(GPU_QUOTE_VALID_MS),
-            digest: blake3::hash(&bytes).to_hex().to_string(),
+            digest: ContentHash::of(&bytes).to_hex(),
         })
     }
 }
