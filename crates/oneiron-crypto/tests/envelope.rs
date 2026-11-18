@@ -428,7 +428,7 @@ fn truncated_oversized_and_trailing_input_is_refused() {
                 "{wrap:?} truncated at {cut}"
             );
         }
-        let mut long = bytes.clone();
+        let mut long = bytes;
         long.push(0);
         assert_eq!(
             Envelope::parse(&long),

@@ -1,0 +1,39 @@
+[package]
+name        = "pkix-path-builder"
+description = "RFC 4158 certification path building for pkix-path"
+version               = "0.3.2"  # Additive: build_first_valid_path<V> helper + Error::NoValidPath variant (PKIX-lwr9.4.2). See CHANGELOG.md.
+edition.workspace     = true
+rust-version.workspace = true
+license.workspace     = true
+repository.workspace  = true
+authors.workspace     = true
+keywords    = ["x509", "certificate", "pki", "pkix", "path-building"]
+categories  = ["cryptography", "no-std"]
+
+[features]
+default = []
+std     = ["der/std", "x509-cert/std"]
+# Optional serde derives on the public `Error` type. Mirrors pkix-path's
+# convention: typed inner errors so consumers can programmatically
+# distinguish "no chain built" from "candidate chain rejected by
+# validate_path". Pulled in by `pkix-chain/serde` (PKIX-zkjb.7).
+serde = ["dep:serde"]
+
+[dependencies]
+pkix-path = { workspace = true }
+der        = { workspace = true }
+x509-cert  = { workspace = true }
+serde      = { workspace = true, optional = true }
+
+[dev-dependencies]
+pkix-path = { path = "../pkix-path", features = ["rsa", "p256", "std"] }
+# Used by the `AlwaysRejectVerifier` in `tests/build_first_valid_path.rs` to
+# spell out the `pkix_path::SignatureVerifier` trait's argument types. Both
+# are transitive deps via pkix-path's public API; declared here only so the
+# integration test's `impl SignatureVerifier` block can name the types.
+spki      = { workspace = true }
+signature = { workspace = true }
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]

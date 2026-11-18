@@ -181,7 +181,9 @@ fn admit_flooder(rooted: &Rooted) -> Flooder {
             MachineRole::Owned(MachineOwnership::Yours),
             None,
         )
-        .expect("the owner admits the machine");
+        .expect("the owner admits the machine")
+        .into_standing()
+        .expect("the owner's admission stands");
     assert!(folded.is_mine(None), "the admitted machine is the owner's");
     let admission = folded
         .chains()
@@ -424,7 +426,10 @@ fn an_admitted_machines_flood_waits_under_the_floor_and_the_owner_removes_it() {
         "after {landed} flood rows ({end:?}) the fold passes its memory floor, so every \
          authority gate refuses it (the removal: {removal:?})"
     );
-    let removed = removal.expect("the owner removes the flooding machine");
+    let removed = removal
+        .expect("the owner removes the flooding machine")
+        .into_standing()
+        .expect("the owner's removal stands");
     assert!(
         !removed.is_mine(None),
         "the removed machine is no longer the owner's"

@@ -213,6 +213,8 @@ impl Vault {
         crate::code_view::collect_after_delete(self);
         // An erased mail message's opened attachments go with it (FIX 12559).
         crate::mail_pack::collect_after_delete(self);
+        // An erased AG-UI capture's asset goes with it (L2-15-CAPTURE-SUBJECT).
+        crate::ingest::collect_capture_asset_erases(self);
         #[cfg(unix)]
         if let Err(error) = self.collect_released_result_bodies(256) {
             keep_error(error, "released result bodies");

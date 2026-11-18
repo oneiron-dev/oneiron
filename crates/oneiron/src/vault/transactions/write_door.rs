@@ -95,6 +95,8 @@ impl Vault {
         // write is about to, holding nothing more: no answer exists yet to
         // carry a permit another write waits on.
         self.keep_waiting_scan_checks();
+        // So are the records served to external readers since then (L8-65).
+        self.keep_waiting_read_exposure();
         // One logical write in the single writer's group commit: the closure
         // runs in a transaction of its own, and `Ok` comes back only once the
         // shared commit is durable.
@@ -215,6 +217,11 @@ impl Vault {
         if verb_hook_ask_changed {
             self.notify_verb_hook_ask_changes();
         }
+        // A task-held inquiry answer whose task this write settled or
+        // cancelled leaves memory now that the end is durable (INQUIRE-SHAPE
+        // Q6 = A; FIX INQUIRY-HOLDER-EVICT-ON-TERMINAL-WRITE). It never fails
+        // this write.
+        self.evict_inquiry_answers_after_commit(task_ids.iter().chain(&settled_tasks));
         self.store.notify_task_updates(task_ids);
         // A pad seal can leave its text frontier unchanged. Wake live NOTE
         // subscribers only now that the seal is durable (FIX 12110). A fork
