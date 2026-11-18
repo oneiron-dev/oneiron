@@ -499,6 +499,8 @@ pub use key_custody::custody_container_path;
 #[cfg(oneiron_test_support)]
 pub(crate) use key_custody::custody_entry_reads_for_test;
 #[cfg(oneiron_test_support)]
+pub(crate) use key_custody::custody_policy_digest_for_test;
+#[cfg(oneiron_test_support)]
 pub(crate) use key_custody::drain_ack_digest_for_test;
 pub use key_custody::protocol as custody_protocol;
 pub use key_custody::sync_dir;
