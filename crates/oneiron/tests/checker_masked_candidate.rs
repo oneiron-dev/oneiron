@@ -10,6 +10,9 @@
 //! under a facet the vault default has since left parks at its birth facet.
 //! (4) RAW-CLAIM-PUT-MASK-REPLAY-MISMATCH: a held raw CLAIM put the mask
 //! rewrites at apply parks with a review of the stored body.
+//! (5)-(7) PREFLIGHT-SAME-BATCH-BIRTH-FACET: a held re-put of a claim an
+//! earlier op of its batch births parks at that birth's facet, also when the
+//! mask rewrites the birth's facet selector.
 //!
 //! The gate fixtures go through `oneiron::test_doors::live_run_claim_put`;
 //! the stored claim's consent binding through
@@ -653,6 +656,102 @@ fn a_held_reput_of_a_raw_claim_put_earlier_in_the_batch_parks_at_its_facet() -> 
     assert_eq!(
         stored.scope_facet, facet,
         "the re-put keeps the facet the raw put in the same batch stamped"
+    );
+    Ok(())
+}
+
+/// `body`'s scope with `key` set to `value` beside its own entries.
+fn scope_with(body: &ClaimBody, key: &str, value: &str) -> Value {
+    let mut entries = match body.scope.clone() {
+        Some(Value::Map(entries)) => entries,
+        _ => Vec::new(),
+    };
+    entries.push((Value::from(key), Value::from(value)));
+    Value::Map(entries)
+}
+
+/// The text `stored` holds in its scope under `key`.
+fn scope_text(stored: &ClaimBody, key: &str) -> String {
+    let Some(Value::Map(entries)) = stored.scope.as_ref() else {
+        panic!("the stored claim keeps its scope map");
+    };
+    entries
+        .iter()
+        .find(|(entry, _)| entry.as_str() == Some(key))
+        .and_then(|(_, value)| value.as_str())
+        .unwrap_or_else(|| panic!("the stored scope holds a text under {key}"))
+        .to_owned()
+}
+
+/// Puts `text` in custody as a value it holds: a candidate that lands with no
+/// review carries it under a credential-named scope field, which the mask
+/// lifts whole.
+fn custody_holds(vault: &Vault, text: &str) -> Result<()> {
+    let id = test_id(0x6e);
+    let mut body = checker_body_with_value(vault, ClaimApprovalStatus::Auto, PLAIN_VALUE)?;
+    body.scope = Some(scope_with(&body, "api_key", text));
+    let envelope = unmarked_auto_envelope(vault, &body)?;
+    vault
+        .batch()
+        .claim_candidate(
+            &id,
+            candidate_of(&body),
+            &envelope,
+            TimeRange { start: 1, end: 1 },
+            1,
+        )
+        .commit()?;
+    let (stored, _) = stored_claim_with_consent_diff(vault, &id)?;
+    assert_ne!(
+        scope_text(&stored, "api_key"),
+        text,
+        "the mask lifts the credential field into custody"
+    );
+    Ok(())
+}
+
+/// (7) A held re-put of a claim that an earlier candidate of the same batch
+/// births through a facet selector the mask rewrites parks at that facet:
+/// the mask never moves the facet a candidate names, so apply stores the
+/// birth where the preflight's walk noted it.
+#[test]
+fn a_held_reput_of_a_claim_born_through_a_masked_facet_selector_parks_at_that_facet() -> Result<()>
+{
+    let (_tmp, vault) = doors::checker_vault(Some(CHECKER_REF))?;
+    let id = test_id(0x6c);
+    let facet = facet_beside_the_default(&vault, 0x6d)?;
+    custody_holds(&vault, &facet.to_hex())?;
+    let mut born = checker_body_with_value(&vault, ClaimApprovalStatus::Auto, PLAIN_VALUE)?;
+    born.scope = Some(scope_with(&born, "facet_ref", &facet.to_hex()));
+    let born_envelope = unmarked_auto_envelope(&vault, &born)?;
+    let reput = checker_body_with_value(&vault, ClaimApprovalStatus::Proposed, REPUT_VALUE)?;
+    let reput_envelope = live_run_put_envelope(&vault, &reput, ClaimApprovalStatus::Proposed)?;
+    let committed = vault
+        .batch()
+        .claim_candidate(
+            &id,
+            candidate_of(&born),
+            &born_envelope,
+            TimeRange { start: 1, end: 1 },
+            1,
+        )
+        .claim_candidate(
+            &id,
+            candidate_of(&reput),
+            &reput_envelope,
+            TimeRange { start: 2, end: 2 },
+            2,
+        )
+        .commit();
+    assert!(
+        committed.is_ok(),
+        "FAILBEFORE PREFLIGHT-SAME-BATCH-BIRTH-FACET: the held re-put of a birth whose facet selector the mask rewrote failed its replay match instead of parking: {committed:?}"
+    );
+    let stored = parked_review_bound_to_stored_body(&vault, &id, CHECKER_UNAVAILABLE)?;
+    assert_eq!(stored.value, Value::from(REPUT_VALUE));
+    assert_eq!(
+        stored.scope_facet, facet,
+        "the birth is stored at the facet its selector named before the mask"
     );
     Ok(())
 }
