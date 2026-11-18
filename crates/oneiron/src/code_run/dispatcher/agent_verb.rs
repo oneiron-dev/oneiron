@@ -13,6 +13,7 @@ use self::connector_wait::connector_call_answer;
 #[cfg(oneiron_test_support)]
 pub(crate) use self::consent::consent_request_digest_for_test;
 use crate::EntityId;
+use crate::code_run::CompareKnown;
 use crate::code_run::payload::{decode_self_dispatch_outcome, self_call_request_value};
 use crate::code_run::replay::{CodeRunBridgeCall, CodeRunDeterminism, CodeRunReplayRecord};
 use crate::code_run::storage::ExecutorStorage;
@@ -373,9 +374,11 @@ impl HostSelfDispatcher<'_> {
         // that request's identity alone, and answers with what it kept
         // (FIX 6534): `response_erased` for an erased answer.
         let recorded = if row.request_erased() {
-            row.request_identity_is(&self_call_request_value(&SelfCall::AgentVerb(
-                call.clone(),
-            ))?)?
+            let base_known = || self.base_known_values();
+            row.request_identity_is(
+                &self_call_request_value(&SelfCall::AgentVerb(call.clone()))?,
+                &CompareKnown::new(Some(&base_known)),
+            )?
         } else {
             records_call(row, &call)
         };
