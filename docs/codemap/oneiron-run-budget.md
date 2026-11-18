@@ -13,5 +13,6 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 |---|---|---|---|---|---|
 | `src/lib.rs` | src | s | 1 mod | — | Run budget declarations and paid-job maximum state of the oneiron engine |
 | `src/run_budget/declaration.rs` | src | s | 4 struct · 2 enum · 23 fn | BudgetLine, DeclarationEditor, DeclarationError, DeclaredTeachers, LeaseUnit, RunDeclaration | The run declaration: the teachers a run pinned at its start, the aliases frozen with them, the paid… |
-| `src/run_budget/job_maximum.rs` | src | s | 7 struct · 4 enum · 9 fn | AddFundsNotice, CheckpointRef, DeclaredMaximum, JobMaximum, JobSignal, JobStartRefused, MaximumShown, MaximumStop +3 | The stop at a paid job's declared maximum (CROSS-ARCH-0023 C2) |
+| `src/run_budget/job_maximum.rs` | src | m | 7 struct · 4 enum · 11 fn | AddFundsNotice, CheckpointRef, DeclaredMaximum, JobMaximum, JobSignal, JobStartRefused, MaximumShown, MaximumStop +3 | The stop at a paid job's declared maximum (CROSS-ARCH-0023 C2) |
 | `src/run_budget/mod.rs` | src | s | 2 re-export | — | Run budget declarations and paid-job maximum state |
+| `tests/job_maximum_signals.rs` | test | s | — | — | A paid job's checkpoint signals at 50, 80 and 95 percent of its maximum (CROSS-ARCH-0023 lifecycle 04), and… |

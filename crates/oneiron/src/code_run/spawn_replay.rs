@@ -66,21 +66,22 @@ impl ReplayRequestMatch {
 /// How a replay's compare reads the values base custody holds now (FIX
 /// REPLAY-COMPARE-KNOWN-MATCHER). The side-row wall gives a value custody
 /// holds its record's handle in a row whose scope decides with custody, a
-/// value no shape rule places too, so the call made again is planned with
-/// these values before it is compared with that row.
+/// value no shape rule places too, so the call made again and that row are
+/// both planned with these values before they are compared: each such value
+/// meets only its own record's handle (FIX REPLAY-COMPARE-KNOWN-OTHER-CALLERS).
 pub(crate) type BaseKnownRead<'a> = &'a dyn Fn() -> Result<Option<Arc<KnownValues>>>;
 
 /// One compare's base known values: read through its [`BaseKnownRead`] on
 /// the first ask, and only when the compare without them missed, then kept
 /// for the rest of that compare. A compare with no read in reach (a record
 /// read in memory) has none.
-pub(in crate::code_run) struct CompareKnown<'a> {
+pub(crate) struct CompareKnown<'a> {
     read: Option<BaseKnownRead<'a>>,
     held: OnceCell<Option<Arc<KnownValues>>>,
 }
 
 impl<'a> CompareKnown<'a> {
-    pub(in crate::code_run) const fn new(read: Option<BaseKnownRead<'a>>) -> Self {
+    pub(crate) const fn new(read: Option<BaseKnownRead<'a>>) -> Self {
         Self {
             read,
             held: OnceCell::new(),
@@ -92,7 +93,7 @@ impl<'a> CompareKnown<'a> {
     /// # Errors
     ///
     /// The read's own.
-    pub(in crate::code_run) fn get(&self) -> Result<Option<Arc<KnownValues>>> {
+    pub(crate) fn get(&self) -> Result<Option<Arc<KnownValues>>> {
         if let Some(known) = self.held.get() {
             return Ok(known.clone());
         }

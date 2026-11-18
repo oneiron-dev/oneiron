@@ -25,6 +25,7 @@ pub mod ask_answer_proof;
 pub mod ask_intent_pins;
 pub mod authority_adopted_fold;
 pub mod authority_ancestor_index;
+pub mod authority_fold_encoding;
 pub mod authority_sequence_floor;
 pub mod authority_signed_branch;
 pub mod authority_stored_damage;
@@ -155,6 +156,7 @@ pub mod frontier_walk;
 #[cfg(feature = "sync")]
 pub mod full_copy_mark;
 pub mod gate_receipt_rows;
+pub mod gpu_job;
 pub mod grant_roles;
 pub mod graph_ask_centre;
 #[cfg(feature = "sync")]

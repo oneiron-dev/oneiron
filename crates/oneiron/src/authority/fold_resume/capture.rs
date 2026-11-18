@@ -291,7 +291,9 @@ impl Once {
             head,
             frontier,
             merged,
-            revocations: final_merged.actor_revocation_hashes.clone(),
+            revocations: crate::authority::fold_state::to_btree_set_map(
+                &final_merged.actor_revocation_hashes,
+            ),
             settlement: Arc::new(Settlement {
                 revoke_facts,
                 retired_keys,
