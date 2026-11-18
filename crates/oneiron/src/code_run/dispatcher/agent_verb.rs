@@ -58,11 +58,14 @@ pub(crate) fn resumed_write_meets_recorded_row(
 /// the step's write made again after a resume, meets the stored row by the
 /// compare `kept_write_answer` makes and by the one a step's close makes
 /// (`refuse_a_step_that_dropped_a_write`), and the input text the row kept.
+/// `between` runs once the row reads back, before the write is made again:
+/// a change custody takes in that time.
 #[cfg(oneiron_test_support)]
 pub(crate) fn resumed_write_meets_stored_receipt(
     vault: &crate::Vault,
     first: &SelfAgentVerbCall,
     again: &SelfAgentVerbCall,
+    between: impl FnOnce(&crate::Vault) -> Result<()>,
 ) -> Result<(bool, bool, String)> {
     let mark = never_ran_mark(VERB_HOOK_STOPPED);
     let run_id = EntityId::now();
@@ -82,6 +85,7 @@ pub(crate) fn resumed_write_meets_stored_receipt(
         .first()
         .ok_or(Error::InvariantViolation("the stored receipt kept no row"))?;
     let kept_input = recorded_call(row).map_or_else(String::new, |(_, input)| input.to_owned());
+    between(vault)?;
     let made = CodeRunBridgeCall::record(0, &SelfCall::AgentVerb(again.clone()), &mark, 0, 0)?;
     let vault_known = || vault.known_values_now();
     let known = CompareKnown::new(Some(&vault_known));
