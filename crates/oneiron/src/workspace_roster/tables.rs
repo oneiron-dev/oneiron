@@ -185,6 +185,10 @@ crate::side_table::side_tables! {
     WORKSPACE_ROSTER_MEMBER_INTENT: VaultMeta b"workspace_roster:member_intent:v1:" Raw
         [restore: content] [family: unclassified] [tier: canonical]
         => crate::store::actor_scrubs::erase_member_intent_actor_in_txn;
+    /// Idempotency journal of member offboardings: the request digest and completion time of each
+    /// completed offboarding. Key: string (caller-supplied offboarding_id).
+    WORKSPACE_OFFBOARDING: VaultMeta b"workspace_roster:offboarding:v1:" Raw
+        [restore: content] [family: unclassified] [tier: canonical];
     /// Idempotency journal tracking one member-onboarding request's progress through the pinned step
     /// ladder. Key: string (caller-supplied onboarding_id).
     WORKSPACE_ONBOARDING: VaultMeta b"workspace_roster:onboarding:v1:" Raw

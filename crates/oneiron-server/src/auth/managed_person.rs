@@ -84,6 +84,7 @@ pub(crate) const MANAGED_PERSON_DOORS: [&str; 44] = [
     "vault.trusted_contacts.concern.propose",
     "vault.workspace.establish",
     "vault.workspace.members.onboard",
+    "vault.workspace.members.offboard",
 ];
 
 /// The root every member door's route sits under.

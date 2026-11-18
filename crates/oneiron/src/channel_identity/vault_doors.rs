@@ -241,14 +241,29 @@ impl Vault {
         state_changed_at: u64,
     ) -> Result<ChannelIdentity> {
         let mut wtxn = self.store.env.write_txn()?;
+        let next = self.step_channel_identity_in_writer(&mut wtxn, id, step, state_changed_at)?;
+        wtxn.commit()?;
+        Ok(next)
+    }
+
+    /// [`Self::step_channel_identity`] in the caller's writer: a workspace
+    /// offboarding retires its leaver's delegated mailbox (`Release`, then
+    /// `Close`) in the writer that ends the seat (INB-07, ruling B1).
+    pub(crate) fn step_channel_identity_in_writer(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        id: &EntityId,
+        step: ChannelIdentityStep,
+        state_changed_at: u64,
+    ) -> Result<ChannelIdentity> {
         let current = self
-            .get_channel_identity_in_txn(&wtxn, id)?
+            .get_channel_identity_in_txn(wtxn, id)?
             .ok_or(Error::EntityNotFound)?;
         let next =
-            step_channel_identity_in_txn(&self.store, &wtxn, &current, step, state_changed_at)?;
+            step_channel_identity_in_txn(&self.store, wtxn, &current, step, state_changed_at)?;
         admit_channel_identity_transition_in_txn(
             &self.store,
-            &wtxn,
+            wtxn,
             id,
             IdentityTransition::Step {
                 prior: &current,
@@ -256,8 +271,7 @@ impl Vault {
             },
         )?;
         let data = encode_channel_identity_body(&next)?;
-        self.apply_channel_identity_body(&mut wtxn, id, state_changed_at, data)?;
-        wtxn.commit()?;
+        self.apply_channel_identity_body(wtxn, id, state_changed_at, data)?;
         Ok(next)
     }
 

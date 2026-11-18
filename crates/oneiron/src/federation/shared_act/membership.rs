@@ -755,6 +755,29 @@ impl Vault {
             &str,
         ) -> Result<(Effect, Option<UnsignedExecution>)>,
     ) -> Result<SharedActExecutionReceipt> {
+        self.move_shared_member_guarded(actor, vault_id, power, effect, ask, |_| Ok(()), apply)
+    }
+
+    /// [`Self::move_shared_member_for_ask`] with `guard`, the composing
+    /// door's own authority, judged in this writer right after the named
+    /// power and before the check-in: a guard that refuses commits nothing,
+    /// not even a pending check-in.
+    #[allow(clippy::too_many_arguments)]
+    fn move_shared_member_guarded(
+        &self,
+        actor: &AuthenticatedOwner,
+        vault_id: u64,
+        power: Option<OrgAdminPower>,
+        effect: Option<MemberEffect>,
+        ask: Option<&str>,
+        guard: impl FnOnce(&heed::RoTxn<'_>) -> Result<()>,
+        apply: impl FnOnce(
+            &mut heed::RwTxn<'_>,
+            EntityId,
+            u64,
+            &str,
+        ) -> Result<(Effect, Option<UnsignedExecution>)>,
+    ) -> Result<SharedActExecutionReceipt> {
         let mut txn = self.store.env.write_txn()?;
         // Person tier; the named power is checked against the live roster.
         let actor_id = actor.revalidate_person_in_txn(self, &txn)?;
@@ -767,6 +790,7 @@ impl Vault {
                 &SharedVaultWrite::Admin(power),
             )?;
         }
+        guard(&txn)?;
         let now = crate::ports::recorded_at_in_txn(&self.store, &mut txn)?;
         let holders = self.live_act_holders(&txn, vault_id, now)?;
         // An ask stands while its Steward does: judged in this writer,
@@ -1081,41 +1105,113 @@ impl Vault {
             }),
             ask,
             |txn, _, now, receipt| {
-                let from = self
-                    .member_role_in_txn(txn, vault_id, member)?
-                    .ok_or_else(invalid)?;
-                if from == Role::Owner {
-                    return Err(invalid());
-                }
-                let own_issuer = self.executing_host_issuer_in_txn(txn, own_issuer)?;
-                let slips = slips.or(own_issuer.as_ref());
-                let MemberMove {
-                    grants,
-                    revoked_slips,
-                    detach,
-                    unsigned_withdrawals,
-                    ..
-                } = self
-                    .move_member_in_txn(txn, vault_id, member, from, None, slips, receipt, now)?;
-                let effect = Effect {
-                    change: SharedVaultChange::MemberRemoved {
-                        member: member.to_hex(),
-                    },
-                    grants,
-                    revoked_slips,
-                    detach,
-                    notify: BTreeSet::from([member]),
-                };
-                Ok((
-                    effect,
-                    member_execution(
-                        MembershipExecutionCause::RemoveMember,
-                        member,
-                        unsigned_withdrawals,
-                    ),
-                ))
+                self.remove_member_in_writer(txn, vault_id, member, slips, own_issuer, receipt, now)
             },
         )
+    }
+    /// The seat end of a workspace offboarding (INB-07; Engine RULING
+    /// OFFBOARD-SEAT-AUTHORITY = A): `member`'s seat in `vault_id` ends
+    /// exactly as [`Self::remove_shared_member_with_check_in`] ends it, under
+    /// its named power, its check-in, its `MemberRemoved` receipt, notice,
+    /// slips and Connect detach, and `settle` runs in that same writer right
+    /// after the seat ended, as the remover (its id, the writer's recorded
+    /// time and the live host issuer that revoked the member's slips, when
+    /// this install holds one), so the offboard's workspace half commits with
+    /// the seat or not at all. `guard`, the offboard's own authority, is
+    /// judged in the writer before the check-in, so a caller it refuses
+    /// commits nothing, not even a pending check-in. An act that waits on a
+    /// check-in applies neither.
+    ///
+    /// # Errors
+    /// As [`Self::remove_shared_member_with_check_in`]; `guard`'s and
+    /// `settle`'s errors.
+    pub(crate) fn remove_shared_member_then<T>(
+        &self,
+        admin: &AuthenticatedOwner,
+        vault_id: u64,
+        member: EntityId,
+        check_in_ref: Option<EntityId>,
+        guard: impl FnOnce(&heed::RoTxn<'_>) -> Result<()>,
+        settle: impl FnOnce(&mut heed::RwTxn<'_>, EntityId, u64, Option<&HostSlipIssuer>) -> Result<T>,
+    ) -> Result<(SharedActExecutionReceipt, T)> {
+        let own_issuer = self.membership_issuer(None);
+        let mut settled = None;
+        let receipt = self.move_shared_member_guarded(
+            admin,
+            vault_id,
+            Some(OrgAdminPower::RemoveMember),
+            Some(MemberEffect {
+                change: MemberChange::Remove { member },
+                check_in_ref,
+            }),
+            None,
+            guard,
+            |txn, remover, now, receipt| {
+                let issuer = self.executing_host_issuer_in_txn(txn, own_issuer)?;
+                let removed = self.remove_member_in_writer(
+                    txn,
+                    vault_id,
+                    member,
+                    issuer.as_ref(),
+                    None,
+                    receipt,
+                    now,
+                )?;
+                settled = Some(settle(txn, remover, now, issuer.as_ref())?);
+                Ok(removed)
+            },
+        )?;
+        let settled = settled.ok_or(Error::InvariantViolation(
+            "a member removal committed without its settle",
+        ))?;
+        Ok((receipt, settled))
+    }
+    /// The body of a member removal in the removal door's writer: `member`,
+    /// who is not an Owner, leaves `vault_id`, and the effect names the
+    /// grants, slips and detach the move made.
+    #[allow(clippy::too_many_arguments)]
+    fn remove_member_in_writer(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        vault_id: u64,
+        member: EntityId,
+        slips: Option<&HostSlipIssuer>,
+        own_issuer: Option<HostSlipIssuer>,
+        receipt: &str,
+        now: u64,
+    ) -> Result<(Effect, Option<UnsignedExecution>)> {
+        let from = self
+            .member_role_in_txn(txn, vault_id, member)?
+            .ok_or_else(invalid)?;
+        if from == Role::Owner {
+            return Err(invalid());
+        }
+        let own_issuer = self.executing_host_issuer_in_txn(txn, own_issuer)?;
+        let slips = slips.or(own_issuer.as_ref());
+        let MemberMove {
+            grants,
+            revoked_slips,
+            detach,
+            unsigned_withdrawals,
+            ..
+        } = self.move_member_in_txn(txn, vault_id, member, from, None, slips, receipt, now)?;
+        let effect = Effect {
+            change: SharedVaultChange::MemberRemoved {
+                member: member.to_hex(),
+            },
+            grants,
+            revoked_slips,
+            detach,
+            notify: BTreeSet::from([member]),
+        };
+        Ok((
+            effect,
+            member_execution(
+                MembershipExecutionCause::RemoveMember,
+                member,
+                unsigned_withdrawals,
+            ),
+        ))
     }
     /// Proof-of-control recovery (ARCH-0043): a shared vault with no live
     /// Owner left takes `claimant` as its Owner, on `authorization` (FIX
@@ -1265,7 +1361,7 @@ impl Vault {
     /// with `slips`. With no `slips`, this install's key is loaded too, so
     /// the writer can sign the record of a change no issuer signs (FIX
     /// 12335).
-    pub(super) fn membership_issuer(
+    pub(crate) fn membership_issuer(
         &self,
         slips: Option<&HostSlipIssuer>,
     ) -> Option<HostSlipIssuer> {

@@ -118,6 +118,7 @@ pub(super) fn write_journal(
         intent_digest: record.intent_digest,
         step: record.step,
         completed_at: record.completed_at,
+        companion_preexisting: false,
     };
     ONBOARDING.encode_value(&row)?;
     // A brought companion is first bound at Started, where her proof is
@@ -130,7 +131,8 @@ pub(super) fn write_journal(
     };
     with_workspace_authority(vault, intent.workspace.workspace_vault_id, writer, |wtxn| {
         require_mailbox_revision(vault, revision)?;
-        if let Some(prior) = ONBOARDING.get(&vault.store, wtxn, &intent.onboarding_id)? {
+        let prior = ONBOARDING.get(&vault.store, wtxn, &intent.onboarding_id)?;
+        if let Some(prior) = &prior {
             if prior.intent_digest != record.intent_digest {
                 return Err(invalid(
                     "onboarding_id was already used with different inputs",
@@ -140,12 +142,48 @@ pub(super) fn write_journal(
                 return Ok(());
             }
         }
+        // Read at the first write, before this onboarding's companion step
+        // can mint anything, and carried by every later one.
+        let companion_preexisting = match &prior {
+            Some(prior) => prior.companion_preexisting,
+            None => work_companion_rows_stand_in_txn(vault, wtxn, intent)?,
+        };
         if record.step == MemberOnboardingStep::Started {
             reserve_member_in_txn(vault, wtxn, intent, &record.intent_digest, authorized_at)?;
         }
-        ONBOARDING.put(&vault.store, wtxn, &intent.onboarding_id, &row)?;
+        ONBOARDING.put(
+            &vault.store,
+            wtxn,
+            &intent.onboarding_id,
+            &OnboardingJournalRow {
+                companion_preexisting,
+                ..row
+            },
+        )?;
         Ok(())
     })
+}
+
+/// Whether `intent` asks for a work companion whose PERSON or agent
+/// definition already stands in the vault: one this onboarding did not bear,
+/// so its roster row records no birth here and an offboarding detaches her,
+/// never switches her off.
+fn work_companion_rows_stand_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    intent: &MemberOnboardingIntent,
+) -> Result<bool> {
+    let Some(birth) = intent.companion.birth() else {
+        return Ok(false);
+    };
+    Ok(vault
+        .store
+        .port_entity_record(txn, &birth.person_ref)?
+        .is_some()
+        || vault
+            .store
+            .port_entity_record(txn, &birth.actor_ref)?
+            .is_some())
 }
 
 /// `workspace_ref` then a NUL separator then the raw member-person id — the
@@ -305,7 +343,7 @@ pub(super) fn decode_preset_row(bytes: &[u8]) -> Result<PresetRow> {
 }
 
 pub(super) fn roster_member_value(row: &RosterMemberRow) -> Value {
-    Value::Map(vec![
+    let mut entries = vec![
         (
             Value::from("schema_version"),
             Value::from(WORKSPACE_ROSTER_SCHEMA_VERSION),
@@ -331,7 +369,39 @@ pub(super) fn roster_member_value(row: &RosterMemberRow) -> Value {
             optional_ref(row.companion_facet_ref),
         ),
         (Value::from("identity_ref"), optional_ref(row.identity_ref)),
-    ])
+    ];
+    match row.companion_origin {
+        CompanionOrigin::Born { profile_grant_ref } => {
+            entries.push((Value::from("companion_origin"), Value::from("born")));
+            entries.push((
+                Value::from("born_profile_grant_ref"),
+                Value::from(profile_grant_ref.to_hex()),
+            ));
+        }
+        CompanionOrigin::Brought => {
+            entries.push((Value::from("companion_origin"), Value::from("brought")));
+        }
+        CompanionOrigin::Unrecorded => {}
+    }
+    Value::Map(entries)
+}
+
+/// The companion origin a roster row records; a row written before
+/// onboarding recorded one has no `companion_origin` key and reads
+/// [`CompanionOrigin::Unrecorded`] (STORED-CHANGE keep path).
+fn decode_companion_origin(entries: &[(Value, Value)]) -> Result<CompanionOrigin> {
+    let origin = entries
+        .iter()
+        .find(|(key, _)| key.as_str() == Some("companion_origin"))
+        .map(|(_, value)| value);
+    match origin.map(Value::as_str) {
+        None => Ok(CompanionOrigin::Unrecorded),
+        Some(Some("brought")) => Ok(CompanionOrigin::Brought),
+        Some(Some("born")) => Ok(CompanionOrigin::Born {
+            profile_grant_ref: required_ref(entries, "born_profile_grant_ref")?,
+        }),
+        Some(_) => Err(invalid("roster member companion_origin is unrecognized")),
+    }
 }
 
 pub(super) fn decode_roster_member_row(bytes: &[u8]) -> Result<RosterMemberRow> {
@@ -346,6 +416,7 @@ pub(super) fn decode_roster_member_row(bytes: &[u8]) -> Result<RosterMemberRow> 
         companion_actor_ref: optional_entity(&entries, "companion_actor_ref")?,
         companion_facet_ref: optional_entity(&entries, "companion_facet_ref")?,
         identity_ref: optional_entity(&entries, "identity_ref")?,
+        companion_origin: decode_companion_origin(&entries)?,
     })
 }
 
