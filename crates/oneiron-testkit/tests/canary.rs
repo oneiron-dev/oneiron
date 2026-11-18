@@ -186,16 +186,16 @@ fn the_detector_names_each_canary_that_reaches_a_reader_outside_its_audience() {
 
 /// The turn wake's model calls over the canary vault, as `(prompt digest,
 /// reply)` (see tests/dreamer.rs for how a table is filled). The turn wake
-/// reads the newest owner turn, the relationship message, with the
-/// private-flag claim listed beside it, and its reply proposes no claim. A
-/// claim extracted from that message inherits its relationship set
-/// (dreamer_consolidation/executor/extraction.rs), and a relationship-stamped
-/// claim lands only over a live RELATIONSHIP row, which no public door mints
-/// (the pending class `claim/relationship`; the fixture mints the space's row
-/// through `Vault::put_entity`, since a MESSAGE's rel must name one). The
-/// rescan of a row the pass derived waits for that door.
+/// reads the newest owner turn, the relationship message, with the owner's
+/// three claims (public, private and private-flag) listed beside it, and its
+/// reply proposes no claim. A claim extracted from that message inherits its
+/// relationship set (dreamer_consolidation/executor/extraction.rs), and a
+/// relationship-stamped claim lands only over a live RELATIONSHIP row, which
+/// no public door mints (the pending class `claim/relationship`; the fixture
+/// mints the space's row through `Vault::put_entity`, since a MESSAGE's rel
+/// must name one). The rescan of a row the pass derived waits for that door.
 const DREAMER_TURN_WAKE_CALLS: &[(&str, &str)] = &[(
-    "04e5a959f9218289a8ba88ec259eec11a090a694637349ccfcb1103f73d527c2",
+    "e0f6de2c4438d6edd527c59320a5704a8c59f24d613b4478d7059f019aeca343",
     r#"{"candidates":[],"persons":[]}"#,
 )];
 

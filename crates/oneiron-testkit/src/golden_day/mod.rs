@@ -80,7 +80,7 @@ pub const TURN_WAKE_CALLS: &[(&str, &str)] = &[
         r#"{"readings":[{"span":1,"kind":"name","novel":true,"confidence":90,"entity":null},{"span":2,"kind":"name","novel":true,"confidence":90,"entity":null}]}"#,
     ),
     (
-        "78d9143fe540c8d87f9f1c3807d66bd8622baf605aaa7e445e123a51655ea334",
+        "fd552e2249e1dc35060cbe0e05fb6a177cc1603fe5cf9d108e5b310003db8796",
         r#"{"candidates":[{"subject":"P1","predicate":"residence.city","value":"Lisbon","confidence":0.9,"evidence_refs":[{"source":"T1","quote":"I moved to Lisbon last March"}]}],"persons":[]}"#,
     ),
 ];
