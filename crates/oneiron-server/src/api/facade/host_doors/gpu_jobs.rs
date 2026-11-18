@@ -18,7 +18,7 @@ use oneiron::consent::AuthenticatedOwner;
 use oneiron::gpu_job::{
     GpuJobActor, GpuJobAgent, GpuJobAllowRequest, GpuJobAllowanceView, GpuJobConnector,
     GpuJobError, GpuJobList, GpuJobListRequest, GpuJobQuote, GpuJobQuoteRequest, GpuJobQuoteTerms,
-    GpuJobRef, GpuJobStartRequest, GpuJobStatus, GpuJobVerb,
+    GpuJobRef, GpuJobStart, GpuJobStartRequest, GpuJobStatus, GpuJobVerb,
 };
 use oneiron::llm::run_admission::ResumeRefused;
 use oneiron::memory::{
@@ -200,11 +200,13 @@ pub(crate) async fn vault_gpu_jobs_start(
         };
         let admission = job_admission(server, &offer.offer, &quote);
         let job = server.vault.start_gpu_job(
-            caller.actor(),
-            &offer.offer,
-            &quote,
-            resume.as_ref(),
-            &admission,
+            GpuJobStart {
+                actor: caller.actor(),
+                offer: &offer.offer,
+                quote: &quote,
+                resume: resume.as_ref(),
+                admission: &admission,
+            },
             server.gpu_jobs.permits(),
             connector.as_ref(),
             now_ms(),
