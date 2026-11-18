@@ -113,6 +113,15 @@ pub trait CheckpointRootSigner: Send + Sync {
     /// [`ASK_WORD_PROOF_DOMAIN`], so it signs no checkpoint statement and no
     /// authority transcript.
     fn sign_ask_word_proof(&self, transcript: &[u8]) -> Result<Vec<u8>>;
+    /// Whether it signs as a host's own root, whose roster row carries the
+    /// host-root attestation (`HostSlipIssuer::root_device`): a self-host
+    /// server's root, or a managed host's. Under the Hosted posture an
+    /// install never offers such a key as the owner's proof
+    /// (`AuthorityFold::offers_owner_proof`). An owner's enrolled device key
+    /// is none.
+    fn is_host_root(&self) -> bool {
+        false
+    }
 }
 
 impl CheckpointRootSigner for HostSlipIssuer {
@@ -136,6 +145,10 @@ impl CheckpointRootSigner for HostSlipIssuer {
             return Err(super::invalid_authority());
         }
         Ok(self.sign_slip(transcript))
+    }
+
+    fn is_host_root(&self) -> bool {
+        true
     }
 }
 
