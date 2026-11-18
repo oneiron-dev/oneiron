@@ -11,6 +11,7 @@ use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, Result};
 use crate::{EntityId, TimeRange, Vault};
 
+use super::machine_identity::SERVING_INSTALL_ROLE;
 use super::slip_vault::{next_entry, require_host};
 use super::*;
 
@@ -476,25 +477,31 @@ impl Vault {
     /// `next` is stamped for the cloud and answers for nobody
     /// ([`Self::host_root_may_sign_role`]): an owner's answer the old root
     /// signed (`Owned`, as a self-host root does before its vault is moved
-    /// or reopened as hosted) is not signed again, and goes stale with the
-    /// old root until the owner answers again through a machine that
-    /// carries his act. Re-signing it would leave the fold to refuse the
-    /// revision and roll the whole move back.
+    /// or reopened as hosted) is not signed again, which the fold would
+    /// refuse, rolling the whole move back. Another machine's such answer
+    /// goes stale with the old root until the owner answers again through a
+    /// machine that carries his act. This install's own is carried on as
+    /// [`SERVING_INSTALL_ROLE`], the role a hosted serving install takes,
+    /// so the vault keeps the carrier of those answers: stale, its profile
+    /// would refuse every start's bootstrap and every owner act here (review
+    /// of #9474, round 2).
     pub(super) fn carry_machine_standing_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         before: &AuthorityFold,
         next: &HostSlipIssuer,
     ) -> Result<usize> {
+        let serving = crate::identity::read_machine_id_in_txn(self, txn)?;
         let mut carried = 0;
         for machine in before
             .machines
             .iter()
-            .filter(|(_, folded)| {
+            .filter(|(machine, folded)| {
                 folded.roster.as_ref().is_some_and(|roster| {
                     roster.is_live()
                         && roster.profile.act.is_none()
-                        && self.host_root_may_sign_role(roster.profile.role)
+                        && (self.host_root_may_sign_role(roster.profile.role)
+                            || serving == Some(**machine))
                 })
             })
             .map(|(machine, _)| *machine)
@@ -504,12 +511,18 @@ impl Vault {
                 .machine(machine)
                 .and_then(|folded| folded.roster.as_ref())
                 .ok_or_else(invalid_authority)?;
+            let role = if self.host_root_may_sign_role(current.profile.role) {
+                current.profile.role
+            } else {
+                SERVING_INSTALL_ROLE
+            };
             let profile = MachineProfile {
                 revision: current
                     .profile
                     .revision
                     .checked_add(1)
                     .ok_or_else(invalid_authority)?,
+                role,
                 ..current.profile.clone()
             };
             self.append_machine_profile_in_txn(txn, next, &fold, profile)?;

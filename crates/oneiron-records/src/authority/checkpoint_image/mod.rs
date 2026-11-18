@@ -84,7 +84,8 @@ use serde::Serialize;
 /// 47: host custody comes from the cloud stamp alone (`ROLE_CLOUD` or `CloudCustodial` on the key
 /// or a key that admitted it); the host-root attestation marks no key, so a self-host root keeps
 /// proving for the owner when its log is folded as hosted (row
-/// HOSTED-REOPEN-REJUDGES-SELF-HOST-ROOT).
+/// HOSTED-REOPEN-REJUDGES-SELF-HOST-ROOT); a custodial carry takes an act-free owner's answer
+/// whose signer the roster no longer holds on as unanswered.
 pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 47;
 
 /// The domain every encoded image starts with.
