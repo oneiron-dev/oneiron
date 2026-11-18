@@ -95,7 +95,7 @@ fn proves_for_the_owner(state: &FoldState, key: &AuthorityKey) -> bool {
 /// as the owner's through a carrier, the act its own signature may not make,
 /// and a vault whose only Ed25519 owner keys are such keys asks for no proof,
 /// as a passkey-only vault does.
-fn gives_owner_proof(state: &FoldState, key: &AuthorityKey) -> bool {
+pub(super) fn gives_owner_proof(state: &FoldState, key: &AuthorityKey) -> bool {
     matches!(key, AuthorityKey::Ed25519(_))
         && proves_for_the_owner(state, key)
         && !state.passkey_limited(key)
