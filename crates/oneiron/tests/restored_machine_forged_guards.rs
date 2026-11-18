@@ -6,6 +6,11 @@
 //! `test_doors::restored_enrolment::forged_rows`; no public writer signs
 //! below its own next sequence or over parents it picks.
 //!
+//! - The root's enrolment of a machine born of a restore is the entry the
+//!   writer returns, beside unpinned anchors' marks of the machine. Before, it
+//!   returned the first held enrolment of the machine by hash, and the owner's
+//!   join door then named a mark (REVIEW-9539 P1, machine_answers.rs:472; fix
+//!   #9534 3051bfa4). Red at 815730df, each machine with odds 3 in 4.
 //! - An unpinned anchor's mark of a machine, under other keys, refuses no
 //!   genuine pairing of it. Before, the pairing read every held enrolment
 //!   and refused (REVIEW-9509 round 2 P1, machine_answers.rs:168; fix
@@ -44,9 +49,10 @@ use std::sync::Arc;
 use ed25519_dalek::{Signer, SigningKey};
 use oneiron::authority::{
     ActSurface, AuthorityEntryHash, AuthorityOp, HostSlipIssuer, MACHINE_ENCRYPTION_KEY_LEN,
-    MACHINE_ENCRYPTION_SUITE_HYBRID_V1, MachineEncryptionKey, MachineEnrolmentRequest,
-    MachineOwnership, MachineProfile, MachineRole, OwnerAct, OwnerActKind, RestoredJoinEnrolment,
-    RestoredMachineJoin, restored_machine_join_seen, restored_machine_profile_proof_transcript,
+    MACHINE_ENCRYPTION_SUITE_HYBRID_V1, MachineAdmitter, MachineDeviceClass, MachineEncryptionKey,
+    MachineEnrolmentRequest, MachineOwnership, MachineProfile, MachineRole, OwnerAct, OwnerActKind,
+    RestoredJoinEnrolment, RestoredMachineJoin, restored_machine_join_seen,
+    restored_machine_profile_proof_transcript,
 };
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::store::GateDecisionId;
@@ -287,6 +293,63 @@ fn stranger_request(vault_id: [u8; 32], copy: &MachineEnrolmentRequest) -> Machi
         encryption_key,
         machine_proof: key.sign(&transcript).to_bytes(),
         restored_from: Some(origin),
+    }
+}
+
+/// A request for the machine from `seed`, under its own key, born of one
+/// fixed image.
+fn restored_request(vault_id: [u8; 32], seed: u8) -> MachineEnrolmentRequest {
+    let machine = EntityId::from_bytes([seed; 16]).expect("FIXTURE: the machine id");
+    let key = SigningKey::from_bytes(&[seed; 32]);
+    let machine_key = key.verifying_key().to_bytes();
+    let class = MachineDeviceClass::Computer;
+    let encryption_key = MachineEncryptionKey {
+        suite: MACHINE_ENCRYPTION_SUITE_HYBRID_V1,
+        key: vec![7; MACHINE_ENCRYPTION_KEY_LEN],
+    };
+    let origin = [0x0d; 32];
+    let transcript = restored_machine_profile_proof_transcript(
+        &vault_id,
+        machine,
+        &machine_key,
+        class,
+        &encryption_key,
+        &origin,
+    );
+    MachineEnrolmentRequest {
+        vault_id,
+        machine,
+        machine_key,
+        device_class: class,
+        encryption_key,
+        machine_proof: key.sign(&transcript).to_bytes(),
+        restored_from: Some(origin),
+    }
+}
+
+#[test]
+fn the_roots_enrolment_is_the_entry_returned_beside_unpinned_marks() {
+    let host = rooted_host(MachineRole::Unanswered, true);
+    for seed in 0x40..0x46 {
+        let request = restored_request(host.vault_id, seed);
+        for _ in 0..3 {
+            publish_unpinned_root_and_mark(&host.vault, host.owner, &request)
+                .expect("FIXTURE: an anchor this install does not pin marks the machine");
+        }
+        let enrolment = file_restored_enrolment(&host.vault, &host.issuer, host.owner, &request)
+            .expect("the root files the machine's enrolment");
+        let fold = host.vault.authority_fold().expect("the host's fold");
+        let held = fold
+            .restored_enrolments()
+            .get(&enrolment)
+            .expect("the entry returned is a held enrolment");
+        assert!(
+            held.admitter == MachineAdmitter::Roster
+                && held.profile.role == MachineRole::Unanswered,
+            "the entry returned is the root's roster enrolment, never an anchor's mark \
+             (machine seed {seed:#x}, admitter {:?})",
+            held.admitter
+        );
     }
 }
 
