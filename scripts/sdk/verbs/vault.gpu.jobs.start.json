@@ -1,0 +1,16 @@
+{
+  "name": "vault.gpu.jobs.start",
+  "description": "Starts a GPU job on the quote the owner saw, reserving the whole quote before anything starts, or with resume the next chunk of a stopped job from its checkpoint. The owner's own act.",
+  "input": "crate::gpu_job::GpuJobStartRequest",
+  "output": "crate::gpu_job::GpuJobStatus",
+  "call": "crate::task_verb::sdk::host_only(memory, \"vault.gpu.jobs.start\", &input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "act_class": "reversible_work",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "host_door_proof": "gpu_job_caller"
+}
