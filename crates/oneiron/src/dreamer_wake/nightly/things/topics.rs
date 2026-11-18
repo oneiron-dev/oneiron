@@ -13,11 +13,11 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
+
 use crate::dreamer_consolidation::ConsolidationPartitionPlan;
 use crate::dreamer_wake::sieve::{SieveSpan, SpanKind, span_words_in_txn};
 use crate::{EntityId, Result, Vault};
-
-const TOPIC_DOMAIN: &[u8] = b"oneiron:dreamer-nightly-topic:v1";
 
 /// One topic: BLAKE3 of its folded words.
 pub(in crate::dreamer_wake::nightly) type TopicKey = [u8; 32];
@@ -53,6 +53,7 @@ pub(in crate::dreamer_wake::nightly) fn topics_in_txn(
 
 /// The topic `words` name: their lower case, whitespace collapsed; none for
 /// words that are only whitespace.
+/// Deterministic grouping keys keep their bytes (K, PLAN-UC-04 stage 7).
 fn topic_of(words: &str) -> Option<TopicKey> {
     let folded = words
         .split_whitespace()
@@ -63,10 +64,13 @@ fn topic_of(words: &str) -> Option<TopicKey> {
         return None;
     }
     Some(
-        *blake3::Hasher::new()
-            .update(TOPIC_DOMAIN)
-            .update(folded.as_bytes())
-            .finalize()
-            .as_bytes(),
+        LegacyDigest::new(purposes::dreamer_wake::NIGHTLY_TOPIC)
+            .raw(folded.as_bytes())
+            .finish(),
     )
+}
+
+#[cfg(oneiron_test_support)]
+pub(crate) fn topic_of_for_test(words: &str) -> Option<[u8; 32]> {
+    topic_of(words)
 }
