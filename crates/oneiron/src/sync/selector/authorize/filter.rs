@@ -1,5 +1,6 @@
 use super::release::{RowRelease, released_for_other_vault};
 use super::*;
+use crate::claim::history_projection::MachineHistoryReadCache;
 use crate::workspace_roster::project::extra_room_redaction;
 
 /// `withhold` names the worlds kept off the machine the export serves. Every
@@ -42,6 +43,9 @@ pub(in crate::sync::selector) fn filter_window_doc(
     // `Storage(Mdb(BadRslot))` under LMDB's single-slot rule, so the scope
     // doors take the txn instead of opening their own.
     let rtxn = vault.store.env.read_txn()?;
+    // Each machine CLAIM's history, resolved once for every control of it
+    // this export judges (FIX MACHINE-HISTORY-PAGE-PER-CONTROL-RESOLVE).
+    let history = MachineHistoryReadCache::new(vault);
     let flagged = withhold.worlds_in(vault, &rtxn)?;
     if key.world().is_some_and(|world| flagged.contains(&world)) {
         let out = create_window_doc("selector", key);
@@ -183,7 +187,7 @@ pub(in crate::sync::selector) fn filter_window_doc(
                 return;
             }
         }
-        match crate::authority::row_causal_admitted(vault, &rtxn, &id, blob) {
+        match crate::authority::row_causal_admitted_cached(&history, &rtxn, &id, blob) {
             Ok(true) => {}
             Ok(false) => return,
             // An undecodable CLAIM is a withheld row, not a failed export:
@@ -203,7 +207,14 @@ pub(in crate::sync::selector) fn filter_window_doc(
         // both hold (FIX-LIST 9433).
         let selected = note_world::selector_world_axis(selector.world);
         let held = [&grant.authority_scope.worlds, &selected];
-        let scope = match note_world::blob_scope_held_at(&vault.store, &rtxn, id, blob, &held) {
+        let scope = match note_world::blob_scope_held_at_with_history(
+            &vault.store,
+            &history,
+            &rtxn,
+            id,
+            blob,
+            &held,
+        ) {
             Ok(Some(scope)) => scope,
             Ok(None) => return,
             Err(error) => {
@@ -280,6 +291,7 @@ pub(in crate::sync::selector) fn filter_window_doc(
                         selector,
                         scope_position,
                         &facet_scope,
+                        &history,
                     )?
                     && crate::store::legal_hold::use_limit_in_txn(&vault.store, &rtxn, source)?
                         .is_none())

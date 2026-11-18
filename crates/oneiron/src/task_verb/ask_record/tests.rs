@@ -1,6 +1,7 @@
 use super::*;
 use crate::task_verb::{
-    TaskAskDefault, TaskAskOptionId, TaskAskQuestion, TaskAskSpec, TaskAskTarget, TaskAssignee,
+    TaskAskDefault, TaskAskOption, TaskAskOptionId, TaskAskQuestion, TaskAskSpec, TaskAskTarget,
+    TaskAssignee,
 };
 
 #[test]
@@ -19,7 +20,7 @@ fn stored_invalid_option_is_a_store_error_not_caller_input()
         &body,
     )?;
     let mut what = TaskAskQuestion::new(super::super::ConsultPayloadRef::Turn(question));
-    what.options = [(TaskAskOptionId::new("yes")?, "yes".into())].into();
+    what.options = [(TaskAskOptionId::new("yes")?, TaskAskOption::new("yes"))].into();
     let spec = TaskAskSpec::shorthand(
         Some(TaskAskTarget::Responder(TaskAssignee::Human {
             actor_ref: actor,
@@ -50,12 +51,16 @@ fn stored_invalid_option_is_a_store_error_not_caller_input()
             group: handle.group_ref,
             task,
             actor,
+            actor_kind: crate::registry::ENTITY_TYPE_PERSON,
             source,
             word,
+            result_kind: crate::registry::ENTITY_TYPE_TURN,
             link_proof: None,
             order: 1,
             delegation_grant_ref: None,
             at: 1,
+            credential_lineage: Vec::new(),
+            lineage_unread: false,
         },
     )?;
     vault
@@ -65,6 +70,7 @@ fn stored_invalid_option_is_a_store_error_not_caller_input()
             ENTITY_TYPE_TASK,
             crate::TimeRange { start: 1, end: 1 },
             1,
+            None,
             &encoded,
         )
         .edge(&word_ref, crate::EdgeKind::About, &handle.group_ref, 1.0)
@@ -113,19 +119,23 @@ fn answer_header_mismatch_is_refused_on_birth_and_identical_body_reput()
             group: handle.group_ref,
             task,
             actor,
+            actor_kind: crate::registry::ENTITY_TYPE_PERSON,
             source: TaskAskSource::Human,
             word,
+            result_kind: crate::registry::ENTITY_TYPE_TURN,
             link_proof: None,
             order: 1,
             delegation_grant_ref: None,
             at: 42,
+            credential_lineage: Vec::new(),
+            lineage_unread: false,
         },
     )?;
     let wrong = crate::TimeRange { start: 43, end: 43 };
     assert!(
         vault
             .batch()
-            .put_replicated(&id, ENTITY_TYPE_TASK, wrong, 43, &encoded)
+            .put_replicated(&id, ENTITY_TYPE_TASK, wrong, 43, None, &encoded)
             .commit()
             .is_err(),
         "a new answer cannot disagree with its header"
@@ -138,6 +148,7 @@ fn answer_header_mismatch_is_refused_on_birth_and_identical_body_reput()
             ENTITY_TYPE_TASK,
             crate::TimeRange { start: 42, end: 42 },
             42,
+            None,
             &encoded,
         )
         .edge(&id, crate::EdgeKind::About, &handle.group_ref, 1.0)
@@ -148,7 +159,7 @@ fn answer_header_mismatch_is_refused_on_birth_and_identical_body_reput()
     assert!(
         vault
             .batch()
-            .put_replicated(&id, ENTITY_TYPE_TASK, wrong, 43, &encoded)
+            .put_replicated(&id, ENTITY_TYPE_TASK, wrong, 43, None, &encoded)
             .commit()
             .is_err(),
         "identical body cannot rewrite answer timestamps"
@@ -170,7 +181,7 @@ fn forged_foreign_word_and_voided_digest_cannot_cross_batch_door()
     let reference = super::super::tests::support::consult_turn(&vault, 0x87);
     let mut what = TaskAskQuestion::new(reference);
     what.options
-        .insert(TaskAskOptionId::new("yes")?, "Yes".into());
+        .insert(TaskAskOptionId::new("yes")?, TaskAskOption::new("Yes"));
     let mut spec = TaskAskSpec::shorthand(
         Some(TaskAskTarget::People([friend].into())),
         what,
@@ -205,12 +216,16 @@ fn forged_foreign_word_and_voided_digest_cannot_cross_batch_door()
         group: ask.group_ref,
         task,
         actor: friend,
+        actor_kind: crate::registry::ENTITY_TYPE_PERSON,
         source: TaskAskSource::ForeignStated,
         word,
+        result_kind: crate::registry::ENTITY_TYPE_PERSON,
         link_proof: None,
         order: 1,
         delegation_grant_ref: None,
         at: 42,
+        credential_lineage: Vec::new(),
+        lineage_unread: false,
     };
     let stage = |fact: &AskAnswerFact| -> crate::Result<()> {
         vault
@@ -220,6 +235,7 @@ fn forged_foreign_word_and_voided_digest_cannot_cross_batch_door()
                 ENTITY_TYPE_TASK,
                 crate::TimeRange { start: 42, end: 42 },
                 42,
+                None,
                 &value(ANSWER, fact)?,
             )
             .edge(&id, crate::EdgeKind::About, &ask.group_ref, 1.0)
@@ -270,7 +286,7 @@ fn issuer_signed_foreign_word_for_non_person_is_refused_without_evidence()
         let reference = super::super::tests::support::consult_turn(&vault, seed + 1);
         let mut what = TaskAskQuestion::new(reference);
         what.options
-            .insert(TaskAskOptionId::new("yes")?, "Yes".into());
+            .insert(TaskAskOptionId::new("yes")?, TaskAskOption::new("Yes"));
         let mut spec = TaskAskSpec::shorthand(
             Some(TaskAskTarget::People([actor].into())),
             what,
@@ -301,12 +317,16 @@ fn issuer_signed_foreign_word_for_non_person_is_refused_without_evidence()
             group: ask.group_ref,
             task: member_task,
             actor,
+            actor_kind: entity_type,
             source: TaskAskSource::ForeignStated,
             word,
+            result_kind: entity_type,
             link_proof: None,
             order: 1,
             delegation_grant_ref: None,
             at: 42,
+            credential_lineage: Vec::new(),
+            lineage_unread: false,
         };
         fact.link_proof = Some(super::link_proof::sign_link_word(
             &vault,
@@ -326,6 +346,7 @@ fn issuer_signed_foreign_word_for_non_person_is_refused_without_evidence()
                 ENTITY_TYPE_TASK,
                 crate::TimeRange { start: 42, end: 42 },
                 42,
+                None,
                 &value(ANSWER, &fact)?,
             )
             .edge(&id, crate::EdgeKind::About, &ask.group_ref, 1.0)

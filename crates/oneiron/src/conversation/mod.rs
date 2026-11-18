@@ -1,4 +1,5 @@
 //! Room bodies, membership windows, session presence and audience visibility.
+pub(crate) mod archive_restore;
 mod attendee;
 mod body;
 mod chat_breakpoint;
@@ -99,8 +100,6 @@ fn authorize(vault: &Vault, txn: &heed::RoTxn<'_>, actor: WriteActor) -> Result<
         .map_err(|_| denied())
 }
 
-// FIX [LIBTEST-QUARANTINE-CONVERSATION-TESTS]: the lib test target's type check fails here (97 errors: E0061 x75, E0599 x10, E0639 x3, E0308 x3, E0063 x2, E0608 x2, E0600 x1, E0277 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;
 

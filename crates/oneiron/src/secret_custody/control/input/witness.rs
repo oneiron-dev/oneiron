@@ -30,6 +30,7 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::side_table::{self, Raw, SideTable};
 use crate::store::Store;
+use oneiron_contracts::fingerprint::{LegacyDigest, LegacyPurpose, purposes};
 
 /// How a custody input's witness past one row travels (CALLS `8088 input
 /// witness form`, Engine 10-22 05:2x).
@@ -53,10 +54,6 @@ pub(crate) const CUSTODY_WITNESS_PART_BYTES: usize = MAX_INPUT_BYTES;
 const PART_LABEL: &[u8] = b"oneiron/custody-input-witness-part/v1\0";
 const REF_LABEL: &[u8] = b"oneiron/custody-input-witness-ref/v1\0";
 const SIGN_DOMAIN: &[u8] = b"oneiron/custody-input-witness-sig/v1\0";
-const KEY_DOMAIN: &[u8] = b"oneiron/custody-input-witness-part-key/v1";
-const COMMIT_DOMAIN: &[u8] = b"oneiron/custody-input-witness-commitment/v1";
-const FRAGMENT_DOMAIN: &[u8] = b"oneiron/custody-input-witness-fragment/v1";
-const ROW_DOMAIN: &[u8] = b"oneiron/custody-input-witness-row/v1";
 /// What a signature is over: a witness part, or an input row's reference.
 const KIND_PART: u8 = 0;
 const KIND_INPUT: u8 = 1;
@@ -87,12 +84,20 @@ pub(crate) struct WitnessGroup {
     signer: [u8; 32],
 }
 
-fn digest(domain: &[u8], bytes: &[u8]) -> [u8; 32] {
-    let mut hasher = blake3::Hasher::new();
-    hasher.update(domain);
-    hasher.update(&(bytes.len() as u64).to_be_bytes());
-    hasher.update(bytes);
-    *hasher.finalize().as_bytes()
+/// A witness digest of `bytes` under `purpose`: the commitment to the whole
+/// witness, a fragment's or an input row envelope's. Signed rows carry them and
+/// peers recompute them, so each keeps its bytes (K, PLAN-UC-04 stage 6.1).
+fn digest(purpose: LegacyPurpose, bytes: &[u8]) -> [u8; 32] {
+    LegacyDigest::new(purpose)
+        .len_u64_be(bytes.len())
+        .raw(bytes)
+        .finish()
+}
+
+/// A witness digest of `bytes` under `purpose`.
+#[cfg(oneiron_test_support)]
+pub(crate) fn custody_witness_digest_for_test(purpose: LegacyPurpose, bytes: &[u8]) -> [u8; 32] {
+    digest(purpose, bytes)
 }
 
 impl WitnessGroup {
@@ -134,16 +139,37 @@ impl WitnessGroup {
         self.signer == *signer
     }
 
-    /// The key part `index` of this witness is kept and relayed under.
+    /// The key part `index` of this witness is kept and relayed under. Peers
+    /// recompute it to find the row, so it keeps its bytes (K, PLAN-UC-04
+    /// stage 5).
     fn part_key(&self, index: u32) -> [u8; 32] {
-        let mut hasher = blake3::Hasher::new();
-        hasher.update(KEY_DOMAIN);
-        hasher.update(&self.request);
-        hasher.update(&self.input);
-        hasher.update(&self.commitment);
-        hasher.update(&index.to_be_bytes());
-        *hasher.finalize().as_bytes()
+        LegacyDigest::new(purposes::secret::CUSTODY_WITNESS_PART_KEY)
+            .raw(&self.request)
+            .raw(&self.input)
+            .raw(&self.commitment)
+            .raw(&index.to_be_bytes())
+            .finish()
     }
+}
+
+/// The key part `index` of a witness over `request`, `input` and `commitment`
+/// is kept under; the part key reads no other field.
+#[cfg(oneiron_test_support)]
+pub(crate) fn custody_witness_part_key_for_test(
+    request: &AuthorityEntryHash,
+    input: &[u8; 32],
+    commitment: &[u8; 32],
+    index: u32,
+) -> [u8; 32] {
+    WitnessGroup {
+        sealed_at: 0,
+        request: *request,
+        input: *input,
+        commitment: *commitment,
+        count: 0,
+        signer: [0; 32],
+    }
+    .part_key(index)
 }
 
 /// One numbered part of a witness.
@@ -233,7 +259,7 @@ impl WitnessPart {
         self.group.verifies(
             KIND_PART,
             self.index,
-            &digest(FRAGMENT_DOMAIN, &self.fragment),
+            &digest(purposes::secret::CUSTODY_WITNESS_FRAGMENT, &self.fragment),
             &self.signature,
         )
     }
@@ -276,7 +302,7 @@ impl RelayedInput {
             && group.verifies(
                 KIND_INPUT,
                 self.place(),
-                &digest(ROW_DOMAIN, &self.envelope),
+                &digest(purposes::secret::CUSTODY_WITNESS_ROW, &self.envelope),
                 &signature,
             ))
         .then_some(group)
@@ -293,7 +319,7 @@ impl RelayedInput {
             signing,
             KIND_INPUT,
             self.place(),
-            &digest(ROW_DOMAIN, &self.envelope),
+            &digest(purposes::secret::CUSTODY_WITNESS_ROW, &self.envelope),
         );
         let mut out = Vec::with_capacity(REF_LABEL.len() + REF_BYTES);
         out.extend_from_slice(REF_LABEL);
@@ -339,7 +365,7 @@ pub(crate) fn keep_witnessed_input_in_txn(
         sealed_at: input.sealed_at,
         request: input.request,
         input: door.digest(),
-        commitment: digest(COMMIT_DOMAIN, &witness),
+        commitment: digest(purposes::secret::CUSTODY_WITNESS_COMMITMENT, &witness),
         count,
         signer,
     };
@@ -351,7 +377,7 @@ pub(crate) fn keep_witnessed_input_in_txn(
                 signing,
                 KIND_PART,
                 index,
-                &digest(FRAGMENT_DOMAIN, fragment),
+                &digest(purposes::secret::CUSTODY_WITNESS_FRAGMENT, fragment),
             ),
             fragment: fragment.to_vec(),
         };
@@ -433,7 +459,7 @@ pub(crate) fn witness_joined_in_txn(
         }
         whole.extend_from_slice(&part.fragment);
     }
-    if digest(COMMIT_DOMAIN, &whole) != group.commitment {
+    if digest(purposes::secret::CUSTODY_WITNESS_COMMITMENT, &whole) != group.commitment {
         return Ok(WitnessJoin::Missing);
     }
     let proves = decode_authority_log_entry_body(&whole).is_ok_and(|entry| {

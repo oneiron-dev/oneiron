@@ -531,6 +531,9 @@ pub(super) fn failure(error: &LlmError) -> Response {
         LlmError::Retryable(RetryableLlmError::WorldRouteNotAdmitted) => {
             (StatusCode::CONFLICT, "world_route_not_admitted")
         }
+        LlmError::Retryable(RetryableLlmError::OutsideHours { .. }) => {
+            (StatusCode::SERVICE_UNAVAILABLE, "outside_hours")
+        }
         LlmError::Retryable(_) => (StatusCode::BAD_GATEWAY, "provider_unavailable"),
     };
     (

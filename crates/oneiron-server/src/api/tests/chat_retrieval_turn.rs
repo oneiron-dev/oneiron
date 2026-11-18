@@ -31,7 +31,9 @@ use crate::server::SyncServer;
 
 /// A rooted vault that captures retrieval runs, served with a chat seat on
 /// `base_url`.
-async fn capturing_server(base_url: &str) -> (tempfile::TempDir, Arc<SyncServer>, AiHost) {
+pub(super) async fn capturing_server(
+    base_url: &str,
+) -> (tempfile::TempDir, Arc<SyncServer>, AiHost) {
     let dir = tempfile::tempdir().unwrap();
     let mut config = VaultConfig::device();
     config.retrieval_telemetry_capture = true;
@@ -54,7 +56,11 @@ async fn capturing_server(base_url: &str) -> (tempfile::TempDir, Arc<SyncServer>
 
 /// One owner chat turn in `conversation`, from this device; its NDJSON
 /// lines once the reply is saved.
-async fn chat_turn(server: &Arc<SyncServer>, conversation: &str, text: &str) -> Vec<Value> {
+pub(super) async fn chat_turn(
+    server: &Arc<SyncServer>,
+    conversation: &str,
+    text: &str,
+) -> Vec<Value> {
     let body = json!({"conversation_ref": conversation, "text": text, "stream": true});
     let mut request: Request<Body> =
         core_request_with_authz("POST", "/v1/ai/chat", owner_bearer(), Some(&body));

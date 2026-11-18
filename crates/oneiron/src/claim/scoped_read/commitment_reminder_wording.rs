@@ -8,6 +8,8 @@
 //! persisted source, judged by this lane's ordinary Recorded policy, and a
 //! withdrawn source reads as absent through the lane's own semantics.
 
+use oneiron_contracts::fingerprint::ContentHash;
+
 use super::*;
 use crate::commitment_wake::wording_source_binding;
 use crate::registry::ENTITY_TYPE_CLAIM;
@@ -64,7 +66,7 @@ impl ScopedRead<'_> {
         else {
             return Ok(false);
         };
-        if blake3::hash(&row.body).as_bytes() != revision {
+        if ContentHash::of(&row.body).as_bytes() != revision {
             return Ok(false);
         }
         Ok(matches!(
