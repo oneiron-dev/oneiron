@@ -35,9 +35,10 @@ pub(super) fn apply_put_arm(
     own_device: Option<&VerifiedOwnDeviceLane>,
 ) -> Result<()> {
     let mut data = Zeroizing::new(data);
-    // The pre-mask bytes of a local CLAIM put the mask rewrote: one slot per
-    // such put, taken here whatever the put does next, so a later put of the
-    // same id keeps its own (RAW-CLAIM-PUT-MASK-REPLAY-MISMATCH).
+    // One slot per local CLAIM put, holding its pre-mask bytes when the mask
+    // rewrote it and None when it did not. It is taken here whatever the put
+    // does next, so a later put of the same id keeps its own
+    // (RAW-CLAIM-PUT-MASK-REPLAY-MISMATCH).
     let pre_mask = if entity_type == crate::registry::ENTITY_TYPE_CLAIM
         && !allow_maintenance
         && !hub_sync_imported
