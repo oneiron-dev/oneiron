@@ -389,14 +389,11 @@ fn a_held_put_without_a_secret_parks_with_a_review_of_the_stored_body() -> Resul
     Ok(())
 }
 
-/// Births `id` under the vault's default facet as an unmarked Generated Auto
-/// candidate, which the manifest lets land with no review. Returns that
-/// facet.
-fn born_with_no_review(vault: &Vault, id: &EntityId) -> Result<EntityId> {
-    let born_under = vault.default_facet()?;
-    let body = checker_body_with_value(vault, ClaimApprovalStatus::Auto, PLAIN_VALUE)?;
-    seed_dreamer_parts(vault, &body)?;
-    let envelope = WriteEnvelope::new(
+/// An unmarked Generated Auto write of `body` by the agent the checker
+/// manifest ceilings at Auto, which the manifest lets land with no review.
+fn unmarked_auto_envelope(vault: &Vault, body: &ClaimBody) -> Result<WriteEnvelope> {
+    seed_dreamer_parts(vault, body)?;
+    Ok(WriteEnvelope::new(
         WriteActor::new(
             doors::first_party_connector_actor_id(),
             EdgeActorClass::Agent,
@@ -407,7 +404,16 @@ fn born_with_no_review(vault: &Vault, id: &EntityId) -> Result<EntityId> {
             Value::from("self.*"),
         )]))?,
         ClaimApprovalStatus::Auto,
-    );
+    ))
+}
+
+/// Births `id` under the vault's default facet as an unmarked Generated Auto
+/// candidate, which the manifest lets land with no review. Returns that
+/// facet.
+fn born_with_no_review(vault: &Vault, id: &EntityId) -> Result<EntityId> {
+    let born_under = vault.default_facet()?;
+    let body = checker_body_with_value(vault, ClaimApprovalStatus::Auto, PLAIN_VALUE)?;
+    let envelope = unmarked_auto_envelope(vault, &body)?;
     vault
         .batch()
         .claim_candidate(
@@ -547,5 +553,106 @@ fn a_held_raw_claim_put_without_a_secret_parks_with_a_review_of_the_stored_body(
     commit_raw_health_put(&vault, &id, PLAIN_VALUE)?;
     let stored = parked_review_bound_to_stored_body(&vault, &id, CRITICALITY_FLOOR)?;
     assert_eq!(stored.value, Value::from(PLAIN_VALUE));
+    Ok(())
+}
+
+/// A FACET the vault holds beside its default. Returns it.
+fn facet_beside_the_default(vault: &Vault, seed: u8) -> Result<EntityId> {
+    let facet = test_id(seed);
+    vault.put_entity(
+        &facet,
+        ENTITY_TYPE_FACET,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"facet",
+    )?;
+    assert_ne!(vault.default_facet()?, facet);
+    Ok(facet)
+}
+
+/// (5) A held re-put of a claim that an earlier candidate of the same batch
+/// births at a stamped facet other than the vault default parks at that
+/// facet, with its review bound to the stored body: the preflight reads the
+/// birth facet the earlier op stamps, as the apply does.
+#[test]
+fn a_held_reput_of_a_claim_born_earlier_in_the_batch_parks_at_its_birth_facet() -> Result<()> {
+    let (_tmp, vault) = doors::checker_vault(Some(CHECKER_REF))?;
+    let id = test_id(0x68);
+    let facet = facet_beside_the_default(&vault, 0x69)?;
+    let born = checker_body_with_value(&vault, ClaimApprovalStatus::Auto, PLAIN_VALUE)?;
+    let born_envelope = unmarked_auto_envelope(&vault, &born)?;
+    let reput = checker_body_with_value(&vault, ClaimApprovalStatus::Proposed, REPUT_VALUE)?;
+    let reput_envelope = live_run_put_envelope(&vault, &reput, ClaimApprovalStatus::Proposed)?;
+    let committed = vault
+        .batch()
+        .claim_candidate(
+            &id,
+            candidate_of(&born).with_scope_stamps(facet, born.scope_project),
+            &born_envelope,
+            TimeRange { start: 1, end: 1 },
+            1,
+        )
+        .claim_candidate(
+            &id,
+            candidate_of(&reput),
+            &reput_envelope,
+            TimeRange { start: 2, end: 2 },
+            2,
+        )
+        .commit();
+    assert!(
+        committed.is_ok(),
+        "FAILBEFORE PREFLIGHT-SAME-BATCH-BIRTH-FACET: the held re-put failed its replay match instead of parking: {committed:?}"
+    );
+    let stored = parked_review_bound_to_stored_body(&vault, &id, CHECKER_UNAVAILABLE)?;
+    assert_eq!(stored.value, Value::from(REPUT_VALUE));
+    assert_eq!(
+        stored.scope_facet, facet,
+        "the re-put keeps the facet its birth in the same batch stamped"
+    );
+    Ok(())
+}
+
+/// (6) The same, with the claim born by a raw CLAIM put whose body names the
+/// facet.
+#[test]
+fn a_held_reput_of_a_raw_claim_put_earlier_in_the_batch_parks_at_its_facet() -> Result<()> {
+    let (_tmp, vault) = doors::checker_vault(Some(CHECKER_REF))?;
+    let id = test_id(0x6a);
+    let facet = facet_beside_the_default(&vault, 0x6b)?;
+    let mut born = checker_body_with_value(&vault, ClaimApprovalStatus::Auto, PLAIN_VALUE)?;
+    seed_dreamer_parts(&vault, &born)?;
+    born.source = None;
+    born.scope_facet = facet;
+    let bytes = encode_claim_body(&born).expect("a valid claim body encodes");
+    let reput = checker_body_with_value(&vault, ClaimApprovalStatus::Proposed, REPUT_VALUE)?;
+    let reput_envelope = live_run_put_envelope(&vault, &reput, ClaimApprovalStatus::Proposed)?;
+    let committed = vault
+        .batch()
+        .put(
+            &id,
+            ENTITY_TYPE_CLAIM,
+            TimeRange { start: 1, end: 1 },
+            1,
+            &bytes,
+        )
+        .claim_candidate(
+            &id,
+            candidate_of(&reput),
+            &reput_envelope,
+            TimeRange { start: 2, end: 2 },
+            2,
+        )
+        .commit();
+    assert!(
+        committed.is_ok(),
+        "FAILBEFORE PREFLIGHT-SAME-BATCH-BIRTH-FACET: the held re-put failed its replay match instead of parking: {committed:?}"
+    );
+    let stored = parked_review_bound_to_stored_body(&vault, &id, CHECKER_UNAVAILABLE)?;
+    assert_eq!(stored.value, Value::from(REPUT_VALUE));
+    assert_eq!(
+        stored.scope_facet, facet,
+        "the re-put keeps the facet the raw put in the same batch stamped"
+    );
     Ok(())
 }
