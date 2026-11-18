@@ -569,6 +569,10 @@ impl BatchBuilder<'_> {
             vault.store.notify_proactivity_changes();
             vault.verb_hook_bindings_changed();
         }
+        // A batch commits outside the write door: a task-held inquiry
+        // answer of a TASK it ended leaves memory here (FIX
+        // INQUIRY-HOLDER-EVICT-ON-TERMINAL-WRITE).
+        vault.evict_inquiry_answers_after_commit(&tasks);
         vault.store.notify_task_updates(tasks);
         vault.store.notify_attempt_observers();
         #[cfg(feature = "sync")]

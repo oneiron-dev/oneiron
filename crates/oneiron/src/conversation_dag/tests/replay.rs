@@ -4,16 +4,17 @@ use super::*;
 #[test]
 fn sub_session_membership_survives_entity_and_edge_replay() {
     let (_dir, source, conv, actor) = fixture();
+    let writer = source.memory(actor.entity_ref(), actor.actor_class());
     let asking = source
-        .append_dag_record(&input(conv, None, true, actor))
+        .append_dag_record(&writer, &input(conv, None, true, actor))
         .unwrap()
         .id;
     let session = source.spawn_dag_sub_session(&asking, actor).unwrap();
     let mut worker = input(conv, Some(asking), false, actor);
     worker.session = Some(session);
-    let worker = source.append_dag_record(&worker).unwrap().id;
+    let worker = source.append_dag_record(&writer, &worker).unwrap().id;
     let trunk = source
-        .append_dag_record(&input(conv, Some(asking), true, actor))
+        .append_dag_record(&writer, &input(conv, Some(asking), true, actor))
         .unwrap()
         .id;
     let dir = tempfile::tempdir().unwrap();
@@ -31,6 +32,7 @@ fn sub_session_membership_survives_entity_and_edge_replay() {
                     end: h.occurred_end,
                 },
                 h.learned_at,
+                None,
                 &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
             )
             .commit()
@@ -56,6 +58,7 @@ fn sub_session_membership_survives_entity_and_edge_replay() {
                     end: header.occurred_end,
                 },
                 header.learned_at,
+                None,
                 &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
             )
             .commit()
@@ -111,14 +114,15 @@ fn sub_session_membership_survives_entity_and_edge_replay() {
 #[test]
 fn malformed_and_conflicting_session_carriers_refuse_without_changing_the_record() {
     let (_dir, vault, conv, actor) = fixture();
+    let writer = vault.memory(actor.entity_ref(), actor.actor_class());
     let asking = vault
-        .append_dag_record(&input(conv, None, true, actor))
+        .append_dag_record(&writer, &input(conv, None, true, actor))
         .unwrap()
         .id;
     let session = vault.spawn_dag_sub_session(&asking, actor).unwrap();
     let mut append = input(conv, Some(asking), false, actor);
     append.session = Some(session);
-    let worker = vault.append_dag_record(&append).unwrap().id;
+    let worker = vault.append_dag_record(&writer, &append).unwrap().id;
     let original = vault.get(&worker).unwrap().unwrap();
     for value in [
         rmpv::Value::from(42),
@@ -138,7 +142,7 @@ fn malformed_and_conflicting_session_carriers_refuse_without_changing_the_record
         assert_eq!(
             vault
                 .batch()
-                .put_replicated(&worker, ENTITY_TYPE_TURN, time(1), 1, &bad)
+                .put_replicated(&worker, ENTITY_TYPE_TURN, time(1), 1, None, &bad)
                 .commit()
                 .unwrap_err()
                 .kind(),
@@ -158,16 +162,17 @@ fn malformed_and_conflicting_session_carriers_refuse_without_changing_the_record
 #[test]
 fn trunk_session_membership_cannot_be_added_by_local_or_replayed_overwrite() {
     let (_dir, vault, conv, actor) = fixture();
+    let writer = vault.memory(actor.entity_ref(), actor.actor_class());
     let asking = vault
-        .append_dag_record(&input(conv, None, true, actor))
+        .append_dag_record(&writer, &input(conv, None, true, actor))
         .unwrap()
         .id;
     let session = vault.spawn_dag_sub_session(&asking, actor).unwrap();
     let mut append = input(conv, Some(asking), false, actor);
     append.session = Some(session);
-    let worker = vault.append_dag_record(&append).unwrap().id;
+    let worker = vault.append_dag_record(&writer, &append).unwrap().id;
     let trunk = vault
-        .append_dag_record(&input(conv, Some(asking), true, actor))
+        .append_dag_record(&writer, &input(conv, Some(asking), true, actor))
         .unwrap()
         .id;
     let original = vault.get(&trunk).unwrap().unwrap();
@@ -185,7 +190,7 @@ fn trunk_session_membership_cannot_be_added_by_local_or_replayed_overwrite() {
         let result = if replay {
             vault
                 .batch()
-                .put_replicated(&trunk, ENTITY_TYPE_TURN, time(20), 21, &changed)
+                .put_replicated(&trunk, ENTITY_TYPE_TURN, time(20), 21, None, &changed)
                 .commit()
         } else {
             vault.put_entity(&trunk, ENTITY_TYPE_TURN, time(20), 21, &changed)
@@ -215,7 +220,7 @@ fn trunk_session_membership_cannot_be_added_by_local_or_replayed_overwrite() {
         let body = vault.get(&id).unwrap().unwrap();
         vault
             .batch()
-            .put_replicated(&id, ENTITY_TYPE_TURN, time(20), 20, &body)
+            .put_replicated(&id, ENTITY_TYPE_TURN, time(20), 20, None, &body)
             .commit()
             .unwrap();
     }
@@ -225,8 +230,9 @@ fn trunk_session_membership_cannot_be_added_by_local_or_replayed_overwrite() {
 #[test]
 fn typed_dag_records_refuse_generic_overwrite_and_delete_recreation() {
     let (dir, vault, conv, actor) = fixture();
+    let writer = vault.memory(actor.entity_ref(), actor.actor_class());
     let root = vault
-        .append_dag_record(&input(conv, None, true, actor))
+        .append_dag_record(&writer, &input(conv, None, true, actor))
         .unwrap()
         .id;
     let original = vault.get(&root).unwrap().unwrap();
@@ -242,7 +248,7 @@ fn typed_dag_records_refuse_generic_overwrite_and_delete_recreation() {
         ] {
             let builder = vault.batch();
             let builder = if replicated {
-                builder.put_replicated(&root, kind, occurred, 2, &body)
+                builder.put_replicated(&root, kind, occurred, 2, None, &body)
             } else {
                 builder.put(&root, kind, occurred, 2, &body)
             };
@@ -255,7 +261,7 @@ fn typed_dag_records_refuse_generic_overwrite_and_delete_recreation() {
     }
     vault
         .batch()
-        .put_replicated(&root, ENTITY_TYPE_TURN, time(20), 20, &original)
+        .put_replicated(&root, ENTITY_TYPE_TURN, time(20), 20, None, &original)
         .commit()
         .unwrap();
     let sentinel = EntityId::now();
@@ -307,6 +313,7 @@ fn typed_dag_records_refuse_generic_overwrite_and_delete_recreation() {
 #[test]
 fn typed_addressing_first_insert_is_checked_before_adoption_for_both_put_origins() {
     let (_dir, vault, conv, actor) = fixture();
+    let writer = vault.memory(actor.entity_ref(), actor.actor_class());
     let person = EntityId::now();
     vault
         .put_entity(
@@ -320,7 +327,7 @@ fn typed_addressing_first_insert_is_checked_before_adoption_for_both_put_origins
     let mut direct = input(conv, None, true, actor);
     direct.address = AddressMode::Direct;
     direct.recipients = vec![person];
-    let direct = vault.append_dag_record(&direct).unwrap().id;
+    let direct = vault.append_dag_record(&writer, &direct).unwrap().id;
     let original = vault.get(&direct).unwrap().unwrap();
     let mut entries = match rmpv::decode::read_value(&mut original.as_slice()).unwrap() {
         rmpv::Value::Map(entries) => entries,
@@ -363,7 +370,7 @@ fn typed_addressing_first_insert_is_checked_before_adoption_for_both_put_origins
             let id = EntityId::now();
             let batch = vault.batch();
             let batch = if replicated {
-                batch.put_replicated(&id, ENTITY_TYPE_TURN, time(1), 1, &payload)
+                batch.put_replicated(&id, ENTITY_TYPE_TURN, time(1), 1, None, &payload)
             } else {
                 batch.put(&id, ENTITY_TYPE_TURN, time(1), 1, &payload)
             };
@@ -387,6 +394,7 @@ fn typed_addressing_first_insert_is_checked_before_adoption_for_both_put_origins
 #[test]
 fn received_address_carrier_reconstructs_only_body_mandated_edges_at_adoption() {
     let (_dir, source, conv, actor) = fixture();
+    let writer = source.memory(actor.entity_ref(), actor.actor_class());
     let person = EntityId::now();
     source
         .put_entity(
@@ -400,7 +408,7 @@ fn received_address_carrier_reconstructs_only_body_mandated_edges_at_adoption() 
     let mut direct = input(conv, None, true, actor);
     direct.address = AddressMode::Direct;
     direct.recipients = vec![person];
-    let direct = source.append_dag_record(&direct).unwrap().id;
+    let direct = source.append_dag_record(&writer, &direct).unwrap().id;
     let dir = tempfile::tempdir().unwrap();
     let peer = crate::Vault::open(dir.path(), crate::VaultConfig::default()).unwrap();
     for id in [conv, direct] {
@@ -412,6 +420,7 @@ fn received_address_carrier_reconstructs_only_body_mandated_edges_at_adoption() 
                 h.entity_type,
                 time(h.occurred_start),
                 h.learned_at,
+                None,
                 &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
             )
             .commit()
@@ -459,6 +468,7 @@ fn received_address_carrier_reconstructs_only_body_mandated_edges_at_adoption() 
             h.entity_type,
             time(h.occurred_start),
             h.learned_at,
+            None,
             &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
         )
         .commit()
@@ -474,6 +484,7 @@ fn received_address_carrier_reconstructs_only_body_mandated_edges_at_adoption() 
 #[test]
 fn deleted_recipient_does_not_block_conversation_adoption_or_resurrect_edges() {
     let (_dir, source, conv, actor) = fixture();
+    let writer = source.memory(actor.entity_ref(), actor.actor_class());
     let person = EntityId::now();
     source
         .put_entity(
@@ -487,7 +498,7 @@ fn deleted_recipient_does_not_block_conversation_adoption_or_resurrect_edges() {
     let mut input = input(conv, None, true, actor);
     input.address = AddressMode::Direct;
     input.recipients = vec![person];
-    let record = source.append_dag_record(&input).unwrap().id;
+    let record = source.append_dag_record(&writer, &input).unwrap().id;
     for reason in [
         crate::DeleteReason::UserDelete,
         crate::DeleteReason::GdprDelete,
@@ -506,6 +517,7 @@ fn deleted_recipient_does_not_block_conversation_adoption_or_resurrect_edges() {
                         end: h.occurred_end,
                     },
                     h.learned_at,
+                    None,
                     &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
                 )
                 .commit()
@@ -533,6 +545,7 @@ fn deleted_recipient_does_not_block_conversation_adoption_or_resurrect_edges() {
 #[test]
 fn replicated_addressed_record_cannot_change_its_edge_timestamp() {
     let (_dir, vault, conv, actor) = fixture();
+    let writer = vault.memory(actor.entity_ref(), actor.actor_class());
     let person = EntityId::now();
     vault
         .put_entity(
@@ -546,7 +559,7 @@ fn replicated_addressed_record_cannot_change_its_edge_timestamp() {
     let mut input = input(conv, None, true, actor);
     input.address = AddressMode::Direct;
     input.recipients = vec![person];
-    let id = vault.append_dag_record(&input).unwrap().id;
+    let id = vault.append_dag_record(&writer, &input).unwrap().id;
     let original = vault.get_raw_unsealed(&id).unwrap().unwrap();
     let payload = &original[crate::batch::ENTITY_METADATA_HEADER_LEN..];
     assert_eq!(
@@ -557,7 +570,8 @@ fn replicated_addressed_record_cannot_change_its_edge_timestamp() {
                 ENTITY_TYPE_TURN,
                 input.occurred,
                 input.learned_at + 1,
-                payload
+                None,
+                payload,
             )
             .commit()
             .unwrap_err()
@@ -576,6 +590,7 @@ fn replicated_addressed_record_cannot_change_its_edge_timestamp() {
             ENTITY_TYPE_TURN,
             input.occurred,
             input.learned_at,
+            None,
             payload,
         )
         .commit()
@@ -587,6 +602,7 @@ fn replicated_addressed_record_cannot_change_its_edge_timestamp() {
 #[test]
 fn received_parent_survives_public_window_replay_and_adoption() {
     let (_dir, source, _unused, actor) = fixture();
+    let writer = source.memory(actor.entity_ref(), actor.actor_class());
     let room = EntityId::now();
     source
         .create_conversation(
@@ -597,11 +613,11 @@ fn received_parent_survives_public_window_replay_and_adoption() {
         )
         .unwrap();
     let first = source
-        .append_dag_record(&input(room, None, true, actor))
+        .append_dag_record(&writer, &input(room, None, true, actor))
         .unwrap()
         .id;
     let second = source
-        .append_dag_record(&input(room, Some(first), true, actor))
+        .append_dag_record(&writer, &input(room, Some(first), true, actor))
         .unwrap()
         .id;
     let key = crate::sync::types::WindowKey::new("1970-01");
@@ -639,6 +655,7 @@ fn received_parent_survives_public_window_replay_and_adoption() {
 #[test]
 fn missing_received_session_skips_one_room_and_migrates_later_legacy_room() {
     let (_dir, source, _unused, actor) = fixture();
+    let writer = source.memory(actor.entity_ref(), actor.actor_class());
     let delayed = EntityId::from_bytes([1; 16]).unwrap();
     let healthy = EntityId::from_bytes([254; 16]).unwrap();
     source
@@ -650,13 +667,13 @@ fn missing_received_session_skips_one_room_and_migrates_later_legacy_room() {
         )
         .unwrap();
     let first = source
-        .append_dag_record(&input(delayed, None, true, actor))
+        .append_dag_record(&writer, &input(delayed, None, true, actor))
         .unwrap()
         .id;
     let session = source.spawn_dag_sub_session(&first, actor).unwrap();
     let mut worker_input = input(delayed, Some(first), false, actor);
     worker_input.session = Some(session);
-    let worker = source.append_dag_record(&worker_input).unwrap().id;
+    let worker = source.append_dag_record(&writer, &worker_input).unwrap().id;
     let key = crate::sync::types::WindowKey::new("1970-01");
     let doc = crate::sync::schema::create_window_doc("dag-regression", &key);
     crate::sync::window::reverse_rematerialize(&source, &doc, &key).unwrap();
@@ -726,6 +743,7 @@ fn missing_received_session_skips_one_room_and_migrates_later_legacy_room() {
 #[cfg(feature = "sync")]
 fn received_cycle_fixture(kind: &str) -> (tempfile::TempDir, Vault, EntityId, EntityId, EntityId) {
     let (_source_dir, source, _unused, actor) = fixture();
+    let writer = source.memory(actor.entity_ref(), actor.actor_class());
     let bad = EntityId::from_bytes([1; 16]).unwrap();
     let good = EntityId::from_bytes([254; 16]).unwrap();
     source
@@ -737,27 +755,27 @@ fn received_cycle_fixture(kind: &str) -> (tempfile::TempDir, Vault, EntityId, En
         )
         .unwrap();
     let root = source
-        .append_dag_record(&input(bad, None, true, actor))
+        .append_dag_record(&writer, &input(bad, None, true, actor))
         .unwrap()
         .id;
     let session = (kind == "session").then(|| source.spawn_dag_sub_session(&root, actor).unwrap());
     let (first, second) = if kind == "thread" {
         let first = source
-            .reply_in_thread(root, &input(bad, Some(root), false, actor))
+            .reply_in_thread(&writer, root, &input(bad, Some(root), false, actor))
             .unwrap()
             .id;
         let second = source
-            .reply_in_thread(root, &input(bad, Some(first), false, actor))
+            .reply_in_thread(&writer, root, &input(bad, Some(first), false, actor))
             .unwrap()
             .id;
         (first, second)
     } else {
         let mut first_input = input(bad, Some(root), session.is_none(), actor);
         first_input.session = session;
-        let first = source.append_dag_record(&first_input).unwrap().id;
+        let first = source.append_dag_record(&writer, &first_input).unwrap().id;
         let mut second_input = input(bad, Some(first), session.is_none(), actor);
         second_input.session = session;
-        let second = source.append_dag_record(&second_input).unwrap().id;
+        let second = source.append_dag_record(&writer, &second_input).unwrap().id;
         (first, second)
     };
     let key = crate::sync::types::WindowKey::new("1970-01");
@@ -844,6 +862,7 @@ fn received_thread_cycle_is_not_marked_migrated() {
 #[cfg(feature = "sync")]
 fn late_parent_cycle_is_rejected(live_delta: bool) {
     let (_dir, source, _unused, actor) = fixture();
+    let writer = source.memory(actor.entity_ref(), actor.actor_class());
     let room = EntityId::now();
     source
         .create_conversation(
@@ -854,11 +873,11 @@ fn late_parent_cycle_is_rejected(live_delta: bool) {
         )
         .unwrap();
     let first = source
-        .append_dag_record(&input(room, None, true, actor))
+        .append_dag_record(&writer, &input(room, None, true, actor))
         .unwrap()
         .id;
     let second = source
-        .append_dag_record(&input(room, Some(first), true, actor))
+        .append_dag_record(&writer, &input(room, Some(first), true, actor))
         .unwrap()
         .id;
     let key = crate::sync::types::WindowKey::new("1970-01");
@@ -919,6 +938,7 @@ fn late_parent_cycle_cannot_poison_adopted_main_line_via_forward_remat() {
 #[test]
 fn honest_parent_and_childof_in_one_observer_delta_are_both_received() {
     let (_dir, source, _unused, actor) = fixture();
+    let writer = source.memory(actor.entity_ref(), actor.actor_class());
     let room = EntityId::now();
     source
         .create_conversation(
@@ -929,11 +949,11 @@ fn honest_parent_and_childof_in_one_observer_delta_are_both_received() {
         )
         .unwrap();
     let first = source
-        .append_dag_record(&input(room, None, true, actor))
+        .append_dag_record(&writer, &input(room, None, true, actor))
         .unwrap()
         .id;
     let second = source
-        .append_dag_record(&input(room, Some(first), true, actor))
+        .append_dag_record(&writer, &input(room, Some(first), true, actor))
         .unwrap()
         .id;
     let key = crate::sync::types::WindowKey::new("1970-01");
@@ -981,6 +1001,7 @@ fn honest_parent_and_childof_in_one_observer_delta_are_both_received() {
 #[test]
 fn two_parent_candidates_in_one_delta_keep_single_parent() {
     let (_dir, source, _unused, actor) = fixture();
+    let writer = source.memory(actor.entity_ref(), actor.actor_class());
     let room = EntityId::now();
     source
         .create_conversation(
@@ -991,15 +1012,15 @@ fn two_parent_candidates_in_one_delta_keep_single_parent() {
         )
         .unwrap();
     let first = source
-        .append_dag_record(&input(room, None, true, actor))
+        .append_dag_record(&writer, &input(room, None, true, actor))
         .unwrap()
         .id;
     let second = source
-        .append_dag_record(&input(room, Some(first), true, actor))
+        .append_dag_record(&writer, &input(room, Some(first), true, actor))
         .unwrap()
         .id;
     let third = source
-        .append_dag_record(&input(room, Some(second), true, actor))
+        .append_dag_record(&writer, &input(room, Some(second), true, actor))
         .unwrap()
         .id;
     let key = crate::sync::types::WindowKey::new("1970-01");
@@ -1047,6 +1068,7 @@ fn two_parent_candidates_in_one_delta_keep_single_parent() {
 #[test]
 fn same_delta_parent_cycle_cannot_poison_adopted_branch() {
     let (_dir, source, _unused, actor) = fixture();
+    let writer = source.memory(actor.entity_ref(), actor.actor_class());
     let room = EntityId::now();
     source
         .create_conversation(
@@ -1057,11 +1079,11 @@ fn same_delta_parent_cycle_cannot_poison_adopted_branch() {
         )
         .unwrap();
     let first = source
-        .append_dag_record(&input(room, None, true, actor))
+        .append_dag_record(&writer, &input(room, None, true, actor))
         .unwrap()
         .id;
     let second = source
-        .append_dag_record(&input(room, Some(first), true, actor))
+        .append_dag_record(&writer, &input(room, Some(first), true, actor))
         .unwrap()
         .id;
     let key = crate::sync::types::WindowKey::new("1970-01");
@@ -1083,11 +1105,11 @@ fn same_delta_parent_cycle_cannot_poison_adopted_branch() {
         [first, second]
     );
     let third = source
-        .append_dag_record(&input(room, Some(second), true, actor))
+        .append_dag_record(&writer, &input(room, Some(second), true, actor))
         .unwrap()
         .id;
     let fourth = source
-        .append_dag_record(&input(room, Some(third), true, actor))
+        .append_dag_record(&writer, &input(room, Some(third), true, actor))
         .unwrap()
         .id;
     crate::sync::window::reverse_rematerialize(&source, &doc, &key).unwrap();
@@ -1151,6 +1173,7 @@ fn same_delta_parent_cycle_cannot_poison_adopted_branch() {
 #[test]
 fn raw_parent_removal_cannot_truncate_adopted_main_line() {
     let (_dir, source, _unused, actor) = fixture();
+    let writer = source.memory(actor.entity_ref(), actor.actor_class());
     let room = EntityId::now();
     source
         .create_conversation(
@@ -1161,11 +1184,11 @@ fn raw_parent_removal_cannot_truncate_adopted_main_line() {
         )
         .unwrap();
     let first = source
-        .append_dag_record(&input(room, None, true, actor))
+        .append_dag_record(&writer, &input(room, None, true, actor))
         .unwrap()
         .id;
     let second = source
-        .append_dag_record(&input(room, Some(first), true, actor))
+        .append_dag_record(&writer, &input(room, Some(first), true, actor))
         .unwrap()
         .id;
     let key = crate::sync::types::WindowKey::new("1970-01");
@@ -1217,6 +1240,7 @@ fn raw_parent_removal_cannot_truncate_adopted_main_line() {
 #[test]
 fn unchanged_parent_retries_when_its_childof_dependencies_arrive() {
     let (_dir, source, _unused, actor) = fixture();
+    let writer = source.memory(actor.entity_ref(), actor.actor_class());
     let room = EntityId::now();
     source
         .create_conversation(
@@ -1227,11 +1251,11 @@ fn unchanged_parent_retries_when_its_childof_dependencies_arrive() {
         )
         .unwrap();
     let first = source
-        .append_dag_record(&input(room, None, true, actor))
+        .append_dag_record(&writer, &input(room, None, true, actor))
         .unwrap()
         .id;
     let second = source
-        .append_dag_record(&input(room, Some(first), true, actor))
+        .append_dag_record(&writer, &input(room, Some(first), true, actor))
         .unwrap()
         .id;
     let key = crate::sync::types::WindowKey::new("1970-01");
@@ -1278,6 +1302,7 @@ fn unchanged_parent_retries_when_its_childof_dependencies_arrive() {
 #[test]
 fn deferred_parent_marker_survives_partial_membership_drain() {
     let (_dir, source, _unused, actor) = fixture();
+    let writer = source.memory(actor.entity_ref(), actor.actor_class());
     let room = EntityId::now();
     source
         .create_conversation(
@@ -1288,11 +1313,11 @@ fn deferred_parent_marker_survives_partial_membership_drain() {
         )
         .unwrap();
     let first = source
-        .append_dag_record(&input(room, None, true, actor))
+        .append_dag_record(&writer, &input(room, None, true, actor))
         .unwrap()
         .id;
     let second = source
-        .append_dag_record(&input(room, Some(first), true, actor))
+        .append_dag_record(&writer, &input(room, Some(first), true, actor))
         .unwrap()
         .id;
     let key = crate::sync::types::WindowKey::new("1970-01");
@@ -1353,6 +1378,7 @@ fn deferred_parent_marker_survives_partial_membership_drain() {
 #[test]
 fn soft_deleted_turn_retains_parent_against_raw_removal() {
     let (_dir, source, _unused, actor) = fixture();
+    let writer = source.memory(actor.entity_ref(), actor.actor_class());
     let room = EntityId::now();
     source
         .create_conversation(
@@ -1363,11 +1389,11 @@ fn soft_deleted_turn_retains_parent_against_raw_removal() {
         )
         .unwrap();
     let first = source
-        .append_dag_record(&input(room, None, true, actor))
+        .append_dag_record(&writer, &input(room, None, true, actor))
         .unwrap()
         .id;
     let second = source
-        .append_dag_record(&input(room, Some(first), true, actor))
+        .append_dag_record(&writer, &input(room, Some(first), true, actor))
         .unwrap()
         .id;
     let key = crate::sync::types::WindowKey::new("1970-01");
@@ -1399,6 +1425,7 @@ fn soft_deleted_turn_retains_parent_against_raw_removal() {
 #[test]
 fn received_parent_respects_full_ancestor_depth() {
     let (_dir, source, _unused, actor) = fixture();
+    let writer = source.memory(actor.entity_ref(), actor.actor_class());
     let extra_room = EntityId::now();
     source
         .create_conversation(
@@ -1409,11 +1436,11 @@ fn received_parent_respects_full_ancestor_depth() {
         )
         .unwrap();
     let extra = source
-        .append_dag_record(&input(extra_room, None, true, actor))
+        .append_dag_record(&writer, &input(extra_room, None, true, actor))
         .unwrap()
         .id;
     let over_limit = source
-        .append_dag_record(&input(extra_room, Some(extra), true, actor))
+        .append_dag_record(&writer, &input(extra_room, Some(extra), true, actor))
         .unwrap()
         .id;
     let dir = tempfile::tempdir().unwrap();
@@ -1533,12 +1560,13 @@ fn received_parent_respects_full_ancestor_depth() {
 #[test]
 fn forged_replies_to_without_pointer_remains_rejected() {
     let (_dir, source, room, actor) = fixture();
+    let writer = source.memory(actor.entity_ref(), actor.actor_class());
     let first = source
-        .append_dag_record(&input(room, None, true, actor))
+        .append_dag_record(&writer, &input(room, None, true, actor))
         .unwrap()
         .id;
     let second = source
-        .append_dag_record(&input(room, Some(first), true, actor))
+        .append_dag_record(&writer, &input(room, Some(first), true, actor))
         .unwrap()
         .id;
     let key = crate::sync::types::WindowKey::new("1970-01");
@@ -1570,6 +1598,7 @@ fn forged_replies_to_without_pointer_remains_rejected() {
 #[cfg(feature = "sync")]
 fn cross_session_parent_is_rejected(live_delta: bool) {
     let (_dir, source, _unused, actor) = fixture();
+    let writer = source.memory(actor.entity_ref(), actor.actor_class());
     let room = EntityId::now();
     source
         .create_conversation(
@@ -1580,11 +1609,11 @@ fn cross_session_parent_is_rejected(live_delta: bool) {
         )
         .unwrap();
     let first = source
-        .append_dag_record(&input(room, None, true, actor))
+        .append_dag_record(&writer, &input(room, None, true, actor))
         .unwrap()
         .id;
     let trunk = source
-        .append_dag_record(&input(room, Some(first), true, actor))
+        .append_dag_record(&writer, &input(room, Some(first), true, actor))
         .unwrap()
         .id;
     let key = crate::sync::types::WindowKey::new("1970-01");
@@ -1604,10 +1633,10 @@ fn cross_session_parent_is_rejected(live_delta: bool) {
     let session_b = source.spawn_dag_sub_session(&trunk, actor).unwrap();
     let mut a_input = input(room, Some(trunk), false, actor);
     a_input.session = Some(session_a);
-    let worker_a = source.append_dag_record(&a_input).unwrap().id;
+    let worker_a = source.append_dag_record(&writer, &a_input).unwrap().id;
     let mut b_input = input(room, Some(trunk), false, actor);
     b_input.session = Some(session_b);
-    let worker_b = source.append_dag_record(&b_input).unwrap().id;
+    let worker_b = source.append_dag_record(&writer, &b_input).unwrap().id;
     let current_key = crate::sync::types::WindowKey::from_timestamp(
         crate::batch::EntityMetadataHeader::parse(
             &source.get_raw_unsealed(&session_a).unwrap().unwrap(),
@@ -1685,6 +1714,7 @@ fn cross_session_parent_is_rejected_via_forward_remat() {
 #[cfg(feature = "sync")]
 fn ordinary_session_trunk_replays(live_delta: bool) {
     let (_dir, source, _unused, actor) = fixture();
+    let writer = source.memory(actor.entity_ref(), actor.actor_class());
     let room = EntityId::now();
     source
         .create_conversation(
@@ -1695,22 +1725,23 @@ fn ordinary_session_trunk_replays(live_delta: bool) {
         )
         .unwrap();
     let first = source
-        .append_dag_record(&input(room, None, true, actor))
+        .append_dag_record(&writer, &input(room, None, true, actor))
         .unwrap()
         .id;
     let second = source
-        .append_dag_record(&input(room, Some(first), true, actor))
+        .append_dag_record(&writer, &input(room, Some(first), true, actor))
         .unwrap()
         .id;
-    let session = match source.mint_session(1).unwrap() {
+    let session_key = source.local_session_key(actor.entity_ref()).unwrap();
+    let session = match source.mint_session(session_key, 1).unwrap() {
         crate::session_lifecycle::SessionMintOutcome::Minted(id) => id,
         _ => panic!("fresh session"),
     };
     let mut member = input(room, Some(second), true, actor);
     member.session = Some(session);
-    let third = source.append_dag_record(&member).unwrap().id;
+    let third = source.append_dag_record(&writer, &member).unwrap().id;
     let fourth = source
-        .append_dag_record(&input(room, Some(third), true, actor))
+        .append_dag_record(&writer, &input(room, Some(third), true, actor))
         .unwrap()
         .id;
     assert_eq!(
@@ -1782,6 +1813,7 @@ fn ordinary_session_trunk_survives_live_replay() {
 #[test]
 fn missing_target_body_registers_parent_retry_and_wakes_on_membership() {
     let (_dir, source, _unused, actor) = fixture();
+    let writer = source.memory(actor.entity_ref(), actor.actor_class());
     let room = EntityId::now();
     source
         .create_conversation(
@@ -1792,11 +1824,11 @@ fn missing_target_body_registers_parent_retry_and_wakes_on_membership() {
         )
         .unwrap();
     let first = source
-        .append_dag_record(&input(room, None, true, actor))
+        .append_dag_record(&writer, &input(room, None, true, actor))
         .unwrap()
         .id;
     let second = source
-        .append_dag_record(&input(room, Some(first), true, actor))
+        .append_dag_record(&writer, &input(room, Some(first), true, actor))
         .unwrap()
         .id;
     let key = crate::sync::types::WindowKey::new("1970-01");
@@ -1846,6 +1878,7 @@ fn missing_target_body_registers_parent_retry_and_wakes_on_membership() {
 #[test]
 fn delayed_intermediate_parent_wakes_unchanged_worker_parent() {
     let (_dir, source, _unused, actor) = fixture();
+    let writer = source.memory(actor.entity_ref(), actor.actor_class());
     let room = EntityId::now();
     source
         .create_conversation(
@@ -1856,11 +1889,11 @@ fn delayed_intermediate_parent_wakes_unchanged_worker_parent() {
         )
         .unwrap();
     let first = source
-        .append_dag_record(&input(room, None, true, actor))
+        .append_dag_record(&writer, &input(room, None, true, actor))
         .unwrap()
         .id;
     let trunk = source
-        .append_dag_record(&input(room, Some(first), true, actor))
+        .append_dag_record(&writer, &input(room, Some(first), true, actor))
         .unwrap()
         .id;
     let key = crate::sync::types::WindowKey::new("1970-01");
@@ -1879,9 +1912,9 @@ fn delayed_intermediate_parent_wakes_unchanged_worker_parent() {
     let session = source.spawn_dag_sub_session(&trunk, actor).unwrap();
     let mut worker = input(room, Some(trunk), false, actor);
     worker.session = Some(session);
-    let one = source.append_dag_record(&worker).unwrap().id;
+    let one = source.append_dag_record(&writer, &worker).unwrap().id;
     worker.parent = Some(one);
-    let two = source.append_dag_record(&worker).unwrap().id;
+    let two = source.append_dag_record(&writer, &worker).unwrap().id;
     let current = crate::sync::types::WindowKey::from_timestamp(
         crate::batch::EntityMetadataHeader::parse(
             &source.get_raw_unsealed(&session).unwrap().unwrap(),
@@ -1934,6 +1967,7 @@ fn delayed_intermediate_parent_wakes_unchanged_worker_parent() {
 #[cfg(feature = "sync")]
 fn missing_target_in_later_window_recovers(live_delta: bool) {
     let (_dir, source, _unused, actor) = fixture();
+    let writer = source.memory(actor.entity_ref(), actor.actor_class());
     let room = EntityId::now();
     source
         .create_conversation(
@@ -1950,10 +1984,10 @@ fn missing_target_in_later_window_recovers(live_delta: bool) {
     let mut root_input = input(room, None, true, actor);
     root_input.occurred = time(now);
     root_input.learned_at = now;
-    let root = source.append_dag_record(&root_input).unwrap().id;
+    let root = source.append_dag_record(&writer, &root_input).unwrap().id;
     let mut child_input = input(room, Some(root), true, actor);
     child_input.occurred = time(now + 1);
-    let child = source.append_dag_record(&child_input).unwrap().id;
+    let child = source.append_dag_record(&writer, &child_input).unwrap().id;
     let early_key = crate::sync::types::WindowKey::new("1970-01");
     let early_doc = crate::sync::schema::create_window_doc("early-child", &early_key);
     crate::sync::window::reverse_rematerialize(&source, &early_doc, &early_key).unwrap();
@@ -2045,6 +2079,7 @@ fn missing_target_in_later_window_recovers_via_observer() {
 #[test]
 fn reverse_parent_delivery_wakes_worker_chain_to_fixed_point() {
     let (_dir, source, _unused, actor) = fixture();
+    let writer = source.memory(actor.entity_ref(), actor.actor_class());
     let room = EntityId::now();
     source
         .create_conversation(
@@ -2055,11 +2090,11 @@ fn reverse_parent_delivery_wakes_worker_chain_to_fixed_point() {
         )
         .unwrap();
     let root = source
-        .append_dag_record(&input(room, None, true, actor))
+        .append_dag_record(&writer, &input(room, None, true, actor))
         .unwrap()
         .id;
     let trunk = source
-        .append_dag_record(&input(room, Some(root), true, actor))
+        .append_dag_record(&writer, &input(room, Some(root), true, actor))
         .unwrap()
         .id;
     let key = crate::sync::types::WindowKey::new("1970-01");
@@ -2074,11 +2109,11 @@ fn reverse_parent_delivery_wakes_worker_chain_to_fixed_point() {
     let session = source.spawn_dag_sub_session(&trunk, actor).unwrap();
     let mut worker = input(room, Some(trunk), false, actor);
     worker.session = Some(session);
-    let one = source.append_dag_record(&worker).unwrap().id;
+    let one = source.append_dag_record(&writer, &worker).unwrap().id;
     worker.parent = Some(one);
-    let two = source.append_dag_record(&worker).unwrap().id;
+    let two = source.append_dag_record(&writer, &worker).unwrap().id;
     worker.parent = Some(two);
-    let three = source.append_dag_record(&worker).unwrap().id;
+    let three = source.append_dag_record(&writer, &worker).unwrap().id;
     let current = crate::sync::types::WindowKey::from_timestamp(
         crate::batch::EntityMetadataHeader::parse(
             &source.get_raw_unsealed(&session).unwrap().unwrap(),
@@ -2136,6 +2171,7 @@ fn reverse_parent_delivery_wakes_worker_chain_to_fixed_point() {
 #[test]
 fn deferred_parent_resumes_after_vault_reopen() {
     let (_dir, source, _unused, actor) = fixture();
+    let writer = source.memory(actor.entity_ref(), actor.actor_class());
     let room = EntityId::now();
     source
         .create_conversation(
@@ -2152,10 +2188,10 @@ fn deferred_parent_resumes_after_vault_reopen() {
     let mut root_input = input(room, None, true, actor);
     root_input.occurred = time(now);
     root_input.learned_at = now;
-    let root = source.append_dag_record(&root_input).unwrap().id;
+    let root = source.append_dag_record(&writer, &root_input).unwrap().id;
     let mut child_input = input(room, Some(root), true, actor);
     child_input.occurred = time(now + 1);
-    let child = source.append_dag_record(&child_input).unwrap().id;
+    let child = source.append_dag_record(&writer, &child_input).unwrap().id;
     let early_key = crate::sync::types::WindowKey::new("1970-01");
     let early_doc = crate::sync::schema::create_window_doc("reopen-early", &early_key);
     crate::sync::window::reverse_rematerialize(&source, &early_doc, &early_key).unwrap();
@@ -2208,6 +2244,7 @@ fn deferred_parent_resumes_after_vault_reopen() {
 #[test]
 fn childof_before_its_turn_body_wakes_unchanged_parent() {
     let (_dir, source, _unused, actor) = fixture();
+    let writer = source.memory(actor.entity_ref(), actor.actor_class());
     let room = EntityId::now();
     source
         .create_conversation(
@@ -2218,11 +2255,11 @@ fn childof_before_its_turn_body_wakes_unchanged_parent() {
         )
         .unwrap();
     let root = source
-        .append_dag_record(&input(room, None, true, actor))
+        .append_dag_record(&writer, &input(room, None, true, actor))
         .unwrap()
         .id;
     let child = source
-        .append_dag_record(&input(room, Some(root), true, actor))
+        .append_dag_record(&writer, &input(room, Some(root), true, actor))
         .unwrap()
         .id;
     let key = crate::sync::types::WindowKey::new("1970-01");
@@ -2260,6 +2297,7 @@ fn childof_before_its_turn_body_wakes_unchanged_parent() {
 #[test]
 fn spawned_by_before_its_session_body_wakes_worker_parent() {
     let (_dir, source, _unused, actor) = fixture();
+    let writer = source.memory(actor.entity_ref(), actor.actor_class());
     let room = EntityId::now();
     source
         .create_conversation(
@@ -2270,17 +2308,17 @@ fn spawned_by_before_its_session_body_wakes_worker_parent() {
         )
         .unwrap();
     let root = source
-        .append_dag_record(&input(room, None, true, actor))
+        .append_dag_record(&writer, &input(room, None, true, actor))
         .unwrap()
         .id;
     let trunk = source
-        .append_dag_record(&input(room, Some(root), true, actor))
+        .append_dag_record(&writer, &input(room, Some(root), true, actor))
         .unwrap()
         .id;
     let session = source.spawn_dag_sub_session(&trunk, actor).unwrap();
     let mut worker_input = input(room, Some(trunk), false, actor);
     worker_input.session = Some(session);
-    let worker = source.append_dag_record(&worker_input).unwrap().id;
+    let worker = source.append_dag_record(&writer, &worker_input).unwrap().id;
     let early_key = crate::sync::types::WindowKey::new("1970-01");
     let early = crate::sync::schema::create_window_doc("spawn-before-session-early", &early_key);
     crate::sync::window::reverse_rematerialize(&source, &early, &early_key).unwrap();
@@ -2334,6 +2372,7 @@ fn spawned_by_before_its_session_body_wakes_worker_parent() {
 #[test]
 fn malformed_parent_replacement_retires_exact_pending_work() {
     let (_dir, source, _unused, actor) = fixture();
+    let writer = source.memory(actor.entity_ref(), actor.actor_class());
     let room = EntityId::now();
     source
         .create_conversation(
@@ -2344,11 +2383,11 @@ fn malformed_parent_replacement_retires_exact_pending_work() {
         )
         .unwrap();
     let root = source
-        .append_dag_record(&input(room, None, true, actor))
+        .append_dag_record(&writer, &input(room, None, true, actor))
         .unwrap()
         .id;
     let child = source
-        .append_dag_record(&input(room, Some(root), true, actor))
+        .append_dag_record(&writer, &input(room, Some(root), true, actor))
         .unwrap()
         .id;
     let key = crate::sync::types::WindowKey::new("1970-01");
@@ -2401,6 +2440,7 @@ fn malformed_parent_replacement_retires_exact_pending_work() {
 #[test]
 fn pending_parent_blocks_adoption_until_root_arrives() {
     let (_dir, source, _unused, actor) = fixture();
+    let writer = source.memory(actor.entity_ref(), actor.actor_class());
     let room = EntityId::from_bytes([1; 16]).unwrap();
     source
         .create_conversation(
@@ -2411,11 +2451,11 @@ fn pending_parent_blocks_adoption_until_root_arrives() {
         )
         .unwrap();
     let root = source
-        .append_dag_record(&input(room, None, true, actor))
+        .append_dag_record(&writer, &input(room, None, true, actor))
         .unwrap()
         .id;
     let child = source
-        .append_dag_record(&input(room, Some(root), true, actor))
+        .append_dag_record(&writer, &input(room, Some(root), true, actor))
         .unwrap()
         .id;
     let key = crate::sync::types::WindowKey::new("1970-01");
@@ -2489,6 +2529,7 @@ fn pending_parent_blocks_adoption_until_root_arrives() {
 #[cfg(feature = "sync")]
 fn cross_window_spawn_anchor_late(live_delta: bool) {
     let (_dir, source, _unused, actor) = fixture();
+    let writer = source.memory(actor.entity_ref(), actor.actor_class());
     let room = EntityId::now();
     source
         .create_conversation(
@@ -2499,17 +2540,17 @@ fn cross_window_spawn_anchor_late(live_delta: bool) {
         )
         .unwrap();
     let root = source
-        .append_dag_record(&input(room, None, true, actor))
+        .append_dag_record(&writer, &input(room, None, true, actor))
         .unwrap()
         .id;
     let trunk = source
-        .append_dag_record(&input(room, Some(root), true, actor))
+        .append_dag_record(&writer, &input(room, Some(root), true, actor))
         .unwrap()
         .id;
     let session = source.spawn_dag_sub_session(&trunk, actor).unwrap();
     let mut worker_input = input(room, Some(trunk), false, actor);
     worker_input.session = Some(session);
-    let worker = source.append_dag_record(&worker_input).unwrap().id;
+    let worker = source.append_dag_record(&writer, &worker_input).unwrap().id;
     let early_key = crate::sync::types::WindowKey::new("1970-01");
     let early = crate::sync::schema::create_window_doc("anchor-turns", &early_key);
     crate::sync::window::reverse_rematerialize(&source, &early, &early_key).unwrap();
@@ -2584,12 +2625,13 @@ fn cross_window_spawned_by_target_late_observer() {
 #[test]
 fn ready_parent_budget_continues_after_reopen_without_other_traffic() {
     let (_dir, source, room, actor) = fixture();
+    let writer = source.memory(actor.entity_ref(), actor.actor_class());
     let root = source
-        .append_dag_record(&input(room, None, true, actor))
+        .append_dag_record(&writer, &input(room, None, true, actor))
         .unwrap()
         .id;
     let trunk = source
-        .append_dag_record(&input(room, Some(root), true, actor))
+        .append_dag_record(&writer, &input(room, Some(root), true, actor))
         .unwrap()
         .id;
     let key = crate::sync::types::WindowKey::new("1970-01");
@@ -2609,7 +2651,8 @@ fn ready_parent_budget_continues_after_reopen_without_other_traffic() {
             [root, trunk]
         );
     }
-    let session = match source.mint_session(1).unwrap() {
+    let session_key = source.local_session_key(actor.entity_ref()).unwrap();
+    let session = match source.mint_session(session_key, 1).unwrap() {
         crate::session_lifecycle::SessionMintOutcome::Minted(id) => id,
         _ => panic!("fresh ordinary session"),
     };
@@ -2696,6 +2739,7 @@ fn ready_parent_budget_continues_after_reopen_without_other_traffic() {
 #[cfg(feature = "sync")]
 fn late_conversation_endpoint_replays_cross_window_childof(live_delta: bool, reopen: bool) {
     let (_dir, source, _unused, actor) = fixture();
+    let writer = source.memory(actor.entity_ref(), actor.actor_class());
     let room = EntityId::now();
     source
         .create_conversation(
@@ -2708,11 +2752,11 @@ fn late_conversation_endpoint_replays_cross_window_childof(live_delta: bool, reo
     let mut first_input = input(room, None, true, actor);
     first_input.learned_at = 946_684_800;
     first_input.occurred = time(946_684_800);
-    let first = source.append_dag_record(&first_input).unwrap().id;
+    let first = source.append_dag_record(&writer, &first_input).unwrap().id;
     let mut second_input = input(room, Some(first), true, actor);
     second_input.learned_at = 946_684_801;
     second_input.occurred = time(946_684_801);
-    let second = source.append_dag_record(&second_input).unwrap().id;
+    let second = source.append_dag_record(&writer, &second_input).unwrap().id;
     let room_key = crate::sync::types::WindowKey::new("1970-01");
     let turn_key = crate::sync::types::WindowKey::new("2000-01");
     let room_doc = crate::sync::schema::create_window_doc("late-room-window", &room_key);
@@ -2827,6 +2871,7 @@ fn conversation_endpoint_last_cross_window_after_reopen() {
 #[test]
 fn hard_erased_thread_root_keeps_its_live_reply_in_fork_scope() {
     let (_dir, vault, _old, actor) = fixture();
+    let writer = vault.memory(actor.entity_ref(), actor.actor_class());
     let room = EntityId::now();
     vault
         .create_conversation(
@@ -2840,19 +2885,19 @@ fn hard_erased_thread_root_keeps_its_live_reply_in_fork_scope() {
         )
         .unwrap();
     let root = vault
-        .append_dag_record(&input(room, None, true, actor))
+        .append_dag_record(&writer, &input(room, None, true, actor))
         .unwrap()
         .id;
     let trunk = vault
-        .append_dag_record(&input(room, Some(root), true, actor))
+        .append_dag_record(&writer, &input(room, Some(root), true, actor))
         .unwrap()
         .id;
     let thread_root = vault
-        .reply_in_thread(root, &input(room, Some(root), false, actor))
+        .reply_in_thread(&writer, root, &input(room, Some(root), false, actor))
         .unwrap()
         .id;
     let live_reply = vault
-        .reply_in_thread(root, &input(room, Some(thread_root), false, actor))
+        .reply_in_thread(&writer, root, &input(room, Some(thread_root), false, actor))
         .unwrap()
         .id;
     assert_eq!(
@@ -2881,11 +2926,14 @@ fn hard_erased_thread_root_keeps_its_live_reply_in_fork_scope() {
             .main_line,
         [root, trunk]
     );
-    let strip = vault.reply_strip(&live_reply).unwrap().unwrap();
+    let read = writer
+        .read_lane(crate::claim::ClaimReadStatus::Recorded)
+        .unwrap();
+    let strip = vault.reply_strip(&read, &live_reply).unwrap().unwrap();
     assert!(strip.redacted && strip.text.is_none());
     assert!(
         vault
-            .append_dag_record(&input(room, Some(trunk), true, actor))
+            .append_dag_record(&writer, &input(room, Some(trunk), true, actor))
             .is_ok()
     );
 }
@@ -2894,12 +2942,13 @@ fn hard_erased_thread_root_keeps_its_live_reply_in_fork_scope() {
 fn tombstone_before_first_adoption_preserves_received_dag_descendant() {
     for hard in [false, true] {
         let (_source_dir, source, room, actor) = fixture();
+        let writer = source.memory(actor.entity_ref(), actor.actor_class());
         let root = source
-            .append_dag_record(&input(room, None, true, actor))
+            .append_dag_record(&writer, &input(room, None, true, actor))
             .unwrap()
             .id;
         let child = source
-            .append_dag_record(&input(room, Some(root), true, actor))
+            .append_dag_record(&writer, &input(room, Some(root), true, actor))
             .unwrap()
             .id;
         let dir = tempfile::tempdir().unwrap();
@@ -2916,6 +2965,7 @@ fn tombstone_before_first_adoption_preserves_received_dag_descendant() {
                         end: header.occurred_end,
                     },
                     header.learned_at,
+                    None,
                     &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
                 )
                 .commit()
@@ -2977,8 +3027,11 @@ fn tombstone_before_first_adoption_preserves_received_dag_descendant() {
         peer.move_head(&room, &child).unwrap();
         crate::conversation_dag::fixtures::grant(&peer, actor, true);
         assert!(
-            peer.append_dag_record(&input(room, Some(child), true, actor))
-                .is_ok()
+            peer.append_dag_record(
+                &peer.memory(actor.entity_ref(), actor.actor_class()),
+                &input(room, Some(child), true, actor),
+            )
+            .is_ok()
         );
     }
 }

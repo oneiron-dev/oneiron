@@ -331,6 +331,15 @@ async fn quickjs_a_runs_search_reads_under_the_credential_builders_key() {
     )
     .unwrap();
     let space = seeded_test_entity_id(0x0024_65c3);
+    mode.vault
+        .put_entity(
+            &space,
+            oneiron::registry::ENTITY_TYPE_RELATIONSHIP,
+            oneiron::TimeRange { start: 1, end: 1 },
+            1,
+            b"relationship",
+        )
+        .unwrap();
     let spaced = (
         seeded_test_entity_id(0x0024_65c4),
         seeded_test_entity_id(0x0024_65c5),

@@ -24,8 +24,8 @@ use oneiron::attempt_queue::{
 };
 use oneiron::calendar::claims::PREDICATE_CALENDAR_ORIGIN;
 use oneiron::calendar::ingest::feed_door::{
-    self as feed, CalendarIcsFeedConfigureRequest, CalendarIcsFeedConsent, CalendarIcsFeedRequest,
-    CalendarIcsFeedReviewDecision, CalendarIcsFeedReviewRequest,
+    self as feed, CalendarIcsFeedConsent, CalendarIcsFeedRequest, CalendarIcsFeedReviewDecision,
+    CalendarIcsFeedReviewRequest,
 };
 use oneiron::calendar::ingest::{
     ICS_PROPERTY_CONTINUATION_ATTEMPT_KIND, IcsFeedFetcher, IcsFeedPollConfig, IcsFetchResponse,
@@ -41,6 +41,7 @@ use oneiron::memory::{
     ClaimProposalReviewRequest, ClaimSettleDecision, ClaimSettleRequest, ClaimSettlementVerdict,
     KeyValuePut, Memory,
 };
+use oneiron::setting::{SetSetting, SetSettingOutcome, SettingCaller};
 use oneiron::test_doors::label_writers::embedded_owner;
 use oneiron::{
     ClaimApprovalStatus, ClaimBody, ClaimSource, EdgeActorClass, EntityId, Vault, VaultConfig,
@@ -123,14 +124,25 @@ impl Fixture {
             cadence_min_seconds: 300,
             cadence_max_seconds: 900,
         };
-        feed::configure(
-            &self.memory(),
-            &self.proof,
-            &CalendarIcsFeedConfigureRequest {
-                config: config.clone(),
-            },
-        )
-        .expect("install the feed");
+        // The owner installs a feed as the `calendar.ics_feed` setting, one item per system
+        // (#8937 replaced the configure door).
+        let outcome = self
+            .vault
+            .set_setting(
+                SettingCaller::Owner(&self.proof),
+                SetSetting {
+                    item: Some(system.to_owned()),
+                    ..SetSetting::vault_value(
+                        "calendar.ics_feed",
+                        serde_json::to_value(&config).expect("feed config as JSON"),
+                    )
+                },
+            )
+            .expect("install the feed");
+        assert!(
+            matches!(outcome, SetSettingOutcome::Applied { .. }),
+            "the owner's install applies: {outcome:?}"
+        );
         config
     }
 
@@ -216,22 +228,30 @@ impl Fixture {
     }
 
     /// The owner's `vault.claims.review`, then `vault.claims.settle`
-    /// (approve), on one held claim.
+    /// (approve), on one held claim, each on the owner's proof. This
+    /// fixture's vault holds no writer lease, so the handle's
+    /// embedded-owner shortcut (`claim_review` with no grant) refuses.
     fn owner_releases(&self, id: EntityId) {
         let memory = self.memory();
         let review = memory
-            .claim_review(&ClaimProposalReviewRequest {
-                claim_ref: id.to_hex(),
-                grant_ref: None,
-            })
+            .claim_review_as_owner(
+                &self.proof,
+                &ClaimProposalReviewRequest {
+                    claim_ref: id.to_hex(),
+                    grant_ref: None,
+                },
+            )
             .expect("the owner reviews the held claim");
         let settled = memory
-            .claim_settle(&ClaimSettleRequest {
-                claim_ref: id.to_hex(),
-                review_id: review.review_id,
-                decision: ClaimSettleDecision::Approve,
-                grant_ref: None,
-            })
+            .claim_settle_as_owner(
+                &self.proof,
+                &ClaimSettleRequest {
+                    claim_ref: id.to_hex(),
+                    review_id: review.review_id,
+                    decision: ClaimSettleDecision::Approve,
+                    grant_ref: None,
+                },
+            )
             .expect("the owner settles the held claim");
         assert_eq!(settled.verdict, ClaimSettlementVerdict::Landed);
     }

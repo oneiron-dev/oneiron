@@ -37,6 +37,7 @@ use crate::entity_id::EntityId;
 use crate::registry::ENTITY_TYPE_EVENT;
 use crate::side_table::{self, LegacyJson, SideKey, SideTable};
 use crate::vault::Vault;
+use oneiron_contracts::lifecycle::{IllegalTransition, Lifecycle};
 
 /// Sub-tag for durable write-outbox rows.
 pub(super) const OUTBOX_ROW_TAG: &[u8] = b"row:";
@@ -185,7 +186,12 @@ pub struct CalendarRemoteObjectRow {
 /// The UID is preserved (or minted once for a locally originated EVENT) and
 /// the SEQUENCE bumps only when this seat already holds that UID. Both derive
 /// from admitted passports and the seat's own remote copy, never from a
-/// pending, rejected or stale passport proposal. The resource renders over its
+/// pending, rejected or stale passport proposal, with one exception: the
+/// importer's own pending passport of this seat's system vouches for its UID
+/// when the pull wrote this seat's remote object under it, so an EVENT edited
+/// before its import is approved replaces the pulled object and never adds a
+/// second one (the lead's ruling 10 Nov 10:3x, FIX
+/// CALDAV-PENDING-IMPORT-WRITEBACK-DUPLICATE). The resource renders over its
 /// archived source so fields the render does not own survive, the durable
 /// outbox row is staged BEFORE the provider call, and the expected ETag rides
 /// as the conditional precondition. A precondition failure records
@@ -227,7 +233,10 @@ pub fn write_calendar_event(
         .map(|(_, value)| value.clone());
     let uid = match &own {
         Some(value) => value.uid.clone(),
-        None => shared_uid(&passports).unwrap_or_else(|| local_uid(&event_ref)),
+        None => match importer_pending_uid(vault, operation, &event_ref, system)? {
+            Some(uid) => uid,
+            None => shared_uid(&passports).unwrap_or_else(|| local_uid(&event_ref)),
+        },
     };
     let calendar_ref = seat.config.calendar_ref.as_str();
     let source = super::resource::archived_source(vault, system, calendar_ref, &uid, event_ref)?;
@@ -637,6 +646,7 @@ fn finish_remote_applied_write_in_txn(
             direction,
             last_seen_at: now,
             presence: CalendarPassportPresence::Live,
+            cancelled_since: None,
         };
         let already_applied = current.as_ref().is_some_and(|(_, value)| {
             value.last_sequence == next.last_sequence
@@ -891,6 +901,16 @@ fn write_outbox_row_in_txn(
     } else if actual_prior != expected {
         return Err(literal::invalid());
     }
+    if let Some(prior) = prior.as_ref()
+        && prior.state != row.state
+        && !prior.state.may_transition_to(&row.state)
+    {
+        return Err(IllegalTransition {
+            from: prior.state,
+            to: row.state,
+        }
+        .into());
+    }
     let instance = match row.carrier.as_ref() {
         Some(held) => held.instance,
         None => vault.store.clock.ulid()?,
@@ -1006,6 +1026,38 @@ fn open_cursor(
     row.href = values.href;
     row.etag = values.etag;
     Ok(())
+}
+
+/// The UID the importer's own pending passport vouches for on this seat's
+/// calendar, if any (the lead's ruling 10 Nov 10:3x, FIX
+/// CALDAV-PENDING-IMPORT-WRITEBACK-DUPLICATE). A pending passport of `system`
+/// counts only when the pull wrote this seat's remote object row under its
+/// UID, so the write replaces that object. Two such passports under different
+/// UIDs are refused, never picked by scan order.
+fn importer_pending_uid(
+    vault: &Vault,
+    operation: &CalendarConnectorOperation,
+    event_ref: &EntityId,
+    system: &str,
+) -> Result<Option<String>, CalendarConnectorError> {
+    let pending = {
+        let rtxn = vault.store.env.read_txn().map_err(crate::Error::from)?;
+        crate::calendar::passport::importer_pending_passports_in_txn(
+            vault, &rtxn, event_ref, system,
+        )?
+    };
+    let mut uids = std::collections::BTreeSet::new();
+    for (_, value) in pending {
+        if read_remote_object_for_operation(vault, operation, &value.uid)?.is_some() {
+            uids.insert(value.uid);
+        }
+    }
+    let mut uids = uids.into_iter();
+    let found = uids.next();
+    if uids.next().is_some() {
+        return Err(ingest_error("competing pending calendar passports"));
+    }
+    Ok(found)
 }
 
 fn read_remote_object_for_operation(
@@ -1204,7 +1256,5 @@ pub(super) fn ingest_error(reason: &'static str) -> CalendarConnectorError {
     CalendarConnectorError::Calendar(ingest_reason(reason))
 }
 
-// FIX [LIBTEST-QUARANTINE-CALENDAR-CONNECTORS-OUTBOUND-TESTS]: the lib test target's type check fails here (1 errors: E0061 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;

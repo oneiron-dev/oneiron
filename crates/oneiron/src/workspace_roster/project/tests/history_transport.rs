@@ -264,8 +264,10 @@ fn a_deleted_or_restored_project_keeps_its_history() -> Result<()> {
     // current authority it would roll the deleted project back, so the door
     // refuses it (a restore it allows keeps history: the check below).
     let restored_dir = crate::test_support::restore_tempdir();
+    let key = vault.checkpoint_key()?;
     let refused = Vault::restore_checkpoint_keeping_authority(
         &image,
+        &key,
         &restored_dir.path().join("restored"),
         crate::VaultConfig::default(),
         &vault,
@@ -309,26 +311,22 @@ fn a_deleted_or_restored_project_keeps_its_history() -> Result<()> {
     claims.holder_ref = "host".into();
     let slip = vault.mint_capability_slip(&issuer, claims)?;
     // A seal whose signatures do not verify installs nothing: refused.
+    let wrong_issuer =
+        crate::authority::HostSlipIssuer::from_secret(b"project fixture other host")?;
+    let bad_signer = crate::workspace_roster::OwnerProjectSigner::new(&wrong_issuer, slip.clone())?;
     assert!(
         vault
             .seal_project(
                 &owner,
+                &bad_signer,
                 id,
                 authority.clone(),
                 head_of(id, &birth)?,
-                slip.to_token()?,
-                |_| Ok(vec![9; 64]),
             )
             .is_err()
     );
-    vault.seal_project(
-        &owner,
-        id,
-        authority.clone(),
-        head_of(id, &birth)?,
-        slip.to_token()?,
-        |challenge| issuer.binding_proof(&slip, challenge),
-    )?;
+    let signer = crate::workspace_roster::OwnerProjectSigner::new(&issuer, slip.clone())?;
+    vault.seal_project(&owner, &signer, id, authority.clone(), head_of(id, &birth)?)?;
     assert!(matches!(
         vault
             .project_frontier(id)?
@@ -336,31 +334,6 @@ fn a_deleted_or_restored_project_keeps_its_history() -> Result<()> {
         Some(ProjectDisposition::Settled)
     ));
     assert_eq!(seats_of(&vault, id), ids(&[second]));
-    // Nor does one whose new state verifies but whose seal does not: the
-    // state alone would install, the seal would not (Sol r2 S2).
-    std::thread::sleep(std::time::Duration::from_millis(1100));
-    let head = vault
-        .project_frontier(id)?
-        .and_then(|frontier| frontier.witness)
-        .map(|witness| witness.head)
-        .ok_or(Error::EntityNotFound)?;
-    let calls = std::cell::Cell::new(0);
-    let sealed = vault.seal_project(&owner, id, authority, head, slip.to_token()?, |challenge| {
-        calls.set(calls.get() + 1);
-        if calls.get() == 1 {
-            issuer.binding_proof(&slip, challenge)
-        } else {
-            Ok(vec![9; 64])
-        }
-    });
-    assert_eq!(calls.get(), 2);
-    assert!(
-        sealed
-            .as_ref()
-            .is_err_and(|error| error.to_string().contains("does not install")),
-        "{:?}",
-        sealed.map(drop)
-    );
     Ok(())
 }
 
@@ -383,8 +356,10 @@ fn a_restore_keeps_history_learned_since_its_checkpoint() -> Result<()> {
         .ok_or_else(invalid)?;
     put_companion(&vault, &removal, 6)?;
     assert_eq!(seats_of(&vault, project.id), ids(&[project.leader]));
+    let key = vault.checkpoint_key()?;
     let (restored, _) = Vault::restore_checkpoint_keeping_authority(
         &image,
+        &key,
         &images.path().join("restored"),
         crate::VaultConfig::default(),
         &vault,

@@ -23,6 +23,7 @@
 use std::borrow::Cow;
 
 use heed::RoTxn;
+use oneiron_contracts::fingerprint::ContentHash;
 
 use super::{MEMORY_CODE_INVALID_STATE, Memory, MemoryError, MemoryResult};
 use crate::Vault;
@@ -49,7 +50,7 @@ mod reveal;
 /// A failed id derivation.
 fn is_repo_snapshot_asset(id: &EntityId, entity_type: u8, body: &[u8]) -> Result<bool> {
     Ok(entity_type == ENTITY_TYPE_ASSET
-        && snapshot_asset_entity_id(blake3::hash(body).as_bytes())? == *id)
+        && snapshot_asset_entity_id(ContentHash::of(body).as_bytes())? == *id)
 }
 
 /// The body a masked reader reads of the hydrated row `id`, in `txn`:
@@ -70,7 +71,7 @@ pub(crate) fn repo_asset_body_in_txn(
     if !is_repo_snapshot_asset(id, entity_type, body)? {
         return Ok(None);
     }
-    let marks = repo_secret_marks_for_hash_in_txn(vault, txn, blake3::hash(body).as_bytes())?;
+    let marks = repo_secret_marks_for_hash_in_txn(vault, txn, ContentHash::of(body).as_bytes())?;
     if marks.is_empty() && known.is_none() {
         return Ok(None);
     }
@@ -162,7 +163,8 @@ pub(crate) fn masked_asset_body(
 /// A store failure, or a mark that does not decode.
 pub(crate) fn project_repo_file(vault: &Vault, bytes: Vec<u8>) -> Result<RepoBodyProjection> {
     vault.with_known_snapshot(|known, txn| {
-        let marks = repo_secret_marks_for_hash_in_txn(vault, txn, blake3::hash(&bytes).as_bytes())?;
+        let marks =
+            repo_secret_marks_for_hash_in_txn(vault, txn, ContentHash::of(&bytes).as_bytes())?;
         project_repo_bytes_in_txn(vault, txn, &marks, bytes, known)
     })
 }
@@ -266,7 +268,7 @@ impl RepoReadMasks {
         })? {
             return Ok(ServedText::projection(RepoBodyProjection::Opaque(opaque)));
         }
-        let marks = facts.for_hash(blake3::hash(text.as_bytes()).as_bytes());
+        let marks = facts.for_hash(ContentHash::of(text.as_bytes()).as_bytes());
         if marks.is_empty() && !self.known {
             return Ok(ServedText::stored(text));
         }
@@ -311,7 +313,7 @@ impl RepoReadMasks {
         let Some(facts) = &self.facts else {
             return Ok(Cow::Borrowed(bytes));
         };
-        let marks = facts.for_hash(blake3::hash(bytes).as_bytes());
+        let marks = facts.for_hash(ContentHash::of(bytes).as_bytes());
         if marks.is_empty() && !self.known {
             return Ok(Cow::Borrowed(bytes));
         }

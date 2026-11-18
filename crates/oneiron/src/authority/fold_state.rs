@@ -55,6 +55,14 @@ pub struct AuthorityFold {
     /// (FIX 12196).
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     pub(super) host_custody: BTreeSet<AuthorityKey>,
+    /// Every roster key the passkey limits hold on the merged history
+    /// (`FoldState::passkey_limited`, row WEB-PASSKEY-OWNER-KEY): a passkey,
+    /// and a key only a passkey vouched for until a key that is no passkey
+    /// confirms it. Read through [`AuthorityFold::proves_owner_acts`], so
+    /// the writer takes no owner proof from a key whose cosign the fold
+    /// judges forged (REVIEW-8451 P1).
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub(super) passkey_limited_keys: BTreeSet<AuthorityKey>,
     /// The handoffs whose fences stand: settled, or in conflict.
     pub(super) closed_handoffs: BTreeSet<AuthorityEntryHash>,
     /// Owner dismissed saving the recovery secret and no second device has enrolled.
@@ -437,6 +445,22 @@ pub(super) struct FoldState {
     /// merged by union: a residence result past its directive's row reads
     /// it here (FIX 5412).
     pub(super) residence_directives: BTreeMap<AuthorityEntryHash, (EntityId, EntityId)>,
+    /// Each enrolled passkey's assertion contexts (row WEB-PASSKEY-OWNER-KEY;
+    /// Sol xhigh F2): the RP id hash and origin of its enrollment's own
+    /// assertion, merged by union. A passkey-form signature by the key counts
+    /// only in one of them. An image carries it only once a passkey enrolled.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub(super) passkey_contexts: BTreeMap<AuthorityKey, BTreeSet<WebAuthnContext>>,
+    /// Each key whose enrollment a passkey vouched for, merged by union
+    /// (lead ruling WEBPASSKEY-BLIND-SIGNATURE = B): until a non-passkey,
+    /// owner-held key vouches for it too, it neither re-roots, nor revokes
+    /// another owner key, nor vouches for a further key.
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub(super) passkey_vouched_keys: BTreeSet<AuthorityKey>,
+    /// Each passkey-vouched key such a second vouch confirmed, merged by
+    /// union.
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub(super) passkey_vouch_confirmations: BTreeSet<AuthorityKey>,
 }
 
 impl FoldState {
@@ -710,6 +734,19 @@ pub(super) fn merge_states(left: &FoldState, right: &FoldState) -> FoldState {
             .iter()
             .map(|(row, directive)| (*row, *directive)),
     );
+    for (key, contexts) in &right.passkey_contexts {
+        merged
+            .passkey_contexts
+            .entry(key.clone())
+            .or_default()
+            .extend(contexts.iter().cloned());
+    }
+    merged
+        .passkey_vouched_keys
+        .extend(right.passkey_vouched_keys.iter().cloned());
+    merged
+        .passkey_vouch_confirmations
+        .extend(right.passkey_vouch_confirmations.iter().cloned());
     merged
 }
 

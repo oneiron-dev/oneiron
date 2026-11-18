@@ -57,11 +57,9 @@
 //! projects, which is how "every transition is receipted" is mechanical rather
 //! than remembered.
 
-use serde::Serialize;
-
+use crate::edit_distance::stored_row::versioned_row_codec;
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
-use crate::error::{Error, Result};
-use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
+use crate::side_table::{self, Raw, SideTable};
 
 // ---------------------------------------------------------------------------
 // Tables
@@ -90,27 +88,7 @@ const THRESHOLD_ROW_LABEL: &str = "graduation threshold row";
 
 const ANSWER_ROW_LABEL: &str = "graduation answer row";
 
-fn encode_row<T: Serialize>(row: &T, label: &'static str) -> Result<Vec<u8>> {
-    rmp_serde::to_vec_named(row).map_err(|_| Error::InvariantViolation(label))
-}
-
-fn decode_row<T: serde::de::DeserializeOwned>(raw: &[u8], label: &'static str) -> Result<T> {
-    rmp_serde::from_slice(raw).map_err(|_| Error::CorruptedIndex(label))
-}
-
-impl RawValue for answers::StoredAnswer {
-    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
-        Ok(encode_row(self, ANSWER_ROW_LABEL)?)
-    }
-
-    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
-        let row: Self = decode_row(bytes, ANSWER_ROW_LABEL)?;
-        if row.v != ROW_VERSION {
-            return Err(CodecError::Value(Error::CorruptedIndex(ANSWER_ROW_LABEL)));
-        }
-        Ok(row)
-    }
-}
+versioned_row_codec!(answers::StoredAnswer, ANSWER_ROW_LABEL, ROW_VERSION);
 
 mod answers;
 mod pattern;
@@ -145,8 +123,6 @@ pub(crate) use self::receipts::answer_receipts_in_txn;
 pub(crate) use self::threshold_policy::graduation_policy_in_txn;
 pub(crate) use self::threshold_policy::runtime_graduation_policy_in_txn;
 
-// FIX [LIBTEST-QUARANTINE-EDIT-DISTANCE-GRADUATION-TESTS]: the lib test target's type check fails here (4 errors: E0063 x4); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;
 
@@ -160,6 +136,10 @@ use self::{answers::*, threshold_policy::*};
 use crate::consent::AuthenticatedOwner;
 #[cfg(test)]
 use crate::consent_graduation::{DEFAULT_GRADUATION_STREAK_FLOOR, RampScope, RampState};
+#[cfg(test)]
+use crate::edit_distance::stored_row::encode_row;
+#[cfg(test)]
+use crate::error::Error;
 #[cfg(test)]
 use crate::receipt::{ReceiptKind, ReceiptQuery, ReceiptRecord};
 #[cfg(test)]

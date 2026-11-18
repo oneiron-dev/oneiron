@@ -84,6 +84,7 @@ impl Fixture {
                     expected_revision: None,
                     why: None,
                     check_in_ref: None,
+                    weight_runs: None,
                 },
             )
             .unwrap_or_else(|error| panic!("the owner's change of `{KEY}` was refused: {error}"));
