@@ -70,6 +70,10 @@ mod carrier_marks;
 mod cloud_registration;
 mod codec;
 mod control;
+#[cfg(oneiron_test_support)]
+pub(crate) use self::control::input::{
+    custody_input_part_key_for_test, custody_witness_part_key_for_test,
+};
 mod doors;
 mod duplicate_merge;
 pub(crate) use self::duplicate_merge::custody_merged_in_txn;
