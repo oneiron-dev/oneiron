@@ -667,19 +667,17 @@ pub(super) fn lease(name: &str) -> BudgetLease {
     BudgetLease::for_test(name)
 }
 
-/// Polls to completion on this thread. The engine's classify path is
-/// runtime-agnostic, so the tests bring the smallest executor that can drive
-/// it: poll until ready.
+/// Drives `future` to completion on a throwaway current-thread Tokio
+/// runtime. The generated read bounds its work time with
+/// `tokio::time::timeout` (FIX 9904), which panics outside a runtime, so the
+/// classify path is no longer runtime-agnostic and the tests bring a runtime
+/// instead of polling.
 pub(super) fn block_on<F: Future>(future: F) -> F::Output {
-    let waker = noop_waker();
-    let mut cx = Context::from_waker(&waker);
-    let mut future = Box::pin(future);
-    for _ in 0..10_000 {
-        if let Poll::Ready(output) = future.as_mut().poll(&mut cx) {
-            return output;
-        }
-    }
-    panic!("test future never completed");
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("test runtime")
+        .block_on(future)
 }
 
 pub(super) fn noop_waker() -> Waker {

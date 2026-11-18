@@ -80,13 +80,11 @@ impl LlmBackend for RecordingBackend {
 }
 
 fn block_on_ready<F: Future>(future: F) -> F::Output {
-    let waker = noop_waker();
-    let mut cx = Context::from_waker(&waker);
-    let mut future = Box::pin(future);
-    match Pin::new(&mut future).poll(&mut cx) {
-        Poll::Ready(output) => output,
-        Poll::Pending => panic!("test future unexpectedly pending"),
-    }
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("test runtime")
+        .block_on(future)
 }
 
 fn noop_waker() -> Waker {
