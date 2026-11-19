@@ -241,9 +241,19 @@ fn revoked_owner_preview_cannot_observe_later_share_recipient() {
     let (_dir, vault, issuer, mut share) = crate::share::tests::fixture().expect("share fixture");
     let memory = vault.memory(issuer.entity_ref(), EdgeActorClass::Human);
     memory.bless_brief_kind().expect("brief kind");
+    let subject = issuer.entity_ref();
+    let claim = opinion_claim(&vault, issuer.entity_ref(), subject);
+    let source = EntityId::from_hex(
+        &memory
+            .author_take(TakeTarget::Subject(subject), "preview quote")
+            .expect("take")
+            .id_hex,
+    )
+    .expect("source id");
+    let pin = vault.pin_note_span(source, claim, 0, 13).expect("pin");
     let brief = EntityId::from_hex(
         &memory
-            .author_brief("preview body", &[])
+            .author_brief("preview body", std::slice::from_ref(&pin))
             .expect("brief")
             .id_hex,
     )

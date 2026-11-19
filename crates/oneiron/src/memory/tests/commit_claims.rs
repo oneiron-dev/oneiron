@@ -1221,7 +1221,7 @@ fn shared_vault_structural_and_claim_content_mutations_obey_role_and_scope() {
             crate::store::GateDecisionId::now(),
         )
         .unwrap();
-    let created = vault
+    vault
         .initialize_shared_vault(
             &authenticated,
             42,
@@ -1243,6 +1243,13 @@ fn shared_vault_structural_and_claim_content_mutations_obey_role_and_scope() {
             1,
         )
         .unwrap();
+    let grant_refs = crate::test_util::accept_founding_invitation(
+        &vault,
+        42,
+        member,
+        FederationGrantRole::Member,
+    );
+    crate::test_util::accept_founding_invitation(&vault, 42, viewer, FederationGrantRole::Viewer);
     let task = || StructuralPutInput {
         id: None,
         kind: "TASK".into(),
@@ -1343,8 +1350,7 @@ fn shared_vault_structural_and_claim_content_mutations_obey_role_and_scope() {
         before_claims
     );
 
-    let (id, mut grant) = created
-        .grant_refs
+    let (id, mut grant) = grant_refs
         .iter()
         .find_map(|hex| {
             let id = EntityId::from_hex(hex).unwrap();

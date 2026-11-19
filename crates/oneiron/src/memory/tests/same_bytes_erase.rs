@@ -110,6 +110,7 @@ fn shared_vault_with(
             1,
         )
         .expect("shared vault");
+    crate::test_util::accept_founding_invitation(&vault, 42, member, role);
     crate::test_util::clear_default_policy_manifest_for_legacy_tests(&vault);
     (dir, vault, owner, member)
 }
