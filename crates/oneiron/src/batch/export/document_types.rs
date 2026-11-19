@@ -409,8 +409,10 @@ pub struct WholeVaultImportReceipt {
     /// out, beyond the manifest's `import_omissions`: an archived
     /// `vault.default_facet` outside the owner's restore into a fresh vault
     /// (`TargetDefaultFacetKept`), a claim about a link the import did not
-    /// bring back before it (`ClaimSubjectEdgeNotRestored`), and a coreference
-    /// share consent (`CoreferenceConsentNotRestored`).
+    /// bring back before it, an edge-provenance claim among them
+    /// (`ClaimSubjectEdgeNotRestored`), a coreference share consent
+    /// (`CoreferenceConsentNotRestored`), and a claim about a row kept out
+    /// (`ClaimSubjectNotRestored`).
     pub destination_omissions: Vec<ExportImportOmission>,
     /// Domain-owned identities (currently MODEL name/version) rebound locally.
     pub remapped_entities: std::collections::BTreeMap<String, String>,
@@ -445,8 +447,8 @@ pub struct WholeVaultImportReceipt {
     pub unrestored_identity_topology_shells: usize,
     /// Archived `same_as` links that stayed out: every link but one between
     /// two PERSONs this import inserted (a CLAIM pair, a diary NOTE pair, or
-    /// a link naming a row already here). A claim about such a link stays
-    /// archive data (`ClaimSubjectEdgeNotRestored`).
+    /// a link naming a row already here). A claim about such a link, its edge
+    /// provenance among them, stays archive data (`ClaimSubjectEdgeNotRestored`).
     pub unrestored_same_as_links: usize,
     /// Custody records the archive carried as handles only: secrets to
     /// re-enter through the owner's registration door.

@@ -663,14 +663,23 @@ impl Vault {
                 let id = id_at(&key, 1)?;
                 let (inserted, unchanged) = match key[0] {
                     QUEUE_PROVENANCE => {
-                        let (inserted, unchanged) = super::provenance_import::restore(
+                        let cohort = super::provenance_import::restore(
                             id,
                             self,
                             &mut wtxn,
                             &mut archive,
                             secrets,
                         )?;
-                        (inserted.into_iter().collect::<Vec<_>>(), unchanged)
+                        destination_omissions.extend(cohort.kept_out.iter().map(|id| {
+                            ExportImportOmission {
+                                entity_id: id.to_hex(),
+                                reason: ImportOmissionReason::ClaimSubjectEdgeNotRestored,
+                            }
+                        }));
+                        (
+                            cohort.inserted.into_iter().collect::<Vec<_>>(),
+                            cohort.unchanged,
+                        )
                     }
                     QUEUE_EXPRESSION => {
                         let actor = actor.ok_or_else(actor_required)?;
@@ -907,7 +916,8 @@ fn mark_ready_rows<R: Read + Seek>(archive: &mut IndexedArchive<'_, R>) -> Resul
 /// comes back as that restore's (`owner_archive_restore::owner_restored_claim`),
 /// and only its restore into a fresh vault sets the default facet. Returns the
 /// reason for a row the destination keeps as archive data instead
-/// (`TargetDefaultFacetKept`, `ClaimSubjectEdgeNotRestored`).
+/// (`TargetDefaultFacetKept`, `ClaimSubjectEdgeNotRestored`,
+/// `CoreferenceConsentNotRestored`, `ClaimSubjectNotRestored`).
 #[expect(
     clippy::too_many_arguments,
     reason = "the import's writer, archive and maps, plus the one row and its owner restore"
@@ -971,6 +981,22 @@ fn insert_ready_row<R: Read + Seek>(
                 archive.index.put(Tag::Omitted, id.as_bytes(), &[])?;
                 archive.index.remove(Tag::Inserted, id.as_bytes())?;
                 return Ok(None);
+            }
+            // A claim about a row this import keeps as archive data (for any
+            // reason here, or one the manifest names) stays archive data too:
+            // every claim door reads its subject live (REVIEW-9581 P1). A
+            // subject this vault holds anyway is written about as before.
+            if let ClaimSubject::Entity(subject) = claim.subject
+                && archive.index.contains(Tag::Omitted, subject.as_bytes())?
+                && !crate::ports::EntityStoreRead::port_entity_present(
+                    &vault.store,
+                    wtxn,
+                    &subject,
+                )?
+            {
+                archive.index.put(Tag::Omitted, id.as_bytes(), &[])?;
+                archive.index.remove(Tag::Inserted, id.as_bytes())?;
+                return Ok(Some(ImportOmissionReason::ClaimSubjectNotRestored));
             }
             // The one list of reserved families names each claim's restore
             // door; an archive-only family never reaches this writer.
@@ -1234,7 +1260,7 @@ fn restore_archived_default_facet<R: Read + Seek>(
 /// Whether the edge passes leave archived `edge` out: an archived MESSAGE's
 /// or NOTE's byline rides inert in its body, since an archive never makes a
 /// local author (FIX 7777), and a link with an end left out stays out too.
-fn archived_edge_skipped<R: Read + Seek>(
+pub(super) fn archived_edge_skipped<R: Read + Seek>(
     archive: &IndexedArchive<'_, R>,
     edge: &ExportEdge,
 ) -> Result<bool> {
@@ -2556,7 +2582,8 @@ fn import_readiness_or_fulfillment_edge(
 /// (`federation::put_consolidated_same_as_in_txn`), and one between two diary
 /// NOTEs only on its residents' own submission
 /// (`Memory::link_diary_coreference`). The edge passes count each link left
-/// out, and a claim about it stays archive data (`ClaimSubjectEdgeNotRestored`).
+/// out, and a claim about it, its edge provenance among them, stays archive
+/// data (`ClaimSubjectEdgeNotRestored`).
 fn import_same_as_edge(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,

@@ -74,12 +74,17 @@ pub enum ImportOmissionReason {
     /// A claim about a link the import does not bring back (the archive
     /// does not carry the link, or the link is not a plain one restored
     /// before it): the claim door reads its link live, so the claim stays
-    /// archive data.
+    /// archive data. An edge-provenance claim whose link the import leaves
+    /// out stays archive data the same way.
     ClaimSubjectEdgeNotRestored,
     /// A coreference share consent: it counts only as this vault's own
     /// Approved act, and an imported claim is neither, so the restored link
     /// stays local until the owner consents again.
     CoreferenceConsentNotRestored,
+    /// A claim about a row the import keeps as archive data (for a reason in
+    /// this list): the claim door reads its subject live, so the claim stays
+    /// archive data too.
+    ClaimSubjectNotRestored,
 }
 
 /// Foundations not stored as vault-owned source. Never fabricate PACK.md/code.

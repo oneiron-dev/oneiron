@@ -9,7 +9,9 @@ use super::archive_index::{
     ArchiveIndex, FLAG_PROVENANCE, IndexedArchive, Loc, QUEUE_PROVENANCE, Tag, edge_key, id_at,
     id_list, ids_of, ready_key,
 };
-use super::document_import::{import_edge, matches_row, parse_id, stamp_archived_birth};
+use super::document_import::{
+    archived_edge_skipped, import_edge, matches_row, parse_id, stamp_archived_birth,
+};
 use super::{ArchiveRecordKind, ExportEdge, ExportEntity};
 use crate::claim::ClaimLifecycleStatus;
 use crate::entity_id::ENTITY_ID_LEN;
@@ -224,16 +226,26 @@ pub(super) fn mark_ready<R: Read + Seek>(archive: &mut IndexedArchive<'_, R>) ->
     }
     Ok(any)
 }
-/// Restores the cohort queued under `key`, its subject edge first; the ids
-/// it inserted and the rows already here. Comparisons re-serialize under the
-/// archive's `secrets`, so writer and reader agree.
+/// What one cohort restore did.
+pub(super) struct CohortRestore {
+    /// The ids it inserted.
+    pub(super) inserted: BTreeSet<EntityId>,
+    /// The rows already here.
+    pub(super) unchanged: usize,
+    /// The rows it kept as archive data, since their subject link did not
+    /// come back (`ClaimSubjectEdgeNotRestored`).
+    pub(super) kept_out: Vec<EntityId>,
+}
+/// Restores the cohort queued under `key`, its subject edge first.
+/// Comparisons re-serialize under the archive's `secrets`, so writer and
+/// reader agree.
 pub(super) fn restore<R: Read + Seek>(
     key: EntityId,
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     archive: &mut IndexedArchive<'_, R>,
     secrets: ExportSecrets,
-) -> Result<(BTreeSet<EntityId>, usize)> {
+) -> Result<CohortRestore> {
     let subject = archive
         .index
         .get(Tag::CohortPending, key.as_bytes())?
@@ -266,7 +278,27 @@ pub(super) fn restore<R: Read + Seek>(
                 &archive.spool.parse::<ExportEdge>(Loc::decode(&loc)?)?,
                 &archive.index,
             )?;
-            stage_edge(vault, txn, &edge, &archive.index)?;
+            if !archived_edge_skipped(archive, &edge)? {
+                stage_edge(vault, txn, &edge, &archive.index)?;
+            }
+            // The provenance door writes onto a live link only, so a cohort
+            // whose link the edge passes skip or the edge import leaves out (a
+            // `same_as` it does not restore, a `merged_into`, a link its pair
+            // does not prove) stays archive data, as a claim about such a
+            // link does (REVIEW-9581 P1). The edge passes count the link.
+            let kind = crate::edge::EdgeKind::try_from_u8(edge.kind)
+                .ok_or_else(|| invalid("archive edge kind"))?;
+            if crate::ports::EdgeStoreRead::port_edge_get(
+                &vault.store,
+                txn,
+                &parse_id(&edge.source)?,
+                kind,
+                &parse_id(&edge.target)?,
+            )?
+            .is_none()
+            {
+                return keep_cohort_out(key, vault, txn, archive, &rows, secrets);
+            }
             false
         }
         None => {
@@ -342,7 +374,55 @@ pub(super) fn restore<R: Read + Seek>(
     for (_, id, _) in &rows {
         archive.index.remove(Tag::Waiting, id.as_bytes())?;
     }
-    Ok((new_ids, unchanged))
+    Ok(CohortRestore {
+        inserted: new_ids,
+        unchanged,
+        kept_out: Vec::new(),
+    })
+}
+/// Keeps the cohort queued under `key`, whose subject link is not here, as
+/// archive data: a row this vault already holds stays as it is, compared as
+/// [`restore_cohort`] compares it, and every other row is marked omitted.
+fn keep_cohort_out<R: Read + Seek>(
+    key: EntityId,
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    archive: &mut IndexedArchive<'_, R>,
+    rows: &[(ExportEntity, EntityId, ClaimBody)],
+    secrets: ExportSecrets,
+) -> Result<CohortRestore> {
+    let mut unchanged = 0;
+    let mut kept_out = Vec::new();
+    for (row, id, body) in rows {
+        match crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, id)? {
+            Some(existing) => {
+                let expected = ExportBody::from_bytes_with(
+                    &crate::write_envelope::claim_body::encode_claim_body(body)?,
+                    row.entity_type,
+                    secrets,
+                );
+                if !crate::vault::live_entity_row_in_txn(&vault.store, txn, id)?.is_live()
+                    || !matches_row(row, &existing, &expected, secrets)
+                {
+                    return Err(invalid("archive provenance ID collision"));
+                }
+                unchanged += 1;
+            }
+            None => {
+                archive.index.put(Tag::Omitted, id.as_bytes(), &[])?;
+                kept_out.push(*id);
+            }
+        }
+    }
+    archive.index.remove(Tag::CohortPending, key.as_bytes())?;
+    for (_, id, _) in rows {
+        archive.index.remove(Tag::Waiting, id.as_bytes())?;
+    }
+    Ok(CohortRestore {
+        inserted: BTreeSet::new(),
+        unchanged,
+        kept_out,
+    })
 }
 fn restore_cohort(
     vault: &Vault,
