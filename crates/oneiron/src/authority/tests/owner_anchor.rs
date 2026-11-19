@@ -135,8 +135,9 @@ pub(super) const YOURS: MachineRole = MachineRole::Owned(MachineOwnership::Yours
 /// custodial key never signs (FIX 7920, custodial bootstrap only), and a
 /// hosted-node bootstrap, which stands. On an install pinned to the owner's
 /// root M stays mine with its own keys, whether the host's revisions saw the
-/// owner's mark or not, and a later owner revision still lands. An unpinned
-/// install counts no anchor admission.
+/// owner's mark or not, and a later owner revision on the valid heads still
+/// lands (a refused row's children never fold). An unpinned install counts
+/// no anchor admission.
 #[test]
 fn neither_a_foreign_anchor_nor_a_host_roster_strips_the_owners_mark() {
     let cloud = ed_key(130);
@@ -224,7 +225,12 @@ fn neither_a_foreign_anchor_nor_a_host_roster_strips_the_owners_mark() {
         assert!(!folded.is_mine(Some(&pin(&host_root))));
         assert!(!folded.admits(&MachineAdmitter::Roster));
 
-        let heads: Vec<&AuthorityLogEntry> = host_revisions.iter().chain([&mark]).collect();
+        let heads: Vec<&AuthorityLogEntry> = host_revisions
+            .iter()
+            .zip(&valid)
+            .filter_map(|(revision, is_valid)| is_valid.then_some(revision))
+            .chain([&mark])
+            .collect();
         let later = signed(id, &heads, &owner_anchor, 3, profile(&request, YOURS, 2));
         entries.push(later.clone());
         let fold = hosted_fold(&entries);
