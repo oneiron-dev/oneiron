@@ -9,15 +9,21 @@
 //! two agent keys, K and T: an agent key lends no consent, so every row K
 //! signs needs an owner key's cosign. While O is live, O cosigns two rows K
 //! signs on the same parents P: C at K's sequence 10, which K publishes, and
-//! B at K's sequence 5, which K withholds. O2 revokes O on C. Then K, still
-//! live, delivers B. B's sequence is below K's floor of 10, so the fold
-//! counts B and records it as a SequenceFork (shape S). Because B is a fork
-//! and its cosigner O is revoked in the final fold, B expires at once: it
-//! binds nothing, is no handover evidence and lists no directive.
+//! B at K's sequence 5, which K withholds and then delivers. B's sequence is
+//! below K's floor of 10, so the fold counts B and records it as a
+//! SequenceFork (shape S). O2 sees the fork and revokes O on C and B. Because
+//! B is a fork and its cosigner O is revoked in the final fold, B expires at
+//! once: it binds nothing, is no handover evidence and lists no directive.
 //!
-//! Expected (estimate, not run yet): red on main 64fa6f07, where B binds T
-//! until the 24 h stale-roster window ends and the handover and the directive
-//! stay valid for ever; green on the head of the fork-expiry PR.
+//! R names B. A B that K delivers only after a revocation that never saw it
+//! is refused outright: the revocation fences every row O signed or cosigned
+//! outside R and its ancestry (`retired_signers`,
+//! REVOKED-OWNER-ROOT-SIBLING-ENROL), so it grants nothing on any head
+//! (REVIEW-9609 round 2).
+//!
+//! Expected (estimate, not run yet): red on main, where B binds T until the
+//! 24 h stale-roster window ends and the handover and the directive stay
+//! valid for ever; green on the head of the fork-expiry PR.
 //!
 //! Run: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test withheld_cosign_below_floor`.
@@ -244,7 +250,7 @@ fn put(rooted: &Rooted, row: &AuthorityLogEntry) -> String {
     }
 }
 
-/// C6 after K delivers the withheld row B.
+/// C6 after O2 revokes O on the fork B.
 struct Delivered {
     _rooted: Rooted,
     withheld: AuthorityEntryHash,
@@ -252,7 +258,7 @@ struct Delivered {
 }
 
 /// Builds C6 with `withheld_op` as B's op (given the owner, the admitted
-/// machine and T's key) and delivers B last: C, R, then B.
+/// machine and T's key): C, then B, then R on both.
 fn deliver_withheld(
     withheld_op: impl FnOnce(EntityId, EntityId, &SigningKey) -> AuthorityOp,
 ) -> Delivered {
@@ -289,16 +295,6 @@ fn deliver_withheld(
         parents.clone(),
         binding_of(&agent, EntityId::now()),
     );
-    let revocation = row_signed_by(
-        &rooted,
-        &revoking_owner,
-        &[],
-        1,
-        vec![hash_of(&published)],
-        AuthorityOp::RevokeDevice {
-            revoked_key: key_of(&revoked_owner),
-        },
-    );
     let withheld = row_signed_by(
         &rooted,
         &agent,
@@ -307,17 +303,24 @@ fn deliver_withheld(
         parents,
         withheld_op(rooted.owner, machine, &bound_agent),
     );
-    let setup = [
-        &agent_enrolled,
-        &bound_agent_enrolled,
-        &published,
-        &revocation,
-    ];
+    // R names B: a revocation fences every row its key signed or cosigned
+    // outside R and its ancestry, so a B delivered only after a revocation
+    // that never saw it is refused outright and grants nothing on any head.
+    let revocation = row_signed_by(
+        &rooted,
+        &revoking_owner,
+        &[],
+        1,
+        vec![hash_of(&published), hash_of(&withheld)],
+        AuthorityOp::RevokeDevice {
+            revoked_key: key_of(&revoked_owner),
+        },
+    );
+    let setup = [&agent_enrolled, &bound_agent_enrolled, &published];
     let kept = setup.into_iter().map(hash_of).collect::<BTreeSet<_>>();
 
-    // The setup alone: before B arrives, every row is valid, O is revoked
-    // and K and T are live. A failure here is the test's setup, not the
-    // finding.
+    // The setup alone: before B arrives, every row is valid and O, K and T
+    // are live. A failure here is the test's setup, not the finding.
     let puts = setup.map(|row| put(&rooted, row));
     let fold = rooted.vault.authority_fold().expect("the fold");
     assert!(
@@ -326,10 +329,10 @@ fn deliver_withheld(
         fold.issues
     );
     assert!(
-        !is_live(&fold, &key_of(&revoked_owner))
+        is_live(&fold, &key_of(&revoked_owner))
             && is_live(&fold, &key_of(&agent))
             && is_live(&fold, &key_of(&bound_agent)),
-        "setup: before B, O is revoked and K and T are live; issues {:?}",
+        "setup: before B, O, K and T are live; issues {:?}",
         fold.issues
     );
 
@@ -347,16 +350,29 @@ fn deliver_withheld(
         fold.issues.iter().any(|issue| matches!(
             issue,
             AuthorityFoldIssue::SequenceFork(forked) if *forked == withheld
-        )),
-        "setup: the fold counts B and records its fork as SequenceFork; issues {:?}",
+        )) && applied(&fold).contains(&withheld),
+        "setup: the fold counts B while its cosigner O is live and records its fork as \
+         SequenceFork; issues {:?}",
         fold.issues
     );
+
+    let arrival = put(&rooted, &revocation);
+    let fold = rooted.vault.authority_fold().expect("the fold");
     assert!(
         kept.is_subset(&applied(&fold))
+            && applied(&fold).contains(&hash_of(&revocation))
             && !is_live(&fold, &key_of(&revoked_owner))
             && is_live(&fold, &key_of(&agent))
             && is_live(&fold, &key_of(&bound_agent)),
-        "setup: B leaves the other rows valid, O revoked and K and T live; issues {:?}",
+        "setup: R is valid, O revoked and K and T live; put {arrival}, issues {:?}",
+        fold.issues
+    );
+    assert!(
+        fold.issues.iter().any(|issue| matches!(
+            issue,
+            AuthorityFoldIssue::SequenceFork(forked) if *forked == withheld
+        )),
+        "setup: after R the fold still counts B as K's fork; issues {:?}",
         fold.issues
     );
     Delivered {
