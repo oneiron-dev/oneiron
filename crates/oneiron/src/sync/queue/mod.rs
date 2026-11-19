@@ -87,6 +87,11 @@ mod embed_page;
 mod scrub;
 mod seq;
 
+#[cfg(oneiron_test_support)]
+#[doc(hidden)]
+#[path = "../../test_doors/sync_queue_rows.rs"]
+pub mod sync_queue_rows;
+
 pub(crate) use self::checkpoint::checkpoint_update_window;
 pub(crate) use self::embed_page::EmbedQueueRow;
 
