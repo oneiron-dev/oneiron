@@ -405,9 +405,9 @@ rungs = ["bad:model", "good:model"]
 inputs = ["text"]
 `;
   const engine = await startEndpointEngine("EMBEDDINGS-03", data, `${providers.urls.primary!}/v1`, undefined, modelConfig);
-  await witness(engine.client, data, swap.targetText, { turn: swap.targetTurn });
+  const diagTarget = await witness(engine.client, data, swap.targetText, { turn: swap.targetTurn });
   await filled(engine.client, vectors.incumbentQuery, swap.targetTurn);
-  await witness(engine.client, data, swap.distractorText, { turn: swap.distractorTurn });
+  const diagDistractor = await witness(engine.client, data, swap.distractorText, { turn: swap.distractorTurn });
   await filled(engine.client, vectors.distractor, swap.distractorTurn);
   // Unmanaged serve opens the vault before constructing its embedder adapter.
   // A populated A space therefore refuses same-width revision B before send.
@@ -426,8 +426,9 @@ inputs = ["text"]
   // needs SPACE_PROBE_MIN_FAMILIES of them. So each family id is witnessed as its own source turn. Its text shares no
   // word with any query, and its fills take the standing vector [0, 0, 0, 1], which no query vector scores, so the
   // target turn stays each probe's first hit in every space that ranks it first.
+  const diagNotes: WitnessReceipt[] = [];
   for (const [index, probe] of swap.probes.entries()) {
-    await witness(engine.client, data, `Owner probe source note ${String.fromCharCode(65 + index)}.`, { turn: probe.family });
+    diagNotes.push(await witness(engine.client, data, `Owner probe source note ${String.fromCharCode(65 + index)}.`, { turn: probe.family }));
   }
 
   for (const id of [swap.bad, swap.good]) await engine.client.call("vault.embedding_spaces.declare", {
@@ -441,7 +442,14 @@ inputs = ["text"]
   await providers.awaitBarrier("bad-filling");
   const semantic = async () => (await engine.client.request<SearchPage>("POST", "/api/search/semantic",
     { text: first.query, view: "standard", limit: 1, depth: "light" })).body;
-  expect((await semantic()).items.map(item => item.id)).toEqual([swap.targetTurn]);
+  // DIAG b46diag4: the first semantic read, at limit 10, with the witnessed rows' ids beside it.
+  const diagPage = (await engine.client.request<SearchPage>("POST", "/api/search/semantic",
+    { text: first.query, view: "standard", limit: 10, depth: "light" })).body;
+  await engine.artifacts.json("semantic-diag.json", { page: diagPage, target: diagTarget,
+    distractor: diagDistractor, notes: diagNotes });
+  const diagRow = (item: unknown) => { const row = item as Record<string, unknown>;
+    return [row.id, row.kind, String(row.label ?? "").slice(0, 48), row.score] };
+  if (diagPage.items[0]?.id !== swap.targetTurn) throw new Error(`DIAG semantic ${JSON.stringify(diagPage.items.map(diagRow))} target ${JSON.stringify([diagTarget.turn?.id, diagTarget.messages.map(m => m.id)])} distractor ${JSON.stringify([diagDistractor.turn?.id, diagDistractor.messages.map(m => m.id)])} notes ${JSON.stringify(diagNotes.map(n => n.messages.map(m => m.id)))}`);
   expect((await engine.client.call("vault.embedding_spaces.list", {})).slots.text).toBeUndefined();
   providers.releaseBarrier("bad-filling");
   const moves = () => engine.client.call("vault.embedding_spaces.list", {});
