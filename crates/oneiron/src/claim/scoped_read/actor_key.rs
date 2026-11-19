@@ -112,6 +112,9 @@ pub struct ScopedReadActorKey {
     /// owner nor one of its own agents reading on its own; see
     /// [`Self::homed_unnamed`].
     home_unnamed: bool,
+    /// Set only on a Connect guest's key at its own envelope fetch; see
+    /// [`Self::home_cleared_to_connect_ceiling`].
+    connect_home_ceiling: Option<crate::federation::SensitivityCeiling>,
     /// The room such a key's reader was found standing in when the key came
     /// to read inside it; see [`Self::standing_in_room_in`].
     pub(super) standing_room: Option<EntityId>,
@@ -464,6 +467,7 @@ impl ScopedReadActorKey {
             system_agent,
             judges_write_target: false,
             home_unnamed: false,
+            connect_home_ceiling: None,
             standing_room: None,
         })
     }
@@ -515,6 +519,7 @@ impl ScopedReadActorKey {
             system_agent: None,
             judges_write_target: false,
             home_unnamed: false,
+            connect_home_ceiling: None,
             standing_room: None,
         }
     }
@@ -821,6 +826,38 @@ impl ScopedReadActorKey {
     pub fn homed_unnamed(mut self) -> Self {
         self.home_unnamed = true;
         self
+    }
+
+    /// This key, homed in no conversation of this vault
+    /// ([`Self::homed_unnamed`]), reading a CLAIM stamped up to `ceiling`
+    /// as the Connect export reads it (ANSWER FED-CONNECT-STAMPED-HOME = A,
+    /// Engine 19 Nov 05:05: a Connect grant reads stamped claims up to its
+    /// own ceiling). Only the guest envelope fetch builds it, for the holder
+    /// of the live Connect guest grant it serves, with that grant's ceiling,
+    /// so the fetch reads the rows the export selected under the same grant.
+    /// Every other check the key makes still runs, and every other door
+    /// keeps the home.
+    #[must_use]
+    pub(crate) fn home_cleared_to_connect_ceiling(
+        mut self,
+        ceiling: crate::federation::SensitivityCeiling,
+    ) -> Self {
+        self.connect_home_ceiling = Some(ceiling);
+        self
+    }
+
+    /// Whether this key reads a CLAIM stamped `band` past its conversation
+    /// home: only under the Connect ceiling
+    /// [`Self::home_cleared_to_connect_ceiling`] set, and only up to it.
+    pub(crate) fn home_clears_band(&self, band: crate::disclosure::DisclosureBand) -> bool {
+        self.connect_home_ceiling
+            .is_some_and(|ceiling| ceiling.permits(band.sensitivity()))
+    }
+
+    /// The Connect ceiling [`Self::home_cleared_to_connect_ceiling`] set, if
+    /// any: what a key fingerprint keeps of it.
+    pub(crate) fn connect_home_ceiling(&self) -> Option<crate::federation::SensitivityCeiling> {
+        self.connect_home_ceiling
     }
 
     /// Whether this key withholds stamped claims ([`Self::homed_unnamed`]):
