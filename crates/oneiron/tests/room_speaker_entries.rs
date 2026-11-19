@@ -9,7 +9,9 @@
 //! under its room; the owner-alone read asks it. A vault older than the
 //! index holds no row: the rebuild a writable open runs files every entry,
 //! and until a whole rebuild has committed no room reads as its owner's
-//! alone.
+//! alone. A withdrawn entry's Shell keeps its index row but names no
+//! speaker: the room reads as its owner's alone again, and the read never
+//! fails on it.
 //!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test room_speaker_entries`.
 #![cfg(oneiron_test_support)]
@@ -78,8 +80,8 @@ fn owner_room(fixture: &Fixture) -> EntityId {
 }
 
 /// An unplaced voice speaker heard in `room` enters it, as a voice host
-/// records it (OF-365).
-fn enter_speaker(fixture: &Fixture, room: EntityId) {
+/// records it (OF-365): its entry fact.
+fn enter_speaker(fixture: &Fixture, room: EntityId) -> EntityId {
     let attendee = ContainerAttendee::Speaker {
         session_key: "owner-room-call".to_owned(),
         speaker_key: "speaker-2".to_owned(),
@@ -95,14 +97,12 @@ fn enter_speaker(fixture: &Fixture, room: EntityId) {
         until: fixture.vault.now_recorded_at() + 3_600,
         history: HistoryChoice::Inherit,
     });
-    assert!(
-        fixture
-            .vault
-            .container_attendee_entry(room, &attendee)
-            .expect("the room's entries read")
-            .is_some(),
-        "the speaker entered the room"
-    );
+    fixture
+        .vault
+        .container_attendee_entry(room, &attendee)
+        .expect("the room's entries read")
+        .expect("the speaker entered the room")
+        .entry_ref
 }
 
 /// Who alone reads `room`, as the plan run's result filing reads it.
@@ -158,5 +158,27 @@ fn the_open_rebuild_files_a_speaker_entry_older_than_its_index() {
         sole_reader(&fixture, quiet),
         Some(fixture.owner),
         "the rebuilt index leaves a room no speaker entered to its owner"
+    );
+}
+
+#[test]
+fn a_withdrawn_speaker_entry_leaves_the_room_to_its_owner() {
+    let fixture = fixture();
+    let heard = owner_room(&fixture);
+    let entry = enter_speaker(&fixture, heard);
+    assert_eq!(
+        sole_reader(&fixture, heard),
+        None,
+        "the speaker's entry reads the room"
+    );
+    assert!(
+        room_speaker_entries::withdraw_to_shell(&fixture.vault, entry)
+            .expect("the entry's withdrawal writes"),
+        "the withdrawn entry takes its Shell"
+    );
+    assert_eq!(
+        sole_reader(&fixture, heard),
+        Some(fixture.owner),
+        "a withdrawn entry's Shell names no speaker, so the owner reads the room alone again"
     );
 }

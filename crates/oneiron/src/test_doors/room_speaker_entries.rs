@@ -33,3 +33,19 @@ pub fn forget_speaker_entry_index(vault: &Vault) -> Result<()> {
 pub fn backfill_speaker_entry_index(vault: &Vault) -> Result<()> {
     crate::task_verb::speaker_entry_index::backfill_speaker_entry_index(vault, false)
 }
+
+/// Withdraws row `id` here as a same-vault Shell cutoff withdraws it
+/// (FIX 931): marked stale through the retrieval stale writer, then
+/// scrubbed to its Shell, its header with no body. Whether it took the
+/// Shell.
+///
+/// # Errors
+/// The write's.
+#[doc(hidden)]
+pub fn withdraw_to_shell(vault: &Vault, id: EntityId) -> Result<bool> {
+    let mut txn = vault.store.env.write_txn()?;
+    crate::ports::RetrievalIndex::port_retrieval_mark_stale(vault, &mut txn, &id)?;
+    let scrubbed = crate::deletion::scrub_withdrawn_record_in_txn(&vault.store, &mut txn, &id)?;
+    txn.commit()?;
+    Ok(scrubbed)
+}
