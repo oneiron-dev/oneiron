@@ -58,6 +58,21 @@ impl MergeQueue<'_> {
         // beside the conflicted ones, before any source is superseded.
         let unshared = unshared_batch_paths(link, retained, &remaining);
         let mut unshared_remaining: BTreeSet<_> = unshared.keys().cloned().collect();
+        // The head chain the retained landings form: every batch row carries
+        // its queue position and its landing, whatever kind enqueued it, so
+        // a carrying batch is ordered against the sources without any
+        // run-only sequence.
+        let mut head_links: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+        if !unshared.is_empty() {
+            for batch in retained {
+                if let Some(landed) = batch.landed_head.as_deref() {
+                    head_links
+                        .entry(batch.expected_head.clone())
+                        .or_default()
+                        .insert(landed.to_owned());
+                }
+            }
+        }
         let mut successor = None;
         let mut last_green = None;
         let mut recorded = false;
@@ -86,20 +101,35 @@ impl MergeQueue<'_> {
                 };
                 let mut covered = BTreeSet::new();
                 let mut carried = BTreeSet::new();
-                for (index, proposal) in batch.proposals.iter().enumerate() {
-                    if path.mask & (1_u64 << index) != 0 {
-                        if !source_batch {
-                            covered.extend(self.conflict_proposal_paths(
-                                &open,
-                                proposal,
-                                Some(&batch.id),
-                            )?);
-                        }
-                        if !unshared.is_empty() {
-                            carried.extend(
-                                self.applied_proposal_paths(&open, proposal, &batch, &unshared)?,
-                            );
-                        }
+                let applied: Vec<&MergeProposal> = batch
+                    .proposals
+                    .iter()
+                    .enumerate()
+                    .filter(|&(index, _)| path.mask & (1_u64 << index) != 0)
+                    .map(|(_, proposal)| proposal)
+                    .collect();
+                if !source_batch {
+                    for &proposal in &applied {
+                        covered.extend(self.conflict_proposal_paths(
+                            &open,
+                            proposal,
+                            Some(&batch.id),
+                        )?);
+                    }
+                }
+                if !unshared.is_empty() {
+                    // A batch that resolves this conflict was enqueued after
+                    // the hand-off, so after every source.
+                    let resolves = !covered.is_empty();
+                    for &proposal in &applied {
+                        carried.extend(self.applied_proposal_paths(
+                            &open,
+                            proposal,
+                            &batch,
+                            resolves,
+                            &unshared,
+                            &head_links,
+                        )?);
                     }
                 }
                 // A source batch that itself reached green already landed
@@ -227,19 +257,38 @@ impl MergeQueue<'_> {
     /// The `wanted` paths `candidate` landed as an applied proposal of
     /// `applied_batch`, by any operation: an unshared file is carried by a
     /// fresh proposal that lands it, not by a resolution, whose guard
-    /// names only a conflicted path. It must follow every pending source
-    /// that writes the path; the source's base green predates its acceptance.
-    /// Missing acceptance order proves no carry-over. The applied checks are
-    /// the ones [`Self::conflict_proposal_paths`] makes for a green batch.
+    /// names only a conflicted path. For every source that writes the path,
+    /// `applied_batch` must have landed strictly after the queue green the
+    /// source was accepted on (a green batch that landed at-or-before it
+    /// predates the source), and it must have been accepted after the
+    /// source: on a strictly later green, or on the same green with a later
+    /// run sequence or with this conflict's resolution (`resolves`), which
+    /// only the hand-off can follow. A batch accepted on the source's green
+    /// with no such evidence may predate the source, so it carries nothing.
+    /// The applied checks are the ones [`Self::conflict_proposal_paths`]
+    /// makes for a green batch.
     fn applied_proposal_paths(
         &self,
         open: &RepoConflictClaim,
         candidate: &MergeProposal,
         applied_batch: &MergeBatch,
-        wanted: &BTreeMap<String, Option<u64>>,
+        resolves: bool,
+        wanted: &BTreeMap<String, BTreeSet<SourceAcceptance>>,
+        head_links: &BTreeMap<String, BTreeSet<String>>,
     ) -> Result<Vec<String>> {
-        let Some(order) = &applied_batch.run_order else {
+        let Some(landed) = applied_batch.landed_head.as_deref() else {
             return Ok(Vec::new());
+        };
+        let sequence = applied_batch.run_order.as_ref().map(|order| order.sequence);
+        let follows = |source: &SourceAcceptance| {
+            let (base, source_sequence) = source;
+            landed_after_base(head_links, base, landed)
+                && (landed_after_base(head_links, base, &applied_batch.base_green)
+                    || (applied_batch.base_green == *base
+                        && (resolves
+                            || sequence
+                                .zip(*source_sequence)
+                                .is_some_and(|(carrier, source)| carrier > source))))
         };
         let Some(row) = EntityId::from_hex(&candidate.id)
             .ok()
@@ -263,9 +312,7 @@ impl MergeQueue<'_> {
             .filter(|file| {
                 wanted
                     .get(&file.path)
-                    .copied()
-                    .flatten()
-                    .is_some_and(|sequence| order.sequence > sequence)
+                    .is_some_and(|sources| sources.iter().all(follows))
                     && candidate
                         .files
                         .iter()
@@ -336,17 +383,21 @@ impl MergeQueue<'_> {
     }
 }
 
+/// A source batch's acceptance: the queue green it was accepted on, and its
+/// run sequence when a run enqueued it (owner and received batches have none).
+type SourceAcceptance = (String, Option<u64>);
+
 /// Every path an unlanded batch of `link` writes that `conflicted` does not
-/// name, with the latest source acceptance sequence a carrying batch must
-/// follow. An unknown source order keeps the path uncarried. A landed batch
+/// name, with the acceptance of each source that writes it: a carrying
+/// batch must follow every one of them. A landed batch
 /// keeps its state and its receipt when its link supersedes, so only the
 /// states that end Superseded count, as in `update_overlap_links`.
 fn unshared_batch_paths(
     link: &QueueConflictLink,
     retained: &[MergeBatch],
     conflicted: &BTreeSet<String>,
-) -> BTreeMap<String, Option<u64>> {
-    let mut unshared = BTreeMap::new();
+) -> BTreeMap<String, BTreeSet<SourceAcceptance>> {
+    let mut unshared: BTreeMap<String, BTreeSet<SourceAcceptance>> = BTreeMap::new();
     for batch in retained.iter().filter(|batch| {
         link.batches.contains(&batch.id)
             && matches!(
@@ -354,17 +405,41 @@ fn unshared_batch_paths(
                 BatchState::Queued | BatchState::Staged | BatchState::Ready
             )
     }) {
-        let sequence = batch.run_order.as_ref().map(|order| order.sequence);
         for file in batch.proposals.iter().flat_map(|proposal| &proposal.files) {
             if !conflicted.contains(&file.path) {
-                unshared
-                    .entry(file.path.clone())
-                    .and_modify(|latest: &mut Option<u64>| {
-                        *latest = (*latest).zip(sequence).map(|(a, b)| a.max(b));
-                    })
-                    .or_insert(sequence);
+                unshared.entry(file.path.clone()).or_default().insert((
+                    batch.base_green.clone(),
+                    batch.run_order.as_ref().map(|order| order.sequence),
+                ));
             }
         }
     }
     unshared
+}
+
+/// Whether `landed` is strictly after `base` on the queue's head chain, as
+/// the retained expected-to-landed `links` say. Every landing advances the
+/// head to a fresh commit, so walking the links from `base` reaches exactly
+/// the heads after it; a landing at-or-before the source's green predates
+/// the source. A repeated link ends the walk, never the reconciliation.
+fn landed_after_base(links: &BTreeMap<String, BTreeSet<String>>, base: &str, landed: &str) -> bool {
+    if base == landed {
+        return false;
+    }
+    let mut seen: BTreeSet<&str> = BTreeSet::new();
+    let mut next = vec![base];
+    while let Some(head) = next.pop() {
+        let Some(landings) = links.get(head) else {
+            continue;
+        };
+        for landing in landings {
+            if landing.as_str() == landed {
+                return true;
+            }
+            if seen.insert(landing.as_str()) {
+                next.push(landing.as_str());
+            }
+        }
+    }
+    false
 }
