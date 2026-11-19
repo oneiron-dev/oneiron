@@ -959,7 +959,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/tests/mod.rs` | test | L | 57 crate-vis | — | — |
 | `src/api/tests/off_record_rooms.rs` | test | XL | — | — | ARCH-0052 D5, the notice model (owner ruling 2026-10-10, O1 = A): anyone in a room may start an off-record… |
 | `src/api/tests/org_admin.rs` | test | s | — | — | Organization credentials expose only their fixed administrative action list |
-| `src/api/tests/owner_authored_writes.rs` | test | s | — | — | Owner-authored writes carry their own confirmation (security pack 2, F14 R6) |
+| `src/api/tests/owner_authored_writes.rs` | test | m | — | — | Owner-authored writes carry their own confirmation (security pack 2, F14 R6) |
 | `src/api/tests/owner_healer.rs` | test | m | — | — | `/v1/owner` safety and repair: the owner rotates a secret (ARCH-0069 S6), reads the three signed healer… |
 | `src/api/tests/owner_routes.rs` | test | L | 4 crate-vis | — | `/v1/owner`: one owner door, receipted acts, whole-batch and whole-run consent |
 | `src/api/tests/owner_secrets.rs` | test | m | — | — | `/v1/owner/secrets/register`: the owner puts a secret into custody (ARCH-0069 S1–S3), with the repo… |

@@ -357,7 +357,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/authority/admission.rs` | src | s | 2 struct · 4 fn · 2 const · 5 crate-vis | AuthorityWorkPolicy, AuthorityWorkWaitExpired | Measured admission for authority work (Phase2 A: FIX 7906, 7909, 7911, 7912, 7921, 7922, 7930) |
 | `src/authority/adopted_build.rs` | src | m | 2 crate-vis | — | A later checkpoint image on a vault that adopted one (OF-469, slice D; identity.md, "Resumable checkpoints… |
 | `src/authority/adopted_evidence.rs` | src | s | 15 crate-vis | — | What an adopted checkpoint image gives the store doors in place of the raw history it covers (OF-469, slice C) |
-| `src/authority/adopted_fold/context.rs` | src | m | 5 crate-vis | — | Whether an adopted image's fold is the one this install reaches in its own context, and whether a late fork… |
+| `src/authority/adopted_fold/context.rs` | src | m | 6 crate-vis | — | Whether an adopted image's fold is the one this install reaches in its own context, and whether a late fork… |
 | `src/authority/adopted_fold/covered_floors.rs` | src | m | 9 crate-vis | — | The covered rows a tail floors past an adopted image (FIX [SEQ-FLOOR-S-ADOPTED-FORK-NEEDS-HISTORY], Astra r4… |
 | `src/authority/adopted_fold/mod.rs` | src | m | 6 crate-vis | — | The authority fold past an adopted checkpoint image (OF-469, slice C; identity.md, "Resumable checkpoints… |
 | `src/authority/adopted_fold/result_parents.rs` | src | s | 1 crate-vis | — | The parents a residence result names on a vault that adopted a checkpoint image (FIX 5412, CALLS "FIX 5412… |
@@ -581,7 +581,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/authority/slip_vault/host_root.rs` | src | s | 3 fn · 1 crate-vis | — | The host's own root slip: its bootstrap with Genesis on an empty log, the cache that retains the minted root… |
 | `src/authority/slip_vault/issuer_custody.rs` | src | m | 6 fn · 4 crate-vis | — | Where a vault's host issuer seed is kept (FIX-LIST 3018): this install's own `HostIssuerSeed` slot for the… |
 | `src/authority/slip_vault/issuer_seed.rs` | src | s | 1 struct · 2 fn · 1 re-export · 3 crate-vis | HostSlipIssuer | The host issuer's own independent seed (FIX-LIST 3018): per-vault host issuer isolation, so one vault's host… |
-| `src/authority/stale_roster.rs` | src | m | 8 crate-vis | — | Clock-free expiry of approvals resting on a subsequently revoked roster |
+| `src/authority/stale_roster.rs` | src | m | 9 crate-vis | — | Clock-free expiry of approvals resting on a subsequently revoked roster |
 | `src/authority/step_up/admin_inputs.rs` | src | s | 3 struct · 1 re-export | WeaveAdminItemWrongRequest, WeaveAdminLensRequest, WeaveAdminReportRequest | The served weave Admin rows' inputs (OF-499 A3, FIX 11694) |
 | `src/authority/step_up/erase.rs` | src | s | 5 crate-vis | — | The step-up rows an erase, or a passkey's removal or replacement, drops: passkeys, open ceremonies and… |
 | `src/authority/step_up/mod.rs` | src | m | 7 fn · 6 const · 4 re-export · 3 crate-vis | — | MFA step-up on a person's own request instrument (MFA-1 A, ruled 2026-10-09; FIX 11694, the remainder of FIX… |
@@ -7416,7 +7416,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/sync/client/residence/custody.rs` | src | m | 1 fn · 1 crate-vis | — | This machine's key custody to its residence home (KS-4A2, FIX 5685): the residence member of the required… |
 | `src/sync/client/residence/home_handoff.rs` | src | m | 12 crate-vis | — | The old home's end of a home handoff on the residence RPC lane (FIX 5661 C2a) |
 | `src/sync/client/residence/index.rs` | src | m | 1 struct · 3 fn · 5 crate-vis | ResidenceIndexWindow | Paged, revision-bound current-window metadata enrolment |
-| `src/sync/client/residence/items.rs` | src | m | 3 fn · 1 crate-vis | — | Thin-item fetch and open reads |
+| `src/sync/client/residence/items.rs` | src | m | 3 fn · 3 crate-vis | — | Thin-item fetch and open reads |
 | `src/sync/client/residence/kit_fetch.rs` | src | m | 2 fn · 1 re-export · 2 crate-vis | — | A restore's read of the sealed cloud bundle from the home with the kit alone (FIX 922): no session, slip or… |
 | `src/sync/client/residence/kit_fetch/custody.rs` | src | s | 1 fn | — | A restore's read of its key custody from the residence home with the kit alone (FIX 5846): no session, slip… |
 | `src/sync/client/residence/machine_history.rs` | src | m | 1 crate-vis | — | The machine-claim history this machine is owed, from the home (FIX 3820) |
@@ -7443,7 +7443,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/sync/client/window_pads/deferred.rs` | src | m | 9 crate-vis | — | A sealed window payload's isolated check before its capsule installs, and the updates that wait for the pads… |
 | `src/sync/connection/batch_admission.rs` | src | m | 1 enum · 1 trait · 1 fn · 3 type · 16 crate-vis | SyncBatchAdmission, SyncBatchVerdict | The host's admission for each batch a sync connection applies or sends (FIX 12036), and the pause that keeps… |
 | `src/sync/connection/converge.rs` | src | m | 7 crate-vis | — | Convergence: run_convergence, re_bootstrap, server-frame pump |
-| `src/sync/connection/directives.rs` | src | s | 4 crate-vis | — | The owner's residence directives, applied on the machine they name (OF-534) |
+| `src/sync/connection/directives.rs` | src | m | 4 crate-vis | — | The owner's residence directives, applied on the machine they name (OF-534) |
 | `src/sync/connection/document_response.rs` | src | s | 2 crate-vis | — | Ordered NOTE command release; the durable queue retains the logical command |
 | `src/sync/connection/handshake.rs` | src | m | 2 fn · 4 crate-vis | — | Handshake: run loop, open_sync_session, overflow check |
 | `src/sync/connection/handshake/acks.rs` | src | s | 2 crate-vis | — | Residence queue acknowledgments during the initial exchange, and the queue clear they drive |
@@ -7452,7 +7452,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/sync/connection/handshake/upgrade.rs` | src | s | 2 crate-vis | — | A sync session's upgrade: its request, proved with this machine's credential, and the socket it opens, to… |
 | `src/sync/connection/home_handoff.rs` | src | m | 2 crate-vis | — | FIX 5661 C2a: the old home's delivery worker |
 | `src/sync/connection/home_search.rs` | src | s | 1 struct · 1 enum · 6 fn · 6 crate-vis | DeviceResidence, HomeSearch | The home search this device's query doors reach through its own sync connection (OF-534): a search an opened… |
-| `src/sync/connection/mod.rs` | src | L | 3 struct · 21 fn · 1 mod · 5 re-export · 1 crate-vis | ConnectionConfig, ResidenceModeChange, SyncConnection | WebSocket connection manager with debounced sync and reconnection |
+| `src/sync/connection/mod.rs` | src | L | 3 struct · 21 fn · 1 mod · 5 re-export · 2 crate-vis | ConnectionConfig, ResidenceModeChange, SyncConnection | WebSocket connection manager with debounced sync and reconnection |
 | `src/sync/connection/node_batch.rs` | src | m | 3 crate-vis | — | One bounded node proposal batch per sync tick, its window updates and document frames taking turns (FIX… |
 | `src/sync/connection/note_reads.rs` | src | s | 2 fn | — | Typed reads of a residence open, using the named connection's own vault |
 | `src/sync/connection/outbox.rs` | src | s | 1 fn · 3 crate-vis | — | The machine's outbox (FIX 3966): the queued updates it still owes its home, window by window, each with the… |
@@ -7623,7 +7623,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/sync/residence/cache_worlds.rs` | src | s | 1 struct · 2 fn · 3 crate-vis | CachedItemWorlds | Source-world evidence for the exact bytes of a thin read cache |
 | `src/sync/residence/content_world.rs` | src | s | 1 enum · 1 fn · 4 crate-vis | ContentWorld | The content-world witness a home gives with each read-only copy it serves (FIX 14534, Engine 11-06 08:34… |
 | `src/sync/residence/custody.rs` | src | s | 5 fn · 1 crate-vis | — | The residence home's door for the key custody of the owner's machines (KS-4A2, FIX 5685): the residence target |
-| `src/sync/residence/directives.rs` | src | m | 1 struct · 3 fn · 4 crate-vis | ResidenceDirectiveState | The owner's residence directives to one of their machines (OF-534): owner-vault acts that name a machine… |
+| `src/sync/residence/directives.rs` | src | m | 1 struct · 3 fn · 5 crate-vis | ResidenceDirectiveState | The owner's residence directives to one of their machines (OF-534): owner-vault acts that name a machine… |
 | `src/sync/residence/discover.rs` | src | s | 1 fn · 1 crate-vis | — | Discover locally held world/month partitions without loading their Docs |
 | `src/sync/residence/home_handoff.rs` | src | m | 3 struct · 2 enum · 10 fn | FreeTimeArming, HomeHandoffCancel, HomeHandoffKey, HomeHandoffSession, HomeHandoffStanding | The new home's doors for a home handoff (FIX 5661 C2a): the target end of `residence.home_handoff.status`… |
 | `src/sync/residence/kit_fetch.rs` | src | s | 1 struct · 4 fn · 3 const · 2 re-export | KitBundleFetch | The kit door to the home's sealed cloud bundle (FIX 922; owner ruling 10-18: the recovery kit alone must… |
@@ -7635,7 +7635,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/sync/residence/pad_custody.rs` | src | s | 3 struct · 1 enum · 3 fn · 1 const | WorldPadCapsule, WorldPadFetch, WorldPadPage, WorldPadSelection | Pad hydration through the home (KS-5, FIX 6706): one world's current pads, sealed for the one machine of the… |
 | `src/sync/residence/policy.rs` | src | s | 1 struct · 7 fn · 4 crate-vis | DeviceSyncPreference | This machine's residence choice: sync every window it may read, sync what it opened, or sync what it opened… |
 | `src/sync/residence/predict.rs` | src | m | 1 enum · 3 fn · 6 crate-vis | PredictedResidenceAnswer | The home's prediction for one machine at the predicted level (ARCH-0023b #predicted-residence) |
-| `src/sync/residence/prune.rs` | src | m | 1 struct · 2 fn · 7 crate-vis | WindowDemotion | Last-touch accounting and pruning for opened-item read caches, and the demotion of a promoted canonical window |
+| `src/sync/residence/prune.rs` | src | m | 1 struct · 2 fn · 8 crate-vis | WindowDemotion | Last-touch accounting and pruning for opened-item read caches, and the demotion of a promoted canonical window |
 | `src/sync/residence/publication_access.rs` | src | s | 1 struct · 4 fn · 1 crate-vis | PendingPublicationGrant | Request-bound publication grants kept by the home beside their generation |
 | `src/sync/residence/recall_scope.rs` | src | s | 1 re-export | — | Resolved recall scope and signing transcript, defined by the recall layer |
 | `src/sync/residence/sealed_updates.rs` | src | m | 4 struct · 8 fn · 2 type · 3 const · 1 crate-vis | OutboxSealedUpdate, SealedUpdatePage, SealedUpdateQueue, StoredSealedUpdate | The home's queue of sealed world updates (DEC-0005 fix 8, CLIP-SYNC = A, FIX 12586), and this machine's… |
@@ -10147,6 +10147,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/whole_vault_restore_seeds.rs` | test | s | — | — | Whole-vault archive restore into a fresh SEEDED vault: engine-seed equivalence |
 | `tests/window_open_lineage.rs` | test | s | — | — | A window opens over the rows learned in its month (WINDOW-LINEAGE-RSLOT) |
 | `tests/window_replacement_installs_the_snapshot_alone.rs` | test | s | — | — | A window replacement is installed, never merged (fix list row [SYNC-REPLACEMENT-NEVER-MERGED-NO-DOOR]) |
+| `tests/withheld_cosign_below_floor.rs` | test | m | — | — | A withheld row whose cosigner the owner has revoked grants nothing (row [SEQ-FLOOR-S-WITHHELD-COSIGN], case… |
 | `tests/witness_turn_no_project_position.rs` | test | m | — | — | FIX WITNESS-TURN-NO-PROJECT-POSITION: a turn witnessed through `vault.witness` keeps the default project… |
 | `tests/witness_turn_wire_project.rs` | test | s | — | — | FIX WITNESS-TURN-NO-PROJECT-POSITION, the wire half: a turn witnessed through `vault.witness` names an… |
 | `tests/word_bound_nonprojected_door.rs` | test | s | — | — | A TURN's non-projected children narrow nothing: on an unbound branch, a TURN whose shown words are a MESSAGE… |

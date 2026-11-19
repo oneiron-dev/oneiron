@@ -3957,7 +3957,7 @@
      "path": "src/authority/adopted_fold/context.rs",
      "purpose": "Whether an adopted image's fold is the one this install reaches in its own context, and whether a late fork…",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -6636,7 +6636,7 @@
      "path": "src/authority/stale_roster.rs",
      "purpose": "Clock-free expiry of approvals resting on a subsequently revoked roster",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -86552,7 +86552,7 @@
      "path": "src/sync/client/residence/items.rs",
      "purpose": "Thin-item fetch and open reads",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 3,
       "fn": 3
      }
     },
@@ -86844,7 +86844,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/sync/connection/directives.rs",
@@ -86951,7 +86951,7 @@
      "path": "src/sync/connection/mod.rs",
      "purpose": "WebSocket connection manager with debounced sync and reconnection",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 21,
       "mod": 1,
       "re-export": 5,
@@ -88875,7 +88875,7 @@
      "path": "src/sync/residence/directives.rs",
      "purpose": "The owner's residence directives to one of their machines (OF-534): owner-vault acts that name a machine…",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "fn": 3,
       "struct": 1
      }
@@ -89050,7 +89050,7 @@
      "path": "src/sync/residence/prune.rs",
      "purpose": "Last-touch accounting and pruning for opened-item read caches, and the demotion of a promoted canonical window",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "fn": 2,
       "struct": 1
      }
@@ -114370,6 +114370,14 @@
      "bucket": "m",
      "kind": "test",
      "notable": [],
+     "path": "tests/withheld_cosign_below_floor.rs",
+     "purpose": "A withheld row whose cosigner the owner has revoked grants nothing (row [SEQ-FLOOR-S-WITHHELD-COSIGN], case…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
      "path": "tests/witness_turn_no_project_position.rs",
      "purpose": "FIX WITNESS-TURN-NO-PROJECT-POSITION: a turn witnessed through `vault.witness` keeps the default project…",
      "surface": {}
@@ -116238,7 +116246,7 @@
    "over_bar": 306,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 8203,
-   "test_files": 1951
+   "test_files": 1952
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -162422,7 +162430,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/api/tests/owner_authored_writes.rs",
