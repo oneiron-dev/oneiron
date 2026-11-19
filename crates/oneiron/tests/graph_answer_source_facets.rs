@@ -8,7 +8,9 @@
 //! still refuse. Rows read in several facets meet at the lowest facet id
 //! (Engine ANSWER STANDING-ANSWER-FACET-PLACEMENT = A, 19 Nov 12:57). When a
 //! room's facet set changes under an unchanged row, the next answer lands
-//! where the row is read now (review round 2 on #9582).
+//! where the row is read now (review round 2 on #9582). When the set narrows,
+//! an answer already written in a facet the room left is marked stale
+//! (FIX STANDING-ANSWER-STAYS-IN-LEFT-FACET, Engine ruling A, 19 Nov 13:29).
 //!
 //! Run: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test graph_answer_source_facets`.
@@ -20,9 +22,9 @@ use std::sync::Arc;
 use oneiron::authority::HostSlipIssuer;
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::llm::decision::questions::{
-    GraphAnswerer, GraphAskResult, GraphPrediction, GraphQuestionInput, GraphQuestionRef,
-    GraphUnitContext, QuestionActivation, QuestionDefinitionInput, RefreshPolicy, create_question,
-    run_graph_question,
+    AnswerProposal, GraphAnswerer, GraphAskResult, GraphPrediction, GraphQuestionInput,
+    GraphQuestionRef, GraphUnitContext, QuestionActivation, QuestionDefinitionInput, RefreshBatch,
+    RefreshPolicy, create_question, refresh_due_questions, run_graph_question,
 };
 use oneiron::llm::decision::{
     AnswerContract, DecisionAnswer, DecisionBand, DecisionClass, DecisionDial, DecisionQuestion,
@@ -159,11 +161,39 @@ impl Fixture {
 
     /// The owner's saved graph question over `units`.
     fn question(&self, units: Vec<EntityId>) -> TestResult<GraphQuestionRef> {
-        let record = create_question(&self.vault, self.actor(), definition(units), 2)?;
+        self.question_of(definition(units))
+    }
+
+    /// The owner's saved graph question `definition`.
+    fn question_of(&self, definition: QuestionDefinitionInput) -> TestResult<GraphQuestionRef> {
+        let record = create_question(&self.vault, self.actor(), definition, 2)?;
         Ok(GraphQuestionRef {
             id: record.definition.question.id,
             version: record.definition.question.version,
         })
+    }
+
+    /// One pass of the question pump over the work due now.
+    fn refresh_due(&self) -> TestResult<RefreshBatch> {
+        Ok(refresh_due_questions(
+            &self.vault,
+            self.actor(),
+            self.vault.now_recorded_at(),
+            |_, _, _| {
+                Ok(AnswerProposal {
+                    answer: DecisionAnswer::Choice("yes".into()),
+                    probability: Some(0.8),
+                    providers: vec![ProviderPin {
+                        rung: DecisionRung::Local,
+                        model: "local/fixture".into(),
+                        version: "r1".into(),
+                    }],
+                    paired: Vec::new(),
+                    rule: None,
+                    cost_per_thousand: None,
+                })
+            },
+        )?)
     }
 
     /// The owner's answer on `unit` resting on `evidence` too.
@@ -193,6 +223,45 @@ impl Fixture {
             .get_claim(&result.answers[0].claim)?
             .ok_or("the written answer reads back")?;
         Ok(claim.scope_facet)
+    }
+
+    /// Whether the answer CLAIM `claim` is marked stale.
+    fn answer_stale(&self, claim: EntityId) -> TestResult<bool> {
+        Ok(self
+            .vault
+            .get_claim(&claim)?
+            .ok_or("the written answer reads back")?
+            .stale)
+    }
+
+    /// The one answer CLAIM of `result`.
+    fn answer_claim(result: &GraphAskResult) -> EntityId {
+        assert_eq!(result.answers.len(), 1, "one answer is written");
+        result.answers[0].claim
+    }
+
+    /// A project home room whose signed set reads `facets`, the project's own
+    /// slice facet the highest of them; returns the project and its room.
+    fn project_room_reading(
+        &self,
+        facets: &BTreeSet<EntityId>,
+    ) -> TestResult<(EntityId, EntityId)> {
+        let slice = *facets.last().ok_or("a set holds a facet")?;
+        let (project, room) = self.project_room(slice)?;
+        self.set_room(project, Some(facets.clone()))?;
+        Ok((project, room))
+    }
+
+    /// Signs `facets` as `project`'s room facet set, or drops the set.
+    fn set_room(&self, project: EntityId, facets: Option<BTreeSet<EntityId>>) -> TestResult {
+        set_room_facets(
+            &self.vault,
+            &self.owner_proof,
+            &self.vault.owner_project_signer(&self.issuer)?,
+            project,
+            facets,
+        )?;
+        Ok(())
     }
 }
 
@@ -419,5 +488,160 @@ fn an_answer_lands_again_where_its_unchanged_row_is_read_now() -> TestResult {
         "once the room reads only its slice facet, the answer on the unchanged MESSAGE lands \
          there, not in the facet the earlier answer took"
     );
+    Ok(())
+}
+
+#[test]
+fn an_answer_in_a_facet_its_room_left_is_marked_stale() -> TestResult {
+    let fixture = open()?;
+    let work = fixture.put_row(ENTITY_TYPE_FACET, "work")?;
+    let health = fixture.put_row(ENTITY_TYPE_FACET, "health")?;
+    let (project, room) = fixture.project_room_reading(&BTreeSet::from([work, health]))?;
+    let (slice, other) = (work.max(health), work.min(health));
+    let message = fixture.message_in_room(room, "The night shift starts at ten.")?;
+    let question = fixture.question(vec![message])?;
+    let shared = fixture
+        .ask(question, message, Vec::new())
+        .map_err(|error| format!("an answer on a room MESSAGE lands; it refused: {error}"))?;
+    let earlier = Fixture::answer_claim(&shared);
+    assert_eq!(
+        fixture.answer_facet(&shared)?,
+        other,
+        "precondition: an answer on a row read in two facets lands at the lower"
+    );
+    assert!(
+        !fixture.answer_stale(earlier)?,
+        "precondition: the answer stands"
+    );
+
+    fixture.set_room(project, None)?;
+    assert!(
+        fixture.answer_stale(earlier)?,
+        "once the room no longer reads the facet its answer sits in, that answer is stale"
+    );
+    let narrowed = fixture
+        .ask(question, message, Vec::new())
+        .map_err(|error| {
+            format!("an answer on the unchanged MESSAGE lands again; it refused: {error}")
+        })?;
+    assert_eq!(
+        fixture.answer_facet(&narrowed)?,
+        slice,
+        "the next answer lands where the room reads the MESSAGE now"
+    );
+    assert!(
+        !fixture.answer_stale(Fixture::answer_claim(&narrowed))?,
+        "the next answer stands"
+    );
+    Ok(())
+}
+
+#[test]
+fn an_answer_in_a_facet_its_room_still_reads_stays_standing() -> TestResult {
+    let fixture = open()?;
+    let mut facets = [
+        fixture.put_row(ENTITY_TYPE_FACET, "work")?,
+        fixture.put_row(ENTITY_TYPE_FACET, "health")?,
+        fixture.put_row(ENTITY_TYPE_FACET, "home")?,
+    ];
+    facets.sort();
+    let [low, _middle, slice] = facets;
+    let (project, room) = fixture.project_room_reading(&BTreeSet::from(facets))?;
+    let message = fixture.message_in_room(room, "The pharmacy closes at six.")?;
+    let question = fixture.question(vec![message])?;
+    let answer = fixture
+        .ask(question, message, Vec::new())
+        .map_err(|error| format!("an answer on a room MESSAGE lands; it refused: {error}"))?;
+    assert_eq!(
+        fixture.answer_facet(&answer)?,
+        low,
+        "precondition: the answer lands at the lowest facet the room reads"
+    );
+
+    fixture.set_room(project, Some(BTreeSet::from([low, slice])))?;
+    assert!(
+        !fixture.answer_stale(Fixture::answer_claim(&answer))?,
+        "a narrowing that drops only the middle facet keeps the answer the room still reads \
+         at the lowest"
+    );
+    Ok(())
+}
+
+#[test]
+fn an_answer_lands_once_its_room_reads_the_left_facet_again() -> TestResult {
+    let fixture = open()?;
+    let work = fixture.put_row(ENTITY_TYPE_FACET, "work")?;
+    let health = fixture.put_row(ENTITY_TYPE_FACET, "health")?;
+    let both = BTreeSet::from([work, health]);
+    let (project, room) = fixture.project_room_reading(&both)?;
+    let other = work.min(health);
+    let message = fixture.message_in_room(room, "The ward meets on Fridays.")?;
+    let question = fixture.question(vec![message])?;
+    fixture
+        .ask(question, message, Vec::new())
+        .map_err(|error| format!("an answer on a room MESSAGE lands; it refused: {error}"))?;
+
+    fixture.set_room(project, None)?;
+    fixture.set_room(project, Some(both))?;
+    let again = fixture
+        .ask(question, message, Vec::new())
+        .map_err(|error| {
+            format!(
+                "once the room reads both facets again, an answer on the unchanged MESSAGE \
+                 lands; it refused: {error}"
+            )
+        })?;
+    assert_eq!(
+        fixture.answer_facet(&again)?,
+        other,
+        "the answer lands at the lower facet the room reads again"
+    );
+    assert!(
+        !fixture.answer_stale(Fixture::answer_claim(&again))?,
+        "the answer the unit has once the room reads the facet again stands"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_narrowing_queues_the_refresh_of_an_answer_it_marks_stale() -> TestResult {
+    let fixture = open()?;
+    let work = fixture.put_row(ENTITY_TYPE_FACET, "work")?;
+    let health = fixture.put_row(ENTITY_TYPE_FACET, "health")?;
+    let (project, room) = fixture.project_room_reading(&BTreeSet::from([work, health]))?;
+    let slice = work.max(health);
+    let message = fixture.message_in_room(room, "The ward closes for repairs in May.")?;
+    let mut watching = definition(vec![message]);
+    watching.refresh.on_arrival = true;
+    let question = fixture.question_of(watching)?;
+    fixture
+        .ask(question, message, Vec::new())
+        .map_err(|error| format!("an answer on a room MESSAGE lands; it refused: {error}"))?;
+    // Whatever the question's creation queued runs first.
+    fixture.refresh_due()?;
+
+    fixture.set_room(project, None)?;
+    let batch = fixture.refresh_due()?;
+    let failures: Vec<String> = batch
+        .failures
+        .iter()
+        .map(|failure| failure.error.to_string())
+        .collect();
+    assert!(failures.is_empty(), "the queued refresh runs: {failures:?}");
+    assert_eq!(
+        batch.answers.len(),
+        1,
+        "a narrowing that marks an answer stale queues its unit's refresh where the question \
+         refreshes on arrival"
+    );
+    let answer = fixture
+        .vault
+        .get_claim(&batch.answers[0].claim)?
+        .ok_or("the refreshed answer reads back")?;
+    assert_eq!(
+        answer.scope_facet, slice,
+        "the refreshed answer lands where the room reads the MESSAGE now"
+    );
+    assert!(!answer.stale, "the refreshed answer stands");
     Ok(())
 }
