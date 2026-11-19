@@ -1277,6 +1277,7 @@ fn posting_dup_item_literal_layout() -> Result<()> {
 fn deindex_deletes_exactly_one_dup_item() -> Result<()> {
     let temp_dir = tempfile::tempdir()?;
     let vault = Vault::open(temp_dir.path(), test_config())?;
+    vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
     let mut ids = [EntityId::now(), EntityId::now(), EntityId::now()];
     for id in &ids {
         put_text_doc(&vault, id, "shared")?;
@@ -1381,6 +1382,7 @@ fn synthetic_base64_word(seed: &str, len: usize) -> String {
 fn a_1583_character_base64_term_round_trips_through_the_index() -> Result<()> {
     let temp_dir = tempfile::tempdir()?;
     let vault = Vault::open(temp_dir.path(), test_config())?;
+    vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
     let long = synthetic_base64_word("bm25-long-term", 1_583);
     let mut tokens = Vec::new();
     vault

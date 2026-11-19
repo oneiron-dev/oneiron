@@ -38,6 +38,7 @@ use crate::model_step_error::DurableStepError;
 use crate::scope_summary::{
     ArcLineRef, ArcRange, ArcStepRef, MemberKind, ScopeSummaryPlan, SummaryLineSpan,
 };
+use oneiron_contracts::fingerprint::ContentHash;
 use oneiron_model::llm::LlmResponse;
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -444,12 +445,12 @@ impl<E> ScopeSummaryExecutor<'_, E> {
             attempt: *step_ctx.attempt_id.as_bytes(),
             step: step_hash,
             model,
-            reply: *blake3::hash(reply_text(&response).as_bytes()).as_bytes(),
+            reply: *ContentHash::of(reply_text(&response).as_bytes()).as_bytes(),
             lines: reply
                 .lines
                 .iter()
                 .map(|line| ArcLineRef {
-                    text: *blake3::hash(line.text.as_bytes()).as_bytes(),
+                    text: *ContentHash::of(line.text.as_bytes()).as_bytes(),
                     turn_refs: line.turn_refs.clone(),
                     source_spans: line.source_spans.clone(),
                 })

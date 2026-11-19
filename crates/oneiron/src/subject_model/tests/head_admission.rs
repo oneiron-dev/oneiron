@@ -159,8 +159,9 @@ fn another_subjects_indexed_head_is_neither_read_nor_superseded() -> Result<()> 
                 set_person_substrate(&vault, first, PersonSubstrate::Meat, writer(), 100)?,
             )
         } else {
-            let actor = seed(&vault, entity(0x8B), ENTITY_TYPE_AGENT_DEF);
-            let other_actor = seed(&vault, entity(0x8C), ENTITY_TYPE_AGENT_DEF);
+            let actor = seed_unanchored_agent_definition(&vault, entity(0x8B), "subject_model");
+            let other_actor =
+                seed_unanchored_agent_definition(&vault, entity(0x8C), "subject_model");
             (
                 other_actor,
                 anchor_actor_subject(&vault, actor, first, writer(), 100)?,

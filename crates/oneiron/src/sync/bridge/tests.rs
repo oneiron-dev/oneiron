@@ -16,9 +16,12 @@ use ed25519_dalek::{Signer, SigningKey};
 use rmpv::Value;
 use std::sync::Arc;
 
-fn test_vault() -> Arc<Vault> {
+fn test_vault() -> (tempfile::TempDir, Arc<Vault>) {
     let dir = tempfile::tempdir().unwrap();
-    Arc::new(Vault::open(dir.path(), VaultConfig::device()).unwrap())
+    let vault = Arc::new(Vault::open(dir.path(), VaultConfig::device()).unwrap());
+    vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::new()));
+    vault.prepare_install_signing().expect("install signing");
+    (dir, vault)
 }
 
 /// One peer entity blob through the shared ingest ladder inside `wtxn`, keyed
@@ -217,13 +220,8 @@ fn read_dt_marker(vault: &Vault, id: &EntityId) -> Option<Vec<u8>> {
 }
 
 fn entity_blob(entity_type: u8, occurred: TimeRange, learned_at: u64, data: &[u8]) -> Vec<u8> {
-    let mut blob = Vec::with_capacity(ENTITY_METADATA_HEADER_LEN + data.len());
-    blob.push(entity_type);
-    blob.extend_from_slice(&occurred.start.to_be_bytes());
-    blob.extend_from_slice(&occurred.end.to_be_bytes());
-    blob.extend_from_slice(&learned_at.to_be_bytes());
-    blob.extend_from_slice(data);
-    blob
+    // Fresh test carrier: row_version 0, the value base writes for a new row.
+    crate::test_util::entity_record(entity_type, occurred, learned_at, 0, data)
 }
 
 #[cfg(feature = "sync")]
@@ -371,7 +369,7 @@ fn authority_log_entity_blob(
 #[cfg(feature = "sync")]
 #[test]
 fn authority_peer_burst_is_observed_and_never_rejected() -> Result<()> {
-    let vault = test_vault();
+    let (_dir_vault, vault) = test_vault();
     quota::set_maintenance_ingest_quota_config(
         &vault,
         quota::MaintenanceIngestQuotaConfig {
@@ -418,7 +416,7 @@ fn authority_peer_burst_is_observed_and_never_rejected() -> Result<()> {
 #[cfg(feature = "sync")]
 #[test]
 fn store_key_mismatched_authority_row_from_peer_is_rejected_without_quota_debit() -> Result<()> {
-    let vault = test_vault();
+    let (_dir_vault, vault) = test_vault();
     let owner = authority_test_key(41);
     let genesis = authority_genesis_fixture(41);
     let vault_id = crate::authority::genesis_vault_id(&genesis)?;
@@ -480,7 +478,7 @@ fn store_key_mismatched_authority_row_from_peer_is_rejected_without_quota_debit(
 #[cfg(feature = "sync")]
 #[test]
 fn tombstone_before_authority_row_cannot_poison_materialization() -> Result<()> {
-    let vault = test_vault();
+    let (_dir_vault, vault) = test_vault();
     let owner = authority_test_key(43);
     let genesis = authority_genesis_fixture(43);
     let vault_id = crate::authority::genesis_vault_id(&genesis)?;
@@ -533,7 +531,7 @@ fn tombstone_before_authority_row_cannot_poison_materialization() -> Result<()> 
 #[cfg(feature = "sync")]
 #[test]
 fn soft_tombstone_before_authority_row_cannot_poison_materialization() -> Result<()> {
-    let vault = test_vault();
+    let (_dir_vault, vault) = test_vault();
     let owner = authority_test_key(45);
     let genesis = authority_genesis_fixture(45);
     let vault_id = crate::authority::genesis_vault_id(&genesis)?;
@@ -589,7 +587,7 @@ fn soft_tombstone_before_authority_row_cannot_poison_materialization() -> Result
 /// retry flagged, even after the peer drops the tombstone again.
 #[test]
 fn a_peer_cleanup_archive_tombstone_deletes_and_fences_nothing() -> Result<()> {
-    let vault = test_vault();
+    let (_dir_vault, vault) = test_vault();
     let materializer = Arc::new(Materializer::new());
     let id = EntityId::now();
     let learned_at = 1_772_400_000u64;
@@ -635,7 +633,7 @@ fn a_peer_cleanup_archive_tombstone_deletes_and_fences_nothing() -> Result<()> {
 /// record, and it reads live: a delete-protected record is never deleted.
 #[test]
 fn an_authority_row_replayed_over_a_planted_fence_reads_live() -> Result<()> {
-    let vault = test_vault();
+    let (_dir_vault, vault) = test_vault();
     let owner = authority_test_key(47);
     let genesis = authority_genesis_fixture(47);
     let vault_id = crate::authority::genesis_vault_id(&genesis)?;
@@ -680,7 +678,7 @@ fn an_authority_row_replayed_over_a_planted_fence_reads_live() -> Result<()> {
 /// it snapshots and recovers instead of being refused as a withdrawn delete.
 #[test]
 fn a_window_holding_an_authority_row_over_a_planted_fence_snapshots_and_recovers() -> Result<()> {
-    let vault = test_vault();
+    let (_dir_vault, vault) = test_vault();
     let owner = authority_test_key(50);
     let genesis = authority_genesis_fixture(50);
     let vault_id = crate::authority::genesis_vault_id(&genesis)?;
@@ -763,7 +761,7 @@ fn a_window_holding_an_authority_row_over_a_planted_fence_snapshots_and_recovers
 #[cfg(feature = "sync")]
 #[test]
 fn a_window_with_a_row_beside_a_handoff_recovers() -> Result<()> {
-    let source = test_vault();
+    let (_dir_source, source) = test_vault();
     let owner = authority_test_key(67);
     let genesis = authority_genesis_fixture(67);
     let vault_id = crate::authority::genesis_vault_id(&genesis)?;
@@ -824,7 +822,7 @@ fn a_window_with_a_row_beside_a_handoff_recovers() -> Result<()> {
     }
     doc.commit();
     let snapshot = crate::recovery::capture_canonical_window(&source, &window, &doc)?;
-    let target = test_vault();
+    let (_dir_target, target) = test_vault();
     target.put_authority_log_entry(&genesis, TimeRange { start: 1, end: 1 }, 1)?;
     let dir = tempfile::tempdir()?;
     crate::recovery::recover_vault_window(
@@ -848,7 +846,7 @@ fn a_window_with_a_row_beside_a_handoff_recovers() -> Result<()> {
 #[cfg(feature = "sync")]
 #[test]
 fn a_window_whose_rows_sort_before_their_enrollments_recovers() -> Result<()> {
-    let source = test_vault();
+    let (_dir_source, source) = test_vault();
     let owner = authority_test_key(66);
     let genesis = authority_genesis_fixture(66);
     let vault_id = crate::authority::genesis_vault_id(&genesis)?;
@@ -892,7 +890,7 @@ fn a_window_whose_rows_sort_before_their_enrollments_recovers() -> Result<()> {
     }
     doc.commit();
     let snapshot = crate::recovery::capture_canonical_window(&source, &window, &doc)?;
-    let target = test_vault();
+    let (_dir_target, target) = test_vault();
     target.put_authority_log_entry(&genesis, TimeRange { start: 1, end: 1 }, 1)?;
     let dir = tempfile::tempdir()?;
     crate::recovery::recover_vault_window(
@@ -914,7 +912,7 @@ fn a_window_whose_rows_sort_before_their_enrollments_recovers() -> Result<()> {
 /// live. A refused delete is no delete at read time either.
 #[test]
 fn a_refused_tombstone_left_published_deletes_no_authority_row() -> Result<()> {
-    let vault = test_vault();
+    let (_dir_vault, vault) = test_vault();
     let genesis = authority_genesis_fixture(49);
     vault.put_authority_log_entry(&genesis, TimeRange { start: 1, end: 1 }, 1)?;
     let id = crate::authority::authority_log_entity_id(&genesis)?;
@@ -976,7 +974,7 @@ fn presquatted_revocation_id_still_admits_the_revocation() -> Result<()> {
     // Both an ordinary (absent) and an LWW-winner (already-materialized)
     // squatter variant must lose to the validated authority row.
     for squatter_is_lww_winner in [false, true] {
-        let vault = test_vault();
+        let (_dir_vault, vault) = test_vault();
         vault.put_authority_log_entry(&genesis, TimeRange { start: 1, end: 1 }, 1)?;
         vault.put_authority_log_entry(&bind, TimeRange { start: 2, end: 2 }, 2)?;
         assert!(crate::authority::actor_binding_is_active(
@@ -1057,7 +1055,7 @@ fn presquatted_revocation_id_still_admits_the_revocation() -> Result<()> {
 #[cfg(feature = "sync")]
 #[test]
 fn forged_authority_row_cannot_displace_a_key_occupant() -> Result<()> {
-    let vault = test_vault();
+    let (_dir_vault, vault) = test_vault();
     let genesis = authority_genesis_fixture(53);
     vault.put_authority_log_entry(&genesis, TimeRange { start: 1, end: 1 }, 1)?;
     let vault_id = crate::authority::genesis_vault_id(&genesis)?;
@@ -1130,7 +1128,7 @@ fn forged_authority_row_cannot_displace_a_key_occupant() -> Result<()> {
 #[cfg(feature = "sync")]
 #[test]
 fn rejected_authority_envelope_leaves_a_key_squatter_untouched() -> Result<()> {
-    let vault = test_vault();
+    let (_dir_vault, vault) = test_vault();
     let genesis = authority_genesis_fixture(56);
     vault.put_authority_log_entry(&genesis, TimeRange { start: 1, end: 1 }, 1)?;
     let vault_id = crate::authority::genesis_vault_id(&genesis)?;
@@ -1197,7 +1195,7 @@ fn rejected_authority_envelope_leaves_a_key_squatter_untouched() -> Result<()> {
 #[cfg(feature = "sync")]
 #[test]
 fn rows_signed_by_an_unenrolled_key_pend_and_are_never_stored() -> Result<()> {
-    let vault = test_vault();
+    let (_dir_vault, vault) = test_vault();
     let owner = authority_test_key(58);
     let genesis = authority_genesis_fixture(58);
     let vault_id = crate::authority::genesis_vault_id(&genesis)?;
@@ -1264,7 +1262,7 @@ fn rows_signed_by_an_unenrolled_key_pend_and_are_never_stored() -> Result<()> {
 #[cfg(feature = "sync")]
 #[test]
 fn rows_an_enrolled_agent_signs_alone_pend_and_are_never_stored() -> Result<()> {
-    let vault = test_vault();
+    let (_dir_vault, vault) = test_vault();
     let owner = authority_test_key(58);
     let genesis = authority_genesis_fixture(58);
     let vault_id = crate::authority::genesis_vault_id(&genesis)?;
@@ -1390,7 +1388,7 @@ fn edge_value_round_trip() {
 
 #[test]
 fn apply_materialized_edge_ops_keeps_other_edges_after_child_of_failure() {
-    let vault = test_vault();
+    let (_dir_vault, vault) = test_vault();
     let a = EntityId::now();
     let b = EntityId::now();
     let c = EntityId::now();
@@ -1443,7 +1441,7 @@ fn apply_materialized_edge_ops_keeps_other_edges_after_child_of_failure() {
 
 #[test]
 fn apply_materialized_edge_ops_keeps_valid_child_of_delete_when_add_fails() {
-    let vault = test_vault();
+    let (_dir_vault, vault) = test_vault();
     let a = EntityId::now();
     let b = EntityId::now();
     let c = EntityId::now();
@@ -1493,7 +1491,7 @@ fn apply_materialized_edge_ops_keeps_valid_child_of_delete_when_add_fails() {
 
 #[test]
 fn apply_materialized_edge_ops_child_of_subset_is_deterministic() {
-    let vault = test_vault();
+    let (_dir_vault, vault) = test_vault();
     let a = EntityId::from_bytes_unchecked([1; 16]);
     let x = EntityId::from_bytes_unchecked([2; 16]);
     let b = EntityId::from_bytes_unchecked([3; 16]);
@@ -1548,7 +1546,7 @@ fn apply_materialized_edge_ops_child_of_subset_is_deterministic() {
 
 #[test]
 fn observer_b_hydrates_edge_endpoints_from_current_crdt_state() {
-    let vault = test_vault();
+    let (_dir_vault, vault) = test_vault();
     let doc = LoroDoc::new();
     let entities = doc.get_map("entities");
     let edges = doc.get_map("edges");
@@ -1597,7 +1595,7 @@ fn observer_b_hydrates_edge_endpoints_from_current_crdt_state() {
 
 #[test]
 fn observer_b_does_not_rehydrate_tombstoned_edge_endpoint() {
-    let vault = test_vault();
+    let (_dir_vault, vault) = test_vault();
     let doc = LoroDoc::new();
     let entities = doc.get_map("entities");
     let edges = doc.get_map("edges");
@@ -1672,7 +1670,7 @@ fn an_endpoint_the_edge_batch_hydrates_is_a_birth_of_the_bytes_it_wrote() {
             crate::test_util::entity_record(event, range, 1, 0, b"other"),
         ),
     ] {
-        let vault = test_vault();
+        let (_dir_vault, vault) = test_vault();
         let doc = LoroDoc::new();
         let (row, target) = (EntityId::now(), EntityId::now());
         vault
@@ -1706,7 +1704,7 @@ fn an_endpoint_the_edge_batch_hydrates_is_a_birth_of_the_bytes_it_wrote() {
 
 #[test]
 fn observer_b_does_not_materialize_edge_to_tombstoned_endpoint_with_stale_row() {
-    let vault = test_vault();
+    let (_dir_vault, vault) = test_vault();
     let doc = LoroDoc::new();
     let edges = doc.get_map("edges");
     let tombstones = doc.get_map("tombstones");
@@ -1772,7 +1770,7 @@ fn observer_b_does_not_materialize_edge_to_tombstoned_endpoint_with_stale_row() 
 /// one typed identity, raised where the write actually happens.
 #[test]
 fn observer_b_quarantines_overlay_member_edge_and_keeps_ordinary_control() {
-    let vault = test_vault();
+    let (_dir_vault, vault) = test_vault();
     let source = EntityId::now();
     let room_target = EntityId::now();
     let ordinary_target = EntityId::now();
@@ -1857,7 +1855,7 @@ fn observer_b_quarantines_overlay_member_edge_and_keeps_ordinary_control() {
 /// lost its committed parent while the winner was quarantined.
 #[test]
 fn rejected_child_of_winner_keeps_the_stored_parent() {
-    let vault = test_vault();
+    let (_dir_vault, vault) = test_vault();
     let (child, old_parent, new_parent) = (EntityId::now(), EntityId::now(), EntityId::now());
     put_tree_nodes(&vault, &[child, old_parent, new_parent]);
     let replay = |tgt: EntityId, created_at: u64| {
@@ -1942,7 +1940,7 @@ fn rejected_child_of_winner_keeps_the_stored_parent() {
 /// rematerialize the purged body into LMDB.
 #[test]
 fn observer_b_never_resurrects_hard_deleted_entity_on_entity_key_retouch() {
-    let vault = test_vault();
+    let (_dir_vault, vault) = test_vault();
     let materializer = Arc::new(Materializer::new());
 
     let id = EntityId::now();
@@ -1999,13 +1997,13 @@ fn observer_b_never_resurrects_hard_deleted_entity_on_entity_key_retouch() {
     );
 }
 
-/// ONE-1122 AC3 — SoftErased-shell variant: a 25 B envelope shell in
+/// ONE-1122 AC3 — SoftErased-shell variant: a 33 B envelope shell in
 /// LMDB + the full blob arriving via an entities-map delta + the
 /// tombstone present in the doc → the body is NOT restored. The gate
 /// fires BEFORE the put; nothing heals after.
 #[test]
 fn observer_b_does_not_restore_soft_erased_body_when_tombstoned() {
-    let vault = test_vault();
+    let (_dir_vault, vault) = test_vault();
     let id = EntityId::now();
     let learned_at = 1_772_400_000u64;
     let occurred = TimeRange { start: 1, end: 1 };
@@ -2013,7 +2011,7 @@ fn observer_b_does_not_restore_soft_erased_body_when_tombstoned() {
         .put_entity(&id, ENTITY_TYPE_TASK, occurred, learned_at, &task_body())
         .unwrap();
 
-    // SoftErase (`user_delete`): scrubs the body, keeps the 25 B shell.
+    // SoftErase (`user_delete`): scrubs the body, keeps the 33 B shell.
     let outcome = vault
         .delete_entity_with_reason(&id, crate::DeleteReason::UserDelete)
         .unwrap();
@@ -2021,7 +2019,7 @@ fn observer_b_does_not_restore_soft_erased_body_when_tombstoned() {
     assert_eq!(
         vault.get_raw(&id).unwrap().expect("shell row").len(),
         ENTITY_METADATA_HEADER_LEN,
-        "SoftErase must leave the bare 25 B envelope shell"
+        "SoftErase must leave the bare 33 B envelope shell"
     );
 
     // Doc already tombstoned BEFORE observers attach; then the full blob
@@ -2062,7 +2060,7 @@ fn observer_b_does_not_restore_soft_erased_body_when_tombstoned() {
 /// `edges_out` with its weight and `created_at` intact.
 #[test]
 fn observer_b_replays_in_range_edge_weight_through_write_gate() {
-    let vault = test_vault();
+    let (_dir_vault, vault) = test_vault();
     let doc = LoroDoc::new();
     let entities = doc.get_map("entities");
     let edges = doc.get_map("edges");
@@ -2124,7 +2122,7 @@ fn observer_b_replays_in_range_edge_weight_through_write_gate() {
 /// row, ONE-1124) as a protocol violation.
 #[test]
 fn observer_b_refuses_resurrection_after_crafted_tombstone_removal() {
-    let vault = test_vault();
+    let (_dir_vault, vault) = test_vault();
     let materializer = Arc::new(Materializer::new());
 
     let id = EntityId::now();
@@ -2222,7 +2220,7 @@ fn observer_b_refuses_resurrection_after_crafted_tombstone_removal() {
 /// any CRDT map state.
 #[test]
 fn hard_delete_writes_dt_marker_soft_delete_does_not() {
-    let vault = test_vault();
+    let (_dir_vault, vault) = test_vault();
     let occurred = TimeRange { start: 1, end: 1 };
     let learned_at = 1_772_400_000u64;
     let before = std::time::SystemTime::now()
@@ -2290,13 +2288,13 @@ fn hard_delete_writes_dt_marker_soft_delete_does_not() {
 
 /// ONE-1122 `dt:` marker, headerless leg: a hard delete that routes
 /// through `delete_entity_without_header` (active residue, entity row /
-/// 25 B header missing) writes NO CRDT tombstone — the `dt:` marker
+/// 33 B header missing) writes NO CRDT tombstone — the `dt:` marker
 /// written in the purge txn is the only local delete truth for that id.
 /// It must exist after the delete, and the Observer-B gate must refuse
 /// a crafted re-put on its strength alone.
 #[test]
 fn headerless_hard_delete_writes_dt_marker_and_gate_refuses_reput() {
-    let vault = test_vault();
+    let (_dir_vault, vault) = test_vault();
     let occurred = TimeRange { start: 1, end: 1 };
     let learned_at = 1_772_400_000u64;
 
@@ -2361,7 +2359,7 @@ fn headerless_hard_delete_writes_dt_marker_and_gate_refuses_reput() {
 /// unchanged honest path — the dt: OR-gate adds no false refusals.
 #[test]
 fn observer_b_materializes_never_deleted_entity_normally() {
-    let vault = test_vault();
+    let (_dir_vault, vault) = test_vault();
     let doc = LoroDoc::new();
     let materializer = Arc::new(Materializer::new());
     let _subs = register_observer_b(&doc, &vault, &materializer, "2026-03");
@@ -2390,7 +2388,7 @@ fn observer_b_materializes_never_deleted_entity_normally() {
 
 #[test]
 fn observer_b_rejects_and_scrubs_public_legacy_persona_facet() {
-    let vault = test_vault();
+    let (_dir_vault, vault) = test_vault();
     let doc = LoroDoc::new();
     let materializer = Arc::new(Materializer::new());
     let _subs = register_observer_b(&doc, &vault, &materializer, "2026-03");
@@ -2446,7 +2444,7 @@ fn observer_b_rejects_and_scrubs_public_legacy_persona_facet() {
 /// Claim replicates with zero quarantine rows.
 #[test]
 fn observer_b_materializes_remote_edge_provenance_claim() {
-    let vault = test_vault();
+    let (_dir_vault, vault) = test_vault();
     let doc = LoroDoc::new();
     let entities = doc.get_map("entities");
 
@@ -2514,7 +2512,7 @@ fn observer_b_materializes_remote_edge_provenance_claim() {
 /// local failure.
 #[test]
 fn local_endpoint_error_aborts_batch_before_remote_quarantine() {
-    let vault = test_vault();
+    let (_dir_vault, vault) = test_vault();
     let doc = LoroDoc::new();
     let entities = doc.get_map("entities");
     let edges = doc.get_map("edges");
@@ -2572,7 +2570,7 @@ fn observer_b_gates_reserved_edges_on_the_ledger_and_derives_shells_from_records
         EntityLifecycleState, StoredIdentityOpAction, StoredIdentityOpEvent,
     };
 
-    let vault = test_vault();
+    let (_dir_vault, vault) = test_vault();
     let doc = LoroDoc::new();
     let entities = doc.get_map("entities");
     let edges = doc.get_map("edges");
@@ -2814,7 +2812,7 @@ fn observer_b_quarantines_a_replicated_fact_link_removal() {
     use crate::task_authority::{
         TaskAuthorityFact, TaskAuthorityFactKind, put_task_authority_fact_in_txn,
     };
-    let vault = test_vault();
+    let (_dir_vault, vault) = test_vault();
     let learned_at = 1_772_400_000u64; // 2026-03 window
     let at = TimeRange {
         start: learned_at,
@@ -2848,6 +2846,7 @@ fn observer_b_quarantines_a_replicated_fact_link_removal() {
         assigned_ref: None,
         actor_generation: None,
         assigned_generation: None,
+        answered_heads: None,
         occurred_at: learned_at,
         maker: None,
     };
@@ -2959,6 +2958,7 @@ fn owned_tasks_for_fact_replay(
                         assigned_ref: None,
                         actor_generation: None,
                         assigned_generation: None,
+                        answered_heads: None,
                         occurred_at: learned_at,
                         maker: None,
                     },
@@ -2997,7 +2997,7 @@ fn observer_b_refuses_a_replayed_tombstone_for_a_fact() {
     use crate::task_authority::{
         TaskAuthorityFact, TaskAuthorityFactKind, put_task_authority_fact_in_txn,
     };
-    let vault = test_vault();
+    let (_dir_vault, vault) = test_vault();
     let learned_at = 1_772_400_000u64; // 2026-03 window
     let (owner, tasks) = owned_tasks_for_fact_replay(&vault, learned_at, 2);
     let ((task, owner_fact), (other, _)) = (tasks[0], tasks[1]);
@@ -3013,6 +3013,7 @@ fn observer_b_refuses_a_replayed_tombstone_for_a_fact() {
                     assigned_ref: None,
                     actor_generation: None,
                     assigned_generation: None,
+                    answered_heads: None,
                     occurred_at: learned_at,
                     maker: None,
                 },
@@ -3083,7 +3084,7 @@ fn a_fact_tombstoned_before_it_arrives_reads_as_a_refusal() {
     use crate::task_authority::{
         TaskAuthorityFact, TaskAuthorityFactKind, encode_task_authority_fact_body,
     };
-    let vault = test_vault();
+    let (_dir_vault, vault) = test_vault();
     let learned_at = 1_772_400_000u64; // 2026-03 window
     let at = TimeRange {
         start: learned_at,
@@ -3117,6 +3118,7 @@ fn a_fact_tombstoned_before_it_arrives_reads_as_a_refusal() {
                 assigned_ref: None,
                 actor_generation: None,
                 assigned_generation: None,
+                answered_heads: None,
                 occurred_at: learned_at,
                 maker: None,
             });
@@ -3161,7 +3163,7 @@ fn a_fact_tombstoned_before_it_arrives_reads_as_a_refusal() {
 /// now unconditional for the kind.
 #[test]
 fn observer_b_refuses_forged_blocks_rows_and_forged_blocks_retirement() {
-    let vault = test_vault();
+    let (_dir_vault, vault) = test_vault();
     let learned_at = 1_772_400_000u64; // 2026-03 window
     let occurred = TimeRange {
         start: learned_at,
@@ -3295,7 +3297,7 @@ fn observer_b_refuses_forged_blocks_rows_and_forged_blocks_retirement() {
 fn observer_b_tombstone_first_then_type_76_blob_neutralizes_poison_with_evidence() {
     use crate::identity_topology::{StoredIdentityOpAction, StoredIdentityOpEvent};
 
-    let vault = test_vault();
+    let (_dir_vault, vault) = test_vault();
     let event_id = EntityId::from_bytes([0x70; 16]).unwrap();
     let record = StoredIdentityOpEvent {
         seq: 50,
@@ -3374,7 +3376,7 @@ fn observer_b_tombstone_first_then_type_76_blob_neutralizes_poison_with_evidence
 fn observer_b_malformed_type_76_envelope_cannot_bypass_delete_wins() {
     use crate::identity_topology::{StoredIdentityOpAction, StoredIdentityOpEvent};
 
-    let vault = test_vault();
+    let (_dir_vault, vault) = test_vault();
     let doc = LoroDoc::new();
     let materializer = Arc::new(Materializer::new());
     let _subs = register_observer_b(&doc, &vault, &materializer, "2026-03");
@@ -3491,7 +3493,7 @@ fn observer_b_rejects_type_76_merge_with_nonstructural_participant() {
         EntityLifecycleState, StoredIdentityOpAction, StoredIdentityOpEvent,
     };
 
-    let vault = test_vault();
+    let (_dir_vault, vault) = test_vault();
     let survivor = EntityId::now();
     vault
         .put_entity(
@@ -3601,7 +3603,7 @@ fn observer_b_revalidates_deferred_participant_before_reserved_edge_write() {
         EntityLifecycleState, StoredIdentityOpAction, StoredIdentityOpEvent,
     };
 
-    let vault = test_vault();
+    let (_dir_vault, vault) = test_vault();
     let doc = LoroDoc::new();
     let entities = doc.get_map("entities");
     let edges = doc.get_map("edges");
@@ -3719,7 +3721,7 @@ fn observer_b_quarantined_undo_commits_no_event_or_seq_advance() {
         IdentityOpOutcome, IdentityOpWrite, StoredIdentityOpAction, StoredIdentityOpEvent,
     };
 
-    let vault = test_vault();
+    let (_dir_vault, vault) = test_vault();
     let ordinary_target = EntityId::now();
     let survivor = EntityId::now();
     let loser = EntityId::now();
@@ -3813,7 +3815,7 @@ fn observer_b_rejects_seq_that_would_consume_local_headroom_before_clock_mutatio
         IdentityOpOutcome, IdentityOpWrite, StoredIdentityOpAction, StoredIdentityOpEvent,
     };
 
-    let vault = test_vault();
+    let (_dir_vault, vault) = test_vault();
     let survivor = EntityId::now();
     let loser = EntityId::now();
     for id in [&survivor, &loser] {
@@ -3909,7 +3911,7 @@ fn observer_b_endpoint_materialization_retriggers_deferred_topology_reconcile() 
         EntityLifecycleState, StoredIdentityOpAction, StoredIdentityOpEvent,
     };
 
-    let vault = test_vault();
+    let (_dir_vault, vault) = test_vault();
     let survivor = EntityId::now();
     let loser = EntityId::now();
     let event_id = EntityId::now();
@@ -4000,7 +4002,7 @@ fn observer_b_endpoint_materialization_retriggers_deferred_topology_reconcile() 
 fn identity_topology_ingest_door_replays_diverges_and_validates() {
     use crate::identity_topology::{StoredIdentityOpAction, StoredIdentityOpEvent};
 
-    let vault = test_vault();
+    let (_dir_vault, vault) = test_vault();
     let survivor = EntityId::now();
     let loser = EntityId::now();
     for id in [&survivor, &loser] {
@@ -4195,7 +4197,7 @@ fn identity_topology_ingest_door_replays_diverges_and_validates() {
 fn byte_identical_type_76_replay_short_circuits_before_full_reconciliation() {
     use crate::identity_topology::{StoredIdentityOpAction, StoredIdentityOpEvent};
 
-    let vault = test_vault();
+    let (_dir_vault, vault) = test_vault();
     quota::set_maintenance_ingest_quota_config(
         &vault,
         quota::MaintenanceIngestQuotaConfig {
@@ -4278,7 +4280,7 @@ fn observer_b_rejects_every_local_impossible_type_76_shape_before_mutation() {
         StoredIdentityOpEvent,
     };
 
-    let vault = test_vault();
+    let (_dir_vault, vault) = test_vault();
     quota::set_maintenance_ingest_quota_config(
         &vault,
         quota::MaintenanceIngestQuotaConfig {
@@ -4468,7 +4470,7 @@ fn observer_b_rejects_present_actor_class_mismatch_before_mutation() {
         StoredIdentityOpAction, StoredIdentityOpEvent, SurvivorshipPlan,
     };
 
-    let vault = test_vault();
+    let (_dir_vault, vault) = test_vault();
     let survivor = EntityId::from_bytes([0x61; 16]).unwrap();
     let source = EntityId::from_bytes([0x62; 16]).unwrap();
     let actor = EntityId::from_bytes([0x63; 16]).unwrap();
@@ -4683,7 +4685,7 @@ fn one521_put_task(vault: &Vault, id: &EntityId, stamp: u64) {
 /// purge, marker, receipt, sweep, and shell semantics in one CRDT delta.
 #[test]
 fn multi_tombstone_delta_uses_one_top_level_write_transaction() {
-    let vault = test_vault();
+    let (_dir_vault, vault) = test_vault();
     let materializer = Arc::new(Materializer::new());
 
     let hard_legacy = EntityId::now();
@@ -4726,12 +4728,12 @@ fn multi_tombstone_delta_uses_one_top_level_write_transaction() {
         "both hard purges must queue their h: sweep row"
     );
 
-    // SOFT user_delete: shell-preserving — the 25 B header row SURVIVES,
+    // SOFT user_delete: shell-preserving — the 33 B header row SURVIVES,
     // the payload is gone, and NO dt:/receipt/sweep is written for it.
     let shell = vault
         .get_raw(&soft)
         .unwrap()
-        .expect("user_delete keeps the 25 B shell");
+        .expect("user_delete keeps the 33 B shell");
     assert_eq!(shell.len(), ENTITY_METADATA_HEADER_LEN);
     assert_eq!(vault.get(&soft).unwrap().as_deref(), Some([].as_slice()));
     assert!(read_dt_marker(&vault, &soft).is_none());
@@ -4744,7 +4746,7 @@ fn multi_tombstone_delta_uses_one_top_level_write_transaction() {
 /// successful siblings' receipts or sweep rows.
 #[test]
 fn one_tombstone_failure_does_not_lose_the_rest() {
-    let vault = test_vault();
+    let (_dir_vault, vault) = test_vault();
     let materializer = Arc::new(Materializer::new());
 
     let a = EntityId::now();
@@ -4871,7 +4873,7 @@ fn replicated_witness_message_body(author: &str, content: &str) -> Vec<u8> {
 /// REMOTE rejection, and ordinary NON-MESSAGE replication is untouched.
 #[test]
 fn observer_b_refuses_replicated_message_bodies_before_any_mutation() -> Result<()> {
-    let vault = test_vault();
+    let (_dir_vault, vault) = test_vault();
     let doc = LoroDoc::new();
     let tombstones = doc.get_map("tombstones");
     let occurred = TimeRange { start: 9, end: 9 };
@@ -4970,7 +4972,7 @@ fn observer_b_refuses_replicated_message_bodies_before_any_mutation() -> Result<
 
 #[test]
 fn edge_hydration_rolls_back_late_project_rejection_but_commits_valid_sibling() {
-    let vault = test_vault();
+    let (_dir_vault, vault) = test_vault();
     let root = vault.root_project().unwrap();
     let leader = EntityId::from_hex(&vault.project(root).unwrap().unwrap().leader).unwrap();
     let bad = EntityId::now();
@@ -5049,7 +5051,7 @@ fn observer_b_quarantines_bad_machine_proof_and_commits_signed_sibling() -> Resu
         ClaimCandidate, MachineWriteSignature, WriteActor, WriteEnvelope, WriteProvenance,
     };
 
-    let vault = test_vault();
+    let (_dir_vault, vault) = test_vault();
     let machine = EntityId::from_bytes([0x30; 16])?;
     let bad_id = EntityId::from_bytes([0x31; 16])?;
     let good_id = EntityId::from_bytes([0x32; 16])?;
@@ -5122,7 +5124,7 @@ fn observer_b_quarantines_bad_machine_proof_and_commits_signed_sibling() -> Resu
 
 #[test]
 fn observer_b_quarantines_in_range_project_depth_edit_without_owner_proof() -> crate::Result<()> {
-    let vault = test_vault();
+    let (_dir_vault, vault) = test_vault();
     let root = vault.root_project()?;
     let person = EntityId::now();
     vault.put_entity(
@@ -5180,7 +5182,7 @@ fn observer_b_quarantines_in_range_project_depth_edit_without_owner_proof() -> c
 
 #[test]
 fn observer_b_replays_signed_owner_project_depth_and_rejects_tampering() -> crate::Result<()> {
-    let a = test_vault();
+    let (_dir_a, a) = test_vault();
     let root_a = a.root_project()?;
     let leader = EntityId::from_hex(&a.project(root_a)?.unwrap().leader)?;
     let project = EntityId::now();
@@ -5214,7 +5216,7 @@ fn observer_b_replays_signed_owner_project_depth_and_rejects_tampering() -> crat
         })
         .expect("signed depth contribution");
 
-    let b = test_vault();
+    let (_dir_b, b) = test_vault();
     let root_b = b.root_project()?;
     let lead_b = EntityId::from_hex(&b.project(root_b)?.unwrap().leader)?;
     b.put_project(
@@ -5285,7 +5287,7 @@ fn observer_b_replays_signed_owner_project_depth_and_rejects_tampering() -> crat
 
 #[test]
 fn observer_b_project_depth_authority_dependency_survives_retry_until_bind() -> crate::Result<()> {
-    let source = test_vault();
+    let (_dir_source, source) = test_vault();
     let root = source.root_project()?;
     let leader = EntityId::from_hex(&source.project(root)?.unwrap().leader)?;
     let id = EntityId::now();
@@ -5318,7 +5320,7 @@ fn observer_b_project_depth_authority_dependency_survives_retry_until_bind() -> 
         })
         .expect("signed depth contribution");
 
-    let target = test_vault();
+    let (_dir_target, target) = test_vault();
     let target_root = target.root_project()?;
     let target_leader = EntityId::from_hex(&target.project(target_root)?.unwrap().leader)?;
     target.put_project(
@@ -5388,7 +5390,7 @@ fn observer_b_project_depth_authority_dependency_survives_retry_until_bind() -> 
 #[test]
 fn observer_b_bootstraps_signed_default_birth_and_edit_on_fresh_replica() -> crate::Result<()> {
     use ed25519_dalek::Signer;
-    let a = test_vault();
+    let (_dir_a, a) = test_vault();
     let root_a = a.root_project()?;
     let leader = EntityId::from_hex(&a.project(root_a)?.unwrap().leader)?;
     let writer = crate::subject_model::tests::authorization::root_host_owner(&a, 0xC1)?;
@@ -5411,7 +5413,7 @@ fn observer_b_bootstraps_signed_default_birth_and_edit_on_fresh_replica() -> cra
     assert_eq!(default_facts.len(), 1);
     assert_eq!(project_facts.len(), 2);
 
-    let b = test_vault();
+    let (_dir_b, b) = test_vault();
     let root_b = b.root_project()?;
     let leader_b = EntityId::from_hex(&b.project(root_b)?.unwrap().leader)?;
     b.put_project(
@@ -5471,7 +5473,7 @@ fn observer_b_bootstraps_signed_default_birth_and_edit_on_fresh_replica() -> cra
 fn deferred_cancellation_target_materializes_as_person_without_poisoning_deletes() {
     use crate::identity_topology::{StoredIdentityOpAction, StoredIdentityOpEvent};
 
-    let vault = test_vault();
+    let (_dir_vault, vault) = test_vault();
     let doc = LoroDoc::new();
     let entities = doc.get_map("entities");
     let materializer = Arc::new(Materializer::new());
@@ -5568,7 +5570,7 @@ fn assert_peer_actor_stamp_is_display_only(validated_at_write: bool) {
     use crate::identity_topology::{
         AdmissionVerdict, StoredIdentityOpAction, StoredIdentityOpEvent,
     };
-    let vault = test_vault();
+    let (_dir_vault, vault) = test_vault();
     let doc = LoroDoc::new();
     let entities = doc.get_map("entities");
     let materializer = Arc::new(Materializer::new());
@@ -5851,7 +5853,7 @@ fn deliver_peer_row(vault: &Vault, id: &EntityId, blob: &[u8]) {
 fn conflicting_peer_author_carriers_leave_the_vault_writable() {
     use crate::identity_topology::{StoredIdentityOpAction, StoredIdentityOpEvent};
     for core_first in [true, false] {
-        let vault = test_vault();
+        let (_dir_vault, vault) = test_vault();
         let (loser, survivor) = (EntityId::now(), EntityId::now());
         put_test_person(&vault, &loser);
         put_test_person(&vault, &survivor);
@@ -5934,7 +5936,7 @@ fn conflicting_peer_author_carriers_leave_the_vault_writable() {
 #[test]
 fn a_peer_carrier_naming_a_missing_actor_never_parks_a_sealed_merge() {
     for stamped in [false, true] {
-        let vault = test_vault();
+        let (_dir_vault, vault) = test_vault();
         let (loser, survivor, own) = (EntityId::now(), EntityId::now(), EntityId::now());
         for id in [&loser, &survivor, &own] {
             put_test_person(&vault, id);
@@ -5982,7 +5984,7 @@ fn a_peer_carrier_naming_a_missing_actor_never_parks_a_sealed_merge() {
 /// fails the erasure, and none comes back when its window replays.
 #[test]
 fn erasing_an_actor_scrubs_every_peer_carrier_naming_it() {
-    let vault = test_vault();
+    let (_dir_vault, vault) = test_vault();
     let (loser, survivor, actor, person) = (
         EntityId::now(),
         EntityId::now(),
@@ -6034,7 +6036,7 @@ fn erasing_an_actor_scrubs_every_peer_carrier_naming_it() {
 /// stamp alone.
 #[test]
 fn the_generic_sync_state_door_cannot_mark_a_carrier_as_written_here() {
-    let vault = test_vault();
+    let (_dir_vault, vault) = test_vault();
     let (loser, survivor, own) = (EntityId::now(), EntityId::now(), EntityId::now());
     for id in [&loser, &survivor, &own] {
         put_test_person(&vault, id);
@@ -6093,6 +6095,8 @@ fn a_restore_keeping_authority_takes_the_written_here_marks_from_this_vault() {
     }
     let root = tempfile::tempdir().unwrap();
     let vault = Vault::open(root.path().join("source"), VaultConfig::device()).unwrap();
+    vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
+    vault.prepare_install_signing().expect("install signing");
     let (loser, survivor, own, other) = (
         EntityId::now(),
         EntityId::now(),
@@ -6120,6 +6124,7 @@ fn a_restore_keeping_authority_takes_the_written_here_marks_from_this_vault() {
         .and_then(|key| EntityId::from_hex(&key["it:authored:".len()..]).ok())
         .unwrap();
     let image = root.path().join("image");
+    vault.ensure_vault_key().expect("mint the vault data key");
     vault.snapshot_checkpoint(&image, 300).unwrap();
     let (later, head, author) = (EntityId::now(), EntityId::now(), EntityId::now());
     for id in [&later, &head, &author] {
@@ -6187,7 +6192,7 @@ fn a_restore_keeping_authority_takes_the_written_here_marks_from_this_vault() {
 fn invalid_deferred_participant_erasure_cannot_activate_verified_merge() {
     use crate::identity_topology::{StoredIdentityOpAction, StoredIdentityOpEvent};
     for invalid_kind in [crate::registry::ENTITY_TYPE_CLAIM, ENTITY_TYPE_FACET] {
-        let vault = test_vault();
+        let (_dir_vault, vault) = test_vault();
         let doc = LoroDoc::new();
         let entities = doc.get_map("entities");
         let materializer = Arc::new(Materializer::new());
@@ -6360,7 +6365,7 @@ fn observer_b_emits_committed_revision_and_reverse_mirror_names_its_source() {
                 .push((diff.revision_events.clone(), by.clone()));
         }
     }
-    let vault = test_vault();
+    let (_dir_vault, vault) = test_vault();
     let at = 1_772_000_000;
     let window_key = crate::sync::WindowKey::from_timestamp(at);
     let doc = LoroDoc::new();
@@ -6432,10 +6437,10 @@ fn observer_b_emits_committed_revision_and_reverse_mirror_names_its_source() {
 #[test]
 fn remote_proposed_claim_materialization_invalidates_digest_deadline_after_commit() -> Result<()> {
     use crate::write_envelope::{WriteEnvelope, WriteProvenance};
-    let origin = test_vault();
+    let (_dir_origin, origin) = test_vault();
     // The Dreamer is a MACHINE writer: its origin is rooted and holds its key.
     crate::test_util::provision_engine_machines(&origin);
-    let receiver = test_vault();
+    let (_dir_receiver, receiver) = test_vault();
     let actor = origin.dreamer_authority()?;
     assert_eq!(
         receiver.dreamer_authority()?.entity_ref(),
@@ -6487,10 +6492,10 @@ fn remote_proposed_claim_materialization_invalidates_digest_deadline_after_commi
 #[test]
 fn edge_only_claim_hydration_signals_after_outer_commit_not_rollback() -> Result<()> {
     use crate::write_envelope::{WriteEnvelope, WriteProvenance};
-    let origin = test_vault();
+    let (_dir_origin, origin) = test_vault();
     // The Dreamer is a MACHINE writer: its origin is rooted and holds its key.
     crate::test_util::provision_engine_machines(&origin);
-    let receiver = test_vault();
+    let (_dir_receiver, receiver) = test_vault();
     let actor = origin.dreamer_authority()?;
     assert_eq!(
         receiver.dreamer_authority()?.entity_ref(),
@@ -6596,7 +6601,7 @@ fn observer_b_quarantines_project_parent_forgery_removal_and_claim_hub_edge() {
     use crate::claim::{ClaimBody, ClaimLifecycleStatus, ClaimSubject};
     use crate::workspace_roster::ProjectRecord;
 
-    let vault = test_vault();
+    let (_dir_vault, vault) = test_vault();
     let root = vault.root_project().unwrap();
     let leader = EntityId::from_hex(&vault.project(root).unwrap().unwrap().leader).unwrap();
     let child = EntityId::now();
@@ -6713,7 +6718,7 @@ fn provenance_claim_tombstone_notifies_both_subject_endpoints_after_commit() {
     }
     for reason in [1u8, 2u8] {
         for rollback in [false, true] {
-            let vault = test_vault();
+            let (_dir_vault, vault) = test_vault();
             let at = 1_771_027_200;
             let [source, target, other, other_target] =
                 [0xE1, 0xE2, 0xE3, 0xE4].map(|byte| EntityId::from_bytes([byte; 16]).unwrap());

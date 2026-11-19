@@ -567,6 +567,7 @@ fn a_restore_goes_ahead_past_a_grant_use_and_refuses_a_revocation() -> Result<()
     )?;
     let backups = crate::test_support::restore_tempdir();
     let image = backups.path().join("backup");
+    vault.ensure_vault_key().expect("mint the vault data key");
     vault.snapshot_checkpoint(&image, 100)?;
     let key = vault.checkpoint_key()?;
     let restore = |destination: &std::path::Path| {

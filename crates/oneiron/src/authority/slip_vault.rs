@@ -1,4 +1,5 @@
 //! Host-root bootstrap and atomic authority-log capability issuance.
+use super::owner_proof::OwnerProofSigner;
 use super::*;
 use crate::Vault;
 use crate::error::Result;
@@ -755,22 +756,23 @@ impl Vault {
         self.append_hashed_slip_op_in_txn(txn, issuer, op)
             .map(|_| ())
     }
-    /// [`Self::append_slip_op_in_txn`] with an owner key's proof beside the
-    /// host root's signature (row HOSTED-ROOT-REVOKES-OWNER-KEY): `proof`
-    /// cosigns the entry ([`next_entry_with_owner_proof`]). The fold must
-    /// count it, as for any slip op.
-    pub(super) fn append_slip_op_with_owner_proof_in_txn(
+    /// [`Self::append_hashed_slip_op_in_txn`] with an owner key's proof
+    /// beside the host root's signature (row HOSTED-ROOT-REVOKES-OWNER-KEY):
+    /// `proof` cosigns the entry ([`next_entry_with_owner_proof`]). The fold
+    /// must count it, as for any slip op; answers the entry's hash. A proof
+    /// key that stopped since it was picked signs nothing, and the append
+    /// fails with its refusal ([`OwnerProofSigner::sign`]).
+    pub(super) fn append_hashed_slip_op_with_owner_proof_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         issuer: &HostSlipIssuer,
         op: AuthorityOp,
-        proof: &dyn CheckpointRootSigner,
-    ) -> Result<()> {
+        proof: &OwnerProofSigner<'_>,
+    ) -> Result<AuthorityEntryHash> {
         self.prepare_hashed_slip_op_in_txn(txn, issuer, op, Some(proof))?
             .apply(self, txn)
-            .map(|_| ())
     }
-    fn append_hashed_slip_op_in_txn(
+    pub(super) fn append_hashed_slip_op_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         issuer: &HostSlipIssuer,
@@ -786,19 +788,30 @@ impl Vault {
         txn: &mut heed::RwTxn<'_>,
         issuer: &HostSlipIssuer,
         op: AuthorityOp,
-        proof: Option<&dyn CheckpointRootSigner>,
+        proof: Option<&OwnerProofSigner<'_>>,
     ) -> Result<PreparedHashedSlipOp> {
         let fold = self.authority_view_readonly_in_txn(txn)?;
         require_host(&fold, issuer)?;
         let now = self.instant_in_txn(txn)?.secs();
-        // FIX 7908: join a frontier wider than one entry names, else today's path.
+        // An end or a re-pact of a pact the expiry holds suspended names the
+        // pact's expired rows the heads leave out beside them (row
+        // SEQ-FLOOR-S-WITHHELD-COSIGN); a narrowing or a Promote of it is
+        // refused here.
+        let beside = super::stale_roster::suspended_pact_rows_in_txn(&self.store, txn, &fold, &op)?;
+        // FIX 7908: join a frontier wider than one entry names, else today's
+        // path. The rows named beside the heads join with them, so no count
+        // of expired rows takes the act past MAX_PARENTS (REVIEW-9609 round 2).
         let joiner = FrontierSigner::Host(issuer);
-        let fold = self
-            .prepare_authority_frontier_in_txn(txn, &fold, joiner, MAX_PARENTS)?
-            .unwrap_or(fold);
+        let frontier = fold.append_heads.union(&beside).copied().collect();
+        let (fold, beside) =
+            match self.join_authority_heads_in_txn(txn, &fold, &frontier, joiner, MAX_PARENTS)? {
+                Some(joined) => (joined, std::collections::BTreeSet::new()),
+                None => (fold, beside),
+            };
+        let entry = next_entry_naming(issuer, &fold, &beside, op, now)?;
         let entry = match proof {
-            Some(proof) => next_entry_with_owner_proof(issuer, &fold, op, now, proof)?,
-            None => next_entry(issuer, &fold, op, now)?,
+            Some(proof) => with_owner_proof(issuer, &fold, entry, proof)?,
+            None => entry,
         };
         let hash = authority_entry_hash(&entry)?;
         Ok(PreparedHashedSlipOp {
@@ -818,21 +831,32 @@ impl Vault {
 /// signature (row HOSTED-ROOT-REVOKES-OWNER-KEY): the proof key's slot is in
 /// the entry before either key signs, so both sign the one transcript, in
 /// the order of [`super::world_key_support::sign_side_entry_with_owner_proof`].
+/// The proof key signs on `fold`, the view the entry is built on: a key that
+/// no longer proves there (row OCS-OWNER-PIN) refuses, and no entry is made.
 pub(super) fn next_entry_with_owner_proof(
     issuer: &HostSlipIssuer,
     fold: &AuthorityFold,
     op: AuthorityOp,
     now: u64,
-    proof: &dyn CheckpointRootSigner,
+    proof: &OwnerProofSigner<'_>,
 ) -> Result<AuthorityLogEntry> {
-    let mut entry = next_entry(issuer, fold, op, now)?;
-    let proof_key = proof.root();
+    with_owner_proof(issuer, fold, next_entry(issuer, fold, op, now)?, proof)
+}
+/// `entry`, built on `fold`, with `proof` beside the host root's signature,
+/// as [`next_entry_with_owner_proof`] makes it.
+fn with_owner_proof(
+    issuer: &HostSlipIssuer,
+    fold: &AuthorityFold,
+    mut entry: AuthorityLogEntry,
+    proof: &OwnerProofSigner<'_>,
+) -> Result<AuthorityLogEntry> {
+    let proof_key = proof.key();
     entry.cosigns.push(AuthoritySignature {
         suite: proof_key.suite(),
         public_key: proof_key,
         signature: vec![0; 64],
     });
-    let proved = proof.sign_owner_proof(&authority_transcript(&entry)?)?;
+    let proved = proof.sign(fold, &authority_transcript(&entry)?)?;
     if let Some(cosign) = entry.cosigns.last_mut() {
         cosign.signature = proved;
     }
@@ -842,6 +866,17 @@ pub(super) fn next_entry_with_owner_proof(
 pub(super) fn next_entry(
     issuer: &HostSlipIssuer,
     fold: &AuthorityFold,
+    op: AuthorityOp,
+    now: u64,
+) -> Result<AuthorityLogEntry> {
+    next_entry_naming(issuer, fold, &std::collections::BTreeSet::new(), op, now)
+}
+/// [`next_entry`] naming `beside` too: rows the act must hold in its
+/// ancestry that the heads leave out.
+fn next_entry_naming(
+    issuer: &HostSlipIssuer,
+    fold: &AuthorityFold,
+    beside: &std::collections::BTreeSet<AuthorityEntryHash>,
     op: AuthorityOp,
     now: u64,
 ) -> Result<AuthorityLogEntry> {
@@ -857,7 +892,7 @@ pub(super) fn next_entry(
     issuer.sign_entry(
         fold.vault_id,
         seq,
-        fold.append_heads.iter().copied().collect(),
+        fold.append_heads.union(beside).copied().collect(),
         op,
         now,
     )
@@ -935,7 +970,7 @@ impl Vault {
             return Ok(());
         };
         let now = self.now_recorded_at();
-        let bind = next_entry_with_owner_proof(issuer, &fold, op, now, proof.as_ref())?;
+        let bind = next_entry_with_owner_proof(issuer, &fold, op, now, &proof)?;
         let at = TimeRange {
             start: now,
             end: now,

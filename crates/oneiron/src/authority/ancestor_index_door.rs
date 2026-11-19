@@ -31,6 +31,10 @@ pub struct IndexedAncestry {
     pub lens: BTreeMap<AuthorityEntryHash, usize>,
     /// Whether each row has an ancestor among the probe hashes.
     pub meets_probe: BTreeMap<AuthorityEntryHash, bool>,
+    /// Whether each row, each claimed parent and each probe hash has an
+    /// ancestor among the probe hashes, by one marked pass over the index
+    /// (`AncestorIndex::marks`, PR 3); by intersection in the set index.
+    pub marked: BTreeMap<AuthorityEntryHash, bool>,
     /// The sum of every row's ancestor count.
     pub pairs: u64,
     /// The pairs whose descendant and ancestor are both counted.
@@ -63,9 +67,16 @@ pub fn by_runs(
         contained: BTreeMap::new(),
         lens: BTreeMap::new(),
         meets_probe: BTreeMap::new(),
+        marked: BTreeMap::new(),
         pairs: index.pairs(),
         counted_pairs,
     };
+    let marks = index.marks(|hash| probe.contains(hash));
+    for candidate in &candidates {
+        ancestry
+            .marked
+            .insert(*candidate, marks.in_ancestry(candidate));
+    }
     for hash in rows.keys() {
         let past = index.get(hash).expect("the index holds every row");
         ancestry
@@ -130,6 +141,15 @@ pub fn by_sets(
         contained: BTreeMap::new(),
         lens: BTreeMap::new(),
         meets_probe: BTreeMap::new(),
+        marked: candidates
+            .iter()
+            .map(|candidate| {
+                let marked = index
+                    .get(candidate)
+                    .is_some_and(|past: &BTreeSet<_>| !past.is_disjoint(probe));
+                (*candidate, marked)
+            })
+            .collect(),
         pairs: index.values().map(|past| past.len() as u64).sum(),
         counted_pairs,
     };

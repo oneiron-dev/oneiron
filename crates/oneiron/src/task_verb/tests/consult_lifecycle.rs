@@ -338,8 +338,11 @@ fn fan_out_mints_one_task_per_distinct_peer_under_one_correlation() {
     let empty = facade
         .fan_out_consults(&fan_out(Vec::new()))
         .expect_err("a fan-out addresses at least one peer");
+    let deadline = super::consult_fanout::decision_deadline();
+    let allowed =
+        super::consult_fanout::decisions(&super::consult_fanout::AllowClassifier, asker, &deadline);
     let receipt = facade
-        .fan_out_consults(&fan_out(peers.clone()))
+        .fan_out_consults_with_classifier(&fan_out(peers.clone()), Some(&allowed))
         .expect("fan out to three distinct peers");
     let correlations: Vec<EntityId> = receipt
         .task_refs

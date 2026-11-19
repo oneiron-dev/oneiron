@@ -703,24 +703,21 @@ fn saved_edge_claim_is_withheld_after_exact_pair_revocation_with_readable_endpoi
     am.grant_diary_coreference(a2, b_note).unwrap();
     let b_grant = bm.grant_diary_coreference(a2, b_note).unwrap();
     let claim_id = entity(0xEA);
-    vault.put_claim(
-        &claim_id,
-        &ClaimBody::new(
-            "report.digest",
-            ClaimSubject::Edge {
-                source: a2,
-                kind: EdgeKind::SameAs,
-                target: b_note,
-            },
-            Value::from("pair digest"),
-            1.0,
-            ClaimApprovalStatus::Approved,
-            ClaimLifecycleStatus::Active,
-        )
-        .unwrap(),
-        TimeRange { start: 1, end: 1 },
-        1,
-    )?;
+    let mut digest_body = ClaimBody::new(
+        "report.digest",
+        ClaimSubject::Edge {
+            source: a2,
+            kind: EdgeKind::SameAs,
+            target: b_note,
+        },
+        Value::from("pair digest"),
+        1.0,
+        ClaimApprovalStatus::Approved,
+        ClaimLifecycleStatus::Active,
+    )
+    .unwrap();
+    crate::test_util::stamp_vault_default_facet(&vault, &mut digest_body);
+    vault.put_claim(&claim_id, &digest_body, TimeRange { start: 1, end: 1 }, 1)?;
     crate::test_util::authorize_readers(&vault, &[&a.to_hex()]);
     let owner =
         vault.authenticate_owner(a, &a.to_hex(), true, crate::store::GateDecisionId::now())?;

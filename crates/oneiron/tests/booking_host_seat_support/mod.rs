@@ -26,7 +26,8 @@ use oneiron::calendar::connectors::door::{
 use oneiron::calendar::connectors::{
     CalendarConnectorError, CalendarConnectorSeatConfig, CalendarRemoteTransport,
     CalendarSyncOutcome, RemoteCalendarChange, RemoteCalendarObject, RemoteSyncBatch,
-    RemoteWriteReceipt, RemoteWriteRequest, run_calendar_connector_sync, write_calendar_event,
+    RemoteWriteReceipt, RemoteWriteRequest, calendar_collection_members_for_operation,
+    run_calendar_connector_sync, write_calendar_event,
 };
 use oneiron::calendar::parse_ics_feed;
 use oneiron::consent::AuthenticatedOwner;
@@ -70,8 +71,23 @@ pub(crate) enum SeatChange {
         sequence: u32,
         cancelled: bool,
     },
+    /// One booking's resource as a cancellation that names no DTSTART or
+    /// DTEND (calendar/ics/parse.rs takes both as optional).
+    UndatedCancel {
+        /// The resource path, as the provider reported it.
+        href: String,
+        /// The booking's UID.
+        uid: String,
+        sequence: u32,
+    },
     /// The provider removed the resource carrying one booking's UID.
     Tombstone {
+        /// The booking's UID.
+        uid: String,
+    },
+    /// The seat's complete listing left out the resource carrying one
+    /// booking's UID: an omission, which is no cancellation evidence.
+    Omitted {
         /// The booking's UID.
         uid: String,
     },
@@ -117,9 +133,27 @@ impl SeatChange {
         }
     }
 
+    /// One booking's resource as a cancellation at `sequence` that names no
+    /// DTSTART or DTEND, carried under the href the seat's write of it
+    /// returned.
+    pub(crate) fn undated_cancel(receipt: &RemoteWriteReceipt, sequence: u32) -> Self {
+        Self::UndatedCancel {
+            href: receipt.href.clone(),
+            uid: receipt.uid.clone(),
+            sequence,
+        }
+    }
+
     /// A provider tombstone for one booking's UID.
     pub(crate) fn tombstone(uid: &str) -> Self {
         Self::Tombstone {
+            uid: uid.to_owned(),
+        }
+    }
+
+    /// A complete listing's omission of one booking's UID.
+    pub(crate) fn omitted(uid: &str) -> Self {
+        Self::Omitted {
             uid: uid.to_owned(),
         }
     }
@@ -210,10 +244,38 @@ impl Seat {
                         &ics,
                     ))
                 }
+                SeatChange::UndatedCancel {
+                    href,
+                    uid,
+                    sequence,
+                } => {
+                    let ics = undated_cancel_ics(uid, *sequence);
+                    RemoteCalendarChange::Upsert(remote_upsert(
+                        href,
+                        Some(&format!("{href}-s{sequence}")),
+                        &ics,
+                    ))
+                }
                 SeatChange::Tombstone { uid } => RemoteCalendarChange::Delete {
                     href: self.resource_href(uid),
                     uid: uid.to_string(),
                 },
+                // The omission carries the listing snapshot's observation of
+                // the UID's row (tests/calendar_google_owed_full_listing.rs).
+                SeatChange::Omitted { uid } => {
+                    let observation =
+                        calendar_collection_members_for_operation(vault, &self.operation(vault))
+                            .expect("the seat's collection members")
+                            .iter()
+                            .find(|member| member.uid == *uid)
+                            .expect("the booking is a member of the seat")
+                            .observation;
+                    RemoteCalendarChange::Omitted {
+                        href: self.resource_href(uid),
+                        uid: uid.to_string(),
+                        observation,
+                    }
+                }
             })
             .collect();
         self.run_pull(vault, changes, now)
@@ -373,6 +435,19 @@ fn booking_ics(uid: &str, start: u64, end: u64, sequence: u32, cancelled: bool) 
     if cancelled {
         out.push_str("STATUS:CANCELLED\r\n");
     }
+    out.push_str("END:VEVENT\r\nEND:VCALENDAR\r\n");
+    out.into_bytes()
+}
+
+/// One booking's cancellation at `sequence` with no DTSTART or DTEND.
+fn undated_cancel_ics(uid: &str, sequence: u32) -> Vec<u8> {
+    let mut out = String::from("BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//oneiron//test//EN\r\n");
+    out.push_str("BEGIN:VEVENT\r\n");
+    out.push_str(&format!("UID:{uid}\r\n"));
+    out.push_str("DTSTAMP:20260302T070000Z\r\n");
+    out.push_str(&format!("SEQUENCE:{sequence}\r\n"));
+    out.push_str("SUMMARY:intro-call\r\n");
+    out.push_str("STATUS:CANCELLED\r\n");
     out.push_str("END:VEVENT\r\nEND:VCALENDAR\r\n");
     out.into_bytes()
 }

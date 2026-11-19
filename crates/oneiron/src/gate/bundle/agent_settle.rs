@@ -215,7 +215,8 @@ fn agent_bundle_members_in_txn(
 /// the run attempt its handle writes from: a dispatch at the dispatcher's own
 /// ceiling pins no delegation parent on the child, so the run carries the
 /// lineage its id does not. The opener is each member's writer, as its
-/// pending gate decision names it, and every try of the run. A member whose
+/// pending gate decision names it and as its claim's attested author names
+/// it, and every try of the run. A member whose
 /// decision no longer names its writer, or a lineage the engine cannot read
 /// whole, counts as the agent's own.
 fn refuse_opener_lineage_in_txn(
@@ -245,6 +246,26 @@ fn refuse_opener_lineage_in_txn(
             return Err(refused());
         };
         opener.push(LineageStart::Actor(writer));
+        // The member claim's own attested writer opens it too. A held
+        // question the engine restates on a Dreamer successor keeps the
+        // asked decision's writer (claim::held_question), and the
+        // successor's writer stays in the check. An author the engine
+        // cannot read counts as the agent's own.
+        let author = vault
+            .get_claim_in_txn(txn, &entry.member.claim_id)
+            .and_then(|body| match body {
+                Some(body) => crate::batch::authenticated_claim_author_in_txn(
+                    &vault.store,
+                    txn,
+                    &entry.member.claim_id,
+                    &body,
+                ),
+                None => Ok(None),
+            })
+            .map_err(|_| refused())?;
+        if let Some(author) = author {
+            opener.push(LineageStart::Actor(author.entity_ref()));
+        }
     }
     opener.extend(
         AttemptQueue::new(vault)
