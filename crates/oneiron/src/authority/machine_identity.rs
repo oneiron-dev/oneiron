@@ -30,7 +30,7 @@ const REQUEST_CODE_CONTEXT: &str = "oneiron/machine-request-code/v1";
 /// install whose owner has not answered whose it is. It carries his acts and
 /// reaches no further than an unprofiled install until he answers. Never
 /// mine, and never a hosted node, which only the managed host's own node is.
-pub(crate) const SERVING_INSTALL_ROLE: MachineRole = MachineRole::Unanswered;
+pub const SERVING_INSTALL_ROLE: MachineRole = MachineRole::Unanswered;
 
 /// Whether a restore that loads no keys names this install's serving machine
 /// by the public half of its machine key the install cached when its keys
