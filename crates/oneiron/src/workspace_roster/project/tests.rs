@@ -1963,14 +1963,9 @@ fn in_range_depth_cannot_be_changed_through_generic_or_replicated_puts() -> Resu
         crate::gate::seeded_project_depth_default()
     );
 
-    let person = EntityId::now();
-    vault.put_entity(
-        &person,
-        crate::registry::ENTITY_TYPE_PERSON,
-        range,
-        8,
-        b"owner",
-    )?;
+    let person = vault
+        .ensure_embedded_owner_actor()
+        .map_err(|_| crate::Error::InvariantViolation("embedded owner"))?;
     let owner = crate::write_envelope::WriteActor::new(person, crate::edge::EdgeActorClass::Human);
     let revoke = crate::subject_model::tests::authorization::root_owner(&vault, owner, 0xA5)?;
     crate::workspace_roster::set_project_depth_signed_for_test(&vault, root, 0, &owner, 10, 0xA5)?;
