@@ -47,15 +47,10 @@ pub(crate) struct AuthorityStructure {
     stranger_keys: BTreeSet<(crate::EntityId, AuthorityKey)>,
     /// The machines a removal filed as this install's own names (a slip
     /// issuer's or an own anchor's mark, or an answer an own carrier key
-    /// signed), or that an owner answer a stranger's carrier key signed
-    /// beside a slip issuer's proof names: removal is terminal, so a
-    /// frontier join one of them carries is a stranger's (FIX 7908). A
-    /// stranger anchor's removal mark removes nothing here, as the fold
-    /// reads a foreign anchor's chains only under the pin (FIX
-    /// [STRANGER-REMOVED-MARK-GLOBAL]); nor does a stranger-carried answer
-    /// without the proof, which the fold holds wherever the vault holds a
-    /// key that can prove (row CARRIER-OWNER-PROOF). The fold judges a
-    /// carrier pin-free, so it takes the proven one (REVIEW-9555 round 2).
+    /// signed): removal is terminal, so a frontier join one of them carries
+    /// is a stranger's (FIX 7908). A stranger anchor's removal mark removes
+    /// nothing here, as the fold reads a foreign anchor's chains only under
+    /// the pin (FIX [STRANGER-REMOVED-MARK-GLOBAL]).
     removed: BTreeSet<crate::EntityId>,
     /// The owner anchors a root record named, each signed by its own anchor
     /// alone (world privacy P6b). An anchor signs only what the fold's anchor
@@ -300,11 +295,6 @@ pub(super) struct StructureBuilder<'a> {
     /// as a stranger's, whose answers [`Self::settle`] has not yet filed
     /// again.
     promoted: Vec<AuthorityKey>,
-    /// The machines a stranger-carried owner answer removes, under the key
-    /// of its one cosign while that key is no slip issuer yet. Once an
-    /// admission makes it one, [`Self::settle`] counts them removed, so a
-    /// proven removal counts in any row order (REVIEW-9555 round 2).
-    proven_removals: BTreeMap<AuthorityKey, Vec<crate::EntityId>>,
     /// The grants [`Self::settle`] made since the caller last took them.
     pub(super) grown: Vec<Grant>,
 }
@@ -428,8 +418,6 @@ impl<'a> StructureBuilder<'a> {
                 for entry in self.profiles.remove(&key).unwrap_or_default() {
                     self.file_profile(entry);
                 }
-                let proven = self.proven_removals.remove(&key).unwrap_or_default();
-                self.structure.removed.extend(proven);
                 self.grown.push(Grant::Issuer(key));
             } else if let Some(key) = anchored.pop() {
                 for entry in self.profiles.remove(&key).unwrap_or_default() {
@@ -489,10 +477,8 @@ impl<'a> StructureBuilder<'a> {
     /// owner key's proof that the fold judges (row CARRIER-OWNER-PROOF), as
     /// its carrier's key stands: own, or a stranger's (mesh PR1b). Only a
     /// revision taken as own files its removal (FIX
-    /// [STRANGER-REMOVED-MARK-GLOBAL]), and a stranger-carried answer
-    /// beside a slip issuer's proof ([`Self::file_proven_removal`]). An
-    /// answer taken as a stranger's is filed again once its carrier's key is
-    /// taken as own (REVIEW-9555 P1).
+    /// [STRANGER-REMOVED-MARK-GLOBAL]). An answer taken as a stranger's is
+    /// filed again once its carrier's key is taken as own (REVIEW-9555 P1).
     fn file_profile(&mut self, entry: &'a AuthorityLogEntry) {
         let AuthorityOp::MachineProfile(profile) = &entry.op else {
             return;
@@ -520,12 +506,8 @@ impl<'a> StructureBuilder<'a> {
         if verify_entry_signatures(entry).is_err() {
             return;
         }
-        if profile.role == MachineRole::Removed {
-            if own {
-                self.structure.removed.insert(profile.machine);
-            } else {
-                self.file_proven_removal(entry, profile);
-            }
+        if own && profile.role == MachineRole::Removed {
+            self.structure.removed.insert(profile.machine);
         }
         if !own && profile.carrier.is_some() {
             self.stranger_answers
@@ -546,31 +528,6 @@ impl<'a> StructureBuilder<'a> {
         if !vouched {
             self.woken.push(key.1.clone());
             self.grown.push(Grant::InstallKey(key.0, key.1));
-        }
-    }
-
-    /// Counts the removal a stranger's carrier key carried when its one
-    /// cosign is an Ed25519 key: the fold takes such an answer on the
-    /// owner's proof from any live carrier (row CARRIER-OWNER-PROOF), and
-    /// its proof key is a live roster owner key, a slip issuer here. The
-    /// removal waits under that key until an admission makes it a slip
-    /// issuer. A stranger holds no owner key, so its own removal never
-    /// counts (FIX [STRANGER-REMOVED-MARK-GLOBAL]). The caller verified the
-    /// entry's signatures.
-    fn file_proven_removal(&mut self, entry: &AuthorityLogEntry, profile: &MachineProfile) {
-        let (Some(_), [proof]) = (profile.carrier, entry.cosigns.as_slice()) else {
-            return;
-        };
-        if !matches!(proof.public_key, AuthorityKey::Ed25519(_)) {
-            return;
-        }
-        if self.structure.issuers.contains(&proof.public_key) {
-            self.structure.removed.insert(profile.machine);
-        } else {
-            self.proven_removals
-                .entry(proof.public_key.clone())
-                .or_default()
-                .push(profile.machine);
         }
     }
 }
