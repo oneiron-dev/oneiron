@@ -1482,6 +1482,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/livequery/residence/search.rs` | src | s | 1 crate-vis | — | A window's home search: the candidates a residence search returns for one query |
 | `src/livequery/residence/secret_same_value.rs` | src | s | 1 crate-vis | — | `residence.secret_same_value.exchange`: this home as the meeting point of its owner's machines' same-value… |
 | `src/livequery/residence/tests.rs` | test | m | 1 crate-vis | — | — |
+| `src/livequery/residence/tombstone_tests.rs` | test | s | — | — | The home's followed-world tombstone answer, `residence.tombstones` (FOLLOWED-WORLD-TIER1-TOMBSTONE-IDS… |
+| `src/livequery/residence/tombstones.rs` | src | s | 1 crate-vis | — | A followed window's tombstone id set, `residence.tombstones` (FOLLOWED-WORLD-TIER1-TOMBSTONE-IDS; canon… |
 | `src/livequery/residence/work.rs` | src | m | 11 crate-vis | — | Socket-owned drivers for durable sealed-bundle work |
 | `src/livequery/routing.rs` | src | s | 7 crate-vis | — | Private routing header for the EXISTING server broadcast channel and a socket's own reply queue |
 | `src/livequery/rpc.rs` | src | m | 7 crate-vis | — | The held socket's verb RPC (OF-489 socket-first): an `rpc.req` names any facade row, and it runs through the… |

@@ -14,7 +14,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | crate | purpose | source files | test files | over 800-line bar |
 |---|---|---|---|---|
-| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 8200 | 1947 | 307 |
+| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 8203 | 1949 | 306 |
 | [oneiron-agent-runtime](codemap/oneiron-agent-runtime.md) | `oneiron-agent-runtime`: the sandbox backends above the `oneiron` core crate (core split slice 5b.1) | 23 | 11 | 1 |
 | [oneiron-android](codemap/oneiron-android.md) | Minimal JNI/Kotlin ownership adapter | 4 | 0 | 0 |
 | [oneiron-authority](codemap/oneiron-authority.md) | Authority vocabulary of the oneiron engine: the AUTHORITY_LOG wire layer, the federation scope codecs, the… | 74 | 7 | 0 |
@@ -64,7 +64,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | [oneiron-sdk-build](codemap/oneiron-sdk-build.md) | The SDK's generated outputs, produced at build time (untangle slice 4.3, SLICE4-RULED S4-2 G1) | 1 | 0 | 0 |
 | [oneiron-sdk-generator](codemap/oneiron-sdk-generator.md) | The SDK generator: writes every generated SDK output of the verb table (`scripts/sdk/verbs/`), the Rust… | 43 | 6 | 7 |
 | [oneiron-seal](codemap/oneiron-seal.md) | Native Rust PAdES seal and verification engine (ONE-1837) | 66 | 17 | 4 |
-| [oneiron-server](codemap/oneiron-server.md) | Oneiron CRDT sync server library | 2035 | 498 | 69 |
+| [oneiron-server](codemap/oneiron-server.md) | Oneiron CRDT sync server library | 2036 | 499 | 69 |
 | [oneiron-setting-contract](codemap/oneiron-setting-contract.md) | The Setting vocabulary below the engine (DESIGN 15-setting-primitive section 1.2): a Setting is a stored… | 5 | 1 | 0 |
 | [oneiron-skill-attribution](codemap/oneiron-skill-attribution.md) | The skill attribution vocabulary (ARCH-0035, ARCH-0053 §4): an attempt's outcome evidence, the judge's… | 3 | 0 | 0 |
 | [oneiron-spawn](codemap/oneiron-spawn.md) | Starting a subprocess with only the descriptors it is meant to have | 1 | 2 | 0 |
@@ -113,7 +113,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `channel_identity_selection` | dir | 8 | m | yes | Relationship-context channel-identity selection law (ONE-1826) |
 | `check_in` | dir | 16 | L | yes | Check-in: one mechanism for every act that may need an ask (ONEIRON-ARCH-0082; owner ruling ROLES-CHECKIN =… |
 | `checkout` | file+dir | 14 | m | — | Checkout leases and optional repository environment plans |
-| `claim` | dir | 154 | L | yes | CLAIM body ABI + typed Claim API (ARCH-0003, pinned decisions D11/D17/D18) |
+| `claim` | dir | 155 | L | yes | CLAIM body ABI + typed Claim API (ARCH-0003, pinned decisions D11/D17/D18) |
 | `claim_check` | file | 1 | s | — | Claim auto-check candidates and normalized verdict values |
 | `clipboard` | dir | 7 | s | yes | A vault's Clipboard world and its masked text records |
 | `cluster` | file+dir | 2 | s | — | Deterministic claim clustering is defined in the Dreamer layer |
@@ -296,7 +296,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `subject_model` | file+dir | 18 | m | yes | Subject model: who, if anyone, stands behind an actor (ARCH-0063 R7) |
 | `surface_event` | dir | 11 | m | yes | Inbound SurfaceEvent adapter contract (OF-347 CID-6) |
 | `sweep` | dir | 11 | L | — | ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via… |
-| `sync` | dir | 431 | XL | yes | CRDT sync layer for Oneiron |
+| `sync` | dir | 433 | XL | yes | CRDT sync layer for Oneiron |
 | `tagging` | dir | 27 | L | yes | The tagging marker and its drain: the write path's outbox rule applied to the Oneironer slot (ARCH-0036… |
 | `task_authority` | dir | 5 | L | yes | Replicated TASK authority: owner proof, cancellation, and acknowledgement as immutable companion TASK entities |
 | `task_type` | dir | 4 | L | — | ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree |
@@ -1121,7 +1121,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `lens_frames` | file | 1 | m | OF-181: the lens frames this server holds for the cards it rendered |
 | `libreoffice` | file | 1 | s | The host's LibreOffice headless runs for the precision recalculator ([`crate::xlsx_recalc`]): where… |
 | `linear_host` | file+dir | 6 | m | Opt-in scheduled Linear mirror over an authenticated host-owned bridge |
-| `livequery` | file+dir | 49 | L | App-tier framing and coarse live-query state, separate from WindowSync |
+| `livequery` | file+dir | 51 | L | App-tier framing and coarse live-query state, separate from WindowSync |
 | `logging` | file+dir | 2 | s | What the binaries write to their log sinks, and the panic hook |
 | `mac_worker_bootstrap` | dir | 4 | s | Private real-CLI entry before Tokio is constructed |
 | `machine` | file+dir | 2 | m | What this machine has: cores, memory, descriptors, free disk |

@@ -1488,9 +1488,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/claim/scoped_read/access_gate.rs` | src | L | 1 fn · 30 crate-vis | — | Relationship access checks share the row read transaction with grant resolution |
 | `src/claim/scoped_read/actor_key.rs` | src | L | 1 struct · 11 fn · 1 re-export · 75 crate-vis | ScopedReadActorKey | Authenticated identity carried by a scoped read |
 | `src/claim/scoped_read/actor_key/weave_admin.rs` | src | s | 1 crate-vis | — | The weave Admin's read key (OF-499 A3, L02 seam): the Admin's verified request instrument as every slip key… |
-| `src/claim/scoped_read/admission.rs` | src | L | 8 fn · 30 crate-vis | — | — |
+| `src/claim/scoped_read/admission.rs` | src | m | 8 fn · 28 crate-vis | — | — |
 | `src/claim/scoped_read/admission/audience.rs` | src | m | 6 crate-vis | — | The audience conjunct of a scoped read: device-local worlds, private threads, an unbound agent's own entry… |
 | `src/claim/scoped_read/admission/room_ceiling.rs` | src | s | 2 crate-vis | — | A room turn's ceiling as each row's snapshot refreshes it, and the peer reads a room or audience conjoins… |
+| `src/claim/scoped_read/admission/world_scope.rs` | src | s | 5 crate-vis | — | The world axes of a scoped read: the worlds the read asked for, the worlds its verified credential grants… |
 | `src/claim/scoped_read/agent_grants.rs` | src | m | 11 crate-vis | — | FIX 7462: an agent's ordinary read also admits what one of its own live owner-minted Grants covers (owner… |
 | `src/claim/scoped_read/authority_fingerprint.rs` | src | m | 1 fn · 1 crate-vis | — | A canonical fingerprint of the live read authority behind one actor key (FIX 9661), the second half of a… |
 | `src/claim/scoped_read/claim_admission.rs` | src | m | 1 fn · 13 crate-vis | — | Claim admission on the scoped lane: the lane's claim-status mode, then the reader, credential, ceiling… |
@@ -1525,7 +1526,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/claim/scoped_read/reactions.rs` | src | m | 9 fn · 2 crate-vis | — | Reactions riding along with the conversation records a scoped read admits |
 | `src/claim/scoped_read/receipt.rs` | src | s | 1 fn · 2 re-export · 3 crate-vis | — | Mandatory read receipts |
 | `src/claim/scoped_read/records_cover.rs` | src | s | 1 fn · 2 crate-vis | — | FIX 8245 (Engine 10-22, CALLS `FIX 8245 records cover`): a credential's records caveat that names an… |
-| `src/claim/scoped_read/residence.rs` | src | s | 1 struct · 5 fn · 1 crate-vis | ResidenceReadContext | One residence read's admission for the machine at the other end of the connection |
+| `src/claim/scoped_read/residence.rs` | src | s | 1 struct · 6 fn · 1 crate-vis | ResidenceReadContext | One residence read's admission for the machine at the other end of the connection |
 | `src/claim/scoped_read/residence_page.rs` | src | s | 1 crate-vis | — | The home's paged residence search (FIX 8865): one ranked text list as deep as a device's whole request, past… |
 | `src/claim/scoped_read/retrieval_loop.rs` | src | s | 5 crate-vis | — | Scoped admission shared by the read-only retrieval loop's verbs |
 | `src/claim/scoped_read/retrieval_visibility.rs` | src | s | 4 crate-vis | — | The retrieval authority floor for graph channels on a scoped read |
@@ -7390,7 +7391,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/sync/client/note_session.rs` | src | s | 1 enum · 2 crate-vis | BindReceipt | The existing app-tier MessagePack auth.bind handshake on the sync socket |
 | `src/sync/client/own_device.rs` | src | s | 5 crate-vis | — | The proof that window bytes this client takes come from one of the owner's own machines (FIX 11709) |
 | `src/sync/client/repo_projection.rs` | src | s | 2 crate-vis | — | A device's admission of the masked repo copies its home sends (FIX 7608 slice 4, LEAF 4.3) |
-| `src/sync/client/residence.rs` | src | s | 6 re-export · 16 crate-vis | — | Bounded on-demand home reads on an independent short-lived authenticated socket |
+| `src/sync/client/residence.rs` | src | s | 6 re-export · 17 crate-vis | — | Bounded on-demand home reads on an independent short-lived authenticated socket |
 | `src/sync/client/residence/ask_option_link.rs` | src | s | 1 fn | — | A bearer call to its issuing install, not the current residence home |
 | `src/sync/client/residence/authority.rs` | src | m | 1 fn · 3 crate-vis | — | Authority history from the home for a machine that syncs what it opened (OF-469) |
 | `src/sync/client/residence/authority/parts.rs` | src | s | 3 crate-vis | — | An authority entry past one RPC frame, either way (FIX 8087, 8246) |
@@ -7427,6 +7428,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/sync/client/residence/search.rs` | src | s | 1 struct · 2 crate-vis | ResidenceSearchPage | A home search served in pages (FIX 8865, FIX 196): the device keeps the caller's whole count and asks the… |
 | `src/sync/client/residence/search_client.rs` | src | s | 2 fn · 1 crate-vis | — | Home search orchestration |
 | `src/sync/client/residence/secret_same_value.rs` | src | s | 1 crate-vis | — | This machine's same-value statement to its residence home, and the home's statements to it, once each steady… |
+| `src/sync/client/residence/tombstones.rs` | src | s | 3 crate-vis | — | A followed world's tombstone id set, taken from the home on each connect… |
 | `src/sync/client/residence/windows.rs` | src | m | 3 fn · 5 crate-vis | — | Window promote, retain, and demote lifecycle |
 | `src/sync/client/root_updates.rs` | src | s | 7 crate-vis | — | One socket's incomplete root image |
 | `src/sync/client/sealed_updates.rs` | src | m | 6 crate-vis | — | A machine's side of the sealed world-update relay (DEC-0005 fix 8: "A my-machines world on it still syncs |
@@ -7591,8 +7593,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/sync/repo_manifests.rs` | src | m | 11 crate-vis | — | FIX 6870 phase 1: a repo's portable manifest on the window plane |
 | `src/sync/repo_manifests/checkpoint.rs` | src | s | 4 crate-vis | — | A repo manifest in a checkpoint (KS7-3a), read with the head codec and filed under its portable id: the head… |
 | `src/sync/repo_manifests/conflicts.rs` | src | s | 2 crate-vis | — | FIX 12763: narrow helpers for one portable manifest carrier |
-| `src/sync/residence.rs` | src | m | 10 fn · 2 const · 32 re-export · 25 crate-vis | — | Grant-checked, per-item residence projections over a window document |
-| `src/sync/residence/admission.rs` | src | s | 1 struct · 11 fn · 2 crate-vis | ResidenceAdmission | One residence request's admission for the machine at the other end of the connection (OF-534 G6) |
+| `src/sync/residence.rs` | src | m | 10 fn · 2 const · 33 re-export · 25 crate-vis | — | Grant-checked, per-item residence projections over a window document |
+| `src/sync/residence/admission.rs` | src | m | 1 struct · 12 fn · 2 crate-vis | ResidenceAdmission | One residence request's admission for the machine at the other end of the connection (OF-534 G6) |
 | `src/sync/residence/authority_parts.rs` | src | s | 4 struct · 1 enum · 3 fn · 2 const | AuthorityAppendPart, AuthorityAppendStage, AuthorityEntryPart, AuthorityEntryRef, AuthorityPartedPage | One authority entry past one RPC frame (FIX 8087, 8246), such as a machine profile revision that lists every… |
 | `src/sync/residence/authority_tail.rs` | src | m | 3 struct · 9 fn · 3 const · 3 crate-vis | AuthorityAppendProgress, AuthorityCheckpointPart, AuthorityPageImport | Authority history for a machine that syncs what it opened (OF-469, the delivery half) |
 | `src/sync/residence/base_projection.rs` | src | s | 2 crate-vis | — | The owner's discard of a world copy, carried into each BASE window it took rows from (FIX 14534 part E… |
@@ -7639,6 +7641,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/sync/residence/secret_same_value.rs` | src | s | 1 fn | — | `residence.secret_same_value.exchange` at the home (FIX [SECRETS-SAME-VALUE-FACT]; Engine RULINGS… |
 | `src/sync/residence/tests.rs` | test | m | — | — | — |
 | `src/sync/residence/window_index.rs` | src | s | 2 struct · 4 fn | IndexPage, WindowIndexEntry | A window's metadata-only index: the listing a residence read serves one page at a time, each entry with the… |
+| `src/sync/residence/window_tombstones.rs` | src | s | 1 struct · 1 fn | WindowTombstoneEntry | A window's tombstone id set: what a residence read serves a device that follows the window's world, so the… |
 | `src/sync/residence/world_base_rows.rs` | src | s | 5 crate-vis | — | The owner's discard of a world copy takes the world's rows that sit in BASE windows too (FIX 14534, Engine… |
 | `src/sync/residence/world_eviction.rs` | src | m | 1 struct · 2 fn · 5 crate-vis | WorldEviction | A world the owner keeps on one other machine leaves this one (DEC-0005 fix 3: "A returning old device learns… |
 | `src/sync/residence_operation_budgets.rs` | src | s | 1 struct · 1 fn | ResidenceOperationBudgets | Resolved holder-side residence operation budgets |
@@ -9600,10 +9603,11 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/it_project_conversion.rs` | test | m | — | — | — |
 | `tests/it_sync/agent_definition_peer_reenable.rs` | test | s | — | — | A federation peer turns no agent definition back on |
 | `tests/it_sync/ask_option_link_replication.rs` | test | m | — | — | A real Loro exchange preserves issuer-verified foreign-stated ask evidence |
+| `tests/it_sync/device_followed_tombstones.rs` | test | m | — | — | A device writes the delete marker of a followed world's item even for a window it never held… |
 | `tests/it_sync/device_predicted_level.rs` | test | s | — | — | The predicted residence level (census L7-46 + L10-14; ARCH-0023b #predicted-residence) |
 | `tests/it_sync/device_predicted_residence_live.rs` | test | L | — | — | A machine at the predicted level applies its home's prediction, fetches the windows and entity documents it… |
 | `tests/it_sync/device_world_follow.rs` | test | m | 6 crate-vis | — | A device follows its worlds by itself (census L7-42; ARCH-0023b #partial-sync; Engine ruling WORLDSET-1, Fri… |
-| `tests/it_sync/device_world_follow_live.rs` | test | m | 4 crate-vis | — | A device's live socket follows the owner's pick as it changes (Engine ruling WORLDSET-1, Fri 13 Nov 03:02… |
+| `tests/it_sync/device_world_follow_live.rs` | test | L | 11 crate-vis | — | A device's live socket follows the owner's pick as it changes (Engine ruling WORLDSET-1, Fri 13 Nov 03:02… |
 | `tests/it_sync/main.rs` | test | s | — | — | Consolidated integration-test binary for the `sync`-feature cluster |
 | `tests/it_sync/rung0_cold_start_conformance.rs` | test | s | — | — | ONE-1346 — rung-0 cold-start conformance contract |
 | `tests/it_sync/sync_blob_artifact_delete.rs` | test | s | — | — | H125: a deleted blob artifact's version bytes leave every replica, while any artifact that still holds the… |
@@ -9837,6 +9841,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/residence_rpc_hello.rs` | test | s | — | — | The residence RPC lane's hello lists the codecs only, not the sealed world-update frame kind (FIX… |
 | `tests/residence_rpc_leaf_key_lane.rs` | test | s | — | — | The residence RPC lane is no custody carrier leaf-key lane (FIX 11785, FIX… |
 | `tests/residence_switch_rechecks_home.rs` | test | m | — | — | FIX RESIDENCE-SWITCH-STALE-HOME: an owner's residence switch reads the elected home once to plan, and a… |
+| `tests/residence_tombstone_answer.rs` | test | m | — | — | A followed window's tombstone id set names only the rows its device reads… |
 | `tests/resident_busy_wakes.rs` | test | m | — | — | A busy resident gets no second wake (AGM-2 = C; FIX BUSY-RESIDENT-ROOM-AND-DIARY-WAKES; UNBUILT3-38) |
 | `tests/resident_human_messages_wake.rs` | test | m | — | — | A resident set to wake on human messages (`ResidentWakeMode::HumanMessages`) wakes on a human's message… |
 | `tests/resident_nightly_reveal_register_names.rs` | test | s | — | — | The names of four crate-private name tables, one line per row, taken from… |
