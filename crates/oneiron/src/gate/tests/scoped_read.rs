@@ -998,6 +998,83 @@ fn neighborhood_counts_a_withheld_peer_once_across_its_edges() -> Result<()> {
     Ok(())
 }
 
+/// A private CLAIM refused to a relationship-gated reader is absent, not
+/// counted as withheld, in its readable subject's inbound neighborhood.
+/// Red at 32b4658e (counts 1); green at HEAD (counts 0).
+#[test]
+fn neighborhood_never_counts_a_private_claim_a_relationship_reader_is_refused() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let principal = test_id(0x80);
+    let subject = test_id(0x81);
+    let claim = test_id(0x82);
+    vault.put_entity(&principal, ENTITY_TYPE_PERSON, test_time(1), 1, b"reader")?;
+    vault.put_entity(&subject, ENTITY_TYPE_TURN, test_time(1), 1, b"subject")?;
+    let mut body = source_trust_claim(ClaimSource::UserStated);
+    body.subject = ClaimSubject::Entity(subject);
+    body.scope = Some(Value::Map(vec![(
+        Value::from("private"),
+        Value::Boolean(true),
+    )]));
+    put_claim_body(&vault, &claim, &body)?;
+    vault.put_edge(&claim, EdgeKind::ClaimOf, &subject, 1.0)?;
+    crate::test_util::authorize_readers(&vault, &["reader"]);
+    let reader = vault.scoped_read(
+        ScopedReadActorKey::new("reader")
+            .expect("FIXTURE: reader key")
+            .require_access_grants(Some(principal)),
+    );
+    let unscoped = vault
+        .scoped_read(ScopedReadActorKey::new("reader").expect("FIXTURE: unscoped control key"));
+    assert!(
+        reader
+            .read(&[crate::claim::PointRead::id(subject)], None)?
+            .single()
+            .value
+            .is_some(),
+        "FIXTURE: the relationship reader must read the unscoped TURN subject"
+    );
+    assert!(
+        reader
+            .read(&[crate::claim::PointRead::id(claim)], None)?
+            .single()
+            .value
+            .is_none(),
+        "FIXTURE: the relationship reader must be refused the private CLAIM"
+    );
+    assert!(
+        unscoped
+            .read(&[crate::claim::PointRead::id(claim)], None)?
+            .single()
+            .value
+            .is_some(),
+        "FIXTURE: the same manifest-authorized actor without the relationship gate must read the CLAIM"
+    );
+    let neighborhood = reader.neighborhood_projected(
+        &subject,
+        crate::ports::EdgeDirection::In,
+        Some(EdgeKind::ClaimOf),
+        None,
+        10,
+        |_, neighbors| {
+            Ok::<_, crate::Error>(neighbors.map(|rows| {
+                rows.into_iter()
+                    .map(|row| row.edge.target)
+                    .collect::<Vec<_>>()
+            }))
+        },
+    )?;
+    assert_eq!(
+        neighborhood.value,
+        Some(vec![]),
+        "review round 2 of #9637: the subject is visible but its private CLAIM is not listed"
+    );
+    assert_eq!(
+        neighborhood.receipt.suppressed_count, 0,
+        "review round 2 of #9637: a refused private CLAIM must not reveal its existence in the count"
+    );
+    Ok(())
+}
+
 /// Review P1 of #9637: the productivity tree reads only TASK nodes, so an
 /// ASSET filed under a Goal, withheld from a TASK-only reader, is no row the
 /// tree withholds and is never counted in its receipt.
