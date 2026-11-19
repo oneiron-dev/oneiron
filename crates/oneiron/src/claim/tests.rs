@@ -827,6 +827,13 @@ fn world_value_must_be_16_byte_binary() {
             (Value::from("pred"), Value::from("profile.name")),
             (Value::from("val"), Value::from("x")),
             (Value::from("conf"), Value::F32(1.0)),
+            // The pinned codec requires the band and basis beside `conf`;
+            // 1.0 reads in the house `certain` band (FIX 7761).
+            (Value::from("confBand"), Value::from("certain")),
+            (
+                Value::from("confBasis"),
+                Value::from("deterministic_fallback"),
+            ),
         ];
         if let Some(world) = world {
             entries.push((Value::from("worldId"), world));
@@ -2594,7 +2601,48 @@ fn expression_preference_fixture() -> (tempfile::TempDir, Vault, EntityId, Write
             b"actor",
         )
         .expect("seed write actor");
+    // The typed read door judges the subject through the caller's lane
+    // (REVIEW-8147 P1): the agent reads what it writes.
+    grant_expression_reads(&vault, &[agent.entity_ref()]);
     (temp, vault, subject, human, agent)
+}
+
+/// Scoped reads are default-deny: a reader needs an explicit `core:read` grant.
+/// The grants ride a second manifest so the fixture's write policy stays in
+/// force for later writes (the `conversation/tests.rs` `permit_reads` shape).
+fn grant_expression_reads(vault: &Vault, readers: &[EntityId]) {
+    let scope = crate::federation::scope_codec::encode_scope_value(
+        &crate::federation::scope_codec::read_preset(),
+    )
+    .expect("read preset encodes");
+    let grants = readers
+        .iter()
+        .map(|reader| {
+            Value::Map(vec![
+                (Value::from("actor_ref"), Value::from(reader.to_hex())),
+                (Value::from("effector"), Value::from("core:read")),
+                (Value::from("scope"), scope.clone()),
+                (Value::from("receipt_required"), Value::from(false)),
+            ])
+        })
+        .collect::<Vec<_>>();
+    let policy = Value::Map(vec![
+        (Value::from("schema_version"), Value::from("1.2")),
+        (
+            Value::from("pack_id"),
+            Value::from("expression-preference-reader-test"),
+        ),
+        (Value::from("pack_version"), Value::from("1")),
+        (Value::from("min_engine_version"), Value::from("0.0.0")),
+        (Value::from("defaults"), Value::Map(vec![])),
+        (Value::from("rules"), Value::Array(vec![])),
+        (Value::from("actor_ceilings"), Value::Array(vec![])),
+        (Value::from("scoped_grants"), Value::Array(grants)),
+    ]);
+    let mut data = Vec::new();
+    rmpv::encode::write_value(&mut data, &policy).expect("encode reader manifest");
+    crate::test_util::put_policy_manifest_bytes(vault, EntityId::now(), &data)
+        .expect("install reader manifest");
 }
 
 /// A PERSON acting as human that is not the vault's owner (H149).
@@ -2609,6 +2657,9 @@ fn non_owner_human(vault: &Vault) -> WriteActor {
             b"human",
         )
         .expect("seed a human who is not the owner");
+    // Same lane read as the fixture agent: the typed read door refuses a
+    // subject the caller's lane withholds.
+    grant_expression_reads(vault, &[persona.entity_ref()]);
     persona
 }
 
