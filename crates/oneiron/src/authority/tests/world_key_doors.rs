@@ -84,10 +84,10 @@ pub(super) fn enrol_own(host: &Host) -> EntityId {
         .machine_enrolment_request(host.vault_id, key)
         .unwrap();
     host.vault
-        .enroll_machine(
+        .set_machine_role(
             &host.owner,
             ActSurface::ThisInstall,
-            &request,
+            request.machine,
             MachineRole::Owned(MachineOwnership::Yours),
             None,
         )
