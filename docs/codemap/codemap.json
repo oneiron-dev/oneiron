@@ -28185,7 +28185,7 @@
      "path": "src/conversation_dag/fixtures.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -57941,7 +57941,7 @@
      "path": "src/memory/tests/mod.rs",
      "purpose": "BRIDGE-01 acceptance tests, engine side",
      "surface": {
-      "crate-vis": 28
+      "crate-vis": 30
      }
     },
     {
@@ -66914,7 +66914,7 @@
      "path": "src/policy_model/tests/support.rs",
      "purpose": "Shared fixtures, mock backends, and pass drivers for policy-model tests",
      "surface": {
-      "crate-vis": 79
+      "crate-vis": 78
      }
     },
     {
@@ -92638,7 +92638,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/task_verb/tests/code_lead.rs",
@@ -92736,7 +92736,7 @@
      "path": "src/task_verb/tests/support.rs",
      "purpose": "Shared fixtures and helpers for the task_verb tests",
      "surface": {
-      "crate-vis": 59
+      "crate-vis": 60
      }
     },
     {
@@ -110753,6 +110753,14 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/owner_key_enrollment_pinned_removal.rs",
+     "purpose": "Red/green tests for #8722 review round 2, P1 1 (FIX [DOOR-HEADS-REVIEW2-P1-TESTS]): an owner key enrollment…",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -115908,7 +115916,7 @@
    "over_bar": 303,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 8188,
-   "test_files": 1931
+   "test_files": 1932
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -165989,13 +165997,13 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/device_sync.rs",
      "purpose": "The device side of sync (ARCH-0023b): a machine that is not the home dials its home and keeps its vault in…",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 11
      }
     },
     {
@@ -166026,6 +166034,16 @@
      "purpose": "What a device dials ([`Dial`]): the home its `[device_sync]` section names by hand, else the one `oneiron…",
      "surface": {
       "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/device_sync/dial_gate.rs",
+     "purpose": "The dial gate ([`standing`]): whether this install may dial its home, read from the heads each machine…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -174447,6 +174465,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/test_doors/device_sync_dial_gate.rs",
+     "purpose": "The device sync dial gate (`crate::device_sync::standing`), as the sync host asks it before it opens the…",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/test_doors/embedded_peer_fixture.rs",
      "purpose": "An enrolled device vault for the L7-47 mesh peer path tests",
      "surface": {
@@ -174717,7 +174745,7 @@
      "path": "src/test_doors/mod.rs",
      "purpose": "Doors for the integration tests to crate-private items, as in `oneiron::test_doors`",
      "surface": {
-      "mod": 66
+      "mod": 67
      }
     },
     {
@@ -175043,6 +175071,16 @@
      "purpose": "Doors for `tests/workflow_park_save_retry.rs` ([WORKFLOW-PARK-FAIL-RETRYABLE]): a workflow step's leaf…",
      "surface": {
       "re-export": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/test_engine_stack.rs",
+     "purpose": "Drives facade-touching lib tests on the engine's stack",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -176293,6 +176331,14 @@
      "notable": [],
      "path": "tests/delete_authority_served_door.rs",
      "purpose": "DEL-2 at the core HTTP delete (ARCH-0043, owner DEL-2 = A; Engine ruling 13 Nov 02:51 = A)",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/device_sync_dial_gate_pinned_heads.rs",
+     "purpose": "Red/green test for #8722 review round 2, P1 2 (FIX [DOOR-HEADS-REVIEW2-P1-TESTS]): device sync's dial gate…",
      "surface": {}
     },
     {
@@ -178655,7 +178701,7 @@
      "purpose": "Release checks for a payload a caller was served earlier and is sent again (DEC-0005): a payload naming a…"
     },
     "device_sync": {
-     "files": 17,
+     "files": 18,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -179012,11 +179058,18 @@
      "purpose": "Request fixtures mint real logged slips before crossing the production router"
     },
     "test_doors": {
-     "files": 68,
+     "files": 69,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "Doors for the integration tests to crate-private items, as in `oneiron::test_doors`"
+    },
+    "test_engine_stack": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Drives facade-touching lib tests on the engine's stack"
     },
     "usage": {
      "files": 14,
@@ -179075,10 +179128,10 @@
      "purpose": "The host's precision recalculator (ARCH-0075 xlsx row; FIX 2462, OF-505 = A): LibreOffice Calc headless…"
     }
    },
-   "over_bar": 71,
+   "over_bar": 70,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 2030,
-   "test_files": 494
+   "source_files": 2033,
+   "test_files": 495
   },
   "oneiron-setting-contract": {
    "files": [

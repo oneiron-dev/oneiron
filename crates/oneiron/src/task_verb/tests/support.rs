@@ -957,21 +957,29 @@ pub(super) fn enqueue_sibling(queue: &AttemptQueue<'_>, task_hex: &str, now: u64
 
 /// Outcome fixtures make deliberate Approved writes. Keep the shipped policy
 /// and its actor ceilings; classify only these fixture predicates as normal.
-/// Outcome labels are scoped reads by the asking principal, so it alone holds
-/// an unrestricted `core:read` grant.
+/// Outcome labels are scoped reads by the asking principal, so it holds
+/// an unrestricted `core:read` grant (beside any ask-holder grants Cause A
+/// already added; existing rows are kept).
 pub(in crate::task_verb) fn permit_outcome_fixture_predicates(
     vault: &Vault,
     principal: EntityId,
 ) -> crate::Result<()> {
-    let bytes = crate::gate::default_policy_manifest()?;
+    let id = crate::gate::default_policy_manifest_id()?;
+    let bytes = match vault.get(&id)? {
+        Some(body) => body,
+        None => crate::gate::default_policy_manifest()?,
+    };
     let mut manifest: serde_json::Value = rmp_serde::from_slice(&bytes).expect("default policy");
-    manifest["scoped_grants"] = serde_json::json!([{
-        "actor_ref": principal.to_hex(),
-        "effector": "core:read",
-        "scope": serde_json::to_value(crate::federation::scope_codec::read_preset())
-            .expect("read preset"),
-        "receipt_required": false,
-    }]);
+    if manifest.get("scoped_grants").is_none() {
+        manifest
+            .as_object_mut()
+            .expect("policy map")
+            .insert("scoped_grants".into(), serde_json::Value::Array(Vec::new()));
+    }
+    let grants = manifest["scoped_grants"]
+        .as_array_mut()
+        .expect("scoped grants");
+    push_unrestricted_read(grants, principal);
     let rules = manifest["rules"].as_array_mut().expect("policy rules");
     for predicate in [
         "outcome.earned",
@@ -983,7 +991,58 @@ pub(in crate::task_verb) fn permit_outcome_fixture_predicates(
     }
     crate::test_util::put_policy_manifest_bytes(
         vault,
-        crate::gate::default_policy_manifest_id()?,
+        id,
+        &rmp_serde::to_vec_named(&manifest).expect("fixture policy"),
+    )
+}
+
+/// Adds the fixture's unrestricted read row for `actor` (`core:read` over
+/// `read_preset()`, no receipt) unless that identical row is already there.
+/// A narrower `core:read` row for the same actor, such as the shipped
+/// MESSAGE-only house grant of `sys.team_lead`, does not count and is kept.
+fn push_unrestricted_read(grants: &mut Vec<serde_json::Value>, actor: EntityId) {
+    let row = serde_json::json!({
+        "actor_ref": actor.to_hex(),
+        "effector": "core:read",
+        "scope": serde_json::to_value(crate::federation::scope_codec::read_preset())
+            .expect("read preset"),
+        "receipt_required": false,
+    });
+    if !grants.contains(&row) {
+        grants.push(row);
+    }
+}
+
+/// Give each `holders` a live read position on every record (Cause A): an
+/// unrestricted `core:read` grant in the vault's default policy, the same
+/// row shape `permit_outcome_fixture_predicates` gives its principal. Ask
+/// admission requires every holder (and the asker) to read the question unit
+/// (`validate_task_answer_unit` -> `record_allowed_in_txn`); a bare PERSON
+/// with no grant reads as absent. Existing grants, ceilings and rules are
+/// kept; a holder's unrestricted row is added unless that identical row is
+/// already there (see [`push_unrestricted_read`]).
+pub(crate) fn grant_ask_read(vault: &Vault, holders: &[EntityId]) -> crate::Result<()> {
+    let id = crate::gate::default_policy_manifest_id()?;
+    let bytes = match vault.get(&id)? {
+        Some(body) => body,
+        None => crate::gate::default_policy_manifest()?,
+    };
+    let mut manifest: serde_json::Value = rmp_serde::from_slice(&bytes).expect("policy manifest");
+    if manifest.get("scoped_grants").is_none() {
+        manifest
+            .as_object_mut()
+            .expect("policy map")
+            .insert("scoped_grants".into(), serde_json::Value::Array(Vec::new()));
+    }
+    let grants = manifest["scoped_grants"]
+        .as_array_mut()
+        .expect("scoped grants");
+    for holder in holders {
+        push_unrestricted_read(grants, *holder);
+    }
+    crate::test_util::put_policy_manifest_bytes(
+        vault,
+        id,
         &rmp_serde::to_vec_named(&manifest).expect("fixture policy"),
     )
 }

@@ -33,6 +33,7 @@ fn fixture() -> (tempfile::TempDir, Vault, WriteActor, EntityId, EntityId) {
     vault
         .create_conversation(room, &ConversationBody::default(), actor, 1)
         .unwrap();
+    permit_reads(&vault, &[alice]);
     (dir, vault, actor, room, bob)
 }
 fn record(vault: &Vault, room: EntityId, actor: WriteActor, at: u64) -> AppendRecord {

@@ -79,6 +79,38 @@ pub(super) fn facade_for(vault: &crate::Vault, actor: EntityId) -> Memory<'_> {
     vault.memory(actor, EdgeActorClass::Human)
 }
 
+/// OF-063: scoped reads are default-deny, so a claim writer needs an explicit
+/// `core:read` grant to name the subject it writes about. Same shape as the
+/// already-passing `dag_writer` manifest in `conversation_dag/tests/mod.rs`.
+pub(super) fn grant_reads(vault: &crate::Vault, actor: EntityId) {
+    grant_reads_as(vault, actor, EdgeActorClass::Human);
+}
+
+/// [`grant_reads`] for a non-Human writer class (e.g., a MACHINE actor bound
+/// as System). The scoped grant names only the actor id; the class is for
+/// the fixture door's actor-binding validation.
+pub(super) fn grant_reads_as(vault: &crate::Vault, actor: EntityId, class: EdgeActorClass) {
+    let writer = crate::WriteActor::new(actor, class);
+    let policy = serde_json::json!({
+        "schema_version": "1.2", "pack_id": "memory-test-read", "pack_version": "v1",
+        "min_engine_version": env!("CARGO_PKG_VERSION"),
+        "defaults": {}, "rules": [], "actor_ceilings": [],
+        "scoped_grants": [{
+            "actor_ref": actor.to_hex(),
+            "effector": "core:read",
+            "scope": crate::federation::scope_codec::read_preset(),
+            "receipt_required": false,
+        }],
+    });
+    crate::conversation_dag::test_support::put_test_policy_manifest(
+        vault,
+        writer,
+        EntityId::now(),
+        &policy,
+    )
+    .unwrap();
+}
+
 /// Puts a MACHINE entity usable as a SYSTEM-class facade actor.
 ///
 /// ONE-1686: `system`-authored MESSAGE rows carry no `AuthoredBy` edge, so the
