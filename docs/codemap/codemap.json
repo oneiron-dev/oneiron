@@ -172941,13 +172941,13 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/owner/secrets.rs",
      "purpose": "The owner registers a secret (ARCH-0069 S1–S3) and rotates it (S6)",
      "surface": {
-      "crate-vis": 28
+      "crate-vis": 31
      }
     },
     {
@@ -179576,7 +179576,7 @@
      "purpose": "The host's precision recalculator (ARCH-0075 xlsx row; FIX 2462, OF-505 = A): LibreOffice Calc headless…"
     }
    },
-   "over_bar": 69,
+   "over_bar": 70,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 2036,
    "test_files": 499
