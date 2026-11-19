@@ -178,7 +178,7 @@ pub(crate) struct CoreMemoryVerbResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schema(example = 1782357700_u64)]
     at: Option<u64>,
-    /// Target id for single-target verbs.
+    /// Executed target for single-target verbs; absent when post hooks redact it.
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schema(example = "0123456789abcdef0123456789abcdef")]
     id: Option<String>,
@@ -402,14 +402,15 @@ pub(crate) async fn core_memory_verb(
             // so echoing the caller's `at` would claim it was used.
             let owner_door = host_action.is_some() || auth.is_owner_grade();
             let facade_ran = !owner_door;
-            let receipt = if owner_door {
+            let (id, receipt) = if owner_door {
                 server.vault.retract_claim(&id, at).map_err(|error| {
                     tracing::error!(kind = ?error.kind(), id = %id.to_hex(), "core memory retract failed");
                     core_engine_error("core memory retract failed", error)
                 })?;
-                None
+                (Some(id.to_hex()), None)
             } else {
-                Some(core_memory_retract_by_facade(&server, &auth, &id)?)
+                let (id, receipt) = core_memory_retract_by_facade(&server, &auth, &id)?;
+                (id, Some(receipt))
             };
 
             Ok(Json(CoreMemoryVerbResponse {
@@ -426,7 +427,7 @@ pub(crate) async fn core_memory_verb(
                     .and_then(Value::as_str)
                     .map(str::to_owned),
                 at: if facade_ran { None } else { Some(at) },
-                id: Some(id.to_hex()),
+                id,
                 new_id: None,
                 old_id: None,
                 entity: None,
@@ -448,7 +449,7 @@ pub(crate) async fn core_memory_verb(
             // with no new read. Any other token is judged by the one delete
             // authority on its own resolved actor.
             let owner_door = host_action.is_some() || auth.is_owner_grade();
-            let delete = if owner_door {
+            let (id, delete) = if owner_door {
                 let failed = |error: oneiron::Error| {
                     tracing::error!(kind = ?error.kind(), id = %id.to_hex(), "core memory delete failed");
                     core_engine_error("core memory delete failed", error)
@@ -457,7 +458,7 @@ pub(crate) async fn core_memory_verb(
                     .vault
                     .delete_entity_with_reason(&id, reason)
                     .map_err(failed)?;
-                serde_json::json!(CoreMemoryVerbDeleteOutcome {
+                let delete = serde_json::json!(CoreMemoryVerbDeleteOutcome {
                     existed: Some(outcome.existed),
                     reason: Some(response_reason),
                     hard: Some(matches!(
@@ -473,7 +474,8 @@ pub(crate) async fn core_memory_verb(
                             .as_str()
                             .to_owned()
                     ),
-                })
+                });
+                (Some(id.to_hex()), delete)
             } else {
                 core_memory_delete_by_role(&server, &auth, &id, response_reason)?
             };
@@ -484,7 +486,7 @@ pub(crate) async fn core_memory_verb(
                 approval: None,
                 receipt_ref: None,
                 at: None,
-                id: Some(id.to_hex()),
+                id,
                 new_id: None,
                 old_id: None,
                 entity: None,

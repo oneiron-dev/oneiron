@@ -5,6 +5,7 @@ use crate::api::{DagWriteError, scoped_auth};
 use crate::auth::CoreAuth;
 use crate::error::ApiError;
 use crate::server::SyncServer;
+use oneiron::task_verb::sdk::SafeDeleteRequest;
 use serde_json::Value;
 
 /// The core retract of `id` by a token that is not owner-grade, through
@@ -21,7 +22,7 @@ pub(super) fn core_memory_retract_by_facade(
     server: &SyncServer,
     auth: &CoreAuth,
     id: &oneiron::EntityId,
-) -> Result<Value, DagWriteError> {
+) -> Result<(Option<String>, Value), DagWriteError> {
     let (actor, class) = match facade::facade_actor(server, auth) {
         Ok((actor, class)) => (actor, class),
         Err(_) => match auth.account_key_principal() {
@@ -39,12 +40,17 @@ pub(super) fn core_memory_retract_by_facade(
         },
     };
     let memory = scoped_auth::credential_memory(server.vault(), Some(auth), actor, class);
-    // Keep the CommitReceipt's caller view, including a pending gate reference.
-    Ok(oneiron::task_verb::sdk::invoke(
+    // Use only the post-hook claim ref: a redacted target must not be restored.
+    let receipt = oneiron::task_verb::sdk::invoke(
         &memory,
         "vault.claims.retract",
         serde_json::json!({ "claim_ref": id.to_hex() }),
-    )?)
+    )?;
+    let id = receipt
+        .pointer("/claim/id")
+        .and_then(Value::as_str)
+        .map(str::to_owned);
+    Ok((id, receipt))
 }
 
 /// The core delete of `id` by a token that is not owner-grade (DEL-2,
@@ -69,7 +75,7 @@ pub(super) fn core_memory_delete_by_role(
     auth: &CoreAuth,
     id: &oneiron::EntityId,
     reason: CoreMemoryVerbDeleteReason,
-) -> Result<Value, DagWriteError> {
+) -> Result<(Option<String>, Value), DagWriteError> {
     let (actor, class, by_account_key) = match facade::facade_actor(server, auth) {
         Ok((actor, class)) => (actor, class, false),
         Err(_) => match auth.account_key_principal() {
@@ -100,14 +106,17 @@ pub(super) fn core_memory_delete_by_role(
         "vault.delete",
         serde_json::json!({ "entity_ref": id.to_hex(), "reason": reason.as_str() }),
         |value| {
-            let input = serde_json::from_value(value).map_err(|error| {
+            let input: SafeDeleteRequest = serde_json::from_value(value).map_err(|error| {
                 oneiron::memory::MemoryError::bad_request(format!("invalid SDK request: {error}"))
             })?;
+            let entity_ref = input.entity_ref.clone();
             // The generated typed row still admits /entity_ref and judges delete authority.
             let receipt = oneiron::task_verb::sdk::vault_delete(&memory, input)?;
-            let value = serde_json::to_value(&receipt).map_err(|_| {
+            let mut value = serde_json::to_value(&receipt).map_err(|_| {
                 oneiron::memory::MemoryError::bad_request("SDK result encoding failed")
             })?;
+            // Carry the executed target through post hooks so they can redact it too.
+            value["entity_ref"] = Value::String(entity_ref);
             // Capture the typed result before the post chain removes caller-visible fields.
             committed = Some(receipt);
             Ok(value)
@@ -141,10 +150,13 @@ pub(super) fn core_memory_delete_by_role(
 fn delete_receipt_view(
     mut view: Value,
     committed: Option<&oneiron::memory::DeleteReceipt>,
-) -> Value {
+) -> (Option<String>, Value) {
     let Some(fields) = view.as_object_mut() else {
-        return view;
+        return (None, view);
     };
+    let id = fields
+        .remove("entity_ref")
+        .and_then(|target| target.as_str().map(str::to_owned));
     if let Some(reason) = fields.get("reason").and_then(Value::as_str) {
         let reason = committed.map_or(reason, |receipt| receipt.reason.as_str());
         let hard = matches!(reason, "user_hard_delete" | "gdpr_delete" | "policy_delete");
@@ -165,7 +177,7 @@ fn delete_receipt_view(
             ),
         );
     }
-    view
+    (id, view)
 }
 
 pub(crate) fn core_memory_delete_reason(
