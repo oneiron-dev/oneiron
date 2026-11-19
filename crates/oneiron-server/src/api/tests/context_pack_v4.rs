@@ -574,7 +574,7 @@ async fn context_board_feeds_explicit_subjects_to_the_l2_producer() {
     let request = json!({
         "session":{"session_id":"l2-observed"},
         "retrieval": {"query":"l2route", "budget":{"max_field_chars":0,"max_item_tokens":0,"token_budget":0}},
-        "companion":{"person_ref":person.to_hex(),"persona_ref":persona.to_hex()}
+        "companion":{"person_ref":person.to_hex(),"counterpart_person_ref":persona.to_hex()}
     });
     let call = || {
         core_request_with_principal_ref(
@@ -650,7 +650,7 @@ async fn context_board_feeds_explicit_subjects_to_the_l2_producer() {
     let rows: Value =
         serde_json::from_str(third["pack"]["l2_base"]["body"].as_str().unwrap()).unwrap();
     assert_eq!(rows.as_array().unwrap().len(), 1);
-    assert_eq!(rows[0]["id"], persona_claim.to_hex());
+    assert_eq!(rows[0]["val"], "persona base fact");
     server.vault.retract_claim(&persona_claim, 3).unwrap();
     for (session, expected) in [
         (
