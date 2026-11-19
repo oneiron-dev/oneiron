@@ -5050,7 +5050,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "VaultRecoveryRequest"
@@ -6200,7 +6200,7 @@
      "path": "src/authority/retired_signers.rs",
      "purpose": "A handoff retires its predecessor for good (engine-crates-03)",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 15
      }
     },
     {
@@ -96039,7 +96039,7 @@
      "path": "src/test_doors/restored_enrolment.rs",
      "purpose": "A root-signed enrolment of an install born of a restore, for the integration tests of the fold's hold and…",
      "surface": {
-      "fn": 1
+      "fn": 3
      }
     },
     {
@@ -111836,6 +111836,14 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/restored_machine_round2_guards.rs",
+     "purpose": "Row RESTORED-COPIES-R2-TESTS: the round 2 fixes of the blind review of stack #9512 (row…",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -116018,10 +116026,10 @@
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     }
    },
-   "over_bar": 304,
+   "over_bar": 305,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 8193,
-   "test_files": 1938
+   "test_files": 1939
   },
   "oneiron-agent-runtime": {
    "files": [
