@@ -586,7 +586,8 @@ fn answer_unit(
         // The answer reads no wider than any source it rests on, the unit's
         // neighbours included, as a standing backfill's does. Gather left
         // out each neighbour it could not rest on beside the unit.
-        let taint = super::standing::constrain_sources(&mut candidate, &rows, principal)?;
+        let taint =
+            super::standing::constrain_sources(vault, txn, &mut candidate, &rows, principal)?;
         candidate = candidate
             .with_evidence_taint(taint)?
             .with_private_reader(principal)?

@@ -964,7 +964,7 @@ fn backfill_answer_with_caller(
             value.clone(),
             1.0,
         );
-        let taint = constrain_sources(&mut candidate, &sources, principal)?;
+        let taint = constrain_sources(vault, txn, &mut candidate, &sources, principal)?;
         let mut refs = vec![input.unit];
         for id in &answer.decision.evidence {
             if !refs.contains(id) {
@@ -1019,17 +1019,28 @@ fn backfill_answer_with_caller(
 
 /// Bounds `candidate` by every source it rests on: their one position, the
 /// highest sensitivity, the claims' scope terms and relationship. Returns the
-/// sources' met taint.
+/// sources' met taint. The answer's facet is read in `txn`
+/// ([`ScopeFold::ensure_stored_facet_in`]).
 pub(super) fn constrain_sources(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
     candidate: &mut ClaimCandidate,
     sources: &[Source],
     principal: EntityId,
 ) -> Result<ClaimSource> {
+    let mut fold = fold_sources(sources, principal)?;
+    fold.ensure_stored_facet_in(vault, txn)?;
+    Ok(fold.bound(candidate))
+}
+
+/// Every source an answer rests on, folded by one law, or the conflict that
+/// refuses the answer.
+pub(super) fn fold_sources(sources: &[Source], principal: EntityId) -> Result<ScopeFold> {
     let mut fold = ScopeFold::new(principal);
     for source in sources {
         fold.fold(source).map_err(SourceConflict::error)?;
     }
-    Ok(fold.bound(candidate))
+    Ok(fold)
 }
 
 /// The one law an answer's sources share ([`constrain_sources`]), source by
@@ -1141,6 +1152,23 @@ impl ScopeFold {
                     self.scope.push((key.clone(), value.clone()));
                 }
             }
+        }
+        Ok(())
+    }
+
+    /// Moves the folded facet to the vault default facet when no FACET row
+    /// holds it. A non-PERSON row born under the default record stamp sits at
+    /// its own derived substrate id, and only a PERSON's substrate is a
+    /// stored FACET, so the CLAIM birth gate would refuse an answer there.
+    /// A stored facet the sources share stays. This is the rule of
+    /// `Vault::claim_put_facet_of_record_in_txn` and
+    /// docs/ops/actor-claim-facets.md (FIX
+    /// STANDING-ANSWER-TAKES-UNSTORED-SUBSTRATE-FACET).
+    fn ensure_stored_facet_in(&mut self, vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<()> {
+        if let Some((facet, _, _)) = &mut self.position
+            && vault.get_entity_type_in_txn(txn, facet)? != Some(crate::registry::ENTITY_TYPE_FACET)
+        {
+            *facet = vault.default_facet_in_txn(txn)?;
         }
         Ok(())
     }
