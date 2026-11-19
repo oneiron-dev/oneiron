@@ -14,15 +14,30 @@ use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 
 /// Makes the vault root `path` names, with any directory missing above it,
-/// owner-only whatever the umask, as [`make_directory`] makes one. A root
-/// another user could write is one this vault's own restore refuses
-/// ([`refuse_shared_path`]). A directory already there keeps its mode.
-pub(crate) fn make_vault_root_all(path: &Path) -> std::io::Result<()> {
-    use std::os::unix::fs::DirBuilderExt;
-    std::fs::DirBuilder::new()
-        .recursive(true)
-        .mode(0o700)
-        .create(path)
+/// owner-only: each one it makes is made through its parent's descriptor
+/// ([`make_directory`]) and then set to exactly 0700 through its own, before
+/// the next is made inside it, so no umask leaves it shared or closed to its
+/// owner. A root another user could write is one this vault's own restore
+/// refuses ([`refuse_shared_path`]). A directory already there, or made
+/// meanwhile by another open, keeps its mode.
+pub(crate) fn make_vault_root_all(path: &Path) -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    let path = std::path::absolute(path)?;
+    let mut missing = Vec::new();
+    let mut at = path.as_path();
+    while matches!(at.try_exists(), Ok(false)) {
+        missing.push(at.to_path_buf());
+        let Some(parent) = at.parent() else { break };
+        at = parent;
+    }
+    for directory in missing.into_iter().rev() {
+        match make_directory(&directory) {
+            Ok(made) => made.set_permissions(std::fs::Permissions::from_mode(0o700))?,
+            Err(_) if directory.is_dir() => {}
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(())
 }
 
 /// Removes the directory `path` names, with everything in it, only while
