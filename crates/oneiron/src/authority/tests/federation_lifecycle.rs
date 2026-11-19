@@ -107,7 +107,7 @@ fn federation_connect_activates_pact_on_both_sides() {
 }
 
 #[test]
-fn federation_connect_bad_gesture_never_activates_and_tampered_scope_folds_as_signed() {
+fn federation_connect_digest_mismatch_never_activates() {
     // (a) Gesture signed over digest Y while the entry claims X: the scope
     // recomputes to X, so the gesture check fails.
     let fixture = pact_fixture(124);
@@ -134,36 +134,23 @@ fn federation_connect_bad_gesture_never_activates_and_tampered_scope_folds_as_si
         Some(FederationLifecycleRejection::GestureInvalid)
     );
 
-    // (b) Entry's pact_scope tampered: since FIX 7907/7958 (edf5e3ffdc6, #4119)
-    // the fold takes the signed scope commitment as it stands
-    // (op_apply.rs:287-303, :406; canonical-only check) and the gesture verifies
-    // against the claimed digest (op_apply.rs:332-352), so the Connect is admitted.
-    // The keyed check lives at the intake doors (`accept_connect_as` /
-    // `accept_connect_rescope_as`) and in this install's authority view
-    // (pact_openings.rs:1-19, :131-145), which this file's pure-fold fixtures
-    // cannot reach (no Vault/custody); tests/it/authority/
-    // authority_view_warm_pact_openings.rs asserts that hold.
+    // (b) Entry's pact_scope tampered: the recompute no longer matches the
+    // claimed (and gesture-signed) digest.
     let fixture = pact_fixture(126);
     let genesis_hash = authority_entry_hash(&fixture.genesis).unwrap();
     let mut action = connect_action(&fixture);
-    let tampered = symmetric_scope(ScopeAxis::Bottom, ScopeAxis::All);
-    action.pact_scope = Some(tampered.clone());
+    action.pact_scope = Some(symmetric_scope(ScopeAxis::Bottom, ScopeAxis::All));
     let entry = lifecycle_entry(&fixture, vec![genesis_hash], 1, action);
     let entry_hash = authority_entry_hash(&entry).unwrap();
     let fold = fold_authority_log(&[fixture.genesis.clone(), entry]);
-    let pact = fold
-        .federation_pacts
-        .get(&fixture.pact_id)
-        .expect("tampered Connect is admitted as it stands");
-    assert_eq!(pact.status, FederationPactStatus::Active);
-    assert_eq!(pact.pact_scope, tampered);
-    assert_eq!(pact.scope_digest, fixture.scope_digest);
-    assert_eq!(pact.pact_epoch, 1);
-    assert_eq!(lifecycle_rejection(&fold, entry_hash), None);
-    assert_eq!(fold.pact_for_grant(&fixture.grant_ref), Some(pact));
+    assert!(fold.federation_pacts.is_empty(), "no pact state may form");
+    assert_eq!(
+        lifecycle_rejection(&fold, entry_hash),
+        Some(FederationLifecycleRejection::ScopeDigestMismatch)
+    );
     assert_eq!(
         federation_grant_activation(&fold, &fixture.grant_ref),
-        FederationGrantActivation::Active
+        FederationGrantActivation::Unpacted
     );
 }
 
