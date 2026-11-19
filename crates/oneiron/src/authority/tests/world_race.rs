@@ -547,10 +547,9 @@ fn a_stale_machine_never_widens_a_world() {
     assert_eq!(after.world_privacy(world).read, EffectiveRead::MyMachines);
 }
 
-/// An edit refused because another machine held the world stays refused when
-/// that holder later goes stale here: the holder is still the owner's by the
-/// roster, so losing its standing on one install never accepts what every
-/// install refused (Sol P2 round 3, F1).
+/// Mesh PR1a (FIX-LIST 10-19 02:16): no holder rule, so the widening by a live
+/// admitted carrier is accepted and supersedes the holder's narrowing, reading
+/// `Everywhere` before and after the holder goes stale.
 #[test]
 fn a_holder_going_stale_never_accepts_a_refused_edit() {
     let old = ed_key(114);
@@ -637,12 +636,9 @@ fn a_holder_going_stale_never_accepts_a_refused_edit() {
     let first_seen: BTreeMap<_, _> = entries.iter().map(|entry| (hash(entry), 100)).collect();
     for now in [100, 100 + DEFAULT_STALE_ROSTER_WINDOW_SECS + 1] {
         let fold = fold_authority_log_with_seen_times(&entries, &first_seen, now);
-        assert!(fold.refused_world_edits.contains(&hash(&refused)));
-        assert_eq!(
-            fold.world_privacy(world).read,
-            EffectiveRead::OneMachine(holder)
-        );
-        assert!(!fold.world_readable_on(world, Destination::Machine(other)));
+        assert!(!fold.refused_world_edits.contains(&hash(&refused)));
+        assert_eq!(fold.world_privacy(world).read, EffectiveRead::Everywhere);
+        assert!(fold.world_readable_on(world, Destination::Machine(other)));
     }
     let after = fold_authority_log_with_seen_times(
         &entries,
@@ -657,12 +653,9 @@ fn a_holder_going_stale_never_accepts_a_refused_edit() {
     assert!(after.machine(other).is_some_and(RosterHead::mine));
 }
 
-/// A refused edit stays refused when a machine whose edit it would have
-/// contended with goes stale here. B's pick of A replaced the conflict between
-/// B and C, so C's later widening is refused; weakening B's edits on one
-/// install brings the conflict back into the settings it reads, but who may
-/// edit is judged on the roster rule's read, so C never becomes a contender
-/// there (Sol P2 round 4, F1).
+/// Mesh PR1a (FIX-LIST 10-19 02:16): no holder or contender rule, so C's widening
+/// by a live admitted carrier is accepted and supersedes B's re-pick, reading
+/// `Everywhere` before and after B goes stale.
 #[test]
 fn a_conflict_weakened_back_never_accepts_a_refused_edit() {
     let old = ed_key(130);
@@ -754,14 +747,17 @@ fn a_conflict_weakened_back_never_accepts_a_refused_edit() {
     let first_seen: BTreeMap<_, _> = entries.iter().map(|entry| (hash(entry), 100)).collect();
     for now in [100, 100 + DEFAULT_STALE_ROSTER_WINDOW_SECS + 1] {
         let fold = fold_authority_log_with_seen_times(&entries, &first_seen, now);
-        assert!(fold.refused_world_edits.contains(&hash(&refused)));
-        assert_eq!(fold.world_roster_read(world), EffectiveRead::OneMachine(a));
-        assert_eq!(fold.world_edit_standing(c, world), None);
+        assert!(!fold.refused_world_edits.contains(&hash(&refused)));
+        assert_eq!(fold.world_roster_read(world), EffectiveRead::Everywhere);
+        assert_eq!(
+            fold.world_edit_standing(c, world),
+            Some(WorldEditStanding::Holds)
+        );
         assert_eq!(
             fold.world_edit_standing(a, world),
             Some(WorldEditStanding::Holds)
         );
-        assert!(!fold.world_readable_on(world, Destination::Machine(c)));
+        assert!(fold.world_readable_on(world, Destination::Machine(c)));
     }
     let after = fold_authority_log_with_seen_times(
         &entries,
@@ -769,14 +765,7 @@ fn a_conflict_weakened_back_never_accepts_a_refused_edit() {
         100 + DEFAULT_STALE_ROSTER_WINDOW_SECS + 1,
     );
     assert!(after.machine(b).is_some_and(|folded| folded.head().stale));
-    // Here B's edits only narrow, so the world reads as the conflict again:
-    // stricter than A alone, and readable nowhere.
-    assert_eq!(
-        after.world_privacy(world).read,
-        EffectiveRead::Conflicted {
-            contenders: BTreeSet::from([a, b, c]),
-        }
-    );
+    assert_eq!(after.world_privacy(world).read, EffectiveRead::Everywhere);
 }
 
 /// A narrowing made above a main-log row the fold later refuses stays. The
@@ -940,10 +929,14 @@ fn a_world_edit_above_a_two_vault_row_folds_closed() {
     assert!(!fold.valid_entries.contains(&hash(&edit)));
 }
 
-/// A mark that still says "yours" acknowledges no edit when its signer turns
-/// out to be in a host's custody: on a hosted fold the edit it lists raced
-/// that loss of standing, and only narrows (Sol P2 round 3, F2). The DAG is
-/// the custody one of `custody_marked_on_another_branch_reaches_the_successor`.
+/// A mark whose signer turns out to be in a host's custody is no owner's
+/// "yours", so the machine carries nothing once the custody is found: a
+/// widening it carried before only narrows while no revision has taken it
+/// away. A removal that lists the widening acknowledges it, whoever signed
+/// that removal, since the race reads what the removal saw, not its signer's
+/// custody (mesh PR1a, FIX-LIST 10-19 02:16; canon identity.md "the carrier's
+/// custody and placement do not decide it"). The DAG is the custody one of
+/// `custody_marked_on_another_branch_reaches_the_successor`.
 #[test]
 fn a_custodial_mark_acknowledges_no_widening() {
     let root = ed_key(120);
@@ -1095,9 +1088,9 @@ fn a_custodial_mark_acknowledges_no_widening() {
     assert_eq!(fold.world_privacy(world).read, EffectiveRead::MyMachines);
 
     // A removal on the marking branch, before that branch meets the custody,
-    // took away a mark that did not stand: once the custody is found it
-    // acknowledges nothing (Wonder P2 round 2, W2). The handoff that joins
-    // the branches takes the removal into its line (Sol P2 round 6, F1).
+    // lists the widening: it acknowledges it, so W reads `Everywhere`. The
+    // handoff that joins the branches takes the removal into its line (Sol P2
+    // round 6, F1).
     let removal = entry(
         3,
         &[&entries[7]],
@@ -1137,8 +1130,8 @@ fn a_custodial_mark_acknowledges_no_widening() {
         fold.machine(machine).unwrap().head().profile.role,
         MachineRole::Removed
     );
-    assert_eq!(fold.world_privacy(world).read, EffectiveRead::MyMachines);
-    assert!(!fold.world_readable_on(world, Destination::Unknown));
+    assert_eq!(fold.world_privacy(world).read, EffectiveRead::Everywhere);
+    assert!(fold.world_readable_on(world, Destination::Unknown));
 }
 
 /// A removal that saw a widening keeps it when the merged head is
