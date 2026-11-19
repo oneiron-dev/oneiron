@@ -177,7 +177,7 @@ function listing(origin: string, id: string, data: Scenarios): ProviderStep {
 function startup(origin: string, id: string, data: Scenarios, worker: boolean): ProviderStep[] {
   return [listing(origin, `${id}-listing`, data),
     { id: `${id}-probe`, origin, role: "embedder", purpose: "configured width probe",
-      request: { method: "POST", path: "/v1/embeddings", model: data.space.modelKey },
+      request: { method: "POST", path: "/v1/embeddings", model: data.space.modelKey, fields: { input: [PROBE_TEXT] } },
       response: embeddingReply(data.space.modelKey, [[1, 0, 0, 0]], 8) },
     ...(worker ? [listing(origin, `${id}-admission`, data)] : [])];
 }
@@ -187,30 +187,36 @@ function documentStep(origin: string, id: string, data: Scenarios, text: string,
     request: { method: "POST", path: "/v1/embeddings", model: data.space.modelKey, fields: { input: [text] } },
     response: embeddingReply(data.space.modelKey, [vector], 8), ...(barrier ? { barrier } : {}) };
 }
-/* Bootstrap rows the engine's own open writes before any fixture document:
- * a seeded person.substrate claim ("model"), the goal-intake SKILL's desc,
- * and a seeded actor.subject_ref claim (a person id hex). The endpoint
- * embedder's background fill sends them at any time, so each case answers
- * them with standing steps (matched by origin, method, path, model and
- * fields; answered any number of times; never in FIFO order; never
- * unconsumed) on the exact input, with a vector that can never outrank or
- * tie the fixture's target. Purpose stays off "fixture document fill" and
- * "owned retrieval probe" so the per-case call censuses keep proving what
- * they prove. */
-const BOOTSTRAP_SUBSTRATE_TEXT = "model";
-const BOOTSTRAP_GOAL_INTAKE_TEXT = "Interview a human for a typed project goal record and commit it via authenticated intake.";
-const BOOTSTRAP_SUBJECT_REF_TEXT = "a4c287a77f1c843ba4b81ebc08ca586b";
-function bootstrapStanding(origin: string, data: Scenarios, vector: number[]): ProviderStep[] {
-  const texts = [
-    ["bootstrap-substrate", BOOTSTRAP_SUBSTRATE_TEXT],
-    ["bootstrap-goal-intake", BOOTSTRAP_GOAL_INTAKE_TEXT],
-    ["bootstrap-subject-ref", BOOTSTRAP_SUBJECT_REF_TEXT],
-  ] as const;
-  return texts.map(([id, text]) => ({ id, origin, role: "embedder",
-    purpose: "bootstrap row fill", standing: true as const,
-    request: { method: "POST" as const, path: "/v1/embeddings", model: data.space.modelKey,
-      fields: { input: [text] } },
-    response: embeddingReply(data.space.modelKey, [vector], 8) }));
+/* The engine's own open seeds rows that the endpoint embedder fills in the
+ * background at any time: each seeded agent's person.substrate and
+ * actor.subject_ref claims, the bootstrap and pack skills' descs, and each
+ * skill's hub_provenance and scan_verdict claims (the 19 Nov b46diag run sent
+ * more of them than any fixed list named, in an order set by timing). No case
+ * authors them, so each origin answers every embedding request whose input is
+ * none of the texts its scripted steps send (the width probe, the fixture
+ * documents and queries, the owned retrieval probes) with a standing step,
+ * with a vector that never ties or outranks a fixture target. A listing the
+ * embedder sends between two scripted ones (its readmission after a failed
+ * pass) gets a fallback answer that never takes a scripted listing. Purposes
+ * stay off "fixture document fill" and "owned retrieval probe", so every
+ * per-case census proves what it proved. */
+const PROBE_TEXT = "oneiron embedder probe"; // the width probe's text (crates/oneiron-server/src/embedder/endpoint.rs)
+const BACKGROUND_FILL = "background-fill";
+function backgroundFills(origin: string, model: string, vector: number[],
+  steps: readonly ProviderStep[], probeQueries: readonly string[] = []): ProviderStep[] {
+  const authored = new Set<string>([PROBE_TEXT, ...probeQueries]);
+  for (const step of steps) if (step.origin === origin) {
+    const input = step.request.fields?.input;
+    if (Array.isArray(input)) for (const text of input) if (typeof text === "string") authored.add(text);
+  }
+  return [
+    { id: `${origin}-${BACKGROUND_FILL}`, origin, role: "embedder", purpose: "background row fill", standing: true,
+      request: { method: "POST", path: "/v1/embeddings", model, inputNotIn: [...authored] },
+      response: embeddingReply(model, [vector], 8) },
+    { id: `${origin}-readmission-listing`, origin, role: "embedder", purpose: "model identity metadata",
+      standing: true, fallback: true, request: { method: "GET", path: "/v1/models" },
+      response: { kind: "json", body: { data: [{ id: model }] } } },
+  ];
 }
 function witness(client: PublicHttpClient, data: Scenarios, text: string,
   refs: { conversation?: string; turn?: string; message?: string } = {}): Promise<WitnessReceipt> {
@@ -256,11 +262,13 @@ suite.test(test, "EMBEDDINGS-01", "First-run embedder choice should work", async
   expect((await none.client.request<OwnerStatus>("GET", "/v1/owner/status")).body.embedder.configured).toBeNull();
   await none.close();
 
-  const providers = await ScriptedProviders.start({ id: "EMBEDDINGS-01", artifacts: providerArtifacts("EMBEDDINGS-01"), steps: [
+  const steps = [
     ...startup("primary", "init", data, false), ...startup("primary", "serve", data, true),
     documentStep("primary", "first-run-document", data, data.firstRun.text, data.firstRun.vector),
     ...startup("primary", "restart", data, true),
-    ...bootstrapStanding("primary", data, [0, 0, 0, 1]),
+  ];
+  const providers = await ScriptedProviders.start({ id: "EMBEDDINGS-01", artifacts: providerArtifacts("EMBEDDINGS-01"), steps: [
+    ...steps, ...backgroundFills("primary", data.space.modelKey, [0, 0, 0, 1], steps),
   ] });
   const engine = await startEndpointEngine("EMBEDDINGS-01-endpoint", data, `${providers.urls.primary!}/v1`);
   expect((await new PublicHttpClient(engine.url).request<{ status: string }>("GET", "/api/health")).body.status).toBe("ok");
@@ -285,7 +293,8 @@ suite.test(test, "EMBEDDINGS-01", "First-run embedder choice should work", async
     "--dimensions", String(data.space.dimensions)]);
   expect(denied.exitCode).not.toBe(0);
   expect(await Bun.file(deniedConfig).exists()).toBe(false);
-  expect(providers.seenFixtureCalls).toHaveLength(sent);
+  // The serving engine may go on filling its own rows; the refused init sends nothing.
+  expect(providers.seenFixtureCalls.slice(sent).every(call => call.fixtureId === `primary-${BACKGROUND_FILL}`)).toBe(true);
   await engine.artifacts.json("providers.json", providers.seenFixtureCalls);
   // No local model is required or downloaded: this flow selects none/endpoint.
 });
@@ -294,13 +303,15 @@ suite.test(test, "EMBEDDINGS-02", "Async embedding durability should work", asyn
   const data = await fixtures();
   const row = data.durability;
   const query = (id: string) => documentStep("primary", id, data, row.query, row.vector);
-  const providers = await ScriptedProviders.start({ id: "EMBEDDINGS-02", artifacts: providerArtifacts("EMBEDDINGS-02"), steps: [
+  const steps = [
     ...startup("primary", "init", data, false), ...startup("primary", "serve", data, true),
     documentStep("primary", "interrupted-fill", data, row.text, row.vector, "before-fill"),
     ...startup("primary", "recovery", data, true),
     documentStep("primary", "successful-fill", data, row.text, row.vector, "recovered-fill"), query("semantic-before-restart"),
     ...startup("primary", "durable-restart", data, true), query("semantic-after-restart"),
-    ...bootstrapStanding("primary", data, [0, 0, 0, 1]),
+  ];
+  const providers = await ScriptedProviders.start({ id: "EMBEDDINGS-02", artifacts: providerArtifacts("EMBEDDINGS-02"), steps: [
+    ...steps, ...backgroundFills("primary", data.space.modelKey, [0, 0, 0, 1], steps),
   ] });
   const engine = await startEndpointEngine("EMBEDDINGS-02", data, `${providers.urls.primary!}/v1`);
   // This acknowledgment resolves while the model response remains held.
@@ -355,7 +366,7 @@ suite.test(test, "EMBEDDINGS-03", "Exact embedding identity and checked swap sho
     request: { method: "POST", path: "/v1/embeddings", model: "model", fields: { input: [text] } },
     response: embeddingReply("model", [vector], 8),
   });
-  const providers = await ScriptedProviders.start({ id: "EMBEDDINGS-03", artifacts: providerArtifacts("EMBEDDINGS-03"), steps: [
+  const steps = [
     ...startup("primary", "init", data, false), ...startup("primary", "serve", data, true),
     documentStep("primary", "target", data, swap.targetText, vectors.target),
     documentStep("primary", "distractor", data, swap.distractorText, vectors.distractor),
@@ -372,7 +383,13 @@ suite.test(test, "EMBEDDINGS-03", "Exact embedding identity and checked swap sho
     mediaDocument("good", "good-distractor", swap.distractorText, vectors.distractor),
     ...swap.probes.map((_, i) => probeStep("good", `good-candidate-${i}`, vectors.goodQuery)),
     probeStep("good", "after-automatic-swap", vectors.goodQuery),
-    ...bootstrapStanding("primary", data, [0, 0, 0, 1]),
+  ];
+  const probeQueries = swap.probes.map(probe => probe.query);
+  const providers = await ScriptedProviders.start({ id: "EMBEDDINGS-03", artifacts: providerArtifacts("EMBEDDINGS-03"), steps: [
+    ...steps,
+    ...backgroundFills("primary", data.space.modelKey, [0, 0, 0, 1], steps, probeQueries),
+    ...backgroundFills("bad", "model", [0, 0, 0, 1], steps, probeQueries),
+    ...backgroundFills("good", "model", [0, 0, 0, 1], steps, probeQueries),
   ] });
   const modelConfig = ["bad", "good"].map(origin => `
 [models.providers.${origin}]
@@ -398,7 +415,8 @@ inputs = ["text"]
   const refused = await engine.cli.run(["serve", "--config", resolve(engine.root, "oneiron.toml"),
     "--embedder-model-id", data.space.wrongRevision]);
   expect(refused.exitCode).not.toBe(0);
-  expect(providers.seenFixtureCalls).toHaveLength(beforeWrongRevision);
+  // A background fill already in flight at the kill may still land; the refused serve sends nothing.
+  expect(providers.seenFixtureCalls.slice(beforeWrongRevision).every(call => call.fixtureId === `primary-${BACKGROUND_FILL}`)).toBe(true);
   await engine.restart();
   await filled(engine.client, vectors.incumbentQuery, swap.targetTurn);
 
@@ -505,7 +523,7 @@ suite.test(test, "EMBEDDINGS-05", "Remote egress deny falls back locally should 
     ...documentStep("remote", "remote-failure", data, failure.text, failure.vector),
     response: { kind: "json", status: 503, body: { error: { type: "unavailable", message: "fixture provider unavailable" } } },
   };
-  const providers = await ScriptedProviders.start({ id: "EMBEDDINGS-05", artifacts: providerArtifacts("EMBEDDINGS-05"), steps: [
+  const steps = [
     ...startup("primary", "local-init", data, false), ...startup("primary", "local-serve", data, true),
     documentStep("primary", "denied-local", data, denied.text, denied.vector),
     documentStep("primary", "undecided-local", data, undecided.text, undecided.vector),
@@ -514,7 +532,12 @@ suite.test(test, "EMBEDDINGS-05", "Remote egress deny falls back locally should 
     ...startup("remote", "remote-init", data, false), ...startup("remote", "remote-serve", data, false),
     listing("remote", "remote-rung-listing", data),
     documentStep("remote", "allowed-remote", data, allowed.text, allowed.vector), failedStep,
-    ...bootstrapStanding("primary", data, [-0.5, -0.5, -0.5, -0.5]),
+  ];
+  // Negative against every authored egress vector, which includes [0, 0, 0, 1].
+  const providers = await ScriptedProviders.start({ id: "EMBEDDINGS-05", artifacts: providerArtifacts("EMBEDDINGS-05"), steps: [
+    ...steps,
+    ...backgroundFills("primary", data.space.modelKey, [-0.5, -0.5, -0.5, -0.5], steps),
+    ...backgroundFills("remote", data.space.modelKey, [-0.5, -0.5, -0.5, -0.5], steps),
   ] });
   // "third-party" is the real adapter's locality policy, not a trusted-model
   // exemption. The recording origin is loopback for the network-isolated run;
