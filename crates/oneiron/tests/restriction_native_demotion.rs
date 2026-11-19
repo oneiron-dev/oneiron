@@ -17,16 +17,23 @@
 //! weakening or a stale mark of a claim that restricts someone, by the same
 //! rule.
 //!
+//! The shipped default manifest names `delivery_window.` in no rule, so it
+//! rates a delivery window critical by its default, and the native door
+//! parks a demotion of one for the owner's Clear before the restriction rule
+//! is reached (a control below). The hole is a noncritical window: the reds
+//! run under an owner rule that rates `delivery_window.` normal
+//! (`Fixture::with_noncritical_delivery_windows`).
+//!
 //! The two reds are the native weakening and the native stale mark of the
-//! agent's delivery window. The three controls are a native decay of the
-//! window (it moves only the weight), a native decay and weakening of a note
-//! that restricts no one, and the owner's own `vault.claims.demote`
-//! weakening of the window. The vault is rooted under a host, with the
-//! shipped default manifest and the engine's machine identities (the
-//! Dreamer signs a weakening's successor). The owner grants the agent read
-//! over the whole vault and an Auto ceiling, as
-//! `tests/restriction_removal_doors.rs` sets it up, so the agent's own rows
-//! land Observed and Auto.
+//! agent's noncritical delivery window. The four controls are a native decay
+//! of that window (it moves only the weight), a native decay and weakening of
+//! a note that restricts no one, the owner's own `vault.claims.demote`
+//! weakening of that window, and the parked native weakening of a window the
+//! shipped manifest rates critical. The vault is rooted under a host, with
+//! the default manifest and the engine's machine identities (the Dreamer
+//! signs a weakening's successor). The owner grants the agent read over the
+//! whole vault and an Auto ceiling, as `tests/restriction_removal_doors.rs`
+//! sets it up, so the agent's own rows land Observed and Auto.
 //!
 //! Run: `cargo test --locked -p oneiron --all-features --no-fail-fast --test
 //! restriction_native_demotion`.
@@ -34,7 +41,7 @@
 
 use oneiron::agent_def::AgentCeiling;
 use oneiron::authority::HostSlipIssuer;
-use oneiron::error::ClaimError;
+use oneiron::error::{ClaimError, GateError};
 use oneiron::memory::{
     ClaimDemoteActionInput, ClaimDemoteRequest, ClaimDemoteView, ClaimInput, MemoryResult,
     resolve_entity_ref,
@@ -53,6 +60,13 @@ const NOTE: &str = "profile.note";
 
 /// A delivery window: it holds interrupts while its condition holds.
 const DELIVERY_WINDOW_CONTEXT: &str = "delivery_window.context";
+
+/// The prefix of every delivery window predicate, which the owner's rule in
+/// `Fixture::with_noncritical_delivery_windows` rates normal.
+const DELIVERY_WINDOW_PREFIX: &str = "delivery_window.";
+
+/// The gate's reason for a demotion it parks for the owner's Clear.
+const CRITICALITY_FLOOR: &str = "gate.pending.criticality_floor";
 
 /// The native door's refusal of a weakening or a stale mark that lifts a
 /// restriction.
@@ -105,6 +119,61 @@ impl Fixture {
             facet,
             _directory: directory,
         }
+    }
+
+    /// `Fixture::new` with one more owner rule in the stored default
+    /// manifest, at its own id (as `tests/agent_wake_hold.rs` adds its
+    /// `agent.resident` rule): `delivery_window.` rates normal. Without it the
+    /// manifest's default rates a delivery window critical, and the native
+    /// door parks its demotion for the owner's Clear.
+    fn with_noncritical_delivery_windows() -> Self {
+        use rmpv::Value;
+
+        let fixture = Self::new();
+        let id = oneiron_store::policy_record::default_policy_manifest_id()
+            .expect("the default policy manifest id");
+        let body = fixture
+            .vault
+            .get(&id)
+            .expect("policy manifest read")
+            .expect("the default policy manifest is stored");
+        let Value::Map(mut fields) =
+            rmpv::decode::read_value(&mut body.as_slice()).expect("the manifest decodes")
+        else {
+            panic!("the default policy manifest is a map");
+        };
+        let Some((_, Value::Array(rules))) = fields
+            .iter_mut()
+            .find(|(key, _)| key.as_str() == Some("rules"))
+        else {
+            panic!("the default policy manifest has a rules array");
+        };
+        rules.push(Value::Map(vec![
+            (Value::from("prefix"), Value::from(DELIVERY_WINDOW_PREFIX)),
+            (
+                Value::from("axes"),
+                Value::Map(vec![
+                    (Value::from("criticality"), Value::from("normal")),
+                    (Value::from("sensitivity"), Value::from("normal")),
+                ]),
+            ),
+        ]));
+        let mut bytes = Vec::new();
+        rmpv::encode::write_value(&mut bytes, &Value::Map(fields)).expect("the manifest encodes");
+        let owner_proof = fixture
+            .vault
+            .authenticate_owner(
+                fixture.owner,
+                &fixture.owner.to_hex(),
+                true,
+                GateDecisionId::now(),
+            )
+            .expect("owner proof");
+        fixture
+            .vault
+            .install_owner_policy_manifest(&owner_proof, id, bytes, fixture.vault.now_recorded_at())
+            .expect("the owner rates delivery windows normal");
+        fixture
     }
 
     /// The agent writes an Observed claim of `predicate` about itself holding
@@ -213,12 +282,12 @@ fn assert_refused_as_a_lift(result: oneiron::Result<ClaimDemotion>) {
     }
 }
 
-/// Red: the host decays the agent's delivery window and then weakens it
-/// through the native door. The weakening closed the window behind a
-/// Generated successor, which holds nothing.
+/// Red: the host decays the agent's noncritical delivery window and then
+/// weakens it through the native door. The weakening closed the window
+/// behind a Generated successor, which holds nothing.
 #[test]
 fn a_native_weakening_never_lifts_a_delivery_window() {
-    let f = Fixture::new();
+    let f = Fixture::with_noncritical_delivery_windows();
     let window = f.agent_lands_a_delivery_window();
     let decayed = f
         .native_demotes(window, decay(0.5))
@@ -235,11 +304,12 @@ fn a_native_weakening_never_lifts_a_delivery_window() {
     assert_refused_as_a_lift(weakened);
 }
 
-/// Red: the host marks the agent's delivery window stale through the native
-/// door. The stale mark took the window out of every surfaceable read.
+/// Red: the host marks the agent's noncritical delivery window stale through
+/// the native door. The stale mark took the window out of every surfaceable
+/// read.
 #[test]
 fn a_native_stale_mark_never_lifts_a_delivery_window() {
-    let f = Fixture::new();
+    let f = Fixture::with_noncritical_delivery_windows();
     let window = f.agent_lands_a_delivery_window();
 
     let marked = f.native_demotes(window, ClaimDemotionAction::MarkStale);
@@ -252,11 +322,11 @@ fn a_native_stale_mark_never_lifts_a_delivery_window() {
     assert_refused_as_a_lift(marked);
 }
 
-/// Control: a native decay of the delivery window lands. It moves only the
-/// window's ClaimOf weight, and the window still holds.
+/// Control: a native decay of the noncritical delivery window lands. It
+/// moves only the window's ClaimOf weight, and the window still holds.
 #[test]
 fn a_native_decay_of_a_delivery_window_still_lands() {
-    let f = Fixture::new();
+    let f = Fixture::with_noncritical_delivery_windows();
     let window = f.agent_lands_a_delivery_window();
 
     let decayed = f
@@ -294,10 +364,10 @@ fn a_native_weakening_of_a_note_still_lands() {
 
 /// Control: the live owner still lifts the restriction, through
 /// `vault.claims.demote` on the owner's own handle: a decay and then a
-/// weakening of the agent's delivery window land.
+/// weakening of the agent's noncritical delivery window land.
 #[test]
 fn the_owner_still_weakens_a_delivery_window() {
-    let f = Fixture::new();
+    let f = Fixture::with_noncritical_delivery_windows();
     let window = f.agent_lands_a_delivery_window();
     f.owner_demotes(
         window,
@@ -323,4 +393,37 @@ fn the_owner_still_weakens_a_delivery_window() {
         "a weakening supersedes"
     );
     assert_eq!(f.stored(window).lifecycle, ClaimLifecycleStatus::Superseded);
+}
+
+/// Control: the shipped manifest rates a delivery window critical by its
+/// default, so the native door parks the window's weakening for the owner's
+/// Clear (`gate.pending.criticality_floor`) and leaves the window as it was.
+#[test]
+fn a_native_weakening_of_a_critical_delivery_window_parks() {
+    let f = Fixture::new();
+    let window = f.agent_lands_a_delivery_window();
+
+    let parked = f.native_demotes(window, weaken(0.5));
+
+    match parked {
+        Err(Error::Gate(GateError::GateWriteRejected {
+            outcome,
+            reason_codes,
+        })) => {
+            assert_eq!(outcome, "pending", "the weakening parks");
+            assert_eq!(
+                reason_codes,
+                [CRITICALITY_FLOOR],
+                "at the criticality floor"
+            );
+        }
+        other => panic!("the native weakening parks for the owner's Clear; got {other:?}"),
+    }
+    let stored = f.stored(window);
+    assert!(!stored.stale, "a parked weakening is no stale mark");
+    assert_eq!(
+        stored.lifecycle,
+        ClaimLifecycleStatus::Active,
+        "the parked window still holds"
+    );
 }
