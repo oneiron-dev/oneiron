@@ -185,12 +185,12 @@ fn checked_page(
         {
             return Err(refused());
         }
+        // An empty value is the home window's own reading of a value that
+        // is no binary: it decodes hard, as the window's replay reads it,
+        // and never refuses the page (blind review 1 of #9593).
         let value = base64::engine::general_purpose::STANDARD
             .decode(&item.value)
             .map_err(|_| refused())?;
-        if value.is_empty() {
-            return Err(refused());
-        }
         previous = Some(item.entity_id.clone());
         page.push((id, value));
     }

@@ -135,7 +135,7 @@ async fn sync_once(connection: &SyncConnection, home: mpsc::UnboundedReceiver<Ho
 /// live socket tests do.
 fn on_engine_stack<F>(name: &str, test: fn() -> F)
 where
-    F: std::future::Future<Output = ()>,
+    F: std::future::Future<Output = ()> + 'static,
 {
     let run = std::thread::Builder::new()
         .name(name.to_owned())
@@ -285,6 +285,69 @@ async fn fresh_device_marks_an_id_it_never_held() {
     assert!(
         marked(&device, item),
         "the device holds the delete marker of an id it never held",
+    );
+}
+
+/// Case 4: the home's window keeps one tombstone value that is no binary,
+/// which the home answers as empty, beside a hard delete of item E. An empty
+/// value decodes hard, as the window's replay reads it, so it never refuses
+/// the page: the device writes `dt:E`, and the marker of the empty value's
+/// id too (blind review 1 of #9593). Before, one empty value refused the
+/// whole answer, and no delete of any followed window landed.
+#[test]
+fn an_empty_tombstone_value_lands_hard_beside_the_others() {
+    on_engine_stack(
+        "an_empty_tombstone_value_lands_hard_beside_the_others",
+        empty_tombstone_value_lands_hard_beside_the_others,
+    );
+}
+
+async fn empty_tombstone_value_lands_hard_beside_the_others() {
+    let device = Device::open();
+    let at = now_secs();
+    let founder = WindowKey::for_world(at, device.founder);
+    let mut items = [EntityId::now(), EntityId::now()];
+    items.sort_unstable_by_key(EntityId::to_hex);
+    let [empty_item, hard_item] = items;
+    let tombstones = Arc::new(TombstoneHome::default());
+    tombstones
+        .served
+        .lock()
+        .expect("the served tombstones")
+        .insert(
+            founder.as_str().to_owned(),
+            vec![
+                (empty_item.to_hex(), Vec::new()),
+                (hard_item.to_hex(), hard_tombstone(at)),
+            ],
+        );
+    let (url, home, release_index) = FakeHome::start_tombstones(
+        root_listing(&[WindowKey::from_timestamp(at), founder.clone()]),
+        Arc::clone(&tombstones),
+    )
+    .await;
+    release_index.send(()).expect("the index read is not held");
+    let connection = opened_connection(&device, url);
+    connection
+        .set_followed_worlds([device.founder].into_iter().collect())
+        .expect("the owner's pick");
+    let _watch = sync_once(&connection, home).await;
+
+    assert!(
+        tombstones
+            .asks
+            .lock()
+            .expect("the recorded asks")
+            .contains(&founder.as_str().to_owned()),
+        "FIXTURE: the device asks for its followed window's tombstones",
+    );
+    assert!(
+        marked(&device, hard_item),
+        "the window's hard delete lands beside a value that reads as empty",
+    );
+    assert!(
+        marked(&device, empty_item),
+        "a value that reads as empty decodes hard, as the window's replay reads it",
     );
 }
 
