@@ -421,6 +421,16 @@ inputs = ["text"]
   expect(providers.seenFixtureCalls.slice(beforeWrongRevision).every(call => call.fixtureId === `primary-${BACKGROUND_FILL}`)).toBe(true);
   await engine.restart();
   await filled(engine.client, vectors.incumbentQuery, swap.targetTurn);
+  // DIAG b46diag5: the read the semantic page makes on an unbound text slot (SearchProbe::Vector, depth light), asked
+  // with the query's own vector so no provider step is spent, in full view (kind, label, body, score), at each step.
+  const diagSnaps: Record<string, unknown> = {};
+  const diagSnap = async (label: string) => {
+    const query = new URLSearchParams({ query: vectors.incumbentQuery.join(","), view: "full", limit: "12", depth: "light" });
+    try { diagSnaps[label] = (await engine.client.request<SearchPage>("GET", `/api/search/vector?${query}`)).body; }
+    catch (error) { diagSnaps[label] = { error: String(error) }; }
+    await engine.artifacts.json("vector-diag.json", diagSnaps);
+  };
+  await diagSnap("after-restart");
   // A probe put by hand names as its family the live row its query was written from (SpaceProbe::family, FIX 9831):
   // the put refuses a family that is no stored row (400), and the check reads one paired difference per family and
   // needs SPACE_PROBE_MIN_FAMILIES of them. So each family id is witnessed as its own source turn. Its text shares no
@@ -430,6 +440,7 @@ inputs = ["text"]
   for (const [index, probe] of swap.probes.entries()) {
     diagNotes.push(await witness(engine.client, data, `Owner probe source note ${String.fromCharCode(65 + index)}.`, { turn: probe.family }));
   }
+  await diagSnap("after-notes");
 
   for (const id of [swap.bad, swap.good]) await engine.client.call("vault.embedding_spaces.declare", {
     id, dimensions: data.space.dimensions, accepts: ["text"], query_towers: ["text"], evidence: { floor: 0.7, strong: 0.9 },
@@ -438,13 +449,20 @@ inputs = ["text"]
     kind: "text", query: probe.query, family: probe.family, targets: probe.targets, author: probe.author,
   });
   await putProbe(first);
+  await diagSnap("after-put");
   await engine.client.call("vault.embedding_spaces.move", { candidate: swap.bad });
   await providers.awaitBarrier("bad-filling");
+  await diagSnap("after-move");
+  for (const id of ["7d33bb0cae19e8ef26cc5febe7bbfe82", swap.targetTurn]) {
+    try { diagSnaps[`entity-${id}`] = (await engine.client.request("GET", `/api/entity/${id}?view=full`)).body; }
+    catch (error) { diagSnaps[`entity-${id}`] = { error: String(error) }; }
+  }
+  await engine.artifacts.json("vector-diag.json", diagSnaps);
   const semantic = async () => (await engine.client.request<SearchPage>("POST", "/api/search/semantic",
     { text: first.query, view: "standard", limit: 1, depth: "light" })).body;
-  // DIAG b46diag4: the first semantic read, at limit 10, with the witnessed rows' ids beside it.
+  // DIAG b46diag4/5: the first semantic read, at limit 10 (full view since b46diag5), with the witnessed rows' ids beside it.
   const diagPage = (await engine.client.request<SearchPage>("POST", "/api/search/semantic",
-    { text: first.query, view: "standard", limit: 10, depth: "light" })).body;
+    { text: first.query, view: "full", limit: 10, depth: "light" })).body;
   await engine.artifacts.json("semantic-diag.json", { page: diagPage, target: diagTarget,
     distractor: diagDistractor, notes: diagNotes });
   const diagRow = (item: unknown) => { const row = item as Record<string, unknown>;
