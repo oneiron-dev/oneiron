@@ -15,9 +15,17 @@
 //! and its cosigner O is revoked in the final fold, B expires at once: it
 //! binds nothing, is no handover evidence and lists no directive.
 //!
+//! B may also be a federation pact's Connect, with the peer's gesture. Then
+//! the pact B set up is held suspended: it confers nothing, its grant stays
+//! bound to it, so the grant never reads as unpacted (legacy allow), and an
+//! owner key still live ends it with a Disconnect (PR 2 of the row).
+//!
 //! Expected (estimate, not run yet): red on main 64fa6f07, where B binds T
 //! until the 24 h stale-roster window ends and the handover and the directive
-//! stay valid for ever; green on the head of the fork-expiry PR.
+//! stay valid for ever; green on the head of the fork-expiry PR. The pact
+//! variant: red on that PR's head a04e1ddd, where B's pact stays active;
+//! green on the head of the lifecycle PR. The Disconnect variant guards the
+//! fix (an ended pact stays ended) and passes on both heads.
 //!
 //! Run: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test withheld_cosign_below_floor`.
@@ -30,13 +38,18 @@ use oneiron::authority::{
     AUTHORITY_LOG_SCHEMA_VERSION, ActAuthority, ActSurface, AuthorityAttestation,
     AuthorityEntryHash, AuthorityFold, AuthorityFoldIssue, AuthorityKey, AuthorityLogEntry,
     AuthorityOp, AuthoritySignature, AuthorityTier, AuthorityVaultId, DeviceAuthority,
-    HostSlipIssuer, MACHINE_ENCRYPTION_KEY_LEN, MACHINE_ENCRYPTION_SUITE_HYBRID_V1,
-    MachineDeviceClass, MachineEncryptionKey, MachineEnrolmentRequest, MachineOwnership,
-    MachineRole, OwnerHandover, OwnerHandoverCause, OwnerKeyEnrollment, ROLE_AGENT, ResidenceAct,
-    ResidenceDirective, actor_binding_is_active, authority_entry_hash, authority_transcript,
-    machine_profile_proof_transcript,
+    FederationGrantActivation, FederationLifecycleAction, FederationLifecycleKind,
+    FederationPactStatus, HostSlipIssuer, MACHINE_ENCRYPTION_KEY_LEN,
+    MACHINE_ENCRYPTION_SUITE_HYBRID_V1, MachineDeviceClass, MachineEncryptionKey,
+    MachineEnrolmentRequest, MachineOwnership, MachineRole, OwnerHandover, OwnerHandoverCause,
+    OwnerKeyEnrollment, ROLE_AGENT, ResidenceAct, ResidenceDirective, actor_binding_is_active,
+    authority_entry_hash, authority_transcript, federation_grant_activation,
+    federation_scope_digest, machine_profile_proof_transcript, sign_federation_pact_gesture,
 };
 use oneiron::consent::AuthenticatedOwner;
+use oneiron::federation::{
+    FederationDirectionScope, FederationPactScope, ScopeAxis, encode_federation_pact_scope,
+};
 use oneiron::store::GateDecisionId;
 use oneiron::{EntityId, TimeRange, Vault, VaultConfig};
 
@@ -246,15 +259,17 @@ fn put(rooted: &Rooted, row: &AuthorityLogEntry) -> String {
 
 /// C6 after K delivers the withheld row B.
 struct Delivered {
-    _rooted: Rooted,
+    rooted: Rooted,
     withheld: AuthorityEntryHash,
+    /// R, O2's revocation of O.
+    revocation: AuthorityEntryHash,
     fold: AuthorityFold,
 }
 
 /// Builds C6 with `withheld_op` as B's op (given the owner, the admitted
-/// machine and T's key) and delivers B last: C, R, then B.
+/// machine, T's key and the vault id) and delivers B last: C, R, then B.
 fn deliver_withheld(
-    withheld_op: impl FnOnce(EntityId, EntityId, &SigningKey) -> AuthorityOp,
+    withheld_op: impl FnOnce(EntityId, EntityId, &SigningKey, AuthorityVaultId) -> AuthorityOp,
 ) -> Delivered {
     let rooted = rooted();
     let machine = admit_machine(&rooted);
@@ -305,7 +320,7 @@ fn deliver_withheld(
         &[&revoked_owner],
         5,
         parents,
-        withheld_op(rooted.owner, machine, &bound_agent),
+        withheld_op(rooted.owner, machine, &bound_agent, rooted.vault_id),
     );
     let setup = [
         &agent_enrolled,
@@ -360,7 +375,8 @@ fn deliver_withheld(
         fold.issues
     );
     Delivered {
-        _rooted: rooted,
+        revocation: hash_of(&revocation),
+        rooted,
         withheld,
         fold,
     }
@@ -370,7 +386,7 @@ fn deliver_withheld(
 #[test]
 fn a_withheld_binding_cosigned_by_a_revoked_owner_key_binds_nothing() {
     let actor = EntityId::now();
-    let delivered = deliver_withheld(|_, _, bound_agent| binding_of(bound_agent, actor));
+    let delivered = deliver_withheld(|_, _, bound_agent, _| binding_of(bound_agent, actor));
     assert!(
         !actor_binding_is_active(&delivered.fold, &actor, "agent"),
         "a forked binding whose cosigner is revoked must not bind T, not even for the \
@@ -387,7 +403,7 @@ fn a_withheld_binding_cosigned_by_a_revoked_owner_key_binds_nothing() {
 /// B is an owner handover: restore evidence for the shared vault.
 #[test]
 fn a_withheld_handover_cosigned_by_a_revoked_owner_key_is_no_evidence() {
-    let delivered = deliver_withheld(|owner, _, _| {
+    let delivered = deliver_withheld(|owner, _, _, _| {
         AuthorityOp::OwnerHandover(OwnerHandover {
             shared_vault: 1,
             cause: OwnerHandoverCause::Transfer,
@@ -414,7 +430,7 @@ fn a_withheld_handover_cosigned_by_a_revoked_owner_key_is_no_evidence() {
 /// B is a residence directive to the admitted machine.
 #[test]
 fn a_withheld_directive_cosigned_by_a_revoked_owner_key_is_not_listed() {
-    let delivered = deliver_withheld(|owner, machine, _| {
+    let delivered = deliver_withheld(|owner, machine, _, _| {
         AuthorityOp::ResidenceDirective(ResidenceDirective {
             id: EntityId::now(),
             machine,
@@ -429,5 +445,136 @@ fn a_withheld_directive_cosigned_by_a_revoked_owner_key_is_not_listed() {
         "a forked directive whose cosigner is revoked must leave the valid rows at once, so \
          no machine lists or runs it; issues {:?}",
         delivered.fold.issues
+    );
+}
+
+/// The peer vault of the pact variants.
+const PEER_VAULT_ID: AuthorityVaultId = [0x56; 32];
+
+/// A Connect of pact `pact_id` over `grant`, sharing everything both ways,
+/// with the gesture of the peer's owner key (outside this vault's roster)
+/// over the side-symmetric transcript.
+fn connect_of(vault_id: AuthorityVaultId, pact_id: [u8; 32], grant: EntityId) -> AuthorityOp {
+    let peer = SigningKey::from_bytes(&[0x50; 32]);
+    let pact_nonce = [0x4E; 16];
+    let open = FederationDirectionScope {
+        worlds: ScopeAxis::All,
+        facets: ScopeAxis::All,
+        bands: ScopeAxis::All,
+    };
+    let scope = FederationPactScope {
+        lo_to_hi: open.clone(),
+        hi_to_lo: open,
+    };
+    // The fold takes the signed commitment as it stands, without the
+    // opening key, so any key keys it here.
+    let scope_digest = federation_scope_digest(
+        &[0x68; 32],
+        &pact_nonce,
+        &encode_federation_pact_scope(&scope).expect("a canonical scope"),
+    );
+    let gesture = sign_federation_pact_gesture(
+        FederationLifecycleKind::Connect,
+        &pact_id,
+        &vault_id,
+        &PEER_VAULT_ID,
+        1,
+        &scope_digest,
+        None,
+        &pact_nonce,
+        key_of(&peer),
+        |transcript| Ok(peer.sign(transcript).to_bytes().to_vec()),
+    )
+    .expect("the peer's gesture");
+    AuthorityOp::FederationLifecycle(FederationLifecycleAction {
+        kind: FederationLifecycleKind::Connect,
+        pact_id,
+        grant_ref: grant,
+        peer_vault_id: PEER_VAULT_ID,
+        pact_epoch: 1,
+        pact_scope: Some(scope),
+        effective_scope: None,
+        scope_digest: Some(scope_digest),
+        gesture: Some(gesture),
+        successor_vault_id: None,
+        pact_nonce,
+    })
+}
+
+/// B is a Connect with the peer's gesture: a federation pact over a grant.
+#[test]
+fn a_withheld_connect_cosigned_by_a_revoked_owner_key_holds_its_pact_suspended() {
+    let pact_id = [0x70; 32];
+    let grant = EntityId::now();
+    let delivered = deliver_withheld(|_, _, _, vault_id| connect_of(vault_id, pact_id, grant));
+    let fold = &delivered.fold;
+    let activation = federation_grant_activation(fold, &grant);
+    assert!(
+        matches!(
+            activation,
+            FederationGrantActivation::Inactive(FederationPactStatus::Suspended)
+        ),
+        "the pact a forked Connect set up, whose cosigner is revoked, must confer nothing \
+         and stay open to an honest Disconnect or re-pact: the grant reads {activation:?}; \
+         issues {:?}",
+        fold.issues
+    );
+    assert!(
+        fold.federation_grant_bindings
+            .get(&grant)
+            .is_some_and(|pacts| pacts.contains(&pact_id)),
+        "the grant stays bound to the held pact, so it never reads as unpacted; issues {:?}",
+        fold.issues
+    );
+    assert!(
+        !applied(fold).contains(&delivered.withheld),
+        "the forked Connect leaves the valid rows at once; issues {:?}",
+        fold.issues
+    );
+}
+
+/// After B, a live owner key ends the held pact: its Disconnect at the
+/// pact's epoch, on B and R, folds, and the pact ends rather than stays held.
+#[test]
+fn an_owner_disconnect_still_ends_the_pact_a_withheld_connect_set_up() {
+    let pact_id = [0x71; 32];
+    let grant = EntityId::now();
+    let delivered = deliver_withheld(|_, _, _, vault_id| connect_of(vault_id, pact_id, grant));
+    let revoking_owner = SigningKey::from_bytes(&[0x52; 32]);
+    let disconnect = row_signed_by(
+        &delivered.rooted,
+        &revoking_owner,
+        &[],
+        2,
+        vec![delivered.withheld, delivered.revocation],
+        AuthorityOp::FederationLifecycle(FederationLifecycleAction {
+            kind: FederationLifecycleKind::Disconnect,
+            pact_id,
+            grant_ref: grant,
+            peer_vault_id: PEER_VAULT_ID,
+            pact_epoch: 1,
+            pact_scope: None,
+            effective_scope: None,
+            scope_digest: None,
+            gesture: None,
+            successor_vault_id: None,
+            pact_nonce: [0x44; 16],
+        }),
+    );
+    let arrival = put(&delivered.rooted, &disconnect);
+    let fold = delivered.rooted.vault.authority_fold().expect("the fold");
+    assert!(
+        applied(&fold).contains(&hash_of(&disconnect)),
+        "the owner's Disconnect folds; put {arrival}, issues {:?}",
+        fold.issues
+    );
+    let activation = federation_grant_activation(&fold, &grant);
+    assert!(
+        matches!(
+            activation,
+            FederationGrantActivation::Inactive(FederationPactStatus::Disconnected)
+        ),
+        "the Disconnect ends the pact: the grant reads {activation:?}; issues {:?}",
+        fold.issues
     );
 }
