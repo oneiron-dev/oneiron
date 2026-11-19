@@ -223,7 +223,9 @@ impl Vault {
                     .try_into()
                     .map_err(|_| Error::CorruptedIndex("message project index"))?,
             )?;
-            if record::<ProjectRecord>(&self.store, &txn, id, kind)?.is_none() {
+            // The index must name a stored project; its body is read only
+            // through the fold below.
+            if !record_present(&self.store, &txn, id, kind)? {
                 return Err(Error::CorruptedIndex("message project target"));
             }
             // A project the read fold hides does not hang off the message.
