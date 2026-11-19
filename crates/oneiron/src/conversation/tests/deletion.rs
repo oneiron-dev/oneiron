@@ -615,6 +615,7 @@ fn deleting_root_middle_or_head_keeps_live_trunk_and_append() {
 fn imported_turn_has_unknown_person_author_but_owner_can_policy_delete_it() {
     let dir = tempfile::tempdir().unwrap();
     let vault = Vault::open(dir.path(), VaultConfig::default()).unwrap();
+    vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
     let owner_id = vault.ensure_embedded_owner_actor().unwrap();
     let owner = WriteActor::new(owner_id, EdgeActorClass::Human);
     let bob = EntityId::now();

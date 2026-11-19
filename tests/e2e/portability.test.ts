@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import type { FacadeInput, FacadeResult } from "@oneiron/client";
+import { PublicHttpClient } from "./support/clients.ts";
 import { EngineFixture, awaitPublic } from "./support/engine.ts";
 import { loadFixtures } from "./support/fixtures.ts";
 import { defineFile, expect, redactor, secretHex } from "./support/run.ts";
@@ -36,10 +37,12 @@ interface SignerPin { install: string; ed25519: string; slhdsa: string }
 interface FreshRestore {
   checkpoint_id: string; vault: string; unlocked_with: string;
 }
+// GET /v1/owner/status flattens its location section into the root
+// (HostStatus, crates/oneiron-server/src/api/owner_routes.rs).
 interface OwnerStatus {
-  location: { vault: string; backups: { restores: {
+  vault: string; backups: { restores: {
     checkpoint_id: string; restored_at: string; reason: string;
-  }[] } };
+  }[] };
 }
 interface FolderSource {
   folder: string; trust: string; last_rescan_at: number | null;
@@ -94,14 +97,23 @@ function sourceId(item: MemoryItem): string {
   return item.record.id;
 }
 
+// A diary is never asserted through recall. Owner canon OF-490: "To read a
+// diary, you have to state a reason". Ambient recall states none, so it never
+// returns an owner-only NOTE, the author's own included (Engine ANSWER
+// PORTABILITY06-DIARY-RECALL = B; the engine pins it in
+// memory/tests/takes_notes.rs). The entry is proven by its point read and by
+// its lexical index hit.
 async function expectDiary(
   engine: EngineFixture, query: string, entryId: string, content: string,
 ): Promise<void> {
-  const item = await recallItem(engine, query);
-  expect(item.provenance.source_revision_ids).toContain(entryId);
-  expect(item.value_text).toContain(query);
   const read = await engine.client.call("vault.get", { entity_ref: entryId });
   expect(read.value?.body).toMatchObject({ markdown: content });
+  const id = read.value!.id_hex;
+  await awaitPublic(
+    () => engine.client.call("vault.search.bm25", { query, limit: 100 }),
+    value => value.value.some(hit => hit.record?.id === id),
+    { label: `diary lexical hit ${query}` },
+  );
 }
 
 async function expectBlob(engine: EngineFixture, artifact: string, expected: Uint8Array): Promise<void> {
@@ -191,6 +203,8 @@ suite.todo(test, "PORTABILITY-04", "waits on typed import stage acknowledgement,
 // this into an old-format migration test. No on-disk fake snapshot is supplied.
 suite.todo(test, "PORTABILITY-05", "waits on authorized supplied canonical snapshot input and destination for recover-window");
 
+/** Request and CLI limit for a backup or restore of the whole vault on the dev-build E2E set. */
+const CHECKPOINT_MS = 60_000;
 suite.test(test, "PORTABILITY-06", "Encrypted backup and wrong-key refusal should work", async () => {
   const catalog = await loadFixtures();
   const facts = await catalog.readJson<Facts>("portability-facts");
@@ -210,8 +224,8 @@ suite.test(test, "PORTABILITY-06", "Encrypted backup and wrong-key refusal shoul
   redactor.add(key); redactor.add(wrongKey);
   expect(wrongKey === key).toBe(false);
   const credential = "portability-fixture-passkey"; // A label, not secret key material.
+  // A diary receipt_ref is a `put:` write marker, not a gate-ledger receipt: expectDiary reads the entry back.
   const saved = await engine.client.call("self.memory.diary", { content: note });
-  await engine.awaitReceipt(saved.receipt_ref);
   const artifact = await engine.client.call("vault.artifacts.create", {
     name: facts.attachment.name, media_type: facts.attachment.mediaType,
     content_base64: Buffer.from(blob).toString("base64"),
@@ -224,7 +238,11 @@ suite.test(test, "PORTABILITY-06", "Encrypted backup and wrong-key refusal shoul
   const signer = (await engine.client.request<SignerPin>("GET", "/v1/owner/vault-key/signer")).body;
   const trustFile = resolve(engine.root, "checkpoint-signers.json");
   await writeFile(trustFile, JSON.stringify(signer), { mode: 0o600 });
-  const backup = (await engine.client.request<BackupOutcome>("POST", "/v1/owner/backups")).body;
+  // A backup writes and seals a checkpoint of the whole vault, and the E2E set is a dev
+  // (unoptimized) build: on nelly (19 Nov) the snapshot took 10.3 s, past the 10 s request
+  // limit. The backup request and the restores below get a minute each; nothing else changes.
+  const backupClient = new PublicHttpClient(engine.url, { ...engine.client.options, timeoutMs: CHECKPOINT_MS });
+  const backup = (await backupClient.request<BackupOutcome>("POST", "/v1/owner/backups")).body;
   expect(backup.backup.bytes).toBeGreaterThan(0);
   const carrier = await readFile(backup.backup.path);
   expect(carrier.includes(Buffer.from(facts.owner.query))).toBe(false);
@@ -235,12 +253,13 @@ suite.test(test, "PORTABILITY-06", "Encrypted backup and wrong-key refusal shoul
   // This later, acknowledged write distinguishes refusal from an unnoticed
   // replacement by the older backup. No private storage inspection is needed.
   const later = await engine.client.call("self.memory.diary", { content: facts.owner.afterBackup });
-  await engine.awaitReceipt(later.receipt_ref);
+  expect((await engine.client.call("vault.get", { entity_ref: later.entry_id })).value?.body)
+    .toMatchObject({ markdown: facts.owner.afterBackup });
   await stopForOwnerCli(engine);
   const unlockArgs = ["--unlock", "passkey", "--credential", credential, "--trust", trustFile];
   const refused = await engine.cli.run([
     "restore", backup.backup.path, ...unlockArgs, ...ownerArgs(engine),
-  ], wrongKey, undefined, true);
+  ], wrongKey, CHECKPOINT_MS, true);
   expect(refused.exitCode).not.toBe(0);
   expect(refused.signal).toBeNull();
   await engine.restart();
@@ -252,12 +271,12 @@ suite.test(test, "PORTABILITY-06", "Encrypted backup and wrong-key refusal shoul
   const destination = resolve(engine.root, "restored-vault");
   const restoreArgs = ["restore", backup.backup.path, ...unlockArgs,
     "--vault-path", destination, ...ownerArgs(engine)];
-  const refusedFresh = await engine.cli.run(restoreArgs, wrongKey, undefined, true);
+  const refusedFresh = await engine.cli.run(restoreArgs, wrongKey, CHECKPOINT_MS, true);
   expect(refusedFresh.exitCode).not.toBe(0);
   expect(refusedFresh.signal).toBeNull();
   expect(await readdir(engine.root)).not.toContain("restored-vault");
   // Identical command and destination, only the private PRF input changes.
-  const restored = await engine.cli.run(restoreArgs, key, undefined, true);
+  const restored = await engine.cli.run(restoreArgs, key, CHECKPOINT_MS, true);
   expect(restored.exitCode).toBe(0);
   expect(restored.signal).toBeNull();
   const receipt = JSON.parse(restored.stdout) as FreshRestore;
@@ -273,18 +292,19 @@ suite.test(test, "PORTABILITY-06", "Encrypted backup and wrong-key refusal shoul
   await engine.restart(); // The original paired owner must authenticate the restored vault.
   await expectDiary(engine, facts.owner.query, saved.entry_id, note);
   await expectBlob(engine, artifact.artifact_id, blob);
-  const notBackedUp = await engine.client.call("vault.recall", {
-    query: facts.owner.afterBackupQuery, effort: "light", limit: 20,
-  });
-  expect(notBackedUp.items.some(item => item.value_text.includes(facts.owner.afterBackupQuery))).toBe(false);
+  // The diary written after the backup is absent from the fresh restore. A
+  // point read, not recall: recall never returns an owner-only NOTE (OF-490),
+  // so a recall miss passes whether the diary survived or not. The same read
+  // returns the backed-up diary just above.
+  expect((await engine.client.call("vault.get", { entity_ref: later.entry_id })).value).toBeNull();
   const status = (await engine.client.request<OwnerStatus>("GET", "/v1/owner/status")).body;
-  expect(status.location.vault).toBe(destination);
-  expect(status.location.backups.restores).toEqual(expect.arrayContaining([
+  expect(status.vault).toBe(destination);
+  expect(status.backups.restores).toEqual(expect.arrayContaining([
     expect.objectContaining({ checkpoint_id: backup.checkpoint_id, reason: "restore" }),
   ]));
   expect(createHash("sha256").update(await readFile(backup.backup.path)).digest("hex")).toBe(carrierDigest);
   await engine.close();
-});
+}, 120_000);
 
 suite.test(test, "PORTABILITY-07", "Folder source rescan lifecycle should work", async () => {
   const catalog = await loadFixtures();

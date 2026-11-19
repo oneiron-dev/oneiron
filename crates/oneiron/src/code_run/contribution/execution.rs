@@ -48,6 +48,7 @@ mod callable;
 
 use std::sync::Arc;
 
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
 use serde::{Deserialize, Serialize};
 
 use super::super::replay_capsule::{CapsuleHost, StepReplayCapsule};
@@ -116,24 +117,25 @@ impl ForkExecutionPin {
     }
 
     /// Its digest, bound to the executor's sandbox contract as well: the WIT
-    /// world and the shadow protocol the programs run under.
+    /// world and the shadow protocol the programs run under
+    /// (`purposes::code_run::FORK_EXECUTION_PIN`).
     #[must_use]
     pub fn digest(&self) -> [u8; 32] {
-        let mut hasher = blake3::Hasher::new_derive_key("oneiron contribution fork execution pin");
-        hasher.update(SANDBOX_WIT_WORLD_NAME.as_bytes());
-        hasher.update(&[0]);
-        hasher.update(&SHADOW_PROTOCOL_VERSION.to_be_bytes());
-        hasher.update(&self.start);
-        hasher.update(&self.bridge_start.to_be_bytes());
-        hasher.update(&self.bridge_end.to_be_bytes());
-        hasher.update(&[u8::from(self.context.is_some())]);
+        let mut digest = LegacyDigest::new(purposes::code_run::FORK_EXECUTION_PIN);
+        digest.raw(SANDBOX_WIT_WORLD_NAME.as_bytes());
+        digest.raw(&[0]);
+        digest.raw(&SHADOW_PROTOCOL_VERSION.to_be_bytes());
+        digest.raw(&self.start);
+        digest.raw(&self.bridge_start.to_be_bytes());
+        digest.raw(&self.bridge_end.to_be_bytes());
+        digest.raw(&[u8::from(self.context.is_some())]);
         if let Some(context) = &self.context {
-            hasher.update(context);
+            digest.raw(context);
         }
-        hasher.update(&self.determinism.frozen_unix_ms.to_be_bytes());
-        hasher.update(&self.determinism.rng_seed);
-        hasher.update(&self.runtime);
-        *hasher.finalize().as_bytes()
+        digest.raw(&self.determinism.frozen_unix_ms.to_be_bytes());
+        digest.raw(&self.determinism.rng_seed);
+        digest.raw(&self.runtime);
+        digest.finish()
     }
 }
 

@@ -396,6 +396,10 @@ struct Chain<'c> {
     /// The source rows of each room Hook receipt in the tail, by its ref: a
     /// hook reads one only while its own view shows them all (FIX 5429).
     room_sources: Vec<(String, Vec<EntityId>)>,
+    /// The call's result as its producer gave it, kept once a post hook's
+    /// Redact narrows the view: a later hook's input names its rows from it
+    /// (review round 2 of #9643).
+    origin: Option<Value>,
     runs: Vec<RunRecord<'c>>,
     blocks: Vec<(EntityId, HookBlock, Vec<LineageLink>)>,
     /// Queued outcomes, each with the proposal it lands, if any.
@@ -436,6 +440,7 @@ impl<'c> Chain<'c> {
             now,
             tail,
             room_sources,
+            origin: None,
             runs: Vec::new(),
             blocks: Vec::new(),
             intents: Vec::new(),
@@ -609,6 +614,7 @@ impl<'c> Chain<'c> {
                     if let Some(capture) = &self.read_capture {
                         capture.changed();
                     }
+                    self.origin.get_or_insert_with(|| view.clone());
                     for path in &paths {
                         redact::hide(&mut view, path);
                     }

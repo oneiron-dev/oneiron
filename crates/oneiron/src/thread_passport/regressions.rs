@@ -663,7 +663,8 @@ fn thread_evidence_cannot_change_subject_predicate_or_mask_on_overwrite() {
     let identity = entity(0x61);
     seed_identity(&vault, identity, "agent@example.com");
     let id = EntityId::now();
-    let body = passport_body(identity, "root@x");
+    let mut body = passport_body(identity, "root@x");
+    crate::test_util::stamp_vault_default_facet(&vault, &mut body);
     vault
         .put_claim(&id, &body, interval(), OBSERVED_AT)
         .unwrap();

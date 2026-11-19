@@ -74,6 +74,10 @@ pub(super) struct FoldContext<'a> {
     /// records count here. The pin decides no entry's validity; it decides
     /// which valid root appointment counts.
     pub(super) pin: Option<&'a PinnedRoot>,
+    /// The entries outside a proving owner-key enrolment's line (row
+    /// CARRIER-PROOF-OLD-PARENTS): set only on a log's second fold, when
+    /// its first found one.
+    pub(super) owner_key_lines: Option<&'a super::owner_key_line::OwnerKeyLines>,
     /// The verdicts of the root appointments this fold holds, which their
     /// refusals carry, and the world the counted ones recover
     /// (`root_appointment_judge`). None on a fold that judges none (an
@@ -84,6 +88,21 @@ pub(super) struct FoldContext<'a> {
 impl FoldContext<'_> {
     pub(super) fn device_can_consent(self, device: &FoldedDevice) -> bool {
         (self.consent_arm)(device)
+    }
+
+    /// Whether entry `hash` is an owner choice or a carried machine answer
+    /// outside a proving owner-key enrolment's line: it needs the owner's
+    /// proof whatever its parents hold.
+    pub(super) fn needs_owner_proof_off_the_line(self, hash: &AuthorityEntryHash) -> bool {
+        self.owner_key_lines
+            .is_some_and(|lines| lines.needs_proof(hash))
+    }
+
+    /// Whether entry `hash` enrols an owner's key outside the line of the
+    /// enrolment that made it the owner's: an invalid entry.
+    pub(super) fn refuses_off_the_line_enrolment(self, hash: &AuthorityEntryHash) -> bool {
+        self.owner_key_lines
+            .is_some_and(|lines| lines.refuses(hash))
     }
 }
 
@@ -323,14 +342,27 @@ fn has_re_root_ancestor(
     false
 }
 
+/// The rows a fold judges ([`judged_entries`]), by hash: each passed
+/// `verify_entry_signatures` when it was taken, and none hangs off another
+/// branch's side entry. A row's signatures are a function of its bytes
+/// alone, so a pass over these rows reads that verdict and never verifies
+/// again (`entry_transition::fold_judged_entry_state`). Only
+/// [`judged_entries`] builds one; it reads as the map it holds.
+pub(super) struct JudgedRows(BTreeMap<AuthorityEntryHash, AuthorityLogEntry>);
+
+impl std::ops::Deref for JudgedRows {
+    type Target = BTreeMap<AuthorityEntryHash, AuthorityLogEntry>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
 /// The entries a fold of `entries` judges, by hash: each well signed, none
 /// hanging off another branch's side entry. With the issues found.
-fn judged_entries(
+pub(super) fn judged_entries(
     entries: &[AuthorityLogEntry],
-) -> (
-    BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
-    Vec<AuthorityFoldIssue>,
-) {
+) -> (JudgedRows, Vec<AuthorityFoldIssue>) {
     let mut by_hash = BTreeMap::<AuthorityEntryHash, AuthorityLogEntry>::new();
     let mut issues = Vec::new();
     for entry in entries {
@@ -348,7 +380,7 @@ fn judged_entries(
         by_hash.remove(&hash);
         issues.push(AuthorityFoldIssue::InvalidEntry(hash));
     }
-    (by_hash, issues)
+    (JudgedRows(by_hash), issues)
 }
 
 /// The floors a fold of `entries` under `context` applies: the rows' own
@@ -381,17 +413,13 @@ pub(super) struct OnceFloors {
 
 /// Where a once fold with sequence floors on takes its floors from, given
 /// its well-signed rows, their ancestor index and its context.
-pub(super) type OnceFloorsOf = fn(
-    &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
-    &AncestorIndex,
-    FoldContext<'_>,
-) -> OnceFloors;
+pub(super) type OnceFloorsOf = fn(&JudgedRows, &AncestorIndex, FoldContext<'_>) -> OnceFloors;
 
 /// Each row's floor from the rows (`rows_floor`), never from the order they
 /// arrived in, so every install folds them alike; then causal ancestry
 /// vouches for what it can (`sequence_ancestry`).
 fn rows_once_floors(
-    by_hash: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+    by_hash: &JudgedRows,
     ancestors: &AncestorIndex,
     context: FoldContext<'_>,
 ) -> OnceFloors {
@@ -448,29 +476,57 @@ pub(super) fn fold_authority_log_once_with(
     // Restrictive facts are proved independently of the surviving roster.
     let mut revoke_facts =
         super::revoke_proof::derive_revoke_facts(&by_hash, &entry_ancestors, context);
-    let mut states = super::fold_schedule::fold_entry_states(&by_hash, context, &mut issues);
-
-    // A handoff's predecessor stays retired on every branch, not only its own.
-    // Concurrent federation confirmations that share an id or a nonce all stay
-    // valid as spent evidence: no hash order picks a loser, so no signer's
-    // confirmation drops another signer's rows (RULING
-    // COLLISION-SETTLEMENT-SHAPE = A, 16 Nov 04:39).
-    let retirements = super::retired_signers::settle_handoffs(
-        &mut states,
-        &by_hash,
-        &entry_ancestors,
-        handoffs,
-        &appointments.recovered,
-        &mut issues,
-    );
-    super::world_refold::refold_world_edits(
-        &mut states,
-        &by_hash,
-        &entry_ancestors,
-        context,
-        &mut issues,
-        |hash| retirements.fences_signer_of(hash, &by_hash),
-    );
+    let issues_before_states = issues.len();
+    // An owner key's enrolment reaches across branches, as a handoff does
+    // (row CARRIER-PROOF-OLD-PARENTS): while a fold's settled states hold an
+    // owner-key enrolment the folds before it did not take, and its line
+    // changes the lines in force, the log folds again with the lines of
+    // every enrolment taken so far, a key at a time, earliest first. Each
+    // fold drops the issues of the one before it.
+    let mut owner_key_enrolments = super::owner_key_line::OwnerKeyEnrolments::default();
+    let mut owner_key_lines: Option<super::owner_key_line::OwnerKeyLines> = None;
+    let (states, retirements) = loop {
+        let context = FoldContext {
+            owner_key_lines: owner_key_lines.as_ref(),
+            ..context
+        };
+        let mut states = super::fold_schedule::fold_entry_states(&by_hash, context, &mut issues);
+        // A handoff's predecessor stays retired on every branch, not only
+        // its own. Concurrent federation confirmations that share an id or
+        // a nonce all stay valid as spent evidence: no hash order picks a
+        // loser, so no signer's confirmation drops another signer's rows
+        // (RULING COLLISION-SETTLEMENT-SHAPE = A, 16 Nov 04:39).
+        let retirements = super::retired_signers::settle_handoffs(
+            &mut states,
+            &by_hash,
+            &entry_ancestors,
+            handoffs,
+            &appointments.recovered,
+            &mut issues,
+        );
+        super::world_refold::refold_world_edits(
+            &mut states,
+            &by_hash,
+            &entry_ancestors,
+            context,
+            &mut issues,
+            |hash| retirements.fences_signer_of(hash, &by_hash),
+        );
+        let Some(lines) = owner_key_enrolments.grow(
+            &states,
+            &by_hash,
+            &entry_ancestors,
+            owner_key_lines.as_ref(),
+        ) else {
+            break (states, retirements);
+        };
+        owner_key_lines = Some(lines);
+        issues.truncate(issues_before_states);
+    };
+    let context = FoldContext {
+        owner_key_lines: owner_key_lines.as_ref(),
+        ..context
+    };
     // A counted row below its floor shows its signer forked its sequence
     // (Engine RULING SEQ-FLOOR-SHAPE-S = B): the fold records the fork.
     issues.extend(
@@ -521,6 +577,7 @@ pub(super) fn fold_authority_log_once_with(
             actor_bindings: BTreeMap::new(),
             machines: BTreeMap::new(),
             held_machine_answers: BTreeMap::new(),
+            restored_enrolments: BTreeMap::new(),
             waiting_owner_choices: BTreeSet::new(),
             pinned_root: None,
             root_anchors: BTreeMap::new(),
@@ -556,6 +613,12 @@ pub(super) fn fold_authority_log_once_with(
     revoke_facts.add_dropped_slip_restrictions(&by_hash, &entry_ancestors, context, &states);
     revoke_facts.forget_retired(&retirements, &by_hash, &entry_ancestors);
     revoke_facts.forget_unsettled(&states, &by_hash, &entry_ancestors);
+    revoke_facts.forget_held_off_the_line(owner_key_lines.as_ref(), &states);
+    revoke_facts.forget_revokes_above_refused_enrolments(
+        owner_key_lines.as_ref(),
+        &by_hash,
+        &entry_ancestors,
+    );
     let mut merged: Option<FoldState> = None;
     let mut valid_entries = ValidEntries::new();
     for (hash, state) in &states {
@@ -578,7 +641,7 @@ pub(super) fn fold_authority_log_once_with(
         super::fold_project::Settled {
             merged,
             valid_entries,
-            by_hash: &by_hash,
+            by_hash: &*by_hash,
             revoke_facts: &revoke_facts,
             retired_keys,
             closed_handoffs: retirements.handoffs(),

@@ -2,6 +2,7 @@
 
 use crate::dreamer_consolidation::routing::CandidateKeys;
 use crate::memory::{MemoryError, MemoryResult};
+use oneiron_contracts::fingerprint::{LegacyDigest, LegacyPurpose, purposes};
 
 /// The word-free equality tokens of one native key triple and its slice.
 pub(super) struct ObservationKeyTokens {
@@ -39,18 +40,27 @@ pub(super) fn observation_key_tokens(keys: &CandidateKeys) -> MemoryResult<Obser
     let encoded_slice = serde_json::to_vec(&(&subject, &world, &facet, &relationships, &project))
         .map_err(|error| MemoryError::bad_request(error.to_string()))?;
     Ok(ObservationKeyTokens {
-        identity: equality_token(b"oneiron:extraction:identity-token:v1", &encoded_identity),
-        topic: equality_token(b"oneiron:extraction:topic-token:v1", &keys.topic_key),
-        value: equality_token(b"oneiron:extraction:value-token:v1", &keys.value_key),
-        slice: equality_token(b"oneiron:extraction:slice-token:v1", &encoded_slice),
+        identity: equality_token(
+            purposes::dreamer::EXTRACTION_IDENTITY_TOKEN,
+            &encoded_identity,
+        ),
+        topic: equality_token(purposes::dreamer::EXTRACTION_TOPIC_TOKEN, &keys.topic_key),
+        value: equality_token(purposes::dreamer::EXTRACTION_VALUE_TOKEN, &keys.value_key),
+        slice: equality_token(purposes::dreamer::EXTRACTION_SLICE_TOKEN, &encoded_slice),
     })
 }
 
-/// Hashes native key bytes after one token-kind domain and a NUL separator.
-fn equality_token(domain: &[u8], bytes: &[u8]) -> String {
-    let mut hash = blake3::Hasher::new();
-    hash.update(domain);
-    hash.update(&[0]);
-    hash.update(bytes);
-    hash.finalize().to_hex().to_string()
+/// Hashes native key bytes after one token kind's tag and a NUL separator. Each tag is a
+/// legacy purpose: an observations page already sends these bytes, so they are kept (K,
+/// PLAN-UC-04).
+fn equality_token(purpose: LegacyPurpose, bytes: &[u8]) -> String {
+    oneiron_hex::encode(&LegacyDigest::new(purpose).raw(&[0]).raw(bytes).finish())
+}
+
+/// [`observation_key_tokens`] as the identity, topic, value and slice tokens in that
+/// order, for the K door (`test_doors::fingerprint_keep_extraction_read_digests`). Not API.
+#[cfg(oneiron_test_support)]
+pub(crate) fn observation_key_tokens_for_test(keys: &CandidateKeys) -> MemoryResult<[String; 4]> {
+    let tokens = observation_key_tokens(keys)?;
+    Ok([tokens.identity, tokens.topic, tokens.value, tokens.slice])
 }

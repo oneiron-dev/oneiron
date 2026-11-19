@@ -766,3 +766,9 @@ pub(crate) fn encode_code_run_replay_value(
 ) -> Result<Vec<u8>> {
     encode_value(value, context)
 }
+
+// The pending-step K seam for the door
+// (`test_doors::fingerprint_keep_code_run_digests`), kept apart from the
+// import block above.
+#[cfg(oneiron_test_support)]
+pub(crate) use self::pending_step::pending_step_bytes_digest_for_test;

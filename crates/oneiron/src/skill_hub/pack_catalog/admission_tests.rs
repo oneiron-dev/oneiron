@@ -114,6 +114,7 @@ fn fixture(
     // legacy helper deindexes it and cannot serve this fixture.
     let dir = tempfile::tempdir()?;
     let vault = Vault::open(dir.path(), config)?;
+    vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
     let owner = vault.ensure_embedded_owner_actor().unwrap();
     let at = TimeRange { start: 1, end: 1 };
     let owner = vault.authenticate_owner(

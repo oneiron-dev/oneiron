@@ -132,6 +132,12 @@ impl ScopedReadActorKey {
             // The room its reader stands in, which it reads stamped claims
             // inside.
             fold_id(&mut hasher, self.standing_room);
+            // A Connect guest's envelope fetch reads stamped claims up to its
+            // grant's ceiling (ANSWER FED-CONNECT-STAMPED-HOME = A).
+            if let Some(ceiling) = self.connect_home_ceiling() {
+                hasher.update(b"connect_home_ceiling");
+                fold_str(&mut hasher, &format!("{ceiling:?}"));
+            }
         }
         Ok(hasher.finalize().into())
     }
@@ -400,6 +406,21 @@ impl ScopedReadActorKey {
         if self.is_homed_unnamed() {
             hasher.update(KEY_FINGERPRINT_HOME_UNNAMED);
             key_fold_id(&mut hasher, self.standing_room);
+            // And the Connect ceiling a guest's envelope fetch reads stamped
+            // claims under (ANSWER FED-CONNECT-STAMPED-HOME = A).
+            if let Some(ceiling) = self.connect_home_ceiling() {
+                hasher.update(KEY_FINGERPRINT_CONNECT_HOME_CEILING);
+                key_fold_json(&mut hasher, &ceiling);
+            }
+        }
+        // Then a key a saved lane's basis took the owner's floor from, which
+        // proves that owner's binding at each read (FIX
+        // SAVED-LANE-MEET-DROPS-OWNER-LIVENESS).
+        if self.vault_owner_ref().is_none()
+            && let Some(owner) = self.owner_binding_ref()
+        {
+            hasher.update(b"withdrawn_floor_owner");
+            key_fold_id(&mut hasher, Some(owner));
         }
         *hasher.finalize().as_bytes()
     }
@@ -412,6 +433,12 @@ const KEY_FINGERPRINT_DOMAIN: &[u8] = b"oneiron.scoped_read.actor_key_fingerprin
 /// conversation of this vault (`ScopedReadActorKey::homed_unnamed`).
 const KEY_FINGERPRINT_HOME_UNNAMED: &[u8] =
     b"oneiron.scoped_read.actor_key_fingerprint.home_unnamed";
+
+/// [`ScopedReadActorKey::key_fingerprint`]'s fold of the Connect ceiling such
+/// a key reads stamped claims under
+/// (`ScopedReadActorKey::home_cleared_to_connect_ceiling`).
+const KEY_FINGERPRINT_CONNECT_HOME_CEILING: &[u8] =
+    b"oneiron.scoped_read.actor_key_fingerprint.connect_home_ceiling";
 
 fn key_fold_len(hasher: &mut blake3::Hasher, len: usize) {
     hasher.update(&(len as u64).to_be_bytes());

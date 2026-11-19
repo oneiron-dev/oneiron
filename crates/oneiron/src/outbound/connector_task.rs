@@ -89,6 +89,13 @@ pub(super) struct ConnectorSendTaskBody {
     /// still in flight; device-local intent rows never enter this body.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) outcome: Option<ConnectorSendTaskOutcome>,
+    /// When [`Self::outcome`] was last set: the `now`, in seconds, of the
+    /// write that changed it. The body updater stamps it whenever the
+    /// outcome changes and clears it with the outcome. Additive and elided
+    /// when absent: a body written before the stamp hydrates with none, and
+    /// its settlement stays with its attempts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) outcome_at: Option<u64>,
     /// Synced terminal reason for a mechanically collapsed send.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) suppression: Option<String>,
@@ -287,6 +294,10 @@ pub struct ConnectorSendTask {
     /// The owner's ask a send that may have gone out waits on (FIX 4747).
     pub uncertain_send: Option<UncertainSendHold>,
     pub outcome: Option<ConnectorSendTaskOutcome>,
+    /// When [`Self::outcome`] was set, in recorded seconds: the settlement a
+    /// board acknowledgement answers. `None` while in flight and on a body
+    /// written before the stamp.
+    pub outcome_at: Option<u64>,
     /// Synced terminal suppression reason, when the engine collapsed a send.
     pub suppression: Option<String>,
     /// Frozen host UTC offset in minutes. `None` ⇒ hostless schedule: the
@@ -388,6 +399,7 @@ pub(crate) fn put_connector_send_task_in_txn(
         lookup_cleared_generation: None,
         uncertain_send: None,
         outcome: None,
+        outcome_at: None,
         suppression: None,
         utc_offset_minutes: schedule_context.utc_offset_minutes,
         iana_timezone: schedule_context.iana_timezone.clone(),
@@ -579,6 +591,7 @@ impl Vault {
             engine_send_id: body.engine_send_id,
             uncertain_send: body.uncertain_send,
             outcome: body.outcome,
+            outcome_at: body.outcome_at,
             suppression: body.suppression,
             utc_offset_minutes: body.utc_offset_minutes,
             iana_timezone: body.iana_timezone,
@@ -1194,8 +1207,11 @@ pub(super) fn project_connector_send_task_suppression_in_txn(
             body.outcome = Some(ConnectorSendTaskOutcome::Delivered);
             body.suppression = None;
         } else {
+            // The caller fails the attempt in this write: that failure is the
+            // outcome's instant, as for any failed attempt.
             body.outcome = Some(ConnectorSendTaskOutcome::Failed);
             body.suppression = Some("dedupe".to_owned());
+            body.outcome_at = Some(now);
         }
         Ok(())
     })
@@ -1284,6 +1300,34 @@ pub(super) fn project_connector_send_task_outcome_in_txn(
     outcome: ConnectorSendTaskOutcome,
     now: u64,
 ) -> Result<(), Error> {
+    project_outcome_in_txn(vault, wtxn, task_ref, outcome, now, false)
+}
+
+/// [`project_connector_send_task_outcome_in_txn`] in the write that also
+/// fails one of the TASK's attempts at `now`. That failure is the outcome's
+/// instant even when the outcome stands as it was (a send that fails again,
+/// on this machine or on the one that took it over), so every peer's
+/// acknowledgement fence answers the newest failure, as the failed head does
+/// on the machine that holds it. A write that fails no attempt (a replay, a
+/// cleanup) keeps the stamp.
+pub(super) fn project_connector_send_task_attempt_failure_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    task_ref: EntityId,
+    outcome: ConnectorSendTaskOutcome,
+    now: u64,
+) -> Result<(), Error> {
+    project_outcome_in_txn(vault, wtxn, task_ref, outcome, now, true)
+}
+
+fn project_outcome_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    task_ref: EntityId,
+    outcome: ConnectorSendTaskOutcome,
+    now: u64,
+    attempt_failed: bool,
+) -> Result<(), Error> {
     #[cfg(test)]
     if matches!(
         outcome,
@@ -1302,6 +1346,9 @@ pub(super) fn project_connector_send_task_outcome_in_txn(
     update_connector_send_task_body_in_txn(vault, wtxn, task_ref, now, |body| {
         body.outcome = Some(outcome);
         body.suppression = None;
+        if attempt_failed {
+            body.outcome_at = Some(now);
+        }
         Ok(())
     })
 }
@@ -1318,7 +1365,15 @@ fn update_connector_send_task_body_in_txn(
         .port_entity_record(&*wtxn, &task_ref)?
         .ok_or(Error::EntityNotFound)?;
     let mut body = decode_connector_send_task_body(raw.entity_type, &raw.body)?;
+    let outcome_before = body.outcome;
     update(&mut body)?;
+    // The outcome's instant moves with the outcome, and with a write that
+    // fails an attempt (its closure stamps that failure): any other write
+    // that leaves the outcome as it stood keeps the instant already stamped,
+    // so an acknowledgement of that outcome stays answered.
+    if body.outcome != outcome_before {
+        body.outcome_at = body.outcome.map(|_| now);
+    }
     let encoded = rmp_serde::to_vec_named(&body)
         .map_err(|_| Error::InvariantViolation("connector task body encode failed"))?;
     // A no-op update writes NOTHING. The executor re-takes its lease on

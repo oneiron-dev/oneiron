@@ -52,7 +52,7 @@ fn selector_replay_is_durable_and_bound_to_current_principal_grant_and_payload()
         &key,
         WorkKind::Selector,
         &payload,
-        (100, 10, &[]),
+        (100, vault.now_recorded_at(), &[]),
         None,
     )
     .unwrap();

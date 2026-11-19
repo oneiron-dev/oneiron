@@ -553,14 +553,15 @@ pub struct CheckedBuiltinConnection {
     pub check: super::PackSetupCheckRecord,
 }
 
-#[cfg(oneiron_test_support)]
+#[cfg(any(test, oneiron_test_support))]
 impl Vault {
     /// Door for `tests/booking_feed_move_held.rs`
     /// ([FEED-MOVE-HOLD-UNTESTED-AND-INCREMENTAL-CURSOR]): removes this
     /// vault's first-open built-in pack seed marker, so the built-in channel
     /// check (OF-519) reads the vault as one that never seeded the packs, as
     /// an unseeded open leaves it. Every other seeded row stays. Compiled
-    /// only under `--cfg oneiron_test_support`; never API.
+    /// only for the crate's unit tests and under `--cfg oneiron_test_support`;
+    /// never API.
     ///
     /// # Errors
     ///
