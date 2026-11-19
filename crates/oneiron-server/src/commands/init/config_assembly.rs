@@ -2,7 +2,10 @@
 //! the file already there, and staged beside it for [`super::setup_models`]
 //! to validate before it replaces the file. An existing file that does not
 //! parse names only itself and the place it failed (FIX 9477), and stays as
-//! it was.
+//! it was. The existing file is read through serve's own reader, so one serve
+//! refuses (any user can write it, or it sets the issuer key and others can
+//! read it) is refused with serve's words and stays as it was too: the keys
+//! init keeps are keys serve would trust (FIX INIT-ADOPTS-UNADMITTED-CONFIG).
 
 use crate::cli::InitArgs;
 use crate::config::{
@@ -161,10 +164,10 @@ pub(super) fn config_text(
     choice: EmbedderProvider,
     path: &Path,
 ) -> anyhow::Result<String> {
-    let mut table: toml::Table = match std::fs::read_to_string(path) {
+    let mut table: toml::Table = match crate::config::merge::read_config_file(path) {
         Ok(text) => crate::config::parse_toml(path, &text)?,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => toml::Table::new(),
-        Err(error) => return Err(error.into()),
+        Err(error) if is_absent(&error) => toml::Table::new(),
+        Err(error) => return Err(error),
     };
     if choice != EmbedderProvider::Endpoint
         && (args.embedder_endpoint.is_some()
@@ -297,6 +300,14 @@ pub(super) fn config_text(
     Ok(toml::to_string_pretty(&table)?)
 }
 
+/// Whether `error` says the config file is not there: init then writes a
+/// new one.
+fn is_absent(error: &anyhow::Error) -> bool {
+    error
+        .downcast_ref::<io::Error>()
+        .is_some_and(|error| error.kind() == io::ErrorKind::NotFound)
+}
+
 pub(super) fn stage_config(path: &Path, text: &str) -> anyhow::Result<PathBuf> {
     let parent = path
         .parent()
@@ -313,4 +324,82 @@ pub(super) fn stage_config(path: &Path, text: &str) -> anyhow::Result<PathBuf> {
     file.write_all(text.as_bytes())?;
     file.sync_all()?;
     Ok(staged)
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::super::{init_with_env, read_config};
+    use crate::cli::InitArgs;
+    use crate::config::{EmbedderProvider, EnvConfig};
+    use std::os::unix::fs::PermissionsExt;
+    use std::path::Path;
+
+    /// A config init keeps a key of (`port`) and replaces a section of.
+    const EXISTING: &str = "port = 12345\n[embedder]\nprovider = \"local\"\n";
+
+    fn answers(dir: &Path, config: &Path) -> InitArgs {
+        InitArgs {
+            path: dir.join("vault"),
+            config: Some(config.to_path_buf()),
+            embedder: Some(EmbedderProvider::None),
+            dimensions: Some(32),
+            map_size: 64 * 1024 * 1024,
+            ..Default::default()
+        }
+    }
+
+    /// `text` at `path` with exactly `mode`, whatever the umask.
+    fn config_file(path: &Path, text: &str, mode: u32) {
+        std::fs::write(path, text).unwrap();
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode)).unwrap();
+    }
+
+    fn mode(path: &Path) -> u32 {
+        std::fs::metadata(path).unwrap().permissions().mode() & 0o777
+    }
+
+    #[test]
+    fn init_refuses_a_config_any_user_can_write_and_leaves_it_as_it_was() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("oneiron.toml");
+        config_file(&path, EXISTING, 0o666);
+        let error = init_with_env(answers(dir.path(), &path), EnvConfig::default(), None)
+            .expect_err("init kept the keys of a config any user can write");
+        let message = format!("{error:#}");
+        assert!(
+            message.contains("can be written by any user (mode 666)")
+                && message.contains("chmod o-w"),
+            "{message}"
+        );
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), EXISTING);
+        assert_eq!(mode(&path), 0o666);
+        assert!(!dir.path().join("vault").exists());
+    }
+
+    #[test]
+    fn init_refuses_a_config_that_sets_the_issuer_key_where_others_can_read_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("oneiron.toml");
+        let text = format!("auth_secret = \"{}\"\n{EXISTING}", "ab".repeat(32));
+        config_file(&path, &text, 0o644);
+        let error = init_with_env(answers(dir.path(), &path), EnvConfig::default(), None)
+            .expect_err("init kept an issuer key other users can read");
+        let message = format!("{error:#}");
+        assert!(message.contains("sets auth_secret at line 1"), "{message}");
+        assert!(!message.contains(&"ab".repeat(32)), "{message}");
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), text);
+        assert_eq!(mode(&path), 0o644);
+    }
+
+    #[test]
+    fn init_keeps_the_keys_of_a_config_only_its_owner_can_write() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("oneiron.toml");
+        config_file(&path, EXISTING, 0o644);
+        init_with_env(answers(dir.path(), &path), EnvConfig::default(), None).unwrap();
+        let config = read_config(&path, EnvConfig::default()).unwrap();
+        assert_eq!(config.port, 12345);
+        assert!(!config.embedder.unwrap().is_active());
+        assert_eq!(mode(&path), 0o600);
+    }
 }

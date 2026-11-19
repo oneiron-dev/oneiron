@@ -834,7 +834,7 @@ mod tests {
     fn init_none_preserves_unrelated_config_and_disables_old_provider() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("oneiron.toml");
-        std::fs::write(
+        crate::owner_only_file::write_owner_only_file(
             &path,
             r#"port = 12345
 [embedder]
