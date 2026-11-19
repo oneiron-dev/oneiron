@@ -150,6 +150,12 @@ pub(super) fn fold_adopted_checkpoint_tail(
         no_vouch,
         ..
     } = settled;
+    // An image that dropped its residence bodies cannot show the keys a
+    // covered directive rests on: only the whole history tells whether such
+    // a fork expires (row SEQ-FLOOR-S-WITHHELD-COSIGN).
+    if dropped_body_fork_may_expire(image, &fold) {
+        return Ok(whole());
+    }
     // This install's own view, over the rows its stale-roster window reads:
     // the tail's first-seen times are the only ones it has.
     let window_secs = log.observations.policy.stale_roster_window_secs;
@@ -490,6 +496,27 @@ fn successor_replay(
         super::checkpoint_image::AUTHORITY_REPLAY_OVERFLOW,
         ReplayEvidence::Rows,
     )
+}
+
+/// Whether `fold`, the once fold past `image`, counts a covered fork
+/// (`SequenceFork`) whose body the image dropped for
+/// [`super::checkpoint_image::AUTHORITY_RESIDENCE_BODY_OVERFLOW`] while its
+/// roster holds some key revoked. A fork expires at once when its signer or a
+/// cosigner is revoked (`stale_roster::revoked_fork_approvals`), and only its
+/// body names its cosigners; every other kind that expires so carries its
+/// body (`checkpoint_image::row`). Such a fork is rare: one signer's row
+/// withheld below its own floor.
+fn dropped_body_fork_may_expire(image: &AuthorityCheckpointV2, fold: &AuthorityFold) -> bool {
+    image.residence_overflow
+        && fold.roster.values().any(|device| device.revoked)
+        && fold.issues.iter().any(|issue| {
+            matches!(
+                issue,
+                AuthorityFoldIssue::SequenceFork(hash)
+                    if fold.valid_entries.contains(hash)
+                        && image.rows.get(hash).is_some_and(|row| row.body.is_none())
+            )
+        })
 }
 
 /// Whether every tail row folds past the image as a resumed fold's tail row

@@ -17,7 +17,7 @@ use crate::sync::TransportError;
 use crate::sync::client::{SyncEvent, SyncResidenceMode};
 use crate::sync::residence::{
     ResidenceDirectiveState, finish_residence_directive_in_txn, load_device_sync_preference,
-    pending_residence_directives, residence_refusal_reason,
+    pending_residence_directives, residence_directive_counts, residence_refusal_reason,
 };
 
 use super::SyncConnection;
@@ -144,6 +144,10 @@ impl SyncConnection {
         for pending in pending_residence_directives(vault).map_err(storage)? {
             match self.apply_residence_directive(&pending).await {
                 Ok(()) => finished += 1,
+                // The fold took the directive out since it was read as
+                // pending (row SEQ-FLOOR-S-WITHHELD-COSIGN): its act and
+                // result committed nothing, and the next one runs.
+                Err(_) if !residence_directive_counts(vault, &pending).map_err(storage)? => {}
                 Err(error) if refuses(&error) => {
                     let reason = residence_refusal_reason(&error.to_string());
                     vault

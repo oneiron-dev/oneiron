@@ -98,7 +98,7 @@ pub use custody::{
 pub use directives::ResidenceDirectiveState;
 pub(crate) use directives::{
     directive_states_in_txn, finish_residence_directive_in_txn, pending_residence_directives,
-    residence_refusal_reason,
+    residence_directive_counts, residence_refusal_reason,
 };
 pub use discover::discover_local_window_keys;
 pub(crate) use discover::retry_pending_tombstones;
