@@ -686,13 +686,17 @@ fn deck_create() {
     assert_eq!(created.slides.len(), 1);
     assert_eq!(created.slides[0].page, "main");
     let deck = read_deck(changed);
-    let paragraphs: Vec<_> = deck
-        .slides
+    assert_eq!(
+        deck.slides.len(),
+        1,
+        "the output deck holds the brief's one page as one slide"
+    );
+    let paragraphs: Vec<_> = deck.slides[0]
+        .shapes
         .iter()
-        .flat_map(|slide| &slide.shapes)
         .flat_map(|shape| &shape.paragraphs)
         .collect();
-    // Each block of the brief is one whole paragraph of the deck: a title cut short fails here.
+    // Each block of the brief is one whole paragraph of that slide: a title cut short fails here.
     for block in [
         "Fourth-quarter spending stayed inside every limit",
         "Spending stayed within the approved limit.",
