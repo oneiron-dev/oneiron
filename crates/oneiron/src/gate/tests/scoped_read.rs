@@ -984,6 +984,7 @@ fn neighborhood_counts_a_withheld_peer_once_across_its_edges() -> Result<()> {
             crate::ports::EdgeDirection::Both,
             None,
             None,
+            None,
             10,
             |_, neighbors| {
                 Ok::<_, crate::Error>(neighbors.map(|rows| {

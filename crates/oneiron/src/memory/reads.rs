@@ -648,6 +648,7 @@ impl Memory<'_> {
             &id,
             crate::ports::EdgeDirection::Both,
             kind_filter,
+            None,
             opts.min_weight,
             opts.limit,
             |txn, neighbors| {

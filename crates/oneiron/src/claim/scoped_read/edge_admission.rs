@@ -218,12 +218,19 @@ impl ScopedRead<'_> {
     /// rows in the same snapshot.
     /// A withheld anchor, and each withheld peer the scan reached, counts once
     /// in the receipt; an opaque one never does (as `edges_out`). A peer on an
-    /// edge of the other direction is not scanned, so it never counts.
+    /// edge of the other direction is not scanned, so it never counts. With
+    /// `peer_type`, a peer of another stored type is neither listed nor
+    /// counted: the caller could never use it.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "anchor, direction, relation, peer type and two budgets are distinct axes"
+    )]
     pub(crate) fn neighborhood_projected<T, E: From<Error>>(
         &self,
         center: &EntityId,
         direction: EdgeDirection,
         kind: Option<EdgeKind>,
+        peer_type: Option<u8>,
         min_weight: Option<f32>,
         limit: usize,
         project: impl FnOnce(
@@ -254,6 +261,13 @@ impl ScopedRead<'_> {
                         continue;
                     }
                     let peer = edge.target;
+                    if let Some(wanted) = peer_type
+                        && self
+                            .entity_record_in(&txn, &peer)?
+                            .is_none_or(|row| row.entity_type != wanted)
+                    {
+                        continue;
+                    }
                     let outbound = direction == EdgeDirection::Out;
                     let (src, tgt) = if outbound {
                         (*center, peer)
