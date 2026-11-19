@@ -174,6 +174,116 @@ Redact /existed from every delete the hook is asked about.
 
 const REDACT_BODY_JS: &str = "return { kind: \"redact\", paths: [\"/existed\"] };\n";
 
+/// The retarget pack for retract: one pre hook that rewrites `vault.claims.retract` claim_ref.
+const RETARGET_RETRACT_PACK: &str = "example.retargetretracthook";
+/// Its one hook.
+const RETARGET_RETRACT_HOOK: &str = "retarget-claim";
+
+const RETARGET_RETRACT_PACK_MD: &str = "---
+name: example.retargetretracthook
+description: One pre hook that retargets retracts.
+version: 1.0.0
+kind: capability
+hooks: [\"retarget-claim\"]
+---
+A pack whose one hook retargets every vault.claims.retract.
+";
+
+const RETARGET_RETRACT_HOOK_MD: &str = "---
+name: retarget-claim
+version: 1.0.0
+verbs: [\"vault.claims.retract\"]
+actors: [\"agent\", \"human\"]
+phase: pre
+outcomes: [\"rewrite\"]
+---
+Retarget every retract the hook is asked about.
+";
+
+/// The retarget pack for delete: one pre hook that rewrites `vault.delete` entity_ref.
+const RETARGET_DELETE_PACK: &str = "example.retargetdeletehook";
+/// Its one hook.
+const RETARGET_DELETE_HOOK: &str = "retarget-entity";
+
+const RETARGET_DELETE_PACK_MD: &str = "---
+name: example.retargetdeletehook
+description: One pre hook that retargets deletes.
+version: 1.0.0
+kind: capability
+hooks: [\"retarget-entity\"]
+---
+A pack whose one hook retargets every vault.delete.
+";
+
+const RETARGET_DELETE_HOOK_MD: &str = "---
+name: retarget-entity
+version: 1.0.0
+verbs: [\"vault.delete\"]
+actors: [\"agent\", \"human\"]
+phase: pre
+outcomes: [\"rewrite\"]
+---
+Retarget every delete the hook is asked about.
+";
+
+/// The redact pack for retract target: one post hook that redacts `/claim` and `/claim_short_id`.
+const REDACT_RETRACT_PACK: &str = "example.redactretracthook";
+/// Its one hook.
+const REDACT_RETRACT_HOOK: &str = "redact-claim";
+
+const REDACT_RETRACT_PACK_MD: &str = "---
+name: example.redactretracthook
+description: One post hook that redacts the retract target.
+version: 1.0.0
+kind: capability
+hooks: [\"redact-claim\"]
+---
+A pack whose one hook redacts /claim from every vault.claims.retract view.
+";
+
+const REDACT_RETRACT_HOOK_MD: &str = "---
+name: redact-claim
+version: 1.0.0
+verbs: [\"vault.claims.retract\"]
+actors: [\"agent\", \"human\"]
+phase: post
+outcomes: [\"redact\"]
+---
+Redact /claim from every retract the hook is asked about.
+";
+
+const REDACT_RETRACT_BODY_JS: &str =
+    "return { kind: \"redact\", paths: [\"/claim\", \"/claim_short_id\"] };\n";
+
+/// The redact pack for delete target: one post hook that redacts `/entity_ref` from `vault.delete`.
+const REDACT_DELETE_TARGET_PACK: &str = "example.redactdeletetargethook";
+/// Its one hook.
+const REDACT_DELETE_TARGET_HOOK: &str = "redact-entity-ref";
+
+const REDACT_DELETE_TARGET_PACK_MD: &str = "---
+name: example.redactdeletetargethook
+description: One post hook that redacts the delete target.
+version: 1.0.0
+kind: capability
+hooks: [\"redact-entity-ref\"]
+---
+A pack whose one hook redacts /entity_ref from every vault.delete view.
+";
+
+const REDACT_DELETE_TARGET_HOOK_MD: &str = "---
+name: redact-entity-ref
+version: 1.0.0
+verbs: [\"vault.delete\"]
+actors: [\"agent\", \"human\"]
+phase: post
+outcomes: [\"redact\"]
+---
+Redact /entity_ref from every delete the hook is asked about.
+";
+
+const REDACT_DELETE_TARGET_BODY_JS: &str =
+    "return { kind: \"redact\", paths: [\"/entity_ref\"] };\n";
+
 /// A distinct slip id for each credential a test mints.
 fn next_slip_id() -> [u8; 32] {
     static NEXT: AtomicU8 = AtomicU8::new(1);
@@ -517,14 +627,154 @@ impl Served {
         }
     }
 
+    /// A non-owner PERSON who authors as `human`: self-authorship, never the owner's door.
+    fn human_author(&self, name: &str) -> EntityId {
+        self.vault
+            .ensure_agent_principal(name)
+            .expect("a human author PERSON")
+    }
+
+    /// An `auto` claim `author` writes as `human` on `predicate`: distinct predicates stay
+    /// distinct heads, so A and B both stand. A human's own retract lands at once: the
+    /// parking lane is the agent's alone (`Memory::claim_retract`), so no consent pends.
+    fn human_claim(&self, author: EntityId, predicate: &str, value: &str) -> EntityId {
+        let input = ClaimInput {
+            id: None,
+            predicate: predicate.to_owned(),
+            subject_ref: self.subject.to_hex(),
+            value: json!(value),
+            confidence: 1.0,
+            confidence_details: None,
+            source: "user_stated".to_owned(),
+            world_ref: None,
+            relationship_ref: None,
+            scope: None,
+            valid_from: None,
+            valid_to: None,
+            occurred_at: Some(100),
+            learned_at: Some(100),
+            salience: None,
+        };
+        let receipt = self
+            .vault
+            .memory(author, EdgeActorClass::Human)
+            .claim_upsert(&input)
+            .expect("human claim");
+        assert_eq!(receipt.approval, "auto");
+        let id = resolve_entity_ref(&self.vault, &receipt.claim_short_id).expect("claim id");
+        self.assert_auto_standing(id, "a human auto claim stands before the retract");
+        id
+    }
+
+    /// The `auto` claim still stands.
+    fn assert_auto_standing(&self, id: EntityId, why: &str) {
+        let body = self
+            .vault
+            .get_claim(&id)
+            .expect("read claim")
+            .expect("the claim exists");
+        assert_eq!(body.lifecycle, ClaimLifecycleStatus::Active, "{why}");
+        assert_eq!(body.approval, ClaimApprovalStatus::Auto, "{why}");
+        assert_eq!(body.valid_to, None, "{why}");
+    }
+
+    /// The owner puts the retarget pack for retract: one pre hook rewriting `claim_ref` to `target`.
+    fn install_retarget_retract_hook(&self, target: EntityId) {
+        let body = format!(
+            "return {{ kind: \"rewrite\", args: {{ ...input.args, claim_ref: \"{}\" }} }};\n",
+            target.to_hex()
+        );
+        let files = vec![
+            HubFile::new("PACK.md", RETARGET_RETRACT_PACK_MD),
+            HubFile::new(
+                format!("hooks/{RETARGET_RETRACT_HOOK}/HOOK.md"),
+                RETARGET_RETRACT_HOOK_MD,
+            ),
+            HubFile::new(format!("hooks/{RETARGET_RETRACT_HOOK}/body.js"), body),
+        ];
+        match self.vault.put_pack(&self.owner_proof, files) {
+            Ok(PackInstallDisposition::Installed(receipt)) => {
+                assert_eq!(receipt.pack_name, RETARGET_RETRACT_PACK);
+            }
+            other => panic!("the owner's retarget retract pack installs: {other:?}"),
+        }
+    }
+
+    /// The owner puts the retarget pack for delete: one pre hook rewriting `entity_ref` to `target`.
+    fn install_retarget_delete_hook(&self, target: EntityId) {
+        let body = format!(
+            "return {{ kind: \"rewrite\", args: {{ ...input.args, entity_ref: \"{}\" }} }};\n",
+            target.to_hex()
+        );
+        let files = vec![
+            HubFile::new("PACK.md", RETARGET_DELETE_PACK_MD),
+            HubFile::new(
+                format!("hooks/{RETARGET_DELETE_HOOK}/HOOK.md"),
+                RETARGET_DELETE_HOOK_MD,
+            ),
+            HubFile::new(format!("hooks/{RETARGET_DELETE_HOOK}/body.js"), body),
+        ];
+        match self.vault.put_pack(&self.owner_proof, files) {
+            Ok(PackInstallDisposition::Installed(receipt)) => {
+                assert_eq!(receipt.pack_name, RETARGET_DELETE_PACK);
+            }
+            other => panic!("the owner's retarget delete pack installs: {other:?}"),
+        }
+    }
+
+    /// The owner puts the redact pack for retract target: one post hook redacting `/claim` and
+    /// `/claim_short_id` from `vault.claims.retract`.
+    fn install_redact_retract_target_hook(&self) {
+        let files = vec![
+            HubFile::new("PACK.md", REDACT_RETRACT_PACK_MD),
+            HubFile::new(
+                format!("hooks/{REDACT_RETRACT_HOOK}/HOOK.md"),
+                REDACT_RETRACT_HOOK_MD,
+            ),
+            HubFile::new(
+                format!("hooks/{REDACT_RETRACT_HOOK}/body.js"),
+                REDACT_RETRACT_BODY_JS,
+            ),
+        ];
+        match self.vault.put_pack(&self.owner_proof, files) {
+            Ok(PackInstallDisposition::Installed(receipt)) => {
+                assert_eq!(receipt.pack_name, REDACT_RETRACT_PACK);
+            }
+            other => panic!("the owner's redact retract pack installs: {other:?}"),
+        }
+    }
+
+    /// The owner puts the redact pack for delete target: one post hook redacting `/entity_ref`.
+    fn install_redact_delete_target_hook(&self) {
+        let files = vec![
+            HubFile::new("PACK.md", REDACT_DELETE_TARGET_PACK_MD),
+            HubFile::new(
+                format!("hooks/{REDACT_DELETE_TARGET_HOOK}/HOOK.md"),
+                REDACT_DELETE_TARGET_HOOK_MD,
+            ),
+            HubFile::new(
+                format!("hooks/{REDACT_DELETE_TARGET_HOOK}/body.js"),
+                REDACT_DELETE_TARGET_BODY_JS,
+            ),
+        ];
+        match self.vault.put_pack(&self.owner_proof, files) {
+            Ok(PackInstallDisposition::Installed(receipt)) => {
+                assert_eq!(receipt.pack_name, REDACT_DELETE_TARGET_PACK);
+            }
+            other => panic!("the owner's redact delete target pack installs: {other:?}"),
+        }
+    }
+
     /// A NOTE `author` writes about the subject, by its full hex ref.
     fn note_by(&self, author: EntityId) -> String {
+        self.note_by_with(author, "a take about the subject")
+    }
+
+    /// A NOTE `author` writes with `markdown`: distinct takes stay distinct NOTEs.
+    fn note_by_with(&self, author: EntityId, markdown: &str) -> String {
         self.vault
             .memory(author, EdgeActorClass::Agent)
-            .author_take(
-                TakeTarget::Subject(self.subject),
-                "a take about the subject",
-            )
+            .author_take(TakeTarget::Subject(self.subject), markdown)
             .expect("author a NOTE")
             .id_hex
     }
@@ -889,6 +1139,151 @@ fn a_post_hook_redacting_existed_omits_it_but_still_deletes() {
             body["delete"].get("existed").is_none(),
             "the redacted existed stays omitted: {body}"
         );
+        assert_eq!(body["delete"]["reason"], "user_delete", "{body}");
+        assert_eq!(body["delete"]["hard"], false, "{body}");
+        assert_eq!(body["delete"]["state"], "applied", "{body}");
+        assert!(
+            fx.deleted(&note),
+            "the redacted view still commits the delete"
+        );
+    });
+}
+
+#[test]
+fn a_hook_retargeted_retract_reports_the_claim_it_retracted() {
+    on_engine_stack(|| async {
+        let fx = served_without_hooks();
+        let author = fx.human_author("retarget-retract-author");
+        let claim_a = fx.human_claim(author, "profile.retarget_a", "alpha");
+        let claim_b = fx.human_claim(author, "profile.retarget_b", "beta");
+        assert_ne!(claim_a, claim_b, "A and B are distinct claims");
+        fx.install_retarget_retract_hook(claim_b);
+        let token = fx.credential(author, "human");
+
+        let (status, body) = fx.retract(&token, claim_a).await;
+
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["verb"], "retract", "{body}");
+        assert_eq!(body["id"], claim_b.to_hex(), "{body}");
+        assert_ne!(
+            body["id"],
+            claim_a.to_hex(),
+            "the answer names B, not the requested A"
+        );
+        assert!(
+            body.get("at").is_none(),
+            "the facade path reports no time: {body}"
+        );
+        assert_ne!(
+            body["approval"], "pending",
+            "a human own retract lands at once: {body}"
+        );
+        let retracted = fx
+            .vault
+            .get_claim(&claim_b)
+            .expect("read B")
+            .expect("B exists");
+        assert_eq!(retracted.lifecycle, ClaimLifecycleStatus::Retracted);
+        fx.assert_auto_standing(claim_a, "the retarget leaves A standing");
+        let pending = fx.vault.pending_gate_consents(10).expect("pending");
+        assert!(
+            !pending
+                .iter()
+                .any(|row| row.claim_id == *claim_a.as_bytes()
+                    || row.claim_id == *claim_b.as_bytes()),
+            "neither claim waits for consent: {pending:?}"
+        );
+    });
+}
+
+#[test]
+fn a_hook_retargeted_delete_reports_the_entity_it_deleted() {
+    on_engine_stack(|| async {
+        let fx = served_without_hooks();
+        let deleter = agent_with_grant(&fx, "retarget_delete_agent", &["read", "delete"]);
+        let note_a = fx.note_by_with(deleter, "a first take about the subject");
+        let note_b = fx.note_by_with(deleter, "a second take about the subject");
+        assert_ne!(note_a, note_b, "A and B are distinct NOTEs");
+        let target_b = EntityId::from_hex(&note_b).expect("B id");
+        fx.install_retarget_delete_hook(target_b);
+        let token = fx.credential(deleter, "agent");
+
+        let (status, body) = fx.delete(&token, &note_a).await;
+
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["verb"], "delete", "{body}");
+        assert_eq!(body["operation"], "delete_entity", "{body}");
+        assert_eq!(body["id"], note_b, "{body}");
+        assert_ne!(
+            body["id"], note_a,
+            "the answer names B, not the requested A"
+        );
+        assert!(
+            body["delete"].get("entity_ref").is_none(),
+            "the executed target leaves no duplicate nested field: {body}"
+        );
+        assert_eq!(body["delete"]["existed"], true, "{body}");
+        assert_eq!(body["delete"]["reason"], "user_delete", "{body}");
+        assert_eq!(body["delete"]["hard"], false, "{body}");
+        assert_eq!(body["delete"]["state"], "applied", "{body}");
+        assert!(fx.deleted(&note_b), "the retarget deletes B");
+        assert!(!fx.deleted(&note_a), "the retarget leaves A live");
+    });
+}
+
+#[test]
+fn a_post_hook_redacting_retract_target_omits_id_but_still_retracts() {
+    on_engine_stack(|| async {
+        let fx = served_without_hooks();
+        let author = fx.human_author("redact-retract-author");
+        let claim = fx.human_claim(author, "profile.redact_target", "gamma");
+        fx.install_redact_retract_target_hook();
+        let token = fx.credential(author, "human");
+
+        let (status, body) = fx.retract(&token, claim).await;
+
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["verb"], "retract", "{body}");
+        assert!(
+            body.get("id").is_none(),
+            "a redacted target stays omitted with no fallback: {body}"
+        );
+        assert_ne!(
+            body["approval"], "pending",
+            "the redacted view still lands: {body}"
+        );
+        let retracted = fx
+            .vault
+            .get_claim(&claim)
+            .expect("read claim")
+            .expect("the claim exists");
+        assert_eq!(retracted.lifecycle, ClaimLifecycleStatus::Retracted);
+    });
+}
+
+#[test]
+fn a_post_hook_redacting_delete_target_omits_id_but_still_deletes() {
+    on_engine_stack(|| async {
+        let fx = served_without_hooks();
+        fx.install_redact_delete_target_hook();
+        let deleter = agent_with_grant(&fx, "redact_target_delete_agent", &["read", "delete"]);
+        let note = fx.note_by(deleter);
+        let token = fx.credential(deleter, "agent");
+
+        let (status, body) = fx.delete(&token, &note).await;
+
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["verb"], "delete", "{body}");
+        assert_eq!(body["operation"], "delete_entity", "{body}");
+        assert!(
+            body.get("id").is_none(),
+            "a redacted target stays omitted with no fallback: {body}"
+        );
+        assert!(
+            body["delete"].get("entity_ref").is_none(),
+            "the redacted target leaves no nested field: {body}"
+        );
+        assert_eq!(body["delete"]["existed"], true, "{body}");
         assert_eq!(body["delete"]["reason"], "user_delete", "{body}");
         assert_eq!(body["delete"]["hard"], false, "{body}");
         assert_eq!(body["delete"]["state"], "applied", "{body}");
