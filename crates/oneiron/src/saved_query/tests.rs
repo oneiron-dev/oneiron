@@ -500,6 +500,7 @@ fn a_held_claim_never_enrolls_under_negation_or_by_presence() {
             },
             ..sample_definition()
         };
+        store_query(&vault, id(query), &definition);
         let request = EvaluationRequest {
             query_ref: id(query),
             campaign_ref: id(query),
@@ -528,6 +529,35 @@ fn a_held_claim_never_enrolls_under_negation_or_by_presence() {
         "a held opt-out still excludes"
     );
     assert_eq!(fit(0xD5), MatchVerdict::NoMatch, "a held fit never enrolls");
+}
+
+/// Registers the saved query kind and stores `definition` as the query
+/// `query_ref` names, as `create` does: the evaluator writes its memo for a
+/// stored query of a registered kind only, and refuses otherwise ("saved
+/// query kind is not registered in this vault"; the 20 Nov night, FIX
+/// [NIGHTLY20-OWN-PR-TEST-REDS]).
+fn store_query(vault: &crate::Vault, query_ref: EntityId, definition: &SavedQueryDefinition) {
+    if super::storage::saved_query_type_byte(vault).is_err() {
+        crate::campaign::register_crm_pack(
+            vault,
+            107,
+            108,
+            crate::registry::TypeByteFamily::Productivity,
+        )
+        .expect("pack");
+    }
+    let kind = super::storage::saved_query_type_byte(vault).expect("kind");
+    let record = SavedQueryRecord {
+        query_ref,
+        definition: definition.clone(),
+        created_at: 10,
+        updated_at: 10,
+    };
+    vault
+        .with_write_txn_grouped(|wtxn| {
+            super::storage::store_record_in_txn(vault, wtxn, &record, kind)
+        })
+        .expect("store the query");
 }
 
 /// Review P1 of #9637: only an inbound `ClaimOf` is a claim about the
@@ -636,6 +666,7 @@ fn a_withheld_outbound_claim_of_peer_leaves_claim_terms_decided() {
         },
         ..sample_definition()
     };
+    store_query(&vault, id(0xC4), &definition);
     let request = EvaluationRequest {
         query_ref: id(0xC4),
         campaign_ref: id(0xC4),
@@ -765,6 +796,7 @@ fn a_withheld_inbound_non_claim_peer_leaves_claim_terms_decided() {
         },
         ..sample_definition()
     };
+    store_query(&vault, id(0xC4), &definition);
     let request = EvaluationRequest {
         query_ref: id(0xC4),
         campaign_ref: id(0xC4),

@@ -879,7 +879,10 @@ fn graph_read_receipts_clamp_nonclaim_types_and_include_unnarrowed_reads() -> Re
 }
 
 /// Review #9577 round 2 P1: a withheld peer two edges reach is one withheld
-/// row to the edge receipt, not one per edge.
+/// row to the edge receipt, not one per edge. The source's birth `FacetOf`
+/// edge reaches the vault's default FACET, which a TURN-only reader is
+/// withheld too, so one edge to the target counts 2 (the 20 Nov night, FIX
+/// [NIGHTLY20-OWN-PR-TEST-REDS]); a second edge to the same target adds none.
 #[test]
 fn edges_out_counts_a_withheld_peer_once_across_its_edges() -> Result<()> {
     use crate::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_TURN};
@@ -889,7 +892,6 @@ fn edges_out_counts_a_withheld_peer_once_across_its_edges() -> Result<()> {
     vault.put_entity(&source, ENTITY_TYPE_TURN, test_time(1), 1, b"source")?;
     vault.put_entity(&target, ENTITY_TYPE_ASSET, test_time(1), 1, b"target")?;
     vault.put_edge(&source, EdgeKind::Supports, &target, 0.7)?;
-    vault.put_edge(&source, EdgeKind::Mentions, &target, 0.5)?;
     put_policy_manifest_bytes(
         &vault,
         test_id(0x76),
@@ -901,11 +903,23 @@ fn edges_out_counts_a_withheld_peer_once_across_its_edges() -> Result<()> {
             )]),
         )]),
     )?;
-    let edges = vault
-        .scoped_read(ScopedReadActorKey::new("graph-reader").unwrap())
-        .edges_out(&source)?;
+    let read = || {
+        vault
+            .scoped_read(ScopedReadActorKey::new("graph-reader").unwrap())
+            .edges_out(&source)
+    };
+    let one_edge = read()?;
+    assert_eq!(
+        one_edge.receipt.suppressed_count, 2,
+        "FIXTURE: the target and the default FACET the birth FacetOf edge reaches"
+    );
+    vault.put_edge(&source, EdgeKind::Mentions, &target, 0.5)?;
+    let edges = read()?;
     assert!(edges.value.unwrap().is_empty());
-    assert_eq!(edges.receipt.suppressed_count, 1);
+    assert_eq!(
+        edges.receipt.suppressed_count, one_edge.receipt.suppressed_count,
+        "a second edge to the withheld target counts it no second time"
+    );
     Ok(())
 }
 
@@ -962,7 +976,9 @@ fn child_of_tree_counts_a_withheld_child_once_and_nothing_below_it() -> Result<(
 }
 
 /// FIX [SCOPED-READ-CHILD-TREE-RECEIPT-UNCOUNTED], the same gap in the
-/// weighted neighborhood: a withheld peer two edges reach counts once.
+/// weighted neighborhood: a withheld peer two edges reach counts once. The
+/// anchor's birth `FacetOf` peer is withheld from the TURN-only reader too,
+/// so the count is read against the one-edge read.
 #[test]
 fn neighborhood_counts_a_withheld_peer_once_across_its_edges() -> Result<()> {
     use crate::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_TURN};
@@ -975,27 +991,38 @@ fn neighborhood_counts_a_withheld_peer_once_across_its_edges() -> Result<()> {
     vault.put_entity(&withheld, ENTITY_TYPE_ASSET, test_time(1), 1, b"withheld")?;
     vault.put_edge(&anchor, EdgeKind::Supports, &shown, 0.7)?;
     vault.put_edge(&anchor, EdgeKind::Supports, &withheld, 0.7)?;
-    vault.put_edge(&anchor, EdgeKind::Mentions, &withheld, 0.5)?;
     put_turn_only_reader_policy(&vault, "graph-reader")?;
-    let neighborhood = vault
-        .scoped_read(ScopedReadActorKey::new("graph-reader").unwrap())
-        .neighborhood_projected(
-            &anchor,
-            crate::ports::EdgeDirection::Both,
-            None,
-            None,
-            None,
-            10,
-            |_, neighbors| {
-                Ok::<_, crate::Error>(neighbors.map(|rows| {
-                    rows.into_iter()
-                        .map(|row| row.edge.target)
-                        .collect::<Vec<_>>()
-                }))
-            },
-        )?;
+    let read = || {
+        vault
+            .scoped_read(ScopedReadActorKey::new("graph-reader").unwrap())
+            .neighborhood_projected(
+                &anchor,
+                crate::ports::EdgeDirection::Both,
+                None,
+                None,
+                None,
+                10,
+                |_, neighbors| {
+                    Ok::<_, crate::Error>(neighbors.map(|rows| {
+                        rows.into_iter()
+                            .map(|row| row.edge.target)
+                            .collect::<Vec<_>>()
+                    }))
+                },
+            )
+    };
+    let one_edge = read()?;
+    assert_eq!(
+        one_edge.receipt.suppressed_count, 2,
+        "FIXTURE: the withheld peer and the default FACET the birth FacetOf edge reaches"
+    );
+    vault.put_edge(&anchor, EdgeKind::Mentions, &withheld, 0.5)?;
+    let neighborhood = read()?;
     assert_eq!(neighborhood.value, Some(vec![shown]));
-    assert_eq!(neighborhood.receipt.suppressed_count, 1);
+    assert_eq!(
+        neighborhood.receipt.suppressed_count, one_edge.receipt.suppressed_count,
+        "a second edge to the withheld peer counts it no second time"
+    );
     Ok(())
 }
 
