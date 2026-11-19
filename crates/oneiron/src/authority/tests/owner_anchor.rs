@@ -128,13 +128,15 @@ pub(super) fn hosted_fold(entries: &[AuthorityLogEntry]) -> AuthorityFold {
 
 pub(super) const YOURS: MachineRole = MachineRole::Owned(MachineOwnership::Yours);
 
-/// The owner's anchor marks machine M. The host then signs sibling revisions
-/// of M, each valid on its own: under a root of its own, a verbatim copy at
-/// revision `u64::MAX` and a removal; under its roster key, a removal and a
-/// conflicting equal revision. On an install pinned to the owner's root M
-/// stays mine with its own keys, whether the host's revisions saw the owner's
-/// mark or not, and a later owner revision still lands. An unpinned install
-/// counts no anchor admission.
+/// The owner's anchor marks M. The host then signs sibling revisions of M:
+/// under a root of its own, a verbatim copy at revision `u64::MAX` and a
+/// removal, each valid on its own parents (no row is refused for its floor,
+/// RULING SEQ-FLOOR-SHAPE-S = B); under its roster key, a removal, which a
+/// custodial key never signs (FIX 7920, custodial bootstrap only), and a
+/// hosted-node bootstrap, which stands. On an install pinned to the owner's
+/// root M stays mine with its own keys, whether the host's revisions saw the
+/// owner's mark or not, and a later owner revision still lands. An unpinned
+/// install counts no anchor admission.
 #[test]
 fn neither_a_foreign_anchor_nor_a_host_roster_strips_the_owners_mark() {
     let cloud = ed_key(130);
@@ -196,13 +198,14 @@ fn neither_a_foreign_anchor_nor_a_host_roster_strips_the_owners_mark() {
         ];
         entries.extend(host_revisions.iter().cloned());
         let fold = hosted_fold(&entries);
-        for revision in &host_revisions {
-            assert!(
+        let valid: Vec<bool> = host_revisions
+            .iter()
+            .map(|revision| {
                 fold.valid_entries
-                    .contains(&authority_entry_hash(revision).unwrap()),
-                "{host_saw_the_mark}"
-            );
-        }
+                    .contains(&authority_entry_hash(revision).unwrap())
+            })
+            .collect();
+        assert_eq!(valid, [true, true, false, true], "{host_saw_the_mark}");
         assert_eq!(
             fold.root_anchors(),
             &BTreeMap::from([
