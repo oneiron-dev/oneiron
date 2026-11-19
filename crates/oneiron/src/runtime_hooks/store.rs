@@ -29,9 +29,9 @@ pub(super) use cursor::{
 };
 pub(super) use erase::{
     ErasedIds, args_erased, dependencies_erased_in_txn, erased_by_args_in_txn,
-    retire_kept_runs_in_txn, rows_named_by_call, rows_named_by_fact, scrub_erased_memo_in_txn,
-    scrub_erased_verb_run_in_txn, scrub_intent_payload, scrub_memo_payload, scrub_receipt_payload,
-    scrub_verb_payload, source_erased_in_txn,
+    retire_kept_runs_in_txn, rows_named_by_call, rows_named_by_fact, rows_named_in,
+    scrub_erased_memo_in_txn, scrub_erased_verb_run_in_txn, scrub_intent_payload,
+    scrub_memo_payload, scrub_receipt_payload, scrub_verb_payload, source_erased_in_txn,
 };
 pub(crate) use erase::{
     forget_scrubbed_source_in_txn, scrub_erased_hook_sources, scrub_erased_in_session_stores,
@@ -550,8 +550,11 @@ pub(super) fn receipt_id(key: &RunKey) -> String {
 /// that the call's args and result named as its hook saw them (review round
 /// 2 of #9535): its body can copy any of them into the receipt's `note` or
 /// `reason`. `None` when the key names no kept run, a fact run heard a
-/// verdict without its evidence rows, or a verb run's input showed a host
-/// verb's free text, whose rows no host names. The receipt family screens a
+/// verdict without its evidence rows, or a verb run's input showed content
+/// that names no row this vault holds: a host verb's free text, a pack item
+/// whose refs did not resolve, or a read result with a value and no held
+/// row id (VERB-HOOK-RECEIPT-UNNAMED-SOURCE-PROVENANCE; a run saved before
+/// that field, only the host's free text). The receipt family screens a
 /// Hook receipt on them for a caller off this device (FIX 1119) and for a
 /// credential-bound reader (HOOKS-04).
 pub(crate) fn hook_run_read_rows(vault: &Vault, run_key: &str) -> Result<Option<Vec<EntityId>>> {
@@ -584,7 +587,11 @@ fn hook_run_read_rows_in(
             // An erased run's payload is gone from its record and its
             // receipt alike (FIX 10080).
             Some(run) if run.history_erased => (run.reads, Vec::new()),
-            Some(run) if run.unattributed && run.verb.starts_with("host.") => return Ok(None),
+            Some(run)
+                if run.unattributed && (run.unnamed_content || run.verb.starts_with("host.")) =>
+            {
+                return Ok(None);
+            }
             Some(run) => {
                 let mut input = run.dependencies;
                 for row in run.named_rows {

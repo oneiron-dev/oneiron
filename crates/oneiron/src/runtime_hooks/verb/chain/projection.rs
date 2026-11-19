@@ -14,7 +14,7 @@ use serde_json::{Value, json};
 
 use crate::claim::{PointRead, ScopedRead};
 use crate::runtime_hooks::read::grant_view::shows_row;
-use crate::runtime_hooks::{HookGrant, filter, grant};
+use crate::runtime_hooks::{HookGrant, filter, grant, store};
 use crate::skill_hub::pack_catalog::PackHookBinding;
 use crate::{EntityId, Error, Result};
 
@@ -130,6 +130,30 @@ pub(super) struct ProjectedInput {
     /// It also shows content whose rows no host names: a hook that saw what
     /// its caller did saw it whole.
     pub(super) unattributed: bool,
+    /// Some of that content names no row this vault holds either
+    /// ([`Unattributed::unnamed`]).
+    pub(super) unnamed_content: bool,
+}
+
+/// What a hook's input showed of content whose rows no host names.
+#[derive(Default)]
+struct Unattributed {
+    /// It showed some.
+    shown: bool,
+    /// Some of it names no row this vault holds either: a host verb's free
+    /// text, a pack item whose refs did not resolve, or a read result that
+    /// holds a value and names no held row by its id. Nothing tells which
+    /// rows a body could copy from it into its receipt, so no screened
+    /// reader reads that receipt (VERB-HOOK-RECEIPT-UNNAMED-SOURCE-PROVENANCE).
+    unnamed: bool,
+}
+
+impl Unattributed {
+    /// It showed content that names no row.
+    fn show_unnamed(&mut self) {
+        self.shown = true;
+        self.unnamed = true;
+    }
 }
 
 impl Chain<'_> {
@@ -144,7 +168,7 @@ impl Chain<'_> {
         seen: &HookView<'_>,
     ) -> Result<ProjectedInput> {
         let mut dependencies = Vec::new();
-        let mut unattributed = false;
+        let mut unattributed = Unattributed::default();
         let args = self.project_args(args, seen, &mut unattributed);
         let result = match result {
             Some(result) => {
@@ -183,7 +207,8 @@ impl Chain<'_> {
         Ok(ProjectedInput {
             json,
             dependencies,
-            unattributed,
+            unattributed: unattributed.shown,
+            unnamed_content: unattributed.unnamed,
         })
     }
 
@@ -212,13 +237,19 @@ impl Chain<'_> {
             cap: cap.as_ref().map(Option::as_ref),
             grant: &grant,
         };
-        let shown = self.project_result(result, &seen, &mut Vec::new(), &mut false)?;
+        let shown =
+            self.project_result(result, &seen, &mut Vec::new(), &mut Unattributed::default())?;
         Ok(served::admits(&binding.selector.served, &shown))
     }
 
     /// The caller's args as the hook sees them: the caller's own, whole; a
     /// host verb's free text withheld from a hook narrower than its caller.
-    fn project_args(&self, args: &Value, seen: &HookView<'_>, unattributed: &mut bool) -> Value {
+    fn project_args(
+        &self,
+        args: &Value,
+        seen: &HookView<'_>,
+        unattributed: &mut Unattributed,
+    ) -> Value {
         let mut args = args.clone();
         self.host_text(&mut args, seen, unattributed);
         args
@@ -241,7 +272,7 @@ impl Chain<'_> {
         result: &Value,
         seen: &HookView<'_>,
         dependencies: &mut Vec<EntityId>,
-        unattributed: &mut bool,
+        unattributed: &mut Unattributed,
     ) -> Result<Value> {
         let narrows = seen.narrows();
         let mut shown = result.clone();
@@ -256,7 +287,10 @@ impl Chain<'_> {
             if narrows {
                 return Ok(withheld());
             }
-            *unattributed = true;
+            if holds_a_value(&shown) && !self.names_a_held_row(&shown)? {
+                unattributed.show_unnamed();
+            }
+            unattributed.shown = true;
             return Ok(shown);
         }
         let mut every = true;
@@ -266,7 +300,7 @@ impl Chain<'_> {
                 if !narrows || seen.shows_all(rows.as_deref())? {
                     match rows {
                         Some(rows) => dependencies.extend(rows),
-                        None => *unattributed = true,
+                        None => unattributed.show_unnamed(),
                     }
                 } else {
                     *item = withheld();
@@ -281,6 +315,19 @@ impl Chain<'_> {
             *rendered = withheld();
         }
         Ok(shown)
+    }
+
+    /// Whether `value` names a row this vault holds by its 32-hex id, as
+    /// the receipt screen counts the rows a call named
+    /// ([`store::rows_named_in`]).
+    fn names_a_held_row(&self, value: &Value) -> Result<bool> {
+        let rtxn = self.vault.store.env.read_txn()?;
+        for id in store::rows_named_in(value) {
+            if self.vault.entity_header_in_txn(&rtxn, &id)?.is_some() {
+                return Ok(true);
+            }
+        }
+        Ok(false)
     }
 
     /// The rows a pack item's content comes from: its own and each message
@@ -340,7 +387,7 @@ impl Chain<'_> {
     /// This host verb's free text in `value`: withheld in place from a hook
     /// narrower than its caller; else shown, as content no host names rows
     /// for.
-    fn host_text(&self, value: &mut Value, seen: &HookView<'_>, unattributed: &mut bool) {
+    fn host_text(&self, value: &mut Value, seen: &HookView<'_>, unattributed: &mut Unattributed) {
         for (verb, path) in HOST_FREE_TEXT {
             if self.call.verb != verb {
                 continue;
@@ -348,7 +395,7 @@ impl Chain<'_> {
             if seen.narrows() {
                 withhold_at(value, path);
             } else {
-                *unattributed = true;
+                unattributed.show_unnamed();
             }
         }
     }
@@ -425,5 +472,17 @@ fn withhold_at(node: &mut Value, path: &[&str]) {
             }
         }
         _ => {}
+    }
+}
+
+/// Whether `value` holds a string, number or boolean anywhere: content, as
+/// a count or a text is. Keys, nulls and empty arrays or objects alone hold
+/// none (a read that found nothing).
+fn holds_a_value(value: &Value) -> bool {
+    match value {
+        Value::Null => false,
+        Value::Bool(_) | Value::Number(_) | Value::String(_) => true,
+        Value::Array(items) => items.iter().any(holds_a_value),
+        Value::Object(fields) => fields.values().any(holds_a_value),
     }
 }
