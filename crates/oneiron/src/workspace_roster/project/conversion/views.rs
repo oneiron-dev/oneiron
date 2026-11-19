@@ -239,7 +239,9 @@ impl Vault {
             }
             let origin_thread =
                 EntityId::from_hex(project.origin_thread.as_deref().ok_or_else(invalid)?)?;
-            if thread_project_in(self, &txn, room, origin_thread, kind)? != Some(id) {
+            // The thread's origin index must name this same project. The fold
+            // above already read its body, so only the index is read here.
+            if thread_index_target(self, &txn, room, origin_thread)? != Some(id) {
                 return Err(Error::CorruptedIndex("message project index"));
             }
             if !threads.contains(&origin_thread) {
