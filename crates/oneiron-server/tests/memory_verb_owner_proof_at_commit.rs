@@ -1,6 +1,8 @@
 //! The core memory route's owner `retract` and `supersede` check the owner's
 //! proof again in the writer that commits them (FIX-LIST
-//! MEMORY-VERB-OWNER-PROOF-NOT-REVALIDATED-AT-COMMIT).
+//! MEMORY-VERB-OWNER-PROOF-NOT-REVALIDATED-AT-COMMIT), and so do its owner
+//! `delete` and `hard_delete`, in each writer of the delete before its
+//! publication (FIX-LIST MEMORY-DELETE-OWNER-PROOF-NOT-REVALIDATED-AT-COMMIT).
 //!
 //! `POST /v1/core/memory/verbs/{retract,supersede}` admits the vault owner
 //! (`owner_routes::owner`) and then ran the vault's lifecycle mechanics in a
@@ -24,6 +26,19 @@
 //! cases are red: the route answers 200 and the claim closes. The control
 //! `an_owner_retract_behind_a_held_writer_with_no_revocation_lands` passes on
 //! both: holding the writer and revoking nothing refuses nothing.
+//!
+//! The delete cases: the owner path ran the ungated
+//! `Vault::delete_entity_with_reason` with the owner's proof dropped, and
+//! took any full-vault slip as the owner's (`is_owner_grade`). Now it takes
+//! the owner's proof (OWNER-GRADE-IS-NOT-OWNERSHIP, census H3) and deletes
+//! through `Vault::delete_entity_with_reason_as_owner`, which re-proves it in
+//! each writer before publication. On the red pin (main with this file, and
+//! the same act run before the route's `delete_entity_with_reason`) both
+//! `*_delete_revoked_behind_the_writer_*` cases and
+//! `a_non_owner_full_vault_slip_deletes_nothing_on_the_owner_path` are red:
+//! the route answers 200 and the NOTE is deleted. The control
+//! `an_owner_delete_behind_a_held_writer_with_no_revocation_lands` passes on
+//! both.
 //!
 //! Deterministic: the revocation is staged before the route's writer opens,
 //! so the route's writer always sees it committed, whichever thread reaches
@@ -53,8 +68,10 @@ use oneiron::authority::{CapabilitySlip, HostSlipIssuer, MachineRole};
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::federation::Scope;
 use oneiron::memory::ClaimInput;
+use oneiron::note::TakeTarget;
+use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::store::GateDecisionId;
-use oneiron::{ClaimLifecycleStatus, EdgeActorClass, EntityId, Vault, VaultConfig};
+use oneiron::{ClaimLifecycleStatus, EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig};
 use oneiron_keystore::MemoryKeystore;
 use oneiron_server::{
     ENGINE_THREAD_STACK_BYTES, build_app, config::SyncServerConfig, server::SyncServer,
@@ -165,12 +182,17 @@ impl Caller {
 
 /// The owner's full slip on one of his devices, minted live by the host.
 fn owner_device_slip(fx: &Fixture) -> Caller {
+    full_vault_slip(fx, fx.owner, "human")
+}
+
+/// A full-vault slip `holder` holds as a `class`, minted live by the host.
+fn full_vault_slip(fx: &Fixture, holder: EntityId, class: &str) -> Caller {
     let key = next_holder_key();
     let mut claims = fx.root.claims.clone();
     claims.slip_id = next_slip_id();
     claims.parent_id = None;
-    claims.holder_ref = fx.owner.to_hex();
-    claims.actor_class = Some("human".to_owned());
+    claims.holder_ref = holder.to_hex();
+    claims.actor_class = Some(class.to_owned());
     claims.binding_key = key.verifying_key().to_bytes();
     claims.scope = Scope::top();
     let slip = fx
@@ -213,6 +235,46 @@ fn life(fx: &Fixture, id: EntityId) -> ClaimLifecycleStatus {
         .lifecycle
 }
 
+/// A live person the vault knows who is not its owner.
+fn person(fx: &Fixture) -> EntityId {
+    let person = EntityId::now();
+    fx.vault
+        .put_entity(
+            &person,
+            ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"human",
+        )
+        .expect("a live person");
+    assert_ne!(person, fx.owner, "the person is not the owner");
+    person
+}
+
+/// A NOTE the owner wrote about a person.
+fn owners_note(fx: &Fixture) -> EntityId {
+    let subject = person(fx);
+    let note = fx
+        .vault
+        .memory(fx.owner, EdgeActorClass::Human)
+        .author_take(TakeTarget::Subject(subject), "the owner's own take")
+        .expect("the owner writes a NOTE")
+        .id_hex;
+    let note = EntityId::from_hex(&note).expect("note id");
+    assert!(live(fx, note), "the owner's NOTE is live");
+    note
+}
+
+/// Whether `id` is still a live record: no delete shell, a body kept.
+fn live(fx: &Fixture, id: EntityId) -> bool {
+    !fx.vault.is_deleted_shell(&id).expect("shell read")
+        && fx
+            .vault
+            .get(&id)
+            .expect("record read")
+            .is_some_and(|body| !body.is_empty())
+}
+
 async fn send(fx: &Fixture, caller: &Caller, verb: &str, body: Value) -> (StatusCode, Value) {
     let request = Request::builder()
         .method("POST")
@@ -233,11 +295,11 @@ async fn send(fx: &Fixture, caller: &Caller, verb: &str, body: Value) -> (Status
     )
 }
 
-/// Registers the act at the route's next owner retract or supersede: a
-/// thread opens the vault's writer and revokes in it every slip `holder`
-/// holds, and the act returns once that writer is held, so the route's own
-/// writer waits behind the uncommitted revocation. The receiver answers the
-/// slip ids the thread revoked, once it committed.
+/// Registers the act at the route's next owner retract, supersede, delete or
+/// hard delete: a thread opens the vault's writer and revokes in it every
+/// slip `holder` holds, and the act returns once that writer is held, so the
+/// route's own writer waits behind the uncommitted revocation. The receiver
+/// answers the slip ids the thread revoked, once it committed.
 fn revoke_behind_the_writer(fx: &Fixture, holder: EntityId) -> mpsc::Receiver<Vec<[u8; 32]>> {
     let (revoked_tx, revoked_rx) = mpsc::channel();
     let vault = Arc::clone(&fx.vault);
@@ -373,5 +435,91 @@ fn an_owner_retract_behind_a_held_writer_with_no_revocation_lands() {
             ClaimLifecycleStatus::Retracted,
             "the owner retracts his claim behind a held writer"
         );
+    });
+}
+
+/// One owner delete `verb` of his NOTE, with the owner's device slip revoked
+/// behind the writer the delete's first write waits on.
+async fn owner_delete_revoked_behind_the_writer(fx: &Fixture, verb: &str) {
+    let caller = owner_device_slip(fx);
+    let note = owners_note(fx);
+    let revoked = revoke_behind_the_writer(fx, fx.owner);
+    let (status, body) = send(fx, &caller, verb, json!({ "id": note.to_hex() })).await;
+    assert_eq!(
+        revoked_ids(&revoked),
+        vec![caller.slip.claims.slip_id],
+        "the owner's device slip is revoked behind the writer"
+    );
+    assert_eq!(
+        status,
+        StatusCode::FORBIDDEN,
+        "a {verb} admitted on a slip revoked before its writer opened lands: {body}"
+    );
+    assert!(
+        live(fx, note),
+        "the revoked owner credential's {verb} removed the NOTE"
+    );
+}
+
+#[test]
+fn an_owner_delete_revoked_behind_the_writer_deletes_nothing() {
+    run_on_engine_stack("memory-verb-owner-delete-revoked", || async {
+        let fx = setup();
+        owner_delete_revoked_behind_the_writer(&fx, "delete").await;
+    });
+}
+
+#[test]
+fn an_owner_hard_delete_revoked_behind_the_writer_purges_nothing() {
+    run_on_engine_stack("memory-verb-owner-hard-delete-revoked", || async {
+        let fx = setup();
+        owner_delete_revoked_behind_the_writer(&fx, "hard_delete").await;
+    });
+}
+
+#[test]
+fn an_owner_delete_behind_a_held_writer_with_no_revocation_lands() {
+    run_on_engine_stack("memory-verb-owner-delete-held", || async {
+        let fx = setup();
+        let caller = owner_device_slip(&fx);
+        let note = owners_note(&fx);
+        // A holder that holds no slip: the writer is held, nothing revoked.
+        let revoked = revoke_behind_the_writer(&fx, EntityId::now());
+        let (status, body) = send(&fx, &caller, "delete", json!({ "id": note.to_hex() })).await;
+        assert!(revoked_ids(&revoked).is_empty(), "nothing is revoked");
+        assert_eq!(status, StatusCode::OK, "the owner deletes: {body}");
+        assert_eq!(body["delete"]["existed"], json!(true), "{body}");
+        assert!(
+            fx.vault.is_deleted_shell(&note).expect("shell read"),
+            "the owner deletes his NOTE behind a held writer"
+        );
+    });
+}
+
+#[test]
+fn a_non_owner_full_vault_slip_deletes_nothing_on_the_owner_path() {
+    run_on_engine_stack("memory-verb-non-owner-delete", || async {
+        for class in ["human", "agent"] {
+            let fx = setup();
+            let holder = if class == "human" {
+                person(&fx)
+            } else {
+                fx.vault
+                    .ensure_agent_principal("memory-verb-owner-proof-agent")
+                    .expect("a registered agent principal")
+            };
+            let caller = full_vault_slip(&fx, holder, class);
+            let note = owners_note(&fx);
+            let (status, body) = send(&fx, &caller, "delete", json!({ "id": note.to_hex() })).await;
+            assert_eq!(
+                status,
+                StatusCode::FORBIDDEN,
+                "a non-owner {class}'s full-vault slip deletes the owner's NOTE as the owner: {body}"
+            );
+            assert!(
+                live(&fx, note),
+                "a non-owner {class} deleted the owner's NOTE"
+            );
+        }
     });
 }

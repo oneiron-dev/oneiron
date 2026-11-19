@@ -477,6 +477,8 @@ pub(crate) async fn core_memory_verb(
                     tracing::error!(kind = ?error.kind(), id = %id.to_hex(), "core memory delete failed");
                     core_engine_error("core memory delete failed", error)
                 };
+                #[cfg(oneiron_test_support)]
+                crate::test_doors::memory_owner_commit::run_before_owner_commit(&server.vault);
                 let outcome = server
                     .vault
                     .delete_entity_with_reason(&id, reason)
