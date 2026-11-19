@@ -556,6 +556,7 @@ fn fold_merged_entry(
             profile,
             hash,
             true,
+            restriction_only,
             |state, parents| {
                 super::machine_profile::apply_owner_answer(
                     state,
@@ -667,7 +668,7 @@ fn fold_merged_entry(
     if let AuthorityOp::RestoredMachineJoin(record) = &entry.op {
         let signer = entry.signer_key().clone();
         let file_inline = |state: &mut FoldState, profile: &MachineProfile| {
-            super::restored_join::fold_revision(state, profile, hash, false, |state, _| {
+            super::restored_join::fold_revision(state, profile, hash, false, false, |state, _| {
                 apply_machine_profile(state, &signer, profile, hash, context, false)
             })
         };
@@ -790,11 +791,16 @@ fn fold_merged_entry(
     }
     if let AuthorityOp::MachineProfile(profile) = &entry.op {
         // A restored machine's root-signed enrolment is held until it joins.
-        if let Err(issue) =
-            super::restored_join::fold_revision(&mut state, profile, hash, false, |state, _| {
+        if let Err(issue) = super::restored_join::fold_revision(
+            &mut state,
+            profile,
+            hash,
+            false,
+            false,
+            |state, _| {
                 apply_machine_profile(state, &signer, profile, hash, context, restriction_only)
-            })
-        {
+            },
+        ) {
             return EntryFold::Invalid(issue);
         }
         state.seqs.insert(signer, entry.seq);

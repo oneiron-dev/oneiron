@@ -49,9 +49,14 @@ pub(super) fn fold_anchor_entry(
         advance(state, entry, signer, hash)
             .and_then(|()| {
                 // A restored machine's anchor mark is held until it joins.
-                super::restored_join::fold_revision(state, profile, hash, false, |state, _| {
-                    apply_anchor_profile(state, anchor, profile, hash, restriction_only)
-                })
+                super::restored_join::fold_revision(
+                    state,
+                    profile,
+                    hash,
+                    false,
+                    false,
+                    |state, _| apply_anchor_profile(state, anchor, profile, hash, restriction_only),
+                )
             })
             .map(|()| {
                 state.anchor_entries.insert(hash);
