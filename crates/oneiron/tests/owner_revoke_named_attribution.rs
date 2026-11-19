@@ -13,8 +13,9 @@
 //! - their key signs a `human` binding of another Owner's key.
 //!
 //! On removal every such key ends and every such binding is revoked. A key
-//! the host root enrolled for another Owner stays live, and that Owner's own
-//! binding stays.
+//! the host root enrolled for another Owner stays live, even when their key
+//! enrolled it again on a sibling branch (REVIEW-9585 P1), and that Owner's
+//! own binding stays.
 //!
 //! Real self-hosted shared vaults, as `tests/owner_enrol.rs` builds them.
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
@@ -365,6 +366,41 @@ fn a_removed_owners_key_ends_the_binding_it_signed_for_another_owner() {
     assert!(
         shared.key_is_live(owner_key),
         "the key the host root enrolled for the owner stays live"
+    );
+    assert_eq!(
+        shared.bound_to(&shared.issuer.public_key()),
+        Some(shared.owner),
+        "the owner's own binding stays"
+    );
+}
+
+/// Blind review round 1 of #9585, P1: a second enrolment the removed Owner's
+/// key signs for a key that already stands on a row no key of theirs signed
+/// does not make the key theirs. The host root enrols the owner's key; the
+/// co-Owner's key enrols the same key for the owner on a sibling branch,
+/// replaying its proof, and the fold counts both rows.
+#[test]
+fn a_removed_owners_sibling_enrolment_leaves_a_key_the_host_root_enrolled_live() {
+    let shared = shared();
+    let co_owner_key = shared.co_owner_key();
+    let fork = main_log_heads(&shared.vault).expect("the heads before the owner's key");
+    let owner_key = shared.enrol_owner_key(shared.owner, OWNER_SEED);
+    assert!(
+        shared.enrol_signed_by(shared.owner, &signing(OWNER_SEED), fork, &co_owner_key),
+        "the fold counts the co-Owner's sibling enrolment of the owner's key"
+    );
+    assert!(shared.key_is_live(owner_key), "the owner's key is live");
+
+    shared.remove_co_owner();
+
+    assert!(
+        !shared.key_is_live(co_owner_key.verifying_key().to_bytes()),
+        "the removed Owner's own key ends with the removal"
+    );
+    assert!(
+        shared.key_is_live(owner_key),
+        "the key the host root enrolled for the owner stays live, though the removed Owner's \
+         key enrolled it again"
     );
     assert_eq!(
         shared.bound_to(&shared.issuer.public_key()),
