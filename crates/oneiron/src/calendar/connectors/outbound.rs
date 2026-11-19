@@ -22,7 +22,7 @@ use super::remote::{
 };
 use super::seat::{CalendarConnectorError, CalendarConnectorSeatState};
 
-use crate::batch::secret_scan::{admitted_from, named_tree};
+use crate::batch::secret_scan::{admitted_from_known, named_tree};
 use crate::calendar::CalendarError;
 use crate::calendar::claims::{
     CalendarPassportDirection, CalendarPassportPresence, CalendarPassportValue,
@@ -30,13 +30,15 @@ use crate::calendar::claims::{
 };
 use crate::calendar::passport::{
     admitted_passports_for_event_in_txn, carries_admitted_uid_in_txn, encode_passport_value,
-    index_passport_uid_in_txn, live_passport_for_in_txn,
+    index_passport_uid_in_txn, live_passport_for_in_txn, revise_passport_in_txn,
 };
 use crate::calendar::safeguard::CalendarInboundBody;
+use crate::code_run::CompareKnown;
 use crate::entity_id::EntityId;
 use crate::registry::ENTITY_TYPE_EVENT;
 use crate::side_table::{self, LegacyJson, SideKey, SideTable};
 use crate::vault::Vault;
+use oneiron_contracts::lifecycle::{IllegalTransition, Lifecycle};
 
 /// Sub-tag for durable write-outbox rows.
 pub(super) const OUTBOX_ROW_TAG: &[u8] = b"row:";
@@ -185,7 +187,12 @@ pub struct CalendarRemoteObjectRow {
 /// The UID is preserved (or minted once for a locally originated EVENT) and
 /// the SEQUENCE bumps only when this seat already holds that UID. Both derive
 /// from admitted passports and the seat's own remote copy, never from a
-/// pending, rejected or stale passport proposal. The resource renders over its
+/// pending, rejected or stale passport proposal, with one exception: the
+/// importer's own pending passport of this seat's system vouches for its UID
+/// when the pull wrote this seat's remote object under it, so an EVENT edited
+/// before its import is approved replaces the pulled object and never adds a
+/// second one (the lead's ruling 10 Nov 10:3x, FIX
+/// CALDAV-PENDING-IMPORT-WRITEBACK-DUPLICATE). The resource renders over its
 /// archived source so fields the render does not own survive, the durable
 /// outbox row is staged BEFORE the provider call, and the expected ETag rides
 /// as the conditional precondition. A precondition failure records
@@ -227,7 +234,10 @@ pub fn write_calendar_event(
         .map(|(_, value)| value.clone());
     let uid = match &own {
         Some(value) => value.uid.clone(),
-        None => shared_uid(&passports).unwrap_or_else(|| local_uid(&event_ref)),
+        None => match importer_pending_uid(vault, operation, &event_ref, system)? {
+            Some(uid) => uid,
+            None => shared_uid(&passports).unwrap_or_else(|| local_uid(&event_ref)),
+        },
     };
     let calendar_ref = seat.config.calendar_ref.as_str();
     let source = super::resource::archived_source(vault, system, calendar_ref, &uid, event_ref)?;
@@ -241,7 +251,7 @@ pub fn write_calendar_event(
 
     let mut prior_instance = None;
     if let Some(mut row) = read_outbox_row(vault, &outbox_id)? {
-        ensure_outbox_matches(&row, seat, transport, event_ref, &uid)?;
+        ensure_outbox_matches(vault, &row, seat, transport, event_ref, &uid)?;
         open_outbox(vault, operation, transport, &uid, &mut row)?;
         prior_instance = row.carrier.as_ref().map(|carrier| carrier.instance);
         match row.state {
@@ -383,6 +393,7 @@ pub fn write_calendar_event(
 }
 
 fn ensure_outbox_matches(
+    vault: &Vault,
     row: &CalendarWriteOutboxRow,
     seat: &CalendarConnectorSeatState,
     transport: &dyn CalendarRemoteTransport,
@@ -392,9 +403,15 @@ fn ensure_outbox_matches(
     // The side-row wall may have masked a secret-shaped span in a string
     // field when the row was stored (FIX 10951): compare each string as the
     // replay compare reads it, so the same secret offered again matches
-    // instead of refusing the resumed write.
+    // instead of refusing the resumed write. The row was stored through the
+    // vault, so a value base custody holds took its handle too: it is read
+    // once a compare without it misses (FIX
+    // REPLAY-COMPARE-KNOWN-OTHER-CALLERS).
+    let base_known = || vault.known_values_now();
+    let known = CompareKnown::new(Some(&base_known));
     let same = |held: &str, offered: &str| -> Result<bool, CalendarConnectorError> {
-        Ok(held == offered || admitted_from(&named_tree(&held)?, &named_tree(&offered)?)?)
+        Ok(held == offered
+            || admitted_from_known(&named_tree(&held)?, &named_tree(&offered)?, || known.get())?)
     };
     if row.action != CalendarWriteAction::Upsert
         || row.event_ref != event_ref
@@ -637,6 +654,7 @@ fn finish_remote_applied_write_in_txn(
             direction,
             last_seen_at: now,
             presence: CalendarPassportPresence::Live,
+            cancelled_since: None,
         };
         let already_applied = current.as_ref().is_some_and(|(_, value)| {
             value.last_sequence == next.last_sequence
@@ -655,9 +673,9 @@ fn finish_remote_applied_write_in_txn(
                 encode_passport_value(&next),
                 now,
             )?;
-            if let Some((old_id, _)) = current {
-                vault.supersede_claim_in_txn(txn, &new_id, &old_id, now)?;
-            }
+            // A pending receipt passport closes the admitted head only once
+            // it is approved; the head keeps its authority until then.
+            revise_passport_in_txn(vault, txn, &member, &row.system, &row.uid, &new_id, now)?;
         }
     }
     if row.uid == local_uid(&event_ref)
@@ -891,6 +909,16 @@ fn write_outbox_row_in_txn(
     } else if actual_prior != expected {
         return Err(literal::invalid());
     }
+    if let Some(prior) = prior.as_ref()
+        && prior.state != row.state
+        && !prior.state.may_transition_to(&row.state)
+    {
+        return Err(IllegalTransition {
+            from: prior.state,
+            to: row.state,
+        }
+        .into());
+    }
     let instance = match row.carrier.as_ref() {
         Some(held) => held.instance,
         None => vault.store.clock.ulid()?,
@@ -1006,6 +1034,38 @@ fn open_cursor(
     row.href = values.href;
     row.etag = values.etag;
     Ok(())
+}
+
+/// The UID the importer's own pending passport vouches for on this seat's
+/// calendar, if any (the lead's ruling 10 Nov 10:3x, FIX
+/// CALDAV-PENDING-IMPORT-WRITEBACK-DUPLICATE). A pending passport of `system`
+/// counts only when the pull wrote this seat's remote object row under its
+/// UID, so the write replaces that object. Two such passports under different
+/// UIDs are refused, never picked by scan order.
+fn importer_pending_uid(
+    vault: &Vault,
+    operation: &CalendarConnectorOperation,
+    event_ref: &EntityId,
+    system: &str,
+) -> Result<Option<String>, CalendarConnectorError> {
+    let pending = {
+        let rtxn = vault.store.env.read_txn().map_err(crate::Error::from)?;
+        crate::calendar::passport::importer_pending_passports_in_txn(
+            vault, &rtxn, event_ref, system,
+        )?
+    };
+    let mut uids = std::collections::BTreeSet::new();
+    for (_, value) in pending {
+        if read_remote_object_for_operation(vault, operation, &value.uid)?.is_some() {
+            uids.insert(value.uid);
+        }
+    }
+    let mut uids = uids.into_iter();
+    let found = uids.next();
+    if uids.next().is_some() {
+        return Err(ingest_error("competing pending calendar passports"));
+    }
+    Ok(found)
 }
 
 fn read_remote_object_for_operation(
@@ -1204,7 +1264,5 @@ pub(super) fn ingest_error(reason: &'static str) -> CalendarConnectorError {
     CalendarConnectorError::Calendar(ingest_reason(reason))
 }
 
-// FIX [LIBTEST-QUARANTINE-CALENDAR-CONNECTORS-OUTBOUND-TESTS]: the lib test target's type check fails here (1 errors: E0061 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;

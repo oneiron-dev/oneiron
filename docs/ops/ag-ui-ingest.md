@@ -114,14 +114,19 @@ registered outcome value. That value must be a string. `grade_response` compares
 exact bytes; it never trims, folds case, runs a judge, or classifies arbitrary app
 JSON as a success label. `response_input` contains the rebuilt state, checked
 preconditions, intent, input and action contract, but not the repair, observed
-outcome or grader answer. A source may still disclose an answer in its task
-input: this separation is not a no-leak audit or a certificate of task quality.
+outcome or grader answer. A trace is a task only if its answer is not leaked
+in the workspace or the history (ARCH-0053 `#eval-trace-task`): the reader
+refuses a task whose trimmed answer is in any string or object key of its
+`initial_state` or `input`, or is the whole text of a number or boolean there.
+The check is exact text, not similarity: a paraphrased answer passes it, and a
+short answer that recurs by chance refuses the task. The intent is the task's
+own words and is not checked. This is not a certificate of task quality.
 
 The reader preserves the AG-UI read receipt, exact content pin, authenticated
 capture binding and live-owner checks. A missing or withheld source returns no
 task and no source metadata. Unlinked outcomes, missing task fields, invalid
-pointers, unmet initial preconditions and unsupported task contracts return an
-error, without changing the original ingest or source-reader paths. The task
+pointers, unmet initial preconditions, unsupported task contracts and a leaked
+answer return an error, without changing the original ingest or source-reader paths. The task
 hash binds the canonical source recipe, full task contract and expected
 response; it is a content digest, not authority. All variants from one capture
 share a family root for the explicitly named seat. No family is assigned here.

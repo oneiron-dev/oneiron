@@ -1,5 +1,7 @@
 //! Settle Vault transactions.
 
+use oneiron_contracts::fingerprint::ContentHash;
+
 use super::codec::{RECORD, settle_grant_bound, settlement_key_parts};
 use super::pending::LINK;
 use super::receipts::{manifest_ref, settled_anchors_from_summary, settlement_receipt_record};
@@ -267,7 +269,7 @@ impl Vault {
                     let source = self
                         .read_blob_artifact_version_in_txn(wtxn, artifact_id, source_version)?
                         .ok_or(Error::EntityNotFound)?;
-                    if *blake3::hash(&source).as_bytes() != proposal.base_content_hash {
+                    if *ContentHash::of(&source).as_bytes() != proposal.base_content_hash {
                         return Err(Error::Artifact(ArtifactError::InvalidEditManifest(
                             "docx proposal base hash does not match its source version",
                         )));
@@ -818,7 +820,7 @@ impl Vault {
             let source = self
                 .read_blob_artifact_version(artifact_id, version)?
                 .ok_or(Error::EntityNotFound)?;
-            if blake3::hash(&source).as_bytes() != &proposal.base_content_hash {
+            if ContentHash::of(&source).as_bytes() != &proposal.base_content_hash {
                 return Err(Error::Artifact(ArtifactError::InvalidEditManifest(
                     "typed answers have a mismatched source hash",
                 )));

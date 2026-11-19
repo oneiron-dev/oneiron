@@ -531,3 +531,6 @@ impl Upkeep<'_> {
         Ok(Some(record))
     }
 }
+
+#[cfg(oneiron_test_support)]
+pub(crate) use self::state::evidence_digest_for_test;

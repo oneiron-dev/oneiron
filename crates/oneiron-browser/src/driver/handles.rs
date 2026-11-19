@@ -124,6 +124,10 @@ impl Documents {
     }
 }
 
+/// `lines` of tab `target` as rows with their handles, each row's DOM node, and the read's
+/// scope: the session, the tab and every document the rows came from, with the main one.
+type Minted = (Vec<Row>, Vec<Option<u64>>, String);
+
 impl Handles {
     /// Drops every binding of tab `target`, closed (FIX 6158): no lookup
     /// reaches its nodes again. Each handle's record stays, its locator
@@ -306,7 +310,7 @@ impl Handles {
         documents: Option<&Documents>,
         lines: Vec<Line>,
         gone: &BTreeSet<u64>,
-    ) -> Result<(Vec<Row>, Vec<Option<u64>>, String), BrowserError> {
+    ) -> Result<Minted, BrowserError> {
         let unsettled = documents
             .is_none()
             .then(|| format!("{target}/unsettled.{}", self.unsettled.saturating_add(1)));
@@ -682,7 +686,7 @@ fn capture_bytes(
     let texts = originals
         .iter()
         .flatten()
-        .map(|text| text.capacity())
+        .map(std::string::String::capacity)
         .fold(0, usize::saturating_add);
     rows_bytes(rows)
         .saturating_add(

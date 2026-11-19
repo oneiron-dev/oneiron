@@ -220,7 +220,7 @@ pub(in crate::api::mcp_gateway) fn mcp_run_speech_gate(
 /// admission job's call. The live session, then the row's own effect
 /// (`McpCallEffect::of_host_verb`): none of them waits for review, so a
 /// writing row needs Write.
-pub(in crate::api::mcp_gateway) fn mcp_host_verb_gate(
+pub(crate) fn mcp_host_verb_gate(
     server: &Arc<SyncServer>,
     actor: &McpCallContext,
     verb: oneiron::task_verb::sdk::AgentVerb,
@@ -274,8 +274,25 @@ pub(crate) fn mcp_verb_gate(
     } else {
         McpRecordBounds::Unrestricted
     };
+    // `self.actor` answers a bounded credential, but no row it answers
+    // carries a channel, so a channel caveat has nothing to filter: refused
+    // here, as its HTTP admission `lane_record_scope` refuses it (review of
+    // #9533).
+    if tool.name == SELF_ACTOR_VERB {
+        let auth = actor.auth.as_ref().ok_or_else(mcp_proof_error)?;
+        auth.require_lane_record_scope().map_err(|_| {
+            McpGatewayError::new(
+                -32020,
+                "mcp_scope_unprojectable",
+                "this facade cannot project the credential's record bounds",
+            )
+        })?;
+    }
     mcp_credential_gate(server, actor, bounds, McpCallEffect::of(tool, arguments))
 }
+
+/// The verb that answers the caller's own actor refs.
+const SELF_ACTOR_VERB: &str = "self.actor";
 
 /// The connector credential is live, inside the record bounds the call can
 /// carry, and holds the verb for what the call does.

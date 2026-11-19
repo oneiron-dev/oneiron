@@ -16,9 +16,11 @@ pub(super) fn fold_as_install(
     consent_arm: fn(&FoldedDevice) -> bool,
     local: FoldLocalInputs<'_>,
 ) -> AuthorityFold {
+    // Floors apply where this install's observations do; the once fold
+    // takes each from the rows (`rows_floor`).
     let sequence_floors = local
         .observations
-        .map(|observations| &observations.sequence_floors);
+        .map(|_| &super::fold_engine::SEQUENCE_FLOORS_FROM_ROWS);
     let stale_roster_window_secs = local
         .observations
         .map_or(DEFAULT_STALE_ROSTER_WINDOW_SECS, |local| {
@@ -44,6 +46,8 @@ pub(super) fn fold_as_install(
             local.observations.map(|observations| &observations.policy),
         ),
         pin: local.pin,
+        owner_key_lines: None,
+        appointments: None,
     };
     let no_vouch = NoVouch::of(entries, first_seen_at_secs, now_secs, local, bare);
     let context = FoldContext {
@@ -313,27 +317,28 @@ impl NoVouch {
         // Only a row a floor would refuse needs a vouch. A removal vouches for
         // its own branch, whichever rows that holds. A row causal ancestry
         // already admits needs none, so the floors are the ones the fold keeps
-        // once later rows of the same signer and scope vouch for what they
-        // can (Astra #1422c F1). Clearing only drops floors, so the receipts
-        // alone rule out most folds first.
+        // once later rows of the same signer vouch for what they can (Astra
+        // #1422c F1). With neither a vouched row nor a removal, no fold
+        // needs one.
         let removal = by_hash
             .values()
             .any(|entry| super::revoke_proof::removes_machine(&entry.op));
+        if observations.vouched.is_empty() && !removal {
+            return None;
+        }
         let rescues = |floors: &BTreeMap<AuthorityEntryHash, u64>| {
             let refused = |hash: &AuthorityEntryHash| {
                 by_hash
                     .get(hash)
                     .zip(floors.get(hash))
                     .is_some_and(|(entry, floor)| {
-                        entry.seq < *floor
-                            && !super::entry_transition::lands_restriction_only(&entry.op)
+                        entry.seq < *floor && super::entry_transition::floor_refuses(&entry.op)
                     })
             };
             observations.vouched.iter().any(refused) || (removal && floors.keys().any(refused))
         };
-        if !rescues(&observations.sequence_floors)
-            || !super::fold_engine::causal_floors_of(entries, bare)
-                .is_some_and(|floors| rescues(&floors))
+        if !super::fold_engine::causal_floors_of(entries, bare)
+            .is_some_and(|floors| rescues(&floors))
         {
             return None;
         }
@@ -557,6 +562,23 @@ pub(super) fn cap_by_no_vouch_fold(
         fold: no_vouch,
         handoffs,
         after,
+        held: BTreeSet::new(),
+        deadline: None,
+    }
+    .cap(fold);
+}
+
+/// [`NoVouch::cap`] of `fold` by its fold with no vouch, where that fold
+/// folds as `fold` does, with no candidate handoff, no hold and no deadline:
+/// the cap the whole install fold applies past an adopted image whose tail
+/// floors covered rows beside a machine removal
+/// (`adopted_fold::covered_floors`, FIX
+/// [SEQ-FLOOR-S-ADOPTED-FORK-NEEDS-HISTORY]).
+pub(super) fn cap_by_identical_no_vouch_fold(fold: &mut AuthorityFold) {
+    NoVouch {
+        fold: fold.clone(),
+        handoffs: BTreeSet::new(),
+        after: BTreeSet::new(),
         held: BTreeSet::new(),
         deadline: None,
     }

@@ -791,6 +791,36 @@ async fn quickjs_code_mode_applies_the_tool_argument_rules() {
     );
 }
 
+/// One TURN the owner witnesses, for a code run's claim to cite: the run
+/// binds a generated origin, so its claim is concluded, and a concluded
+/// claim names the TURN it was concluded from (claim_admission's RowBirth).
+fn witness_evidence_turn(vault: &oneiron::Vault) -> oneiron::EntityId {
+    let owner = vault.ensure_embedded_owner_actor().expect("embedded owner");
+    vault
+        .memory(owner, oneiron::EdgeActorClass::Human)
+        .witness(&oneiron::memory::WitnessTurn {
+            conversation_ref: oneiron::EntityId::now().to_hex(),
+            turn_ref: None,
+            thread_audience: None,
+            project: None,
+            messages: vec![oneiron::memory::WitnessMessage {
+                id: None,
+                author: oneiron::memory::WitnessAuthor::User,
+                message_type: "dialogue".to_owned(),
+                content: "I drink sencha".to_owned(),
+                parts: None,
+                metadata: None,
+                is_visible: true,
+                order: 0,
+                quote: None,
+            }],
+            occurred_at: 1_772_400_000,
+            assertions: oneiron::memory::WitnessAssertions::default(),
+        })
+        .expect("the evidence turn")
+        .turn_id
+}
+
 /// The four-axis position `vault.claims.upsert` takes: `world`, the vault's
 /// default facet, every relationship and the default project.
 fn upsert_scope(vault: &oneiron::Vault, world: oneiron::EntityId) -> serde_json::Value {
@@ -812,12 +842,14 @@ async fn quickjs_code_mode_claims_carry_the_runs_generated_source() {
     let subject = seeded_test_entity_id(0x0024_6542);
     let claim = seeded_test_entity_id(0x0024_6543);
     let mode = code_mode_server(Vec::new());
+    let evidence = witness_evidence_turn(&mode.vault);
     mode.backend.scripts.lock().unwrap().push_back(format!(
         "await vault.claims.upsert({{id: '{}', predicate: 'profile.favorite_drink', \
-         subject_ref: '{}', value: 'sencha', confidence: 1, source: 'user_stated', \
-         scope: {}}}); finish('stated');",
+         subject_ref: '{}', evidence_turn_refs: ['{}'], value: 'sencha', confidence: 1, \
+         source: 'user_stated', scope: {}}}); finish('stated');",
         claim.to_hex(),
         subject.to_hex(),
+        evidence.to_hex(),
         upsert_scope(&mode.vault, oneiron::claim::base_world_id())
     ));
     mode.vault
@@ -836,6 +868,9 @@ async fn quickjs_code_mode_claims_carry_the_runs_generated_source() {
         oneiron::EdgeActorClass::Human,
     )
     .await;
+    // The upsert's writer reads the PERSON it is about (FIX 1218): else the
+    // run's upsert fails INVENTED_REFERENCE and the step reports facade_error.
+    put_actor_read_grant(&mode.vault, actor, None);
     let args = mcp_merge_args(
         mcp_endpoint_envelope(actor, "write_memory"),
         json!({"run_ref": "quickjs-claim", "task": "state a favorite drink"}),
@@ -1436,3 +1471,6 @@ mod device_local;
 
 /// The rows a run serves itself, under the connector's door.
 mod run_rows;
+
+/// The graph-FS rows, walked through the verb-call import.
+mod graph_fs_walk;

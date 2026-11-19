@@ -361,7 +361,7 @@ fn cancel_uses_in_txn_live_state_not_stale_leased_snapshot() {
         target_ref: task_hex.clone(),
     };
     let cancel = facade
-        .cancel_with_injected_state_for_test(TaskCancelMode::Auto, stale)
+        .cancel_with_injected_state_for_test(CheckInMode::AskWhenUnsure, stale)
         .expect("cancel with stale snapshot");
     let after = queue.list().expect("list after");
 
@@ -440,7 +440,7 @@ fn cancel_reaches_a_retry_minted_between_snapshot_and_write_txn() {
     assert_ne!(next.id, claimed.id);
 
     let cancel = facade
-        .cancel_with_injected_state_for_test(TaskCancelMode::Auto, snapshot)
+        .cancel_with_injected_state_for_test(CheckInMode::AskWhenUnsure, snapshot)
         .expect("cancel with pre-retry snapshot");
     let after = queue.list().expect("list after");
 
@@ -1203,10 +1203,12 @@ fn a_restore_goes_ahead_past_a_failure_acknowledged_since() {
     let backups = crate::test_support::restore_tempdir();
     let image = backups.path().join("backup");
     vault.snapshot_checkpoint(&image, 130).expect("backup");
+    let key = vault.checkpoint_key().expect("derive the checkpoint key");
 
     assert!(facade.tasks_update(task_ref).expect("ack task").acked);
     let (restored, _) = Vault::restore_checkpoint_keeping_authority(
         &image,
+        &key,
         &backups.path().join("restored"),
         vault.config.clone(),
         &vault,
@@ -1575,6 +1577,7 @@ fn both_entry_points_follow_the_in_transaction_ownership_answer() {
             trigger_ref: "s1".to_owned(),
             job_ref: None,
             occurred_at: Some(120),
+            mention: None,
         })
         .expect("schedule send");
     let connector = vault.connector_send_tasks().expect("connector tasks")[0].task_ref;

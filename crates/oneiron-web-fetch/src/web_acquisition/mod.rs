@@ -1,4 +1,5 @@
 //! Web acquisition values and the host-supplied acquisition port.
+use oneiron_fingerprint::{LegacyDigest, purposes};
 use serde::{Deserialize, Serialize};
 
 mod door;
@@ -13,8 +14,9 @@ pub use refusal::{
 use result::FetchResultWire;
 pub(crate) use url::*;
 
-/// Domain prefix for the OF-444 content identity.
-pub const WEB_FETCH_CONTENT_HASH_DOMAIN: &[u8] = b"oneiron.web_fetch.content.v1\0";
+/// Domain prefix for the OF-444 content identity: the tag of
+/// [`purposes::web_fetch::CONTENT_HASH`], which the content hash writes first.
+pub const WEB_FETCH_CONTENT_HASH_DOMAIN: &[u8] = purposes::web_fetch::CONTENT_HASH.tag().as_bytes();
 
 /// Engine default for deciding that a renderer extracted real page content.
 /// This is a test-injectable mechanism dial, not a safety or quality verdict.
@@ -244,13 +246,13 @@ pub enum WebFetchError {
     },
 
     /// A managed (hosted) node's fetcher refused a destination that reaches
-    /// the infrastructure it runs on (SCAN C447): the requested page before
+    /// the infrastructure it runs on, for tenant isolation (SCAN C447): the requested page before
     /// any rung ran, or a redirect hop, a re-resolved address or a landing a
     /// rung reached (FIX 6101), which ends the ladder. The message names
     /// [`HOSTED_INFRASTRUCTURE_REASON`]; `url` is the requested page,
     /// credential-redacted.
     #[error(
-        "web fetch refused (hosted_infrastructure): on a hosted node, {url} resolves or redirects to the hosting infrastructure (loopback, link-local, this node's own address or a cloud metadata endpoint); a self-hosted node fetches it"
+        "web fetch refused (hosted_infrastructure): on a hosted node, {url} resolves or redirects to the hosting infrastructure (loopback, link-local, this node's own address or a cloud metadata endpoint), which hosted nodes refuse for tenant isolation; a self-hosted node fetches it"
     )]
     HostedInfrastructure { url: String },
 
@@ -260,7 +262,7 @@ pub enum WebFetchError {
     /// refused. The message names [`HOSTED_PRIVATE_NETWORK_REASON`]; `url` is
     /// the requested page, credential-redacted.
     #[error(
-        "web fetch refused (hosted_private_network): on a hosted node, {url} resolves or redirects to a private-network address outside the hosting operator's allowed origins, and hosted nodes refuse private-network addresses (RFC1918, CGNAT 100.64.0.0/10, IPv6 ULA fc00::/7); a self-hosted node fetches it, or the hosting operator can allow its named private origin"
+        "web fetch refused (hosted_private_network): on a hosted node, {url} resolves or redirects to a private-network address outside the hosting operator's allowed origins, and for tenant isolation hosted nodes refuse private-network addresses (RFC1918, CGNAT 100.64.0.0/10, IPv6 ULA fc00::/7); a self-hosted node fetches it, or the hosting operator can allow its named private origin"
     )]
     HostedPrivateNetwork { url: String },
 
@@ -424,10 +426,11 @@ pub struct CrawlResult {
 // ---------------------------------------------------------------------------
 
 pub(crate) fn content_hash(markdown: &str) -> String {
-    let mut hasher = blake3::Hasher::new();
-    hasher.update(WEB_FETCH_CONTENT_HASH_DOMAIN);
-    hasher.update(markdown.as_bytes());
-    hasher.finalize().to_hex().to_string()
+    oneiron_hex::encode(
+        &LegacyDigest::new(purposes::web_fetch::CONTENT_HASH)
+            .raw(markdown.as_bytes())
+            .finish(),
+    )
 }
 
 /// Acquisition used by actor-bound import. Each method is one ladder operation.

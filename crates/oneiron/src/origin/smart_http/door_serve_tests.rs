@@ -1,7 +1,8 @@
 //! Serve command and door tests: closed env/argv, vetted hook, unlandable names,
 //! framed blobs, coordinator, door request parse, repo names, noop seam, dial.
 
-use super::tests::{git, landing_outcome, landing_time, seeded_repo, temp_vault};
+use super::protected_ref_confirm::ProtectedRefPasses;
+use super::tests::{git, landing_outcome, landing_time, owner_principal, seeded_repo, temp_vault};
 use super::*;
 use crate::credential_door::PushedBlob;
 use crate::error::CodeError;
@@ -50,7 +51,7 @@ fn receive_pack_rejects_secret_under_hostile_inherited_git_config() {
     }
     let (_vault_dir, vault) = temp_vault();
     let (source, repo, _, head) = served_repo(&vault);
-    let pusher = EntityId::now().to_hex();
+    let pusher = owner_principal(&vault).to_hex();
     let push = |path: &str, contents: &str, name: &str| {
         let tip = commit_file(source.path(), path, contents);
         // Transfer objects only; the receive-pack below proposes their first new served ref.
@@ -333,7 +334,13 @@ fn smart_http_noop_evidence_never_claims_landed_policy_or_scanning() {
     );
     assert!(
         vault
-            .record_receive_pack_intent(&unpinned_repo_ref(&root), &stamp, &door)
+            .record_receive_pack_intent(
+                &unpinned_repo_ref(&root),
+                &stamp,
+                &door,
+                None,
+                &ProtectedRefPasses::default()
+            )
             .is_err()
     );
     assert!(

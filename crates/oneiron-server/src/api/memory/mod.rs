@@ -136,7 +136,9 @@ pub(crate) struct CoreMemoryVerbRequest {
     #[serde(default, rename = "old_id", alias = "oldId")]
     #[schema(example = "11111111111111111111111111111111")]
     old_id: Option<String>,
-    /// Operation timestamp for supersede/retract verbs. Defaults to server time.
+    /// Operation timestamp for supersede/retract verbs on the vault owner's
+    /// path. Defaults to server time. A retract judged on its caller's own
+    /// actor rejects this field: the vault records its time.
     /// Delete verbs reject this field because the vault owns deletion time.
     #[serde(default, alias = "now")]
     #[schema(example = 1782357700_u64)]
@@ -168,12 +170,6 @@ pub(crate) struct CoreMemoryVerbResponse {
     verb: String,
     /// Typed operation family selected by the verb.
     operation: CoreMemoryOperationKind,
-    /// Approval reported by the facade retract receipt, including `pending`.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    approval: Option<String>,
-    /// Settlement reference from the facade retract receipt (`gate:<hex>` when pending).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    receipt_ref: Option<String>,
     /// Operation timestamp used by supersede/retract verbs.
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schema(example = 1782357700_u64)]
@@ -197,6 +193,25 @@ pub(crate) struct CoreMemoryVerbResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schema(value_type = Option<CoreMemoryVerbDeleteOutcome>)]
     delete: Option<Value>,
+    /// Retract outcome for `retract`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    retract: Option<CoreMemoryVerbRetractOutcome>,
+}
+
+/// Retract result returned by the `retract` verb.
+#[derive(Debug, Serialize, ToSchema)]
+pub(crate) struct CoreMemoryVerbRetractOutcome {
+    /// `retracted` when the claim closed, or `pending` when the gate parked a
+    /// caller's retract of its own claim for the holder's consent (ARCH-0040
+    /// `mcp:5`): the claim stays as it was until the holder settles it.
+    /// Absent when post hooks redact the receipt's approval.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(value_type = Option<String>, example = "retracted")]
+    state: Option<String>,
+    /// The claim door's receipt for a retract judged on its caller's own
+    /// actor; for a parked retract, its pending decision (`gate:<hex>`).
+    #[serde(skip_serializing_if = "Option::is_none", rename = "receipt_ref")]
+    receipt_ref: Option<String>,
 }
 
 /// Delete operation result returned by named delete verbs. Hook-redacted fields are absent.
@@ -281,11 +296,11 @@ pub(super) use self::watch::{
     request_body(content = CoreMemoryVerbRequest, content_type = "application/json"),
     responses(
         (status = 200, description = "Named verb resolved and executed as a typed operation.", body = CoreMemoryVerbResponse, content_type = "application/json"),
-        (status = 400, description = "Malformed verb request.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 400, description = "Malformed verb request, or a retract by a caller that is not the vault owner naming `at`.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 401, description = "Missing or invalid core auth.", body = ApiErrorEnvelope, content_type = "application/json"),
-        (status = 403, description = "Core token lacks core:write, or the verb names the owner's erase. delete and hard_delete by a token that is not owner-grade answer the engine's delete authority (DEL-2) in the facade's MemoryError body: FORBIDDEN naming not_owner_of_item, out_of_admin_scope, no_delete_grant, credential_bounds, unresolved_actor, or account_key_unbound (an account key that does not name the owner, on a rooted vault). remember's guarded batch door refusing the writer answers the engine's FORBIDDEN in the facade's MemoryError body, as `/v1/core/batch` does.", body = ApiErrorEnvelope, content_type = "application/json"),
-        (status = 404, description = "Referenced entity was not found.", body = ApiErrorEnvelope, content_type = "application/json"),
-        (status = 409, description = "The key's first request never settled an outcome (`idempotent_outcome_unknown`, FIX 9527): its effect may have landed, so it is not run again; read the resource's state, or send a new `Idempotency-Key` to act again. A retry whose first request counted committed writes gets `idempotent_reply_not_kept` instead (FIX 10379): those writes landed, and the reply was not kept.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 403, description = "Core token lacks core:write, or the verb names the owner's erase. delete and hard_delete by a token that is not owner-grade answer the engine's delete authority (DEL-2) in the facade's MemoryError body: FORBIDDEN naming not_owner_of_item, out_of_admin_scope, no_delete_grant, credential_bounds, unresolved_actor, or account_key_unbound (an account key that does not name the owner, on a rooted vault). remember's guarded batch door refusing the writer answers the engine's FORBIDDEN in the facade's MemoryError body, as `/v1/core/batch` does. supersede by a caller that is not the vault owner is refused. retract by a caller that is not the vault owner answers `vault.claims.retract`'s refusal in the facade's MemoryError body: FORBIDDEN for a claim it did not write, for a token that names no actor (unresolved_actor), or for an account key on a rooted vault retracting a claim its person did not write (account_key_unbound); OWNER_BINDING_REQUIRED for a person the authority log does not bind.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 404, description = "Referenced entity was not found. A retract by a caller that is not the vault owner answers the claim door's NOT_FOUND in the facade's MemoryError body.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 409, description = "The key's first request never settled an outcome (`idempotent_outcome_unknown`, FIX 9527): its effect may have landed, so it is not run again; read the resource's state, or send a new `Idempotency-Key` to act again. A retry whose first request counted committed writes gets `idempotent_reply_not_kept` instead (FIX 10379): those writes landed, and the reply was not kept. A retract by a caller that is not the vault owner of a claim the general door does not close (an expression preference) answers the claim door's INVALID_STATE in the facade's MemoryError body.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 422, description = "remember: a ref the entity names does not resolve for its writer: INVENTED_REFERENCE, naming the field pointer, as the facade's MemoryError body (as `/v1/core/batch`).", body = super::facade::MemoryErrorEnvelopeSchema, content_type = "application/json"),
         (status = 500, description = "Memory verb failed.", body = ApiErrorEnvelope, content_type = "application/json")
     )
@@ -343,8 +358,6 @@ pub(crate) async fn core_memory_verb(
             Ok(Json(CoreMemoryVerbResponse {
                 verb: verb.canonical_name().to_owned(),
                 operation,
-                approval: None,
-                receipt_ref: None,
                 at: None,
                 id: Some(written.id.clone()),
                 new_id: None,
@@ -355,15 +368,25 @@ pub(crate) async fn core_memory_verb(
                     agent_definition: written.agent_definition,
                 }),
                 delete: None,
+                retract: None,
             }))
         }
         oneiron::NamedMemoryVerb::Supersede => {
             let new_id = parse_required_entity_id(req.new_id.as_deref(), "new_id")?;
             let old_id = parse_required_entity_id(req.old_id.as_deref(), "old_id")?;
+            // The vault's supersede mechanics run no authorship check, no gate
+            // and no deferred closure (ARCH-0040: a destructive supersede
+            // defers closure until approval), so on this route they are the
+            // owner's (LEGACY-MEMORY-VERB-RETRACT-SUPERSEDE-UNGUARDED).
+            let Some(owner) = memory_owner_proof(&server, &auth, host_action.is_some())? else {
+                return Err(non_owner_supersede_refusal().into());
+            };
             let at = req.at.unwrap_or_else(unix_seconds_now);
+            #[cfg(oneiron_test_support)]
+            crate::test_doors::memory_owner_commit::run_before_owner_commit(&server.vault);
             server
                 .vault
-                .supersede_claim(&new_id, &old_id, at)
+                .supersede_claim_as_owner(&owner, &new_id, &old_id, at)
                 .map_err(|error| {
                     tracing::error!(
                         kind = ?error.kind(),
@@ -377,61 +400,80 @@ pub(crate) async fn core_memory_verb(
             Ok(Json(CoreMemoryVerbResponse {
                 verb: verb.canonical_name().to_owned(),
                 operation,
-                approval: None,
-                receipt_ref: None,
                 at: Some(at),
                 id: None,
                 new_id: Some(new_id.to_hex()),
                 old_id: Some(old_id.to_hex()),
                 entity: None,
                 delete: None,
+                retract: None,
             }))
         }
         oneiron::NamedMemoryVerb::Retract => {
             let id = parse_required_entity_id(req.id.as_deref(), "id")?;
-            let at = req.at.unwrap_or_else(unix_seconds_now);
-            // As the delete below (DEL-2): a self-hosted root, the dev
-            // mode and an owner-grade token retract as the owner, as
-            // before. Any other token runs the facade row
-            // `vault.claims.retract`, so its verb hooks and its
-            // `/claim_ref` reference admission judge the call before the
-            // engine judges the actor's authorship, exactly as on the
-            // facade (FIX-LIST 25699). That row records its own time, so
-            // a non-owner caller's `at` does not reach it, and the answer
-            // reports no time on that path: the row's receipt carries none,
-            // so echoing the caller's `at` would claim it was used.
-            let owner_door = host_action.is_some() || auth.is_owner_grade();
-            let facade_ran = !owner_door;
-            let (id, receipt) = if owner_door {
-                server.vault.retract_claim(&id, at).map_err(|error| {
-                    tracing::error!(kind = ?error.kind(), id = %id.to_hex(), "core memory retract failed");
-                    core_engine_error("core memory retract failed", error)
-                })?;
-                (Some(id.to_hex()), None)
-            } else {
+            // Anyone but the owner retracts as `vault.claims.retract` does: on
+            // its own resolved actor, its own claim only, at the vault's time
+            // (LEGACY-MEMORY-VERB-RETRACT-SUPERSEDE-UNGUARDED).
+            let Some(owner) = memory_owner_proof(&server, &auth, host_action.is_some())? else {
+                if req.at.is_some() {
+                    return Err(ApiError::bad_request(
+                        "at is the vault owner's to set; this retract is recorded at the vault's time",
+                        Some("at"),
+                    )
+                    .into());
+                }
                 let (id, receipt) = core_memory_retract_by_facade(&server, &auth, &id)?;
-                (id, Some(receipt))
+                // Only the post-hook approval can report the claim door's state.
+                let state = receipt
+                    .get("approval")
+                    .and_then(Value::as_str)
+                    .map(|approval| {
+                        if approval == "pending" {
+                            "pending"
+                        } else {
+                            "retracted"
+                        }
+                        .to_owned()
+                    });
+                return Ok(Json(CoreMemoryVerbResponse {
+                    verb: verb.canonical_name().to_owned(),
+                    operation,
+                    at: None,
+                    id,
+                    new_id: None,
+                    old_id: None,
+                    entity: None,
+                    delete: None,
+                    retract: Some(CoreMemoryVerbRetractOutcome {
+                        state,
+                        receipt_ref: receipt
+                            .get("receipt_ref")
+                            .and_then(Value::as_str)
+                            .map(str::to_owned),
+                    }),
+                }));
             };
+            let at = req.at.unwrap_or_else(unix_seconds_now);
+            #[cfg(oneiron_test_support)]
+            crate::test_doors::memory_owner_commit::run_before_owner_commit(&server.vault);
+            server.vault.retract_claim_as_owner(&owner, &id, at).map_err(|error| {
+                tracing::error!(kind = ?error.kind(), id = %id.to_hex(), "core memory retract failed");
+                core_engine_error("core memory retract failed", error)
+            })?;
 
             Ok(Json(CoreMemoryVerbResponse {
                 verb: verb.canonical_name().to_owned(),
                 operation,
-                approval: receipt
-                    .as_ref()
-                    .and_then(|receipt| receipt.get("approval"))
-                    .and_then(Value::as_str)
-                    .map(str::to_owned),
-                receipt_ref: receipt
-                    .as_ref()
-                    .and_then(|receipt| receipt.get("receipt_ref"))
-                    .and_then(Value::as_str)
-                    .map(str::to_owned),
-                at: if facade_ran { None } else { Some(at) },
-                id,
+                at: Some(at),
+                id: Some(id.to_hex()),
                 new_id: None,
                 old_id: None,
                 entity: None,
                 delete: None,
+                retract: Some(CoreMemoryVerbRetractOutcome {
+                    state: Some("retracted".to_owned()),
+                    receipt_ref: None,
+                }),
             }))
         }
         oneiron::NamedMemoryVerb::Delete | oneiron::NamedMemoryVerb::HardDelete => {
@@ -483,14 +525,13 @@ pub(crate) async fn core_memory_verb(
             Ok(Json(CoreMemoryVerbResponse {
                 verb: verb.canonical_name().to_owned(),
                 operation,
-                approval: None,
-                receipt_ref: None,
                 at: None,
                 id,
                 new_id: None,
                 old_id: None,
                 entity: None,
                 delete: Some(delete),
+                retract: None,
             }))
         }
     }
@@ -713,4 +754,40 @@ fn memory_verb_refusal(refusal: oneiron::NamedMemoryVerbRefusal) -> ApiError {
             Some("verb"),
         ),
     }
+}
+
+/// The vault owner's proof when a memory verb takes the owner's path, or
+/// `None` for anyone else: a self-hosted root or the dev mode
+/// (`host_action`), whose proof carries that action, or the owner's own slip
+/// ([`crate::api::owner_routes::owner`]). A full-vault slip someone else
+/// holds is not the owner's (OWNER-GRADE-IS-NOT-OWNERSHIP). A host action
+/// whose owner no longer authenticates gets the owner door's refusal. The
+/// lifecycle door checks the proof again in the writer that commits the act,
+/// so a credential revoked, or an owner removed, while the request waits on
+/// that writer commits nothing (FIX
+/// MEMORY-VERB-OWNER-PROOF-NOT-REVALIDATED-AT-COMMIT).
+fn memory_owner_proof(
+    server: &SyncServer,
+    auth: &CoreAuth,
+    host_action: bool,
+) -> Result<Option<oneiron::consent::AuthenticatedOwner>, ApiError> {
+    let owner = crate::api::owner_routes::owner(auth, server);
+    if host_action {
+        return owner.map(Some);
+    }
+    Ok(owner.ok())
+}
+
+/// `supersede` by a caller that is not the vault owner.
+fn non_owner_supersede_refusal() -> ApiError {
+    ApiError::new(
+        "supersede on this route is the vault owner's: it closes a claim with no gate and no deferred closure",
+        ApiErrorDetails::Forbidden {
+            required_scope: Some("owner".to_owned()),
+        },
+        [
+            "Write a replacement on the same subject, scope and predicate through vault.claims.upsert: it supersedes the standing head under its authorship check and the write gates.",
+            "A live run supersedes through vault.claims.supersede; the vault owner supersedes any pair here.",
+        ],
+    )
 }

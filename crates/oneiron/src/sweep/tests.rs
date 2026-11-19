@@ -184,6 +184,7 @@ fn the_owners_maintain_compacts_a_live_hosts_idle_windows_and_a_scheduled_pass_l
     };
     let dir = tempfile::tempdir().unwrap();
     let vault = Arc::new(Vault::open(dir.path(), embedding_test_config()).unwrap());
+    vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
     let learned_at = 1_771_027_200;
     let erased = EntityId::now();
     put_entity(&vault, &erased, learned_at, b"erased-window-body");
@@ -248,6 +249,7 @@ fn a_window_opened_during_its_compaction_reads_the_compacted_window() {
 
     let dir = tempfile::tempdir().unwrap();
     let vault = Arc::new(Vault::open(dir.path(), embedding_test_config()).unwrap());
+    vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
     let id = EntityId::now();
     let learned_at = 1_771_027_200;
     put_entity(&vault, &id, learned_at, b"reopened-window-body");
@@ -511,9 +513,10 @@ fn sweep_failure_updates_retry_state_in_place_and_keeps_obligation() {
 }
 
 /// ONE-1162: a retained `Arc<LoadedWindow>` can persist a full-history
-/// snapshot after `discard_window` removes the registry entry. The sweep
-/// must still defer while that handle exists, so no finalized shallow row
-/// can be clobbered by a late `persist_state`.
+/// snapshot after `discard_window` removes the registry entry. Census L6-05:
+/// the sweep compacts the window while that handle exists, under its
+/// history-free pin, so the handle's late `persist_state` stores no history
+/// over the finalized shallow row.
 #[cfg(feature = "sync")]
 #[test]
 fn retained_handle_cannot_resurrect_after_finalize() {
@@ -524,6 +527,7 @@ fn retained_handle_cannot_resurrect_after_finalize() {
 
     let dir = tempfile::tempdir().unwrap();
     let vault = Arc::new(Vault::open(dir.path(), embedding_test_config()).unwrap());
+    vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
     let id = EntityId::now();
     let learned_at = 1_771_027_200;
     put_entity(&vault, &id, learned_at, b"retained-window-body");
@@ -553,36 +557,29 @@ fn retained_handle_cannot_resurrect_after_finalize() {
     let sweep_key = outcome.sweep_key.expect("sweep key");
 
     let run = run_hard_erase_sweep(&vault).unwrap();
-    assert_eq!(run.jobs_processed, 0, "retained handle must not finalize");
-    assert!(
-        run.windows_deferred_live >= 1,
-        "orphaned retained handle must defer the window"
-    );
-    assert_eq!(run.windows_compacted, 0);
-    assert!(run.jobs_deferred >= 1);
+    assert_eq!(run.jobs_processed, 1, "{run:?}");
+    assert_eq!(run.windows_deferred_live, 0, "{run:?}");
+    assert!(run.windows_compacted_held >= 1, "{run:?}");
     assert_eq!(run.jobs_failed, 0);
-    assert!(
-        h_rows(&vault).iter().any(|(k, _)| *k == sweep_key),
-        "h: obligation must be kept while the handle can persist"
-    );
-    assert!(receipt_sweep_complete_at(&vault, &receipt_id).is_none());
-
-    retained.persist_state(&vault).unwrap();
-    assert!(
-        h_rows(&vault).iter().any(|(k, _)| *k == sweep_key),
-        "late persist cannot clobber a finalized shallow row because no finalization happened"
-    );
-    assert!(receipt_sweep_complete_at(&vault, &receipt_id).is_none());
-
-    drop(retained);
-    let run = run_hard_erase_sweep(&vault).unwrap();
-    assert_eq!(run.jobs_processed, 1);
-    assert!(run.windows_compacted >= 1);
-    assert!(
-        !h_rows(&vault).iter().any(|(k, _)| *k == sweep_key),
-        "h: obligation is removed only after the handle is gone"
-    );
+    assert!(!h_rows(&vault).iter().any(|(k, _)| *k == sweep_key));
     assert!(receipt_sweep_complete_at(&vault, &receipt_id).is_some());
+
+    // The handle still holds the full history in memory; under the pin its
+    // late persist stores a history-free snapshot, not that history.
+    retained.persist_state(&vault).unwrap();
+    let stored = {
+        let rtxn = vault.store.env.read_txn().unwrap();
+        crate::sync::window_rows::WINDOW_SNAPSHOT
+            .get(&vault.store, &rtxn, &window_key.as_str().to_owned())
+            .unwrap()
+            .expect("the window's snapshot")
+    };
+    let stored = crate::sync::loro_support::doc_from_snapshot(&stored).unwrap();
+    assert!(stored.is_shallow(), "the late persist kept the cut's root");
+    assert!(
+        stored.get_map("entities").get(&id.to_hex()).is_none(),
+        "the erased row stays out of the window"
+    );
 }
 
 /// Non-`sync` builds fail closed: with NO CRDT carrier rows the
@@ -850,6 +847,7 @@ fn sweep_raced_window_completes_on_clean_rerun() {
 
     let dir = tempfile::tempdir().unwrap();
     let vault = Arc::new(Vault::open(dir.path(), embedding_test_config()).unwrap());
+    vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
     let id = EntityId::now();
     put_entity(&vault, &id, 1_771_027_200, UNIT_SENTINEL);
 
@@ -916,6 +914,7 @@ fn sweep_defers_when_uw_carrier_appears_after_compaction_before_finalize() {
 
     let dir = tempfile::tempdir().unwrap();
     let vault = Arc::new(Vault::open(dir.path(), embedding_test_config()).unwrap());
+    vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
     let id = EntityId::now();
     put_entity(&vault, &id, 1_771_027_200, b"final-fence-body");
 

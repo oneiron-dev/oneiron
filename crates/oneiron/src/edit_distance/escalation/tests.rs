@@ -67,6 +67,7 @@ fn field<'a>(record: &'a ReceiptRecord, key: &str) -> Option<&'a str> {
 #[test]
 fn acceptance_is_the_only_door_and_it_is_receipted() {
     let (_dir, vault) = open_vault();
+    let holder = crate::test_util::embedded_owner_proof(&vault);
     record_run(
         &vault,
         EscalationTrigger::Policy,
@@ -94,7 +95,7 @@ fn acceptance_is_the_only_door_and_it_is_receipted() {
         Some(3)
     );
 
-    accept_standing_policy_at(&vault, &row_ref, 6_000).expect("accept");
+    accept_standing_policy_at(&vault, &holder, &row_ref, 6_000).expect("accept");
     let accepted = standing_policy_for(&vault, SCOPE, EscalationTrigger::Policy)
         .expect("read")
         .expect("row");
@@ -111,7 +112,7 @@ fn acceptance_is_the_only_door_and_it_is_receipted() {
     assert!(outcomes.contains(&"proposed") && outcomes.contains(&"accepted"));
 
     // Re-accepting keeps the time the act happened.
-    accept_standing_policy_at(&vault, &row_ref, 9_999).expect("idempotent accept");
+    accept_standing_policy_at(&vault, &holder, &row_ref, 9_999).expect("idempotent accept");
     let accepted_receipt = policy_receipts(&vault)
         .into_iter()
         .find(|record| record.outcome == "accepted")
@@ -122,7 +123,8 @@ fn acceptance_is_the_only_door_and_it_is_receipted() {
 #[test]
 fn accepting_an_unknown_row_ref_is_a_typed_refusal() {
     let (_dir, vault) = open_vault();
-    let error = accept_standing_policy_at(&vault, &crate::test_util::entity(0x32), 6_000)
+    let holder = crate::test_util::embedded_owner_proof(&vault);
+    let error = accept_standing_policy_at(&vault, &holder, &crate::test_util::entity(0x32), 6_000)
         .expect_err("no such row");
     assert!(matches!(
         error,
@@ -137,6 +139,7 @@ fn accepting_an_unknown_row_ref_is_a_typed_refusal() {
 #[test]
 fn the_suppression_read_is_scope_and_trigger_exact() {
     let (_dir, vault) = open_vault();
+    let holder = crate::test_util::embedded_owner_proof(&vault);
     record_run(
         &vault,
         EscalationTrigger::Policy,
@@ -147,7 +150,7 @@ fn the_suppression_read_is_scope_and_trigger_exact() {
     let row_ref = maybe_propose_standing_policy_at(&vault, SCOPE, EscalationTrigger::Policy, 5_000)
         .expect("propose")
         .expect("stable pattern");
-    accept_standing_policy_at(&vault, &row_ref, 6_000).expect("accept");
+    accept_standing_policy_at(&vault, &holder, &row_ref, 6_000).expect("accept");
 
     assert!(
         standing_policy_for(&vault, SCOPE, EscalationTrigger::Policy)

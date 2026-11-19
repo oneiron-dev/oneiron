@@ -145,5 +145,5 @@ impl HandoverRows {
 
 /// Whether `text` is an entity id in its one canonical spelling.
 fn canonical_id(text: &str) -> bool {
-    EntityId::from_hex(text).is_ok_and(|id| id.to_hex() == text)
+    EntityId::from_lower_hex(text).is_ok()
 }

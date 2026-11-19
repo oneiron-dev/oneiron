@@ -4,12 +4,17 @@ use super::test_hooks::{RestoreStep, arm_restore_failure};
 use super::*;
 use crate::{EntityId, temporal::TimeRange};
 
+thread_local! {
+    static CHECKPOINT_KEYS: std::sync::Arc<oneiron_keystore::MemoryKeystore> = std::sync::Arc::default();
+}
+
 #[test]
 fn checkpoint_restore_binds_live_exterior_claim_keys_across_paths() {
     use crate::store::{GateDecisionId, GateDecisionRecord};
     let root = crate::test_support::restore_tempdir();
     let source_path = root.path().join("source");
     let source = Vault::open(&source_path, VaultConfig::device()).unwrap();
+    source.install_device_keystore(CHECKPOINT_KEYS.with(std::sync::Arc::clone));
     let claim_id = [0xC1; 16];
     let decision = GateDecisionRecord {
         version: 0,
@@ -27,13 +32,16 @@ fn checkpoint_restore_binds_live_exterior_claim_keys_across_paths() {
         grant_ref: None,
         diff_handle: vec![1],
         read_frontier_hash: [2; 32],
+        context: Default::default(),
         redacted_at: None,
     };
     source
         .with_write_txn(|txn| source.store.append_gate_decision_in_txn(txn, &decision))
         .unwrap();
     let image = root.path().join("checkpoint");
+    source.ensure_vault_key().expect("mint the vault data key");
     source.snapshot_checkpoint(&image, 100).unwrap();
+    let checkpoint_key = source.checkpoint_key().unwrap();
     let key = root
         .path()
         .join(".source.gate-decision-keys")
@@ -50,6 +58,7 @@ fn checkpoint_restore_binds_live_exterior_claim_keys_across_paths() {
     let destination = destination_parent.join("different-name");
     let (restored, _) = Vault::restore_checkpoint(
         &image,
+        &checkpoint_key,
         &destination,
         VaultConfig::device(),
         RestoreReason::Restore,
@@ -68,6 +77,7 @@ fn checkpoint_restore_binds_live_exterior_claim_keys_across_paths() {
     assert!(
         Vault::restore_checkpoint(
             &image,
+            &checkpoint_key,
             &refused,
             VaultConfig::device(),
             RestoreReason::Migrate,
@@ -89,6 +99,7 @@ fn erase_destroys_the_claim_key_so_a_pre_erase_image_restores_without_its_receip
     use crate::store::{GateDecisionId, GateDecisionRecord};
     let root = crate::test_support::restore_tempdir();
     let source = Vault::open(root.path().join("source"), VaultConfig::device()).unwrap();
+    source.install_device_keystore(CHECKPOINT_KEYS.with(std::sync::Arc::clone));
     let erased = EntityId::now();
     let kept = EntityId::now();
     for id in [erased, kept] {
@@ -118,6 +129,7 @@ fn erase_destroys_the_claim_key_so_a_pre_erase_image_restores_without_its_receip
         grant_ref: None,
         diff_handle: vec![1],
         read_frontier_hash: [2; 32],
+        context: Default::default(),
         redacted_at: None,
     };
     let (erased_receipt, kept_receipt) = (receipt(erased), receipt(kept));
@@ -130,9 +142,11 @@ fn erase_destroys_the_claim_key_so_a_pre_erase_image_restores_without_its_receip
         })
         .expect("append claim receipts");
     let image = root.path().join("pre-erase");
+    source.ensure_vault_key().expect("mint the vault data key");
     source
         .snapshot_checkpoint(&image, 100)
         .expect("pre-erase image");
+    let checkpoint_key = source.checkpoint_key().expect("checkpoint key");
     let custody = root.path().join(".source.gate-decision-keys");
     let key = custody.join(crate::entity_id::bytes_to_hex_lower(erased.as_bytes()));
     assert!(key.exists());
@@ -162,6 +176,7 @@ fn erase_destroys_the_claim_key_so_a_pre_erase_image_restores_without_its_receip
 
     let (restored, _) = Vault::restore_checkpoint(
         &image,
+        &checkpoint_key,
         &root.path().join("restored"),
         VaultConfig::device(),
         RestoreReason::Restore,
@@ -198,6 +213,7 @@ fn a_hold_after_an_erase_commits_never_keeps_its_receipts_readable() {
     let source = std::sync::Arc::new(
         Vault::open(root.path().join("source"), VaultConfig::device()).unwrap(),
     );
+    source.install_device_keystore(CHECKPOINT_KEYS.with(std::sync::Arc::clone));
     let erased = EntityId::now();
     source
         .put_entity(
@@ -224,15 +240,18 @@ fn a_hold_after_an_erase_commits_never_keeps_its_receipts_readable() {
         grant_ref: None,
         diff_handle: vec![1],
         read_frontier_hash: [2; 32],
+        context: Default::default(),
         redacted_at: None,
     };
     source
         .with_write_txn(|txn| source.store.append_gate_decision_in_txn(txn, &receipt))
         .expect("append claim receipt");
     let image = root.path().join("pre-erase");
+    source.ensure_vault_key().expect("mint the vault data key");
     source
         .snapshot_checkpoint(&image, 100)
         .expect("pre-erase image");
+    let checkpoint_key = source.checkpoint_key().expect("checkpoint key");
     let key = root
         .path()
         .join(".source.gate-decision-keys")
@@ -264,6 +283,7 @@ fn a_hold_after_an_erase_commits_never_keeps_its_receipts_readable() {
 
     let (restored, _) = Vault::restore_checkpoint(
         &image,
+        &checkpoint_key,
         &root.path().join("restored"),
         VaultConfig::device(),
         RestoreReason::Restore,
@@ -309,6 +329,7 @@ fn claim_with_receipt(vault: &Vault) -> (EntityId, crate::store::GateDecisionRec
         grant_ref: None,
         diff_handle: vec![1],
         read_frontier_hash: [2; 32],
+        context: Default::default(),
         redacted_at: None,
     };
     vault
@@ -323,7 +344,7 @@ fn commit_unfinished_erase(vault: &Vault, claim: &EntityId) {
     let mut wtxn = vault.store.env.write_txn().unwrap();
     vault
         .store
-        .redact_gate_decisions_for_claim_in_txn(&mut wtxn, claim.as_bytes(), 50)
+        .redact_gate_decisions_for_claim_in_txn(&mut wtxn, claim.as_bytes(), 50, true)
         .expect("commit an erase");
     wtxn.commit().unwrap();
 }
@@ -342,10 +363,12 @@ const SIDES: [Side; 3] = [Side::Open, Side::Disk, Side::KeepingAuthority];
 /// Restores `image` beside the vault at `<root>/source` into `<root>/copy`
 /// through `side`, and returns the source, reopened when `Disk` closed it.
 fn restore_beside(side: Side, source: Vault, root: &Path, image: &Path) -> (Vault, Vault) {
+    let checkpoint_key = source.checkpoint_key().expect("checkpoint key");
     let destination = root.join("copy");
     let (copy, _) = match side {
         Side::Open => Vault::restore_checkpoint_beside(
             image,
+            &checkpoint_key,
             &destination,
             VaultConfig::device(),
             &source.side_restore_source().expect("source state"),
@@ -353,9 +376,10 @@ fn restore_beside(side: Side, source: Vault, root: &Path, image: &Path) -> (Vaul
         ),
         Side::Disk => {
             drop(source);
-            let state = SideRestoreSource::read(&root.join("source")).expect("source state");
+            let state = SideRestoreSource::read(&root.join("source"), None).expect("source state");
             let restored = Vault::restore_checkpoint_beside(
                 image,
+                &checkpoint_key,
                 &destination,
                 VaultConfig::device(),
                 &state,
@@ -363,10 +387,15 @@ fn restore_beside(side: Side, source: Vault, root: &Path, image: &Path) -> (Vaul
             )
             .expect("side restore");
             let source = Vault::open(root.join("source"), VaultConfig::device()).unwrap();
+            source.install_device_keystore(CHECKPOINT_KEYS.with(std::sync::Arc::clone));
+            restored
+                .0
+                .install_device_keystore(CHECKPOINT_KEYS.with(std::sync::Arc::clone));
             return (source, restored.0);
         }
         Side::KeepingAuthority => Vault::restore_checkpoint_keeping_authority(
             image,
+            &checkpoint_key,
             &destination,
             VaultConfig::device(),
             &source,
@@ -374,6 +403,7 @@ fn restore_beside(side: Side, source: Vault, root: &Path, image: &Path) -> (Vaul
         ),
     }
     .expect("side restore");
+    copy.install_device_keystore(CHECKPOINT_KEYS.with(std::sync::Arc::clone));
     (source, copy)
 }
 
@@ -383,8 +413,10 @@ fn side_copy(
     side: Side,
 ) -> (Vault, Vault, EntityId, crate::store::GateDecisionRecord) {
     let source = Vault::open(root.join("source"), VaultConfig::device()).unwrap();
+    source.install_device_keystore(CHECKPOINT_KEYS.with(std::sync::Arc::clone));
     let (claim, receipt) = claim_with_receipt(&source);
     let image = root.join("image");
+    source.ensure_vault_key().expect("mint the vault data key");
     source.snapshot_checkpoint(&image, 100).expect("image");
     let (source, copy) = restore_beside(side, source, root, &image);
     (source, copy, claim, receipt)
@@ -445,10 +477,12 @@ fn a_side_restore_copies_no_key_the_source_destroyed_or_committed_to_destroy() {
     for side in SIDES {
         let root = crate::test_support::restore_tempdir();
         let source = Vault::open(root.path().join("source"), VaultConfig::device()).unwrap();
+        source.install_device_keystore(CHECKPOINT_KEYS.with(std::sync::Arc::clone));
         let (live, live_receipt) = claim_with_receipt(&source);
         let (destroyed, destroyed_receipt) = claim_with_receipt(&source);
         let (committed, committed_receipt) = claim_with_receipt(&source);
         let image = root.path().join("image");
+        source.ensure_vault_key().expect("mint the vault data key");
         source.snapshot_checkpoint(&image, 100).expect("image");
         source
             .delete_entity_with_reason(&destroyed, crate::DeleteReason::UserHardDelete)
@@ -484,10 +518,13 @@ fn a_side_restore_copies_no_key_the_source_destroyed_or_committed_to_destroy() {
 fn a_refused_side_restore_leaves_no_forked_key_behind() {
     let root = crate::test_support::restore_tempdir();
     let source = Vault::open(root.path().join("source"), VaultConfig::device()).unwrap();
+    source.install_device_keystore(CHECKPOINT_KEYS.with(std::sync::Arc::clone));
     let owner = source.ensure_embedded_owner_actor().unwrap();
     claim_with_receipt(&source);
     let image = root.path().join("image");
+    source.ensure_vault_key().expect("mint the vault data key");
     source.snapshot_checkpoint(&image, 100).expect("image");
+    let checkpoint_key = source.checkpoint_key().expect("checkpoint key");
     // Reviving an owner deleted since is refused after the restore has run.
     source
         .delete_entity_with_options(&owner, crate::deletion::DeleteEntityOptions { purge: true })
@@ -496,6 +533,7 @@ fn a_refused_side_restore_leaves_no_forked_key_behind() {
     assert!(
         Vault::restore_checkpoint_keeping_authority(
             &image,
+            &checkpoint_key,
             &destination,
             VaultConfig::device(),
             &source,
@@ -515,8 +553,10 @@ fn a_refused_side_restore_leaves_no_forked_key_behind() {
 fn a_restore_never_shreds_custody_its_vault_is_not_bound_to() {
     let root = crate::test_support::restore_tempdir();
     let source = Vault::open(root.path().join("source"), VaultConfig::device()).unwrap();
+    source.install_device_keystore(CHECKPOINT_KEYS.with(std::sync::Arc::clone));
     let (claim, receipt) = claim_with_receipt(&source);
     let image = root.path().join("image");
+    source.ensure_vault_key().expect("mint the vault data key");
     source.snapshot_checkpoint(&image, 100).expect("image");
     let (source, copy) = restore_beside(Side::Open, source, root.path(), &image);
     drop(copy);
@@ -526,10 +566,12 @@ fn a_restore_never_shreds_custody_its_vault_is_not_bound_to() {
     source
         .snapshot_checkpoint(&pending, 110)
         .expect("image with the erase pending");
+    let checkpoint_key = source.checkpoint_key().expect("checkpoint key");
 
     // In its vault's place at the path the copy left: keep-mode custody.
     let (restored, _) = Vault::restore_checkpoint(
         &pending,
+        &checkpoint_key,
         &root.path().join("copy"),
         VaultConfig::device(),
         RestoreReason::Restore,
@@ -538,6 +580,7 @@ fn a_restore_never_shreds_custody_its_vault_is_not_bound_to() {
     .expect("restore");
     drop(restored);
     let moved = Vault::open(root.path().join("moved"), VaultConfig::device()).unwrap();
+    moved.install_device_keystore(CHECKPOINT_KEYS.with(std::sync::Arc::clone));
     assert!(
         moved
             .gate_decisions(100)
@@ -566,23 +609,27 @@ fn refused_as_no_vault<T>(result: Result<T>) -> bool {
 fn a_side_restore_refuses_a_source_it_cannot_read() {
     let root = crate::test_support::restore_tempdir();
     let source = Vault::open(root.path().join("source"), VaultConfig::device()).unwrap();
+    source.install_device_keystore(CHECKPOINT_KEYS.with(std::sync::Arc::clone));
     let (claim, _) = claim_with_receipt(&source);
     let image = root.path().join("image");
+    source.ensure_vault_key().expect("mint the vault data key");
     source.snapshot_checkpoint(&image, 100).expect("image");
     commit_unfinished_erase(&source, &claim);
+    let checkpoint_key = source.checkpoint_key().expect("checkpoint key");
     drop(source);
     std::fs::create_dir(root.path().join("empty")).unwrap();
     for missing in ["elsewhere", "empty"] {
         assert!(
-            refused_as_no_vault(SideRestoreSource::read(&root.path().join(missing))),
+            refused_as_no_vault(SideRestoreSource::read(&root.path().join(missing), None)),
             "{missing}"
         );
     }
-    let state = SideRestoreSource::read(&root.path().join("source")).expect("source state");
+    let state = SideRestoreSource::read(&root.path().join("source"), None).expect("source state");
     std::fs::rename(root.path().join("source"), root.path().join("moved")).unwrap();
     let destination = root.path().join("copy");
     assert!(refused_as_no_vault(Vault::restore_checkpoint_beside(
         &image,
+        &checkpoint_key,
         &destination,
         VaultConfig::device(),
         &state,
@@ -602,12 +649,16 @@ fn each_side_restore_reads_its_source_when_it_starts() {
         let root = crate::test_support::restore_tempdir();
         let source_path = root.path().join("source");
         let source = Vault::open(&source_path, VaultConfig::device()).unwrap();
+        source.install_device_keystore(CHECKPOINT_KEYS.with(std::sync::Arc::clone));
         let (claim, receipt) = claim_with_receipt(&source);
         let image = root.path().join("image");
+        source.ensure_vault_key().expect("mint the vault data key");
         source.snapshot_checkpoint(&image, 100).expect("image");
+        let checkpoint_key = source.checkpoint_key().expect("checkpoint key");
         let restore = |state: &SideRestoreSource<'_>, copy: &str| {
             Vault::restore_checkpoint_beside(
                 &image,
+                &checkpoint_key,
                 &root.path().join(copy),
                 VaultConfig::device(),
                 state,
@@ -623,9 +674,10 @@ fn each_side_restore_reads_its_source_when_it_starts() {
             (first, restore(&state, "second"))
         } else {
             drop(source);
-            let state = SideRestoreSource::read(&source_path).unwrap();
+            let state = SideRestoreSource::read(&source_path, None).unwrap();
             let first = restore(&state, "first");
             let source = Vault::open(&source_path, VaultConfig::device()).unwrap();
+            source.install_device_keystore(CHECKPOINT_KEYS.with(std::sync::Arc::clone));
             commit_unfinished_erase(&source, &claim);
             drop(source);
             (first, restore(&state, "second"))
@@ -669,11 +721,12 @@ fn each_side_restore_reads_its_source_when_it_starts() {
 fn a_side_restore_source_never_reopens_a_vault_this_process_holds() {
     let root = crate::test_support::restore_tempdir();
     let source = Vault::open(root.path().join("source"), VaultConfig::device()).unwrap();
+    source.install_device_keystore(CHECKPOINT_KEYS.with(std::sync::Arc::clone));
     let reader = source.store.env.read_txn().unwrap();
     let locks = |dir: &str| lmdb_locks_held(&root.path().join(dir).join("lock.mdb"));
     let held = |path: &Path| {
         matches!(
-            SideRestoreSource::read(path),
+            SideRestoreSource::read(path, None),
             Err(Error::Store(crate::error::StoreError::VaultRootPreflight {
                 problem: crate::error::VaultRootProblem::DuplicateOpenRoot { .. },
                 ..
@@ -692,7 +745,7 @@ fn a_side_restore_source_never_reopens_a_vault_this_process_holds() {
     );
     drop(reader);
     drop(source);
-    assert!(SideRestoreSource::read(&root.path().join("renamed")).is_ok());
+    assert!(SideRestoreSource::read(&root.path().join("renamed"), None).is_ok());
 }
 
 /// How many `fcntl` record locks this process holds on `lock_file`, from the
@@ -747,12 +800,16 @@ fn a_side_restore_source_read_off_disk_is_that_vault_only() {
     let root = crate::test_support::restore_tempdir();
     let source_path = root.path().join("source");
     let source = Vault::open(&source_path, VaultConfig::device()).unwrap();
+    source.install_device_keystore(CHECKPOINT_KEYS.with(std::sync::Arc::clone));
     let (claim, _) = claim_with_receipt(&source);
     let image = root.path().join("image");
+    source.ensure_vault_key().expect("mint the vault data key");
     source.snapshot_checkpoint(&image, 100).expect("image");
+    let checkpoint_key = source.checkpoint_key().expect("checkpoint key");
     drop(source);
-    let state = SideRestoreSource::read(&source_path).expect("source state");
+    let state = SideRestoreSource::read(&source_path, None).expect("source state");
     let source = Vault::open(&source_path, VaultConfig::device()).unwrap();
+    source.install_device_keystore(CHECKPOINT_KEYS.with(std::sync::Arc::clone));
     commit_unfinished_erase(&source, &claim);
     drop(source);
     // The source moves; its custody stays, and a new vault takes its path.
@@ -760,7 +817,14 @@ fn a_side_restore_source_read_off_disk_is_that_vault_only() {
     drop(Vault::open(&source_path, VaultConfig::device()).unwrap());
     let destination = root.path().join("copy");
     assert!(matches!(
-        Vault::restore_checkpoint_beside(&image, &destination, VaultConfig::device(), &state, 120),
+        Vault::restore_checkpoint_beside(
+            &image,
+            &checkpoint_key,
+            &destination,
+            VaultConfig::device(),
+            &state,
+            120,
+        ),
         Err(Error::InvalidConfig(_))
     ));
     assert!(!destination.exists());
@@ -775,29 +839,26 @@ fn archived<T>(result: Result<T>) -> bool {
     )
 }
 
-/// Exchanges two directories, as `oneiron restore` does in one call.
-fn exchange(a: &Path, b: &Path) -> std::io::Result<()> {
-    let between = a.with_extension("exchange");
-    std::fs::rename(a, &between)?;
-    std::fs::rename(b, a)?;
-    std::fs::rename(&between, b)
-}
-
 /// A vault with one claim receipt, its image, and a replacement restored
 /// from the image for its place at `<root>/vault`, built at `<root>/staged`.
 fn replacement_for(root: &Path) -> (Vault, Vault, EntityId, crate::store::GateDecisionRecord) {
     let vault = Vault::open(root.join("vault"), VaultConfig::device()).unwrap();
+    vault.install_device_keystore(CHECKPOINT_KEYS.with(std::sync::Arc::clone));
     let (claim, receipt) = claim_with_receipt(&vault);
     let image = root.join("image");
+    vault.ensure_vault_key().expect("mint the vault data key");
     vault.snapshot_checkpoint(&image, 100).expect("image");
+    let checkpoint_key = vault.checkpoint_key().expect("checkpoint key");
     let (replacement, _) = Vault::restore_checkpoint_replacing(
         &image,
+        &checkpoint_key,
         &root.join("staged"),
         VaultConfig::device(),
         &vault,
         120,
     )
     .expect("restore");
+    replacement.install_device_keystore(CHECKPOINT_KEYS.with(std::sync::Arc::clone));
     (vault, replacement, claim, receipt)
 }
 
@@ -825,9 +886,7 @@ fn a_vault_a_restore_replaced_is_archived_until_activated() {
     })));
     // As `oneiron restore` runs it.
     source
-        .swap_in_replacement(&replacement, || {
-            exchange(&vault_path, &root.path().join("staged"))
-        })
+        .swap_in_replacement(&replacement, crate::store::exchange_held)
         .expect("swap");
     assert!(archived(source.delete_entity_with_reason(
         &claim,
@@ -836,8 +895,10 @@ fn a_vault_a_restore_replaced_is_archived_until_activated() {
     drop((source, replacement));
     std::fs::rename(root.path().join("staged"), &previous_path).unwrap();
     let replacement = Vault::open(&vault_path, VaultConfig::device()).unwrap();
+    replacement.install_device_keystore(CHECKPOINT_KEYS.with(std::sync::Arc::clone));
 
     let previous = Vault::open(&previous_path, VaultConfig::device()).unwrap();
+    previous.install_device_keystore(CHECKPOINT_KEYS.with(std::sync::Arc::clone));
     assert!(
         previous
             .gate_decisions(100)
@@ -885,8 +946,8 @@ fn a_restore_that_dies_mid_swap_leaves_one_live_vault() {
     let (vault_path, staged) = (root.path().join("vault"), root.path().join("staged"));
     let (source, replacement, claim, receipt) = replacement_for(root.path());
     let died = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        source.swap_in_replacement(&replacement, || {
-            exchange(&vault_path, &staged).unwrap();
+        source.swap_in_replacement(&replacement, |live, held_staged| {
+            crate::store::exchange_held(live, held_staged).unwrap();
             panic!("the process dies once the directories are exchanged");
         })
     }));
@@ -894,12 +955,14 @@ fn a_restore_that_dies_mid_swap_leaves_one_live_vault() {
     drop((source, replacement));
 
     let previous = Vault::open(&staged, VaultConfig::device()).unwrap();
+    previous.install_device_keystore(CHECKPOINT_KEYS.with(std::sync::Arc::clone));
     assert!(archived(previous.delete_entity_with_reason(
         &claim,
         crate::DeleteReason::UserHardDelete
     )));
     drop(previous);
     let live = Vault::open(&vault_path, VaultConfig::device()).unwrap();
+    live.install_device_keystore(CHECKPOINT_KEYS.with(std::sync::Arc::clone));
     assert!(
         live.gate_decisions(100)
             .expect("the live vault's receipts decrypt")
@@ -924,7 +987,7 @@ fn a_writer_waiting_through_a_swap_is_refused() {
         let staged = staged.clone();
         move || {
             source
-                .swap_in_replacement(&replacement, || exchange(&vault_path, &staged))
+                .swap_in_replacement(&replacement, crate::store::exchange_held)
                 .expect("swap");
         }
     });
@@ -933,6 +996,7 @@ fn a_writer_waiting_through_a_swap_is_refused() {
         checkpoint_id: "written after the swap".into(),
         restored_at: 130,
         reason: RestoreReason::Restore,
+        pad_recovery: Default::default(),
     };
     assert!(archived(source.with_write_txn(|txn| {
         RESTORE_EPOCH.put(&source.store, txn, &u64::MAX, &late)
@@ -943,9 +1007,11 @@ fn a_writer_waiting_through_a_swap_is_refused() {
     )));
     drop((source, replacement));
     let previous = Vault::open(&staged, VaultConfig::device()).unwrap();
+    previous.install_device_keystore(CHECKPOINT_KEYS.with(std::sync::Arc::clone));
     assert!(!previous.restore_epochs().unwrap().contains(&late));
     drop(previous);
     let live = Vault::open(root.path().join("vault"), VaultConfig::device()).unwrap();
+    live.install_device_keystore(CHECKPOINT_KEYS.with(std::sync::Arc::clone));
     assert!(
         live.gate_decisions(100)
             .expect("the live vault's receipts decrypt")
@@ -962,11 +1028,12 @@ fn a_swap_that_leaves_the_vault_in_place_is_refused() {
     let root = crate::test_support::restore_tempdir();
     let (source, replacement, claim, _) = replacement_for(root.path());
     assert!(matches!(
-        source.swap_in_replacement(&replacement, || Ok(())),
+        source.swap_in_replacement(&replacement, |_, _| Ok(())),
         Err(Error::InvalidConfig(_))
     ));
     drop((source, replacement));
     let staged = Vault::open(root.path().join("staged"), VaultConfig::device()).unwrap();
+    staged.install_device_keystore(CHECKPOINT_KEYS.with(std::sync::Arc::clone));
     assert!(archived(staged.delete_entity_with_reason(
         &claim,
         crate::DeleteReason::UserHardDelete
@@ -997,9 +1064,9 @@ fn a_swap_whose_vault_moved_off_its_path_refuses_with_nothing_marked() {
             std::fs::create_dir(&vault_path).unwrap();
         }
         let exchanged = std::cell::Cell::new(false);
-        let refused = source.swap_in_replacement(&replacement, || {
+        let refused = source.swap_in_replacement(&replacement, |live, held_staged| {
             exchanged.set(true);
-            exchange(&vault_path, &staged)
+            crate::store::exchange_held(live, held_staged)
         });
         assert!(
             matches!(refused, Err(Error::InvalidConfig(_))),
@@ -1029,8 +1096,8 @@ fn a_swap_that_strands_the_set_aside_vault_is_refused() {
     let (vault_path, staged) = (root.path().join("vault"), root.path().join("staged"));
     let (source, replacement, claim, receipt) = replacement_for(root.path());
     let moved = root.path().join("moved");
-    let refused = source.swap_in_replacement(&replacement, || {
-        exchange(&vault_path, &staged)?;
+    let refused = source.swap_in_replacement(&replacement, |live, held_staged| {
+        crate::store::exchange_held(live, held_staged)?;
         std::fs::rename(&staged, &moved)?;
         std::fs::create_dir(&staged)
     });
@@ -1045,6 +1112,7 @@ fn a_swap_that_strands_the_set_aside_vault_is_refused() {
             .delete_entity_with_reason(&claim, crate::DeleteReason::UserHardDelete)
     ));
     let live = Vault::open(&vault_path, VaultConfig::device()).unwrap();
+    live.install_device_keystore(CHECKPOINT_KEYS.with(std::sync::Arc::clone));
     assert!(
         live.gate_decisions(100)
             .expect("the live vault's receipts decrypt")
@@ -1072,7 +1140,7 @@ fn a_failed_swap_keeps_the_vault_live_only_at_its_path() {
         let vault_path = root.path().join("vault");
         let (source, replacement, claim, _) = replacement_for(root.path());
         let moved = root.path().join("moved");
-        let refused = source.swap_in_replacement(&replacement, || {
+        let refused = source.swap_in_replacement(&replacement, |_, _| {
             if case == "moved while the exchange failed" {
                 std::fs::rename(&vault_path, &moved)?;
             }
@@ -1119,9 +1187,12 @@ fn a_replacing_restore_writes_only_into_the_directory_it_made() {
     use std::os::unix::fs::PermissionsExt;
     let root = crate::test_support::restore_tempdir();
     let vault = Vault::open(root.path().join("vault"), VaultConfig::device()).unwrap();
+    vault.install_device_keystore(CHECKPOINT_KEYS.with(std::sync::Arc::clone));
     let (claim, _) = claim_with_receipt(&vault);
     let image = root.path().join("image");
+    vault.ensure_vault_key().expect("mint the vault data key");
     vault.snapshot_checkpoint(&image, 100).expect("image");
+    let checkpoint_key = vault.checkpoint_key().expect("checkpoint key");
     let directory = |name: &str, mode: u32| {
         let dir = root.path().join(name);
         std::fs::create_dir(&dir).unwrap();
@@ -1131,6 +1202,7 @@ fn a_replacing_restore_writes_only_into_the_directory_it_made() {
     let restore = |staging: &Path| {
         Vault::restore_checkpoint_replacing(
             &image,
+            &checkpoint_key,
             &staging.join("vault"),
             VaultConfig::device(),
             &vault,
@@ -1152,6 +1224,7 @@ fn a_replacing_restore_writes_only_into_the_directory_it_made() {
     let refused = restore(&staging);
     assert!(refused.is_err(), "{:?}", refused.map(|_| ()));
     let moved_in = Vault::open(staging.join("vault"), VaultConfig::device()).unwrap();
+    moved_in.install_device_keystore(CHECKPOINT_KEYS.with(std::sync::Arc::clone));
     assert!(
         moved_in.get(&kept).unwrap().is_some(),
         "the vault moved in keeps its rows"
@@ -1166,6 +1239,7 @@ fn a_replacing_restore_writes_only_into_the_directory_it_made() {
     let kept = |dir: &Path| {
         Vault::restore_checkpoint(
             &image,
+            &checkpoint_key,
             &dir.join("kept"),
             VaultConfig::device(),
             RestoreReason::Restore,
@@ -1184,7 +1258,7 @@ fn a_replacing_restore_writes_only_into_the_directory_it_made() {
     // A side restore's source there is read, since the vault opens and writes
     // there as it is, and the directory is reported (Engine ruling on r5).
     drop(Vault::open(shared.join("source"), VaultConfig::device()).unwrap());
-    let source = SideRestoreSource::read(&shared.join("source")).unwrap();
+    let source = SideRestoreSource::read(&shared.join("source"), None).unwrap();
     assert_eq!(
         source.shared_path().map(|path| path.directory.clone()),
         Some(shared.canonicalize().unwrap())
@@ -1247,7 +1321,7 @@ fn a_source_missing_at_its_admission_is_never_read() {
     let root = crate::test_support::restore_tempdir();
     let prepared = root.path().join("prepared");
     drop(Vault::open(&prepared, VaultConfig::device()).unwrap());
-    let read = SideRestoreSource::read(&prepared).unwrap();
+    let read = SideRestoreSource::read(&prepared, None).unwrap();
     assert!(
         read.shared_path().is_none(),
         "a private source has nothing to report"
@@ -1258,7 +1332,7 @@ fn a_source_missing_at_its_admission_is_never_read() {
         let (prepared, source) = (prepared.clone(), source.clone());
         move || std::fs::rename(prepared, source).unwrap()
     });
-    assert!(refused_as_no_vault(SideRestoreSource::read(&source)));
+    assert!(refused_as_no_vault(SideRestoreSource::read(&source, None)));
     assert!(prepared.exists(), "nothing looks under the name after it");
     // Review r9 (Astra F1): nor through a link to a missing directory.
     let link = root.path().join("link");
@@ -1267,7 +1341,7 @@ fn a_source_missing_at_its_admission_is_never_read() {
         let prepared = prepared.clone();
         move || std::fs::rename(prepared, source).unwrap()
     });
-    assert!(refused_as_no_vault(SideRestoreSource::read(&link)));
+    assert!(refused_as_no_vault(SideRestoreSource::read(&link, None)));
     assert!(prepared.exists(), "nothing looks through the link after it");
 }
 
@@ -1281,9 +1355,7 @@ fn an_activation_commits_only_receipts_its_forked_keys_read() {
     let (vault_path, previous_path) = (root.path().join("vault"), root.path().join("previous"));
     let (source, replacement, claim, receipt) = replacement_for(root.path());
     source
-        .swap_in_replacement(&replacement, || {
-            exchange(&vault_path, &root.path().join("staged"))
-        })
+        .swap_in_replacement(&replacement, crate::store::exchange_held)
         .expect("swap");
     drop((source, replacement));
     std::fs::rename(root.path().join("staged"), &previous_path).unwrap();
@@ -1300,11 +1372,13 @@ fn an_activation_commits_only_receipts_its_forked_keys_read() {
     assert!(Vault::activate_archived(&previous_path, VaultConfig::device(), &source).is_err());
     assert!(!root.path().join(".previous.gate-decision-keys").exists());
     let previous = Vault::open(&previous_path, VaultConfig::device()).unwrap();
+    previous.install_device_keystore(CHECKPOINT_KEYS.with(std::sync::Arc::clone));
     assert!(archived(previous.side_restore_source()));
     drop(previous);
 
     Vault::activate_archived(&previous_path, VaultConfig::device(), &source).expect("activate");
     let previous = Vault::open(&previous_path, VaultConfig::device()).unwrap();
+    previous.install_device_keystore(CHECKPOINT_KEYS.with(std::sync::Arc::clone));
     assert!(
         previous
             .gate_decisions(100)
@@ -1318,6 +1392,7 @@ fn an_activation_commits_only_receipts_its_forked_keys_read() {
 fn canonical_snapshot_rebuilds_indexes_excludes_runtime_and_mints_epoch() {
     let root = crate::test_support::restore_tempdir();
     let source = Vault::open(root.path().join("source"), VaultConfig::device()).unwrap();
+    source.install_device_keystore(CHECKPOINT_KEYS.with(std::sync::Arc::clone));
     let id = EntityId::now();
     source
         .batch()
@@ -1363,7 +1438,9 @@ fn canonical_snapshot_rebuilds_indexes_excludes_runtime_and_mints_epoch() {
     .unwrap();
     assert_eq!(diagnostics.len(), 1);
     let path = root.path().join("checkpoint");
+    source.ensure_vault_key().expect("mint the vault data key");
     let checkpoint_id = source.snapshot_checkpoint(&path, 100).unwrap();
+    let checkpoint_key = source.checkpoint_key().unwrap();
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -1395,6 +1472,7 @@ fn canonical_snapshot_rebuilds_indexes_excludes_runtime_and_mints_epoch() {
     {
         let (restored, report) = Vault::restore_checkpoint(
             &path,
+            &checkpoint_key,
             &root.path().join(format!("restored-{index}")),
             VaultConfig::device(),
             reason,
@@ -1451,14 +1529,18 @@ fn canonical_snapshot_rebuilds_indexes_excludes_runtime_and_mints_epoch() {
 fn corrupt_checkpoint_and_existing_destination_are_refused_without_overwrite() {
     let root = crate::test_support::restore_tempdir();
     let vault = Vault::open(root.path().join("source"), VaultConfig::device()).unwrap();
+    vault.install_device_keystore(CHECKPOINT_KEYS.with(std::sync::Arc::clone));
     let image = root.path().join("checkpoint");
+    vault.ensure_vault_key().expect("mint the vault data key");
     vault.snapshot_checkpoint(&image, 1).unwrap();
+    let checkpoint_key = vault.checkpoint_key().unwrap();
     let destination = root.path().join("existing");
     std::fs::create_dir(&destination).unwrap();
     std::fs::write(destination.join("owned"), b"keep").unwrap();
     assert!(
         Vault::restore_checkpoint(
             &image,
+            &checkpoint_key,
             &destination,
             VaultConfig::device(),
             RestoreReason::Restore,
@@ -1473,6 +1555,7 @@ fn corrupt_checkpoint_and_existing_destination_are_refused_without_overwrite() {
     assert!(
         Vault::restore_checkpoint(
             &image,
+            &checkpoint_key,
             &root.path().join("fresh"),
             VaultConfig::device(),
             RestoreReason::Restore,
@@ -1487,6 +1570,7 @@ fn corrupt_checkpoint_and_existing_destination_are_refused_without_overwrite() {
 fn restore_rebuilds_pending_consent_indexes_and_preserves_insertion_order() {
     let root = crate::test_support::restore_tempdir();
     let source = Vault::open(root.path().join("source"), VaultConfig::device()).unwrap();
+    source.install_device_keystore(CHECKPOINT_KEYS.with(std::sync::Arc::clone));
     let mut expected = Vec::new();
     for _ in 0..2 {
         let record = crate::store::PendingGateConsentRecord {
@@ -1498,6 +1582,8 @@ fn restore_rebuilds_pending_consent_indexes_and_preserves_insertion_order() {
             read_frontier_hash: [2; 32],
             reason_codes: vec!["gate.pending.test".into()],
             dreamer_run_id: Some("pending-run".into()),
+            predicate: None,
+            expires_at: None,
         };
         source
             .with_write_txn(|txn| source.store.put_pending_gate_consent_in_txn(txn, &record))
@@ -1533,9 +1619,12 @@ fn restore_rebuilds_pending_consent_indexes_and_preserves_insertion_order() {
         })
         .unwrap();
     let image = root.path().join("checkpoint");
+    source.ensure_vault_key().expect("mint the vault data key");
     source.snapshot_checkpoint(&image, 110).unwrap();
+    let checkpoint_key = source.checkpoint_key().unwrap();
     let (restored, _) = Vault::restore_checkpoint(
         &image,
+        &checkpoint_key,
         &root.path().join("restored"),
         VaultConfig::device(),
         RestoreReason::Restore,
@@ -1596,12 +1685,14 @@ fn checkpoint_refuses_unreconstructable_explicit_vectors_before_creating_image()
         config.dimensions = 4;
         config.embedding_model = Some("test/model@v1".into());
         let source = Vault::open(dir.path().join("source"), config).unwrap();
+        source.install_device_keystore(CHECKPOINT_KEYS.with(std::sync::Arc::clone));
         let id = EntityId::now();
         source
             .put_entity(&id, entity_type, TimeRange { start: 1, end: 1 }, 1, body)
             .unwrap();
         let vector = vec![1.0, 0.0, 0.0, 0.0];
         source.put_vector(&id, &vector).unwrap();
+        source.ensure_vault_key().expect("mint the vault data key");
         let checkpoint = dir.path().join("checkpoint");
         assert!(matches!(
             source.snapshot_checkpoint(&checkpoint, 100),
@@ -1640,11 +1731,13 @@ fn restored_summary_is_reembedded_from_retained_prose_and_retrievable() -> Resul
     let dir = crate::test_support::restore_tempdir();
     let config = crate::test_util::embedding_test_config();
     let source = Vault::open(dir.path().join("source"), config.clone())?;
+    source.install_device_keystore(CHECKPOINT_KEYS.with(std::sync::Arc::clone));
     let id = EntityId::now();
     let body =
         crate::compaction::encode_epoch_summary_body(&crate::compaction::EpochSummaryBody {
             v: 1,
             session: "61616161616161616161616161616161".to_owned(),
+            conversation: None,
             epoch: 1,
             turn_start: 1,
             turn_end: 1,
@@ -1661,10 +1754,13 @@ fn restored_summary_is_reembedded_from_retained_prose_and_retrievable() -> Resul
     )?;
     source.put_vector(&id, &[1.0, 0.0, 0.0, 0.0])?;
     let checkpoint = dir.path().join("checkpoint");
+    source.ensure_vault_key().expect("mint the vault data key");
     source.snapshot_checkpoint(&checkpoint, 100)?;
+    let checkpoint_key = source.checkpoint_key()?;
     drop(source);
     let (restored, _) = Vault::restore_checkpoint(
         &checkpoint,
+        &checkpoint_key,
         &dir.path().join("restored"),
         config,
         RestoreReason::Restore,
@@ -1717,6 +1813,7 @@ fn restore_refuses_another_kinds_job_row_in_the_owner_retained_range() {
     use crate::attempt_queue::{AttemptId, AttemptQueue, EnqueueAttempt};
     let root = crate::test_support::restore_tempdir();
     let vault = Vault::open(root.path().join("source"), VaultConfig::device()).unwrap();
+    vault.install_device_keystore(CHECKPOINT_KEYS.with(std::sync::Arc::clone));
     AttemptQueue::new(&vault)
         .enqueue(EnqueueAttempt {
             kind: "test.retained".into(),
@@ -1728,7 +1825,9 @@ fn restore_refuses_another_kinds_job_row_in_the_owner_retained_range() {
         .unwrap();
     let template = AttemptQueue::new(&vault).list().unwrap().remove(0);
     let image = root.path().join("checkpoint");
+    vault.ensure_vault_key().expect("mint the vault data key");
     vault.snapshot_checkpoint(&image, 1).unwrap();
+    let checkpoint_key = vault.checkpoint_key().unwrap();
     let bytes = std::fs::read(&image).unwrap();
     let base: CheckpointImage = rmp_serde::from_slice(&bytes[41..]).unwrap();
     for (n, (first, kind, restores)) in [
@@ -1759,6 +1858,7 @@ fn restore_refuses_another_kinds_job_row_in_the_owner_retained_range() {
         let destination = root.path().join(format!("restored-{n}"));
         let restored = Vault::restore_checkpoint(
             &crafted_path,
+            &checkpoint_key,
             &destination,
             VaultConfig::device(),
             RestoreReason::Restore,
@@ -1787,11 +1887,14 @@ fn restore_refuses_another_kinds_job_row_in_the_owner_retained_range() {
 fn restore_refuses_an_authority_row_without_its_body() {
     let root = tempfile::tempdir().unwrap();
     let vault = Vault::open(root.path().join("source"), VaultConfig::default()).unwrap();
+    vault.install_device_keystore(CHECKPOINT_KEYS.with(std::sync::Arc::clone));
     vault
         .ensure_host_root_slip(&crate::test_support::test_host_issuer())
         .unwrap();
     let image = root.path().join("checkpoint");
+    vault.ensure_vault_key().expect("mint the vault data key");
     vault.snapshot_checkpoint(&image, 1).unwrap();
+    let checkpoint_key = vault.checkpoint_key().unwrap();
     let bytes = std::fs::read(&image).unwrap();
     let base: CheckpointImage = rmp_serde::from_slice(&bytes[41..]).unwrap();
     let at = base.databases["entities"]
@@ -1818,6 +1921,7 @@ fn restore_refuses_an_authority_row_without_its_body() {
         assert!(
             Vault::restore_checkpoint(
                 &crafted_path,
+                &checkpoint_key,
                 &destination,
                 VaultConfig::default(),
                 RestoreReason::Restore,
@@ -1841,10 +1945,13 @@ fn restore_refuses_an_authority_row_without_its_body() {
 fn a_refused_restore_leaves_nothing_at_its_destination() {
     let root = crate::test_support::restore_tempdir();
     let vault = Vault::open(root.path().join("vault"), VaultConfig::device()).unwrap();
+    vault.install_device_keystore(CHECKPOINT_KEYS.with(std::sync::Arc::clone));
     let (claim, _) = claim_with_receipt(&vault);
     let image = root.path().join("image");
+    vault.ensure_vault_key().expect("mint the vault data key");
     vault.snapshot_checkpoint(&image, 100).expect("image");
     let source = vault.side_restore_source().unwrap();
+    let checkpoint_key = vault.checkpoint_key().expect("checkpoint key");
     for beside in [false, true] {
         for step in [
             RestoreStep::FirstOpen,
@@ -1857,6 +1964,7 @@ fn a_refused_restore_leaves_nothing_at_its_destination() {
                 if beside {
                     Vault::restore_checkpoint_beside(
                         &image,
+                        &checkpoint_key,
                         &destination,
                         VaultConfig::device(),
                         &source,
@@ -1865,6 +1973,7 @@ fn a_refused_restore_leaves_nothing_at_its_destination() {
                 } else {
                     Vault::restore_checkpoint(
                         &image,
+                        &checkpoint_key,
                         &destination,
                         VaultConfig::device(),
                         RestoreReason::Restore,
@@ -1895,8 +2004,11 @@ fn a_refused_restore_leaves_nothing_at_its_destination() {
 fn a_refused_restore_leaves_a_directory_moved_in_under_its_name() {
     let root = crate::test_support::restore_tempdir();
     let vault = Vault::open(root.path().join("vault"), VaultConfig::device()).unwrap();
+    vault.install_device_keystore(CHECKPOINT_KEYS.with(std::sync::Arc::clone));
     let image = root.path().join("image");
+    vault.ensure_vault_key().expect("mint the vault data key");
     vault.snapshot_checkpoint(&image, 100).expect("image");
+    let checkpoint_key = vault.checkpoint_key().expect("checkpoint key");
     let destination = root.path().join("copy");
     let (moved_in, aside) = (root.path().join("moved-in"), root.path().join("aside"));
     std::fs::create_dir(&moved_in).unwrap();
@@ -1910,6 +2022,7 @@ fn a_refused_restore_leaves_a_directory_moved_in_under_its_name() {
     });
     let refused = Vault::restore_checkpoint(
         &image,
+        &checkpoint_key,
         &destination,
         VaultConfig::device(),
         RestoreReason::Restore,
@@ -1935,20 +2048,25 @@ fn a_refused_restore_leaves_a_directory_moved_in_under_its_name() {
 fn a_refused_restore_leaves_a_copy_another_owner_holds() {
     let root = crate::test_support::restore_tempdir();
     let vault = Vault::open(root.path().join("vault"), VaultConfig::device()).unwrap();
+    vault.install_device_keystore(CHECKPOINT_KEYS.with(std::sync::Arc::clone));
     let image = root.path().join("image");
+    vault.ensure_vault_key().expect("mint the vault data key");
     vault.snapshot_checkpoint(&image, 100).expect("image");
+    let checkpoint_key = vault.checkpoint_key().expect("checkpoint key");
     let destination = root.path().join("copy");
     let owner = std::rc::Rc::new(std::cell::RefCell::new(None));
     crate::store::arm_after_restore_destination_made({
         let (destination, owner) = (destination.clone(), owner.clone());
         move || {
             let held = Vault::open_owned(&destination, VaultConfig::device()).unwrap();
+            held.install_device_keystore(CHECKPOINT_KEYS.with(std::sync::Arc::clone));
             let (row, _) = claim_with_receipt(&held);
             *owner.borrow_mut() = Some((held, row));
         }
     });
     let refused = Vault::restore_checkpoint(
         &image,
+        &checkpoint_key,
         &destination,
         VaultConfig::device(),
         RestoreReason::Restore,
@@ -1963,6 +2081,7 @@ fn a_refused_restore_leaves_a_copy_another_owner_holds() {
     assert!(held.get(&row).unwrap().is_some());
     drop(held);
     let reopened = Vault::open_owned(&destination, VaultConfig::device()).unwrap();
+    reopened.install_device_keystore(CHECKPOINT_KEYS.with(std::sync::Arc::clone));
     assert!(
         reopened.get(&row).unwrap().is_some(),
         "the other owner's copy survives the refused restore"
@@ -1978,8 +2097,11 @@ fn a_refused_restore_leaves_a_copy_another_owner_holds() {
 fn a_refused_restore_unlinks_the_writer_lock_last() {
     let root = crate::test_support::restore_tempdir();
     let vault = Vault::open(root.path().join("vault"), VaultConfig::device()).unwrap();
+    vault.install_device_keystore(CHECKPOINT_KEYS.with(std::sync::Arc::clone));
     let image = root.path().join("image");
+    vault.ensure_vault_key().expect("mint the vault data key");
     vault.snapshot_checkpoint(&image, 100).expect("image");
+    let checkpoint_key = vault.checkpoint_key().expect("checkpoint key");
     let destination = root.path().join("copy");
     let removed = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
     crate::store::arm_after_root_entry_removed({
@@ -2000,6 +2122,7 @@ fn a_refused_restore_unlinks_the_writer_lock_last() {
     arm_restore_failure(RestoreStep::SecondOpen);
     let refused = Vault::restore_checkpoint(
         &image,
+        &checkpoint_key,
         &destination,
         VaultConfig::device(),
         RestoreReason::Restore,
@@ -2026,8 +2149,11 @@ fn a_restore_that_panics_in_its_final_checks_closes_its_copy_first() {
     let root = crate::test_support::restore_tempdir();
     let base = root.path().canonicalize().unwrap();
     let current = Vault::open(base.join("vault"), VaultConfig::device()).unwrap();
+    current.install_device_keystore(CHECKPOINT_KEYS.with(std::sync::Arc::clone));
     let image = base.join("image");
+    current.ensure_vault_key().expect("mint the vault data key");
     current.snapshot_checkpoint(&image, 100).expect("image");
+    let checkpoint_key = current.checkpoint_key().expect("checkpoint key");
     for replacing in [false, true] {
         let destination = base.join(format!("copy-{replacing}"));
         let open = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
@@ -2040,6 +2166,7 @@ fn a_restore_that_panics_in_its_final_checks_closes_its_copy_first() {
             if replacing {
                 Vault::restore_checkpoint_replacing(
                     &image,
+                    &checkpoint_key,
                     &destination,
                     VaultConfig::device(),
                     &current,
@@ -2048,6 +2175,7 @@ fn a_restore_that_panics_in_its_final_checks_closes_its_copy_first() {
             } else {
                 Vault::restore_checkpoint_keeping_authority(
                     &image,
+                    &checkpoint_key,
                     &destination,
                     VaultConfig::device(),
                     &current,

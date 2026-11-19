@@ -47,14 +47,24 @@ use crate::gate::input::{GateActor, GateContentKind, GateProvenanceHandles};
 use crate::gate::resolution::{PolicyManifestResolution, check_claim_source_trust};
 use crate::gate::weave_grant::{GATE_REASON_ALLOW_WEAVE_GRANT, landing_weave_grant_in_txn};
 use crate::store::{
-    GateDecisionId, GateDecisionRecord, PendingGateConsentRecord, Store, TrayRemoval,
-    checker_hold_receipt_reason,
+    GateDecisionId, PendingGateConsentRecord, Store, TrayRemoval, checker_hold_receipt_reason,
 };
 use crate::write_envelope::{SourceLineage, WriteEnvelope};
 
 /// The receipt reason of a write held because its value does not fit the auto
 /// checker's preview, so no checker could review all of it.
 const CHECKER_PARTIAL_VIEW_RECEIPT_REASON: &str = "checker_partial_view";
+
+/// The receipt a same-transaction preflight recorded for a persisted
+/// candidate (ONE-1419, FIX 8752), and the claim diff of the body it judged
+/// when the mask on write rewrote the candidate since: the receipt names
+/// those pre-mask bytes, the stored body their handles
+/// (CHECKER-PREVIEW-READS-UNMASKED-CANDIDATE).
+#[derive(Clone, Copy)]
+struct PreflightReceipt {
+    decision: GateDecisionId,
+    pre_mask_diff: Option<[u8; 32]>,
+}
 
 /// The claim write door.
 ///
@@ -95,7 +105,13 @@ pub(crate) fn check_claim_policy_for_write(
 
 // The pending-bind seam threads the preflight receipt identity one parameter
 // further than the record seam; bundling the axis tuple would hide the
-// preflight decision binding this lane opened.
+// preflight decision binding this lane opened. `pre_mask_diff` is the claim
+// diff of the body that receipt judged, when the mask on write rewrote the
+// candidate after it.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the record seam's arguments plus the preflight receipt and the body it judged"
+)]
 pub(crate) fn check_claim_policy_for_write_with_preflight_decision(
     store: &Store,
     wtxn: &mut heed::RwTxn<'_>,
@@ -104,6 +120,7 @@ pub(crate) fn check_claim_policy_for_write_with_preflight_decision(
     policy: &PolicyManifestResolution,
     mode: GateWriteMode,
     preflight_decision_id: Option<GateDecisionId>,
+    pre_mask_diff: Option<[u8; 32]>,
 ) -> Result<()> {
     let mut recorded_decision = None;
     check_claim_policy_for_write_with_record_inner(
@@ -114,7 +131,10 @@ pub(crate) fn check_claim_policy_for_write_with_preflight_decision(
         policy,
         mode,
         &mut recorded_decision,
-        preflight_decision_id,
+        preflight_decision_id.map(|decision| PreflightReceipt {
+            decision,
+            pre_mask_diff,
+        }),
         // The batch/replay claim door only ever carries PERSISTED candidates,
         // so it never opens the synthetic-operation mode.
         false,

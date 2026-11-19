@@ -8,44 +8,36 @@ use crate::server::SyncServer;
 use oneiron::task_verb::sdk::SafeDeleteRequest;
 use serde_json::Value;
 
-/// The core retract of `id` by a token that is not owner-grade, through
-/// the facade row `vault.claims.retract` (FIX-LIST 25699). The generated
-/// dispatch runs the row's verb-hook boundary, admits `/claim_ref`
-/// through the caller's scoped read, and only then calls
-/// `Memory::claim_retract`, which judges the resolved actor's authorship.
-/// Calling a judged door directly here would skip the hooks and the
-/// admission, and the door would answer for claims the caller cannot
-/// read. The actor is resolved as the delete below resolves it, an
-/// account key judged as its person; a token that names no actor is
-/// refused `unresolved_actor`.
+/// The core retract of `id` by a caller that is not the vault owner: the
+/// claim door `vault.claims.retract` runs ([`oneiron::Memory::claim_retract`]),
+/// on the caller's own actor ([`core_memory_caller`]) with the credential's
+/// proof bound. A human the authority log binds retracts any claim, recorded
+/// as the owner's explicit retraction (the door takes that binding for
+/// ownership: FIX-LIST CLAIM-RETRACT-HUMAN-BINDING-IS-NOT-OWNERSHIP); anyone
+/// else only a claim it wrote, and an agent's retract the gate holds parks
+/// for the holder's consent. An account key on a rooted vault retracting a
+/// claim its person did not write answers `account_key_unbound`, as delete
+/// does. The vault's clock dates it.
+/// The facade row runs its verb hooks and `/claim_ref` reference admission
+/// before the claim door (FIX-LIST 25699). Its post-hook view alone supplies
+/// the executed target and receipt fields; redactions are never restored.
 pub(super) fn core_memory_retract_by_facade(
     server: &SyncServer,
     auth: &CoreAuth,
     id: &oneiron::EntityId,
 ) -> Result<(Option<String>, Value), DagWriteError> {
-    let (actor, class) = match facade::facade_actor(server, auth) {
-        Ok((actor, class)) => (actor, class),
-        Err(_) => match auth.account_key_principal() {
-            Some(person) => (person, oneiron::EdgeActorClass::Human),
-            None => {
-                return Err(oneiron::memory::MemoryError::new(
-                    oneiron::memory::MEMORY_CODE_FORBIDDEN,
-                    "unresolved_actor: this token names no actor the retract authority can judge",
-                    &[
-                        "Present a slip paired with --principal-ref and --actor-class, an account key that names its person, or the owner's own credential.",
-                    ],
-                )
-                .into());
-            }
-        },
-    };
-    let memory = scoped_auth::credential_memory(server.vault(), Some(auth), actor, class);
+    let (actor, class, by_account_key) = core_memory_caller(server, auth, "retract")?;
+    let memory = scoped_auth::credential_memory(server.vault(), Some(auth), actor, class)
+        .at(auth.locality());
     // Use only the post-hook claim ref: a redacted target must not be restored.
     let receipt = oneiron::task_verb::sdk::invoke(
         &memory,
         "vault.claims.retract",
         serde_json::json!({ "claim_ref": id.to_hex() }),
-    )?;
+    )
+    .map_err(|refusal| {
+        account_key_unbound(server, by_account_key, refusal, "retract another's claim")
+    })?;
     let id = receipt
         .pointer("/claim/id")
         .and_then(Value::as_str)
@@ -76,22 +68,7 @@ pub(super) fn core_memory_delete_by_role(
     id: &oneiron::EntityId,
     reason: CoreMemoryVerbDeleteReason,
 ) -> Result<(Option<String>, Value), DagWriteError> {
-    let (actor, class, by_account_key) = match facade::facade_actor(server, auth) {
-        Ok((actor, class)) => (actor, class, false),
-        Err(_) => match auth.account_key_principal() {
-            Some(person) => (person, oneiron::EdgeActorClass::Human, true),
-            None => {
-                return Err(oneiron::memory::MemoryError::new(
-                    oneiron::memory::MEMORY_CODE_FORBIDDEN,
-                    "unresolved_actor: this token names no actor the delete authority can judge",
-                    &[
-                        "Present a slip paired with --principal-ref and --actor-class, an account key that names its person, or the owner's own credential.",
-                    ],
-                )
-                .into());
-            }
-        },
-    };
+    let (actor, class, by_account_key) = core_memory_caller(server, auth, "delete")?;
     let memory = scoped_auth::credential_memory(server.vault(), Some(auth), actor, class);
     let reason = match reason {
         CoreMemoryVerbDeleteReason::User => oneiron::memory::SafeDeleteReason::UserDelete,
@@ -122,25 +99,65 @@ pub(super) fn core_memory_delete_by_role(
             Ok(value)
         },
     );
-    match deleted {
-        Err(refusal)
-            if by_account_key
-                && refusal.code == oneiron::memory::MEMORY_CODE_OWNER_BINDING_REQUIRED
-                && server
-                    .vault()
-                    .authority_vault_id()
-                    .is_ok_and(|root| root.is_some()) =>
-        {
-            Err(oneiron::memory::MemoryError::new(
+    let view = deleted
+        .map_err(|refusal| account_key_unbound(server, by_account_key, refusal, "delete"))?;
+    Ok(delete_receipt_view(view, committed.as_ref()))
+}
+
+/// An account key's refusal of `act`: the key carries no vault slip, so on a
+/// rooted vault no person but the owner stands by it, and the engine's owner
+/// refusal there answers `account_key_unbound` with the remedy (Engine rulings
+/// 13 Nov 08:20 and 08:30 = C). Any other refusal passes unchanged.
+fn account_key_unbound(
+    server: &SyncServer,
+    by_account_key: bool,
+    refusal: oneiron::memory::MemoryError,
+    act: &str,
+) -> oneiron::memory::MemoryError {
+    if by_account_key
+        && refusal.code == oneiron::memory::MEMORY_CODE_OWNER_BINDING_REQUIRED
+        && server
+            .vault()
+            .authority_vault_id()
+            .is_ok_and(|root| root.is_some())
+    {
+        let remedy = format!(
+            "Present the person's own paired slip (--principal-ref, --actor-class human) to {act} as that person."
+        );
+        return oneiron::memory::MemoryError::new(
+            oneiron::memory::MEMORY_CODE_FORBIDDEN,
+            format!(
+                "account_key_unbound: this key can't {act} in this vault; use your app login or ask the owner"
+            ),
+            &[remedy.as_str()],
+        );
+    }
+    refusal
+}
+
+/// The actor a memory verb judges a caller that is not the vault owner on:
+/// the writer the facade resolves, or the person an account API key names, as
+/// a human (Engine rulings 13 Nov 08:20 and 08:30 = C). The flag says it came
+/// from an account key. A token that names neither is refused
+/// `unresolved_actor`, naming `authority`.
+fn core_memory_caller(
+    server: &SyncServer,
+    auth: &CoreAuth,
+    authority: &str,
+) -> Result<(oneiron::EntityId, oneiron::EdgeActorClass, bool), DagWriteError> {
+    match facade::facade_actor(server, auth) {
+        Ok((actor, class)) => Ok((actor, class, false)),
+        Err(_) => match auth.account_key_principal() {
+            Some(person) => Ok((person, oneiron::EdgeActorClass::Human, true)),
+            None => Err(oneiron::memory::MemoryError::new(
                 oneiron::memory::MEMORY_CODE_FORBIDDEN,
-                "account_key_unbound: this key can't delete in this vault; use your app login or ask the owner",
+                format!("unresolved_actor: this token names no actor the {authority} authority can judge"),
                 &[
-                    "Present the person's own paired slip (--principal-ref, --actor-class human) to delete as that person.",
+                    "Present a slip paired with --principal-ref and --actor-class, an account key that names its person, or the owner's own credential.",
                 ],
             )
-            .into())
-        }
-        outcome => Ok(delete_receipt_view(outcome?, committed.as_ref())),
+            .into()),
+        },
     }
 }
 

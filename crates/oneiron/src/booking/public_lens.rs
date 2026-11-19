@@ -14,8 +14,9 @@
 use serde::{Deserialize, Serialize};
 
 use crate::booking::{
-    BookingError, BookingLandingContent, BookingSlotPreview, BookingVerb, DisclosureRung,
-    OpaqueLifecycleToken, RungProjection, SurfaceClass, booking_slot_preview, project_at_rung,
+    BookingConversionPolicy, BookingError, BookingLandingContent, BookingSlotPreview, BookingVerb,
+    DisclosureRung, OpaqueLifecycleToken, RungProjection, SurfaceClass, booking_slot_preview,
+    project_at_rung,
 };
 use crate::lens::{
     ButtonControl, CollectionAtom, GeneratedLens, GeneratedUiActionDeclaration,
@@ -46,18 +47,36 @@ pub struct BookingPageModel {
     pub visitor_tz: String,
 }
 
+/// The host-owned presentation of a public booking page: the parts its owner
+/// published, which [`BookingPageModel::new`] joins with the disclosure
+/// projection.
+#[derive(Clone, Debug, PartialEq)]
+pub struct BookingPagePresentation {
+    pub owner_display: String,
+    pub event_types: Vec<EventTypeCard>,
+    pub constraint_field: ConstraintFieldConfig,
+    pub theme: ThemeTokens,
+    pub landing: BookingLandingContent,
+}
+
 impl BookingPageModel {
+    /// The preview shows the first `policy.max_visible_slots` ranked slots:
+    /// the page's resolved conversion policy, which owner rows set.
     pub fn new(
-        owner_display: String,
-        event_types: Vec<EventTypeCard>,
+        presentation: BookingPagePresentation,
         slots: RungProjection,
-        constraint_field: ConstraintFieldConfig,
-        theme: ThemeTokens,
-        landing: BookingLandingContent,
         visitor_tz: String,
+        policy: &BookingConversionPolicy,
     ) -> core::result::Result<Self, BookingPageModelError> {
+        let BookingPagePresentation {
+            owner_display,
+            event_types,
+            constraint_field,
+            theme,
+            landing,
+        } = presentation;
         let preview = match &slots {
-            RungProjection::Slots(mask) => booking_slot_preview(mask),
+            RungProjection::Slots(mask) => booking_slot_preview(mask, policy.max_visible_slots),
             _ => return Err(BookingPageModelError::NonSlotsProjection),
         };
         let model = Self {
@@ -89,7 +108,13 @@ pub fn validate_booking_page_model(
         .landing
         .validate()
         .map_err(|_| BookingPageModelError::InvalidLanding)?;
-    if model.preview != booking_slot_preview(mask) {
+    // The preview is the mask's ranked prefix at the length it shows, with
+    // that prefix's recommendation and remainder; the length is the policy's
+    // choice, which the model does not carry. A non-empty mask shows one or
+    // more (a policy count is never zero).
+    let shown = model.preview.visible.len();
+    if model.preview != booking_slot_preview(mask, shown) || (shown == 0 && !mask.slots.is_empty())
+    {
         return Err(BookingPageModelError::InvalidPreview);
     }
     if crate::calendar::tz::utc_to_wall(mask.window_start_utc, &model.visitor_tz).is_err() {
@@ -111,8 +136,9 @@ pub fn validate_booking_page_model(
     Ok(())
 }
 
-/// Bounded ranked prefix for the public lens: the first 128 ranked slots.
-/// Query a narrower window for more choices. Never truncate a serialized JSON
+/// Bounded ranked prefix for the public lens: the first 128 ranked slots, and
+/// every full day (one per visitor-local day of the bounded window, so bounded
+/// already). Query a narrower window for more choices. Never truncate a serialized JSON
 /// string or change a slot interval; the lens frames the projection whole,
 /// whatever its length (FIX 20663).
 pub fn bounded_public_slots(
@@ -318,7 +344,7 @@ fn model_field(name: &str, value: &impl Serialize) -> Result<LensNode> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::booking::{RankedSlot, SolveRequest, SolveResult, slot_mask};
+    use crate::booking::{EventTypeKey, RankedSlot, SolveRequest, SolveResult, slot_mask};
     use crate::temporal::TimeRange;
     use serde_json::json;
 
@@ -331,6 +357,7 @@ mod tests {
             },
             constraint: None,
             visitor_tz: "UTC".to_owned(),
+            duration_min: None,
         };
         let mask = slot_mask(
             &request,
@@ -342,25 +369,31 @@ mod tests {
                 }],
                 flex_used: false,
                 host_bindings: Vec::new(),
+                full_days: Vec::new(),
             },
         );
         BookingPageModel::new(
-            "Fixture host".to_owned(),
-            vec![EventTypeCard {
-                key: request.event_type,
-                title: "Introduction".to_owned(),
-                duration_min: 10,
-                description: "Fixture description".to_owned(),
-            }],
+            BookingPagePresentation {
+                owner_display: "Fixture host".to_owned(),
+                event_types: vec![EventTypeCard {
+                    key: request.event_type,
+                    title: "Introduction".to_owned(),
+                    deposit: None,
+                    duration_min: 10,
+                    description: "Fixture description".to_owned(),
+                    allowed_durations_min: Vec::new(),
+                }],
+                constraint_field: ConstraintFieldConfig {
+                    enabled: false,
+                    placeholder: String::new(),
+                },
+                theme: ThemeTokens(json!({"unknown": {"nested": [null, 7, "opaque"]}})),
+                landing: BookingLandingContent::default(),
+            },
             project_at_rung(&[], DisclosureRung::Full, SurfaceClass::Public, Some(&mask))
                 .expect("public clamp"),
-            ConstraintFieldConfig {
-                enabled: false,
-                placeholder: String::new(),
-            },
-            ThemeTokens(json!({"unknown": {"nested": [null, 7, "opaque"]}})),
-            BookingLandingContent::default(),
             "UTC".to_owned(),
+            &BookingConversionPolicy::default(),
         )
         .expect("model")
     }
@@ -393,13 +426,16 @@ mod tests {
             .collect();
         assert!(
             BookingPageModel::new(
-                model.owner_display.clone(),
-                model.event_types.clone(),
+                BookingPagePresentation {
+                    owner_display: model.owner_display.clone(),
+                    event_types: model.event_types.clone(),
+                    constraint_field: model.constraint_field.clone(),
+                    theme: model.theme.clone(),
+                    landing: model.landing.clone(),
+                },
                 RungProjection::Slots(mask.clone()),
-                model.constraint_field.clone(),
-                model.theme.clone(),
-                model.landing.clone(),
-                model.visitor_tz.clone()
+                model.visitor_tz.clone(),
+                &BookingConversionPolicy::default(),
             )
             .is_err()
         );
@@ -407,7 +443,10 @@ mod tests {
         let RungProjection::Slots(projected) = &model.slots else {
             panic!("slots");
         };
-        model.preview = booking_slot_preview(projected);
+        model.preview = booking_slot_preview(
+            projected,
+            BookingConversionPolicy::default().max_visible_slots,
+        );
         let RungProjection::Slots(mask) = &model.slots else {
             panic!("slots");
         };

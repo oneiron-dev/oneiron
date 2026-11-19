@@ -5,6 +5,8 @@
 use super::commit::claim_envelope_actor;
 use super::*;
 
+use crate::store::gate_reason::GateReceiptOutcome;
+
 /// Whether `proof` lets `actor` propose a claim born at `position`, judged
 /// in the committing snapshot (FIX 1400). The record bounds may narrow the
 /// world and facet the claim is born at and nothing else; a record or
@@ -161,7 +163,7 @@ impl Memory<'_> {
         producers: &[EntityId],
         read: &[&[u8]],
     ) -> MemoryResult<CommitReceipt> {
-        if input.predicate != "integration.exchange"
+        if input.predicate != crate::connector_key::PROXY_EXCHANGE_PREDICATE
             || input.subject_ref != self.actor.to_hex()
             || input.source != "tool_output"
         {
@@ -171,22 +173,9 @@ impl Memory<'_> {
         }
         let birth = self.prompted_birth(input, door, producers, read)?;
         let guard = |txn: &heed::RoTxn<'_>| -> Result<(), Error> {
-            let registered = self
-                .vault
-                .live_connector_registration_in_txn(
-                    txn,
-                    crate::connector_key::PROXY_CONNECTOR,
-                    &self.actor,
-                )?
-                .is_some_and(|registration| {
-                    use crate::connector_key::SlateDisposition::{AlwaysAsk, NeverAllow};
-                    let setting = |tool| registration.slate.tool_setting(tool);
-                    // A write the owner set to always ask is never made: the
-                    // proxy cannot ask the owner per call (FIX 4843).
-                    setting("vault.recall") != NeverAllow
-                        && !matches!(setting("vault.remember"), NeverAllow | AlwaysAsk)
-                });
-            if !registered {
+            // A write the owner set to always ask is never made: the proxy
+            // cannot ask the owner per call (FIX 4843).
+            if !self.vault.proxy_exchange_open_in_txn(txn, &self.actor)? {
                 return Err(Error::Claim(
                     crate::error::ClaimError::ActorLacksClaimAuthority {
                         reason: "the proxy's read or write grant is revoked, or its write asks per call",
@@ -349,12 +338,21 @@ impl Memory<'_> {
                 verify_owner_actor_binding_in_txn(self.vault, &*wtxn, self.actor)?;
                 let raw = crate::claim::encode_claim_body(&body)?;
                 let receipt = super::authorship::decision(
-                    WriteActor::new(self.actor, self.actor_class), "memory_claim_override", "approved",
-                    "gate.memory.explicit_owner_retraction", Some(id),
-                    blake3::hash(&raw).as_bytes().to_vec(), now,
+                    WriteActor::new(self.actor, self.actor_class),
+                    "memory_claim_override",
+                    GateReceiptOutcome::Approved,
+                    "gate.memory.explicit_owner_retraction",
+                    Some(id),
+                    blake3::hash(&raw).as_bytes().to_vec(),
                 );
-                self.vault.store.append_gate_decision_in_txn(wtxn, &receipt)?;
+                self.vault.store.record_gate_receipt_in_txn(wtxn, receipt)?;
             }
+            // A retract of a row that restricts someone lifts it: a live
+            // owner's alone, its own author's self-grant included (FIX
+            // [RESTRICTION-CLAIM-OVERWRITE-AND-SELF-RETRACT] F2).
+            require_live_owner_to_lift_restriction_in_txn(
+                self.vault, &*wtxn, self.write_actor(), &body, "retract",
+            )?;
             if body.predicate == crate::booking::BOOKING_PUBLIC_PAGE_PREDICATE {
                 super::booking_publication::stage_publication_write(self.vault, wtxn, id)?;
             }

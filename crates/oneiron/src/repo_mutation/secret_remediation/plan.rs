@@ -6,6 +6,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Range;
 
 use heed::RoTxn;
+use oneiron_contracts::fingerprint::ContentHash;
 
 use super::env::{RepoEnvEntry, RepoEnvFileKind};
 use super::text::{assigned_name, fallback_name, line_before, literal_bounds, toml_string};
@@ -136,13 +137,13 @@ impl Plan {
         // Dotenv files first: their names are the ones programs read.
         for (path, file) in files {
             if let Some(kind) = repo_env_file(path) {
-                let marks = facts.for_hash(blake3::hash(&file.content).as_bytes());
+                let marks = facts.for_hash(ContentHash::of(&file.content).as_bytes());
                 self.dotenv(vault, txn, custody, path, &file.content, kind, &marks)?;
             }
         }
         for (path, file) in files {
             if repo_env_file(path).is_none() {
-                let marks = facts.for_hash(blake3::hash(&file.content).as_bytes());
+                let marks = facts.for_hash(ContentHash::of(&file.content).as_bytes());
                 if !marks.is_empty() {
                     self.code(vault, txn, custody, path, &file.content, &marks)?;
                 }

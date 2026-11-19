@@ -202,7 +202,12 @@ impl Vault {
         let key = crate::identity::read_machine_signing_key_in_txn(self, txn)?
             .ok_or_else(|| authority_refused(NO_CARRIER))?;
         let public_key = key.verifying_key().to_bytes();
-        if !super::owner_act_signer_admits(fold.machine(machine), &fold.roster, &public_key) {
+        if !super::owner_act_signer_admits(
+            fold.machine(machine),
+            &fold.roster,
+            &public_key,
+            fold.pinned_root.as_ref(),
+        ) {
             return Err(authority_refused(NO_CARRIER));
         }
         // FIX 7908: join a frontier wider than one entry names, else today's path.
@@ -217,7 +222,15 @@ impl Vault {
             return Err(authority_refused(TOO_MANY_HEADS));
         }
         let now = self.instant_in_txn(txn)?.secs();
-        let entry = sign_side_entry(&fold, &key, seq, parents, op(machine), now)?;
+        let op = op(machine);
+        // Only a setting act lands through the gate that reads an owner
+        // key's proof (row CARRIER-OWNER-PROOF); an export act's fold still
+        // refuses any cosign.
+        let proof = matches!(op, AuthorityOp::PolicySettingSet(_))
+            .then(|| self.owner_proof_signer(&fold))
+            .flatten();
+        let entry =
+            sign_side_entry_with_owner_proof(&fold, &key, seq, parents, op, now, proof.as_ref())?;
         let entry_hash = authority_entry_hash(&entry)?;
         let at = TimeRange {
             start: now,

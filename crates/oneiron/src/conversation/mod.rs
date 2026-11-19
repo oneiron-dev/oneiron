@@ -1,14 +1,18 @@
 //! Room bodies, membership windows, session presence and audience visibility.
+pub(crate) mod archive_restore;
 mod attendee;
 mod body;
 mod chat_breakpoint;
+mod closed;
 mod deletion;
 mod live_speakers;
 mod membership;
+mod membership_index;
 mod output_guard;
 mod pins;
 mod preview;
 mod privacy_erase;
+mod retrieval_turn;
 mod roles;
 mod session;
 // An owner-named residual speaker handed into a PERSON window (FIX 3634).
@@ -28,6 +32,7 @@ pub(crate) use chat_breakpoint::{
     erase_chat_breakpoints_in_txn, forget_chat_breakpoint_in_txn,
     forget_withdrawn_summary_breakpoints_in_txn, scrub_chat_breakpoint_actor_in_txn,
 };
+pub(crate) use closed::CLOSED_UPDATES;
 pub(crate) use deletion::ROOM_ERASURES;
 pub(crate) use deletion::{
     guard_room_message_delete, pin_room_message_edge, record_author, replay_room_message_tombstone,
@@ -36,13 +41,16 @@ pub(crate) use deletion::{
 pub use live_speakers::{LiveSpeakerCall, RoomLiveSpeakerEntries};
 pub(crate) use live_speakers::{LiveSpeakers, RequiredSpeaker, required_live_speakers};
 pub use membership::{HistoryChoice, MembershipAction, MembershipRow, MembershipWindow};
+pub(crate) use membership_index::rebuild_membership_index_in_txn;
+#[cfg(oneiron_test_support)]
+pub(crate) use membership_index::test_support as membership_index_test_support;
 pub(crate) use output_guard::ContainerOutputGuard;
 pub use output_guard::OutputMark;
 pub(crate) use pins::{PIN_UPDATES, body_without_room_pins, served_room_body};
 pub(crate) use preview::{LatestMessage, PreviewCandidates, snippet, turn_text};
 pub use privacy_erase::RoomPersonEraseOutcome;
-pub(crate) use roles::person_role_in;
 pub(crate) use roles::{RoomHost, room_host_in_txn};
+pub(crate) use roles::{person_role_in, room_owners_in};
 pub use session::{SessionMode, SessionPresence};
 pub use speaker_handoff::{SpeakerHandoff, SpeakerHandoffBoundary, SpeakerHandoffReceipt};
 pub use turn_actions::{
@@ -52,8 +60,8 @@ pub use turn_actions::{
 };
 pub(crate) use visibility::{
     AudienceCache, anchors_own_windows_admit_in, conversation_summary_covers,
-    gate_claim_anchors_in, gate_claim_anchors_store_in, private_thread_word_turns_in,
-    private_threads_readable_with_read_in, room_for_record_in,
+    gate_claim_anchors_in, gate_claim_anchors_store_in, hangs_under_in,
+    private_thread_word_turns_in, private_threads_readable_with_read_in, room_for_record_in,
 };
 
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
@@ -92,8 +100,6 @@ fn authorize(vault: &Vault, txn: &heed::RoTxn<'_>, actor: WriteActor) -> Result<
         .map_err(|_| denied())
 }
 
-// FIX [LIBTEST-QUARANTINE-CONVERSATION-TESTS]: the lib test target's type check fails here (97 errors: E0061 x75, E0599 x10, E0639 x3, E0308 x3, E0063 x2, E0608 x2, E0600 x1, E0277 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;
 

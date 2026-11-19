@@ -15,6 +15,14 @@
 //! them. The person's own door ([`Vault::set_conversation_training`]) signs
 //! a choice; it is kept, and ignored, while the vault does not let people
 //! opt out.
+//!
+//! Who proves it (row CARRIER-OWNER-PROOF, ruling
+//! CARRIER-PERSON-OPT-BACK-IN = A): until a person has a key of their own,
+//! the carrying machine's sign-in check stands for them. That is enough for
+//! their opt-out, a narrowing of their own row, through any carrier. Their
+//! opt back in widens it, so through a machine that is not the owner's it
+//! waits for an owner key's proof where the vault holds one
+//! ([`super::owner_proof`]), and their door refuses it there.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -113,12 +121,17 @@ pub(super) fn apply_conversation_training(
     hash: AuthorityEntryHash,
     counting: (Option<&PinnedRoot>, InstallCounted<'_>),
     restriction_only: bool,
+    needs_proof_off_the_line: bool,
 ) -> std::result::Result<(), AuthorityFoldIssue> {
     let op = OwnerChoiceOp {
         act: &set.act,
         machine: set.machine,
         choice: Some(&set.leave_out),
         context: CONVERSATION_TRAINING_REVISION_CONTEXT,
+        // Leaving their own messages out narrows the person's own row;
+        // letting them back in widens it, and a carrier proves only itself.
+        needs_proof_off_the_line,
+        persons_own_narrowing: set.act.target == set.act.owner && set.leave_out,
     };
     let landing = owner_choice_landing(
         state,
@@ -142,6 +155,6 @@ pub(super) fn folded_conversation_training(
 ) -> FoldedConversationTraining {
     FoldedConversationTraining {
         persons: folded_owner_choices(state, &state.conversation_training, pin, counted),
-        refused: refused_owner_choices(&state.conversation_training).clone(),
+        refused: refused_owner_choices(&state.conversation_training).to_btree_set(),
     }
 }

@@ -366,13 +366,14 @@ fn exact_other_facet_text_hit_does_not_suppress_strict_facet_prefix() -> Result<
             b"facet",
         )
         .commit()?;
-    put_claim_text(&vault, other_facet_exact, "facetprefix", None)?;
-    put_claim_text(&vault, active_facet_prefix, "facetprefixalpha", None)?;
-    vault
-        .batch()
-        .edge(&other_facet_exact, EdgeKind::FacetOf, &facet_other, 0.7)
-        .edge(&active_facet_prefix, EdgeKind::FacetOf, &facet_active, 0.7)
-        .commit()?;
+    put_claim_text_in_facet(&vault, other_facet_exact, "facetprefix", None, facet_other)?;
+    put_claim_text_in_facet(
+        &vault,
+        active_facet_prefix,
+        "facetprefixalpha",
+        None,
+        facet_active,
+    )?;
 
     let results = vault
         .query()

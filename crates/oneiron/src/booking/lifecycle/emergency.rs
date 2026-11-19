@@ -150,7 +150,7 @@ pub(in crate::booking) fn commit_emergency_item(
                 "emergency booking snapshot is stale or does not belong to this owner",
             ));
         }
-        validate_emergency_proposals(vault, plan, calendars, input)?;
+        validate_emergency_proposals(vault, &*txn, plan, calendars, input)?;
         emergency::verify_initial_invite_in(vault, txn, plan)?;
         let admission = plan
             .payload
@@ -180,6 +180,11 @@ pub(in crate::booking) fn commit_emergency_item(
         // one proposal picked (FIX 9635). Its notification is the apology that
         // carries the proposals; the pick sends the REQUEST.
         let calendar = if cancel {
+            // The owner cancelled: the visitor's deposit comes back whole, in
+            // this commit (RULING DEPOSIT-HOST-CANCEL-REFUND = A). The
+            // calendar's later readback finds the booking cancelled and
+            // moves nothing more.
+            super::deposit::refund_on_host_cancel_in_writer(vault, txn, &event, input.now_utc)?;
             supersede_exact_claim(
                 vault,
                 txn,
@@ -262,20 +267,22 @@ pub(in crate::booking) fn commit_emergency_item(
     })
 }
 
-/// The plan's two or three proposals, each still a live, future slot the
-/// booking's calendars offer.
+/// The plan's proposals, at least the owner's floor in force at this commit
+/// (PACK-SETTINGS-ALL W1: higher is tighter, so a floor raised since the plan
+/// refuses it), each still a live, future slot the booking's calendars offer.
+/// The count has no order: a plan made under a larger count still commits.
 fn validate_emergency_proposals(
     vault: &Vault,
+    txn: &heed::RoTxn<'_>,
     plan: &crate::booking::emergency_reschedule::EmergencyPlan,
     calendars: &[(EntityId, Vec<crate::calendar::query::CalendarSel>)],
     input: &BookingLifecycleConsumerInput,
 ) -> Result<(), BookingError> {
     use crate::booking::emergency_reschedule as emergency;
-    if !(2..=3).contains(&plan.proposals.len()) {
-        return Err(emergency_refused(
-            "emergency requires two or three genuine proposals",
-        ));
-    }
+    emergency::setting_keys::emergency_proposal_policy_in_txn(vault, txn)
+        .map_err(|error| engine_failure("emergency proposal policy read", error))?
+        .admit(plan.proposals.len())
+        .map_err(emergency_refused)?;
     for slot in &plan.proposals {
         let target = TimeRange {
             start: slot.start_utc,

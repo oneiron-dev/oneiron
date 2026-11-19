@@ -2,8 +2,126 @@
 
 use oneiron_contracts::entity_id::EntityId;
 
+// `#[derive(SideKey)]`, documented on the trait below.
+pub use oneiron_derive::SideKey;
+
 /// The bytes a key spells after its table's prefix. A decode reads exactly those bytes, so a
 /// row of another shape under the same prefix is refused rather than sliced at a fixed offset.
+///
+/// # Deriving
+///
+/// `#[derive(SideKey)]` declares a key's parts once: a struct's fields, in order, are its parts,
+/// and `encode_into` and `decode_key` both follow from that declaration. A key may start with
+/// `#[side_key(prefix = b"..")]` and join its parts with one byte, `#[side_key(sep = b':')]`.
+/// A decode finds where each part ends by one rule:
+/// - a part is fixed width by default: its type is a [`FixedSideKey`];
+/// - `#[side_key(len = u16)]` (or `len = u64`) writes the part's byte count, big-endian, before it
+///   ([`LengthPrefix`]);
+/// - `#[side_key(rest)]` marks the one part, anywhere in the key, that takes the bytes the other
+///   parts leave. The parts after it are read from the end of the key, so they are fixed width.
+///   An `Option` of a fixed-width part may be the rest part: absent, it spells no bytes.
+///
+/// `#[side_key(with = P)]` spells a field through the part type `P`, a [`FieldSpelling`] of the
+/// field's type, so the field keeps its own type: [`HexU64`] for a `u64`, [`HexId`] for an
+/// [`EntityId`]. A decode refuses any byte the declaration does not account for, and a key whose
+/// parts are all fixed width is itself a [`FixedSideKey`], so it can lead another key.
+///
+/// ```
+/// use oneiron_store::side_table::key::{HexU64, SideKey};
+///
+/// // `{window}:{seq:016x}`: the window may hold `:`, so it is the rest part, and the
+/// // fixed-width sequence number is read from the end.
+/// #[derive(SideKey, Debug, PartialEq)]
+/// #[side_key(sep = b':')]
+/// struct UpdateKey {
+///     #[side_key(rest)]
+///     window: String,
+///     #[side_key(with = HexU64)]
+///     seq: u64,
+/// }
+///
+/// let key = UpdateKey { window: "w:1".to_owned(), seq: 7 };
+/// let mut bytes = Vec::new();
+/// key.encode_into(&mut bytes);
+/// assert_eq!(bytes, b"w:1:0000000000000007");
+/// assert_eq!(UpdateKey::decode_key(&bytes), Some(key));
+/// assert_eq!(UpdateKey::decode_key(b"w:1:000000000000000A"), None);
+/// ```
+///
+/// ```
+/// use oneiron_store::side_table::key::{FixedSideKey, SideKey};
+///
+/// #[derive(SideKey)]
+/// #[side_key(prefix = b"r:")]
+/// struct ReservationKey {
+///     #[side_key(len = u16)]
+///     budget: String,
+///     attempt: [u8; 4],
+/// }
+///
+/// #[derive(SideKey)]
+/// struct PairKey([u8; 2], u64);
+///
+/// let mut bytes = Vec::new();
+/// ReservationKey { budget: "b".to_owned(), attempt: [9; 4] }.encode_into(&mut bytes);
+/// assert_eq!(bytes, b"r:\x00\x01b\x09\x09\x09\x09");
+/// assert_eq!(PairKey::WIDTH, 10);
+/// ```
+///
+/// A key has at most one rest part; another variable part takes a length prefix:
+///
+/// ```compile_fail
+/// use oneiron_store::side_table::key::SideKey;
+///
+/// #[derive(SideKey)]
+/// #[side_key(sep = b'\0')]
+/// struct TwoRestParts {
+///     #[side_key(rest)]
+///     voice: String,
+///     #[side_key(rest)]
+///     target: String,
+/// }
+/// ```
+///
+/// ```
+/// use oneiron_store::side_table::key::SideKey;
+///
+/// #[derive(SideKey)]
+/// #[side_key(sep = b'\0')]
+/// struct OneRestPart {
+///     #[side_key(len = u16)]
+///     voice: String,
+///     #[side_key(rest)]
+///     target: String,
+/// }
+/// ```
+///
+/// The separator is one byte:
+///
+/// ```compile_fail
+/// use oneiron_store::side_table::key::SideKey;
+///
+/// #[derive(SideKey)]
+/// #[side_key(sep = b"::")]
+/// struct TwoByteSeparator([u8; 2], [u8; 2]);
+/// ```
+///
+/// ```
+/// use oneiron_store::side_table::key::SideKey;
+///
+/// #[derive(SideKey)]
+/// #[side_key(sep = b':')]
+/// struct OneByteSeparator([u8; 2], [u8; 2]);
+/// ```
+///
+/// A part with neither `len` nor `rest` is fixed width:
+///
+/// ```compile_fail
+/// use oneiron_store::side_table::key::SideKey;
+///
+/// #[derive(SideKey)]
+/// struct UnmarkedVariablePart(String, [u8; 2]);
+/// ```
 pub trait SideKey: Sized {
     fn encode_into(&self, out: &mut Vec<u8>);
     fn decode_key(bytes: &[u8]) -> Option<Self>;
@@ -12,6 +130,68 @@ pub trait SideKey: Sized {
 /// A key part of fixed width, so it can lead a composite key.
 pub trait FixedSideKey: SideKey {
     const WIDTH: usize;
+}
+
+/// A part type that spells a field of another type (`#[side_key(with = ..)]`), so the field keeps
+/// its own type.
+pub trait FieldSpelling<F>: SideKey {
+    fn encode_field(field: &F, out: &mut Vec<u8>);
+    fn into_field(self) -> F;
+}
+
+/// The count before a length-prefixed part (`#[side_key(len = u16)]` or `len = u64`): the part's
+/// byte count, big-endian.
+pub trait LengthPrefix {
+    /// The count's own width in bytes.
+    const WIDTH: usize;
+
+    /// Writes `len` into `slot`, which is [`Self::WIDTH`] bytes. A count past this type's range
+    /// writes its largest value: such a part is far past LMDB's 511-byte key limit, so the store
+    /// refuses the key either way.
+    fn write_count(len: usize, slot: &mut [u8]);
+
+    /// Reads the count from `slot`, which is [`Self::WIDTH`] bytes.
+    fn read_count(slot: &[u8]) -> Option<usize>;
+
+    /// Appends the count of the bytes `encode_part` appends, then those bytes.
+    fn encode_prefixed(out: &mut Vec<u8>, encode_part: impl FnOnce(&mut Vec<u8>)) {
+        let count_at = out.len();
+        out.resize(count_at + Self::WIDTH, 0);
+        encode_part(out);
+        let len = out.len() - count_at - Self::WIDTH;
+        Self::write_count(len, &mut out[count_at..count_at + Self::WIDTH]);
+    }
+
+    /// Splits a length-prefixed part off the front of `bytes`: the part's own bytes, then the
+    /// bytes after it.
+    fn split_prefixed(bytes: &[u8]) -> Option<(&[u8], &[u8])> {
+        let (count, rest) = bytes.split_at_checked(Self::WIDTH)?;
+        rest.split_at_checked(Self::read_count(count)?)
+    }
+}
+
+impl LengthPrefix for u16 {
+    const WIDTH: usize = 2;
+
+    fn write_count(len: usize, slot: &mut [u8]) {
+        slot.copy_from_slice(&u16::try_from(len).unwrap_or(u16::MAX).to_be_bytes());
+    }
+
+    fn read_count(slot: &[u8]) -> Option<usize> {
+        Some(usize::from(u16::from_be_bytes(slot.try_into().ok()?)))
+    }
+}
+
+impl LengthPrefix for u64 {
+    const WIDTH: usize = 8;
+
+    fn write_count(len: usize, slot: &mut [u8]) {
+        slot.copy_from_slice(&u64::try_from(len).unwrap_or(u64::MAX).to_be_bytes());
+    }
+
+    fn read_count(slot: &[u8]) -> Option<usize> {
+        usize::try_from(u64::from_be_bytes(slot.try_into().ok()?)).ok()
+    }
 }
 
 /// The singleton row: its key is the prefix itself.
@@ -51,6 +231,54 @@ impl<const N: usize> FixedSideKey for [u8; N] {
     const WIDTH: usize = N;
 }
 
+/// One byte, such as a kind tag.
+impl SideKey for u8 {
+    fn encode_into(&self, out: &mut Vec<u8>) {
+        out.push(*self);
+    }
+
+    fn decode_key(bytes: &[u8]) -> Option<Self> {
+        let &[byte] = bytes else {
+            return None;
+        };
+        Some(byte)
+    }
+}
+
+impl FixedSideKey for u8 {
+    const WIDTH: usize = 1;
+}
+
+/// Big-endian, so keys order by number.
+impl SideKey for u16 {
+    fn encode_into(&self, out: &mut Vec<u8>) {
+        out.extend_from_slice(&self.to_be_bytes());
+    }
+
+    fn decode_key(bytes: &[u8]) -> Option<Self> {
+        Some(u16::from_be_bytes(bytes.try_into().ok()?))
+    }
+}
+
+impl FixedSideKey for u16 {
+    const WIDTH: usize = 2;
+}
+
+/// Big-endian, so keys order by number.
+impl SideKey for u32 {
+    fn encode_into(&self, out: &mut Vec<u8>) {
+        out.extend_from_slice(&self.to_be_bytes());
+    }
+
+    fn decode_key(bytes: &[u8]) -> Option<Self> {
+        Some(u32::from_be_bytes(bytes.try_into().ok()?))
+    }
+}
+
+impl FixedSideKey for u32 {
+    const WIDTH: usize = 4;
+}
+
 /// Big-endian, so keys order by number.
 impl SideKey for u64 {
     fn encode_into(&self, out: &mut Vec<u8>) {
@@ -88,6 +316,58 @@ impl SideKey for String {
     }
 }
 
+/// An optional fixed-width part, as the rest of a key (`#[side_key(rest)]`): no bytes when absent,
+/// else the part's own. `T` is at least one byte wide, so the two never meet.
+impl<T: FixedSideKey> SideKey for Option<T> {
+    fn encode_into(&self, out: &mut Vec<u8>) {
+        if let Some(part) = self {
+            part.encode_into(out);
+        }
+    }
+
+    fn decode_key(bytes: &[u8]) -> Option<Self> {
+        const {
+            assert!(
+                T::WIDTH > 0,
+                "an absent part and an empty one would spell alike"
+            )
+        };
+        if bytes.is_empty() {
+            return Some(None);
+        }
+        T::decode_key(bytes).map(Some)
+    }
+}
+
+/// UTF-8 text that holds no NUL byte, spelling a `String` part (`#[side_key(rest, with =
+/// NulFreeText)]`). A key that ends this part with a NUL separator therefore splits at its first
+/// NUL, and a key whose text holds a NUL is refused.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct NulFreeText(pub String);
+
+impl SideKey for NulFreeText {
+    fn encode_into(&self, out: &mut Vec<u8>) {
+        Self::encode_field(&self.0, out);
+    }
+
+    fn decode_key(bytes: &[u8]) -> Option<Self> {
+        if bytes.contains(&0) {
+            return None;
+        }
+        String::decode_key(bytes).map(Self)
+    }
+}
+
+impl FieldSpelling<String> for NulFreeText {
+    fn encode_field(field: &String, out: &mut Vec<u8>) {
+        out.extend_from_slice(field.as_bytes());
+    }
+
+    fn into_field(self) -> String {
+        self.0
+    }
+}
+
 /// An id spelled as 32 lower-case hex characters, the `sync_state` spelling.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct HexId(pub EntityId);
@@ -98,7 +378,7 @@ impl SideKey for HexId {
     }
 
     fn decode_key(bytes: &[u8]) -> Option<Self> {
-        EntityId::from_hex(std::str::from_utf8(bytes).ok()?)
+        EntityId::from_lower_hex(std::str::from_utf8(bytes).ok()?)
             .ok()
             .map(HexId)
     }
@@ -106,6 +386,144 @@ impl SideKey for HexId {
 
 impl FixedSideKey for HexId {
     const WIDTH: usize = 32;
+}
+
+impl FieldSpelling<EntityId> for HexId {
+    fn encode_field(field: &EntityId, out: &mut Vec<u8>) {
+        Self(*field).encode_into(out);
+    }
+
+    fn into_field(self) -> EntityId {
+        self.0
+    }
+}
+
+/// `N` bytes spelled as `2 * N` lower-case hex characters. A decode refuses upper case and any
+/// other length (HEX-CASE-POLICY = A).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct HexLower<const N: usize>(pub [u8; N]);
+
+impl<const N: usize> SideKey for HexLower<N> {
+    fn encode_into(&self, out: &mut Vec<u8>) {
+        Self::encode_field(&self.0, out);
+    }
+
+    fn decode_key(bytes: &[u8]) -> Option<Self> {
+        oneiron_hex::decode::<N>(std::str::from_utf8(bytes).ok()?).map(Self)
+    }
+}
+
+impl<const N: usize> FixedSideKey for HexLower<N> {
+    const WIDTH: usize = 2 * N;
+}
+
+impl<const N: usize> FieldSpelling<[u8; N]> for HexLower<N> {
+    fn encode_field(field: &[u8; N], out: &mut Vec<u8>) {
+        out.extend_from_slice(oneiron_hex::encode(field).as_bytes());
+    }
+
+    fn into_field(self) -> [u8; N] {
+        self.0
+    }
+}
+
+/// Text that is already `2 * N` lower-case hex characters, such as a hash's `to_hex()`: written as
+/// it is, and read back only from that spelling.
+impl<const N: usize> FieldSpelling<String> for HexLower<N> {
+    fn encode_field(field: &String, out: &mut Vec<u8>) {
+        out.extend_from_slice(field.as_bytes());
+    }
+
+    fn into_field(self) -> String {
+        oneiron_hex::encode(&self.0)
+    }
+}
+
+/// A `u32` spelled as 8 lower-case hex characters (`{:08x}`), so keys order by number. A decode
+/// refuses upper case, a sign and any other length.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct HexU32(pub u32);
+
+impl SideKey for HexU32 {
+    fn encode_into(&self, out: &mut Vec<u8>) {
+        Self::encode_field(&self.0, out);
+    }
+
+    fn decode_key(bytes: &[u8]) -> Option<Self> {
+        let HexLower(digits) = HexLower::<4>::decode_key(bytes)?;
+        Some(Self(u32::from_be_bytes(digits)))
+    }
+}
+
+impl FixedSideKey for HexU32 {
+    const WIDTH: usize = 8;
+}
+
+impl FieldSpelling<u32> for HexU32 {
+    fn encode_field(field: &u32, out: &mut Vec<u8>) {
+        HexLower::<4>::encode_field(&field.to_be_bytes(), out);
+    }
+
+    fn into_field(self) -> u32 {
+        self.0
+    }
+}
+
+/// A `u64` spelled as 16 lower-case hex characters (`{:016x}`), so keys order by number. A decode
+/// refuses upper case, a sign and any other length.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct HexU64(pub u64);
+
+impl SideKey for HexU64 {
+    fn encode_into(&self, out: &mut Vec<u8>) {
+        Self::encode_field(&self.0, out);
+    }
+
+    fn decode_key(bytes: &[u8]) -> Option<Self> {
+        let HexLower(digits) = HexLower::<8>::decode_key(bytes)?;
+        Some(Self(u64::from_be_bytes(digits)))
+    }
+}
+
+impl FixedSideKey for HexU64 {
+    const WIDTH: usize = 16;
+}
+
+impl FieldSpelling<u64> for HexU64 {
+    fn encode_field(field: &u64, out: &mut Vec<u8>) {
+        HexLower::<8>::encode_field(&field.to_be_bytes(), out);
+    }
+
+    fn into_field(self) -> u64 {
+        self.0
+    }
+}
+
+/// A window label, `:`, then the entity's 32 lower-case hex characters: the bytes after the prefix
+/// of every window+entity marker table (the `pt:` pending tombstones, the `ra:w:`, `rm:w:` and
+/// `rmp:w:` sync markers, the `pm:` promotion pickups). Split from the END (fixed-width hex tail),
+/// so a window label containing `:` still decodes correctly. Here, not in the sync-only
+/// `window_rows` (which re-exports it), because `deletion` writes `pt:` rows without the `sync`
+/// feature (ONE-1132).
+#[derive(Debug, Clone, PartialEq, Eq, SideKey)]
+#[side_key(sep = b':')]
+pub struct WindowEntityHexKey {
+    #[side_key(rest)]
+    pub window: String,
+    #[side_key(with = HexId)]
+    pub id: EntityId,
+}
+
+/// A text, NUL, then an entity's 16 raw bytes: the key of each index row that names an entity
+/// under a text (a codebase's repo reference or project id, a connector key's connector). The id
+/// is fixed width and read from the end of the key, so the text is every byte before the NUL
+/// that precedes it.
+#[derive(Debug, Clone, PartialEq, Eq, SideKey)]
+#[side_key(sep = b'\0')]
+pub struct TextIdKey {
+    #[side_key(rest)]
+    pub text: String,
+    pub id: EntityId,
 }
 
 impl<A: FixedSideKey, B: SideKey> SideKey for (A, B) {

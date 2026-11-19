@@ -52,6 +52,7 @@ mod node_batch;
 mod note_reads;
 mod outbox;
 mod peer_session;
+mod predicted;
 mod residence_mode;
 mod server_close;
 mod session;
@@ -104,9 +105,23 @@ pub struct SyncConnection {
     /// The residence mode this machine runs now. A change closes the live
     /// socket; the next connect negotiates the new hello.
     mode: tokio::sync::watch::Sender<SyncResidenceMode>,
+    /// Held by an owner's switch from its recording transaction to its
+    /// publish, and by the residence refresh from its first resolution to its
+    /// last publish, so neither publishes a mode the other's commit made
+    /// stale (FIX RESIDENCE-SWITCH-STALE-HOME). Never held across an await;
+    /// no write transaction's closure takes it.
+    mode_publish: std::sync::Mutex<()>,
     /// Wakes the owner's residence directives naming this machine: the
     /// residence upkeep rings it once the authority history is in (OF-534).
     directive_wake: Arc<tokio::sync::Notify>,
+    /// Wakes the predicted level's upkeep on this machine: the residence upkeep rings it once
+    /// the authority history is in and a newly applied prediction rings it (ARCH-0023b
+    /// #predicted-residence). A change of the app shell's fetch conditions wakes the upkeep
+    /// through the open vault's report ([`crate::Vault::report_fetch_conditions`]).
+    predicted_wake: Arc<tokio::sync::Notify>,
+    /// A (re)connect completed since the predicted upkeep last asked for a prediction, so it
+    /// asks again even before its 6 h are up (Engine ruling L7-46-MERGE A).
+    predicted_connected: std::sync::atomic::AtomicBool,
     /// Wakes the steady loop to judge again which worlds this machine
     /// follows: a world pick, each residence upkeep tick and an authority
     /// catch-up that took rows ring it. A changed set renegotiates at once
@@ -161,6 +176,8 @@ pub struct ResidenceModeChange {
     pub pruned_items: usize,
 }
 
+pub use crate::sync::fetch_conditions::FetchConditions;
+
 impl SyncConnection {
     /// Creates a new connection manager over manager-owned windows. An own
     /// device runs its persisted residence choice (the elected home runs
@@ -200,7 +217,10 @@ impl SyncConnection {
             queue,
             config,
             mode,
+            mode_publish: std::sync::Mutex::new(()),
             directive_wake: Arc::default(),
+            predicted_wake: Arc::default(),
+            predicted_connected: std::sync::atomic::AtomicBool::new(false),
             follow_wake: Arc::default(),
             home_handoff_wake: Arc::default(),
             left: tokio::sync::watch::channel(left).0,
@@ -492,27 +512,77 @@ impl SyncConnection {
         *self.mode.borrow()
     }
 
-    /// Switch this machine between sync-all and sync-what-you-opened. The
-    /// choice persists; the live socket closes and reconnects with the new
-    /// hello. To sync-all, the opened read caches are dropped (full windows
+    /// Switch this machine between sync-all and sync-what-you-opened, off
+    /// the predicted level. The choice persists; the live socket closes and
+    /// reconnects with the new hello. To sync-all, the opened read caches are dropped (full windows
     /// replace them). To opened, each window held in full is granted again
     /// by the home before it keeps syncing as a promoted window; that needs
     /// the home reachable, and an offline home leaves the mode unchanged.
-    /// Nothing held is erased. The elected home always stays All.
+    /// A home that loses the election while it switches runs sync opened at
+    /// once and reports its held windows unsynced; the residence upkeep asks
+    /// the new home to grant them. Nothing held is erased. The elected home
+    /// always stays All.
     pub async fn set_residence_mode(
         &self,
         mode: SyncResidenceMode,
     ) -> Result<ResidenceModeChange, crate::sync::TransportError> {
-        self.switch_residence_mode(mode, |_, _| Ok(())).await
+        self.switch_residence_mode(mode, false, |_, _| Ok(())).await
+    }
+
+    /// Rings the owner's residence directives naming this machine, so a
+    /// directive this host just issued to it runs now rather than at the
+    /// next residence upkeep.
+    pub fn wake_residence_directives(&self) {
+        self.directive_wake.notify_one();
+    }
+
+    /// Records what the app shell reports about fetching predictions on this machine, on the
+    /// open vault this connection runs ([`crate::Vault::report_fetch_conditions`]), so a
+    /// connection rebuilt later starts from it too. A change rings the predicted upkeep, so a
+    /// newly opened gate fetches now rather than at the next upkeep.
+    pub fn set_fetch_conditions(&self, conditions: FetchConditions) {
+        self.manager.vault().report_fetch_conditions(conditions);
+    }
+
+    /// Whether the predicted upkeep may ask and fetch now: a computer always may, and any other
+    /// machine only on the open vault's reported unmetered and powered state.
+    fn fetch_gate_open(&self) -> bool {
+        let vault = self.manager.vault();
+        if vault.config.machine_device_class == crate::authority::MachineDeviceClass::Computer {
+            return true;
+        }
+        let conditions = vault.reported_fetch_conditions();
+        conditions.unmetered && conditions.powered
     }
 
     /// [`Self::set_residence_mode`], with `finish` run in the transaction
     /// that records the choice, beside the read caches a switch to sync-all
     /// drops; the new mode is published once that commits. The owner's mode
-    /// directives record their result there (OF-534).
+    /// directives record their result there (OF-534). `predicted` puts an
+    /// opened machine at the predicted level (ARCH-0023b
+    /// #predicted-residence), which the transport runs as opened. A switch to
+    /// sync-opened, the predicted level included, withdraws this install's
+    /// full-copy mark in that same transaction (L7-47).
+    ///
+    /// The home read first only plans the switch: whether the held windows
+    /// must be granted again before sync opened. Those grants wait on the
+    /// home, and an election can move the home meanwhile, so the recording
+    /// transaction resolves the mode again from the choice it records and
+    /// the home it reads, and the withdrawal, the dropped caches and the
+    /// published mode follow that resolution (FIX
+    /// RESIDENCE-SWITCH-STALE-HOME). A machine elected home meanwhile stays
+    /// All and keeps its mark; every window syncs, so none is reported
+    /// retained or unsynced. A home that lost the election meanwhile runs the
+    /// owner's sync-opened choice and withdraws its mark; the held windows
+    /// the home has not granted are marked in that transaction for the
+    /// residence upkeep to ask the home to retain, and reported unsynced
+    /// until then. The resolution and the publish
+    /// hold [`Self::mode_publish`], as the residence refresh does, so neither
+    /// publishes between the other's resolution and publish.
     async fn switch_residence_mode(
         &self,
         mode: SyncResidenceMode,
+        predicted: bool,
         finish: impl FnOnce(&mut heed::RwTxn<'_>, &ResidenceModeChange) -> crate::error::Result<()>,
     ) -> Result<ResidenceModeChange, crate::sync::TransportError> {
         let storage = |e: crate::Error| crate::sync::TransportError::Storage(e.to_string());
@@ -522,19 +592,17 @@ impl SyncConnection {
             ));
         }
         let vault = self.manager.vault();
-        let effective = crate::sync::residence::effective_residence_mode(
+        let planned = crate::sync::residence::effective_residence_mode(
             None,
             mode,
             crate::sync::residence::local_is_elected_home(vault).map_err(storage)?,
         );
-        let mut change = ResidenceModeChange {
-            mode: effective,
-            retained: Vec::new(),
-            unsynced: Vec::new(),
-            pruned_items: 0,
-        };
-        let switching = effective != *self.mode.borrow();
-        if switching && effective == SyncResidenceMode::Opened {
+        // Whether the switch asks the home to grant the held windows again
+        // before it records sync opened.
+        let grants = planned == SyncResidenceMode::Opened && planned != *self.mode.borrow();
+        let mut retained = Vec::new();
+        let mut unsynced = Vec::new();
+        if grants {
             let mut config = self.client_config();
             config.residence_mode = SyncResidenceMode::Opened;
             let (mut client, _events) =
@@ -543,25 +611,78 @@ impl SyncConnection {
                 crate::sync::residence::discover_local_window_keys(vault).map_err(storage)?
             {
                 if client.retain_window(&window).await? {
-                    change.retained.push(window);
+                    retained.push(window);
                 } else {
-                    change.unsynced.push(window);
+                    unsynced.push(window);
                 }
             }
         }
-        vault
+        // A switch to sync opened planned without the grants (this machine
+        // was the home, or ran sync opened already) can still record it from
+        // sync all: the home moved meanwhile, or another switch published
+        // sync all. The recording transaction then marks the held windows the
+        // home has not granted for the residence upkeep's grants.
+        let ungranted = if mode == SyncResidenceMode::Opened && !grants {
+            crate::sync::residence::discover_local_window_keys(vault).map_err(storage)?
+        } else {
+            Vec::new()
+        };
+        // The install key signs the withdrawal; a home that loses the
+        // election before the recording transaction withdraws too. A key
+        // that does not load fails only a switch that withdraws: a machine
+        // elected home meanwhile records the choice and stays All.
+        let signing = if mode == SyncResidenceMode::Opened {
+            vault.load_install_signing_if_minted()
+        } else {
+            Ok(())
+        };
+        #[cfg(oneiron_test_support)]
+        crate::test_doors::full_copy_mark::at_residence_switch_record(vault).map_err(storage)?;
+        let configured = self.config.client_config.residence_mode;
+        let _publish = self
+            .mode_publish
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let running = *self.mode.borrow();
+        let change = vault
             .with_write_txn_grouped(|txn| {
+                crate::sync::residence::set_device_sync_preference_in_txn(
+                    vault, txn, mode, predicted,
+                )?;
+                let effective = vault.resolve_residence_mode_in_txn(txn, configured)?;
+                let mut change = ResidenceModeChange {
+                    mode: effective,
+                    retained,
+                    unsynced,
+                    pruned_items: 0,
+                };
+                if effective == SyncResidenceMode::All {
+                    change.retained.clear();
+                    change.unsynced.clear();
+                }
+                let switching = effective != running;
+                if switching && effective == SyncResidenceMode::Opened {
+                    // L7-47: the mark is withdrawn in the same transaction
+                    // that records the switch.
+                    signing?;
+                    vault.declare_full_copy_in_txn(txn, false)?;
+                    // The held windows no grant was asked for stay on disk
+                    // unsynced until the upkeep's grants.
+                    let marked =
+                        crate::sync::client::mark_ungranted_windows_in_txn(vault, txn, ungranted)?;
+                    change.unsynced.extend(marked);
+                }
                 if switching && effective == SyncResidenceMode::All {
                     // A cached id refuses local writes until promoted; the
                     // full windows supersede every read cache.
                     change.pruned_items =
                         crate::sync::residence::prune_thin_items_in_txn(vault, txn, u64::MAX)?;
                 }
-                crate::sync::residence::set_device_sync_preference_in_txn(vault, txn, mode)?;
-                finish(txn, &change)
+                finish(txn, &change)?;
+                Ok(change)
             })
             .map_err(storage)?;
-        self.mode.send_replace(effective);
+        self.mode.send_replace(change.mode);
         Ok(change)
     }
 
@@ -697,9 +818,9 @@ impl SyncConnection {
         let demotion = self.client()?.demote_window(window).await?;
         if demotion.complete {
             // The steady socket still follows the window: a fresh hello
-            // drops it.
-            let mode = *self.mode.borrow();
-            self.mode.send_replace(mode);
+            // drops it. The mode stays as it is; a value read and sent back
+            // could undo a switch or refresh published in between.
+            self.mode.send_modify(|_| {});
         }
         Ok(demotion)
     }
@@ -869,8 +990,6 @@ enum LoopExit {
     HomeReturned,
 }
 
-// FIX [LIBTEST-QUARANTINE-SYNC-CONNECTION-TESTS]: the lib test target's type check fails here (1 errors: E0061 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;
 

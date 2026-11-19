@@ -1,5 +1,7 @@
 //! Where one run's reads and writes land: the canonical vault or a bound off-record session.
 
+use std::sync::Arc;
+
 use crate::claim::{ClaimReadStatus, ScopedReadActorKey};
 use crate::memory::{MessageResultAttachment, WitnessAssertions, WitnessReceipt};
 use crate::off_record::{ExecutorUtterance, OffRecordMode, OffRecordSession, SessionWriteRoute};
@@ -13,8 +15,8 @@ use super::super::replay::{
 };
 use super::super::support::invalid_code_run_replay;
 use super::records::{
-    RAW_OUTPUT_SECRETS, RAW_OUTPUT_TAINTS, RAW_OUTPUTS, REPLAY_RECORDS, finish_output_sourced,
-    load_whole_body, read_body_row_range,
+    RAW_OUTPUT_SECRETS, RAW_OUTPUT_TAINTS, RAW_OUTPUTS, finish_output_sourced, load_whole_body,
+    read_body_row_range,
 };
 use super::speech_identity::{
     ResultSpeech, canonical_witness_executor_turn_sourced, executor_speech_message_id_for_run,
@@ -23,6 +25,7 @@ use super::speech_identity::{
 use crate::limit_ask::{EngineLimit, LimitWatch};
 use crate::result_memory::ResultShare;
 use crate::secret_rotation::ArtifactTaintState;
+use crate::store::known_value_index::KnownValues;
 use crate::store::{BODY_KEYS, BodySink, body_key_row_in_txn};
 
 mod bodies;
@@ -168,7 +171,6 @@ impl SessionBinding<'_> {
         expected: Option<CodeRunReplayGeneration>,
         healed_model: Option<&ModelId>,
     ) -> Result<CodeRunReplayGeneration> {
-        REPLAY_RECORDS.encode_value(record)?;
         let next_generation = record.generation()?;
         self.answered(|| self.put_replay_routed(record, expected, healed_model, |_, _| Ok(())))?;
         Ok(next_generation)
@@ -187,7 +189,9 @@ impl SessionBinding<'_> {
 
     /// [`Vault::inherit_code_run_result_marks`] on the room's route: the
     /// marks of every occurrence in `from` join those of `owner`'s
-    /// occurrence of `output`.
+    /// occurrence of `output`. A secret named twice keeps its lowest
+    /// recorded generation, as on the vault, so a merge across a rotation
+    /// stays storable.
     fn inherit_marks(
         &self,
         owner: EntityId,
@@ -202,17 +206,21 @@ impl SessionBinding<'_> {
             Ok::<_, crate::Error>((key, refs.unwrap_or_default(), secret))
         };
         let (key, mut refs, mut secret) = get_marks(owner, output)?;
-        let (own_refs, own_secret) = (refs.len(), secret.is_some());
+        let (own_refs, own_secret) = (refs.clone(), secret.is_some());
         for (source, held) in from {
             let (_, more, marked) = get_marks(*source, held)?;
             for taint in more {
-                if !refs.contains(&taint) {
-                    refs.push(taint);
+                match refs
+                    .iter_mut()
+                    .find(|held| held.secret_ref == taint.secret_ref)
+                {
+                    Some(held) => held.generation = held.generation.min(taint.generation),
+                    None => refs.push(taint),
                 }
             }
             secret = secret.or(marked);
         }
-        if refs.len() > own_refs {
+        if refs != own_refs {
             self.answered(|| {
                 self.session
                     .side_table_put_routed(&self.route, &RAW_OUTPUT_TAINTS, &key, &refs)
@@ -290,8 +298,9 @@ impl SessionBinding<'_> {
 /// accessors route by mode — overlay while `OffRecord`, ordinary base after
 /// the room flips `OnRecord`. Adding a method here is adding a way for the
 /// executor to reach storage, so the set below is closed: identity, policy,
-/// search, and the four replay/raw-output accessors. The memory-write verbs
-/// are NOT here; they route inside their own dispatch bodies.
+/// search, the four replay/raw-output accessors, and the known values a
+/// replay compares its rows with. The memory-write verbs are NOT here; they
+/// route inside their own dispatch bodies.
 pub(crate) enum ExecutorStorage<'a> {
     Canonical(&'a Vault),
     Session(SessionBinding<'a>),
@@ -373,6 +382,21 @@ impl<'a> ExecutorStorage<'a> {
         match self {
             Self::Canonical(vault) => vault.vault_id(),
             Self::Session(binding) => binding.session.vault_id(),
+        }
+    }
+
+    /// The values the owning vault's custody holds now, which a replay
+    /// compares a recorded row with (FIX REPLAY-COMPARE-KNOWN-MATCHER): a
+    /// session's too, whose rows are read over base. A matcher; neither
+    /// arm hands out the store it was read from.
+    ///
+    /// # Errors
+    ///
+    /// The custody read's.
+    pub(crate) fn base_known_values(&self) -> Result<Option<Arc<KnownValues>>> {
+        match self {
+            Self::Canonical(vault) => vault.known_values_now(),
+            Self::Session(binding) => binding.session.base_known_values(),
         }
     }
 
@@ -888,6 +912,17 @@ impl<'a> ExecutorStorage<'a> {
         match self {
             Self::Canonical(vault) => vault.limit_watch(),
             Self::Session(binding) => binding.session.limit_watch(),
+        }
+    }
+
+    /// The owner's `code_run.result_search.max_context` on the vault this
+    /// run's storage is on.
+    pub(crate) fn result_search_max_context(&self) -> Result<usize> {
+        match self {
+            Self::Canonical(vault) => {
+                crate::code_run::setting_keys::result_search_max_context(vault)
+            }
+            Self::Session(binding) => binding.session.result_search_max_context(),
         }
     }
 

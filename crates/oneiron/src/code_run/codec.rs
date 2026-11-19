@@ -8,7 +8,8 @@ use rmpv::Value;
 
 use crate::attempt_queue::AttemptId;
 use crate::claim::CallerLocality;
-use crate::{EdgeActorClass, EntityId, Error, Result};
+use crate::{EdgeActorClass, EntityId, Result};
+use oneiron_contracts::msgpack::{self, MsgpackError};
 
 use super::live_run::{CodeRunLiveRunBinding, LiveRunCredential};
 use super::payload::self_effect_from_str;
@@ -26,10 +27,12 @@ use super::support::{
 };
 
 mod checkpoint;
+mod held;
 mod pending_step;
 
 pub use self::checkpoint::CODE_RUN_STEP_CHECKPOINT_KEYS;
 use self::checkpoint::{decode_step_checkpoint, encode_step_checkpoint, validate_step_checkpoints};
+pub(crate) use self::held::{decode_code_run_replay_generation, decode_code_run_replay_held};
 pub(super) use self::pending_step::pending_step_digest;
 use self::pending_step::{decode_pending_step, encode_pending_step, validate_pending_step};
 
@@ -659,6 +662,13 @@ fn validate_code_run_replay_record(record: &CodeRunReplayRecord) -> Result<()> {
         validate_abi_layout_check(check)?;
     }
 
+    // Each binding names an output by its handle: a set, so the check is
+    // linear in the record and not bindings x outputs at every encode (FIX 16).
+    let handles: HashSet<&str> = record
+        .outputs
+        .iter()
+        .map(|output| output.handle.as_str())
+        .collect();
     let mut names = HashSet::new();
     for binding in &record.bindings {
         if !CodeRunResultBinding::is_valid_name(&binding.name) {
@@ -667,11 +677,7 @@ fn validate_code_run_replay_record(record: &CodeRunReplayRecord) -> Result<()> {
         if !names.insert(binding.name.as_str()) {
             return Err(invalid_code_run_replay("duplicate result binding name"));
         }
-        if !record
-            .outputs
-            .iter()
-            .any(|output| output.handle == binding.handle)
-        {
+        if !handles.contains(binding.handle.as_str()) {
             return Err(invalid_code_run_replay(
                 "result binding names no output of this run",
             ));
@@ -741,21 +747,17 @@ fn validate_abi_layout_check(check: &CodeRunAbiLayoutCheck) -> Result<()> {
 }
 
 fn decode_value(bytes: &[u8]) -> Result<Value> {
-    let mut cursor = bytes;
-    let value = rmpv::decode::read_value(&mut cursor)
-        .map_err(|_| invalid_code_run_replay("record is not valid MessagePack"))?;
-    if !cursor.is_empty() {
-        return Err(invalid_code_run_replay(
-            "trailing bytes after code-run replay record",
-        ));
-    }
-    Ok(value)
+    msgpack::decode(bytes).map_err(|error| {
+        invalid_code_run_replay(match error {
+            MsgpackError::Trailing => "trailing bytes after code-run replay record",
+            _ => "record is not valid MessagePack",
+        })
+    })
 }
 
-fn encode_value(value: &Value, context: &'static str) -> Result<Vec<u8>> {
-    let mut out = Vec::new();
-    rmpv::encode::write_value(&mut out, value).map_err(|_| Error::InvariantViolation(context))?;
-    Ok(out)
+/// The context named a write error, which writing into a Vec cannot raise; kept for the callers.
+fn encode_value(value: &Value, _context: &'static str) -> Result<Vec<u8>> {
+    Ok(msgpack::encode(value))
 }
 
 pub(crate) fn encode_code_run_replay_value(
@@ -764,3 +766,9 @@ pub(crate) fn encode_code_run_replay_value(
 ) -> Result<Vec<u8>> {
     encode_value(value, context)
 }
+
+// The pending-step K seam for the door
+// (`test_doors::fingerprint_keep_code_run_digests`), kept apart from the
+// import block above.
+#[cfg(oneiron_test_support)]
+pub(crate) use self::pending_step::pending_step_bytes_digest_for_test;

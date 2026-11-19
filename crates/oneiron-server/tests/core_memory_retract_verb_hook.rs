@@ -1079,8 +1079,10 @@ fn a_non_owner_pending_retract_reports_pending_and_keeps_claim_standing() {
             body.get("at").is_none(),
             "the facade path reports no time: {body}"
         );
-        assert_eq!(body["approval"], "pending", "{body}");
-        let receipt_ref = body["receipt_ref"].as_str().expect("pending receipt_ref");
+        assert_eq!(body["retract"]["state"], "pending", "{body}");
+        let receipt_ref = body["retract"]["receipt_ref"]
+            .as_str()
+            .expect("pending receipt_ref");
         assert!(
             receipt_ref.starts_with("gate:"),
             "the pending receipt names its gate decision: {body}"
@@ -1174,8 +1176,8 @@ fn a_hook_retargeted_retract_reports_the_claim_it_retracted() {
             body.get("at").is_none(),
             "the facade path reports no time: {body}"
         );
-        assert_ne!(
-            body["approval"], "pending",
+        assert_eq!(
+            body["retract"]["state"], "retracted",
             "a human own retract lands at once: {body}"
         );
         let retracted = fx
@@ -1248,8 +1250,8 @@ fn a_post_hook_redacting_retract_target_omits_id_but_still_retracts() {
             body.get("id").is_none(),
             "a redacted target stays omitted with no fallback: {body}"
         );
-        assert_ne!(
-            body["approval"], "pending",
+        assert_eq!(
+            body["retract"]["state"], "retracted",
             "the redacted view still lands: {body}"
         );
         let retracted = fx
