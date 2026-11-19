@@ -2629,6 +2629,8 @@ fn note_session_bind_frame_carries_a_holder_proof_the_vault_accepts() {
 /// A claim of a portable world whose text this device edited, its client, and
 /// a server document UPDATE whose reply would carry the edit.
 struct JournaledClaimText {
+    /// The vault's directory: the caller keeps it for the test body.
+    dir: tempfile::TempDir,
     vault: Arc<Vault>,
     world: EntityId,
     claim: EntityId,
@@ -2638,7 +2640,7 @@ struct JournaledClaimText {
 }
 
 fn journaled_claim_text() -> JournaledClaimText {
-    let (_dir_manager, manager) = test_manager();
+    let (dir, manager) = test_manager();
     let vault = Arc::clone(manager.vault());
     let at = TimeRange { start: 1, end: 1 };
     let world = EntityId::from_bytes([0x61; 16]).unwrap();
@@ -2691,6 +2693,7 @@ fn journaled_claim_text() -> JournaledClaimText {
     .into_result()
     .unwrap();
     JournaledClaimText {
+        dir,
         vault,
         world,
         claim,
@@ -2706,6 +2709,7 @@ fn journaled_claim_text() -> JournaledClaimText {
 #[test]
 fn device_only_claim_text_stays_journaled_until_the_flag_clears() {
     let JournaledClaimText {
+        dir: _dir,
         vault,
         world,
         mut client,
@@ -2732,6 +2736,7 @@ fn claim_text_whose_world_cannot_be_read_stays_journaled_while_a_flag_stands() {
     // Never MessagePack, and no body at all.
     for tail in [&[0xc1][..], &[][..]] {
         let JournaledClaimText {
+            dir: _dir,
             vault,
             world,
             claim,
