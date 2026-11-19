@@ -636,6 +636,19 @@ impl SyncConnection {
                 })?;
         }
 
+        // Each followed world's tombstone id set (FOLLOWED-WORLD-TIER1-
+        // TOMBSTONE-IDS; ARCH-0023b :500): every delete the home lets this
+        // device read writes its marker here, even of a window the home
+        // refuses to it or that it never held. A fault never fails the
+        // session: the next pass asks again.
+        if peer.is_none()
+            && let Err(error) = client.fetch_followed_tombstones().await
+        {
+            let _ = event_tx.send(SyncEvent::Error(format!(
+                "Followed tombstone fetch failed: {error}"
+            )));
+        }
+
         // A followed world's window asked as a follow waits for the home's
         // answer before the queue replays: a granted window's queued writes
         // go now, a refused one's stay owed, and the socket stays open. A home
