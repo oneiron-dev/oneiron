@@ -510,7 +510,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/authority/owner_delegate.rs` | src | s | 1 enum · 1 fn · 4 crate-vis | OwnerOrDelegate | Who takes an owner act at a door that also admits the owner's delegate (restriction wave 11) |
 | `src/authority/owner_key_enrollment.rs` | src | m | 11 crate-vis | — | The fold's judge of the owner's enrollment of one of his devices' own owner signing keys (FIX 4920; Engine… |
 | `src/authority/owner_key_enrollment_door.rs` | src | XL | 7 struct · 1 enum · 12 fn · 1 re-export · 16 crate-vis | EnrolledOwnerKey, EnrolledOwnerKeyKind, EnrolledOwnerPasskey, OwnerKeyEnrollment, OwnerKeyEnrollmentReceipt, OwnerPasskeyEnrollment, OwnerPasskeyEnrollmentReceipt, PreparedOwnerKeyEnrollment | The owner's enrollment of one of his devices' own owner signing keys (FIX 4920 part 2; Engine 10-20 00:5x… |
-| `src/authority/owner_key_enrollment_door/recovery_authority.rs` | src | m | 1 struct · 3 fn · 11 crate-vis | WaysBack | The recovery root's authority key R on the owner's roster: its enrolment under its own attestation kind… |
+| `src/authority/owner_key_enrollment_door/recovery_authority.rs` | src | L | 1 struct · 3 fn · 11 crate-vis | WaysBack | The recovery root's authority key R on the owner's roster: its enrolment under its own attestation kind… |
 | `src/authority/owner_key_enrollment_door/revoke_device.rs` | src | s | 3 crate-vis | — | The one `RevokeDevice` writer: an entry signed by the host root or a live roster key, in the caller's write… |
 | `src/authority/owner_key_line.rs` | src | m | 8 crate-vis | — | The owner key's line (row CARRIER-PROOF-OLD-PARENTS; Engine RULING 15 Nov 21:09, design A, and… |
 | `src/authority/owner_key_move_confirm.rs` | src | m | 2 struct · 2 fn · 6 const · 3 crate-vis | OwnerKeyMovePlan, OwnerKeyMoveSigner | The owner-key move a device confirms (row HOSTED-OWNER-MOVE-TWO-PHASE; Engine RULING… |
@@ -579,7 +579,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/authority/slip_vault/host_root.rs` | src | s | 3 fn · 1 crate-vis | — | The host's own root slip: its bootstrap with Genesis on an empty log, the cache that retains the minted root… |
 | `src/authority/slip_vault/issuer_custody.rs` | src | m | 6 fn · 4 crate-vis | — | Where a vault's host issuer seed is kept (FIX-LIST 3018): this install's own `HostIssuerSeed` slot for the… |
 | `src/authority/slip_vault/issuer_seed.rs` | src | s | 1 struct · 2 fn · 1 re-export · 3 crate-vis | HostSlipIssuer | The host issuer's own independent seed (FIX-LIST 3018): per-vault host issuer isolation, so one vault's host… |
-| `src/authority/stale_roster.rs` | src | m | 7 crate-vis | — | Clock-free expiry of approvals resting on a subsequently revoked roster |
+| `src/authority/stale_roster.rs` | src | m | 8 crate-vis | — | Clock-free expiry of approvals resting on a subsequently revoked roster |
 | `src/authority/step_up/admin_inputs.rs` | src | s | 3 struct · 1 re-export | WeaveAdminItemWrongRequest, WeaveAdminLensRequest, WeaveAdminReportRequest | The served weave Admin rows' inputs (OF-499 A3, FIX 11694) |
 | `src/authority/step_up/erase.rs` | src | s | 5 crate-vis | — | The step-up rows an erase, or a passkey's removal or replacement, drops: passkeys, open ceremonies and… |
 | `src/authority/step_up/mod.rs` | src | m | 7 fn · 6 const · 4 re-export · 3 crate-vis | — | MFA step-up on a person's own request instrument (MFA-1 A, ruled 2026-10-09; FIX 11694, the remainder of FIX… |
@@ -7576,9 +7576,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/sync/quarantine/writes_batch.rs` | src | m | 10 crate-vis | — | Quarantine row writes plus TerminalRejectionBatch |
 | `src/sync/queue/checkpoint.rs` | src | s | 4 crate-vis | — | The sync queue's rows in a checkpoint (KS7-3a), read with the queue's own key and value codecs |
 | `src/sync/queue/codec.rs` | src | s | 14 crate-vis | — | Key/value encode/decode plus metadata codecs |
-| `src/sync/queue/core.rs` | src | m | 13 fn · 3 crate-vis | — | SyncQueue impl: push/drain/clear/prune |
+| `src/sync/queue/core.rs` | src | m | 14 fn · 3 crate-vis | — | SyncQueue impl: push/drain/clear/prune |
 | `src/sync/queue/embed_page.rs` | src | s | 2 crate-vis | — | A resumable physical-row read for provider-independent vector catch-up |
-| `src/sync/queue/mod.rs` | src | s | 3 struct · 6 crate-vis | QueuedEmbedJob, QueuedUpdate, SyncQueue | Persistent offline queue backed by LMDB |
+| `src/sync/queue/mod.rs` | src | s | 3 struct · 1 mod · 6 crate-vis | QueuedEmbedJob, QueuedUpdate, SyncQueue | Persistent offline queue backed by LMDB |
 | `src/sync/queue/scrub.rs` | src | s | 9 crate-vis | — | Carrier scrubs plus test injection hook |
 | `src/sync/queue/seq.rs` | src | s | 7 crate-vis | — | Seq allocation, delete-bearing seqs, embed-job txn helpers |
 | `src/sync/queue/tests.rs` | test | L | — | — | — |
@@ -8204,7 +8204,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/test_doors/mesh_machine_endpoint_index.rs` | src | s | 1 enum · 5 fn | IndexedEndpoint | Doors for `tests/mesh_machine_endpoint_index.rs` (census L3-28B): the endpoint lookup as the MACHINE… |
 | `src/test_doors/meso_extraction_width.rs` | src | m | 1 struct · 1 enum · 1 fn | ExtractionWidth, PriorScenario | Door for `tests/dreamer_meso_width.rs` (FIX 21927 P2): measure the extraction calls in flight during one… |
 | `src/test_doors/microsoft_token.rs` | src | s | 1 struct · 6 fn · 1 crate-vis | ExchangedMicrosoftGrant | Door for `tests/microsoft365_oauth.rs` and `tests/microsoft365_refresh_write_back.rs`… |
-| `src/test_doors/mod.rs` | src | m | 1 fn · 326 mod · 1 re-export | — | Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD) |
+| `src/test_doors/mod.rs` | src | m | 1 fn · 326 mod · 2 re-export | — | Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD) |
 | `src/test_doors/model_binding_proposer.rs` | src | m | 1 struct · 2 fn · 1 const | TrialFixture | Fixture for the `model_binding_proposer_grant` server test: one completed held-out trial offer for a role… |
 | `src/test_doors/model_call_turn_link.rs` | src | s | 1 fn | — | Doors for `oneiron-server/tests/chat_model_call_turn_link.rs` (UNBUILT3-41, FIX [TURN-MODEL-LINK]): the… |
 | `src/test_doors/model_step_submission_codec.rs` | src | s | 1 fn | — | Doors for `tests/model_step_submission_codec.rs` (STEP-CORRECTION-HEALTH-PARK): a model step's submission… |
@@ -8253,7 +8253,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/test_doors/repo_secret_marks.rs` | src | s | 1 struct · 1 fn | MarkedHit | Doors for `tests/git_smart_http.rs` (SMART-HTTP-SECRET-PUSH-EXPECTATIONS): the hits a marked push's intent… |
 | `src/test_doors/research_continuation.rs` | src | s | 2 fn | — | Doors for `tests/verb_vault_research_advance.rs` (LEARNING-09): seed one research continuation at a chosen… |
 | `src/test_doors/resident_wake_hold.rs` | src | s | 4 fn | — | Doors for `tests/agent_wake_hold.rs` (AGM-4 wake hold), `tests/agent_message_classes.rs` and… |
-| `src/test_doors/restored_enrolment.rs` | src | s | 3 fn | — | A root-signed enrolment of an install born of a restore, for the integration tests of the fold's hold and… |
+| `src/test_doors/restored_enrolment.rs` | src | s | 3 fn · 1 mod | — | A root-signed enrolment of an install born of a restore, for the integration tests of the fold's hold and… |
+| `src/test_doors/restored_enrolment/forged_rows.rs` | src | s | 1 struct · 1 enum · 4 fn | RowSigner, SignedRow | Hand-signed authority rows for the restored-copy guards (row RESTORED-COPIES-R2-TESTS, part 2) |
 | `src/test_doors/retrieval_policy_default_floor.rs` | src | s | 1 fn | — | The finalized-run writer needed by `tests/retrieval_policy_default_floor.rs` |
 | `src/test_doors/reveal_ask_window.rs` | src | s | 1 struct · 2 fn | RevealWindowRun | Drives one secret reveal ask with a set window and the owner's answer |
 | `src/test_doors/room_facet_limit.rs` | src | s | 1 fn | — | Door for `tests/room_of_unheld_project_reads_bottom.rs` (L7-39 guard): the facets a room limits its reads… |
@@ -8308,6 +8309,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/test_doors/sync_checkpoint_pins/fixture_table.rs` | src | m | 1 crate-vis | — | The fixture table of the checkpoint pins door: every key and every value the door asks each window root… |
 | `src/test_doors/sync_outbox.rs` | src | s | 2 fn | — | Door for `tests/sync_outbox.rs`, mounted inside `sync::connection` so it drives the production… |
 | `src/test_doors/sync_parted_row_binding.rs` | src | m | 1 struct · 1 enum · 8 fn · 1 const | CaptureRefusal, PartedMap | Doors for `tests/sync_parted_row_binding.rs` (UC-10 PR 1; Engine RULING UC10-PR1-PREMISE = A, 15 Nov 17:45)… |
+| `src/test_doors/sync_queue_rows.rs` | src | s | 2 fn | — | Door for `tests/sync_outbox.rs` (FIX row SYNC-OUTBOX-READ-PRUNES-ROWS), mounted inside `sync::queue` so it… |
 | `src/test_doors/sync_whole_row_binding.rs` | src | s | 1 enum · 3 fn · 1 const | WholeMap | Doors for `tests/sync_discard_whole_row_binding.rs` (FIX SYNC-DISCARD-KEEPS-UNBOUND-WHOLE-ROW; Engine RULING… |
 | `src/test_doors/task_ask_role_routing.rs` | src | s | 1 fn | — | Door for `tests/task_ask_role_routing.rs` (ROLES-EVERYWHERE = A): who a task ask's members are put to, and… |
 | `src/test_doors/task_refusal_output.rs` | src | s | 1 fn | — | Door for `tests/run_row_door_scoped_reads_tasks.rs` (FIX [RUN-ROW-DOOR-TESTS-ABSENT]): the reason body a… |
@@ -8813,7 +8815,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/workspace_roster/project/joint/worlds.rs` | src | s | 4 crate-vis | — | A component member's worlds, each folded, and the decision's work, both counted against the bounds the… |
 | `src/workspace_roster/project/leader_chat.rs` | src | m | 2 fn · 1 const · 1 re-export · 17 crate-vis | — | Direct leader chats: same-vault routing, shared-ancestor rule clamp and speaker scope |
 | `src/workspace_roster/project/mint.rs` | src | m | 3 fn · 2 re-export · 6 crate-vis | — | Owner-confirmed project birth: one card, one atomic Grant and project branch |
-| `src/workspace_roster/project/mod.rs` | src | L | 4 struct · 2 enum · 20 fn · 1 const · 20 re-export · 55 crate-vis | ProjectAnchorLink, ProjectAuthority, ProjectProofVersion, ProjectRecord, ProjectWriteOutcome, ProjectWriteProof | Project responsibility records and their derived home-room membership |
+| `src/workspace_roster/project/mod.rs` | src | L | 4 struct · 2 enum · 20 fn · 1 const · 20 re-export · 56 crate-vis | ProjectAnchorLink, ProjectAuthority, ProjectProofVersion, ProjectRecord, ProjectWriteOutcome, ProjectWriteProof | Project responsibility records and their derived home-room membership |
 | `src/workspace_roster/project/origin.rs` | src | s | 8 crate-vis | — | Durable origin proof and local secondary indexes for converted projects |
 | `src/workspace_roster/project/owner_signer.rs` | src | s | 1 struct · 2 fn · 5 crate-vis | OwnerProjectSigner | The owner-project signer (decision 3): every owner door signs the project state it writes through one… |
 | `src/workspace_roster/project/projection.rs` | src | m | 6 crate-vis | — | The write-time projector shared by local batches and sync materialization |
@@ -9831,6 +9833,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/resident_human_messages_wake.rs` | test | m | — | — | A resident set to wake on human messages (`ResidentWakeMode::HumanMessages`) wakes on a human's message… |
 | `tests/resident_nightly_reveal_register_names.rs` | test | s | — | — | The names of four crate-private name tables, one line per row, taken from… |
 | `tests/restore_over_live_compartment_rows.rs` | test | s | — | — | Live restores compare refused families with the image's opened compartments |
+| `tests/restored_kit_join_stale_roster.rs` | test | m | — | — | REVIEW-9539 round 2 P1 (stale_roster.rs:141): a kit restore's inline join of an install born of a restore is… |
+| `tests/restored_machine_forged_guards.rs` | test | m | — | — | Row RESTORED-COPIES-R2-TESTS, part 2: the fixes of stack #9512's review rounds that only a hand-signed row… |
 | `tests/restored_machine_join_guards.rs` | test | m | — | — | Row RESTORED-COPIES-ENROL-EACH-OTHER, round 1 of the blind review of stack #9512 (REVIEW-9509 and… |
 | `tests/restored_machine_join_standing.rs` | test | s | — | — | Row RESTORED-COPIES-ENROL-EACH-OTHER (P1; Setting DESIGN pass 15e "Joined", RULING SETTING-UNTANGLE = A… |
 | `tests/restored_machine_owner_join.rs` | test | s | — | — | Row RESTORED-COPIES-ENROL-EACH-OTHER, PR 2 (P1; Setting DESIGN pass 15e "Joined", the second way; RULING… |

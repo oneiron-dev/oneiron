@@ -5809,7 +5809,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "WaysBack"
@@ -6616,7 +6616,7 @@
      "path": "src/authority/stale_roster.rs",
      "purpose": "Clock-free expiry of approvals resting on a subsequently revoked roster",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -88295,7 +88295,7 @@
      "purpose": "SyncQueue impl: push/drain/clear/prune",
      "surface": {
       "crate-vis": 3,
-      "fn": 13
+      "fn": 14
      }
     },
     {
@@ -88320,6 +88320,7 @@
      "purpose": "Persistent offline queue backed by LMDB",
      "surface": {
       "crate-vis": 6,
+      "mod": 1,
       "struct": 3
      }
     },
@@ -95516,7 +95517,7 @@
      "surface": {
       "fn": 1,
       "mod": 326,
-      "re-export": 1
+      "re-export": 2
      }
     },
     {
@@ -96039,7 +96040,23 @@
      "path": "src/test_doors/restored_enrolment.rs",
      "purpose": "A root-signed enrolment of an install born of a restore, for the integration tests of the fold's hold and…",
      "surface": {
-      "fn": 3
+      "fn": 3,
+      "mod": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "RowSigner",
+      "SignedRow"
+     ],
+     "path": "src/test_doors/restored_enrolment/forged_rows.rs",
+     "purpose": "Hand-signed authority rows for the restored-copy guards (row RESTORED-COPIES-R2-TESTS, part 2)",
+     "surface": {
+      "enum": 1,
+      "fn": 4,
+      "struct": 1
      }
     },
     {
@@ -96633,6 +96650,16 @@
       "enum": 1,
       "fn": 8,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/test_doors/sync_queue_rows.rs",
+     "purpose": "Door for `tests/sync_outbox.rs` (FIX row SYNC-OUTBOX-READ-PRUNES-ROWS), mounted inside `sync::queue` so it…",
+     "surface": {
+      "fn": 2
      }
     },
     {
@@ -102863,7 +102890,7 @@
      "purpose": "Project responsibility records and their derived home-room membership",
      "surface": {
       "const": 1,
-      "crate-vis": 55,
+      "crate-vis": 56,
       "enum": 2,
       "fn": 20,
       "re-export": 20,
@@ -111807,6 +111834,22 @@
      "bucket": "m",
      "kind": "test",
      "notable": [],
+     "path": "tests/restored_kit_join_stale_roster.rs",
+     "purpose": "REVIEW-9539 round 2 P1 (stale_roster.rs:141): a kit restore's inline join of an install born of a restore is…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/restored_machine_forged_guards.rs",
+     "purpose": "Row RESTORED-COPIES-R2-TESTS, part 2: the fixes of stack #9512's review rounds that only a hand-signed row…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
      "path": "tests/restored_machine_join_guards.rs",
      "purpose": "Row RESTORED-COPIES-ENROL-EACH-OTHER, round 1 of the blind review of stack #9512 (REVIEW-9509 and…",
      "surface": {}
@@ -115851,7 +115894,7 @@
      "purpose": "`TimeRange`, temporal expressions/parsing, granularity/anchor enums"
     },
     "test_doors": {
-     "files": 333,
+     "files": 335,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -116026,10 +116069,10 @@
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     }
    },
-   "over_bar": 305,
+   "over_bar": 306,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 8193,
-   "test_files": 1939
+   "source_files": 8195,
+   "test_files": 1941
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -178070,6 +178113,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/support/owner_only_file.rs",
+     "purpose": "A test's config file, or a file its config names, written with the mode the server admits whatever the…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -179261,7 +179314,7 @@
    "over_bar": 70,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 2033,
-   "test_files": 495
+   "test_files": 496
   },
   "oneiron-setting-contract": {
    "files": [
