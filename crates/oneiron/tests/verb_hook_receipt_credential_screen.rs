@@ -43,6 +43,15 @@
 //!   six. Green on main (the invocation withholds every one: 0 for the
 //!   first call, so its MISSING assert fails there; red on main), red at
 //!   c029867c (2 and 2: LEAK), green on the head.
+//! - (f) `a_credential_reads_no_receipt_whose_input_showed_content_naming_no_held_row`
+//!   (VERB-HOOK-RECEIPT-UNNAMED-SOURCE-PROVENANCE): four calls whose post
+//!   hooks see content no held row id names: a count, a list naming its row
+//!   only by short ref, a list naming a row this vault does not hold, and a
+//!   pack whose item ref does not resolve. Nothing tells which rows a body
+//!   could copy from them into its receipt, so no credential-bound reader
+//!   keeps their receipts, as for a host verb's free text since #9535; the
+//!   owner reading unbound still lists all eight. Red on main (the narrower
+//!   credential keeps 2 of each call's 2: LEAK), green on the head (0).
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use std::collections::BTreeSet;
@@ -787,5 +796,70 @@ fn a_narrower_credential_of_the_caller_reads_no_receipt_whose_input_showed_a_row
         &got[1..],
         &[0, 0],
         "LEAK: a narrower credential of the caller reads receipts whose run's input showed a row it cannot read, got {got:?} (plain, packed, listed)"
+    );
+}
+
+#[test]
+fn a_credential_reads_no_receipt_whose_input_showed_content_naming_no_held_row() {
+    let fixture = Fixture::new();
+    fixture.put_verb_pack();
+    let unheld = EntityId::now();
+    let counted = fixture.run_verb_call_with(fixture.owner, serde_json::json!({"count": 3}));
+    let short_ref = fixture.run_verb_call_with(
+        fixture.owner,
+        serde_json::json!({"rows": [{"short_id": "ms1:0a", "value": RESTRICTED_WORDS}]}),
+    );
+    let foreign = fixture.run_verb_call_with(
+        fixture.owner,
+        serde_json::json!({"rows": [{"claim_ref": unheld.to_hex(), "value": RESTRICTED_WORDS}]}),
+    );
+    let unresolved = fixture.run_verb_call_with(
+        fixture.owner,
+        serde_json::json!({
+            "pack_version": "v1",
+            "items": [{"short_id": "ms1:0a", "text": RESTRICTED_WORDS}],
+            "rendered": RESTRICTED_WORDS,
+        }),
+    );
+    let calls = [counted, short_ref, foreign, unresolved];
+    let mut kept = Vec::new();
+    for call in calls {
+        let runs = fixture.hook_runs(call);
+        assert_eq!(
+            runs.len(),
+            2,
+            "FIXTURE: the post chain records two Hook receipts for each call, read unbound: {runs:?}"
+        );
+        kept.extend(runs);
+    }
+    let mut records = named_hex(&kept, "binding");
+    records.extend(named_hex(&kept, "code"));
+    assert!(
+        records.len() >= 2 && !records.contains(&unheld.to_hex()),
+        "FIXTURE: the narrower credential is held to the binding and CODE rows: {records:?}"
+    );
+
+    let narrow = credential(&fixture, fixture.owner, records);
+    let narrow_reader = fixture
+        .vault
+        .memory(fixture.owner, EdgeActorClass::Human)
+        .with_read_proof(&narrow);
+    let got = kept_per_call(&narrow_reader, &calls);
+    assert_eq!(
+        got,
+        vec![0, 0, 0, 0],
+        "LEAK: a narrower credential of the caller reads receipts whose run's input showed content no held row id names, got {got:?} (count, short ref, unheld id, unresolved pack item)"
+    );
+
+    let broad = credential(&fixture, fixture.owner, BTreeSet::new());
+    let broad_reader = fixture
+        .vault
+        .memory(fixture.owner, EdgeActorClass::Human)
+        .with_read_proof(&broad);
+    let got = kept_per_call(&broad_reader, &calls);
+    assert_eq!(
+        got,
+        vec![0, 0, 0, 0],
+        "RULE: no credential-bound reader keeps such a receipt, the broad one included, as for a host verb's free text, got {got:?} (count, short ref, unheld id, unresolved pack item)"
     );
 }
