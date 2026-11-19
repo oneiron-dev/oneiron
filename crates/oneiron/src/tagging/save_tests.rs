@@ -138,7 +138,9 @@ fn open_in(path: &std::path::Path, mode: TaggingMode) -> Arc<Vault> {
             .with_labels(BTreeMap::from([("PERSON".to_owned(), ENTITY_TYPE_PERSON)]))
             .with_mode(mode),
     );
-    Arc::new(Vault::open(path, config).expect("open vault"))
+    let vault = Vault::open(path, config).expect("open vault");
+    vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
+    Arc::new(vault)
 }
 
 fn person(vault: &Vault, byte: u8, name: &str) -> EntityId {
@@ -1067,6 +1069,7 @@ fn an_entity_with_more_part_of_edges_than_a_query_returns_is_deleted() {
     let mut config = VaultConfig::device();
     config.store_clock = ManualClock::new(NOW).bundle();
     let vault = Vault::open(dir.path(), config).expect("open vault");
+    vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
     let hub = person(&vault, 0x24, "Hub");
     let mut value = [0u8; 12];
     value[0..4].copy_from_slice(&1.0_f32.to_le_bytes());

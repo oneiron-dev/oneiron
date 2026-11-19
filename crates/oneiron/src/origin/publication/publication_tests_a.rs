@@ -85,7 +85,8 @@ pub(crate) mod tests {
         request: &OriginPublicationRequest,
     ) -> EntityId {
         let id = EntityId::now();
-        let body = origin_publication_intent_claim(request).unwrap();
+        let mut body = origin_publication_intent_claim(request).unwrap();
+        crate::test_util::stamp_vault_default_facet(vault, &mut body);
         // `repo.*` is engine-owned: the fixture writes through the reserved door.
         vault
             .with_write_txn(|wtxn| {

@@ -94,6 +94,7 @@ fn erasing_a_message_drops_its_turn_vector_before_any_worker_runs() {
         config.embedding_model = Some("test/model@v1".to_owned());
         config.dimensions = ERASED_MEANING.len();
         let vault = crate::Vault::open(dir.path(), config).expect("open vault");
+        vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
         let alice = put_owner(&vault);
         let owner = crate::WriteActor::new(alice, EdgeActorClass::Human);
         crate::conversation_dag::fixtures::grant(&vault, owner, true);
@@ -217,6 +218,7 @@ fn a_vectorless_handle_still_erases_the_turn_vector_of_an_erased_message() {
         model.embedding_model = Some("test/model@v1".to_owned());
         model.dimensions = ERASED_MEANING.len();
         let mut vault = crate::Vault::open(dir.path(), model.clone()).expect("open vault");
+        vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
         let alice = put_owner(&vault);
         let owner = crate::WriteActor::new(alice, EdgeActorClass::Human);
         crate::conversation_dag::fixtures::grant(&vault, owner, true);
@@ -472,6 +474,7 @@ fn safe_delete_live_tombstone_reaches_attached_outbound_channel() {
     let dir = tempfile::tempdir().expect("tempdir");
     let vault =
         Arc::new(crate::Vault::open(dir.path(), VaultConfig::default()).expect("open vault"));
+    vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
     let actor = put_owner(&vault);
     let victim = put_person(&vault, 0xC2);
     let manager = Arc::new(WindowManager::new(
