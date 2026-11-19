@@ -100,6 +100,23 @@ pub(super) fn revokes_roster_key(op: &AuthorityOp) -> bool {
     )
 }
 
+/// Whether a row of `op` is an approval the window weighs: a binding or a
+/// rebinding, a federation confirm other than a revoke, a critical-write
+/// clearance, or a machine standing short of a removal that names no owner
+/// act. An owner answer rests on its carrier's act, never on a roster key,
+/// so no roster revocation expires it (C3).
+fn is_window_approval(op: &AuthorityOp) -> bool {
+    match op {
+        AuthorityOp::BindActor { .. } | AuthorityOp::RebindActor { .. } => true,
+        AuthorityOp::FederationConfirm(action) => action.kind != AuthorityConfirmKind::Revoke,
+        AuthorityOp::CriticalWriteConfirm(action) => {
+            action.disposition == CriticalWriteConfirmDisposition::Clear
+        }
+        op => filed_machine_profile(op)
+            .is_some_and(|profile| profile.role != MachineRole::Removed && profile.act.is_none()),
+    }
+}
+
 /// Earliest second at which each currently valid approval becomes stale.
 /// A checked deadline at the u64 ceiling never arrives, just as the original
 /// saturating-subtraction predicate could never exceed its window there.
@@ -152,21 +169,7 @@ fn stale_roster_approval_deadlines<E: LogRow>(
         .iter()
         .filter_map(|row| {
             let entry = row.entry();
-            let approval = match &entry.op {
-                AuthorityOp::BindActor { .. } | AuthorityOp::RebindActor { .. } => true,
-                AuthorityOp::FederationConfirm(action) => {
-                    action.kind != AuthorityConfirmKind::Revoke
-                }
-                AuthorityOp::CriticalWriteConfirm(action) => {
-                    action.disposition == CriticalWriteConfirmDisposition::Clear
-                }
-                // An owner answer rests on its carrier's act, never on a
-                // roster key, so no roster revocation expires it (C3).
-                op => filed_machine_profile(op).is_some_and(|profile| {
-                    profile.role != MachineRole::Removed && profile.act.is_none()
-                }),
-            };
-            if !approval {
+            if !is_window_approval(&entry.op) {
                 return None;
             }
             let hash = row.entry_hash()?;
@@ -205,21 +208,16 @@ fn expired_stale_roster_approvals<E: LogRow>(
 }
 
 /// Whether a forked row of `op` expires at once when the final roster holds
-/// its signer or a cosigner revoked: the approvals the window weighs, short
-/// of a machine standing (a restriction, which never forks), and the owner
-/// handovers and residence directives, whose readers take only valid rows.
+/// its signer or a cosigner revoked: every approval the window weighs
+/// ([`is_window_approval`]; a machine profile row is a restriction and never
+/// forks, an owner's join that files one inline may), and the owner handovers
+/// and residence directives, whose readers take only valid rows.
 fn expires_as_revoked_fork(op: &AuthorityOp) -> bool {
-    match op {
-        AuthorityOp::BindActor { .. }
-        | AuthorityOp::RebindActor { .. }
-        | AuthorityOp::OwnerHandover(_)
-        | AuthorityOp::ResidenceDirective(_) => true,
-        AuthorityOp::FederationConfirm(action) => action.kind != AuthorityConfirmKind::Revoke,
-        AuthorityOp::CriticalWriteConfirm(action) => {
-            action.disposition == CriticalWriteConfirmDisposition::Clear
-        }
-        _ => false,
-    }
+    is_window_approval(op)
+        || matches!(
+            op,
+            AuthorityOp::OwnerHandover(_) | AuthorityOp::ResidenceDirective(_)
+        )
 }
 
 /// The valid granting rows the fold counted as forks of their signer's
