@@ -8,6 +8,7 @@ use crate::dreamer_promotion::{DreamerRunContext, PromotionWriterSink};
 use crate::dreamer_wake::{DreamerWakeDriver, RunWakePass, WakeCancellation, WakeTrigger};
 use crate::llm::ScopeResource;
 use crate::memory::{WitnessAuthor, WitnessMessage, WitnessTurn};
+use crate::registry::ENTITY_TYPE_RELATIONSHIP;
 use crate::vault_cleanup::{CleanupKind, zero_live_members};
 
 const SAID: &str = "call me Owen";
@@ -712,6 +713,17 @@ fn private_or_ungranted_relationship_messages_never_reach_consolidation() -> Res
     let related = || serde_json::json!({"rel": space.to_hex()});
     for case in ["private", "no grant", "revoked grant", "expired grant"] {
         let (_dir, vault, clock) = open_clocked_vault();
+        // The witness MESSAGE door refuses a `rel` with no live RELATIONSHIP row
+        // (MESSAGE-REL-NAMES = A).
+        vault
+            .put_entity(
+                &space,
+                ENTITY_TYPE_RELATIONSHIP,
+                occurred(1),
+                1,
+                b"relationship",
+            )
+            .expect("put the relationship space");
         let metadata = if case == "private" {
             serde_json::json!({"scope": {"private": true}})
         } else {
@@ -773,6 +785,17 @@ fn private_or_ungranted_relationship_messages_never_reach_consolidation() -> Res
     // the grant was live, commits only if the grant still holds when written.
     for expire in [false, true] {
         let (_dir, vault, clock) = open_clocked_vault();
+        // The witness MESSAGE door refuses a `rel` with no live RELATIONSHIP row
+        // (MESSAGE-REL-NAMES = A).
+        vault
+            .put_entity(
+                &space,
+                ENTITY_TYPE_RELATIONSHIP,
+                occurred(1),
+                1,
+                b"relationship",
+            )
+            .expect("put the relationship space");
         let (turn, _) = witness(
             &vault,
             0x6d,
@@ -846,6 +869,17 @@ fn gap_queue_refuses_a_text_gap_whose_message_changed_after_the_scan() -> Result
     for case in ["deleted row", "expired grant"] {
         let (_dir, vault, clock) = open_clocked_vault();
         let space = EntityId::now();
+        // The witness MESSAGE door refuses a `rel` with no live RELATIONSHIP row
+        // (MESSAGE-REL-NAMES = A).
+        vault
+            .put_entity(
+                &space,
+                ENTITY_TYPE_RELATIONSHIP,
+                occurred(1),
+                1,
+                b"relationship",
+            )
+            .expect("put the relationship space");
         let said = WitnessMessage {
             metadata: (case == "expired grant").then(|| serde_json::json!({"rel": space.to_hex()})),
             ..message(0, WitnessAuthor::User, "I'll call Casey tomorrow", true)
@@ -1476,6 +1510,17 @@ fn branch_gap_write_refuses_evidence_that_moved_after_the_read() -> Result<()> {
     for case in ["none", "deleted row", "expired grant"] {
         let (_dir, vault, clock) = open_clocked_vault();
         let space = EntityId::now();
+        // The witness MESSAGE door refuses a `rel` with no live RELATIONSHIP row
+        // (MESSAGE-REL-NAMES = A).
+        vault
+            .put_entity(
+                &space,
+                ENTITY_TYPE_RELATIONSHIP,
+                occurred(1),
+                1,
+                b"relationship",
+            )
+            .expect("put the relationship space");
         let said = WitnessMessage {
             metadata: Some(serde_json::json!({"rel": space.to_hex()})),
             ..message(0, WitnessAuthor::User, SAID, true)

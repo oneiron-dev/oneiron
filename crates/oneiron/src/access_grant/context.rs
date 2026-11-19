@@ -335,6 +335,15 @@ mod tests {
             1,
             b"author",
         )?;
+        // The witness MESSAGE door refuses a `rel` with no live RELATIONSHIP row
+        // (MESSAGE-REL-NAMES = A).
+        vault.put_entity(
+            &space,
+            crate::registry::ENTITY_TYPE_RELATIONSHIP,
+            when,
+            1,
+            b"relationship",
+        )?;
         vault
             .memory(author, crate::EdgeActorClass::Human)
             .witness(&crate::memory::WitnessTurn {

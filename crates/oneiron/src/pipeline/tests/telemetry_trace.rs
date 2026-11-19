@@ -326,7 +326,7 @@ fn a_compressed_space_counts_a_paraphrase_under_its_own_floors() -> Result<()> {
     ] {
         let mut config = embedding_test_config();
         config.vector_evidence = floors;
-        let (_dir, vault) = crate::test_util::open_test_vault_with(config);
+        let (_dir, vault) = crate::test_util::open_test_vault_with_manifest(config);
         put_text_and_vector(
             &vault,
             target,
@@ -772,7 +772,6 @@ fn a_stored_fork_hash_confirms_no_guessed_query() -> Result<()> {
     let mut config = embedding_test_config();
     config.retrieval_telemetry_capture = true;
     let vault = Vault::open(dir.path(), config)?;
-    crate::test_util::clear_default_policy_manifest_for_legacy_tests(&vault);
     let (_, reopened) =
         captured_retrieval_run_trace(&vault, vault.query().search_text("yes", 10).limit(10))?;
     assert_eq!(reopened.fork_hash, stored.fork_hash);

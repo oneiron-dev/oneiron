@@ -540,20 +540,28 @@ fn key_is_the_owners(
 }
 
 /// Refuses `request` unless the machine it names made it, as a machine the
-/// owner holds: the install key of a live profile of that machine signed
-/// [`OwnerKeyVouchRequest::machine_transcript`] (no chain of the machine
-/// removed, as the carrier rule reads a profile), and that profile's role is
-/// one the owner answered as theirs. Any one such chain of the machine, the
-/// roster's or an anchor's, is enough, as one admitting chain admits a
-/// machine ([`FoldedMachine::is_admitted`]): a live chain of another role
-/// beside it vetoes nothing. A hosted or execution node, or an install the
-/// owner has not answered, holds no owner key (ruling
-/// CARRIER-HOSTED-SERVER-OWNER-KEY = A).
+/// owner holds: the install key of a live head of that machine, one it
+/// stands under here ([`FoldedMachine::standing_heads`]: the roster's head
+/// and the pinned anchor's chain, never another anchor's), signed
+/// [`OwnerKeyVouchRequest::machine_transcript`], and that head's role is one
+/// the owner answered as theirs. Any one such head is enough: a roster head
+/// of another role beside the pinned anchor's owned one vetoes nothing
+/// (#8796 review P1). The roster's head of the machine must be live, as the
+/// fold judges the enrolment this vouch writes on the roster's chain alone
+/// ([`super::owner_key_enrollment::machine_is_live`]), and no head it stands
+/// under here may say removed. Another anchor's chain, a stranger's fresh
+/// root among them, neither admits the machine nor removes it here: any
+/// fresh key publishes a root and marks any machine in its own chain (FIXes
+/// FOREIGN-ANCHOR-MARK-BLOCKS-MACHINE-DOORS and
+/// FOREIGN-ANCHOR-CHAIN-COUNTS-IN-EVERY-CHAIN-PREDICATES). A hosted or
+/// execution node, or an install the owner has not answered, holds no owner
+/// key (ruling CARRIER-HOSTED-SERVER-OWNER-KEY = A).
 ///
 /// # Errors
-/// [`RecordError::InvalidAuthorityLogBody`] for a machine proof no live
-/// profile of the machine verifies; [`RecordError::AuthorityRefused`] for a
-/// machine the owner has not answered as theirs in any live profile whose
+/// [`RecordError::InvalidAuthorityLogBody`] for a machine with no live
+/// roster head, one a head it stands under here says removed, or a machine
+/// proof no live such head verifies; [`RecordError::AuthorityRefused`] for a
+/// machine the owner has not answered as theirs in any live such head whose
 /// install key verifies it.
 pub(crate) fn require_holding_machine(
     fold: &AuthorityFold,
@@ -562,19 +570,21 @@ pub(crate) fn require_holding_machine(
     let transcript = request.machine_transcript()?;
     let proof = ed25519_dalek::Signature::from_slice(&request.machine_proof)
         .map_err(|_| not_valid(MACHINE_PROOF_NOT_VALID))?;
-    let folded = fold
+    let pin = fold.pinned_root.as_ref();
+    let heads = fold
         .machine(request.machine)
-        .filter(|folded| folded.chains().all(|(_, chain)| !chain.removed))
+        .filter(|folded| super::owner_key_enrollment::machine_is_live_here(folded, pin))
+        .map(|folded| folded.standing_heads(pin))
         .ok_or_else(|| not_valid(MACHINE_PROOF_NOT_VALID))?;
     let mut verified = false;
-    for (_, chain) in folded.chains() {
-        let signed = chain.is_live()
-            && strong_ed25519_key(&chain.profile.machine_key)
+    for head in heads {
+        let signed = head.is_live()
+            && strong_ed25519_key(&head.profile.machine_key)
                 .is_ok_and(|key| key.verify_strict(&transcript, &proof).is_ok());
         if !signed {
             continue;
         }
-        if matches!(chain.profile.role, MachineRole::Owned(_)) {
+        if matches!(head.profile.role, MachineRole::Owned(_)) {
             return Ok(());
         }
         verified = true;

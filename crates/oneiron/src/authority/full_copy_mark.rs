@@ -67,8 +67,8 @@ impl FullCopyMarkState {
 /// The `FullCopyMark` transition, after the shape, signature, retired,
 /// sequence-floor, parent-merge and vault checks and before any roster
 /// check: its signer is the declaring machine's install key, never a roster
-/// key (FIX 2222: the host root acts as nobody), and some chain of the
-/// machine must name it. It replaces every mark of its machine its parents
+/// key (FIX 2222: the host root acts as nobody), and the machine's roster
+/// chain must name it. It replaces every mark of its machine its parents
 /// carry.
 pub(super) fn apply_full_copy_mark(
     state: &mut FoldState,
@@ -273,7 +273,12 @@ impl Vault {
             return Ok(None);
         };
         let public_key = key.verifying_key().to_bytes();
-        if !super::owner_act_signer_admits(fold.machine(machine), &fold.roster, &public_key) {
+        if !super::owner_act_signer_admits(
+            fold.machine(machine),
+            &fold.roster,
+            &public_key,
+            fold.pinned_root.as_ref(),
+        ) {
             tracing::debug!(
                 "this install's machine key is not admitted here, so it writes no full-copy mark"
             );
